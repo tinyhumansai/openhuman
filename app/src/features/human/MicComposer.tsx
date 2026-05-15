@@ -1,7 +1,7 @@
 import debug from 'debug';
 import { useEffect, useRef, useState } from 'react';
 
-import { transcribeCloud } from './voice/sttClient';
+import { transcribeWithFactory } from './voice/sttClient';
 import { encodeBlobToWav } from './voice/wavEncoder';
 
 /** Minimal descriptor for an audio input device. */
@@ -29,7 +29,7 @@ function pickRecorderMime(): string {
   return '';
 }
 
-export interface MicCloudComposerProps {
+export interface MicComposerProps {
   /** Disabled while a turn is in flight or the welcome message is pending. */
   disabled: boolean;
   /** Receives the transcribed text — same callback the textarea send uses. */
@@ -48,20 +48,24 @@ type RecordingState = 'idle' | 'recording' | 'transcribing';
 
 /**
  * Tap-to-toggle mic composer for the mascot page. Captures audio via the
- * browser's `MediaRecorder`, hands the resulting Blob to the cloud STT proxy
- * (`openhuman.voice_cloud_transcribe`), then forwards the transcript through
- * `onSubmit` so it joins the agent's normal send pipeline.
+ * browser's `MediaRecorder`, hands the resulting Blob to the factory-
+ * dispatched STT RPC (`openhuman.voice_stt_dispatch`), then forwards the
+ * transcript through `onSubmit` so it joins the agent's normal send pipeline.
+ *
+ * The provider (cloud vs local Whisper) is resolved server-side from
+ * `config.local_ai.stt_provider`, so the renderer doesn't have to know
+ * which backend ran — it only sees `{ text, provider }`.
  *
  * Single button, single decision: tap once to start recording, tap again to
  * stop and send. No textarea — that's the whole point of the mascot tab.
  */
-export function MicCloudComposer({
+export function MicComposer({
   disabled,
   onSubmit,
   onError,
   language = 'en',
   showDeviceSelector = false,
-}: MicCloudComposerProps) {
+}: MicComposerProps) {
   const [state, setState] = useState<RecordingState>('idle');
   const [devices, setDevices] = useState<AudioInputDevice[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
@@ -390,7 +394,7 @@ export function MicCloudComposer({
         blob.type,
         language || 'auto'
       );
-      const text = await transcribeCloud(blob, opts);
+      const text = await transcribeWithFactory(blob, opts);
       composerLog('transcribe ok attempt=native ms=%d', Math.round(Date.now() - startedAt));
       return text;
     } catch (err) {
@@ -403,7 +407,7 @@ export function MicCloudComposer({
         wav.size,
         Math.round(Date.now() - reEncodeStart)
       );
-      const text = await transcribeCloud(wav, opts);
+      const text = await transcribeWithFactory(wav, opts);
       composerLog(
         'transcribe ok attempt=wav-fallback total_ms=%d',
         Math.round(Date.now() - startedAt)
@@ -489,4 +493,4 @@ export function MicCloudComposer({
   );
 }
 
-export default MicCloudComposer;
+export default MicComposer;

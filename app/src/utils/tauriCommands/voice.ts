@@ -33,6 +33,10 @@ export interface VoiceStatus {
   whisper_in_process: boolean;
   /** Whether LLM post-processing is enabled for transcription cleanup. */
   llm_cleanup_enabled: boolean;
+  /** Currently selected STT provider ('cloud' or 'whisper'). */
+  stt_provider: string;
+  /** Currently selected TTS provider ('cloud' or 'piper'). */
+  tts_provider: string;
 }
 
 export interface VoiceServerStatus {
@@ -105,6 +109,34 @@ export async function openhumanUpdateVoiceServerSettings(update: {
 }): Promise<CommandResponse<ConfigSnapshot>> {
   return await callCoreRpc<CommandResponse<ConfigSnapshot>>({
     method: 'openhuman.config_update_voice_server_settings',
+    params: update,
+  });
+}
+
+export interface VoiceProvidersUpdate {
+  stt_provider?: 'cloud' | 'whisper';
+  tts_provider?: 'cloud' | 'piper';
+  stt_model?: string;
+  tts_voice?: string;
+}
+
+export interface VoiceProvidersSnapshot {
+  stt_provider: string;
+  tts_provider: string;
+  stt_model_id: string;
+  tts_voice_id: string;
+}
+
+/**
+ * Persist the STT / TTS provider selection. Maps to the
+ * `openhuman.voice_set_providers` RPC, which validates each value against
+ * the supported provider list and rejects unknown ids server-side.
+ */
+export async function openhumanVoiceSetProviders(
+  update: VoiceProvidersUpdate
+): Promise<VoiceProvidersSnapshot> {
+  return await callCoreRpc<VoiceProvidersSnapshot>({
+    method: 'openhuman.voice_set_providers',
     params: update,
   });
 }

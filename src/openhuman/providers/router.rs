@@ -3,12 +3,14 @@ use super::Provider;
 use async_trait::async_trait;
 use std::collections::HashMap;
 
-/// Maps OpenHuman's abstract tier model names (`reasoning-v1`, `agentic-v1`,
-/// `coding-v1`, `summarization-v1`) to the hint slot in `model_routes`.
-/// Returns `None` for any model the router shouldn't rewrite.
+/// Maps OpenHuman's abstract tier model names (`reasoning-v1`,
+/// `reasoning-quick-v1`, `agentic-v1`, `coding-v1`, `summarization-v1`)
+/// to the hint slot in `model_routes`. Returns `None` for any model the
+/// router shouldn't rewrite.
 fn openhuman_tier_to_hint(model: &str) -> Option<&'static str> {
     match model {
         "reasoning-v1" => Some("reasoning"),
+        "reasoning-quick-v1" => Some("reasoning-quick"),
         "agentic-v1" => Some("agentic"),
         "coding-v1" => Some("coding"),
         "summarization-v1" => Some("summarization"),

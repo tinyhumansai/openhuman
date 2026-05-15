@@ -22,6 +22,39 @@ fn schema_names_are_stable() {
     let s = voice_schemas("overlay_stt_notify");
     assert_eq!(s.namespace, "voice");
     assert_eq!(s.function, "overlay_stt_notify");
+
+    let s = voice_schemas("voice_stt_dispatch");
+    assert_eq!(s.namespace, "voice");
+    assert_eq!(s.function, "stt_dispatch");
+
+    let s = voice_schemas("voice_tts_dispatch");
+    assert_eq!(s.namespace, "voice");
+    assert_eq!(s.function, "tts_dispatch");
+
+    let s = voice_schemas("voice_set_providers");
+    assert_eq!(s.namespace, "voice");
+    assert_eq!(s.function, "set_providers");
+}
+
+#[test]
+fn factory_dispatch_schemas_are_wired_into_registry() {
+    // Both dispatch endpoints + the persistence endpoint must be reachable
+    // through the registered_controllers list; without them the JSON-RPC
+    // router will reject the new method names with "unknown method".
+    let registry = all_voice_registered_controllers();
+    let functions: Vec<&'static str> = registry.iter().map(|c| c.schema.function).collect();
+    assert!(
+        functions.contains(&"stt_dispatch"),
+        "voice.stt_dispatch must be registered (got {functions:?})"
+    );
+    assert!(
+        functions.contains(&"tts_dispatch"),
+        "voice.tts_dispatch must be registered"
+    );
+    assert!(
+        functions.contains(&"set_providers"),
+        "voice.set_providers must be registered"
+    );
 }
 
 #[test]

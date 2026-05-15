@@ -454,21 +454,27 @@ const CAPABILITIES: &[Capability] = &[
     },
     Capability {
         id: "local_ai.speech_to_text",
-        name: "Speech Recognition",
+        name: "Speech Recognition (Local)",
         domain: "local_ai",
         category: CapabilityCategory::LocalAI,
-        description: "Transcribe audio into text using local speech recognition.",
-        how_to: "Settings > Local AI Model > Advanced > Test Voice Input",
+        description:
+            "Transcribe audio into text using local whisper.cpp via the voice STT factory. \
+             Pick the model size (tiny / base / small / medium / large-v3-turbo) in \
+             Settings > Voice; the factory routes through WHISPER_BIN or the in-process engine.",
+        how_to: "Settings > Voice > STT Provider = Whisper",
         status: CapabilityStatus::Beta,
         privacy: None,
     },
     Capability {
         id: "local_ai.text_to_speech",
-        name: "Text to Speech",
+        name: "Text to Speech (Local)",
         domain: "local_ai",
         category: CapabilityCategory::LocalAI,
-        description: "Synthesize speech from text using local voice models.",
-        how_to: "Settings > Local AI Model > Advanced > Test Voice Output",
+        description:
+            "Synthesize speech locally with Piper via the voice TTS factory. PIPER_BIN points \
+             at the binary; the voice .onnx ships with the installer. Returns a synthetic \
+             viseme timeline (full forced-alignment lives behind the cloud provider for now).",
+        how_to: "Settings > Voice > TTS Provider = Piper",
         status: CapabilityStatus::Beta,
         privacy: None,
     },
@@ -491,6 +497,34 @@ const CAPABILITIES: &[Capability] = &[
         how_to: "Settings > Local AI Model > Advanced > Test Custom Prompt",
         status: CapabilityStatus::Beta,
         privacy: None,
+    },
+    Capability {
+        id: "local_ai.whisper_installer",
+        name: "Whisper Installer (Local STT)",
+        domain: "local_ai",
+        category: CapabilityCategory::LocalAI,
+        description:
+            "One-click download of the whisper.cpp GGML model (and on Windows the whisper-cli \
+             binary) into the workspace so local Speech-to-Text runs without manual setup. \
+             Streams to disk via a .part file + atomic rename so a crash never leaves a corrupt \
+             model behind.",
+        how_to: "Settings > Voice > Voice Providers > Install Whisper",
+        status: CapabilityStatus::Beta,
+        privacy: MODEL_DOWNLOAD,
+    },
+    Capability {
+        id: "local_ai.piper_installer",
+        name: "Piper Installer (Local TTS)",
+        domain: "local_ai",
+        category: CapabilityCategory::LocalAI,
+        description:
+            "One-click download of the Piper binary archive and the bundled en_US-lessac-medium \
+             voice (.onnx + .onnx.json) into the workspace so local Text-to-Speech runs without \
+             manual setup. Atomic rename guarantees no half-written voice files are ever read \
+             by the runtime.",
+        how_to: "Settings > Voice > Voice Providers > Install Piper",
+        status: CapabilityStatus::Beta,
+        privacy: MODEL_DOWNLOAD,
     },
     Capability {
         id: "team.create",
@@ -886,6 +920,21 @@ const CAPABILITIES: &[Capability] = &[
         how_to: "Automatic after onboarding (runs daily at 7 AM). Adjust schedule via Settings > Cron Jobs.",
         status: CapabilityStatus::Beta,
         privacy: None,
+    },
+    Capability {
+        id: "automation.crypto_agent",
+        name: "Crypto Agent",
+        domain: "automation",
+        category: CapabilityCategory::Automation,
+        description: "Dedicated wallet & market specialist sub-agent. The orchestrator \
+                      routes transfers, swaps, contract calls, balance lookups, and \
+                      exchange trading requests here. The agent enforces a read → \
+                      simulate → confirm → execute flow, refuses to fabricate chain ids \
+                      or token addresses, and gates every write call behind explicit \
+                      user confirmation.",
+        how_to: "Automatic — invoked by the orchestrator when a crypto wallet or market action is requested. Connect a wallet via Settings > Recovery Phrase first.",
+        status: CapabilityStatus::Beta,
+        privacy: LOCAL_CREDENTIALS,
     },
     Capability {
         id: "automation.welcome_agent",

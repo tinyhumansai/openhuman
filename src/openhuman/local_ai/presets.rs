@@ -303,6 +303,10 @@ pub fn current_tier_from_config(config: &LocalAiConfig) -> ModelTier {
 }
 
 #[cfg(test)]
+#[path = "presets_tests.rs"]
+mod presets_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

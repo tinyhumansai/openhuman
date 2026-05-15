@@ -37,6 +37,13 @@ pub struct VoiceStatus {
     pub whisper_in_process: bool,
     /// Whether LLM post-processing is enabled for transcription cleanup.
     pub llm_cleanup_enabled: bool,
+    /// Currently selected STT provider ("cloud" or "whisper"). Echoed so
+    /// the settings panel can render the picker without an extra RPC.
+    #[serde(default)]
+    pub stt_provider: String,
+    /// Currently selected TTS provider ("cloud" or "piper").
+    #[serde(default)]
+    pub tts_provider: String,
 }
 
 impl From<LocalAiSpeechResult> for VoiceSpeechResult {
@@ -99,6 +106,8 @@ mod tests {
             tts_voice_path: None,
             whisper_in_process: true,
             llm_cleanup_enabled: true,
+            stt_provider: "whisper".into(),
+            tts_provider: "cloud".into(),
         };
         let v = serde_json::to_value(&s).unwrap();
         assert_eq!(v["stt_available"], true);
@@ -106,6 +115,8 @@ mod tests {
         assert!(v["piper_binary"].is_null());
         assert_eq!(v["whisper_in_process"], true);
         assert_eq!(v["llm_cleanup_enabled"], true);
+        assert_eq!(v["stt_provider"], "whisper");
+        assert_eq!(v["tts_provider"], "cloud");
     }
 
     #[test]

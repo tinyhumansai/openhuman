@@ -59,4 +59,6 @@ pub(crate) mod test_support;
 mod test_support_tests;
 
 #[cfg(test)]
+mod harness_gap_tests;
+#[cfg(test)]
 mod tests;

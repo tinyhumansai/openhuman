@@ -40,6 +40,33 @@ function deriveConnectionLabel(c: ComposioConnection): string | null {
   return null;
 }
 
+const ATLASSIAN_DOMAIN_SUFFIX = '.atlassian.net';
+
+export function normalizeAtlassianSubdomain(value: string): string {
+  let normalized = value.trim().toLowerCase();
+  normalized = normalized.replace(/^https?:\/\//, '');
+  normalized = normalized.replace(/\/.*$/, '');
+  normalized = normalized.replace(/:\d+$/, '');
+  if (normalized.endsWith(ATLASSIAN_DOMAIN_SUFFIX)) {
+    normalized = normalized.slice(0, -ATLASSIAN_DOMAIN_SUFFIX.length);
+  }
+  return normalized;
+}
+
+function validateAtlassianSubdomain(value: string): string | null {
+  const subdomain = normalizeAtlassianSubdomain(value);
+  if (!subdomain) return null;
+  if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(subdomain)) return null;
+  return subdomain;
+}
+
+export function isMissingAtlassianSubdomainError(message: string): boolean {
+  return (
+    /ConnectedAccount_MissingRequiredFields/i.test(message) &&
+    /subdomain|Your Subdomain/i.test(message)
+  );
+}
+
 type Phase = 'idle' | 'authorizing' | 'waiting' | 'connected' | 'disconnecting' | 'error';
 
 interface ComposioConnectModalProps {
@@ -76,6 +103,8 @@ export default function ComposioConnectModal({
   // WhatsApp Business requires a WABA ID before the OAuth flow can start.
   const [wabaId, setWabaId] = useState('');
   const needsWabaId = toolkit.slug === 'whatsapp';
+  const [atlassianSubdomain, setAtlassianSubdomain] = useState('');
+  const needsAtlassianSubdomain = toolkit.slug === 'jira';
   const [activeConnection, setActiveConnection] = useState<ComposioConnection | undefined>(
     connection
   );
@@ -195,22 +224,54 @@ export default function ComposioConnectModal({
       setError('Please enter your WhatsApp Business Account ID (WABA ID) to continue.');
       return;
     }
+    const jiraSubdomain = needsAtlassianSubdomain
+      ? validateAtlassianSubdomain(atlassianSubdomain)
+      : null;
+    if (needsAtlassianSubdomain && !jiraSubdomain) {
+      setError(
+        'Enter your Atlassian subdomain, such as "acme" from "acme.atlassian.net", to continue.'
+      );
+      return;
+    }
     setPhase('authorizing');
     setError(null);
     setConnectUrl(null);
     try {
-      const extraParams = needsWabaId ? { waba_id: wabaId.trim() } : undefined;
-      const resp = await authorize(toolkit.slug, extraParams);
+      const extraParams: Record<string, string> = {};
+      if (needsWabaId) extraParams.waba_id = wabaId.trim();
+      if (jiraSubdomain) extraParams.subdomain = jiraSubdomain;
+      const resp = await authorize(
+        toolkit.slug,
+        Object.keys(extraParams).length > 0 ? extraParams : undefined
+      );
       setConnectUrl(resp.connectUrl);
       await openUrl(resp.connectUrl);
       setPhase('waiting');
       startPolling();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      if (needsAtlassianSubdomain && isMissingAtlassianSubdomainError(msg)) {
+        console.warn('[composio] authorize missing required Jira subdomain', {
+          toolkit: toolkit.slug,
+          errorSlug: 'ConnectedAccount_MissingRequiredFields',
+        });
+        setPhase('idle');
+        setError(
+          'Jira needs your Atlassian subdomain before authorization. Enter the subdomain and retry.'
+        );
+        return;
+      }
       setPhase('error');
       setError(`Authorization failed: ${msg}`);
     }
-  }, [needsWabaId, startPolling, toolkit.slug, wabaId]);
+  }, [
+    atlassianSubdomain,
+    needsAtlassianSubdomain,
+    needsWabaId,
+    startPolling,
+    toolkit.slug,
+    wabaId,
+  ]);
 
   // Fetch the stored scope pref whenever the modal lands in the
   // 'connected' phase. Re-fetching each time we transition (rather
@@ -393,6 +454,32 @@ export default function ComposioConnectModal({
                       GET /&#123;business_id&#125;/owned_whatsapp_business_accounts
                     </span>{' '}
                     using your Meta access token.
+                  </p>
+                </div>
+              )}
+              {needsAtlassianSubdomain && (
+                <div className="space-y-1.5">
+                  <label
+                    htmlFor="atlassian-subdomain-input"
+                    className="block text-xs font-medium text-stone-700">
+                    Atlassian subdomain
+                    <span className="ml-1 text-coral-500">*</span>
+                  </label>
+                  <input
+                    id="atlassian-subdomain-input"
+                    type="text"
+                    value={atlassianSubdomain}
+                    onChange={(e: ChangeEvent<HTMLInputElement>) => {
+                      setAtlassianSubdomain(e.target.value);
+                      if (error) setError(null);
+                    }}
+                    placeholder="e.g. acme"
+                    className="w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-100"
+                  />
+                  <p className="text-[11px] leading-relaxed text-stone-400">
+                    Use only the subdomain from your Jira Cloud URL, for example{' '}
+                    <span className="font-mono">acme</span> from{' '}
+                    <span className="font-mono">acme.atlassian.net</span>.
                   </p>
                 </div>
               )}

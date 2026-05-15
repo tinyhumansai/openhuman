@@ -69,6 +69,15 @@ pub const PRICING_TABLE: &[ModelPricing] = &[
         cached_input_per_mtok_usd: 1.50,
         output_per_mtok_usd: 75.00,
     },
+    // Quick reasoning tier — Kimi K2.6 Turbo on Fireworks (backend PR
+    // #760). Low TTFT, 128k context, `supportsThinking: false`. Rates
+    // track Fireworks' published Kimi turbo pricing at time of writing.
+    ModelPricing {
+        model: "reasoning-quick-v1",
+        input_per_mtok_usd: 0.60,
+        cached_input_per_mtok_usd: 0.06,
+        output_per_mtok_usd: 2.50,
+    },
     // Agentic tier — maps to Sonnet-class models.
     ModelPricing {
         model: "agentic-v1",
@@ -95,14 +104,21 @@ pub fn lookup_pricing(model: &str) -> ModelPricing {
         return *row;
     }
     let lower = model.to_ascii_lowercase();
+    let by_tier = |tier: &str| {
+        PRICING_TABLE
+            .iter()
+            .find(|row| row.model == tier)
+            .copied()
+            .unwrap_or(FALLBACK_PRICING)
+    };
     if lower.contains("opus") {
-        return PRICING_TABLE[0];
+        return by_tier("reasoning-v1");
     }
     if lower.contains("coding") {
-        return PRICING_TABLE[2];
+        return by_tier("coding-v1");
     }
     if lower.contains("sonnet") || lower.contains("agentic") {
-        return PRICING_TABLE[1];
+        return by_tier("agentic-v1");
     }
     FALLBACK_PRICING
 }

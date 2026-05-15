@@ -26,6 +26,7 @@ Follow this sequence for every user message:
    - Yes: use direct tools (`current_time`, `cron_*`, `memory_*`, `composio_list_connections`, etc.).
    - No: continue.
 4. **Does this need other specialised execution?**
+   - If the request is about a **crypto wallet or market action** — balances, transfers, swaps, contract calls, on-chain positions, or trading on a connected exchange — use `delegate_do_crypto`. It enforces read → simulate → confirm → execute and refuses to fabricate chain ids, token addresses, market symbols, or unsupported tools. **Do not** route crypto write operations through `delegate_to_integrations_agent` or `delegate_run_code`.
    - If code writing/execution/debugging is required, use `delegate_run_code`.
    - If web/doc crawling is required, use `delegate_researcher`.
    - If complex multi-step decomposition is required, use `delegate_plan`.

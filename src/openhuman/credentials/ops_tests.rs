@@ -451,3 +451,136 @@ async fn list_provider_credentials_by_prefix_returns_empty_when_no_match() {
         .expect("prefix list should succeed");
     assert!(result.is_empty(), "got {result:?}");
 }
+
+// ── Account-scoped storage isolation ──────────────────────────────────────
+//
+// The credential store is scoped to `config.workspace_dir` / `config.config_path`.
+// Two configs pointing at different directories must not share credential data.
+// This models the multi-account scenario: each user account activates a
+// different `workspace_dir`, so credentials stored under one account must be
+// completely invisible to a different account's config.
+
+#[tokio::test]
+async fn credentials_stored_under_one_workspace_dir_invisible_to_another() {
+    let tmp_a = TempDir::new().unwrap();
+    let tmp_b = TempDir::new().unwrap();
+    let config_a = test_config(&tmp_a);
+    let config_b = test_config(&tmp_b);
+
+    // Store an OpenAI credential under account A.
+    store_provider_credentials(
+        &config_a,
+        "openai",
+        Some("default"),
+        Some("sk-account-a".to_string()),
+        None,
+        Some(true),
+    )
+    .await
+    .expect("store under config_a");
+
+    // Account B's store must be empty — it has its own workspace_dir.
+    let listed_b = list_provider_credentials(&config_b, None)
+        .await
+        .expect("list from config_b");
+    assert!(
+        listed_b.value.is_empty(),
+        "credentials from account A must not be visible to account B, got: {:?}",
+        listed_b.value
+    );
+}
+
+#[tokio::test]
+async fn clear_session_on_one_account_does_not_affect_another() {
+    let tmp_a = TempDir::new().unwrap();
+    let tmp_b = TempDir::new().unwrap();
+    let config_a = test_config(&tmp_a);
+    let config_b = test_config(&tmp_b);
+
+    // Store an OpenAI credential under each account.
+    store_provider_credentials(
+        &config_a,
+        "openai",
+        None,
+        Some("sk-a".to_string()),
+        None,
+        Some(true),
+    )
+    .await
+    .unwrap();
+    store_provider_credentials(
+        &config_b,
+        "openai",
+        None,
+        Some("sk-b".to_string()),
+        None,
+        Some(true),
+    )
+    .await
+    .unwrap();
+
+    // Clearing the session for account A must not wipe account B's credentials.
+    clear_session(&config_a).await.unwrap();
+
+    let listed_b = list_provider_credentials(&config_b, None)
+        .await
+        .expect("list from config_b after clear_session on config_a");
+    assert_eq!(
+        listed_b.value.len(),
+        1,
+        "account B credential must survive clear_session on account A"
+    );
+    assert_eq!(listed_b.value[0].provider, "openai");
+}
+
+#[tokio::test]
+async fn each_account_workspace_holds_its_own_credential_data() {
+    // Two accounts store credentials under distinct workspace dirs.
+    // Listing with each config must see only its own data, never the other's.
+    let tmp_a = TempDir::new().unwrap();
+    let tmp_b = TempDir::new().unwrap();
+    let config_a = test_config(&tmp_a);
+    let config_b = test_config(&tmp_b);
+
+    store_provider_credentials(
+        &config_a,
+        "anthropic",
+        None,
+        Some("sk-ant-a".to_string()),
+        None,
+        Some(true),
+    )
+    .await
+    .unwrap();
+    store_provider_credentials(
+        &config_b,
+        "anthropic",
+        None,
+        Some("sk-ant-b".to_string()),
+        None,
+        Some(true),
+    )
+    .await
+    .unwrap();
+
+    let result_a = list_provider_credentials(&config_a, Some("anthropic".into()))
+        .await
+        .unwrap();
+    let result_b = list_provider_credentials(&config_b, Some("anthropic".into()))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        result_a.value.len(),
+        1,
+        "config_a must see exactly its own anthropic credential"
+    );
+    assert_eq!(
+        result_b.value.len(),
+        1,
+        "config_b must see exactly its own anthropic credential"
+    );
+    // Sanity: both found their own entry, neither crossed over.
+    assert_eq!(result_a.value[0].provider, "anthropic");
+    assert_eq!(result_b.value[0].provider, "anthropic");
+}

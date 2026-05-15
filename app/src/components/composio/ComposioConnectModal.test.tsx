@@ -1,8 +1,13 @@
-import { render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { authorize } from '../../lib/composio/composioApi';
 import { type ComposioConnection } from '../../lib/composio/types';
-import ComposioConnectModal from './ComposioConnectModal';
+import { openUrl } from '../../utils/openUrl';
+import ComposioConnectModal, {
+  isMissingAtlassianSubdomainError,
+  normalizeAtlassianSubdomain,
+} from './ComposioConnectModal';
 import { composioToolkitMeta } from './toolkitMeta';
 
 vi.mock('../../lib/composio/composioApi', () => ({
@@ -19,8 +24,18 @@ vi.mock('../../utils/openUrl', () => ({ openUrl: vi.fn() }));
 vi.mock('./TriggerToggles', () => ({ default: () => <div data-testid="trigger-toggles" /> }));
 
 const mockToolkit = composioToolkitMeta('gmail');
+const jiraToolkit = composioToolkitMeta('jira');
 
 describe('<ComposioConnectModal>', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(authorize).mockResolvedValue({
+      connectUrl: 'https://composio.example/jira/consent',
+      connectionId: 'conn-123',
+    });
+    vi.mocked(openUrl).mockResolvedValue(undefined);
+  });
+
   it('hides raw connection ID and "id:" label in connected phase', () => {
     const connection: ComposioConnection = { id: 'ca_xyz', toolkit: 'gmail', status: 'ACTIVE' };
 
@@ -96,5 +111,80 @@ describe('<ComposioConnectModal>', () => {
     expect(screen.getByText('(foo@bar.com)')).toBeInTheDocument();
     expect(screen.queryByText('(Acme)')).not.toBeInTheDocument();
     expect(screen.queryByText('(oxox)')).not.toBeInTheDocument();
+  });
+
+  it('keeps default toolkit authorization free of empty extra params', async () => {
+    render(
+      <ComposioConnectModal toolkit={mockToolkit} connection={undefined} onClose={() => {}} />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Connect Gmail' }));
+
+    await waitFor(() => {
+      expect(authorize).toHaveBeenCalledWith('gmail', undefined);
+    });
+  });
+
+  it('normalizes pasted Atlassian URLs to the Jira subdomain', () => {
+    expect(normalizeAtlassianSubdomain('https://Acme.atlassian.net/jira/software')).toBe('acme');
+    expect(normalizeAtlassianSubdomain('acme.atlassian.net')).toBe('acme');
+  });
+
+  it('detects Composio missing-subdomain errors without exposing raw payloads', () => {
+    expect(
+      isMissingAtlassianSubdomainError(
+        'Composio authorization failed: {"error":{"slug":"ConnectedAccount_MissingRequiredFields","message":"Missing required fields: Your Subdomain"}}'
+      )
+    ).toBe(true);
+  });
+
+  it('requires an Atlassian subdomain before Jira authorization', async () => {
+    render(
+      <ComposioConnectModal toolkit={jiraToolkit} connection={undefined} onClose={() => {}} />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Connect Jira' }));
+
+    expect(await screen.findByText(/Enter your Atlassian subdomain/i)).toBeInTheDocument();
+    expect(authorize).not.toHaveBeenCalled();
+    expect(openUrl).not.toHaveBeenCalled();
+  });
+
+  it('sends the normalized Jira subdomain as an authorize extra param', async () => {
+    render(
+      <ComposioConnectModal toolkit={jiraToolkit} connection={undefined} onClose={() => {}} />
+    );
+
+    fireEvent.change(screen.getByLabelText(/Atlassian subdomain/i), {
+      target: { value: 'https://Acme.atlassian.net/jira/software' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Connect Jira' }));
+
+    await waitFor(() => {
+      expect(authorize).toHaveBeenCalledWith('jira', { subdomain: 'acme' });
+    });
+    expect(openUrl).toHaveBeenCalledWith('https://composio.example/jira/consent');
+  });
+
+  it('maps Jira missing-field backend errors back to the inline subdomain form', async () => {
+    vi.mocked(authorize).mockRejectedValueOnce(
+      new Error(
+        'Composio authorization failed: 400 {"error":{"slug":"ConnectedAccount_MissingRequiredFields","message":"Missing required fields: Your Subdomain"}}'
+      )
+    );
+
+    render(
+      <ComposioConnectModal toolkit={jiraToolkit} connection={undefined} onClose={() => {}} />
+    );
+
+    fireEvent.change(screen.getByLabelText(/Atlassian subdomain/i), { target: { value: 'acme' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Connect Jira' }));
+
+    expect(
+      await screen.findByText(/Jira needs your Atlassian subdomain before authorization/i)
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText(/Atlassian subdomain/i)).toBeInTheDocument();
+    expect(screen.queryByText(/ConnectedAccount_MissingRequiredFields/i)).not.toBeInTheDocument();
+    expect(openUrl).not.toHaveBeenCalled();
   });
 });

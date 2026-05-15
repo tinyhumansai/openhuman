@@ -10,6 +10,36 @@ use std::time::Duration;
 
 use super::jwt::bearer_authorization_value;
 
+/// Typed errors surfaced by `authed_json` for expected backend states that
+/// callers should recover from in-flow rather than funnel into Sentry.
+#[derive(Debug, thiserror::Error)]
+pub enum BackendApiError {
+    /// Edit / delete of a channel message returned 404. Happens when the
+    /// user deletes the message on the provider side (Telegram, Discord,
+    /// Slack, …) but our local `StreamingState` still has the id, or when
+    /// the backend GC'd the relay row before we got around to editing it.
+    /// Callers should clear stale state and skip the retry. Targets
+    /// `OPENHUMAN-TAURI-2Y` (~454 events on `/channels/telegram/messages/<id>`).
+    #[error("message not found on {provider}: {message_id}")]
+    MessageNotFound {
+        /// Channel provider segment (e.g. `"telegram"`, `"discord"`).
+        provider: String,
+        /// Provider-specific message id from the URL.
+        message_id: String,
+    },
+}
+
+/// Extract `(provider, message_id)` from a backend channel path of the
+/// shape `/channels/<provider>/messages/<id>`. Returns `None` for paths
+/// with a different segment count or non-`channels` first segment.
+fn parse_message_path(path: &str) -> Option<(&str, &str)> {
+    let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    if segments.len() == 4 && segments[0] == "channels" && segments[2] == "messages" {
+        return Some((segments[1], segments[3]));
+    }
+    None
+}
+
 const CLIENT_VERSION_HEADER_MAX_LEN: usize = 64;
 
 fn sanitize_client_version(raw: &str) -> Option<String> {
@@ -471,6 +501,32 @@ impl BackendOAuthClient {
         if !status.is_success() {
             let status_code = status.as_u16();
             let status_str = status_code.to_string();
+
+            // 404 on `/channels/<provider>/messages/<id>` is an expected
+            // state (user deleted the message provider-side, or backend
+            // GC'd the relay row) — not a code bug. Surface a typed
+            // `BackendApiError::MessageNotFound` so callers (`bus.rs`
+            // streaming/thinking/delete/final paths) can clear stale
+            // ids and skip retry, without funneling the 404 into
+            // `report_error`. Targets `OPENHUMAN-TAURI-2Y` (~454 events).
+            if status_code == 404 {
+                if let Some((provider, message_id)) = parse_message_path(url.path()) {
+                    tracing::info!(
+                        domain = "backend_api",
+                        operation = "authed_json",
+                        provider = provider,
+                        message_id = message_id,
+                        "[backend_api] message-not-found 404 on {} {} — surfacing typed error",
+                        method.as_str(),
+                        url.path(),
+                    );
+                    return Err(anyhow::Error::new(BackendApiError::MessageNotFound {
+                        provider: provider.to_string(),
+                        message_id: message_id.to_string(),
+                    }));
+                }
+            }
+
             // These are transient infrastructure errors (proxy/CDN/backend
             // temporarily unavailable). They are not code bugs and callers already
             // implement retry/disable logic, so skip Sentry to avoid noise.

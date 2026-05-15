@@ -1,6 +1,6 @@
 [package]
 name = "openhuman"
-version = "0.53.46"
+version = "0.53.47"
 edition = "2021"
 description = "OpenHuman core business logic and RPC server"
 autobins = false
@@ -55,6 +55,10 @@ hmac = "0.12"
 tar = "0.4"
 xz2 = { version = "0.1", features = ["static"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
+# gzip decoder for the Piper tar.gz binary releases on macOS / Linux. Already
+# pulled in transitively by zip's `deflate` feature; declared directly so
+# the installer module can `use flate2::read::GzDecoder`.
+flate2 = "1"
 # Real timeout for `node --version` probes in the runtime resolver. Guards
 # against a broken shim on PATH hanging the bootstrap forever.
 wait-timeout = "0.2"

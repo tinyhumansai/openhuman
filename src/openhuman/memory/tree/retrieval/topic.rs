@@ -88,10 +88,20 @@ pub async fn query_topic(
     // `total` and waste result slots. For duplicates, keep the higher
     // score; if scores tie, prefer the newer `time_range_end`.
     // Flagged on PR #831 CodeRabbit review.
-    use std::collections::HashMap;
-    let mut by_node: HashMap<String, RetrievalHit> = HashMap::new();
+    //
+    // `BTreeMap` (not `HashMap`) so the post-dedup iteration order is a
+    // deterministic function of `node_id`. The downstream sort is
+    // stable, so when many hits tie on `(score, time_range_end)` —
+    // which is common with the inert embedder used in tests and with
+    // freshly-ingested workspaces where score normalisation hasn't run
+    // — the surviving order falls back to alphabetical `node_id`
+    // instead of `HashMap`'s randomised SipHash iteration. Without
+    // this, `tests/agent_retrieval_e2e.rs::orchestrator_query_topic…`
+    // picked a different "first leaf hit" on each run.
+    use std::collections::BTreeMap;
+    let mut by_node: BTreeMap<String, RetrievalHit> = BTreeMap::new();
 
-    let merge = |map: &mut HashMap<String, RetrievalHit>, hit: RetrievalHit| {
+    let merge = |map: &mut BTreeMap<String, RetrievalHit>, hit: RetrievalHit| {
         map.entry(hit.node_id.clone())
             .and_modify(|existing| {
                 let better = match hit
@@ -130,12 +140,17 @@ pub async fn query_topic(
         rerank_by_semantic_similarity(config, q, hits).await?
     } else {
         let mut by_score = hits;
-        // Sort: score DESC, then newest first on ties.
+        // Sort: score DESC, then newest first on ties, then `node_id`
+        // ASC as a final tie-break so two hits that match on every
+        // ranked dimension still produce a deterministic order across
+        // runs (matters with the inert embedder used in tests, where
+        // every score lands at 0.0 and only the `node_id` differs).
         by_score.sort_by(|a, b| {
             b.score
                 .partial_cmp(&a.score)
                 .unwrap_or(std::cmp::Ordering::Equal)
                 .then_with(|| b.time_range_end.cmp(&a.time_range_end))
+                .then_with(|| a.node_id.cmp(&b.node_id))
         });
         by_score
     };
