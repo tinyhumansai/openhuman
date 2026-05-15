@@ -21,8 +21,7 @@
 
 use super::dom_snapshot::{report_from_snapshot, CaptureSnapshot};
 
-const FIXTURE_2026_05: &str =
-    include_str!("test_fixtures/dom_snapshot_2026_05.json");
+const FIXTURE_2026_05: &str = include_str!("test_fixtures/dom_snapshot_2026_05.json");
 
 fn load_fixture() -> CaptureSnapshot {
     serde_json::from_str(FIXTURE_2026_05)
@@ -84,14 +83,10 @@ fn find_body_extracts_via_dir_attr_tier2() {
 fn find_body_extracts_via_descendant_text_tier3_fallback() {
     let snap = load_fixture();
     let report = report_from_snapshot(&snap);
-    let row = report
-        .rows
-        .iter()
-        .find(|r| r.msg_id == "msgGHI789")
-        .expect(
-            "tier 3 row (msgGHI789) must survive — body comes from \
+    let row = report.rows.iter().find(|r| r.msg_id == "msgGHI789").expect(
+        "tier 3 row (msgGHI789) must survive — body comes from \
              descendant text walk fallback (issue #1376)",
-        );
+    );
     assert_eq!(
         row.body, "hello tier 3",
         "tier 3 fallback recovers body when neither class nor dir hint is present"
