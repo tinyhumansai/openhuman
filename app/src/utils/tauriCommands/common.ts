@@ -64,16 +64,33 @@ export function tauriErrorMessage(err: unknown): string {
   return 'Unknown Tauri invoke error';
 }
 
+function isCommandResponse<T>(value: unknown): value is CommandResponse<T> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return false;
+  }
+  const candidate = value as { result?: unknown; logs?: unknown };
+  if (!('result' in candidate) || !('logs' in candidate)) {
+    return false;
+  }
+  if (!Array.isArray(candidate.logs)) {
+    return false;
+  }
+  return candidate.logs.every(entry => typeof entry === 'string');
+}
+
 export function parseServiceCliOutput<T>(raw: string): CommandResponse<T> {
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(raw) as CommandResponse<T>;
-    if (!parsed || typeof parsed !== 'object') {
-      throw new Error('Parsed value is not an object');
-    }
-    return parsed;
+    parsed = JSON.parse(raw);
   } catch (err) {
     throw new Error(
       `Failed to parse service CLI output as JSON: ${err instanceof Error ? err.message : String(err)}`
     );
   }
+  if (!isCommandResponse<T>(parsed)) {
+    throw new Error(
+      'Failed to parse service CLI output as JSON: parsed value does not match CommandResponse shape'
+    );
+  }
+  return parsed;
 }
