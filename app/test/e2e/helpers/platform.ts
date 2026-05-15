@@ -1,57 +1,38 @@
 /**
  * Platform detection utilities for cross-platform E2E tests.
  *
- * Two automation backends are supported:
+ * The harness was previously split between Appium Mac2 (accessibility tree)
+ * and tauri-driver (DOM). It is now unified onto **Appium Chromium driver
+ * attached to CEF's CDP port** on all three platforms (macOS / Linux /
+ * Windows). Every session exposes the full DOM and supports W3C
+ * `executeScript`, so the legacy branching collapses to a single backend.
  *
- *  - **Appium Mac2** (macOS): Drives the `.app` bundle via XCUITest / accessibility
- *    tree.  Elements are XCUIElementType* nodes; clicks require W3C pointer actions
- *    because accessibility clicks don't propagate to WKWebView DOM handlers.
- *
- *  - **tauri-driver** (Linux): WebDriver server shipped by the Tauri project.
- *    Exposes the WebView DOM directly — standard CSS selectors and `el.click()`
- *    work as in a normal browser session.
+ * These functions are kept (rather than deleted) as a shim so the ~40
+ * existing specs that branch on `isTauriDriver()` / `isMac2()` still pass:
+ * they always take the DOM-capable code path now.
  */
 
 /**
- * Returns `true` when the session is driven by tauri-driver (Linux E2E).
- *
- * tauri-driver does not set `platformName` or `appium:automationName`, so the
- * absence of Mac2 markers is the signal.  We also check `process.platform` as
- * a secondary indicator.
+ * Always true — the unified Chromium-driver session exposes the WebView DOM
+ * exactly like the old tauri-driver path did. Specs that gated DOM work
+ * behind `if (isTauriDriver())` now run that work on every platform.
  */
 export function isTauriDriver(): boolean {
-  if (typeof browser === 'undefined') return process.platform === 'linux';
-
-  const caps = browser.capabilities as Record<string, unknown>;
-  const automation = String(
-    caps['appium:automationName'] ?? caps['automationName'] ?? ''
-  ).toLowerCase();
-
-  // Appium Mac2 always sets automationName to 'mac2'
-  if (automation === 'mac2' || automation.includes('mac2')) return false;
-
-  const platform = String(caps.platformName ?? caps['appium:platformName'] ?? '').toLowerCase();
-
-  // If platformName is 'mac' it's Appium on macOS even without automationName
-  if (platform === 'mac') return false;
-
   return true;
 }
 
 /**
- * Returns `true` when the session is driven by Appium Mac2 (macOS E2E).
+ * Always false. The Mac2 accessibility-tree backend is retired; macOS now
+ * speaks CDP just like Linux/Windows.
  */
 export function isMac2(): boolean {
-  return !isTauriDriver();
+  return false;
 }
 
 /**
- * Returns `true` when the WebDriver session supports W3C Execute Script
- * for running JS inside the WebView.
- *
- * - tauri-driver: YES (full W3C WebDriver compliance)
- * - Appium Mac2: NO (only supports `macos: *` extension commands)
+ * Always true — Chromium driver is a full W3C WebDriver and supports
+ * `browser.execute(...)` on every platform.
  */
 export function supportsExecuteScript(): boolean {
-  return isTauriDriver();
+  return true;
 }

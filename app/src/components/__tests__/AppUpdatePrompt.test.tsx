@@ -8,7 +8,7 @@
  *     (`ready_to_install`)
  *   - error surface with retry path
  */
-import { fireEvent, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderWithProviders } from '../../test/test-utils';
@@ -223,6 +223,27 @@ describe('AppUpdatePrompt', () => {
     await waitFor(() => {
       expect(screen.queryByText('Update failed')).not.toBeInTheDocument();
     });
+  });
+
+  it('does not re-open the same dismissed update error on the next background cycle', async () => {
+    renderWithProviders(
+      <AppUpdatePrompt autoCheck={false} initialCheckDelayMs={0} recheckIntervalMs={0} />
+    );
+    await waitFor(() => expect(statusListeners.length).toBeGreaterThan(0));
+
+    emitStatus('error');
+    await waitFor(() => expect(screen.getByText('Update failed')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: /^Dismiss$/i }));
+    await waitFor(() => {
+      expect(screen.queryByText('Update failed')).not.toBeInTheDocument();
+    });
+
+    await act(async () => {
+      emitStatus('checking');
+      emitStatus('error');
+    });
+    expect(screen.queryByText('Update failed')).not.toBeInTheDocument();
   });
 
   it('renders nothing when not in Tauri', async () => {

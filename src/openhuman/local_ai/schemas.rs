@@ -111,6 +111,28 @@ struct LocalAiTenorSearchParams {
     limit: Option<u32>,
 }
 
+#[derive(Debug, Deserialize)]
+struct LocalAiInstallWhisperParams {
+    /// Optional model size (`tiny`, `base`, `small`, `medium`,
+    /// `large-v3-turbo`). Defaults to `large-v3-turbo`.
+    #[serde(default)]
+    model_size: Option<String>,
+    /// When true, blow away any existing model file and re-download.
+    #[serde(default)]
+    force: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LocalAiInstallPiperParams {
+    /// Optional Piper voice id (e.g. `en_US-lessac-medium`). Defaults to
+    /// the bundled US-English Lessac voice.
+    #[serde(default)]
+    voice_id: Option<String>,
+    /// When true, blow away any existing voice file and re-download.
+    #[serde(default)]
+    force: Option<bool>,
+}
+
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
     vec![
         schemas("agent_chat"),
@@ -138,6 +160,10 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("local_ai_analyze_sentiment"),
         schemas("local_ai_should_send_gif"),
         schemas("local_ai_tenor_search"),
+        schemas("local_ai_install_whisper"),
+        schemas("local_ai_install_piper"),
+        schemas("local_ai_whisper_install_status"),
+        schemas("local_ai_piper_install_status"),
     ]
 }
 
@@ -242,6 +268,22 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("local_ai_tenor_search"),
             handler: handle_local_ai_tenor_search,
+        },
+        RegisteredController {
+            schema: schemas("local_ai_install_whisper"),
+            handler: handle_local_ai_install_whisper,
+        },
+        RegisteredController {
+            schema: schemas("local_ai_install_piper"),
+            handler: handle_local_ai_install_piper,
+        },
+        RegisteredController {
+            schema: schemas("local_ai_whisper_install_status"),
+            handler: handle_local_ai_whisper_install_status,
+        },
+        RegisteredController {
+            schema: schemas("local_ai_piper_install_status"),
+            handler: handle_local_ai_piper_install_status,
         },
     ]
 }
@@ -491,6 +533,52 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 optional_u64("limit", "Max results to return (default 5, max 50)."),
             ],
             outputs: vec![json_output("result", "Tenor search result: {results, next}.")],
+        },
+        "local_ai_install_whisper" => ControllerSchema {
+            namespace: "local_ai",
+            function: "install_whisper",
+            description: "Download whisper.cpp's GGML model (and on Windows the whisper-cli binary) into the workspace so the local STT factory has everything it needs to run.",
+            inputs: vec![
+                optional_string(
+                    "model_size",
+                    "Whisper model size (tiny, base, small, medium, large-v3-turbo). Defaults to large-v3-turbo.",
+                ),
+                optional_bool(
+                    "force",
+                    "When true, re-download even if the workspace already has a matching model.",
+                ),
+            ],
+            outputs: vec![json_output("status", "Whisper install status payload.")],
+        },
+        "local_ai_install_piper" => ControllerSchema {
+            namespace: "local_ai",
+            function: "install_piper",
+            description: "Download the Piper binary archive and the bundled en_US-lessac-medium voice files into the workspace.",
+            inputs: vec![
+                optional_string(
+                    "voice_id",
+                    "Piper voice id (e.g. en_US-lessac-medium). Defaults to en_US-lessac-medium.",
+                ),
+                optional_bool(
+                    "force",
+                    "When true, re-download even if the workspace already has the voice files.",
+                ),
+            ],
+            outputs: vec![json_output("status", "Piper install status payload.")],
+        },
+        "local_ai_whisper_install_status" => ControllerSchema {
+            namespace: "local_ai",
+            function: "whisper_install_status",
+            description: "Query the Whisper install state (missing / installing / installed / broken / error) plus per-stage download progress.",
+            inputs: vec![],
+            outputs: vec![json_output("status", "Whisper install status payload.")],
+        },
+        "local_ai_piper_install_status" => ControllerSchema {
+            namespace: "local_ai",
+            function: "piper_install_status",
+            description: "Query the Piper install state (missing / installing / installed / broken / error) plus per-stage download progress.",
+            inputs: vec![],
+            outputs: vec![json_output("status", "Piper install status payload.")],
         },
         _ => ControllerSchema {
             namespace: "local_ai",
@@ -924,6 +1012,149 @@ fn handle_local_ai_chat(params: Map<String, Value>) -> ControllerFuture {
         to_json(
             crate::openhuman::local_ai::rpc::local_ai_chat(&config, messages, p.max_tokens).await?,
         )
+    })
+}
+
+// The install RPCs are intentionally fire-and-forget: a binary+model
+// download can take minutes (1.6 GB GGML model, ~5 MB Piper binary
+// archive) but the core JSON-RPC client times out at
+// VITE_CORE_RPC_TIMEOUT_MS (default 30s). Blocking the handler on the
+// full download would force the UI into a retry loop that deletes the
+// in-flight .part on each retry, looping forever.
+//
+// Shape: mark the engine as `installing(0%)` in the shared status table,
+// spawn the real install on a background tokio task, return the
+// just-written status immediately. The UI's status-polling RPC
+// (handle_local_ai_*_install_status) reads from the same table and
+// renders real-time progress. The eventual `installed` / `error`
+// transition lands on the table when the background task finishes;
+// no caller awaits it.
+
+fn handle_local_ai_install_whisper(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let p = deserialize_params::<LocalAiInstallWhisperParams>(params)?;
+        let config = config_rpc::load_config_with_timeout().await?;
+        let force = p.force.unwrap_or(false);
+
+        // Idempotency: a duplicate click while an install is already in
+        // flight should be a no-op, not a second concurrent download.
+        let current = crate::openhuman::local_ai::voice_install_common::read_status(
+            crate::openhuman::local_ai::voice_install_common::ENGINE_WHISPER,
+        );
+        if current.state
+            == crate::openhuman::local_ai::voice_install_common::VoiceInstallState::Installing
+        {
+            tracing::debug!(
+                "[voice-install:whisper] already installing — returning current status"
+            );
+            return serde_json::to_value(current)
+                .map_err(|e| format!("serialize whisper status: {e}"));
+        }
+
+        // Mark "installing" before the spawn so the very next status poll
+        // (≤ 2s away) reflects the new state without a stale read.
+        crate::openhuman::local_ai::voice_install_common::write_status(
+            crate::openhuman::local_ai::voice_install_common::VoiceInstallStatus {
+                engine: crate::openhuman::local_ai::voice_install_common::ENGINE_WHISPER
+                    .to_string(),
+                state:
+                    crate::openhuman::local_ai::voice_install_common::VoiceInstallState::Installing,
+                progress: Some(0),
+                downloaded_bytes: None,
+                total_bytes: None,
+                stage: Some("queued".to_string()),
+                error_detail: None,
+            },
+        );
+
+        tracing::debug!(
+            model_size = ?p.model_size,
+            force,
+            "[voice-install:whisper] spawning background install"
+        );
+        let model_size = p.model_size.clone();
+        tokio::spawn(async move {
+            if let Err(e) = crate::openhuman::local_ai::install_whisper::install_whisper(
+                &config, model_size, force,
+            )
+            .await
+            {
+                log::warn!("[voice-install:whisper] background install failed: {e}");
+            }
+        });
+
+        let status = crate::openhuman::local_ai::voice_install_common::read_status(
+            crate::openhuman::local_ai::voice_install_common::ENGINE_WHISPER,
+        );
+        serde_json::to_value(status).map_err(|e| format!("serialize whisper status: {e}"))
+    })
+}
+
+fn handle_local_ai_install_piper(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let p = deserialize_params::<LocalAiInstallPiperParams>(params)?;
+        let config = config_rpc::load_config_with_timeout().await?;
+        let force = p.force.unwrap_or(false);
+
+        let current = crate::openhuman::local_ai::voice_install_common::read_status(
+            crate::openhuman::local_ai::voice_install_common::ENGINE_PIPER,
+        );
+        if current.state
+            == crate::openhuman::local_ai::voice_install_common::VoiceInstallState::Installing
+        {
+            tracing::debug!("[voice-install:piper] already installing — returning current status");
+            return serde_json::to_value(current)
+                .map_err(|e| format!("serialize piper status: {e}"));
+        }
+
+        crate::openhuman::local_ai::voice_install_common::write_status(
+            crate::openhuman::local_ai::voice_install_common::VoiceInstallStatus {
+                engine: crate::openhuman::local_ai::voice_install_common::ENGINE_PIPER.to_string(),
+                state:
+                    crate::openhuman::local_ai::voice_install_common::VoiceInstallState::Installing,
+                progress: Some(0),
+                downloaded_bytes: None,
+                total_bytes: None,
+                stage: Some("queued".to_string()),
+                error_detail: None,
+            },
+        );
+
+        tracing::debug!(
+            voice_id = ?p.voice_id,
+            force,
+            "[voice-install:piper] spawning background install"
+        );
+        let voice_id = p.voice_id.clone();
+        tokio::spawn(async move {
+            if let Err(e) =
+                crate::openhuman::local_ai::install_piper::install_piper(&config, voice_id, force)
+                    .await
+            {
+                log::warn!("[voice-install:piper] background install failed: {e}");
+            }
+        });
+
+        let status = crate::openhuman::local_ai::voice_install_common::read_status(
+            crate::openhuman::local_ai::voice_install_common::ENGINE_PIPER,
+        );
+        serde_json::to_value(status).map_err(|e| format!("serialize piper status: {e}"))
+    })
+}
+
+fn handle_local_ai_whisper_install_status(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let status = crate::openhuman::local_ai::install_whisper::status(&config);
+        serde_json::to_value(status).map_err(|e| format!("serialize whisper status: {e}"))
+    })
+}
+
+fn handle_local_ai_piper_install_status(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let status = crate::openhuman::local_ai::install_piper::status(&config);
+        serde_json::to_value(status).map_err(|e| format!("serialize piper status: {e}"))
     })
 }
 

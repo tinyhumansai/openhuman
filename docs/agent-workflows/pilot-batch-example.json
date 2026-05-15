@@ -1,0 +1,35 @@
+{
+  "batch_id": "example-pilot-2026-05-15",
+  "base_repo": "tinyhumansai/openhuman",
+  "base_branch": "main",
+  "tracking_issue": 1480,
+  "agents": [
+    {
+      "id": "a01",
+      "issue": 9001,
+      "title": "tighten memory namespace migration logging",
+      "branch": "cursor/a01-9001-memory-namespace-logging",
+      "owned_paths": ["src/openhuman/memory/"],
+      "allowed_shared_paths": ["docs/TEST-COVERAGE-MATRIX.md"],
+      "labels": ["cursor-agent", "pilot", "batch:example-pilot-2026-05-15"]
+    },
+    {
+      "id": "a02",
+      "issue": 9002,
+      "title": "deduplicate cron RPC validation helpers",
+      "branch": "cursor/a02-9002-cron-rpc-dedupe",
+      "owned_paths": ["src/openhuman/cron/"],
+      "allowed_shared_paths": ["docs/TEST-COVERAGE-MATRIX.md"],
+      "labels": ["cursor-agent", "pilot", "batch:example-pilot-2026-05-15"]
+    },
+    {
+      "id": "a03",
+      "issue": 9003,
+      "title": "settings panel a11y labels",
+      "branch": "cursor/a03-9003-settings-a11y-labels",
+      "owned_paths": ["app/src/components/settings/"],
+      "allowed_shared_paths": ["docs/TEST-COVERAGE-MATRIX.md"],
+      "labels": ["cursor-agent", "pilot", "batch:example-pilot-2026-05-15"]
+    }
+  ]
+}

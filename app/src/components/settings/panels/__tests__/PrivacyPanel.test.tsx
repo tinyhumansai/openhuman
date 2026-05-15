@@ -8,10 +8,11 @@ import PrivacyPanel from '../PrivacyPanel';
 vi.mock('../../../../utils/tauriCommands/aboutApp', () => ({ listCapabilities: vi.fn() }));
 
 const setMeetAutoOrchestratorHandoffMock = vi.fn();
+const setAnalyticsEnabledMock = vi.fn();
 vi.mock('../../../../providers/CoreStateProvider', () => ({
   useCoreState: () => ({
     snapshot: { analyticsEnabled: false, meetAutoOrchestratorHandoff: false },
-    setAnalyticsEnabled: vi.fn(),
+    setAnalyticsEnabled: (v: boolean) => setAnalyticsEnabledMock(v),
     setMeetAutoOrchestratorHandoff: (v: boolean) => setMeetAutoOrchestratorHandoffMock(v),
   }),
 }));
@@ -59,6 +60,22 @@ const unannotated: Capability = {
 describe('PrivacyPanel', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it('flips the analytics toggle when clicked (#1698)', async () => {
+    vi.mocked(listCapabilities).mockResolvedValue([]);
+    renderWithProviders(<PrivacyPanel />);
+
+    // Analytics toggle is the first role="switch" on the page (before meet-handoff).
+    const toggles = await screen.findAllByRole('switch');
+    const toggle = toggles[0];
+    expect(toggle.getAttribute('aria-checked')).toBe('false');
+
+    fireEvent.click(toggle);
+
+    await waitFor(() => {
+      expect(setAnalyticsEnabledMock).toHaveBeenCalledWith(true);
+    });
   });
 
   it('renders annotated capabilities returned by about_app.list', async () => {

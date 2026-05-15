@@ -209,9 +209,9 @@ fn generate_code() -> String {
 /// on macOS). The 32 random bytes (256 bits) are hex-encoded for a
 /// 64-character token, providing 256 bits of entropy.
 fn generate_token() -> String {
-    use rand::RngCore;
+    use rand::RngExt as _;
     let mut bytes = [0u8; 32];
-    rand::rng().fill_bytes(&mut bytes);
+    rand::rng().fill(&mut bytes);
     format!("zc_{}", hex::encode(bytes))
 }
 

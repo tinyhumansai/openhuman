@@ -79,6 +79,18 @@ pub fn floor_char_boundary(s: &str, index: usize) -> usize {
     end
 }
 
+/// Round a byte index UP to the nearest UTF-8 character boundary.
+pub fn ceil_char_boundary(s: &str, index: usize) -> usize {
+    if index >= s.len() {
+        return s.len();
+    }
+    let mut start = index;
+    while start < s.len() && !s.is_char_boundary(start) {
+        start += 1;
+    }
+    start
+}
+
 /// Utility enum for handling optional values.
 pub enum MaybeSet<T> {
     Set(T),
@@ -216,6 +228,19 @@ mod tests {
     }
 
     #[test]
+    fn test_ceil_char_boundary() {
+        let s = "A🦀C";
+        assert_eq!(ceil_char_boundary(s, 0), 0);
+        assert_eq!(ceil_char_boundary(s, 1), 1); // After 'A'
+        assert_eq!(ceil_char_boundary(s, 2), 5); // Mid-🦀
+        assert_eq!(ceil_char_boundary(s, 3), 5); // Mid-🦀
+        assert_eq!(ceil_char_boundary(s, 4), 5); // Mid-🦀
+        assert_eq!(ceil_char_boundary(s, 5), 5); // After '🦀'
+        assert_eq!(ceil_char_boundary(s, 6), 6); // After 'C'
+        assert_eq!(ceil_char_boundary(s, 100), 6);
+    }
+
+    #[test]
     fn test_truncate_with_suffix() {
         let s = "Hello World";
         assert_eq!(truncate_with_suffix(s, 5, "!!!"), "Hello!!!");
@@ -343,6 +368,73 @@ mod tests {
             0,
             "closure must not run when attempts == 0"
         );
+    }
+
+    // ── is_transient_fs_error ──────────────────────────────────────
+
+    /// The test-cfg backdoor: any error containing `__TEST_TRANSIENT__` is
+    /// treated as transient so retry logic can be exercised on non-Windows
+    /// CI runners without faking OS error codes.
+    #[test]
+    fn is_transient_fs_error_recognises_test_sentinel() {
+        let err = anyhow::anyhow!("__TEST_TRANSIENT__ simulated lock violation");
+        assert!(
+            is_transient_fs_error(&err),
+            "__TEST_TRANSIENT__ sentinel must be recognised as transient in test builds"
+        );
+    }
+
+    /// A plain anyhow error (no io::Error chain) must not be treated as
+    /// transient — the backoff must not swallow unknown failures.
+    #[test]
+    fn is_transient_fs_error_rejects_plain_anyhow_error() {
+        let err = anyhow::anyhow!("some permanent application error");
+        assert!(
+            !is_transient_fs_error(&err),
+            "plain anyhow error without IO chain must not be transient"
+        );
+    }
+
+    /// A chained io::Error with `ErrorKind::NotFound` is not a transient
+    /// locking error — we should not retry it.
+    #[test]
+    fn is_transient_fs_error_rejects_not_found_io_error() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file not found");
+        let err = anyhow::Error::new(io_err);
+        assert!(
+            !is_transient_fs_error(&err),
+            "NotFound IO error must not be transient"
+        );
+    }
+
+    /// Verify that retry_with_backoff retries exactly when the test
+    /// sentinel is present and bails immediately on a non-transient error.
+    /// This exercises the `is_transient_fs_error` integration path.
+    #[test]
+    fn retry_with_backoff_respects_transient_classification() {
+        let mut calls = 0usize;
+
+        // Transient path: retries until success.
+        let result = retry_with_backoff("transient_class", 3, 1, || {
+            calls += 1;
+            if calls < 2 {
+                anyhow::bail!("__TEST_TRANSIENT__ lock error");
+            }
+            Ok(calls)
+        });
+        assert_eq!(result.unwrap(), 2, "should succeed on second attempt");
+        assert_eq!(calls, 2, "must have retried once");
+
+        // Non-transient path: bails after first attempt.
+        let mut calls2 = 0usize;
+        let result2 = retry_with_backoff("non_transient_class", 3, 1, || {
+            calls2 += 1;
+            anyhow::bail!("hard permanent error");
+            #[allow(unreachable_code)]
+            Ok::<_, anyhow::Error>(())
+        });
+        assert!(result2.is_err(), "non-transient must fail");
+        assert_eq!(calls2, 1, "must NOT retry a non-transient error");
     }
 }
 

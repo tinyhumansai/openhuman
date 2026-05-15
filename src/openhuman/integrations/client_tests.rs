@@ -264,3 +264,102 @@ async fn post_500_remains_actionable() {
         "5xx must remain actionable, not classified as expected; got: {msg}"
     );
 }
+
+// ── Jira subdomain / ConnectedAccount_MissingRequiredFields (issue#1702) ─
+
+/// The Jira authorization flow requires an Atlassian subdomain ("Tenant
+/// Name"). When the user submits the form without it, Composio returns a
+/// `ConnectedAccount_MissingRequiredFields` error. The error must:
+///   1. Propagate through `IntegrationClient::post` so the RPC layer can
+///      surface it to the UI (not silently swallowed).
+///   2. Classify as `BackendUserError` so the observability layer demotes
+///      it from a Sentry event to a warn breadcrumb — this is an expected
+///      user-input failure, not a product bug.
+///
+/// The first assertion locks in the error string; the second pins the
+/// classifier to `BackendUserError` so future changes to either side
+/// (format string in `client.rs` or classifier in `observability.rs`)
+/// are caught at review rather than in production.
+#[tokio::test]
+async fn jira_missing_subdomain_error_propagates_and_classifies_as_user_error() {
+    use crate::core::observability::{expected_error_kind, ExpectedErrorKind};
+
+    let app = Router::new().route(
+        "/agent-integrations/composio/authorize",
+        post(|| async {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "success": false,
+                    "error": "Composio authorization failed: 400 {\"error\":{\"message\":\"Missing required fields: Tenant Name\",\"slug\":\"ConnectedAccount_MissingRequiredFields\",\"status\":400}}"
+                })),
+            )
+                .into_response()
+        }),
+    );
+    let base = start_mock_backend(app).await;
+    let client = client_for(base);
+    let err = client
+        .post::<serde_json::Value>(
+            "/agent-integrations/composio/authorize",
+            &json!({ "toolkit": "jira" }),
+        )
+        .await
+        .expect_err("Jira missing-subdomain must surface as Err");
+    let msg = format!("{err:#}");
+
+    // 1. The error string from the Composio payload must propagate so the
+    //    UI can show "Missing required fields: Tenant Name" in the connect
+    //    form and prompt for the Atlassian subdomain.
+    assert!(
+        msg.contains("Tenant Name") || msg.contains("ConnectedAccount_MissingRequiredFields"),
+        "Jira missing-subdomain error must propagate; got: {msg}"
+    );
+
+    // 2. The classifier must route this as an expected user-input failure —
+    //    not a Sentry-reportable product error. Classifier must agree with
+    //    the `BackendUserError` branch so the observability layer demotes it.
+    assert_eq!(
+        expected_error_kind(&msg),
+        Some(ExpectedErrorKind::BackendUserError),
+        "Jira ConnectedAccount_MissingRequiredFields must classify as BackendUserError; got: {msg}"
+    );
+}
+
+/// Complementary: a Jira 400 where the slug is *not*
+/// `ConnectedAccount_MissingRequiredFields` (e.g. a token revocation)
+/// must still classify as `BackendUserError` via the outer 400 shape —
+/// not as an unexpected error that would create Sentry noise.
+#[tokio::test]
+async fn jira_generic_400_classifies_as_backend_user_error() {
+    use crate::core::observability::{expected_error_kind, ExpectedErrorKind};
+
+    let app = Router::new().route(
+        "/agent-integrations/composio/authorize",
+        post(|| async {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "success": false,
+                    "error": "Composio authorization failed: 400 {\"error\":{\"message\":\"Invalid subdomain\",\"slug\":\"ConnectedAccount_InvalidSubdomain\",\"status\":400}}"
+                })),
+            )
+                .into_response()
+        }),
+    );
+    let base = start_mock_backend(app).await;
+    let client = client_for(base);
+    let err = client
+        .post::<serde_json::Value>(
+            "/agent-integrations/composio/authorize",
+            &json!({ "toolkit": "jira" }),
+        )
+        .await
+        .expect_err("400 must surface as Err");
+    let msg = format!("{err:#}");
+    assert_eq!(
+        expected_error_kind(&msg),
+        Some(ExpectedErrorKind::BackendUserError),
+        "Jira generic 400 must classify as BackendUserError; got: {msg}"
+    );
+}

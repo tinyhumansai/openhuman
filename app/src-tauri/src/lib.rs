@@ -775,6 +775,26 @@ fn is_daemon_mode() -> bool {
     std::env::args().any(|arg| arg == "daemon" || arg == "--daemon")
 }
 
+/// Returns true when an executable named `name` is discoverable on `$PATH`.
+///
+/// Inline `which`-style lookup so the deep-link pre-flight on Linux can
+/// skip `tauri-plugin-deep-link::register_all` cleanly when `xdg-mime` is
+/// missing (OPENHUMAN-TAURI-AS). Walks `$PATH` entries, joins `name`, and
+/// returns true on the first hit that is a regular file. The metadata check
+/// is `is_file()` rather than an executable-bit check: on Linux any file in
+/// `$PATH` that is named like the binary is enough to gate the plugin call
+/// (the plugin itself will surface the real exec error to its own warn),
+/// and an executable-bit check would require unix-specific
+/// `MetadataExt::mode` plumbing that isn't worth the platform branch for a
+/// single discoverability gate.
+#[cfg(target_os = "linux")]
+fn path_has_executable(name: &str) -> bool {
+    let Some(path_var) = std::env::var_os("PATH") else {
+        return false;
+    };
+    std::env::split_paths(&path_var).any(|dir| dir.join(name).is_file())
+}
+
 /// Tauri command: bring the main window to front from any webview (e.g. overlay orb click).
 #[tauri::command]
 fn activate_main_window(app: AppHandle<AppRuntime>) -> Result<(), String> {
@@ -1314,6 +1334,19 @@ pub fn run() {
                 );
                 return None;
             }
+            if openhuman_core::core::observability::is_budget_event(&event) {
+                // Log only structured tag metadata — `event.message` can carry
+                // upstream provider error text including tokens / pasted-through
+                // secrets, and per `CLAUDE.md` "never log secrets or full PII".
+                // The (domain, status) pair is sufficient diagnostic since
+                // those are the tags `is_budget_event` gates on.
+                log::debug!(
+                    "[sentry-budget-filter] dropping budget-exhausted event (domain={:?}, status={:?})",
+                    event.tags.get("domain"),
+                    event.tags.get("status")
+                );
+                return None;
+            }
             // Defense-in-depth: drop max-tool-iterations cap events that
             // slipped past the call-site filters in the core (see
             // `openhuman_core::core::observability::is_max_iterations_event`
@@ -1329,7 +1362,25 @@ pub fn run() {
             }
             if openhuman_core::core::observability::is_transient_backend_api_failure(&event)
                 || openhuman_core::core::observability::is_transient_integrations_failure(&event)
+                || openhuman_core::core::observability::is_updater_transient_event(&event)
             {
+                return None;
+            }
+            // Drop 401 "Session expired. Please log in again." bodies and
+            // pre-flight "no session token stored" guards — mirrors the
+            // core binary's before_send chain. Since #1061 the Tauri shell
+            // links the core in-process, so any session-expired event
+            // captured by either surface lands in the same Sentry client
+            // here and must be filtered identically. Keeps
+            // OPENHUMAN-TAURI-25 / -1Q / -27 / -1G off Sentry.
+            if openhuman_core::core::observability::is_session_expired_event(&event) {
+                // Metadata-only log shape — `event.message` carries the raw
+                // backend response body which CLAUDE.md forbids from local
+                // logs. Mirror the core binary's main.rs filter.
+                log::debug!(
+                    "[sentry-session-expired-filter] dropping session-expired event_id={:?}",
+                    event.event_id
+                );
                 return None;
             }
             // Strip server_name (hostname) to avoid leaking machine identity.
@@ -1403,6 +1454,64 @@ pub fn run() {
     // with "No provider set" the first time `tauri dev` forwards a request.
     // Install the ring provider once before any HTTPS client is built.
     let _ = rustls::crypto::ring::default_provider().install_default();
+
+    // ── Windows pre-CEF single-instance guard (Sentry OPENHUMAN-TAURI-A) ──
+    //
+    // `tauri_plugin_single_instance` detects a second launch inside its
+    // `.setup()` hook — but `.setup()` runs AFTER `Builder::build()` which
+    // calls `CefRuntime::init` → `cef::initialize()`. On a second launch,
+    // `cef::initialize()` returns 0 because the primary holds the CEF
+    // cache lock; the vendored runtime asserts `result == 1` and panics
+    // (left: 0, right: 1, fatal, Windows-only, 598 events).
+    //
+    // Fix: acquire a named Win32 mutex at the very top of `run()` — before
+    // any CEF or builder work — so any secondary instance sees
+    // `ERROR_ALREADY_EXISTS` and exits immediately. The mutex name uses
+    // a `-cef-init` suffix distinct from the plugin's own `-sim` mutex so
+    // the two guards don't interfere; the plugin still handles WM_COPYDATA
+    // forwarding for graceful "focus primary" behaviour once the app is
+    // fully initialised.
+    //
+    // The RAII guard holds the mutex handle for the lifetime of `run()`.
+    // Windows releases all process handles automatically on exit, so
+    // explicit cleanup is only needed if `run()` returns normally.
+    #[cfg(windows)]
+    let _cef_init_mutex_guard = {
+        use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS};
+        use windows_sys::Win32::System::Threading::CreateMutexW;
+
+        // Must match the bundle identifier in tauri.conf.json.
+        // Changing the app identifier requires updating this string too.
+        let mutex_name: Vec<u16> = "com.openhuman.app-cef-init\0".encode_utf16().collect();
+
+        // SAFETY: mutex_name is null-terminated UTF-16; handle is checked below.
+        let handle = unsafe { CreateMutexW(std::ptr::null(), 0, mutex_name.as_ptr()) };
+
+        if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
+            // Another instance is already past this point — exit before we
+            // touch CEF at all. The plugin's WM_COPYDATA path won't run
+            // here (it needs an AppHandle from setup()), but the primary
+            // is already showing its window so the user experience is fine.
+            if !handle.is_null() {
+                unsafe { CloseHandle(handle) };
+            }
+            log::info!(
+                "[single-instance] pre-CEF mutex held by primary; secondary exiting (OPENHUMAN-TAURI-A fix)"
+            );
+            std::process::exit(0);
+        }
+
+        // Primary: hold the handle until run() returns.
+        struct OwnedMutex(isize);
+        impl Drop for OwnedMutex {
+            fn drop(&mut self) {
+                if self.0 != 0 {
+                    unsafe { CloseHandle(self.0 as _) };
+                }
+            }
+        }
+        OwnedMutex(handle as isize)
+    };
 
     // CEF cache-lock preflight (macOS only): if another OpenHuman instance
     // is already holding the CEF user-data-dir, the vendored
@@ -1579,6 +1688,20 @@ pub fn run() {
             args.push(("--disable-gpu-compositing", None));
             log::info!("[cef-startup] Intel macOS detected: adding --disable-gpu-compositing (issue #1012)");
         }
+        // Issue #1697 — Linux AppImage fails to launch on Mesa 26+ (Arch,
+        // Manjaro, EndeavourOS, CachyOS) with EGL_BAD_ATTRIBUTE during GPU
+        // context creation. Chromium's EGL initialization returns
+        // EGL_BAD_ATTRIBUTE for both ES 3.0 and 2.0 contexts on Mesa 26+,
+        // producing ContextResult::kFatalFailure. Disabling the entire GPU
+        // process forces SwiftShader software rendering so the app launches
+        // on these distros. The same CEF version works on Ubuntu/deb-based
+        // distros with older Mesa; this flag degrades gracefully there
+        // (software-only rendering, no WebGL).
+        #[cfg(target_os = "linux")]
+        {
+            args.push(("--disable-gpu", None));
+            log::info!("[cef-startup] Linux detected: adding --disable-gpu (issue #1697)");
+        }
         tauri::Builder::<tauri::Cef>::new().command_line_args::<&str, &str>(args)
     };
 
@@ -1652,10 +1775,38 @@ pub fn run() {
     let builder = builder.manage(meet_video::frame_bus::MeetVideoFrameBusState::new());
     builder
         .setup(move |app| {
-            #[cfg(any(windows, target_os = "linux"))]
+            #[cfg(windows)]
             {
                 if let Err(err) = app.deep_link().register_all() {
                     log::warn!("[deep-link] register_all failed (non-fatal): {err}");
+                }
+            }
+            #[cfg(target_os = "linux")]
+            {
+                // `tauri-plugin-deep-link::register_all` on Linux shells out
+                // to `xdg-mime` (and `update-desktop-database` / `xdg-icon-resource`)
+                // to install MIME-type associations for our custom URL
+                // schemes. On Linux installs that ship without xdg-utils —
+                // WSL2 without a desktop env, headless servers, minimal
+                // containers (OPENHUMAN-TAURI-AS: WSL2 user in BR) — the
+                // tool isn't on PATH and the plugin fires
+                // `log::error!("Failed to run OS command \`xdg-mime\`…")`
+                // *internally* before returning the Err. That internal
+                // error log is scooped up by `sentry-tracing` into a Sentry
+                // event even though our `if let Err` arm below already
+                // demotes the user-visible failure to a warn. Skip the
+                // plugin call entirely when xdg-mime isn't available so
+                // the internal log never fires — registration only matters
+                // on systems with a desktop environment, where xdg-utils
+                // is part of the desktop install anyway.
+                if path_has_executable("xdg-mime") {
+                    if let Err(err) = app.deep_link().register_all() {
+                        log::warn!("[deep-link] register_all failed (non-fatal): {err}");
+                    }
+                } else {
+                    log::warn!(
+                        "[deep-link] skipping register_all — xdg-mime not on PATH (xdg-utils not installed; deep-link MIME registration unavailable on this host)"
+                    );
                 }
             }
 
@@ -2976,5 +3127,77 @@ mod tests {
             !message_is_localhost_dev_fetch_noise(msg),
             "messages that merely contain the dev-proxy prefix must NOT be filtered"
         );
+    }
+
+    // -------------------------------------------------------------------------
+    // path_has_executable / deep-link xdg-mime pre-flight (OPENHUMAN-TAURI-AS)
+    // -------------------------------------------------------------------------
+
+    /// With a controlled `$PATH` containing one dir that holds a file named
+    /// `xdg-mime`, the lookup must succeed (mirrors a Linux desktop install
+    /// where xdg-utils ships the binary).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn path_has_executable_finds_file_on_path() {
+        let _g = ENV_LOCK.lock().unwrap();
+        let original = std::env::var_os("PATH");
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join("xdg-mime"), b"#!/bin/sh\n").expect("write stub");
+        std::env::set_var("PATH", dir.path());
+
+        assert!(
+            path_has_executable("xdg-mime"),
+            "must discover xdg-mime when present in a $PATH entry"
+        );
+
+        match original {
+            Some(v) => std::env::set_var("PATH", v),
+            None => std::env::remove_var("PATH"),
+        }
+    }
+
+    /// With a controlled `$PATH` that does NOT contain `xdg-mime`, the lookup
+    /// must fail (mirrors WSL2 / minimal containers without xdg-utils — the
+    /// case OPENHUMAN-TAURI-AS protects against).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn path_has_executable_returns_false_when_missing() {
+        let _g = ENV_LOCK.lock().unwrap();
+        let original = std::env::var_os("PATH");
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        // Intentionally do not create xdg-mime in `dir`.
+        std::env::set_var("PATH", dir.path());
+
+        assert!(
+            !path_has_executable("xdg-mime"),
+            "must return false when xdg-mime is not in any $PATH entry"
+        );
+
+        match original {
+            Some(v) => std::env::set_var("PATH", v),
+            None => std::env::remove_var("PATH"),
+        }
+    }
+
+    /// When `$PATH` is unset entirely, the lookup must short-circuit to false
+    /// rather than panic or fall back to the cwd.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn path_has_executable_returns_false_when_path_unset() {
+        let _g = ENV_LOCK.lock().unwrap();
+        let original = std::env::var_os("PATH");
+
+        std::env::remove_var("PATH");
+        assert!(
+            !path_has_executable("xdg-mime"),
+            "unset $PATH must yield false (skip register_all on the missing-xdg-utils branch)"
+        );
+
+        match original {
+            Some(v) => std::env::set_var("PATH", v),
+            None => std::env::remove_var("PATH"),
+        }
     }
 }

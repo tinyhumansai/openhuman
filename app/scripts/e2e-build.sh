@@ -44,25 +44,30 @@ TAURI_CONFIG_OVERRIDE='{"bundle":{"createUpdaterArtifacts":false}}'
 # Tauri CLI maps env CI to --ci and only accepts true|false; some runners set CI=1.
 case "${CI:-}" in 1) export CI=true ;; 0) export CI=false ;; esac
 
+# CEF runtime requires the vendored CEF-aware tauri-cli (the stock one produces
+# a bundle that panics at startup in cef::library_loader::LibraryLoader::new).
+# All other build scripts in app/package.json do `pnpm tauri:ensure` + use
+# `cargo tauri build`; the E2E build was the one outlier and we got the panic.
+pnpm tauri:ensure
+export CEF_PATH="$HOME/Library/Caches/tauri-cef"
+
 OS="$(uname)"
 case "$OS" in
   Linux)
-    # Linux: build debug binary only (no bundle needed for tauri-driver)
+    # Linux: build debug binary only.
     echo "Building for Linux (debug binary, no bundle)..."
-    pnpm exec tauri build -c "$TAURI_CONFIG_OVERRIDE" --debug --no-bundle
+    cargo tauri build -c "$TAURI_CONFIG_OVERRIDE" --debug --no-bundle -- --bin OpenHuman
     ;;
   Darwin)
-    # macOS: build .app bundle for Appium Mac2 (wdio.conf points at
+    # macOS: build .app bundle (wdio.conf points at
     # src-tauri/target/debug/bundle/macos/OpenHuman.app).
     echo "Building for macOS (.app bundle)..."
-    pnpm exec tauri build -c "$TAURI_CONFIG_OVERRIDE" --bundles app --debug
+    cargo tauri build -c "$TAURI_CONFIG_OVERRIDE" --bundles app --debug -- --bin OpenHuman
     ;;
   MINGW*|MSYS*|CYGWIN*|Windows_NT)
-    # Windows: bare .exe at src-tauri/target/debug/OpenHuman.exe is what
-    # wdio.conf launches via tauri-driver. NSIS/MSI bundling adds time we
-    # don't need for the driver path.
+    # Windows: bare .exe at src-tauri/target/debug/OpenHuman.exe.
     echo "Building for Windows (.exe, no bundle)..."
-    pnpm exec tauri build -c "$TAURI_CONFIG_OVERRIDE" --debug --no-bundle
+    cargo tauri build -c "$TAURI_CONFIG_OVERRIDE" --debug --no-bundle -- --bin OpenHuman
     ;;
   *)
     echo "ERROR: unsupported OS for e2e build: $OS" >&2

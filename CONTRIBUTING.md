@@ -39,6 +39,7 @@ This project adheres to the [Contributor Covenant Code of Conduct](CODE_OF_CONDU
 | pnpm | `pnpm@10.10.0` from [`package.json`](package.json) | The repo enforces pnpm via the root `packageManager` field. |
 | Rust | `1.93.0` from [`rust-toolchain.toml`](rust-toolchain.toml) | Install with `rustup`; `rustfmt` and `clippy` are required components. |
 | CMake | Current stable | Required by native Rust dependencies such as Whisper bindings. |
+| Ninja | Current stable | Required on macOS to build the bundled CEF helper. CMake delegates the actual compile to Ninja; without it the `cef-dll-sys` build script aborts. |
 | Tauri vendored sources | Git submodules under `app/src-tauri/vendor/` | Required for the CEF-aware Tauri CLI and notification plugin patches. |
 | macOS tools | Xcode Command Line Tools | Needed for local desktop builds on macOS. |
 | Linux desktop packages | System GTK/WebKit/AppIndicator build deps | Install the package set Tauri requires for your distro before attempting desktop builds. |
@@ -102,14 +103,17 @@ clang -v
 - **Linux desktop builds** require extra system packages beyond Node/Rust. Follow the distro-specific Tauri dependency list before running desktop commands, then use the OpenHuman scripts below. For deeper platform troubleshooting, see [`gitbooks/developing/getting-set-up.md`](gitbooks/developing/getting-set-up.md).
 - **Windows 10 WSL + classic X11 forwarding** is unsupported for the desktop app. The Tauri/CEF stack can hang, render blank windows, or crash before useful app logs are available. Use native Windows development, or Windows 11 WSLg if you need a Linux GUI workflow. OpenHuman logs a startup warning when it detects WSL with `DISPLAY` set but no `WAYLAND_DISPLAY`/WSLg markers.
 - **Windows desktop builds** additionally require Visual Studio C++ Build Tools (MSVC v143), LLVM/Clang, and CMake. See [Windows-specific setup](#windows-specific-setup) for the full list and install order.
+- **macOS desktop builds** require a one-time codesigning cert. After cloning, run `bash scripts/setup-dev-codesign.sh` once to create the local "OpenHuman Dev Signer" self-signed certificate that Tauri uses when bundling dev builds. Without it, `pnpm --filter openhuman-app dev:app` fails at the bundle/sign step with `OpenHuman Dev Signer: no identity found`.
 - **Skills development** happens in the separate [`tinyhumansai/openhuman-skills`](https://github.com/tinyhumansai/openhuman-skills) repository. This repo consumes built skill bundles from GitHub or a local override path; it does not vendor the skills source as a submodule.
 
 Example macOS bootstrap with Homebrew:
 
 ```bash
-brew install node@24 pnpm rustup-init cmake
+brew install node@24 pnpm rustup-init cmake ninja
 rustup toolchain install 1.93.0 --profile minimal
 rustup component add rustfmt clippy --toolchain 1.93.0
+# CEF builds a universal binary, so the x86_64 target is required even on Apple Silicon
+rustup target add x86_64-apple-darwin
 ```
 
 ### 2. Clone and install

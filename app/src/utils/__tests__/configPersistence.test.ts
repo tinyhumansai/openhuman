@@ -12,6 +12,8 @@ import {
   getStoredCoreMode,
   getStoredCoreToken,
   getStoredRpcUrl,
+  isAllowedCloudRpcUrl,
+  isLocalOrPrivateNetworkHost,
   isValidRpcUrl,
   normalizeRpcUrl,
   peekStoredRpcUrl,
@@ -202,6 +204,56 @@ describe('configPersistence', () => {
 
     it('returns false for http:// with no host', () => {
       expect(isValidRpcUrl('http://')).toBe(false);
+    });
+  });
+
+  describe('isLocalOrPrivateNetworkHost', () => {
+    it('allows localhost and loopback addresses', () => {
+      expect(isLocalOrPrivateNetworkHost('localhost')).toBe(true);
+      expect(isLocalOrPrivateNetworkHost('app.localhost')).toBe(true);
+      expect(isLocalOrPrivateNetworkHost('127.0.0.1')).toBe(true);
+      expect(isLocalOrPrivateNetworkHost('::1')).toBe(true);
+    });
+
+    it('allows RFC1918, link-local, and Tailscale/CGNAT IPv4 addresses', () => {
+      expect(isLocalOrPrivateNetworkHost('10.0.0.8')).toBe(true);
+      expect(isLocalOrPrivateNetworkHost('172.16.0.1')).toBe(true);
+      expect(isLocalOrPrivateNetworkHost('172.31.255.255')).toBe(true);
+      expect(isLocalOrPrivateNetworkHost('192.168.1.100')).toBe(true);
+      expect(isLocalOrPrivateNetworkHost('169.254.10.20')).toBe(true);
+      expect(isLocalOrPrivateNetworkHost('100.64.0.1')).toBe(true);
+      expect(isLocalOrPrivateNetworkHost('100.116.244.64')).toBe(true);
+      expect(isLocalOrPrivateNetworkHost('100.127.255.254')).toBe(true);
+    });
+
+    it('allows private IPv6 ranges', () => {
+      expect(isLocalOrPrivateNetworkHost('fc00::1')).toBe(true);
+      expect(isLocalOrPrivateNetworkHost('fd12:3456::1')).toBe(true);
+      expect(isLocalOrPrivateNetworkHost('fe80::1')).toBe(true);
+    });
+
+    it('rejects public hosts and invalid IPv4 addresses', () => {
+      expect(isLocalOrPrivateNetworkHost('example.com')).toBe(false);
+      expect(isLocalOrPrivateNetworkHost('8.8.8.8')).toBe(false);
+      expect(isLocalOrPrivateNetworkHost('100.128.0.1')).toBe(false);
+      expect(isLocalOrPrivateNetworkHost('256.1.1.1')).toBe(false);
+    });
+  });
+
+  describe('isAllowedCloudRpcUrl', () => {
+    it('allows HTTPS cloud URLs on public hosts', () => {
+      expect(isAllowedCloudRpcUrl('https://core.example.com/rpc')).toBe(true);
+    });
+
+    it('allows HTTP only for local and private-network core URLs', () => {
+      expect(isAllowedCloudRpcUrl('http://127.0.0.1:7788/rpc')).toBe(true);
+      expect(isAllowedCloudRpcUrl('http://192.168.1.100:7788/rpc')).toBe(true);
+      expect(isAllowedCloudRpcUrl('http://100.116.244.64:7788/rpc')).toBe(true);
+    });
+
+    it('rejects public HTTP cloud URLs', () => {
+      expect(isAllowedCloudRpcUrl('http://core.example.com/rpc')).toBe(false);
+      expect(isAllowedCloudRpcUrl('http://8.8.8.8:7788/rpc')).toBe(false);
     });
   });
 

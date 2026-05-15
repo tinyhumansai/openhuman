@@ -853,4 +853,120 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
       });
     });
   });
+
+  // Error classifier full set — Batch-5 coverage (#1506, pr#1566).
+  //
+  // For the generic 'inference' error type the raw server message is
+  // replaced with USER_FACING_AGENT_ERROR_MESSAGE.  For all classified
+  // types (rate_limited, auth_error, budget_exhausted, context_overflow,
+  // timeout, network, tool_error, provider_error, model_unavailable) the
+  // server already provides a user-friendly message, which is forwarded
+  // directly.  'cancelled' produces no bubble at all.
+  describe('inference error classifier — full type set', () => {
+    const USER_FACING_FALLBACK =
+      'Something went wrong. Please try again.\nThis error has been reported. You can also report it on Discord.\n<openhuman-link path="community/discord">Report on Discord</openhuman-link>';
+
+    it.each([
+      ['rate_limited', 'You have been rate limited. Please try again later.'],
+      ['auth_error', 'Authentication failed. Please reconnect your account.'],
+      ['budget_exhausted', 'Your usage budget has been exhausted.'],
+      ['context_overflow', 'The conversation is too long. Please start a new thread.'],
+      ['timeout', 'The request timed out. Please try again.'],
+      ['network', 'A network error occurred. Please check your connection.'],
+      ['tool_error', 'A tool call failed during this request.'],
+      ['provider_error', 'The AI provider returned an error.'],
+      ['model_unavailable', 'The selected model is currently unavailable.'],
+    ] as const)('forwards server message for error_type %s', async (error_type, serverMessage) => {
+      const listeners = renderProvider();
+      const threadId = `t-${error_type}`;
+
+      act(() => {
+        listeners.onError?.({
+          thread_id: threadId,
+          request_id: 'r1',
+          message: serverMessage,
+          error_type,
+          round: 0,
+        });
+      });
+
+      await waitFor(() =>
+        expect(threadApi.appendMessage).toHaveBeenCalledWith(
+          threadId,
+          expect.objectContaining({ content: serverMessage, sender: 'agent' })
+        )
+      );
+    });
+
+    it('replaces raw internal message with user-facing constant for inference type', async () => {
+      const listeners = renderProvider();
+      const threadId = 't-raw-inference';
+
+      act(() => {
+        listeners.onError?.({
+          thread_id: threadId,
+          request_id: 'r1',
+          message: 'internal panic: channel closed unexpectedly at line 42',
+          error_type: 'inference',
+          round: 0,
+        });
+      });
+
+      await waitFor(() =>
+        expect(threadApi.appendMessage).toHaveBeenCalledWith(
+          threadId,
+          expect.objectContaining({ content: USER_FACING_FALLBACK, sender: 'agent' })
+        )
+      );
+      // The raw server string must NOT leak through.
+      expect(threadApi.appendMessage).not.toHaveBeenCalledWith(
+        threadId,
+        expect.objectContaining({ content: expect.stringContaining('channel closed unexpectedly') })
+      );
+    });
+
+    it('produces no error bubble for cancelled turns', async () => {
+      const listeners = renderProvider();
+      const threadId = 't-cancelled';
+
+      act(() => {
+        listeners.onError?.({
+          thread_id: threadId,
+          request_id: 'r1',
+          message: 'request cancelled by user',
+          error_type: 'cancelled',
+          round: 0,
+        });
+      });
+
+      // Give a tick for any async work to complete.
+      await new Promise(resolve => setTimeout(resolve, 50));
+      expect(threadApi.appendMessage).not.toHaveBeenCalledWith(
+        threadId,
+        expect.objectContaining({ sender: 'agent' })
+      );
+    });
+
+    it('falls back to USER_FACING constant when inference error has empty message', async () => {
+      const listeners = renderProvider();
+      const threadId = 't-empty-msg';
+
+      act(() => {
+        listeners.onError?.({
+          thread_id: threadId,
+          request_id: 'r1',
+          message: '',
+          error_type: 'network',
+          round: 0,
+        });
+      });
+
+      await waitFor(() =>
+        expect(threadApi.appendMessage).toHaveBeenCalledWith(
+          threadId,
+          expect.objectContaining({ content: USER_FACING_FALLBACK, sender: 'agent' })
+        )
+      );
+    });
+  });
 });

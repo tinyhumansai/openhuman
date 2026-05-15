@@ -19,8 +19,23 @@ use crate::openhuman::embeddings::{
     self, EmbeddingProvider, DEFAULT_CLOUD_EMBEDDING_DIMENSIONS, DEFAULT_CLOUD_EMBEDDING_MODEL,
     DEFAULT_OLLAMA_DIMENSIONS, DEFAULT_OLLAMA_MODEL,
 };
+use crate::openhuman::memory::store::agentmemory::AgentMemoryBackend;
 use crate::openhuman::memory::store::unified::UnifiedMemory;
 use crate::openhuman::memory::traits::Memory;
+
+/// Stable wire string for the agentmemory backend selector.
+///
+/// When `MemoryConfig.backend` matches this (ASCII case-insensitive), the
+/// memory factory short-circuits the SQLite + embedder path and returns an
+/// [`AgentMemoryBackend`] that proxies trait calls through agentmemory's
+/// REST surface. OpenHuman's `embedding_provider` / `embedding_model` /
+/// `embedding_dimensions` are ignored on this path — agentmemory owns its
+/// embedding stack via `~/.agentmemory/.env`.
+pub const AGENTMEMORY_BACKEND: &str = "agentmemory";
+
+fn is_agentmemory_backend(name: &str) -> bool {
+    name.eq_ignore_ascii_case(AGENTMEMORY_BACKEND)
+}
 
 /// One-shot guard so the Ollama health-gate fallback only reports to Sentry
 /// once per process lifetime. Memory is constructed many times per session
@@ -349,6 +364,25 @@ fn create_memory_full(
     local_ai: Option<&LocalAiConfig>,
     workspace_dir: &Path,
 ) -> anyhow::Result<Box<dyn Memory>> {
+    // 0. Short-circuit the unified path when the user has explicitly
+    //    selected the agentmemory backend. agentmemory owns its own
+    //    embedding stack, persistence, and graph layer — wiring a local
+    //    embedder + SQLite store on top of it would duplicate the
+    //    embedding pipeline and create a divergence between OpenHuman's
+    //    cached vectors and agentmemory's. Fail loud at boot if the daemon
+    //    isn't reachable (per the issue #1664 fallback decision).
+    if is_agentmemory_backend(&config.backend) {
+        log::info!(
+            "[memory::factory] using agentmemory backend at {}",
+            config
+                .agentmemory_url
+                .as_deref()
+                .unwrap_or(crate::openhuman::memory::store::agentmemory_default_url()),
+        );
+        let backend = AgentMemoryBackend::from_config(config)?;
+        return Ok(Box::new(backend));
+    }
+
     // 1. Resolve the intended provider from config.
     let intended = effective_embedding_settings(config, local_ai);
     let local_ai_opt_in = local_ai
@@ -452,6 +486,86 @@ mod tests {
                 }
             }
         }
+    }
+
+    // ── effective_embedding_settings (unprobed selection priority) ────────
+
+    #[test]
+    fn embedding_settings_defaults_to_cloud_when_no_local_ai() {
+        let mem = MemoryConfig::default();
+        let (provider, model, dims) = effective_embedding_settings(&mem, None);
+        assert_eq!(
+            provider, "cloud",
+            "no local-AI config must default to cloud"
+        );
+        assert!(!model.is_empty(), "cloud model must be non-empty");
+        assert!(dims > 0, "cloud dimensions must be positive");
+    }
+
+    #[test]
+    fn embedding_settings_uses_memory_config_when_local_ai_disabled() {
+        let mut mem = MemoryConfig::default();
+        mem.embedding_provider = "openai".to_string();
+        mem.embedding_model = "text-embedding-3-small".to_string();
+        mem.embedding_dimensions = 1536;
+
+        let mut local_ai = LocalAiConfig::default();
+        local_ai.runtime_enabled = true;
+        local_ai.usage.embeddings = false; // explicitly disabled
+
+        let (provider, model, dims) = effective_embedding_settings(&mem, Some(&local_ai));
+        assert_eq!(
+            provider, "openai",
+            "when local embeddings disabled, memory config must be used"
+        );
+        assert_eq!(model, "text-embedding-3-small");
+        assert_eq!(dims, 1536);
+    }
+
+    #[test]
+    fn embedding_settings_local_ai_opt_in_overrides_memory_config() {
+        // memory.embedding_provider says "cloud" — but local_ai.usage.embeddings
+        // is the stronger signal and must override it.
+        let mem = MemoryConfig::default(); // cloud by default
+        let mut local_ai = LocalAiConfig::default();
+        local_ai.runtime_enabled = true;
+        local_ai.usage.embeddings = true;
+        local_ai.embedding_model_id = "nomic-embed-text:latest".to_string();
+
+        let (provider, model, dims) = effective_embedding_settings(&mem, Some(&local_ai));
+        assert_eq!(
+            provider, "ollama",
+            "local-AI opt-in must override memory.embedding_provider"
+        );
+        assert_eq!(model, "nomic-embed-text:latest");
+        assert_eq!(
+            dims,
+            crate::openhuman::embeddings::DEFAULT_OLLAMA_DIMENSIONS,
+            "dimensions must default to Ollama default"
+        );
+    }
+
+    #[test]
+    fn embedding_settings_local_ai_opt_in_with_empty_model_uses_default() {
+        // When the user has opted in but the model field is empty/whitespace,
+        // the default Ollama model must be used rather than passing "" to Ollama.
+        let mem = MemoryConfig::default();
+        let mut local_ai = LocalAiConfig::default();
+        local_ai.runtime_enabled = true;
+        local_ai.usage.embeddings = true;
+        local_ai.embedding_model_id = "   ".to_string(); // whitespace only
+
+        let (provider, model, dims) = effective_embedding_settings(&mem, Some(&local_ai));
+        assert_eq!(provider, "ollama");
+        assert_eq!(
+            model,
+            crate::openhuman::embeddings::DEFAULT_OLLAMA_MODEL,
+            "empty model ID must fall back to default Ollama model"
+        );
+        assert_eq!(
+            dims,
+            crate::openhuman::embeddings::DEFAULT_OLLAMA_DIMENSIONS
+        );
     }
 
     #[test]

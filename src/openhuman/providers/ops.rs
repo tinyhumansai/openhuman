@@ -128,29 +128,28 @@ pub fn should_report_provider_http_failure(status: reqwest::StatusCode) -> bool 
     !crate::core::observability::TRANSIENT_PROVIDER_HTTP_STATUSES.contains(&status.as_u16())
 }
 
-/// Whether a "Budget exceeded" error from `provider` at `status` should be
-/// suppressed from Sentry.
-///
-/// Suppression is scoped to `backend + 400` so that:
-/// - Other providers (OpenAI, Anthropic, …) whose 400 bodies happen to mention
-///   "Budget exceeded" still report.
-/// - Backend 5xx errors that mention "Budget exceeded" still report (server bug,
-///   not user-state).
-/// - Only the exact user-actionable signal from the OpenHuman backend — which
-///   the UI surfaces directly — is silenced.
-pub(super) fn is_budget_exceeded_suppressed(
+/// Whether a provider non-2xx response is a deterministic budget-exhausted
+/// user-state error that should be demoted from Sentry to an info log.
+pub(super) fn is_budget_exhausted_http_400(status: reqwest::StatusCode, body: &str) -> bool {
+    status == reqwest::StatusCode::BAD_REQUEST && super::is_budget_exhausted_message(body)
+}
+
+pub(super) fn log_budget_exhausted_http_400(
+    operation: &str,
     provider: &str,
+    model: Option<&str>,
     status: reqwest::StatusCode,
-    sanitized_body: &str,
-) -> bool {
-    provider == openhuman_backend::PROVIDER_LABEL
-        && matches!(
-            status,
-            reqwest::StatusCode::BAD_REQUEST | reqwest::StatusCode::PAYMENT_REQUIRED
-        )
-        && sanitized_body
-            .to_ascii_lowercase()
-            .contains("budget exceeded")
+) {
+    tracing::info!(
+        domain = "llm_provider",
+        operation = operation,
+        provider = provider,
+        model = model.unwrap_or(""),
+        status = status.as_u16(),
+        failure = "non_2xx",
+        kind = "budget",
+        "[llm_provider] {operation} budget-exhausted 400 — not reporting to Sentry"
+    );
 }
 
 /// Build a sanitized provider error from a failed HTTP response.
@@ -183,7 +182,7 @@ pub async fn api_error(provider: &str, response: reqwest::Response) -> anyhow::E
 
     let is_auth_failure = matches!(status.as_u16(), 401 | 403);
     let is_backend = provider == openhuman_backend::PROVIDER_LABEL;
-    let is_budget_exceeded_user_state = is_budget_exceeded_suppressed(provider, status, &sanitized);
+    let is_budget_exhausted_user_state = is_budget_exhausted_http_400(status, &body);
 
     if is_auth_failure && is_backend {
         tracing::warn!(
@@ -204,14 +203,8 @@ pub async fn api_error(provider: &str, response: reqwest::Response) -> anyhow::E
                 reason: sanitize_api_error(&message),
             },
         );
-    } else if is_budget_exceeded_user_state {
-        tracing::info!(
-            domain = "llm_provider",
-            operation = "api_error",
-            provider = provider,
-            status = status_str.as_str(),
-            "[llm_provider] budget-exceeded response suppressed from Sentry (user-actionable, not a bug)"
-        );
+    } else if is_budget_exhausted_user_state {
+        log_budget_exhausted_http_400("api_error", provider, None, status);
     } else if should_report_provider_http_failure(status) {
         crate::core::observability::report_error(
             message.as_str(),
@@ -404,15 +397,34 @@ pub fn create_intelligent_routing_provider(
     config: &crate::openhuman::config::Config,
     options: &ProviderRuntimeOptions,
 ) -> anyhow::Result<Box<dyn Provider>> {
-    let backend = create_backend_inference_provider(inference_url, backend_url, api_key, options)?;
+    let raw_backend =
+        create_backend_inference_provider(inference_url, backend_url, api_key, options)?;
+    // Wrap the raw backend in ReliableProvider so transient 502/503/504 errors
+    // are retried before propagating to the agent turn. Without this, a single
+    // 502 from the backend bypasses the retry layer entirely and surfaces as a
+    // fatal `run_single` failure.
+    log::debug!(
+        "[providers] initialising reliable wrapper: retries={} backoff_ms={} fallbacks={}",
+        config.reliability.provider_retries,
+        config.reliability.provider_backoff_ms,
+        config.reliability.model_fallbacks.len()
+    );
+    let reliable_backend: Box<dyn Provider> = Box::new(
+        reliable::ReliableProvider::new(
+            vec![(INFERENCE_BACKEND_ID.to_string(), raw_backend)],
+            config.reliability.provider_retries,
+            config.reliability.provider_backoff_ms,
+        )
+        .with_model_fallbacks(config.reliability.model_fallbacks.clone()),
+    );
     let default_model = config
         .default_model
         .as_deref()
         .unwrap_or(crate::openhuman::config::DEFAULT_MODEL);
 
     // When the user has configured `model_routes` (custom provider via
-    // BackendProviderPanel), wrap the remote in a RouterProvider so abstract
-    // tier names like `reasoning-v1` get translated to the configured
+    // BackendProviderPanel), wrap the reliable remote in a RouterProvider so
+    // abstract tier names like `reasoning-v1` get translated to the configured
     // provider-specific model id (e.g. `gpt-5.5`) BEFORE the request leaves
     // the host. Without this step the abstract tier name would reach
     // `custom_openai` and 404. The OpenHuman backend can dispatch tier names
@@ -424,10 +436,10 @@ pub fn create_intelligent_routing_provider(
         inference_url.is_some()
     );
     let remote: Box<dyn Provider> = if config.model_routes.is_empty() {
-        backend
+        reliable_backend
     } else {
         let providers: Vec<(String, Box<dyn Provider>)> =
-            vec![(INFERENCE_BACKEND_ID.to_string(), backend)];
+            vec![(INFERENCE_BACKEND_ID.to_string(), reliable_backend)];
         let routes: Vec<(String, router::Route)> = config
             .model_routes
             .iter()
@@ -547,76 +559,60 @@ mod tests {
         }
     }
 
-    // Confirm the Budget-exceeded suppression predicate is scoped correctly.
+    // Confirm the budget-exhausted suppression predicate is scoped correctly.
     // These tests exercise the real production function, not a duplicate.
-    mod budget_exceeded_suppression {
+    mod budget_exhausted_suppression {
         use super::*;
 
-        const BACKEND: &str = openhuman_backend::PROVIDER_LABEL; // "OpenHuman"
-        const OTHER: &str = "OpenAI";
-        const BUDGET_BODY: &str = "Budget exceeded: you have no credits remaining";
+        const BUDGET_BODY: &str = "Insufficient budget";
         const UNRELATED_BODY: &str = "Invalid request: model not found";
 
         #[test]
-        fn backend_400_budget_exceeded_is_suppressed() {
-            assert!(is_budget_exceeded_suppressed(
-                BACKEND,
+        fn budget_exhausted_400_is_suppressed() {
+            assert!(is_budget_exhausted_http_400(
                 reqwest::StatusCode::BAD_REQUEST,
                 BUDGET_BODY,
             ));
         }
 
         #[test]
-        fn other_provider_400_budget_exceeded_is_not_suppressed() {
-            // A third-party provider whose body happens to say "Budget exceeded"
-            // should still be reported to Sentry — only the backend gets special
-            // treatment.
-            assert!(!is_budget_exceeded_suppressed(
-                OTHER,
+        fn budget_exhausted_400_is_case_insensitive() {
+            assert!(is_budget_exhausted_http_400(
                 reqwest::StatusCode::BAD_REQUEST,
-                BUDGET_BODY,
+                "budget exceeded — ADD credits to continue",
             ));
         }
 
         #[test]
-        fn backend_500_budget_exceeded_is_not_suppressed() {
+        fn budget_exhausted_500_is_not_suppressed() {
             // A 500 is a server bug, not expected user-state — keep reporting.
-            assert!(!is_budget_exceeded_suppressed(
-                BACKEND,
+            assert!(!is_budget_exhausted_http_400(
                 reqwest::StatusCode::INTERNAL_SERVER_ERROR,
                 BUDGET_BODY,
             ));
         }
 
         #[test]
-        fn backend_400_unrelated_body_is_not_suppressed() {
-            assert!(!is_budget_exceeded_suppressed(
-                BACKEND,
+        fn budget_exhausted_400_unrelated_body_is_not_suppressed() {
+            assert!(!is_budget_exhausted_http_400(
                 reqwest::StatusCode::BAD_REQUEST,
                 UNRELATED_BODY,
             ));
         }
 
         #[test]
-        fn backend_402_budget_exceeded_is_suppressed() {
-            // 402 Payment Required is a valid alternative status the backend may
-            // return for the same user-state (no credits); it should be suppressed
-            // just like 400.
-            assert!(is_budget_exceeded_suppressed(
-                BACKEND,
+        fn budget_exhausted_402_is_not_suppressed() {
+            assert!(!is_budget_exhausted_http_400(
                 reqwest::StatusCode::PAYMENT_REQUIRED,
                 BUDGET_BODY,
             ));
         }
 
         #[test]
-        fn backend_402_budget_exceeded_case_insensitive() {
-            // Body casing should not affect suppression — e.g. "budget exceeded"
-            // (all-lowercase) from a future backend change.
-            assert!(is_budget_exceeded_suppressed(
-                BACKEND,
-                reqwest::StatusCode::PAYMENT_REQUIRED,
-                "budget exceeded: no credits",
+        fn budget_exhausted_empty_body_is_not_suppressed() {
+            assert!(!is_budget_exhausted_http_400(
+                reqwest::StatusCode::BAD_REQUEST,
+                "",
             ));
         }
     }

@@ -252,6 +252,42 @@ fn push_failure(
     ));
 }
 
+/// Format the final bail message produced when every provider+model in the
+/// chain has failed.
+///
+/// When the originally-requested `model` has no fallback chain configured
+/// in `model_fallbacks`, prepend a single user-actionable hint pointing at
+/// the most common cause we see in production (OPENHUMAN-TAURI-BY / -BZ /
+/// -C0 / -C1, issue #1596): the user has wired up a `custom_openai`
+/// provider whose endpoint does not expose the configured `default_model`.
+/// In that scenario the bail aggregate is otherwise an opaque stack of
+/// provider-formatted error envelopes which gives the user no clue where
+/// to look.
+///
+/// We deliberately avoid emitting the hint when fallbacks *are* configured
+/// — the user has already engaged with the knob and likely has either a
+/// real outage or a misconfigured chain; the dump-of-attempts surface is
+/// what they need to debug it.
+fn format_failure_aggregate(
+    model: &str,
+    failures: &[String],
+    has_configured_fallbacks: bool,
+) -> String {
+    let attempts = format!(
+        "All providers/models failed. Attempts:\n{}",
+        failures.join("\n")
+    );
+    if has_configured_fallbacks {
+        attempts
+    } else {
+        format!(
+            "The model `{model}` may not be available on your provider. \
+             Configure a fallback chain via `reliability.model_fallbacks` in your \
+             OpenHuman config, or change your default model in Settings → AI.\n\n{attempts}"
+        )
+    }
+}
+
 /// Provider wrapper with retry, fallback, auth rotation, and model failover.
 pub struct ReliableProvider {
     providers: Vec<(String, Box<dyn Provider>)>,
@@ -447,9 +483,12 @@ impl Provider for ReliableProvider {
             }
         }
 
-        let aggregate = format!(
-            "All providers/models failed. Attempts:\n{}",
-            failures.join("\n")
+        let aggregate = format_failure_aggregate(
+            model,
+            &failures,
+            self.model_fallbacks
+                .get(model)
+                .is_some_and(|chain| !chain.is_empty()),
         );
         crate::core::observability::report_error_or_expected(
             aggregate.as_str(),
@@ -568,9 +607,12 @@ impl Provider for ReliableProvider {
             }
         }
 
-        let aggregate = format!(
-            "All providers/models failed. Attempts:\n{}",
-            failures.join("\n")
+        let aggregate = format_failure_aggregate(
+            model,
+            &failures,
+            self.model_fallbacks
+                .get(model)
+                .is_some_and(|chain| !chain.is_empty()),
         );
         crate::core::observability::report_error_or_expected(
             aggregate.as_str(),
@@ -725,9 +767,12 @@ impl Provider for ReliableProvider {
             }
         }
 
-        let aggregate = format!(
-            "All providers/models failed. Attempts:\n{}",
-            failures.join("\n")
+        let aggregate = format_failure_aggregate(
+            model,
+            &failures,
+            self.model_fallbacks
+                .get(model)
+                .is_some_and(|chain| !chain.is_empty()),
         );
         crate::core::observability::report_error_or_expected(
             aggregate.as_str(),
@@ -847,9 +892,12 @@ impl Provider for ReliableProvider {
             }
         }
 
-        let aggregate = format!(
-            "All providers/models failed. Attempts:\n{}",
-            failures.join("\n")
+        let aggregate = format_failure_aggregate(
+            model,
+            &failures,
+            self.model_fallbacks
+                .get(model)
+                .is_some_and(|chain| !chain.is_empty()),
         );
         crate::core::observability::report_error_or_expected(
             aggregate.as_str(),

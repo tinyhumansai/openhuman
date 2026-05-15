@@ -10,6 +10,7 @@
 //! this domain can be filtered in one shot.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::Result;
 use serde_json::json;
@@ -22,6 +23,9 @@ use super::types::{
     ComposioDisableTriggerResponse, ComposioEnableTriggerResponse, ComposioExecuteResponse,
     ComposioGithubReposResponse, ComposioToolkitsResponse, ComposioToolsResponse,
 };
+
+const POST_OAUTH_ACTION_RETRY_DELAY: Duration = Duration::from_secs(10);
+const POST_OAUTH_AUTH_ERROR_STRINGS: &[&str] = &["connection error, try to authenticate"];
 
 /// High-level client for all backend-proxied Composio operations.
 #[derive(Clone)]
@@ -160,9 +164,113 @@ impl ComposioClient {
         let arguments = arguments.unwrap_or(serde_json::Value::Object(Default::default()));
         tracing::debug!(tool = %tool, "[composio] execute_tool");
         let body = json!({ "tool": tool, "arguments": arguments });
-        self.inner
-            .post::<ComposioExecuteResponse>("/agent-integrations/composio/execute", &body)
+        self.execute_tool_with_post_oauth_retry(tool, &body, POST_OAUTH_ACTION_RETRY_DELAY)
             .await
+    }
+
+    async fn execute_tool_with_post_oauth_retry(
+        &self,
+        tool: &str,
+        body: &serde_json::Value,
+        retry_delay: Duration,
+    ) -> Result<ComposioExecuteResponse> {
+        tracing::debug!(
+            tool = %tool,
+            retry_delay_ms = retry_delay.as_millis() as u64,
+            attempt = 1u8,
+            "[composio] execute_tool_with_post_oauth_retry attempt"
+        );
+        let first = self.post_execute_tool(body).await?;
+        let should_retry = is_post_oauth_auth_readiness_error(&first);
+        tracing::debug!(
+            tool = %tool,
+            attempt = 1u8,
+            successful = first.successful,
+            has_error = first.error.is_some(),
+            should_retry,
+            "[composio] execute_tool_with_post_oauth_retry branch decision"
+        );
+        if !should_retry {
+            return Ok(first);
+        }
+
+        tracing::warn!(
+            tool = %tool,
+            retry_delay_ms = retry_delay.as_millis() as u64,
+            "[composio] action returned post-OAuth auth-readiness error; retrying once"
+        );
+        if !retry_delay.is_zero() {
+            tokio::time::sleep(retry_delay).await;
+        }
+        tracing::debug!(
+            tool = %tool,
+            retry_delay_ms = retry_delay.as_millis() as u64,
+            attempt = 2u8,
+            "[composio] execute_tool_with_post_oauth_retry retry dispatch"
+        );
+        let retry = self.post_execute_tool(body).await;
+        match &retry {
+            Ok(resp) => tracing::debug!(
+                tool = %tool,
+                attempt = 2u8,
+                successful = resp.successful,
+                has_error = resp.error.is_some(),
+                "[composio] execute_tool_with_post_oauth_retry retry completed"
+            ),
+            Err(err) => tracing::debug!(
+                tool = %tool,
+                attempt = 2u8,
+                error = %err,
+                "[composio] execute_tool_with_post_oauth_retry retry failed"
+            ),
+        }
+        retry
+    }
+
+    async fn post_execute_tool(&self, body: &serde_json::Value) -> Result<ComposioExecuteResponse> {
+        self.inner
+            .post::<ComposioExecuteResponse>("/agent-integrations/composio/execute", body)
+            .await
+    }
+
+    /// Single-shot `execute_tool` — same body construction and slug validation
+    /// as [`Self::execute_tool`], but **without** the inner post-OAuth retry
+    /// that [`Self::execute_tool_with_post_oauth_retry`] performs. Reserved
+    /// for callers that already own a higher-level retry policy and would
+    /// otherwise stack two retry layers (4 hits to the gateway instead of 2).
+    /// In particular, [`super::auth_retry::execute_with_auth_retry`] uses
+    /// this entry point so its `must retry exactly once` contract still
+    /// holds after PR #1707 introduced the inner retry.
+    pub(crate) async fn execute_tool_once(
+        &self,
+        tool: &str,
+        arguments: Option<serde_json::Value>,
+    ) -> Result<ComposioExecuteResponse> {
+        let tool = tool.trim();
+        if tool.is_empty() {
+            anyhow::bail!("composio.execute_tool_once: tool slug must not be empty");
+        }
+        let arguments = arguments.unwrap_or(serde_json::Value::Object(Default::default()));
+        tracing::debug!(
+            tool = %tool,
+            "[composio] execute_tool_once start"
+        );
+        let body = json!({ "tool": tool, "arguments": arguments });
+        let result = self.post_execute_tool(&body).await;
+        match &result {
+            Ok(resp) => tracing::debug!(
+                tool = %tool,
+                successful = resp.successful,
+                has_error = resp.error.is_some(),
+                "[composio] execute_tool_once completed"
+            ),
+            Err(err) => tracing::debug!(
+                tool = %tool,
+                error = %err,
+                "[composio] execute_tool_once failed"
+            ),
+        }
+        result
     }
 
     /// `GET /agent-integrations/composio/github/repos` — list repositories
@@ -393,6 +501,19 @@ impl ComposioClient {
             anyhow::anyhow!("Backend returned success but no data for DELETE {}", url)
         })
     }
+}
+
+fn is_post_oauth_auth_readiness_error(resp: &ComposioExecuteResponse) -> bool {
+    if resp.successful {
+        return false;
+    }
+    let Some(error) = resp.error.as_deref() else {
+        return false;
+    };
+    let normalized = error.trim().to_ascii_lowercase();
+    POST_OAUTH_AUTH_ERROR_STRINGS
+        .iter()
+        .any(|needle| normalized == *needle)
 }
 
 /// Build a [`ComposioClient`] from the root config.

@@ -767,4 +767,49 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
       });
     });
   });
+
+  // Batch-5: Conversation category tabs keep stable labels and mapping (pr#1646).
+  //
+  // The tab set is fixed so categories do not disappear when the thread list
+  // is empty, and the active-filter state remains unambiguous.
+  it('renders all four fixed category tabs with stable labels', async () => {
+    await act(async () => {
+      await renderConversations({ thread: emptyThreadState });
+    });
+
+    // All four tabs must be present regardless of thread count.
+    expect(screen.getByRole('tab', { name: 'All' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Work' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Briefing' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Notification' })).toBeInTheDocument();
+  });
+
+  it('starts with the "All" tab selected', async () => {
+    await act(async () => {
+      await renderConversations({ thread: emptyThreadState });
+    });
+
+    expect(screen.getByRole('tab', { name: 'All' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: 'Work' })).toHaveAttribute('aria-selected', 'false');
+  });
+
+  it('shows "No threads yet" placeholder when All tab is active and list is empty', async () => {
+    await act(async () => {
+      await renderConversations({ thread: emptyThreadState });
+    });
+
+    expect(screen.getByText('No threads yet')).toBeInTheDocument();
+  });
+
+  it('shows category-specific empty message when a label tab is selected and no threads match', async () => {
+    await act(async () => {
+      await renderConversations({ thread: emptyThreadState });
+    });
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Work' }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/"work" threads/i)).toBeInTheDocument();
+    });
+  });
 });

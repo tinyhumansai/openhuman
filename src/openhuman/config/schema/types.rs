@@ -9,6 +9,14 @@ use std::path::PathBuf;
 /// Standard model identifiers matching the backend model registry.
 pub const MODEL_AGENTIC_V1: &str = "agentic-v1";
 pub const MODEL_REASONING_V1: &str = "reasoning-v1";
+/// Low-latency chat tier. Backend maps this to Kimi K2.6 Turbo on
+/// Fireworks (128k context, `supportsThinking: false`) — tuned for
+/// time-to-first-token on conversational turns. See backend PR #760.
+/// The orchestrator (user-facing front-line agent) rides on this tier
+/// by default (via `hint:chat`) so chat responses feel snappy; reach
+/// for the slower `reasoning-v1` (DeepSeek V4 Pro) only when deep
+/// reasoning is needed.
+pub const MODEL_REASONING_QUICK_V1: &str = "reasoning-quick-v1";
 pub const MODEL_CODING_V1: &str = "coding-v1";
 /// Default model used when no explicit model is configured.
 ///
@@ -28,6 +36,13 @@ pub struct Config {
     pub workspace_dir: PathBuf,
     #[serde(skip)]
     pub config_path: PathBuf,
+    /// Workspace data-schema version. Bumped each time a one-shot data
+    /// migration under [`crate::openhuman::migrations`] runs successfully.
+    /// `#[serde(default)]` so existing `config.toml` files (which predate
+    /// the field) load as version `0` and pick up pending migrations on
+    /// the first launch of the new build.
+    #[serde(default)]
+    pub schema_version: u32,
     pub api_url: Option<String>,
     pub api_key: Option<String>,
     /// Custom LLM inference endpoint (OpenAI-compatible). When set together
@@ -127,6 +142,9 @@ pub struct Config {
 
     #[serde(default)]
     pub multimodal: MultimodalConfig,
+
+    #[serde(default)]
+    pub seltz: SeltzConfig,
 
     #[serde(default)]
     pub web_search: WebSearchConfig,
@@ -272,6 +290,7 @@ impl Default for Config {
         Self {
             workspace_dir: openhuman_dir.join("workspace"),
             config_path: openhuman_dir.join("config.toml"),
+            schema_version: 0,
             api_url: None,
             api_key: None,
             inference_url: None,
@@ -302,6 +321,7 @@ impl Default for Config {
             curl: CurlConfig::default(),
             gitbooks: GitbooksConfig::default(),
             multimodal: MultimodalConfig::default(),
+            seltz: SeltzConfig::default(),
             web_search: WebSearchConfig::default(),
             proxy: ProxyConfig::default(),
             cost: CostConfig::default(),

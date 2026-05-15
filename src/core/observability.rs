@@ -1,6 +1,7 @@
 //! Centralised error reporting for the core, plus a Sentry
-//! `before_send` filter that drops per-attempt transient-upstream
-//! provider failures.
+//! `before_send` filters that drop deterministic provider noise:
+//! per-attempt transient-upstream failures, budget-exhausted user-state,
+//! and transient updater failures.
 //!
 //! Wraps `tracing::error!` (which the global subscriber forwards to Sentry via
 //! `sentry-tracing`) inside a `sentry::with_scope` so each captured event
@@ -52,6 +53,21 @@ pub const TRANSIENT_TRANSPORT_PHRASES: &[&str] = &[
     "error sending request",
 ];
 
+/// HTTP statuses from updater probes that are expected GitHub/network noise:
+/// unauthenticated GitHub API rate-limit / policy 403s plus gateway/server
+/// hiccups. Scoped to updater domains/messages by [`is_updater_transient_event`].
+const UPDATER_TRANSIENT_HTTP_STATUSES: &[u16] = &[403, 500, 502, 503, 504];
+
+/// Message fragments observed from Tauri/core updater transient failures.
+/// Keep these updater-specific so unrelated GitHub or generic transport
+/// failures still reach Sentry.
+const UPDATER_TRANSIENT_MESSAGE_PHRASES: &[&str] = &[
+    "failed to check for updates: error sending request",
+    "github api error: 403",
+    "github api error: 5",
+    "error sending request for url (https://github.com/tinyhumansai/openhuman/releases/",
+];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExpectedErrorKind {
     LocalAiDisabled,
@@ -61,6 +77,8 @@ pub enum ExpectedErrorKind {
     LocalAiBinaryMissing,
     BackendUserError,
     LocalAiCapabilityUnavailable,
+    BudgetExhausted,
+    SessionExpired,
 }
 
 pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
@@ -86,7 +104,55 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     if is_local_ai_capability_unavailable_message(&lower) {
         return Some(ExpectedErrorKind::LocalAiCapabilityUnavailable);
     }
+    if crate::openhuman::providers::is_budget_exhausted_message(message) {
+        return Some(ExpectedErrorKind::BudgetExhausted);
+    }
+    if is_session_expired_message(message) {
+        return Some(ExpectedErrorKind::SessionExpired);
+    }
     None
+}
+
+/// Detect **app-session-expired** boundary errors that bubble up from any
+/// backend-touching call site (agent, web channel, cron, integrations).
+///
+/// Deliberately stricter than the dispatch-site classifier in
+/// [`crate::core::jsonrpc`]: the dispatch-site predicate matches a generic
+/// "401 + unauthorized" pair to trigger token cleanup on *any* 401 (even an
+/// OpenAI / Anthropic BYO-key 401 that means a misconfigured key — see
+/// `providers::ops::api_error`). Replicating that loose match here would
+/// silence BYO-key configuration errors at the agent layer, where they
+/// *are* actionable and should reach Sentry as errors.
+///
+/// The canonical OpenHuman session-expired wire shapes:
+///
+/// - `"OpenHuman API error (401 Unauthorized): {…\"Session expired. Please
+///   log in again.\"…}"` — emitted by `providers::ops::api_error` from the
+///   OpenHuman backend and re-raised through `agent::run_single` /
+///   `channels::providers::web::run_chat_task` (OPENHUMAN-TAURI-26). The
+///   `"session expired"` substring anchors the match to the OpenHuman
+///   backend's session-renewal body, not the bare numeric status.
+/// - `"SESSION_EXPIRED: backend session not active — sign in to resume LLM work"`
+///   — the `scheduler_gate::is_signed_out` sentinel from
+///   `providers::openhuman_backend::resolve_bearer`.
+/// - `"no backend session token; run auth_store_session first"` and
+///   `"session JWT required"` — local pre-flight guards that fire when the
+///   stored profile is empty (`#1465`-ish onboarding spam) or has been
+///   cleared by a previous 401 cycle. Both shapes are OpenHuman-specific.
+///
+/// At the JSON-RPC dispatch boundary the looser classifier in
+/// `crate::core::jsonrpc::is_session_expired_error` keeps its existing
+/// generic "401 + unauthorized" match so token cleanup + `DomainEvent::SessionExpired`
+/// publish still fires for every 401. Adding the demote here therefore does
+/// **not** silence the auto-cleanup teardown — it only stops the duplicate
+/// per-attempt error event that escaped via `report_error_or_expected` from
+/// the agent / web-channel layers (OPENHUMAN-TAURI-26).
+pub fn is_session_expired_message(msg: &str) -> bool {
+    let lower = msg.to_ascii_lowercase();
+    lower.contains("session expired")
+        || lower.contains("no backend session token")
+        || lower.contains("session jwt required")
+        || msg.contains("SESSION_EXPIRED")
 }
 
 /// Detect transport-level connection failures that fire before any HTTP status
@@ -321,6 +387,43 @@ fn report_expected_message(kind: ExpectedErrorKind, message: &str, domain: &str,
                 "[observability] {domain}.{operation} skipped expected local-ai capability-unavailable error: {message}"
             );
         }
+        ExpectedErrorKind::BudgetExhausted => {
+            // User-state condition: the backend reports the user is out of
+            // budget / credits / balance (HTTP 400 from the OpenHuman backend,
+            // surfaced by `providers::is_budget_exhausted_message`). The UI
+            // already surfaces this as an actionable toast — Sentry would
+            // turn each affected turn into noise (OPENHUMAN-TAURI-3M / -12 /
+            // -13). Demote to info so it still appears in breadcrumbs but
+            // never spawns a Sentry error event.
+            tracing::info!(
+                domain = domain,
+                operation = operation,
+                kind = "budget",
+                error = %message,
+                "[observability] {domain}.{operation} skipped expected budget-exhausted error: {message}"
+            );
+        }
+        ExpectedErrorKind::SessionExpired => {
+            // Auth-boundary condition: the user's JWT expired (or was never
+            // present). The JSON-RPC dispatch layer already handles the
+            // teardown — `Err` propagation publishes `DomainEvent::SessionExpired`
+            // which clears the stored token and flips the scheduler-gate
+            // signed-out override so background workers stand down — and the
+            // UI re-auths the user. The per-attempt error event from the
+            // upstream call site (agent.run_single, web_channel.run_chat_task)
+            // adds noise without signal: every mid-conversation 401 would
+            // emit one event before the cascade dampener kicks in
+            // (OPENHUMAN-TAURI-26, and the same upstream gap that
+            // OPENHUMAN-TAURI-1T's #1516 cascade fix dampened but did not
+            // close). Demote to info so the breadcrumb survives for trace
+            // correlation but Sentry sees no error event.
+            tracing::info!(
+                domain = domain,
+                operation = operation,
+                error = %message,
+                "[observability] {domain}.{operation} skipped expected session-expired error: {message}"
+            );
+        }
     }
 }
 
@@ -437,6 +540,55 @@ pub fn is_max_iterations_event(event: &sentry::protocol::Event<'_>) -> bool {
         .any(crate::openhuman::agent::error::is_max_iterations_error)
 }
 
+/// Tag + body classifier for the `before_send` chain — drops Sentry events
+/// emitted at the OpenHuman backend / rpc layers for "401 Session
+/// expired" or the pre-flight "no session token stored" guards.
+///
+/// Pairs with [`is_session_expired_message`] (which classifies the
+/// message body at the emit site via `report_error_or_expected`). This
+/// fn runs in `before_send` so it catches any future call site that
+/// re-emits the same shape without routing through the classifier —
+/// keeps OPENHUMAN-TAURI-25 / -1Q / -27 / -1G permanently off Sentry
+/// (~185 events/day combined).
+///
+/// Scope: only the three domains that surface session-expired today
+/// (`llm_provider`, `backend_api`, `rpc`). Composio's OAuth-state 401
+/// is excluded — that's actionable and must reach Sentry.
+pub fn is_session_expired_event(event: &sentry::protocol::Event<'_>) -> bool {
+    let tags = &event.tags;
+    let Some(domain) = tags.get("domain").map(String::as_str) else {
+        return false;
+    };
+    if !matches!(domain, "llm_provider" | "backend_api" | "rpc") {
+        return false;
+    }
+
+    let status_is_401 = tags
+        .get("status")
+        .and_then(|s| s.parse::<u16>().ok())
+        .is_some_and(|code| code == 401);
+
+    let direct = event.message.as_deref();
+    let from_exception = event.exception.last().and_then(|e| e.value.as_deref());
+    let body_matches = [direct, from_exception]
+        .into_iter()
+        .flatten()
+        .any(is_session_expired_message);
+
+    if status_is_401 && body_matches {
+        return true;
+    }
+
+    // Pre-flight rpc guard has no status tag — accept on body alone,
+    // scoped to the rpc dispatcher (other domains don't emit the
+    // "no session token stored" sentinel).
+    if domain == "rpc" && body_matches {
+        return true;
+    }
+
+    false
+}
+
 pub fn is_transient_http_status(status: &str) -> bool {
     TRANSIENT_HTTP_STATUSES.contains(&status)
 }
@@ -449,6 +601,17 @@ pub fn is_transient_http_status_code(status: u16) -> bool {
 pub fn contains_transient_transport_phrase(message: &str) -> bool {
     let lower = message.to_ascii_lowercase();
     TRANSIENT_TRANSPORT_PHRASES
+        .iter()
+        .any(|phrase| lower.contains(phrase))
+}
+
+pub fn is_updater_transient_http_status(status: u16) -> bool {
+    UPDATER_TRANSIENT_HTTP_STATUSES.contains(&status)
+}
+
+pub fn is_updater_transient_message(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    UPDATER_TRANSIENT_MESSAGE_PHRASES
         .iter()
         .any(|phrase| lower.contains(phrase))
 }
@@ -468,6 +631,30 @@ fn event_has_transient_transport_phrase(event: &sentry::protocol::Event<'_>) -> 
                 .as_deref()
                 .is_some_and(contains_transient_transport_phrase)
         })
+}
+
+fn event_has_updater_transient_message(event: &sentry::protocol::Event<'_>) -> bool {
+    event
+        .message
+        .as_deref()
+        .is_some_and(is_updater_transient_message)
+        || event
+            .logentry
+            .as_ref()
+            .is_some_and(|log| is_updater_transient_message(&log.message))
+        || event.exception.values.iter().any(|exception| {
+            exception
+                .value
+                .as_deref()
+                .is_some_and(is_updater_transient_message)
+        })
+}
+
+fn event_has_updater_domain(event: &sentry::protocol::Event<'_>) -> bool {
+    matches!(
+        event.tags.get("domain").map(String::as_str),
+        Some("update") | Some("update.check_releases") | Some("updater")
+    )
 }
 
 fn is_transient_domain_failure(event: &sentry::protocol::Event<'_>, domain: &str) -> bool {
@@ -495,6 +682,34 @@ pub fn is_transient_backend_api_failure(event: &sentry::protocol::Event<'_>) -> 
 /// gateway hiccups).
 pub fn is_transient_integrations_failure(event: &sentry::protocol::Event<'_>) -> bool {
     is_transient_domain_failure(event, "integrations")
+}
+
+/// Transient updater failures from GitHub release probes/downloads.
+///
+/// Core-side reports carry structured tags (`domain=update`, often
+/// `operation=check_releases`, plus `failure/status`). Tauri's updater plugin
+/// can also emit message-only events such as
+/// `"failed to check for updates: error sending request for url (...latest.json)"`.
+/// Match both shapes, but never drop an arbitrary update-domain event unless
+/// it also has a transient status/transport marker.
+pub fn is_updater_transient_event(event: &sentry::protocol::Event<'_>) -> bool {
+    if event_has_updater_transient_message(event) {
+        return true;
+    }
+
+    if !event_has_updater_domain(event) {
+        return false;
+    }
+
+    match event.tags.get("failure").map(String::as_str) {
+        Some("non_2xx") => event
+            .tags
+            .get("status")
+            .and_then(|status| status.parse::<u16>().ok())
+            .is_some_and(is_updater_transient_http_status),
+        Some("transport") => event_has_transient_transport_phrase(event),
+        _ => false,
+    }
 }
 
 /// String tokens that mark a formatted error message as a transient HTTP
@@ -531,6 +746,47 @@ pub fn is_transient_message_failure(msg: &str) -> bool {
         .iter()
         .any(|token| lower.contains(token))
         || contains_transient_transport_phrase(&lower)
+}
+
+/// Returns true when a Sentry event is a budget-exhausted 400 that should be
+/// dropped from `before_send`.
+///
+/// Match criteria (all required):
+/// - tag `failure == "non_2xx"`
+/// - tag `status == "400"`
+/// - the event message or any exception value contains one of the tight
+///   budget-exhaustion phrases
+///
+/// Note: `domain` is intentionally not gated here as defense-in-depth over
+/// the emit-site classifier — any non_2xx/400 event that carries the
+/// budget-exhausted phrasing is dropped regardless of which domain produced
+/// it, so a future re-emitter under a different tag still gets filtered.
+pub fn is_budget_event(event: &sentry::protocol::Event<'_>) -> bool {
+    let tags = &event.tags;
+    if tags.get("failure").map(String::as_str) != Some("non_2xx") {
+        return false;
+    }
+    if tags.get("status").map(String::as_str) != Some("400") {
+        return false;
+    }
+    event_contains_budget_exhausted_message(event)
+}
+
+fn event_contains_budget_exhausted_message(event: &sentry::protocol::Event<'_>) -> bool {
+    if event
+        .message
+        .as_deref()
+        .is_some_and(crate::openhuman::providers::is_budget_exhausted_message)
+    {
+        return true;
+    }
+
+    event.exception.values.iter().any(|exception| {
+        exception
+            .value
+            .as_deref()
+            .is_some_and(crate::openhuman::providers::is_budget_exhausted_message)
+    })
 }
 
 #[cfg(test)]
@@ -867,6 +1123,107 @@ mod tests {
     }
 
     #[test]
+    fn classifies_session_expired_messages() {
+        // OPENHUMAN-TAURI-26: the canonical wire shape that `agent.run_single`
+        // and `web_channel.run_chat_task` re-emit via `report_error_or_expected`
+        // when the user's JWT expires mid-conversation. The classifier
+        // anchors on the literal `"session expired"` substring from the
+        // OpenHuman backend's 401 body — NOT on the bare `(401 Unauthorized)`
+        // status, which would also silence BYO-key OpenAI/Anthropic 401s
+        // that are actionable.
+        assert_eq!(
+            expected_error_kind(
+                r#"OpenHuman API error (401 Unauthorized): {"success":false,"error":"Session expired. Please log in again."}"#
+            ),
+            Some(ExpectedErrorKind::SessionExpired)
+        );
+
+        // Wrapped by the agent / web-channel report sites in production —
+        // the classifier is substring-based so caller context must not
+        // defeat it.
+        assert_eq!(
+            expected_error_kind(
+                r#"run_chat_task failed client_id=abc thread_id=t1 request_id=r1 error=OpenHuman API error (401 Unauthorized): {"success":false,"error":"Session expired. Please log in again."}"#
+            ),
+            Some(ExpectedErrorKind::SessionExpired)
+        );
+
+        // Sentinel raised by `providers::openhuman_backend::resolve_bearer`
+        // when the scheduler-gate signed-out override is set
+        // (OPENHUMAN-TAURI-1T's cascade dampener returns this so callers
+        // get the same teardown path as a real backend 401).
+        assert_eq!(
+            expected_error_kind(
+                "SESSION_EXPIRED: backend session not active — sign in to resume LLM work"
+            ),
+            Some(ExpectedErrorKind::SessionExpired)
+        );
+
+        // Local pre-flight guards — OpenHuman-specific phrasing, safe to
+        // match regardless of caller wrapping.
+        for raw in [
+            "no backend session token; run auth_store_session first",
+            "session JWT required",
+            "composio unavailable: no backend session token. Sign in first (auth_store_session).",
+        ] {
+            assert_eq!(
+                expected_error_kind(raw),
+                Some(ExpectedErrorKind::SessionExpired),
+                "should classify as session-expired: {raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn does_not_classify_byo_key_provider_401_as_session_expired() {
+        // Critical: a BYO-key 401 from OpenAI / Anthropic etc. is an
+        // actionable misconfiguration (wrong API key) that the user needs
+        // to fix in settings. It must reach Sentry as an error and must
+        // NOT be classified as session-expired at the agent layer — the
+        // strict classifier requires the OpenHuman backend's
+        // "session expired" body to anchor the match. The dispatch-site
+        // classifier (`crate::core::jsonrpc::is_session_expired_error`)
+        // still matches these for the `DomainEvent::SessionExpired`
+        // auto-cleanup path, which clears stale local state defensively.
+        for raw in [
+            "OpenAI API error (401 Unauthorized): invalid_api_key",
+            "Anthropic API error (401 Unauthorized): authentication_error",
+            "OpenAI API error (401): unauthorized",
+            r#"OpenAI API error (401 Unauthorized): {"error":{"code":"invalid_api_key","message":"Incorrect API key provided"}}"#,
+            // Generic "invalid token" without OpenHuman session phrasing —
+            // could mean a third-party provider rejected its own token.
+            "Invalid token",
+            "got an invalid token here",
+        ] {
+            assert_eq!(
+                expected_error_kind(raw),
+                None,
+                "BYO-key / generic 401 must reach Sentry as actionable error: {raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn does_not_classify_unrelated_messages_as_session_expired() {
+        // Bare numeric 401 (port number, runbook reference) must not be
+        // silenced.
+        assert_eq!(expected_error_kind("server returned 401"), None);
+        assert_eq!(
+            expected_error_kind("see runbook for 401 handling at https://example.com/401"),
+            None
+        );
+        // Provider 5xx — must reach Sentry.
+        assert_eq!(
+            expected_error_kind("OpenAI API error (500): internal server error"),
+            None
+        );
+        // Lowercase sentinel must NOT match — the SESSION_EXPIRED sentinel
+        // is case-sensitive by design (matches the sentinel emitted by
+        // `providers::openhuman_backend::resolve_bearer` exactly).
+        assert_eq!(expected_error_kind("session_expired lowercase"), None);
+    }
+
+    #[test]
     fn report_error_does_not_panic_with_many_tags() {
         let err = anyhow::anyhow!("multi-tag");
         report_error(
@@ -1105,6 +1462,51 @@ mod tests {
     }
 
     #[test]
+    fn updater_transient_403_is_dropped() {
+        let event = event_with_tags_and_message(
+            &[
+                ("domain", "update"),
+                ("operation", "check_releases"),
+                ("failure", "non_2xx"),
+                ("status", "403"),
+            ],
+            "[observability] update.check_releases failed: GitHub API error: 403 Forbidden",
+        );
+        assert!(
+            is_updater_transient_event(&event),
+            "GitHub 403 updater checks are unactionable transient/rate-limit noise"
+        );
+    }
+
+    #[test]
+    fn updater_transient_502_is_dropped() {
+        let event = event_with_tags_and_message(
+            &[
+                ("domain", "update.check_releases"),
+                ("failure", "non_2xx"),
+                ("status", "502"),
+            ],
+            "GitHub API error: 502 Bad Gateway",
+        );
+        assert!(
+            is_updater_transient_event(&event),
+            "GitHub 5xx updater checks must be filtered as transient"
+        );
+    }
+
+    #[test]
+    fn updater_real_panic_still_reported() {
+        let event = event_with_tags_and_message(
+            &[("domain", "update"), ("operation", "check_releases")],
+            "thread 'main' panicked at src/openhuman/update/core.rs: index out of bounds",
+        );
+        assert!(
+            !is_updater_transient_event(&event),
+            "update-domain events without a transient updater shape must still reach Sentry"
+        );
+    }
+
+    #[test]
     fn message_failure_classifier_matches_canonical_status_phrases() {
         for msg in [
             "rpc.invoke_method failed: GET /teams failed (502 Bad Gateway)",
@@ -1150,6 +1552,50 @@ mod tests {
                 !is_transient_message_failure(msg),
                 "{msg:?} must not be classified as transient"
             );
+        }
+    }
+
+    #[test]
+    fn budget_filter_drops_budget_message_on_tagged_400() {
+        let event = event_with_tags_and_message(
+            &[("failure", "non_2xx"), ("status", "400")],
+            r#"OpenHuman API error (400 Bad Request): {"success":false,"error":"Insufficient budget"}"#,
+        );
+
+        assert!(is_budget_event(&event));
+    }
+
+    #[test]
+    fn budget_filter_drops_budget_exception_on_tagged_400() {
+        let mut event = event_with_tags(&[("failure", "non_2xx"), ("status", "400")]);
+        event.exception.values.push(sentry::protocol::Exception {
+            value: Some("Budget exceeded — add credits to continue".to_string()),
+            ..Default::default()
+        });
+
+        assert!(is_budget_event(&event));
+    }
+
+    #[test]
+    fn budget_filter_keeps_non_budget_400() {
+        let event = event_with_tags_and_message(
+            &[("failure", "non_2xx"), ("status", "400")],
+            "Bad request: missing field",
+        );
+
+        assert!(!is_budget_event(&event));
+    }
+
+    #[test]
+    fn budget_filter_requires_non_2xx_failure_and_400_status() {
+        let message = "Budget exceeded — add credits to continue";
+        for tags in [
+            vec![("failure", "transport"), ("status", "400")],
+            vec![("failure", "non_2xx"), ("status", "500")],
+            vec![("failure", "non_2xx")],
+        ] {
+            let event = event_with_tags_and_message(&tags, message);
+            assert!(!is_budget_event(&event));
         }
     }
 

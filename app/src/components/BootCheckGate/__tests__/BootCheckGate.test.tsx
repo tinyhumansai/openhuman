@@ -39,14 +39,17 @@ vi.mock('../../../services/coreRpcClient', () => ({
   testCoreRpcConnection: (...args: unknown[]) => mockTestCoreRpcConnection(...args),
 }));
 
-vi.mock('../../../utils/configPersistence', () => ({
-  storeRpcUrl: vi.fn(),
-  storeCoreToken: vi.fn(),
-  clearStoredCoreToken: vi.fn(),
-  storeCoreMode: vi.fn(),
-  clearStoredCoreMode: vi.fn(),
-  isValidRpcUrl: vi.fn().mockReturnValue(true),
-}));
+vi.mock('../../../utils/configPersistence', async importOriginal => {
+  const actual = await importOriginal<typeof import('../../../utils/configPersistence')>();
+  return {
+    ...actual,
+    storeRpcUrl: vi.fn(),
+    storeCoreToken: vi.fn(),
+    clearStoredCoreToken: vi.fn(),
+    storeCoreMode: vi.fn(),
+    clearStoredCoreMode: vi.fn(),
+  };
+});
 
 // ---------------------------------------------------------------------------
 // Store factory
@@ -155,6 +158,43 @@ describe('BootCheckGate — picker (unset mode)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
 
     expect(screen.getByText(/Please enter the core auth token/i)).toBeInTheDocument();
+  });
+
+  it('accepts a Tailscale HTTP core URL in cloud mode', async () => {
+    mockRunBootCheck.mockResolvedValue({ kind: 'match' });
+
+    renderGate();
+    fireEvent.click(screen.getByText('Cloud'));
+    fireEvent.change(screen.getByPlaceholderText(/https:\/\/core\.example\.com/), {
+      target: { value: 'http://100.116.244.64:7788/rpc' },
+    });
+    fireEvent.change(screen.getByPlaceholderText(/Bearer token/i), {
+      target: { value: 'tok-1234' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('app-content')).toBeInTheDocument();
+    });
+    expect(mockRunBootCheck).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'cloud',
+        url: 'http://100.116.244.64:7788/rpc',
+        token: 'tok-1234',
+      }),
+      expect.any(Object)
+    );
+  });
+
+  it('rejects public HTTP cloud URLs', () => {
+    renderGate();
+
+    fireEvent.click(screen.getByText('Cloud'));
+    const urlInput = screen.getByPlaceholderText(/https:\/\/core\.example\.com/);
+    fireEvent.change(urlInput, { target: { value: 'http://core.example.com/rpc' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+
+    expect(screen.getByText(/HTTP core URLs are only allowed/)).toBeInTheDocument();
   });
 
   it('clears the token error as soon as the user types into the token field', () => {

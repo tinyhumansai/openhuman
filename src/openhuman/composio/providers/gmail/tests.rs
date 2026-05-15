@@ -2,7 +2,7 @@
 
 use super::sync::{
     cursor_to_gmail_after_epoch_filter, cursor_to_gmail_after_filter, extract_messages,
-    extract_page_token,
+    extract_page_token, now_ms, parse_cursor_to_epoch_secs,
 };
 use super::GmailProvider;
 use crate::openhuman::composio::providers::ComposioProvider;
@@ -107,6 +107,131 @@ fn epoch_filter_is_preferred_over_day_filter_for_typical_internal_date() {
         secs < 4_102_444_800,
         "epoch filter must be before 2100-01-01"
     );
+}
+
+// ── Adaptive page cap and early-stop helpers (issue#1404, pr#1474) ──────────
+//
+// The full `sync()` path needs a live ComposioClient + MemoryClient, so
+// we test the helper functions that gate the adaptive cap and early-stop
+// decisions:
+//
+//   * `parse_cursor_to_epoch_secs` — used to decide whether `last_sync_at_ms`
+//     falls within `RECENT_SYNC_WINDOW_MS` (5 min) for the adaptive page cap.
+//   * `now_ms` — sanity check: must not return 0 and must be within a plausible
+//     range so the adaptive window comparison never produces pathological results.
+//   * early-stop guard: when `last_seen_id` matches the first page's head id
+//     the sync loop breaks with `stop_reason = "head_unchanged"`. We pin the
+//     helper logic that feeds this decision.
+
+#[test]
+fn parse_cursor_to_epoch_secs_handles_epoch_millis() {
+    // Gmail internalDate is epoch milliseconds as a numeric string.
+    // 1774915200000 ms = 1774915200 s (2026-03-31 00:00:00 UTC).
+    assert_eq!(
+        parse_cursor_to_epoch_secs("1774915200000"),
+        Some(1774915200)
+    );
+}
+
+#[test]
+fn parse_cursor_to_epoch_secs_handles_iso_date() {
+    // YYYY-MM-DD date cursor produced by the older day-cursor write path.
+    let secs = parse_cursor_to_epoch_secs("2024-01-15").unwrap();
+    // 2024-01-15 00:00:00 UTC = 1705276800
+    assert_eq!(secs, 1705276800);
+}
+
+#[test]
+fn parse_cursor_to_epoch_secs_handles_rfc3339() {
+    let secs = parse_cursor_to_epoch_secs("2024-01-15T00:00:00Z").unwrap();
+    assert_eq!(secs, 1705276800);
+}
+
+#[test]
+fn parse_cursor_to_epoch_secs_returns_none_for_garbage() {
+    assert_eq!(parse_cursor_to_epoch_secs("not-a-timestamp"), None);
+    assert_eq!(parse_cursor_to_epoch_secs(""), None);
+    assert_eq!(parse_cursor_to_epoch_secs("   "), None);
+}
+
+/// The adaptive page cap relies on `parse_cursor_to_epoch_secs` and `now_ms`
+/// agreeing on a common epoch so the "less than 5 min ago" comparison works.
+/// `now_ms()` must return epoch-milliseconds (not zero, not micros). If it
+/// returned microseconds, every sync would appear "recent" (delta < 300_000 ms
+/// vs delta actually being ~ 1e12 µs); if it returned seconds, every sync
+/// would appear "old" (delta > 300_000 ms trivially).
+#[test]
+fn now_ms_is_in_epoch_milliseconds_range() {
+    let ms = now_ms();
+    // Must be strictly positive.
+    assert!(ms > 0, "now_ms must not return zero");
+    // Must be > 2024-01-01 00:00:00 UTC in milliseconds so it's clearly
+    // millisecond-epoch and not seconds-epoch (which would be ~1.7e9, much
+    // smaller than 1.7e12).
+    let jan_2024_ms: u64 = 1_704_067_200_000;
+    assert!(
+        ms > jan_2024_ms,
+        "now_ms ({ms}) must be above 2024-01-01 in epoch-millisecond scale"
+    );
+    // Must be < year 2100 in milliseconds — rules out microseconds/nanoseconds.
+    let year_2100_ms: u64 = 4_102_444_800_000;
+    assert!(
+        ms < year_2100_ms,
+        "now_ms ({ms}) must be below year 2100 in epoch-millisecond scale"
+    );
+}
+
+/// The early-stop optimisation fires when `last_seen_id` equals the first
+/// message id on the first page. We test the helper that extracts message ids
+/// — `extract_messages` — to verify it correctly surfaces the `id` field so
+/// the comparison in the sync loop gets the right value.
+///
+/// The early-stop check uses `messages.first()` with the `MESSAGE_ID_PATHS`
+/// extractor. We can't call the private extractor, but we can pin
+/// `extract_messages` to return messages with their `id` intact so the
+/// sync loop can compare them to `state.last_seen_id`.
+#[test]
+fn extract_messages_preserves_id_field_for_early_stop() {
+    // The early-stop check reads `m["id"]` via `extract_item_id`. Verify
+    // `extract_messages` doesn't strip or transform the field.
+    let v = json!({
+        "data": {
+            "messages": [
+                {"id": "msg_abc", "internalDate": "1774915200000"},
+                {"id": "msg_def", "internalDate": "1774915100000"}
+            ]
+        },
+        "successful": true
+    });
+    let msgs = extract_messages(&v);
+    assert_eq!(msgs.len(), 2);
+    assert_eq!(
+        msgs[0]["id"], "msg_abc",
+        "first message id must be preserved"
+    );
+    assert_eq!(
+        msgs[1]["id"], "msg_def",
+        "second message id must be preserved"
+    );
+}
+
+/// Variant: messages embedded in `data.data.messages` (deeper nesting
+/// seen in some Composio provider responses) — the extractor must still
+/// find them so the early-stop comparison has data to work with.
+#[test]
+fn extract_messages_handles_deep_nesting() {
+    let v = json!({
+        "data": {
+            "data": {
+                "messages": [
+                    {"id": "deep_msg_1"}
+                ]
+            }
+        }
+    });
+    let msgs = extract_messages(&v);
+    assert_eq!(msgs.len(), 1);
+    assert_eq!(msgs[0]["id"], "deep_msg_1");
 }
 
 // Note: full `sync` / `fetch_user_profile` / `on_trigger` paths require a

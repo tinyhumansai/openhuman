@@ -65,15 +65,19 @@ const OnboardingLayout = () => {
       connectedSources: draft.connectedSources,
     });
 
-    await setOnboardingTasks({
-      accessibilityPermissionGranted:
-        snapshot.localState.onboardingTasks?.accessibilityPermissionGranted ?? false,
-      localModelConsentGiven: false,
-      localModelDownloadStarted: false,
-      enabledTools: getDefaultEnabledTools(),
-      connectedSources: draft.connectedSources,
-      updatedAtMs: Date.now(),
-    });
+    try {
+      await setOnboardingTasks({
+        accessibilityPermissionGranted:
+          snapshot.localState.onboardingTasks?.accessibilityPermissionGranted ?? false,
+        localModelConsentGiven: false,
+        localModelDownloadStarted: false,
+        enabledTools: getDefaultEnabledTools(),
+        connectedSources: draft.connectedSources,
+        updatedAtMs: Date.now(),
+      });
+    } catch (e) {
+      console.warn('[onboarding] Failed to persist onboarding tasks; continuing completion', e);
+    }
 
     try {
       await userApi.onboardingComplete();

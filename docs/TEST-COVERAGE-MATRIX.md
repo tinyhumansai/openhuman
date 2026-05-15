@@ -389,6 +389,7 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 | 11.1.1 | Multi-Source Analysis      | RI    | `tests/memory_graph_sync_e2e.rs`                                                                                    | 🟡     | Frontend trigger untested                                                                 |
 | 11.1.2 | Actionable Item Extraction | VU    | `app/src/components/intelligence/__tests__/utils.test.ts` (this PR)                                                 | ✅     | Was ❌                                                                                    |
 | 11.1.3 | Analyze Trigger            | WD    | `app/test/e2e/specs/insights-dashboard.spec.ts` mounts the route (this PR); explicit analyze-handler invocation TBD | 🟡     | Route mounts and search/filter UI assert — full analyze trigger flow tracked as follow-up |
+| 11.1.4 | MCP stdio server           | RU    | `src/openhuman/mcp_server/`                                                                                         | ✅     | Read-only initialize/tools/list/tools/call plus stdio framing; binary smoke in PR validation |
 
 ### 11.2 Insights Dashboard
 

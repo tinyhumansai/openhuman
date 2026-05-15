@@ -141,13 +141,14 @@ fn client_clone_shares_inner_arc() {
 // by live backend tests.
 
 use axum::{
-    extract::{Path, Query},
+    extract::{Path, Query, State},
     http::StatusCode,
     routing::{get, post},
     Json, Router,
 };
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 async fn start_mock_backend(app: Router) -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -330,6 +331,97 @@ async fn execute_tool_returns_cost_and_success_flags() {
     assert!(resp.successful);
     assert!((resp.cost_usd - 0.0025).abs() < f64::EPSILON);
     assert_eq!(resp.data["echoed_tool"], "GMAIL_SEND_EMAIL");
+}
+
+#[tokio::test]
+async fn execute_tool_retries_once_on_post_oauth_auth_readiness_error() {
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let app = Router::new()
+        .route(
+            "/agent-integrations/composio/execute",
+            post(|State(attempts): State<Arc<AtomicUsize>>| async move {
+                let attempt = attempts.fetch_add(1, Ordering::SeqCst);
+                if attempt == 0 {
+                    Json(json!({
+                        "success": true,
+                        "data": {
+                            "data": {},
+                            "successful": false,
+                            "error": "Connection error, try to authenticate",
+                            "costUsd": 0.0
+                        }
+                    }))
+                } else {
+                    Json(json!({
+                        "success": true,
+                        "data": {
+                            "data": {"ok": true},
+                            "successful": true,
+                            "error": null,
+                            "costUsd": 0.001
+                        }
+                    }))
+                }
+            }),
+        )
+        .with_state(attempts.clone());
+    let base = start_mock_backend(app).await;
+    let client = build_client_for(base);
+
+    let resp = client
+        .execute_tool_with_post_oauth_retry(
+            "GOOGLECALENDAR_EVENTS_LIST",
+            &json!({
+                "tool": "GOOGLECALENDAR_EVENTS_LIST",
+                "arguments": {}
+            }),
+            std::time::Duration::ZERO,
+        )
+        .await
+        .unwrap();
+
+    assert!(resp.successful);
+    assert_eq!(attempts.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn execute_tool_does_not_retry_other_auth_errors() {
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let app = Router::new()
+        .route(
+            "/agent-integrations/composio/execute",
+            post(|State(attempts): State<Arc<AtomicUsize>>| async move {
+                attempts.fetch_add(1, Ordering::SeqCst);
+                Json(json!({
+                    "success": true,
+                    "data": {
+                        "data": {},
+                        "successful": false,
+                        "error": "Invalid OAuth scope",
+                        "costUsd": 0.0
+                    }
+                }))
+            }),
+        )
+        .with_state(attempts.clone());
+    let base = start_mock_backend(app).await;
+    let client = build_client_for(base);
+
+    let resp = client
+        .execute_tool_with_post_oauth_retry(
+            "GOOGLECALENDAR_EVENTS_LIST",
+            &json!({
+                "tool": "GOOGLECALENDAR_EVENTS_LIST",
+                "arguments": {}
+            }),
+            std::time::Duration::ZERO,
+        )
+        .await
+        .unwrap();
+
+    assert!(!resp.successful);
+    assert_eq!(resp.error.as_deref(), Some("Invalid OAuth scope"));
+    assert_eq!(attempts.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test]
@@ -579,4 +671,139 @@ async fn delete_connection_surfaces_envelope_error_detail() {
         "expected backend error detail in message, got: {msg}"
     );
     assert!(msg.contains("400"), "expected status 400, got: {msg}");
+}
+
+// ── execute_tool resilience tests (Batch 1 — post-OAuth readiness) ─────
+
+/// When the backend returns `{ "successful": false, "error": "..." }` inside
+/// the data envelope, `execute_tool` should still succeed at the HTTP level
+/// (the envelope `success: true`) but surface the failure via the `successful`
+/// flag on [`ComposioExecuteResponse`]. Callers like `composio_execute` in
+/// `ops.rs` inspect `resp.successful` and propagate the inner error.
+///
+/// This is the shape the backend sends during the post-OAuth readiness gap
+/// (e.g. "App not authorized yet") — the outer `success: true` means the
+/// proxy reached Composio; `successful: false` means Composio itself rejected
+/// the action.
+#[tokio::test]
+async fn execute_tool_surfaces_non_successful_provider_response() {
+    let app = Router::new().route(
+        "/agent-integrations/composio/execute",
+        post(|| async {
+            Json(json!({
+                "success": true,
+                "data": {
+                    "data": {},
+                    "successful": false,
+                    "error": "App not authorized yet — please complete OAuth first",
+                    "costUsd": 0.0
+                }
+            }))
+        }),
+    );
+    let base = start_mock_backend(app).await;
+    let client = build_client_for(base);
+    let resp = client.execute_tool("GMAIL_SEND_EMAIL", None).await.unwrap();
+    assert!(
+        !resp.successful,
+        "non-successful provider response must be surfaced via the successful flag"
+    );
+    let err = resp.error.expect("error field must be present on failure");
+    assert!(
+        err.contains("not authorized"),
+        "error message must pass through verbatim; got: {err}"
+    );
+    assert_eq!(resp.cost_usd, 0.0, "zero cost on failure");
+}
+
+/// A revoked-token error is a distinct failure mode from a transient
+/// readiness gap — both manifest as `successful: false` but with different
+/// error strings. The client must not swallow either; both must surface
+/// in the `error` field so callers can classify them.
+#[tokio::test]
+async fn execute_tool_surfaces_revoked_token_error() {
+    let app = Router::new().route(
+        "/agent-integrations/composio/execute",
+        post(|| async {
+            Json(json!({
+                "success": true,
+                "data": {
+                    "data": {},
+                    "successful": false,
+                    "error": "Token revoked: the user has disconnected their account",
+                    "costUsd": 0.0
+                }
+            }))
+        }),
+    );
+    let base = start_mock_backend(app).await;
+    let client = build_client_for(base);
+    let resp = client
+        .execute_tool("GMAIL_FETCH_EMAILS", None)
+        .await
+        .unwrap();
+    assert!(!resp.successful);
+    let err = resp.error.unwrap();
+    assert!(
+        err.contains("revoked"),
+        "revoked-token message must be preserved verbatim; got: {err}"
+    );
+}
+
+/// A transport-level 5xx is distinct from a provider-level failure: it
+/// means the backend itself failed before reaching Composio. This must
+/// surface as an `Err` from `execute_tool`, not as `successful: false`,
+/// so callers that only inspect the flag don't silently swallow the
+/// outage.
+#[tokio::test]
+async fn execute_tool_propagates_backend_5xx_as_err() {
+    let app = Router::new().route(
+        "/agent-integrations/composio/execute",
+        post(|| async { StatusCode::INTERNAL_SERVER_ERROR }),
+    );
+    let base = start_mock_backend(app).await;
+    let client = build_client_for(base);
+    let result = client.execute_tool("ANY_TOOL", None).await;
+    assert!(
+        result.is_err(),
+        "5xx backend must be an Err, not Ok(unsuccessful)"
+    );
+    let msg = result.unwrap_err().to_string();
+    assert!(
+        msg.contains("500") || msg.contains("Backend returned"),
+        "5xx error message must contain status code; got: {msg}"
+    );
+}
+
+/// `execute_tool` must forward the `tool` field in the request body so
+/// the backend knows which action to proxy to Composio. Regression guard
+/// for any future refactor that touches the body builder.
+#[tokio::test]
+async fn execute_tool_sends_tool_slug_in_request_body() {
+    let app = Router::new().route(
+        "/agent-integrations/composio/execute",
+        post(|Json(body): Json<Value>| async move {
+            let tool_field = body["tool"].as_str().unwrap_or("").to_string();
+            Json(json!({
+                "success": true,
+                "data": {
+                    "data": { "received_tool": tool_field },
+                    "successful": true,
+                    "error": null,
+                    "costUsd": 0.0
+                }
+            }))
+        }),
+    );
+    let base = start_mock_backend(app).await;
+    let client = build_client_for(base);
+    let resp = client
+        .execute_tool("JIRA_CREATE_ISSUE", Some(json!({"project": "OH"})))
+        .await
+        .unwrap();
+    assert!(resp.successful);
+    assert_eq!(
+        resp.data["received_tool"], "JIRA_CREATE_ISSUE",
+        "tool slug must be forwarded in request body"
+    );
 }

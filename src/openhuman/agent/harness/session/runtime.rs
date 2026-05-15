@@ -510,10 +510,11 @@ impl Agent {
                 // `log::info!` (OPENHUMAN-TAURI-99 / -98).
                 //
                 // Other agent errors go through `report_error_or_expected`
-                // so OPENHUMAN-TAURI-5Z and friends — upstream transient
-                // HTTP that bubbles up under `domain=agent` and escapes
-                // the `domain=llm_provider` filter — get demoted to a
-                // warn-level breadcrumb without losing genuine bugs.
+                // so OPENHUMAN-TAURI-5Z and the budget-noise cluster —
+                // upstream transient HTTP and backend budget-exhausted 400s
+                // that bubble up under `domain=agent` and escape the
+                // `domain=llm_provider` filter — get demoted to a
+                // warn/info-level breadcrumb without losing genuine bugs.
                 // `Err` propagation, the `AgentError` domain event, and
                 // downstream `recoverable=false` semantics are preserved.
                 let is_max_iter = matches!(

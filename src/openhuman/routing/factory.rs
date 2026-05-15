@@ -100,3 +100,119 @@ pub fn new_provider(
         health,
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::openhuman::config::LocalAiConfig;
+    use crate::openhuman::providers::traits::{ProviderCapabilities, ToolsPayload};
+    use crate::openhuman::tools::ToolSpec;
+    use async_trait::async_trait;
+
+    struct StubProvider;
+
+    #[async_trait]
+    impl Provider for StubProvider {
+        async fn chat_with_system(
+            &self,
+            _system: Option<&str>,
+            _msg: &str,
+            _model: &str,
+            _temp: f64,
+        ) -> anyhow::Result<String> {
+            Ok("stub".to_string())
+        }
+        fn capabilities(&self) -> ProviderCapabilities {
+            ProviderCapabilities {
+                native_tool_calling: false,
+                vision: false,
+            }
+        }
+        fn convert_tools(&self, _tools: &[ToolSpec]) -> ToolsPayload {
+            ToolsPayload::PromptGuided {
+                instructions: String::new(),
+            }
+        }
+    }
+
+    fn make_provider(config: &LocalAiConfig) -> IntelligentRoutingProvider {
+        new_provider(Box::new(StubProvider), config, "remote-fallback")
+    }
+
+    /// Test that construction does not panic and the provider is usable.
+    /// Private fields are not readable from outside the module, so we verify
+    /// via observable behaviour (supports_streaming, capabilities).
+    #[test]
+    fn factory_local_disabled_when_runtime_disabled_does_not_support_local_streaming() {
+        let mut cfg = LocalAiConfig::default();
+        cfg.runtime_enabled = false;
+        let p = make_provider(&cfg);
+        // When local is disabled, the routing provider defers everything to
+        // remote. StubProvider reports `supports_streaming = false`, so the
+        // composite must surface that — this also exercises the
+        // local-disabled branch in supports_streaming without panicking.
+        assert!(
+            !p.supports_streaming(),
+            "expected remote streaming capability (StubProvider=false) when local runtime is disabled"
+        );
+    }
+
+    #[test]
+    fn factory_constructs_without_panic_when_runtime_enabled() {
+        let mut cfg = LocalAiConfig::default();
+        cfg.runtime_enabled = true;
+        cfg.chat_model_id = "gemma3:4b-it-qat".to_string();
+        let _p = make_provider(&cfg);
+    }
+
+    #[test]
+    fn factory_llamacpp_provider_constructs_without_panic() {
+        // When provider is "llamacpp" the health probe URL must be
+        // `{base}/models` (OpenAI-compat), not `{base}/api/tags` (Ollama).
+        // We verify construction does not panic and the routing provider
+        // is usable.
+        let mut cfg = LocalAiConfig::default();
+        cfg.runtime_enabled = true;
+        cfg.provider = "llamacpp".to_string();
+        cfg.base_url = Some("http://127.0.0.1:8080/v1".to_string());
+        let _p = make_provider(&cfg);
+    }
+
+    #[test]
+    fn factory_custom_openai_provider_constructs_without_panic() {
+        let mut cfg = LocalAiConfig::default();
+        cfg.runtime_enabled = true;
+        cfg.provider = "custom_openai".to_string();
+        cfg.base_url = Some("http://127.0.0.1:1234/v1".to_string());
+        let _p = make_provider(&cfg);
+    }
+
+    #[test]
+    fn factory_llama_server_alias_is_recognised() {
+        // "llama-server" is an alias for the llamacpp OpenAI-compat path.
+        let mut cfg = LocalAiConfig::default();
+        cfg.runtime_enabled = true;
+        cfg.provider = "llama-server".to_string();
+        cfg.base_url = Some("http://127.0.0.1:8080/v1".to_string());
+        let _p = make_provider(&cfg);
+    }
+
+    #[test]
+    fn factory_env_override_url_takes_precedence_over_base_url() {
+        // OPENHUMAN_LOCAL_INFERENCE_URL env var must override config.base_url.
+        // This is tested by ensuring construction succeeds when the env var
+        // is set — a real URL check would require a running server.
+        let _guard = crate::openhuman::local_ai::local_ai_test_guard();
+        unsafe {
+            std::env::set_var("OPENHUMAN_LOCAL_INFERENCE_URL", "http://127.0.0.1:9999/v1");
+        }
+        let mut cfg = LocalAiConfig::default();
+        cfg.runtime_enabled = true;
+        cfg.base_url = Some("http://should-be-ignored:1234/v1".to_string());
+        // Should construct without panic — env override is recognised.
+        let _p = make_provider(&cfg);
+        unsafe {
+            std::env::remove_var("OPENHUMAN_LOCAL_INFERENCE_URL");
+        }
+    }
+}

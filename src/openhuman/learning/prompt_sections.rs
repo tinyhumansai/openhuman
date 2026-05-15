@@ -216,6 +216,10 @@ pub fn load_learned_from_cache(
 }
 
 #[cfg(test)]
+#[path = "prompt_sections_tests.rs"]
+mod prompt_sections_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::openhuman::context::prompt::LearnedContextData;

@@ -14,6 +14,7 @@ import { handleConversations } from "./routes/conversations.mjs";
 import { handleCron } from "./routes/cron.mjs";
 import { handleIntegrations } from "./routes/integrations.mjs";
 import { handleInvites } from "./routes/invites.mjs";
+import { handleLlmCompletions } from "./routes/llm.mjs";
 import { handleOAuth } from "./routes/oauth.mjs";
 import { handlePayments } from "./routes/payments.mjs";
 import { handleUser } from "./routes/user.mjs";
@@ -37,6 +38,10 @@ const ROUTE_HANDLERS = [
   handleUser,
   handleInvites,
   handlePayments,
+  // LLM completions must run before the catch-all stub in
+  // `handleIntegrations` so keyword-driven test scripts can override
+  // the default "Hello from e2e mock agent" reply.
+  handleLlmCompletions,
   handleIntegrations,
   handleWebhooks,
   handleCron,

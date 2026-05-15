@@ -191,13 +191,13 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
       // Leaf panels under features
       case 'screen-intelligence':
       case 'autocomplete':
-      case 'voice':
       case 'messaging':
       case 'tools':
         return [settingsCrumb, featuresCrumb];
 
       // Leaf panels under AI & Models
       case 'local-model':
+      case 'voice':
         return [settingsCrumb, aiModelsCrumb];
 
       // Team sub-pages

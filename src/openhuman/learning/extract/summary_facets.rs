@@ -76,8 +76,15 @@ pub struct StructuredSummary {
 /// Uses the first non-empty `evidence_chunks` entry as the `chunk_id` in
 /// [`EvidenceRef::DocumentChunk`].
 pub fn route_facets_to_buffer(parsed: &StructuredSummary, source_id: &str) {
+    route_facets_to_buffer_into(parsed, source_id, candidate::global());
+}
+
+fn route_facets_to_buffer_into(
+    parsed: &StructuredSummary,
+    source_id: &str,
+    buf: &candidate::Buffer,
+) {
     let now = now_secs();
-    let buf = candidate::global();
     let mut pushed = 0usize;
 
     for facet in &parsed.facets {
@@ -251,20 +258,14 @@ mod tests {
             0.8,
             "behavioral",
         )]);
-        // Use global buffer for integration.
-        let before_global = candidate::global().len();
-        route_facets_to_buffer(&s, "src-1");
-        let after_global = candidate::global().len();
+        route_facets_to_buffer_into(&s, "src-1", &buf);
         // No new candidates pushed.
-        assert_eq!(
-            after_global, before_global,
-            "unknown class should drop the facet"
-        );
-        let _ = (buf, before);
+        assert_eq!(buf.len(), before, "unknown class should drop the facet");
     }
 
     #[test]
     fn drops_facet_without_evidence_chunks() {
+        let buf = Buffer::new(64);
         let s = make_summary(vec![make_facet(
             "style",
             "verbosity",
@@ -273,10 +274,10 @@ mod tests {
             0.8,
             "explicit",
         )]);
-        let before = candidate::global().len();
-        route_facets_to_buffer(&s, "src-2");
+        let before = buf.len();
+        route_facets_to_buffer_into(&s, "src-2", &buf);
         assert_eq!(
-            candidate::global().len(),
+            buf.len(),
             before,
             "facet without evidence_chunks must be dropped"
         );
@@ -301,7 +302,8 @@ mod tests {
     }
 
     #[test]
-    fn route_pushes_to_global_buffer() {
+    fn route_pushes_to_buffer() {
+        let buf = Buffer::new(64);
         let s = make_summary(vec![
             make_facet(
                 "style",
@@ -320,16 +322,16 @@ mod tests {
                 "structural",
             ),
         ]);
-        let before = candidate::global().len();
-        route_facets_to_buffer(&s, "notion:doc-1");
-        let after = candidate::global().len();
+        let before = buf.len();
+        route_facets_to_buffer_into(&s, "notion:doc-1", &buf);
+        let after = buf.len();
         assert_eq!(
             after,
             before + 2,
             "two valid facets should push two candidates"
         );
 
-        let all = candidate::global().peek();
+        let all = buf.peek();
         let tz = all.iter().find(|c| c.key == "timezone");
         let tz = tz.expect("timezone candidate in buffer");
         assert_eq!(tz.value, "UTC+5:30");

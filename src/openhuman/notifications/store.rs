@@ -587,6 +587,10 @@ fn row_to_notification(row: &rusqlite::Row<'_>) -> Result<IntegrationNotificatio
 }
 
 #[cfg(test)]
+#[path = "store_tests.rs"]
+mod store_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::openhuman::config::Config;
