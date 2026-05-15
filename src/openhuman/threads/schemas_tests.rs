@@ -310,3 +310,18 @@ async fn task_board_get_rejects_blank_thread_id() {
         .expect_err("blank id rejected");
     assert!(err.contains("thread_id"), "err: {err}");
 }
+
+#[tokio::test]
+async fn task_board_put_rejects_blank_thread_id() {
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let temp = tempfile::tempdir().expect("tempdir");
+    let _env = WorkspaceEnvGuard::set(temp.path());
+
+    let err = handle_task_board_put(obj(json!({
+        "thread_id": "   ",
+        "cards": []
+    })))
+    .await
+    .expect_err("blank id rejected");
+    assert!(err.contains("thread_id"), "err: {err}");
+}

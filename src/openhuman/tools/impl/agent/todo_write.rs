@@ -126,8 +126,9 @@ impl Tool for TodoWriteTool {
             .ok_or_else(|| anyhow::anyhow!("Missing 'todos' parameter"))?;
         let items: Vec<TodoItem> = serde_json::from_value(todos.clone())
             .map_err(|e| anyhow::anyhow!("Invalid todos array: {e}"))?;
+        let items: Vec<TodoItem> = items.into_iter().map(normalize_todo_item).collect();
 
-        if items.iter().any(|i| i.content.trim().is_empty()) {
+        if items.iter().any(|i| i.content.is_empty()) {
             return Ok(ToolResult::error("todo `content` must not be empty"));
         }
 
@@ -178,6 +179,20 @@ impl Tool for TodoWriteTool {
         }
         Ok(ToolResult::success(body))
     }
+}
+
+fn normalize_todo_item(mut item: TodoItem) -> TodoItem {
+    item.content = item.content.trim().to_string();
+    item.id = normalize_optional(item.id);
+    item.notes = normalize_optional(item.notes);
+    item.blocker = normalize_optional(item.blocker);
+    item
+}
+
+fn normalize_optional(value: Option<String>) -> Option<String> {
+    value
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
 }
 
 #[derive(Debug)]
@@ -241,16 +256,27 @@ async fn persist_thread_board(items: &[TodoItem]) -> Result<(), TaskBoardPersist
     let saved = TaskBoardStore::new(parent.workspace_dir.clone())
         .put(board)
         .map_err(TaskBoardPersistError::Persist)?;
+    let workspace_name = parent
+        .workspace_dir
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "<unknown>".to_string());
     tracing::debug!(
         thread_id = %saved.thread_id,
-        workspace_dir = %parent.workspace_dir.display(),
+        workspace = %workspace_name,
         card_count = saved.cards.len(),
         "[todowrite][task_board] persisted"
     );
     if let Some(tx) = parent.on_progress {
-        let _ = tx
-            .send(AgentProgress::TaskBoardUpdated { board: saved })
-            .await;
+        if let Err(err) = tx.try_send(AgentProgress::TaskBoardUpdated {
+            board: saved.clone(),
+        }) {
+            tracing::debug!(
+                thread_id = %saved.thread_id,
+                error = %err,
+                "[todowrite] task board progress dropped"
+            );
+        }
     }
     Ok(())
 }
@@ -357,6 +383,38 @@ mod tests {
         assert!(!result.is_error, "{}", result.output());
         assert!(result.output().contains("[!] wait for credentials"));
         assert!(result.output().contains("missing token"));
+    }
+
+    #[tokio::test]
+    async fn todowrite_normalizes_items_before_store_and_output() {
+        let store = Arc::new(TodoStore::new());
+        let tool = TodoWriteTool::new(store.clone());
+        let result = tool
+            .execute(json!({
+                "todos": [
+                    {
+                        "id": "   ",
+                        "content": " Draft plan ",
+                        "status": "blocked",
+                        "notes": "  ",
+                        "blocker": " waiting "
+                    }
+                ]
+            }))
+            .await
+            .unwrap();
+
+        assert!(!result.is_error, "{}", result.output());
+        assert!(result.output().contains("[!] Draft plan"));
+        assert!(result.output().contains("blocked: waiting"));
+        assert!(!result.output().contains("[!]  Draft plan"));
+
+        let snap = store.snapshot();
+        assert_eq!(snap.len(), 1);
+        assert_eq!(snap[0].content, "Draft plan");
+        assert_eq!(snap[0].id, None);
+        assert_eq!(snap[0].notes, None);
+        assert_eq!(snap[0].blocker.as_deref(), Some("waiting"));
     }
 
     struct NoopProvider;
@@ -522,6 +580,39 @@ mod tests {
             }
             other => panic!("unexpected progress event: {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn todowrite_does_not_block_when_progress_channel_full() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = Arc::new(TodoStore::new());
+        let tool = TodoWriteTool::new(store);
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        tx.try_send(AgentProgress::TaskBoardUpdated {
+            board: TaskBoard::empty("pre-filled"),
+        })
+        .expect("pre-fill progress channel");
+        let parent = parent_context(temp.path().to_path_buf(), Some(tx));
+
+        let result = tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            with_thread_id("thread-todo", async {
+                with_parent_context(parent, async {
+                    tool.execute(json!({
+                        "todos": [
+                            { "content": "Draft plan", "status": "pending" }
+                        ]
+                    }))
+                    .await
+                })
+                .await
+            })
+            .await
+        })
+        .await
+        .expect("todowrite should not block on a full progress channel")
+        .expect("todowrite execute");
+
+        assert!(!result.is_error, "{}", result.output());
     }
 
     #[tokio::test]
