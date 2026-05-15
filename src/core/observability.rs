@@ -1101,6 +1101,44 @@ mod tests {
     }
 
     #[test]
+    fn integrations_post_composio_timeout_dropped() {
+        // OPENHUMAN-TAURI-18 / -G regression guard. The integrations
+        // client at `crate::openhuman::integrations::client::IntegrationClient::post`
+        // builds the reqwest error chain and routes it through
+        // `report_error_or_expected(.., "integrations", "post", &[("failure",
+        // "transport")])`. The chain text contains the
+        // `"error sending request for url"` anchor so
+        // `is_network_unreachable_message` matches first and demotes to
+        // `NetworkUnreachable` (functionally equivalent to
+        // `TransientUpstreamHttp` for Sentry suppression — both routes
+        // skip the report path via `report_expected_message`).
+        //
+        // Pinning this exact wire shape catches a future refactor that
+        // drops the URL anchor (e.g. a chain-flatten helper that strips
+        // it for "PII safety"), which would silently re-open the leak.
+        let chain = "error sending request for url \
+                     (https://api.tinyhumans.ai/agent-integrations/composio/execute) → \
+                     client error (SendRequest) → connection error → \
+                     Operation timed out (os error 60)";
+        assert_eq!(
+            expected_error_kind(chain),
+            Some(ExpectedErrorKind::NetworkUnreachable),
+            "TAURI-18 chain shape must classify as NetworkUnreachable"
+        );
+
+        // If the URL anchor is ever dropped, the transport-phrase
+        // fallback (`operation timed out` from
+        // `TRANSIENT_TRANSPORT_PHRASES`) catches it via the message
+        // classifier helper used at upstream re-emit sites — confirm
+        // both paths so the regression surface is fully pinned.
+        assert!(
+            is_transient_message_failure(chain),
+            "TAURI-18 chain must also satisfy upstream message classifier \
+             (defense-in-depth for sites that lose the URL anchor)"
+        );
+    }
+
+    #[test]
     fn channels_dispatch_re_emit_of_provider_502_classifies_as_transient() {
         // OPENHUMAN-TAURI-4F (~157 events) / -1C (~87 events) / -8F
         // (~39 events): the reliable provider layer retried 5xx, the
