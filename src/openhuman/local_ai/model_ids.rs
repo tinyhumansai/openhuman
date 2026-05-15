@@ -98,16 +98,16 @@ pub(crate) fn effective_chat_model_id(config: &Config) -> String {
 }
 
 fn raw_chat_model_id(config: &Config) -> String {
+    // For LM Studio the user must set `local_ai.chat_model_id` explicitly —
+    // there is no sensible Ollama-branded default to fall back to. Return an
+    // empty string so callers (diagnostics, status) surface the missing-model
+    // warning rather than silently requesting "gemma3:1b-it-qat" from LM Studio.
     let raw = if !config.local_ai.chat_model_id.trim().is_empty() {
         config.local_ai.chat_model_id.trim()
     } else {
         config.local_ai.model_id.trim()
     };
-    if raw.is_empty() {
-        DEFAULT_OLLAMA_MODEL.to_string()
-    } else {
-        raw.to_string()
-    }
+    raw.to_string()
 }
 
 pub(crate) fn effective_vision_model_id(config: &Config) -> String {
@@ -198,6 +198,18 @@ mod tests {
             effective_chat_model_id(&config),
             "publisher/custom-model-7b"
         );
+    }
+
+    #[test]
+    fn lm_studio_chat_model_returns_empty_when_no_model_configured() {
+        // LM Studio has no sensible Ollama-branded default — an empty model ID
+        // surfaces the missing-model warning in diagnostics / status rather than
+        // silently sending "gemma3:1b-it-qat" to an LM Studio server.
+        let mut config = test_config();
+        config.local_ai.provider = "lm_studio".to_string();
+        config.local_ai.chat_model_id = String::new();
+        config.local_ai.model_id = String::new();
+        assert_eq!(effective_chat_model_id(&config), "");
     }
 
     #[test]

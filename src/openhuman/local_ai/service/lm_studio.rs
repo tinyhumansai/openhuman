@@ -29,6 +29,11 @@ impl LocalAiService {
         Ok(())
     }
 
+    /// Returns `true` when the LM Studio server responds successfully to a
+    /// `/v1/models` probe (regardless of whether any models are loaded).
+    /// Reserved for future health-gating in the routing layer; currently only
+    /// `ensure_lm_studio_available` is used at bootstrap.
+    #[allow(dead_code)]
     pub(in crate::openhuman::local_ai::service) async fn lm_studio_healthy(
         &self,
         config: &Config,
