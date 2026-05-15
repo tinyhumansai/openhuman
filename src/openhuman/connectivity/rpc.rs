@@ -130,6 +130,14 @@ pub async fn diag() -> Result<RpcOutcome<serde_json::Value>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    /// Serialize env-var mutation across the three `resolve_listen_port_*`
+    /// tests so they don't race each other under Rust's default parallel
+    /// runner. Process-global env state means one test's restore can land
+    /// in another test's read window without this. Same pattern used in
+    /// `webview_accounts/ops.rs` and `tools/impl/system/lsp.rs`.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn snapshot_socket_state_is_uninitialized_without_manager() {
@@ -150,6 +158,7 @@ mod tests {
 
     #[test]
     fn resolve_listen_port_defaults_to_7788_when_env_unset() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         // Use a UUID-ish guard so we don't clobber an env the test runner
         // genuinely needs. SAFETY: env mutation is process-global; we
         // restore at the end. See SAFETY note in `cargo test --doc`.
@@ -170,6 +179,7 @@ mod tests {
 
     #[test]
     fn resolve_listen_port_honours_env_override() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         let prev = std::env::var("OPENHUMAN_CORE_PORT").ok();
         unsafe {
             std::env::set_var("OPENHUMAN_CORE_PORT", "65000");
@@ -183,6 +193,7 @@ mod tests {
 
     #[test]
     fn resolve_listen_port_falls_back_on_invalid_env() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         let prev = std::env::var("OPENHUMAN_CORE_PORT").ok();
         unsafe {
             std::env::set_var("OPENHUMAN_CORE_PORT", "not-a-number");
