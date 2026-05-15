@@ -507,6 +507,57 @@ async fn lm_studio_diagnostics_surfaces_reachable_model_list_errors() {
         .as_str()
         .unwrap_or("")
         .contains("Failed to list LM Studio models")));
+    assert!(!diag["repair_actions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|action| action["action"].as_str() == Some("load_lm_studio_model")));
+}
+
+#[tokio::test]
+async fn lm_studio_assets_reports_embedding_as_ollama_managed() {
+    let _guard = crate::openhuman::local_ai::local_ai_test_guard();
+
+    let app = Router::new().route(
+        "/v1/models",
+        get(|| async {
+            Json(json!({
+                "data": [
+                    { "id": "local-model", "object": "model", "owned_by": "lm-studio" }
+                ]
+            }))
+        }),
+    );
+    let base = spawn_mock(app).await;
+    let mut config = lm_studio_config(&base);
+    config.local_ai.embedding_model_id = "bge-m3".to_string();
+
+    let prev_ollama_bin = std::env::var_os("OLLAMA_BIN");
+    let fake_ollama = std::env::current_exe().expect("current test exe path");
+    unsafe {
+        std::env::set_var("OLLAMA_BIN", &fake_ollama);
+    }
+
+    let service = LocalAiService::new(&config);
+    let status = service.assets_status(&config).await.expect("assets status");
+
+    unsafe {
+        match prev_ollama_bin {
+            Some(value) => std::env::set_var("OLLAMA_BIN", value),
+            None => std::env::remove_var("OLLAMA_BIN"),
+        }
+    }
+
+    assert_eq!(status.chat.provider, "lm_studio");
+    assert_eq!(status.chat.state, "ready");
+    assert_eq!(status.embedding.provider, "ollama");
+    assert_eq!(status.embedding.path.as_deref(), Some("ollama://bge-m3"));
+    assert!(status
+        .embedding
+        .warning
+        .as_deref()
+        .unwrap_or("")
+        .contains("Ollama path"));
 }
 
 // ---- owned-PID lifecycle ------------------------------------------------

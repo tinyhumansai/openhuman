@@ -47,6 +47,14 @@ pub(crate) fn test_events_for_external_id(external_id: &str) -> Vec<DomainEvent>
         .collect()
 }
 
+#[cfg(test)]
+pub(crate) fn clear_test_events() {
+    TEST_EVENTS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clear();
+}
+
 #[cfg(not(test))]
 fn record_test_event(_event: &DomainEvent) {}
 

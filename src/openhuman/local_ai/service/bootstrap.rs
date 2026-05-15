@@ -176,6 +176,30 @@ impl LocalAiService {
                 return;
             }
 
+            if effective_config.local_ai.preload_embedding_model {
+                let embedding_model = model_ids::effective_embedding_model_id(&effective_config);
+                {
+                    let mut status = self.status.lock();
+                    status.state = "downloading".to_string();
+                    status.embedding_state = "downloading".to_string();
+                    status.warning = Some(format!(
+                        "Downloading embedding model via Ollama: `{embedding_model}`"
+                    ));
+                }
+                if let Err(err) = async {
+                    self.ensure_ollama_server(&effective_config).await?;
+                    self.ensure_ollama_model_available(&embedding_model, "embedding")
+                        .await
+                }
+                .await
+                {
+                    log::warn!("[local_ai] LM Studio bootstrap embedding preload failed: {err}");
+                    self.status.lock().embedding_state = "missing".to_string();
+                } else {
+                    self.status.lock().embedding_state = "ready".to_string();
+                }
+            }
+
             if effective_config.local_ai.preload_stt_model {
                 if let Err(err) = self.ensure_stt_asset_available(&effective_config).await {
                     log::warn!("[local_ai] LM Studio bootstrap STT preload failed: {err}");
@@ -192,7 +216,11 @@ impl LocalAiService {
             let mut status = self.status.lock();
             status.state = "ready".to_string();
             status.vision_state = "disabled".to_string();
-            status.embedding_state = "idle".to_string();
+            if !effective_config.local_ai.preload_embedding_model {
+                status.embedding_state = "idle".to_string();
+            } else if status.embedding_state != "ready" {
+                status.embedding_state = "missing".to_string();
+            }
             if !effective_config.local_ai.preload_stt_model {
                 status.stt_state = "idle".to_string();
             }

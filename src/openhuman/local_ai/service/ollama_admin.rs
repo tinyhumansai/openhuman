@@ -1080,12 +1080,12 @@ impl LocalAiService {
                 "base_url": base_url,
             }));
         }
-        if healthy && models.is_empty() {
+        if healthy && models_error.is_none() && models.is_empty() {
             issues.push("LM Studio is reachable but no models are loaded".to_string());
             repair_actions.push(serde_json::json!({
                 "action": "load_lm_studio_model",
             }));
-        } else if healthy && !chat_found {
+        } else if healthy && models_error.is_none() && !chat_found {
             issues.push(format!(
                 "Chat model `{}` is not loaded in LM Studio",
                 expected_chat

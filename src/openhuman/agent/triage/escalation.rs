@@ -210,6 +210,22 @@ mod tests {
     use serde_json::json;
     use tokio::time::{sleep, timeout, Duration};
 
+    static TEST_EVENTS_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    struct TestEventsGuard(tokio::sync::MutexGuard<'static, ()>);
+
+    impl Drop for TestEventsGuard {
+        fn drop(&mut self) {
+            events::clear_test_events();
+        }
+    }
+
+    async fn test_events_guard() -> TestEventsGuard {
+        let guard = TEST_EVENTS_LOCK.lock().await;
+        events::clear_test_events();
+        TestEventsGuard(guard)
+    }
+
     fn envelope(external_id: &str) -> TriggerEnvelope {
         TriggerEnvelope::from_composio(
             "gmail",
@@ -268,6 +284,7 @@ mod tests {
 
     #[tokio::test]
     async fn apply_decision_drop_only_publishes_evaluated() {
+        let _events_guard = test_events_guard().await;
         let envelope = envelope("esc-drop");
         let _ = init_global(32);
         let collect = tokio::spawn(collect_trigger_events_until("esc-drop", |events| {
@@ -306,6 +323,7 @@ mod tests {
 
     #[tokio::test]
     async fn apply_decision_acknowledge_only_publishes_evaluated() {
+        let _events_guard = test_events_guard().await;
         let envelope = envelope("esc-ack");
         let _ = init_global(32);
         let collect = tokio::spawn(collect_trigger_events_until("esc-ack", |events| {
@@ -344,6 +362,7 @@ mod tests {
 
     #[tokio::test]
     async fn apply_decision_react_failure_publishes_failed_event() {
+        let _events_guard = test_events_guard().await;
         let envelope = envelope("esc-react-fail");
         let _ = init_global(32);
         let _ = AgentDefinitionRegistry::init_global_builtins();
@@ -392,6 +411,7 @@ mod tests {
 
     #[tokio::test]
     async fn apply_decision_escalate_failure_publishes_failed_event() {
+        let _events_guard = test_events_guard().await;
         let envelope = envelope("esc-escalate-fail");
         let _ = init_global(32);
         let _ = AgentDefinitionRegistry::init_global_builtins();

@@ -4,7 +4,7 @@ use futures_util::TryStreamExt;
 
 use crate::openhuman::config::Config;
 use crate::openhuman::local_ai::model_ids;
-use log::debug;
+use tracing::{debug, trace};
 
 use crate::openhuman::local_ai::paths::{
     resolve_stt_model_path, resolve_tts_voice_path, stt_model_target_path, tts_model_target_path,
@@ -26,34 +26,210 @@ impl LocalAiService {
         let tts_voice = model_ids::effective_tts_voice_id(config);
 
         let provider = provider_from_config(config);
+        let correlation_id = uuid::Uuid::new_v4().to_string();
+        trace!(
+            target: "local_ai::assets",
+            %correlation_id,
+            provider = %provider.as_str(),
+            chat_model = %chat_model,
+            vision_model = %vision_model,
+            embedding_model = %embedding_model,
+            "[local_ai:assets:provider_routing] entry"
+        );
 
         // Pre-flight precondition: if no Ollama binary exists anywhere
-        // discoverable, every `has_model` call will fail (or time out). Skip
-        // the HTTP probes entirely and report a clean "missing" state with
-        // `ollama_available: false` so the UI can render an "Install Ollama"
-        // CTA instead of perpetually-empty model state.
-        let ollama_available = if provider == LocalAiProvider::Ollama {
-            self.ollama_binary_present(config)
+        // discoverable, every Ollama-backed `has_model` call will fail (or
+        // time out). LM Studio still delegates embeddings to Ollama in this
+        // first provider slice, so it needs the same pre-flight for the
+        // embedding branch.
+        let uses_ollama_assets = matches!(
+            provider,
+            LocalAiProvider::Ollama | LocalAiProvider::LmStudio
+        );
+        let ollama_available = if uses_ollama_assets {
+            let present = self.ollama_binary_present(config);
+            debug!(
+                target: "local_ai::assets",
+                %correlation_id,
+                provider = %provider.as_str(),
+                ollama_available = present,
+                "[local_ai:assets:provider_routing] ollama binary check"
+            );
+            present
         } else {
             true
         };
         let (chat_ready, vision_ready, embedding_ready) = if provider == LocalAiProvider::LmStudio {
-            (
-                self.has_lm_studio_model(config, &chat_model)
-                    .await
-                    .unwrap_or(false),
-                false,
-                false,
-            )
+            trace!(
+                target: "local_ai::assets",
+                %correlation_id,
+                branch = "lm_studio",
+                "[local_ai:assets:provider_routing] selected provider branch"
+            );
+            let chat_ready = match self.has_lm_studio_model(config, &chat_model).await {
+                Ok(ready) => {
+                    debug!(
+                        target: "local_ai::assets",
+                        %correlation_id,
+                        provider = "lm_studio",
+                        model = %chat_model,
+                        ready,
+                        "[local_ai:assets:provider_routing] lm studio chat model check"
+                    );
+                    ready
+                }
+                Err(err) => {
+                    debug!(
+                        target: "local_ai::assets",
+                        %correlation_id,
+                        provider = "lm_studio",
+                        model = %chat_model,
+                        error = %err,
+                        "[local_ai:assets:provider_routing] lm studio chat model check failed"
+                    );
+                    false
+                }
+            };
+            let embedding_ready = if ollama_available {
+                match self.has_model(&embedding_model).await {
+                    Ok(ready) => {
+                        debug!(
+                            target: "local_ai::assets",
+                            %correlation_id,
+                            provider = "ollama",
+                            model = %embedding_model,
+                            ready,
+                            "[local_ai:assets:provider_routing] lm studio embedding ollama model check"
+                        );
+                        ready
+                    }
+                    Err(err) => {
+                        debug!(
+                            target: "local_ai::assets",
+                            %correlation_id,
+                            provider = "ollama",
+                            model = %embedding_model,
+                            error = %err,
+                            "[local_ai:assets:provider_routing] lm studio embedding ollama model check failed"
+                        );
+                        false
+                    }
+                }
+            } else {
+                debug!(
+                    target: "local_ai::assets",
+                    %correlation_id,
+                    provider = "ollama",
+                    model = %embedding_model,
+                    "[local_ai:assets:provider_routing] lm studio embedding check skipped; ollama binary missing"
+                );
+                false
+            };
+            (chat_ready, false, embedding_ready)
         } else if ollama_available {
-            (
-                self.has_model(&chat_model).await.unwrap_or(false),
-                self.has_model(&vision_model).await.unwrap_or(false),
-                self.has_model(&embedding_model).await.unwrap_or(false),
-            )
+            trace!(
+                target: "local_ai::assets",
+                %correlation_id,
+                branch = "ollama",
+                "[local_ai:assets:provider_routing] selected provider branch"
+            );
+            let chat_ready = match self.has_model(&chat_model).await {
+                Ok(ready) => {
+                    debug!(
+                        target: "local_ai::assets",
+                        %correlation_id,
+                        provider = "ollama",
+                        capability = "chat",
+                        model = %chat_model,
+                        ready,
+                        "[local_ai:assets:provider_routing] ollama model check"
+                    );
+                    ready
+                }
+                Err(err) => {
+                    debug!(
+                        target: "local_ai::assets",
+                        %correlation_id,
+                        provider = "ollama",
+                        capability = "chat",
+                        model = %chat_model,
+                        error = %err,
+                        "[local_ai:assets:provider_routing] ollama model check failed"
+                    );
+                    false
+                }
+            };
+            let vision_ready = match self.has_model(&vision_model).await {
+                Ok(ready) => {
+                    debug!(
+                        target: "local_ai::assets",
+                        %correlation_id,
+                        provider = "ollama",
+                        capability = "vision",
+                        model = %vision_model,
+                        ready,
+                        "[local_ai:assets:provider_routing] ollama model check"
+                    );
+                    ready
+                }
+                Err(err) => {
+                    debug!(
+                        target: "local_ai::assets",
+                        %correlation_id,
+                        provider = "ollama",
+                        capability = "vision",
+                        model = %vision_model,
+                        error = %err,
+                        "[local_ai:assets:provider_routing] ollama model check failed"
+                    );
+                    false
+                }
+            };
+            let embedding_ready = match self.has_model(&embedding_model).await {
+                Ok(ready) => {
+                    debug!(
+                        target: "local_ai::assets",
+                        %correlation_id,
+                        provider = "ollama",
+                        capability = "embedding",
+                        model = %embedding_model,
+                        ready,
+                        "[local_ai:assets:provider_routing] ollama model check"
+                    );
+                    ready
+                }
+                Err(err) => {
+                    debug!(
+                        target: "local_ai::assets",
+                        %correlation_id,
+                        provider = "ollama",
+                        capability = "embedding",
+                        model = %embedding_model,
+                        error = %err,
+                        "[local_ai:assets:provider_routing] ollama model check failed"
+                    );
+                    false
+                }
+            };
+            (chat_ready, vision_ready, embedding_ready)
         } else {
+            trace!(
+                target: "local_ai::assets",
+                %correlation_id,
+                branch = "ollama_missing_binary",
+                "[local_ai:assets:provider_routing] selected provider branch"
+            );
             (false, false, false)
         };
+        trace!(
+            target: "local_ai::assets",
+            %correlation_id,
+            chat_ready,
+            vision_ready,
+            embedding_ready,
+            ollama_available,
+            "[local_ai:assets:provider_routing] exit"
+        );
         let stt_resolve = resolve_stt_model_path(config);
         let tts_resolve = resolve_tts_voice_path(config);
 
@@ -109,6 +285,7 @@ impl LocalAiService {
         };
 
         let vision_mode = presets::vision_mode_for_config(&config.local_ai);
+        let embedding_path = Some(format!("ollama://{embedding_model}"));
         Ok(LocalAiAssetsStatus {
             chat: LocalAiAssetStatus {
                 state: if chat_ready { "ready" } else { "missing" }.to_string(),
@@ -157,7 +334,7 @@ impl LocalAiService {
                 } else {
                     provider.as_str().to_string()
                 },
-                path: None,
+                path: embedding_path,
                 warning: (provider == LocalAiProvider::LmStudio).then(|| {
                     "Embeddings still use the existing Ollama path in this first LM Studio slice."
                         .to_string()
@@ -307,13 +484,35 @@ impl LocalAiService {
 
         if provider_from_config(config) == LocalAiProvider::LmStudio {
             self.ensure_lm_studio_available(config).await?;
+            if config.local_ai.preload_embedding_model {
+                let model_id = model_ids::effective_embedding_model_id(config);
+                {
+                    let mut status = self.status.lock();
+                    status.state = "downloading".to_string();
+                    status.embedding_state = "downloading".to_string();
+                    status.warning = Some(format!(
+                        "Downloading embedding model via Ollama: `{model_id}`"
+                    ));
+                }
+                self.ensure_ollama_server(config).await?;
+                self.ensure_ollama_model_available(&model_id, "embedding")
+                    .await?;
+                self.status.lock().embedding_state = "ready".to_string();
+            }
             if config.local_ai.preload_stt_model {
                 self.ensure_stt_asset_available(config).await?;
             }
             if config.local_ai.preload_tts_voice {
                 self.ensure_tts_asset_available(config).await?;
             }
-            self.status.lock().state = "ready".to_string();
+            {
+                let mut status = self.status.lock();
+                status.state = "ready".to_string();
+                if !config.local_ai.preload_embedding_model {
+                    status.embedding_state = "idle".to_string();
+                }
+                status.warning = None;
+            }
             return Ok(());
         }
 
@@ -399,13 +598,10 @@ impl LocalAiService {
 
         let capability = capability.trim().to_ascii_lowercase();
         if provider_from_config(config) == LocalAiProvider::LmStudio
-            && matches!(
-                capability.as_str(),
-                "chat" | "vision" | "embedding" | "embeddings"
-            )
+            && matches!(capability.as_str(), "chat" | "vision")
         {
             return Err(
-                "LM Studio manages model downloads and loading. Load the model in LM Studio, then retry."
+                "LM Studio manages chat and vision model downloads. Load the model in LM Studio, then retry."
                     .to_string(),
             );
         }
