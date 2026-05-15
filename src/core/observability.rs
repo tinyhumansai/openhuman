@@ -306,6 +306,21 @@ fn is_provider_user_state_message(lower: &str) -> bool {
     // OPENHUMAN-TAURI-97: composio authorize with a blank required field —
     // SharePoint Subdomain, WhatsApp WABA ID, Tenant Name, etc.
     // Backend returns 500 with `"Missing required fields: …"` body.
+    //
+    // **Intentionally broad** — unlike the trigger/toolkit arms, this is a
+    // single substring with no second anchor. Composio's wire shape varies
+    // per provider (`Missing required fields: Tenant Name`, `Missing
+    // required fields: Your Subdomain (example: 'your-subdomain' for…)`,
+    // `Missing required fields: WABA ID (WhatsApp Business Account ID…)`)
+    // and embedding every variant would be brittle. Accepted false-positive
+    // surface: a non-composio caller whose error happens to contain
+    // `"missing required fields"` (e.g. `"Internal error: missing required
+    // fields in config"`) will also demote to info. This is fine — every
+    // current emit site routed through `report_error_or_expected` is scoped
+    // to composio / integrations envelopes, so a stray collision would have
+    // to come from a brand-new call site that explicitly opts in.
+    // See `unrelated_missing_required_fields_classifies_as_accepted_false_positive`
+    // for the documented surface.
     if lower.contains("missing required fields") {
         return true;
     }
@@ -1306,6 +1321,26 @@ mod tests {
             expected_error_kind("the cache is not enabled in this build"),
             None,
             "bare 'is not enabled' without 'toolkit ' anchor must NOT classify"
+        );
+    }
+
+    #[test]
+    fn unrelated_missing_required_fields_classifies_as_accepted_false_positive() {
+        // Documents the breadth of the `"missing required fields"` arm —
+        // unlike the trigger/toolkit arms it has no second anchor, so a
+        // non-composio call site whose error happens to contain the phrase
+        // will also demote. This is the accepted false-positive surface
+        // per the classifier doc-comment (every current emit site is
+        // scoped to composio/integrations envelopes, so a stray collision
+        // would have to come from a brand-new opt-in call site).
+        //
+        // Pinning this assertion locks the breadth in so a future
+        // narrowing of the matcher surfaces here instead of silently
+        // re-bucketing the demote path.
+        assert_eq!(
+            expected_error_kind("Internal error: missing required fields in config"),
+            Some(ExpectedErrorKind::ProviderUserState),
+            "accepted false-positive: bare 'missing required fields' demotes by design"
         );
     }
 
