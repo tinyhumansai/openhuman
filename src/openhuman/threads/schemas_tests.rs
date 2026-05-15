@@ -297,6 +297,13 @@ async fn task_board_handlers_roundtrip_task_board_payload() {
         .await
         .expect("task board get");
     assert_eq!(get["taskBoard"]["cards"].as_array().unwrap().len(), 2);
+    // Assert that normalization is preserved in the persisted get payload.
+    assert_eq!(get["taskBoard"]["threadId"], "thread-rpc");
+    assert_eq!(get["taskBoard"]["cards"][0]["id"], "task-a");
+    assert_eq!(get["taskBoard"]["cards"][0]["title"], "First task");
+    assert_eq!(get["taskBoard"]["cards"][0]["order"], 0);
+    assert_eq!(get["taskBoard"]["cards"][1]["id"], "task-b");
+    assert_eq!(get["taskBoard"]["cards"][1]["blocker"], "waiting");
 }
 
 #[tokio::test]
