@@ -273,6 +273,24 @@ fn chrono_now_millis() -> i64 {
         .unwrap_or(0)
 }
 
+/// Normalize a chat display name for active-chat → JID matching (issue #1376).
+/// Lowercases, strips every non-ASCII-alphanumeric code point (drops emoji,
+/// punctuation, dashes, separators), and collapses internal whitespace runs
+/// to nothing — leaves `[a-z0-9]*`. Lets the matcher find a match when the
+/// DOM-parsed header text drifts slightly from the IDB-stored chat name
+/// (extra spaces, trailing emoji, hyphenation differences).
+pub(crate) fn normalize_chat_name(s: &str) -> String {
+    s.chars()
+        .filter_map(|c| {
+            if c.is_ascii_alphanumeric() {
+                Some(c.to_ascii_lowercase())
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
 async fn scan_once<R: Runtime>(
     app: &AppHandle<R>,
     account_id: &str,
@@ -568,8 +586,10 @@ fn emit_snapshot<R: Runtime>(app: &AppHandle<R>, account_id: &str, snap: &ScanSn
     // don't mis-attribute messages.
     let active_chat_jid: Option<String> = snap.active_chat_name.as_deref().and_then(|name| {
         let name_lc = name.to_ascii_lowercase();
+        let name_norm = normalize_chat_name(name);
         let mut exact: Vec<&str> = Vec::new();
         let mut ci: Vec<&str> = Vec::new();
+        let mut normalized: Vec<&str> = Vec::new();
         let mut substring: Vec<&str> = Vec::new();
         for (jid, chat) in snap.chats.iter() {
             let chat_name = chat.get("name").and_then(|v| v.as_str()).unwrap_or("");
@@ -577,22 +597,36 @@ fn emit_snapshot<R: Runtime>(app: &AppHandle<R>, account_id: &str, snap: &ScanSn
                 exact.push(jid);
             } else if !chat_name.is_empty() && chat_name.to_ascii_lowercase() == name_lc {
                 ci.push(jid);
-            } else if !chat_name.is_empty()
-                && (chat_name.to_ascii_lowercase().contains(&name_lc)
-                    || name_lc.contains(&chat_name.to_ascii_lowercase()))
-            {
-                substring.push(jid);
+            } else if !chat_name.is_empty() {
+                // Normalized tier (issue #1376): strip non-alphanumeric +
+                // collapse whitespace + lowercase, then compare equality.
+                // Catches drift introduced by emoji, punctuation, or
+                // double-spaces between the DOM header text and the IDB
+                // chat name (e.g. group titles like "17-18-19 July samagam"
+                // vs "17 18 19 July samagam ✨"). Substring stays as a final
+                // fallback so loose matches are tried last.
+                let chat_norm = normalize_chat_name(chat_name);
+                if !name_norm.is_empty() && chat_norm == name_norm {
+                    normalized.push(jid);
+                } else if chat_name.to_ascii_lowercase().contains(&name_lc)
+                    || name_lc.contains(&chat_name.to_ascii_lowercase())
+                {
+                    substring.push(jid);
+                }
             }
         }
-        // Prefer exact > case-insensitive > substring. Substring only wins
-        // when there's exactly one candidate (avoids cross-attribution when
-        // many chats share a token like a common first name).
-        match (exact.len(), ci.len(), substring.len()) {
-            (1, _, _) => Some(exact[0].to_string()),
-            (0, 1, _) => Some(ci[0].to_string()),
-            (0, 0, 1) => Some(substring[0].to_string()),
-            (e, c, s) => {
-                let count = e + c + s;
+        // Prefer exact > case-insensitive > normalized > substring. Each
+        // tier only wins when it has exactly one candidate (avoids
+        // cross-attribution when many chats share a token like a common
+        // first name). Tier counts feed into the warn log so ambiguous
+        // resolutions are visible in the scanner output.
+        match (exact.len(), ci.len(), normalized.len(), substring.len()) {
+            (1, _, _, _) => Some(exact[0].to_string()),
+            (0, 1, _, _) => Some(ci[0].to_string()),
+            (0, 0, 1, _) => Some(normalized[0].to_string()),
+            (0, 0, 0, 1) => Some(substring[0].to_string()),
+            (e, c, n, s) => {
+                let count = e + c + n + s;
                 if count > 1 {
                     log::warn!(
                         "[whatsapp_scanner] ambiguous active-chat resolution: {} candidates for '{}' — skipping backfill",
@@ -883,6 +917,20 @@ fn emit_grouped_whatsapp<R: Runtime>(
                     .and_then(|v| v.as_i64())
                     .or_else(|| m.get("preTimestamp").and_then(|v| v.as_i64()))
                     .unwrap_or(0);
+                // Per-row source tag (issue #1376): rows that picked up their
+                // body from the DOM scrape get tagged `cdp-dom` so the
+                // structured store can distinguish DOM-sourced text from
+                // IDB-sourced metadata. `merge_dom_into_snapshot` stamps
+                // `bodySource = "dom"` (IDB row patched with DOM body) and
+                // `"dom-only"` (DOM row with no IDB peer); both cases fall
+                // back to `cdp-dom`. Everything else inherits the caller's
+                // tag (full-scan = `cdp-indexeddb`, fast-tick = `cdp-dom`).
+                let row_source = m
+                    .get("bodySource")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| matches!(*s, "dom" | "dom-only"))
+                    .map(|_| "cdp-dom")
+                    .unwrap_or(source);
                 Some(json!({
                     "message_id": msg_id,
                     "chat_id": chat_id,
@@ -892,7 +940,7 @@ fn emit_grouped_whatsapp<R: Runtime>(
                     "body": body,
                     "timestamp": timestamp,
                     "message_type": m.get("type").cloned().unwrap_or(Value::Null),
-                    "source": source,
+                    "source": row_source,
                 }))
             })
             .collect();
@@ -1419,6 +1467,45 @@ impl ScannerRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── Issue #1376 — chat-name normalization for active-chat → JID lookup ──
+
+    #[test]
+    fn normalize_chat_name_strips_punctuation_and_emoji() {
+        // Group titles routinely pick up emoji + punctuation drift between
+        // the DOM-parsed conversation header and the IDB-stored chat name.
+        // Normalization should collapse both sides to the same key so the
+        // lookup at scan_once succeeds.
+        assert_eq!(
+            normalize_chat_name("17-18-19 July samagam"),
+            "171819julysamagam"
+        );
+        assert_eq!(
+            normalize_chat_name("17 18 19 July  samagam"),
+            "171819julysamagam"
+        );
+        assert_eq!(
+            normalize_chat_name("17-18-19 July samagam ✨"),
+            "171819julysamagam"
+        );
+        assert_eq!(
+            normalize_chat_name("17.18.19 July, samagam!"),
+            "171819julysamagam"
+        );
+        // Identity property — already-normal strings round-trip unchanged.
+        assert_eq!(normalize_chat_name("foo123"), "foo123");
+        // Empty input → empty output (caller guards against this).
+        assert_eq!(normalize_chat_name(""), "");
+        assert_eq!(normalize_chat_name("   "), "");
+        assert_eq!(normalize_chat_name("✨"), "");
+    }
+
+    #[test]
+    fn normalize_chat_name_lowercases() {
+        assert_eq!(normalize_chat_name("Hello World"), "helloworld");
+        assert_eq!(normalize_chat_name("HELLO"), "hello");
+        assert_eq!(normalize_chat_name("hElLo"), "hello");
+    }
 
     fn insert_pending_tasks(
         registry: &ScannerRegistry,
