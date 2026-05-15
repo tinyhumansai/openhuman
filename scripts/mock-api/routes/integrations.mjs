@@ -141,16 +141,7 @@ export function handleIntegrations(ctx) {
     return true;
   }
 
-  if (method === "POST" && /^\/openai\/v1\/chat\/completions\/?$/.test(url)) {
-    json(res, 200, {
-      choices: [
-        {
-          message: { role: "assistant", content: "Hello from e2e mock agent" },
-        },
-      ],
-    });
-    return true;
-  }
+  // (chat/completions is handled by routes/llm.mjs ahead of this route)
 
   // ── Composio ───────────────────────────────────────────────
   if (

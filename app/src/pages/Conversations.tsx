@@ -10,7 +10,7 @@ import PillTabBar from '../components/PillTabBar';
 import UpsellBanner from '../components/upsell/UpsellBanner';
 import { dismissBanner, shouldShowBanner } from '../components/upsell/upsellDismissState';
 import UsageLimitModal from '../components/upsell/UsageLimitModal';
-import MicCloudComposer from '../features/human/MicCloudComposer';
+import MicComposer from '../features/human/MicComposer';
 // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
 // import { ONBOARDING_WELCOME_THREAD_LABEL } from '../constants/onboardingChat';
 import { useStickToBottom } from '../hooks/useStickToBottom';
@@ -1648,11 +1648,16 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
               </p>
               <div className="flex items-center gap-2 flex-shrink-0 ml-2">
                 {(sendError.code === 'stt_not_ready' ||
-                  sendError.code === 'voice_transcription') && (
+                  sendError.code === 'voice_transcription' ||
+                  sendError.code === 'tts_not_ready' ||
+                  sendError.code === 'voice_synthesis') && (
                   <button
                     onClick={() => {
                       setSendError(null);
-                      navigate('/settings/local-model');
+                      // STT/TTS provider settings live on the Voice panel
+                      // since PR 2; the legacy local-model route was for
+                      // back when speech assets were lumped with Ollama.
+                      navigate('/settings/voice');
                     }}
                     className="text-xs text-primary-500 hover:text-primary-600 font-medium transition-colors">
                     Set up
@@ -1668,7 +1673,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
           )}
 
           {composer === 'mic-cloud' ? (
-            <MicCloudComposer
+            <MicComposer
               // Without `!selectedThreadId`, a mic submit before a thread is
               // ready hits `handleSendMessage`'s early return and the
               // transcript is silently dropped — the user spoke into the void.

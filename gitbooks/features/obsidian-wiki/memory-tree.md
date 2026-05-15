@@ -166,3 +166,13 @@ Open it from the bottom navigation bar.
 **Search & retrieval.** A search bar over the Memory Tree. Source-scoped, topic-scoped or global queries are all supported, and any result links back to the underlying chunk file in your Obsidian vault for full provenance.
 
 **Routing.** The Intelligence tab also surfaces which model the agent is using per task - see [Automatic Model Routing](../model-routing/).
+
+## Swapping the backend
+
+The Memory Tree pipeline (chunker → score → seal → summarise) is the
+default. Operators who self-host [agentmemory](https://github.com/rohitg00/agentmemory)
+across multiple agents and want OpenHuman to share that same durable
+store can opt into an external backend via `MemoryConfig.backend =
+"agentmemory"` — see [agentmemory backend](agentmemory-backend.md) for
+config keys, field mapping, endpoint table, security, and failure
+modes.

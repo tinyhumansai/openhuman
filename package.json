@@ -32,6 +32,8 @@
     "reset": "bash scripts/shortcuts/ws-reset.sh",
     "review": "bash scripts/shortcuts/review/cli.sh",
     "work": "bash scripts/shortcuts/work/cli.sh",
+    "agent-batch": "node scripts/agent-batch/cli.mjs",
+    "agent-batch:test": "node --test scripts/agent-batch/__tests__/lib.test.mjs scripts/agent-batch/__tests__/cli.test.mjs",
     "debug": "bash scripts/debug/cli.sh",
     "test:install-ps1": "pwsh -NoProfile -File scripts/tests/OpenHumanWindowsInstall.Tests.ps1",
     "rust:check": "pnpm --filter openhuman-app rust:check",

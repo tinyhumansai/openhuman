@@ -229,6 +229,10 @@ pub fn request_microphone_access() {
     // Unsupported platform — no-op.
 }
 
+#[cfg(test)]
+#[path = "permissions_tests.rs"]
+mod tests;
+
 /// Returns a platform-specific user-facing message when microphone permission is denied.
 pub fn microphone_denied_message() -> String {
     #[cfg(target_os = "macos")]

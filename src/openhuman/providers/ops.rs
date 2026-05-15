@@ -397,15 +397,34 @@ pub fn create_intelligent_routing_provider(
     config: &crate::openhuman::config::Config,
     options: &ProviderRuntimeOptions,
 ) -> anyhow::Result<Box<dyn Provider>> {
-    let backend = create_backend_inference_provider(inference_url, backend_url, api_key, options)?;
+    let raw_backend =
+        create_backend_inference_provider(inference_url, backend_url, api_key, options)?;
+    // Wrap the raw backend in ReliableProvider so transient 502/503/504 errors
+    // are retried before propagating to the agent turn. Without this, a single
+    // 502 from the backend bypasses the retry layer entirely and surfaces as a
+    // fatal `run_single` failure.
+    log::debug!(
+        "[providers] initialising reliable wrapper: retries={} backoff_ms={} fallbacks={}",
+        config.reliability.provider_retries,
+        config.reliability.provider_backoff_ms,
+        config.reliability.model_fallbacks.len()
+    );
+    let reliable_backend: Box<dyn Provider> = Box::new(
+        reliable::ReliableProvider::new(
+            vec![(INFERENCE_BACKEND_ID.to_string(), raw_backend)],
+            config.reliability.provider_retries,
+            config.reliability.provider_backoff_ms,
+        )
+        .with_model_fallbacks(config.reliability.model_fallbacks.clone()),
+    );
     let default_model = config
         .default_model
         .as_deref()
         .unwrap_or(crate::openhuman::config::DEFAULT_MODEL);
 
     // When the user has configured `model_routes` (custom provider via
-    // BackendProviderPanel), wrap the remote in a RouterProvider so abstract
-    // tier names like `reasoning-v1` get translated to the configured
+    // BackendProviderPanel), wrap the reliable remote in a RouterProvider so
+    // abstract tier names like `reasoning-v1` get translated to the configured
     // provider-specific model id (e.g. `gpt-5.5`) BEFORE the request leaves
     // the host. Without this step the abstract tier name would reach
     // `custom_openai` and 404. The OpenHuman backend can dispatch tier names
@@ -417,10 +436,10 @@ pub fn create_intelligent_routing_provider(
         inference_url.is_some()
     );
     let remote: Box<dyn Provider> = if config.model_routes.is_empty() {
-        backend
+        reliable_backend
     } else {
         let providers: Vec<(String, Box<dyn Provider>)> =
-            vec![(INFERENCE_BACKEND_ID.to_string(), backend)];
+            vec![(INFERENCE_BACKEND_ID.to_string(), reliable_backend)];
         let routes: Vec<(String, router::Route)> = config
             .model_routes
             .iter()

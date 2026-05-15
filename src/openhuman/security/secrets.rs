@@ -188,8 +188,22 @@ impl SecretStore {
         }
 
         if self.key_path.exists() {
-            let hex_key = read_key_file_with_retry(&self.key_path)
-                .context("Failed to read secret key file")?;
+            let hex_key = read_key_file_with_retry(&self.key_path).with_context(|| {
+                let mut msg = format!(
+                    "Failed to read secret key file at {}",
+                    self.key_path.display()
+                );
+                #[cfg(windows)]
+                {
+                    msg.push_str(
+                        "\n\nThis is often caused by incorrect file permissions on Windows. \
+                         Try repairing ACLs on the .openhuman directory:\n\
+                         icacls \"%USERPROFILE%\\.openhuman\" /reset /t /c\n\
+                         icacls \"%USERPROFILE%\\.openhuman\\.secret_key\" /reset /c",
+                    );
+                }
+                msg
+            })?;
             let key = hex_decode(hex_key.trim()).context("Secret key file is corrupt")?;
             anyhow::ensure!(
                 key.len() == KEY_LEN,

@@ -178,10 +178,13 @@ pub async fn rpc_auth_middleware(req: axum::extract::Request, next: Next) -> Res
 ///
 /// Uses `rand::rng()` (thread-local, OS-seeded CSPRNG) introduced in rand 0.9.
 fn generate_token() -> String {
-    use rand::RngCore as _;
+    use rand::RngExt as _;
+    log::trace!("[auth] generate_token: start (32 bytes)");
     let mut bytes = [0u8; 32];
-    rand::rng().fill_bytes(&mut bytes);
-    hex::encode(bytes)
+    rand::rng().fill(&mut bytes);
+    let token = hex::encode(bytes);
+    log::trace!("[auth] generate_token: complete (64 hex chars)");
+    token
 }
 
 /// Write `token` to `path` with owner-only read+write permissions on Unix.

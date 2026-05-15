@@ -13,7 +13,8 @@ pub mod rest;
 pub mod socket;
 
 pub use config::{
-    api_base_from_env, effective_api_url, normalize_api_base_url, DEFAULT_API_BASE_URL,
+    api_base_from_env, effective_api_url, effective_backend_api_url, normalize_api_base_url,
+    DEFAULT_API_BASE_URL,
 };
 pub use jwt::{bearer_authorization_value, get_session_token};
 pub use rest::{

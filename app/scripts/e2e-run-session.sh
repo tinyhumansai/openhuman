@@ -63,11 +63,40 @@ cleanup() {
   fi
   if [ -n "$APP_PID" ]; then
     echo "[runner] Stopping CEF app (pid $APP_PID)..."
+    # CEF spawns helper child processes (zygote, GPU, renderers) that
+    # the parent does not reap on SIGTERM. If we only `kill $APP_PID`
+    # the parent exits but children keep writing into the temp
+    # workspace, and the `rm -rf` below races them and fails with
+    # "Directory not empty" on Linux runners — even though the WDIO
+    # spec itself passed. Reap the whole process tree before cleanup.
+    #
+    # CRITICAL: capture child PIDs **before** killing the parent.
+    # The instant the parent exits, the kernel reparents its children
+    # to init (PID 1). After that, `pkill -P "$APP_PID"` matches
+    # nothing because no process has the dying parent as its PPID
+    # anymore. Snapshot the PIDs while the relationship still exists,
+    # then signal them directly by PID.
+    CHILD_PIDS="$(pgrep -P "$APP_PID" 2>/dev/null || true)"
+    pkill -TERM -P "$APP_PID" 2>/dev/null || true
     kill "$APP_PID" 2>/dev/null || true
     wait "$APP_PID" 2>/dev/null || true
+    # Brief grace period so CEF helpers can flush their CEF/Default
+    # files and exit on the SIGTERM we already sent. Anything that
+    # ignored it gets SIGKILLed by the captured-PID sweep below.
+    sleep 1
+    if [ -n "$CHILD_PIDS" ]; then
+      for pid in $CHILD_PIDS; do
+        kill -KILL "$pid" 2>/dev/null || true
+      done
+    fi
   fi
   if [ -n "$CREATED_TEMP_WORKSPACE" ]; then
-    rm -rf "$CREATED_TEMP_WORKSPACE"
+    # Tolerate transient races: even after the kill above, a CEF helper
+    # may still be flushing CEF/Default/* on a slow Linux runner. The
+    # workspace is a per-run mktemp under /tmp; anything left behind is
+    # collected by the next CI tmp-cleanup pass. We must not fail the
+    # whole job on cleanup leftovers when the test itself passed.
+    rm -rf "$CREATED_TEMP_WORKSPACE" 2>/dev/null || true
   fi
   if [ -n "$E2E_CONFIG_BACKUP" ] && [ -f "$E2E_CONFIG_BACKUP" ]; then
     mv "$E2E_CONFIG_BACKUP" "$E2E_CONFIG_FILE"

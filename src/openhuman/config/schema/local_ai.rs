@@ -65,8 +65,18 @@ pub struct LocalAiConfig {
     pub stt_model_id: String,
     #[serde(default = "default_stt_download_url")]
     pub stt_download_url: Option<String>,
+    /// Voice STT provider selector. `"cloud"` (default) routes through the
+    /// backend Whisper proxy; `"whisper"` runs local whisper.cpp via the
+    /// `WHISPER_BIN` env var. Surfaced in Settings → Voice.
+    #[serde(default = "default_stt_provider")]
+    pub stt_provider: String,
     #[serde(default = "default_tts_voice_id")]
     pub tts_voice_id: String,
+    /// Voice TTS provider selector. `"cloud"` (default) routes through the
+    /// backend ElevenLabs proxy and returns rich visemes; `"piper"` runs
+    /// local Piper via the `PIPER_BIN` env var.
+    #[serde(default = "default_tts_provider")]
+    pub tts_provider: String,
     #[serde(default = "default_tts_download_url")]
     pub tts_download_url: Option<String>,
     #[serde(default = "default_tts_config_download_url")]
@@ -144,6 +154,14 @@ fn default_stt_model_id() -> String {
 
 fn default_tts_voice_id() -> String {
     "en_US-lessac-medium".to_string()
+}
+
+fn default_stt_provider() -> String {
+    "cloud".to_string()
+}
+
+fn default_tts_provider() -> String {
+    "cloud".to_string()
 }
 
 fn default_stt_download_url() -> Option<String> {
@@ -244,7 +262,9 @@ impl Default for LocalAiConfig {
             embedding_model_id: default_embedding_model_id(),
             stt_model_id: default_stt_model_id(),
             stt_download_url: default_stt_download_url(),
+            stt_provider: default_stt_provider(),
             tts_voice_id: default_tts_voice_id(),
+            tts_provider: default_tts_provider(),
             tts_download_url: default_tts_download_url(),
             tts_config_download_url: default_tts_config_download_url(),
             quantization: default_quantization(),

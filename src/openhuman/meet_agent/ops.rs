@@ -120,6 +120,10 @@ impl Vad {
 }
 
 #[cfg(test)]
+#[path = "ops_tests.rs"]
+mod ops_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

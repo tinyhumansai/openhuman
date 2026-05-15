@@ -738,11 +738,19 @@ impl Config {
                 recovered = config_was_corrupted,
                 "Config loaded"
             );
+            crate::openhuman::migrations::run_pending(&mut config).await;
             Ok(config)
         } else {
+            // Fresh install: there is no legacy on-disk state, so stamp
+            // the workspace at the current schema version up front. This
+            // makes `run_pending` a fast no-op on the first launch
+            // (nothing to migrate) and keeps the "first launch on this
+            // workspace" semantics aligned with "current binary built
+            // this workspace".
             let mut config = Config {
                 config_path: config_path.clone(),
                 workspace_dir,
+                schema_version: crate::openhuman::migrations::CURRENT_SCHEMA_VERSION,
                 ..Default::default()
             };
             config.save().await?;
@@ -762,6 +770,13 @@ impl Config {
                 initialized = true,
                 "Config loaded"
             );
+            // Defensive: still call run_pending. It will see
+            // `schema_version == CURRENT` and return immediately, but
+            // the call site stays symmetric with the existing-config
+            // branch so a future migration that needs to fire on fresh
+            // installs (vanishingly unlikely, but possible) doesn't
+            // require touching this path.
+            crate::openhuman::migrations::run_pending(&mut config).await;
             Ok(config)
         }
     }

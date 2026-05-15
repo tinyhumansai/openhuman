@@ -1,6 +1,6 @@
 [package]
 name = "openhuman"
-version = "0.53.45"
+version = "0.53.47"
 edition = "2021"
 description = "OpenHuman core business logic and RPC server"
 autobins = false
@@ -45,7 +45,7 @@ env_logger = "0.11"
 base64 = "0.22"
 aes-gcm = "0.10"
 argon2 = "0.5"
-rand = "0.9"
+rand = "0.10"
 dirs = "5"
 sha2 = "0.10"
 hmac = "0.12"
@@ -55,6 +55,10 @@ hmac = "0.12"
 tar = "0.4"
 xz2 = { version = "0.1", features = ["static"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
+# gzip decoder for the Piper tar.gz binary releases on macOS / Linux. Already
+# pulled in transitively by zip's `deflate` feature; declared directly so
+# the installer module can `use flate2::read::GzDecoder`.
+flate2 = "1"
 # Real timeout for `node --version` probes in the runtime resolver. Guards
 # against a broken shim on PATH hanging the bootstrap forever.
 wait-timeout = "0.2"
@@ -110,7 +114,7 @@ tower = { version = "0.5", default-features = false }
 opentelemetry = { version = "0.31", default-features = false, features = ["trace", "metrics"] }
 opentelemetry_sdk = { version = "0.31", default-features = false, features = ["trace", "metrics"] }
 opentelemetry-otlp = { version = "0.31", default-features = false, features = ["trace", "metrics", "http-proto", "reqwest-client", "reqwest-rustls-webpki-roots"] }
-sentry = { version = "0.47.0", default-features = false, features = ["backtrace", "contexts", "panic", "tracing", "debug-images", "reqwest", "rustls", "test"] }
+sentry = { version = "0.47.0", default-features = false, features = ["backtrace", "contexts", "panic", "tracing", "debug-images", "reqwest", "rustls"] }
 tokio-stream = { version = "0.1.18", features = ["full"] }
 url = "2"
 socketioxide = { version = "0.15", features = ["extensions"] }

@@ -158,8 +158,12 @@ mod tests {
         let body = build(&ctx_with(&[])).unwrap();
         assert!(body.contains("## Delegation Decision Tree (Direct-First)"));
         assert!(body.contains(
-            "Default bias: **do not spawn a sub-agent when a direct response or direct tool call is sufficient**."
+            "Default bias: **do not spawn a sub-agent when a direct response or direct tool call is sufficient**"
         ));
+        // Step 2 of the decision tree now explicitly routes live external-service
+        // requests to `delegate_to_integrations_agent` rather than `memory_tree`.
+        assert!(body.contains("Does the request name (or imply) a connected external service?"));
+        assert!(body.contains("Do this even if `memory_tree` could plausibly answer"));
     }
 
     #[test]

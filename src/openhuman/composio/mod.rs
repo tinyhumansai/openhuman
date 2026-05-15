@@ -36,6 +36,7 @@
 //! crate::core::event_bus::DomainEvent::ComposioTriggerReceived
 
 pub mod action_tool;
+pub mod auth_retry;
 pub mod bus;
 pub mod client;
 pub mod ops;

@@ -158,9 +158,12 @@ fn spawn_restart_child() -> Result<u32, String> {
 mod tests {
     use super::*;
     use async_trait::async_trait;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
     use tokio::sync::mpsc;
     use tokio::time::{timeout, Duration};
+
+    static RESTART_TEST_ID: AtomicUsize = AtomicUsize::new(0);
 
     struct RestartProbe {
         tx: mpsc::UnboundedSender<(String, String)>,
@@ -190,18 +193,27 @@ mod tests {
         let bus = event_bus::init_global(event_bus::DEFAULT_CAPACITY);
         let (tx, mut rx) = mpsc::unbounded_channel();
         let handle = bus.subscribe(Arc::new(RestartProbe { tx }));
+        let id = RESTART_TEST_ID.fetch_add(1, Ordering::SeqCst);
+        let source = format!("test-{id}");
+        let reason = format!("integration-{id}");
 
-        let outcome = service_restart(Some("test".into()), Some("integration".into()))
+        let outcome = service_restart(Some(source.clone()), Some(reason.clone()))
             .await
             .expect("restart request should succeed");
         assert!(outcome.value.accepted);
 
-        let event = timeout(Duration::from_secs(1), rx.recv())
-            .await
-            .expect("restart event should arrive")
-            .expect("probe channel should stay open");
-        assert_eq!(event.0, "test");
-        assert_eq!(event.1, "integration");
+        let event = timeout(Duration::from_secs(1), async {
+            loop {
+                let event = rx.recv().await.expect("probe channel should stay open");
+                if event.0 == source && event.1 == reason {
+                    break event;
+                }
+            }
+        })
+        .await
+        .expect("matching restart event should arrive");
+        assert_eq!(event.0, source);
+        assert_eq!(event.1, reason);
 
         handle.cancel();
     }
