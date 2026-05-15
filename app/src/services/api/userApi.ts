@@ -12,5 +12,4 @@ export const userApi = {
   getMe: async (): Promise<User> => {
     return await callCoreCommand<User>('openhuman.auth_get_me');
   },
-
 };
