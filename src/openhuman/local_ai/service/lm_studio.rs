@@ -8,6 +8,15 @@ use crate::openhuman::local_ai::ollama_api::OllamaModelTag;
 
 use super::LocalAiService;
 
+fn diagnostic_body_snippet(body: &str) -> String {
+    const MAX_CHARS: usize = 512;
+    let mut snippet: String = body.chars().take(MAX_CHARS).collect();
+    if body.chars().count() > MAX_CHARS {
+        snippet.push_str("...");
+    }
+    snippet
+}
+
 pub(in crate::openhuman::local_ai::service) struct LmStudioCompletionOutcome {
     pub reply: String,
     pub prompt_tokens: Option<u32>,
@@ -48,12 +57,27 @@ impl LocalAiService {
         let response = apply_lm_studio_auth(request, config)
             .send()
             .await
-            .map_err(|e| format!("lm studio models request failed: {e}"))?;
+            .map_err(|e| {
+                tracing::debug!(
+                    target: "local_ai::lm_studio",
+                    %url,
+                    error = %e,
+                    "[local_ai:lm_studio] list_models: request failed"
+                );
+                format!("lm studio models request failed: {e}")
+            })?;
 
         let status = response.status();
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
             let detail = body.trim();
+            tracing::debug!(
+                target: "local_ai::lm_studio",
+                %url,
+                %status,
+                body = %diagnostic_body_snippet(&body),
+                "[local_ai:lm_studio] list_models: non-success response"
+            );
             return Err(format!(
                 "lm studio models failed with status {}{}",
                 status,
@@ -65,12 +89,25 @@ impl LocalAiService {
             ));
         }
 
-        let body = response
-            .text()
-            .await
-            .map_err(|e| format!("lm studio models body read failed: {e}"))?;
-        let payload: LmStudioModelsResponse = serde_json::from_str(&body)
-            .map_err(|e| format!("lm studio models parse failed: {e}"))?;
+        let body = response.text().await.map_err(|e| {
+            tracing::debug!(
+                target: "local_ai::lm_studio",
+                %url,
+                error = %e,
+                "[local_ai:lm_studio] list_models: body read failed"
+            );
+            format!("lm studio models body read failed: {e}")
+        })?;
+        let payload: LmStudioModelsResponse = serde_json::from_str(&body).map_err(|e| {
+            tracing::debug!(
+                target: "local_ai::lm_studio",
+                %url,
+                error = %e,
+                body = %diagnostic_body_snippet(&body),
+                "[local_ai:lm_studio] list_models: parse failed"
+            );
+            format!("lm studio models parse failed: {e}")
+        })?;
 
         Ok(payload
             .data
@@ -133,12 +170,27 @@ impl LocalAiService {
         let response = apply_lm_studio_auth(request, config)
             .send()
             .await
-            .map_err(|e| format!("lm studio chat request failed: {e}"))?;
+            .map_err(|e| {
+                tracing::debug!(
+                    target: "local_ai::lm_studio",
+                    %url,
+                    error = %e,
+                    "[local_ai:lm_studio] chat completion: request failed"
+                );
+                format!("lm studio chat request failed: {e}")
+            })?;
 
         let status = response.status();
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
             let detail = body.trim();
+            tracing::debug!(
+                target: "local_ai::lm_studio",
+                %url,
+                %status,
+                body = %diagnostic_body_snippet(&body),
+                "[local_ai:lm_studio] chat completion: non-success response"
+            );
             return Err(format!(
                 "lm studio chat failed with status {}{}",
                 status,
@@ -150,10 +202,25 @@ impl LocalAiService {
             ));
         }
 
-        let payload: LmStudioChatCompletionResponse = response
-            .json()
-            .await
-            .map_err(|e| format!("lm studio chat response parse failed: {e}"))?;
+        let body = response.text().await.map_err(|e| {
+            tracing::debug!(
+                target: "local_ai::lm_studio",
+                %url,
+                error = %e,
+                "[local_ai:lm_studio] chat completion: body read failed"
+            );
+            format!("lm studio chat response body read failed: {e}")
+        })?;
+        let payload: LmStudioChatCompletionResponse = serde_json::from_str(&body).map_err(|e| {
+            tracing::debug!(
+                target: "local_ai::lm_studio",
+                %url,
+                error = %e,
+                body = %diagnostic_body_snippet(&body),
+                "[local_ai:lm_studio] chat completion: parse failed"
+            );
+            format!("lm studio chat response parse failed: {e}")
+        })?;
 
         let reply = payload
             .choices

@@ -489,6 +489,26 @@ async fn lm_studio_diagnostics_flags_missing_chat_model() {
         .any(|issue| issue.as_str().unwrap_or("").contains("local-model")));
 }
 
+#[tokio::test]
+async fn lm_studio_diagnostics_surfaces_reachable_model_list_errors() {
+    let _guard = crate::openhuman::local_ai::local_ai_test_guard();
+
+    let app = Router::new().route("/v1/models", get(|| async { "not json" }));
+    let base = spawn_mock(app).await;
+    let config = lm_studio_config(&base);
+    let service = LocalAiService::new(&config);
+
+    let diag = service.diagnostics(&config).await.expect("diagnostics");
+
+    assert_eq!(diag["provider"].as_str(), Some("lm_studio"));
+    assert_eq!(diag["lm_studio_running"], true);
+    assert_eq!(diag["ok"], false);
+    assert!(diag["issues"].as_array().unwrap().iter().any(|issue| issue
+        .as_str()
+        .unwrap_or("")
+        .contains("Failed to list LM Studio models")));
+}
+
 // ---- owned-PID lifecycle ------------------------------------------------
 //
 // These tests pin the contract that `kill_ollama_server` only touches

@@ -1,9 +1,11 @@
 //! Resolved model / voice IDs from [`crate::openhuman::config::Config`].
 //!
-//! All `effective_*` functions enforce the MVP model allowlist: if a resolved
+//! Most `effective_*` functions enforce the MVP model allowlist: if a resolved
 //! model ID is not in the allowlist the function silently falls back to the
-//! default MVP model and logs a warning. This prevents config-file edits from
-//! bypassing the MVP tier restriction.
+//! default MVP model and logs a warning. `effective_chat_model_id` intentionally
+//! bypasses that allowlist for LM Studio so user-managed model IDs are passed
+//! through unchanged; the generic `effective_*` helpers still enforce the MVP
+//! tier restriction for OpenHuman-managed Ollama assets.
 
 use crate::openhuman::config::Config;
 use crate::openhuman::local_ai::provider::{provider_from_config, LocalAiProvider};
@@ -74,8 +76,15 @@ fn enforce_mvp_embedding_allowlist(resolved: &str) -> String {
 }
 
 pub(crate) fn effective_chat_model_id(config: &Config) -> String {
-    if provider_from_config(config) == LocalAiProvider::LmStudio {
-        return raw_chat_model_id(config);
+    let provider = provider_from_config(config);
+    if provider == LocalAiProvider::LmStudio {
+        let model_id = raw_chat_model_id(config);
+        tracing::debug!(
+            provider = provider.as_str(),
+            has_model = !model_id.is_empty(),
+            "[local_ai] effective_chat_model_id: using provider-managed model id"
+        );
+        return model_id;
     }
 
     let raw = if !config.local_ai.chat_model_id.trim().is_empty() {
@@ -107,6 +116,12 @@ fn raw_chat_model_id(config: &Config) -> String {
     } else {
         config.local_ai.model_id.trim()
     };
+    if raw.is_empty() {
+        tracing::debug!(
+            provider = "lm_studio",
+            "[local_ai] raw_chat_model_id: no LM Studio chat model configured"
+        );
+    }
     raw.to_string()
 }
 

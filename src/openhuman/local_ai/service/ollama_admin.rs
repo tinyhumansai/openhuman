@@ -18,6 +18,10 @@ use crate::openhuman::local_ai::provider::{provider_from_config, LocalAiProvider
 use super::spawn_marker::{self, OllamaSpawnMarker};
 use super::LocalAiService;
 
+fn lm_studio_models_error_means_unreachable(error: &str) -> bool {
+    error.starts_with("lm studio models request failed:")
+}
+
 impl LocalAiService {
     pub(in crate::openhuman::local_ai::service) async fn ensure_ollama_server(
         &self,
@@ -1045,10 +1049,12 @@ impl LocalAiService {
     async fn lm_studio_diagnostics(&self, config: &Config) -> Result<serde_json::Value, String> {
         let base_url = lm_studio_base_url(config);
         let models_result = self.list_lm_studio_models(config).await;
-        let healthy = models_result.is_ok();
-        let (models, models_error) = match models_result {
-            Ok(models) => (models, None),
-            Err(err) => (vec![], Some(err)),
+        let (models, models_error, healthy) = match models_result {
+            Ok(models) => (models, None, true),
+            Err(err) => {
+                let reachable = !lm_studio_models_error_means_unreachable(&err);
+                (vec![], Some(err), reachable)
+            }
         };
 
         let expected_chat = model_ids::effective_chat_model_id(config);
@@ -1061,9 +1067,13 @@ impl LocalAiService {
         let mut repair_actions: Vec<serde_json::Value> = Vec::new();
 
         if !healthy {
+            let detail = models_error
+                .as_deref()
+                .map(|err| format!(": {err}"))
+                .unwrap_or_default();
             issues.push(format!(
-                "LM Studio server is not running or not reachable at {}",
-                base_url
+                "LM Studio server is not running or not reachable at {}{}",
+                base_url, detail
             ));
             repair_actions.push(serde_json::json!({
                 "action": "start_lm_studio_server",
@@ -1085,11 +1095,6 @@ impl LocalAiService {
                 "model": expected_chat,
             }));
         }
-        // Only surface the raw error when the server appeared healthy but the
-        // model-list call still returned an error (e.g. a malformed response).
-        // When the server is not reachable the "not running" issue above is
-        // already the canonical message; duplicating the low-level error there
-        // would create two issues for one failure.
         if healthy {
             if let Some(ref err) = models_error {
                 issues.push(format!("Failed to list LM Studio models: {err}"));
