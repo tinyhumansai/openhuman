@@ -112,6 +112,12 @@ fn report_composio_op_error<E: std::fmt::Display + ?Sized>(operation: &str, err:
 /// Extracted so tests can pin the routing without a Sentry test client.
 fn classify_composio_failure_tag(rendered: &str) -> &'static str {
     let lower = rendered.to_ascii_lowercase();
+    // `rendered`: pass to callee-normalised checks
+    //   (`contains_transient_transport_phrase` handles casing internally).
+    // `lower`: pre-lowered copy reused for literal substring matches that
+    //   intentionally do their own case-folding here.
+    // A future contributor adding a new condition should extend the side
+    // that matches the new check's normaliser contract.
     let is_transport = crate::core::observability::contains_transient_transport_phrase(rendered)
         || lower.contains("error sending request");
     if is_transport {
