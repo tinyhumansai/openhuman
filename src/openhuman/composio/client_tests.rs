@@ -807,3 +807,235 @@ async fn execute_tool_sends_tool_slug_in_request_body() {
         "tool slug must be forwarded in request body"
     );
 }
+// ── Factory tests (`create_composio_client`) ────────────────────────
+//
+// Mirror the four branches the spec demands:
+//   1. backend mode with a session JWT — Backend variant
+//   2. direct mode + stored api key — Direct variant
+//   3. direct mode without api key — explicit error
+//   4. unknown mode string — explicit error
+
+fn config_with_session_token(tmp: &tempfile::TempDir) -> crate::openhuman::config::Config {
+    let mut config = crate::openhuman::config::Config::default();
+    config.config_path = tmp.path().join("config.toml");
+    crate::openhuman::credentials::AuthService::from_config(&config)
+        .store_provider_token(
+            crate::openhuman::credentials::APP_SESSION_PROVIDER,
+            crate::openhuman::credentials::DEFAULT_AUTH_PROFILE_NAME,
+            "test-token",
+            std::collections::HashMap::new(),
+            true,
+        )
+        .expect("store test session token");
+    config
+}
+
+#[test]
+fn create_composio_client_backend_variant_when_mode_default() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let config = config_with_session_token(&tmp);
+    let kind = create_composio_client(&config).expect("backend mode should build");
+    assert_eq!(kind.mode(), "backend");
+    assert!(matches!(kind, ComposioClientKind::Backend(_)));
+}
+
+#[test]
+fn create_composio_client_backend_empty_mode_falls_back_to_backend() {
+    // A literal empty string in TOML should be treated as the default
+    // (`"backend"`) rather than an unknown mode error.
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut config = config_with_session_token(&tmp);
+    config.composio.mode = String::new();
+    let kind = create_composio_client(&config).expect("empty mode should fall back to backend");
+    assert_eq!(kind.mode(), "backend");
+}
+
+#[test]
+fn create_composio_client_backend_errors_without_session() {
+    // Backend mode requires the app-session JWT — without it the
+    // factory must return an explicit error (not silently downgrade).
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut config = crate::openhuman::config::Config::default();
+    config.config_path = tmp.path().join("config.toml");
+    let err = create_composio_client(&config)
+        .err()
+        .expect("must error without auth token");
+    assert!(
+        err.to_string().contains("no backend session token"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn create_composio_client_direct_variant_with_stored_key() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut config = crate::openhuman::config::Config::default();
+    config.config_path = tmp.path().join("config.toml");
+    config.composio.mode = "direct".into();
+    // Persist the key the way the RPC layer would.
+    crate::openhuman::credentials::AuthService::from_config(&config)
+        .store_provider_token(
+            crate::openhuman::credentials::COMPOSIO_DIRECT_PROVIDER,
+            crate::openhuman::credentials::DEFAULT_AUTH_PROFILE_NAME,
+            "ck_test_key_redacted",
+            std::collections::HashMap::new(),
+            true,
+        )
+        .expect("store direct api key");
+    let kind = create_composio_client(&config).expect("direct mode with stored key should build");
+    assert_eq!(kind.mode(), "direct");
+    assert!(matches!(kind, ComposioClientKind::Direct(_)));
+}
+
+#[test]
+fn create_composio_client_direct_falls_back_to_config_api_key() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut config = crate::openhuman::config::Config::default();
+    config.config_path = tmp.path().join("config.toml");
+    config.composio.mode = "direct".into();
+    // No keychain entry — fall back to the inline config field.
+    config.composio.api_key = Some("ck_inline_redacted".into());
+    let kind = create_composio_client(&config)
+        .expect("direct mode should accept inline config.api_key when keychain is empty");
+    assert_eq!(kind.mode(), "direct");
+}
+
+#[test]
+fn create_composio_client_direct_errors_without_key() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut config = crate::openhuman::config::Config::default();
+    config.config_path = tmp.path().join("config.toml");
+    config.composio.mode = "direct".into();
+    let err = create_composio_client(&config)
+        .err()
+        .expect("direct without key must error");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("no api key is configured"),
+        "unexpected error: {msg}"
+    );
+}
+
+#[test]
+fn create_composio_client_unknown_mode_errors() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut config = crate::openhuman::config::Config::default();
+    config.config_path = tmp.path().join("config.toml");
+    config.composio.mode = "voyage".into();
+    let err = create_composio_client(&config)
+        .err()
+        .expect("unknown mode must error");
+    let msg = err.to_string();
+    assert!(msg.contains("unknown composio mode"), "got: {msg}");
+    assert!(
+        msg.contains("voyage"),
+        "should echo the invalid value, got: {msg}"
+    );
+}
+
+// ── Direct-mode credentials helpers ─────────────────────────────────
+
+#[test]
+fn store_get_clear_composio_api_key_roundtrip() {
+    use crate::openhuman::credentials::{get_composio_api_key, COMPOSIO_DIRECT_PROVIDER};
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut config = crate::openhuman::config::Config::default();
+    config.config_path = tmp.path().join("config.toml");
+
+    // Initially: nothing stored.
+    assert_eq!(
+        get_composio_api_key(&config).expect("read empty store"),
+        None
+    );
+
+    // Store under the direct-mode provider slot.
+    crate::openhuman::credentials::AuthService::from_config(&config)
+        .store_provider_token(
+            COMPOSIO_DIRECT_PROVIDER,
+            crate::openhuman::credentials::DEFAULT_AUTH_PROFILE_NAME,
+            "ck_secret_value_redacted",
+            std::collections::HashMap::new(),
+            true,
+        )
+        .expect("store");
+
+    assert_eq!(
+        get_composio_api_key(&config).expect("read stored"),
+        Some("ck_secret_value_redacted".into())
+    );
+
+    // Clearing the profile must remove it again.
+    crate::openhuman::credentials::AuthService::from_config(&config)
+        .remove_profile(
+            COMPOSIO_DIRECT_PROVIDER,
+            crate::openhuman::credentials::DEFAULT_AUTH_PROFILE_NAME,
+        )
+        .expect("remove");
+    assert_eq!(
+        get_composio_api_key(&config).expect("read post-clear"),
+        None
+    );
+}
+
+// ── Pricing short-circuit ───────────────────────────────────────────
+
+// ── Direct-mode reshapers (`direct_authorize` / `direct_execute` / ─
+//   `direct_list_connections`)
+//
+// These helpers wrap a `ComposioTool` and reshape v3 responses into
+// the backend-proxied envelope types. We can't easily mock the live
+// `backend.composio.dev` endpoints in this unit-test layer (the
+// `ComposioTool` builds its own `reqwest::Client`), so the assertions
+// below verify the empty/invalid-input paths that don't require HTTP:
+//
+//   * `direct_authorize` rejects an empty toolkit before any network
+//     hit, with an explicit error so the caller can surface it as a
+//     400-class user error.
+//   * `direct_execute` accepts a None-arguments call and falls
+//     through to the underlying tool surface (which then errors on the
+//     network call — covered by the integration test in `ops_tests.rs`).
+//   * `direct_list_connections` is a thin mapper; the real coverage
+//     for its row → ComposioConnection translation lives in the
+//     `connected_account_*` tests in `composio_tests.rs`.
+
+fn direct_tool_for_test() -> std::sync::Arc<crate::openhuman::tools::ComposioTool> {
+    std::sync::Arc::new(crate::openhuman::tools::ComposioTool::new(
+        "ck_test_direct",
+        Some("default"),
+        std::sync::Arc::new(crate::openhuman::security::SecurityPolicy::default()),
+    ))
+}
+
+#[tokio::test]
+async fn direct_authorize_rejects_empty_toolkit() {
+    let tool = direct_tool_for_test();
+    let err = super::direct_authorize(&tool, "   ", "default")
+        .await
+        .err()
+        .expect("empty toolkit must error before any HTTP call");
+    assert!(
+        err.to_string().contains("toolkit must not be empty"),
+        "unexpected error: {err}"
+    );
+}
+
+#[tokio::test]
+async fn pricing_for_config_short_circuits_in_direct_mode() {
+    // Build a client pointed at an unreachable backend — if the
+    // short-circuit fires, we never actually attempt the network call
+    // and the empty default struct comes back immediately.
+    let client = crate::openhuman::integrations::IntegrationClient::new(
+        "http://127.0.0.1:0".into(),
+        "test".into(),
+    );
+    let mut config = crate::openhuman::config::Config::default();
+    config.composio.mode = "direct".into();
+
+    let pricing = crate::openhuman::integrations::pricing_for_config(&client, &config).await;
+    // The default struct has every per-integration entry as `None`.
+    assert!(pricing.integrations.apify.is_none());
+    assert!(pricing.integrations.twilio.is_none());
+    assert!(pricing.integrations.google_places.is_none());
+    assert!(pricing.integrations.parallel.is_none());
+}

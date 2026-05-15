@@ -160,12 +160,23 @@ async fn handle_request(id: Value, method: &str, params: Value) -> Value {
                         success_response(id, result)
                     }
                     Err(err) => {
+                        // Dispatch the JSON-RPC error code based on the
+                        // variant: client-input problems (`InvalidParams`)
+                        // stay as `-32602`, server-side failures
+                        // (`Internal`) surface as `-32603` so clients don't
+                        // mis-attribute them to the caller's arguments.
                         log::debug!(
-                            "[mcp_server] tools/call rejected tool={} error={}",
+                            "[mcp_server] tools/call rejected tool={} code={} error={}",
                             name,
+                            err.code(),
                             err.message()
                         );
-                        error_response(id, -32602, "Invalid params", Some(json!(err.message())))
+                        error_response(
+                            id,
+                            err.code(),
+                            err.jsonrpc_message(),
+                            Some(json!(err.message())),
+                        )
                     }
                 }
             }

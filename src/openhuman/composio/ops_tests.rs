@@ -54,7 +54,14 @@ async fn composio_list_toolkits_errors_without_session() {
     let tmp = tempfile::tempdir().unwrap();
     let config = test_config(&tmp);
     let err = composio_list_toolkits(&config).await.unwrap_err();
-    assert!(err.contains("composio unavailable"));
+    // Backend-mode (default) without a session — the mode-aware factory
+    // surfaces "no backend session token" so we accept either the
+    // legacy `composio unavailable` prefix or the new factory message.
+    assert!(
+        err.to_lowercase().contains("composio")
+            && (err.contains("no backend session") || err.contains("unavailable")),
+        "unexpected error: {err}"
+    );
 }
 
 #[tokio::test]
@@ -62,7 +69,11 @@ async fn composio_list_connections_errors_without_session() {
     let tmp = tempfile::tempdir().unwrap();
     let config = test_config(&tmp);
     let err = composio_list_connections(&config).await.unwrap_err();
-    assert!(err.contains("composio unavailable"));
+    assert!(
+        err.to_lowercase().contains("composio")
+            && (err.contains("no backend session") || err.contains("unavailable")),
+        "unexpected error: {err}"
+    );
 }
 
 #[tokio::test]
@@ -72,7 +83,15 @@ async fn composio_authorize_errors_without_session() {
     let err = composio_authorize(&config, "gmail", None)
         .await
         .unwrap_err();
-    assert!(err.contains("composio unavailable"));
+    // Backend mode (default) without a session — the mode-aware factory
+    // surfaces "no backend session token" once `composio_authorize`
+    // routes through `create_composio_client`. Accept either the
+    // legacy `composio unavailable` prefix or the new factory phrasing.
+    assert!(
+        err.to_lowercase().contains("composio")
+            && (err.contains("no backend session") || err.contains("unavailable")),
+        "unexpected error: {err}"
+    );
 }
 
 #[tokio::test]
@@ -90,7 +109,12 @@ async fn composio_list_tools_errors_without_session() {
     let tmp = tempfile::tempdir().unwrap();
     let config = test_config(&tmp);
     let err = composio_list_tools(&config, None).await.unwrap_err();
-    assert!(err.contains("composio unavailable"));
+    // Same tolerance as `composio_list_toolkits_errors_without_session`.
+    assert!(
+        err.to_lowercase().contains("composio")
+            && (err.contains("no backend session") || err.contains("unavailable")),
+        "unexpected error: {err}"
+    );
 }
 
 #[tokio::test]
@@ -100,7 +124,11 @@ async fn composio_execute_errors_without_session() {
     let err = composio_execute(&config, "GMAIL_SEND_EMAIL", None)
         .await
         .unwrap_err();
-    assert!(err.contains("composio unavailable"));
+    assert!(
+        err.to_lowercase().contains("composio")
+            && (err.contains("no backend session") || err.contains("unavailable")),
+        "unexpected error: {err}"
+    );
 }
 
 #[tokio::test]
@@ -930,6 +958,186 @@ async fn composio_disable_trigger_propagates_backend_error() {
         .await
         .unwrap_err();
     assert!(err.contains("disable_trigger failed"), "unexpected: {err}");
+}
+
+// ── Direct-mode list_* short-circuits ─────────────────────────────
+//
+// [composio-direct] When `config.composio.mode == "direct"`, the
+// `composio_list_toolkits` / `composio_list_connections` ops must NOT
+// silently fall through to the backend tenant's data — that's the
+// bug the user reported in #1710 (toggled to Direct, still saw
+// tinyhumans-tenant connections). We return empty responses with
+// explicit log lines so the UI / agent surface stays honest about
+// where the data is (or isn't) coming from.
+
+/// Set up a config with `composio.mode = "direct"` and a stored
+/// direct-mode API key (so `create_composio_client` succeeds).
+fn direct_mode_config(tmp: &tempfile::TempDir) -> Config {
+    let mut c = Config::default();
+    c.workspace_dir = tmp.path().join("workspace");
+    c.config_path = tmp.path().join("config.toml");
+    c.composio.mode = crate::openhuman::config::schema::COMPOSIO_MODE_DIRECT.into();
+    crate::openhuman::credentials::AuthService::from_config(&c)
+        .store_provider_token(
+            crate::openhuman::credentials::ops::COMPOSIO_DIRECT_PROVIDER,
+            crate::openhuman::credentials::DEFAULT_AUTH_PROFILE_NAME,
+            "ck_test_direct_key",
+            std::collections::HashMap::new(),
+            true,
+        )
+        .expect("store test direct-mode api key");
+    c
+}
+
+#[tokio::test]
+async fn composio_list_toolkits_returns_empty_in_direct_mode() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config = direct_mode_config(&tmp);
+    let outcome = composio_list_toolkits(&config)
+        .await
+        .expect("direct-mode list_toolkits must succeed without HTTP");
+    assert!(
+        outcome.value.toolkits.is_empty(),
+        "direct mode must not surface the backend allowlist"
+    );
+    assert!(
+        outcome.logs.iter().any(|l| l.contains("direct mode")),
+        "log line must call out direct mode explicitly, got {:?}",
+        outcome.logs
+    );
+}
+
+#[tokio::test]
+async fn composio_list_connections_routes_through_direct_mode() {
+    let _guard = CACHE_TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    let tmp = tempfile::tempdir().unwrap();
+    let config = direct_mode_config(&tmp);
+    // [composio-direct] After commit 2 of #1710, direct mode actually
+    // calls `backend.composio.dev/api/v3/connected_accounts` rather
+    // than returning an empty stub. Without a real Composio key the
+    // remote will reject the test request, so we assert on the error
+    // shape: it must reference `composio` AND must NOT reference the
+    // backend-session path (proving the factory routed us to direct).
+    let result = composio_list_connections(&config).await;
+    match result {
+        Ok(outcome) => {
+            // Some sandboxes resolve OK with an empty list — accept
+            // that as well, but the connections vec must be empty
+            // (the test key is not provisioned in any real tenant).
+            assert!(
+                outcome.value.connections.is_empty(),
+                "test key should not surface real connections"
+            );
+        }
+        Err(err) => {
+            assert!(
+                !err.contains("no backend session"),
+                "direct mode must not surface backend-auth errors, got: {err}"
+            );
+            assert!(
+                err.to_lowercase().contains("composio"),
+                "error must carry the composio prefix, got: {err}"
+            );
+        }
+    }
+}
+
+// ── Direct-mode authorize / list_tools / execute (commit 1, #1710) ─
+
+/// Direct-mode `composio_list_tools` now hits Composio v3 with the
+/// user's own key (replacing the prior empty-short-circuit). The unit
+/// test reaches an outbound HTTPS call against the real
+/// `backend.composio.dev`, which immediately fails with HTTP 401 on the
+/// fake key — exactly the shape we want the contract to preserve:
+///
+///   * NEVER fall back to the tinyhumans backend tenant (no
+///     `"no backend session"` text in the error)
+///   * Surface the failure with the `composio` grep prefix so it routes
+///     through normal observability
+///
+/// A full schemas-mapped test that asserts response shape lives in the
+/// `client_tests.rs` mock-axum suite (`direct_list_tools_*`); this
+/// integration-style test only pins the failure-mode contract.
+#[tokio::test]
+async fn composio_list_tools_in_direct_mode_does_not_fall_back_to_backend() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config = direct_mode_config(&tmp);
+    let result = composio_list_tools(&config, None).await;
+    match result {
+        Ok(outcome) => {
+            // If the prefetch returns empty connections (test env may
+            // intermittently mock that), the function short-circuits to
+            // an empty tool list — still no backend leak.
+            assert!(
+                outcome.value.tools.is_empty(),
+                "direct mode must NOT surface backend-tenant tool catalogue"
+            );
+            assert!(
+                outcome.logs.iter().any(|l| l.contains("direct mode")),
+                "log line must call out direct mode explicitly, got {:?}",
+                outcome.logs
+            );
+        }
+        Err(err) => {
+            assert!(
+                !err.contains("no backend session"),
+                "direct mode must not surface backend-auth errors, got: {err}"
+            );
+            assert!(
+                err.to_lowercase().contains("composio"),
+                "error must carry the composio prefix, got: {err}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn composio_authorize_routes_through_direct_mode() {
+    // The direct-mode `authorize` path actually calls
+    // `backend.composio.dev/api/v3/connected_accounts/link` over HTTPS.
+    // We can't mock that endpoint at the URL-rewriter level in this
+    // unit test, so the assertion below verifies (a) the mode-aware
+    // factory was hit (i.e. no "no backend session" error) and (b) the
+    // error path is the direct-mode one (HTTP failure or DNS failure),
+    // not the backend one. Both error shapes are acceptable — the
+    // important thing is that backend mode would have produced
+    // "composio unavailable / no backend session" instead.
+    let tmp = tempfile::tempdir().unwrap();
+    let config = direct_mode_config(&tmp);
+    let err = composio_authorize(&config, "gmail", None)
+        .await
+        .unwrap_err();
+    assert!(
+        !err.contains("no backend session"),
+        "direct mode must not surface backend-auth errors, got: {err}"
+    );
+    assert!(
+        err.to_lowercase().contains("composio"),
+        "error must carry the composio prefix, got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn composio_execute_routes_through_direct_mode() {
+    // Same shape of assertion as
+    // `composio_authorize_routes_through_direct_mode` — we can't mock
+    // `backend.composio.dev` from a unit test, so we verify the factory
+    // routed to direct mode (no backend-auth error) and that an error
+    // surfaces because the live HTTP call cannot succeed against a
+    // test key.
+    let tmp = tempfile::tempdir().unwrap();
+    let config = direct_mode_config(&tmp);
+    let err = composio_execute(&config, "GMAIL_SEND_EMAIL", None)
+        .await
+        .unwrap_err();
+    assert!(
+        !err.contains("no backend session"),
+        "direct mode must not surface backend-auth errors, got: {err}"
+    );
+    assert!(
+        err.to_lowercase().contains("composio"),
+        "error must carry the composio prefix, got: {err}"
+    );
 }
 
 // ── classify_composio_failure_tag ──────────────────────────────

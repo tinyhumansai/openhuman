@@ -34,7 +34,7 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-use crate::openhuman::composio::client::ComposioClient;
+use crate::openhuman::composio::providers::ProviderContext;
 
 /// Composio action slug for the bulk user listing.
 const ACTION_LIST_USERS: &str = "SLACK_LIST_ALL_USERS";
@@ -107,7 +107,7 @@ impl SlackUsers {
     /// retries, so the caller can charge the daily quota meter
     /// accurately. Pages walked silently are tracked too — without this,
     /// large workspaces under-report their request usage.
-    pub async fn fetch(client: &ComposioClient) -> (Self, u32) {
+    pub async fn fetch(ctx: &ProviderContext) -> (Self, u32) {
         let mut map: HashMap<String, String> = HashMap::new();
         let mut cursor: Option<String> = None;
         let mut total_attempts: u32 = 0;
@@ -123,7 +123,7 @@ impl SlackUsers {
             // directory while the rest of the provider uses backoff.
             // Soft-fall to whatever was collected so far on any failure.
             let (resp, attempts) = match super::provider::execute_with_retry(
-                client,
+                ctx,
                 ACTION_LIST_USERS,
                 args,
                 &format!("{ACTION_LIST_USERS} page {page_num}"),

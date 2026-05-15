@@ -28,6 +28,14 @@ export interface ComposerBlockedSendFeedback {
   error: { code: 'usage_limit_reached' | 'socket_disconnected'; message: string };
 }
 
+export interface ComposerKeyDownEventLike {
+  key: string;
+  shiftKey?: boolean;
+  isComposing?: boolean;
+  keyCode?: number;
+  nativeEvent?: { isComposing?: boolean; keyCode?: number };
+}
+
 export const handleComposerSlashCommand = (
   command: string,
   welcomeLocked: boolean
@@ -64,6 +72,22 @@ export const evaluateComposerSend = (args: ComposerSendDecisionArgs): ComposerSe
 
   return { shouldSend: true, trimmedText };
 };
+
+export const isComposerImeComposing = (
+  event: ComposerKeyDownEventLike,
+  compositionActive = false
+): boolean =>
+  compositionActive ||
+  event.isComposing === true ||
+  event.keyCode === 229 ||
+  event.nativeEvent?.isComposing === true ||
+  event.nativeEvent?.keyCode === 229;
+
+export const shouldSendComposerKeyDown = (
+  event: ComposerKeyDownEventLike,
+  compositionActive = false
+): boolean =>
+  event.key === 'Enter' && !event.shiftKey && !isComposerImeComposing(event, compositionActive);
 
 export const getComposerBlockedSendFeedback = (
   blockReason: ComposerSendBlockReason | undefined

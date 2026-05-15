@@ -77,6 +77,9 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("list_triggers"),
         schemas("enable_trigger"),
         schemas("disable_trigger"),
+        schemas("get_mode"),
+        schemas("set_api_key"),
+        schemas("clear_api_key"),
     ]
 }
 
@@ -153,6 +156,18 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("disable_trigger"),
             handler: handle_disable_trigger,
+        },
+        RegisteredController {
+            schema: schemas("get_mode"),
+            handler: handle_get_mode,
+        },
+        RegisteredController {
+            schema: schemas("set_api_key"),
+            handler: handle_set_api_key,
+        },
+        RegisteredController {
+            schema: schemas("clear_api_key"),
+            handler: handle_clear_api_key,
         },
     ]
 }
@@ -571,6 +586,70 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 required: true,
             }],
         },
+        "get_mode" => ControllerSchema {
+            namespace: "composio",
+            function: "get_mode",
+            description:
+                "Read the current Composio routing mode and whether a direct-mode API key is stored. \
+                 Never returns the key itself.",
+            inputs: vec![],
+            outputs: vec![
+                FieldSchema {
+                    name: "mode",
+                    ty: TypeSchema::String,
+                    comment: "Current mode: 'backend' (default) or 'direct'.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "api_key_set",
+                    ty: TypeSchema::Bool,
+                    comment: "True if a direct-mode Composio API key is in the encrypted keychain.",
+                    required: true,
+                },
+            ],
+        },
+        "set_api_key" => ControllerSchema {
+            namespace: "composio",
+            function: "set_api_key",
+            description:
+                "Persist a user-provided Composio API key for direct mode in the encrypted \
+                 keychain. Optionally flip composio.mode to 'direct' atomically. The key is \
+                 NEVER logged or returned — only its length is recorded in tracing.",
+            inputs: vec![
+                FieldSchema {
+                    name: "api_key",
+                    ty: TypeSchema::String,
+                    comment: "The Composio API key from https://app.composio.dev/api-keys.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "activate_direct",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Bool)),
+                    comment: "When true, also set composio.mode = 'direct'. Default false.",
+                    required: false,
+                },
+            ],
+            outputs: vec![FieldSchema {
+                name: "result",
+                ty: TypeSchema::Json,
+                comment: "{ stored: bool, mode: string } — current mode after the operation.",
+                required: true,
+            }],
+        },
+        "clear_api_key" => ControllerSchema {
+            namespace: "composio",
+            function: "clear_api_key",
+            description:
+                "Remove the stored direct-mode Composio API key and reset composio.mode \
+                 back to 'backend'.",
+            inputs: vec![],
+            outputs: vec![FieldSchema {
+                name: "result",
+                ty: TypeSchema::Json,
+                comment: "{ cleared: bool, mode: 'backend' }.",
+                required: true,
+            }],
+        },
         _other => ControllerSchema {
             namespace: "composio",
             function: "unknown",
@@ -847,6 +926,32 @@ fn handle_disable_trigger(params: Map<String, Value>) -> ControllerFuture {
         let config = config_rpc::load_config_with_timeout().await?;
         let trigger_id = read_required_non_empty(&params, "trigger_id")?;
         to_json(super::ops::composio_disable_trigger(&config, &trigger_id).await?)
+    })
+}
+
+fn handle_get_mode(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        tracing::debug!("[composio-direct] rpc get_mode entry");
+        let config = config_rpc::load_config_with_timeout().await?;
+        to_json(super::ops::composio_get_mode(&config).await?)
+    })
+}
+
+fn handle_set_api_key(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        tracing::debug!("[composio-direct] rpc set_api_key entry");
+        let config = config_rpc::load_config_with_timeout().await?;
+        let api_key = read_required_non_empty(&params, "api_key")?;
+        let activate_direct = read_optional::<bool>(&params, "activate_direct")?.unwrap_or(false);
+        to_json(super::ops::composio_set_api_key(&config, &api_key, activate_direct).await?)
+    })
+}
+
+fn handle_clear_api_key(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        tracing::debug!("[composio-direct] rpc clear_api_key entry");
+        let config = config_rpc::load_config_with_timeout().await?;
+        to_json(super::ops::composio_clear_api_key(&config).await?)
     })
 }
 

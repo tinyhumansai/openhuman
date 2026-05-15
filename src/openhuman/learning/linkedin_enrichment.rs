@@ -513,28 +513,50 @@ pub fn render_profile_markdown(url: &str, data: &serde_json::Value) -> String {
 /// `payload.parts[].body.data`. We must decode those parts before
 /// regex-matching; searching the raw JSON alone misses them.
 async fn search_gmail_for_linkedin(config: &Config) -> anyhow::Result<Option<String>> {
-    use crate::openhuman::composio::client::build_composio_client;
+    use crate::openhuman::composio::client::{
+        create_composio_client, direct_execute, ComposioClientKind,
+    };
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use base64::Engine;
 
-    let client = build_composio_client(config)
-        .ok_or_else(|| anyhow::anyhow!("composio client unavailable"))?;
+    // Resolve through the mode-aware factory so a direct-mode user
+    // with a stored API key can still drive Gmail enrichment from the
+    // personal Composio tenant (#1710 Wave 2). Pre-fix this path used
+    // `build_composio_client` and returned early for any user without
+    // a backend session, silently disabling LinkedIn enrichment for
+    // direct-mode users even when their LinkedIn/Gmail connections
+    // were healthy on app.composio.dev.
+    let client_kind = create_composio_client(config)
+        .map_err(|e| anyhow::anyhow!("composio client unavailable: {e}"))?;
 
     // `comm/in/<username>` — LinkedIn's own notification emails always use
     // this form to refer to the email *recipient's* profile.
     static COMM_RE: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"linkedin\.com/comm/in/([a-zA-Z0-9_-]+)").unwrap());
 
-    let resp = client
-        .execute_tool(
-            "GMAIL_FETCH_EMAILS",
-            Some(json!({
-                "query": "from:linkedin.com",
-                "max_results": 10,
-            })),
-        )
-        .await
-        .map_err(|e| anyhow::anyhow!("GMAIL_FETCH_EMAILS failed: {e:#}"))?;
+    let args = json!({
+        "query": "from:linkedin.com",
+        "max_results": 10,
+    });
+    let resp = match &client_kind {
+        ComposioClientKind::Backend(client) => client
+            .execute_tool("GMAIL_FETCH_EMAILS", Some(args))
+            .await
+            .map_err(|e| anyhow::anyhow!("GMAIL_FETCH_EMAILS failed: {e:#}"))?,
+        ComposioClientKind::Direct(direct) => {
+            tracing::debug!(
+                "[linkedin_enrichment][composio-direct] GMAIL_FETCH_EMAILS via direct tenant"
+            );
+            direct_execute(
+                direct,
+                "GMAIL_FETCH_EMAILS",
+                Some(args),
+                &config.composio.entity_id,
+            )
+            .await
+            .map_err(|e| anyhow::anyhow!("GMAIL_FETCH_EMAILS (direct) failed: {e:#}"))?
+        }
+    };
 
     if !resp.successful {
         let err = resp.error.unwrap_or_else(|| "unknown error".into());

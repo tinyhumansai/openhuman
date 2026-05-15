@@ -1,6 +1,8 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import * as composioApi from '../../lib/composio/composioApi';
+import * as openUrlModule from '../../utils/openUrl';
 import { authorize } from '../../lib/composio/composioApi';
 import { type ComposioConnection } from '../../lib/composio/types';
 import ComposioConnectModal, {
@@ -219,6 +221,60 @@ describe('<ComposioConnectModal>', () => {
     expect(screen.getByText('(foo@bar.com)')).toBeInTheDocument();
     expect(screen.queryByText('(Acme)')).not.toBeInTheDocument();
     expect(screen.queryByText('(oxox)')).not.toBeInTheDocument();
+  });
+
+  // ── Connect flow → openUrl(connectUrl) ───────────────────────────
+  //
+  // Verifies the end-to-end OAuth handoff plumbing for #1710:
+  //   Connect click → authorize RPC → openUrl(connectUrl).
+  //
+  // The frontend doesn't care whether the URL is the backend's
+  // `/agent-integrations/composio/authorize` redirect or Composio's
+  // hosted `https://hosted.composio.dev/<token>` — both come back via
+  // the same `connectUrl` field on `ComposioAuthorizeResponse`, so this
+  // single assertion covers both modes. After this commit the
+  // mechanically-wired direct-mode flow is: ops.rs `composio_authorize`
+  // → factory routes to Direct → `direct_authorize` returns a Composio
+  // hosted URL → frontend opens it in the system browser via this
+  // path → `list_connections` polling detects the new ACTIVE row.
+  describe('Connect flow (covers backend + direct mode #1710)', () => {
+    beforeEach(() => {
+      vi.mocked(composioApi.authorize).mockReset();
+      vi.mocked(composioApi.listConnections).mockReset();
+      vi.mocked(openUrlModule.openUrl).mockReset();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('opens the connectUrl from the authorize response in the system browser', async () => {
+      // Direct mode emits an empty connectionId; backend mode emits a
+      // populated one. The frontend treats both the same — only the
+      // URL is the source of truth for opening the browser.
+      vi.mocked(composioApi.authorize).mockResolvedValue({
+        connectUrl: 'https://hosted.composio.dev/test-token',
+        connectionId: '',
+      });
+      // Polling won't fire during this test — we don't advance timers
+      // past the connect click, so listConnections only needs to be
+      // mockable to avoid throwing.
+      vi.mocked(composioApi.listConnections).mockResolvedValue({ connections: [] });
+
+      render(<ComposioConnectModal toolkit={mockToolkit} onClose={() => {}} />);
+
+      const connectBtn = screen.getByRole('button', { name: /Connect Gmail/ });
+      fireEvent.click(connectBtn);
+
+      await waitFor(() => {
+        expect(composioApi.authorize).toHaveBeenCalledWith('gmail', undefined);
+      });
+      await waitFor(() => {
+        expect(openUrlModule.openUrl).toHaveBeenCalledWith(
+          'https://hosted.composio.dev/test-token'
+        );
+      });
+    });
   });
 });
 

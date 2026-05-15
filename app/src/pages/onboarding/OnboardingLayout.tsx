@@ -12,7 +12,6 @@ import { setWalkthroughPending } from '../../components/walkthrough/AppWalkthrou
 // import { ONBOARDING_WELCOME_THREAD_LABEL } from '../../constants/onboardingChat';
 import { useCoreState } from '../../providers/CoreStateProvider';
 import { trackEvent } from '../../services/analytics';
-import { userApi } from '../../services/api/userApi';
 import { getDefaultEnabledTools } from '../../utils/toolDefinitions';
 import BetaBanner from './components/BetaBanner';
 import { OnboardingContext, type OnboardingDraft } from './OnboardingContext';
@@ -77,12 +76,6 @@ const OnboardingLayout = () => {
       });
     } catch (e) {
       console.warn('[onboarding] Failed to persist onboarding tasks; continuing completion', e);
-    }
-
-    try {
-      await userApi.onboardingComplete();
-    } catch {
-      console.warn('[onboarding] Failed to notify backend of onboarding completion');
     }
 
     try {

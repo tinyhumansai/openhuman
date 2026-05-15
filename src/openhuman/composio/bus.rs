@@ -55,6 +55,7 @@ use crate::core::event_bus::{subscribe_global, DomainEvent, EventHandler, Subscr
 use crate::openhuman::agent::triage::{apply_decision, run_triage, TriageOutcome, TriggerEnvelope};
 use crate::openhuman::composio::trigger_history;
 use crate::openhuman::config::rpc as config_rpc;
+use crate::openhuman::config::schema::COMPOSIO_MODE_DIRECT;
 
 use super::client::ComposioClient;
 use super::providers::{get_provider, ProviderContext};
@@ -81,6 +82,7 @@ const CONNECTION_READY_MAX_BACKOFF: Duration = Duration::from_secs(4);
 
 static COMPOSIO_TRIGGER_HANDLE: OnceLock<SubscriptionHandle> = OnceLock::new();
 static COMPOSIO_CONNECTION_HANDLE: OnceLock<SubscriptionHandle> = OnceLock::new();
+static COMPOSIO_CONFIG_HANDLE: OnceLock<SubscriptionHandle> = OnceLock::new();
 
 /// Register both long-lived composio subscribers on the global event
 /// bus, and initialise the default provider registry. Idempotent.
@@ -113,6 +115,20 @@ pub fn register_composio_trigger_subscriber() {
             None => {
                 log::warn!(
                     "[event_bus] failed to register composio connection_created subscriber — bus not initialized"
+                );
+            }
+        }
+    }
+
+    if COMPOSIO_CONFIG_HANDLE.get().is_none() {
+        match subscribe_global(Arc::new(ComposioConfigChangedSubscriber::new())) {
+            Some(handle) => {
+                let _ = COMPOSIO_CONFIG_HANDLE.set(handle);
+                log::debug!("[event_bus] composio config_changed subscriber registered");
+            }
+            None => {
+                log::warn!(
+                    "[event_bus] failed to register composio config_changed subscriber — bus not initialized"
                 );
             }
         }
@@ -165,6 +181,36 @@ impl EventHandler for ComposioTriggerSubscriber {
             payload_bytes = payload.to_string().len(),
             "[composio:bus] trigger received"
         );
+
+        // [composio-direct] Direct-mode trigger gate.
+        //
+        // Inbound `composio:trigger` events ride the backend socket
+        // (`wss://api.tinyhumans.ai`) which only fans out events from
+        // the tinyhumans Composio tenant. When the user has switched
+        // to direct mode, that tenant is no longer their active source
+        // of truth — connections live on `backend.composio.dev` under
+        // their own API key, and any backend-tenant triggers that keep
+        // firing are ghosts from the prior mode. Drop them here so the
+        // user doesn't see triage runs or history entries originating
+        // from a tenant they've moved away from. Real-time triggers
+        // for direct-mode users are tracked as a follow-up — see the
+        // `composio.direct_mode_triggers_gap` capability and
+        // `periodic.rs` docstring.
+        //
+        // Fail-open on config load error: if config is unreadable, we
+        // let the event through rather than silently dropping it. The
+        // existing env-var / config triage flags below remain the
+        // backend-mode gates.
+        if let Ok(config) = config_rpc::load_config_with_timeout().await {
+            if config.composio.mode == COMPOSIO_MODE_DIRECT {
+                tracing::info!(
+                    toolkit = %toolkit,
+                    trigger = %trigger,
+                    "[composio:trigger] dropped — direct mode active (backend-tenant event ignored)"
+                );
+                return;
+            }
+        }
 
         if let Some(store) = trigger_history::global() {
             let toolkit_owned = toolkit.clone();
@@ -418,7 +464,23 @@ impl EventHandler for ComposioConnectionCreatedSubscriber {
                 return;
             };
 
-            match wait_for_connection_active(&ctx.client, &connection_id).await {
+            // `wait_for_connection_active` is a backend-only metadata
+            // probe (`list_connections`). Resolve a backend
+            // `ComposioClient` from the live config for it; direct-mode
+            // users surface a clear error here rather than silently
+            // routing through the wrong tenant (#1710).
+            let backend_client = match ctx.backend_client().await {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::debug!(
+                        toolkit = %toolkit,
+                        error = %e,
+                        "[composio:bus] backend client unavailable for connection-readiness poll; skipping"
+                    );
+                    return;
+                }
+            };
+            match wait_for_connection_active(&backend_client, &connection_id).await {
                 Ok(status) => {
                     tracing::info!(
                         toolkit = %toolkit,
@@ -589,6 +651,60 @@ async fn wait_for_connection_active(
 
         tokio::time::sleep(backoff).await;
         backoff = (backoff * 2).min(CONNECTION_READY_MAX_BACKOFF);
+    }
+}
+
+// ── Config-changed subscriber ───────────────────────────────────────
+
+/// Drops the prompt-level integrations cache whenever the user flips
+/// `config.composio.mode` between `"backend"` and `"direct"` or
+/// stores/clears the direct-mode API key. Without this, the chat
+/// runtime keeps the old tenant's tool catalogue / connection list
+/// pinned for up to `CACHE_TTL` (60s) — that's the regression behind
+/// "I switched to Direct and my old integrations are still showing"
+/// (#1710).
+///
+/// The subscriber is intentionally tiny: it only clears the cache,
+/// which guarantees the very next `fetch_connected_integrations` /
+/// `cached_active_integrations` read hits the new client. We don't
+/// eagerly warm the cache here because we don't have a config handle
+/// in the event payload and `load_config_with_timeout` would race the
+/// concurrent `cfg_mut.save()` call that produced this event.
+pub struct ComposioConfigChangedSubscriber;
+
+impl ComposioConfigChangedSubscriber {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Default for ComposioConfigChangedSubscriber {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl EventHandler for ComposioConfigChangedSubscriber {
+    fn name(&self) -> &str {
+        "composio::config_changed"
+    }
+
+    fn domains(&self) -> Option<&[&str]> {
+        Some(&["composio"])
+    }
+
+    async fn handle(&self, event: &DomainEvent) {
+        let DomainEvent::ComposioConfigChanged { mode, api_key_set } = event else {
+            return;
+        };
+
+        tracing::info!(
+            mode = %mode,
+            api_key_set = api_key_set,
+            "[composio-cache] config changed — invalidating integrations cache"
+        );
+        super::ops::invalidate_connected_integrations_cache();
     }
 }
 

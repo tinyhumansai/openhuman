@@ -10,15 +10,21 @@ import { MemoryRouter } from 'react-router-dom';
 
 import channelConnectionsReducer from '../store/channelConnectionsSlice';
 import coreModeReducer from '../store/coreModeSlice';
+import mascotReducer from '../store/mascotSlice';
 import socketReducer from '../store/socketSlice';
 
 /**
  * Creates a fresh Redux store for testing.
  * Uses raw (non-persisted) reducers to avoid persist complexity in tests.
+ *
+ * `mascot` is wired in for the mascot voice picker (issue #1762): the
+ * VoicePanel reads + dispatches against this slice, and useSelector
+ * would throw on a missing reducer without a stub here.
  */
 const testRootReducer = combineReducers({
   channelConnections: channelConnectionsReducer,
   coreMode: coreModeReducer,
+  mascot: mascotReducer,
   socket: socketReducer,
 });
 

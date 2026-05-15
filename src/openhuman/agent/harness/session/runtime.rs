@@ -120,13 +120,6 @@ impl Agent {
         &self.connected_integrations
     }
 
-    /// The Composio client cached on the session, if any. Populated by
-    /// [`Agent::fetch_connected_integrations`]; remains `None` when the
-    /// user is not signed in.
-    pub fn composio_client(&self) -> Option<&crate::openhuman::composio::ComposioClient> {
-        self.composio_client.as_ref()
-    }
-
     /// This session's transcript key — `"{unix_ts}_{agent_id}"`,
     /// generated once at build time. Sub-agents chain this into their
     /// own transcript filenames so the parent → child hierarchy is

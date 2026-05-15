@@ -82,15 +82,6 @@ pub struct ParentExecutionContext {
     /// Active Composio integrations the parent has fetched.
     pub connected_integrations: Vec<crate::openhuman::context::prompt::ConnectedIntegration>,
 
-    /// Composio client — populated alongside `connected_integrations`
-    /// when the parent agent fetches its integration list. Used by the
-    /// sub-agent runner to dynamically construct per-action
-    /// [`ComposioActionTool`](crate::openhuman::composio::ComposioActionTool)
-    /// entries at spawn time when `integrations_agent` is scoped to a
-    /// specific toolkit. `None` when the user isn't signed in to
-    /// Composio or the backend was unreachable.
-    pub composio_client: Option<crate::openhuman::composio::ComposioClient>,
-
     /// The parent's active tool-call format (Native / PFormat / Json).
     /// Sub-agents render their system prompts with this format so the
     /// `## Tool Use Protocol` section instructs the model in the

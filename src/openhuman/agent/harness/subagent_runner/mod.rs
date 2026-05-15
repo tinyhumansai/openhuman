@@ -44,3 +44,11 @@ pub use types::{SubagentMode, SubagentRunError, SubagentRunOptions, SubagentRunO
 // renderer, and `session::builder` reuses the welcome-only guard. The
 // other `tool_prep` helpers are used only inside this module.
 pub(crate) use tool_prep::{build_text_mode_tool_instructions, is_welcome_only_tool};
+
+// `user_is_signed_in_to_composio` is the mode-aware "can the user call
+// composio at all?" probe added in Wave 2 (#1710). Re-exported here so
+// non-composio probe sites (registration gates, heartbeat telemetry)
+// can call it as
+// `crate::openhuman::agent::harness::subagent_runner::user_is_signed_in_to_composio`
+// without reaching into a private sibling module.
+pub(crate) use ops::user_is_signed_in_to_composio;
