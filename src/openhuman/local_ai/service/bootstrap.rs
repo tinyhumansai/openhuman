@@ -168,16 +168,32 @@ impl LocalAiService {
         }
 
         if provider_from_config(&effective_config) == LocalAiProvider::LmStudio {
+            log::debug!(
+                "[local_ai] LM Studio bootstrap branch entry preload_embedding={} preload_stt={} preload_tts={}",
+                effective_config.local_ai.preload_embedding_model,
+                effective_config.local_ai.preload_stt_model,
+                effective_config.local_ai.preload_tts_voice
+            );
+            log::trace!("[local_ai] LM Studio bootstrap availability check start");
             if let Err(err) = self.ensure_lm_studio_available(&effective_config).await {
+                log::debug!("[local_ai] LM Studio bootstrap degraded: {err}");
                 let mut status = self.status.lock();
                 status.state = "degraded".to_string();
                 status.error_category = Some("server".to_string());
                 status.warning = Some(err);
                 return;
             }
+            log::debug!("[local_ai] LM Studio bootstrap availability check succeeded");
 
+            log::trace!(
+                "[local_ai] LM Studio bootstrap embedding preload decision: {}",
+                effective_config.local_ai.preload_embedding_model
+            );
             if effective_config.local_ai.preload_embedding_model {
                 let embedding_model = model_ids::effective_embedding_model_id(&effective_config);
+                log::debug!(
+                    "[local_ai] LM Studio bootstrap embedding preload start model={embedding_model}"
+                );
                 {
                     let mut status = self.status.lock();
                     status.state = "downloading".to_string();
@@ -187,29 +203,59 @@ impl LocalAiService {
                     ));
                 }
                 if let Err(err) = async {
+                    log::trace!(
+                        "[local_ai] LM Studio bootstrap embedding ensure_ollama_server start"
+                    );
                     self.ensure_ollama_server(&effective_config).await?;
+                    log::trace!(
+                        "[local_ai] LM Studio bootstrap embedding ensure_ollama_server succeeded"
+                    );
+                    log::trace!(
+                        "[local_ai] LM Studio bootstrap embedding ensure_ollama_model_available start model={embedding_model}"
+                    );
                     self.ensure_ollama_model_available(&embedding_model, "embedding")
-                        .await
+                        .await?;
+                    log::trace!(
+                        "[local_ai] LM Studio bootstrap embedding ensure_ollama_model_available succeeded model={embedding_model}"
+                    );
+                    Ok::<(), String>(())
                 }
                 .await
                 {
                     log::warn!("[local_ai] LM Studio bootstrap embedding preload failed: {err}");
                     self.status.lock().embedding_state = "missing".to_string();
                 } else {
+                    log::debug!(
+                        "[local_ai] LM Studio bootstrap embedding preload succeeded model={embedding_model}"
+                    );
                     self.status.lock().embedding_state = "ready".to_string();
                 }
             }
 
+            log::trace!(
+                "[local_ai] LM Studio bootstrap STT preload decision: {}",
+                effective_config.local_ai.preload_stt_model
+            );
             if effective_config.local_ai.preload_stt_model {
+                log::debug!("[local_ai] LM Studio bootstrap STT preload start");
                 if let Err(err) = self.ensure_stt_asset_available(&effective_config).await {
                     log::warn!("[local_ai] LM Studio bootstrap STT preload failed: {err}");
                     self.status.lock().stt_state = "missing".to_string();
+                } else {
+                    log::debug!("[local_ai] LM Studio bootstrap STT preload succeeded");
                 }
             }
+            log::trace!(
+                "[local_ai] LM Studio bootstrap TTS preload decision: {}",
+                effective_config.local_ai.preload_tts_voice
+            );
             if effective_config.local_ai.preload_tts_voice {
+                log::debug!("[local_ai] LM Studio bootstrap TTS preload start");
                 if let Err(err) = self.ensure_tts_asset_available(&effective_config).await {
                     log::warn!("[local_ai] LM Studio bootstrap TTS preload failed: {err}");
                     self.status.lock().tts_state = "missing".to_string();
+                } else {
+                    log::debug!("[local_ai] LM Studio bootstrap TTS preload succeeded");
                 }
             }
 
@@ -236,6 +282,12 @@ impl LocalAiService {
             status.download_speed_bps = None;
             status.eta_seconds = None;
             status.model_path = Some(model_path_for_config(&effective_config));
+            log::debug!(
+                "[local_ai] LM Studio bootstrap ready embedding_state={} stt_state={} tts_state={}",
+                status.embedding_state,
+                status.stt_state,
+                status.tts_state
+            );
             return;
         }
 

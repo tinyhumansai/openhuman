@@ -476,6 +476,44 @@ impl LocalAiService {
         })
     }
 
+    fn finalize_lm_studio_download_status(
+        &self,
+        config: &Config,
+        embedding_state: Option<&'static str>,
+        stt_state: Option<&'static str>,
+        tts_state: Option<&'static str>,
+        warning: Option<String>,
+    ) {
+        let mut status = self.status.lock();
+        status.state = "ready".to_string();
+        status.vision_state = "disabled".to_string();
+        if let Some(state) = embedding_state {
+            status.embedding_state = state.to_string();
+        } else if !config.local_ai.preload_embedding_model {
+            status.embedding_state = "idle".to_string();
+        } else if status.embedding_state != "ready" {
+            status.embedding_state = "missing".to_string();
+        }
+        if let Some(state) = stt_state {
+            status.stt_state = state.to_string();
+        } else if !config.local_ai.preload_stt_model {
+            status.stt_state = "idle".to_string();
+        }
+        if let Some(state) = tts_state {
+            status.tts_state = state.to_string();
+        } else if !config.local_ai.preload_tts_voice {
+            status.tts_state = "idle".to_string();
+        }
+        status.warning = warning;
+        status.error_detail = None;
+        status.error_category = None;
+        status.download_progress = None;
+        status.downloaded_bytes = None;
+        status.total_bytes = None;
+        status.download_speed_bps = None;
+        status.eta_seconds = None;
+    }
+
     pub async fn download_all_models(&self, config: &Config) -> Result<(), String> {
         if !config.local_ai.runtime_enabled {
             return Err("local ai is disabled".to_string());
@@ -484,6 +522,7 @@ impl LocalAiService {
 
         if provider_from_config(config) == LocalAiProvider::LmStudio {
             self.ensure_lm_studio_available(config).await?;
+            let mut embedding_state = None;
             if config.local_ai.preload_embedding_model {
                 let model_id = model_ids::effective_embedding_model_id(config);
                 {
@@ -494,25 +533,66 @@ impl LocalAiService {
                         "Downloading embedding model via Ollama: `{model_id}`"
                     ));
                 }
-                self.ensure_ollama_server(config).await?;
-                self.ensure_ollama_model_available(&model_id, "embedding")
-                    .await?;
-                self.status.lock().embedding_state = "ready".to_string();
-            }
-            if config.local_ai.preload_stt_model {
-                self.ensure_stt_asset_available(config).await?;
-            }
-            if config.local_ai.preload_tts_voice {
-                self.ensure_tts_asset_available(config).await?;
-            }
-            {
-                let mut status = self.status.lock();
-                status.state = "ready".to_string();
-                if !config.local_ai.preload_embedding_model {
-                    status.embedding_state = "idle".to_string();
+                if let Err(err) = async {
+                    self.ensure_ollama_server(config).await?;
+                    self.ensure_ollama_model_available(&model_id, "embedding")
+                        .await
                 }
-                status.warning = None;
+                .await
+                {
+                    log::warn!(
+                        "[local_ai] LM Studio download_all_models embedding preload failed: {err}"
+                    );
+                    self.finalize_lm_studio_download_status(
+                        config,
+                        Some("missing"),
+                        None,
+                        None,
+                        None,
+                    );
+                    return Err(err);
+                }
+                embedding_state = Some("ready");
             }
+            let mut stt_warning = None;
+            let mut stt_state = None;
+            if config.local_ai.preload_stt_model {
+                if let Err(err) = self.ensure_stt_asset_available(config).await {
+                    log::warn!(
+                        "[local_ai] LM Studio download_all_models STT preload failed: {err}"
+                    );
+                    stt_state = Some("missing");
+                    stt_warning = Some(err);
+                } else {
+                    stt_state = Some("ready");
+                }
+            }
+            let mut tts_warning = None;
+            let mut tts_state = None;
+            if config.local_ai.preload_tts_voice {
+                if let Err(err) = self.ensure_tts_asset_available(config).await {
+                    log::warn!(
+                        "[local_ai] LM Studio download_all_models TTS preload failed: {err}"
+                    );
+                    tts_state = Some("missing");
+                    tts_warning = Some(err);
+                } else {
+                    tts_state = Some("ready");
+                }
+            }
+            let warning = match (stt_warning, tts_warning) {
+                (Some(a), Some(b)) => Some(format!("{a}; {b}")),
+                (Some(a), None) => Some(a),
+                (None, Some(b)) => Some(b),
+                (None, None) => None,
+            };
+            self.finalize_lm_studio_download_status(
+                config,
+                embedding_state,
+                stt_state,
+                tts_state,
+                warning,
+            );
             return Ok(());
         }
 
