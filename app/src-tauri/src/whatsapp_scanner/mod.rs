@@ -32,6 +32,8 @@ use tokio::time::sleep;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 mod dom_snapshot;
+#[cfg(test)]
+mod dom_snapshot_test;
 mod idb;
 
 const CDP_HOST: &str = "127.0.0.1";
