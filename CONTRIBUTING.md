@@ -40,6 +40,7 @@ This project adheres to the [Contributor Covenant Code of Conduct](CODE_OF_CONDU
 | Rust | `1.93.0` from [`rust-toolchain.toml`](rust-toolchain.toml) | Install with `rustup`; `rustfmt` and `clippy` are required components. |
 | CMake | Current stable | Required by native Rust dependencies such as Whisper bindings. |
 | Ninja | Current stable | Required on macOS to build the bundled CEF helper. CMake delegates the actual compile to Ninja; without it the `cef-dll-sys` build script aborts. |
+| ripgrep (`rg`) | Current stable | Used by the `lint:commands-tokens` pre-push step (scans `app/src/components/commands/`). Without it, `git push` fails the hook with `rg: command not found`. |
 | Tauri vendored sources | Git submodules under `app/src-tauri/vendor/` | Required for the CEF-aware Tauri CLI and notification plugin patches. |
 | macOS tools | Xcode Command Line Tools | Needed for local desktop builds on macOS. |
 | Linux desktop packages | System GTK/WebKit/AppIndicator build deps | Install the package set Tauri requires for your distro before attempting desktop builds. |
@@ -109,7 +110,7 @@ clang -v
 Example macOS bootstrap with Homebrew:
 
 ```bash
-brew install node@24 pnpm rustup-init cmake ninja
+brew install node@24 pnpm rustup-init cmake ninja ripgrep
 rustup toolchain install 1.93.0 --profile minimal
 rustup component add rustfmt clippy --toolchain 1.93.0
 # CEF builds a universal binary, so the x86_64 target is required even on Apple Silicon
