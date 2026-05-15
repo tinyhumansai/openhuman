@@ -1036,20 +1036,29 @@ fn handle_local_ai_install_whisper(params: Map<String, Value>) -> ControllerFutu
         let config = config_rpc::load_config_with_timeout().await?;
         let force = p.force.unwrap_or(false);
 
-        // Idempotency: a duplicate click while an install is already in
-        // flight should be a no-op, not a second concurrent download.
-        let current = crate::openhuman::local_ai::voice_install_common::read_status(
+        // Atomic install-start guard. A duplicate click while an install
+        // is already in flight (or a parallel auto-install firing
+        // alongside a manual click) must be a no-op — not a second
+        // concurrent download racing on the same `.part` file inside
+        // `download_to_file`. The previous read_status -> check ->
+        // write_status sequence was non-atomic and let two callers slip
+        // through; `try_acquire_install_slot` does the check-and-claim
+        // under a single mutex acquisition.
+        let slot = match crate::openhuman::local_ai::voice_install_common::try_acquire_install_slot(
             crate::openhuman::local_ai::voice_install_common::ENGINE_WHISPER,
-        );
-        if current.state
-            == crate::openhuman::local_ai::voice_install_common::VoiceInstallState::Installing
-        {
-            tracing::debug!(
-                "[voice-install:whisper] already installing — returning current status"
-            );
-            return serde_json::to_value(current)
-                .map_err(|e| format!("serialize whisper status: {e}"));
-        }
+        ) {
+            Some(slot) => slot,
+            None => {
+                tracing::debug!(
+                    "[voice-install:whisper] slot already held — returning current status"
+                );
+                let current = crate::openhuman::local_ai::voice_install_common::read_status(
+                    crate::openhuman::local_ai::voice_install_common::ENGINE_WHISPER,
+                );
+                return serde_json::to_value(current)
+                    .map_err(|e| format!("serialize whisper status: {e}"));
+            }
+        };
 
         // Mark "installing" before the spawn so the very next status poll
         // (≤ 2s away) reflects the new state without a stale read.
@@ -1073,7 +1082,12 @@ fn handle_local_ai_install_whisper(params: Map<String, Value>) -> ControllerFutu
             "[voice-install:whisper] spawning background install"
         );
         let model_size = p.model_size.clone();
+        // Move the slot into the spawned task so it lives for the actual
+        // install duration (download + extract + validate), not just the
+        // RPC handler's lifetime. The slot's Drop releases the
+        // single-writer guard on task exit, including via panic.
         tokio::spawn(async move {
+            let _slot = slot;
             if let Err(e) = crate::openhuman::local_ai::install_whisper::install_whisper(
                 &config, model_size, force,
             )
@@ -1096,16 +1110,23 @@ fn handle_local_ai_install_piper(params: Map<String, Value>) -> ControllerFuture
         let config = config_rpc::load_config_with_timeout().await?;
         let force = p.force.unwrap_or(false);
 
-        let current = crate::openhuman::local_ai::voice_install_common::read_status(
+        // See the whisper handler above for why this is an atomic slot
+        // acquisition rather than a read_status / write_status pair.
+        let slot = match crate::openhuman::local_ai::voice_install_common::try_acquire_install_slot(
             crate::openhuman::local_ai::voice_install_common::ENGINE_PIPER,
-        );
-        if current.state
-            == crate::openhuman::local_ai::voice_install_common::VoiceInstallState::Installing
-        {
-            tracing::debug!("[voice-install:piper] already installing — returning current status");
-            return serde_json::to_value(current)
-                .map_err(|e| format!("serialize piper status: {e}"));
-        }
+        ) {
+            Some(slot) => slot,
+            None => {
+                tracing::debug!(
+                    "[voice-install:piper] slot already held — returning current status"
+                );
+                let current = crate::openhuman::local_ai::voice_install_common::read_status(
+                    crate::openhuman::local_ai::voice_install_common::ENGINE_PIPER,
+                );
+                return serde_json::to_value(current)
+                    .map_err(|e| format!("serialize piper status: {e}"));
+            }
+        };
 
         crate::openhuman::local_ai::voice_install_common::write_status(
             crate::openhuman::local_ai::voice_install_common::VoiceInstallStatus {
@@ -1126,7 +1147,10 @@ fn handle_local_ai_install_piper(params: Map<String, Value>) -> ControllerFuture
             "[voice-install:piper] spawning background install"
         );
         let voice_id = p.voice_id.clone();
+        // Move the slot into the spawned task — same rationale as the
+        // whisper handler.
         tokio::spawn(async move {
+            let _slot = slot;
             if let Err(e) =
                 crate::openhuman::local_ai::install_piper::install_piper(&config, voice_id, force)
                     .await

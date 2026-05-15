@@ -438,6 +438,62 @@ async fn apply_browser_settings_updates_enabled_flag() {
 }
 
 #[tokio::test]
+async fn apply_local_ai_settings_updates_lm_studio_provider_fields() {
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+    cfg.local_ai.model_id = "old-default".into();
+    cfg.local_ai.chat_model_id = "old-chat".into();
+
+    let patch = LocalAiSettingsPatch {
+        runtime_enabled: Some(true),
+        opt_in_confirmed: Some(true),
+        provider: Some("lm-studio".into()),
+        base_url: Some(" http://localhost:1234/v1/ ".into()),
+        model_id: Some(" local-default ".into()),
+        chat_model_id: Some(" local-chat ".into()),
+        usage_embeddings: Some(true),
+        usage_heartbeat: Some(true),
+        usage_learning_reflection: Some(false),
+        usage_subconscious: Some(true),
+    };
+
+    let outcome = apply_local_ai_settings(&mut cfg, patch)
+        .await
+        .expect("apply local ai");
+
+    assert!(cfg.local_ai.runtime_enabled);
+    assert!(cfg.local_ai.opt_in_confirmed);
+    assert_eq!(cfg.local_ai.provider, "lm_studio");
+    assert_eq!(
+        cfg.local_ai.base_url.as_deref(),
+        Some("http://localhost:1234/v1/")
+    );
+    assert_eq!(cfg.local_ai.model_id, "local-default");
+    assert_eq!(cfg.local_ai.chat_model_id, "local-chat");
+    assert!(cfg.local_ai.usage.embeddings);
+    assert!(cfg.local_ai.usage.heartbeat);
+    assert!(!cfg.local_ai.usage.learning_reflection);
+    assert!(cfg.local_ai.usage.subconscious);
+    assert_eq!(outcome.value["config"]["local_ai"]["provider"], "lm_studio");
+
+    let clear_and_fallback = LocalAiSettingsPatch {
+        provider: Some("unknown-provider".into()),
+        base_url: Some("   ".into()),
+        model_id: Some("   ".into()),
+        chat_model_id: Some("".into()),
+        ..LocalAiSettingsPatch::default()
+    };
+    apply_local_ai_settings(&mut cfg, clear_and_fallback)
+        .await
+        .expect("clear local ai");
+
+    assert_eq!(cfg.local_ai.provider, "ollama");
+    assert!(cfg.local_ai.base_url.is_none());
+    assert_eq!(cfg.local_ai.model_id, "");
+    assert_eq!(cfg.local_ai.chat_model_id, "");
+}
+
+#[tokio::test]
 async fn apply_analytics_settings_updates_enabled() {
     let tmp = tempdir().unwrap();
     let mut cfg = tmp_config(&tmp);

@@ -623,11 +623,15 @@ async fn sync_directory(_path: &Path) -> Result<()> {
 impl Config {
     pub async fn load_or_init() -> Result<Self> {
         let (default_openhuman_dir, default_workspace_dir) = default_config_and_workspace_dirs()?;
-        Self::load_or_init_with_env(&default_openhuman_dir, &default_workspace_dir, &ProcessEnv)
-            .await
+        Self::load_or_init_with_env_lookup(
+            &default_openhuman_dir,
+            &default_workspace_dir,
+            &ProcessEnv,
+        )
+        .await
     }
 
-    async fn load_or_init_with_env(
+    async fn load_or_init_with_env_lookup(
         default_openhuman_dir: &Path,
         default_workspace_dir: &Path,
         env: &(dyn EnvLookup + Send + Sync),

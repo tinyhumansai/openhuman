@@ -156,6 +156,7 @@ fn permission_state_serde_round_trip() {
 // mechanism used by `autocomplete::start_if_enabled` on re-engagement.
 
 mod automation_state_stale_cache {
+    use crate::openhuman::accessibility::automation_state;
     use crate::openhuman::accessibility::{
         automation_state_test_lock, clear_automation_denial, mark_system_events_denied,
         system_events_denied,
@@ -163,7 +164,7 @@ mod automation_state_stale_cache {
 
     #[test]
     fn fresh_state_is_not_denied() {
-        let _g = automation_state_test_lock();
+        let _g = automation_state::test_lock();
         clear_automation_denial();
         assert!(
             !system_events_denied(),
@@ -173,7 +174,7 @@ mod automation_state_stale_cache {
 
     #[test]
     fn clear_resets_denial_flag() {
-        let _g = automation_state_test_lock();
+        let _g = automation_state::test_lock();
         clear_automation_denial();
         mark_system_events_denied();
         assert!(system_events_denied(), "should be denied after mark");
@@ -186,7 +187,7 @@ mod automation_state_stale_cache {
 
     #[test]
     fn denied_flag_does_not_persist_through_clear() {
-        let _g = automation_state_test_lock();
+        let _g = automation_state::test_lock();
         // Simulate: previous session left the flag set.
         // clear() is called on re-engagement → no stale state carried over.
         mark_system_events_denied();

@@ -1366,6 +1366,23 @@ pub fn run() {
             {
                 return None;
             }
+            // Drop 401 "Session expired. Please log in again." bodies and
+            // pre-flight "no session token stored" guards — mirrors the
+            // core binary's before_send chain. Since #1061 the Tauri shell
+            // links the core in-process, so any session-expired event
+            // captured by either surface lands in the same Sentry client
+            // here and must be filtered identically. Keeps
+            // OPENHUMAN-TAURI-25 / -1Q / -27 / -1G off Sentry.
+            if openhuman_core::core::observability::is_session_expired_event(&event) {
+                // Metadata-only log shape — `event.message` carries the raw
+                // backend response body which CLAUDE.md forbids from local
+                // logs. Mirror the core binary's main.rs filter.
+                log::debug!(
+                    "[sentry-session-expired-filter] dropping session-expired event_id={:?}",
+                    event.event_id
+                );
+                return None;
+            }
             // Strip server_name (hostname) to avoid leaking machine identity.
             event.server_name = None;
             event.user = None;
@@ -1670,6 +1687,20 @@ pub fn run() {
         {
             args.push(("--disable-gpu-compositing", None));
             log::info!("[cef-startup] Intel macOS detected: adding --disable-gpu-compositing (issue #1012)");
+        }
+        // Issue #1697 — Linux AppImage fails to launch on Mesa 26+ (Arch,
+        // Manjaro, EndeavourOS, CachyOS) with EGL_BAD_ATTRIBUTE during GPU
+        // context creation. Chromium's EGL initialization returns
+        // EGL_BAD_ATTRIBUTE for both ES 3.0 and 2.0 contexts on Mesa 26+,
+        // producing ContextResult::kFatalFailure. Disabling the entire GPU
+        // process forces SwiftShader software rendering so the app launches
+        // on these distros. The same CEF version works on Ubuntu/deb-based
+        // distros with older Mesa; this flag degrades gracefully there
+        // (software-only rendering, no WebGL).
+        #[cfg(target_os = "linux")]
+        {
+            args.push(("--disable-gpu", None));
+            log::info!("[cef-startup] Linux detected: adding --disable-gpu (issue #1697)");
         }
         tauri::Builder::<tauri::Cef>::new().command_line_args::<&str, &str>(args)
     };

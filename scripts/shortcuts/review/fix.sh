@@ -63,9 +63,10 @@ else
   conflict_block=""
 fi
 
-prompt=$(awk -v pr="$REVIEW_PR" -v repo="$REVIEW_REPO_RESOLVED" \
-             -v head_repo="$REVIEW_HEAD_REPO" -v head_branch="$REVIEW_HEAD_BRANCH" \
-             -v conflict="$conflict_block" '
+prompt=$(REVIEW_CONFLICT_BLOCK="$conflict_block" \
+         awk -v pr="$REVIEW_PR" -v repo="$REVIEW_REPO_RESOLVED" \
+             -v head_repo="$REVIEW_HEAD_REPO" -v head_branch="$REVIEW_HEAD_BRANCH" '
+  BEGIN { conflict = ENVIRON["REVIEW_CONFLICT_BLOCK"] }
   {
     gsub(/__PR__/, pr);
     gsub(/__REPO__/, repo);

@@ -114,7 +114,7 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 
 ---
 
-## 3. Local AI Runtime (Ollama)
+## 3. Local AI Runtime (Ollama + LM Studio)
 
 ### 3.1 Model Management
 
@@ -123,6 +123,7 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 | 3.1.1 | Model Detection               | RU+WD | `src/openhuman/local_ai/`, `local-model-runtime.spec.ts` | ✅     |       |
 | 3.1.2 | Model Download & Installation | WD    | `local-model-runtime.spec.ts`                            | ✅     |       |
 | 3.1.3 | Model Version Handling        | RU    | `src/openhuman/local_ai/model_ids.rs`                    | ✅     |       |
+| 3.1.4 | LM Studio Model Discovery     | RU+RI | `src/openhuman/local_ai/service/ollama_admin_tests.rs`, `tests/json_rpc_e2e.rs` | ✅ | Uses LM Studio's OpenAI-compatible `/v1/models` surface |
 
 ### 3.2 Runtime Execution
 
@@ -131,6 +132,7 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 | 3.2.1 | Local Inference Execution          | WD    | `local-model-runtime.spec.ts`      | ✅     |                                           |
 | 3.2.2 | Resource Handling (CPU/GPU/Memory) | RU    | `src/openhuman/local_ai/device.rs` | 🟡     | Detection unit; runtime constraint manual |
 | 3.2.3 | Runtime Failure Handling           | RU+WD | `local-model-runtime.spec.ts`      | ✅     |                                           |
+| 3.2.4 | LM Studio Chat Completions         | RU+RI | `src/openhuman/local_ai/service/public_infer_tests.rs`, `tests/json_rpc_e2e.rs` | ✅ | Covers prompt/chat success and non-success status errors |
 
 ### 3.3 Runtime Configuration
 
@@ -157,6 +159,7 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 | 3.3.3.1 | Save RAM Settings | VU    | _missing_                     | ❌     | Settings slice        |
 | 3.3.3.2 | Apply on Restart  | WD    | `local-model-runtime.spec.ts` | 🟡     | Restart not exercised |
 | 3.3.3.3 | Reset to Default  | VU    | _missing_                     | ❌     |                       |
+| 3.3.3.4 | Provider Selection Persistence | RU+RI+VU | `src/openhuman/config/ops_tests.rs`, `tests/json_rpc_e2e.rs`, `app/src/utils/tauriCommands/config.test.ts` | ✅ | Covers `lm_studio` normalization and config round-trip |
 
 ---
 

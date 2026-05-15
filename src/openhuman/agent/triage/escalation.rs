@@ -205,12 +205,26 @@ async fn dispatch_target_agent(agent_id: &str, prompt: &str) -> anyhow::Result<S
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::event_bus::{global, init_global, DomainEvent};
+    use crate::core::event_bus::{init_global, DomainEvent};
     use crate::openhuman::agent::harness::definition::AgentDefinitionRegistry;
     use serde_json::json;
-    use tokio::sync::broadcast;
-    use tokio::task::yield_now;
-    use tokio::time::{timeout, Duration};
+    use tokio::time::{sleep, timeout, Duration};
+
+    static TEST_EVENTS_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    struct TestEventsGuard(tokio::sync::MutexGuard<'static, ()>);
+
+    impl Drop for TestEventsGuard {
+        fn drop(&mut self) {
+            events::clear_test_events();
+        }
+    }
+
+    async fn test_events_guard() -> TestEventsGuard {
+        let guard = TEST_EVENTS_LOCK.lock().await;
+        events::clear_test_events();
+        TestEventsGuard(guard)
+    }
 
     fn envelope(external_id: &str) -> TriggerEnvelope {
         TriggerEnvelope::from_composio(
@@ -250,68 +264,30 @@ mod tests {
         }
     }
 
-    fn subscribe_probe() -> broadcast::Receiver<DomainEvent> {
-        global().unwrap().raw_receiver()
-    }
-
-    fn trigger_external_id(event: &DomainEvent) -> Option<&str> {
-        match event {
-            DomainEvent::TriggerEvaluated { external_id, .. }
-            | DomainEvent::TriggerEscalated { external_id, .. }
-            | DomainEvent::TriggerEscalationFailed { external_id, .. } => Some(external_id),
-            _ => None,
-        }
-    }
-
     async fn collect_trigger_events_until(
-        mut rx: broadcast::Receiver<DomainEvent>,
         external_id: &str,
         expected: impl Fn(&[DomainEvent]) -> bool,
     ) -> Vec<DomainEvent> {
         let external_id = external_id.to_string();
-        let mut captured = timeout(Duration::from_secs(5), async {
-            let mut captured = Vec::new();
+        timeout(Duration::from_secs(5), async {
             loop {
+                let captured = events::test_events_for_external_id(&external_id);
                 if expected(&captured) {
                     return captured;
                 }
-                match rx.recv().await {
-                    Ok(event) => {
-                        if trigger_external_id(&event) == Some(external_id.as_str()) {
-                            captured.push(event);
-                        }
-                    }
-                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
-                    Err(broadcast::error::RecvError::Closed) => {
-                        panic!("probe channel should stay open")
-                    }
-                }
+                sleep(Duration::from_millis(10)).await;
             }
         })
         .await
-        .expect("expected triage event should arrive");
-
-        while let Ok(result) = timeout(Duration::from_millis(50), rx.recv()).await {
-            match result {
-                Ok(event) => {
-                    if trigger_external_id(&event) == Some(external_id.as_str()) {
-                        captured.push(event);
-                    }
-                }
-                Err(broadcast::error::RecvError::Lagged(_)) => continue,
-                Err(broadcast::error::RecvError::Closed) => break,
-            }
-        }
-
-        captured
+        .expect("expected triage event should arrive")
     }
 
     #[tokio::test]
     async fn apply_decision_drop_only_publishes_evaluated() {
+        let _events_guard = test_events_guard().await;
         let envelope = envelope("esc-drop");
         let _ = init_global(32);
-        let rx = subscribe_probe();
-        let collect = tokio::spawn(collect_trigger_events_until(rx, "esc-drop", |events| {
+        let collect = tokio::spawn(collect_trigger_events_until("esc-drop", |events| {
             events.iter().any(|event| {
                 matches!(
                     event,
@@ -323,7 +299,6 @@ mod tests {
                 )
             })
         }));
-        yield_now().await;
 
         apply_decision(run(TriageAction::Drop), &envelope)
             .await
@@ -348,10 +323,10 @@ mod tests {
 
     #[tokio::test]
     async fn apply_decision_acknowledge_only_publishes_evaluated() {
+        let _events_guard = test_events_guard().await;
         let envelope = envelope("esc-ack");
         let _ = init_global(32);
-        let rx = subscribe_probe();
-        let collect = tokio::spawn(collect_trigger_events_until(rx, "esc-ack", |events| {
+        let collect = tokio::spawn(collect_trigger_events_until("esc-ack", |events| {
             events.iter().any(|event| {
                 matches!(
                     event,
@@ -363,7 +338,6 @@ mod tests {
                 )
             })
         }));
-        yield_now().await;
 
         apply_decision(run(TriageAction::Acknowledge), &envelope)
             .await
@@ -388,33 +362,28 @@ mod tests {
 
     #[tokio::test]
     async fn apply_decision_react_failure_publishes_failed_event() {
+        let _events_guard = test_events_guard().await;
         let envelope = envelope("esc-react-fail");
         let _ = init_global(32);
         let _ = AgentDefinitionRegistry::init_global_builtins();
-        let rx = subscribe_probe();
-        let collect = tokio::spawn(collect_trigger_events_until(
-            rx,
-            "esc-react-fail",
-            |events| {
-                events.iter().any(|event| {
-                    matches!(
-                        event,
-                        DomainEvent::TriggerEvaluated {
-                            decision,
-                            external_id,
-                            ..
-                        } if decision == "react" && external_id == "esc-react-fail"
-                    )
-                }) && events.iter().any(|event| {
-                    matches!(
-                        event,
-                        DomainEvent::TriggerEscalationFailed { external_id, reason, .. }
-                            if external_id == "esc-react-fail" && reason.contains("missing-agent")
-                    )
-                })
-            },
-        ));
-        yield_now().await;
+        let collect = tokio::spawn(collect_trigger_events_until("esc-react-fail", |events| {
+            events.iter().any(|event| {
+                matches!(
+                    event,
+                    DomainEvent::TriggerEvaluated {
+                        decision,
+                        external_id,
+                        ..
+                    } if decision == "react" && external_id == "esc-react-fail"
+                )
+            }) && events.iter().any(|event| {
+                matches!(
+                    event,
+                    DomainEvent::TriggerEscalationFailed { external_id, reason, .. }
+                        if external_id == "esc-react-fail" && reason.contains("missing-agent")
+                )
+            })
+        }));
 
         let err = apply_decision(
             run_with_target(TriageAction::React, "missing-agent", "handle this"),
@@ -442,12 +411,11 @@ mod tests {
 
     #[tokio::test]
     async fn apply_decision_escalate_failure_publishes_failed_event() {
+        let _events_guard = test_events_guard().await;
         let envelope = envelope("esc-escalate-fail");
         let _ = init_global(32);
         let _ = AgentDefinitionRegistry::init_global_builtins();
-        let rx = subscribe_probe();
         let collect = tokio::spawn(collect_trigger_events_until(
-            rx,
             "esc-escalate-fail",
             |events| {
                 events.iter().any(|event| {
@@ -466,7 +434,6 @@ mod tests {
             ))
             },
         ));
-        yield_now().await;
 
         let err = apply_decision(
             run_with_target(TriageAction::Escalate, "missing-agent", "escalate this"),

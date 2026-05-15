@@ -1144,7 +1144,7 @@ fn env_lock() -> std::sync::MutexGuard<'static, ()> {
 
 async fn load_or_init_for_workspace(root: &std::path::Path) -> Config {
     let env = MapEnv::default().with("OPENHUMAN_WORKSPACE", root.to_str().unwrap());
-    Config::load_or_init_with_env(root, &root.join("default-workspace"), &env)
+    Config::load_or_init_with_env_lookup(root, &root.join("workspace"), &env)
         .await
         .unwrap()
 }

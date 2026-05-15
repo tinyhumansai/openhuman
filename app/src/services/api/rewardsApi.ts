@@ -2,6 +2,8 @@ import type { ApiResponse } from '../../types/api';
 import type { RewardsAchievement, RewardsSnapshot } from '../../types/rewards';
 import { apiClient } from '../apiClient';
 
+const REWARDS_SNAPSHOT_TIMEOUT_MS = 15_000;
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -106,7 +108,9 @@ export function normalizeRewardsSnapshot(payload: unknown): RewardsSnapshot {
 
 export const rewardsApi = {
   async getMyRewards(): Promise<RewardsSnapshot> {
-    const response = await apiClient.get<ApiResponse<unknown>>('/rewards/me');
+    const response = await apiClient.get<ApiResponse<unknown>>('/rewards/me', {
+      timeout: REWARDS_SNAPSHOT_TIMEOUT_MS,
+    });
     if (!response.success) {
       throw {
         success: false,
