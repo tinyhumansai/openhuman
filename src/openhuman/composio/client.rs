@@ -25,6 +25,10 @@ use super::types::{
 };
 
 const POST_OAUTH_ACTION_RETRY_DELAY: Duration = Duration::from_secs(10);
+/// Literal error fragments Composio's gateway emits during the post-OAuth
+/// readiness gap. Matching is case-insensitive and substring-based so
+/// trailing punctuation or wrapper text from the gateway does not silently
+/// disable the retry.
 const POST_OAUTH_AUTH_ERROR_STRINGS: &[&str] = &["connection error, try to authenticate"];
 
 /// High-level client for all backend-proxied Composio operations.
@@ -168,7 +172,7 @@ impl ComposioClient {
             .await
     }
 
-    async fn execute_tool_with_post_oauth_retry(
+    pub(super) async fn execute_tool_with_post_oauth_retry(
         &self,
         tool: &str,
         body: &serde_json::Value,
@@ -473,7 +477,7 @@ fn is_post_oauth_auth_readiness_error(resp: &ComposioExecuteResponse) -> bool {
     let normalized = error.trim().to_ascii_lowercase();
     POST_OAUTH_AUTH_ERROR_STRINGS
         .iter()
-        .any(|needle| normalized == *needle)
+        .any(|needle| normalized.contains(needle))
 }
 
 /// Build a [`ComposioClient`] from the root config.

@@ -384,6 +384,53 @@ async fn execute_tool_retries_once_on_post_oauth_auth_readiness_error() {
     assert_eq!(attempts.load(Ordering::SeqCst), 2);
 }
 
+#[test]
+fn post_oauth_auth_readiness_error_matches_known_gateway_variants() {
+    for err in [
+        "Connection error, try to authenticate",
+        "connection error, try to authenticate",
+        "CONNECTION ERROR, TRY TO AUTHENTICATE",
+        "Action failed: Connection error, try to authenticate (gateway code 401)",
+    ] {
+        assert!(
+            is_post_oauth_auth_readiness_error(&ComposioExecuteResponse {
+                data: json!({}),
+                successful: false,
+                error: Some(err.to_string()),
+                cost_usd: 0.0,
+                markdown_formatted: None,
+            }),
+            "should classify retryable Composio auth-readiness error: {err}"
+        );
+    }
+}
+
+#[test]
+fn post_oauth_auth_readiness_error_rejects_unrelated_or_successful_payloads() {
+    for err in ["invalid_grant", "ratelimited", ""] {
+        assert!(
+            !is_post_oauth_auth_readiness_error(&ComposioExecuteResponse {
+                data: json!({}),
+                successful: false,
+                error: Some(err.to_string()),
+                cost_usd: 0.0,
+                markdown_formatted: None,
+            }),
+            "should not classify unrelated error as retryable: {err}"
+        );
+    }
+
+    assert!(!is_post_oauth_auth_readiness_error(
+        &ComposioExecuteResponse {
+            data: json!({}),
+            successful: true,
+            error: Some("Connection error, try to authenticate".to_string()),
+            cost_usd: 0.0,
+            markdown_formatted: None,
+        }
+    ));
+}
+
 #[tokio::test]
 async fn execute_tool_does_not_retry_other_auth_errors() {
     let attempts = Arc::new(AtomicUsize::new(0));

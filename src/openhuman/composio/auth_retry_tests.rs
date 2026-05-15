@@ -224,29 +224,3 @@ async fn retries_once_only_even_when_second_call_still_errors() {
         "must retry exactly once, never a third time"
     );
 }
-
-#[test]
-fn is_retryable_auth_error_matches_known_string() {
-    assert!(super::is_retryable_auth_error(
-        "Connection error, try to authenticate"
-    ));
-    // Tolerates wrapping text — Composio sometimes wraps the message
-    // in a longer envelope.
-    assert!(super::is_retryable_auth_error(
-        "Action failed: Connection error, try to authenticate (gateway code 401)"
-    ));
-    // Tolerates capitalisation drift on the gateway side.
-    assert!(super::is_retryable_auth_error(
-        "CONNECTION ERROR, TRY TO AUTHENTICATE"
-    ));
-    assert!(super::is_retryable_auth_error(
-        "connection error, try to authenticate"
-    ));
-}
-
-#[test]
-fn is_retryable_auth_error_rejects_unrelated_messages() {
-    assert!(!super::is_retryable_auth_error("invalid_grant"));
-    assert!(!super::is_retryable_auth_error("ratelimited"));
-    assert!(!super::is_retryable_auth_error(""));
-}
