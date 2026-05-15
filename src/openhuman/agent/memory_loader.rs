@@ -2,7 +2,9 @@ use crate::openhuman::memory::Memory;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use super::harness::memory_context::{WORKING_MEMORY_KEY_PREFIX, WORKING_MEMORY_LIMIT};
+use super::harness::memory_context::{
+    CROSS_CHAT_LIMIT, WORKING_MEMORY_KEY_PREFIX, WORKING_MEMORY_LIMIT,
+};
 use crate::openhuman::learning::transcript_ingest::CONVERSATION_MEMORY_NAMESPACE;
 
 /// Maximum number of `[Prior conversations]` lines surfaced into the prompt
@@ -14,6 +16,25 @@ const PRIOR_CONVERSATION_LIMIT: usize = 3;
 /// Medium/low entries stay queryable via the on-demand memory tool but
 /// do not auto-pollute every fresh chat.
 const PRIOR_CONVERSATION_KEY_PREFIX: &str = "high.";
+
+/// Per-snippet cap on the `[Cross-chat context]` block. Mirrors the
+/// harness-side helper but capped tighter for the loader path because
+/// loader runs against every turn (vs. build_context which is
+/// orchestrator-side).
+const CROSS_CHAT_LOADER_SNIPPET_CHARS: usize = 200;
+
+/// Render a short, non-leaky provenance tag for a cross-chat hit. The
+/// channel-side `session_id` is a JSON blob (`{"client_id": "...",
+/// "thread_id": "..."}`) — render only a short stable hash so the prompt
+/// never carries the raw `client_id` or socket UUID. See #1505 and the
+/// "Redact paths and IDs in public artifacts" auto-memory.
+fn provenance_tag(session_id: &str) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    session_id.hash(&mut hasher);
+    let h = hasher.finish();
+    format!("chat:{:08x}", (h & 0xFFFF_FFFF) as u32)
+}
 
 #[async_trait]
 pub trait MemoryLoader: Send + Sync {
@@ -246,6 +267,71 @@ impl MemoryLoader for DefaultMemoryLoader {
             prior_added += 1;
         }
 
+        // ── Cross-chat context (#1505) ───────────────────────────────────
+        //
+        // Same user, multiple chats. Pull conversational hits from OTHER
+        // sessions (workspace-isolated by SQLite path) so context the
+        // user shared in chat A is recoverable when they ask a dependent
+        // question in chat B. Bounded by the same character budget as
+        // the rest of the loader output. The current chat's `thread_id`
+        // (from the channel-side `with_thread_id` task-local) is
+        // excluded so the block doesn't echo same-chat history.
+        let current_thread_id = crate::openhuman::providers::thread_context::current_thread_id();
+        let cross_session_opts = crate::openhuman::memory::RecallOpts {
+            session_id: current_thread_id.as_deref(),
+            cross_session: true,
+            min_score: Some(self.min_relevance_score),
+            ..Default::default()
+        };
+        let cross_entries = memory
+            .recall(user_message, CROSS_CHAT_LIMIT * 3, cross_session_opts)
+            .await
+            .unwrap_or_default();
+
+        let mut appended_cross_header = false;
+        for entry in cross_entries
+            .into_iter()
+            .filter(|e| e.id.starts_with("episodic-cross:"))
+            .filter(|e| match e.score {
+                Some(score) => score >= self.min_relevance_score,
+                None => true,
+            })
+            .take(CROSS_CHAT_LIMIT)
+        {
+            let snippet = if entry.content.chars().count() > CROSS_CHAT_LOADER_SNIPPET_CHARS {
+                crate::openhuman::util::truncate_with_ellipsis(
+                    &entry.content,
+                    CROSS_CHAT_LOADER_SNIPPET_CHARS,
+                )
+            } else {
+                entry.content.clone()
+            };
+            let prov = entry
+                .session_id
+                .as_deref()
+                .map(provenance_tag)
+                .unwrap_or_else(|| "chat:unknown".to_string());
+            if !appended_cross_header {
+                let section = "[Cross-chat context]\n";
+                if context.len() + section.len() > budget {
+                    break;
+                }
+                context.push_str(section);
+                appended_cross_header = true;
+            }
+            let line = format!("- [{prov}] {snippet}\n");
+            if context.len() + line.len() > budget {
+                tracing::debug!(
+                    budget,
+                    current_len = context.len(),
+                    skipped_line_len = line.len(),
+                    "[memory_loader] context budget reached while appending cross-chat context"
+                );
+                break;
+            }
+            context.push_str(&line);
+        }
+
         if context.is_empty() {
             return Ok(String::new());
         }
@@ -261,6 +347,16 @@ mod tests {
 
     struct MockMemory {
         entries: Vec<MemoryEntry>,
+        cross_chat: Vec<MemoryEntry>,
+    }
+
+    impl MockMemory {
+        fn new(entries: Vec<MemoryEntry>) -> Self {
+            Self {
+                entries,
+                cross_chat: Vec::new(),
+            }
+        }
     }
 
     #[async_trait]
@@ -284,8 +380,11 @@ mod tests {
             &self,
             _query: &str,
             _limit: usize,
-            _opts: crate::openhuman::memory::RecallOpts<'_>,
+            opts: crate::openhuman::memory::RecallOpts<'_>,
         ) -> anyhow::Result<Vec<MemoryEntry>> {
+            if opts.cross_session {
+                return Ok(self.cross_chat.clone());
+            }
             Ok(self.entries.clone())
         }
 
@@ -339,8 +438,7 @@ mod tests {
         // Prior chat extracted two memories: one high-importance preference
         // and one medium-importance unresolved task. Only the high one
         // should make it into the loader's prompt block (#1399).
-        let mem = MockMemory {
-            entries: vec![
+        let mem = MockMemory::new(vec![
                 MemoryEntry {
                     id: "id-1".into(),
                     key: "high.preference.aaaaaaaaaaaa".into(),
@@ -361,8 +459,7 @@ mod tests {
                     session_id: None,
                     score: Some(0.9),
                 },
-            ],
-        };
+            ]);
 
         let loader = DefaultMemoryLoader::default();
         let out = loader
@@ -387,13 +484,11 @@ mod tests {
 
     #[tokio::test]
     async fn collect_recall_citations_filters_and_truncates_entries() {
-        let mem = MockMemory {
-            entries: vec![
-                entry("keep", "useful context", Some(0.9)),
-                entry("drop", "too weak", Some(0.1)),
-                entry("long", &"x".repeat(600), Some(0.8)),
-            ],
-        };
+        let mem = MockMemory::new(vec![
+            entry("keep", "useful context", Some(0.9)),
+            entry("drop", "too weak", Some(0.1)),
+            entry("long", &"x".repeat(600), Some(0.8)),
+        ]);
 
         let citations = collect_recall_citations(&mem, "hello", 5, 0.4)
             .await
@@ -402,5 +497,121 @@ mod tests {
         assert_eq!(citations[0].key, "keep");
         assert_eq!(citations[1].key, "long");
         assert!(citations[1].snippet.ends_with("..."));
+    }
+
+    // ── Cross-chat context (#1505) ───────────────────────────────────────
+
+    fn cross_chat_entry(
+        cross_id: &str,
+        session_id: &str,
+        content: &str,
+        score: Option<f64>,
+    ) -> MemoryEntry {
+        MemoryEntry {
+            id: format!("episodic-cross:{cross_id}"),
+            key: format!("{session_id}:user"),
+            content: content.into(),
+            namespace: None,
+            category: MemoryCategory::Conversation,
+            timestamp: "2026-05-15T00:00:00Z".into(),
+            session_id: Some(session_id.into()),
+            score,
+        }
+    }
+
+    #[tokio::test]
+    async fn loader_surfaces_cross_chat_block_with_provenance_tag() {
+        let mut mem = MockMemory::new(Vec::new());
+        mem.cross_chat = vec![cross_chat_entry(
+            "1",
+            "thread-source",
+            "I prefer Postgres for new services",
+            Some(0.9),
+        )];
+
+        let loader = DefaultMemoryLoader::default();
+        let out = loader
+            .load_context(&mem, "what database should I use?")
+            .await
+            .expect("loader must succeed");
+        assert!(
+            out.contains("[Cross-chat context]"),
+            "expected cross-chat header, got:\n{out}"
+        );
+        assert!(
+            out.contains("Postgres"),
+            "expected the cross-chat fact in the loader output, got:\n{out}"
+        );
+        assert!(
+            out.contains("[chat:"),
+            "expected provenance tag, got:\n{out}"
+        );
+        assert!(
+            !out.contains("thread-source"),
+            "raw session id MUST NOT leak into the prompt — render only the hashed tag, got:\n{out}"
+        );
+    }
+
+    #[tokio::test]
+    async fn loader_caps_cross_chat_block_at_limit() {
+        let mut mem = MockMemory::new(Vec::new());
+        mem.cross_chat = (0..10)
+            .map(|i| {
+                cross_chat_entry(
+                    &format!("{i}"),
+                    &format!("thread-{i}"),
+                    &format!("Cross-chat fact #{i}"),
+                    Some(0.9),
+                )
+            })
+            .collect();
+
+        let loader = DefaultMemoryLoader::default();
+        let out = loader
+            .load_context(&mem, "Cross-chat fact")
+            .await
+            .expect("loader must succeed");
+        let cross_lines = out.lines().filter(|l| l.starts_with("- [chat:")).count();
+        assert!(
+            cross_lines <= CROSS_CHAT_LIMIT,
+            "loader cross-chat block must be capped at {CROSS_CHAT_LIMIT}, saw {cross_lines}"
+        );
+    }
+
+    #[tokio::test]
+    async fn loader_drops_cross_chat_below_relevance_threshold() {
+        let mut mem = MockMemory::new(Vec::new());
+        mem.cross_chat = vec![
+            cross_chat_entry("1", "thread-a", "low score chat fact", Some(0.05)),
+            cross_chat_entry("2", "thread-b", "high score chat fact", Some(0.9)),
+        ];
+
+        let loader = DefaultMemoryLoader::default();
+        let out = loader
+            .load_context(&mem, "fact")
+            .await
+            .expect("loader must succeed");
+        assert!(
+            out.contains("high score chat fact"),
+            "high-relevance cross-chat must surface, got:\n{out}"
+        );
+        assert!(
+            !out.contains("low score chat fact"),
+            "low-relevance cross-chat must be filtered, got:\n{out}"
+        );
+    }
+
+    #[tokio::test]
+    async fn loader_returns_empty_when_no_cross_chat_or_other_blocks_match() {
+        let mem = MockMemory::new(Vec::new());
+        let loader = DefaultMemoryLoader::default();
+        let out = loader
+            .load_context(&mem, "anything")
+            .await
+            .expect("loader must succeed");
+        assert!(
+            !out.contains("[Cross-chat context]"),
+            "no cross-chat hits must produce no header, got:\n{out}"
+        );
     }
 }
