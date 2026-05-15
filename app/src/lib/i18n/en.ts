@@ -980,7 +980,8 @@ const en: TranslationMap = {
   'about.update.status.availableNoVersion': 'Update available',
   'about.update.status.downloading': 'Downloading...',
   'about.update.status.readyToInstall': 'v{version} ready to install',
-  'about.update.status.readyToInstallNoVersion': 'A new version is downloaded and ready. Restart to apply.',
+  'about.update.status.readyToInstallNoVersion':
+    'A new version is downloaded and ready. Restart to apply.',
   'about.update.status.installing': 'Installing...',
   'about.update.status.restarting': 'Restarting...',
   'about.update.status.upToDate': 'You are running the latest version.',

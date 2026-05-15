@@ -304,9 +304,7 @@ const ContextGatheringStep = ({
         <div className="w-20 h-20 rounded-full bg-gradient-to-r from-stone-300 via-stone-100 to-stone-300 bg-[length:200%_100%] animate-shimmer" />
 
         {/* Title */}
-        <h1 className="text-xl font-bold text-stone-900 animate-pulse">
-          Building your profile...
-        </h1>
+        <h1 className="text-xl font-bold text-stone-900 animate-pulse">Building your profile...</h1>
         <p className="text-sm text-stone-500 leading-relaxed">
           Connecting your integrations and building your personal context.
         </p>

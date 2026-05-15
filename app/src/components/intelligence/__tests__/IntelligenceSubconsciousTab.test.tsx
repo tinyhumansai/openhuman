@@ -18,10 +18,7 @@ import IntelligenceSubconsciousTab from '../IntelligenceSubconsciousTab';
 const mockDispatch = vi.fn();
 const mockNavigate = vi.fn();
 
-vi.mock('react-redux', () => ({
-  useDispatch: () => mockDispatch,
-  useSelector: () => 'en',
-}));
+vi.mock('react-redux', () => ({ useDispatch: () => mockDispatch, useSelector: () => 'en' }));
 
 vi.mock('react-router-dom', () => ({ useNavigate: () => mockNavigate }));
 
