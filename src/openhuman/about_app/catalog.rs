@@ -209,6 +209,21 @@ const CAPABILITIES: &[Capability] = &[
         privacy: None,
     },
     Capability {
+        id: "intelligence.agentmemory_backend",
+        name: "agentmemory Memory Backend",
+        domain: "intelligence",
+        category: CapabilityCategory::Intelligence,
+        description: "Opt-in Memory trait backend that delegates every store/recall/get/list/forget \
+            call to a locally-running agentmemory REST server. Selected via \
+            `memory.backend = \"agentmemory\"` in config.toml. Allows users who self-host \
+            agentmemory across Claude Code, Cursor, Codex, and OpenCode to share a single durable \
+            memory store. Default backend remains sqlite; selecting agentmemory is non-breaking.",
+        how_to: "Set `memory.backend = \"agentmemory\"` in config.toml. \
+            See gitbooks/features/obsidian-wiki/agentmemory-backend.md for setup and config keys.",
+        status: CapabilityStatus::Beta,
+        privacy: LOCAL_RAW,
+    },
+    Capability {
         id: "intelligence.memory_workspace",
         name: "Memory Workspace",
         domain: "intelligence",
