@@ -711,7 +711,7 @@ impl Tool for ComposioExecuteTool {
             super::googlecalendar_args::apply_calendar_query_defaults(&tool, arguments, &iana);
 
         let started = std::time::Instant::now();
-        let res = self.client.execute_tool(&tool, arguments).await;
+        let res = super::auth_retry::execute_with_auth_retry(&self.client, &tool, arguments).await;
         let elapsed_ms = started.elapsed().as_millis() as u64;
         match res {
             Ok(mut resp) => {

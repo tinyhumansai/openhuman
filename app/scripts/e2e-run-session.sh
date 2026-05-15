@@ -37,6 +37,7 @@ APPIUM_PID=""
 APP_PID=""
 E2E_CONFIG_BACKUP=""
 E2E_CONFIG_FILE=""
+CREATED_TEMP_CEF_CACHE=""
 
 # ------------------------------------------------------------------------------
 # Workspace + config
@@ -50,12 +51,30 @@ else
   echo "[runner] Using OPENHUMAN_WORKSPACE from environment: $OPENHUMAN_WORKSPACE"
 fi
 
+# Place the CEF cache directory OUTSIDE the workspace. By default the Tauri
+# shell roots it under `$OPENHUMAN_WORKSPACE/users/<id>/cef`, but our
+# `mega-flow` spec calls `openhuman.config_reset_local_data` between
+# sub-scenarios — that RPC does `remove_dir_all($OPENHUMAN_WORKSPACE)`,
+# which yanks CEF's cache out from under the running process and kills
+# the WebDriver session (every later sub-test then fails with
+# "invalid session id"). Pointing CEF at a sibling tmpdir via the
+# `OPENHUMAN_CEF_CACHE_PATH` escape hatch (`cef_profile.rs:7`) keeps it
+# unaffected by the reset.
+if [ -z "${OPENHUMAN_CEF_CACHE_PATH:-}" ]; then
+  OPENHUMAN_CEF_CACHE_PATH="$(mktemp -d)"
+  CREATED_TEMP_CEF_CACHE="$OPENHUMAN_CEF_CACHE_PATH"
+  export OPENHUMAN_CEF_CACHE_PATH
+  echo "[runner] Using temporary OPENHUMAN_CEF_CACHE_PATH: $OPENHUMAN_CEF_CACHE_PATH"
+fi
+
 if [ "${OPENHUMAN_SERVICE_MOCK:-0}" = "1" ] && [ -z "${OPENHUMAN_SERVICE_MOCK_STATE_FILE:-}" ]; then
   OPENHUMAN_SERVICE_MOCK_STATE_FILE="$OPENHUMAN_WORKSPACE/service-mock-state.json"
   export OPENHUMAN_SERVICE_MOCK_STATE_FILE
 fi
 
 cleanup() {
+  local status=$?
+  set +e
   if [ -n "$APPIUM_PID" ]; then
     echo "[runner] Stopping Appium (pid $APPIUM_PID)..."
     kill "$APPIUM_PID" 2>/dev/null || true
@@ -63,17 +82,54 @@ cleanup() {
   fi
   if [ -n "$APP_PID" ]; then
     echo "[runner] Stopping CEF app (pid $APP_PID)..."
+    # CEF spawns helper child processes (zygote, GPU, renderers) that
+    # the parent does not reap on SIGTERM. If we only `kill $APP_PID`
+    # the parent exits but children keep writing into the temp
+    # workspace, and the `rm -rf` below races them and fails with
+    # "Directory not empty" on Linux runners — even though the WDIO
+    # spec itself passed. Reap the whole process tree before cleanup.
+    #
+    # CRITICAL: capture child PIDs **before** killing the parent.
+    # The instant the parent exits, the kernel reparents its children
+    # to init (PID 1). After that, `pkill -P "$APP_PID"` matches
+    # nothing because no process has the dying parent as its PPID
+    # anymore. Snapshot the PIDs while the relationship still exists,
+    # then signal them directly by PID.
+    CHILD_PIDS="$(pgrep -P "$APP_PID" 2>/dev/null || true)"
+    pkill -TERM -P "$APP_PID" 2>/dev/null || true
     kill "$APP_PID" 2>/dev/null || true
     wait "$APP_PID" 2>/dev/null || true
+    # Brief grace period so CEF helpers can flush their CEF/Default
+    # files and exit on the SIGTERM we already sent. Anything that
+    # ignored it gets SIGKILLed by the captured-PID sweep below.
+    sleep 1
+    if [ -n "$CHILD_PIDS" ]; then
+      for pid in $CHILD_PIDS; do
+        kill -KILL "$pid" 2>/dev/null || true
+      done
+    fi
   fi
   if [ -n "$CREATED_TEMP_WORKSPACE" ]; then
-    rm -rf "$CREATED_TEMP_WORKSPACE"
+    for attempt in 1 2 3; do
+      rm -rf "$CREATED_TEMP_WORKSPACE" 2>/dev/null && break
+      echo "[runner] Warning: temporary workspace cleanup failed (attempt $attempt): $CREATED_TEMP_WORKSPACE" >&2
+      sleep "$attempt"
+    done
+    if [ -e "$CREATED_TEMP_WORKSPACE" ]; then
+      echo "[runner] Warning: leaving temporary workspace after cleanup retries: $CREATED_TEMP_WORKSPACE" >&2
+    fi
+  fi
+  if [ -n "$CREATED_TEMP_CEF_CACHE" ]; then
+    rm -rf "$CREATED_TEMP_CEF_CACHE" 2>/dev/null || true
   fi
   if [ -n "$E2E_CONFIG_BACKUP" ] && [ -f "$E2E_CONFIG_BACKUP" ]; then
-    mv "$E2E_CONFIG_BACKUP" "$E2E_CONFIG_FILE"
+    mv "$E2E_CONFIG_BACKUP" "$E2E_CONFIG_FILE" \
+      || echo "[runner] Warning: failed to restore E2E config backup: $E2E_CONFIG_BACKUP" >&2
   elif [ -n "$E2E_CONFIG_FILE" ] && [ -f "$E2E_CONFIG_FILE" ]; then
-    rm -f "$E2E_CONFIG_FILE"
+    rm -f "$E2E_CONFIG_FILE" \
+      || echo "[runner] Warning: failed to remove generated E2E config: $E2E_CONFIG_FILE" >&2
   fi
+  return "$status"
 }
 trap cleanup EXIT
 

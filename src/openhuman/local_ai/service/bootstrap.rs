@@ -2,6 +2,7 @@ use crate::openhuman::config::Config;
 use crate::openhuman::local_ai::device::DeviceProfile;
 use crate::openhuman::local_ai::model_ids;
 use crate::openhuman::local_ai::presets::{self, VisionMode};
+use crate::openhuman::local_ai::provider::{provider_from_config, LocalAiProvider};
 use crate::openhuman::local_ai::types::LocalAiStatus;
 
 use super::LocalAiService;
@@ -12,6 +13,7 @@ impl LocalAiService {
         let vision_model_id = model_ids::effective_vision_model_id(config);
         let embedding_model_id = model_ids::effective_embedding_model_id(config);
         let vision_mode = vision_mode_str(config);
+        let provider = provider_from_config(config);
         Self {
             whisper: super::whisper_engine::new_handle(),
             status: parking_lot::Mutex::new(LocalAiStatus {
@@ -28,7 +30,7 @@ impl LocalAiService {
                 embedding_state: "idle".to_string(),
                 stt_state: "idle".to_string(),
                 tts_state: "idle".to_string(),
-                provider: "ollama".to_string(),
+                provider: provider.as_str().to_string(),
                 download_progress: None,
                 downloaded_bytes: None,
                 total_bytes: None,
@@ -37,8 +39,8 @@ impl LocalAiService {
                 warning: None,
                 error_detail: None,
                 error_category: None,
-                model_path: Some(format!("ollama://{}", model_id)),
-                active_backend: "ollama".to_string(),
+                model_path: Some(model_path_for_config(config)),
+                active_backend: provider.as_str().to_string(),
                 backend_reason: None,
                 last_latency_ms: None,
                 prompt_toks_per_sec: None,
@@ -76,6 +78,7 @@ impl LocalAiService {
     pub fn reset_to_idle(&self, config: &Config) {
         let model_id = model_ids::effective_chat_model_id(config);
         let vision_mode = vision_mode_str(config);
+        let provider = provider_from_config(config);
         let mut status = self.status.lock();
         status.state = "idle".to_string();
         status.model_id = model_id.clone();
@@ -90,7 +93,7 @@ impl LocalAiService {
         status.embedding_state = "idle".to_string();
         status.stt_state = "idle".to_string();
         status.tts_state = "idle".to_string();
-        status.provider = "ollama".to_string();
+        status.provider = provider.as_str().to_string();
         status.download_progress = None;
         status.downloaded_bytes = None;
         status.total_bytes = None;
@@ -99,8 +102,8 @@ impl LocalAiService {
         status.warning = None;
         status.error_detail = None;
         status.error_category = None;
-        status.model_path = Some(format!("ollama://{}", model_id));
-        status.active_backend = "ollama".to_string();
+        status.model_path = Some(model_path_for_config(config));
+        status.active_backend = provider.as_str().to_string();
         status.backend_reason = None;
         status.last_latency_ms = None;
         status.prompt_toks_per_sec = None;
@@ -133,6 +136,7 @@ impl LocalAiService {
         }
 
         {
+            let provider = provider_from_config(&effective_config);
             let mut status = self.status.lock();
             status.model_id = model_ids::effective_chat_model_id(&effective_config);
             status.chat_model_id = model_ids::effective_chat_model_id(&effective_config);
@@ -142,8 +146,12 @@ impl LocalAiService {
             status.tts_voice_id = model_ids::effective_tts_voice_id(&effective_config);
             status.quantization = model_ids::effective_quantization(&effective_config);
             status.state = "loading".to_string();
+            status.provider = provider.as_str().to_string();
             status.vision_mode = vision_mode_str(&effective_config);
-            status.warning = Some("Connecting to local Ollama runtime".to_string());
+            status.warning = Some(format!(
+                "Connecting to local {} runtime",
+                provider.display_name()
+            ));
             status.download_progress = None;
             status.downloaded_bytes = None;
             status.total_bytes = None;
@@ -151,12 +159,136 @@ impl LocalAiService {
             status.eta_seconds = None;
             status.error_detail = None;
             status.error_category = None;
-            status.active_backend = "ollama".to_string();
-            status.backend_reason = Some("Inference delegated to Ollama runtime".to_string());
-            status.model_path = Some(format!(
-                "ollama://{}",
-                model_ids::effective_chat_model_id(&effective_config)
+            status.active_backend = provider.as_str().to_string();
+            status.backend_reason = Some(format!(
+                "Inference delegated to {} runtime",
+                provider.display_name()
             ));
+            status.model_path = Some(model_path_for_config(&effective_config));
+        }
+
+        if provider_from_config(&effective_config) == LocalAiProvider::LmStudio {
+            log::debug!(
+                "[local_ai] LM Studio bootstrap branch entry preload_embedding={} preload_stt={} preload_tts={}",
+                effective_config.local_ai.preload_embedding_model,
+                effective_config.local_ai.preload_stt_model,
+                effective_config.local_ai.preload_tts_voice
+            );
+            log::trace!("[local_ai] LM Studio bootstrap availability check start");
+            if let Err(err) = self.ensure_lm_studio_available(&effective_config).await {
+                log::debug!("[local_ai] LM Studio bootstrap degraded: {err}");
+                let mut status = self.status.lock();
+                status.state = "degraded".to_string();
+                status.error_category = Some("server".to_string());
+                status.warning = Some(err);
+                return;
+            }
+            log::debug!("[local_ai] LM Studio bootstrap availability check succeeded");
+
+            log::trace!(
+                "[local_ai] LM Studio bootstrap embedding preload decision: {}",
+                effective_config.local_ai.preload_embedding_model
+            );
+            if effective_config.local_ai.preload_embedding_model {
+                let embedding_model = model_ids::effective_embedding_model_id(&effective_config);
+                log::debug!(
+                    "[local_ai] LM Studio bootstrap embedding preload start model={embedding_model}"
+                );
+                {
+                    let mut status = self.status.lock();
+                    status.state = "downloading".to_string();
+                    status.embedding_state = "downloading".to_string();
+                    status.warning = Some(format!(
+                        "Downloading embedding model via Ollama: `{embedding_model}`"
+                    ));
+                }
+                if let Err(err) = async {
+                    log::trace!(
+                        "[local_ai] LM Studio bootstrap embedding ensure_ollama_server start"
+                    );
+                    self.ensure_ollama_server(&effective_config).await?;
+                    log::trace!(
+                        "[local_ai] LM Studio bootstrap embedding ensure_ollama_server succeeded"
+                    );
+                    log::trace!(
+                        "[local_ai] LM Studio bootstrap embedding ensure_ollama_model_available start model={embedding_model}"
+                    );
+                    self.ensure_ollama_model_available(&embedding_model, "embedding")
+                        .await?;
+                    log::trace!(
+                        "[local_ai] LM Studio bootstrap embedding ensure_ollama_model_available succeeded model={embedding_model}"
+                    );
+                    Ok::<(), String>(())
+                }
+                .await
+                {
+                    log::warn!("[local_ai] LM Studio bootstrap embedding preload failed: {err}");
+                    self.status.lock().embedding_state = "missing".to_string();
+                } else {
+                    log::debug!(
+                        "[local_ai] LM Studio bootstrap embedding preload succeeded model={embedding_model}"
+                    );
+                    self.status.lock().embedding_state = "ready".to_string();
+                }
+            }
+
+            log::trace!(
+                "[local_ai] LM Studio bootstrap STT preload decision: {}",
+                effective_config.local_ai.preload_stt_model
+            );
+            if effective_config.local_ai.preload_stt_model {
+                log::debug!("[local_ai] LM Studio bootstrap STT preload start");
+                if let Err(err) = self.ensure_stt_asset_available(&effective_config).await {
+                    log::warn!("[local_ai] LM Studio bootstrap STT preload failed: {err}");
+                    self.status.lock().stt_state = "missing".to_string();
+                } else {
+                    log::debug!("[local_ai] LM Studio bootstrap STT preload succeeded");
+                }
+            }
+            log::trace!(
+                "[local_ai] LM Studio bootstrap TTS preload decision: {}",
+                effective_config.local_ai.preload_tts_voice
+            );
+            if effective_config.local_ai.preload_tts_voice {
+                log::debug!("[local_ai] LM Studio bootstrap TTS preload start");
+                if let Err(err) = self.ensure_tts_asset_available(&effective_config).await {
+                    log::warn!("[local_ai] LM Studio bootstrap TTS preload failed: {err}");
+                    self.status.lock().tts_state = "missing".to_string();
+                } else {
+                    log::debug!("[local_ai] LM Studio bootstrap TTS preload succeeded");
+                }
+            }
+
+            let mut status = self.status.lock();
+            status.state = "ready".to_string();
+            status.vision_state = "disabled".to_string();
+            if !effective_config.local_ai.preload_embedding_model {
+                status.embedding_state = "idle".to_string();
+            } else if status.embedding_state != "ready" {
+                status.embedding_state = "missing".to_string();
+            }
+            if !effective_config.local_ai.preload_stt_model {
+                status.stt_state = "idle".to_string();
+            }
+            if !effective_config.local_ai.preload_tts_voice {
+                status.tts_state = "idle".to_string();
+            }
+            status.warning = None;
+            status.error_detail = None;
+            status.error_category = None;
+            status.download_progress = None;
+            status.downloaded_bytes = None;
+            status.total_bytes = None;
+            status.download_speed_bps = None;
+            status.eta_seconds = None;
+            status.model_path = Some(model_path_for_config(&effective_config));
+            log::debug!(
+                "[local_ai] LM Studio bootstrap ready embedding_state={} stt_state={} tts_state={}",
+                status.embedding_state,
+                status.stt_state,
+                status.tts_state
+            );
+            return;
         }
 
         if let Err(first_err) = self.ensure_ollama_server(&effective_config).await {
@@ -251,10 +383,7 @@ impl LocalAiService {
         status.total_bytes = None;
         status.download_speed_bps = None;
         status.eta_seconds = None;
-        status.model_path = Some(format!(
-            "ollama://{}",
-            model_ids::effective_chat_model_id(&effective_config)
-        ));
+        status.model_path = Some(model_path_for_config(&effective_config));
     }
 
     pub fn should_run_memory_autosummary(&self, config: &Config) -> bool {
@@ -338,6 +467,14 @@ fn initial_vision_state(config: &Config) -> String {
 
 fn vision_mode_str(config: &Config) -> String {
     format!("{:?}", presets::vision_mode_for_config(&config.local_ai)).to_ascii_lowercase()
+}
+
+fn model_path_for_config(config: &Config) -> String {
+    let model_id = model_ids::effective_chat_model_id(config);
+    match provider_from_config(config) {
+        LocalAiProvider::Ollama => format!("ollama://{model_id}"),
+        LocalAiProvider::LmStudio => format!("lmstudio://{model_id}"),
+    }
 }
 
 #[cfg(test)]

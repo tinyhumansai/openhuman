@@ -400,6 +400,10 @@ pub async fn update_apply(
 }
 
 #[cfg(test)]
+#[path = "ops_tests.rs"]
+mod ops_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::openhuman::config::TEST_ENV_LOCK;

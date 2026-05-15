@@ -56,7 +56,9 @@ export default function VoiceSetupModal({ onClose, skillStatus }: Props) {
 
   const handleGoToLocalModel = () => {
     onClose();
-    navigate('/settings/local-model');
+    // STT model install lives on the Voice settings panel (PR 2). The
+    // legacy `/settings/local-model` route handled Ollama assets only.
+    navigate('/settings/voice');
   };
 
   const handleGoToSettings = () => {

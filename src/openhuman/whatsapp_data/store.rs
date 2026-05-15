@@ -468,6 +468,10 @@ fn map_message_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<WhatsAppMessage>
 }
 
 #[cfg(test)]
+#[path = "store_tests.rs"]
+mod store_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use tempfile::tempdir;

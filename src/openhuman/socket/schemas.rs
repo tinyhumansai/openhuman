@@ -222,7 +222,7 @@ fn handle_connect_with_session(_params: Map<String, Value>) -> ControllerFuture 
 
         // Load config for API URL and session token.
         let config = crate::openhuman::config::rpc::load_config_with_timeout().await?;
-        let api_url = crate::api::config::effective_api_url(&config.api_url);
+        let api_url = crate::api::config::effective_backend_api_url(&config.api_url);
         let token = crate::api::jwt::get_session_token(&config)
             .map_err(|e| format!("failed to read session token: {e}"))?
             .ok_or("no session token stored — user must log in first")?;

@@ -44,6 +44,12 @@ subagents = [
     "tools_agent",
     "critic",
     "archivist",
+    # Crypto wallet & market specialist (#1397). Synthesised into a
+    # `delegate_do_crypto` tool at agent-build time. Route any wallet,
+    # transfer, swap, contract-call, or exchange trading request here —
+    # the agent enforces a strict read → simulate → confirm → execute
+    # contract that the generic delegation surface does not.
+    "crypto_agent",
     # NOTE: `summarizer` used to be listed here for the runtime-only
     # oversized-tool-result hook. That path is currently disabled
     # (`context.summarizer_payload_threshold_tokens = 0`) after recursive
@@ -55,7 +61,15 @@ subagents = [
 ]
 
 [model]
-hint = "reasoning"
+# Front-line conversational agent: TTFT dominates UX. `hint:chat` resolves
+# to the fast chat tier (`reasoning-quick-v1` / Kimi K2.6 Turbo on
+# Fireworks via backend PR #760, 128k context, `supportsThinking: false`).
+# The orchestrator is a planner/router that picks a delegate and
+# synthesises sub-agent output — workload that doesn't benefit from the
+# slower deep-reasoning tier. Sub-agents that need heavier reasoning
+# can still opt into `reasoning-v1` (DeepSeek V4 Pro) via
+# `ModelSpec::Hint("reasoning")` in their own definitions.
+hint = "chat"
 
 [tools]
 # Direct tools — things the orchestrator calls itself rather than

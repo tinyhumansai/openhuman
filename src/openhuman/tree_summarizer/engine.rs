@@ -408,7 +408,8 @@ async fn summarize_to_limit(
             char_limit
         );
         // Truncate at a char boundary
-        let truncated = &response[..response.floor_char_boundary(char_limit)];
+        let truncated =
+            &response[..crate::openhuman::util::floor_char_boundary(&response, char_limit)];
         truncated.to_string()
     } else {
         response

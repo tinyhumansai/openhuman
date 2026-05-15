@@ -26,14 +26,21 @@ Quick reference for anyone starting with Claude on this project. Updated by the 
 - **Ask user when in doubt** — never assume scope or approach
 - **PRs target upstream** — `tinyhumansai/openhuman` main branch, not fork
 
-## Local AI Presets & Daemon Gotcha
+## Local AI Presets
 
 - **Tier system lives in `src/openhuman/local_ai/presets.rs`** — single source of truth for tier→model ID mapping. To change default models for a release, edit `all_presets()` there.
 - **Device detection** uses `sysinfo` crate (`src/openhuman/local_ai/device.rs`). Apple Silicon = GPU always; others = best-effort.
 - **`OPENHUMAN_LOCAL_AI_TIER` env var** overrides the selected tier at config load time (in `load.rs`).
 - **Frontend tier selector** is in `LocalModelPanel.tsx` under Settings > Local AI Model. Uses `coreRpcClient` to call 3 RPC methods: `local_ai_device_profile`, `local_ai_presets`, `local_ai_apply_preset`.
 - **Default config maps to Medium tier** (`gemma3:4b-it-qat`). If someone changes `model_ids.rs` defaults, they should keep `presets.rs` in sync.
-- **Daemon binary gotcha** — A daemon process (`openhuman-aarch64-apple-darwin run`) auto-starts on port 7788 and respawns on kill. `pnpm tauri dev` reuses it if already running. When adding new RPC methods, you must replace this binary: `cp -f target/debug/openhuman-core app/src-tauri/binaries/openhuman-aarch64-apple-darwin`, then kill the old PID so it respawns with the new binary.
+
+## Core process (in-process, no sidecar)
+
+- **Core runs in-process** as a tokio task inside the Tauri host (sidecar removed in PR #1061). Lifecycle owned by `core_process::CoreProcessHandle` in `app/src-tauri/src/core_process.rs`.
+- **`pnpm core:stage` is a no-op echo** — there is no `target/debug/openhuman-core` binary to copy into `app/src-tauri/binaries/`. Rebuilding via `pnpm dev:app` is enough to pick up new RPC methods in the in-process server.
+- **Token auth**: per-launch hex bearer in `OPENHUMAN_CORE_TOKEN`, exposed to the renderer via `core_rpc_token` Tauri command. Always call RPC through `invoke('core_rpc_relay', { request: { method, params } })` — avoids the CORS preflight `fetch()` would trigger.
+- **Stale-listener policy** (#1130): if the port is already in use, the handle probes `GET /` to decide if it's an OpenHuman core, then term/force-kill with PID revalidation guarding against PID reuse. Set `OPENHUMAN_CORE_REUSE_EXISTING=1` to attach to a manually-started `openhuman-core serve` for debugging.
+- **Default port** `7788`. Stage token (when running standalone): `~/.openhuman-staging/core.token` under `OPENHUMAN_APP_ENV=staging`.
 
 ## Onboarding System
 
@@ -177,6 +184,7 @@ Quick reference for anyone starting with Claude on this project. Updated by the 
 
 ## Environment
 
-- **Core sidecar port** — `7788` (default). Check with `lsof -i :7788`.
-- **Stage sidecar** — `cd app && pnpm core:stage` (required for core RPC).
-- **Kill stuck processes** — `lsof -i :7788` then `kill <PID>`.
+- **Core port** — `7788` (default; in-process inside Tauri host). Check with `lsof -i :7788`.
+- **`pnpm core:stage`** — no-op (sidecar removed in PR #1061). Use `pnpm dev:app` for full Tauri+core dev.
+- **Kill stuck processes** — `lsof -i :7788` then `kill <PID>`. Useful when `dev:app` reports a stale listener and you want to force a fresh boot rather than relying on the handle's auto-recovery.
+- **Skills runtime removed** — the QuickJS / `rquickjs` runtime is gone; `src/openhuman/skills/` is metadata-only ("Legacy skill metadata helpers retained after QuickJS runtime removal"). Skill execution surfaces are being rebuilt; don't assume a `.skill` can run end-to-end without checking the current code.

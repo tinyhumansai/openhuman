@@ -1,0 +1,63 @@
+id = "crypto_agent"
+display_name = "Crypto Agent"
+delegate_name = "do_crypto"
+when_to_use = "Crypto wallet & market specialist — drives wallet balances, quotes, transfers, swaps, contract calls, and exchange trading workflows on the user's connected wallet identities. Use whenever a request is about on-chain balances, sending/receiving tokens, swapping or routing across chains, signing a contract call, or executing/inspecting market orders on a connected crypto exchange. Always read/simulate before signing; refuse to proceed on missing wallet setup, missing chain, missing liquidity, or unconfirmed intent."
+temperature = 0.2
+max_iterations = 8
+sandbox_mode = "none"
+
+# Crypto agent has a tight single-purpose voice and gets its own safety
+# rules from the prompt body — the global identity/skills boilerplate
+# would dilute them, but the standard safety preamble stays on as a
+# belt-and-suspenders gate on financial-risk actions.
+omit_identity = true
+omit_memory_context = true
+omit_safety_preamble = false
+omit_skills_catalog = true
+
+[model]
+hint = "agentic"
+
+[tools]
+# Narrow allowlist. Wallet + market primitives only — no shell, no
+# file_write, no broad HTTP, no integration delegation. Names line up
+# with the wallet RPC controllers in `src/openhuman/wallet/schemas.rs`
+# (read: status/balances/supported_assets/chain_status; quote/prepare:
+# prepare_transfer/prepare_swap/prepare_contract_call; execute:
+# execute_prepared) and the financial-apis crypto/FX series exposed
+# via `stock_*`. Tools that aren't yet registered are silently dropped
+# by the tool filter at spawn time, so this list also describes the
+# agent's *intended* tool surface as wallet + exchange tools land.
+named = [
+    # Read-only wallet inspection.
+    "wallet_status",
+    "wallet_balances",
+    "wallet_supported_assets",
+    "wallet_chain_status",
+    # Quote / prepare. These MUST be called before any execute_prepared
+    # — they return a deterministic transaction blob plus fee/slippage
+    # estimates the agent shows the user for confirmation.
+    "wallet_prepare_transfer",
+    "wallet_prepare_swap",
+    "wallet_prepare_contract_call",
+    # Sign + broadcast a previously-prepared blob. Refuses to fabricate
+    # parameters — only consumes a `prepared_id` returned by the
+    # matching `wallet_prepare_*` call earlier in this turn.
+    "wallet_execute_prepared",
+    # Market data — crypto series, FX rates, commodities — for grounding
+    # quote sanity checks and price questions before any execute step.
+    "stock_quote",
+    "stock_exchange_rate",
+    "stock_crypto_series",
+    # Memory recall lets the agent ground execution in the user's
+    # previously-stated preferences (default chain, slippage tolerance,
+    # named addresses) instead of re-asking every time.
+    "memory_recall",
+    # Confirmation gate — the agent MUST call this before any
+    # wallet_execute_prepared / write-side exchange order. The runtime
+    # routes the prompt to the user and blocks until they reply.
+    "ask_user_clarification",
+    # Time grounding for "as of <when>" framing and freshness checks on
+    # quotes before execute.
+    "current_time",
+]

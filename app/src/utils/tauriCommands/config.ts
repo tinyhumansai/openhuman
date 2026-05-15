@@ -88,6 +88,11 @@ export interface ScreenIntelligenceSettingsUpdate {
 
 export interface LocalAiSettingsUpdate {
   runtime_enabled?: boolean | null;
+  opt_in_confirmed?: boolean | null;
+  provider?: string | null;
+  base_url?: string | null;
+  model_id?: string | null;
+  chat_model_id?: string | null;
   usage_embeddings?: boolean | null;
   usage_heartbeat?: boolean | null;
   usage_learning_reflection?: boolean | null;

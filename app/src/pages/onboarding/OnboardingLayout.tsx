@@ -12,7 +12,6 @@ import { setWalkthroughPending } from '../../components/walkthrough/AppWalkthrou
 // import { ONBOARDING_WELCOME_THREAD_LABEL } from '../../constants/onboardingChat';
 import { useCoreState } from '../../providers/CoreStateProvider';
 import { trackEvent } from '../../services/analytics';
-import { userApi } from '../../services/api/userApi';
 import { getDefaultEnabledTools } from '../../utils/toolDefinitions';
 import BetaBanner from './components/BetaBanner';
 import { OnboardingContext, type OnboardingDraft } from './OnboardingContext';
@@ -65,20 +64,18 @@ const OnboardingLayout = () => {
       connectedSources: draft.connectedSources,
     });
 
-    await setOnboardingTasks({
-      accessibilityPermissionGranted:
-        snapshot.localState.onboardingTasks?.accessibilityPermissionGranted ?? false,
-      localModelConsentGiven: false,
-      localModelDownloadStarted: false,
-      enabledTools: getDefaultEnabledTools(),
-      connectedSources: draft.connectedSources,
-      updatedAtMs: Date.now(),
-    });
-
     try {
-      await userApi.onboardingComplete();
-    } catch {
-      console.warn('[onboarding] Failed to notify backend of onboarding completion');
+      await setOnboardingTasks({
+        accessibilityPermissionGranted:
+          snapshot.localState.onboardingTasks?.accessibilityPermissionGranted ?? false,
+        localModelConsentGiven: false,
+        localModelDownloadStarted: false,
+        enabledTools: getDefaultEnabledTools(),
+        connectedSources: draft.connectedSources,
+        updatedAtMs: Date.now(),
+      });
+    } catch (e) {
+      console.warn('[onboarding] Failed to persist onboarding tasks; continuing completion', e);
     }
 
     try {

@@ -68,7 +68,9 @@ impl Default for CostConfig {
 
 /// Default pricing for popular models (USD per 1M tokens)
 fn get_default_pricing() -> HashMap<String, ModelPricing> {
-    use super::types::{MODEL_AGENTIC_V1, MODEL_CODING_V1, MODEL_REASONING_V1};
+    use super::types::{
+        MODEL_AGENTIC_V1, MODEL_CODING_V1, MODEL_REASONING_QUICK_V1, MODEL_REASONING_V1,
+    };
 
     let mut prices = HashMap::new();
 
@@ -77,6 +79,14 @@ fn get_default_pricing() -> HashMap<String, ModelPricing> {
         ModelPricing {
             input: 0.84,
             output: 2.52,
+        },
+    );
+    // Kimi K2.6 Turbo on Fireworks — see backend PR #760.
+    prices.insert(
+        MODEL_REASONING_QUICK_V1.into(),
+        ModelPricing {
+            input: 0.60,
+            output: 2.50,
         },
     );
     prices.insert(

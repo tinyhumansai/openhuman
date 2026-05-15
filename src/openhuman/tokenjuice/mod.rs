@@ -48,6 +48,10 @@ pub mod text;
 pub mod tool_integration;
 pub mod types;
 
+#[cfg(test)]
+#[path = "text_tests.rs"]
+mod text_tests;
+
 pub use reduce::reduce_execution_with_rules;
 pub use rules::{load_builtin_rules, load_rules, LoadRuleOptions};
 pub use tool_integration::{compact_tool_output, CompactionStats};

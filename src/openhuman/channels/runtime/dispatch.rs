@@ -1190,7 +1190,24 @@ pub(crate) async fn process_channel_message(
                     e
                 );
             } else {
-                crate::core::observability::report_error(
+                // Route through `report_error_or_expected` so
+                // transient-upstream provider HTTP errors that bubbled
+                // up via `agent.run_single` (`OpenHuman API error
+                // (502 Bad Gateway): …`) get demoted via
+                // `is_transient_upstream_http_message` — the agent
+                // re-emit at the dispatch layer was previously
+                // unconditionally calling `report_error`, which firehoses
+                // Sentry under `domain="channels"` even though the same
+                // chain was already classified at the provider + agent
+                // layers (OPENHUMAN-TAURI-4F ~157ev / -1C ~87ev / -8F
+                // ~39ev: provider 5xx that the reliable layer retried
+                // and exhausted, then the channels layer re-reported as
+                // a fresh per-attempt event). Genuine bugs (404 / 500
+                // / unrelated agent failures) still surface — the
+                // classifier only demotes the canonical transient
+                // shapes documented in
+                // `crate::core::observability::expected_error_kind`.
+                crate::core::observability::report_error_or_expected(
                     &e,
                     "channels",
                     "dispatch_llm_error",

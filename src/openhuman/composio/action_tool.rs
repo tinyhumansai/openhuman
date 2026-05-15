@@ -135,7 +135,8 @@ impl Tool for ComposioActionTool {
         );
 
         let started = std::time::Instant::now();
-        let res = self.client.execute_tool(&self.action_name, args).await;
+        let res =
+            super::auth_retry::execute_with_auth_retry(&self.client, &self.action_name, args).await;
         let elapsed_ms = started.elapsed().as_millis() as u64;
 
         match res {

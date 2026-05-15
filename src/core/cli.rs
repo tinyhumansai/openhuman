@@ -45,7 +45,9 @@ Contribute & Star us on GitHub: https://github.com/tinyhumansai/openhuman
 /// the subcommand/namespace is unknown.
 pub fn run_from_cli_args(args: &[String]) -> Result<()> {
     // Print the welcome banner to stderr to keep stdout clean for JSON output.
-    eprint!("{CLI_BANNER}");
+    if !matches!(args.first().map(String::as_str), Some("mcp" | "mcp-server")) {
+        eprint!("{CLI_BANNER}");
+    }
 
     load_dotenv_for_cli()?;
 
@@ -58,6 +60,7 @@ pub fn run_from_cli_args(args: &[String]) -> Result<()> {
     // Match on the first argument to determine the subcommand.
     match args[0].as_str() {
         "run" | "serve" => run_server_command(&args[1..]),
+        "mcp" | "mcp-server" => crate::openhuman::mcp_server::run_stdio_from_cli(&args[1..]),
         "call" => run_call_command(&args[1..]),
         // Domain-specific CLI adapters that don't follow the generic namespace pattern.
         "screen-intelligence" => {
@@ -518,6 +521,9 @@ fn print_general_help(grouped: &BTreeMap<String, Vec<ControllerSchema>>) {
     println!("Usage:");
     println!("  openhuman run [--host <addr>] [--port <u16>] [--jsonrpc-only] [--verbose]");
     println!("  openhuman call --method <name> [--params '<json>']");
+    println!(
+        "  openhuman mcp [-v|--verbose]              (stdio MCP server; read-only memory tools)"
+    );
     println!("  openhuman skills <subcommand> [options]   (skill development runtime)");
     println!("  openhuman agent <subcommand> [options]    (inspect agent definitions & prompts)");
     println!("  openhuman voice [--hotkey <combo>] [--mode <tap|push>]  (voice dictation server)");

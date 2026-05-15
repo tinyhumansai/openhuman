@@ -105,9 +105,12 @@ const persistedNotificationReducer = persistReducer(notificationPersistConfig, n
 const threadPersistConfig = { key: 'thread', storage, whitelist: ['selectedThreadId'] };
 const persistedThreadReducer = persistReducer(threadPersistConfig, threadReducer);
 
-// Mascot appearance — color preference is per-user so it travels with the
-// account on logout/login rather than leaking across users.
-const mascotPersistConfig = { key: 'mascot', storage, whitelist: ['color'] };
+// Mascot appearance + voice — color and voiceId preferences are per-user
+// so they travel with the account on logout/login rather than leaking
+// across users. `voiceId` is the user's chosen ElevenLabs voice for
+// reply speech (issue #1762); `null` falls back to the build-time
+// default in `app/src/utils/config.ts::MASCOT_VOICE_ID`.
+const mascotPersistConfig = { key: 'mascot', storage, whitelist: ['color', 'voiceId'] };
 const persistedMascotReducer = persistReducer(mascotPersistConfig, mascotReducer);
 
 export const store = configureStore({

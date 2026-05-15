@@ -10,7 +10,7 @@ import PillTabBar from '../components/PillTabBar';
 import UpsellBanner from '../components/upsell/UpsellBanner';
 import { dismissBanner, shouldShowBanner } from '../components/upsell/upsellDismissState';
 import UsageLimitModal from '../components/upsell/UsageLimitModal';
-import MicCloudComposer from '../features/human/MicCloudComposer';
+import MicComposer from '../features/human/MicComposer';
 // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
 // import { ONBOARDING_WELCOME_THREAD_LABEL } from '../constants/onboardingChat';
 import { useStickToBottom } from '../hooks/useStickToBottom';
@@ -110,6 +110,24 @@ export function isComposerInteractionBlocked(args: {
   rustChat: boolean;
 }): boolean {
   return !args.rustChat || Boolean(args.activeThreadId) || args.welcomePending;
+}
+
+interface ImeKeyboardEventLike {
+  isComposing?: boolean;
+  keyCode?: number;
+  which?: number;
+  nativeEvent?: { isComposing?: boolean; keyCode?: number; which?: number };
+}
+
+export function isImeCompositionKeyEvent(event: ImeKeyboardEventLike): boolean {
+  return (
+    event.isComposing === true ||
+    event.nativeEvent?.isComposing === true ||
+    event.nativeEvent?.keyCode === 229 ||
+    event.nativeEvent?.which === 229 ||
+    event.keyCode === 229 ||
+    event.which === 229
+  );
 }
 
 /**
@@ -239,6 +257,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
   });
 
   const textInputRef = useRef<HTMLTextAreaElement>(null);
+  const isComposingTextRef = useRef(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -817,6 +836,8 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
   }, [messages, replyMode, rustChat]);
 
   const handleInputKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (isComposingTextRef.current || isImeCompositionKeyEvent(e)) return;
+
     const inlineSuffix = getInlineCompletionSuffix(inputValue, inlineSuggestionValue);
     const textarea = e.currentTarget;
     const caretAtEnd =
@@ -1648,11 +1669,16 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
               </p>
               <div className="flex items-center gap-2 flex-shrink-0 ml-2">
                 {(sendError.code === 'stt_not_ready' ||
-                  sendError.code === 'voice_transcription') && (
+                  sendError.code === 'voice_transcription' ||
+                  sendError.code === 'tts_not_ready' ||
+                  sendError.code === 'voice_synthesis') && (
                   <button
                     onClick={() => {
                       setSendError(null);
-                      navigate('/settings/local-model');
+                      // STT/TTS provider settings live on the Voice panel
+                      // since PR 2; the legacy local-model route was for
+                      // back when speech assets were lumped with Ollama.
+                      navigate('/settings/voice');
                     }}
                     className="text-xs text-primary-500 hover:text-primary-600 font-medium transition-colors">
                     Set up
@@ -1668,7 +1694,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
           )}
 
           {composer === 'mic-cloud' ? (
-            <MicCloudComposer
+            <MicComposer
               // Without `!selectedThreadId`, a mic submit before a thread is
               // ready hits `handleSendMessage`'s early return and the
               // transcript is silently dropped — the user spoke into the void.
@@ -1690,6 +1716,12 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                   ref={textInputRef}
                   value={inputValue}
                   onChange={e => setInputValue(e.target.value)}
+                  onCompositionStart={() => {
+                    isComposingTextRef.current = true;
+                  }}
+                  onCompositionEnd={() => {
+                    isComposingTextRef.current = false;
+                  }}
                   onKeyDown={handleInputKeyDown}
                   placeholder="Type a message..."
                   rows={1}

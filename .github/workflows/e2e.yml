@@ -118,8 +118,12 @@ jobs:
           xvfb-run -a --server-args="-screen 0 1280x960x24" \
             bash app/scripts/e2e-run-session.sh
 
-      - name: Upload e2e artifacts on failure
-        if: failure() || cancelled()
+      - name: Upload e2e artifacts
+        # `always()` so artifacts upload even when an earlier step is
+        # `continue-on-error: true` (mega-flow) and the job is marked
+        # success. Without this we have no logs to diagnose the Linux
+        # CEF session-death issue.
+        if: always()
         uses: actions/upload-artifact@v5
         with:
           name: e2e-artifacts-linux

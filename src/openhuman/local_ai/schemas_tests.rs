@@ -269,3 +269,130 @@ async fn handle_set_ollama_path_accepts_empty_string_to_clear() {
         std::env::remove_var("OPENHUMAN_WORKSPACE");
     }
 }
+
+/// Regression test for the CodeRabbit #7 race on PR #1755: when two
+/// concurrent RPC calls (e.g. a double-click, or the auto-install firing
+/// alongside a manual click) hit `handle_local_ai_install_whisper` at
+/// the same time, only one of them must spawn a real install task. The
+/// other must short-circuit and return the in-flight status without
+/// starting a second download that would race on the same `.part` file.
+///
+/// We exercise the actual handler — not just the slot primitive — so
+/// the wiring at the call site is also covered.
+#[tokio::test]
+async fn install_whisper_handler_serializes_concurrent_calls() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let tmp = TempDir::new().unwrap();
+    unsafe {
+        std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
+    }
+
+    // Pre-acquire the install slot from the test so we're guaranteed to
+    // observe the "already in flight" code path. Holding the slot here
+    // also means the handler under test will short-circuit immediately
+    // rather than spawning a real install task that would try to hit
+    // the network in CI.
+    let slot = crate::openhuman::local_ai::voice_install_common::try_acquire_install_slot(
+        crate::openhuman::local_ai::voice_install_common::ENGINE_WHISPER,
+    )
+    .expect("test should be able to claim the slot first");
+
+    // Mark the status table as `Installing` so the handler's
+    // short-circuit branch (which reads current status to return) sees
+    // a coherent snapshot.
+    crate::openhuman::local_ai::voice_install_common::write_status(
+        crate::openhuman::local_ai::voice_install_common::VoiceInstallStatus {
+            engine: crate::openhuman::local_ai::voice_install_common::ENGINE_WHISPER.to_string(),
+            state: crate::openhuman::local_ai::voice_install_common::VoiceInstallState::Installing,
+            progress: Some(0),
+            downloaded_bytes: None,
+            total_bytes: None,
+            stage: Some("queued".to_string()),
+            error_detail: None,
+        },
+    );
+
+    // Fire two handler calls in parallel. Both must succeed and both
+    // must return the existing `Installing` status — neither must
+    // mutate or re-spawn. This is exactly the double-click / auto-fire
+    // shape described in CodeRabbit #7.
+    let (r1, r2) = tokio::join!(
+        handle_local_ai_install_whisper(Map::new()),
+        handle_local_ai_install_whisper(Map::new())
+    );
+
+    unsafe {
+        std::env::remove_var("OPENHUMAN_WORKSPACE");
+    }
+    drop(slot);
+    // Clean up so other tests see Missing.
+    crate::openhuman::local_ai::voice_install_common::reset_status(
+        crate::openhuman::local_ai::voice_install_common::ENGINE_WHISPER,
+    );
+
+    let v1 = r1.expect("first call ok");
+    let v2 = r2.expect("second call ok");
+    // Both calls must report the engine is already installing — proving
+    // the handler short-circuited rather than running the spawn path.
+    for (label, v) in [("first", &v1), ("second", &v2)] {
+        let state = v.get("state").and_then(|s| s.as_str());
+        assert_eq!(
+            state,
+            Some("installing"),
+            "{label} concurrent call should see Installing, got {v:?}"
+        );
+    }
+}
+
+/// Same regression for Piper. The two handlers share the slot
+/// infrastructure but live in separate code paths, so the wiring needs
+/// independent coverage.
+#[tokio::test]
+async fn install_piper_handler_serializes_concurrent_calls() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let tmp = TempDir::new().unwrap();
+    unsafe {
+        std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
+    }
+
+    let slot = crate::openhuman::local_ai::voice_install_common::try_acquire_install_slot(
+        crate::openhuman::local_ai::voice_install_common::ENGINE_PIPER,
+    )
+    .expect("test should be able to claim the slot first");
+
+    crate::openhuman::local_ai::voice_install_common::write_status(
+        crate::openhuman::local_ai::voice_install_common::VoiceInstallStatus {
+            engine: crate::openhuman::local_ai::voice_install_common::ENGINE_PIPER.to_string(),
+            state: crate::openhuman::local_ai::voice_install_common::VoiceInstallState::Installing,
+            progress: Some(0),
+            downloaded_bytes: None,
+            total_bytes: None,
+            stage: Some("queued".to_string()),
+            error_detail: None,
+        },
+    );
+
+    let (r1, r2) = tokio::join!(
+        handle_local_ai_install_piper(Map::new()),
+        handle_local_ai_install_piper(Map::new())
+    );
+
+    unsafe {
+        std::env::remove_var("OPENHUMAN_WORKSPACE");
+    }
+    drop(slot);
+    crate::openhuman::local_ai::voice_install_common::reset_status(
+        crate::openhuman::local_ai::voice_install_common::ENGINE_PIPER,
+    );
+
+    let v1 = r1.expect("first call ok");
+    let v2 = r2.expect("second call ok");
+    for (label, v) in [("first", &v1), ("second", &v2)] {
+        let state = v.get("state").and_then(|s| s.as_str());
+        assert_eq!(
+            state,
+            Some("installing"),
+            "{label} concurrent call should see Installing, got {v:?}"
+        );
+    }
+}
