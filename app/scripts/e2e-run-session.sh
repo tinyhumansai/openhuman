@@ -37,6 +37,7 @@ APPIUM_PID=""
 APP_PID=""
 E2E_CONFIG_BACKUP=""
 E2E_CONFIG_FILE=""
+CREATED_TEMP_CEF_CACHE=""
 
 # ------------------------------------------------------------------------------
 # Workspace + config
@@ -48,6 +49,22 @@ if [ -z "${OPENHUMAN_WORKSPACE:-}" ]; then
   echo "[runner] Using temporary OPENHUMAN_WORKSPACE: $OPENHUMAN_WORKSPACE"
 else
   echo "[runner] Using OPENHUMAN_WORKSPACE from environment: $OPENHUMAN_WORKSPACE"
+fi
+
+# Place the CEF cache directory OUTSIDE the workspace. By default the Tauri
+# shell roots it under `$OPENHUMAN_WORKSPACE/users/<id>/cef`, but our
+# `mega-flow` spec calls `openhuman.config_reset_local_data` between
+# sub-scenarios — that RPC does `remove_dir_all($OPENHUMAN_WORKSPACE)`,
+# which yanks CEF's cache out from under the running process and kills
+# the WebDriver session (every later sub-test then fails with
+# "invalid session id"). Pointing CEF at a sibling tmpdir via the
+# `OPENHUMAN_CEF_CACHE_PATH` escape hatch (`cef_profile.rs:7`) keeps it
+# unaffected by the reset.
+if [ -z "${OPENHUMAN_CEF_CACHE_PATH:-}" ]; then
+  OPENHUMAN_CEF_CACHE_PATH="$(mktemp -d)"
+  CREATED_TEMP_CEF_CACHE="$OPENHUMAN_CEF_CACHE_PATH"
+  export OPENHUMAN_CEF_CACHE_PATH
+  echo "[runner] Using temporary OPENHUMAN_CEF_CACHE_PATH: $OPENHUMAN_CEF_CACHE_PATH"
 fi
 
 if [ "${OPENHUMAN_SERVICE_MOCK:-0}" = "1" ] && [ -z "${OPENHUMAN_SERVICE_MOCK_STATE_FILE:-}" ]; then
@@ -97,6 +114,9 @@ cleanup() {
     # collected by the next CI tmp-cleanup pass. We must not fail the
     # whole job on cleanup leftovers when the test itself passed.
     rm -rf "$CREATED_TEMP_WORKSPACE" 2>/dev/null || true
+  fi
+  if [ -n "$CREATED_TEMP_CEF_CACHE" ]; then
+    rm -rf "$CREATED_TEMP_CEF_CACHE" 2>/dev/null || true
   fi
   if [ -n "$E2E_CONFIG_BACKUP" ] && [ -f "$E2E_CONFIG_BACKUP" ]; then
     mv "$E2E_CONFIG_BACKUP" "$E2E_CONFIG_FILE"

@@ -9,12 +9,13 @@ use std::path::PathBuf;
 /// Standard model identifiers matching the backend model registry.
 pub const MODEL_AGENTIC_V1: &str = "agentic-v1";
 pub const MODEL_REASONING_V1: &str = "reasoning-v1";
-/// Low-latency reasoning tier. Backend maps this to Kimi K2.6 Turbo on
+/// Low-latency chat tier. Backend maps this to Kimi K2.6 Turbo on
 /// Fireworks (128k context, `supportsThinking: false`) — tuned for
 /// time-to-first-token on conversational turns. See backend PR #760.
 /// The orchestrator (user-facing front-line agent) rides on this tier
-/// by default so chat responses feel snappy; reach for the slower
-/// `reasoning-v1` (DeepSeek V4 Pro) only when deep reasoning is needed.
+/// by default (via `hint:chat`) so chat responses feel snappy; reach
+/// for the slower `reasoning-v1` (DeepSeek V4 Pro) only when deep
+/// reasoning is needed.
 pub const MODEL_REASONING_QUICK_V1: &str = "reasoning-quick-v1";
 pub const MODEL_CODING_V1: &str = "coding-v1";
 /// Default model used when no explicit model is configured.

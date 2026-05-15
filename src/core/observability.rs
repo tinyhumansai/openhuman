@@ -540,6 +540,55 @@ pub fn is_max_iterations_event(event: &sentry::protocol::Event<'_>) -> bool {
         .any(crate::openhuman::agent::error::is_max_iterations_error)
 }
 
+/// Tag + body classifier for the `before_send` chain — drops Sentry events
+/// emitted at the OpenHuman backend / rpc layers for "401 Session
+/// expired" or the pre-flight "no session token stored" guards.
+///
+/// Pairs with [`is_session_expired_message`] (which classifies the
+/// message body at the emit site via `report_error_or_expected`). This
+/// fn runs in `before_send` so it catches any future call site that
+/// re-emits the same shape without routing through the classifier —
+/// keeps OPENHUMAN-TAURI-25 / -1Q / -27 / -1G permanently off Sentry
+/// (~185 events/day combined).
+///
+/// Scope: only the three domains that surface session-expired today
+/// (`llm_provider`, `backend_api`, `rpc`). Composio's OAuth-state 401
+/// is excluded — that's actionable and must reach Sentry.
+pub fn is_session_expired_event(event: &sentry::protocol::Event<'_>) -> bool {
+    let tags = &event.tags;
+    let Some(domain) = tags.get("domain").map(String::as_str) else {
+        return false;
+    };
+    if !matches!(domain, "llm_provider" | "backend_api" | "rpc") {
+        return false;
+    }
+
+    let status_is_401 = tags
+        .get("status")
+        .and_then(|s| s.parse::<u16>().ok())
+        .is_some_and(|code| code == 401);
+
+    let direct = event.message.as_deref();
+    let from_exception = event.exception.last().and_then(|e| e.value.as_deref());
+    let body_matches = [direct, from_exception]
+        .into_iter()
+        .flatten()
+        .any(is_session_expired_message);
+
+    if status_is_401 && body_matches {
+        return true;
+    }
+
+    // Pre-flight rpc guard has no status tag — accept on body alone,
+    // scoped to the rpc dispatcher (other domains don't emit the
+    // "no session token stored" sentinel).
+    if domain == "rpc" && body_matches {
+        return true;
+    }
+
+    false
+}
+
 pub fn is_transient_http_status(status: &str) -> bool {
     TRANSIENT_HTTP_STATUSES.contains(&status)
 }

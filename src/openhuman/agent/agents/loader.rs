@@ -301,9 +301,9 @@ mod tests {
     }
 
     #[test]
-    fn orchestrator_has_reasoning_hint_and_named_tools() {
+    fn orchestrator_has_chat_hint_and_named_tools() {
         let def = find("orchestrator");
-        assert!(matches!(def.model, ModelSpec::Hint(ref h) if h == "reasoning-quick"));
+        assert!(matches!(def.model, ModelSpec::Hint(ref h) if h == "chat"));
         match def.tools {
             ToolScope::Named(tools) => {
                 // spawn_subagent was removed in #1141; spawn_worker_thread is the replacement
