@@ -1101,6 +1101,38 @@ mod tests {
     }
 
     #[test]
+    fn channels_dispatch_re_emit_of_provider_502_classifies_as_transient() {
+        // OPENHUMAN-TAURI-4F (~157 events) / -1C (~87 events) / -8F
+        // (~39 events): the reliable provider layer retried 5xx, the
+        // agent re-raised the error, and `channels::runtime::dispatch`
+        // re-emitted it under `domain="channels", operation="dispatch_llm_error"`
+        // via raw `report_error` (which skips classification). Switching
+        // that site to `report_error_or_expected` routes the chain
+        // through this classifier — but only works if the canonical
+        // `"OpenHuman API error (NNN ...)"` substring still anchors the
+        // match through the channels-layer wrapping.
+        //
+        // The wrapping shape at the dispatch site is the agent error
+        // chain rendered via `format!("{e:#}")`. For a backend 502 from
+        // `providers::ops::api_error`, that resolves to:
+        //   "OpenHuman API error (502 Bad Gateway): error code: 502"
+        // possibly prepended with a runner / iteration prefix. Both
+        // shapes must classify as transient so the dispatch re-emit
+        // gets demoted.
+        for raw in [
+            "OpenHuman API error (502 Bad Gateway): error code: 502",
+            "agent.provider_chat failed: OpenHuman API error (503 Service Unavailable): retry budget exhausted",
+            "all providers exhausted: OpenHuman API error (504 Gateway Timeout): error code: 504",
+        ] {
+            assert_eq!(
+                expected_error_kind(raw),
+                Some(ExpectedErrorKind::TransientUpstreamHttp),
+                "channels.dispatch re-emit of {raw:?} must classify as transient"
+            );
+        }
+    }
+
+    #[test]
     fn classifies_socket_transient_http_errors() {
         // OPENHUMAN-TAURI-5P / -EZ: tungstenite's `WsError::Http(response)`
         // surfaces during the WebSocket upgrade handshake when the backend
