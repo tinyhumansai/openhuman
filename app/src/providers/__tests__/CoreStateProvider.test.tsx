@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as coreStateApi from '../../services/coreStateApi';
 import * as tauriCommands from '../../utils/tauriCommands';
 import { setCoreStateSnapshot } from '../../lib/coreState/store';
+import { setActiveUserId } from '../../store/userScopedStorage';
 import CoreStateProvider, {
   coreStatePollFailureWarningMessage,
   useCoreState,
@@ -104,6 +105,7 @@ describe('CoreStateProvider — identity-change cache clearing', () => {
     getTeamMembers.mockReset();
     getTeamInvites.mockReset();
     resetCoreStateStore();
+    setActiveUserId(null);
   });
 
   it('clears teams/members/invites when the userId changes between refreshes', async () => {

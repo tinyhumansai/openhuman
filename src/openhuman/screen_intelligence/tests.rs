@@ -1,5 +1,5 @@
 use std::path::Path;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::time::{self, Duration};
 
@@ -46,13 +46,8 @@ impl Drop for EnvVarGuard {
     }
 }
 
-static SCREEN_INTELLIGENCE_ENV_LOCK: OnceLock<std::sync::Mutex<()>> = OnceLock::new();
-
 fn screen_intelligence_env_lock() -> std::sync::MutexGuard<'static, ()> {
-    match SCREEN_INTELLIGENCE_ENV_LOCK
-        .get_or_init(|| std::sync::Mutex::new(()))
-        .lock()
-    {
+    match crate::openhuman::config::TEST_ENV_LOCK.lock() {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),
     }
