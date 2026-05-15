@@ -10,7 +10,6 @@
  * `FAIL_THRESHOLD` consecutive failures to mark `unreachable` so a single
  * dropped TCP packet doesn't pop a scary blocking screen.
  */
-
 import { setCore } from '../store/connectivitySlice';
 import { store } from '../store/index';
 import { callCoreRpc } from './coreRpcClient';
@@ -41,8 +40,13 @@ async function probe(): Promise<void> {
 
 function schedule(): void {
   if (timer != null) clearTimeout(timer);
+  // Use the failure streak (not just the Redux state) so we enter degraded
+  // 5s polling on the *first* miss — before the threshold flips `core` to
+  // `unreachable`. Without this, first-failure retries stayed at 30s.
+  // (addresses @coderabbitai on coreHealthMonitor.ts:46)
   const state = store.getState().connectivity.core;
-  const interval = state === 'reachable' ? HEALTHY_INTERVAL_MS : DEGRADED_INTERVAL_MS;
+  const isDegraded = consecutiveFails > 0 || state !== 'reachable';
+  const interval = isDegraded ? DEGRADED_INTERVAL_MS : HEALTHY_INTERVAL_MS;
   timer = setTimeout(() => void probe(), interval);
 }
 
