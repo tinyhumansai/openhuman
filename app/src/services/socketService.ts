@@ -157,8 +157,13 @@ class SocketService {
     const backendUrl = await resolveCoreSocketBaseUrl();
     socketLog('Connecting to core socket', { userId: uid, backendUrl });
 
-    // Ensure we're not connecting to the wrong URL
+    // Ensure we're not connecting to the wrong URL (Vite dev HMR port guard).
+    // Reset the backend channel before returning so it doesn't stay stuck at
+    // 'connecting'. (addresses @coderabbitai on socketService.ts:154-163)
     if (backendUrl.includes('localhost:1420') || backendUrl.includes(':1420')) {
+      store.dispatch(
+        setBackend({ value: 'disconnected', error: 'dev-server URL guard — not a real backend' })
+      );
       return;
     }
 
