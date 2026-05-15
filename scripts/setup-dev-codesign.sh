@@ -3,16 +3,16 @@
 # openhuman-core sidecar. Run this once per development machine.
 #
 # Why: macOS TCC identifies unsigned binaries by content hash (Mach-O UUID).
-# Every `yarn core:stage` recompiles the sidecar, changing its hash, so TCC
+# Every `pnpm core:stage` recompiles the sidecar, changing its hash, so TCC
 # no longer matches the old grant. Signing with a stable certificate causes
 # TCC to use the certificate identity instead — grants persist across rebuilds.
 #
 # After running this script:
-#   1. yarn core:stage        (signs the sidecar with the new cert)
+#   1. pnpm core:stage        (signs the sidecar with the new cert)
 #   2. In OpenHuman → Request Permissions (removes old stale TCC entry,
 #      registers current binary)
 #   3. Grant in System Settings → Refresh Status
-#   From this point the grant survives future `yarn core:stage` runs.
+#   From this point the grant survives future `pnpm core:stage` runs.
 
 set -euo pipefail
 
@@ -32,7 +32,7 @@ trap cleanup EXIT
 # ── Check if already set up ──────────────────────────────────────────────────
 if security find-identity -v -p codesigning 2>/dev/null | grep -q "$IDENTITY"; then
   echo "[setup-dev-codesign] Certificate \"$IDENTITY\" already exists — nothing to do."
-  echo "[setup-dev-codesign] Run 'yarn core:stage' to sign the sidecar."
+  echo "[setup-dev-codesign] Run 'pnpm core:stage' to sign the sidecar."
   exit 0
 fi
 
@@ -89,6 +89,23 @@ security import "$P12" \
   -T /usr/bin/codesign \
   -T /usr/bin/security
 
+# ── Grant codesign explicit partition access ─────────────────────────────────
+# The `-T /usr/bin/codesign` flag on `security import` above adds codesign to
+# the key's trusted-applications ACL, but macOS additionally requires the
+# *partition list* to be committed via `set-key-partition-list` before that
+# access actually takes effect. Without this step, the first `codesign`
+# invocation during `pnpm --filter openhuman-app dev:app` aborts with
+# `errSecInternalComponent` (or pops a Keychain password dialog for every
+# helper bundle, mid-build).
+#
+# This will prompt ONCE for your login keychain password (usually the same as
+# your macOS account password). From then on codesign uses the key silently.
+echo "[setup-dev-codesign] Granting codesign access to the private key — you'll be prompted for your login keychain password once."
+security set-key-partition-list \
+  -S apple-tool:,apple:,unsigned: \
+  -s \
+  "$KEYCHAIN"
+
 # ── Trust for code signing ───────────────────────────────────────────────────
 # Note: we add both basic and codeSign trust.
 security add-trusted-cert \
@@ -102,9 +119,9 @@ echo ""
 echo "[setup-dev-codesign] Done. Certificate \"$IDENTITY\" added to login Keychain."
 echo ""
 echo "Next steps:"
-echo "  1. yarn core:stage          — rebuilds and signs the sidecar"
+echo "  1. pnpm core:stage          — rebuilds and signs the sidecar"
 echo "  2. In OpenHuman click 'Request Permissions' to register the signed binary"
 echo "  3. Grant in System Settings → Privacy & Security → Accessibility"
 echo "  4. Click 'Refresh Status'"
 echo ""
-echo "After this, accessibility grants will survive future 'yarn core:stage' runs."
+echo "After this, accessibility grants will survive future 'pnpm core:stage' runs."
