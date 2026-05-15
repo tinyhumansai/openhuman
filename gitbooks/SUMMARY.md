@@ -43,6 +43,7 @@
 * [Testing Strategy](developing/testing-strategy.md)
 * [E2E Testing](developing/e2e-testing.md)
 * [Release Policy](developing/release-policy.md)
+* [Boost VC AI Capability Plan](developing/boost-vc-ai-capability-plan.md)
 * [Chromium Embedded Framework](developing/cef.md)
 * [Agent Observability](developing/agent-observability.md)
 * [Architecture](developing/architecture/README.md)
