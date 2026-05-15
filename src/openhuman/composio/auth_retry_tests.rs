@@ -250,10 +250,9 @@ async fn retries_once_only_even_when_second_call_still_errors() {
     // Once collapsed, tighten this to `assert_eq!(counter, 2)`.
     let hits = counter.load(Ordering::SeqCst);
     assert!(
-        (2..=4).contains(&hits),
-        "compound retry must be bounded: got {hits} gateway hits, expected 2-4 \
-         (2 = single-layer, 4 = outer auth_retry.rs #1708 × inner execute_tool_with_post_oauth_retry #1707). \
-         A count outside this range means an unintended retry loop."
+        matches!(hits, 2 | 4),
+        "compound retry must stay within known layer models: got {hits} gateway hits, \
+         expected 2 (single-layer) or 4 (outer auth_retry.rs #1708 × inner execute_tool_with_post_oauth_retry #1707)."
     );
 }
 
