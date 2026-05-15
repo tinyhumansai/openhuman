@@ -76,6 +76,18 @@ pub enum ExpectedErrorKind {
     TransientUpstreamHttp,
     LocalAiBinaryMissing,
     BackendUserError,
+    /// Third-party provider (composio, gmail OAuth, …) surfaced a user-state
+    /// validation failure: a trigger registry mismatch, a toolkit that was
+    /// never enabled, an OAuth scope that the user did not grant, or a
+    /// required field that was left blank. The UI already shows an
+    /// actionable error and Sentry has no remediation path — see
+    /// [`is_provider_user_state_message`] for the exact body shapes.
+    ///
+    /// Drops OPENHUMAN-TAURI-3R / -3S / -33 / -34 / -97 (~54 events): the
+    /// composio backend wraps several of these as HTTP 500 with the real
+    /// 4xx body embedded, which would otherwise escape the
+    /// [`is_backend_user_error_message`] 4xx-only matcher.
+    ProviderUserState,
     LocalAiCapabilityUnavailable,
     BudgetExhausted,
     SessionExpired,
@@ -97,6 +109,13 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     }
     if lower.contains("binary not found") {
         return Some(ExpectedErrorKind::LocalAiBinaryMissing);
+    }
+    // Check `is_provider_user_state_message` BEFORE `is_backend_user_error_message`:
+    // composio's "Toolkit X is not enabled" lands as a 4xx that both would
+    // match, and the more specific `ProviderUserState` bucket is the right
+    // home — see the variant doc-comment for OPENHUMAN-TAURI-… coverage.
+    if is_provider_user_state_message(&lower) {
+        return Some(ExpectedErrorKind::ProviderUserState);
     }
     if is_backend_user_error_message(&lower) {
         return Some(ExpectedErrorKind::BackendUserError);
@@ -242,6 +261,65 @@ fn is_backend_user_error_message(lower: &str) -> bool {
     matches!(status, 400..=499) && status != 408 && status != 429
 }
 
+/// Detect third-party provider validation failures that bubble up as
+/// user-state errors — composio trigger registry mismatch, toolkit not
+/// enabled, OAuth scopes missing, required fields left blank.
+///
+/// Unlike [`is_backend_user_error_message`], this classifier is **body-text
+/// shape-based** rather than HTTP-status-based, so it catches the cases
+/// where the composio backend wraps a Composio API 4xx as a 500 with the
+/// real validation message embedded in the body (OPENHUMAN-TAURI-3R / -3S
+/// / -97 — `"Backend returned 500 … Trigger type GITHUB_PUSH_EVENT not
+/// found"`, `"Backend returned 500 … Missing required fields: Your
+/// Subdomain"`). These would otherwise escape the 4xx-only matcher and
+/// fire as actionable Sentry events even though the underlying condition
+/// is user-state (the trigger slug isn't in composio's registry, the
+/// toolkit wasn't enabled by the user, the form field was left blank, …).
+///
+/// Also handles the gmail-sync 403 (OPENHUMAN-TAURI-33) where the
+/// composio sync loop surfaces the upstream Google OAuth scopes error as
+/// `"HTTP 403: Request had insufficient authentication scopes."`. The
+/// remediation is "user re-authorizes with the right scope" — nothing
+/// Sentry can act on.
+///
+/// All matches are substring-based against the lower-cased message so the
+/// classifier survives caller wrapping (rpc.invoke_method, agent.run_single,
+/// `[composio:gmail]` prefixes, anyhow chains, …).
+fn is_provider_user_state_message(lower: &str) -> bool {
+    // OPENHUMAN-TAURI-3R / -3S: composio enable_trigger when the slug isn't
+    // in the trigger registry (e.g. user clicked a stale UI option).
+    // Backend returns 500 with `"Trigger type GITHUB_PUSH_EVENT not found"`.
+    // Also covers the alternate phrasing `"Cannot enable trigger … not found"`.
+    if (lower.contains("trigger type ") && lower.contains("not found"))
+        || (lower.contains("cannot enable trigger") && lower.contains("not found"))
+    {
+        return true;
+    }
+
+    // OPENHUMAN-TAURI-34: composio rejected a tool call because the user
+    // hasn't enabled the toolkit yet. Wire shape:
+    // `Backend returned 400 … Toolkit "get" is not enabled`.
+    if lower.contains("toolkit ") && lower.contains("is not enabled") {
+        return true;
+    }
+
+    // OPENHUMAN-TAURI-97: composio authorize with a blank required field —
+    // SharePoint Subdomain, WhatsApp WABA ID, Tenant Name, etc.
+    // Backend returns 500 with `"Missing required fields: …"` body.
+    if lower.contains("missing required fields") {
+        return true;
+    }
+
+    // OPENHUMAN-TAURI-33: gmail sync hit an OAuth scope wall —
+    // `HTTP 403: Request had insufficient authentication scopes.`
+    // (or any sibling OAuth scope rejection from composio's toolkits).
+    if lower.contains("insufficient authentication scopes") {
+        return true;
+    }
+
+    false
+}
+
 /// Detect "<capability> is disabled / unavailable for this RAM tier" errors
 /// emitted by the local-AI service when the user's hardware tier doesn't
 /// support a capability (OPENHUMAN-TAURI-3B: vision asset download invoked
@@ -369,6 +447,22 @@ fn report_expected_message(kind: ExpectedErrorKind, message: &str, domain: &str,
                 operation = operation,
                 error = %message,
                 "[observability] {domain}.{operation} skipped expected backend user-error response: {message}"
+            );
+        }
+        ExpectedErrorKind::ProviderUserState => {
+            // Third-party provider (composio, gmail OAuth, …) rejected the
+            // request for a user-state reason: trigger slug missing from
+            // composio's registry (OPENHUMAN-TAURI-3R / -3S), toolkit not
+            // enabled (OPENHUMAN-TAURI-34), OAuth scopes missing
+            // (OPENHUMAN-TAURI-33), or a required form field was left blank
+            // (OPENHUMAN-TAURI-97). The UI already surfaces the actionable
+            // error to the user — Sentry has no remediation path.
+            tracing::info!(
+                domain = domain,
+                operation = operation,
+                kind = "provider_user_state",
+                error = %message,
+                "[observability] {domain}.{operation} skipped expected provider-user-state error: {message}"
             );
         }
         ExpectedErrorKind::LocalAiCapabilityUnavailable => {
@@ -987,9 +1081,13 @@ mod tests {
     #[test]
     fn classifies_backend_user_error_responses() {
         // OPENHUMAN-TAURI-BC: SharePoint authorize 400 because the user
-        // didn't fill in the required Tenant Name field. The exact wire
-        // shape `IntegrationClient::post` builds — must classify as
-        // expected so the Sentry event is suppressed.
+        // didn't fill in the required Tenant Name field. After the
+        // ProviderUserState classifier was added (#1472 wave E), this
+        // canonical shape now lands in the more specific
+        // ProviderUserState bucket — `"missing required fields"` wins
+        // over the generic 4xx matcher. Either expected-kind silences
+        // Sentry; the dedicated bucket gives operators a finer-grained
+        // `kind="provider_user_state"` info-log facet for triage.
         let bc = "Backend returned 400 Bad Request for POST \
                   https://api.tinyhumans.ai/agent-integrations/composio/authorize: \
                   Composio authorization failed: 400 \
@@ -997,8 +1095,9 @@ mod tests {
                   \"slug\":\"ConnectedAccount_MissingRequiredFields\",\"status\":400}}";
         assert_eq!(
             expected_error_kind(bc),
-            Some(ExpectedErrorKind::BackendUserError),
-            "OPENHUMAN-TAURI-BC wire shape must classify"
+            Some(ExpectedErrorKind::ProviderUserState),
+            "OPENHUMAN-TAURI-BC wire shape must classify as ProviderUserState (the \
+             more specific bucket once #1472 wave E added it)"
         );
 
         // Cover the rest of the 4xx surface produced by integrations /
@@ -1064,6 +1163,168 @@ mod tests {
             expected_error_kind("OpenAI API error (400): bad request"),
             None,
             "provider-formatted 4xx must keep going through the provider classifier path"
+        );
+    }
+
+    #[test]
+    fn classifies_trigger_type_not_found_as_provider_user_state() {
+        // OPENHUMAN-TAURI-3R / -3S: composio enable_trigger when the slug
+        // isn't in the trigger registry. Backend wraps the upstream
+        // composio 4xx as 500, so this would otherwise escape the
+        // 4xx-only `is_backend_user_error_message` matcher.
+        assert_eq!(
+            expected_error_kind(
+                "Backend returned 500 Internal Server Error for POST \
+                 https://api.tinyhumans.ai/agent-integrations/composio/triggers: \
+                 Trigger type GITHUB_PUSH_EVENT not found"
+            ),
+            Some(ExpectedErrorKind::ProviderUserState)
+        );
+
+        // Wrapped by `rpc.invoke_method` / `[composio] sync(toolkit) failed: …`
+        // — substring match must survive caller context.
+        assert_eq!(
+            expected_error_kind(
+                "rpc.invoke_method failed: Backend returned 500 Internal Server Error \
+                 for POST /agent-integrations/composio/triggers: \
+                 Trigger type SLACK_NEW_MESSAGE not found"
+            ),
+            Some(ExpectedErrorKind::ProviderUserState)
+        );
+
+        // Alternate phrasing observed from the same cluster.
+        assert_eq!(
+            expected_error_kind(
+                "composio: Cannot enable trigger 'GITHUB_PUSH_EVENT': trigger not found in registry"
+            ),
+            Some(ExpectedErrorKind::ProviderUserState)
+        );
+    }
+
+    #[test]
+    fn classifies_toolkit_not_enabled_as_provider_user_state() {
+        // OPENHUMAN-TAURI-34: 400 from composio because the user hasn't
+        // enabled the toolkit. Must classify as ProviderUserState (more
+        // specific) rather than the generic BackendUserError bucket — the
+        // ordering in `expected_error_kind` enforces that.
+        let msg = "Backend returned 400 Bad Request for POST \
+                   https://api.tinyhumans.ai/agent-integrations/composio/execute: \
+                   Toolkit \"get\" is not enabled";
+        assert_eq!(
+            expected_error_kind(msg),
+            Some(ExpectedErrorKind::ProviderUserState)
+        );
+
+        // Wrapped variant (anyhow chain through the agent runtime).
+        assert_eq!(
+            expected_error_kind(
+                "tool.invoke failed: Backend returned 400 Bad Request for POST \
+                 /agent-integrations/composio/execute: Toolkit \"linear\" is not enabled \
+                 for this account"
+            ),
+            Some(ExpectedErrorKind::ProviderUserState)
+        );
+    }
+
+    #[test]
+    fn classifies_missing_required_fields_as_provider_user_state() {
+        // OPENHUMAN-TAURI-97: composio authorize with a blank required
+        // field. Backend wraps the composio 400 as 500 with the inner
+        // body embedded as a JSON-stringified error message.
+        assert_eq!(
+            expected_error_kind(
+                "Backend returned 500 Internal Server Error for POST \
+                 https://api.tinyhumans.ai/agent-integrations/composio/authorize: \
+                 400 {\"error\":{\"message\":\"Missing required fields: Your Subdomain\"}}"
+            ),
+            Some(ExpectedErrorKind::ProviderUserState)
+        );
+
+        // Sibling toolkits surface the same shape with different field names.
+        for raw in [
+            "Backend returned 500 Internal Server Error for POST /authorize: Missing required fields: WABA ID",
+            "Backend returned 500 Internal Server Error for POST /authorize: Missing required fields: Tenant Name",
+            "Backend returned 400 Bad Request for POST /authorize: Missing required fields: Domain URL",
+        ] {
+            assert_eq!(
+                expected_error_kind(raw),
+                Some(ExpectedErrorKind::ProviderUserState),
+                "missing-required-fields shape must classify: {raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn classifies_insufficient_scopes_as_provider_user_state() {
+        // OPENHUMAN-TAURI-33: gmail sync surfaced the upstream Google
+        // OAuth scopes error verbatim through composio. Reaches the RPC
+        // dispatch site via `[composio] sync(gmail) failed: [composio:gmail]
+        // GMAIL_FETCH_EMAILS page 0: HTTP 403: Request had insufficient
+        // authentication scopes.`.
+        assert_eq!(
+            expected_error_kind(
+                "[composio:gmail] GMAIL_FETCH_EMAILS page 0: HTTP 403: \
+                 Request had insufficient authentication scopes."
+            ),
+            Some(ExpectedErrorKind::ProviderUserState)
+        );
+
+        // Bare upstream shape (in case any future caller forwards without
+        // the gmail prefix).
+        assert_eq!(
+            expected_error_kind("HTTP 403: Request had insufficient authentication scopes."),
+            Some(ExpectedErrorKind::ProviderUserState)
+        );
+    }
+
+    #[test]
+    fn does_not_classify_unrelated_500s_as_provider_user_state() {
+        // Sanity check: a generic 500 with no provider-user-state body
+        // shape must continue to reach Sentry as an actionable event.
+        assert_eq!(
+            expected_error_kind(
+                "Backend returned 500 Internal Server Error for POST \
+                 /agent-integrations/composio/triggers: random panic in handler"
+            ),
+            None
+        );
+        assert_eq!(
+            expected_error_kind(
+                "Backend returned 500 Internal Server Error for GET /teams: database connection lost"
+            ),
+            None
+        );
+
+        // Free-form text that mentions "not found" / "is not enabled" out
+        // of context must not be silenced.
+        assert_eq!(
+            expected_error_kind("file not found at /tmp/x.json"),
+            None,
+            "bare 'not found' without 'trigger type' anchor must NOT classify"
+        );
+        assert_eq!(
+            expected_error_kind("the cache is not enabled in this build"),
+            None,
+            "bare 'is not enabled' without 'toolkit ' anchor must NOT classify"
+        );
+    }
+
+    #[test]
+    fn provider_user_state_takes_precedence_over_backend_user_error() {
+        // Critical ordering guarantee: a 4xx body that contains the
+        // toolkit-not-enabled phrasing must land in `ProviderUserState`
+        // (more specific) — not in the generic `BackendUserError` bucket.
+        // Without the ordering in `expected_error_kind`, the 4xx matcher
+        // would win and the operator would see a different breadcrumb
+        // kind than intended (and miss the `kind="provider_user_state"`
+        // tag in info logs).
+        let msg = "Backend returned 400 Bad Request for POST \
+                   /agent-integrations/composio/execute: \
+                   Toolkit \"github\" is not enabled";
+        assert_eq!(
+            expected_error_kind(msg),
+            Some(ExpectedErrorKind::ProviderUserState),
+            "4xx + toolkit-not-enabled must land in ProviderUserState, not BackendUserError"
         );
     }
 
