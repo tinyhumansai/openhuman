@@ -16,6 +16,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { agentProfilesApi } from '../../services/api/agentProfilesApi';
 import { threadApi } from '../../services/api/threadApi';
 import { chatSend } from '../../services/chatService';
+import agentProfileReducer from '../../store/agentProfileSlice';
 import chatRuntimeReducer from '../../store/chatRuntimeSlice';
 import socketReducer from '../../store/socketSlice';
 import threadReducer from '../../store/threadSlice';
@@ -165,6 +166,7 @@ function buildStore(preload: Record<string, unknown> = {}) {
       thread: threadReducer,
       socket: socketReducer,
       chatRuntime: chatRuntimeReducer,
+      agentProfiles: agentProfileReducer,
     }),
     preloadedState: preload as never,
   });

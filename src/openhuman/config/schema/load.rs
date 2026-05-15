@@ -623,9 +623,18 @@ async fn sync_directory(_path: &Path) -> Result<()> {
 impl Config {
     pub async fn load_or_init() -> Result<Self> {
         let (default_openhuman_dir, default_workspace_dir) = default_config_and_workspace_dirs()?;
+        Self::load_or_init_with_env(&default_openhuman_dir, &default_workspace_dir, &ProcessEnv)
+            .await
+    }
 
+    async fn load_or_init_with_env(
+        default_openhuman_dir: &Path,
+        default_workspace_dir: &Path,
+        env: &(dyn EnvLookup + Send + Sync),
+    ) -> Result<Self> {
         let (openhuman_dir, workspace_dir, resolution_source) =
-            resolve_runtime_config_dirs(&default_openhuman_dir, &default_workspace_dir).await?;
+            resolve_runtime_config_dirs_with(default_openhuman_dir, default_workspace_dir, env)
+                .await?;
 
         let config_path = openhuman_dir.join("config.toml");
 
@@ -641,7 +650,7 @@ impl Config {
                 workspace_dir: workspace_dir.clone(),
                 ..Default::default()
             };
-            config.apply_env_overrides();
+            config.apply_env_overrides_from(env);
 
             tracing::debug!(
                 path = %config.config_path.display(),
@@ -692,7 +701,7 @@ impl Config {
             config.workspace_dir = workspace_dir;
             migrate_legacy_autocomplete_disabled_apps(&mut config);
             migrate_legacy_inference_url(&mut config);
-            config.apply_env_overrides();
+            config.apply_env_overrides_from(env);
 
             if config_was_corrupted {
                 // Rename the corrupted primary away *before* calling save().
@@ -761,7 +770,7 @@ impl Config {
                 let _ = fs::set_permissions(&config_path, Permissions::from_mode(0o600)).await;
             }
 
-            config.apply_env_overrides();
+            config.apply_env_overrides_from(env);
 
             tracing::debug!(
                 path = %config.config_path.display(),
@@ -817,7 +826,11 @@ impl Config {
     }
 
     pub fn apply_env_overrides(&mut self) {
-        self.apply_env_overlay_with(&ProcessEnv);
+        self.apply_env_overrides_from(&ProcessEnv);
+    }
+
+    fn apply_env_overrides_from(&mut self, env: &(dyn EnvLookup + Send + Sync)) {
+        self.apply_env_overlay_with(env);
 
         // The pure overlay above never mutates process-level state. The
         // two side effects below remain here so tests driving
@@ -840,7 +853,7 @@ impl Config {
     /// [`Self::apply_env_overrides`] wrapper so unit tests can call this
     /// with a [`HashMapEnv`] (see tests) without requiring the
     /// `TEST_ENV_LOCK` or tainting sibling tests.
-    pub(crate) fn apply_env_overlay_with<E: EnvLookup>(&mut self, env: &E) {
+    pub(crate) fn apply_env_overlay_with<E: EnvLookup + ?Sized>(&mut self, env: &E) {
         if let Some(model) = env.get_any(&["OPENHUMAN_MODEL", "MODEL"]) {
             if !model.is_empty() {
                 self.default_model = Some(model);

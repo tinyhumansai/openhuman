@@ -30,6 +30,10 @@
 //!   failures) propagate unchanged because the upstream
 //!   [`crate::openhuman::integrations`] client already classifies and
 //!   retries those separately.
+//!
+//! The wrapper calls the client's one-shot execution primitive instead of
+//! [`ComposioClient::execute_tool`] so this layer does not stack another
+//! two-attempt retry on top of the client's direct-call retry path.
 
 use std::time::Duration;
 

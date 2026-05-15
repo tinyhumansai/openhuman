@@ -1142,9 +1142,15 @@ fn env_lock() -> std::sync::MutexGuard<'static, ()> {
     ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+async fn load_or_init_for_workspace(root: &std::path::Path) -> Config {
+    let env = MapEnv::default().with("OPENHUMAN_WORKSPACE", root.to_str().unwrap());
+    Config::load_or_init_with_env(root, &root.join("default-workspace"), &env)
+        .await
+        .unwrap()
+}
+
 #[tokio::test]
 async fn load_or_init_recovers_from_backup_when_config_corrupted() {
-    let _g = env_lock();
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path();
 
@@ -1160,11 +1166,7 @@ default_temperature = 0.7
     )
     .await;
 
-    unsafe {
-        std::env::set_var("OPENHUMAN_WORKSPACE", root.to_str().unwrap());
-    }
-
-    let config = Config::load_or_init().await.unwrap();
+    let config = load_or_init_for_workspace(root).await;
 
     assert_eq!(
         config.default_model.as_deref(),
@@ -1186,15 +1188,10 @@ default_temperature = 0.7
         bak_contents.contains("gpt-recovery-test"),
         "backup must not be overwritten by corrupted config during save: {bak_contents}"
     );
-
-    unsafe {
-        std::env::remove_var("OPENHUMAN_WORKSPACE");
-    }
 }
 
 #[tokio::test]
 async fn load_or_init_falls_back_to_defaults_when_backup_also_corrupted() {
-    let _g = env_lock();
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path();
 
@@ -1204,11 +1201,7 @@ async fn load_or_init_falls_back_to_defaults_when_backup_also_corrupted() {
     write_file(&config_path, CORRUPTED_TOML).await;
     write_file(&backup_path, CORRUPTED_TOML).await;
 
-    unsafe {
-        std::env::set_var("OPENHUMAN_WORKSPACE", root.to_str().unwrap());
-    }
-
-    let config = Config::load_or_init().await.unwrap();
+    let config = load_or_init_for_workspace(root).await;
 
     // Config::default() sets default_model = Some("reasoning-v1").
     assert_eq!(
@@ -1231,26 +1224,17 @@ async fn load_or_init_falls_back_to_defaults_when_backup_also_corrupted() {
         tokio::fs::try_exists(&corrupted_path).await.unwrap(),
         "corrupted primary must be renamed to config.toml.corrupted"
     );
-
-    unsafe {
-        std::env::remove_var("OPENHUMAN_WORKSPACE");
-    }
 }
 
 #[tokio::test]
 async fn load_or_init_falls_back_to_defaults_when_no_backup() {
-    let _g = env_lock();
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path();
 
     let config_path = root.join("config.toml");
     write_file(&config_path, CORRUPTED_TOML).await;
 
-    unsafe {
-        std::env::set_var("OPENHUMAN_WORKSPACE", root.to_str().unwrap());
-    }
-
-    let config = Config::load_or_init().await.unwrap();
+    let config = load_or_init_for_workspace(root).await;
 
     assert_eq!(
         config.default_model.as_deref(),
@@ -1266,15 +1250,10 @@ async fn load_or_init_falls_back_to_defaults_when_no_backup() {
         tokio::fs::try_exists(&corrupted_path).await.unwrap(),
         "corrupted primary must be renamed to config.toml.corrupted"
     );
-
-    unsafe {
-        std::env::remove_var("OPENHUMAN_WORKSPACE");
-    }
 }
 
 #[tokio::test]
 async fn load_or_init_does_not_trigger_recovery_on_valid_config() {
-    let _g = env_lock();
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path();
 
@@ -1286,21 +1265,13 @@ default_temperature = 0.7
     )
     .await;
 
-    unsafe {
-        std::env::set_var("OPENHUMAN_WORKSPACE", root.to_str().unwrap());
-    }
-
-    let config = Config::load_or_init().await.unwrap();
+    let config = load_or_init_for_workspace(root).await;
 
     assert_eq!(
         config.default_model.as_deref(),
         Some("gpt-valid"),
         "valid config must load normally without recovery"
     );
-
-    unsafe {
-        std::env::remove_var("OPENHUMAN_WORKSPACE");
-    }
 }
 
 #[test]

@@ -1,4 +1,5 @@
 import { convertFileSrc } from '@tauri-apps/api/core';
+import debugFactory from 'debug';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
@@ -16,7 +17,6 @@ import MicComposer from '../features/human/MicComposer';
 import { useStickToBottom } from '../hooks/useStickToBottom';
 import { useUsageState } from '../hooks/useUsageState';
 import { trackEvent } from '../services/analytics';
-import { agentProfilesApi } from '../services/api/agentProfilesApi';
 import { threadApi } from '../services/api/threadApi';
 // [#1123] getCoreStateSnapshot and isWelcomeLocked commented out — welcome-agent onboarding replaced by Joyride walkthrough
 // import { getCoreStateSnapshot, isWelcomeLocked } from '../lib/coreState/store';
@@ -24,6 +24,13 @@ import { threadApi } from '../services/api/threadApi';
 // import { useCoreState } from '../providers/CoreStateProvider';
 import { chatCancel, chatSend, useRustChat } from '../services/chatService';
 import { store } from '../store';
+import {
+  loadAgentProfiles,
+  selectActiveAgentProfileId,
+  selectAgentProfile,
+  selectAgentProfiles,
+  upsertAgentProfile,
+} from '../store/agentProfileSlice';
 import {
   beginInferenceTurn,
   clearRuntimeForThread,
@@ -91,12 +98,7 @@ type InputMode = 'text' | 'voice';
 type ReplyMode = 'text' | 'voice';
 const AUTOCOMPLETE_POLL_DEBOUNCE_MS = 320;
 const AUTOCOMPLETE_MIN_CONTEXT_CHARS = 3;
-const AGENT_PROFILE_AGENT_OPTIONS = [
-  { id: 'orchestrator', label: 'Orchestrator' },
-  { id: 'researcher', label: 'Researcher' },
-  { id: 'planner', label: 'Planner' },
-  { id: 'critic', label: 'Critic' },
-] as const;
+const debug = debugFactory('conversations');
 const DEFAULT_PROFILE_DRAFT = {
   name: '',
   agentId: 'orchestrator',
@@ -146,6 +148,14 @@ export function formatThreadLoadError(err: unknown): string {
     if (typeof message === 'string') return message;
   }
   return String(err);
+}
+
+function formatAgentProfileAgentLabel(agentId: string): string {
+  return agentId
+    .split(/[_-]+/)
+    .filter(Boolean)
+    .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
 }
 
 // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
@@ -220,11 +230,11 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
   const [inlineSuggestionValue, setInlineSuggestionValue] = useState('');
   const [sendError, setSendError] = useState<ChatSendError | null>(null);
   const [sendAdvisory, setSendAdvisory] = useState<string | null>(null);
-  const [agentProfiles, setAgentProfiles] = useState<AgentProfile[]>([]);
-  const [selectedAgentProfileId, setSelectedAgentProfileId] = useState('default');
   const [profileDraftOpen, setProfileDraftOpen] = useState(false);
   const [profileDraft, setProfileDraft] = useState(DEFAULT_PROFILE_DRAFT);
   const socketStatus = useAppSelector(selectSocketStatus);
+  const agentProfiles = useAppSelector(selectAgentProfiles);
+  const selectedAgentProfileId = useAppSelector(selectActiveAgentProfileId);
   const toolTimelineByThread = useAppSelector(state => state.chatRuntime.toolTimelineByThread);
   const taskBoardByThread = useAppSelector(state => state.chatRuntime.taskBoardByThread);
   const inferenceStatusByThread = useAppSelector(
@@ -260,6 +270,29 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
     onConfirm: () => {},
     onCancel: () => {},
   });
+  const agentProfileAgentOptions = useMemo(() => {
+    const seen = new Set<string>();
+    const options: Array<{ id: string; label: string }> = [];
+    for (const profile of agentProfiles) {
+      const id = profile.agentId.trim();
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      options.push({
+        id,
+        label: profile.builtIn ? profile.name : formatAgentProfileAgentLabel(id),
+      });
+    }
+    if (profileDraft.agentId && !seen.has(profileDraft.agentId)) {
+      options.push({
+        id: profileDraft.agentId,
+        label: formatAgentProfileAgentLabel(profileDraft.agentId),
+      });
+    }
+    if (options.length === 0) {
+      options.push({ id: 'orchestrator', label: 'Orchestrator' });
+    }
+    return options;
+  }, [agentProfiles, profileDraft.agentId]);
 
   const textInputRef = useRef<HTMLTextAreaElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -295,13 +328,10 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
   };
 
   const handleSelectAgentProfile = async (profileId: string) => {
-    setSelectedAgentProfileId(profileId);
     try {
-      const state = await agentProfilesApi.select(profileId);
-      setAgentProfiles(state.profiles);
-      setSelectedAgentProfileId(state.activeProfileId || profileId);
+      await dispatch(selectAgentProfile(profileId)).unwrap();
     } catch (error) {
-      console.warn('[conversations] agent profile select failed:', error);
+      debug('agent profile select failed: %o', error);
     }
   };
 
@@ -330,15 +360,13 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
       builtIn: false,
     };
     try {
-      await agentProfilesApi.upsert(profile);
-      const state = await agentProfilesApi.select(id);
-      setAgentProfiles(state.profiles);
-      setSelectedAgentProfileId(state.activeProfileId);
+      await dispatch(upsertAgentProfile(profile)).unwrap();
+      await dispatch(selectAgentProfile(id)).unwrap();
       setProfileDraftOpen(false);
       setProfileDraft(DEFAULT_PROFILE_DRAFT);
       setSendAdvisory(null);
     } catch (error) {
-      console.warn('[conversations] agent profile create failed:', error);
+      debug('agent profile create failed: %o', error);
       setSendAdvisory('Could not create agent profile.');
     }
   };
@@ -416,23 +444,12 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
   }, [selectedThreadId, dispatch]);
 
   useEffect(() => {
-    let cancelled = false;
-    void agentProfilesApi
-      .list()
-      .then(state => {
-        if (cancelled) return;
-        setAgentProfiles(state.profiles);
-        setSelectedAgentProfileId(state.activeProfileId || 'default');
-      })
+    void dispatch(loadAgentProfiles())
+      .unwrap()
       .catch(error => {
-        if (!cancelled) {
-          console.warn('[conversations] agent profiles load failed:', error);
-        }
+        debug('agent profiles load failed: %o', error);
       });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  }, [dispatch]);
 
   // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
   // Welcome lockdown unlock (#883) — when `chatOnboardingCompleted`
@@ -1346,7 +1363,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                   setProfileDraft(prev => ({ ...prev, agentId: event.target.value }))
                 }
                 className="h-8 rounded-lg border border-stone-200 px-2 text-xs outline-none focus:border-primary-400">
-                {AGENT_PROFILE_AGENT_OPTIONS.map(agent => (
+                {agentProfileAgentOptions.map(agent => (
                   <option key={agent.id} value={agent.id}>
                     {agent.label}
                   </option>

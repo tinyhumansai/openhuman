@@ -13,6 +13,7 @@ import {
 
 import { IS_DEV } from '../utils/config';
 import accountsReducer from './accountsSlice';
+import agentProfileReducer from './agentProfileSlice';
 import channelConnectionsReducer from './channelConnectionsSlice';
 import chatRuntimeReducer from './chatRuntimeSlice';
 import coreModeReducer from './coreModeSlice';
@@ -115,6 +116,7 @@ export const store = configureStore({
     socket: socketReducer,
     thread: persistedThreadReducer,
     chatRuntime: chatRuntimeReducer,
+    agentProfiles: agentProfileReducer,
     channelConnections: persistedChannelConnectionsReducer,
     accounts: persistedAccountsReducer,
     notifications: persistedNotificationReducer,

@@ -496,7 +496,11 @@ mod tests {
         Memory, MemoryCategory, MemoryEntry, NamespaceSummary, RecallOpts,
     };
     use crate::openhuman::providers::{ChatRequest, ChatResponse, Provider};
-    use std::sync::Arc;
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+    use tokio::time::{sleep, Duration};
 
     #[test]
     fn metadata_methods_expose_execute_permission_and_schema() {
@@ -588,6 +592,69 @@ mod tests {
         }
     }
 
+    struct ConcurrentProvider {
+        active: AtomicUsize,
+        max_active: AtomicUsize,
+    }
+
+    impl ConcurrentProvider {
+        fn new() -> Arc<Self> {
+            Arc::new(Self {
+                active: AtomicUsize::new(0),
+                max_active: AtomicUsize::new(0),
+            })
+        }
+
+        fn max_active(&self) -> usize {
+            self.max_active.load(Ordering::SeqCst)
+        }
+
+        fn observe_active(&self, current: usize) {
+            let mut observed = self.max_active.load(Ordering::SeqCst);
+            while current > observed {
+                match self.max_active.compare_exchange(
+                    observed,
+                    current,
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                ) {
+                    Ok(_) => break,
+                    Err(next) => observed = next,
+                }
+            }
+        }
+    }
+
+    #[async_trait]
+    impl Provider for ConcurrentProvider {
+        async fn chat_with_system(
+            &self,
+            _system_prompt: Option<&str>,
+            _message: &str,
+            _model: &str,
+            _temperature: f64,
+        ) -> anyhow::Result<String> {
+            Ok("ok".into())
+        }
+
+        async fn chat(
+            &self,
+            _request: ChatRequest<'_>,
+            _model: &str,
+            _temperature: f64,
+        ) -> anyhow::Result<ChatResponse> {
+            let current = self.active.fetch_add(1, Ordering::SeqCst) + 1;
+            self.observe_active(current);
+            sleep(Duration::from_millis(50)).await;
+            self.active.fetch_sub(1, Ordering::SeqCst);
+            Ok(ChatResponse {
+                text: Some("parallel ok".into()),
+                tool_calls: Vec::new(),
+                usage: None,
+            })
+        }
+    }
+
     struct NoopMemory;
 
     #[async_trait]
@@ -646,13 +713,16 @@ mod tests {
         }
     }
 
-    fn parent_context(max_parallel_tools: usize) -> ParentExecutionContext {
+    fn parent_context_with_provider(
+        max_parallel_tools: usize,
+        provider: Arc<dyn Provider>,
+    ) -> ParentExecutionContext {
         let agent_config = crate::openhuman::config::AgentConfig {
             max_parallel_tools,
             ..Default::default()
         };
         ParentExecutionContext {
-            provider: Arc::new(NoopProvider),
+            provider,
             all_tools: Arc::new(Vec::new()),
             all_tool_specs: Arc::new(Vec::new()),
             model_name: "test-model".into(),
@@ -671,6 +741,10 @@ mod tests {
             session_parent_prefix: None,
             on_progress: None,
         }
+    }
+
+    fn parent_context(max_parallel_tools: usize) -> ParentExecutionContext {
+        parent_context_with_provider(max_parallel_tools, Arc::new(NoopProvider))
     }
 
     #[tokio::test]
@@ -731,5 +805,53 @@ mod tests {
         assert!(errors
             .iter()
             .any(|error| error.contains("requires toolkit")));
+    }
+
+    #[tokio::test]
+    async fn runs_valid_tasks_concurrently_and_collects_successes() {
+        let _ = AgentDefinitionRegistry::init_global_builtins();
+        let tool = SpawnParallelAgentsTool::new();
+        let provider_impl = ConcurrentProvider::new();
+        let provider: Arc<dyn Provider> = provider_impl.clone();
+        let parent = parent_context_with_provider(4, provider);
+
+        let result = with_parent_context(parent, async {
+            tool.execute(json!({
+                "tasks": [
+                    {
+                        "agent_id": "researcher",
+                        "prompt": "summarize alpha",
+                        "ownership": "files: alpha.rs"
+                    },
+                    {
+                        "agent_id": "planner",
+                        "prompt": "plan beta",
+                        "ownership": "files: beta.rs"
+                    }
+                ]
+            }))
+            .await
+        })
+        .await
+        .expect("tool result");
+
+        assert!(!result.is_error, "{}", result.output());
+        let body: serde_json::Value = serde_json::from_str(&result.output()).expect("json output");
+        assert_eq!(body["parallel_agents"]["total"], 2);
+        assert_eq!(body["parallel_agents"]["succeeded"], 2);
+        assert_eq!(body["parallel_agents"]["failed"], 0);
+        let results = body["parallel_agents"]["results"]
+            .as_array()
+            .expect("results");
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().all(|result| result["success"] == true));
+        assert!(results
+            .iter()
+            .all(|result| result["output"].as_str() == Some("parallel ok")));
+        assert!(
+            provider_impl.max_active() >= 2,
+            "expected overlapping provider calls, max_active={}",
+            provider_impl.max_active()
+        );
     }
 }
