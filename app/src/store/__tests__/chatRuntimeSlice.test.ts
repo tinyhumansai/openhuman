@@ -6,6 +6,7 @@ import reducer, {
   clearInferenceStatusForThread,
   clearRuntimeForThread,
   clearStreamingAssistantForThread,
+  clearTaskBoardForThread,
   clearToolTimelineForThread,
   endInferenceTurn,
   hydrateRuntimeFromSnapshot,
@@ -103,6 +104,9 @@ describe('chatRuntimeSlice', () => {
       setTaskBoardForThread({ threadId: 'thread-board', board: taskBoard })
     );
     expect(withBoard.taskBoardByThread['thread-board']).toEqual(taskBoard);
+
+    const afterClear = reducer(withBoard, clearTaskBoardForThread({ threadId: 'thread-board' }));
+    expect(afterClear.taskBoardByThread['thread-board']).toBeUndefined();
 
     const snapshot: PersistedTurnState = {
       threadId: 'thread-h',
