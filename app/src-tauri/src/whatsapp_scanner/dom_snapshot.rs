@@ -471,17 +471,35 @@ fn find_pre_plain(
     (None, None)
 }
 
-/// Pick the longest rendered body text inside the row. WhatsApp puts each
-/// message's text in a descendant `span.selectable-text` or a
-/// `span[dir="ltr|rtl"]`; walking every such span and keeping the longest
-/// one matches `dom_scan.js`. Falls back to the row's full text with the
-/// "[HH:MM, D/M/YYYY] Author:" prefix stripped.
+/// Pick the longest rendered body text inside the row.
+///
+/// Three tiers, tried in order — each tier only runs when the previous
+/// returned empty:
+///
+/// **Tier 1** — descendant `span.selectable-text` (legacy WhatsApp Web).
+/// **Tier 2** — descendant `span[dir="ltr"|"rtl"]` (current WhatsApp Web
+/// drops the `selectable-text` class but keeps the `dir` hint on text
+/// spans). Both tiers walk every match and keep the longest, mirroring
+/// the original `dom_scan.js` behavior.
+///
+/// **Tier 3 fallback (issue #1376)** — when WhatsApp Web layout drift
+/// strips both class+dir hints from the message body, walk every
+/// descendant TEXT node, skip icon ligatures (`wds-ic-*`, `wds-icon`)
+/// and chrome strings (timestamps `H:MM`, status indicators ✓ ✓✓ 🔇),
+/// concatenate the remainder. This is the broadest recovery path and
+/// catches rows that render their body via a plain `<div>` or unhinted
+/// `<span>` wrapper. Capped at [`MAX_BODY_CHARS`].
+///
+/// Final fallback (unchanged): everything under the row with the
+/// `"[HH:MM, D/M/YYYY] Author:"` prefix stripped — handles rows rendered
+/// without any dedicated text span at all.
 fn find_body(
     nodes: &NodeTreeSnap,
     strings: &[String],
     children: &[Vec<usize>],
     root: usize,
 ) -> String {
+    // Tiers 1 + 2 — span-attribute-driven discovery (longest wins).
     let mut best = String::new();
     let mut stack = vec![root];
     while let Some(idx) = stack.pop() {
@@ -512,10 +530,128 @@ fn find_body(
     if !best.is_empty() {
         return best;
     }
-    // Fallback: everything under the row, with the "[HH:MM, ...] Author:"
-    // prefix stripped — handles rows rendered without a dedicated text span.
+
+    // Tier 3 fallback (issue #1376): walk every descendant text node,
+    // filter out icon ligatures + chrome strings, concatenate.
+    let tier3 = collect_descendant_text_filtered(nodes, strings, children, root);
+    if !tier3.is_empty() {
+        return truncate_chars(&tier3, MAX_BODY_CHARS);
+    }
+
+    // Last-resort: everything under the row, with the
+    // "[HH:MM, ...] Author:" prefix stripped — handles rows rendered
+    // without a dedicated text span.
     let full = collect_text(nodes, strings, children, root);
     strip_pre_prefix(full.trim()).to_string()
+}
+
+/// Tier-3 helper for [`find_body`] (issue #1376). Walks every TEXT node
+/// under `root` whose nearest element ancestor is NOT an icon wrapper
+/// (`wds-ic-*` / `wds-icon` class) and whose trimmed value is NOT a
+/// chrome string (timestamp `H:MM[ AM/PM]`, single status indicator).
+/// Joins surviving snippets with spaces.
+///
+/// Skip rules (in the order they're checked):
+/// 1. Element ancestor's `class` contains `wds-icon` or any `wds-ic-*`
+///    token — entire icon subtree is ignored.
+/// 2. Trimmed text matches the timestamp regex shape `H:MM` /
+///    `HH:MM` / `H:MM AM` / `H:MM PM` (case-insensitive). Captures
+///    WhatsApp's per-bubble timestamp + delivery clock chip.
+/// 3. Trimmed text is a single delivery-status glyph (✓, ✓✓, ✓✓ tinted
+///    blue, 🔇, 📌, 📷, 🎤, 🎥, 📎, 📄). The first two are the only
+///    common ones today; the rest are defensive against future glyph
+///    drift.
+fn collect_descendant_text_filtered(
+    nodes: &NodeTreeSnap,
+    strings: &[String],
+    children: &[Vec<usize>],
+    root: usize,
+) -> String {
+    // Build "is this node inside an icon wrapper?" lookup as we walk —
+    // cheaper than recomputing per text node.
+    let mut out_parts: Vec<String> = Vec::new();
+    // Stack carries (node_idx, ancestor_is_icon).
+    let mut stack: Vec<(usize, bool)> = vec![(root, false)];
+    while let Some((idx, ancestor_is_icon)) = stack.pop() {
+        let node_type = nodes.node_type.get(idx).copied().unwrap_or(0);
+        let mut now_is_icon = ancestor_is_icon;
+        if node_type == NODE_TYPE_ELEMENT {
+            let attrs = attrs_map(nodes, idx, strings);
+            if let Some(class) = attrs.get("class") {
+                if class
+                    .split_whitespace()
+                    .any(|w| w == "wds-icon" || w.starts_with("wds-ic-"))
+                {
+                    now_is_icon = true;
+                }
+            }
+        } else if node_type == NODE_TYPE_TEXT && !ancestor_is_icon {
+            let raw = str_at(strings, *nodes.node_value.get(idx).unwrap_or(&-1));
+            let trimmed = raw.trim();
+            if !trimmed.is_empty()
+                && !looks_like_timestamp(trimmed)
+                && !looks_like_status_glyph(trimmed)
+                && !looks_like_icon_ligature(trimmed)
+            {
+                out_parts.push(trimmed.to_string());
+            }
+        }
+        if let Some(kids) = children.get(idx) {
+            for &k in kids.iter().rev() {
+                stack.push((k, now_is_icon));
+            }
+        }
+    }
+    out_parts.join(" ").trim().to_string()
+}
+
+/// Returns true when `s` looks like a WhatsApp Web message-bubble
+/// timestamp: `H:MM`, `HH:MM`, optionally followed by ` AM` / ` PM`
+/// (any case). Reject anything else so real bodies that happen to
+/// include digits aren't dropped.
+fn looks_like_timestamp(s: &str) -> bool {
+    let t = s.trim();
+    if t.is_empty() {
+        return false;
+    }
+    // Optional trailing AM/PM after a single space — accept and strip.
+    let upper = t.to_ascii_uppercase();
+    let core = if let Some(stripped) = upper
+        .strip_suffix(" AM")
+        .or_else(|| upper.strip_suffix(" PM"))
+    {
+        stripped
+    } else {
+        upper.as_str()
+    };
+    // Now `core` must be exactly H:MM or HH:MM with both halves digits.
+    let mut parts = core.split(':');
+    let (Some(h), Some(m), None) = (parts.next(), parts.next(), parts.next()) else {
+        return false;
+    };
+    if h.is_empty() || h.len() > 2 || m.len() != 2 {
+        return false;
+    }
+    h.bytes().all(|b| b.is_ascii_digit()) && m.bytes().all(|b| b.is_ascii_digit())
+}
+
+/// Returns true when `s` is a single delivery-status glyph WhatsApp
+/// renders next to message bubbles (e.g. ✓, ✓✓, 🔇). The check is
+/// intentionally conservative: short string AND every char is in a
+/// small allow-list of known glyph code points. Real one-char message
+/// bodies (e.g. emoji-only "👍" reactions still render as a separate
+/// bubble) are NOT in the list and survive the filter.
+fn looks_like_status_glyph(s: &str) -> bool {
+    let t = s.trim();
+    if t.is_empty() || t.chars().count() > 2 {
+        return false;
+    }
+    t.chars().all(|c| {
+        matches!(
+            c,
+            '\u{2713}' | '\u{2714}' | '\u{1F507}' | '\u{1F508}' | '\u{1F509}'
+        )
+    })
 }
 
 /// Concatenate every TEXT_NODE nodeValue under `root` in document order.
