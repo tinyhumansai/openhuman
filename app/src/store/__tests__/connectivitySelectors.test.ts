@@ -1,20 +1,21 @@
 import { describe, expect, it } from 'vitest';
 
-import type { RootState } from '../index';
 import { selectBlockingState } from '../connectivitySelectors';
 import type { ConnectivityState } from '../connectivitySlice';
+import type { RootState } from '../index';
 
-const make = (over: Partial<ConnectivityState>): RootState => ({
-  // The selector only reads `connectivity`. Cast through unknown so we don't
-  // have to fabricate the rest of the root state.
-  connectivity: {
-    internet: 'online',
-    core: 'reachable',
-    backend: 'connected',
-    lastError: {},
-    ...over,
-  },
-}) as unknown as RootState;
+const make = (over: Partial<ConnectivityState>): RootState =>
+  ({
+    // The selector only reads `connectivity`. Cast through unknown so we don't
+    // have to fabricate the rest of the root state.
+    connectivity: {
+      internet: 'online',
+      core: 'reachable',
+      backend: 'connected',
+      lastError: {},
+      ...over,
+    },
+  }) as unknown as RootState;
 
 describe('selectBlockingState', () => {
   it('returns ok when all three channels are healthy', () => {
@@ -23,7 +24,9 @@ describe('selectBlockingState', () => {
 
   it('prioritises internet outage over everything else', () => {
     expect(
-      selectBlockingState(make({ internet: 'offline', core: 'unreachable', backend: 'disconnected' }))
+      selectBlockingState(
+        make({ internet: 'offline', core: 'unreachable', backend: 'disconnected' })
+      )
     ).toBe('internet-offline');
   });
 

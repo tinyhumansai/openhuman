@@ -6,7 +6,6 @@
  * Called once at app boot from `App.tsx`. Idempotent — repeat invocations
  * no-op via `started`.
  */
-
 import { setInternet } from '../store/connectivitySlice';
 import { store } from '../store/index';
 

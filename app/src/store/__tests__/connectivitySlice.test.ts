@@ -1,10 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import connectivityReducer, {
-  setBackend,
-  setCore,
-  setInternet,
-} from '../connectivitySlice';
+import connectivityReducer, { setBackend, setCore, setInternet } from '../connectivitySlice';
 
 describe('connectivitySlice', () => {
   it('setInternet flips the internet channel and tracks errors only on offline', () => {
@@ -18,7 +14,10 @@ describe('connectivitySlice', () => {
   });
 
   it('setCore flips the core channel and tracks errors only on non-reachable', () => {
-    let state = connectivityReducer(undefined, setCore({ value: 'unreachable', error: 'ECONNREFUSED' }));
+    let state = connectivityReducer(
+      undefined,
+      setCore({ value: 'unreachable', error: 'ECONNREFUSED' })
+    );
     expect(state.core).toBe('unreachable');
     expect(state.lastError.core).toBe('ECONNREFUSED');
 

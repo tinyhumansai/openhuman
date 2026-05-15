@@ -6,7 +6,6 @@
  * is stuck. Outside Tauri (web preview / Vitest harness) this is a no-op
  * that returns a friendly error string.
  */
-
 import { invoke } from '@tauri-apps/api/core';
 
 import { isTauri } from '../utils/tauriCommands/common';
