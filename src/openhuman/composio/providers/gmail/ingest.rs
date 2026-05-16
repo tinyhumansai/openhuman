@@ -834,6 +834,7 @@ mod tests {
             sent_at: chrono::Utc::now(),
             body: "body".into(),
             source_ref: None,
+            list_unsubscribe: None,
         }];
         assert_eq!(pick_thread_subject(&messages), "Phoenix kickoff");
     }
@@ -848,6 +849,7 @@ mod tests {
             sent_at: chrono::Utc::now(),
             body: "body".into(),
             source_ref: None,
+            list_unsubscribe: None,
         }];
         assert_eq!(pick_thread_subject(&messages), "(no subject)");
     }

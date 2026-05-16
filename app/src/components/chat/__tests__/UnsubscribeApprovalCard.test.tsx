@@ -1,5 +1,5 @@
 import { fireEvent, screen, waitFor } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { callCoreRpc } from '../../../services/coreRpcClient';
 import { renderWithProviders } from '../../../test/test-utils';
@@ -8,6 +8,10 @@ import { UnsubscribeApprovalCard } from '../UnsubscribeApprovalCard';
 vi.mock('../../../services/coreRpcClient', () => ({ callCoreRpc: vi.fn() }));
 
 describe('UnsubscribeApprovalCard', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   const mockPayload = {
     status: 'pending_approval',
     action: 'unsubscribe',
@@ -27,6 +31,12 @@ describe('UnsubscribeApprovalCard', () => {
 
   it('returns null if action is not unsubscribe', () => {
     const payload = { ...mockPayload, action: 'other' };
+    const { container } = renderWithProviders(<UnsubscribeApprovalCard payload={payload} />);
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it('returns null if status is not pending_approval', () => {
+    const payload = { ...mockPayload, status: 'completed' };
     const { container } = renderWithProviders(<UnsubscribeApprovalCard payload={payload} />);
     expect(container).toBeEmptyDOMElement();
   });
