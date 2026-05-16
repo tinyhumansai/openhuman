@@ -7,6 +7,7 @@
  */
 import { useEffect, useMemo, useState } from 'react';
 
+import { useT } from '../../lib/i18n/I18nContext';
 import type { Chunk, EntityRef, Source } from '../../utils/tauriCommands';
 import { MemoryHeatmap } from './MemoryHeatmap';
 
@@ -93,6 +94,7 @@ export function MemoryNavigator({
   searchQuery,
   onSearchChange,
 }: MemoryNavigatorProps) {
+  const { t } = useT();
   const heatmapTimestamps = useMemo(
     () => chunks.map(c => Math.floor(c.timestamp_ms / 1000)),
     [chunks]
@@ -178,10 +180,10 @@ export function MemoryNavigator({
         <input
           type="text"
           className="mw-search-input"
-          placeholder="search memory…"
+          placeholder={t('memory.searchPlaceholder')}
           value={searchQuery}
           onChange={e => onSearchChange(e.target.value)}
-          aria-label="Search memory"
+          aria-label={t('memory.search')}
         />
       </div>
 
@@ -190,14 +192,21 @@ export function MemoryNavigator({
       </div>
 
       <div className="mw-pane-scroll">
-        <NavSection label="recent" defaultOpen>
+        <NavSection label={t('navigator.recent')} defaultOpen>
           <div className="mw-recent-summary">
-            <span>today {todayCount}</span>
-            <span>this week {weekCount}</span>
+            <span>
+              {t('navigator.today')} {todayCount}
+            </span>
+            <span>
+              {t('navigator.thisWeek')} {weekCount}
+            </span>
           </div>
         </NavSection>
 
-        <NavSection label="sources" defaultOpen countSummary={String(sources.length)}>
+        <NavSection
+          label={t('navigator.sources')}
+          defaultOpen
+          countSummary={String(sources.length)}>
           {sources.length === 0 ? (
             <ul className="mw-list">
               <li style={{ padding: '6px 16px', fontSize: 12, color: 'var(--ink-whisper)' }}>—</li>
@@ -215,10 +224,10 @@ export function MemoryNavigator({
                 byKind.set(s.source_kind, arr);
               }
               const kindLabel: Record<string, string> = {
-                email: 'Email',
-                slack: 'Slack',
-                chat: 'Chat',
-                document: 'Documents',
+                email: t('navigator.email'),
+                slack: t('navigator.slack'),
+                chat: t('navigator.chat'),
+                document: t('navigator.documents'),
               };
               const kinds = Array.from(byKind.entries()).sort((a, b) => b[1].length - a[1].length);
               return (
@@ -257,11 +266,17 @@ export function MemoryNavigator({
           )}
         </NavSection>
 
-        <NavSection label="people" defaultOpen countSummary={String(topPeople.length)}>
+        <NavSection
+          label={t('navigator.people')}
+          defaultOpen
+          countSummary={String(topPeople.length)}>
           {renderEntityList(topPeople)}
         </NavSection>
 
-        <NavSection label="topics" defaultOpen countSummary={String(topTopics.length)}>
+        <NavSection
+          label={t('navigator.topics')}
+          defaultOpen
+          countSummary={String(topTopics.length)}>
           {renderEntityList(topTopics)}
         </NavSection>
       </div>

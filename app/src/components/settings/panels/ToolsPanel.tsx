@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 
+import { useT } from '../../../lib/i18n/I18nContext';
 import { useCoreState } from '../../../providers/CoreStateProvider';
 import {
   CATEGORY_DESCRIPTIONS,
@@ -11,7 +12,14 @@ import {
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
-const ToolsPanel = () => {
+interface ToolsPanelProps {
+  /** When true, render without the SettingsHeader chrome (used when embedded
+   *  inside the onboarding custom wizard). */
+  embedded?: boolean;
+}
+
+const ToolsPanel = ({ embedded = false }: ToolsPanelProps = {}) => {
+  const { t } = useT();
   const { navigateBack, breadcrumbs } = useSettingsNavigation();
   const { snapshot, setOnboardingTasks } = useCoreState();
   const toolsByCategory = getToolsByCategory();
@@ -80,17 +88,17 @@ const ToolsPanel = () => {
 
   return (
     <div>
-      <SettingsHeader
-        title="Tools"
-        showBackButton
-        onBack={navigateBack}
-        breadcrumbs={breadcrumbs}
-      />
+      {!embedded && (
+        <SettingsHeader
+          title={t('settings.features.tools')}
+          showBackButton
+          onBack={navigateBack}
+          breadcrumbs={breadcrumbs}
+        />
+      )}
 
-      <div className="p-4 space-y-4">
-        <p className="text-stone-500 text-sm">
-          Choose which capabilities OpenHuman can use on your behalf.
-        </p>
+      <div className={embedded ? 'space-y-4' : 'p-4 space-y-4'}>
+        <p className="text-stone-500 text-sm">{t('settings.tools.chooseCapabilities')}</p>
 
         <div className="max-h-[420px] overflow-y-auto pr-1 space-y-4">
           {TOOL_CATEGORIES.map(category => {
@@ -141,16 +149,16 @@ const ToolsPanel = () => {
             onClick={handleSave}
             disabled={saving}
             className="mt-4 w-full py-2 rounded-xl bg-primary-600 text-white text-sm font-medium hover:bg-primary-500 transition-colors disabled:opacity-50">
-            {saving ? 'Saving...' : 'Save Changes'}
+            {saving ? 'Saving...' : t('settings.tools.saveChanges')}
           </button>
         )}
         {saveStatus === 'saved' && (
-          <p className="text-xs text-center text-green-600 mt-1">Preferences saved</p>
+          <p className="text-xs text-center text-green-600 mt-1">
+            {t('settings.tools.preferencesSaved')}
+          </p>
         )}
         {saveStatus === 'error' && (
-          <p className="text-xs text-center text-red-500 mt-1">
-            Failed to save preferences. Try again.
-          </p>
+          <p className="text-xs text-center text-red-500 mt-1">{t('settings.tools.saveFailed')}</p>
         )}
       </div>
     </div>

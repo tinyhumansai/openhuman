@@ -2,6 +2,7 @@ import { useCallback, useMemo, useState } from 'react';
 
 import { useChannelDefinitions } from '../../../hooks/useChannelDefinitions';
 import { resolvePreferredAuthModeForChannel } from '../../../lib/channels/routing';
+import { useT } from '../../../lib/i18n/I18nContext';
 import { channelConnectionsApi } from '../../../services/api/channelConnectionsApi';
 import { setDefaultMessagingChannel } from '../../../store/channelConnectionsSlice';
 import { useAppDispatch, useAppSelector } from '../../../store/hooks';
@@ -14,11 +15,7 @@ import ChannelSetupModal from '../../channels/ChannelSetupModal';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
-const CHANNEL_ICONS: Record<string, string> = {
-  telegram: '\u2708\uFE0F',
-  discord: '\uD83C\uDFAE',
-  web: '\uD83C\uDF10',
-};
+const CHANNEL_ICONS: Record<string, string> = { telegram: '✈️', discord: '🎮', web: '🌐' };
 
 function statusDot(status: ChannelConnectionStatus): string {
   switch (status) {
@@ -33,16 +30,16 @@ function statusDot(status: ChannelConnectionStatus): string {
   }
 }
 
-function statusLabel(status: ChannelConnectionStatus): string {
+function statusLabel(status: ChannelConnectionStatus, t: (key: string) => string): string {
   switch (status) {
     case 'connected':
-      return 'Connected';
+      return t('channels.status.connected');
     case 'connecting':
-      return 'Connecting';
+      return t('channels.status.connecting');
     case 'error':
-      return 'Error';
+      return t('channels.status.error');
     default:
-      return 'Not configured';
+      return t('channels.status.notConfigured');
   }
 }
 
@@ -60,6 +57,7 @@ function statusColor(status: ChannelConnectionStatus): string {
 }
 
 const MessagingPanel = () => {
+  const { t } = useT();
   const { navigateBack, breadcrumbs } = useSettingsNavigation();
   const dispatch = useAppDispatch();
   const channelConnections = useAppSelector(state => state.channelConnections);
@@ -76,8 +74,10 @@ const MessagingPanel = () => {
   const recommendedRoute = useMemo(() => {
     const channel = channelConnections.defaultMessagingChannel;
     const authMode = resolvePreferredAuthModeForChannel(channelConnections, channel);
-    return authMode ? `${channel} via ${authMode}` : 'No active route';
-  }, [channelConnections]);
+    return authMode
+      ? t('channels.activeRouteValue').replace('{channel}', channel).replace('{authMode}', authMode)
+      : t('channels.noActiveRoute');
+  }, [channelConnections, t]);
 
   const bestStatus = useCallback(
     (channelId: ChannelType): ChannelConnectionStatus => {
@@ -107,7 +107,7 @@ const MessagingPanel = () => {
   return (
     <div>
       <SettingsHeader
-        title="Messaging"
+        title={t('settings.features.messaging')}
         showBackButton={true}
         onBack={navigateBack}
         breadcrumbs={breadcrumbs}
@@ -116,7 +116,7 @@ const MessagingPanel = () => {
       <div className="p-4 space-y-4">
         {/* Default channel selector */}
         <section className="rounded-xl border border-stone-200 bg-white p-4 space-y-3">
-          <h3 className="text-sm font-semibold text-stone-900">Default Messaging Channel</h3>
+          <h3 className="text-sm font-semibold text-stone-900">{t('channels.defaultMessaging')}</h3>
           <div className="grid grid-cols-2 gap-2">
             {definitions.map(def => {
               const channelId = def.id as ChannelType;
@@ -139,7 +139,8 @@ const MessagingPanel = () => {
             })}
           </div>
           <p className="text-xs text-stone-400">
-            Active route: <span className="text-primary-600">{recommendedRoute}</span>
+            {t('channels.activeRoute')}:{' '}
+            <span className="text-primary-600">{recommendedRoute}</span>
           </p>
         </section>
 
@@ -151,17 +152,17 @@ const MessagingPanel = () => {
 
         {loading && (
           <div className="rounded-xl border border-stone-200 bg-white p-4 text-sm text-stone-400">
-            Loading channel definitions...
+            {t('channels.loadingDefinitions')}
           </div>
         )}
 
         {/* Channel cards — click to open the shared ChannelSetupModal */}
         {!loading && (
           <section className="rounded-xl border border-stone-200 bg-white p-4 space-y-3">
-            <h3 className="text-sm font-semibold text-stone-900">Channel Connections</h3>
-            <p className="text-xs text-stone-400">
-              Configure auth modes for each messaging channel.
-            </p>
+            <h3 className="text-sm font-semibold text-stone-900">
+              {t('channels.channelConnections')}
+            </h3>
+            <p className="text-xs text-stone-400">{t('channels.configureAuthModes')}</p>
             <div className="space-y-2">
               {configurableChannels.map(def => {
                 const channelId = def.id as ChannelType;
@@ -185,7 +186,7 @@ const MessagingPanel = () => {
                             className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${statusDot(status)}`}
                           />
                           <span className={`text-xs ${statusColor(status)}`}>
-                            {statusLabel(status)}
+                            {statusLabel(status, t)}
                           </span>
                         </div>
                         <p className="text-xs text-stone-500 mt-0.5">{def.description}</p>

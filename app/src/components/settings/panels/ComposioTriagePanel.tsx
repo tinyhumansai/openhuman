@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 
+import { useT } from '../../../lib/i18n/I18nContext';
 import {
   openhumanGetComposioTriggerSettings,
   openhumanUpdateComposioTriggerSettings,
@@ -8,6 +9,7 @@ import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
 const ComposioTriagePanel = () => {
+  const { t } = useT();
   const { navigateBack, breadcrumbs } = useSettingsNavigation();
 
   const [triageDisabled, setTriageDisabled] = useState(false);
@@ -48,7 +50,7 @@ const ComposioTriagePanel = () => {
     try {
       const toolkitList = disabledToolkits
         .split(',')
-        .map(t => t.trim().toLowerCase())
+        .map(e => e.trim().toLowerCase())
         .filter(Boolean);
       await openhumanUpdateComposioTriggerSettings({
         triage_disabled: triageDisabled,
@@ -75,7 +77,7 @@ const ComposioTriagePanel = () => {
     return (
       <div>
         <SettingsHeader
-          title="Integration Triggers"
+          title={t('composio.triageTitle')}
           showBackButton
           onBack={navigateBack}
           breadcrumbs={breadcrumbs}
@@ -90,7 +92,7 @@ const ComposioTriagePanel = () => {
   return (
     <div>
       <SettingsHeader
-        title="Integration Triggers"
+        title={t('composio.triageTitle')}
         showBackButton
         onBack={navigateBack}
         breadcrumbs={breadcrumbs}
@@ -98,14 +100,11 @@ const ComposioTriagePanel = () => {
 
       <div className="p-4 space-y-5">
         <p className="text-sm text-stone-500">
-          When active, each incoming Composio trigger runs through an AI triage step that classifies
-          the event and may kick off automated actions — one local LLM turn per trigger. Disable
-          globally or per integration if you prefer manual review. If the environment variable{' '}
-          <span className="font-mono">OPENHUMAN_TRIGGER_TRIAGE_DISABLED</span> is set, it overrides
-          these settings and disables triage for all triggers.
+          {t('composio.triageDesc')}{' '}
+          <span className="font-mono">OPENHUMAN_TRIGGER_TRIAGE_DISABLED</span>{' '}
+          {t('composio.envVarOverrides')}
         </p>
 
-        {/* Global toggle */}
         <div className="rounded-2xl border border-stone-200 bg-stone-50/60 p-4 space-y-1">
           <button
             type="button"
@@ -116,11 +115,9 @@ const ComposioTriagePanel = () => {
             className="w-full flex items-center justify-between">
             <div className="text-left">
               <span className="text-sm font-medium text-stone-900">
-                Disable AI triage for all triggers
+                {t('composio.disableAllTriage')}
               </span>
-              <p className="text-xs text-stone-500 mt-0.5">
-                Triggers are still recorded to history — no LLM turn is run.
-              </p>
+              <p className="text-xs text-stone-500 mt-0.5">{t('composio.triggersStillRecorded')}</p>
             </div>
             <div
               className={`ml-3 flex-shrink-0 w-9 h-5 rounded-full transition-colors relative ${
@@ -135,10 +132,9 @@ const ComposioTriagePanel = () => {
           </button>
         </div>
 
-        {/* Per-toolkit list */}
         <div className={`space-y-2 ${triageDisabled ? 'opacity-40 pointer-events-none' : ''}`}>
           <label className="block text-sm font-medium text-stone-800" htmlFor="disabled-toolkits">
-            Disable AI triage for specific integrations
+            {t('composio.disableSpecificIntegrations')}
           </label>
           <p className="text-xs text-stone-500">
             Comma-separated integration slugs, e.g. <span className="font-mono">gmail, slack</span>.
@@ -160,14 +156,14 @@ const ComposioTriagePanel = () => {
           onClick={handleSave}
           disabled={saving}
           className="w-full py-2 rounded-xl bg-primary-600 text-white text-sm font-medium hover:bg-primary-500 transition-colors disabled:opacity-50">
-          {saving ? 'Saving…' : 'Save'}
+          {saving ? t('common.loading') : t('common.save')}
         </button>
 
         {saveStatus === 'saved' && (
-          <p className="text-xs text-center text-green-600">Settings saved</p>
+          <p className="text-xs text-center text-green-600">{t('composio.settingsSaved')}</p>
         )}
         {saveStatus === 'error' && (
-          <p className="text-xs text-center text-red-500">Failed to save. Try again.</p>
+          <p className="text-xs text-center text-red-500">{t('composio.saveFailed')}</p>
         )}
       </div>
     </div>

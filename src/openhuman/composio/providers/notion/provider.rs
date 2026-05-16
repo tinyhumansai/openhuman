@@ -88,8 +88,7 @@ impl ComposioProvider for NotionProvider {
         );
 
         let resp = ctx
-            .client
-            .execute_tool(ACTION_GET_ABOUT_ME, Some(json!({})))
+            .execute(ACTION_GET_ABOUT_ME, Some(json!({})))
             .await
             .map_err(|e| format!("[composio:notion] {ACTION_GET_ABOUT_ME} failed: {e:#}"))?;
 
@@ -203,8 +202,7 @@ impl ComposioProvider for NotionProvider {
             }
 
             let resp = ctx
-                .client
-                .execute_tool(ACTION_FETCH_DATA, Some(args))
+                .execute(ACTION_FETCH_DATA, Some(args))
                 .await
                 .map_err(|e| {
                     format!("[composio:notion] {ACTION_FETCH_DATA} page {page_num}: {e:#}")

@@ -1,6 +1,7 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { useEffect, useState } from 'react';
 
+import { useT } from '../../lib/i18n/I18nContext';
 import { closeMeetCall, joinMeetCall } from '../../services/meetCallService';
 
 type ActiveCall = { requestId: string; meetUrl: string; displayName: string };
@@ -25,6 +26,7 @@ const PLACEHOLDER_URL = 'https://meet.google.com/abc-defg-hij';
  * tracks active calls so the user can close them from the same surface.
  */
 export default function IntelligenceCallsTab({ onToast }: Props) {
+  const { t } = useT();
   const [meetUrl, setMeetUrl] = useState('');
   const [displayName, setDisplayName] = useState('OpenHuman Agent');
   const [submitting, setSubmitting] = useState(false);
@@ -70,13 +72,13 @@ export default function IntelligenceCallsTab({ onToast }: Props) {
       setMeetUrl('');
       onToast?.({
         type: 'success',
-        title: 'Joining call',
-        message: 'Opening the Meet window — admit the agent from the host side.',
+        title: t('calls.joiningCall'),
+        message: t('calls.meetWindowOpening'),
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to start Meet call.';
+      const message = err instanceof Error ? err.message : t('calls.failedToStart');
       setError(message);
-      onToast?.({ type: 'error', title: 'Could not start call', message });
+      onToast?.({ type: 'error', title: t('calls.couldNotStart'), message });
     } finally {
       setSubmitting(false);
     }
@@ -92,25 +94,22 @@ export default function IntelligenceCallsTab({ onToast }: Props) {
         setActiveCalls(prev => prev.filter(call => call.requestId !== requestId));
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to close call.';
-      onToast?.({ type: 'error', title: 'Could not close call', message });
+      const message = err instanceof Error ? err.message : t('calls.failedToClose');
+      onToast?.({ type: 'error', title: t('calls.couldNotClose'), message });
     }
   };
 
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-base font-semibold text-stone-900">Join a Google Meet call</h2>
-        <p className="mt-1 text-sm text-stone-500">
-          Paste a Meet link and the agent will join the call as a named guest in a separate window.
-          The host needs to admit the agent from the Meet waiting room.
-        </p>
+        <h2 className="text-base font-semibold text-stone-900">{t('calls.joinMeet')}</h2>
+        <p className="mt-1 text-sm text-stone-500">{t('calls.joinMeetDescription')}</p>
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-4">
         <label className="block">
           <span className="text-xs font-medium uppercase tracking-wide text-stone-500">
-            Meet link
+            {t('calls.meetLink')}
           </span>
           <input
             type="url"
@@ -127,7 +126,7 @@ export default function IntelligenceCallsTab({ onToast }: Props) {
 
         <label className="block">
           <span className="text-xs font-medium uppercase tracking-wide text-stone-500">
-            Display name
+            {t('calls.displayName')}
           </span>
           <input
             type="text"
@@ -151,14 +150,14 @@ export default function IntelligenceCallsTab({ onToast }: Props) {
           type="submit"
           disabled={submitting || !meetUrl.trim() || !displayName.trim()}
           className="inline-flex items-center justify-center rounded-xl border border-primary-600 bg-primary-600 px-4 py-2 text-sm font-medium text-white shadow-soft transition hover:bg-primary-500 disabled:cursor-not-allowed disabled:opacity-50">
-          {submitting ? 'Opening Meet…' : 'Join call'}
+          {submitting ? t('calls.openingMeet') : t('calls.joinCall')}
         </button>
       </form>
 
       {activeCalls.length > 0 && (
         <div className="space-y-2">
           <h3 className="text-xs font-semibold uppercase tracking-wide text-stone-500">
-            Active calls
+            {t('calls.activeCalls')}
           </h3>
           <ul className="space-y-2">
             {activeCalls.map(call => (
@@ -175,7 +174,7 @@ export default function IntelligenceCallsTab({ onToast }: Props) {
                   type="button"
                   onClick={() => handleClose(call.requestId)}
                   className="shrink-0 rounded-lg border border-stone-200 bg-white px-3 py-1 text-xs text-stone-600 hover:border-coral-300 hover:text-coral-600">
-                  Leave
+                  {t('calls.leave')}
                 </button>
               </li>
             ))}

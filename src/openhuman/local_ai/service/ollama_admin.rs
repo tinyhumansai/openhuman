@@ -4,6 +4,7 @@ use futures_util::StreamExt;
 
 use crate::openhuman::config::Config;
 use crate::openhuman::local_ai::install::{find_system_ollama_binary, run_ollama_install_script};
+use crate::openhuman::local_ai::lm_studio_api::lm_studio_base_url;
 use crate::openhuman::local_ai::model_ids;
 use crate::openhuman::local_ai::ollama_api::{
     ollama_base_url, OllamaModelTag, OllamaPullEvent, OllamaPullProgress, OllamaPullRequest,
@@ -12,9 +13,14 @@ use crate::openhuman::local_ai::ollama_api::{
 use crate::openhuman::local_ai::paths::{find_workspace_ollama_binary, workspace_ollama_binary};
 use crate::openhuman::local_ai::presets::{self, VisionMode};
 use crate::openhuman::local_ai::process_util::apply_no_window;
+use crate::openhuman::local_ai::provider::{provider_from_config, LocalAiProvider};
 
 use super::spawn_marker::{self, OllamaSpawnMarker};
 use super::LocalAiService;
+
+fn lm_studio_models_error_means_unreachable(error: &str) -> bool {
+    error.starts_with("lm studio models request failed:")
+}
 
 impl LocalAiService {
     pub(in crate::openhuman::local_ai::service) async fn ensure_ollama_server(
@@ -836,6 +842,10 @@ impl LocalAiService {
     /// Run full diagnostics: check Ollama server health, list installed models,
     /// and verify expected models are present. Returns a JSON-serializable report.
     pub async fn diagnostics(&self, config: &Config) -> Result<serde_json::Value, String> {
+        if provider_from_config(config) == LocalAiProvider::LmStudio {
+            return self.lm_studio_diagnostics(config).await;
+        }
+
         let base_url = ollama_base_url();
         let healthy = self.ollama_healthy().await;
 
@@ -1034,6 +1044,93 @@ impl LocalAiService {
         );
 
         Ok(payload.models)
+    }
+
+    async fn lm_studio_diagnostics(&self, config: &Config) -> Result<serde_json::Value, String> {
+        let base_url = lm_studio_base_url(config);
+        let models_result = self.list_lm_studio_models(config).await;
+        let (models, models_error, healthy) = match models_result {
+            Ok(models) => (models, None, true),
+            Err(err) => {
+                let reachable = !lm_studio_models_error_means_unreachable(&err);
+                (vec![], Some(err), reachable)
+            }
+        };
+
+        let expected_chat = model_ids::effective_chat_model_id(config);
+        let model_names: Vec<String> = models.iter().map(|m| m.name.to_ascii_lowercase()).collect();
+        let chat_found = model_names
+            .iter()
+            .any(|name| name == &expected_chat.to_ascii_lowercase());
+
+        let mut issues: Vec<String> = Vec::new();
+        let mut repair_actions: Vec<serde_json::Value> = Vec::new();
+
+        if !healthy {
+            let detail = models_error
+                .as_deref()
+                .map(|err| format!(": {err}"))
+                .unwrap_or_default();
+            issues.push(format!(
+                "LM Studio server is not running or not reachable at {}{}",
+                base_url, detail
+            ));
+            repair_actions.push(serde_json::json!({
+                "action": "start_lm_studio_server",
+                "base_url": base_url,
+            }));
+        }
+        if healthy && models_error.is_none() && models.is_empty() {
+            issues.push("LM Studio is reachable but no models are loaded".to_string());
+            repair_actions.push(serde_json::json!({
+                "action": "load_lm_studio_model",
+            }));
+        } else if healthy && models_error.is_none() && !chat_found {
+            issues.push(format!(
+                "Chat model `{}` is not loaded in LM Studio",
+                expected_chat
+            ));
+            repair_actions.push(serde_json::json!({
+                "action": "load_lm_studio_model",
+                "model": expected_chat,
+            }));
+        }
+        if healthy {
+            if let Some(ref err) = models_error {
+                issues.push(format!("Failed to list LM Studio models: {err}"));
+            }
+        }
+
+        tracing::debug!(
+            provider = "lm_studio",
+            %base_url,
+            healthy,
+            models = models.len(),
+            issues = issues.len(),
+            "[local_ai] diagnostics"
+        );
+
+        Ok(serde_json::json!({
+            "provider": "lm_studio",
+            "lm_studio_running": healthy,
+            "lm_studio_base_url": base_url,
+            "ollama_running": false,
+            "ollama_base_url": serde_json::Value::Null,
+            "ollama_binary_path": serde_json::Value::Null,
+            "installed_models": models,
+            "vision_mode": "disabled",
+            "expected": {
+                "chat_model": expected_chat,
+                "chat_found": chat_found,
+                "embedding_model": model_ids::effective_embedding_model_id(config),
+                "embedding_found": false,
+                "vision_model": model_ids::effective_vision_model_id(config),
+                "vision_found": false,
+            },
+            "issues": issues,
+            "repair_actions": repair_actions,
+            "ok": issues.is_empty(),
+        }))
     }
 
     fn resolve_binary_path(&self, config: &Config) -> Option<String> {

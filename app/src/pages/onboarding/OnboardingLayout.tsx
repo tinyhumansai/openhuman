@@ -12,7 +12,6 @@ import { setWalkthroughPending } from '../../components/walkthrough/AppWalkthrou
 // import { ONBOARDING_WELCOME_THREAD_LABEL } from '../../constants/onboardingChat';
 import { useCoreState } from '../../providers/CoreStateProvider';
 import { trackEvent } from '../../services/analytics';
-import { userApi } from '../../services/api/userApi';
 import { getDefaultEnabledTools } from '../../utils/toolDefinitions';
 import BetaBanner from './components/BetaBanner';
 import { OnboardingContext, type OnboardingDraft } from './OnboardingContext';
@@ -77,12 +76,6 @@ const OnboardingLayout = () => {
       });
     } catch (e) {
       console.warn('[onboarding] Failed to persist onboarding tasks; continuing completion', e);
-    }
-
-    try {
-      await userApi.onboardingComplete();
-    } catch {
-      console.warn('[onboarding] Failed to notify backend of onboarding completion');
     }
 
     try {
@@ -166,7 +159,7 @@ const OnboardingLayout = () => {
       <div
         data-testid="onboarding-layout"
         className="min-h-full relative flex items-center justify-center py-10">
-        <div className="relative z-10 w-full max-w-lg mx-4">
+        <div className="relative z-10 w-full max-w-2xl mx-4">
           <BetaBanner />
           <Outlet />
         </div>

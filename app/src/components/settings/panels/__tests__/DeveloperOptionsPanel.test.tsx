@@ -24,6 +24,14 @@ vi.mock('../../../../utils/config', () => ({
   get APP_ENVIRONMENT() {
     return hoisted.appEnvironment;
   },
+  // Pulled transitively via `resetWalkthrough` → configPersistence.
+  CORE_RPC_URL: 'http://127.0.0.1:7788/rpc',
+  BACKEND_URL: 'http://localhost:5005',
+}));
+
+vi.mock('../../../walkthrough/AppWalkthrough', () => ({
+  resetWalkthrough: vi.fn(),
+  setWalkthroughPending: vi.fn(),
 }));
 
 vi.mock('../../hooks/useSettingsNavigation', () => ({

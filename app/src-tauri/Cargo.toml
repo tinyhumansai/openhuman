@@ -177,6 +177,10 @@ default = []
 # every `pnpm dev:app` will silently load the production bundle. DO NOT REMOVE!!
 custom-protocol = ["tauri/custom-protocol"]
 sandbox-bubblewrap = []
+# Forwarded to the core crate to expose `openhuman.test_reset`. Off by
+# default; the E2E build flips it on via `cargo tauri build --features
+# e2e-test-support`. See app/scripts/e2e-build.sh.
+e2e-test-support = ["openhuman_core/e2e-test-support"]
 
 [patch.crates-io]
 # `cargo tauri build` resolves dependencies from this manifest, so the

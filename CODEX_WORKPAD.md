@@ -1,5 +1,9 @@
 # CODEX Workpad
 
+> **Format**: chronological log of Codex/AI-driven sweeps. Entries below are historical — read them as "what happened on this date" rather than as a description of current repo state. For current state see [`CLAUDE.md`](CLAUDE.md), [`AGENTS.md`](AGENTS.md), and [`.claude/memory.md`](.claude/memory.md).
+>
+> Append new entries at the bottom with a date heading and a short Scope / Validation / Follow-up structure. Do not edit older entries in place.
+
 ## Portfolio Readiness Pass - 2026-05-12
 
 ### Scope

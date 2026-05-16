@@ -47,6 +47,15 @@ const GITHUB_RELEASES_METADATA: Option<CapabilityPrivacy> = Some(CapabilityPriva
     destinations: &["GitHub Releases"],
 });
 
+// Direct-mode Composio: the user's API key and tool arguments leave the
+// device — they are sent to backend.composio.dev, not the OpenHuman backend.
+// LOCAL_CREDENTIALS was incorrect here because leaves_device must be true.
+const COMPOSIO_DIRECT_CREDENTIALS: Option<CapabilityPrivacy> = Some(CapabilityPrivacy {
+    leaves_device: true,
+    data_kind: PrivacyDataKind::Credentials,
+    destinations: &["Composio (backend.composio.dev)"],
+});
+
 const CAPABILITIES: &[Capability] = &[
     Capability {
         id: "conversation.create",
@@ -397,6 +406,43 @@ const CAPABILITIES: &[Capability] = &[
         status: CapabilityStatus::Beta,
         privacy: None,
     },
+    // ── Composio direct mode (BYO API key) ──────────────────────────
+    //
+    // Composio shipped with two integration paths:
+    //   1. Backend-proxied (default) — calls through api.tinyhumans.ai;
+    //      backend owns the Composio API key, billing, allowlist, and
+    //      HMAC-verified trigger fan-out via socket.io.
+    //   2. Direct (BYO key) — core calls backend.composio.dev directly
+    //      with the user's own key. Sovereign / offline-friendly, but
+    //      tool execution only — real-time trigger webhooks are NOT
+    //      routed in direct mode (they still require the backend).
+    Capability {
+        id: "composio.direct_mode",
+        name: "Composio Direct Mode (BYO API Key)",
+        domain: "skills",
+        category: CapabilityCategory::Skills,
+        description:
+            "Route Composio tool calls directly to backend.composio.dev with your own API key, \
+             bypassing the OpenHuman backend proxy. Tool execution only — trigger webhooks still \
+             require backend mode.",
+        how_to: "Settings > Skills > Composio > Direct mode",
+        status: CapabilityStatus::Beta,
+        privacy: COMPOSIO_DIRECT_CREDENTIALS,
+    },
+    Capability {
+        id: "composio.direct_mode_triggers_gap",
+        name: "Composio Triggers (Direct Mode — Limited)",
+        domain: "skills",
+        category: CapabilityCategory::Skills,
+        description:
+            "Composio real-time trigger webhooks (Gmail new-message, Slack new-message, …) \
+             currently arrive over wss://api.tinyhumans.ai/socket.io and require backend mode. \
+             Direct-mode users get synchronous tool execution but not async trigger push in \
+             this release.",
+        how_to: "Switch to Backend mode to receive triggers, or wait for the direct trigger sink follow-up",
+        status: CapabilityStatus::ComingSoon,
+        privacy: None,
+    },
     Capability {
         id: "skills.connect_google",
         name: "Connect Google",
@@ -456,6 +502,16 @@ const CAPABILITIES: &[Capability] = &[
         how_to: "Settings > Local AI Model",
         status: CapabilityStatus::Beta,
         privacy: MODEL_DOWNLOAD,
+    },
+    Capability {
+        id: "local_ai.configure_provider",
+        name: "Configure Local Provider",
+        domain: "local_ai",
+        category: CapabilityCategory::LocalAI,
+        description: "Select Ollama or LM Studio as the local model provider and configure the local server endpoint.",
+        how_to: "Settings > Local AI Model",
+        status: CapabilityStatus::Beta,
+        privacy: None,
     },
     Capability {
         id: "local_ai.manage_model_assets",

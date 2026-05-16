@@ -10,20 +10,20 @@ Narrative architecture: [`gitbooks/developing/architecture.md`](gitbooks/develop
 
 | Path | Role |
 | --- | --- |
-| **`app/`** | Yarn workspace `openhuman-app`: Vite + React (`app/src/`), Tauri desktop host (`app/src-tauri/`), Vitest tests |
-| **`src/`** (root) | Rust lib `openhuman_core` + `openhuman` CLI binary — `core_server`, `openhuman::*` domains, MCP routing |
-| **`Cargo.toml`** (root) | Core crate; `cargo build --bin openhuman` produces the sidecar staged by `app`'s `core:stage` |
-| **`docs/`** | Remaining deep internals (memory pipeline excalidraws, sentry, telegram-login, etc.). Public contributor docs live in `gitbooks/developing/`. |
+| **`app/`** | pnpm workspace `openhuman-app` (v0.53.45): Vite + React (`app/src/`), Tauri desktop host (`app/src-tauri/`), Vitest tests |
+| **`src/`** (root) | Rust lib crate `openhuman` + `openhuman-core` CLI binary (`src/main.rs`) — `src/core/` (transport: Axum/HTTP, JSON-RPC, CLI), `src/openhuman/*` domains, event bus |
+| **`Cargo.toml`** (root) | Core crate; `cargo build --bin openhuman-core` produces the binary. Also defines `slack-backfill` and `gmail-backfill-3d` helper binaries in `src/bin/`. |
+| **`docs/`** | Remaining deep internals (memory pipeline excalidraws, sentry, etc.). Public contributor docs live in `gitbooks/developing/`. |
 
-Commands assume the **repo root**; `pnpm dev` delegates to the `app` workspace. (Repo migrated from yarn to pnpm — `package.json` enforces pnpm via the `packageManager` field.)
+Commands assume the **repo root**; `pnpm dev` delegates to the `app` workspace. The root `package.json` is `openhuman-repo` (private) and enforces pnpm via the `packageManager` field.
 
 ---
 
 ## Runtime scope
 
 - **Shipped product**: desktop — Windows, macOS, Linux.
-- **Tauri host** (`app/src-tauri`): desktop-only (`compile_error!` for other targets). No Android/iOS branches.
-- **Core binary** (`openhuman`): spawned as a **sidecar**; the UI talks to it over HTTP (`core_rpc_relay` + `core_rpc` client), not by duplicating domain logic.
+- **Tauri host** (`app/src-tauri`): desktop-only. No Android/iOS branches.
+- **Core runs in-process** inside the Tauri host as a tokio task — there is **no sidecar binary anymore** (removed in PR #1061). The lifecycle is owned by `core_process::CoreProcessHandle` in `app/src-tauri/src/core_process.rs`; on Cmd+Q the core dies with the GUI. Frontend RPC still goes over HTTP (`core_rpc_relay` + `core_rpc` client) to `http://127.0.0.1:<port>/rpc`, authenticated with a per-launch bearer in `OPENHUMAN_CORE_TOKEN`. Set `OPENHUMAN_CORE_REUSE_EXISTING=1` to attach to an externally-started `openhuman-core` process (e.g. a debug harness).
 
 **Where logic lives**
 - **Rust core**: business logic, execution, domains, RPC, persistence, CLI. Authoritative.
@@ -34,25 +34,28 @@ Commands assume the **repo root**; `pnpm dev` delegates to the `app` workspace. 
 ## Commands (from repo root)
 
 ```bash
-pnpm dev                  # Frontend + Tauri dev
-pnpm tauri dev            # Desktop with Tauri (loads env via scripts/load-dotenv.sh)
+pnpm dev                  # Vite dev server only (app workspace)
+pnpm dev:app              # Full Tauri desktop dev (CEF runtime, loads env via scripts/load-dotenv.sh)
 pnpm build                # Production UI build
-pnpm typecheck            # Typecheck (app workspace)
-pnpm lint                 # ESLint
-pnpm format               # Prettier write
-pnpm format:check         # Prettier check
-cd app && pnpm core:stage # Stage openhuman binary next to Tauri resources
+pnpm typecheck            # tsc --noEmit (app workspace, aliased to `compile`)
+pnpm compile              # Same as typecheck
+pnpm lint                 # ESLint --cache
+pnpm format               # Prettier write + cargo fmt
+pnpm format:check         # Prettier check + cargo fmt --check
 
 # Rust — core library + CLI
 cargo check --manifest-path Cargo.toml
-cargo build --manifest-path Cargo.toml --bin openhuman
+cargo build --manifest-path Cargo.toml --bin openhuman-core
 
 # Rust — Tauri shell
 cargo check --manifest-path app/src-tauri/Cargo.toml
+pnpm rust:check           # Tauri shell check
 ```
 
-**Tests**: Vitest in `app/` (`pnpm test:unit`, `pnpm test:coverage`); Rust via `cargo test`.
-**Quality**: ESLint + Prettier + Husky in `app`.
+Note: `pnpm core:stage` is a no-op (echoes a message). The sidecar was removed in PR #1061; core is linked in-process.
+
+**Tests**: `pnpm test` (Vitest, app workspace) · `pnpm test:coverage` · `pnpm test:rust` (cargo test via `scripts/test-rust-with-mock.sh`).
+**Quality**: ESLint + Prettier + Husky in `app`. Pre-push hook runs `pnpm rust:check` — pass `--no-verify` only for unrelated pre-existing breakage.
 
 ### Agent debug runners (`scripts/debug/`)
 
@@ -105,7 +108,7 @@ PRs must meet **≥ 80% coverage on changed lines**. Enforced by [`.github/workf
 
 - Co-locate as `*.test.ts` / `*.test.tsx` under `app/src/**`.
 - Config: `app/test/vitest.config.ts`; setup: `app/src/test/setup.ts`.
-- Run: `pnpm test:unit`, `pnpm test:coverage`.
+- Run from repo root: `pnpm test` or `pnpm test:coverage`. (Inside `app/`, `pnpm test:unit` is also defined.)
 - Prefer behavior over implementation. Use helpers in `app/src/test/`. No real network, no time flakes.
 
 ### Shared mock backend
@@ -131,9 +134,9 @@ docker compose -f e2e/docker-compose.yml run --rm e2e   # Linux E2E on macOS
 
 Use `element-helpers.ts` (`clickNativeButton`, `waitForWebView`, `clickToggle`) — never raw `XCUIElementType*`. Assert UI outcomes and mock effects.
 
-### Deterministic core-sidecar reset
+### Deterministic core reset (E2E)
 
-`app/scripts/e2e-run-spec.sh` creates and cleans a temp `OPENHUMAN_WORKSPACE` by default. `OPENHUMAN_WORKSPACE` redirects core config + storage away from `~/.openhuman`.
+`app/scripts/e2e-run-spec.sh` creates and cleans a temp `OPENHUMAN_WORKSPACE` by default. `OPENHUMAN_WORKSPACE` redirects core config + storage away from `~/.openhuman`. Each spec gets a fresh in-process core inside the freshly-built Tauri bundle.
 
 ### Rust tests with mock
 
@@ -147,15 +150,17 @@ bash scripts/test-rust-with-mock.sh --test json_rpc_e2e
 ## Frontend (`app/src/`)
 
 **Provider chain** (`App.tsx`):
-`Redux` → `PersistGate` → `UserProvider` → `SocketProvider` → `AIProvider` → `SkillProvider` → `HashRouter` → `AppRoutes`.
+`Sentry.ErrorBoundary` → `Redux Provider` → `PersistGate` (with `PersistRehydrationScreen`) → `BootCheckGate` → `CoreStateProvider` → `SocketProvider` → `ChatRuntimeProvider` → `HashRouter` → `CommandProvider` → `ServiceBlockingGate` → `AppShell` (`AppRoutes` + `BottomTabBar` + walkthrough/mascot/snackbars).
 
-**State** (`store/`): Redux Toolkit slices — auth, user, socket, ai, skills, team, etc. Prefer Redux (persisted where configured) over ad-hoc `localStorage`.
+No `UserProvider` / `AIProvider` / `SkillProvider` — auth and core snapshot live in `CoreStateProvider`, fetched via `fetchCoreAppSnapshot()` RPC (auth tokens are NOT in redux-persist; they live in the in-process core).
 
-**Services** (`services/`): singletons — `apiClient`, `socketService`, `coreRpcClient` (HTTP bridge to core), domain `api/*` clients.
+**State** (`store/`): Redux Toolkit slices — `accounts`, `channelConnections`, `chatRuntime`, `coreMode`, `deepLinkAuth`, `mascot`, `notification`, `providerSurface`, `socket`, `thread`. Persisted slices via redux-persist. Prefer Redux over ad-hoc `localStorage` (exception: ephemeral UI state like upsell dismiss flags).
 
-**MCP** (`lib/mcp/`): JSON-RPC transport, validation, types over Socket.io. Tooling is driven by the backend + skills system.
+**Services** (`services/`): singletons — `apiClient`, `socketService`, `coreRpcClient` + `coreCommandClient` (HTTP bridge to in-process core via Tauri IPC), `chatService`, `analytics`, `notificationService`, `webviewAccountService`, `daemonHealthService`, plus domain `api/*` clients.
 
-**Routing** (`AppRoutes.tsx`): hash routes `/`, `/onboarding`, `/mnemonic`, `/home`, `/intelligence`, `/skills`, `/conversations`, `/invites`, `/agents`, `/settings/*`. No `/login`.
+**MCP** (`lib/mcp/`): JSON-RPC transport, validation, types over Socket.io.
+
+**Routing** (`AppRoutes.tsx`, HashRouter): `/` (Welcome), `/onboarding/*`, `/home`, `/human`, `/intelligence`, `/skills`, `/chat` (unified agent + connected web apps, replaces old `/conversations` + `/accounts`), `/channels`, `/invites`, `/notifications`, `/rewards`, `/webhooks` (redirects to `/settings/webhooks-triggers`), `/settings/*`. Default catch-all is `DefaultRedirect`. There is no `/login`, no `/mnemonic` (recovery phrase moved to Settings), no `/agents`, no `/conversations`.
 
 **AI config**: bundled prompts in `src/openhuman/agent/prompts/` (also bundled via `app/src-tauri/tauri.conf.json` `resources`). Loaders in `app/src/lib/ai/` use `?raw` imports, optional remote fetch, and `ai_get_config` / `ai_refresh_config` in Tauri.
 
@@ -163,9 +168,11 @@ bash scripts/test-rust-with-mock.sh --test json_rpc_e2e
 
 ## Tauri shell (`app/src-tauri/`)
 
-Thin desktop host: window management, daemon health, **core process lifecycle** (`core_process`, `CoreProcessHandle`), **JSON-RPC relay** (`core_rpc_relay`, `core_rpc`).
+Thin desktop host. Top-level modules: `core_process`, `core_rpc`, `cdp`, `cef_preflight`, `cef_profile`, `dictation_hotkeys`, `file_logging`, `mascot_native_window`, `native_notifications`, `notification_settings`, `process_kill`, `process_recovery`, `screen_capture`, `window_state`, plus the per-provider scanner modules (`discord_scanner`, `gmessages_scanner`, `imessage_scanner`, `meet_scanner`, `slack_scanner`, `telegram_scanner`, `whatsapp_scanner`), `meet_audio` / `meet_call` / `meet_video`, `fake_camera`, `webview_accounts`, `webview_apis`.
 
-Registered IPC (see [`gitbooks/developing/architecture/tauri-shell.md`](gitbooks/developing/architecture/tauri-shell.md)): `greet`, `write_ai_config_file`, `ai_get_config`, `ai_refresh_config`, `core_rpc_relay`, window commands, `openhuman_*` daemon helpers.
+**Core lifecycle**: `core_process::CoreProcessHandle` spawns the JSON-RPC server as an in-process tokio task and authenticates inbound RPC with a per-launch hex bearer (`OPENHUMAN_CORE_TOKEN`). On stale-listener detection (#1130) the handle revalidates the PID before force-killing so PID reuse can't kill an unrelated process. `restart_core_process` / `start_core_process` Tauri commands let the frontend cycle it for updates.
+
+Registered IPC (see [`gitbooks/developing/architecture/tauri-shell.md`](gitbooks/developing/architecture/tauri-shell.md)) includes `greet`, `write_ai_config_file`, `ai_get_config`, `ai_refresh_config`, `core_rpc_relay`, `core_rpc_token`, `start_core_process`, `restart_core_process`, window commands, and `openhuman_*` daemon helpers. Always use `invoke('core_rpc_relay', ...)` for in-process RPC (avoids CORS preflight that `fetch()` would trigger).
 
 ### CEF child webviews — no new JS injection
 
@@ -185,19 +192,20 @@ Watch out for Tauri plugins that inject JS by default. `tauri-plugin-opener` shi
 
 ## Rust core (`src/`)
 
-- **`openhuman/`** — Domain logic (memory, channels, config, cron, skills, webhooks, …). RPC controllers in per-domain `rpc.rs`; use `RpcOutcome<T>` per [`AGENTS.md`](AGENTS.md).
-- **Module layout rule**: new functionality goes in a **dedicated subdirectory** (`openhuman/<domain>/mod.rs` + siblings). **Do not** add new standalone `*.rs` files at `src/openhuman/` root.
-- **Controller schema contract**: shared types in `src/core/mod.rs` (`ControllerSchema`, `FieldSchema`, `TypeSchema`).
+- **`src/openhuman/`** — Domain logic. Current domains: `about_app`, `accessibility`, `agent`, `app_state`, `approval`, `autocomplete`, `billing`, `channels`, `composio`, `config`, `context`, `cost`, `credentials`, `cron`, `doctor`, `embeddings`, `encryption`, `health`, `heartbeat`, `integrations`, `learning`, `local_ai`, `meet`, `meet_agent`, `memory`, `migration`, `node_runtime`, `notifications`, `overlay`, `people`, `prompt_injection`, `provider_surfaces`, `providers`, `redirect_links`, `referral`, `routing`, `scheduler_gate`, `screen_intelligence`, `security`, `service`, `skills`, `socket`, `subconscious`, `team`, `text_input`, `threads`, `tokenjuice`, `tool_timeout`, `tools`, `tree_summarizer`, `update`, `voice`, `wallet`, `webhooks`, `webview_accounts`, `webview_apis`, `webview_notifications`. RPC controllers in per-domain `rpc.rs` / `schemas.rs`; use `RpcOutcome<T>` per [`AGENTS.md`](AGENTS.md).
+- **Skills runtime removed**: the QuickJS / `rquickjs` runtime that previously executed skill packages is gone. `src/openhuman/skills/` is now a metadata-only domain (`ops_create`, `ops_discover`, `ops_install`, `ops_parse`, `inject`, `schemas`, `types`) — see the module header comment "Legacy skill metadata helpers retained after QuickJS runtime removal."
+- **Module layout rule**: new functionality goes in a **dedicated subdirectory** (`openhuman/<domain>/mod.rs` + siblings). **Do not** add new standalone `*.rs` files at `src/openhuman/` root (`dev_paths.rs` and `util.rs` are grandfathered, not a template).
+- **Controller schema contract**: shared types in `src/core/types.rs` / `src/core/mod.rs` (`ControllerSchema`, `FieldSchema`, `TypeSchema`).
 - **Domain schema files**: per-domain `schemas.rs` (e.g. `src/openhuman/cron/schemas.rs`), exported from domain `mod.rs`.
 - **Controller-only exposure**: expose features to CLI and JSON-RPC via the controller registry. **Do not** add domain branches in `src/core/cli.rs` / `src/core/jsonrpc.rs`.
 - **Light `mod.rs`**: keep domain `mod.rs` export-focused. Operational code in `ops.rs`, `store.rs`, `types.rs`, etc.
-- **`core_server/`** — Transport only: Axum/HTTP, JSON-RPC envelope, CLI parsing, dispatch. No heavy logic.
+- **`src/core/`** — Transport only. Modules: `all`, `all_tests`, `auth`, `autocomplete_cli_adapter`, `cli`, `cli_tests`, `dispatch`, `event_bus/`, `jsonrpc`, `jsonrpc_tests`, `legacy_aliases`, `logging`, `memory_cli`, `observability`, `rpc_log`, `shutdown`, `socketio`, `types`, plus `agent_cli`. No heavy domain logic here. (There is no `src/core_server/` — older docs that reference `core_server` mean `src/core/`.)
 
 ### Controller migration checklist
 
 - `src/openhuman/<domain>/mod.rs`: add `mod schemas;`, re-export `all_controller_schemas as all_<domain>_controller_schemas` and `all_registered_controllers as all_<domain>_registered_controllers`.
 - `src/openhuman/<domain>/schemas.rs` defines `schemas`, `all_controller_schemas`, `all_registered_controllers`, and `handle_*` fns delegating to domain `rpc.rs`.
-- Wire exports into `src/core/all.rs`. Remove migrated branches from `src/rpc/dispatch.rs`.
+- Wire exports into `src/core/all.rs`. Remove migrated branches from `src/core/dispatch.rs`.
 
 ### Event bus (`src/core/event_bus/`)
 
@@ -299,4 +307,4 @@ Specify → prove in Rust → prove over RPC → surface in the UI → test.
 - **Vendored CEF-aware `tauri-cli`**: runtime is CEF; only the vendored CLI at `app/src-tauri/vendor/tauri-cef/crates/tauri-cli` bundles Chromium into `Contents/Frameworks/`. Stock `@tauri-apps/cli` produces a broken bundle (panic in `cef::library_loader::LibraryLoader::new`). `pnpm dev:app` and all `cargo tauri` scripts call `pnpm tauri:ensure` which runs [`scripts/ensure-tauri-cli.sh`](scripts/ensure-tauri-cli.sh). If overwritten, reinstall with `cargo install --locked --path app/src-tauri/vendor/tauri-cef/crates/tauri-cli`.
 - **macOS deep links**: often require a built `.app` bundle, not just `tauri dev`.
 - **Tauri environment guard**: use `isTauri()` (from `app/src/services/webviewAccountService.ts`) or wrap `invoke(...)` in `try/catch`; do not check `window.__TAURI__` directly — it is not present at module load and bypasses the established wrapper contract.
-- **Core sidecar**: must be staged so `core_rpc` can reach the `openhuman` binary (see `scripts/stage-core-sidecar.mjs`).
+- **Core is in-process** (no sidecar): `core_rpc` reaches the embedded server at `http://127.0.0.1:<port>/rpc` with bearer auth via `OPENHUMAN_CORE_TOKEN`. `scripts/stage-core-sidecar.mjs` no longer exists; `pnpm core:stage` is a no-op echo. To run the core standalone for debugging, use `./target/debug/openhuman-core serve` (token at `{workspace}/core.token`, default `~/.openhuman-staging/core.token` under `OPENHUMAN_APP_ENV=staging`).

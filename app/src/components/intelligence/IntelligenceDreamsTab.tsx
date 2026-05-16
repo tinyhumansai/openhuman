@@ -1,4 +1,7 @@
+import { useT } from '../../lib/i18n/I18nContext';
+
 export default function IntelligenceDreamsTab() {
+  const { t } = useT();
   return (
     <div className="glass rounded-2xl p-8 text-center animate-fade-up">
       <div className="w-16 h-16 mx-auto mb-4 flex items-center justify-center rounded-full bg-sky-500/10">
@@ -17,13 +20,9 @@ export default function IntelligenceDreamsTab() {
           />
         </svg>
       </div>
-      <h2 className="text-lg font-semibold text-stone-900 mb-2">Dreams</h2>
-      <p className="text-stone-400 text-sm mb-1">
-        Twice every day, OpenHuman will generate a dream (or a summary) based on everything that has
-        happened in your life today. These dreams are then indexed and can be used to influence
-        OpenHuman&apos;s behavior.
-      </p>
-      <p className="text-xs text-stone-500">Coming soon</p>
+      <h2 className="text-lg font-semibold text-stone-900 mb-2">{t('memory.tab.dreams')}</h2>
+      <p className="text-stone-400 text-sm mb-1">{t('dreams.description')}</p>
+      <p className="text-xs text-stone-500">{t('dreams.comingSoon')}</p>
     </div>
   );
 }

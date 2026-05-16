@@ -93,7 +93,9 @@
     @apply text-lg lg:text-xl;
   }
 
-  /* Complete focus outline suppression - no borders, no rings, no outlines */
+  /* Suppress the default browser focus ring (outline + tap highlight) but
+     leave borders and box-shadows alone — components rely on those for
+     selected / focus-visible styling (e.g. the runtime picker cards). */
   * {
     outline: none !important;
     -webkit-tap-highlight-color: transparent !important;
@@ -101,12 +103,8 @@
 
   *:focus {
     outline: none !important;
-    box-shadow: none !important;
-    border: inherit !important;
-    border-color: inherit !important;
   }
 
-  /* Specific overrides for common elements that might show blue outlines */
   button:focus,
   a:focus,
   input:focus,
@@ -115,8 +113,6 @@
   [role='button']:focus,
   [tabindex]:focus {
     outline: none !important;
-    box-shadow: none !important;
-    border-color: inherit !important;
   }
 
   /* Smooth scrolling */
@@ -177,7 +173,7 @@
 
   .app-dotted-canvas {
     background-color: transparent;
-    background-image: radial-gradient(circle at center, rgba(0, 0, 0, 0.5) 1px, transparent 1px);
+    background-image: radial-gradient(circle at center, rgba(0, 0, 0, 0.3) 1px, transparent 1px);
     background-size: 18px 18px;
     background-position: 0 0;
   }

@@ -49,7 +49,7 @@ BIN="${REPO_ROOT}/target/debug/openhuman-core"
 # Composio toggle reach the dumped prompts. `Config::load_or_init`
 # calls `apply_env_overrides` after reading from disk, so any variable
 # exported here wins over whatever is baked into the workspace config.
-# Mirrors `yarn tauri dev`, which sources the same file via
+# Mirrors `pnpm tauri dev`, which sources the same file via
 # `scripts/load-dotenv.sh` before launching the sidecar.
 if [[ -f "${REPO_ROOT}/.env" ]]; then
   echo "[debug-agent-prompts] loading env from ${REPO_ROOT}/.env" >&2

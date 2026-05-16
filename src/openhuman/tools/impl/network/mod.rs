@@ -6,7 +6,7 @@ mod url_guard;
 mod web_fetch;
 mod web_search;
 
-pub use composio::{ComposioAction, ComposioTool};
+pub use composio::{ComposioAction, ComposioConnectedAccount, ComposioTool};
 pub use curl::CurlTool;
 pub use gitbooks::{GitbooksGetPageTool, GitbooksSearchTool};
 pub use http_request::HttpRequestTool;

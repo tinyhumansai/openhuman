@@ -1,0 +1,529 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OpenHuman · AI settings (preview)</title>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap"
+      rel="stylesheet" />
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            fontFamily: {
+              sans: ['Inter', 'system-ui', 'sans-serif'],
+              mono: ['"JetBrains Mono"', 'Consolas', 'monospace'],
+            },
+            colors: {
+              primary: { 50: '#EFF6FF', 100: '#DBEAFE', 200: '#BFDBFE', 300: '#93C5FD', 400: '#60A5FA', 500: '#2F6EF4', 600: '#2563EB', 700: '#1D4ED8' },
+              sage: { 50: '#F0FDF4', 100: '#DCFCE7', 200: '#BBF7D0', 500: '#34C759', 600: '#16A34A', 700: '#15803D' },
+              amber: { 50: '#FFFBEB', 100: '#FEF3C7', 200: '#FDE68A', 500: '#E8A728', 600: '#D97706', 700: '#B45309' },
+              coral: { 50: '#FEF2F2', 100: '#FEE2E2', 200: '#FECACA', 500: '#EF4444', 600: '#DC2626' },
+              stone: { 50: '#FAFAFA', 100: '#F5F5F5', 200: '#E5E5E5', 300: '#D4D4D4', 400: '#A3A3A3', 500: '#737373', 600: '#525252', 700: '#404040', 800: '#262626', 900: '#171717' },
+              slate: { 50: '#F8FAFC', 100: '#F1F5F9', 200: '#E2E8F0', 500: '#64748B' },
+            },
+            boxShadow: {
+              subtle: '0 1px 2px 0 rgba(0,0,0,0.03), 0 1px 3px 0 rgba(0,0,0,0.04)',
+              soft: '0 2px 8px -2px rgba(0,0,0,0.08), 0 4px 12px -4px rgba(0,0,0,0.08)',
+              float: '0 12px 32px -8px rgba(0,0,0,0.12), 0 24px 48px -12px rgba(0,0,0,0.12)',
+            },
+            animation: {
+              'fade-up': 'fadeUp 0.32s cubic-bezier(0.4,0,0.2,1)',
+              'glow-pulse': 'glowPulse 2s cubic-bezier(0.4,0,0.6,1) infinite',
+            },
+            keyframes: {
+              fadeUp: { '0%': { opacity: 0, transform: 'translateY(8px)' }, '100%': { opacity: 1, transform: 'translateY(0)' } },
+              glowPulse: { '0%,100%': { opacity: 1 }, '50%': { opacity: 0.55 } },
+            },
+          },
+        },
+      };
+    </script>
+
+    <script defer src="https://unpkg.com/alpinejs@3.13.5/dist/cdn.min.js"></script>
+    <script src="https://unpkg.com/lucide@0.469.0/dist/umd/lucide.min.js"></script>
+
+    <style>
+      html, body {
+        font-family: 'Inter', system-ui, sans-serif;
+        background: #F5F5F5;
+        color: #171717;
+      }
+      [x-cloak] { display: none !important; }
+      .ring-inset { --tw-ring-inset: inset; }
+    </style>
+  </head>
+  <body class="min-h-screen py-8">
+    <!-- Approximates the WrappedSettingsPage container: max-w-lg, rounded-2xl, shadow-soft -->
+    <div class="mx-auto max-w-lg overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-soft">
+      <!-- SettingsHeader (matches real component: px-5 pt-5 pb-3, text-sm font-semibold) -->
+      <div class="px-5 pb-3 pt-5">
+        <div class="flex items-center">
+          <button class="mr-2 flex h-6 w-6 items-center justify-center rounded-full text-stone-500 hover:bg-stone-100">
+            <i data-lucide="chevron-left" class="h-4 w-4"></i>
+          </button>
+          <nav class="mr-1">
+            <ol class="flex items-center gap-1">
+              <li class="flex items-center gap-1">
+                <span class="text-xs text-stone-400">Settings</span>
+                <i data-lucide="chevron-right" class="h-3 w-3 text-stone-300"></i>
+              </li>
+            </ol>
+          </nav>
+          <h2 class="text-sm font-semibold text-stone-900">AI</h2>
+          <span class="ml-auto font-mono text-[9px] uppercase tracking-widest text-stone-300">preview</span>
+        </div>
+      </div>
+
+      <div x-data="aiSettings()" x-init="$nextTick(() => lucide.createIcons())" x-cloak class="space-y-4 p-4">
+        <!-- ─── Cloud providers ─────────────────────────────────────── -->
+        <section class="space-y-3">
+          <div class="flex items-center justify-between">
+            <h3 class="text-xs font-semibold uppercase tracking-wide text-stone-500">Cloud providers</h3>
+            <button class="inline-flex items-center gap-1 rounded-md border border-stone-200 px-2 py-1 text-xs font-medium text-stone-700 hover:border-primary-300 hover:bg-primary-50/40 hover:text-primary-700">
+              <i data-lucide="plus" class="h-3 w-3"></i> Add
+            </button>
+          </div>
+
+          <div class="space-y-2">
+            <template x-for="p in draft.cloudProviders" :key="p.id">
+              <div
+                class="group relative flex overflow-hidden rounded-lg border"
+                :class="
+                  p.id === draft.primaryCloudId
+                    ? 'border-primary-300 bg-primary-50/30 ring-1 ring-primary-100'
+                    : 'border-stone-200 bg-stone-50'
+                ">
+                <div class="w-0.5 shrink-0" :class="providerMeta[p.type].rail"></div>
+                <div class="flex flex-1 flex-col gap-2 p-3">
+                  <div class="flex items-start justify-between gap-2">
+                    <div class="flex flex-wrap items-center gap-1.5">
+                      <span class="text-sm font-semibold text-stone-900" x-text="p.label"></span>
+                      <span
+                        x-show="p.id === draft.primaryCloudId"
+                        class="rounded bg-primary-500 px-1.5 py-0.5 font-mono text-[9px] font-medium uppercase tracking-widest text-white">
+                        Primary
+                      </span>
+                      <span
+                        class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium ring-1 ring-inset"
+                        :class="providerMeta[p.type].pill">
+                        <i :data-lucide="providerMeta[p.type].icon" class="h-3 w-3"></i>
+                        <span x-text="providerMeta[p.type].label"></span>
+                      </span>
+                    </div>
+                    <div class="flex shrink-0 items-center gap-0.5">
+                      <button
+                        x-show="p.id !== draft.primaryCloudId"
+                        @click="draft.primaryCloudId = p.id; recordDirty();"
+                        class="rounded px-1.5 py-0.5 text-[11px] font-medium text-primary-600 hover:bg-primary-100/60">
+                        Set primary
+                      </button>
+                      <button class="rounded p-1 text-stone-400 hover:bg-stone-100 hover:text-stone-700">
+                        <i data-lucide="pencil-line" class="h-3 w-3"></i>
+                      </button>
+                      <button
+                        x-show="p.type !== 'openhuman'"
+                        class="rounded p-1 text-stone-400 hover:bg-coral-50 hover:text-coral-600">
+                        <i data-lucide="trash-2" class="h-3 w-3"></i>
+                      </button>
+                    </div>
+                  </div>
+                  <template x-if="p.type === 'openhuman'">
+                    <div class="text-xs text-stone-500">Signed-in default · no configuration needed</div>
+                  </template>
+                  <template x-if="p.type !== 'openhuman'">
+                    <dl class="grid grid-cols-[auto_1fr] gap-x-2 gap-y-1 text-[11px]">
+                      <dt class="text-stone-400">Endpoint</dt>
+                      <dd class="truncate font-mono text-stone-700" x-text="p.endpoint"></dd>
+                      <dt class="text-stone-400">Key</dt>
+                      <dd class="flex items-center gap-1 truncate font-mono text-stone-700">
+                        <i data-lucide="key" class="h-2.5 w-2.5 text-stone-400"></i>
+                        <span class="truncate" x-text="p.maskedKey"></span>
+                      </dd>
+                      <dt class="text-stone-400">Model</dt>
+                      <dd class="truncate font-mono text-stone-700" x-text="p.defaultModel"></dd>
+                    </dl>
+                  </template>
+                </div>
+              </div>
+            </template>
+          </div>
+        </section>
+
+        <!-- ─── Local provider ──────────────────────────────────────── -->
+        <section class="space-y-3">
+          <h3 class="text-xs font-semibold uppercase tracking-wide text-stone-500">Local provider</h3>
+
+          <div class="overflow-hidden rounded-lg border border-stone-200 bg-stone-50">
+            <div class="flex items-center gap-2 border-b border-stone-200 px-3 py-2.5">
+              <span class="relative inline-flex h-2 w-2 items-center justify-center">
+                <span class="absolute inset-0 animate-glow-pulse rounded-full bg-sage-500"></span>
+              </span>
+              <div class="min-w-0 flex-1">
+                <div class="text-sm font-medium capitalize text-stone-900">running</div>
+                <div class="font-mono text-[10px] text-stone-400">ollama · v0.3.14</div>
+              </div>
+              <button class="inline-flex items-center gap-1 rounded-md border border-stone-200 bg-white px-2 py-1 text-xs font-medium text-stone-700 hover:bg-stone-50">
+                <i data-lucide="power" class="h-3 w-3"></i> Stop
+              </button>
+              <button class="inline-flex items-center gap-1 rounded-md border border-stone-200 bg-white px-2 py-1 text-xs font-medium text-stone-700 hover:bg-stone-50">
+                <i data-lucide="refresh-cw" class="h-3 w-3"></i> Update
+              </button>
+            </div>
+
+            <ul class="divide-y divide-stone-200">
+              <template x-for="m in installedModels" :key="m.id">
+                <li class="flex items-center gap-2 px-3 py-2">
+                  <i data-lucide="cpu" class="h-3 w-3 text-stone-400"></i>
+                  <span class="flex-1 truncate font-mono text-xs text-stone-800" x-text="m.id"></span>
+                  <span class="font-mono text-[10px] text-stone-400" x-text="formatBytes(m.sizeBytes)"></span>
+                  <button class="rounded p-1 text-stone-400 hover:bg-coral-50 hover:text-coral-600">
+                    <i data-lucide="trash-2" class="h-3 w-3"></i>
+                  </button>
+                </li>
+              </template>
+            </ul>
+            <div class="border-t border-stone-200 px-3 py-2">
+              <button class="inline-flex items-center gap-1 rounded-md border border-dashed border-stone-300 bg-white px-2 py-1 text-xs font-medium text-stone-600 hover:border-primary-400 hover:text-primary-700">
+                <i data-lucide="download" class="h-3 w-3"></i> Pull a model
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <!-- ─── Workload routing ────────────────────────────────────── -->
+        <section class="space-y-3">
+          <div class="flex items-center justify-between gap-2">
+            <h3 class="text-xs font-semibold uppercase tracking-wide text-stone-500">Workload routing</h3>
+            <div class="inline-flex items-center rounded-full bg-stone-100 p-0.5">
+              <button @click="applyPreset('cloud')" class="rounded-full px-2 py-0.5 text-[10px] font-medium text-stone-600 hover:text-stone-900">
+                Cloud
+              </button>
+              <button @click="applyPreset('local')" class="rounded-full px-2 py-0.5 text-[10px] font-medium text-stone-600 hover:text-stone-900">
+                Local
+              </button>
+              <button @click="applyPreset('mixed')" class="rounded-full bg-white px-2 py-0.5 text-[10px] font-medium text-stone-900 shadow-subtle ring-1 ring-stone-200">
+                Mixed
+              </button>
+            </div>
+          </div>
+
+          <div class="rounded-lg border border-stone-200 bg-stone-50 px-3">
+            <div class="pt-3">
+              <div class="text-[10px] font-semibold uppercase tracking-wide text-stone-400">Chat</div>
+              <div class="divide-y divide-stone-200">
+                <template x-for="w in chatWorkloads" :key="w.id">
+                  <div class="space-y-2 py-2.5" x-data="{ w: w }">
+                    <div class="flex items-start justify-between gap-2">
+                      <div class="min-w-0">
+                        <div class="text-sm font-medium text-stone-900" x-text="w.label"></div>
+                        <div class="truncate text-xs text-stone-500" x-text="w.description"></div>
+                      </div>
+                      <div class="inline-flex shrink-0 items-center rounded bg-stone-100 p-0.5">
+                        <button @click="setRouting(w.id, { kind: 'primary' })" :class="tabClass(draft.routing[w.id].kind === 'primary')">Primary</button>
+                        <button @click="setCloud(w.id)" :class="tabClass(draft.routing[w.id].kind === 'cloud')">Cloud</button>
+                        <button @click="setLocal(w.id)" :class="tabClass(draft.routing[w.id].kind === 'local')">Local</button>
+                      </div>
+                    </div>
+                    <template x-if="draft.routing[w.id].kind === 'primary'">
+                      <div class="text-right font-mono text-[11px] text-stone-400" x-text="'↳ ' + resolvedLabel(w.id)"></div>
+                    </template>
+                    <template x-if="draft.routing[w.id].kind === 'cloud'">
+                      <div class="flex items-center justify-end gap-1.5">
+                        <select
+                          @change="onCloudProviderChange($event, w.id)"
+                          class="rounded-md border border-stone-300 bg-white px-2 py-1 font-mono text-[11px] text-stone-800 focus:border-primary-400 focus:outline-none focus:ring-1 focus:ring-primary-200">
+                          <template x-for="cp in draft.cloudProviders" :key="cp.id">
+                            <option :value="cp.id" :selected="draft.routing[w.id].providerId === cp.id" x-text="providerMeta[cp.type].label"></option>
+                          </template>
+                        </select>
+                        <template x-if="selectedCloudType(w.id) !== 'openhuman'">
+                          <input
+                            :value="draft.routing[w.id].model"
+                            @input="draft.routing[w.id].model = $event.target.value; recordDirty();"
+                            class="w-28 rounded-md border border-stone-300 bg-white px-2 py-1 font-mono text-[11px] text-stone-800 focus:border-primary-400 focus:outline-none focus:ring-1 focus:ring-primary-200" />
+                        </template>
+                      </div>
+                    </template>
+                    <template x-if="draft.routing[w.id].kind === 'local'">
+                      <div class="flex justify-end">
+                        <select
+                          @change="draft.routing[w.id].model = $event.target.value; recordDirty();"
+                          class="rounded-md border border-stone-300 bg-white px-2 py-1 font-mono text-[11px] text-stone-800 focus:border-primary-400 focus:outline-none focus:ring-1 focus:ring-primary-200">
+                          <template x-for="m in installedModels" :key="m.id">
+                            <option :value="m.id" :selected="draft.routing[w.id].model === m.id" x-text="m.id"></option>
+                          </template>
+                        </select>
+                      </div>
+                    </template>
+                  </div>
+                </template>
+              </div>
+            </div>
+
+            <div class="pb-3 pt-3">
+              <div class="text-[10px] font-semibold uppercase tracking-wide text-stone-400">Background</div>
+              <div class="divide-y divide-stone-200">
+                <template x-for="w in bgWorkloads" :key="w.id">
+                  <div class="space-y-2 py-2.5" x-data="{ w: w }">
+                    <div class="flex items-start justify-between gap-2">
+                      <div class="min-w-0">
+                        <div class="text-sm font-medium text-stone-900" x-text="w.label"></div>
+                        <div class="truncate text-xs text-stone-500" x-text="w.description"></div>
+                      </div>
+                      <div class="inline-flex shrink-0 items-center rounded bg-stone-100 p-0.5">
+                        <button @click="setRouting(w.id, { kind: 'primary' })" :class="tabClass(draft.routing[w.id].kind === 'primary')">Primary</button>
+                        <button @click="setCloud(w.id)" :class="tabClass(draft.routing[w.id].kind === 'cloud')">Cloud</button>
+                        <button @click="setLocal(w.id)" :class="tabClass(draft.routing[w.id].kind === 'local')">Local</button>
+                      </div>
+                    </div>
+                    <template x-if="draft.routing[w.id].kind === 'primary'">
+                      <div class="text-right font-mono text-[11px] text-stone-400" x-text="'↳ ' + resolvedLabel(w.id)"></div>
+                    </template>
+                    <template x-if="draft.routing[w.id].kind === 'cloud'">
+                      <div class="flex items-center justify-end gap-1.5">
+                        <select
+                          @change="onCloudProviderChange($event, w.id)"
+                          class="rounded-md border border-stone-300 bg-white px-2 py-1 font-mono text-[11px] text-stone-800 focus:border-primary-400 focus:outline-none focus:ring-1 focus:ring-primary-200">
+                          <template x-for="cp in draft.cloudProviders" :key="cp.id">
+                            <option :value="cp.id" :selected="draft.routing[w.id].providerId === cp.id" x-text="providerMeta[cp.type].label"></option>
+                          </template>
+                        </select>
+                        <template x-if="selectedCloudType(w.id) !== 'openhuman'">
+                          <input
+                            :value="draft.routing[w.id].model"
+                            @input="draft.routing[w.id].model = $event.target.value; recordDirty();"
+                            class="w-28 rounded-md border border-stone-300 bg-white px-2 py-1 font-mono text-[11px] text-stone-800 focus:border-primary-400 focus:outline-none focus:ring-1 focus:ring-primary-200" />
+                        </template>
+                      </div>
+                    </template>
+                    <template x-if="draft.routing[w.id].kind === 'local'">
+                      <div class="flex justify-end">
+                        <select
+                          @change="draft.routing[w.id].model = $event.target.value; recordDirty();"
+                          class="rounded-md border border-stone-300 bg-white px-2 py-1 font-mono text-[11px] text-stone-800 focus:border-primary-400 focus:outline-none focus:ring-1 focus:ring-primary-200">
+                          <template x-for="m in installedModels" :key="m.id">
+                            <option :value="m.id" :selected="draft.routing[w.id].model === m.id" x-text="m.id"></option>
+                          </template>
+                        </select>
+                      </div>
+                    </template>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </div>
+
+          <div class="text-[11px] text-stone-500">
+            Primary resolves to
+            <span class="font-mono text-stone-700" x-text="primaryResolvedLabel()"></span>
+          </div>
+        </section>
+
+        <!-- Sticky save bar -->
+        <div
+          x-show="isDirty"
+          x-transition:enter="transition transform duration-300 ease-out"
+          x-transition:enter-start="opacity-0 translate-y-3"
+          x-transition:enter-end="opacity-100 translate-y-0"
+          class="pointer-events-none sticky bottom-3 z-20 flex justify-center px-1">
+          <div class="pointer-events-auto flex w-full items-center gap-2 rounded-lg border border-stone-200 bg-white/95 px-3 py-2 shadow-float backdrop-blur-md">
+            <div class="flex h-6 w-6 shrink-0 items-center justify-center rounded bg-amber-50 text-amber-600">
+              <i data-lucide="circle-alert" class="h-3.5 w-3.5"></i>
+            </div>
+            <div class="min-w-0 flex-1">
+              <div class="text-xs font-medium text-stone-900">
+                <span x-text="diffSummary.length"></span>
+                unsaved change<span x-text="diffSummary.length === 1 ? '' : 's'"></span>
+              </div>
+              <div class="truncate font-mono text-[10px] text-stone-500" x-text="diffSummaryText()"></div>
+            </div>
+            <button
+              @click="discard()"
+              class="rounded-md border border-stone-200 px-2 py-1 text-xs font-medium text-stone-700 hover:bg-stone-50">
+              Discard
+            </button>
+            <button
+              @click="save()"
+              class="inline-flex items-center gap-1 rounded-md bg-primary-500 px-2.5 py-1 text-xs font-medium text-white hover:bg-primary-600">
+              <i data-lucide="check" class="h-3 w-3"></i> Save
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      function aiSettings() {
+        const providerMeta = {
+          openhuman: { label: 'OpenHuman', icon: 'shield', rail: 'bg-primary-500', pill: 'bg-primary-50 text-primary-700 ring-primary-200' },
+          openai: { label: 'OpenAI', icon: 'wand', rail: 'bg-sage-500', pill: 'bg-sage-50 text-sage-700 ring-sage-200' },
+          anthropic: { label: 'Anthropic', icon: 'zap', rail: 'bg-amber-500', pill: 'bg-amber-50 text-amber-700 ring-amber-200' },
+          openrouter: { label: 'OpenRouter', icon: 'cloud', rail: 'bg-slate-500', pill: 'bg-slate-50 text-slate-700 ring-slate-200' },
+          custom: { label: 'Custom', icon: 'server', rail: 'bg-stone-500', pill: 'bg-stone-100 text-stone-700 ring-stone-200' },
+        };
+
+        const workloads = [
+          { id: 'reasoning', group: 'chat', label: 'Reasoning', description: 'Main chat agent, meeting summarizer' },
+          { id: 'agentic', group: 'chat', label: 'Agentic', description: 'Sub-agent runners, tool loops, GIF decisions' },
+          { id: 'coding', group: 'chat', label: 'Coding', description: 'Code generation and refactor passes' },
+          { id: 'memory', group: 'background', label: 'Memory summarization', description: 'Tree-extracts and consolidations' },
+          { id: 'embeddings', group: 'background', label: 'Embeddings', description: 'Vector encoding for memory retrieval' },
+          { id: 'heartbeat', group: 'background', label: 'Heartbeat', description: 'Background reasoning between turns' },
+          { id: 'learning', group: 'background', label: 'Learning · Reflections', description: 'Periodic reflection over history' },
+          { id: 'subconscious', group: 'background', label: 'Subconscious', description: 'Eventfulness scoring + drift checks' },
+        ];
+
+        const initial = {
+          cloudProviders: [
+            { id: 'p_oh', type: 'openhuman', label: 'OpenHuman', endpoint: 'https://api.openhuman.ai/v1', maskedKey: 'oh_••••••••••••a31f', defaultModel: 'openhuman-default' },
+            { id: 'p_oai', type: 'openai', label: 'OpenAI', endpoint: 'https://api.openai.com/v1', maskedKey: 'sk-••••••••••••••••7Q2', defaultModel: 'gpt-4o' },
+            { id: 'p_anth', type: 'anthropic', label: 'Anthropic', endpoint: 'https://api.anthropic.com/v1', maskedKey: 'sk-ant-•••••••••••e9c', defaultModel: 'claude-sonnet-4-6' },
+          ],
+          primaryCloudId: 'p_oh',
+          routing: {
+            reasoning: { kind: 'primary' },
+            agentic: { kind: 'cloud', providerId: 'p_oai', model: 'gpt-4o-mini' },
+            coding: { kind: 'cloud', providerId: 'p_anth', model: 'claude-sonnet-4-6' },
+            memory: { kind: 'local', model: 'llama3.1:8b' },
+            embeddings: { kind: 'local', model: 'nomic-embed-text' },
+            heartbeat: { kind: 'local', model: 'llama3.2:3b' },
+            learning: { kind: 'primary' },
+            subconscious: { kind: 'local', model: 'llama3.2:3b' },
+          },
+        };
+
+        const installedModels = [
+          { id: 'llama3.1:8b', sizeBytes: 4_700_000_000, family: 'llama' },
+          { id: 'llama3.2:3b', sizeBytes: 2_000_000_000, family: 'llama' },
+          { id: 'qwen2.5:14b', sizeBytes: 8_700_000_000, family: 'qwen' },
+          { id: 'nomic-embed-text', sizeBytes: 274_000_000, family: 'embed' },
+        ];
+
+        return {
+          providerMeta,
+          workloads,
+          installedModels,
+          saved: JSON.parse(JSON.stringify(initial)),
+          draft: JSON.parse(JSON.stringify(initial)),
+          get chatWorkloads() { return this.workloads.filter((w) => w.group === 'chat'); },
+          get bgWorkloads() { return this.workloads.filter((w) => w.group === 'background'); },
+          get primary() { return this.draft.cloudProviders.find((p) => p.id === this.draft.primaryCloudId); },
+          get isDirty() { return JSON.stringify(this.saved) !== JSON.stringify(this.draft); },
+          get diffSummary() {
+            const out = [];
+            for (const w of this.workloads) {
+              const a = this.saved.routing[w.id];
+              const b = this.draft.routing[w.id];
+              if (JSON.stringify(a) !== JSON.stringify(b)) {
+                const describe = (r) =>
+                  r.kind === 'primary' ? 'primary' :
+                  r.kind === 'cloud' ? `cloud:${r.model}` :
+                  `local:${r.model}`;
+                out.push(`${w.label} → ${describe(b)}`);
+              }
+            }
+            if (this.saved.primaryCloudId !== this.draft.primaryCloudId) {
+              const p = this.draft.cloudProviders.find((cp) => cp.id === this.draft.primaryCloudId);
+              out.push(`primary → ${p ? providerMeta[p.type].label : '—'}`);
+            }
+            return out;
+          },
+          diffSummaryText() {
+            const d = this.diffSummary;
+            const head = d.slice(0, 2).join(' · ');
+            return d.length > 2 ? `${head} · +${d.length - 2}` : head;
+          },
+          tabClass(active) {
+            return (
+              'flex-1 px-2 py-1 text-[11px] font-medium transition-colors first:rounded-l last:rounded-r cursor-pointer ' +
+              (active
+                ? 'bg-white text-stone-900 shadow-subtle ring-1 ring-stone-200'
+                : 'text-stone-500 hover:text-stone-800')
+            );
+          },
+          formatBytes(n) {
+            if (n < 1024 ** 2) return `${(n / 1024).toFixed(0)} KB`;
+            if (n < 1024 ** 3) return `${(n / 1024 ** 2).toFixed(0)} MB`;
+            return `${(n / 1024 ** 3).toFixed(1)} GB`;
+          },
+          selectedCloudType(workloadId) {
+            const r = this.draft.routing[workloadId];
+            if (r.kind !== 'cloud') return null;
+            const p = this.draft.cloudProviders.find((cp) => cp.id === r.providerId);
+            return p?.type ?? null;
+          },
+          resolvedLabel(workloadId) {
+            const r = this.draft.routing[workloadId];
+            if (r.kind === 'primary') {
+              const p = this.primary;
+              if (!p) return 'no primary set';
+              if (p.type === 'openhuman') return 'openhuman';
+              return `${providerMeta[p.type].label.toLowerCase()} · ${p.defaultModel}`;
+            }
+            if (r.kind === 'cloud') {
+              const p = this.draft.cloudProviders.find((cp) => cp.id === r.providerId);
+              if (!p) return r.model;
+              if (p.type === 'openhuman') return 'openhuman';
+              return `${providerMeta[p.type].label.toLowerCase()} · ${r.model}`;
+            }
+            return `ollama · ${r.model}`;
+          },
+          primaryResolvedLabel() {
+            const p = this.primary;
+            if (!p) return '—';
+            if (p.type === 'openhuman') return 'openhuman';
+            return `${providerMeta[p.type].label.toLowerCase()} · ${p.defaultModel}`;
+          },
+          setRouting(id, next) {
+            this.draft.routing[id] = next;
+            this.recordDirty();
+          },
+          setCloud(id) {
+            const other = this.draft.cloudProviders.find((c) => c.id !== this.draft.primaryCloudId) ?? this.draft.cloudProviders[0];
+            if (!other) return;
+            this.setRouting(id, {
+              kind: 'cloud',
+              providerId: other.id,
+              model: other.type === 'openhuman' ? '' : other.defaultModel,
+            });
+          },
+          setLocal(id) {
+            const m = this.installedModels[0]?.id;
+            if (!m) return;
+            this.setRouting(id, { kind: 'local', model: m });
+          },
+          onCloudProviderChange(ev, id) {
+            const pid = ev.target.value;
+            const p = this.draft.cloudProviders.find((c) => c.id === pid);
+            if (!p) return;
+            this.draft.routing[id] = {
+              kind: 'cloud',
+              providerId: p.id,
+              model: p.type === 'openhuman' ? '' : p.defaultModel,
+            };
+            this.recordDirty();
+          },
+          applyPreset(kind) {
+            const m = this.installedModels[0]?.id;
+            for (const w of this.workloads) {
+              if (kind === 'cloud') this.draft.routing[w.id] = { kind: 'primary' };
+              else if (kind === 'local') this.draft.routing[w.id] = m ? { kind: 'local', model: m } : { kind: 'primary' };
+              else this.draft.routing[w.id] = w.group === 'chat' ? { kind: 'primary' } : (m ? { kind: 'local', model: m } : { kind: 'primary' });
+            }
+            this.recordDirty();
+          },
+          save() { this.saved = JSON.parse(JSON.stringify(this.draft)); },
+          discard() { this.draft = JSON.parse(JSON.stringify(this.saved)); },
+          recordDirty() { this.$nextTick(() => lucide.createIcons()); },
+        };
+      }
+    </script>
+  </body>
+</html>

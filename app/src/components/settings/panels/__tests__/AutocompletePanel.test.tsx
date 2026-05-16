@@ -129,7 +129,7 @@ describe('AutocompletePanel (simplified)', () => {
 
     // Verify runtime status section shows
     await waitFor(() => {
-      expect(screen.getByText('Running: no')).toBeInTheDocument();
+      expect(screen.getByText('Running: No')).toBeInTheDocument();
     });
 
     // Change style preset and save
@@ -155,7 +155,7 @@ describe('AutocompletePanel (simplified)', () => {
 
     // Wait for status to load
     await waitFor(() => {
-      expect(screen.getByText('Running: no')).toBeInTheDocument();
+      expect(screen.getByText('Running: No')).toBeInTheDocument();
     });
 
     // Start
@@ -188,7 +188,7 @@ describe('AutocompletePanel (simplified)', () => {
 
     // Wait for config to load
     await waitFor(() => {
-      expect(screen.getByText('Running: no')).toBeInTheDocument();
+      expect(screen.getByText('Running: No')).toBeInTheDocument();
     });
 
     // Toggle enabled off and save

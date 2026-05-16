@@ -1,10 +1,10 @@
 # Local AI
 
-On-device inference stack. Owns the bundled Ollama runtime, whisper.cpp speech-to-text, Piper text-to-speech, sentiment scoring, vision-embedding routing, the model preset / device-profile chooser, asset download + install management, the GIF-decision heuristic, and the per-session `LocalAiService` singleton. Does NOT own remote-provider HTTP transport (`providers/`) or the agent tool loop (`agent/`).
+On-device inference stack. Owns the bundled Ollama runtime, LM Studio local-server integration, whisper.cpp speech-to-text, Piper text-to-speech, sentiment scoring, vision-embedding routing, the model preset / device-profile chooser, asset download + install management, the GIF-decision heuristic, and the per-session `LocalAiService` singleton. Does NOT own remote-provider HTTP transport (`providers/`) or the agent tool loop (`agent/`).
 
 ## Public surface
 
-- `pub struct LocalAiService` — `service/mod.rs` — singleton holding Ollama / whisper / Piper handles.
+- `pub struct LocalAiService` — `service/mod.rs` — singleton holding Ollama / LM Studio / whisper / Piper handles.
 - `pub fn global(config: &Config) -> Arc<LocalAiService>` — `core.rs` — singleton accessor.
 - `pub fn model_artifact_path(config: &Config) -> PathBuf` — `core.rs` — resolve on-disk model path.
 - `pub struct DeviceProfile` — `device.rs` — RAM / VRAM / CPU classification used for preset selection.
@@ -17,9 +17,10 @@ On-device inference stack. Owns the bundled Ollama runtime, whisper.cpp speech-t
 
 ## Calls into
 
-- `src/openhuman/config/` — model paths, Ollama URL override, device-profile inputs.
+- `src/openhuman/config/` — provider selection, model IDs, local server URL override, device-profile inputs.
 - `src/openhuman/encryption/` — Tenor / asset keys at rest.
 - Bundled binaries: Ollama (HTTP `OLLAMA_BASE_URL`), whisper.cpp, Piper.
+- LM Studio local server via OpenAI-compatible `GET /v1/models` and `POST /v1/chat/completions`.
 - HTTP for Tenor GIF search.
 - Filesystem under `~/.openhuman/local-ai/` for downloaded model artifacts.
 
@@ -38,3 +39,9 @@ On-device inference stack. Owns the bundled Ollama runtime, whisper.cpp speech-t
 - Unit: `ops_tests.rs`, `schemas_tests.rs`, plus `service/ollama_admin_tests.rs`, `service/public_infer_tests.rs`.
 - Domain mutex: `LOCAL_AI_TEST_MUTEX` (`mod.rs:4`) serializes tests that mutate the singleton or env vars.
 - Routing: `agent/triage/routing_tests.rs` covers local-vs-remote escalation.
+
+## LM Studio
+
+Set `local_ai.provider = "lm_studio"`, `local_ai.runtime_enabled = true`, and `local_ai.opt_in_confirmed = true`, then run LM Studio's local server with the OpenAI-compatible API enabled. The default base URL is `http://localhost:1234/v1`; override it with `local_ai.base_url`, `OPENHUMAN_LM_STUDIO_BASE_URL`, or `LM_STUDIO_BASE_URL`.
+
+This first provider slice covers connection validation, model discovery, diagnostics, direct local chat/prompt requests, and intelligent-routing local chat through LM Studio. LM Studio manages its own model downloads and loading; OpenHuman reports missing chat models as actionable status instead of trying to pull them. Vision and embeddings stay on the existing Ollama-specific paths until those provider surfaces are split.

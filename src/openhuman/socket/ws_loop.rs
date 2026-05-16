@@ -12,6 +12,7 @@ use tokio_tungstenite::{
 };
 
 use crate::api::models::socket::ConnectionStatus;
+use crate::openhuman::util::utf8_safe_prefix_at_byte_boundary;
 
 use super::event_handlers::{handle_sio_event, parse_sio_event};
 use super::manager::{emit_state_change, SharedState};
@@ -371,7 +372,7 @@ async fn read_eio_open(
                 }
                 log::debug!(
                     "[socket] Skipping non-OPEN packet: {}",
-                    &s[..s.len().min(40)]
+                    utf8_safe_prefix_at_byte_boundary(s, 40)
                 );
             }
             Some(Ok(_)) => continue,
@@ -416,7 +417,7 @@ async fn read_sio_connect_ack(
                 }
                 log::debug!(
                     "[socket] Skipping packet during SIO handshake: {}",
-                    &s[..s.len().min(40)]
+                    utf8_safe_prefix_at_byte_boundary(s, 40)
                 );
             }
             Some(Ok(_)) => continue,
@@ -463,7 +464,7 @@ fn handle_eio_message(
         _ => {
             log::debug!(
                 "[socket] Unknown EIO packet: {}",
-                &text[..text.len().min(30)]
+                utf8_safe_prefix_at_byte_boundary(text, 30)
             );
         }
     }
@@ -487,7 +488,7 @@ fn handle_sio_packet(
             } else {
                 log::warn!(
                     "[socket] Failed to parse SIO EVENT: {}",
-                    &text[..text.len().min(80)]
+                    utf8_safe_prefix_at_byte_boundary(text, 80)
                 );
             }
         }
@@ -522,7 +523,7 @@ fn handle_sio_packet(
         _ => {
             log::debug!(
                 "[socket] Unknown SIO packet type: {}",
-                &text[..text.len().min(30)]
+                utf8_safe_prefix_at_byte_boundary(text, 30)
             );
         }
     }

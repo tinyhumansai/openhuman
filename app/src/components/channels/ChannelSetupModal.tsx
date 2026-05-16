@@ -5,6 +5,7 @@
 import { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 
+import { useT } from '../../lib/i18n/I18nContext';
 import type { ChannelDefinition, ChannelType } from '../../types/channels';
 import DiscordConfig from './DiscordConfig';
 import TelegramConfig from './TelegramConfig';
@@ -21,6 +22,7 @@ interface ChannelSetupModalProps {
 }
 
 function ChannelConfigContent({ definition }: { definition: ChannelDefinition }) {
+  const { t } = useT();
   const channelId = definition.id as ChannelType;
   switch (channelId) {
     case 'telegram':
@@ -30,13 +32,14 @@ function ChannelConfigContent({ definition }: { definition: ChannelDefinition })
     default:
       return (
         <p className="text-sm text-stone-400 py-4">
-          Configuration for {definition.display_name} is not available yet.
+          {t('channels.configNotAvailable')} {definition.display_name}
         </p>
       );
   }
 }
 
 export default function ChannelSetupModal({ definition, onClose }: ChannelSetupModalProps) {
+  const { t } = useT();
   const modalRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -88,7 +91,7 @@ export default function ChannelSetupModal({ definition, onClose }: ChannelSetupM
                   {definition.display_name}
                 </h2>
                 <span className="px-1.5 py-0.5 text-[10px] font-medium rounded-md bg-primary-500/15 text-primary-600">
-                  channel
+                  {t('channels.channel')}
                 </span>
               </div>
               <p className="text-xs text-stone-500 mt-1.5">{definition.description}</p>

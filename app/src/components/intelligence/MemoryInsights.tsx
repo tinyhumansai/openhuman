@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 
+import { useT } from '../../lib/i18n/I18nContext';
 import type { GraphRelation } from '../../utils/tauriCommands';
 
 interface MemoryInsightsProps {
@@ -88,53 +89,53 @@ function categorize(predicate: string): InsightCategory {
   return 'other';
 }
 
-const CATEGORY_CONFIG: Record<
-  InsightCategory,
-  { label: string; icon: string; color: string; bgColor: string; borderColor: string }
-> = {
-  facts: {
-    label: 'Known Facts',
-    icon: 'M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z',
-    color: 'text-emerald-600',
-    bgColor: 'bg-emerald-50',
-    borderColor: 'border-emerald-200',
-  },
-  preferences: {
-    label: 'Preferences',
-    icon: 'M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z',
-    color: 'text-rose-600',
-    bgColor: 'bg-rose-50',
-    borderColor: 'border-rose-200',
-  },
-  relationships: {
-    label: 'Relationships',
-    icon: 'M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z',
-    color: 'text-primary-600',
-    bgColor: 'bg-primary-50',
-    borderColor: 'border-primary-200',
-  },
-  skills: {
-    label: 'Skills & Expertise',
-    icon: 'M13 10V3L4 14h7v7l9-11h-7z',
-    color: 'text-amber-600',
-    bgColor: 'bg-amber-100',
-    borderColor: 'border-amber-200',
-  },
-  opinions: {
-    label: 'Opinions & Beliefs',
-    icon: 'M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z',
-    color: 'text-lavender-600',
-    bgColor: 'bg-lavender-50',
-    borderColor: 'border-lavender-200',
-  },
-  other: {
-    label: 'Other Insights',
-    icon: 'M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z',
-    color: 'text-stone-600',
-    bgColor: 'bg-stone-100',
-    borderColor: 'border-stone-200',
-  },
-};
+function useInsightCategoryLabels() {
+  const { t } = useT();
+  return {
+    facts: {
+      label: t('insights.knownFacts'),
+      icon: 'M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z',
+      color: 'text-emerald-600',
+      bgColor: 'bg-emerald-50',
+      borderColor: 'border-emerald-200',
+    },
+    preferences: {
+      label: t('insights.preferences'),
+      icon: 'M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z',
+      color: 'text-rose-600',
+      bgColor: 'bg-rose-50',
+      borderColor: 'border-rose-200',
+    },
+    relationships: {
+      label: t('insights.relationships'),
+      icon: 'M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z',
+      color: 'text-primary-600',
+      bgColor: 'bg-primary-50',
+      borderColor: 'border-primary-200',
+    },
+    skills: {
+      label: t('insights.skills'),
+      icon: 'M13 10V3L4 14h7v7l9-11h-7z',
+      color: 'text-amber-600',
+      bgColor: 'bg-amber-100',
+      borderColor: 'border-amber-200',
+    },
+    opinions: {
+      label: t('insights.opinions'),
+      icon: 'M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z',
+      color: 'text-lavender-600',
+      bgColor: 'bg-lavender-50',
+      borderColor: 'border-lavender-200',
+    },
+    other: {
+      label: t('insights.other'),
+      icon: 'M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z',
+      color: 'text-stone-600',
+      bgColor: 'bg-stone-100',
+      borderColor: 'border-stone-200',
+    },
+  } as const;
+}
 
 /** Small inline badge that displays an entity type (e.g. "person", "project"). */
 function EntityTypeBadge({ type }: { type: string }) {
@@ -146,7 +147,9 @@ function EntityTypeBadge({ type }: { type: string }) {
 }
 
 export function MemoryInsights({ relations, loading }: MemoryInsightsProps) {
+  const { t } = useT();
   const [expandedCategory, setExpandedCategory] = useState<InsightCategory | null>(null);
+  const config = useInsightCategoryLabels();
 
   const groups = useMemo<InsightGroup[]>(() => {
     const buckets = new Map<InsightCategory, InsightItem[]>();
@@ -184,13 +187,13 @@ export function MemoryInsights({ relations, loading }: MemoryInsightsProps) {
 
     return categoryOrder
       .filter(cat => (buckets.get(cat)?.length ?? 0) > 0)
-      .map(cat => ({ category: cat, ...CATEGORY_CONFIG[cat], items: buckets.get(cat)! }));
-  }, [relations]);
+      .map(cat => ({ category: cat, ...config[cat], items: buckets.get(cat)! }));
+  }, [relations, config]);
 
   if (loading) {
     return (
       <div className="rounded-xl border border-stone-200 bg-stone-50 p-5">
-        <h3 className="text-sm font-semibold text-stone-900 mb-4">Intelligent Insights</h3>
+        <h3 className="text-sm font-semibold text-stone-900 mb-4">{t('insights.title')}</h3>
         <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
           {[1, 2, 3].map(i => (
             <div key={i} className="h-28 rounded-lg bg-stone-200 animate-pulse" />
@@ -203,10 +206,8 @@ export function MemoryInsights({ relations, loading }: MemoryInsightsProps) {
   if (groups.length === 0) {
     return (
       <div className="rounded-xl border border-stone-200 bg-stone-50 p-5">
-        <h3 className="text-sm font-semibold text-stone-900 mb-2">Intelligent Insights</h3>
-        <p className="text-sm text-stone-600">
-          No insights yet. Ingest documents to extract facts, preferences, and relationships.
-        </p>
+        <h3 className="text-sm font-semibold text-stone-900 mb-2">{t('insights.title')}</h3>
+        <p className="text-sm text-stone-600">{t('insights.empty')}</p>
       </div>
     );
   }
@@ -215,9 +216,9 @@ export function MemoryInsights({ relations, loading }: MemoryInsightsProps) {
     <div className="rounded-xl border border-stone-200 bg-stone-50 p-5">
       <div className="flex items-center justify-between mb-4">
         <div>
-          <h3 className="text-sm font-semibold text-stone-900">Intelligent Insights</h3>
+          <h3 className="text-sm font-semibold text-stone-900">{t('insights.title')}</h3>
           <p className="text-xs text-stone-500 mt-0.5">
-            Extracted knowledge organized by type — {relations.length} total relations
+            {t('insights.description').replace('{count}', String(relations.length))}
           </p>
         </div>
       </div>
@@ -253,7 +254,9 @@ export function MemoryInsights({ relations, loading }: MemoryInsightsProps) {
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className={`text-xs font-medium ${group.color}`}>{group.label}</div>
-                  <div className="text-[10px] text-stone-500">{group.items.length} items</div>
+                  <div className="text-[10px] text-stone-500">
+                    {group.items.length} {t('insights.items')}
+                  </div>
                 </div>
                 <svg
                   className={`w-3.5 h-3.5 text-stone-500 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
@@ -294,7 +297,7 @@ export function MemoryInsights({ relations, loading }: MemoryInsightsProps) {
                 ))}
                 {!isExpanded && group.items.length > 3 && (
                   <div className="text-[10px] text-stone-500 pt-0.5">
-                    +{group.items.length - 3} more
+                    +{group.items.length - 3} {t('insights.more')}
                   </div>
                 )}
               </div>

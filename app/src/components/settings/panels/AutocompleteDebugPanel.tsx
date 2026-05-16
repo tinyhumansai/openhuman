@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 
+import { useT } from '../../../lib/i18n/I18nContext';
 import {
   type AcceptedCompletion,
   type AutocompleteConfig,
@@ -65,6 +66,7 @@ const parseAutocompleteConfig = (raw: unknown): AutocompleteConfig => {
 };
 
 const AutocompleteDebugPanel = () => {
+  const { t } = useT();
   const { navigateBack, breadcrumbs } = useSettingsNavigation();
 
   // Status & loading
@@ -456,7 +458,7 @@ const AutocompleteDebugPanel = () => {
   return (
     <div className="z-10 relative">
       <SettingsHeader
-        title="Autocomplete Debug"
+        title={t('autocomplete.debugTitle')}
         showBackButton={true}
         onBack={navigateBack}
         breadcrumbs={breadcrumbs}

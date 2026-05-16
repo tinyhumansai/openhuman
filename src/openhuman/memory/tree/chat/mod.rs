@@ -98,14 +98,17 @@ pub trait ChatProvider: Send + Sync {
     }
 }
 
-/// Build the [`ChatProvider`] dictated by `config.memory_tree.llm_backend`.
+/// Build the [`ChatProvider`] dictated by the unified
+/// `Config::workload_local_model("memory")`.
 ///
-/// - `Cloud` (default): wires [`cloud::CloudChatProvider`] against the
-///   OpenHuman backend with `cloud_llm_model` (defaulting to
-///   `summarization-v1`).
-/// - `Local`: wires [`local::OllamaChatProvider`] against the legacy
-///   `llm_extractor_endpoint` / `llm_extractor_model` config — the same
-///   knobs that drove the Ollama-direct path before this refactor.
+/// - When that returns `None` (i.e. `memory_provider` is unset / `"cloud"`):
+///   wires [`cloud::CloudChatProvider`] against the OpenHuman backend with
+///   `cloud_llm_model` (defaulting to `summarization-v1`).
+/// - When it returns `Some(model)` (i.e. `memory_provider = "ollama:<m>"`):
+///   wires [`local::OllamaChatProvider`] against the legacy
+///   `llm_extractor_endpoint` / `llm_summariser_endpoint` (the daemon
+///   endpoints stay in the `memory_tree` block — only the cloud/local
+///   routing decision moves to the unified `memory_provider`).
 ///
 /// `consumer` is one of `"extract"` / `"summarise"` and selects the local
 /// endpoint+model pair (extract uses `llm_extractor_*`, summarise uses
@@ -114,67 +117,75 @@ pub fn build_chat_provider(
     config: &Config,
     consumer: ChatConsumer,
 ) -> Result<Arc<dyn ChatProvider>> {
-    match config.memory_tree.llm_backend {
-        LlmBackend::Cloud => {
-            let model = config
-                .memory_tree
-                .cloud_llm_model
-                .clone()
-                .unwrap_or_else(|| DEFAULT_CLOUD_LLM_MODEL.to_string());
-            // The `auth-profiles.json` lives next to `config.toml`, so the
-            // openhuman_dir is the parent of config_path. Without this the
-            // inner OpenHumanBackendProvider falls back to `~/.openhuman`
-            // and fails with "No backend session" on any workspace not
-            // located at the home default — the bug observed when running
-            // with `OPENHUMAN_WORKSPACE` pointed elsewhere.
-            let openhuman_dir = config.config_path.parent().map(std::path::PathBuf::from);
-            log::debug!(
-                "[memory_tree::chat] building Cloud provider consumer={} model={} \
-                 openhuman_dir={:?}",
-                consumer.as_str(),
-                model,
-                openhuman_dir
-            );
-            Ok(Arc::new(cloud::CloudChatProvider::new(
-                config.api_url.clone(),
-                model,
-                openhuman_dir,
-                config.secrets.encrypt,
-            )))
-        }
-        LlmBackend::Local => {
-            let (endpoint, model, timeout_ms) = match consumer {
-                ChatConsumer::Extract => (
-                    config.memory_tree.llm_extractor_endpoint.clone(),
-                    config.memory_tree.llm_extractor_model.clone(),
-                    config
-                        .memory_tree
-                        .llm_extractor_timeout_ms
-                        .unwrap_or(15_000),
-                ),
-                ChatConsumer::Summarise => (
-                    config.memory_tree.llm_summariser_endpoint.clone(),
-                    config.memory_tree.llm_summariser_model.clone(),
-                    config
-                        .memory_tree
-                        .llm_summariser_timeout_ms
-                        .unwrap_or(120_000),
-                ),
-            };
-            log::debug!(
-                "[memory_tree::chat] building Local (Ollama) provider consumer={} \
-                 endpoint_set={} model_set={} timeout_ms={}",
-                consumer.as_str(),
-                endpoint.is_some(),
-                model.is_some(),
-                timeout_ms
-            );
-            Ok(Arc::new(local::OllamaChatProvider::new(
-                endpoint,
-                model,
-                std::time::Duration::from_millis(timeout_ms),
-            )?))
-        }
+    if let Some(routed_model) = config.workload_local_model("memory") {
+        let (endpoint, model, timeout_ms) = match consumer {
+            ChatConsumer::Extract => (
+                config.memory_tree.llm_extractor_endpoint.clone(),
+                // Prefer the legacy per-path model for back-compat; fall back
+                // to the unified workload_local_model from memory_provider.
+                config
+                    .memory_tree
+                    .llm_extractor_model
+                    .clone()
+                    .or_else(|| Some(routed_model.clone())),
+                config
+                    .memory_tree
+                    .llm_extractor_timeout_ms
+                    .unwrap_or(15_000),
+            ),
+            ChatConsumer::Summarise => (
+                config.memory_tree.llm_summariser_endpoint.clone(),
+                // Same fallback for the summarise path.
+                config
+                    .memory_tree
+                    .llm_summariser_model
+                    .clone()
+                    .or_else(|| Some(routed_model)),
+                config
+                    .memory_tree
+                    .llm_summariser_timeout_ms
+                    .unwrap_or(120_000),
+            ),
+        };
+        log::debug!(
+            "[memory_tree::chat] building Local (Ollama) provider consumer={} \
+             endpoint_set={} model_set={} timeout_ms={}",
+            consumer.as_str(),
+            endpoint.is_some(),
+            model.is_some(),
+            timeout_ms
+        );
+        Ok(Arc::new(local::OllamaChatProvider::new(
+            endpoint,
+            model,
+            std::time::Duration::from_millis(timeout_ms),
+        )?))
+    } else {
+        let model = config
+            .memory_tree
+            .cloud_llm_model
+            .clone()
+            .unwrap_or_else(|| DEFAULT_CLOUD_LLM_MODEL.to_string());
+        // The `auth-profiles.json` lives next to `config.toml`, so the
+        // openhuman_dir is the parent of config_path. Without this the
+        // inner OpenHumanBackendProvider falls back to `~/.openhuman`
+        // and fails with "No backend session" on any workspace not
+        // located at the home default — the bug observed when running
+        // with `OPENHUMAN_WORKSPACE` pointed elsewhere.
+        let openhuman_dir = config.config_path.parent().map(std::path::PathBuf::from);
+        log::debug!(
+            "[memory_tree::chat] building Cloud provider consumer={} model={} \
+             openhuman_dir={:?}",
+            consumer.as_str(),
+            model,
+            openhuman_dir
+        );
+        Ok(Arc::new(cloud::CloudChatProvider::new(
+            config.api_url.clone(),
+            model,
+            openhuman_dir,
+            config.secrets.encrypt,
+        )))
     }
 }
 
@@ -242,8 +253,14 @@ mod tests {
 
     #[test]
     fn build_provider_returns_local_when_configured() {
+        // After #1710 the local-vs-cloud decision is driven by
+        // `memory_provider` (via `Config::workload_uses_local("memory")`),
+        // not the legacy `memory_tree.llm_backend` flag — so the test
+        // needs to set the new workload field. Endpoint + model on
+        // `memory_tree` are still consumed for endpoint/model resolution
+        // inside the local branch.
         let mut cfg = Config::default();
-        cfg.memory_tree.llm_backend = LlmBackend::Local;
+        cfg.memory_provider = Some("ollama:qwen2.5:0.5b".into());
         cfg.memory_tree.llm_extractor_endpoint = Some("http://localhost:11434".into());
         cfg.memory_tree.llm_extractor_model = Some("qwen2.5:0.5b".into());
         let provider = build_chat_provider(&cfg, ChatConsumer::Extract).unwrap();

@@ -1,10 +1,12 @@
 import { useState } from 'react';
 
+import { useT } from '../../../lib/i18n/I18nContext';
 import { DISCORD_INVITE_URL } from '../../../utils/links';
 
 const DISMISSED_KEY = 'openhuman_beta_banner_dismissed';
 
 const BetaBanner = () => {
+  const { t } = useT();
   const [visible, setVisible] = useState(() => {
     try {
       return localStorage.getItem(DISMISSED_KEY) !== 'true';
@@ -28,22 +30,20 @@ const BetaBanner = () => {
     <div className="mb-4 flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
       {/* Message */}
       <p className="flex-1 text-xs leading-relaxed text-stone-700">
-        🐣 OpenHuman is in early beta. Report bugs, give feedback, and get free credits.{' '}
+        {t('misc.beta')}{' '}
         <a
           href={DISCORD_INVITE_URL}
           target="_blank"
           rel="noopener noreferrer"
-          aria-label="Join OpenHuman Discord"
           className="font-medium text-amber-800 underline underline-offset-2 hover:text-amber-900">
-          Join our Discord
-        </a>{' '}
-        to be a part of the community!
+          {t('misc.betaFeedback')}
+        </a>
       </p>
 
       {/* Dismiss */}
       <button
         type="button"
-        aria-label="Dismiss beta notice"
+        aria-label={t('common.dismiss')}
         onClick={handleDismiss}
         className="mt-0.5 flex-shrink-0 text-stone-400 hover:text-stone-600 transition-colors">
         <svg

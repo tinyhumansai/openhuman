@@ -12,6 +12,8 @@ use log::{debug, info, warn};
 use parking_lot::Mutex;
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 
+use crate::openhuman::util::utf8_safe_prefix_at_byte_boundary;
+
 /// Per-segment confidence threshold: reject segments with avg log-probability below this.
 const SEGMENT_LOGPROB_REJECT: f32 = -0.7;
 
@@ -168,7 +170,7 @@ pub fn transcribe_pcm_f32(
             params.set_initial_prompt(prompt);
             debug!(
                 "{LOG_PREFIX} set initial_prompt: '{}...'",
-                &prompt[..prompt.len().min(80)]
+                utf8_safe_prefix_at_byte_boundary(prompt, 80)
             );
         }
     }
