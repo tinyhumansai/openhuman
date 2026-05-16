@@ -114,7 +114,7 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 
 ---
 
-## 3. Local AI Runtime (Ollama)
+## 3. Local AI Runtime (Ollama + LM Studio)
 
 ### 3.1 Model Management
 
@@ -123,6 +123,7 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 | 3.1.1 | Model Detection               | RU+WD | `src/openhuman/local_ai/`, `local-model-runtime.spec.ts` | ✅     |       |
 | 3.1.2 | Model Download & Installation | WD    | `local-model-runtime.spec.ts`                            | ✅     |       |
 | 3.1.3 | Model Version Handling        | RU    | `src/openhuman/local_ai/model_ids.rs`                    | ✅     |       |
+| 3.1.4 | LM Studio Model Discovery     | RU+RI | `src/openhuman/local_ai/service/ollama_admin_tests.rs`, `tests/json_rpc_e2e.rs` | ✅ | Uses LM Studio's OpenAI-compatible `/v1/models` surface |
 
 ### 3.2 Runtime Execution
 
@@ -131,6 +132,7 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 | 3.2.1 | Local Inference Execution          | WD    | `local-model-runtime.spec.ts`      | ✅     |                                           |
 | 3.2.2 | Resource Handling (CPU/GPU/Memory) | RU    | `src/openhuman/local_ai/device.rs` | 🟡     | Detection unit; runtime constraint manual |
 | 3.2.3 | Runtime Failure Handling           | RU+WD | `local-model-runtime.spec.ts`      | ✅     |                                           |
+| 3.2.4 | LM Studio Chat Completions         | RU+RI | `src/openhuman/local_ai/service/public_infer_tests.rs`, `tests/json_rpc_e2e.rs` | ✅ | Covers prompt/chat success and non-success status errors |
 
 ### 3.3 Runtime Configuration
 
@@ -157,6 +159,7 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 | 3.3.3.1 | Save RAM Settings | VU    | _missing_                     | ❌     | Settings slice        |
 | 3.3.3.2 | Apply on Restart  | WD    | `local-model-runtime.spec.ts` | 🟡     | Restart not exercised |
 | 3.3.3.3 | Reset to Default  | VU    | _missing_                     | ❌     |                       |
+| 3.3.3.4 | Provider Selection Persistence | RU+RI+VU | `src/openhuman/config/ops_tests.rs`, `tests/json_rpc_e2e.rs`, `app/src/utils/tauriCommands/config.test.ts` | ✅ | Covers `lm_studio` normalization and config round-trip |
 
 ---
 
@@ -213,6 +216,7 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 | 5.3.1 | Voice Input Capture       | WD    | `voice-mode.spec.ts` | ✅     |       |
 | 5.3.2 | Speech-to-Text Processing | WD    | `voice-mode.spec.ts` | ✅     |       |
 | 5.3.3 | Voice Command Execution   | WD    | `voice-mode.spec.ts` | ✅     |       |
+| 5.3.4 | Mascot Voice Selection    | VU    | `app/src/store/__tests__/mascotSlice.test.ts`, `app/src/components/settings/panels/__tests__/VoicePanel.test.tsx`, `app/src/features/human/useHumanMascot.test.ts` (this PR) | ✅ | Slice validation + persist REHYDRATE, Settings picker UI (#1762), `synthesizeSpeech` voiceId override propagation |
 
 ---
 
@@ -389,6 +393,7 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 | 11.1.1 | Multi-Source Analysis      | RI    | `tests/memory_graph_sync_e2e.rs`                                                                                    | 🟡     | Frontend trigger untested                                                                 |
 | 11.1.2 | Actionable Item Extraction | VU    | `app/src/components/intelligence/__tests__/utils.test.ts` (this PR)                                                 | ✅     | Was ❌                                                                                    |
 | 11.1.3 | Analyze Trigger            | WD    | `app/test/e2e/specs/insights-dashboard.spec.ts` mounts the route (this PR); explicit analyze-handler invocation TBD | 🟡     | Route mounts and search/filter UI assert — full analyze trigger flow tracked as follow-up |
+| 11.1.4 | MCP stdio server           | RU    | `src/openhuman/mcp_server/`                                                                                         | ✅     | Read-only initialize/tools/list/tools/call plus stdio framing; binary smoke in PR validation |
 
 ### 11.2 Insights Dashboard
 

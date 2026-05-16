@@ -15,7 +15,7 @@ const WelcomePage = () => {
     <WelcomeStep
       onNext={() => {
         trackEvent('onboarding_step_complete', { step_name: 'welcome' });
-        navigate('/onboarding/skills');
+        navigate('/onboarding/runtime-choice');
       }}
     />
   );

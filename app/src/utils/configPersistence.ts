@@ -125,6 +125,54 @@ export function isValidRpcUrl(url: string): boolean {
 }
 
 /**
+ * Return true when `hostname` is local or private-network address space.
+ *
+ * This intentionally includes Tailscale/CGNAT (`100.64.0.0/10`): self-hosted
+ * cores often run on tailnets where the transport is already encrypted and
+ * the HTTP service is not exposed to the public internet.
+ */
+export function isLocalOrPrivateNetworkHost(hostname: string): boolean {
+  const host = hostname
+    .trim()
+    .replace(/^\[(.*)\]$/, '$1')
+    .toLowerCase();
+  if (!host) return false;
+  if (host === 'localhost' || host.endsWith('.localhost')) return true;
+  if (host === '::1') return true;
+  if (host.startsWith('fe80:')) return true;
+  if (/^f[cd][0-9a-f]{2}:/i.test(host)) return true;
+
+  const match = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (!match) return false;
+
+  const octets = match.slice(1).map(Number);
+  if (octets.some(octet => octet < 0 || octet > 255)) return false;
+
+  const [a, b] = octets;
+  return (
+    a === 10 ||
+    a === 127 ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168) ||
+    (a === 169 && b === 254) ||
+    (a === 100 && b >= 64 && b <= 127)
+  );
+}
+
+/**
+ * Cloud cores may use HTTPS on any host. Plain HTTP is accepted only for
+ * localhost/private networks, including tailnets, to avoid encouraging
+ * bearer-token transport over public plaintext links.
+ */
+export function isAllowedCloudRpcUrl(url: string): boolean {
+  if (!isValidRpcUrl(url)) return false;
+
+  const parsed = new URL(url.trim());
+  if (parsed.protocol === 'https:') return true;
+  return parsed.protocol === 'http:' && isLocalOrPrivateNetworkHost(parsed.hostname);
+}
+
+/**
  * Normalize an RPC URL by trimming whitespace and trailing slashes.
  *
  * @param url - The URL to normalize

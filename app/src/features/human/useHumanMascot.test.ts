@@ -16,6 +16,24 @@ vi.mock('../../services/chatService', () => ({
   },
 }));
 
+// `useHumanMascot` reads the user-selected ElevenLabs voice override
+// via `useSelector(selectMascotVoiceId)` (issue #1762). The renderHook
+// calls below intentionally don't wrap the hook in a Redux Provider —
+// stubbing `useSelector` keeps the existing test surface untouched
+// while letting individual specs override the returned voice id to
+// pin the override-propagation behaviour.
+let mockMascotVoiceId: string | null = null;
+vi.mock('react-redux', async () => {
+  const actual = await vi.importActual<typeof import('react-redux')>('react-redux');
+  return {
+    ...actual,
+    useSelector: <T>(selector: (state: { mascot: { voiceId: string | null } }) => T): T =>
+      selector({ mascot: { voiceId: mockMascotVoiceId } } as {
+        mascot: { voiceId: string | null };
+      }),
+  };
+});
+
 const proceduralVisemesMock = vi.fn(
   (text: string, durationMs: number): { viseme: string; start_ms: number; end_ms: number }[] => {
     if (!text) return [];
@@ -498,5 +516,56 @@ describe('useHumanMascot TTS playback', () => {
       vi.advanceTimersByTime(ACK_FACE_HOLD_MS + 1);
     });
     expect(result.current.face).toBe('idle');
+  });
+
+  // Issue #1762 — the user-selected mascot voice id flows through to
+  // every TTS RPC the hook makes. The store-stub at module scope lets
+  // these specs pin the prop without standing up a Redux Provider.
+  describe('mascot voice id override (issue #1762)', () => {
+    it('passes the stored voice id to synthesizeSpeech when set', async () => {
+      mockMascotVoiceId = 'voice-custom-123';
+      const fake = makeFakePlayback();
+      (synthesizeSpeech as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        audio_base64: 'AAA=',
+        audio_mime: 'audio/mpeg',
+        visemes: [{ viseme: 'aa', start_ms: 0, end_ms: 100 }],
+      });
+      (playBase64Audio as ReturnType<typeof vi.fn>).mockResolvedValueOnce(fake.handle);
+
+      renderHook(() => useHumanMascot({ speakReplies: true }));
+      await act(async () => {
+        capturedListeners?.onDone?.(fakeDone('hello'));
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(synthesizeSpeech).toHaveBeenCalledWith('hello', { voiceId: 'voice-custom-123' });
+      mockMascotVoiceId = null;
+    });
+
+    it('omits the voice override when no preference is stored', async () => {
+      mockMascotVoiceId = null;
+      const fake = makeFakePlayback();
+      (synthesizeSpeech as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        audio_base64: 'AAA=',
+        audio_mime: 'audio/mpeg',
+        visemes: [{ viseme: 'aa', start_ms: 0, end_ms: 100 }],
+      });
+      (playBase64Audio as ReturnType<typeof vi.fn>).mockResolvedValueOnce(fake.handle);
+
+      renderHook(() => useHumanMascot({ speakReplies: true }));
+      await act(async () => {
+        capturedListeners?.onDone?.(fakeDone('hello'));
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      // Second-arg is undefined → synthesizeSpeech falls through to its
+      // own MASCOT_VOICE_ID default. Locks the no-regression contract
+      // for users who never opened the picker.
+      expect(synthesizeSpeech).toHaveBeenCalledWith('hello', undefined);
+    });
   });
 });

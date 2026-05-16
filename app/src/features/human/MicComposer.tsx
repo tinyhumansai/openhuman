@@ -1,7 +1,8 @@
 import debug from 'debug';
 import { useEffect, useRef, useState } from 'react';
 
-import { transcribeCloud } from './voice/sttClient';
+import { useT } from '../../lib/i18n/I18nContext';
+import { transcribeWithFactory } from './voice/sttClient';
 import { encodeBlobToWav } from './voice/wavEncoder';
 
 /** Minimal descriptor for an audio input device. */
@@ -29,7 +30,7 @@ function pickRecorderMime(): string {
   return '';
 }
 
-export interface MicCloudComposerProps {
+export interface MicComposerProps {
   /** Disabled while a turn is in flight or the welcome message is pending. */
   disabled: boolean;
   /** Receives the transcribed text — same callback the textarea send uses. */
@@ -48,20 +49,25 @@ type RecordingState = 'idle' | 'recording' | 'transcribing';
 
 /**
  * Tap-to-toggle mic composer for the mascot page. Captures audio via the
- * browser's `MediaRecorder`, hands the resulting Blob to the cloud STT proxy
- * (`openhuman.voice_cloud_transcribe`), then forwards the transcript through
- * `onSubmit` so it joins the agent's normal send pipeline.
+ * browser's `MediaRecorder`, hands the resulting Blob to the factory-
+ * dispatched STT RPC (`openhuman.voice_stt_dispatch`), then forwards the
+ * transcript through `onSubmit` so it joins the agent's normal send pipeline.
+ *
+ * The provider (cloud vs local Whisper) is resolved server-side from
+ * `config.local_ai.stt_provider`, so the renderer doesn't have to know
+ * which backend ran — it only sees `{ text, provider }`.
  *
  * Single button, single decision: tap once to start recording, tap again to
  * stop and send. No textarea — that's the whole point of the mascot tab.
  */
-export function MicCloudComposer({
+export function MicComposer({
   disabled,
   onSubmit,
   onError,
   language = 'en',
   showDeviceSelector = false,
-}: MicCloudComposerProps) {
+}: MicComposerProps) {
+  const { t } = useT();
   const [state, setState] = useState<RecordingState>('idle');
   const [devices, setDevices] = useState<AudioInputDevice[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
@@ -219,7 +225,7 @@ export function MicCloudComposer({
   async function startRecording() {
     if (state !== 'idle' || disabled || startInFlightRef.current) return;
     if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
-      onError?.('Microphone access is not available in this runtime.');
+      onError?.(t('mic.unavailable'));
       return;
     }
     startInFlightRef.current = true;
@@ -257,7 +263,7 @@ export function MicCloudComposer({
       composerLog('getUserMedia rejected: %s', msg);
       if (err instanceof DOMException) {
         if (err.name === 'NotAllowedError' || err.name === 'SecurityError') {
-          onError?.(`Microphone permission denied: ${msg}`);
+          onError?.(`${t('mic.permissionDenied')}: ${msg}`);
         } else if (err.name === 'NotFoundError' || err.name === 'OverconstrainedError') {
           onError?.('Selected microphone is unavailable — try a different device.');
         } else if (err.name === 'NotReadableError') {
@@ -292,7 +298,7 @@ export function MicCloudComposer({
       stream.getTracks().forEach(t => t.stop());
       startInFlightRef.current = false;
       const msg = err instanceof Error ? err.message : String(err);
-      onError?.(`Failed to start recorder: ${msg}`);
+      onError?.(`${t('mic.failedToStartRecorder')}: ${msg}`);
       return;
     }
 
@@ -323,7 +329,7 @@ export function MicCloudComposer({
       // resets `state`, leaving the UI stuck on "Transcribing…". Recover here.
       composerLog('recorder.stop threw: %s', err);
       const msg = err instanceof Error ? err.message : String(err);
-      onError?.(`Failed to stop recording: ${msg}`);
+      onError?.(t('mic.failedToStopRecording').replace('{message}', msg));
       stopStream();
       recorderRef.current = null;
       setState('idle');
@@ -352,14 +358,14 @@ export function MicCloudComposer({
 
     if (blob.size === 0) {
       setState('idle');
-      onError?.('No audio captured. Try holding the mic a little longer.');
+      onError?.(t('mic.noAudioCaptured'));
       return;
     }
 
     try {
       const transcript = await transcribeWithFallback(blob);
       if (!transcript) {
-        onError?.('No speech detected. Try again.');
+        onError?.(t('mic.noSpeechDetected'));
         setState('idle');
         return;
       }
@@ -367,7 +373,7 @@ export function MicCloudComposer({
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       composerLog('transcribe failed: %s', msg);
-      onError?.(`Voice transcription failed: ${msg}`);
+      onError?.(t('mic.transcriptionFailed').replace('{message}', msg));
     } finally {
       setState('idle');
     }
@@ -390,7 +396,7 @@ export function MicCloudComposer({
         blob.type,
         language || 'auto'
       );
-      const text = await transcribeCloud(blob, opts);
+      const text = await transcribeWithFactory(blob, opts);
       composerLog('transcribe ok attempt=native ms=%d', Math.round(Date.now() - startedAt));
       return text;
     } catch (err) {
@@ -403,7 +409,7 @@ export function MicCloudComposer({
         wav.size,
         Math.round(Date.now() - reEncodeStart)
       );
-      const text = await transcribeCloud(wav, opts);
+      const text = await transcribeWithFactory(wav, opts);
       composerLog(
         'transcribe ok attempt=wav-fallback total_ms=%d',
         Math.round(Date.now() - startedAt)
@@ -417,12 +423,12 @@ export function MicCloudComposer({
   const buttonDisabled = disabled || isBusy;
 
   const label = isBusy
-    ? 'Transcribing…'
+    ? t('mic.transcribing')
     : isRecording
-      ? 'Tap to send'
+      ? t('mic.tapToSend')
       : disabled
-        ? 'Waiting for the agent…'
-        : 'Tap and speak';
+        ? t('mic.waitingForAgent')
+        : t('mic.tapAndSpeak');
 
   return (
     <div className="flex flex-col items-center gap-2">
@@ -443,7 +449,7 @@ export function MicCloudComposer({
       <div className="flex items-center justify-center gap-3">
         <button
           type="button"
-          aria-label={isRecording ? 'Stop recording and send' : 'Start recording'}
+          aria-label={isRecording ? t('mic.stopRecording') : t('mic.startRecording')}
           onClick={() => (isRecording ? stopRecording() : void startRecording())}
           disabled={buttonDisabled}
           className={`relative w-14 h-14 flex items-center justify-center rounded-full text-white shadow-soft transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
@@ -489,4 +495,4 @@ export function MicCloudComposer({
   );
 }
 
-export default MicCloudComposer;
+export default MicComposer;

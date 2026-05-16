@@ -3,9 +3,11 @@ import { useState } from 'react';
 import ChannelConfigPanel from '../components/channels/ChannelConfigPanel';
 import ChannelSelector from '../components/channels/ChannelSelector';
 import { useChannelDefinitions } from '../hooks/useChannelDefinitions';
+import { useT } from '../lib/i18n/I18nContext';
 import type { ChannelType } from '../types/channels';
 
 const Channels = () => {
+  const { t } = useT();
   const { definitions, loading, error } = useChannelDefinitions();
   const [selectedChannel, setSelectedChannel] = useState<ChannelType>('telegram');
 
@@ -20,7 +22,7 @@ const Channels = () => {
 
         {loading ? (
           <div className="rounded-xl border border-stone-200 bg-white p-6 text-sm text-stone-400">
-            Loading channel definitions...
+            {t('common.loading')}
           </div>
         ) : (
           <>

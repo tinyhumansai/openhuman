@@ -2,7 +2,7 @@
 
 use serde_json::json;
 
-use crate::api::config::effective_api_url;
+use crate::api::config::effective_backend_api_url;
 use crate::api::jwt::get_session_token;
 use crate::api::rest::{user_id_from_profile_payload, BackendOAuthClient};
 use crate::openhuman::config::Config;
@@ -127,7 +127,7 @@ pub async fn store_session(
         return Err("token is required".to_string());
     }
 
-    let api_url = effective_api_url(&config.api_url);
+    let api_url = effective_backend_api_url(&config.api_url);
 
     let client = BackendOAuthClient::new(&api_url).map_err(|e| e.to_string())?;
     let settings = client
@@ -335,7 +335,7 @@ pub async fn auth_get_session_token_json(
 }
 
 pub async fn auth_get_me(config: &Config) -> Result<RpcOutcome<serde_json::Value>, String> {
-    let api_url = effective_api_url(&config.api_url);
+    let api_url = effective_backend_api_url(&config.api_url);
     let token = get_session_token(config)?.ok_or_else(|| "session JWT required".to_string())?;
     let client = BackendOAuthClient::new(&api_url).map_err(|e| e.to_string())?;
     let user = client
@@ -355,7 +355,7 @@ pub async fn consume_login_token(
         return Err("loginToken is required".to_string());
     }
 
-    let api_url = effective_api_url(&config.api_url);
+    let api_url = effective_backend_api_url(&config.api_url);
     let client = BackendOAuthClient::new(&api_url).map_err(|e| e.to_string())?;
     let jwt_token = client
         .consume_login_token(token)
@@ -387,7 +387,7 @@ pub async fn auth_create_channel_link_token(
         return Err(format!("unsupported channel: {channel}"));
     }
 
-    let api_url = effective_api_url(&config.api_url);
+    let api_url = effective_backend_api_url(&config.api_url);
     let token = get_session_token(config)?.ok_or_else(|| "session JWT required".to_string())?;
     let client = BackendOAuthClient::new(&api_url).map_err(|e| e.to_string())?;
     let payload = client
@@ -526,7 +526,7 @@ pub async fn oauth_connect(
     response_type: Option<&str>,
     encryption_mode: Option<&str>,
 ) -> Result<RpcOutcome<serde_json::Value>, String> {
-    let api_url = effective_api_url(&config.api_url);
+    let api_url = effective_backend_api_url(&config.api_url);
     let token = get_session_token(config)?.ok_or_else(|| {
         "session JWT required; complete login and store_session first".to_string()
     })?;
@@ -544,7 +544,7 @@ pub async fn oauth_connect(
 pub async fn oauth_list_integrations(
     config: &Config,
 ) -> Result<RpcOutcome<serde_json::Value>, String> {
-    let api_url = effective_api_url(&config.api_url);
+    let api_url = effective_backend_api_url(&config.api_url);
     let token = get_session_token(config)?.ok_or_else(|| "session JWT required".to_string())?;
     let client = BackendOAuthClient::new(&api_url).map_err(|e| e.to_string())?;
     let list = client
@@ -562,7 +562,7 @@ pub async fn oauth_fetch_integration_tokens(
     integration_id: &str,
     encryption_key: &str,
 ) -> Result<RpcOutcome<serde_json::Value>, String> {
-    let api_url = effective_api_url(&config.api_url);
+    let api_url = effective_backend_api_url(&config.api_url);
     let token = get_session_token(config)?.ok_or_else(|| "session JWT required".to_string())?;
     let client = BackendOAuthClient::new(&api_url).map_err(|e| e.to_string())?;
     let tokens = client
@@ -579,7 +579,7 @@ pub async fn oauth_fetch_client_key(
     config: &Config,
     integration_id: &str,
 ) -> Result<RpcOutcome<serde_json::Value>, String> {
-    let api_url = effective_api_url(&config.api_url);
+    let api_url = effective_backend_api_url(&config.api_url);
     let token = get_session_token(config)?.ok_or_else(|| "session JWT required".to_string())?;
     let client = BackendOAuthClient::new(&api_url).map_err(|e| e.to_string())?;
     let client_key = client
@@ -600,7 +600,7 @@ pub async fn oauth_revoke_integration(
     config: &Config,
     integration_id: &str,
 ) -> Result<RpcOutcome<serde_json::Value>, String> {
-    let api_url = effective_api_url(&config.api_url);
+    let api_url = effective_backend_api_url(&config.api_url);
     let token = get_session_token(config)?.ok_or_else(|| "session JWT required".to_string())?;
     let client = BackendOAuthClient::new(&api_url).map_err(|e| e.to_string())?;
     client
@@ -610,6 +610,90 @@ pub async fn oauth_revoke_integration(
     Ok(RpcOutcome::single_log(
         serde_json::json!({ "revoked": true, "integrationId": integration_id }),
         "integration revoked",
+    ))
+}
+
+/// Provider slot for the user-provided Composio API key when running in
+/// direct mode (BYO key).
+///
+/// Parallel to [`APP_SESSION_PROVIDER`] but completely independent — the
+/// app-session JWT authenticates the user against `api.tinyhumans.ai`,
+/// while this slot authenticates the user against
+/// `backend.composio.dev`. Stored via the same
+/// [`super::profiles::AuthProfilesStore`] backend (encrypted on disk
+/// when `secrets.encrypt = true`).
+pub const COMPOSIO_DIRECT_PROVIDER: &str = "composio-direct";
+
+/// Persist the user-provided Composio API key to the encrypted credential
+/// store under [`COMPOSIO_DIRECT_PROVIDER`].
+///
+/// **Never log the API key itself** — the debug line below records only
+/// length and a length-of-stored marker. This honours the CLAUDE.md
+/// debug-logging rule (`Never log secrets … redact or omit`).
+pub async fn store_composio_api_key(
+    config: &Config,
+    api_key: &str,
+) -> Result<RpcOutcome<serde_json::Value>, String> {
+    let trimmed = api_key.trim();
+    if trimmed.is_empty() {
+        return Err("composio api_key must not be empty".to_string());
+    }
+    tracing::debug!(
+        len = trimmed.len(),
+        "[composio-direct] storing api key (redacted)"
+    );
+    let auth = AuthService::from_config(config);
+    auth.store_provider_token(
+        COMPOSIO_DIRECT_PROVIDER,
+        DEFAULT_AUTH_PROFILE_NAME,
+        trimmed,
+        std::collections::HashMap::new(),
+        true,
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(RpcOutcome::single_log(
+        json!({ "stored": true, "provider": COMPOSIO_DIRECT_PROVIDER }),
+        "composio direct api key stored",
+    ))
+}
+
+/// Read the user-provided Composio API key from the encrypted credential
+/// store. Returns `Ok(None)` when no key has been stored yet.
+///
+/// Used by [`crate::openhuman::composio::client::create_composio_client`]
+/// to decide whether direct mode can actually be activated.
+pub fn get_composio_api_key(config: &Config) -> Result<Option<String>, String> {
+    let auth = AuthService::from_config(config);
+    let key = auth
+        .get_provider_bearer_token(COMPOSIO_DIRECT_PROVIDER, None)
+        .map_err(|e| e.to_string())?;
+    Ok(key.map(|k| k.trim().to_string()).filter(|k| !k.is_empty()))
+}
+
+/// RPC wrapper around [`store_composio_api_key`] — accepts plain string
+/// for symmetry with `store_provider_credentials` while only persisting
+/// the trimmed value.
+pub async fn rpc_store_composio_api_key(
+    config: &Config,
+    api_key: &str,
+) -> Result<RpcOutcome<serde_json::Value>, String> {
+    store_composio_api_key(config, api_key).await
+}
+
+/// Remove the stored Composio direct-mode API key. Used when the user
+/// switches back to backend mode and explicitly clears their key.
+pub async fn clear_composio_api_key(
+    config: &Config,
+) -> Result<RpcOutcome<serde_json::Value>, String> {
+    tracing::debug!("[composio-direct] clearing stored api key");
+    let auth = AuthService::from_config(config);
+    let removed = auth
+        .remove_profile(COMPOSIO_DIRECT_PROVIDER, DEFAULT_AUTH_PROFILE_NAME)
+        .map_err(|e| e.to_string())?;
+    Ok(RpcOutcome::single_log(
+        json!({ "removed": removed }),
+        "composio direct api key cleared",
     ))
 }
 

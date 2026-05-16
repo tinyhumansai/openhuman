@@ -228,10 +228,17 @@ async fn post_400_user_input_failure_classifies_as_backend_user_error() {
     // `IntegrationClient::post` bail string and the
     // `observability::report_error_or_expected` argument share the same
     // shape, so this is a tight pin against drift on either side.
+    //
+    // After #1472 wave E added `ProviderUserState` (which matches
+    // `"missing required fields"` regardless of HTTP status), the
+    // SharePoint shape now lands in the more specific bucket. Either
+    // expected-kind silences Sentry; assert the new tighter bucket so
+    // a regression in the precedence ordering surfaces here.
     assert_eq!(
         expected_error_kind(&msg),
-        Some(ExpectedErrorKind::BackendUserError),
-        "OPENHUMAN-TAURI-BC: propagated 400 must classify as BackendUserError; got: {msg}"
+        Some(ExpectedErrorKind::ProviderUserState),
+        "OPENHUMAN-TAURI-BC: propagated 400 must classify as ProviderUserState (more \
+         specific than BackendUserError, takes precedence per #1472 wave E); got: {msg}"
     );
 }
 
@@ -317,12 +324,18 @@ async fn jira_missing_subdomain_error_propagates_and_classifies_as_user_error() 
     );
 
     // 2. The classifier must route this as an expected user-input failure —
-    //    not a Sentry-reportable product error. Classifier must agree with
-    //    the `BackendUserError` branch so the observability layer demotes it.
+    //    not a Sentry-reportable product error. After #1472 wave E added the
+    //    `ProviderUserState` bucket (which anchors on
+    //    `"missing required fields"` regardless of HTTP status, so it also
+    //    catches the 500-wrapped composio variant), the Jira missing-subdomain
+    //    shape lands there rather than in the generic `BackendUserError`
+    //    bucket. Either expected-kind silences Sentry — assert the tighter
+    //    bucket so a regression in the precedence ordering surfaces here.
     assert_eq!(
         expected_error_kind(&msg),
-        Some(ExpectedErrorKind::BackendUserError),
-        "Jira ConnectedAccount_MissingRequiredFields must classify as BackendUserError; got: {msg}"
+        Some(ExpectedErrorKind::ProviderUserState),
+        "Jira ConnectedAccount_MissingRequiredFields must classify as ProviderUserState \
+         (more specific than BackendUserError per #1472 wave E); got: {msg}"
     );
 }
 

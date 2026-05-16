@@ -24,6 +24,7 @@ use super::postprocess;
 use crate::openhuman::config::Config;
 use crate::openhuman::local_ai;
 use crate::openhuman::local_ai::whisper_engine;
+use crate::openhuman::util::utf8_safe_prefix_at_byte_boundary;
 
 const LOG_PREFIX: &str = "[voice-stream]";
 const AUDIO_SAMPLE_RATE: usize = 16_000;
@@ -116,7 +117,7 @@ pub async fn handle_dictation_ws(mut socket: WebSocket, config: Arc<Config>) {
                                 "{LOG_PREFIX} partial transcription ({} samples, avg_logprob={:.3}): {}",
                                 samples.len(),
                                 result.avg_logprob.unwrap_or(0.0),
-                                &result.text[..result.text.len().min(80)]
+                                utf8_safe_prefix_at_byte_boundary(&result.text, 80)
                             );
                             if partial_tx.send(result.text).await.is_err() {
                                 break; // receiver dropped

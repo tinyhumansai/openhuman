@@ -95,6 +95,7 @@ target-test-run
 # CocoIndex Code (ccc)
 /.cocoindex_code/
 
+tmp/
 app/test/e2e/.cache/
 test-map.md
 .test-gap-analysis.md

@@ -5,6 +5,53 @@ import {
   scheduleCefProfilePurge,
 } from './tauriCommands';
 
+const ACTIVE_USER_KEY = 'OPENHUMAN_ACTIVE_USER_ID';
+
+/**
+ * Selectively purge localStorage keys belonging to a single user.
+ *
+ * Removes:
+ *  - `${userId}:persist:*`  — per-user Redux-persist blobs
+ *  - `${userId}:*`          — any other user-scoped keys
+ *  - `OPENHUMAN_ACTIVE_USER_ID` — the boot-time user seed (only when a userId
+ *                                  is supplied so we don't wipe it on pre-login
+ *                                  recovery where userId is null)
+ *
+ * Intentionally leaves other users' scoped keys untouched so that
+ * "clear my data" on account B does not silently destroy account A's
+ * persisted state (#983).
+ */
+function clearUserScopedStorage(userId: string | null): void {
+  try {
+    if (userId) {
+      const prefix = `${userId}:`;
+      const toRemove: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith(prefix)) {
+          toRemove.push(key);
+        }
+      }
+      for (const key of toRemove) {
+        localStorage.removeItem(key);
+      }
+      localStorage.removeItem(ACTIVE_USER_KEY);
+    } else {
+      // No known user (pre-login recovery) — fall back to clearing everything
+      // so we don't leave orphaned blobs with no way to scope the deletion.
+      localStorage.clear();
+    }
+  } catch (err) {
+    console.warn('[clearAllAppData] storage clear failed:', err);
+  } finally {
+    try {
+      sessionStorage.clear();
+    } catch {
+      // best-effort
+    }
+  }
+}
+
 export interface ClearAllAppDataOptions {
   // Optional core-side session clear (e.g. `auth_clear_session`). Best-effort —
   // skipped silently if the caller cannot/does not provide it (e.g. pre-login
@@ -59,11 +106,10 @@ export const clearAllAppData = async ({
   await resetOpenHumanDataAndRestartCore();
 
   // 4. Purge redux-persist + browser storage. `persistor.purge()` wipes the
-  //    persisted backend; localStorage/sessionStorage clear everything else
-  //    (auth flags, theme, etc.).
+  //    persisted backend; `clearUserScopedStorage` removes only the active
+  //    user's localStorage keys so other accounts' data is not destroyed.
   await persistor.purge();
-  window.localStorage.clear();
-  window.sessionStorage.clear();
+  clearUserScopedStorage(userId);
 
   // 5. Full app restart so CEF reboots into the fresh pre-login profile.
   await restartApp();

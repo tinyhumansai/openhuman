@@ -1,3 +1,5 @@
+import { useT } from '../../lib/i18n/I18nContext';
+
 interface MemoryStatsBarProps {
   totalDocs: number;
   totalFiles: number;
@@ -39,6 +41,7 @@ function formatNumber(value: number): string {
 }
 
 export function MemoryStatsBar(props: MemoryStatsBarProps) {
+  const { t } = useT();
   const {
     totalDocs,
     totalFiles,
@@ -55,39 +58,41 @@ export function MemoryStatsBar(props: MemoryStatsBarProps) {
 
   const stats = [
     {
-      label: 'Storage',
+      label: t('stats.storage'),
       value: estimatedStorageBytes > 0 ? formatBytes(estimatedStorageBytes) : '--',
-      sub: totalFiles > 0 ? `${formatNumber(totalFiles)} files` : undefined,
+      sub: totalFiles > 0 ? `${formatNumber(totalFiles)} ${t('stats.files')}` : undefined,
       color: 'text-primary-500',
     },
     {
-      label: 'Documents',
+      label: t('stats.documents'),
       value: formatNumber(totalDocs),
-      sub: docsToday > 0 ? `+${docsToday} today` : undefined,
+      sub: docsToday > 0 ? `+${docsToday} ${t('stats.today')}` : undefined,
       color: 'text-emerald-600',
     },
     {
-      label: 'Namespaces',
+      label: t('stats.namespaces'),
       value: formatNumber(totalNamespaces),
       sub: undefined,
       color: 'text-amber-600',
     },
     {
-      label: 'Relations',
+      label: t('stats.relations'),
       value: formatNumber(totalRelations),
       sub: undefined,
       color: 'text-lavender-600',
     },
     {
-      label: 'First Memory',
+      label: t('stats.firstMemory'),
       value: oldestDocTimestamp ? formatTimeAgo(oldestDocTimestamp) : '--',
-      sub: newestDocTimestamp ? `Latest: ${formatTimeAgo(newestDocTimestamp)}` : undefined,
+      sub: newestDocTimestamp
+        ? `${t('stats.latest')}: ${formatTimeAgo(newestDocTimestamp)}`
+        : undefined,
       color: 'text-sky-600',
     },
     {
-      label: 'Sessions',
+      label: t('stats.sessions'),
       value: totalSessions !== null ? formatNumber(totalSessions) : '--',
-      sub: totalTokens !== null ? `${formatNumber(totalTokens)} tokens` : undefined,
+      sub: totalTokens !== null ? `${formatNumber(totalTokens)} ${t('stats.tokens')}` : undefined,
       color: 'text-rose-600',
     },
   ];

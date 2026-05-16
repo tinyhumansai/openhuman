@@ -101,7 +101,7 @@ describe('rewardsApi', () => {
 
     const snapshot = await rewardsApi.getMyRewards();
 
-    expect(apiClient.get).toHaveBeenCalledWith('/rewards/me');
+    expect(apiClient.get).toHaveBeenCalledWith('/rewards/me', { timeout: 15000 });
     expect(snapshot.discord.membershipStatus).toBe('not_linked');
     expect(snapshot.summary.totalCount).toBe(8);
   });

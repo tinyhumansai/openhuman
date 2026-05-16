@@ -232,25 +232,61 @@ fn record_on_thread(
     }
 
     let host = cpal::default_host();
-    let device = host
-        .default_input_device()
-        .ok_or_else(|| "no default audio input device found".to_string())?;
+    let device = match host.default_input_device() {
+        Some(d) => d,
+        None => {
+            // Forward via setup_tx so `start_recording`'s caller sees the
+            // real reason instead of the generic "capture thread exited
+            // before signalling readiness" fallback that fires when
+            // setup_tx is dropped (OPENHUMAN-TAURI-AE). Without this, the
+            // user — and Sentry — gets no signal about *which* audio
+            // failure occurred.
+            let msg = "no default audio input device found".to_string();
+            error!("{LOG_PREFIX} {msg}");
+            let _ = setup_tx.send(Err(msg.clone()));
+            return Err(msg);
+        }
+    };
 
     let device_name = device.name().unwrap_or_else(|_| "<unknown>".into());
     info!("{LOG_PREFIX} using input device: {device_name}");
 
     let config = match device.supported_input_configs() {
-        Ok(supported) => find_best_config(supported).unwrap_or_else(|e| {
-            warn!("{LOG_PREFIX} find_best_config failed ({e}), falling back to default");
-            device
-                .default_input_config()
-                .expect("no default input config available")
-        }),
+        Ok(supported) => match find_best_config(supported) {
+            Ok(cfg) => cfg,
+            Err(e) => {
+                warn!("{LOG_PREFIX} find_best_config failed ({e}), falling back to default");
+                match device.default_input_config() {
+                    Ok(cfg) => cfg,
+                    Err(e2) => {
+                        // Replaces a `.expect()` that would have panicked
+                        // and dropped setup_tx — see OPENHUMAN-TAURI-AE.
+                        let msg = format!(
+                            "no default input config available (best-config failed: {e}; default lookup: {e2})"
+                        );
+                        error!("{LOG_PREFIX} {msg}");
+                        let _ = setup_tx.send(Err(msg.clone()));
+                        return Err(msg);
+                    }
+                }
+            }
+        },
         Err(e) => {
             warn!("{LOG_PREFIX} failed to query input configs ({e}), using default");
-            device
-                .default_input_config()
-                .map_err(|e2| format!("no default input config: {e2}"))?
+            match device.default_input_config() {
+                Ok(cfg) => cfg,
+                Err(e2) => {
+                    // Forward via setup_tx so callers see the real cpal
+                    // error rather than the generic dropped-tx fallback
+                    // (OPENHUMAN-TAURI-AE).
+                    let msg = format!(
+                        "no default input config: {e2} (supported-configs query failed: {e})"
+                    );
+                    error!("{LOG_PREFIX} {msg}");
+                    let _ = setup_tx.send(Err(msg.clone()));
+                    return Err(msg);
+                }
+            }
         }
     };
     let source_sample_rate = config.sample_rate().0;

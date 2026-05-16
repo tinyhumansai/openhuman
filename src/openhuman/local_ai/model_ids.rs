@@ -1,11 +1,14 @@
 //! Resolved model / voice IDs from [`crate::openhuman::config::Config`].
 //!
-//! All `effective_*` functions enforce the MVP model allowlist: if a resolved
+//! Most `effective_*` functions enforce the MVP model allowlist: if a resolved
 //! model ID is not in the allowlist the function silently falls back to the
-//! default MVP model and logs a warning. This prevents config-file edits from
-//! bypassing the MVP tier restriction.
+//! default MVP model and logs a warning. `effective_chat_model_id` intentionally
+//! bypasses that allowlist for LM Studio so user-managed model IDs are passed
+//! through unchanged; the generic `effective_*` helpers still enforce the MVP
+//! tier restriction for OpenHuman-managed Ollama assets.
 
 use crate::openhuman::config::Config;
+use crate::openhuman::local_ai::provider::{provider_from_config, LocalAiProvider};
 
 pub(crate) const DEFAULT_OLLAMA_MODEL: &str = "gemma3:1b-it-qat";
 pub(crate) const DEFAULT_OLLAMA_VISION_MODEL: &str = "";
@@ -73,6 +76,17 @@ fn enforce_mvp_embedding_allowlist(resolved: &str) -> String {
 }
 
 pub(crate) fn effective_chat_model_id(config: &Config) -> String {
+    let provider = provider_from_config(config);
+    if provider == LocalAiProvider::LmStudio {
+        let model_id = raw_chat_model_id(config);
+        tracing::debug!(
+            provider = provider.as_str(),
+            has_model = !model_id.is_empty(),
+            "[local_ai] effective_chat_model_id: using provider-managed model id"
+        );
+        return model_id;
+    }
+
     let raw = if !config.local_ai.chat_model_id.trim().is_empty() {
         config.local_ai.chat_model_id.trim()
     } else {
@@ -90,6 +104,25 @@ pub(crate) fn effective_chat_model_id(config: &Config) -> String {
         return enforce_mvp_chat_allowlist(DEFAULT_OLLAMA_MODEL);
     }
     enforce_mvp_chat_allowlist(raw)
+}
+
+fn raw_chat_model_id(config: &Config) -> String {
+    // For LM Studio the user must set `local_ai.chat_model_id` explicitly —
+    // there is no sensible Ollama-branded default to fall back to. Return an
+    // empty string so callers (diagnostics, status) surface the missing-model
+    // warning rather than silently requesting "gemma3:1b-it-qat" from LM Studio.
+    let raw = if !config.local_ai.chat_model_id.trim().is_empty() {
+        config.local_ai.chat_model_id.trim()
+    } else {
+        config.local_ai.model_id.trim()
+    };
+    if raw.is_empty() {
+        tracing::debug!(
+            provider = "lm_studio",
+            "[local_ai] raw_chat_model_id: no LM Studio chat model configured"
+        );
+    }
+    raw.to_string()
 }
 
 pub(crate) fn effective_vision_model_id(config: &Config) -> String {
@@ -169,6 +202,29 @@ mod tests {
         let mut config = test_config();
         config.local_ai.chat_model_id = "gemma3:1b-it-qat".to_string();
         assert_eq!(effective_chat_model_id(&config), "gemma3:1b-it-qat");
+    }
+
+    #[test]
+    fn chat_model_allows_custom_ids_for_lm_studio() {
+        let mut config = test_config();
+        config.local_ai.provider = "lm_studio".to_string();
+        config.local_ai.chat_model_id = "publisher/custom-model-7b".to_string();
+        assert_eq!(
+            effective_chat_model_id(&config),
+            "publisher/custom-model-7b"
+        );
+    }
+
+    #[test]
+    fn lm_studio_chat_model_returns_empty_when_no_model_configured() {
+        // LM Studio has no sensible Ollama-branded default — an empty model ID
+        // surfaces the missing-model warning in diagnostics / status rather than
+        // silently sending "gemma3:1b-it-qat" to an LM Studio server.
+        let mut config = test_config();
+        config.local_ai.provider = "lm_studio".to_string();
+        config.local_ai.chat_model_id = String::new();
+        config.local_ai.model_id = String::new();
+        assert_eq!(effective_chat_model_id(&config), "");
     }
 
     #[test]

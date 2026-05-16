@@ -2,6 +2,8 @@
 //!
 //! Split into submodules; this module re-exports the main `Config` and all public types.
 
+pub mod cloud_providers;
+pub use cloud_providers::{generate_provider_id, CloudProviderCreds, CloudProviderType};
 mod accessibility;
 mod agent;
 mod autocomplete;
@@ -64,7 +66,7 @@ pub use storage_memory::{
 pub use tools::{
     BrowserComputerUseConfig, BrowserConfig, ComposioConfig, ComputerControlConfig, CurlConfig,
     GitbooksConfig, HttpRequestConfig, IntegrationToggle, IntegrationsConfig, MultimodalConfig,
-    SecretsConfig, WebSearchConfig,
+    SecretsConfig, SeltzConfig, WebSearchConfig, COMPOSIO_MODE_BACKEND, COMPOSIO_MODE_DIRECT,
 };
 pub use update::{UpdateConfig, UpdateRestartStrategy};
 mod voice_server;

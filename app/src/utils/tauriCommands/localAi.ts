@@ -474,3 +474,15 @@ export async function openhumanLocalAiSetOllamaPath(
     params: { path },
   });
 }
+
+/**
+ * Gate off the local-AI runtime: kills the Ollama daemon only if OpenHuman
+ * spawned it (external daemons are left running), and forces status to
+ * `"disabled"` so the UI flips immediately.
+ */
+export async function openhumanLocalAiShutdownOwned(): Promise<CommandResponse<LocalAiStatus>> {
+  return await callCoreRpc<CommandResponse<LocalAiStatus>>({
+    method: 'openhuman.local_ai_shutdown_owned',
+    params: {},
+  });
+}

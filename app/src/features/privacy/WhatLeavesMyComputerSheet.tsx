@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 
 import Button from '../../components/ui/Button';
+import { useT } from '../../lib/i18n/I18nContext';
 import { WHAT_LEAVES_HEADLINE, WHAT_LEAVES_ITEMS, WHAT_LEAVES_SUBHEAD } from './whatLeavesItems';
 
 export interface WhatLeavesMyComputerSheetProps {
@@ -10,6 +11,7 @@ export interface WhatLeavesMyComputerSheetProps {
 }
 
 const WhatLeavesMyComputerSheet = ({ open, onClose }: WhatLeavesMyComputerSheetProps) => {
+  const { t } = useT();
   const dialogRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -30,7 +32,7 @@ const WhatLeavesMyComputerSheet = ({ open, onClose }: WhatLeavesMyComputerSheetP
       role="presentation">
       <button
         type="button"
-        aria-label="Close"
+        aria-label={t('common.close')}
         onClick={onClose}
         className="absolute inset-0 bg-neutral-900/40 backdrop-blur-sm cursor-default"
       />
@@ -62,11 +64,9 @@ const WhatLeavesMyComputerSheet = ({ open, onClose }: WhatLeavesMyComputerSheetP
         </ul>
 
         <div className="flex items-center justify-between gap-3">
-          <p className="text-xs text-neutral-500">
-            Full controls live in Settings → Privacy & Security.
-          </p>
+          <p className="text-xs text-neutral-500">{t('privacy.description')}</p>
           <Button variant="primary" size="md" onClick={onClose}>
-            Got it
+            {t('common.ok')}
           </Button>
         </div>
       </div>

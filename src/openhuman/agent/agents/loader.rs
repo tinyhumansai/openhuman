@@ -78,6 +78,11 @@ pub const BUILTINS: &[BuiltinAgent] = &[
         prompt_fn: super::integrations_agent::prompt::build,
     },
     BuiltinAgent {
+        id: "crypto_agent",
+        toml: include_str!("crypto_agent/agent.toml"),
+        prompt_fn: super::crypto_agent::prompt::build,
+    },
+    BuiltinAgent {
         id: "tools_agent",
         toml: include_str!("tools_agent/agent.toml"),
         prompt_fn: super::tools_agent::prompt::build,
@@ -177,7 +182,7 @@ mod tests {
     fn all_builtins_parse() {
         let defs = load_builtins().expect("built-in TOML must parse");
         assert_eq!(defs.len(), BUILTINS.len());
-        assert_eq!(defs.len(), 15, "expected 15 built-in agents");
+        assert_eq!(defs.len(), 16, "expected 16 built-in agents");
     }
 
     #[test]
@@ -296,9 +301,9 @@ mod tests {
     }
 
     #[test]
-    fn orchestrator_has_reasoning_hint_and_named_tools() {
+    fn orchestrator_has_chat_hint_and_named_tools() {
         let def = find("orchestrator");
-        assert!(matches!(def.model, ModelSpec::Hint(ref h) if h == "reasoning"));
+        assert!(matches!(def.model, ModelSpec::Hint(ref h) if h == "chat"));
         match def.tools {
             ToolScope::Named(tools) => {
                 // spawn_subagent was removed in #1141; spawn_worker_thread is the replacement
@@ -495,6 +500,135 @@ mod tests {
                 "orchestrator must not have curl — it should delegate"
             );
         }
+    }
+
+    /// Crypto Agent (#1397) is the dedicated specialist for wallet
+    /// actions and market operations. It must have a *narrow* tool
+    /// allowlist (no shell, no file_write, no broad HTTP), MUST keep
+    /// the safety preamble on (financial-risk gate), and MUST require
+    /// quote/confirm-before-execute via `ask_user_clarification`.
+    #[test]
+    fn crypto_agent_has_narrow_wallet_market_tools_and_safety_on() {
+        let def = find("crypto_agent");
+        // Hint must be agentic — the agent reasons about quotes vs.
+        // executes across multiple tool calls per turn.
+        assert!(matches!(def.model, ModelSpec::Hint(ref h) if h == "agentic"));
+        assert_eq!(def.sandbox_mode, SandboxMode::None);
+        // Financial-risk agent — global safety preamble stays ON.
+        assert!(
+            !def.omit_safety_preamble,
+            "crypto_agent must keep the global safety preamble — financial-risk gate"
+        );
+        match &def.tools {
+            ToolScope::Named(tools) => {
+                // Wallet read surface.
+                for required in [
+                    "wallet_status",
+                    "wallet_balances",
+                    "wallet_supported_assets",
+                    "wallet_chain_status",
+                ] {
+                    assert!(
+                        tools.iter().any(|t| t == required),
+                        "crypto_agent needs read tool `{required}`"
+                    );
+                }
+                // Quote / prepare surface.
+                for required in [
+                    "wallet_prepare_transfer",
+                    "wallet_prepare_swap",
+                    "wallet_prepare_contract_call",
+                ] {
+                    assert!(
+                        tools.iter().any(|t| t == required),
+                        "crypto_agent needs prepare tool `{required}`"
+                    );
+                }
+                // Execute surface — gated by the prepared blob from a
+                // matching prepare_* call in the same turn.
+                assert!(
+                    tools.iter().any(|t| t == "wallet_execute_prepared"),
+                    "crypto_agent needs wallet_execute_prepared"
+                );
+                // Confirmation gate — MUST be present so the prompt's
+                // "confirm before execute" rule is mechanically enforceable.
+                assert!(
+                    tools.iter().any(|t| t == "ask_user_clarification"),
+                    "crypto_agent needs ask_user_clarification to gate write ops"
+                );
+                // Market grounding + context helpers. Pin the full set so a
+                // TOML edit that silently drops `stock_quote`,
+                // `stock_exchange_rate`, `memory_recall`, or `current_time`
+                // gets caught here — the agent's quote-before-execute
+                // discipline and "ground in user preferences before re-asking"
+                // behaviour both depend on these being present.
+                for required in [
+                    "stock_quote",
+                    "stock_exchange_rate",
+                    "stock_crypto_series",
+                    "memory_recall",
+                    "current_time",
+                ] {
+                    assert!(
+                        tools.iter().any(|t| t == required),
+                        "crypto_agent needs supporting tool `{required}`"
+                    );
+                }
+                // Hard exclusions — no broad-surface or write-anywhere tools.
+                // Includes the orchestrator-level delegate_* tools so a future
+                // TOML edit can't accidentally hand crypto writes to the
+                // generic integrations or code-execution paths.
+                for forbidden in [
+                    "shell",
+                    "file_write",
+                    "curl",
+                    "http_request",
+                    "composio_execute",
+                    "composio_list_tools",
+                    "spawn_subagent",
+                    "spawn_worker_thread",
+                    "delegate_to_integrations_agent",
+                    "delegate_run_code",
+                    "delegate_research",
+                    "delegate_plan",
+                ] {
+                    assert!(
+                        !tools.iter().any(|t| t == forbidden),
+                        "crypto_agent must NOT have `{forbidden}` — keeps blast radius bounded"
+                    );
+                }
+            }
+            ToolScope::Wildcard => panic!("crypto_agent must have a Named tool scope"),
+        }
+        // Keep iteration cap tight — quote → confirm → execute is a
+        // 3-step loop, not a research crawl.
+        assert!(
+            def.max_iterations <= 10,
+            "crypto_agent max_iterations must stay tight (got {})",
+            def.max_iterations
+        );
+        assert!(def.omit_identity);
+        assert!(def.omit_memory_context);
+        assert!(def.omit_skills_catalog);
+    }
+
+    /// Routing: the orchestrator must list `crypto_agent` in its
+    /// `subagents` so a `delegate_do_crypto` tool is synthesised at
+    /// agent-build time. Without this entry the orchestrator can't
+    /// route crypto-shaped requests to the specialist.
+    #[test]
+    fn orchestrator_subagents_include_crypto_agent() {
+        use crate::openhuman::agent::harness::definition::SubagentEntry;
+        let def = find("orchestrator");
+        let listed = def.subagents.iter().any(|e| match e {
+            SubagentEntry::AgentId(id) => id == "crypto_agent",
+            _ => false,
+        });
+        assert!(
+            listed,
+            "orchestrator.subagents must list `crypto_agent` so the \
+             routing layer can synthesise `delegate_do_crypto`"
+        );
     }
 
     #[test]

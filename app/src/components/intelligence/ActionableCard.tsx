@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
+import { useT } from '../../lib/i18n/I18nContext';
 import type { ActionableItem, SnoozeOption } from '../../types/intelligence';
 
 interface ActionableCardProps {
@@ -207,6 +208,7 @@ export function ActionableCard({
   onSnooze,
   className = '',
 }: ActionableCardProps) {
+  const { t } = useT();
   const [showSnoozeMenu, setShowSnoozeMenu] = useState(false);
   const [isAnimatingOut, setIsAnimatingOut] = useState(false);
   const snoozeButtonRef = useRef<HTMLButtonElement>(null);
@@ -284,7 +286,7 @@ export function ActionableCard({
                 <button
                   onClick={handleComplete}
                   className="w-6 h-6 flex items-center justify-center rounded-md text-stone-400 hover:text-sage-400 hover:bg-sage-400/10 transition-all duration-150"
-                  title="Complete">
+                  title={t('actionable.complete')}>
                   <svg
                     className="w-3.5 h-3.5"
                     fill="none"
@@ -303,7 +305,7 @@ export function ActionableCard({
                 <button
                   onClick={handleDismiss}
                   className="w-6 h-6 flex items-center justify-center rounded-md text-stone-400 hover:text-coral-400 hover:bg-coral-400/10 transition-all duration-150"
-                  title="Dismiss">
+                  title={t('actionable.dismiss')}>
                   <svg
                     className="w-3.5 h-3.5"
                     fill="none"
@@ -324,7 +326,7 @@ export function ActionableCard({
                     ref={snoozeButtonRef}
                     onClick={() => setShowSnoozeMenu(!showSnoozeMenu)}
                     className="w-6 h-6 flex items-center justify-center rounded-md text-stone-400 hover:text-amber-400 hover:bg-amber-400/10 transition-all duration-150"
-                    title="Snooze">
+                    title={t('actionable.snooze')}>
                     <svg
                       className="w-3.5 h-3.5"
                       fill="none"
@@ -354,7 +356,7 @@ export function ActionableCard({
                 <>
                   <span className="text-xs text-stone-600">•</span>
                   <span className="text-xs bg-sage-500 text-white px-1.5 py-0.5 rounded-sm font-medium">
-                    New
+                    {t('actionable.new')}
                   </span>
                 </>
               )}

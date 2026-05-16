@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { formatThreadLoadError, isComposerInteractionBlocked } from '../Conversations';
+import {
+  formatThreadLoadError,
+  isComposerInteractionBlocked,
+  isImeCompositionKeyEvent,
+} from '../Conversations';
 
 describe('isComposerInteractionBlocked', () => {
   it('blocks composer interaction while the welcome agent loader is visible', () => {
@@ -29,6 +33,25 @@ describe('isComposerInteractionBlocked', () => {
     expect(
       isComposerInteractionBlocked({ activeThreadId: null, welcomePending: false, rustChat: false })
     ).toBe(true);
+  });
+});
+
+describe('isImeCompositionKeyEvent', () => {
+  it('detects active IME composition from the native event', () => {
+    expect(isImeCompositionKeyEvent({ nativeEvent: { isComposing: true } })).toBe(true);
+  });
+
+  it('detects legacy IME keyCode 229 fallbacks', () => {
+    expect(isImeCompositionKeyEvent({ keyCode: 229 })).toBe(true);
+    expect(isImeCompositionKeyEvent({ which: 229 })).toBe(true);
+    expect(isImeCompositionKeyEvent({ nativeEvent: { keyCode: 229 } })).toBe(true);
+    expect(isImeCompositionKeyEvent({ nativeEvent: { which: 229 } })).toBe(true);
+  });
+
+  it('does not treat ordinary Enter as IME composition', () => {
+    expect(isImeCompositionKeyEvent({ keyCode: 13, nativeEvent: { isComposing: false } })).toBe(
+      false
+    );
   });
 });
 

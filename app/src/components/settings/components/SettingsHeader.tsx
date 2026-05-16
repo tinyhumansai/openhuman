@@ -1,3 +1,5 @@
+import { useT } from '../../../lib/i18n/I18nContext';
+
 interface BreadcrumbItem {
   label: string;
   onClick?: () => void;
@@ -13,11 +15,13 @@ interface SettingsHeaderProps {
 
 const SettingsHeader = ({
   className = '',
-  title = 'Settings',
+  title,
   showBackButton = false,
   onBack,
   breadcrumbs,
 }: SettingsHeaderProps) => {
+  const { t } = useT();
+
   return (
     <div className={`px-5 pt-5 pb-3 ${className}`}>
       <div className="flex items-center">
@@ -26,7 +30,7 @@ const SettingsHeader = ({
           <button
             onClick={onBack}
             className="w-6 h-6 flex items-center justify-center rounded-full hover:bg-stone-100 transition-colors mr-2"
-            aria-label="Go back">
+            aria-label={t('common.back')}>
             <svg
               className="w-4 h-4 text-stone-500"
               fill="none"
@@ -77,7 +81,7 @@ const SettingsHeader = ({
         )}
 
         {/* Title */}
-        <h2 className="text-sm font-semibold text-stone-900">{title}</h2>
+        <h2 className="text-sm font-semibold text-stone-900">{title ?? t('nav.settings')}</h2>
       </div>
     </div>
   );

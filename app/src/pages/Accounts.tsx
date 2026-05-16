@@ -4,11 +4,12 @@ import AddAccountModal from '../components/accounts/AddAccountModal';
 import { AgentIcon, ProviderIcon } from '../components/accounts/providerIcons';
 // import RespondQueuePanel from '../components/accounts/RespondQueuePanel';
 import WebviewHost from '../components/accounts/WebviewHost';
+import { usePrewarmMostRecentAccount } from '../hooks/usePrewarmMostRecentAccount';
 // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
 // import { isWelcomeLocked } from '../lib/coreState/store';
 // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
 // import { useCoreState } from '../providers/CoreStateProvider';
-import { usePrewarmMostRecentAccount } from '../hooks/usePrewarmMostRecentAccount';
+import { useT } from '../lib/i18n/I18nContext';
 import { trackEvent } from '../services/analytics';
 import {
   hideWebviewAccount,
@@ -99,6 +100,7 @@ interface ContextMenuState {
 }
 
 const Accounts = () => {
+  const { t } = useT();
   const dispatch = useAppDispatch();
   const accountsById = useAppSelector(state => state.accounts.accounts);
   const order = useAppSelector(state => state.accounts.order);
@@ -241,7 +243,7 @@ const Accounts = () => {
       {/* Narrow icon rail — always rendered. */}
       {/* [#1123] welcomeLocked guard removed — welcome-agent onboarding replaced by Joyride walkthrough */}
       <aside className="z-30 flex w-16 flex-none flex-col items-center gap-2 bg-white/60 py-3 backdrop-blur-md my-3 ml-3 rounded-2xl border border-stone-200/70 shadow-soft">
-        <RailButton active={isAgentSelected} onClick={selectAgent} tooltip="Agent">
+        <RailButton active={isAgentSelected} onClick={selectAgent} tooltip={t('accounts.agent')}>
           <AgentIcon className="h-9 w-9 rounded-lg" />
         </RailButton>
 
@@ -260,14 +262,14 @@ const Accounts = () => {
         <button
           onClick={() => setAddOpen(true)}
           className="group relative mt-2 flex h-11 w-11 items-center justify-center rounded-xl border border-dashed border-stone-300 text-stone-400 hover:z-50 hover:bg-stone-50 hover:text-stone-600"
-          aria-label="Add app">
+          aria-label={t('accounts.addAccount')}>
           <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
           </svg>
           {/* Issue #1284 — see RailButton for why the tooltip sits below
               the icon instead of to the right. */}
           <span className="pointer-events-none absolute left-1/2 top-full mt-1 -translate-x-1/2 whitespace-nowrap rounded-md bg-stone-900 px-2 py-1 text-xs text-white opacity-0 shadow-md transition-opacity group-hover:opacity-100 z-50">
-            Add app
+            {t('accounts.addAccount')}
           </span>
         </button>
       </aside>
@@ -297,7 +299,7 @@ const Accounts = () => {
           </div>
         ) : (
           <div className="flex flex-1 items-center justify-center text-sm text-stone-400">
-            Select or add an app to get started.
+            {t('accounts.noAccounts')}
           </div>
         )}
       </main>
@@ -325,7 +327,7 @@ const Accounts = () => {
                 d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"
               />
             </svg>
-            Logout
+            {t('accounts.disconnect')}
           </button>
         </div>
       )}

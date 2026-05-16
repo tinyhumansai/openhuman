@@ -233,15 +233,60 @@ impl AuthProfilesStore {
     fn load_locked(&self) -> Result<AuthProfilesData> {
         let mut persisted = self.read_persisted_locked()?;
         let mut migrated = false;
+        let mut dropped_ids: Vec<String> = Vec::new();
 
         let mut profiles = BTreeMap::new();
         for (id, p) in &mut persisted.profiles {
-            let (access_token, access_migrated) =
-                self.decrypt_optional(p.access_token.as_deref())?;
-            let (refresh_token, refresh_migrated) =
-                self.decrypt_optional(p.refresh_token.as_deref())?;
-            let (id_token, id_migrated) = self.decrypt_optional(p.id_token.as_deref())?;
-            let (token, token_migrated) = self.decrypt_optional(p.token.as_deref())?;
+            // Decrypt all four optional secret fields. A decryption
+            // failure here means the secret was encrypted with a
+            // `.secret_key` that no longer exists (manual deletion,
+            // partial workspace restore, key rotation across machines).
+            // The profile is unrecoverable — drop it from the store
+            // instead of poisoning every reader. The user falls back
+            // to a clean "logged out" state and the next login
+            // re-encrypts cleanly under the current key.
+            let decrypted = (|| -> Result<_> {
+                let (access_token, access_migrated) =
+                    self.decrypt_optional(p.access_token.as_deref())?;
+                let (refresh_token, refresh_migrated) =
+                    self.decrypt_optional(p.refresh_token.as_deref())?;
+                let (id_token, id_migrated) = self.decrypt_optional(p.id_token.as_deref())?;
+                let (token, token_migrated) = self.decrypt_optional(p.token.as_deref())?;
+                Ok((
+                    access_token,
+                    access_migrated,
+                    refresh_token,
+                    refresh_migrated,
+                    id_token,
+                    id_migrated,
+                    token,
+                    token_migrated,
+                ))
+            })();
+
+            let (
+                access_token,
+                access_migrated,
+                refresh_token,
+                refresh_migrated,
+                id_token,
+                id_migrated,
+                token,
+                token_migrated,
+            ) = match decrypted {
+                Ok(v) => v,
+                Err(e) => {
+                    log::warn!(
+                        "[auth] dropping unrecoverable profile provider={}: {e}. \
+                         Most likely cause: .secret_key was regenerated after this profile \
+                         was stored. The store will be rewritten without this entry; \
+                         re-authenticate to restore the session.",
+                        p.provider
+                    );
+                    dropped_ids.push(id.clone());
+                    continue;
+                }
+            };
 
             if let Some(value) = access_migrated {
                 p.access_token = Some(value);
@@ -296,7 +341,25 @@ impl AuthProfilesStore {
             );
         }
 
-        if migrated {
+        // Purge dropped profiles from the on-disk persisted view AND
+        // any `active_profiles` pointers that referenced them, so the
+        // next read returns a clean "no active session" state.
+        if !dropped_ids.is_empty() {
+            for id in &dropped_ids {
+                persisted.profiles.remove(id);
+            }
+            persisted
+                .active_profiles
+                .retain(|_, profile_id| !dropped_ids.contains(profile_id));
+            persisted.updated_at = Utc::now().to_rfc3339();
+            log::warn!(
+                "[auth] purged {} unrecoverable profile(s) from store at {} \
+                 (provider list redacted to avoid leaking PII)",
+                dropped_ids.len(),
+                self.path.display(),
+            );
+            self.write_persisted_locked(&persisted)?;
+        } else if migrated {
             self.write_persisted_locked(&persisted)?;
         }
 

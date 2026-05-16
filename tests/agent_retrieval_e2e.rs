@@ -54,16 +54,37 @@ fn test_config() -> (TempDir, Config) {
 
 // ── RAII env guard shared by all tests in this file ──────────────────────────
 
+/// Process-wide mutex that serialises every test in this binary that
+/// mutates `OPENHUMAN_WORKSPACE`. Cargo runs integration-test binaries
+/// multi-threaded by default (`test-threads = num_cpus`), so without
+/// this serialisation two tests would race on the env var: test A sets
+/// it to `/tmp/aaa`, test B overwrites it with `/tmp/bbb`, then when
+/// B's `TempDir` drops it unlinks `/tmp/bbb` while A is still reading
+/// from it. That race surfaced in CI as `SQLITE_IOERR_FSTAT` (error
+/// code 1802) during a later `with_connection` call on the now-deleted
+/// path, and earlier as `fetch_leaves` returning 0 hits when the
+/// resolved workspace temporarily pointed at the wrong sibling test's
+/// (otherwise empty) tempdir.
+///
+/// `unwrap_or_else(|p| p.into_inner())` keeps the lock usable after a
+/// poisoning panic so one failing test never cascades.
+static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 struct EnvGuard {
     key: &'static str,
     prev: Option<std::ffi::OsString>,
+    /// Last field — dropped after `Drop::drop` has already restored
+    /// the env var, so the next test acquires the lock against a
+    /// clean `OPENHUMAN_WORKSPACE` value.
+    _lock: std::sync::MutexGuard<'static, ()>,
 }
 
 impl Drop for EnvGuard {
     fn drop(&mut self) {
         // SAFETY: cargo test runs each integration test binary in its own
-        // process; nothing else in this bin mutates these env vars, and the
-        // guard restores the previous value on drop.
+        // process; the `ENV_LOCK` mutex held in `_lock` serialises all
+        // mutations within this binary, and the guard restores the
+        // previous value before the lock is released.
         unsafe {
             match self.prev.take() {
                 Some(v) => std::env::set_var(self.key, v),
@@ -77,13 +98,19 @@ impl Drop for EnvGuard {
 /// restores the previous value on drop. This makes the tool wrappers (which
 /// call `load_config_with_timeout` internally) resolve to the same workspace
 /// that was used for ingest.
+///
+/// The returned guard also holds [`ENV_LOCK`] for its lifetime, so concurrent
+/// tests in the same binary cannot stomp on each other's
+/// `OPENHUMAN_WORKSPACE` setting.
 fn set_workspace_env(tmp: &TempDir) -> EnvGuard {
+    let lock = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let prev = std::env::var_os("OPENHUMAN_WORKSPACE");
     // SAFETY: see EnvGuard::Drop above.
     unsafe { std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path()) };
     EnvGuard {
         key: "OPENHUMAN_WORKSPACE",
         prev,
+        _lock: lock,
     }
 }
 

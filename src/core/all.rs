@@ -139,6 +139,8 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
         .extend(crate::openhuman::channels::controllers::all_channels_registered_controllers());
     // Persistent configuration management
     controllers.extend(crate::openhuman::config::all_config_registered_controllers());
+    // Local sidecar reachability + backend Socket.IO state diagnostics (#1527)
+    controllers.extend(crate::openhuman::connectivity::all_connectivity_registered_controllers());
     // User credentials and session management
     controllers.extend(crate::openhuman::credentials::all_credentials_registered_controllers());
     // Desktop service management
@@ -182,6 +184,12 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(crate::openhuman::billing::all_billing_registered_controllers());
     // Team and role management
     controllers.extend(crate::openhuman::team::all_team_registered_controllers());
+    // E2E test support — `openhuman.test_reset` wipes sidecar state in-place.
+    // Gated behind the `e2e-test-support` cargo feature so shipped binaries
+    // never even register the destructive wipe RPC. Flipped on by the E2E
+    // build script (app/scripts/e2e-build.sh).
+    #[cfg(feature = "e2e-test-support")]
+    controllers.extend(crate::openhuman::test_support::all_test_support_registered_controllers());
     // Local wallet metadata and onboarding status
     controllers.extend(crate::openhuman::wallet::all_wallet_registered_controllers());
     // Local assistive surfaces over third-party provider apps
@@ -256,6 +264,7 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
         .extend(crate::openhuman::channels::providers::web::all_web_channel_controller_schemas());
     schemas.extend(crate::openhuman::channels::controllers::all_channels_controller_schemas());
     schemas.extend(crate::openhuman::config::all_config_controller_schemas());
+    schemas.extend(crate::openhuman::connectivity::all_connectivity_controller_schemas());
     schemas.extend(crate::openhuman::credentials::all_credentials_controller_schemas());
     schemas.extend(crate::openhuman::service::all_service_controller_schemas());
     schemas.extend(crate::openhuman::migration::all_migration_controller_schemas());
@@ -279,6 +288,8 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::referral::all_referral_controller_schemas());
     schemas.extend(crate::openhuman::billing::all_billing_controller_schemas());
     schemas.extend(crate::openhuman::team::all_team_controller_schemas());
+    #[cfg(feature = "e2e-test-support")]
+    schemas.extend(crate::openhuman::test_support::all_test_support_controller_schemas());
     schemas.extend(crate::openhuman::wallet::all_wallet_controller_schemas());
     schemas.extend(crate::openhuman::provider_surfaces::all_provider_surfaces_controller_schemas());
     schemas.extend(crate::openhuman::text_input::all_text_input_controller_schemas());
@@ -335,6 +346,9 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
             "Composio OAuth integrations proxied via the backend — toolkits, connections, tools, and actions."
         ),
         "config" => Some("Read and update persisted runtime configuration."),
+        "connectivity" => Some(
+            "Connectivity diagnostics for the local sidecar, listening port, and backend Socket.IO state.",
+        ),
         "cron" => Some("Manage scheduled jobs and run history."),
         "decrypt" => Some("Decrypt secure values managed by secret storage."),
         "doctor" => Some("Run diagnostics for workspace and runtime health."),
@@ -360,6 +374,9 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
         "referral" => Some("Referral codes, stats, and apply flows via the hosted backend API."),
         "billing" => Some("Subscription plan, payment links, and credit top-up via the backend."),
         "team" => Some("Team member management, invites, and role changes via the backend."),
+        "test" => Some(
+            "E2E test support — wipe sidecar state in-place between specs.",
+        ),
         "wallet" => Some("Local wallet onboarding status and derived multi-chain account metadata."),
         "provider_surfaces" => Some(
             "Local-first assistive surfaces for provider events, respond queues, and drafts.",

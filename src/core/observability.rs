@@ -1,6 +1,7 @@
 //! Centralised error reporting for the core, plus a Sentry
 //! `before_send` filters that drop deterministic provider noise:
-//! per-attempt transient-upstream failures and budget-exhausted user-state.
+//! per-attempt transient-upstream failures, budget-exhausted user-state,
+//! and transient updater failures.
 //!
 //! Wraps `tracing::error!` (which the global subscriber forwards to Sentry via
 //! `sentry-tracing`) inside a `sentry::with_scope` so each captured event
@@ -52,6 +53,21 @@ pub const TRANSIENT_TRANSPORT_PHRASES: &[&str] = &[
     "error sending request",
 ];
 
+/// HTTP statuses from updater probes that are expected GitHub/network noise:
+/// unauthenticated GitHub API rate-limit / policy 403s plus gateway/server
+/// hiccups. Scoped to updater domains/messages by [`is_updater_transient_event`].
+const UPDATER_TRANSIENT_HTTP_STATUSES: &[u16] = &[403, 500, 502, 503, 504];
+
+/// Message fragments observed from Tauri/core updater transient failures.
+/// Keep these updater-specific so unrelated GitHub or generic transport
+/// failures still reach Sentry.
+const UPDATER_TRANSIENT_MESSAGE_PHRASES: &[&str] = &[
+    "failed to check for updates: error sending request",
+    "github api error: 403",
+    "github api error: 5",
+    "error sending request for url (https://github.com/tinyhumansai/openhuman/releases/",
+];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExpectedErrorKind {
     LocalAiDisabled,
@@ -60,8 +76,21 @@ pub enum ExpectedErrorKind {
     TransientUpstreamHttp,
     LocalAiBinaryMissing,
     BackendUserError,
+    /// Third-party provider (composio, gmail OAuth, …) surfaced a user-state
+    /// validation failure: a trigger registry mismatch, a toolkit that was
+    /// never enabled, an OAuth scope that the user did not grant, or a
+    /// required field that was left blank. The UI already shows an
+    /// actionable error and Sentry has no remediation path — see
+    /// [`is_provider_user_state_message`] for the exact body shapes.
+    ///
+    /// Drops OPENHUMAN-TAURI-3R / -3S / -33 / -34 / -97 (~54 events): the
+    /// composio backend wraps several of these as HTTP 500 with the real
+    /// 4xx body embedded, which would otherwise escape the
+    /// [`is_backend_user_error_message`] 4xx-only matcher.
+    ProviderUserState,
     LocalAiCapabilityUnavailable,
     BudgetExhausted,
+    SessionExpired,
 }
 
 pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
@@ -81,6 +110,13 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     if lower.contains("binary not found") {
         return Some(ExpectedErrorKind::LocalAiBinaryMissing);
     }
+    // Check `is_provider_user_state_message` BEFORE `is_backend_user_error_message`:
+    // composio's "Toolkit X is not enabled" lands as a 4xx that both would
+    // match, and the more specific `ProviderUserState` bucket is the right
+    // home — see the variant doc-comment for OPENHUMAN-TAURI-… coverage.
+    if is_provider_user_state_message(&lower) {
+        return Some(ExpectedErrorKind::ProviderUserState);
+    }
     if is_backend_user_error_message(&lower) {
         return Some(ExpectedErrorKind::BackendUserError);
     }
@@ -90,7 +126,52 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     if crate::openhuman::providers::is_budget_exhausted_message(message) {
         return Some(ExpectedErrorKind::BudgetExhausted);
     }
+    if is_session_expired_message(message) {
+        return Some(ExpectedErrorKind::SessionExpired);
+    }
     None
+}
+
+/// Detect **app-session-expired** boundary errors that bubble up from any
+/// backend-touching call site (agent, web channel, cron, integrations).
+///
+/// Deliberately stricter than the dispatch-site classifier in
+/// [`crate::core::jsonrpc`]: the dispatch-site predicate matches a generic
+/// "401 + unauthorized" pair to trigger token cleanup on *any* 401 (even an
+/// OpenAI / Anthropic BYO-key 401 that means a misconfigured key — see
+/// `providers::ops::api_error`). Replicating that loose match here would
+/// silence BYO-key configuration errors at the agent layer, where they
+/// *are* actionable and should reach Sentry as errors.
+///
+/// The canonical OpenHuman session-expired wire shapes:
+///
+/// - `"OpenHuman API error (401 Unauthorized): {…\"Session expired. Please
+///   log in again.\"…}"` — emitted by `providers::ops::api_error` from the
+///   OpenHuman backend and re-raised through `agent::run_single` /
+///   `channels::providers::web::run_chat_task` (OPENHUMAN-TAURI-26). The
+///   `"session expired"` substring anchors the match to the OpenHuman
+///   backend's session-renewal body, not the bare numeric status.
+/// - `"SESSION_EXPIRED: backend session not active — sign in to resume LLM work"`
+///   — the `scheduler_gate::is_signed_out` sentinel from
+///   `providers::openhuman_backend::resolve_bearer`.
+/// - `"no backend session token; run auth_store_session first"` and
+///   `"session JWT required"` — local pre-flight guards that fire when the
+///   stored profile is empty (`#1465`-ish onboarding spam) or has been
+///   cleared by a previous 401 cycle. Both shapes are OpenHuman-specific.
+///
+/// At the JSON-RPC dispatch boundary the looser classifier in
+/// `crate::core::jsonrpc::is_session_expired_error` keeps its existing
+/// generic "401 + unauthorized" match so token cleanup + `DomainEvent::SessionExpired`
+/// publish still fires for every 401. Adding the demote here therefore does
+/// **not** silence the auto-cleanup teardown — it only stops the duplicate
+/// per-attempt error event that escaped via `report_error_or_expected` from
+/// the agent / web-channel layers (OPENHUMAN-TAURI-26).
+pub fn is_session_expired_message(msg: &str) -> bool {
+    let lower = msg.to_ascii_lowercase();
+    lower.contains("session expired")
+        || lower.contains("no backend session token")
+        || lower.contains("session jwt required")
+        || msg.contains("SESSION_EXPIRED")
 }
 
 /// Detect transport-level connection failures that fire before any HTTP status
@@ -134,10 +215,33 @@ fn is_network_unreachable_message(lower: &str) -> bool {
 /// `"OpenHuman API error (504 Gateway Timeout): error code: 504"`. Pin the
 /// match to that exact `"api error (<status>"` prefix so an unrelated message
 /// that merely mentions "504" (a log line, a doc URL) is not silenced.
+///
+/// Also matches the second canonical wire shape: tungstenite's
+/// `WsError::Http(response)` Display, which renders as `"HTTP error: <status>"`
+/// (and which `socket::ws_loop::run_connection` wraps as
+/// `"WebSocket connect: HTTP error: 502 Bad Gateway"`). Per
+/// OPENHUMAN-TAURI-5P (~110 events) and -EZ (~51 events), backend
+/// staging/production load balancers emit HTTP 502/504 during the WebSocket
+/// upgrade handshake; tungstenite surfaces those as `WsError::Http` and the
+/// socket reconnect loop already handles them via exponential backoff. Each
+/// `FAIL_ESCALATE_THRESHOLD` escalation fires `report_error_or_expected` with
+/// the formatted reason, which would land in Sentry as `domain=socket`
+/// noise without this matcher (the existing `domain=integrations`
+/// before_send filter scopes too narrowly).
+///
+/// Three separator variants cover every observed shape: trailing space
+/// (`"HTTP error: 502 Bad Gateway"`), trailing newline (`"HTTP error: 502\n…"`
+/// from chained errors), and trailing colon (`"HTTP error: 502: …"`). Bare
+/// `"HTTP error: 502"` at end-of-string is not matched on purpose — the
+/// status integer alone could collide with unrelated log lines containing
+/// `"HTTP error: 5023"` (port number, runbook ID).
 fn is_transient_upstream_http_message(lower: &str) -> bool {
-    TRANSIENT_PROVIDER_HTTP_STATUSES
-        .iter()
-        .any(|code| lower.contains(&format!("api error ({code}")))
+    TRANSIENT_PROVIDER_HTTP_STATUSES.iter().any(|code| {
+        lower.contains(&format!("api error ({code}"))
+            || lower.contains(&format!("http error: {code} "))
+            || lower.contains(&format!("http error: {code}\n"))
+            || lower.contains(&format!("http error: {code}:"))
+    })
 }
 
 /// Detect non-2xx HTTP failures returned from the backend integrations / composio
@@ -178,6 +282,80 @@ fn is_backend_user_error_message(lower: &str) -> bool {
     };
     // 4xx (except transient 408 / 429 which are handled separately).
     matches!(status, 400..=499) && status != 408 && status != 429
+}
+
+/// Detect third-party provider validation failures that bubble up as
+/// user-state errors — composio trigger registry mismatch, toolkit not
+/// enabled, OAuth scopes missing, required fields left blank.
+///
+/// Unlike [`is_backend_user_error_message`], this classifier is **body-text
+/// shape-based** rather than HTTP-status-based, so it catches the cases
+/// where the composio backend wraps a Composio API 4xx as a 500 with the
+/// real validation message embedded in the body (OPENHUMAN-TAURI-3R / -3S
+/// / -97 — `"Backend returned 500 … Trigger type GITHUB_PUSH_EVENT not
+/// found"`, `"Backend returned 500 … Missing required fields: Your
+/// Subdomain"`). These would otherwise escape the 4xx-only matcher and
+/// fire as actionable Sentry events even though the underlying condition
+/// is user-state (the trigger slug isn't in composio's registry, the
+/// toolkit wasn't enabled by the user, the form field was left blank, …).
+///
+/// Also handles the gmail-sync 403 (OPENHUMAN-TAURI-33) where the
+/// composio sync loop surfaces the upstream Google OAuth scopes error as
+/// `"HTTP 403: Request had insufficient authentication scopes."`. The
+/// remediation is "user re-authorizes with the right scope" — nothing
+/// Sentry can act on.
+///
+/// All matches are substring-based against the lower-cased message so the
+/// classifier survives caller wrapping (rpc.invoke_method, agent.run_single,
+/// `[composio:gmail]` prefixes, anyhow chains, …).
+fn is_provider_user_state_message(lower: &str) -> bool {
+    // OPENHUMAN-TAURI-3R / -3S: composio enable_trigger when the slug isn't
+    // in the trigger registry (e.g. user clicked a stale UI option).
+    // Backend returns 500 with `"Trigger type GITHUB_PUSH_EVENT not found"`.
+    // Also covers the alternate phrasing `"Cannot enable trigger … not found"`.
+    if (lower.contains("trigger type ") && lower.contains("not found"))
+        || (lower.contains("cannot enable trigger") && lower.contains("not found"))
+    {
+        return true;
+    }
+
+    // OPENHUMAN-TAURI-34: composio rejected a tool call because the user
+    // hasn't enabled the toolkit yet. Wire shape:
+    // `Backend returned 400 … Toolkit "get" is not enabled`.
+    if lower.contains("toolkit ") && lower.contains("is not enabled") {
+        return true;
+    }
+
+    // OPENHUMAN-TAURI-97: composio authorize with a blank required field —
+    // SharePoint Subdomain, WhatsApp WABA ID, Tenant Name, etc.
+    // Backend returns 500 with `"Missing required fields: …"` body.
+    //
+    // **Intentionally broad** — unlike the trigger/toolkit arms, this is a
+    // single substring with no second anchor. Composio's wire shape varies
+    // per provider (`Missing required fields: Tenant Name`, `Missing
+    // required fields: Your Subdomain (example: 'your-subdomain' for…)`,
+    // `Missing required fields: WABA ID (WhatsApp Business Account ID…)`)
+    // and embedding every variant would be brittle. Accepted false-positive
+    // surface: a non-composio caller whose error happens to contain
+    // `"missing required fields"` (e.g. `"Internal error: missing required
+    // fields in config"`) will also demote to info. This is fine — every
+    // current emit site routed through `report_error_or_expected` is scoped
+    // to composio / integrations envelopes, so a stray collision would have
+    // to come from a brand-new call site that explicitly opts in.
+    // See `unrelated_missing_required_fields_classifies_as_accepted_false_positive`
+    // for the documented surface.
+    if lower.contains("missing required fields") {
+        return true;
+    }
+
+    // OPENHUMAN-TAURI-33: gmail sync hit an OAuth scope wall —
+    // `HTTP 403: Request had insufficient authentication scopes.`
+    // (or any sibling OAuth scope rejection from composio's toolkits).
+    if lower.contains("insufficient authentication scopes") {
+        return true;
+    }
+
+    false
 }
 
 /// Detect "<capability> is disabled / unavailable for this RAM tier" errors
@@ -309,6 +487,22 @@ fn report_expected_message(kind: ExpectedErrorKind, message: &str, domain: &str,
                 "[observability] {domain}.{operation} skipped expected backend user-error response: {message}"
             );
         }
+        ExpectedErrorKind::ProviderUserState => {
+            // Third-party provider (composio, gmail OAuth, …) rejected the
+            // request for a user-state reason: trigger slug missing from
+            // composio's registry (OPENHUMAN-TAURI-3R / -3S), toolkit not
+            // enabled (OPENHUMAN-TAURI-34), OAuth scopes missing
+            // (OPENHUMAN-TAURI-33), or a required form field was left blank
+            // (OPENHUMAN-TAURI-97). The UI already surfaces the actionable
+            // error to the user — Sentry has no remediation path.
+            tracing::info!(
+                domain = domain,
+                operation = operation,
+                kind = "provider_user_state",
+                error = %message,
+                "[observability] {domain}.{operation} skipped expected provider-user-state error: {message}"
+            );
+        }
         ExpectedErrorKind::LocalAiCapabilityUnavailable => {
             // User-state condition: the local-AI service refused a
             // capability (vision summarization, vision asset download)
@@ -339,6 +533,27 @@ fn report_expected_message(kind: ExpectedErrorKind, message: &str, domain: &str,
                 kind = "budget",
                 error = %message,
                 "[observability] {domain}.{operation} skipped expected budget-exhausted error: {message}"
+            );
+        }
+        ExpectedErrorKind::SessionExpired => {
+            // Auth-boundary condition: the user's JWT expired (or was never
+            // present). The JSON-RPC dispatch layer already handles the
+            // teardown — `Err` propagation publishes `DomainEvent::SessionExpired`
+            // which clears the stored token and flips the scheduler-gate
+            // signed-out override so background workers stand down — and the
+            // UI re-auths the user. The per-attempt error event from the
+            // upstream call site (agent.run_single, web_channel.run_chat_task)
+            // adds noise without signal: every mid-conversation 401 would
+            // emit one event before the cascade dampener kicks in
+            // (OPENHUMAN-TAURI-26, and the same upstream gap that
+            // OPENHUMAN-TAURI-1T's #1516 cascade fix dampened but did not
+            // close). Demote to info so the breadcrumb survives for trace
+            // correlation but Sentry sees no error event.
+            tracing::info!(
+                domain = domain,
+                operation = operation,
+                error = %message,
+                "[observability] {domain}.{operation} skipped expected session-expired error: {message}"
             );
         }
     }
@@ -457,6 +672,55 @@ pub fn is_max_iterations_event(event: &sentry::protocol::Event<'_>) -> bool {
         .any(crate::openhuman::agent::error::is_max_iterations_error)
 }
 
+/// Tag + body classifier for the `before_send` chain — drops Sentry events
+/// emitted at the OpenHuman backend / rpc layers for "401 Session
+/// expired" or the pre-flight "no session token stored" guards.
+///
+/// Pairs with [`is_session_expired_message`] (which classifies the
+/// message body at the emit site via `report_error_or_expected`). This
+/// fn runs in `before_send` so it catches any future call site that
+/// re-emits the same shape without routing through the classifier —
+/// keeps OPENHUMAN-TAURI-25 / -1Q / -27 / -1G permanently off Sentry
+/// (~185 events/day combined).
+///
+/// Scope: only the three domains that surface session-expired today
+/// (`llm_provider`, `backend_api`, `rpc`). Composio's OAuth-state 401
+/// is excluded — that's actionable and must reach Sentry.
+pub fn is_session_expired_event(event: &sentry::protocol::Event<'_>) -> bool {
+    let tags = &event.tags;
+    let Some(domain) = tags.get("domain").map(String::as_str) else {
+        return false;
+    };
+    if !matches!(domain, "llm_provider" | "backend_api" | "rpc") {
+        return false;
+    }
+
+    let status_is_401 = tags
+        .get("status")
+        .and_then(|s| s.parse::<u16>().ok())
+        .is_some_and(|code| code == 401);
+
+    let direct = event.message.as_deref();
+    let from_exception = event.exception.last().and_then(|e| e.value.as_deref());
+    let body_matches = [direct, from_exception]
+        .into_iter()
+        .flatten()
+        .any(is_session_expired_message);
+
+    if status_is_401 && body_matches {
+        return true;
+    }
+
+    // Pre-flight rpc guard has no status tag — accept on body alone,
+    // scoped to the rpc dispatcher (other domains don't emit the
+    // "no session token stored" sentinel).
+    if domain == "rpc" && body_matches {
+        return true;
+    }
+
+    false
+}
+
 pub fn is_transient_http_status(status: &str) -> bool {
     TRANSIENT_HTTP_STATUSES.contains(&status)
 }
@@ -469,6 +733,17 @@ pub fn is_transient_http_status_code(status: u16) -> bool {
 pub fn contains_transient_transport_phrase(message: &str) -> bool {
     let lower = message.to_ascii_lowercase();
     TRANSIENT_TRANSPORT_PHRASES
+        .iter()
+        .any(|phrase| lower.contains(phrase))
+}
+
+pub fn is_updater_transient_http_status(status: u16) -> bool {
+    UPDATER_TRANSIENT_HTTP_STATUSES.contains(&status)
+}
+
+pub fn is_updater_transient_message(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    UPDATER_TRANSIENT_MESSAGE_PHRASES
         .iter()
         .any(|phrase| lower.contains(phrase))
 }
@@ -488,6 +763,30 @@ fn event_has_transient_transport_phrase(event: &sentry::protocol::Event<'_>) -> 
                 .as_deref()
                 .is_some_and(contains_transient_transport_phrase)
         })
+}
+
+fn event_has_updater_transient_message(event: &sentry::protocol::Event<'_>) -> bool {
+    event
+        .message
+        .as_deref()
+        .is_some_and(is_updater_transient_message)
+        || event
+            .logentry
+            .as_ref()
+            .is_some_and(|log| is_updater_transient_message(&log.message))
+        || event.exception.values.iter().any(|exception| {
+            exception
+                .value
+                .as_deref()
+                .is_some_and(is_updater_transient_message)
+        })
+}
+
+fn event_has_updater_domain(event: &sentry::protocol::Event<'_>) -> bool {
+    matches!(
+        event.tags.get("domain").map(String::as_str),
+        Some("update") | Some("update.check_releases") | Some("updater")
+    )
 }
 
 fn is_transient_domain_failure(event: &sentry::protocol::Event<'_>, domain: &str) -> bool {
@@ -513,8 +812,48 @@ pub fn is_transient_backend_api_failure(event: &sentry::protocol::Event<'_>) -> 
 
 /// Transient integrations / Composio failures (timeout, connection reset,
 /// gateway hiccups).
+///
+/// Accepts both `domain="integrations"` (the shared
+/// [`crate::openhuman::integrations::IntegrationClient`] HTTP wrapper that
+/// fronts every backend-proxied integration) and `domain="composio"` (errors
+/// reported from the Composio op layer in
+/// [`crate::openhuman::composio::ops`]). Composio routes through the same
+/// `IntegrationClient`, so the failure shape is identical — but op-level
+/// reporters that wrap and re-emit those errors with their own domain tag
+/// would otherwise escape the integrations-scoped filter (OPENHUMAN-TAURI-35
+/// ~139ev, -2H ~26ev: `[composio] list_connections failed: Backend returned
+/// 502 …` events that landed in Sentry under `domain=composio`).
 pub fn is_transient_integrations_failure(event: &sentry::protocol::Event<'_>) -> bool {
     is_transient_domain_failure(event, "integrations")
+        || is_transient_domain_failure(event, "composio")
+}
+
+/// Transient updater failures from GitHub release probes/downloads.
+///
+/// Core-side reports carry structured tags (`domain=update`, often
+/// `operation=check_releases`, plus `failure/status`). Tauri's updater plugin
+/// can also emit message-only events such as
+/// `"failed to check for updates: error sending request for url (...latest.json)"`.
+/// Match both shapes, but never drop an arbitrary update-domain event unless
+/// it also has a transient status/transport marker.
+pub fn is_updater_transient_event(event: &sentry::protocol::Event<'_>) -> bool {
+    if event_has_updater_transient_message(event) {
+        return true;
+    }
+
+    if !event_has_updater_domain(event) {
+        return false;
+    }
+
+    match event.tags.get("failure").map(String::as_str) {
+        Some("non_2xx") => event
+            .tags
+            .get("status")
+            .and_then(|status| status.parse::<u16>().ok())
+            .is_some_and(is_updater_transient_http_status),
+        Some("transport") => event_has_transient_transport_phrase(event),
+        _ => false,
+    }
 }
 
 /// String tokens that mark a formatted error message as a transient HTTP
@@ -762,6 +1101,144 @@ mod tests {
     }
 
     #[test]
+    fn integrations_post_composio_timeout_dropped() {
+        // OPENHUMAN-TAURI-18 / -G regression guard. The integrations
+        // client at `crate::openhuman::integrations::client::IntegrationClient::post`
+        // builds the reqwest error chain and routes it through
+        // `report_error_or_expected(.., "integrations", "post", &[("failure",
+        // "transport")])`. The chain text contains the
+        // `"error sending request for url"` anchor so
+        // `is_network_unreachable_message` matches first and demotes to
+        // `NetworkUnreachable` (functionally equivalent to
+        // `TransientUpstreamHttp` for Sentry suppression — both routes
+        // skip the report path via `report_expected_message`).
+        //
+        // Pinning this exact wire shape catches a future refactor that
+        // drops the URL anchor (e.g. a chain-flatten helper that strips
+        // it for "PII safety"), which would silently re-open the leak.
+        let chain = "error sending request for url \
+                     (https://api.tinyhumans.ai/agent-integrations/composio/execute) → \
+                     client error (SendRequest) → connection error → \
+                     Operation timed out (os error 60)";
+        assert_eq!(
+            expected_error_kind(chain),
+            Some(ExpectedErrorKind::NetworkUnreachable),
+            "TAURI-18 chain shape must classify as NetworkUnreachable"
+        );
+
+        // If the URL anchor is ever dropped, the transport-phrase
+        // fallback (`operation timed out` from
+        // `TRANSIENT_TRANSPORT_PHRASES`) catches it via the message
+        // classifier helper used at upstream re-emit sites — confirm
+        // both paths so the regression surface is fully pinned.
+        assert!(
+            is_transient_message_failure(chain),
+            "TAURI-18 chain must also satisfy upstream message classifier \
+             (defense-in-depth for sites that lose the URL anchor)"
+        );
+    }
+
+    #[test]
+    fn channels_dispatch_re_emit_of_provider_502_classifies_as_transient() {
+        // OPENHUMAN-TAURI-4F (~157 events) / -1C (~87 events) / -8F
+        // (~39 events): the reliable provider layer retried 5xx, the
+        // agent re-raised the error, and `channels::runtime::dispatch`
+        // re-emitted it under `domain="channels", operation="dispatch_llm_error"`
+        // via raw `report_error` (which skips classification). Switching
+        // that site to `report_error_or_expected` routes the chain
+        // through this classifier — but only works if the canonical
+        // `"OpenHuman API error (NNN ...)"` substring still anchors the
+        // match through the channels-layer wrapping.
+        //
+        // The wrapping shape at the dispatch site is the agent error
+        // chain rendered via `format!("{e:#}")`. For a backend 502 from
+        // `providers::ops::api_error`, that resolves to:
+        //   "OpenHuman API error (502 Bad Gateway): error code: 502"
+        // possibly prepended with a runner / iteration prefix. Both
+        // shapes must classify as transient so the dispatch re-emit
+        // gets demoted.
+        for raw in [
+            "OpenHuman API error (502 Bad Gateway): error code: 502",
+            "agent.provider_chat failed: OpenHuman API error (503 Service Unavailable): retry budget exhausted",
+            "all providers exhausted: OpenHuman API error (504 Gateway Timeout): error code: 504",
+        ] {
+            assert_eq!(
+                expected_error_kind(raw),
+                Some(ExpectedErrorKind::TransientUpstreamHttp),
+                "channels.dispatch re-emit of {raw:?} must classify as transient"
+            );
+        }
+    }
+
+    #[test]
+    fn classifies_socket_transient_http_errors() {
+        // OPENHUMAN-TAURI-5P / -EZ: tungstenite's `WsError::Http(response)`
+        // surfaces during the WebSocket upgrade handshake when the backend
+        // load balancer returns 502 / 504. The socket reconnect loop wraps
+        // it as `format!("WebSocket connect: {e}")`, producing
+        // `"WebSocket connect: HTTP error: <status> <reason>"`. Each
+        // sustained-outage threshold escalation routes the formatted reason
+        // through `report_error_or_expected`, which must classify as
+        // transient so the per-client noise stops reaching Sentry.
+        for raw in [
+            "WebSocket connect: HTTP error: 502 Bad Gateway",
+            "WebSocket connect: HTTP error: 503 Service Unavailable",
+            "WebSocket connect: HTTP error: 504 Gateway Timeout",
+            "[socket] Connection failed (sustained outage after 5 attempts): \
+             WebSocket connect: HTTP error: 502 Bad Gateway",
+        ] {
+            assert_eq!(
+                expected_error_kind(raw),
+                Some(ExpectedErrorKind::TransientUpstreamHttp),
+                "should classify as transient upstream HTTP (socket shape): {raw}"
+            );
+        }
+
+        // Trailing-colon separator (chained error formatting).
+        // Note: avoid words like "connection refused" or "timeout" in the
+        // suffix — those would also match `is_network_unreachable_message` /
+        // `TRANSIENT_TRANSPORT_PHRASES` and the order in `expected_error_kind`
+        // would route through `NetworkUnreachable` first, defeating the
+        // assertion. Both classifications silence the event so production
+        // behavior is identical, but the test is anchored on the canonical
+        // socket shape so a future regression in `is_transient_upstream_http_message`
+        // surfaces here, not behind another classifier.
+        assert_eq!(
+            expected_error_kind(
+                "WebSocket connect: HTTP error: 502: upstream returned bad gateway"
+            ),
+            Some(ExpectedErrorKind::TransientUpstreamHttp)
+        );
+
+        // Trailing-newline separator (multi-line error chain).
+        assert_eq!(
+            expected_error_kind("WebSocket connect: HTTP error: 504\nupstream gateway"),
+            Some(ExpectedErrorKind::TransientUpstreamHttp)
+        );
+    }
+
+    #[test]
+    fn does_not_classify_unrelated_http_error_text_as_transient_socket() {
+        // Bare numeric "HTTP error: 5023" (port number, runbook ID) without
+        // a separator must NOT silence — pin the matcher to space/newline/colon.
+        assert_eq!(expected_error_kind("HTTP error: 5023"), None);
+        // Non-transient HTTP statuses must not match — `WsError::Http` for
+        // a 401 / 403 / 404 is genuinely actionable (auth / routing bug).
+        for raw in [
+            "WebSocket connect: HTTP error: 401 Unauthorized",
+            "WebSocket connect: HTTP error: 403 Forbidden",
+            "WebSocket connect: HTTP error: 404 Not Found",
+            "WebSocket connect: HTTP error: 500 Internal Server Error",
+        ] {
+            assert_eq!(
+                expected_error_kind(raw),
+                None,
+                "must NOT silence actionable socket HTTP error: {raw}"
+            );
+        }
+    }
+
+    #[test]
     fn does_not_classify_actionable_provider_errors_as_transient_upstream() {
         // 4xx (other than 408/429) and non-transient 5xx must continue to
         // reach Sentry — those are real bugs (wrong model name, malformed
@@ -792,9 +1269,13 @@ mod tests {
     #[test]
     fn classifies_backend_user_error_responses() {
         // OPENHUMAN-TAURI-BC: SharePoint authorize 400 because the user
-        // didn't fill in the required Tenant Name field. The exact wire
-        // shape `IntegrationClient::post` builds — must classify as
-        // expected so the Sentry event is suppressed.
+        // didn't fill in the required Tenant Name field. After the
+        // ProviderUserState classifier was added (#1472 wave E), this
+        // canonical shape now lands in the more specific
+        // ProviderUserState bucket — `"missing required fields"` wins
+        // over the generic 4xx matcher. Either expected-kind silences
+        // Sentry; the dedicated bucket gives operators a finer-grained
+        // `kind="provider_user_state"` info-log facet for triage.
         let bc = "Backend returned 400 Bad Request for POST \
                   https://api.tinyhumans.ai/agent-integrations/composio/authorize: \
                   Composio authorization failed: 400 \
@@ -802,8 +1283,9 @@ mod tests {
                   \"slug\":\"ConnectedAccount_MissingRequiredFields\",\"status\":400}}";
         assert_eq!(
             expected_error_kind(bc),
-            Some(ExpectedErrorKind::BackendUserError),
-            "OPENHUMAN-TAURI-BC wire shape must classify"
+            Some(ExpectedErrorKind::ProviderUserState),
+            "OPENHUMAN-TAURI-BC wire shape must classify as ProviderUserState (the \
+             more specific bucket once #1472 wave E added it)"
         );
 
         // Cover the rest of the 4xx surface produced by integrations /
@@ -873,6 +1355,188 @@ mod tests {
     }
 
     #[test]
+    fn classifies_trigger_type_not_found_as_provider_user_state() {
+        // OPENHUMAN-TAURI-3R / -3S: composio enable_trigger when the slug
+        // isn't in the trigger registry. Backend wraps the upstream
+        // composio 4xx as 500, so this would otherwise escape the
+        // 4xx-only `is_backend_user_error_message` matcher.
+        assert_eq!(
+            expected_error_kind(
+                "Backend returned 500 Internal Server Error for POST \
+                 https://api.tinyhumans.ai/agent-integrations/composio/triggers: \
+                 Trigger type GITHUB_PUSH_EVENT not found"
+            ),
+            Some(ExpectedErrorKind::ProviderUserState)
+        );
+
+        // Wrapped by `rpc.invoke_method` / `[composio] sync(toolkit) failed: …`
+        // — substring match must survive caller context.
+        assert_eq!(
+            expected_error_kind(
+                "rpc.invoke_method failed: Backend returned 500 Internal Server Error \
+                 for POST /agent-integrations/composio/triggers: \
+                 Trigger type SLACK_NEW_MESSAGE not found"
+            ),
+            Some(ExpectedErrorKind::ProviderUserState)
+        );
+
+        // Alternate phrasing observed from the same cluster.
+        assert_eq!(
+            expected_error_kind(
+                "composio: Cannot enable trigger 'GITHUB_PUSH_EVENT': trigger not found in registry"
+            ),
+            Some(ExpectedErrorKind::ProviderUserState)
+        );
+    }
+
+    #[test]
+    fn classifies_toolkit_not_enabled_as_provider_user_state() {
+        // OPENHUMAN-TAURI-34: 400 from composio because the user hasn't
+        // enabled the toolkit. Must classify as ProviderUserState (more
+        // specific) rather than the generic BackendUserError bucket — the
+        // ordering in `expected_error_kind` enforces that.
+        let msg = "Backend returned 400 Bad Request for POST \
+                   https://api.tinyhumans.ai/agent-integrations/composio/execute: \
+                   Toolkit \"get\" is not enabled";
+        assert_eq!(
+            expected_error_kind(msg),
+            Some(ExpectedErrorKind::ProviderUserState)
+        );
+
+        // Wrapped variant (anyhow chain through the agent runtime).
+        assert_eq!(
+            expected_error_kind(
+                "tool.invoke failed: Backend returned 400 Bad Request for POST \
+                 /agent-integrations/composio/execute: Toolkit \"linear\" is not enabled \
+                 for this account"
+            ),
+            Some(ExpectedErrorKind::ProviderUserState)
+        );
+    }
+
+    #[test]
+    fn classifies_missing_required_fields_as_provider_user_state() {
+        // OPENHUMAN-TAURI-97: composio authorize with a blank required
+        // field. Backend wraps the composio 400 as 500 with the inner
+        // body embedded as a JSON-stringified error message.
+        assert_eq!(
+            expected_error_kind(
+                "Backend returned 500 Internal Server Error for POST \
+                 https://api.tinyhumans.ai/agent-integrations/composio/authorize: \
+                 400 {\"error\":{\"message\":\"Missing required fields: Your Subdomain\"}}"
+            ),
+            Some(ExpectedErrorKind::ProviderUserState)
+        );
+
+        // Sibling toolkits surface the same shape with different field names.
+        for raw in [
+            "Backend returned 500 Internal Server Error for POST /authorize: Missing required fields: WABA ID",
+            "Backend returned 500 Internal Server Error for POST /authorize: Missing required fields: Tenant Name",
+            "Backend returned 400 Bad Request for POST /authorize: Missing required fields: Domain URL",
+        ] {
+            assert_eq!(
+                expected_error_kind(raw),
+                Some(ExpectedErrorKind::ProviderUserState),
+                "missing-required-fields shape must classify: {raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn classifies_insufficient_scopes_as_provider_user_state() {
+        // OPENHUMAN-TAURI-33: gmail sync surfaced the upstream Google
+        // OAuth scopes error verbatim through composio. Reaches the RPC
+        // dispatch site via `[composio] sync(gmail) failed: [composio:gmail]
+        // GMAIL_FETCH_EMAILS page 0: HTTP 403: Request had insufficient
+        // authentication scopes.`.
+        assert_eq!(
+            expected_error_kind(
+                "[composio:gmail] GMAIL_FETCH_EMAILS page 0: HTTP 403: \
+                 Request had insufficient authentication scopes."
+            ),
+            Some(ExpectedErrorKind::ProviderUserState)
+        );
+
+        // Bare upstream shape (in case any future caller forwards without
+        // the gmail prefix).
+        assert_eq!(
+            expected_error_kind("HTTP 403: Request had insufficient authentication scopes."),
+            Some(ExpectedErrorKind::ProviderUserState)
+        );
+    }
+
+    #[test]
+    fn does_not_classify_unrelated_500s_as_provider_user_state() {
+        // Sanity check: a generic 500 with no provider-user-state body
+        // shape must continue to reach Sentry as an actionable event.
+        assert_eq!(
+            expected_error_kind(
+                "Backend returned 500 Internal Server Error for POST \
+                 /agent-integrations/composio/triggers: random panic in handler"
+            ),
+            None
+        );
+        assert_eq!(
+            expected_error_kind(
+                "Backend returned 500 Internal Server Error for GET /teams: database connection lost"
+            ),
+            None
+        );
+
+        // Free-form text that mentions "not found" / "is not enabled" out
+        // of context must not be silenced.
+        assert_eq!(
+            expected_error_kind("file not found at /tmp/x.json"),
+            None,
+            "bare 'not found' without 'trigger type' anchor must NOT classify"
+        );
+        assert_eq!(
+            expected_error_kind("the cache is not enabled in this build"),
+            None,
+            "bare 'is not enabled' without 'toolkit ' anchor must NOT classify"
+        );
+    }
+
+    #[test]
+    fn unrelated_missing_required_fields_classifies_as_accepted_false_positive() {
+        // Documents the breadth of the `"missing required fields"` arm —
+        // unlike the trigger/toolkit arms it has no second anchor, so a
+        // non-composio call site whose error happens to contain the phrase
+        // will also demote. This is the accepted false-positive surface
+        // per the classifier doc-comment (every current emit site is
+        // scoped to composio/integrations envelopes, so a stray collision
+        // would have to come from a brand-new opt-in call site).
+        //
+        // Pinning this assertion locks the breadth in so a future
+        // narrowing of the matcher surfaces here instead of silently
+        // re-bucketing the demote path.
+        assert_eq!(
+            expected_error_kind("Internal error: missing required fields in config"),
+            Some(ExpectedErrorKind::ProviderUserState),
+            "accepted false-positive: bare 'missing required fields' demotes by design"
+        );
+    }
+
+    #[test]
+    fn provider_user_state_takes_precedence_over_backend_user_error() {
+        // Critical ordering guarantee: a 4xx body that contains the
+        // toolkit-not-enabled phrasing must land in `ProviderUserState`
+        // (more specific) — not in the generic `BackendUserError` bucket.
+        // Without the ordering in `expected_error_kind`, the 4xx matcher
+        // would win and the operator would see a different breadcrumb
+        // kind than intended (and miss the `kind="provider_user_state"`
+        // tag in info logs).
+        let msg = "Backend returned 400 Bad Request for POST \
+                   /agent-integrations/composio/execute: \
+                   Toolkit \"github\" is not enabled";
+        assert_eq!(
+            expected_error_kind(msg),
+            Some(ExpectedErrorKind::ProviderUserState),
+            "4xx + toolkit-not-enabled must land in ProviderUserState, not BackendUserError"
+        );
+    }
+
+    #[test]
     fn classifies_local_ai_binary_missing_errors() {
         // OPENHUMAN-TAURI-9N: `local_ai_tts` returns this exact string
         // from `service::speech::tts` when piper isn't on PATH or
@@ -925,6 +1589,107 @@ mod tests {
             expected_error_kind("whisper.cpp returned empty transcript"),
             None
         );
+    }
+
+    #[test]
+    fn classifies_session_expired_messages() {
+        // OPENHUMAN-TAURI-26: the canonical wire shape that `agent.run_single`
+        // and `web_channel.run_chat_task` re-emit via `report_error_or_expected`
+        // when the user's JWT expires mid-conversation. The classifier
+        // anchors on the literal `"session expired"` substring from the
+        // OpenHuman backend's 401 body — NOT on the bare `(401 Unauthorized)`
+        // status, which would also silence BYO-key OpenAI/Anthropic 401s
+        // that are actionable.
+        assert_eq!(
+            expected_error_kind(
+                r#"OpenHuman API error (401 Unauthorized): {"success":false,"error":"Session expired. Please log in again."}"#
+            ),
+            Some(ExpectedErrorKind::SessionExpired)
+        );
+
+        // Wrapped by the agent / web-channel report sites in production —
+        // the classifier is substring-based so caller context must not
+        // defeat it.
+        assert_eq!(
+            expected_error_kind(
+                r#"run_chat_task failed client_id=abc thread_id=t1 request_id=r1 error=OpenHuman API error (401 Unauthorized): {"success":false,"error":"Session expired. Please log in again."}"#
+            ),
+            Some(ExpectedErrorKind::SessionExpired)
+        );
+
+        // Sentinel raised by `providers::openhuman_backend::resolve_bearer`
+        // when the scheduler-gate signed-out override is set
+        // (OPENHUMAN-TAURI-1T's cascade dampener returns this so callers
+        // get the same teardown path as a real backend 401).
+        assert_eq!(
+            expected_error_kind(
+                "SESSION_EXPIRED: backend session not active — sign in to resume LLM work"
+            ),
+            Some(ExpectedErrorKind::SessionExpired)
+        );
+
+        // Local pre-flight guards — OpenHuman-specific phrasing, safe to
+        // match regardless of caller wrapping.
+        for raw in [
+            "no backend session token; run auth_store_session first",
+            "session JWT required",
+            "composio unavailable: no backend session token. Sign in first (auth_store_session).",
+        ] {
+            assert_eq!(
+                expected_error_kind(raw),
+                Some(ExpectedErrorKind::SessionExpired),
+                "should classify as session-expired: {raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn does_not_classify_byo_key_provider_401_as_session_expired() {
+        // Critical: a BYO-key 401 from OpenAI / Anthropic etc. is an
+        // actionable misconfiguration (wrong API key) that the user needs
+        // to fix in settings. It must reach Sentry as an error and must
+        // NOT be classified as session-expired at the agent layer — the
+        // strict classifier requires the OpenHuman backend's
+        // "session expired" body to anchor the match. The dispatch-site
+        // classifier (`crate::core::jsonrpc::is_session_expired_error`)
+        // still matches these for the `DomainEvent::SessionExpired`
+        // auto-cleanup path, which clears stale local state defensively.
+        for raw in [
+            "OpenAI API error (401 Unauthorized): invalid_api_key",
+            "Anthropic API error (401 Unauthorized): authentication_error",
+            "OpenAI API error (401): unauthorized",
+            r#"OpenAI API error (401 Unauthorized): {"error":{"code":"invalid_api_key","message":"Incorrect API key provided"}}"#,
+            // Generic "invalid token" without OpenHuman session phrasing —
+            // could mean a third-party provider rejected its own token.
+            "Invalid token",
+            "got an invalid token here",
+        ] {
+            assert_eq!(
+                expected_error_kind(raw),
+                None,
+                "BYO-key / generic 401 must reach Sentry as actionable error: {raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn does_not_classify_unrelated_messages_as_session_expired() {
+        // Bare numeric 401 (port number, runbook reference) must not be
+        // silenced.
+        assert_eq!(expected_error_kind("server returned 401"), None);
+        assert_eq!(
+            expected_error_kind("see runbook for 401 handling at https://example.com/401"),
+            None
+        );
+        // Provider 5xx — must reach Sentry.
+        assert_eq!(
+            expected_error_kind("OpenAI API error (500): internal server error"),
+            None
+        );
+        // Lowercase sentinel must NOT match — the SESSION_EXPIRED sentinel
+        // is case-sensitive by design (matches the sentinel emitted by
+        // `providers::openhuman_backend::resolve_bearer` exactly).
+        assert_eq!(expected_error_kind("session_expired lowercase"), None);
     }
 
     #[test]
@@ -1145,14 +1910,19 @@ mod tests {
             );
         }
 
-        let wrong_domain = event_with_tags(&[
-            ("domain", "composio"),
+        // Sibling-domain check: composio op-layer events MUST be silenced
+        // by the integrations filter — composio routes through the same
+        // `IntegrationClient` so the failure shape is identical, but
+        // op-level reporters that wrap and re-emit with their own domain
+        // tag would otherwise escape (OPENHUMAN-TAURI-35 / -2H).
+        let scheduler_domain = event_with_tags(&[
+            ("domain", "scheduler"),
             ("failure", "non_2xx"),
             ("status", "503"),
         ]);
         assert!(
-            !is_transient_integrations_failure(&wrong_domain),
-            "domain scoping must keep composio-tagged events visible"
+            !is_transient_integrations_failure(&scheduler_domain),
+            "domain scoping must keep unrelated transient-shaped events visible"
         );
 
         let non_matching_transport = event_with_tags_and_message(
@@ -1162,6 +1932,102 @@ mod tests {
         assert!(
             !is_transient_integrations_failure(&non_matching_transport),
             "transport failures without an allowlisted phrase must stay visible"
+        );
+    }
+
+    #[test]
+    fn composio_domain_routes_through_integrations_filter() {
+        // OPENHUMAN-TAURI-35 (~139 events) / -2H (~26 events):
+        // `[composio] list_connections failed: Backend returned 502 …` —
+        // composio op-layer wrappers (e.g. `composio_list_connections`) emit
+        // errors under `domain="composio"` so the original
+        // `domain="integrations"` filter let them through. Routing the
+        // composio domain through the same transient classifier closes
+        // that gap; the underlying transport / non_2xx semantics are
+        // identical because both layers share the same `IntegrationClient`.
+        for status in TRANSIENT_HTTP_STATUSES {
+            let event = event_with_tags(&[
+                ("domain", "composio"),
+                ("failure", "non_2xx"),
+                ("status", status),
+            ]);
+            assert!(
+                is_transient_integrations_failure(&event),
+                "composio status {status} must be classified as transient"
+            );
+        }
+
+        // Transport-phrase variant — composio also surfaces reqwest
+        // transport failures (timeouts, connection resets) once the op
+        // wrapper has tagged the event with `failure=transport`.
+        for phrase in TRANSIENT_TRANSPORT_PHRASES {
+            let event = event_with_tags_and_message(
+                &[("domain", "composio"), ("failure", "transport")],
+                &format!("[composio] execute failed: {phrase}"),
+            );
+            assert!(
+                is_transient_integrations_failure(&event),
+                "composio transport phrase {phrase} must be classified as transient"
+            );
+        }
+
+        // Non-transient composio statuses (404 / 500) must still surface —
+        // actionable bugs even when reported under the composio domain.
+        for status in ["404", "500"] {
+            let event = event_with_tags(&[
+                ("domain", "composio"),
+                ("failure", "non_2xx"),
+                ("status", status),
+            ]);
+            assert!(
+                !is_transient_integrations_failure(&event),
+                "composio status {status} must stay visible"
+            );
+        }
+    }
+
+    #[test]
+    fn updater_transient_403_is_dropped() {
+        let event = event_with_tags_and_message(
+            &[
+                ("domain", "update"),
+                ("operation", "check_releases"),
+                ("failure", "non_2xx"),
+                ("status", "403"),
+            ],
+            "[observability] update.check_releases failed: GitHub API error: 403 Forbidden",
+        );
+        assert!(
+            is_updater_transient_event(&event),
+            "GitHub 403 updater checks are unactionable transient/rate-limit noise"
+        );
+    }
+
+    #[test]
+    fn updater_transient_502_is_dropped() {
+        let event = event_with_tags_and_message(
+            &[
+                ("domain", "update.check_releases"),
+                ("failure", "non_2xx"),
+                ("status", "502"),
+            ],
+            "GitHub API error: 502 Bad Gateway",
+        );
+        assert!(
+            is_updater_transient_event(&event),
+            "GitHub 5xx updater checks must be filtered as transient"
+        );
+    }
+
+    #[test]
+    fn updater_real_panic_still_reported() {
+        let event = event_with_tags_and_message(
+            &[("domain", "update"), ("operation", "check_releases")],
+            "thread 'main' panicked at src/openhuman/update/core.rs: index out of bounds",
+        );
+        assert!(
+            !is_updater_transient_event(&event),
+            "update-domain events without a transient updater shape must still reach Sentry"
         );
     }
 

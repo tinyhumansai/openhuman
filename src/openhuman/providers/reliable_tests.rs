@@ -845,3 +845,153 @@ fn failure_reason_upstream_unhealthy_wins_over_all_others() {
     // All flags set — upstream_unhealthy must still win.
     assert_eq!(failure_reason(true, true, true), "upstream_unhealthy");
 }
+
+// ── issue #1596: custom_openai model-not-found UX ──
+//
+// When a `custom_openai` provider is configured with a model name that
+// does not exist on the user's endpoint (e.g. `reasoning-v1` on a
+// provider that never shipped it), the bail aggregate is the only
+// signal the user has — and the default text was an opaque dump of
+// per-attempt error envelopes. The helper below tags the dump with a
+// pointer at `reliability.model_fallbacks` when the user hasn't
+// configured a chain yet, so the next step is obvious without
+// re-reading the docs.
+
+#[test]
+fn format_failure_aggregate_prepends_user_hint_when_no_fallbacks_configured() {
+    let failures = vec![
+        "provider=custom_openai model=reasoning-v1 attempt 1/1: non_retryable; \
+         error=custom_openai API error (404 Not Found): {\"error\":{\"message\":\
+         \"model 'reasoning-v1' not found\"}}"
+            .to_string(),
+    ];
+
+    let msg = format_failure_aggregate("reasoning-v1", &failures, false);
+
+    assert!(
+        msg.contains("may not be available on your provider"),
+        "hint copy missing: {msg}"
+    );
+    assert!(
+        msg.contains("reliability.model_fallbacks"),
+        "config key reference missing: {msg}"
+    );
+    assert!(
+        msg.contains("Settings → AI"),
+        "settings pointer missing: {msg}"
+    );
+    assert!(
+        msg.contains("reasoning-v1"),
+        "should mention the offending model name: {msg}"
+    );
+    // The raw attempt dump must still be present for support to diagnose.
+    assert!(
+        msg.contains("custom_openai API error (404 Not Found)"),
+        "raw failure attempts dropped: {msg}"
+    );
+}
+
+#[test]
+fn format_failure_aggregate_omits_hint_when_fallbacks_configured() {
+    // User already engaged with `reliability.model_fallbacks`; the
+    // configured chain itself failed too. Telling them to "configure a
+    // fallback chain" would be misleading — keep the raw dump only.
+    let failures = vec![
+        "provider=primary model=reasoning-v1 attempt 1/1: non_retryable; error=...".to_string(),
+        "provider=primary model=fallback-a attempt 1/1: non_retryable; error=...".to_string(),
+    ];
+
+    let msg = format_failure_aggregate("reasoning-v1", &failures, true);
+
+    assert!(
+        !msg.contains("Configure a fallback chain"),
+        "hint must NOT fire when fallbacks already configured: {msg}"
+    );
+    assert!(
+        msg.starts_with("All providers/models failed."),
+        "should use the plain aggregate when user has engaged with the knob: {msg}"
+    );
+}
+
+/// End-to-end: a `chat_with_system` call that fails with the
+/// `custom_openai`-shaped 404 must bail with the user-actionable hint
+/// included.
+#[tokio::test]
+async fn chat_with_system_bail_includes_hint_when_no_fallbacks() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let provider = ReliableProvider::new(
+        vec![(
+            "custom_openai".into(),
+            Box::new(MockProvider {
+                calls: Arc::clone(&calls),
+                fail_until_attempt: 999, // never recovers
+                response: "(unused)",
+                error: "custom_openai API error (404 Not Found): \
+                        {\"error\":{\"message\":\"model 'reasoning-v1' not found\",\
+                        \"type\":\"not_found_error\"}}",
+            }),
+        )],
+        0,
+        1,
+    );
+
+    let err = provider
+        .chat_with_system(None, "hi", "reasoning-v1", 0.0)
+        .await
+        .unwrap_err()
+        .to_string();
+
+    assert!(
+        err.contains("may not be available on your provider"),
+        "expected hint, got: {err}"
+    );
+    assert!(
+        err.contains("reasoning-v1"),
+        "expected model name in error: {err}"
+    );
+}
+
+/// End-to-end: when the user has configured a fallback chain and it
+/// also exhausts, the hint must NOT fire — the user already knows the
+/// knob exists, they just need the raw dump to debug their chain.
+#[tokio::test]
+async fn chat_with_system_bail_omits_hint_when_fallbacks_configured_but_all_fail() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut fallbacks = HashMap::new();
+    fallbacks.insert(
+        "reasoning-v1".to_string(),
+        vec!["chat-v1".to_string(), "general-v1".to_string()],
+    );
+
+    let provider = ReliableProvider::new(
+        vec![(
+            "custom_openai".into(),
+            Box::new(MockProvider {
+                calls: Arc::clone(&calls),
+                fail_until_attempt: 999,
+                response: "(unused)",
+                error: "custom_openai API error (404 Not Found): model not found",
+            }),
+        )],
+        0,
+        1,
+    )
+    .with_model_fallbacks(fallbacks);
+
+    let err = provider
+        .chat_with_system(None, "hi", "reasoning-v1", 0.0)
+        .await
+        .unwrap_err()
+        .to_string();
+
+    assert!(
+        !err.contains("Configure a fallback chain"),
+        "must not nag when chain already configured: {err}"
+    );
+    // All three models in chain (configured + 2 fallbacks) must have
+    // been attempted; the dump is the user's diagnostic surface.
+    assert!(
+        err.contains("reasoning-v1") && err.contains("chat-v1") && err.contains("general-v1"),
+        "expected dump to mention every model tried: {err}"
+    );
+}

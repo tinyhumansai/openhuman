@@ -168,6 +168,19 @@ fn handle_eio_message_close_and_noop_do_not_panic() {
     handle_eio_message("9", &tx, &shared); // unknown
 }
 
+#[test]
+fn handle_eio_message_unknown_packet_is_utf8_safe_at_preview_boundary() {
+    let previous_max_level = log::max_level();
+    log::set_max_level(log::LevelFilter::Trace);
+    let shared = make_shared();
+    let (tx, _rx) = mpsc::unbounded_channel::<String>();
+    let packet = format!("9{}{}", "a".repeat(28), "魔");
+    assert!(!packet.is_char_boundary(30));
+
+    handle_eio_message(&packet, &tx, &shared);
+    log::set_max_level(previous_max_level);
+}
+
 // ── handle_sio_packet ──────────────────────────────────────────
 
 #[test]
@@ -188,6 +201,32 @@ fn handle_sio_packet_event_with_unparseable_payload_is_logged_only() {
     handle_sio_packet("2not-json", &tx, &shared);
     // Unparseable SIO events must not change status.
     assert_eq!(*shared.status.read(), ConnectionStatus::Disconnected);
+}
+
+#[test]
+fn handle_sio_packet_unparseable_event_is_utf8_safe_at_preview_boundary() {
+    let previous_max_level = log::max_level();
+    log::set_max_level(log::LevelFilter::Trace);
+    let shared = make_shared();
+    let (tx, _rx) = mpsc::unbounded_channel::<String>();
+    let packet = format!("2{}{}", "a".repeat(78), "魔");
+    assert!(!packet.is_char_boundary(80));
+
+    handle_sio_packet(&packet, &tx, &shared);
+    log::set_max_level(previous_max_level);
+}
+
+#[test]
+fn handle_sio_packet_unknown_type_is_utf8_safe_at_preview_boundary() {
+    let previous_max_level = log::max_level();
+    log::set_max_level(log::LevelFilter::Trace);
+    let shared = make_shared();
+    let (tx, _rx) = mpsc::unbounded_channel::<String>();
+    let packet = format!("9{}{}", "a".repeat(28), "魔");
+    assert!(!packet.is_char_boundary(30));
+
+    handle_sio_packet(&packet, &tx, &shared);
+    log::set_max_level(previous_max_level);
 }
 
 #[test]

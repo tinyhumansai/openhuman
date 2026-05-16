@@ -9,6 +9,12 @@
  *   the toolkit flips to ACTIVE → "Connected" success screen with
  *   a "Disconnect" action.
  *
+ * Jira-specific flow: the Atlassian subdomain is collected upfront (before
+ * the authorize call) via an inline input. If Composio returns
+ * `ConnectedAccount_MissingRequiredFields` (error code 612) for any toolkit,
+ * the modal transitions to a `needs-subdomain` phase so the user can supply
+ * the missing field and retry — instead of seeing the raw backend error.
+ *
  * Redundant refetches from the polling hook in `useComposioIntegrations`
  * keep the Skills page badge in sync too, so the card reflects the new
  * state as soon as the modal closes.
@@ -40,7 +46,89 @@ function deriveConnectionLabel(c: ComposioConnection): string | null {
   return null;
 }
 
-type Phase = 'idle' | 'authorizing' | 'waiting' | 'connected' | 'disconnecting' | 'error';
+/**
+ * The Composio error slug for missing required fields (code 612). Matching
+ * on the slug string is more precise than matching the numeric code, which
+ * could appear in unrelated messages (e.g. port numbers, resource IDs).
+ */
+const COMPOSIO_MISSING_REQUIRED_FIELDS_SLUG = 'ConnectedAccount_MissingRequiredFields';
+
+/**
+ * Validate an Atlassian subdomain. Accepts the short form used in
+ * `<subdomain>.atlassian.net` — alphanumerics and hyphens, 1-63 chars,
+ * no leading/trailing hyphens. Rejects full URLs so users are not confused
+ * about what to paste.
+ */
+export function isValidAtlassianSubdomain(value: string): boolean {
+  return /^[a-z0-9][a-z0-9-]{0,61}[a-z0-9]$|^[a-z0-9]$/i.test(value.trim());
+}
+
+/**
+ * Detect a `ConnectedAccount_MissingRequiredFields` (code 612) error from
+ * the backend/Composio. Returns true if the thrown error message contains
+ * the known slug. Matching only on the slug avoids false positives from
+ * unrelated messages that happen to contain the numeric code "612".
+ * Safe to call with any value — returns false for null/non-Error.
+ */
+export function isMissingRequiredFieldsError(err: unknown): boolean {
+  if (!err) return false;
+  const msg = err instanceof Error ? err.message : String(err);
+  return msg.includes(COMPOSIO_MISSING_REQUIRED_FIELDS_SLUG);
+}
+
+/**
+ * Return a safe, user-facing summary of an authorization failure. Strips the
+ * raw backend URL and JSON payload from the message so sensitive Composio
+ * internals are never shown in the UI.
+ */
+export function sanitizeAuthError(err: unknown): string {
+  if (isMissingRequiredFieldsError(err)) {
+    // Never surface raw 612 payloads — callers should handle this separately.
+    return 'A required field is missing. Please provide the missing details and try again.';
+  }
+  if (!err) return 'Something went wrong.';
+  const raw = err instanceof Error ? err.message : String(err);
+
+  // Strip any URL that looks like a backend endpoint so it is not displayed.
+  const stripped = raw.replace(/https?:\/\/[^\s"]+/g, '<backend>');
+
+  // Trim at the first occurrence of a JSON blob to avoid leaking payloads.
+  // The URL stripping above may consume the `:` before `{`, so we match
+  // the optional colon and any surrounding whitespace before the `{`.
+  // This covers both `: {"error"...}` and the bare ` {"error"...}` form.
+  const jsonIdx = stripped.search(/\s*:?\s*\{"error"/);
+  // Fall back to trimming at any bare `{` that follows whitespace if we
+  // did not find a `{"error"` form (defensive — handles other JSON shapes).
+  const jsonIdxFallback = stripped.search(/\s\{/);
+  const cutIdx =
+    jsonIdx !== -1 ? jsonIdx : jsonIdxFallback !== -1 ? jsonIdxFallback : stripped.length;
+  const trimmed = stripped.slice(0, cutIdx).trimEnd();
+
+  // Collapse repeated colons / prefixes produced by the RPC error chain.
+  // Apply iteratively until stable to handle nested wrapping.
+  let result = trimmed;
+  let prev: string;
+  do {
+    prev = result;
+    result = result
+      .replace(/^(Authorization failed:\s*)+/i, '')
+      .replace(/^\[composio\]\s*authorize failed:\s*/i, '')
+      .replace(/^Backend returned \d+[^:]*(?:for POST <backend>[^:]*)?:?\s*/i, '')
+      .replace(/^Composio authorization failed:\s*/i, '')
+      .trim();
+  } while (result !== prev);
+
+  return result || 'Authorization failed.';
+}
+
+type Phase =
+  | 'idle'
+  | 'needs-subdomain'
+  | 'authorizing'
+  | 'waiting'
+  | 'connected'
+  | 'disconnecting'
+  | 'error';
 
 interface ComposioConnectModalProps {
   toolkit: ComposioToolkitMeta;
@@ -76,6 +164,10 @@ export default function ComposioConnectModal({
   // WhatsApp Business requires a WABA ID before the OAuth flow can start.
   const [wabaId, setWabaId] = useState('');
   const needsWabaId = toolkit.slug === 'whatsapp';
+  // Jira requires an Atlassian subdomain (e.g. "acme" for acme.atlassian.net).
+  const [atlassianSubdomain, setAtlassianSubdomain] = useState('');
+  const [subdomainError, setSubdomainError] = useState<string | null>(null);
+  const needsAtlassianSubdomain = toolkit.slug === 'jira';
   const [activeConnection, setActiveConnection] = useState<ComposioConnection | undefined>(
     connection
   );
@@ -190,27 +282,112 @@ export default function ComposioConnectModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleConnect = useCallback(async () => {
+  /**
+   * Validate and collect required fields before calling authorize.
+   * For Jira: subdomain must match the expected Atlassian format.
+   * Returns false (and surfaces an inline validation message) when
+   * a required field is missing or malformed.
+   */
+  const validateRequiredFields = useCallback((): boolean => {
     if (needsWabaId && !wabaId.trim()) {
       setError('Please enter your WhatsApp Business Account ID (WABA ID) to continue.');
-      return;
+      return false;
     }
+    if (needsAtlassianSubdomain) {
+      const trimmed = atlassianSubdomain.trim();
+      if (!trimmed) {
+        setSubdomainError('Please enter your Atlassian subdomain to continue.');
+        return false;
+      }
+      if (!isValidAtlassianSubdomain(trimmed)) {
+        setSubdomainError(
+          'Enter the short subdomain only (e.g. "acme"), not the full URL. ' +
+            'It should contain only letters, numbers, and hyphens.'
+        );
+        return false;
+      }
+    }
+    return true;
+  }, [needsWabaId, wabaId, needsAtlassianSubdomain, atlassianSubdomain]);
+
+  const handleConnect = useCallback(async () => {
+    if (!validateRequiredFields()) return;
+
     setPhase('authorizing');
     setError(null);
+    setSubdomainError(null);
     setConnectUrl(null);
+
+    const extraParams: Record<string, string> = {};
+    if (needsWabaId) extraParams.waba_id = wabaId.trim();
+    if (needsAtlassianSubdomain && atlassianSubdomain.trim()) {
+      extraParams.subdomain = atlassianSubdomain.trim();
+    }
+
+    console.debug(
+      '[composio][authorize] → toolkit=%s has_extra_params=%s',
+      toolkit.slug,
+      Object.keys(extraParams).length > 0
+    );
+
     try {
-      const extraParams = needsWabaId ? { waba_id: wabaId.trim() } : undefined;
-      const resp = await authorize(toolkit.slug, extraParams);
+      const resp = await authorize(
+        toolkit.slug,
+        Object.keys(extraParams).length > 0 ? extraParams : undefined
+      );
+      console.debug(
+        '[composio][authorize] ← toolkit=%s connection_id=%s',
+        toolkit.slug,
+        resp.connectionId
+      );
       setConnectUrl(resp.connectUrl);
       await openUrl(resp.connectUrl);
       setPhase('waiting');
       startPolling();
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      console.error(
+        '[composio][authorize] failed toolkit=%s slug_check=%s',
+        toolkit.slug,
+        isMissingRequiredFieldsError(err)
+      );
+
+      if (isMissingRequiredFieldsError(err)) {
+        // Composio reported a missing required field (code 612). For Atlassian
+        // toolkits, transition to the dedicated needs-subdomain phase so the
+        // user can supply the field and retry. For other toolkits, surface a
+        // sanitized message in the error phase — the needs-subdomain UI
+        // currently only collects an Atlassian subdomain, so showing it for
+        // non-Atlassian toolkits would be misleading and the Retry loop would
+        // never succeed.
+        console.debug(
+          '[composio][authorize] missing-required-fields toolkit=%s needsAtlassianSubdomain=%s',
+          toolkit.slug,
+          needsAtlassianSubdomain
+        );
+        if (needsAtlassianSubdomain) {
+          setPhase('needs-subdomain');
+          setError(null);
+        } else {
+          setPhase('error');
+          setError(
+            'This connection requires additional configuration. Please contact support for assistance.'
+          );
+        }
+        return;
+      }
+
       setPhase('error');
-      setError(`Authorization failed: ${msg}`);
+      setError(sanitizeAuthError(err));
     }
-  }, [needsWabaId, startPolling, toolkit.slug, wabaId]);
+  }, [
+    validateRequiredFields,
+    needsWabaId,
+    wabaId,
+    needsAtlassianSubdomain,
+    atlassianSubdomain,
+    startPolling,
+    toolkit.slug,
+  ]);
 
   // Fetch the stored scope pref whenever the modal lands in the
   // 'connected' phase. Re-fetching each time we transition (rather
@@ -396,12 +573,57 @@ export default function ComposioConnectModal({
                   </p>
                 </div>
               )}
+              {needsAtlassianSubdomain && (
+                <AtlassianSubdomainInput
+                  value={atlassianSubdomain}
+                  error={subdomainError}
+                  onChange={v => {
+                    setAtlassianSubdomain(v);
+                    if (subdomainError) setSubdomainError(null);
+                  }}
+                />
+              )}
               {error && phase === 'idle' && <p className="text-[11px] text-coral-600">{error}</p>}
               <button
                 type="button"
                 onClick={() => void handleConnect()}
                 className="w-full rounded-xl bg-primary-500 text-white text-sm font-medium py-2.5 hover:bg-primary-600 transition-colors">
                 Connect {toolkit.name}
+              </button>
+            </>
+          )}
+
+          {phase === 'needs-subdomain' && (
+            <>
+              <p className="text-sm text-stone-600">
+                To connect {toolkit.name}, enter your Atlassian subdomain (e.g.{' '}
+                <span className="font-mono">acme</span> for{' '}
+                <span className="font-mono">acme.atlassian.net</span>) and try again.
+              </p>
+              <AtlassianSubdomainInput
+                value={atlassianSubdomain}
+                error={subdomainError}
+                onChange={v => {
+                  setAtlassianSubdomain(v);
+                  if (subdomainError) setSubdomainError(null);
+                }}
+                autoFocus
+              />
+              <button
+                type="button"
+                onClick={() => void handleConnect()}
+                className="w-full rounded-xl bg-primary-500 text-white text-sm font-medium py-2.5 hover:bg-primary-600 transition-colors">
+                Retry connection
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setPhase('idle');
+                  setSubdomainError(null);
+                  setError(null);
+                }}
+                className="w-full rounded-xl border border-stone-200 bg-white text-stone-600 text-xs font-medium py-2 hover:bg-stone-50 transition-colors">
+                Cancel
               </button>
             </>
           )}
@@ -573,6 +795,69 @@ function ScopeToggles({ scopes, savingScope, onToggle, error }: ScopeTogglesProp
         })}
       </ul>
       {error && <p className="text-[11px] text-coral-600">{error}</p>}
+    </div>
+  );
+}
+
+// ── Atlassian subdomain input ───────────────────────────────────────
+
+interface AtlassianSubdomainInputProps {
+  value: string;
+  error: string | null;
+  onChange: (value: string) => void;
+  /** Autofocus the input on mount (used in the needs-subdomain recovery phase). */
+  autoFocus?: boolean;
+}
+
+/**
+ * Reusable inline subdomain collector for Atlassian-hosted toolkits (Jira,
+ * Confluence). Validates the short-form subdomain (`acme` for
+ * `acme.atlassian.net`) and surfaces an inline validation message when the
+ * user types a full URL or an invalid value.
+ */
+function AtlassianSubdomainInput({
+  value,
+  error,
+  onChange,
+  autoFocus,
+}: AtlassianSubdomainInputProps) {
+  return (
+    <div className="space-y-1.5">
+      <label
+        htmlFor="atlassian-subdomain-input"
+        className="block text-xs font-medium text-stone-700">
+        Atlassian subdomain
+        <span className="ml-1 text-coral-500">*</span>
+      </label>
+      <div className="flex items-center rounded-xl border border-stone-200 bg-white focus-within:border-primary-400 focus-within:ring-2 focus-within:ring-primary-100 overflow-hidden">
+        <input
+          id="atlassian-subdomain-input"
+          type="text"
+          value={value}
+          autoFocus={autoFocus}
+          onChange={(e: ChangeEvent<HTMLInputElement>) => onChange(e.target.value)}
+          placeholder="your-subdomain"
+          aria-describedby="atlassian-subdomain-hint"
+          aria-invalid={!!error}
+          className="flex-1 min-w-0 px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 bg-transparent focus:outline-none"
+        />
+        <span className="pr-3 text-xs text-stone-400 select-none whitespace-nowrap">
+          .atlassian.net
+        </span>
+      </div>
+      {/* Always render the hint paragraph with the same id so aria-describedby resolves
+          correctly regardless of error state. When there is an error, role="alert"
+          causes screen readers to announce the message immediately. */}
+      {error ? (
+        <p id="atlassian-subdomain-hint" role="alert" className="text-[11px] text-coral-600">
+          {error}
+        </p>
+      ) : (
+        <p id="atlassian-subdomain-hint" className="text-[11px] leading-relaxed text-stone-400">
+          Enter the short subdomain only — e.g. <span className="font-mono">acme</span> for{' '}
+          <span className="font-mono">acme.atlassian.net</span>. Do not paste the full URL.
+        </p>
+      )}
     </div>
   );
 }

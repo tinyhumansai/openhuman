@@ -12,6 +12,7 @@
  */
 import { useEffect, useMemo, useRef } from 'react';
 
+import { useT } from '../../lib/i18n/I18nContext';
 import type { Chunk } from '../../utils/tauriCommands';
 
 interface MemoryResultListProps {
@@ -103,6 +104,7 @@ export function MemoryResultList({
   selectedChunkId,
   onSelectChunk,
 }: MemoryResultListProps) {
+  const { t } = useT();
   const groups = useMemo<Group[]>(() => {
     const today = startOfLocalDay(new Date()).getTime();
     const yesterday = today - DAY_MS;
@@ -132,7 +134,7 @@ export function MemoryResultList({
   if (chunks.length === 0) {
     return (
       <section className="mw-pane-results" data-testid="memory-result-list">
-        <div className="mw-results-empty">No matching chunks.</div>
+        <div className="mw-results-empty">{t('memory.noResults')}</div>
       </section>
     );
   }
@@ -151,6 +153,7 @@ export function MemoryResultList({
                   key={chunk.id}
                   ref={isActive ? activeRowRef : undefined}
                   className={`mw-result-row${isActive ? ' is-active' : ''}`}
+                  aria-pressed={isActive}
                   onClick={() => onSelectChunk(chunk.id)}
                   data-chunk-id={chunk.id}>
                   <span className="mw-result-time">

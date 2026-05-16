@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { callCoreRpc } from '../../../services/coreRpcClient';
-import { transcribeCloud } from './sttClient';
+import { transcribeCloud, transcribeWithFactory } from './sttClient';
 
 vi.mock('../../../services/coreRpcClient', () => ({ callCoreRpc: vi.fn() }));
 
@@ -108,5 +108,71 @@ describe('transcribeCloud', () => {
     mock.mockRejectedValueOnce(new Error('upstream STT failed: 502'));
     const blob = new Blob([new Uint8Array([1])], { type: 'audio/webm' });
     await expect(transcribeCloud(blob)).rejects.toThrow(/upstream STT failed/);
+  });
+});
+
+describe('transcribeWithFactory', () => {
+  beforeEach(() => {
+    (callCoreRpc as ReturnType<typeof vi.fn>).mockReset();
+  });
+
+  it('routes through openhuman.voice_stt_dispatch and returns text', async () => {
+    const mock = callCoreRpc as ReturnType<typeof vi.fn>;
+    mock.mockResolvedValueOnce({ text: 'hello via factory', provider: 'cloud' });
+    const blob = new Blob([new Uint8Array([1, 2, 3])], { type: 'audio/webm' });
+
+    const text = await transcribeWithFactory(blob);
+    expect(text).toBe('hello via factory');
+    const call = mock.mock.calls[0][0] as { method: string; params: Record<string, unknown> };
+    expect(call.method).toBe('openhuman.voice_stt_dispatch');
+    expect(call.params.mime_type).toBe('audio/webm');
+    expect(call.params.file_name).toBe('audio.webm');
+    // No provider override unless caller pins one.
+    expect(call.params.provider).toBeUndefined();
+  });
+
+  it('forwards an explicit provider override', async () => {
+    const mock = callCoreRpc as ReturnType<typeof vi.fn>;
+    mock.mockResolvedValueOnce({ text: 'local hi', provider: 'whisper' });
+    const blob = new Blob([new Uint8Array([1])], { type: 'audio/webm' });
+    await transcribeWithFactory(blob, { provider: 'whisper', model: 'whisper-large-v3-turbo' });
+    const params = mock.mock.calls[0][0].params as Record<string, unknown>;
+    expect(params.provider).toBe('whisper');
+    expect(params.model).toBe('whisper-large-v3-turbo');
+  });
+
+  it('rejects empty blobs without hitting the core', async () => {
+    const mock = callCoreRpc as ReturnType<typeof vi.fn>;
+    const blob = new Blob([], { type: 'audio/webm' });
+    await expect(transcribeWithFactory(blob)).rejects.toThrow(/empty/);
+    expect(mock).not.toHaveBeenCalled();
+  });
+
+  it('rewrites stale-sidecar "unknown method" errors', async () => {
+    const mock = callCoreRpc as ReturnType<typeof vi.fn>;
+    mock.mockRejectedValueOnce(new Error('unknown method: openhuman.voice_stt_dispatch'));
+    const blob = new Blob([new Uint8Array([1])], { type: 'audio/webm' });
+    await expect(transcribeWithFactory(blob)).rejects.toThrow(/Restart the OpenHuman desktop app/i);
+  });
+
+  it('passes through non-unknown-method errors verbatim', async () => {
+    const mock = callCoreRpc as ReturnType<typeof vi.fn>;
+    mock.mockRejectedValueOnce(new Error('whisper.cpp failed: model not found'));
+    const blob = new Blob([new Uint8Array([1])], { type: 'audio/webm' });
+    await expect(transcribeWithFactory(blob)).rejects.toThrow(/whisper.cpp failed/);
+  });
+
+  it('trims whitespace off the returned transcript', async () => {
+    const mock = callCoreRpc as ReturnType<typeof vi.fn>;
+    mock.mockResolvedValueOnce({ text: '  padded  ', provider: 'whisper' });
+    const blob = new Blob([new Uint8Array([1])], { type: 'audio/webm' });
+    expect(await transcribeWithFactory(blob)).toBe('padded');
+  });
+
+  it('returns empty string when provider yields no text', async () => {
+    const mock = callCoreRpc as ReturnType<typeof vi.fn>;
+    mock.mockResolvedValueOnce({ provider: 'whisper' });
+    const blob = new Blob([new Uint8Array([1])], { type: 'audio/webm' });
+    expect(await transcribeWithFactory(blob)).toBe('');
   });
 });

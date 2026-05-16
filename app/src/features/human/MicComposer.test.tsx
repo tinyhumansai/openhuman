@@ -1,14 +1,14 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { MicCloudComposer } from './MicCloudComposer';
+import { MicComposer } from './MicComposer';
 
-// transcribeCloud + encodeBlobToWav are the network/heavy boundaries — mock
-// them here so we can drive the state machine without touching real APIs.
-const transcribeCloudMock = vi.fn();
+// transcribeWithFactory + encodeBlobToWav are the network/heavy boundaries —
+// mock them here so we can drive the state machine without touching real APIs.
+const transcribeWithFactoryMock = vi.fn();
 const encodeBlobToWavMock = vi.fn();
 vi.mock('./voice/sttClient', () => ({
-  transcribeCloud: (...args: unknown[]) => transcribeCloudMock(...args),
+  transcribeWithFactory: (...args: unknown[]) => transcribeWithFactoryMock(...args),
 }));
 vi.mock('./voice/wavEncoder', () => ({
   encodeBlobToWav: (...args: unknown[]) => encodeBlobToWavMock(...args),
@@ -44,7 +44,7 @@ function makeFakeRecorder(mime: string): FakeRecorder {
 
 const fakeStream = { getTracks: () => [{ stop: vi.fn() }] } as unknown as MediaStream;
 
-describe('MicCloudComposer', () => {
+describe('MicComposer', () => {
   let recorder: FakeRecorder;
   let getUserMediaMock: ReturnType<typeof vi.fn>;
   // Snapshot the descriptor so afterEach can restore it — without this, the
@@ -57,7 +57,7 @@ describe('MicCloudComposer', () => {
       globalThis.navigator,
       'mediaDevices'
     );
-    transcribeCloudMock.mockReset();
+    transcribeWithFactoryMock.mockReset();
     encodeBlobToWavMock.mockReset();
     recorder = makeFakeRecorder('audio/webm;codecs=opus');
 
@@ -93,26 +93,26 @@ describe('MicCloudComposer', () => {
   });
 
   it('renders the idle "Tap and speak" state', () => {
-    render(<MicCloudComposer disabled={false} onSubmit={vi.fn()} />);
+    render(<MicComposer disabled={false} onSubmit={vi.fn()} />);
     expect(screen.getByText('Tap and speak')).toBeInTheDocument();
   });
 
   it('shows a "Waiting" label when disabled', () => {
-    render(<MicCloudComposer disabled={true} onSubmit={vi.fn()} />);
+    render(<MicComposer disabled={true} onSubmit={vi.fn()} />);
     expect(screen.getByText(/waiting/i)).toBeInTheDocument();
   });
 
   it('does not start recording when disabled', () => {
-    render(<MicCloudComposer disabled={true} onSubmit={vi.fn()} />);
+    render(<MicComposer disabled={true} onSubmit={vi.fn()} />);
     fireEvent.click(screen.getByRole('button', { name: /start recording/i }));
     expect(getUserMediaMock).not.toHaveBeenCalled();
   });
 
   it('starts recording on tap, then transcribes + submits on second tap', async () => {
-    transcribeCloudMock.mockResolvedValueOnce('hello world');
+    transcribeWithFactoryMock.mockResolvedValueOnce('hello world');
     const onSubmit = vi.fn();
     const onError = vi.fn();
-    render(<MicCloudComposer disabled={false} onSubmit={onSubmit} onError={onError} />);
+    render(<MicComposer disabled={false} onSubmit={onSubmit} onError={onError} />);
 
     fireEvent.click(screen.getByRole('button', { name: /start recording/i }));
     await waitFor(() => expect(getUserMediaMock).toHaveBeenCalled());
@@ -131,19 +131,19 @@ describe('MicCloudComposer', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /stop recording and send/i }));
     await waitFor(() => expect(onSubmit).toHaveBeenCalledWith('hello world'));
-    expect(transcribeCloudMock).toHaveBeenCalledTimes(1);
+    expect(transcribeWithFactoryMock).toHaveBeenCalledTimes(1);
   });
 
   it('forwards the language prop to transcribeCloud', async () => {
-    transcribeCloudMock.mockResolvedValueOnce('hi');
-    render(<MicCloudComposer disabled={false} onSubmit={vi.fn()} language="es" />);
+    transcribeWithFactoryMock.mockResolvedValueOnce('hi');
+    render(<MicComposer disabled={false} onSubmit={vi.fn()} language="es" />);
     fireEvent.click(screen.getByRole('button', { name: /start recording/i }));
     await waitFor(() =>
       expect(screen.getByRole('button', { name: /stop recording and send/i })).toBeInTheDocument()
     );
     fireEvent.click(screen.getByRole('button', { name: /stop recording and send/i }));
-    await waitFor(() => expect(transcribeCloudMock).toHaveBeenCalled());
-    const opts = transcribeCloudMock.mock.calls[0][1];
+    await waitFor(() => expect(transcribeWithFactoryMock).toHaveBeenCalled());
+    const opts = transcribeWithFactoryMock.mock.calls[0][1];
     expect(opts).toEqual({ language: 'es' });
   });
 
@@ -151,7 +151,7 @@ describe('MicCloudComposer', () => {
     const err = Object.assign(new DOMException('', 'NotAllowedError'));
     getUserMediaMock.mockRejectedValueOnce(err);
     const onError = vi.fn();
-    render(<MicCloudComposer disabled={false} onSubmit={vi.fn()} onError={onError} />);
+    render(<MicComposer disabled={false} onSubmit={vi.fn()} onError={onError} />);
     fireEvent.click(screen.getByRole('button', { name: /start recording/i }));
     await waitFor(() => expect(onError).toHaveBeenCalledWith(expect.stringMatching(/permission/i)));
   });
@@ -160,7 +160,7 @@ describe('MicCloudComposer', () => {
     const err = new DOMException('', 'OverconstrainedError');
     getUserMediaMock.mockRejectedValueOnce(err);
     const onError = vi.fn();
-    render(<MicCloudComposer disabled={false} onSubmit={vi.fn()} onError={onError} />);
+    render(<MicComposer disabled={false} onSubmit={vi.fn()} onError={onError} />);
     fireEvent.click(screen.getByRole('button', { name: /start recording/i }));
     await waitFor(() =>
       expect(onError).toHaveBeenCalledWith(expect.stringMatching(/unavailable/i))
@@ -171,7 +171,7 @@ describe('MicCloudComposer', () => {
     const err = new DOMException('', 'NotReadableError');
     getUserMediaMock.mockRejectedValueOnce(err);
     const onError = vi.fn();
-    render(<MicCloudComposer disabled={false} onSubmit={vi.fn()} onError={onError} />);
+    render(<MicComposer disabled={false} onSubmit={vi.fn()} onError={onError} />);
     fireEvent.click(screen.getByRole('button', { name: /start recording/i }));
     await waitFor(() => expect(onError).toHaveBeenCalledWith(expect.stringMatching(/in use/i)));
   });
@@ -179,7 +179,7 @@ describe('MicCloudComposer', () => {
   it('surfaces a generic error for non-DOMException getUserMedia failures', async () => {
     getUserMediaMock.mockRejectedValueOnce(new Error('some other error'));
     const onError = vi.fn();
-    render(<MicCloudComposer disabled={false} onSubmit={vi.fn()} onError={onError} />);
+    render(<MicComposer disabled={false} onSubmit={vi.fn()} onError={onError} />);
     fireEvent.click(screen.getByRole('button', { name: /start recording/i }));
     await waitFor(() =>
       expect(onError).toHaveBeenCalledWith(expect.stringMatching(/microphone error/i))
@@ -187,14 +187,14 @@ describe('MicCloudComposer', () => {
   });
 
   it('falls back to wav re-encode when the native attempt fails', async () => {
-    transcribeCloudMock
+    transcribeWithFactoryMock
       .mockRejectedValueOnce(new Error('codec not accepted'))
       .mockResolvedValueOnce('after fallback');
     encodeBlobToWavMock.mockResolvedValueOnce(
       new Blob([new Uint8Array([0])], { type: 'audio/wav' })
     );
     const onSubmit = vi.fn();
-    render(<MicCloudComposer disabled={false} onSubmit={onSubmit} />);
+    render(<MicComposer disabled={false} onSubmit={onSubmit} />);
     fireEvent.click(screen.getByRole('button', { name: /start recording/i }));
     await waitFor(() =>
       expect(screen.getByRole('button', { name: /stop recording and send/i })).toBeInTheDocument()
@@ -202,14 +202,14 @@ describe('MicCloudComposer', () => {
     fireEvent.click(screen.getByRole('button', { name: /stop recording and send/i }));
     await waitFor(() => expect(onSubmit).toHaveBeenCalledWith('after fallback'));
     expect(encodeBlobToWavMock).toHaveBeenCalledTimes(1);
-    expect(transcribeCloudMock).toHaveBeenCalledTimes(2);
+    expect(transcribeWithFactoryMock).toHaveBeenCalledTimes(2);
   });
 
   it('reports an error when transcription returns empty text', async () => {
-    transcribeCloudMock.mockResolvedValueOnce('');
+    transcribeWithFactoryMock.mockResolvedValueOnce('');
     const onError = vi.fn();
     const onSubmit = vi.fn();
-    render(<MicCloudComposer disabled={false} onSubmit={onSubmit} onError={onError} />);
+    render(<MicComposer disabled={false} onSubmit={onSubmit} onError={onError} />);
     fireEvent.click(screen.getByRole('button', { name: /start recording/i }));
     await waitFor(() =>
       expect(screen.getByRole('button', { name: /stop recording and send/i })).toBeInTheDocument()
@@ -228,7 +228,7 @@ describe('MicCloudComposer', () => {
       writable: true,
     });
     const onError = vi.fn();
-    render(<MicCloudComposer disabled={false} onSubmit={vi.fn()} onError={onError} />);
+    render(<MicComposer disabled={false} onSubmit={vi.fn()} onError={onError} />);
     fireEvent.click(screen.getByRole('button', { name: /start recording/i }));
     expect(onError).toHaveBeenCalledWith(expect.stringMatching(/not available/i));
   });
@@ -236,9 +236,9 @@ describe('MicCloudComposer', () => {
   // ── Spacebar shortcut (#1471) ────────────────────────────────────────────
 
   it('spacebar starts recording when idle and stops + submits on second press', async () => {
-    transcribeCloudMock.mockResolvedValueOnce('voice via space');
+    transcribeWithFactoryMock.mockResolvedValueOnce('voice via space');
     const onSubmit = vi.fn();
-    render(<MicCloudComposer disabled={false} onSubmit={onSubmit} />);
+    render(<MicComposer disabled={false} onSubmit={onSubmit} />);
 
     fireEvent.keyDown(window, { code: 'Space' });
     await waitFor(() => expect(getUserMediaMock).toHaveBeenCalled());
@@ -251,13 +251,13 @@ describe('MicCloudComposer', () => {
   });
 
   it('spacebar ignores key repeat so holding the key does not flap the recorder', () => {
-    render(<MicCloudComposer disabled={false} onSubmit={vi.fn()} />);
+    render(<MicComposer disabled={false} onSubmit={vi.fn()} />);
     fireEvent.keyDown(window, { code: 'Space', repeat: true });
     expect(getUserMediaMock).not.toHaveBeenCalled();
   });
 
   it('spacebar ignores modifier combinations so Shift-Space etc. stay free', () => {
-    render(<MicCloudComposer disabled={false} onSubmit={vi.fn()} />);
+    render(<MicComposer disabled={false} onSubmit={vi.fn()} />);
     fireEvent.keyDown(window, { code: 'Space', shiftKey: true });
     fireEvent.keyDown(window, { code: 'Space', ctrlKey: true });
     fireEvent.keyDown(window, { code: 'Space', metaKey: true });
@@ -269,7 +269,7 @@ describe('MicCloudComposer', () => {
     render(
       <>
         <input data-testid="text-field" type="text" />
-        <MicCloudComposer disabled={false} onSubmit={vi.fn()} />
+        <MicComposer disabled={false} onSubmit={vi.fn()} />
       </>
     );
     const input = screen.getByTestId('text-field');
@@ -282,7 +282,7 @@ describe('MicCloudComposer', () => {
     render(
       <>
         <textarea data-testid="ta" />
-        <MicCloudComposer disabled={false} onSubmit={vi.fn()} />
+        <MicComposer disabled={false} onSubmit={vi.fn()} />
       </>
     );
     const ta = screen.getByTestId('ta');
@@ -297,7 +297,7 @@ describe('MicCloudComposer', () => {
         <div data-testid="ce" contentEditable suppressContentEditableWarning>
           x
         </div>
-        <MicCloudComposer disabled={false} onSubmit={vi.fn()} />
+        <MicComposer disabled={false} onSubmit={vi.fn()} />
       </>
     );
     const ce = screen.getByTestId('ce');
@@ -307,14 +307,14 @@ describe('MicCloudComposer', () => {
   });
 
   it('spacebar is a no-op while the composer is disabled', () => {
-    render(<MicCloudComposer disabled={true} onSubmit={vi.fn()} />);
+    render(<MicComposer disabled={true} onSubmit={vi.fn()} />);
     fireEvent.keyDown(window, { code: 'Space' });
     expect(getUserMediaMock).not.toHaveBeenCalled();
   });
 
   it('removes the window keydown listener on unmount', () => {
     const removeSpy = vi.spyOn(window, 'removeEventListener');
-    const { unmount } = render(<MicCloudComposer disabled={false} onSubmit={vi.fn()} />);
+    const { unmount } = render(<MicComposer disabled={false} onSubmit={vi.fn()} />);
     unmount();
     expect(removeSpy).toHaveBeenCalledWith('keydown', expect.any(Function));
     removeSpy.mockRestore();
@@ -334,7 +334,7 @@ describe('MicCloudComposer', () => {
       writable: true,
     });
 
-    render(<MicCloudComposer disabled={false} onSubmit={vi.fn()} showDeviceSelector />);
+    render(<MicComposer disabled={false} onSubmit={vi.fn()} showDeviceSelector />);
 
     await waitFor(() => expect(enumerateDevicesMock).toHaveBeenCalled());
     expect(await screen.findByRole('combobox', { name: /microphone device/i })).toBeInTheDocument();
@@ -355,7 +355,7 @@ describe('MicCloudComposer', () => {
       writable: true,
     });
 
-    render(<MicCloudComposer disabled={false} onSubmit={vi.fn()} />);
+    render(<MicComposer disabled={false} onSubmit={vi.fn()} />);
 
     await waitFor(() => {
       expect(
@@ -375,7 +375,7 @@ describe('MicCloudComposer', () => {
       writable: true,
     });
 
-    render(<MicCloudComposer disabled={false} onSubmit={vi.fn()} showDeviceSelector />);
+    render(<MicComposer disabled={false} onSubmit={vi.fn()} showDeviceSelector />);
 
     const select = await screen.findByRole('combobox', { name: /microphone device/i });
     expect(select).toBeInTheDocument();
@@ -393,7 +393,7 @@ describe('MicCloudComposer', () => {
       writable: true,
     });
 
-    render(<MicCloudComposer disabled={false} onSubmit={vi.fn()} showDeviceSelector />);
+    render(<MicComposer disabled={false} onSubmit={vi.fn()} showDeviceSelector />);
 
     await waitFor(() => expect(screen.queryByRole('combobox')).toBeInTheDocument());
     expect(screen.getByText('Microphone 1')).toBeInTheDocument();
@@ -405,14 +405,14 @@ describe('MicCloudComposer', () => {
       { kind: 'audioinput', deviceId: 'dev1', label: 'Built-in Mic' },
       { kind: 'audioinput', deviceId: 'dev2', label: 'USB Headset' },
     ]);
-    transcribeCloudMock.mockResolvedValueOnce('hello');
+    transcribeWithFactoryMock.mockResolvedValueOnce('hello');
     Object.defineProperty(globalThis.navigator, 'mediaDevices', {
       value: { getUserMedia: getUserMediaMock, enumerateDevices: enumerateDevicesMock },
       configurable: true,
       writable: true,
     });
 
-    render(<MicCloudComposer disabled={false} onSubmit={vi.fn()} showDeviceSelector />);
+    render(<MicComposer disabled={false} onSubmit={vi.fn()} showDeviceSelector />);
 
     // Wait for the selector to appear and pick the second device
     const select = await screen.findByRole('combobox', { name: /microphone device/i });
@@ -439,14 +439,14 @@ describe('MicCloudComposer', () => {
         { kind: 'audioinput', deviceId: 'dev1', label: 'Built-in Mic' },
         { kind: 'audioinput', deviceId: 'dev2', label: 'USB Headset' },
       ]);
-    transcribeCloudMock.mockResolvedValueOnce('ok');
+    transcribeWithFactoryMock.mockResolvedValueOnce('ok');
     Object.defineProperty(globalThis.navigator, 'mediaDevices', {
       value: { getUserMedia: getUserMediaMock, enumerateDevices: enumerateDevicesMock },
       configurable: true,
       writable: true,
     });
 
-    render(<MicCloudComposer disabled={false} onSubmit={vi.fn()} showDeviceSelector />);
+    render(<MicComposer disabled={false} onSubmit={vi.fn()} showDeviceSelector />);
 
     // Mount enumerate ran — labels are blank placeholders
     await waitFor(() => expect(screen.queryByRole('combobox')).toBeInTheDocument());
@@ -471,7 +471,7 @@ describe('MicCloudComposer', () => {
       writable: true,
     });
 
-    render(<MicCloudComposer disabled={false} onSubmit={vi.fn()} showDeviceSelector />);
+    render(<MicComposer disabled={false} onSubmit={vi.fn()} showDeviceSelector />);
 
     await waitFor(() => expect(enumerateDevicesMock).toHaveBeenCalled());
     // Selector requires >1 device; error yields 0 → selector stays hidden

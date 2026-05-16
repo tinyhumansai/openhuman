@@ -9,6 +9,7 @@ use std::os::unix::fs::PermissionsExt as _;
 
 use crate::openhuman::config::UpdateRestartStrategy;
 use crate::openhuman::update::types::{GitHubAsset, GitHubRelease, UpdateApplyResult, UpdateInfo};
+use crate::openhuman::util::utf8_safe_prefix_at_byte_boundary;
 
 /// GitHub owner/repo for the core binary releases.
 const GITHUB_OWNER: &str = "tinyhumansai";
@@ -105,7 +106,9 @@ pub async fn check_available() -> Result<UpdateInfo, String> {
         .await
         .map_err(|e| {
             let msg = format!("failed to fetch latest release: {e}");
-            if is_transport_network_failure(&e) {
+            if is_transport_network_failure(&e)
+                || crate::core::observability::is_updater_transient_message(&msg)
+            {
                 // OPENHUMAN-TAURI-2F: reqwest's transport-level failure fires
                 // before any HTTP status when DNS / TCP / TLS handshake fails,
                 // or the user's ISP / firewall blocks api.github.com. No
@@ -113,8 +116,11 @@ pub async fn check_available() -> Result<UpdateInfo, String> {
                 // on, and every scheduled poll generates another noisy event.
                 // Log a warn so it shows up in local diagnostics and the next
                 // tick can retry, without paging.
-                log::warn!(
-                    "[update] check_releases skipped transport-level failure (will retry next poll): {msg}"
+                tracing::warn!(
+                    domain = "update",
+                    operation = "check_releases",
+                    failure = "transport",
+                    "[observability] update.check_releases skipped transient updater transport failure: {msg}"
                 );
             } else {
                 crate::core::observability::report_error(
@@ -134,15 +140,25 @@ pub async fn check_available() -> Result<UpdateInfo, String> {
         log::warn!(
             "[update] GitHub API returned {}: {}",
             status,
-            &body[..body.len().min(200)]
+            utf8_safe_prefix_at_byte_boundary(&body, 200)
         );
         let msg = format!("GitHub API error: {status}");
-        crate::core::observability::report_error(
-            msg.as_str(),
-            "update",
-            "check_releases",
-            &[("status", status_str.as_str()), ("failure", "non_2xx")],
-        );
+        if crate::core::observability::is_updater_transient_http_status(status.as_u16()) {
+            tracing::warn!(
+                domain = "update",
+                operation = "check_releases",
+                failure = "non_2xx",
+                status = status_str.as_str(),
+                "[observability] update.check_releases skipped transient updater HTTP response: {msg}"
+            );
+        } else {
+            crate::core::observability::report_error(
+                msg.as_str(),
+                "update",
+                "check_releases",
+                &[("status", status_str.as_str()), ("failure", "non_2xx")],
+            );
+        }
         return Err(msg);
     }
 
@@ -239,16 +255,27 @@ pub async fn download_and_stage_with_version(
         let status = response.status();
         let status_str = status.as_u16().to_string();
         let msg = format!("download failed with status {}", status);
-        crate::core::observability::report_error(
-            msg.as_str(),
-            "update",
-            "download",
-            &[
-                ("asset", asset_name),
-                ("status", status_str.as_str()),
-                ("failure", "non_2xx"),
-            ],
-        );
+        if crate::core::observability::is_updater_transient_http_status(status.as_u16()) {
+            tracing::warn!(
+                domain = "update",
+                operation = "download",
+                failure = "non_2xx",
+                status = status_str.as_str(),
+                asset = asset_name,
+                "[observability] update.download skipped transient updater HTTP response: {msg}"
+            );
+        } else {
+            crate::core::observability::report_error(
+                msg.as_str(),
+                "update",
+                "download",
+                &[
+                    ("asset", asset_name),
+                    ("status", status_str.as_str()),
+                    ("failure", "non_2xx"),
+                ],
+            );
+        }
         return Err(msg);
     }
 

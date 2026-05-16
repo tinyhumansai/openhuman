@@ -66,7 +66,7 @@ pub fn effective_api_url(api_url: &Option<String>) -> String {
 /// (Ollama, vLLM, LM Studio, OpenAI-compatible proxy on loopback) rather than
 /// our hosted backend?
 ///
-/// Used by [`effective_integrations_api_url`] to avoid concatenating
+/// Used by [`effective_backend_api_url`] to avoid concatenating
 /// backend-integration paths (e.g. `/agent-integrations/composio/toolkits`)
 /// onto a user-set local-AI URL — see the Sentry cluster
 /// `OPENHUMAN-TAURI-51 / -80 / -7Z` where Ollama users had every integration
@@ -145,33 +145,86 @@ pub fn looks_like_local_ai_endpoint(url: &str) -> bool {
     port_signals_llm || path_signals_llm
 }
 
-/// Resolves the API base URL to use for **backend-proxied integrations**
-/// (composio, channels, teams, etc.).
+fn looks_like_openhuman_backend_endpoint(url: &str) -> bool {
+    let trimmed = url.trim();
+    let redacted_url = redact_url_for_log(trimmed);
+    let parsed = match url::Url::parse(trimmed) {
+        Ok(parsed) => {
+            tracing::trace!(
+                api_url = %redacted_url,
+                "[api/config] parsed api_url while checking OpenHuman backend classification"
+            );
+            parsed
+        }
+        Err(error) => {
+            tracing::trace!(
+                api_url = %redacted_url,
+                error = %error,
+                "[api/config] api_url parse failed while checking OpenHuman backend classification"
+            );
+            return false;
+        }
+    };
+    let Some(host) = parsed.host_str().map(str::to_ascii_lowercase) else {
+        tracing::trace!(
+            api_url = %redacted_url,
+            "[api/config] api_url has no host; not classified as OpenHuman backend"
+        );
+        return false;
+    };
+    let is_openhuman_backend = matches!(
+        host.as_str(),
+        "api.tinyhumans.ai" | "staging-api.tinyhumans.ai"
+    );
+    tracing::debug!(
+        api_url = %redacted_url,
+        host = %host,
+        is_openhuman_backend,
+        "[api/config] OpenHuman backend classification complete"
+    );
+    is_openhuman_backend
+}
+
+/// Resolves the API base URL for **all hosted-backend calls** (billing,
+/// team, referral, webhooks, credentials, channels, voice, socket,
+/// app_state, integrations, core/jsonrpc, etc.).
 ///
 /// Same resolution chain as [`effective_api_url`] EXCEPT the user override
 /// is skipped when it [`looks_like_local_ai_endpoint`]. In that case we
-/// fall through to env / default backend so integration requests still
-/// hit the hosted API instead of being concatenated onto the user's
-/// local Ollama/vLLM endpoint (which only knows about chat completions
-/// and 404s every other path — see the Sentry cluster
+/// fall through to env / default backend so backend requests still hit
+/// the hosted API instead of being concatenated onto the user's local
+/// Ollama/vLLM endpoint (which only knows about chat completions and
+/// 404s every other path — see the Sentry cluster
 /// `OPENHUMAN-TAURI-51 / -80 / -7Z`).
 ///
 /// Logs a one-shot `warn!` the first time the fallback fires so users
 /// can see the diagnostic in their core sidecar logs.
-///
-// TODO(#1663): rename to `effective_backend_api_url` and migrate the
-// remaining `effective_api_url` callers across non-integrations domains
-// (billing, team, referral, webhooks, credentials, channels, voice,
-// socket, app_state, core/jsonrpc) per graycyrus review of PR #1630.
-// Today they silently leak the user's local-AI endpoint as the base for
-// every hosted-backend call — same bug shape, different surface.
-pub fn effective_integrations_api_url(api_url: &Option<String>) -> String {
+pub fn effective_backend_api_url(api_url: &Option<String>) -> String {
     if let Some(u) = api_url.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-        if looks_like_local_ai_endpoint(u) {
-            warn_integrations_url_fallback_once(u);
+        let redacted_url = redact_url_for_log(u);
+        let is_local_ai = looks_like_local_ai_endpoint(u);
+        let is_openhuman_backend = looks_like_openhuman_backend_endpoint(u);
+        tracing::debug!(
+            api_url = %redacted_url,
+            is_local_ai,
+            is_openhuman_backend,
+            "[api/config] evaluating backend api_url override"
+        );
+        if is_local_ai && !is_openhuman_backend {
+            tracing::debug!(
+                api_url = %redacted_url,
+                "[api/config] backend api_url override classified as local AI; falling back to backend default chain"
+            );
+            warn_backend_url_fallback_once(u);
             // Fall through to env / default — do NOT use the user override.
         } else {
-            return normalize_integrations_api_base_url(u);
+            let normalized = normalize_backend_api_base_url(u);
+            tracing::trace!(
+                api_url = %redacted_url,
+                normalized_api_url = %redact_url_for_log(&normalized),
+                "[api/config] using configured backend api_url override"
+            );
+            return normalized;
         }
     }
     if let Some(env_url) = api_base_from_env() {
@@ -180,13 +233,13 @@ pub fn effective_integrations_api_url(api_url: &Option<String>) -> String {
     default_api_base_url_for_env(app_env_from_env().as_deref()).to_string()
 }
 
-/// Normalize a configured integrations backend override to its host root.
+/// Normalize a configured backend override to its host root.
 ///
 /// Users may have `config.api_url` populated with an inference endpoint such
-/// as `https://api.tinyhumans.ai/openai/v1/chat/completions`. Integrations
-/// callers append `/agent-integrations/*`, so the LLM-specific path must not
+/// as `https://api.tinyhumans.ai/openai/v1/chat/completions`. Backend
+/// callers append domain-specific paths, so the LLM-specific path must not
 /// survive into the backend base.
-fn normalize_integrations_api_base_url(url: &str) -> String {
+fn normalize_backend_api_base_url(url: &str) -> String {
     let normalized = normalize_api_base_url(url);
     let Ok(mut parsed) = url::Url::parse(&normalized) else {
         return normalized;
@@ -202,21 +255,39 @@ fn normalize_integrations_api_base_url(url: &str) -> String {
 }
 
 /// Emit a single `warn!` **once per process lifetime** the first time
-/// [`effective_integrations_api_url`] falls back away from a user-set
+/// [`effective_backend_api_url`] falls back away from a user-set
 /// local-AI URL. Subsequent calls — including calls with a *different*
 /// local-AI URL — are silently suppressed via `std::sync::Once` so we
-/// don't spam logs on every integration request.
-fn warn_integrations_url_fallback_once(local_url: &str) {
+/// don't spam logs on every backend request.
+fn warn_backend_url_fallback_once(local_url: &str) {
     use std::sync::Once;
     static WARNED: Once = Once::new();
     WARNED.call_once(|| {
         tracing::warn!(
-            local_url = %local_url,
+            local_url = %redact_url_for_log(local_url),
             "[api/config] config.api_url looks like a local-AI endpoint; \
              integrations base will fall back to env/default backend so \
              /agent-integrations/* requests don't 404 against your local LLM"
         );
     });
+}
+
+fn redact_url_for_log(raw: &str) -> String {
+    let trimmed = raw.trim();
+    // Attempt bare-host parsing (e.g. "localhost:1234") before giving up so
+    // that non-scheme URLs are still redacted rather than returned verbatim.
+    let parsed =
+        url::Url::parse(trimmed).or_else(|_| url::Url::parse(&format!("http://{trimmed}")));
+    let Ok(mut parsed) = parsed else {
+        return trimmed.to_string();
+    };
+    if !parsed.username().is_empty() {
+        let _ = parsed.set_username("redacted");
+    }
+    if parsed.password().is_some() {
+        let _ = parsed.set_password(Some("redacted"));
+    }
+    parsed.to_string().trim_end_matches('/').to_string()
 }
 
 /// Trim and strip trailing slashes so paths join consistently.
@@ -281,16 +352,26 @@ pub fn api_base_from_env() -> Option<String> {
     }
     // 2. Compile-time fallback — baked in by build-desktop.yml.
     //    Each key checked independently for the same reason as above.
-    for v in [option_env!("BACKEND_URL"), option_env!("VITE_BACKEND_URL")]
-        .into_iter()
-        .flatten()
-    {
+    for v in compile_time_api_base_env_values().into_iter().flatten() {
         let url = normalize_api_base_url(v);
         if !url.is_empty() {
             return Some(url);
         }
     }
     None
+}
+
+#[cfg(not(test))]
+fn compile_time_api_base_env_values() -> [Option<&'static str>; 2] {
+    [option_env!("BACKEND_URL"), option_env!("VITE_BACKEND_URL")]
+}
+
+#[cfg(test)]
+fn compile_time_api_base_env_values() -> [Option<&'static str>; 2] {
+    // Test wrappers may set BACKEND_URL to the mock server before rustc
+    // starts. Runtime env coverage remains in the tests above; ignoring
+    // baked values here keeps env-clearing assertions deterministic.
+    [None, None]
 }
 
 /// Resolve the app environment, checking runtime env first then compile-time.
@@ -309,19 +390,26 @@ pub fn app_env_from_env() -> Option<String> {
         }
     }
     // 2. Compile-time fallback — each key checked independently
-    for v in [
-        option_env!("OPENHUMAN_APP_ENV"),
-        option_env!("VITE_OPENHUMAN_APP_ENV"),
-    ]
-    .into_iter()
-    .flatten()
-    {
+    for v in compile_time_app_env_values().into_iter().flatten() {
         let s = v.trim().to_ascii_lowercase();
         if !s.is_empty() {
             return Some(s);
         }
     }
     None
+}
+
+#[cfg(not(test))]
+fn compile_time_app_env_values() -> [Option<&'static str>; 2] {
+    [
+        option_env!("OPENHUMAN_APP_ENV"),
+        option_env!("VITE_OPENHUMAN_APP_ENV"),
+    ]
+}
+
+#[cfg(test)]
+fn compile_time_app_env_values() -> [Option<&'static str>; 2] {
+    [None, None]
 }
 
 pub fn is_staging_app_env(app_env: Option<&str>) -> bool {
@@ -338,13 +426,20 @@ pub fn default_api_base_url_for_env(app_env: Option<&str>) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Mutex, OnceLock};
+    use std::sync::{Mutex, MutexGuard, OnceLock};
 
     use super::*;
 
     // Serialise all env-mutating tests to prevent flaky failures under
     // parallel test execution (std::env is process-global).
     static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    fn env_lock() -> MutexGuard<'static, ()> {
+        match ENV_LOCK.get_or_init(Mutex::default).lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        }
+    }
 
     struct EnvSnapshot {
         vars: [(&'static str, Option<String>); 4],
@@ -365,6 +460,12 @@ mod tests {
 
             Self { vars }
         }
+    }
+
+    fn fallback_backend_base_for_current_build() -> String {
+        api_base_from_env().unwrap_or_else(|| {
+            default_api_base_url_for_env(app_env_from_env().as_deref()).to_string()
+        })
     }
 
     impl Drop for EnvSnapshot {
@@ -463,7 +564,7 @@ mod tests {
 
     #[test]
     fn app_env_from_env_reads_runtime_var() {
-        let _guard = ENV_LOCK.get_or_init(Mutex::default).lock().unwrap();
+        let _guard = env_lock();
         let key = APP_ENV_VAR;
         let prev = std::env::var(key).ok();
         std::env::set_var(key, "staging");
@@ -477,7 +578,7 @@ mod tests {
 
     #[test]
     fn app_env_from_env_falls_through_empty_primary_to_secondary() {
-        let _guard = ENV_LOCK.get_or_init(Mutex::default).lock().unwrap();
+        let _guard = env_lock();
         let prev_primary = std::env::var(APP_ENV_VAR).ok();
         let prev_secondary = std::env::var(VITE_APP_ENV_VAR).ok();
         std::env::set_var(APP_ENV_VAR, ""); // empty — must not block secondary
@@ -496,7 +597,7 @@ mod tests {
 
     #[test]
     fn api_base_from_env_reads_runtime_var() {
-        let _guard = ENV_LOCK.get_or_init(Mutex::default).lock().unwrap();
+        let _guard = env_lock();
         let key = "BACKEND_URL";
         let prev = std::env::var(key).ok();
         std::env::set_var(key, "https://staging-api.tinyhumans.ai/");
@@ -510,7 +611,7 @@ mod tests {
 
     #[test]
     fn api_base_from_env_falls_through_empty_primary_to_secondary() {
-        let _guard = ENV_LOCK.get_or_init(Mutex::default).lock().unwrap();
+        let _guard = env_lock();
         let prev_primary = std::env::var("BACKEND_URL").ok();
         let prev_secondary = std::env::var("VITE_BACKEND_URL").ok();
         std::env::set_var("BACKEND_URL", ""); // empty — must not block secondary
@@ -599,6 +700,22 @@ mod tests {
         // a real backend, must not be misclassified.
         assert!(!looks_like_local_ai_endpoint(
             "https://my-backend.example/v1"
+        ));
+    }
+
+    #[test]
+    fn openhuman_backend_endpoint_detection_accepts_hosted_api_paths() {
+        assert!(looks_like_openhuman_backend_endpoint(
+            "https://api.tinyhumans.ai/openai/v1/chat/completions"
+        ));
+        assert!(looks_like_openhuman_backend_endpoint(
+            "https://staging-api.tinyhumans.ai/openai/v1/chat/completions"
+        ));
+        assert!(!looks_like_openhuman_backend_endpoint(
+            "https://openrouter.ai/api/v1/chat/completions"
+        ));
+        assert!(!looks_like_openhuman_backend_endpoint(
+            "http://localhost:1234/v1/chat/completions"
         ));
     }
 
@@ -708,7 +825,7 @@ mod tests {
     #[test]
     fn api_url_with_lm_studio_base_joins_correctly() {
         // Verify that an LM Studio URL used as the api_url base (which
-        // should not reach here in practice — effective_integrations_api_url
+        // should not reach here in practice — effective_backend_api_url
         // redirects it away) still joins without panicking and produces
         // something parseable.
         let result = api_url("http://localhost:1234/v1", "/agent-integrations/foo");
@@ -737,44 +854,45 @@ mod tests {
         );
     }
 
-    // ── effective_integrations_api_url ─────────────────────────────────
+    // ── effective_backend_api_url ─────────────────────────────────
 
     #[test]
     fn integrations_url_handles_llm_endpoint_overrides() {
-        let _guard = ENV_LOCK.get_or_init(Mutex::default).lock().unwrap();
+        let _guard = env_lock();
         let _env = EnvSnapshot::clear_backend_env();
+        let fallback_backend = fallback_backend_base_for_current_build();
 
         struct Case {
             api_url: &'static str,
-            expected: &'static str,
+            expected: String,
         }
 
         let cases = [
             Case {
                 api_url: "https://api.tinyhumans.ai/openai/v1/chat/completions",
-                expected: "https://api.tinyhumans.ai",
+                expected: "https://api.tinyhumans.ai".to_string(),
             },
             Case {
                 api_url: "http://localhost:11434/v1/chat/completions",
-                expected: DEFAULT_API_BASE_URL,
+                expected: fallback_backend.clone(),
             },
             Case {
                 api_url: "https://api.tinyhumans.ai",
-                expected: "https://api.tinyhumans.ai",
+                expected: "https://api.tinyhumans.ai".to_string(),
             },
             Case {
                 api_url: "https://api.tinyhumans.ai/openai/v1/",
-                expected: "https://api.tinyhumans.ai",
+                expected: "https://api.tinyhumans.ai".to_string(),
             },
             Case {
                 api_url: "https://openrouter.ai/api/v1/chat/completions",
-                expected: DEFAULT_API_BASE_URL,
+                expected: fallback_backend,
             },
         ];
 
         for case in cases {
             assert_eq!(
-                effective_integrations_api_url(&Some(case.api_url.to_string())),
+                effective_backend_api_url(&Some(case.api_url.to_string())),
                 case.expected,
                 "api_url={}",
                 case.api_url
@@ -784,47 +902,22 @@ mod tests {
 
     #[test]
     fn integrations_url_falls_back_to_default_when_override_is_local_ai() {
-        let _guard = ENV_LOCK.get_or_init(Mutex::default).lock().unwrap();
-        // Clear env so we deterministically hit the default branch.
-        let prev_backend = std::env::var("BACKEND_URL").ok();
-        let prev_vite_backend = std::env::var("VITE_BACKEND_URL").ok();
-        let prev_app_env = std::env::var(APP_ENV_VAR).ok();
-        let prev_vite_app_env = std::env::var(VITE_APP_ENV_VAR).ok();
-        std::env::remove_var("BACKEND_URL");
-        std::env::remove_var("VITE_BACKEND_URL");
-        std::env::remove_var(APP_ENV_VAR);
-        std::env::remove_var(VITE_APP_ENV_VAR);
+        let _guard = env_lock();
+        let _env = EnvSnapshot::clear_backend_env();
+        let expected = fallback_backend_base_for_current_build();
 
-        let result = effective_integrations_api_url(&Some("http://127.0.0.1:11434/v1".to_string()));
+        let result = effective_backend_api_url(&Some("http://127.0.0.1:11434/v1".to_string()));
 
-        // Restore env before asserting so a failing assert doesn't leak.
-        match prev_backend {
-            Some(v) => std::env::set_var("BACKEND_URL", v),
-            None => std::env::remove_var("BACKEND_URL"),
-        }
-        match prev_vite_backend {
-            Some(v) => std::env::set_var("VITE_BACKEND_URL", v),
-            None => std::env::remove_var("VITE_BACKEND_URL"),
-        }
-        match prev_app_env {
-            Some(v) => std::env::set_var(APP_ENV_VAR, v),
-            None => std::env::remove_var(APP_ENV_VAR),
-        }
-        match prev_vite_app_env {
-            Some(v) => std::env::set_var(VITE_APP_ENV_VAR, v),
-            None => std::env::remove_var(VITE_APP_ENV_VAR),
-        }
-
-        assert_eq!(result, DEFAULT_API_BASE_URL);
+        assert_eq!(result, expected);
     }
 
     #[test]
     fn integrations_url_falls_back_to_env_when_override_is_local_ai() {
-        let _guard = ENV_LOCK.get_or_init(Mutex::default).lock().unwrap();
+        let _guard = env_lock();
         let prev_backend = std::env::var("BACKEND_URL").ok();
         std::env::set_var("BACKEND_URL", "https://staging-api.tinyhumans.ai/");
 
-        let result = effective_integrations_api_url(&Some(
+        let result = effective_backend_api_url(&Some(
             "http://127.0.0.1:8080/v1/chat/completions".to_string(),
         ));
 
@@ -840,42 +933,17 @@ mod tests {
     fn integrations_url_keeps_real_backend_override() {
         // User explicitly set a real backend host — must be respected.
         let result =
-            effective_integrations_api_url(&Some("https://staging-api.tinyhumans.ai/".to_string()));
+            effective_backend_api_url(&Some("https://staging-api.tinyhumans.ai/".to_string()));
         assert_eq!(result, "https://staging-api.tinyhumans.ai");
     }
 
     #[test]
     fn integrations_url_matches_effective_api_url_without_override() {
-        let _guard = ENV_LOCK.get_or_init(Mutex::default).lock().unwrap();
-        // No override, no env → both helpers must agree.
-        let prev_backend = std::env::var("BACKEND_URL").ok();
-        let prev_vite_backend = std::env::var("VITE_BACKEND_URL").ok();
-        let prev_app_env = std::env::var(APP_ENV_VAR).ok();
-        let prev_vite_app_env = std::env::var(VITE_APP_ENV_VAR).ok();
-        std::env::remove_var("BACKEND_URL");
-        std::env::remove_var("VITE_BACKEND_URL");
-        std::env::remove_var(APP_ENV_VAR);
-        std::env::remove_var(VITE_APP_ENV_VAR);
+        let _guard = env_lock();
+        let _env = EnvSnapshot::clear_backend_env();
 
-        let integrations = effective_integrations_api_url(&None);
+        let integrations = effective_backend_api_url(&None);
         let api = effective_api_url(&None);
-
-        match prev_backend {
-            Some(v) => std::env::set_var("BACKEND_URL", v),
-            None => std::env::remove_var("BACKEND_URL"),
-        }
-        match prev_vite_backend {
-            Some(v) => std::env::set_var("VITE_BACKEND_URL", v),
-            None => std::env::remove_var("VITE_BACKEND_URL"),
-        }
-        match prev_app_env {
-            Some(v) => std::env::set_var(APP_ENV_VAR, v),
-            None => std::env::remove_var(APP_ENV_VAR),
-        }
-        match prev_vite_app_env {
-            Some(v) => std::env::set_var(VITE_APP_ENV_VAR, v),
-            None => std::env::remove_var(VITE_APP_ENV_VAR),
-        }
 
         assert_eq!(integrations, api);
     }

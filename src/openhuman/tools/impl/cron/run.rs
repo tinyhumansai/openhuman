@@ -145,24 +145,31 @@ mod tests {
 
         let result = tool.execute(json!({ "job_id": job.id })).await.unwrap();
         if cfg!(windows) {
-            // `echo` may not be available as a standalone executable on Windows;
-            // verify the expected failure mode without short-circuiting the test.
-            assert!(result.is_error);
-            assert!(
-                result.output().contains("spawn error"),
-                "{:?}",
-                result.output()
-            );
+            // Windows is platform-dependent for `echo`: cmd.exe treats it
+            // as a shell built-in (no standalone executable), but a dev
+            // box with Git Bash on PATH exposes a real `echo.exe` that
+            // succeeds. Both outcomes are valid; assert only that we
+            // get a deterministic ToolResult and that the runs ledger
+            // matches the success/failure decision.
+            if result.is_error {
+                assert!(
+                    result.output().contains("spawn error"),
+                    "expected spawn-error explanation on Windows failure path: {:?}",
+                    result.output()
+                );
+                let runs = cron::list_runs(&cfg, &job.id, 10).unwrap();
+                assert_eq!(runs.len(), 0, "spawn failure must not persist a run");
+            } else {
+                let runs = cron::list_runs(&cfg, &job.id, 10).unwrap();
+                assert_eq!(
+                    runs.len(),
+                    1,
+                    "successful run must persist exactly one entry"
+                );
+            }
         } else {
             assert!(!result.is_error, "{:?}", result.output());
-        }
-
-        // History persistence should be verified on all platforms.
-        let runs = cron::list_runs(&cfg, &job.id, 10).unwrap();
-        if cfg!(windows) {
-            // On Windows the job fails to spawn, so no run record is expected.
-            assert_eq!(runs.len(), 0);
-        } else {
+            let runs = cron::list_runs(&cfg, &job.id, 10).unwrap();
             assert_eq!(runs.len(), 1);
         }
     }

@@ -270,6 +270,19 @@ pub enum DomainEvent {
         cost_usd: f64,
         elapsed_ms: u64,
     },
+    /// The user changed the Composio routing configuration — either the
+    /// mode (`"backend"` ↔ `"direct"`) flipped, or the direct-mode API
+    /// key was stored / cleared. Subscribers should treat any cached
+    /// tenant-scoped Composio state (connections, toolkit allowlists,
+    /// tool catalogues) as stale and re-fetch on next access. Published
+    /// by `composio_set_api_key` / `composio_clear_api_key`.
+    ComposioConfigChanged {
+        /// New routing mode after the change (`"backend"` or `"direct"`).
+        mode: String,
+        /// Whether a direct-mode API key is now present in the encrypted
+        /// store. The key itself is never carried on the event.
+        api_key_set: bool,
+    },
 
     // ── Triage ──────────────────────────────────────────────────────────
     //
@@ -485,7 +498,8 @@ impl DomainEvent {
             Self::ComposioTriggerReceived { .. }
             | Self::ComposioConnectionCreated { .. }
             | Self::ComposioConnectionDeleted { .. }
-            | Self::ComposioActionExecuted { .. } => "composio",
+            | Self::ComposioActionExecuted { .. }
+            | Self::ComposioConfigChanged { .. } => "composio",
 
             Self::TriggerEvaluated { .. }
             | Self::TriggerEscalated { .. }

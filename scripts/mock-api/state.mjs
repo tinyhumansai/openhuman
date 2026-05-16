@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 export const DEFAULT_PORT = 18473;
 export const MOCK_JWT = "e2e-mock-jwt-token";
 export const MAX_PORT_RETRY_ATTEMPTS = 10;
+export const MAX_MOCK_DELAY_MS = 30_000;
 
 let requestLog = [];
 let mockBehavior = {};
@@ -59,7 +60,8 @@ export function parseBehaviorJson(key, fallback) {
 
 export function getDelayMs(key) {
   const value = Number(mockBehavior[key] || 0);
-  return Number.isFinite(value) && value > 0 ? value : 0;
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  return Math.min(value, MAX_MOCK_DELAY_MS);
 }
 
 export function sleep(ms) {
