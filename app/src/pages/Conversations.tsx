@@ -86,6 +86,7 @@ import {
   formatResetTime,
   getInlineCompletionSuffix,
 } from './conversations/utils/format';
+import { isThreadVisibleInTab, WORKERS_TAB_VALUE } from './conversations/utils/threadFilter';
 
 // Chat uses the reasoning model; `agentic-v1` is reserved for sub-agents
 // that execute tool calls, not the primary user-facing conversation.
@@ -1115,14 +1116,20 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
   };
 
   const filteredThreads = useMemo(() => {
-    const base = threads.filter(t => {
-      // Hide worker/subagent threads from the conversation list. They are
-      // currently surfaced inline inside the parent thread via WorkerThreadRefCard.
-      // A dedicated showcase is tracked in tinyhumansai/openhuman#1624.
-      if (t.parentThreadId) return false;
-      if (selectedLabel === 'all') return true;
-      return t.labels?.includes(selectedLabel);
-    });
+    // Worker/subagent threads (any thread with `parentThreadId`) are
+    // surfaced through two intentional paths (issue #1624):
+    //   1. The dedicated `Workers` tab in the sidebar — pick that tab to
+    //      see only background work and jump into a worker transcript.
+    //   2. Inline inside the parent thread via `WorkerThreadRefCard`,
+    //      which now also renders a live running/completed/failed badge
+    //      derived from the parent timeline entry's status.
+    // The default ("All") and label-scoped tabs hide them so the main
+    // sidebar is dominated by user-initiated conversations rather than
+    // background reasoning threads. The actual rule lives in
+    // `isThreadVisibleInTab` so it is pure, unit-testable, and stays
+    // in lockstep with the sidebar tab definition (`labelTabs` below)
+    // via the shared `WORKERS_TAB_VALUE` sentinel.
+    const base = threads.filter(t => isThreadVisibleInTab(t, selectedLabel));
     // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
     // if (!welcomeLocked) return base;
     // // During welcome lockdown only the onboarding welcome thread should
@@ -1145,11 +1152,17 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
 
   // Fixed tab set so categories don't disappear when empty and the active
   // filter state remains unambiguous regardless of what threads exist.
+  // The `workers` tab (issue #1624) is the deliberate UI surface for
+  // background sub-agent / worker threads — selecting it inverts the
+  // default `parentThreadId` filter in `filteredThreads` above so only
+  // worker threads show. Without this tab the only way into a worker
+  // transcript is the inline `WorkerThreadRefCard` inside the parent.
   const labelTabs = [
     { label: t('chat.filter.all'), value: 'all' },
     { label: t('chat.filter.work'), value: 'work' },
     { label: t('chat.filter.briefing'), value: 'briefing' },
     { label: t('chat.filter.notification'), value: 'notification' },
+    { label: t('chat.filter.workers'), value: WORKERS_TAB_VALUE },
   ];
 
   const isSidebar = variant === 'sidebar';
@@ -1175,6 +1188,25 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
     // }
     return thr?.title ?? t('chat.selectThread');
   };
+
+  // Resolve the parent of the currently-selected thread, if any. Used to
+  // render the back-to-parent breadcrumb in the chat header so a user who
+  // dropped into a worker thread (via `WorkerThreadRefCard` or the
+  // `Workers` sidebar tab) can return to the conversation that spawned it
+  // — issue #1624 acceptance criterion "Parent ↔ worker navigation is
+  // bidirectional". Returns `null` when the active thread is a top-level
+  // conversation (no parent), so the header stays unchanged in the
+  // non-worker case.
+  const selectedThreadParent = useMemo(() => {
+    if (!selectedThreadId) return null;
+    const current = threads.find(thr => thr.id === selectedThreadId);
+    const parentId = current?.parentThreadId;
+    if (!parentId) return null;
+    const parent = threads.find(thr => thr.id === parentId);
+    return parent
+      ? { id: parent.id, title: parent.title || 'parent thread' }
+      : { id: parentId, title: 'parent thread' };
+  }, [threads, selectedThreadId]);
 
   return (
     <div
@@ -1220,7 +1252,9 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
               <p className="px-4 py-6 text-xs text-stone-400 text-center">
                 {selectedLabel === 'all'
                   ? t('chat.noThreads')
-                  : t('chat.noLabelThreads').replace('{label}', selectedLabel)}
+                  : selectedLabel === WORKERS_TAB_VALUE
+                    ? t('chat.noWorkerThreads')
+                    : t('chat.noLabelThreads').replace('{label}', selectedLabel)}
               </p>
             ) : (
               sortedThreads.map(thread => (
@@ -1335,9 +1369,26 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                 />
               </svg>
             </button>
-            <h3 className="text-sm font-medium text-stone-700 truncate flex-1">
-              {resolveThreadDisplayTitle(selectedThreadId)}
-            </h3>
+            <div className="flex flex-col min-w-0 flex-1">
+              {selectedThreadParent ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    dispatch(setSelectedThread(selectedThreadParent.id));
+                    void dispatch(loadThreadMessages(selectedThreadParent.id));
+                  }}
+                  className="self-start flex items-center gap-1 text-[11px] font-medium text-primary-600 hover:text-primary-700 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300 rounded -mx-1 px-1"
+                  data-testid="worker-thread-back-to-parent">
+                  <span aria-hidden="true">←</span>
+                  <span className="truncate max-w-[16rem]">
+                    back to {selectedThreadParent.title}
+                  </span>
+                </button>
+              ) : null}
+              <h3 className="text-sm font-medium text-stone-700 truncate">
+                {resolveThreadDisplayTitle(selectedThreadId)}
+              </h3>
+            </div>
             {/* [#1123] welcomeLocked guard removed — always show token usage + new thread button */}
             <>
               <div className="flex items-center gap-1">

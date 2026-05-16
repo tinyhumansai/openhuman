@@ -19,9 +19,20 @@ struct ModelRouteUpdate {
 struct CloudProviderUpdate {
     /// Opaque stable id. Empty / missing → server generates a new id.
     id: Option<String>,
-    /// "openhuman" | "openai" | "anthropic" | "openrouter" | "custom"
-    r#type: String,
+    /// Routing slug, e.g. "openai", "my-deepseek". Must be unique per config.
+    slug: String,
+    /// Human-readable label.
+    #[serde(default)]
+    label: Option<String>,
     endpoint: String,
+    /// Auth style: "bearer" | "anthropic" | "openhuman_jwt" | "none".
+    #[serde(default)]
+    auth_style: Option<String>,
+    /// Legacy field — tolerated on read for back-compat but not required.
+    #[serde(rename = "type", default)]
+    legacy_type: Option<String>,
+    /// Legacy field — tolerated on read.
+    #[serde(default)]
     default_model: Option<String>,
 }
 
@@ -407,7 +418,7 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 FieldSchema {
                     name: "cloud_providers",
                     ty: TypeSchema::Option(Box::new(TypeSchema::Json)),
-                    comment: "Optional list of cloud provider entries {id, type, endpoint, default_model}. API keys are stored separately via cloud_provider_set_key. Replaces config.cloud_providers wholesale.",
+                    comment: "Optional list of cloud provider entries {id, slug, label, endpoint, auth_style}. API keys are stored separately via cloud_provider_set_key. Replaces config.cloud_providers wholesale.",
                     required: false,
                 },
                 optional_string("primary_cloud", "id of the cloud_providers entry used when a workload routes to 'cloud'. Empty string clears."),
@@ -891,9 +902,10 @@ fn handle_get_client_config(_params: Map<String, Value>) -> ControllerFuture {
             .map(|c| {
                 serde_json::json!({
                     "id": c.id,
-                    "type": c.r#type.as_str(),
+                    "slug": c.slug,
+                    "label": c.label,
                     "endpoint": c.endpoint,
-                    "default_model": c.default_model,
+                    "auth_style": c.auth_style.as_str(),
                 })
             })
             .collect();
@@ -951,36 +963,62 @@ fn handle_update_model_settings(params: Map<String, Value>) -> ControllerFuture 
                 .cloud_providers
                 .map(|entries| {
                     use crate::openhuman::config::schema::cloud_providers::{
-                        generate_provider_id, CloudProviderCreds, CloudProviderType,
+                        generate_provider_id, is_slug_reserved, migrate_legacy_fields, AuthStyle,
+                        CloudProviderCreds,
                     };
                     entries
                         .into_iter()
                         .map(|e| {
-                            let r#type = match e.r#type.to_ascii_lowercase().as_str() {
-                                "openhuman" => CloudProviderType::Openhuman,
-                                "openai" => CloudProviderType::Openai,
-                                "anthropic" => CloudProviderType::Anthropic,
-                                "openrouter" => CloudProviderType::Openrouter,
-                                "custom" => CloudProviderType::Custom,
+                            let slug = e.slug.trim().to_string();
+                            if slug.is_empty() {
+                                return Err(
+                                    "cloud provider slug must not be empty".to_string()
+                                );
+                            }
+                            if is_slug_reserved(&slug) {
+                                return Err(format!(
+                                    "slug '{}' is reserved and cannot be used for a custom provider",
+                                    slug
+                                ));
+                            }
+                            let auth_style = match e
+                                .auth_style
+                                .as_deref()
+                                .unwrap_or("bearer")
+                                .to_ascii_lowercase()
+                                .as_str()
+                            {
+                                "bearer" => AuthStyle::Bearer,
+                                "anthropic" => AuthStyle::Anthropic,
+                                "openhuman_jwt" | "openhumanjwt" => AuthStyle::OpenhumanJwt,
+                                "none" => AuthStyle::None,
                                 other => {
                                     return Err(format!(
-                                        "unknown cloud provider type '{}'; \
-                                         valid values: openhuman, openai, anthropic, \
-                                         openrouter, custom",
+                                        "unknown auth_style '{}'; valid: bearer, anthropic, openhuman_jwt, none",
                                         other
                                     ))
                                 }
                             };
-                            let id =
-                                e.id.filter(|s| !s.trim().is_empty())
-                                    .unwrap_or_else(|| generate_provider_id(&r#type));
-                            let default_model = e.default_model.unwrap_or_default();
-                            Ok(CloudProviderCreds {
+                            let id = e
+                                .id
+                                .filter(|s| !s.trim().is_empty())
+                                .unwrap_or_else(|| generate_provider_id(&slug));
+                            let label = e
+                                .label
+                                .filter(|s| !s.trim().is_empty())
+                                .unwrap_or_else(|| slug.clone());
+                            let mut entry = CloudProviderCreds {
                                 id,
-                                r#type,
+                                slug,
+                                label,
                                 endpoint: e.endpoint,
-                                default_model,
-                            })
+                                auth_style,
+                                legacy_type: e.legacy_type,
+                                default_model: e.default_model,
+                            };
+                            // Apply any remaining legacy-field migration.
+                            migrate_legacy_fields(&mut entry);
+                            Ok(entry)
                         })
                         .collect::<Result<Vec<_>, String>>()
                 })

@@ -15,6 +15,7 @@ export const CORE_RPC_METHODS = {
   configWorkspaceOnboardingFlagExists: 'openhuman.config_workspace_onboarding_flag_exists',
   configWorkspaceOnboardingFlagSet: 'openhuman.config_workspace_onboarding_flag_set',
   corePing: 'core.ping',
+  providersListModels: 'openhuman.providers_list_models',
   screenIntelligenceStatus: 'openhuman.screen_intelligence_status',
 } as const;
 

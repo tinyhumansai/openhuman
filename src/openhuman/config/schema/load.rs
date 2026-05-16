@@ -586,6 +586,103 @@ pub(super) fn redact_url_for_log(raw: &str) -> String {
     "<unparseable url>".to_string()
 }
 
+/// Migrate `cloud_providers` entries to the new slug-keyed shape and rewrite
+/// any per-workload routing strings that still use the old bare-prefix grammar.
+///
+/// This is idempotent: entries that already have a slug/label are left
+/// untouched. Routing fields that already contain a `:` are assumed to be
+/// in the new `<slug>:<model>` form.
+fn migrate_cloud_provider_slugs(config: &mut Config) {
+    use super::cloud_providers::migrate_legacy_fields;
+
+    // Step 1: migrate every cloud_providers entry in-place.
+    for entry in &mut config.cloud_providers {
+        migrate_legacy_fields(entry);
+    }
+
+    // Step 2: rewrite per-workload routing strings from legacy bare grammar.
+    // Build a lookup: legacy type string → first entry with that slug.
+    // After migration, `entry.slug` is populated from `legacy_type` when it
+    // was empty, so we can look up by slug now.
+    let slug_to_id: std::collections::HashMap<String, String> = config
+        .cloud_providers
+        .iter()
+        .map(|e| (e.slug.clone(), e.id.clone()))
+        .collect();
+
+    // Helper: rewrite a single routing field.
+    // Legacy bare strings are: "cloud", "openhuman", "openai", "anthropic",
+    // "openrouter", "custom" (no ':').  New strings contain ':'.
+    let rewrite = |field: &mut Option<String>| {
+        let raw = match field.as_deref() {
+            Some(s) if !s.is_empty() => s.to_string(),
+            _ => return,
+        };
+        // Already in new grammar (contains ':') or is the openhuman sentinel.
+        if raw.contains(':') || raw == "openhuman" {
+            return;
+        }
+        match raw.as_str() {
+            "cloud" => {
+                // "cloud" sentinel: look for the primary or first non-openhuman entry.
+                // If none found, leave as "openhuman".
+                let primary_slug = config.primary_cloud.as_deref().and_then(|pid| {
+                    config
+                        .cloud_providers
+                        .iter()
+                        .find(|e| e.id == pid)
+                        .map(|e| e.slug.clone())
+                });
+                let slug = primary_slug.or_else(|| {
+                    config
+                        .cloud_providers
+                        .iter()
+                        .find(|e| e.slug != "openhuman")
+                        .map(|e| e.slug.clone())
+                });
+                if let Some(s) = slug {
+                    tracing::info!(
+                        "[config][migrate] rewriting routing 'cloud' → '{s}:' (empty model)"
+                    );
+                    *field = Some(format!("{s}:"));
+                } else {
+                    tracing::debug!(
+                        "[config][migrate] routing 'cloud' with no non-openhuman provider → 'openhuman'"
+                    );
+                    *field = Some("openhuman".to_string());
+                }
+            }
+            other => {
+                // Bare type string (e.g. "openai") — find entry by slug.
+                if slug_to_id.contains_key(other) {
+                    tracing::info!(
+                        "[config][migrate] rewriting bare routing '{}' → '{}:'",
+                        other,
+                        other
+                    );
+                    *field = Some(format!("{other}:"));
+                } else if other != "openhuman" {
+                    tracing::warn!(
+                        "[config][migrate] bare routing '{}' has no matching provider entry, \
+                         falling back to 'openhuman'",
+                        other
+                    );
+                    *field = Some("openhuman".to_string());
+                }
+            }
+        }
+    };
+
+    rewrite(&mut config.reasoning_provider);
+    rewrite(&mut config.agentic_provider);
+    rewrite(&mut config.coding_provider);
+    rewrite(&mut config.memory_provider);
+    rewrite(&mut config.embeddings_provider);
+    rewrite(&mut config.heartbeat_provider);
+    rewrite(&mut config.learning_provider);
+    rewrite(&mut config.subconscious_provider);
+}
+
 fn migrate_legacy_autocomplete_disabled_apps(config: &mut Config) {
     // Legacy defaults blocked both terminal and code, which prevented Codex/CLI usage.
     // Migrate only the exact legacy default so custom user preferences remain untouched.
@@ -705,6 +802,7 @@ impl Config {
             config.workspace_dir = workspace_dir;
             migrate_legacy_autocomplete_disabled_apps(&mut config);
             migrate_legacy_inference_url(&mut config);
+            migrate_cloud_provider_slugs(&mut config);
             config.apply_env_overrides_from(env);
 
             if config_was_corrupted {

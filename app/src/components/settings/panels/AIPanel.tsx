@@ -8,25 +8,21 @@
  * whichever cloud provider is currently marked primary. Overrides are explicit
  * per row, so the resolved provider+model is always rendered inline.
  */
-import { type ReactElement, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { LuCheck, LuCircleAlert, LuCloud, LuServer, LuShield, LuWand, LuZap } from 'react-icons/lu';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { LuCheck, LuCircleAlert } from 'react-icons/lu';
 
 import {
   type AISettings as ApiAISettings,
   type ProviderRef as ApiProviderRef,
-  cacheProviderModelIds,
   clearCloudProviderKey,
-  clearProviderModelIds,
   type CloudProviderView,
   loadAISettings,
   loadLocalProviderSnapshot,
-  loadProviderModelIds,
   type LocalProviderSnapshot,
   saveAISettings,
   setCloudProviderKey,
-  validateCloudProviderKey,
 } from '../../../services/api/aiSettingsApi';
-import type { CloudProviderType as ApiCloudProviderType } from '../../../utils/tauriCommands/config';
+import type { AuthStyle } from '../../../utils/tauriCommands/config';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
@@ -34,15 +30,13 @@ import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 // Types
 // ─────────────────────────────────────────────────────────────────────────────
 
-type CloudProviderType = 'openhuman' | 'openai' | 'anthropic' | 'openrouter' | 'custom';
-
 type CloudProvider = {
   id: string;
-  type: CloudProviderType;
+  slug: string;
   label: string;
   endpoint: string;
+  authStyle: AuthStyle;
   maskedKey: string;
-  defaultModel: string;
 };
 
 type OllamaState = 'disabled' | 'missing' | 'stopped' | 'starting' | 'running' | 'error';
@@ -62,8 +56,8 @@ type WorkloadId =
 type WorkloadGroup = 'chat' | 'background';
 
 type ProviderRef =
-  | { kind: 'primary' }
-  | { kind: 'cloud'; providerId: string; model: string }
+  | { kind: 'openhuman' }
+  | { kind: 'cloud'; providerSlug: string; model: string }
   | { kind: 'local'; model: string };
 
 type Workload = { id: WorkloadId; group: WorkloadGroup; label: string; description: string };
@@ -73,6 +67,16 @@ type RoutingMap = Record<WorkloadId, ProviderRef>;
 // ─────────────────────────────────────────────────────────────────────────────
 // Static catalog
 // ─────────────────────────────────────────────────────────────────────────────
+
+// Slug-keyed display metadata for built-in provider slugs. Used only for
+// chip rendering (label, tone). Custom providers use `provider.label` directly.
+const BUILTIN_PROVIDER_META: Record<string, { tone: string; label: string }> = {
+  openhuman: { label: 'OpenHuman', tone: 'bg-primary-50 ring-primary-200 text-primary-900' },
+  openai: { label: 'OpenAI', tone: 'bg-emerald-50 ring-emerald-200 text-emerald-900' },
+  anthropic: { label: 'Anthropic', tone: 'bg-orange-50 ring-orange-200 text-orange-900' },
+  openrouter: { label: 'OpenRouter', tone: 'bg-slate-100 ring-slate-300 text-slate-900' },
+  custom: { label: 'Custom', tone: 'bg-stone-100 ring-stone-300 text-stone-900' },
+};
 
 const WORKLOADS: Workload[] = [
   {
@@ -125,101 +129,62 @@ const WORKLOADS: Workload[] = [
   },
 ];
 
-const PROVIDER_META: Record<
-  CloudProviderType,
-  { label: string; rail: string; pill: string; icon: ReactElement }
-> = {
-  openhuman: {
-    label: 'OpenHuman',
-    rail: 'bg-primary-500',
-    pill: 'bg-primary-50 text-primary-700 ring-primary-200',
-    icon: <LuShield className="h-3 w-3" />,
-  },
-  openai: {
-    label: 'OpenAI',
-    rail: 'bg-sage-500',
-    pill: 'bg-sage-50 text-sage-700 ring-sage-200',
-    icon: <LuWand className="h-3 w-3" />,
-  },
-  anthropic: {
-    label: 'Anthropic',
-    rail: 'bg-amber-500',
-    pill: 'bg-amber-50 text-amber-700 ring-amber-200',
-    icon: <LuZap className="h-3 w-3" />,
-  },
-  openrouter: {
-    label: 'OpenRouter',
-    rail: 'bg-slate-500',
-    pill: 'bg-slate-50 text-slate-700 ring-slate-200',
-    icon: <LuCloud className="h-3 w-3" />,
-  },
-  custom: {
-    label: 'Custom',
-    rail: 'bg-stone-500',
-    pill: 'bg-stone-100 text-stone-700 ring-stone-200',
-    icon: <LuServer className="h-3 w-3" />,
-  },
-};
-
 // TIER_PRESETS removed alongside the Local provider section.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // API-adapter hooks
 //
-// The panel works in terms of `CloudProvider` (with a derived `label` +
-// `maskedKey`) and `ProviderRef.cloud.providerId`. The wire format uses
-// provider TYPE, not id. These hooks bridge the two.
+// The panel works in terms of `CloudProvider` (slug + maskedKey) and
+// `ProviderRef` (slug-keyed). The wire format is identical — this layer
+// just derives the `maskedKey` display string from `has_api_key`.
 // ─────────────────────────────────────────────────────────────────────────────
 
-type AISettings = { cloudProviders: CloudProvider[]; primaryCloudId: string; routing: RoutingMap };
+type AISettings = { cloudProviders: CloudProvider[]; routing: RoutingMap };
 
-const EMPTY_SETTINGS: AISettings = {
-  cloudProviders: [],
-  primaryCloudId: '',
-  routing: {
-    reasoning: { kind: 'primary' },
-    agentic: { kind: 'primary' },
-    coding: { kind: 'primary' },
-    memory: { kind: 'primary' },
-    embeddings: { kind: 'primary' },
-    heartbeat: { kind: 'primary' },
-    learning: { kind: 'primary' },
-    subconscious: { kind: 'primary' },
-  },
+const EMPTY_ROUTING: RoutingMap = {
+  reasoning: { kind: 'openhuman' },
+  agentic: { kind: 'openhuman' },
+  coding: { kind: 'openhuman' },
+  memory: { kind: 'openhuman' },
+  embeddings: { kind: 'openhuman' },
+  heartbeat: { kind: 'openhuman' },
+  learning: { kind: 'openhuman' },
+  subconscious: { kind: 'openhuman' },
 };
+
+const EMPTY_SETTINGS: AISettings = { cloudProviders: [], routing: EMPTY_ROUTING };
 
 function maskKeyLabel(hasKey: boolean): string {
   return hasKey ? '•••• configured' : 'Not configured';
 }
 
+/**
+ * Default auth style for a slug. Built-in slugs map to their known styles;
+ * everything else (custom + third-party slugs the user types in) defaults
+ * to bearer, matching the OpenAI-compatible majority.
+ */
+function authStyleForSlug(slug: string): AuthStyle {
+  if (slug === 'openhuman') return 'openhuman_jwt';
+  if (slug === 'anthropic') return 'anthropic';
+  if (slug === 'lmstudio' || slug === 'ollama') return 'none';
+  return 'bearer';
+}
+
 function toPanelProvider(p: CloudProviderView): CloudProvider {
   return {
     id: p.id,
-    type: p.type as CloudProviderType,
-    label: PROVIDER_META[p.type as CloudProviderType].label,
+    slug: p.slug,
+    label: p.label,
     endpoint: p.endpoint,
+    authStyle: p.auth_style,
     maskedKey: maskKeyLabel(p.has_api_key),
-    defaultModel: p.default_model,
   };
 }
 
 function toPanelRoutingFromApi(api: ApiAISettings): { panel: AISettings } {
   const cloudProviders = api.cloudProviders.map(toPanelProvider);
-  const idByType = new Map<string, string>();
-  for (const p of cloudProviders) {
-    idByType.set(p.type, p.id);
-  }
-  const liftRef = (r: ApiProviderRef): ProviderRef => {
-    if (r.kind === 'primary') return { kind: 'primary' };
-    if (r.kind === 'local') return { kind: 'local', model: r.model };
-    // cloud
-    const id = idByType.get(r.providerType) ?? '';
-    if (!id) {
-      // Provider type referenced but no entry — degrade to primary.
-      return { kind: 'primary' };
-    }
-    return { kind: 'cloud', providerId: id, model: r.model };
-  };
+  // ApiProviderRef and ProviderRef share the same shape — pass through directly.
+  const liftRef = (r: ApiProviderRef): ProviderRef => r;
   const routing: RoutingMap = {
     reasoning: liftRef(api.routing.reasoning),
     agentic: liftRef(api.routing.agentic),
@@ -230,42 +195,28 @@ function toPanelRoutingFromApi(api: ApiAISettings): { panel: AISettings } {
     learning: liftRef(api.routing.learning),
     subconscious: liftRef(api.routing.subconscious),
   };
-  return {
-    panel: {
-      cloudProviders,
-      primaryCloudId: api.primaryCloudId ?? cloudProviders[0]?.id ?? '',
-      routing,
-    },
-  };
-}
-
-function toApiRefFromPanel(r: ProviderRef, providers: CloudProvider[]): ApiProviderRef {
-  if (r.kind === 'primary') return { kind: 'primary' };
-  if (r.kind === 'local') return { kind: 'local', model: r.model };
-  const entry = providers.find(p => p.id === r.providerId);
-  if (!entry) return { kind: 'primary' };
-  return { kind: 'cloud', providerType: entry.type as ApiCloudProviderType, model: r.model };
+  return { panel: { cloudProviders, routing } };
 }
 
 function toApiSettings(panel: AISettings): ApiAISettings {
   return {
     cloudProviders: panel.cloudProviders.map(p => ({
       id: p.id,
-      type: p.type as ApiCloudProviderType,
+      slug: p.slug,
+      label: p.label,
       endpoint: p.endpoint,
-      default_model: p.defaultModel,
+      auth_style: p.authStyle,
       has_api_key: p.maskedKey.startsWith('••••'),
     })),
-    primaryCloudId: panel.primaryCloudId || null,
     routing: {
-      reasoning: toApiRefFromPanel(panel.routing.reasoning, panel.cloudProviders),
-      agentic: toApiRefFromPanel(panel.routing.agentic, panel.cloudProviders),
-      coding: toApiRefFromPanel(panel.routing.coding, panel.cloudProviders),
-      memory: toApiRefFromPanel(panel.routing.memory, panel.cloudProviders),
-      embeddings: toApiRefFromPanel(panel.routing.embeddings, panel.cloudProviders),
-      heartbeat: toApiRefFromPanel(panel.routing.heartbeat, panel.cloudProviders),
-      learning: toApiRefFromPanel(panel.routing.learning, panel.cloudProviders),
-      subconscious: toApiRefFromPanel(panel.routing.subconscious, panel.cloudProviders),
+      reasoning: panel.routing.reasoning,
+      agentic: panel.routing.agentic,
+      coding: panel.routing.coding,
+      memory: panel.routing.memory,
+      embeddings: panel.routing.embeddings,
+      heartbeat: panel.routing.heartbeat,
+      learning: panel.routing.learning,
+      subconscious: panel.routing.subconscious,
     },
   };
 }
@@ -300,7 +251,9 @@ function useAISettings() {
 
   const save = useCallback(async () => {
     try {
-      await saveAISettings(toApiSettings(saved), toApiSettings(draft));
+      const prevApi = toApiSettings(saved);
+      const nextApi = toApiSettings(draft);
+      await saveAISettings(prevApi, nextApi);
       setSaved(draft);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to save AI settings';
@@ -386,58 +339,36 @@ function useInstalledModels(snapshot: LocalProviderSnapshot | null): OllamaModel
 // Cloud provider card
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Provider "type" id used by the chip UI. Extends CloudProviderType with two
-// local-runtime brands (LM Studio + Ollama) so they get the same chip
-// affordance. Backend storage still uses CloudProviderType; the two extras
-// are persisted as `type: 'custom'` with a distinguishing label.
-type ProviderChipType = CloudProviderType | 'lmstudio' | 'ollama';
+// Local-runtime chip slugs (Ollama / LM Studio) that aren't actual slugs in
+// the cloud_providers list but need the same chip affordance.
+type LocalChipSlug = 'lmstudio' | 'ollama';
 
-// Faint brand-tinted background per provider. Compact (no icon) chip that
-// holds the provider name + a small toggle switch. The brand tint is shown
-// at all times (enabled and disabled) — the toggle is the only enabled-state
-// signal — so the row reads as a row of branded options at a glance.
-//
-// Tints are rough approximations of each vendor's brand:
-//   - OpenAI     → emerald (their classic green logo accent)
-//   - Anthropic  → orange  (Claude / Anthropic warm orange branding)
-//   - OpenRouter → slate   (dark / monochrome logo)
-//   - LM Studio  → cyan    (their teal/cyan icon)
-//   - Ollama     → violet  (their llama-themed purple tone)
-//   - Custom     → stone   (neutral)
-const PROVIDER_CHIP_TONE: Record<ProviderChipType, string> = {
-  openhuman: 'bg-primary-50 ring-primary-200 text-primary-900',
-  openai: 'bg-emerald-50 ring-emerald-200 text-emerald-900',
-  anthropic: 'bg-orange-50 ring-orange-200 text-orange-900',
-  openrouter: 'bg-slate-100 ring-slate-300 text-slate-900',
+// Tints per local-runtime chip slug.
+const LOCAL_CHIP_TONE: Record<LocalChipSlug, string> = {
   lmstudio: 'bg-cyan-50 ring-cyan-200 text-cyan-900',
   ollama: 'bg-violet-50 ring-violet-200 text-violet-900',
-  custom: 'bg-stone-100 ring-stone-300 text-stone-900',
 };
 
-const PROVIDER_CHIP_LABEL: Record<ProviderChipType, string> = {
-  openhuman: 'OpenHuman',
-  openai: 'OpenAI',
-  anthropic: 'Anthropic',
-  openrouter: 'OpenRouter',
-  lmstudio: 'LM Studio',
-  ollama: 'Ollama',
-  custom: 'Custom',
-};
+const LOCAL_CHIP_LABEL: Record<LocalChipSlug, string> = { lmstudio: 'LM Studio', ollama: 'Ollama' };
+
+function slugTone(slug: string): string {
+  return BUILTIN_PROVIDER_META[slug]?.tone ?? 'bg-stone-100 ring-stone-300 text-stone-900';
+}
 
 const ProviderToggleChip = ({
-  type,
+  slug,
   label,
   enabled,
   busy,
   onToggle,
 }: {
-  type: ProviderChipType;
+  slug: string;
   label: string;
   enabled: boolean;
   busy?: boolean;
   onToggle: () => void;
 }) => {
-  const tone = PROVIDER_CHIP_TONE[type];
+  const tone = slugTone(slug);
   return (
     <div
       className={`inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-xs font-medium ring-1 transition-colors ${tone}`}>
@@ -449,14 +380,10 @@ const ProviderToggleChip = ({
         aria-label={`${enabled ? 'Disconnect' : 'Connect'} ${label}`}
         disabled={busy}
         onClick={onToggle}
-        className={`relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors disabled:cursor-wait disabled:opacity-60 ${
-          enabled ? 'bg-primary-500' : 'bg-stone-300'
-        }`}>
+        className={`relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors disabled:cursor-wait disabled:opacity-60 ${enabled ? 'bg-primary-500' : 'bg-stone-300'}`}>
         <span
           aria-hidden
-          className={`inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform ${
-            enabled ? 'translate-x-3.5' : 'translate-x-0.5'
-          }`}
+          className={`inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform ${enabled ? 'translate-x-3.5' : 'translate-x-0.5'}`}
         />
       </button>
     </div>
@@ -464,31 +391,30 @@ const ProviderToggleChip = ({
 };
 
 // Minimal API-key dialog — shown when the user flips a provider toggle ON.
-// No endpoint / model fields; default endpoint is derived from the type and
+// No endpoint / model fields; default endpoint is derived from the slug and
 // the model is left empty (the routing dialog picks the model per workload).
 const ProviderKeyDialog = ({
-  type,
+  slug,
   label,
   onCancel,
   onSubmit,
 }: {
-  type: CloudProviderType;
+  slug: string;
   label: string;
   onCancel: () => void;
-  onSubmit: (apiKey: string, modelIds?: string[]) => Promise<void> | void;
+  onSubmit: (apiKey: string) => Promise<void> | void;
 }) => {
   const [apiKey, setApiKey] = useState('');
-  const [phase, setPhase] = useState<'idle' | 'testing' | 'saving'>('idle');
+  const [phase, setPhase] = useState<'idle' | 'saving'>('idle');
   const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
   const busy = phase !== 'idle';
 
   const placeholder =
-    type === 'openai'
+    slug === 'openai'
       ? 'sk-...'
-      : type === 'anthropic'
+      : slug === 'anthropic'
         ? 'sk-ant-...'
-        : type === 'openrouter'
+        : slug === 'openrouter'
           ? 'sk-or-...'
           : 'your-api-key';
 
@@ -499,26 +425,10 @@ const ProviderKeyDialog = ({
       return;
     }
     setError(null);
-    setSuccess(null);
-
-    // Sanity-check the key against the provider's models endpoint before
-    // we persist anything. For provider types we don't know how to verify
-    // (custom / local runtimes) `validateCloudProviderKey` resolves
-    // `{ ok: true }` without making a request, so this is a no-op there.
-    setPhase('testing');
-    const result = await validateCloudProviderKey(type, trimmed);
-    if (!result.ok) {
-      setError(result.error ?? "Couldn't verify that key. Please try again.");
-      setPhase('idle');
-      return;
-    }
-    if (typeof result.modelCount === 'number') {
-      setSuccess(`Key looks good — ${result.modelCount} models available.`);
-    }
 
     setPhase('saving');
     try {
-      await onSubmit(trimmed, result.modelIds);
+      await onSubmit(trimmed);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setPhase('idle');
@@ -559,14 +469,10 @@ const ProviderKeyDialog = ({
             onChange={e => {
               setApiKey(e.target.value);
               setError(null);
-              setSuccess(null);
             }}
             className="rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm text-stone-900 placeholder-stone-400 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 disabled:opacity-60"
           />
           {error ? <p className="text-xs font-medium text-red-600">{error}</p> : null}
-          {success && !error ? (
-            <p className="text-xs font-medium text-emerald-600">{success}</p>
-          ) : null}
         </div>
 
         <div className="mt-6 flex justify-end gap-2">
@@ -582,7 +488,7 @@ const ProviderKeyDialog = ({
             onClick={() => void handleSave()}
             disabled={busy}
             className="rounded-lg bg-primary-500 px-4 py-2 text-sm font-medium text-white hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-50">
-            {phase === 'testing' ? 'Testing…' : phase === 'saving' ? 'Saving…' : 'Save'}
+            {phase === 'saving' ? 'Saving…' : 'Save'}
           </button>
         </div>
       </div>
@@ -602,7 +508,6 @@ const ProviderKeyDialog = ({
 type WorkloadRowProps = {
   workload: Workload;
   ref_: ProviderRef;
-  primary: CloudProvider | undefined;
   cloudProviders: CloudProvider[];
   localModels: OllamaModel[];
   ollamaState: OllamaState;
@@ -612,7 +517,6 @@ type WorkloadRowProps = {
 const WorkloadRow = ({
   workload,
   ref_,
-  primary,
   cloudProviders,
   localModels,
   ollamaState,
@@ -620,18 +524,15 @@ const WorkloadRow = ({
   onCustomClick,
 }: WorkloadRowProps & { onCustomClick: () => void }) => {
   const selectedCloud =
-    ref_.kind === 'cloud' ? cloudProviders.find(c => c.id === ref_.providerId) : undefined;
+    ref_.kind === 'cloud' ? cloudProviders.find(c => c.slug === ref_.providerSlug) : undefined;
 
-  const isDefault = ref_.kind === 'primary';
+  const isDefault = ref_.kind === 'openhuman';
 
   let resolved: string;
-  if (ref_.kind === 'primary') {
-    if (!primary) resolved = 'no primary set';
-    else if (primary.type === 'openhuman') resolved = 'OpenHuman';
-    else resolved = `${primary.label} · ${primary.defaultModel}`;
+  if (ref_.kind === 'openhuman') {
+    resolved = 'OpenHuman (default)';
   } else if (ref_.kind === 'cloud') {
-    if (!selectedCloud) resolved = ref_.model;
-    else if (selectedCloud.type === 'openhuman') resolved = 'OpenHuman';
+    if (!selectedCloud) resolved = `${ref_.providerSlug} · ${ref_.model}`;
     else resolved = `${selectedCloud.label} · ${ref_.model}`;
   } else {
     resolved = `Ollama · ${ref_.model}`;
@@ -657,7 +558,7 @@ const WorkloadRow = ({
       <div className="inline-flex shrink-0 items-center rounded-lg bg-stone-100 p-0.5">
         <button
           type="button"
-          onClick={() => onChange({ kind: 'primary' })}
+          onClick={() => onChange({ kind: 'openhuman' })}
           className={`${segmentBase} ${isDefault ? activeSegment : inactiveSegment}`}>
           Default
         </button>
@@ -683,15 +584,11 @@ interface CustomRoutingDialogProps {
   cloudProviders: CloudProvider[];
   localModels: OllamaModel[];
   ollamaRunning: boolean;
-  /** Per-provider-type model id catalog cached from the validation step.
-   *  Empty array for a given type means "no cache, fall back to free-text
-   *  model input". */
-  cloudModelIds: Partial<Record<CloudProviderType, string[]>>;
   onClose: () => void;
   onSubmit: (next: ProviderRef) => void;
 }
 
-type CustomDialogSource = { kind: 'cloud'; providerId: string } | { kind: 'local' };
+type CustomDialogSource = { kind: 'cloud'; providerSlug: string } | { kind: 'local' };
 
 const CustomRoutingDialog = ({
   workload,
@@ -699,22 +596,21 @@ const CustomRoutingDialog = ({
   cloudProviders,
   localModels,
   ollamaRunning,
-  cloudModelIds,
   onClose,
   onSubmit,
 }: CustomRoutingDialogProps) => {
   // Non-openhuman cloud providers + local-ollama (if available) are the
   // "Custom" options. OpenHuman is excluded — it's the Default path.
-  const customCloud = cloudProviders.filter(p => p.type !== 'openhuman');
+  const customCloud = cloudProviders.filter(p => p.slug !== 'openhuman');
   const localAvailable = ollamaRunning && localModels.length > 0;
 
   const initialSource: CustomDialogSource | null =
     initial.kind === 'cloud'
-      ? { kind: 'cloud', providerId: initial.providerId }
+      ? { kind: 'cloud', providerSlug: initial.providerSlug }
       : initial.kind === 'local'
         ? { kind: 'local' }
         : customCloud[0]
-          ? { kind: 'cloud', providerId: customCloud[0].id }
+          ? { kind: 'cloud', providerSlug: customCloud[0].slug }
           : localAvailable
             ? { kind: 'local' }
             : null;
@@ -723,21 +619,21 @@ const CustomRoutingDialog = ({
   const [model, setModel] = useState<string>(() => {
     if (initial.kind === 'cloud' || initial.kind === 'local') return initial.model;
     if (initialSource?.kind === 'cloud') {
-      const p = customCloud.find(c => c.id === initialSource.providerId);
-      return p?.defaultModel ?? '';
+      const p = customCloud.find(c => c.slug === initialSource.providerSlug);
+      return p ? '' : '';
     }
     return localModels[0]?.id ?? '';
   });
 
   const selectedCloud =
-    source?.kind === 'cloud' ? customCloud.find(c => c.id === source.providerId) : undefined;
+    source?.kind === 'cloud' ? customCloud.find(c => c.slug === source.providerSlug) : undefined;
 
   const canSave = source !== null && model.trim().length > 0;
 
   const handleSave = () => {
     if (!source || !canSave) return;
     if (source.kind === 'cloud') {
-      onSubmit({ kind: 'cloud', providerId: source.providerId, model: model.trim() });
+      onSubmit({ kind: 'cloud', providerSlug: source.providerSlug, model: model.trim() });
     } else {
       onSubmit({ kind: 'local', model: model.trim() });
     }
@@ -784,22 +680,25 @@ const CustomRoutingDialog = ({
               <label className="text-xs font-medium text-stone-700">Provider</label>
               <select
                 value={
-                  source ? `${source.kind}:${source.kind === 'cloud' ? source.providerId : ''}` : ''
+                  source
+                    ? `${source.kind}:${source.kind === 'cloud' ? source.providerSlug : ''}`
+                    : ''
                 }
                 onChange={e => {
-                  const [kind, providerId] = e.target.value.split(':');
+                  const colonIdx = e.target.value.indexOf(':');
+                  const kind = e.target.value.slice(0, colonIdx);
+                  const slug = e.target.value.slice(colonIdx + 1);
                   if (kind === 'local') {
                     setSource({ kind: 'local' });
                     setModel(localModels[0]?.id ?? '');
                   } else if (kind === 'cloud') {
-                    const p = customCloud.find(c => c.id === providerId);
-                    setSource({ kind: 'cloud', providerId });
-                    setModel(p?.defaultModel ?? '');
+                    setSource({ kind: 'cloud', providerSlug: slug });
+                    setModel('');
                   }
                 }}
                 className="rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm text-stone-900 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500">
                 {customCloud.map(p => (
-                  <option key={p.id} value={`cloud:${p.id}`}>
+                  <option key={p.slug} value={`cloud:${p.slug}`}>
                     {p.label}
                   </option>
                 ))}
@@ -821,48 +720,13 @@ const CustomRoutingDialog = ({
                   ))}
                 </select>
               ) : (
-                (() => {
-                  const cachedIds =
-                    selectedCloud && cloudModelIds[selectedCloud.type]
-                      ? (cloudModelIds[selectedCloud.type] ?? [])
-                      : [];
-                  // When we have a cached model list for this provider
-                  // (populated at validation time), show a dropdown. Fall
-                  // back to free-text otherwise — e.g. for `custom` /
-                  // LM Studio / Ollama where we don't pre-query models.
-                  if (cachedIds.length > 0) {
-                    // Make sure the currently-selected model id is in the
-                    // option list even if it's missing from the cached
-                    // catalog (typo, deprecated id, etc.) so the dropdown
-                    // never silently swallows the user's choice.
-                    const visibleIds = cachedIds.includes(model)
-                      ? cachedIds
-                      : model
-                        ? [model, ...cachedIds]
-                        : cachedIds;
-                    return (
-                      <select
-                        value={model}
-                        onChange={e => setModel(e.target.value)}
-                        className="rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-mono text-stone-900 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500">
-                        {visibleIds.map(id => (
-                          <option key={id} value={id}>
-                            {id}
-                          </option>
-                        ))}
-                      </select>
-                    );
-                  }
-                  return (
-                    <input
-                      type="text"
-                      value={model}
-                      onChange={e => setModel(e.target.value)}
-                      placeholder={selectedCloud?.defaultModel ?? 'model-id'}
-                      className="rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-mono text-stone-900 placeholder-stone-400 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
-                    />
-                  );
-                })()
+                <input
+                  type="text"
+                  value={model}
+                  onChange={e => setModel(e.target.value)}
+                  placeholder={selectedCloud ? `${selectedCloud.slug} model id` : 'model-id'}
+                  className="rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-mono text-stone-900 placeholder-stone-400 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+                />
               )}
             </div>
           </div>
@@ -953,29 +817,12 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
   const [busyAction, setBusyAction] = useState<string | null>(null);
   // Which workload's "Custom" dialog is currently open (null = closed).
   const [customDialogFor, setCustomDialogFor] = useState<WorkloadId | null>(null);
-  // Which provider type's API-key dialog is currently open (null = closed).
-  const [keyDialogFor, setKeyDialogFor] = useState<CloudProviderType | null>(null);
-  // When the user toggles LM Studio / Ollama (both stored as `custom`), we
+  // Which provider slug's API-key dialog is currently open (null = closed).
+  const [keyDialogFor, setKeyDialogFor] = useState<string | null>(null);
+  // When the user toggles LM Studio / Ollama (local runtimes), we
   // need to remember which label to attach to the upserted provider so the
   // chip can find it again. Cleared when the dialog closes.
   const [pendingLocalLabel, setPendingLocalLabel] = useState<string | null>(null);
-
-  const primary = useMemo(
-    () => draft.cloudProviders.find(p => p.id === draft.primaryCloudId),
-    [draft]
-  );
-
-  // Per-type cache of model IDs we captured at validation time. Used to
-  // populate the model dropdown in CustomRoutingDialog. Recomputed when
-  // the set of active cloud providers changes (toggle on/off).
-  const cloudModelIdsMap = useMemo(() => {
-    const out: Partial<Record<CloudProviderType, string[]>> = {};
-    for (const p of draft.cloudProviders) {
-      if (p.type === 'openhuman') continue;
-      out[p.type] = loadProviderModelIds(p.type);
-    }
-    return out;
-  }, [draft.cloudProviders]);
 
   const updateRouting = (id: WorkloadId, next: ProviderRef) =>
     setDraft({ ...draft, routing: { ...draft.routing, [id]: next } });
@@ -990,17 +837,13 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
       const b = draft.routing[w.id];
       if (JSON.stringify(a) !== JSON.stringify(b)) {
         const describe = (r: ProviderRef) =>
-          r.kind === 'primary'
-            ? 'primary'
+          r.kind === 'openhuman'
+            ? 'openhuman'
             : r.kind === 'cloud'
-              ? `cloud:${r.model}`
+              ? `${r.providerSlug}:${r.model}`
               : `local:${r.model}`;
         out.push(`${w.label} → ${describe(b)}`);
       }
-    }
-    if (saved.primaryCloudId !== draft.primaryCloudId) {
-      const p = draft.cloudProviders.find(cp => cp.id === draft.primaryCloudId);
-      out.push(`primary → ${p ? p.label : '—'}`);
     }
     return out;
   }, [saved, draft]);
@@ -1043,101 +886,93 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
             )}
 
             <div className="flex flex-wrap gap-2">
-              {(['openai', 'anthropic', 'openrouter', 'custom'] as CloudProviderType[]).map(
-                type => {
-                  const meta = PROVIDER_META[type];
-                  const existing = draft.cloudProviders.find(cp => cp.type === type);
-                  const enabled = !!existing;
-                  return (
-                    <ProviderToggleChip
-                      key={type}
-                      type={type}
-                      label={meta.label}
-                      enabled={enabled}
-                      busy={busyAction === `toggle-${type}`}
-                      onToggle={() => {
-                        if (enabled && existing) {
-                          // Toggle OFF: remove the provider + scrub any
-                          // routing entries that pin to it + drop the
-                          // cached model-id list for this provider type.
-                          const remaining = draft.cloudProviders.filter(
-                            cp => cp.id !== existing.id
-                          );
-                          const nextPrimaryId =
-                            draft.primaryCloudId === existing.id
-                              ? (remaining[0]?.id ?? null)
-                              : draft.primaryCloudId;
-                          const nextRouting = Object.fromEntries(
-                            Object.entries(draft.routing).map(([wid, ref]) => [
-                              wid,
-                              ref.kind === 'cloud' && ref.providerId === existing.id
-                                ? { kind: 'primary' as const }
-                                : ref,
-                            ])
-                          ) as typeof draft.routing;
-                          setDraft({
-                            ...draft,
-                            cloudProviders: remaining,
-                            primaryCloudId: nextPrimaryId,
-                            routing: nextRouting,
-                          });
-                          clearProviderModelIds(type);
-                        } else {
-                          // Toggle ON: open the API-key popup. The chip
-                          // only flips after the dialog saves.
-                          setKeyDialogFor(type);
-                        }
-                      }}
-                    />
-                  );
-                }
-              )}
-
-              {/* LM Studio + Ollama — local runtimes. Stored as `type: 'custom'`
-                with a distinguishing label so the existing CloudProvider
-                machinery doesn't need a new variant. Toggle ON prompts for
-                the local endpoint URL via the same API-key dialog (the
-                "key" field doubles as the endpoint here). */}
-              {(['lmstudio', 'ollama'] as const).map(localKind => {
-                const label = PROVIDER_CHIP_LABEL[localKind];
-                const existing = draft.cloudProviders.find(
-                  cp => cp.type === 'custom' && cp.label === label
-                );
+              {/* Built-in cloud providers — openai/anthropic/openrouter/custom */}
+              {(['openai', 'anthropic', 'openrouter', 'custom'] as const).map(slug => {
+                const meta = BUILTIN_PROVIDER_META[slug];
+                const label = meta?.label ?? slug;
+                const existing = draft.cloudProviders.find(cp => cp.slug === slug);
                 const enabled = !!existing;
                 return (
                   <ProviderToggleChip
-                    key={localKind}
-                    type={localKind}
+                    key={slug}
+                    slug={slug}
                     label={label}
                     enabled={enabled}
-                    busy={busyAction === `toggle-${localKind}`}
+                    busy={busyAction === `toggle-${slug}`}
                     onToggle={() => {
                       if (enabled && existing) {
+                        // Toggle OFF: remove the provider + scrub any
+                        // routing entries that pin to it.
                         const remaining = draft.cloudProviders.filter(cp => cp.id !== existing.id);
-                        const nextPrimaryId =
-                          draft.primaryCloudId === existing.id
-                            ? (remaining[0]?.id ?? null)
-                            : draft.primaryCloudId;
                         const nextRouting = Object.fromEntries(
                           Object.entries(draft.routing).map(([wid, ref]) => [
                             wid,
-                            ref.kind === 'cloud' && ref.providerId === existing.id
-                              ? { kind: 'primary' as const }
+                            ref.kind === 'cloud' && ref.providerSlug === existing.slug
+                              ? ({ kind: 'openhuman' } as const)
                               : ref,
                           ])
                         ) as typeof draft.routing;
-                        setDraft({
-                          ...draft,
-                          cloudProviders: remaining,
-                          primaryCloudId: nextPrimaryId,
-                          routing: nextRouting,
-                        });
+                        setDraft({ ...draft, cloudProviders: remaining, routing: nextRouting });
+                      } else if (slug === 'custom') {
+                        // Custom providers need slug + endpoint + label, not
+                        // just an API key — defer to the full editor modal.
+                        setEditing('new');
                       } else {
-                        setKeyDialogFor('custom');
-                        setPendingLocalLabel(label);
+                        // Toggle ON: open the API-key popup. The chip
+                        // only flips after the dialog saves.
+                        setKeyDialogFor(slug);
                       }
                     }}
                   />
+                );
+              })}
+
+              {/* LM Studio + Ollama — local runtimes stored with a slug of
+                  "lmstudio" / "ollama" so they're distinct from generic custom. */}
+              {(['lmstudio', 'ollama'] as const).map(localKind => {
+                const label = LOCAL_CHIP_LABEL[localKind];
+                const tone = LOCAL_CHIP_TONE[localKind];
+                const existing = draft.cloudProviders.find(cp => cp.slug === localKind);
+                const enabled = !!existing;
+                // Use a styled chip directly for local runtimes — they have
+                // non-standard tones not in BUILTIN_PROVIDER_META.
+                return (
+                  <div
+                    key={localKind}
+                    className={`inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-xs font-medium ring-1 transition-colors ${tone}`}>
+                    <span>{label}</span>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={enabled}
+                      aria-label={`${enabled ? 'Disconnect' : 'Connect'} ${label}`}
+                      disabled={busyAction === `toggle-${localKind}`}
+                      onClick={() => {
+                        if (enabled && existing) {
+                          const remaining = draft.cloudProviders.filter(
+                            cp => cp.id !== existing.id
+                          );
+                          const nextRouting = Object.fromEntries(
+                            Object.entries(draft.routing).map(([wid, ref]) => [
+                              wid,
+                              ref.kind === 'cloud' && ref.providerSlug === localKind
+                                ? ({ kind: 'openhuman' } as const)
+                                : ref,
+                            ])
+                          ) as typeof draft.routing;
+                          setDraft({ ...draft, cloudProviders: remaining, routing: nextRouting });
+                        } else {
+                          setKeyDialogFor(localKind);
+                          setPendingLocalLabel(label);
+                        }
+                      }}
+                      className={`relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors disabled:cursor-wait disabled:opacity-60 ${enabled ? 'bg-primary-500' : 'bg-stone-300'}`}>
+                      <span
+                        aria-hidden
+                        className={`inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform ${enabled ? 'translate-x-3.5' : 'translate-x-0.5'}`}
+                      />
+                    </button>
+                  </div>
                 );
               })}
             </div>
@@ -1171,7 +1006,6 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
                       key={w.id}
                       workload={w}
                       ref_={draft.routing[w.id]}
-                      primary={primary}
                       cloudProviders={draft.cloudProviders}
                       localModels={installed}
                       ollamaState={ollama.state}
@@ -1191,7 +1025,6 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
                       key={w.id}
                       workload={w}
                       ref_={draft.routing[w.id]}
-                      primary={primary}
                       cloudProviders={draft.cloudProviders}
                       localModels={installed}
                       ollamaState={ollama.state}
@@ -1203,16 +1036,9 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
               </div>
             </div>
 
-            {primary && (
-              <div className="text-[11px] text-stone-500">
-                Default resolves to{' '}
-                <span className="font-mono text-stone-700">
-                  {primary.type === 'openhuman'
-                    ? 'OpenHuman'
-                    : `${primary.label} · ${primary.defaultModel}`}
-                </span>
-              </div>
-            )}
+            <div className="text-[11px] text-stone-500">
+              Default resolves to <span className="font-mono text-stone-700">OpenHuman</span>.
+            </div>
           </section>
         </div>
         {/* end of Routing section */}
@@ -1230,52 +1056,50 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
       {editing && (
         <CloudProviderEditor
           initial={editing === 'new' ? null : editing}
-          existingTypes={draft.cloudProviders
+          existingSlugs={draft.cloudProviders
             .filter(p => p.id !== (editing === 'new' ? '' : editing.id))
-            .map(p => p.type)}
+            .map(p => p.slug)}
           onClose={() => setEditing(null)}
           onSubmit={async (next, apiKey) => {
             setBusyAction('save-provider');
             try {
               const id =
                 editing === 'new' || !editing.id
-                  ? `p_${next.type}_${Math.random().toString(36).slice(2, 7)}`
+                  ? `p_${next.slug}_${Math.random().toString(36).slice(2, 7)}`
                   : editing.id;
               const upserted: CloudProvider = {
                 ...next,
                 id,
                 maskedKey: maskKeyLabel(apiKey ? true : next.maskedKey.startsWith('••••')),
               };
+              // Persist the credential BEFORE mutating draft, so a key-write
+              // failure doesn't leave the config referencing a provider with
+              // no stored key.
+              if (apiKey && upserted.slug !== 'openhuman') {
+                try {
+                  await setCloudProviderKey(upserted.slug, apiKey);
+                } catch (err) {
+                  const msg = err instanceof Error ? err.message : String(err);
+                  console.warn('[ai-settings] setCloudProviderKey failed', msg);
+                  return;
+                }
+              }
               const list =
                 editing === 'new'
                   ? [...draft.cloudProviders, upserted]
                   : draft.cloudProviders.map(p => (p.id === editing.id ? upserted : p));
-              setDraft({
-                ...draft,
-                cloudProviders: list,
-                primaryCloudId: draft.primaryCloudId || upserted.id,
-              });
-              if (apiKey && upserted.type !== 'openhuman') {
-                try {
-                  await setCloudProviderKey(upserted.type as ApiCloudProviderType, apiKey);
-                } catch (err) {
-                  const msg = err instanceof Error ? err.message : String(err);
-
-                  console.warn('[ai-settings] setCloudProviderKey failed', msg);
-                }
-              }
+              setDraft({ ...draft, cloudProviders: list });
               setEditing(null);
             } finally {
               setBusyAction(null);
             }
           }}
-          onClearKey={async type => {
+          onClearKey={async slug => {
             try {
-              await clearCloudProviderKey(type as ApiCloudProviderType);
+              await clearCloudProviderKey(slug);
               await reload();
             } catch (err) {
               const msg = err instanceof Error ? err.message : String(err);
-
               console.warn('[ai-settings] clearCloudProviderKey failed', msg);
             }
           }}
@@ -1293,7 +1117,6 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
               cloudProviders={draft.cloudProviders}
               localModels={installed}
               ollamaRunning={ollama.state === 'running'}
-              cloudModelIds={cloudModelIdsMap}
               onClose={() => setCustomDialogFor(null)}
               onSubmit={next => {
                 updateRouting(customDialogFor, next);
@@ -1305,17 +1128,17 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
 
       {keyDialogFor && (
         <ProviderKeyDialog
-          type={keyDialogFor}
-          label={pendingLocalLabel ?? PROVIDER_META[keyDialogFor].label}
+          slug={keyDialogFor}
+          label={pendingLocalLabel ?? BUILTIN_PROVIDER_META[keyDialogFor]?.label ?? keyDialogFor}
           onCancel={() => {
             setKeyDialogFor(null);
             setPendingLocalLabel(null);
           }}
-          onSubmit={async (apiKey, modelIds) => {
-            const type = keyDialogFor;
+          onSubmit={async apiKey => {
+            const slug = keyDialogFor;
             const localLabel = pendingLocalLabel;
             setBusyAction(
-              `toggle-${localLabel ? localLabel.toLowerCase().replace(/\s/g, '') : type}`
+              `toggle-${localLabel ? localLabel.toLowerCase().replace(/\s/g, '') : slug}`
             );
             try {
               // For LM Studio / Ollama the dialog's "API key" field is
@@ -1323,23 +1146,25 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
               // and skip the credential save (no remote key to store).
               const isLocalRuntime = Boolean(localLabel);
               const upserted: CloudProvider = {
-                id: `p_${type}_${Math.random().toString(36).slice(2, 7)}`,
-                type,
-                label: localLabel ?? PROVIDER_META[type].label,
-                endpoint: isLocalRuntime ? apiKey.trim() : defaultEndpointFor(type),
-                defaultModel: '',
+                id: `p_${slug}_${Math.random().toString(36).slice(2, 7)}`,
+                slug,
+                label: localLabel ?? BUILTIN_PROVIDER_META[slug]?.label ?? slug,
+                endpoint: isLocalRuntime ? apiKey.trim() : defaultEndpointFor(slug),
+                authStyle: authStyleForSlug(slug),
                 maskedKey: maskKeyLabel(true),
               };
+              // Persist the credential BEFORE mutating draft, so a key-write
+              // failure can't leave config + secrets out of sync.
+              if (!isLocalRuntime && slug !== 'openhuman') {
+                try {
+                  await setCloudProviderKey(slug, apiKey);
+                } catch (err) {
+                  const msg = err instanceof Error ? err.message : String(err);
+                  console.warn('[ai-settings] setCloudProviderKey failed', msg);
+                  return;
+                }
+              }
               setDraft({ ...draft, cloudProviders: [...draft.cloudProviders, upserted] });
-              if (!isLocalRuntime && type !== 'openhuman') {
-                await setCloudProviderKey(type as ApiCloudProviderType, apiKey);
-              }
-              // Persist the model IDs so the custom-routing dropdown is
-              // populated for this provider without needing the plaintext
-              // key again. Best-effort.
-              if (modelIds && modelIds.length > 0) {
-                cacheProviderModelIds(type, modelIds);
-              }
               setKeyDialogFor(null);
               setPendingLocalLabel(null);
             } finally {
@@ -1358,29 +1183,31 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
 
 const CloudProviderEditor = ({
   initial,
-  existingTypes,
+  existingSlugs,
   onClose,
   onSubmit,
   onClearKey,
 }: {
   initial: CloudProvider | null;
-  existingTypes: CloudProviderType[];
+  existingSlugs: string[];
   onClose: () => void;
   onSubmit: (next: CloudProvider, apiKey: string) => Promise<void> | void;
-  onClearKey: (type: CloudProviderType) => Promise<void> | void;
+  onClearKey: (slug: string) => Promise<void> | void;
 }) => {
-  const defaultType: CloudProviderType =
-    initial?.type ??
-    (['openai', 'anthropic', 'openrouter', 'custom'] as CloudProviderType[]).find(
-      t => !existingTypes.includes(t)
+  const defaultSlug: string =
+    initial?.slug ??
+    (['openai', 'anthropic', 'openrouter', 'custom'] as const).find(
+      s => !existingSlugs.includes(s)
     ) ??
     'custom';
-  const [type, setType] = useState<CloudProviderType>(defaultType);
-  const [endpoint, setEndpoint] = useState(initial?.endpoint ?? defaultEndpointFor(defaultType));
-  const [defaultModel, setDefaultModel] = useState(initial?.defaultModel ?? '');
+  const [slug, setSlug] = useState<string>(defaultSlug);
+  const [label, setLabel] = useState<string>(
+    initial?.label ?? BUILTIN_PROVIDER_META[defaultSlug]?.label ?? defaultSlug
+  );
+  const [endpoint, setEndpoint] = useState(initial?.endpoint ?? defaultEndpointFor(defaultSlug));
   const [apiKey, setApiKey] = useState('');
   const [saving, setSaving] = useState(false);
-  const isOpenHuman = type === 'openhuman';
+  const isOpenHuman = slug === 'openhuman';
   const hasExistingKey = (initial?.maskedKey ?? '').startsWith('••••');
 
   return (
@@ -1397,27 +1224,39 @@ const CloudProviderEditor = ({
         <div className="space-y-3 px-4 py-3">
           <div>
             <label className="text-[10px] font-semibold uppercase tracking-wide text-stone-500">
-              Provider
+              Provider slug
             </label>
             <select
-              value={type}
+              value={slug}
               onChange={e => {
-                const next = e.target.value as CloudProviderType;
-                setType(next);
+                const next = e.target.value;
+                setSlug(next);
+                setLabel(BUILTIN_PROVIDER_META[next]?.label ?? next);
                 if (!initial) {
                   setEndpoint(defaultEndpointFor(next));
                 }
               }}
               disabled={!!initial}
               className="mt-1 w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 disabled:opacity-60 focus:border-primary-400 focus:outline-none focus:ring-1 focus:ring-primary-200">
-              {(['openai', 'anthropic', 'openrouter', 'custom'] as CloudProviderType[])
-                .filter(t => t === type || !existingTypes.includes(t))
-                .map(t => (
-                  <option key={t} value={t}>
-                    {PROVIDER_META[t].label}
+              {(['openai', 'anthropic', 'openrouter', 'custom'] as const)
+                .filter(s => s === slug || !existingSlugs.includes(s))
+                .map(s => (
+                  <option key={s} value={s}>
+                    {BUILTIN_PROVIDER_META[s]?.label ?? s}
                   </option>
                 ))}
             </select>
+          </div>
+          <div>
+            <label className="text-[10px] font-semibold uppercase tracking-wide text-stone-500">
+              Display label
+            </label>
+            <input
+              value={label}
+              onChange={e => setLabel(e.target.value)}
+              className="mt-1 w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 focus:border-primary-400 focus:outline-none focus:ring-1 focus:ring-primary-200"
+              placeholder="My Provider"
+            />
           </div>
           <div>
             <label className="text-[10px] font-semibold uppercase tracking-wide text-stone-500">
@@ -1431,24 +1270,13 @@ const CloudProviderEditor = ({
               placeholder="https://api.example.com/v1"
             />
           </div>
-          <div>
-            <label className="text-[10px] font-semibold uppercase tracking-wide text-stone-500">
-              Default model
-            </label>
-            <input
-              value={defaultModel}
-              onChange={e => setDefaultModel(e.target.value)}
-              className="mt-1 w-full rounded-lg border border-stone-200 bg-white px-3 py-2 font-mono text-xs text-stone-900 placeholder:text-stone-400 focus:border-primary-400 focus:outline-none focus:ring-1 focus:ring-primary-200"
-              placeholder="gpt-4o"
-            />
-          </div>
           {!isOpenHuman && (
             <div>
               <label className="flex items-center justify-between text-[10px] font-semibold uppercase tracking-wide text-stone-500">
                 <span>API key</span>
                 {hasExistingKey && (
                   <button
-                    onClick={() => void onClearKey(type)}
+                    onClick={() => void onClearKey(slug)}
                     className="text-[10px] font-medium normal-case text-coral-600 hover:text-coral-700">
                     Clear stored key
                   </button>
@@ -1478,11 +1306,11 @@ const CloudProviderEditor = ({
                 await onSubmit(
                   {
                     id: initial?.id ?? '',
-                    type,
-                    label: PROVIDER_META[type].label,
+                    slug,
+                    label: label.trim() || slug,
                     endpoint: endpoint.trim(),
+                    authStyle: initial?.authStyle ?? authStyleForSlug(slug),
                     maskedKey: maskKeyLabel(hasExistingKey || apiKey.length > 0),
-                    defaultModel: defaultModel.trim(),
                   },
                   apiKey.trim()
                 );
@@ -1500,8 +1328,8 @@ const CloudProviderEditor = ({
   );
 };
 
-function defaultEndpointFor(t: CloudProviderType): string {
-  switch (t) {
+function defaultEndpointFor(slug: string): string {
+  switch (slug) {
     case 'openhuman':
       return 'https://api.openhuman.ai/v1';
     case 'openai':
@@ -1510,7 +1338,7 @@ function defaultEndpointFor(t: CloudProviderType): string {
       return 'https://api.anthropic.com/v1';
     case 'openrouter':
       return 'https://openrouter.ai/api/v1';
-    case 'custom':
+    default:
       return '';
   }
 }

@@ -5,12 +5,77 @@ import { setActiveThread } from '../../../store/threadSlice';
 import type { WorkerThreadRef } from '../utils/workerThreadRef';
 
 /**
+ * Live lifecycle phase of the worker thread referenced by the card.
+ *
+ * The values mirror the parent timeline entry's status (which is what
+ * `ToolTimelineBlock` derives from the `subagent_spawned` /
+ * `subagent_completed` / `subagent_failed` socket events). Using the
+ * same source of truth means the badge can never disagree with the
+ * surrounding `<details>` row's status pill — both refresh together
+ * when the lifecycle event lands.
+ */
+export type WorkerThreadStatus = 'running' | 'completed' | 'failed';
+
+interface WorkerThreadStatusBadgeProps {
+  status: WorkerThreadStatus;
+}
+
+/**
+ * Compact running/completed/failed badge rendered next to the worker
+ * label inside the card. Issue #1624 acceptance criterion "Worker
+ * lifecycle is visible" — the badge is the at-a-glance signal so users
+ * scanning the parent transcript know whether the background work has
+ * finished or is still in flight without having to open the worker.
+ *
+ * Tones use the existing tool-timeline status palette
+ * (amber=running, sage=success, coral=error) so a worker badge inside a
+ * timeline row reads as the same state as its containing `<details>`
+ * status pill — no new colour vocabulary for the user to learn.
+ */
+function WorkerThreadStatusBadge({ status }: WorkerThreadStatusBadgeProps) {
+  const tone =
+    status === 'running'
+      ? 'bg-amber-100 text-amber-700'
+      : status === 'completed'
+        ? 'bg-sage-100 text-sage-700'
+        : 'bg-coral-100 text-coral-700';
+  const label = status === 'running' ? 'running' : status === 'completed' ? 'done' : 'failed';
+  return (
+    <span
+      className={`flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${tone}`}
+      data-testid="worker-thread-status-badge"
+      data-status={status}
+      role="status"
+      aria-label={`Worker ${label}`}>
+      {status === 'running' ? (
+        // Inline animated dot — purely decorative; the visible label
+        // carries the meaning so screen readers don't need to parse it.
+        <span aria-hidden="true" className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" />
+      ) : null}
+      {label}
+    </span>
+  );
+}
+
+/**
  * Compact card rendered inside a parent thread's tool timeline when the
  * orchestrator delegated a sub-task into a dedicated worker thread.
  * Clicking the card swaps the active thread so the user can read the
  * sub-agent's full transcript without losing the parent conversation.
+ *
+ * `status` is optional so the card stays renderable from ad-hoc parsers
+ * that don't have a parent timeline context (today only the historical
+ * test fixtures hit that path). When present, the badge surfaces live
+ * running / completed / failed state derived from the parent timeline
+ * entry's status — issue #1624.
  */
-export function WorkerThreadRefCard({ ref }: { ref: WorkerThreadRef }) {
+export function WorkerThreadRefCard({
+  ref,
+  status,
+}: {
+  ref: WorkerThreadRef;
+  status?: WorkerThreadStatus;
+}) {
   const { t } = useT();
   const dispatch = useDispatch();
   const meta: string[] = [];
@@ -35,6 +100,7 @@ export function WorkerThreadRefCard({ ref }: { ref: WorkerThreadRef }) {
           <span className="truncate text-xs font-medium text-primary-900">
             {t('chat.openWorkerThread')}
           </span>
+          {status ? <WorkerThreadStatusBadge status={status} /> : null}
         </div>
         {meta.length > 0 ? (
           <div className="mt-0.5 text-[10px] text-primary-700/80">{meta.join(' · ')}</div>

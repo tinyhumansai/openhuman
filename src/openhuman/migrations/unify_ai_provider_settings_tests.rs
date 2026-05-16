@@ -1,7 +1,6 @@
 //! Tests for the 1 → 2 AI-provider unification migration.
 
 use super::*;
-use crate::openhuman::config::schema::cloud_providers::CloudProviderType;
 use crate::openhuman::config::schema::{LocalAiConfig, LocalAiUsage};
 use crate::openhuman::config::Config;
 
@@ -30,7 +29,7 @@ fn empty_config_seeds_openhuman_entry() {
 
     assert_eq!(stats.cloud_providers_seeded, 1);
     assert_eq!(c.cloud_providers.len(), 1);
-    assert_eq!(c.cloud_providers[0].r#type, CloudProviderType::Openhuman);
+    assert_eq!(c.cloud_providers[0].slug, "openhuman");
     assert!(c.cloud_providers[0].id.starts_with("p_openhuman_"));
 }
 
@@ -59,10 +58,10 @@ fn legacy_inference_url_becomes_custom_entry() {
     let custom = c
         .cloud_providers
         .iter()
-        .find(|e| e.r#type == CloudProviderType::Custom)
+        .find(|e| e.slug == "custom")
         .expect("custom entry must be seeded");
     assert_eq!(custom.endpoint, "https://api.example.com/v1");
-    assert_eq!(custom.default_model, "gpt-4o");
+    assert_eq!(custom.default_model.as_deref(), Some("gpt-4o"));
 }
 
 #[test]
@@ -72,7 +71,7 @@ fn openhuman_inference_url_does_not_seed_custom() {
     let _ = run(&mut c).expect("migration must succeed");
     // Only the openhuman entry should be seeded — no Custom entry.
     assert_eq!(c.cloud_providers.len(), 1);
-    assert_eq!(c.cloud_providers[0].r#type, CloudProviderType::Openhuman);
+    assert_eq!(c.cloud_providers[0].slug, "openhuman");
 }
 
 #[test]
@@ -128,7 +127,7 @@ fn chat_workload_providers_left_unset() {
     let mut c = make_legacy_config_local_on();
     let _ = run(&mut c).unwrap();
     // Reasoning/agentic/coding have no legacy equivalent — they stay None
-    // and the factory defaults them to "cloud" at runtime.
+    // and the factory defaults them to "openhuman" at runtime.
     assert_eq!(c.reasoning_provider, None);
     assert_eq!(c.agentic_provider, None);
     assert_eq!(c.coding_provider, None);

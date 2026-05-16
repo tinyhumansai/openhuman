@@ -77,6 +77,8 @@ pub enum AuthStyle {
     Bearer,
     /// `x-api-key: <key>` (used by some Chinese providers)
     XApiKey,
+    /// Anthropic-specific: `x-api-key: <key>` + `anthropic-version: 2023-06-01`
+    Anthropic,
     /// Custom header name
     Custom(String),
 }
@@ -362,6 +364,9 @@ impl OpenAiCompatibleProvider {
                 req.header("Authorization", format!("Bearer {credential}"))
             }
             (AuthStyle::XApiKey, Some(credential)) => req.header("x-api-key", credential),
+            (AuthStyle::Anthropic, Some(credential)) => req
+                .header("x-api-key", credential)
+                .header("anthropic-version", "2023-06-01"),
             (AuthStyle::Custom(header), Some(credential)) => req.header(header, credential),
         }
     }
@@ -1692,6 +1697,9 @@ impl Provider for OpenAiCompatibleProvider {
                 (AuthStyle::XApiKey, Some(credential)) => {
                     req_builder.header("x-api-key", credential)
                 }
+                (AuthStyle::Anthropic, Some(credential)) => req_builder
+                    .header("x-api-key", credential)
+                    .header("anthropic-version", "2023-06-01"),
                 (AuthStyle::Custom(header), Some(credential)) => {
                     req_builder.header(header, credential)
                 }

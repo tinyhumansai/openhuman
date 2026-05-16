@@ -40,7 +40,7 @@
 //!   URL doesn't look like the OpenHuman backend.
 
 use crate::openhuman::config::schema::cloud_providers::{
-    generate_provider_id, CloudProviderCreds, CloudProviderType,
+    generate_provider_id, AuthStyle, CloudProviderCreds, CloudProviderType,
 };
 use crate::openhuman::config::Config;
 
@@ -98,10 +98,13 @@ fn seed_cloud_providers(config: &mut Config, stats: &mut MigrationStats) {
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| "reasoning-v1".to_string());
     config.cloud_providers.push(CloudProviderCreds {
-        id: generate_provider_id(&CloudProviderType::Openhuman),
-        r#type: CloudProviderType::Openhuman,
+        id: generate_provider_id("openhuman"),
+        slug: "openhuman".to_string(),
+        label: "OpenHuman".to_string(),
         endpoint: oh_endpoint,
-        default_model: oh_default_model,
+        auth_style: AuthStyle::OpenhumanJwt,
+        default_model: Some(oh_default_model),
+        ..Default::default()
     });
     stats.cloud_providers_seeded += 1;
 
@@ -121,12 +124,15 @@ fn seed_cloud_providers(config: &mut Config, stats: &mut MigrationStats) {
                 .find(|r| r.hint.eq_ignore_ascii_case("reasoning"))
                 .or_else(|| config.model_routes.first())
                 .map(|r| r.model.clone())
-                .unwrap_or_default();
+                .filter(|m| !m.is_empty());
             config.cloud_providers.push(CloudProviderCreds {
-                id: generate_provider_id(&CloudProviderType::Custom),
-                r#type: CloudProviderType::Custom,
+                id: generate_provider_id("custom"),
+                slug: "custom".to_string(),
+                label: "Custom".to_string(),
                 endpoint: trimmed.to_string(),
+                auth_style: AuthStyle::Bearer,
                 default_model,
+                ..Default::default()
             });
             stats.cloud_providers_seeded += 1;
             log::info!(
@@ -146,7 +152,7 @@ fn set_primary_cloud(config: &mut Config, stats: &mut MigrationStats) {
     let oh = config
         .cloud_providers
         .iter()
-        .find(|e| e.r#type == CloudProviderType::Openhuman);
+        .find(|e| e.slug == "openhuman" || e.legacy_type.as_deref() == Some("openhuman"));
     if let Some(entry) = oh {
         config.primary_cloud = Some(entry.id.clone());
         stats.primary_cloud_set = true;

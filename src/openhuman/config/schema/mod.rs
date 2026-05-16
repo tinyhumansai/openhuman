@@ -3,7 +3,10 @@
 //! Split into submodules; this module re-exports the main `Config` and all public types.
 
 pub mod cloud_providers;
-pub use cloud_providers::{generate_provider_id, CloudProviderCreds, CloudProviderType};
+pub use cloud_providers::{
+    generate_provider_id, is_slug_reserved, migrate_legacy_fields, AuthStyle, CloudProviderCreds,
+    CloudProviderType,
+};
 mod accessibility;
 mod agent;
 mod autocomplete;

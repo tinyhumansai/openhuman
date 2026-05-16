@@ -20,20 +20,26 @@ export interface ModelRoute {
   model: string;
 }
 
-/** Cloud provider type discriminator. Lowercase JSON wire format. */
+/** Authentication header style. Matches Rust AuthStyle enum. */
+export type AuthStyle = 'bearer' | 'anthropic' | 'openhuman_jwt' | 'none';
+
+/** @deprecated Use AuthStyle. Kept for back-compat with old wire format. */
 export type CloudProviderType = 'openhuman' | 'openai' | 'anthropic' | 'openrouter' | 'custom';
 
 /**
- * Endpoint config for one cloud LLM provider. API keys are NOT carried on
- * this struct — they live in `auth-profiles.json` via the AuthService
- * (set/cleared through the `auth_*` RPCs).
+ * Endpoint config for one cloud LLM provider (new slug-keyed shape).
+ * API keys are NOT carried here — they live in `auth-profiles.json`
+ * (set/cleared through the `auth_*` RPCs, keyed by `provider:<slug>`).
  */
 export interface CloudProviderCreds {
   /** Opaque stable id, e.g. `"p_openai_a8c3f"`. Never shown in UI. */
   id: string;
-  type: CloudProviderType;
+  /** User-chosen routing key, e.g. `"openai"`. Used in `"<slug>:<model>"` strings. */
+  slug: string;
+  /** Human-readable display label, e.g. `"OpenAI"`. */
+  label: string;
   endpoint: string;
-  default_model: string;
+  auth_style: AuthStyle;
 }
 
 export interface ModelSettingsUpdate {
@@ -61,9 +67,10 @@ export interface ModelSettingsUpdate {
   /**
    * When present, REPLACES `config.cloud_providers` wholesale. API keys are
    * NOT carried here — store them via `authStoreProviderCredentials`.
+   * Each entry: { id?, slug, label?, endpoint, auth_style? }
    */
   cloud_providers?: CloudProviderCreds[] | null;
-  /** Id of the `cloud_providers` entry used when a workload routes to "cloud". */
+  /** @deprecated No longer used — slug-based routing replaces primary_cloud. */
   primary_cloud?: string | null;
   /** Per-workload provider strings — see Rust `providers::factory` grammar. */
   reasoning_provider?: string | null;

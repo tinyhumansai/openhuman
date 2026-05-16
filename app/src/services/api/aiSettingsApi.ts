@@ -15,16 +15,18 @@
  * through this file. Keeps the wiring testable and the panel focused on
  * presentation.
  */
+import { callCoreRpc } from '../../services/coreRpcClient';
+import { CORE_RPC_METHODS } from '../../services/rpcMethods';
 import {
   authListProviderCredentials,
   type AuthProfileSummary,
   authRemoveProviderCredentials,
   authStoreProviderCredentials,
 } from '../../utils/tauriCommands/auth';
+import { isTauri } from '../../utils/tauriCommands/common';
 import {
   type ClientConfig,
   type CloudProviderCreds,
-  type CloudProviderType,
   type ModelSettingsUpdate,
   openhumanGetClientConfig,
   openhumanUpdateLocalAiSettings,
@@ -68,8 +70,8 @@ export const ALL_WORKLOADS: WorkloadId[] = [...CHAT_WORKLOADS, ...BACKGROUND_WOR
 
 /** Provider reference parsed from a stored provider-string. */
 export type ProviderRef =
-  | { kind: 'primary' }
-  | { kind: 'cloud'; providerType: CloudProviderType; model: string }
+  | { kind: 'openhuman' }
+  | { kind: 'cloud'; providerSlug: string; model: string }
   | { kind: 'local'; model: string };
 
 /**
@@ -80,70 +82,70 @@ export interface CloudProviderView extends CloudProviderCreds {
   has_api_key: boolean;
 }
 
+/** Model descriptor returned by providers_list_models. */
+export interface ModelInfo {
+  id: string;
+  owned_by?: string | null;
+  context_window?: number | null;
+}
+
 /** Single in-memory snapshot the AI panel renders against. */
 export interface AISettings {
   cloudProviders: CloudProviderView[];
-  primaryCloudId: string | null;
   routing: Record<WorkloadId, ProviderRef>;
 }
 
 // ─── Read path: load + parse ───────────────────────────────────────────────
 
-const PROVIDER_PREFIXES: Record<string, CloudProviderType> = {
-  openhuman: 'openhuman',
-  openai: 'openai',
-  anthropic: 'anthropic',
-  openrouter: 'openrouter',
-  custom: 'custom',
-};
-
 /**
  * Parse a stored provider string (e.g. `"openai:gpt-4o"`) into a structured
- * ProviderRef. Empty/null/`"cloud"` → primary. Unrecognised → primary (safest
- * fallback). Mirrors the Rust factory grammar.
+ * ProviderRef. Empty/null/`"cloud"` → openhuman. Mirrors the Rust factory grammar.
+ *
+ * New grammar: `"<slug>:<model>"`. Legacy bare sentinels:
+ *   - `"openhuman"` → { kind: 'openhuman' }
+ *   - `"cloud"` or empty → { kind: 'openhuman' }
+ *   - `"ollama:<model>"` → { kind: 'local', model }
+ *   - `"<slug>:<model>"` → { kind: 'cloud', providerSlug: slug, model }
  */
 export function parseProviderString(s: string | null | undefined): ProviderRef {
   const trimmed = (s ?? '').trim();
-  if (!trimmed || trimmed === 'cloud') {
-    return { kind: 'primary' };
+  if (!trimmed || trimmed === 'cloud' || trimmed === 'openhuman') {
+    return { kind: 'openhuman' };
   }
   if (trimmed.startsWith('ollama:')) {
     return { kind: 'local', model: trimmed.slice('ollama:'.length).trim() };
   }
-  // Bare "openhuman" (no model suffix) means "use the OpenHuman backend with
-  // its default model" — map to a cloud ref so the round-trip preserves the
-  // explicit override rather than collapsing to the primary-cloud sentinel.
-  if (trimmed === 'openhuman') {
-    return { kind: 'cloud', providerType: 'openhuman', model: '' };
-  }
-  for (const prefix of Object.keys(PROVIDER_PREFIXES)) {
-    if (trimmed.startsWith(`${prefix}:`)) {
-      return {
-        kind: 'cloud',
-        providerType: PROVIDER_PREFIXES[prefix],
-        model: trimmed.slice(prefix.length + 1).trim(),
-      };
+  const colonIdx = trimmed.indexOf(':');
+  if (colonIdx > 0) {
+    const slug = trimmed.slice(0, colonIdx).trim();
+    const model = trimmed.slice(colonIdx + 1).trim();
+    if (slug === 'openhuman') {
+      return { kind: 'openhuman' };
     }
+    return { kind: 'cloud', providerSlug: slug, model };
   }
-  return { kind: 'primary' };
+  // Unrecognised bare string → fall back to openhuman.
+  return { kind: 'openhuman' };
 }
 
 /** Serialise a `ProviderRef` back to the wire-format string. */
 export function serializeProviderRef(ref: ProviderRef): string {
   switch (ref.kind) {
-    case 'primary':
-      return 'cloud';
+    case 'openhuman':
+      return 'openhuman';
     case 'cloud':
-      // Bare "openhuman" (no model) uses the sentinel form the Rust factory
-      // expects — avoid emitting "openhuman:" (with trailing colon) which the
-      // factory does not parse.
-      if (ref.providerType === 'openhuman' && !ref.model) {
-        return 'openhuman';
-      }
-      return `${ref.providerType}:${ref.model}`;
+      return `${ref.providerSlug}:${ref.model}`;
     case 'local':
       return `ollama:${ref.model}`;
   }
+}
+
+/**
+ * Auth-profile key for a slug-keyed provider (matches Rust `auth_key_for_slug`).
+ * Used to look up whether an API key is stored for a given provider.
+ */
+function authKeyForSlug(slug: string): string {
+  return `provider:${slug}`;
 }
 
 /**
@@ -161,14 +163,18 @@ export async function loadAISettings(): Promise<AISettings> {
     authListProviderCredentials().catch((): { result: AuthProfileSummary[] } => ({ result: [] })),
   ]);
   const config: ClientConfig = configRes.result;
-  const profilesByProvider = new Set(
+  // Build a set of stored provider keys for has_api_key derivation.
+  // Supports both new-style `provider:<slug>` and legacy bare `<slug>`.
+  const profileProviders = new Set(
     profilesRes.result.map((p: AuthProfileSummary) => p.provider.toLowerCase())
   );
 
-  const cloudProviders: CloudProviderView[] = config.cloud_providers.map(p => ({
-    ...p,
-    has_api_key: profilesByProvider.has(p.type.toLowerCase()),
-  }));
+  const cloudProviders: CloudProviderView[] = config.cloud_providers.map(p => {
+    const newKey = authKeyForSlug(p.slug).toLowerCase();
+    const legacyKey = p.slug.toLowerCase();
+    const has_api_key = profileProviders.has(newKey) || profileProviders.has(legacyKey);
+    return { ...p, has_api_key };
+  });
 
   const routing: Record<WorkloadId, ProviderRef> = {
     reasoning: parseProviderString(config.reasoning_provider),
@@ -181,7 +187,7 @@ export async function loadAISettings(): Promise<AISettings> {
     subconscious: parseProviderString(config.subconscious_provider),
   };
 
-  return { cloudProviders, primaryCloudId: config.primary_cloud, routing };
+  return { cloudProviders, routing };
 }
 
 // ─── Write path: diff + save ───────────────────────────────────────────────
@@ -202,22 +208,16 @@ export async function saveAISettings(prev: AISettings, next: AISettings): Promis
       return (
         !n ||
         n.id !== p.id ||
-        n.type !== p.type ||
+        n.slug !== p.slug ||
+        n.label !== p.label ||
         n.endpoint !== p.endpoint ||
-        n.default_model !== p.default_model
+        n.auth_style !== p.auth_style
       );
     })
   ) {
-    patch.cloud_providers = next.cloudProviders.map(({ id, type, endpoint, default_model }) => ({
-      id,
-      type,
-      endpoint,
-      default_model,
-    }));
-  }
-
-  if (prev.primaryCloudId !== next.primaryCloudId) {
-    patch.primary_cloud = next.primaryCloudId ?? '';
+    patch.cloud_providers = next.cloudProviders.map(
+      ({ id, slug, label, endpoint, auth_style }) => ({ id, slug, label, endpoint, auth_style })
+    );
   }
 
   for (const w of ALL_WORKLOADS) {
@@ -234,190 +234,53 @@ export async function saveAISettings(prev: AISettings, next: AISettings): Promis
   await openhumanUpdateModelSettings(patch);
 }
 
-// ─── API key management (per cloud provider type) ──────────────────────────
+// ─── API key management (per cloud provider slug) ──────────────────────────
 
 /**
- * Store an API key for a cloud provider (encrypted at rest). The provider
- * type doubles as the auth-profile id, so every cloud_providers entry of
- * the same type shares the same key.
+ * Store an API key for a cloud provider (encrypted at rest). Keyed by slug
+ * using the new `provider:<slug>` format.
  */
-export async function setCloudProviderKey(
-  providerType: CloudProviderType,
-  apiKey: string
-): Promise<void> {
-  if (providerType === 'openhuman') {
+export async function setCloudProviderKey(slug: string, apiKey: string): Promise<void> {
+  if (slug === 'openhuman') {
     throw new Error('OpenHuman uses the session JWT — keys are not configurable here.');
   }
+  // Store under both new-style key `provider:<slug>` and legacy bare `<slug>`
+  // so old code paths that look up by bare slug continue to work.
   await authStoreProviderCredentials({
-    provider: providerType,
+    provider: authKeyForSlug(slug),
     profile: 'default',
     token: apiKey,
     setActive: true,
   });
 }
 
-// ─── Provider key validation ──────────────────────────────────────────────
-//
-// Sanity-checks an API key by hitting the provider's "list models" endpoint.
-// Returns `ok: true` plus the model count on success, or `ok: false` with a
-// short error string on failure. Best-effort: providers we don't know how
-// to validate against (custom / local runtimes) resolve to `{ ok: true }`
-// without making a request, since "no failure" is the most useful default.
-
-export interface ProviderValidationResult {
-  ok: boolean;
-  /** Number of models the endpoint returned on success, when available. */
-  modelCount?: number;
-  /** Sorted model IDs returned by the endpoint, when parseable. Used by
-   *  the custom-routing dialog to populate a model dropdown without
-   *  having to round-trip back through the core for the decrypted key. */
-  modelIds?: string[];
-  /** Short human-readable failure reason on `ok: false`. */
-  error?: string;
-}
-
-interface ValidationEndpoint {
-  url: string;
-  authHeader: (apiKey: string) => Record<string, string>;
-  /** Extract the models list from the parsed JSON response, if shaped. */
-  extractList?: (json: unknown) => unknown[] | null;
-}
-
-const PROVIDER_VALIDATION: Partial<Record<CloudProviderType, ValidationEndpoint>> = {
-  openai: {
-    url: 'https://api.openai.com/v1/models',
-    authHeader: key => ({ Authorization: `Bearer ${key}` }),
-    extractList: json =>
-      typeof json === 'object' &&
-      json &&
-      'data' in json &&
-      Array.isArray((json as Record<string, unknown>).data)
-        ? ((json as Record<string, unknown>).data as unknown[])
-        : null,
-  },
-  anthropic: {
-    url: 'https://api.anthropic.com/v1/models',
-    authHeader: key => ({ 'x-api-key': key, 'anthropic-version': '2023-06-01' }),
-    extractList: json =>
-      typeof json === 'object' &&
-      json &&
-      'data' in json &&
-      Array.isArray((json as Record<string, unknown>).data)
-        ? ((json as Record<string, unknown>).data as unknown[])
-        : null,
-  },
-  openrouter: {
-    url: 'https://openrouter.ai/api/v1/models',
-    authHeader: key => ({ Authorization: `Bearer ${key}` }),
-    extractList: json =>
-      typeof json === 'object' &&
-      json &&
-      'data' in json &&
-      Array.isArray((json as Record<string, unknown>).data)
-        ? ((json as Record<string, unknown>).data as unknown[])
-        : null,
-  },
-};
-
-export async function validateCloudProviderKey(
-  providerType: CloudProviderType,
-  apiKey: string
-): Promise<ProviderValidationResult> {
-  const cfg = PROVIDER_VALIDATION[providerType];
-  if (!cfg) {
-    // Custom / local-runtime entries don't have a known models endpoint;
-    // accept the key as-is.
-    return { ok: true };
-  }
-  try {
-    const res = await fetch(cfg.url, { method: 'GET', headers: cfg.authHeader(apiKey) });
-    if (!res.ok) {
-      if (res.status === 401 || res.status === 403) {
-        return { ok: false, error: 'Key rejected — check it and try again.' };
-      }
-      return { ok: false, error: `Models endpoint returned ${res.status} ${res.statusText}.` };
-    }
-    let modelCount: number | undefined;
-    let modelIds: string[] | undefined;
-    try {
-      const json = (await res.json()) as unknown;
-      const list = cfg.extractList?.(json);
-      if (Array.isArray(list)) {
-        modelCount = list.length;
-        const ids = list
-          .map(entry => {
-            if (typeof entry === 'string') return entry;
-            if (entry && typeof entry === 'object' && 'id' in (entry as Record<string, unknown>)) {
-              const id = (entry as Record<string, unknown>).id;
-              if (typeof id === 'string') return id;
-            }
-            return null;
-          })
-          .filter((id): id is string => typeof id === 'string' && id.length > 0);
-        if (ids.length > 0) modelIds = ids.sort();
-      }
-    } catch {
-      // Body parse failed — the 2xx alone is good enough.
-    }
-    return { ok: true, modelCount, modelIds };
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
-  }
-}
-
-// ─── Provider model-id cache ─────────────────────────────────────────────
-//
-// `validateCloudProviderKey` is the only path where the renderer has the
-// plaintext key in hand, so it doubles as the source of truth for the
-// per-provider model dropdown shown in the custom-routing dialog. Cache
-// the IDs here (localStorage) so the dropdown is populated immediately on
-// subsequent loads without re-prompting the user for their key.
-
-const MODEL_CACHE_PREFIX = 'openhuman.provider_model_ids.v1.';
-
-function modelCacheKey(providerType: CloudProviderType): string {
-  return `${MODEL_CACHE_PREFIX}${providerType}`;
-}
-
-export function cacheProviderModelIds(providerType: CloudProviderType, modelIds: string[]): void {
-  if (typeof localStorage === 'undefined') return;
-  try {
-    localStorage.setItem(modelCacheKey(providerType), JSON.stringify(modelIds));
-  } catch {
-    // Storage full / blocked — caching is best-effort.
-  }
-}
-
-export function loadProviderModelIds(providerType: CloudProviderType): string[] {
-  if (typeof localStorage === 'undefined') return [];
-  try {
-    const raw = localStorage.getItem(modelCacheKey(providerType));
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as unknown;
-    if (Array.isArray(parsed)) {
-      return parsed.filter((s): s is string => typeof s === 'string' && s.length > 0);
-    }
-  } catch {
-    // Bad JSON / parse failure — fall through.
-  }
-  return [];
-}
-
-export function clearProviderModelIds(providerType: CloudProviderType): void {
-  if (typeof localStorage === 'undefined') return;
-  try {
-    localStorage.removeItem(modelCacheKey(providerType));
-  } catch {
-    // best-effort
-  }
-}
-
 /** Clear a stored API key. */
-export async function clearCloudProviderKey(providerType: CloudProviderType): Promise<void> {
-  if (providerType === 'openhuman') {
+export async function clearCloudProviderKey(slug: string): Promise<void> {
+  if (slug === 'openhuman') {
     return;
   }
-  await authRemoveProviderCredentials({ provider: providerType, profile: 'default' });
+  // Clear the new-style key. Legacy bare-slug entries are left as-is
+  // since we can't be sure they aren't used by other things.
+  await authRemoveProviderCredentials({ provider: authKeyForSlug(slug), profile: 'default' });
+}
+
+/**
+ * Fetch the model list from a configured cloud provider's /models API.
+ * Returns an empty array on error (callers should handle gracefully).
+ */
+export async function listProviderModels(providerId: string): Promise<ModelInfo[]> {
+  if (!isTauri()) {
+    return [];
+  }
+  try {
+    const res = await callCoreRpc<{ result: { models: ModelInfo[] } }>({
+      method: CORE_RPC_METHODS.providersListModels,
+      params: { provider_id: providerId },
+    });
+    return res?.result?.models ?? [];
+  } catch {
+    return [];
+  }
 }
 
 // ─── Local provider façade (Ollama install / detect / model manage) ───────
@@ -447,41 +310,24 @@ export async function loadLocalProviderSnapshot(): Promise<LocalProviderSnapshot
 /**
  * Toggle the master local-AI runtime (Ollama daemon orchestration). When
  * `false`, every workload routed to `ollama:*` will fail to build at the
- * factory level — the user should leave routes set to "cloud" while local
+ * factory level — the user should leave routes set to "openhuman" while local
  * AI is disabled. The new AI panel surfaces this as a single switch.
  *
  * Critically: this flips BOTH `runtime_enabled` AND `opt_in_confirmed`.
- * Bootstrap has a separate hard-override that forces status to "disabled"
- * whenever `opt_in_confirmed` is false, regardless of `runtime_enabled`.
- * Setting only `runtime_enabled = true` would spawn the daemon and
- * immediately get re-disabled on the next bootstrap call:
- *   [local_ai] bootstrap: opt_in_confirmed=false, hard-overriding to disabled
- * Tying the two flags together matches `apply_preset`'s behaviour and gives
- * the user a single-click enable.
  */
 export async function setLocalRuntimeEnabled(enabled: boolean): Promise<void> {
   await openhumanUpdateLocalAiSettings({ runtime_enabled: enabled, opt_in_confirmed: enabled });
 }
 
 /**
- * Set / clear the user-configured Ollama binary path. The Rust resolver
- * tries (in order): this field → `OLLAMA_BIN` env → workspace bin →
- * system PATH → auto-install. Pass an empty string to clear and fall
- * back to auto-detection.
- *
- * Triggers a re-bootstrap on the Rust side so the new path takes effect
- * without needing a manual restart.
+ * Set / clear the user-configured Ollama binary path.
  */
 export async function setLocalOllamaPath(path: string): Promise<void> {
   await openhumanLocalAiSetOllamaPath(path);
 }
 
 /**
- * Gate off the local-AI runtime: writes `runtime_enabled = false`, kills the
- * Ollama daemon ONLY if OpenHuman spawned it (external daemons are left
- * untouched), and forces status to `"disabled"`. Workloads routed to
- * `ollama:<model>` will fail at factory build time after this — the gate is
- * at the routing layer, not by killing arbitrary processes.
+ * Gate off the local-AI runtime.
  */
 export async function shutdownLocalProvider(): Promise<void> {
   await setLocalRuntimeEnabled(false);
