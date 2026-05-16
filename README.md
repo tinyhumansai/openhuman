@@ -1,7 +1,3 @@
-<p align="right">
-  🌐 <a href="./README.md">English</a> | <a href="./README.zh-CN.md">简体中文</a>
-</p>
-
 <h1 align="center">OpenHuman</h1>
 
 <p align="center">
@@ -30,6 +26,11 @@
  <a href="https://tinyhumans.gitbook.io/openhuman/">Docs</a> •
  <a href="https://x.com/intent/follow?screen_name=senamakel">Follow @senamakel (Creator)</a>
 </p>
+
+<p align="center">
+  🇺🇸 <a href="./README.md">English</a> | 🇨🇳 <a href="./README.zh-CN.md">简体中文</a>
+</p>
+
 
 <p align="center">
  <img src="https://img.shields.io/badge/status-early%20beta-orange" alt="Early Beta" />
