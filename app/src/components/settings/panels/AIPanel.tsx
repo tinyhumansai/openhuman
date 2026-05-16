@@ -856,11 +856,11 @@ const BackgroundLoopControls = ({
       risk: `${MEMORY_WORKERS} workers poll every ${MEMORY_POLL_SECONDS}s; LLM calls only when queue has extract/seal/digest/topic jobs.`,
     },
     {
-      name: 'Learning rebuild',
+      name: 'Reflection rebuild',
       enabled: true,
       cadence: '30 min',
       route: describeProvider(routing.learning, cloudProviders),
-      work: 'Refreshes learning/reflection state after memory activity.',
+      work: 'Refreshes reflection state after memory activity.',
       risk: `${formatCount(learningTicksPerWeek)} wakeups/week; LLM work only when rebuild needs reflection.`,
     },
     {
