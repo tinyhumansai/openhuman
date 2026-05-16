@@ -283,7 +283,14 @@ impl ComposioProvider for GmailProvider {
             // so same-day re-ticks do not re-fetch a whole day's
             // window every time. Fall back to the day filter only when
             // the cursor cannot be parsed as a timestamp.
-            let mut query = "in:inbox -in:spam -in:trash".to_string();
+            //
+            // NOTE: We intentionally do NOT restrict to `in:inbox` here.
+            // The original query `in:inbox -in:spam -in:trash` meant sent
+            // emails (label:SENT) were never fetched and therefore the
+            // agent could not answer questions about outbound mail (issue #1713).
+            // Removing `in:inbox` lets Gmail return both inbox and sent
+            // messages while still excluding spam and trash.
+            let mut query = "-in:spam -in:trash".to_string();
             if let Some(ref cursor) = state.cursor {
                 if let Some(epoch_filter) = sync::cursor_to_gmail_after_epoch_filter(cursor) {
                     query.push_str(&format!(" after:{epoch_filter}"));
