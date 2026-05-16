@@ -8,6 +8,7 @@ const id: TranslationMap = {
   'nav.human': 'Human',
   'nav.chat': 'Chat',
   'nav.connections': 'Koneksi',
+  'nav.canvasTracker': 'Canvas',
   'nav.memory': 'Memori',
   'nav.alerts': 'Peringatan',
   'nav.rewards': 'Hadiah',

@@ -71,6 +71,21 @@ const makeTabs = (t: (key: string) => string) => [
     ),
   },
   {
+    id: 'canvas-tracker',
+    label: t('nav.canvasTracker'),
+    path: '/canvas-tracker',
+    icon: (
+      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={1.8}
+          d="M9 5h6m-7 4h8m-8 4h5m-8 8h14a2 2 0 002-2V7.5L16.5 3H5a2 2 0 00-2 2v14a2 2 0 002 2z"
+        />
+      </svg>
+    ),
+  },
+  {
     id: 'intelligence',
     label: t('nav.memory'),
     path: '/intelligence',
@@ -164,6 +179,7 @@ const BottomTabBar = () => {
 
   const isActive = (path: string) => {
     if (path === '/chat') return location.pathname.startsWith('/chat');
+    if (path === '/canvas-tracker') return location.pathname.startsWith('/canvas-tracker');
     if (path === '/settings/cron-jobs') return location.pathname.startsWith('/settings/cron-jobs');
     if (path === '/settings/messaging') return location.pathname.startsWith('/settings/messaging');
     if (path === '/settings')

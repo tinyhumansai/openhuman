@@ -6,6 +6,7 @@ const zhCN: TranslationMap = {
   'nav.human': '助手',
   'nav.chat': '对话',
   'nav.connections': '连接',
+  'nav.canvasTracker': 'Canvas',
   'nav.memory': '记忆',
   'nav.alerts': '通知',
   'nav.rewards': '奖励',

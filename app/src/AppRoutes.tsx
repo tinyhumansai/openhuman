@@ -5,6 +5,7 @@ import ProtectedRoute from './components/ProtectedRoute';
 import PublicRoute from './components/PublicRoute';
 import HumanPage from './features/human/HumanPage';
 import Accounts from './pages/Accounts';
+import CanvasTracker from './pages/CanvasTracker';
 import Channels from './pages/Channels';
 import Home from './pages/Home';
 import Intelligence from './pages/Intelligence';
@@ -72,6 +73,15 @@ const AppRoutes = () => {
         element={
           <ProtectedRoute requireAuth={true}>
             <Skills />
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path="/canvas-tracker"
+        element={
+          <ProtectedRoute requireAuth={true}>
+            <CanvasTracker />
           </ProtectedRoute>
         }
       />
