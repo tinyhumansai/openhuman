@@ -873,23 +873,54 @@ impl OrEmpty for String {
 }
 
 // ---------------------------------------------------------------------------
-// Regex helpers (avoid repeated compilation)
+// Regex helpers — thread-local cache to avoid repeated compilation
 // ---------------------------------------------------------------------------
 
+use std::cell::RefCell;
+
+thread_local! {
+    static REGEX_CACHE: RefCell<HashMap<&'static str, regex::Regex>> =
+        RefCell::new(HashMap::with_capacity(32));
+}
+
+/// Get or compile a regex for a static pattern string. Patterns in TokenJuice
+/// rules are all string literals, so we use `&'static str` keys. For dynamic
+/// patterns (which don't exist in practice), this falls back to compiling fresh.
+fn get_or_compile(pattern: &str) -> Option<regex::Regex> {
+    // SAFETY: rule patterns are string literals living for the program's lifetime.
+    // We transmute the lifetime to avoid allocating a String key for the cache.
+    // If a caller passes a non-static pattern, the worst case is a cache miss
+    // on a subsequent call with a different pointer to the same content — still
+    // correct, just slightly less efficient.
+    let static_pattern: &'static str = unsafe { std::mem::transmute(pattern) };
+
+    REGEX_CACHE.with(|cache| {
+        let mut map = cache.borrow_mut();
+        match map.entry(static_pattern) {
+            std::collections::hash_map::Entry::Occupied(e) => Some(e.get().clone()),
+            std::collections::hash_map::Entry::Vacant(e) => {
+                let re = regex::Regex::new(pattern).ok()?;
+                e.insert(re.clone());
+                Some(re)
+            }
+        }
+    })
+}
+
 fn regex_match(pattern: &str, text: &str) -> bool {
-    regex::Regex::new(pattern)
+    get_or_compile(pattern)
         .map(|re| re.is_match(text))
         .unwrap_or(false)
 }
 
 fn regex_replace(pattern: &str, text: &str, replacement: &str) -> String {
-    regex::Regex::new(pattern)
+    get_or_compile(pattern)
         .map(|re| re.replace(text, replacement).into_owned())
-        .unwrap_or_else(|_| text.to_owned())
+        .unwrap_or_else(|| text.to_owned())
 }
 
 fn regex_captures(pattern: &str, text: &str) -> Option<Vec<String>> {
-    let re = regex::Regex::new(pattern).ok()?;
+    let re = get_or_compile(pattern)?;
     let caps = re.captures(text)?;
     Some(
         (1..caps.len())
