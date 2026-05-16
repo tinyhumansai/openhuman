@@ -819,13 +819,10 @@ impl Agent {
                     def.omit_skills_catalog,
                 ),
                 PromptSource::File { path } => {
-                    let workspace_path = config
-                        .workspace_dir
-                        .join("agent")
-                        .join("prompts")
-                        .join(path);
+                    let prompt_root = config.workspace_dir.join("agent").join("prompts");
+                    let workspace_path = prompt_root.join(path);
                     let body_text = if workspace_path.is_file() {
-                        match crate::openhuman::security::validate_path_within_root(&workspace_path, &config.workspace_dir) {
+                        match crate::openhuman::security::validate_path_within_root(&workspace_path, &prompt_root) {
                             Ok(resolved) => {
                                 std::fs::read_to_string(&resolved).unwrap_or_else(|e| {
                                     log::warn!(

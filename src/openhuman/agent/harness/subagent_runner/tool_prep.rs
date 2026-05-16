@@ -195,9 +195,10 @@ pub(crate) fn load_prompt_source(
             // Try the workspace's `agent/prompts/` first (so users can
             // override built-in prompts), then fall back to the crate's
             // own bundled prompts via `include_str!`-style lookup.
-            let workspace_path = workspace_dir.join("agent").join("prompts").join(path);
+            let prompt_root = workspace_dir.join("agent").join("prompts");
+            let workspace_path = prompt_root.join(path);
             if workspace_path.is_file() {
-                if let Ok(resolved) = crate::openhuman::security::validate_path_within_root(&workspace_path, workspace_dir) {
+                if let Ok(resolved) = crate::openhuman::security::validate_path_within_root(&workspace_path, &prompt_root) {
                     return std::fs::read_to_string(&resolved).map_err(|e| {
                         SubagentRunError::PromptLoad {
                             path: resolved.display().to_string(),
