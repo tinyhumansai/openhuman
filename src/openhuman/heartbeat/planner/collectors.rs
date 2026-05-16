@@ -151,11 +151,17 @@ pub(crate) async fn collect_calendar_meetings(
     let end_window = now + lookahead;
 
     let mut out = Vec::new();
-    for conn in connections.into_iter().filter(|c| c.is_active()) {
+    let calendar_connection_limit = config.heartbeat.max_calendar_connections_per_tick.max(1);
+    for conn in connections
+        .into_iter()
+        .filter(|c| c.is_active())
+        .filter(|c| {
+            let toolkit = c.normalized_toolkit();
+            toolkit == "googlecalendar" || toolkit == "google_calendar" || toolkit == "calendar"
+        })
+        .take(calendar_connection_limit as usize)
+    {
         let toolkit = conn.normalized_toolkit();
-        if toolkit != "googlecalendar" && toolkit != "google_calendar" && toolkit != "calendar" {
-            continue;
-        }
 
         // Build base args, then let the shared transformer fill in
         // `timeZone` + `singleEvents` so this poller behaves identically

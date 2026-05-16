@@ -18,6 +18,7 @@ pub struct HeartbeatSettingsPatch {
     pub notify_relevant_events: Option<bool>,
     pub external_delivery_enabled: Option<bool>,
     pub meeting_lookahead_minutes: Option<u32>,
+    pub max_calendar_connections_per_tick: Option<u32>,
     pub reminder_lookahead_minutes: Option<u32>,
 }
 
@@ -31,6 +32,7 @@ pub struct HeartbeatSettingsView {
     pub notify_relevant_events: bool,
     pub external_delivery_enabled: bool,
     pub meeting_lookahead_minutes: u32,
+    pub max_calendar_connections_per_tick: u32,
     pub reminder_lookahead_minutes: u32,
 }
 
@@ -80,6 +82,10 @@ pub async fn settings_set(
     }
     if let Some(meeting_lookahead_minutes) = patch.meeting_lookahead_minutes {
         config.heartbeat.meeting_lookahead_minutes = meeting_lookahead_minutes.max(1);
+    }
+    if let Some(max_calendar_connections_per_tick) = patch.max_calendar_connections_per_tick {
+        config.heartbeat.max_calendar_connections_per_tick =
+            max_calendar_connections_per_tick.max(1);
     }
     if let Some(reminder_lookahead_minutes) = patch.reminder_lookahead_minutes {
         config.heartbeat.reminder_lookahead_minutes = reminder_lookahead_minutes.max(1);
@@ -133,6 +139,7 @@ fn view(config: &Config) -> HeartbeatSettingsView {
         notify_relevant_events: config.heartbeat.notify_relevant_events,
         external_delivery_enabled: config.heartbeat.external_delivery_enabled,
         meeting_lookahead_minutes: config.heartbeat.meeting_lookahead_minutes,
+        max_calendar_connections_per_tick: config.heartbeat.max_calendar_connections_per_tick,
         reminder_lookahead_minutes: config.heartbeat.reminder_lookahead_minutes,
     }
 }

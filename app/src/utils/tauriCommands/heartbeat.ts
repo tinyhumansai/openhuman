@@ -13,6 +13,7 @@ export interface HeartbeatSettings {
   notify_relevant_events: boolean;
   external_delivery_enabled: boolean;
   meeting_lookahead_minutes: number;
+  max_calendar_connections_per_tick: number;
   reminder_lookahead_minutes: number;
 }
 

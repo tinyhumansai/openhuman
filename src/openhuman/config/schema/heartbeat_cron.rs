@@ -38,6 +38,9 @@ pub struct HeartbeatConfig {
     /// Maximum lookahead window for meeting notifications.
     #[serde(default = "default_meeting_lookahead_minutes")]
     pub meeting_lookahead_minutes: u32,
+    /// Maximum active calendar connections polled per heartbeat planner tick.
+    #[serde(default = "default_max_calendar_connections_per_tick")]
+    pub max_calendar_connections_per_tick: u32,
     /// Maximum lookahead window for reminder notifications.
     #[serde(default = "default_reminder_lookahead_minutes")]
     pub reminder_lookahead_minutes: u32,
@@ -53,6 +56,10 @@ fn default_interval_minutes() -> u32 {
 
 fn default_meeting_lookahead_minutes() -> u32 {
     120
+}
+
+fn default_max_calendar_connections_per_tick() -> u32 {
+    2
 }
 
 fn default_reminder_lookahead_minutes() -> u32 {
@@ -71,6 +78,7 @@ impl Default for HeartbeatConfig {
             notify_relevant_events: false,
             external_delivery_enabled: false,
             meeting_lookahead_minutes: default_meeting_lookahead_minutes(),
+            max_calendar_connections_per_tick: default_max_calendar_connections_per_tick(),
             reminder_lookahead_minutes: default_reminder_lookahead_minutes(),
         }
     }
@@ -90,6 +98,7 @@ mod tests {
         assert!(!config.notify_relevant_events);
         assert!(!config.external_delivery_enabled);
         assert_eq!(config.interval_minutes, 5);
+        assert_eq!(config.max_calendar_connections_per_tick, 2);
     }
 }
 

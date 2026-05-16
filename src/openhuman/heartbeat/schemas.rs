@@ -74,6 +74,10 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     "Max lookahead window (minutes) for meeting notifications.",
                 ),
                 optional_u64(
+                    "max_calendar_connections_per_tick",
+                    "Max active calendar connections polled per planner tick.",
+                ),
+                optional_u64(
                     "reminder_lookahead_minutes",
                     "Max lookahead window (minutes) for reminder notifications.",
                 ),

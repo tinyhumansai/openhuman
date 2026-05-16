@@ -32,6 +32,7 @@ describe('tauriCommands/heartbeat', () => {
           notify_relevant_events: false,
           external_delivery_enabled: false,
           meeting_lookahead_minutes: 120,
+          max_calendar_connections_per_tick: 2,
           reminder_lookahead_minutes: 30,
         },
       },
