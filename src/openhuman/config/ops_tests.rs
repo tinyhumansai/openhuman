@@ -167,6 +167,45 @@ fn set_browser_allow_all_toggles_env_var() {
     }
 }
 
+#[test]
+fn set_browser_allow_all_emits_security_audit_log() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let before = std::env::var("OPENHUMAN_BROWSER_ALLOW_ALL").ok();
+
+    let enable_outcome = set_browser_allow_all(true);
+    assert_eq!(enable_outcome.logs.len(), 1);
+    let enable_log = &enable_outcome.logs[0];
+    assert!(
+        enable_log.contains("[SECURITY]"),
+        "enable log should be audit-tagged: {enable_log}"
+    );
+    assert!(
+        enable_log.contains("enabled"),
+        "enable log should mention enabled state: {enable_log}"
+    );
+    assert!(enable_outcome.value.browser_allow_all);
+
+    let disable_outcome = set_browser_allow_all(false);
+    assert_eq!(disable_outcome.logs.len(), 1);
+    let disable_log = &disable_outcome.logs[0];
+    assert!(
+        disable_log.contains("[SECURITY]"),
+        "disable log should be audit-tagged: {disable_log}"
+    );
+    assert!(
+        disable_log.contains("disabled"),
+        "disable log should mention disabled state: {disable_log}"
+    );
+    assert!(!disable_outcome.value.browser_allow_all);
+
+    unsafe {
+        match before {
+            Some(v) => std::env::set_var("OPENHUMAN_BROWSER_ALLOW_ALL", v),
+            None => std::env::remove_var("OPENHUMAN_BROWSER_ALLOW_ALL"),
+        }
+    }
+}
+
 // ── snapshot_config_json ───────────────────────────────────────
 
 #[test]
