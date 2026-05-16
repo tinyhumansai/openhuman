@@ -20,18 +20,14 @@ fn maybe_override_tauri_config_for_local_builds() {
     }
 
     let mut merge_config = serde_json::json!({});
-    if skip_resources {
-        merge_config["bundle"]["resources"] = serde_json::json!([]);
-        // Keep sidecars enabled for local/debug builds so the desktop host can
-        // exercise the same core process launch path as packaged builds.
-    }
+    merge_config["bundle"]["resources"] = serde_json::json!([]);
+    // Keep sidecars enabled for local/debug builds so the desktop host can
+    // exercise the same core process launch path as packaged builds.
 
     match serde_json::to_string(&merge_config) {
         Ok(json) => {
             env::set_var("TAURI_CONFIG", json);
-            if skip_resources {
-                println!("cargo:warning=TAURI resources disabled for local build");
-            }
+            println!("cargo:warning=TAURI resources disabled for local build");
         }
         Err(err) => {
             println!("cargo:warning=Failed to serialize TAURI_CONFIG override: {err}");

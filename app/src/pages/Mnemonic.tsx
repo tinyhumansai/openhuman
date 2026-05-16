@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 
 import LottieAnimation from '../components/LottieAnimation';
 import { persistLocalWalletFromMnemonic } from '../features/wallet/setupLocalWalletFromMnemonic';
+import { useT } from '../lib/i18n/I18nContext';
 import { useCoreState } from '../providers/CoreStateProvider';
 import {
   generateMnemonicPhrase,
@@ -16,6 +17,7 @@ const BIP39_IMPORT_LENGTHS = [12, 15, 18, 21, 24] as const;
 const IMPORT_SLOTS_INITIAL = MNEMONIC_GENERATE_WORD_COUNT;
 
 const Mnemonic = () => {
+  const { t } = useT();
   const navigate = useNavigate();
   const { snapshot, setEncryptionKey } = useCoreState();
   const user = snapshot.currentUser;
@@ -254,7 +256,7 @@ const Mnemonic = () => {
               <button
                 onClick={() => switchMode('import')}
                 className="w-full text-center text-sm text-primary-500 hover:text-primary-600 transition-colors mb-3">
-                I already have a recovery phrase
+                {t('mnemonic.alreadyHavePhrase')}
               </button>
 
               {/* Confirmation Checkbox */}
@@ -274,11 +276,7 @@ const Mnemonic = () => {
             <>
               <div className="text-center mb-4">
                 <h1 className="text-xl font-bold mb-2">Import Recovery Phrase</h1>
-                <p className="opacity-70 text-sm">
-                  Enter your recovery phrase below to restore your local encryption key and wallet
-                  identities, or paste the full phrase into any field (12 words for new backups;
-                  24-word phrases from older versions still work).
-                </p>
+                <p className="opacity-70 text-sm">{t('mnemonic.copyWarning')}</p>
               </div>
 
               {/* Import Word Inputs Grid */}
@@ -331,7 +329,7 @@ const Mnemonic = () => {
               <button
                 onClick={() => switchMode('generate')}
                 className="w-full text-center text-sm text-primary-500 hover:text-primary-600 transition-colors mb-3">
-                Generate a new recovery phrase instead
+                {t('mnemonic.generateNewPhrase')}
               </button>
             </>
           )}

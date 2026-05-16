@@ -349,7 +349,7 @@ try {
 } catch (err) {
   fail(`cannot load socket.io-client: ${err.message}`);
   console.log(
-    `${C.dim}    Try: cd app && yarn install${C.reset}`,
+    `${C.dim}    Try: cd app && pnpm install${C.reset}`,
   );
   process.exit(1);
 }

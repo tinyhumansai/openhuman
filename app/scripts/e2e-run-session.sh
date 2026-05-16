@@ -73,6 +73,8 @@ if [ "${OPENHUMAN_SERVICE_MOCK:-0}" = "1" ] && [ -z "${OPENHUMAN_SERVICE_MOCK_ST
 fi
 
 cleanup() {
+  local status=$?
+  set +e
   if [ -n "$APPIUM_PID" ]; then
     echo "[runner] Stopping Appium (pid $APPIUM_PID)..."
     kill "$APPIUM_PID" 2>/dev/null || true
@@ -108,21 +110,26 @@ cleanup() {
     fi
   fi
   if [ -n "$CREATED_TEMP_WORKSPACE" ]; then
-    # Tolerate transient races: even after the kill above, a CEF helper
-    # may still be flushing CEF/Default/* on a slow Linux runner. The
-    # workspace is a per-run mktemp under /tmp; anything left behind is
-    # collected by the next CI tmp-cleanup pass. We must not fail the
-    # whole job on cleanup leftovers when the test itself passed.
-    rm -rf "$CREATED_TEMP_WORKSPACE" 2>/dev/null || true
+    for attempt in 1 2 3; do
+      rm -rf "$CREATED_TEMP_WORKSPACE" 2>/dev/null && break
+      echo "[runner] Warning: temporary workspace cleanup failed (attempt $attempt): $CREATED_TEMP_WORKSPACE" >&2
+      sleep "$attempt"
+    done
+    if [ -e "$CREATED_TEMP_WORKSPACE" ]; then
+      echo "[runner] Warning: leaving temporary workspace after cleanup retries: $CREATED_TEMP_WORKSPACE" >&2
+    fi
   fi
   if [ -n "$CREATED_TEMP_CEF_CACHE" ]; then
     rm -rf "$CREATED_TEMP_CEF_CACHE" 2>/dev/null || true
   fi
   if [ -n "$E2E_CONFIG_BACKUP" ] && [ -f "$E2E_CONFIG_BACKUP" ]; then
-    mv "$E2E_CONFIG_BACKUP" "$E2E_CONFIG_FILE"
+    mv "$E2E_CONFIG_BACKUP" "$E2E_CONFIG_FILE" \
+      || echo "[runner] Warning: failed to restore E2E config backup: $E2E_CONFIG_BACKUP" >&2
   elif [ -n "$E2E_CONFIG_FILE" ] && [ -f "$E2E_CONFIG_FILE" ]; then
-    rm -f "$E2E_CONFIG_FILE"
+    rm -f "$E2E_CONFIG_FILE" \
+      || echo "[runner] Warning: failed to remove generated E2E config: $E2E_CONFIG_FILE" >&2
   fi
+  return "$status"
 }
 trap cleanup EXIT
 

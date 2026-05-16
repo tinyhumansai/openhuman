@@ -72,7 +72,7 @@ echo "[dry-run] Building local DMG with staged sidecar"
 (
   cd "$APP_DIR"
   source ../scripts/load-dotenv.sh
-  yarn tauri build --bundles app,dmg --config "$TMP_TAURI_CONF"
+  pnpm tauri build --bundles app,dmg --config "$TMP_TAURI_CONF"
 )
 
 if [[ ! -d "$APP_BUNDLE" ]]; then

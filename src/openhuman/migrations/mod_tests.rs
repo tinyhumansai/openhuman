@@ -74,7 +74,7 @@ async fn run_pending_runs_phase_out_when_version_zero() {
     assert_eq!(config.schema_version, 0);
     run_pending(&mut config).await;
 
-    assert_eq!(config.schema_version, 1);
+    assert_eq!(config.schema_version, 2);
     let session = read_transcript(&path).unwrap();
     assert!(
         !session.messages[0].content.contains("### PROFILE.md"),
@@ -84,8 +84,8 @@ async fn run_pending_runs_phase_out_when_version_zero() {
 
     let on_disk = std::fs::read_to_string(&config.config_path).unwrap();
     assert!(
-        on_disk.contains("schema_version = 1"),
-        "saved config.toml must record schema_version=1, got:\n{on_disk}"
+        on_disk.contains("schema_version = 2"),
+        "saved config.toml must record schema_version=2, got:\n{on_disk}"
     );
 }
 
@@ -98,9 +98,9 @@ async fn run_pending_bumps_version_on_fresh_install() {
     let mut config = config_in(&tmp);
     run_pending(&mut config).await;
 
-    assert_eq!(config.schema_version, 1);
+    assert_eq!(config.schema_version, 2);
     let on_disk = std::fs::read_to_string(&config.config_path).unwrap();
-    assert!(on_disk.contains("schema_version = 1"));
+    assert!(on_disk.contains("schema_version = 2"));
 }
 
 #[tokio::test]
@@ -132,7 +132,7 @@ async fn run_pending_is_a_no_op_on_second_invocation() {
 
     let mut config = config_in(&tmp);
     run_pending(&mut config).await;
-    assert_eq!(config.schema_version, 1);
+    assert_eq!(config.schema_version, 2);
 
     // Mutate the config file timestamp marker by reading + comparing
     // before vs after the second invocation.
@@ -141,7 +141,7 @@ async fn run_pending_is_a_no_op_on_second_invocation() {
     run_pending(&mut config).await;
     let after = fs::metadata(&config.config_path).unwrap().modified().ok();
 
-    assert_eq!(config.schema_version, 1);
+    assert_eq!(config.schema_version, 2);
     assert_eq!(
         before, after,
         "config.toml must not be re-saved on second run"

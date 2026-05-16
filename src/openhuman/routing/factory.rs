@@ -2,7 +2,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::openhuman::config::LocalAiConfig;
+use crate::openhuman::local_ai::lm_studio_api::lm_studio_base_url_from_local_ai;
 use crate::openhuman::local_ai::ollama_base_url;
+use crate::openhuman::local_ai::provider::normalize_provider;
 use crate::openhuman::providers::compatible::{AuthStyle, OpenAiCompatibleProvider};
 use crate::openhuman::providers::Provider;
 
@@ -39,24 +41,52 @@ pub fn new_provider(
         .map(|s| s.trim().trim_end_matches('/').to_string())
         .filter(|s| !s.is_empty());
 
+    // Resolve the provider string: use the canonical helper for LM Studio
+    // aliases ("lm-studio", "lmstudio" → "lm_studio"), but preserve other
+    // provider strings ("llamacpp", "llama-server", "custom_openai") as-is so
+    // their own branches below still match.
     let provider_kind = local_ai_config.provider.trim().to_ascii_lowercase();
+    let local_provider_kind: String = {
+        let normalized = normalize_provider(&provider_kind);
+        if normalized == "lm_studio" {
+            normalized
+        } else {
+            provider_kind.clone()
+        }
+    };
     let use_openai_compat_local = override_base.is_some()
         || matches!(
-            provider_kind.as_str(),
-            "llamacpp" | "llama-server" | "custom_openai"
+            local_provider_kind.as_str(),
+            "lm_studio" | "llamacpp" | "llama-server" | "custom_openai"
         );
 
-    let (provider_label, local_base, health) = if use_openai_compat_local {
+    let (provider_label, local_base, health) = if local_provider_kind == "lm_studio" {
         let base = override_base
+            .clone()
+            .unwrap_or_else(|| lm_studio_base_url_from_local_ai(local_ai_config));
+        let probe = format!("{base}/models");
+        tracing::debug!(
+            provider = %local_provider_kind,
+            base = %base,
+            "[routing] local inference configured via LM Studio"
+        );
+        (
+            "lm_studio",
+            base,
+            Arc::new(LocalHealthChecker::with_probe_url(probe, LOCAL_HEALTH_TTL)),
+        )
+    } else if use_openai_compat_local {
+        let base = override_base
+            .clone()
             .or_else(|| local_ai_config.base_url.clone())
             .unwrap_or_else(|| "http://127.0.0.1:8080/v1".to_string());
         let probe = format!("{base}/models");
         tracing::debug!(
-            provider = %provider_kind,
+            provider = %local_provider_kind,
             "[routing] local inference configured via OpenAI-compat (non-ollama)"
         );
         (
-            if provider_kind == "custom_openai" {
+            if local_provider_kind.as_str() == "custom_openai" {
                 "custom_openai"
             } else {
                 "llamacpp"
@@ -184,6 +214,16 @@ mod tests {
         cfg.runtime_enabled = true;
         cfg.provider = "custom_openai".to_string();
         cfg.base_url = Some("http://127.0.0.1:1234/v1".to_string());
+        let _p = make_provider(&cfg);
+    }
+
+    #[test]
+    fn factory_lm_studio_provider_constructs_without_panic() {
+        let mut cfg = LocalAiConfig::default();
+        cfg.runtime_enabled = true;
+        cfg.provider = "lm-studio".to_string();
+        cfg.base_url = Some("http://127.0.0.1:1234/v1".to_string());
+        cfg.chat_model_id = "local-model".to_string();
         let _p = make_provider(&cfg);
     }
 

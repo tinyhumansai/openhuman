@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { useScreenIntelligenceState } from '../../../features/screen-intelligence/useScreenIntelligenceState';
+import { useT } from '../../../lib/i18n/I18nContext';
 import { isTauri, openhumanUpdateScreenIntelligenceSettings } from '../../../utils/tauriCommands';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
@@ -20,6 +21,7 @@ const formatRemaining = (remainingMs: number | null): string => {
 };
 
 const ScreenIntelligencePanel = () => {
+  const { t } = useT();
   const { navigateBack, breadcrumbs } = useSettingsNavigation();
   const {
     status,
@@ -109,7 +111,7 @@ const ScreenIntelligencePanel = () => {
   return (
     <div className="z-10 relative">
       <SettingsHeader
-        title="Screen Awareness"
+        title={t('settings.features.screenAwareness')}
         showBackButton={true}
         onBack={navigateBack}
         breadcrumbs={breadcrumbs}
@@ -134,10 +136,12 @@ const ScreenIntelligencePanel = () => {
         )}
 
         <section className="space-y-3">
-          <h3 className="text-sm font-semibold text-stone-900">Screen Awareness</h3>
+          <h3 className="text-sm font-semibold text-stone-900">
+            {t('settings.features.screenAwareness')}
+          </h3>
 
           <label className="flex items-center justify-between rounded-xl border border-stone-200 bg-stone-50 px-3 py-2">
-            <span className="text-sm text-stone-700">Enabled</span>
+            <span className="text-sm text-stone-700">{t('common.enabled')}</span>
             <input
               type="checkbox"
               checked={enabled}
@@ -146,7 +150,7 @@ const ScreenIntelligencePanel = () => {
           </label>
 
           <label className="flex items-center justify-between rounded-xl border border-stone-200 bg-stone-50 px-3 py-2">
-            <span className="text-sm text-stone-700">Mode</span>
+            <span className="text-sm text-stone-700">{t('settings.screenAwareness.mode')}</span>
             <select
               value={policyMode}
               onChange={event =>
@@ -157,13 +161,17 @@ const ScreenIntelligencePanel = () => {
                 )
               }
               className="rounded border border-stone-200 bg-white px-2 py-1 text-xs text-stone-700">
-              <option value="all_except_blacklist">All Except Blacklist</option>
-              <option value="whitelist_only">Whitelist Only</option>
+              <option value="all_except_blacklist">
+                {t('settings.screenAwareness.allExceptBlacklist')}
+              </option>
+              <option value="whitelist_only">{t('settings.screenAwareness.whitelistOnly')}</option>
             </select>
           </label>
 
           <label className="flex items-center justify-between rounded-xl border border-stone-200 bg-stone-50 px-3 py-2">
-            <span className="text-sm text-stone-700">Screen Monitoring</span>
+            <span className="text-sm text-stone-700">
+              {t('settings.screenAwareness.screenMonitoring')}
+            </span>
             <input
               type="checkbox"
               checked={screenMonitoring}
@@ -181,16 +189,25 @@ const ScreenIntelligencePanel = () => {
             onClick={() => void saveConfig()}
             disabled={isSavingConfig}
             className="rounded-lg border border-primary-400 bg-primary-50 px-3 py-2 text-sm text-primary-700 disabled:opacity-50">
-            {isSavingConfig ? 'Saving…' : 'Save Settings'}
+            {isSavingConfig ? 'Saving…' : t('settings.screenAwareness.saveSettings')}
           </button>
           {configError && <div className="text-xs text-red-600">{configError}</div>}
         </section>
 
         <section className="space-y-3">
-          <h3 className="text-sm font-semibold text-stone-900">Session</h3>
+          <h3 className="text-sm font-semibold text-stone-900">
+            {t('settings.screenAwareness.session')}
+          </h3>
           <div className="text-sm text-stone-600 space-y-1">
-            <div>Status: {status?.session.active ? 'Active' : 'Stopped'}</div>
-            <div>Remaining: {remaining}</div>
+            <div>
+              {t('settings.screenAwareness.status')}:{' '}
+              {status?.session.active
+                ? t('settings.screenAwareness.active')
+                : t('settings.screenAwareness.stopped')}
+            </div>
+            <div>
+              {t('settings.screenAwareness.remaining')}: {remaining}
+            </div>
           </div>
 
           <div className="flex gap-2">
@@ -205,29 +222,28 @@ const ScreenIntelligencePanel = () => {
               }
               disabled={startDisabled}
               className="rounded-lg border border-green-400 bg-green-50 px-3 py-2 text-sm text-green-700 disabled:opacity-50">
-              {isStartingSession ? 'Starting…' : 'Start Session'}
+              {isStartingSession ? 'Starting…' : t('settings.screenAwareness.startSession')}
             </button>
             <button
               type="button"
               onClick={() => void stopSession('manual_stop')}
               disabled={stopDisabled}
               className="rounded-lg border border-red-400 bg-red-50 px-3 py-2 text-sm text-red-700 disabled:opacity-50">
-              {isStoppingSession ? 'Stopping…' : 'Stop Session'}
+              {isStoppingSession ? 'Stopping…' : t('settings.screenAwareness.stopSession')}
             </button>
             <button
               type="button"
               onClick={() => void flushVision()}
               disabled={isFlushingVision || !status?.session.active}
               className="rounded-lg border border-primary-400 bg-primary-50 px-3 py-2 text-sm text-primary-700 disabled:opacity-50">
-              {isFlushingVision ? 'Analyzing…' : 'Analyze Now'}
+              {isFlushingVision ? 'Analyzing…' : t('settings.screenAwareness.analyzeNow')}
             </button>
           </div>
         </section>
 
         {status !== null && !status.platform_supported && (
           <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-700">
-            Screen Awareness desktop capture and permission controls are currently supported on
-            macOS only.
+            {t('settings.screenAwareness.macosOnly')}
           </div>
         )}
 
@@ -236,17 +252,6 @@ const ScreenIntelligencePanel = () => {
             {lastError}
           </div>
         )}
-
-        {/* Screen Awareness Debug entry hidden alongside Developer Options entries. */}
-        {/* <button
-          type="button"
-          onClick={() => navigateToSettings('screen-awareness-debug')}
-          className="flex items-center gap-1.5 text-xs text-stone-400 hover:text-stone-600 transition-colors">
-          Advanced settings
-          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-          </svg>
-        </button> */}
       </div>
     </div>
   );

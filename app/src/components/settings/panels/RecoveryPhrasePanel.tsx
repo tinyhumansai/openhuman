@@ -1,6 +1,7 @@
 import { type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { persistLocalWalletFromMnemonic } from '../../../features/wallet/setupLocalWalletFromMnemonic';
+import { useT } from '../../../lib/i18n/I18nContext';
 import { useCoreState } from '../../../providers/CoreStateProvider';
 import {
   generateMnemonicPhrase,
@@ -15,6 +16,7 @@ const BIP39_IMPORT_LENGTHS = [12, 15, 18, 21, 24] as const;
 const IMPORT_SLOTS_INITIAL = MNEMONIC_GENERATE_WORD_COUNT;
 
 const RecoveryPhrasePanel = () => {
+  const { t } = useT();
   const { navigateBack, breadcrumbs } = useSettingsNavigation();
   const { snapshot, setEncryptionKey } = useCoreState();
   const user = snapshot.currentUser;
@@ -63,7 +65,6 @@ const RecoveryPhrasePanel = () => {
     setError(null);
   }, []);
 
-  // Navigate back after success
   useEffect(() => {
     if (success) {
       const timer = setTimeout(() => {
@@ -146,13 +147,13 @@ const RecoveryPhrasePanel = () => {
     setImportValid(isValid);
 
     if (!isValid) {
-      setError('Invalid recovery phrase. Please check your words and try again.');
+      setError(t('mnemonic.invalidPhrase'));
       return false;
     }
 
     setError(null);
     return true;
-  }, [importWords]);
+  }, [importWords, t]);
 
   const handleSave = async () => {
     setError(null);
@@ -176,7 +177,7 @@ const RecoveryPhrasePanel = () => {
       }
 
       if (!user?._id) {
-        setError('User not loaded. Please sign in again or refresh the page.');
+        setError(t('mnemonic.userNotLoaded'));
         return;
       }
       await persistLocalWalletFromMnemonic({
@@ -186,7 +187,7 @@ const RecoveryPhrasePanel = () => {
       });
       setSuccess(true);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Something went wrong. Please try again.');
+      setError(e instanceof Error ? e.message : t('mnemonic.somethingWentWrong'));
     } finally {
       setLoading(false);
     }
@@ -201,7 +202,7 @@ const RecoveryPhrasePanel = () => {
   return (
     <div>
       <SettingsHeader
-        title="Recovery Phrase"
+        title={t('mnemonic.title')}
         showBackButton
         onBack={navigateBack}
         breadcrumbs={breadcrumbs}
@@ -221,10 +222,8 @@ const RecoveryPhrasePanel = () => {
                   <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                 </svg>
               </div>
-              <p className="text-sm font-medium text-sage-500">Recovery phrase saved</p>
-              <p className="text-xs text-stone-500">
-                Multi-chain wallet identities are ready. Returning to settings...
-              </p>
+              <p className="text-sm font-medium text-sage-500">{t('mnemonic.phraseSaved')}</p>
+              <p className="text-xs text-stone-500">{t('mnemonic.walletReady')}</p>
             </div>
           ) : (
             <>
@@ -232,9 +231,8 @@ const RecoveryPhrasePanel = () => {
                 <>
                   <div className="mb-4 space-y-3">
                     <p className="text-sm text-stone-600 leading-relaxed">
-                      Write down these {MNEMONIC_GENERATE_WORD_COUNT} words in order and store them
-                      somewhere safe. This phrase secures your local encryption key and your EVM,
-                      BTC, Solana, and Tron wallet identities.
+                      {t('mnemonic.writeDownWords')} {MNEMONIC_GENERATE_WORD_COUNT}{' '}
+                      {t('mnemonic.wordsInOrder')}
                     </p>
                     <div className="flex items-start gap-2.5 p-3 rounded-xl bg-amber-50 border border-amber-200/70">
                       <svg
@@ -250,8 +248,7 @@ const RecoveryPhrasePanel = () => {
                         />
                       </svg>
                       <p className="text-xs text-amber-800 leading-relaxed">
-                        This phrase can never be recovered if lost and should stay fully local to
-                        your device.
+                        {t('mnemonic.cannotRecover')}
                       </p>
                     </div>
                   </div>
@@ -284,7 +281,7 @@ const RecoveryPhrasePanel = () => {
                           strokeWidth={2}>
                           <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                         </svg>
-                        <span className="text-sage-400">Copied to Clipboard</span>
+                        <span className="text-sage-400">{t('common.copied')}</span>
                       </>
                     ) : (
                       <>
@@ -300,7 +297,7 @@ const RecoveryPhrasePanel = () => {
                             d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
                           />
                         </svg>
-                        <span>Copy to Clipboard</span>
+                        <span>{t('mnemonic.copyToClipboard')}</span>
                       </>
                     )}
                   </button>
@@ -308,7 +305,7 @@ const RecoveryPhrasePanel = () => {
                   <button
                     onClick={() => switchMode('import')}
                     className="w-full text-center text-sm text-primary-400 hover:text-primary-600 transition-colors mb-3">
-                    I already have a recovery phrase
+                    {t('mnemonic.alreadyHavePhrase')}
                   </button>
 
                   <label className="flex items-start gap-3 cursor-pointer mb-4">
@@ -318,23 +315,19 @@ const RecoveryPhrasePanel = () => {
                       onChange={e => setConfirmed(e.target.checked)}
                       className="mt-0.5 w-4 h-4 rounded border-stone-500 text-primary-500 focus:ring-primary-500"
                     />
-                    <span className="text-sm text-stone-700">
-                      I saved this phrase and consent to using it for local wallet setup
-                    </span>
+                    <span className="text-sm text-stone-700">{t('mnemonic.consentSaved')}</span>
                   </label>
                 </>
               ) : (
                 <>
                   <div className="mb-4">
                     <p className="text-sm text-stone-600 leading-relaxed">
-                      Enter your recovery phrase below to restore your local wallet identities, or
-                      paste the full phrase into any field (12 words for new backups; 24-word
-                      phrases from older versions still work).
+                      {t('mnemonic.enterPhraseToRestore')}
                     </p>
                   </div>
 
                   <div className="flex items-center gap-2 mb-3">
-                    <span className="text-xs text-stone-500">Words:</span>
+                    <span className="text-xs text-stone-500">{t('mnemonic.words')}:</span>
                     {BIP39_IMPORT_LENGTHS.map(len => (
                       <button
                         key={len}
@@ -391,14 +384,14 @@ const RecoveryPhrasePanel = () => {
                         strokeWidth={2}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                       </svg>
-                      <span>Valid recovery phrase</span>
+                      <span>{t('mnemonic.validPhrase')}</span>
                     </div>
                   )}
 
                   <button
                     onClick={() => switchMode('generate')}
                     className="w-full text-center text-sm text-primary-400 hover:text-primary-600 transition-colors mb-3">
-                    Generate a new recovery phrase instead
+                    {t('mnemonic.generateNewPhrase')}
                   </button>
                 </>
               )}
@@ -445,10 +438,10 @@ const RecoveryPhrasePanel = () => {
                         d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
                       />
                     </svg>
-                    <span>Securing Your Data...</span>
+                    <span>{t('mnemonic.securingData')}</span>
                   </>
                 ) : (
-                  'Save Recovery Phrase'
+                  t('mnemonic.saveRecoveryPhrase')
                 )}
               </button>
             </>

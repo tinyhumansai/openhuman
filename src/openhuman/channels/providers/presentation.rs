@@ -311,6 +311,7 @@ fn split_sentences(text: &str) -> Vec<String> {
         current.push(chars[i]);
         let ch = chars[i];
 
+        // Latin sentence terminators: split on ". " followed by uppercase.
         if (ch == '.' || ch == '!' || ch == '?')
             && i + 2 < chars.len()
             && chars[i + 1] == ' '
@@ -322,6 +323,17 @@ fn split_sentences(text: &str) -> Vec<String> {
             }
             current.clear();
             i += 2; // skip the space
+            continue;
+        }
+
+        // CJK sentence terminators: split after fullwidth period/exclamation/question.
+        if (ch == '\u{3002}' || ch == '\u{FF01}' || ch == '\u{FF1F}') && i + 1 < chars.len() {
+            let trimmed = current.trim().to_string();
+            if !trimmed.is_empty() {
+                parts.push(trimmed);
+            }
+            current.clear();
+            i += 1;
             continue;
         }
 

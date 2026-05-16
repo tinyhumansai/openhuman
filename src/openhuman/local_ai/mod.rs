@@ -1,4 +1,4 @@
-//! Bundled local AI stack (Ollama, whisper.cpp, Piper).
+//! Bundled local AI stack (Ollama / LM Studio, whisper.cpp, Piper).
 
 #[cfg(test)]
 pub(crate) static LOCAL_AI_TEST_MUTEX: once_cell::sync::Lazy<std::sync::Mutex<()>> =
@@ -22,12 +22,14 @@ pub mod sentiment;
 mod install;
 pub(crate) mod install_piper;
 pub(crate) mod install_whisper;
+pub(crate) mod lm_studio_api;
 pub(crate) mod model_ids;
 mod ollama_api;
 mod process_util;
 pub(crate) use ollama_api::{ollama_base_url, OLLAMA_BASE_URL};
 mod parse;
 pub(crate) mod paths;
+pub(crate) mod provider;
 mod service;
 mod types;
 pub(crate) mod voice_install_common;

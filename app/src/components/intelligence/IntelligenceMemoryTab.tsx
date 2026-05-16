@@ -1,3 +1,4 @@
+import { useT } from '../../lib/i18n/I18nContext';
 import type { ActionableItem, ActionableItemSource, TimeGroup } from '../../types/intelligence';
 import { ActionableCard } from './ActionableCard';
 
@@ -32,17 +33,18 @@ export default function IntelligenceMemoryTab({
   timeGroups,
   usingMemoryData,
 }: IntelligenceMemoryTabProps) {
+  const { t } = useT();
   return (
     <>
       <div className="flex items-center gap-3 mb-6 animate-fade-up">
         <div className="flex-1">
           <label htmlFor="actionable-search" className="sr-only">
-            Search actionable items
+            {t('memory.searchAria')}
           </label>
           <input
             id="actionable-search"
             type="text"
-            placeholder="Search actionable items..."
+            placeholder={t('memory.search')}
             value={searchFilter}
             onChange={e => setSearchFilter(e.target.value)}
             className="w-full px-3 py-2 text-sm bg-white border border-stone-200 rounded-lg text-stone-900 placeholder-stone-400 focus:outline-none focus:border-primary-500/50 transition-colors"
@@ -56,14 +58,14 @@ export default function IntelligenceMemoryTab({
           value={sourceFilter}
           onChange={e => setSourceFilter(e.target.value as ActionableItemSource | 'all')}
           className="px-3 py-2 text-sm bg-white border border-stone-200 rounded-lg text-stone-900 focus:outline-none focus:border-primary-500/50 transition-colors">
-          <option value="all">All Sources</option>
-          <option value="email">Email</option>
-          <option value="calendar">Calendar</option>
-          <option value="telegram">Telegram</option>
-          <option value="ai_insight">AI Insights</option>
-          <option value="system">System</option>
-          <option value="trading">Trading</option>
-          <option value="security">Security</option>
+          <option value="all">{t('memory.sourceFilter.all')}</option>
+          <option value="email">{t('memory.sourceFilter.email')}</option>
+          <option value="calendar">{t('memory.sourceFilter.calendar')}</option>
+          <option value="telegram">{t('memory.sourceFilter.telegram')}</option>
+          <option value="ai_insight">{t('memory.sourceFilter.aiInsight')}</option>
+          <option value="system">{t('memory.sourceFilter.system')}</option>
+          <option value="trading">{t('memory.sourceFilter.trading')}</option>
+          <option value="security">{t('memory.sourceFilter.security')}</option>
         </select>
       </div>
 
@@ -72,18 +74,16 @@ export default function IntelligenceMemoryTab({
           <div className="w-16 h-16 mx-auto mb-4 flex items-center justify-center rounded-full bg-primary-500/10">
             <div className="w-8 h-8 border-2 border-primary-400 border-t-transparent rounded-full animate-spin" />
           </div>
-          <h2 className="text-lg font-semibold text-stone-900 mb-2">Loading Intelligence...</h2>
-          <p className="text-stone-400 text-sm">Fetching your actionable items</p>
+          <h2 className="text-lg font-semibold text-stone-900 mb-2">{t('memory.loading')}</h2>
+          <p className="text-stone-400 text-sm">{t('memory.fetching')}</p>
         </div>
       ) : isRunning && items.length === 0 ? (
         <div className="glass rounded-2xl p-8 text-center animate-fade-up">
           <div className="w-16 h-16 mx-auto mb-4 flex items-center justify-center rounded-full bg-primary-500/10">
             <div className="w-8 h-8 border-2 border-primary-400 border-t-transparent rounded-full animate-spin" />
           </div>
-          <h2 className="text-lg font-semibold text-stone-900 mb-2">Analyzing your data…</h2>
-          <p className="text-stone-400 text-sm">
-            The conscious loop is reviewing your connected skills
-          </p>
+          <h2 className="text-lg font-semibold text-stone-900 mb-2">{t('memory.analyzing')}</h2>
+          <p className="text-stone-400 text-sm">{t('memory.analyzingHint')}</p>
         </div>
       ) : timeGroups.length === 0 ? (
         <div className="glass rounded-2xl p-8 text-center animate-fade-up">
@@ -103,25 +103,27 @@ export default function IntelligenceMemoryTab({
           </div>
           {searchFilter || sourceFilter !== 'all' ? (
             <>
-              <h2 className="text-lg font-semibold text-stone-900 mb-2">No matches</h2>
-              <p className="text-stone-400 text-sm">No items match your current filters.</p>
+              <h2 className="text-lg font-semibold text-stone-900 mb-2">{t('memory.noMatches')}</h2>
+              <p className="text-stone-400 text-sm">{t('memory.noMatchesHint')}</p>
             </>
           ) : usingMemoryData ? (
             <>
-              <h2 className="text-lg font-semibold text-stone-900 mb-2">All caught up!</h2>
-              <p className="text-stone-400 text-sm">No actionable items at the moment.</p>
+              <h2 className="text-lg font-semibold text-stone-900 mb-2">
+                {t('memory.allCaughtUp')}
+              </h2>
+              <p className="text-stone-400 text-sm">{t('memory.allCaughtUpHint')}</p>
             </>
           ) : (
             <>
-              <h2 className="text-lg font-semibold text-stone-900 mb-2">No analysis yet</h2>
-              <p className="text-stone-400 text-sm mb-4">
-                Run an analysis to extract actionable items from your connected skills.
-              </p>
+              <h2 className="text-lg font-semibold text-stone-900 mb-2">
+                {t('memory.noAnalysis')}
+              </h2>
+              <p className="text-stone-400 text-sm mb-4">{t('memory.noAnalysisHint')}</p>
               <button
                 onClick={() => void handleAnalyzeNow()}
                 disabled={isRunning}
                 className="px-4 py-2 bg-primary-500 hover:bg-primary-600 disabled:opacity-40 text-white text-sm rounded-lg transition-colors">
-                Analyze Now
+                {t('memory.analyzeNow')}
               </button>
             </>
           )}
@@ -131,7 +133,7 @@ export default function IntelligenceMemoryTab({
           {isRunning && (
             <div className="flex items-center gap-2 text-xs text-stone-400 animate-fade-up">
               <div className="w-3 h-3 border border-stone-400 border-t-transparent rounded-full animate-spin" />
-              Analyzing your data…
+              {t('memory.analyzing')}
             </div>
           )}
           {timeGroups.map((group, groupIndex) => (

@@ -671,6 +671,103 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     });
   });
 
+  it('sends with Enter when the composer is not composing text', async () => {
+    const { textarea, thread } = await renderSelectedConversation();
+
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: 'enter send' } });
+    });
+    await waitFor(() => {
+      expect(textarea).toHaveValue('enter send');
+      expect(screen.getByRole('button', { name: 'Send message' })).not.toBeDisabled();
+    });
+
+    await act(async () => {
+      fireEvent.keyDown(textarea, { key: 'Enter' });
+    });
+
+    await waitFor(() => {
+      expect(chatSend).toHaveBeenCalledWith({
+        threadId: thread.id,
+        message: 'enter send',
+        model: 'reasoning-v1',
+      });
+    });
+  });
+
+  it('does not send while an IME composition key event is confirming text', async () => {
+    const { textarea } = await renderSelectedConversation();
+
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: '你好' } });
+    });
+    await waitFor(() => {
+      expect(textarea).toHaveValue('你好');
+      expect(screen.getByRole('button', { name: 'Send message' })).not.toBeDisabled();
+    });
+
+    await act(async () => {
+      const event = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true });
+      Object.defineProperty(event, 'isComposing', { value: true });
+      textarea.dispatchEvent(event);
+    });
+
+    expect(chatSend).not.toHaveBeenCalled();
+    expect(textarea).toHaveValue('你好');
+  });
+
+  it('does not send for legacy IME keyCode 229 events', async () => {
+    const { textarea } = await renderSelectedConversation();
+
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: 'かな' } });
+    });
+    await waitFor(() => {
+      expect(textarea).toHaveValue('かな');
+      expect(screen.getByRole('button', { name: 'Send message' })).not.toBeDisabled();
+    });
+
+    await act(async () => {
+      fireEvent.keyDown(textarea, { key: 'Enter', keyCode: 229 });
+    });
+
+    expect(chatSend).not.toHaveBeenCalled();
+    expect(textarea).toHaveValue('かな');
+  });
+
+  it('does not send while composition is active even if keydown lacks IME flags', async () => {
+    const { textarea, thread } = await renderSelectedConversation();
+
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: '안녕' } });
+    });
+    await waitFor(() => {
+      expect(textarea).toHaveValue('안녕');
+      expect(screen.getByRole('button', { name: 'Send message' })).not.toBeDisabled();
+    });
+
+    await act(async () => {
+      fireEvent.compositionStart(textarea);
+      fireEvent.keyDown(textarea, { key: 'Enter' });
+    });
+
+    expect(chatSend).not.toHaveBeenCalled();
+    expect(textarea).toHaveValue('안녕');
+
+    await act(async () => {
+      fireEvent.compositionEnd(textarea);
+      fireEvent.keyDown(textarea, { key: 'Enter' });
+    });
+
+    await waitFor(() => {
+      expect(chatSend).toHaveBeenCalledWith({
+        threadId: thread.id,
+        message: '안녕',
+        model: 'reasoning-v1',
+      });
+    });
+  });
+
   // Batch-5: Conversation category tabs keep stable labels and mapping (pr#1646).
   //
   // The tab set is fixed so categories do not disappear when the thread list

@@ -183,20 +183,18 @@ pub(crate) async fn probe_ollama_reachable(base_url: &str) -> bool {
 /// [`effective_embedding_settings_probed`].
 pub fn effective_embedding_settings(
     memory: &MemoryConfig,
-    local_ai: Option<&LocalAiConfig>,
+    local_embedding_model: Option<&str>,
 ) -> (String, String, usize) {
-    if local_ai
-        .map(LocalAiConfig::use_local_for_embeddings)
-        .unwrap_or(false)
-    {
+    if let Some(raw) = local_embedding_model {
         // Trim once and reuse — the emptiness check and the final model
         // string must agree, otherwise a value like "  bge-m3  " would pass
         // through to Ollama with surrounding whitespace and 404.
-        let model = local_ai
-            .map(|c| c.embedding_model_id.trim())
-            .filter(|m| !m.is_empty())
-            .unwrap_or(DEFAULT_OLLAMA_MODEL)
-            .to_string();
+        let trimmed = raw.trim();
+        let model = if trimmed.is_empty() {
+            DEFAULT_OLLAMA_MODEL.to_string()
+        } else {
+            trimmed.to_string()
+        };
         return ("ollama".to_string(), model, DEFAULT_OLLAMA_DIMENSIONS);
     }
     (
@@ -223,9 +221,9 @@ pub fn effective_embedding_settings(
 /// genuinely down.
 pub async fn effective_embedding_settings_probed(
     memory: &MemoryConfig,
-    local_ai: Option<&LocalAiConfig>,
+    local_embedding_model: Option<&str>,
 ) -> (String, String, usize) {
-    let intended = effective_embedding_settings(memory, local_ai);
+    let intended = effective_embedding_settings(memory, local_embedding_model);
     if intended.0 != "ollama" {
         return intended;
     }
@@ -278,14 +276,17 @@ pub fn create_memory_with_storage(
     create_memory_full(config, &[], storage_provider, None, workspace_dir)
 }
 
-/// Create a memory instance honoring both the `memory` and `local_ai` sections.
+/// Create a memory instance honouring the unified per-workload embedding
+/// provider.
 ///
-/// Used by top-level entry points (agent harness, channels runtime) that have
-/// the full `Config` in scope and want the local-AI opt-in to flip the
-/// embedder to Ollama.
+/// `local_embedding_model` is the parsed Ollama model id when
+/// `Config::workload_local_model("embeddings")` returned `Some`, otherwise
+/// `None`. Used by top-level entry points (agent harness, channels runtime)
+/// that have the full `Config` in scope. The local-AI opt-in flips the
+/// embedder to Ollama when `Some`.
 pub fn create_memory_with_local_ai(
     memory: &MemoryConfig,
-    local_ai: &LocalAiConfig,
+    local_embedding_model: Option<&str>,
     embedding_routes: &[EmbeddingRouteConfig],
     storage_provider: Option<&StorageProviderConfig>,
     workspace_dir: &Path,
@@ -294,7 +295,7 @@ pub fn create_memory_with_local_ai(
         memory,
         embedding_routes,
         storage_provider,
-        Some(local_ai),
+        local_embedding_model,
         workspace_dir,
     )
 }
@@ -361,7 +362,7 @@ fn create_memory_full(
     config: &MemoryConfig,
     _embedding_routes: &[EmbeddingRouteConfig],
     _storage_provider: Option<&StorageProviderConfig>,
-    local_ai: Option<&LocalAiConfig>,
+    local_embedding_model: Option<&str>,
     workspace_dir: &Path,
 ) -> anyhow::Result<Box<dyn Memory>> {
     // 0. Short-circuit the unified path when the user has explicitly
@@ -384,9 +385,9 @@ fn create_memory_full(
     }
 
     // 1. Resolve the intended provider from config.
-    let intended = effective_embedding_settings(config, local_ai);
-    let local_ai_opt_in = local_ai
-        .map(LocalAiConfig::use_local_for_embeddings)
+    let intended = effective_embedding_settings(config, local_embedding_model);
+    let local_ai_opt_in = local_embedding_model
+        .map(|s| !s.trim().is_empty())
         .unwrap_or(false);
 
     // 2. Health-gate: if the user has opted into Ollama embeddings but the
@@ -503,17 +504,14 @@ mod tests {
     }
 
     #[test]
-    fn embedding_settings_uses_memory_config_when_local_ai_disabled() {
+    fn embedding_settings_uses_memory_config_when_local_disabled() {
         let mut mem = MemoryConfig::default();
         mem.embedding_provider = "openai".to_string();
         mem.embedding_model = "text-embedding-3-small".to_string();
         mem.embedding_dimensions = 1536;
 
-        let mut local_ai = LocalAiConfig::default();
-        local_ai.runtime_enabled = true;
-        local_ai.usage.embeddings = false; // explicitly disabled
-
-        let (provider, model, dims) = effective_embedding_settings(&mem, Some(&local_ai));
+        // Local embedding model = None means workload routes to cloud.
+        let (provider, model, dims) = effective_embedding_settings(&mem, None);
         assert_eq!(
             provider, "openai",
             "when local embeddings disabled, memory config must be used"
@@ -523,19 +521,15 @@ mod tests {
     }
 
     #[test]
-    fn embedding_settings_local_ai_opt_in_overrides_memory_config() {
-        // memory.embedding_provider says "cloud" — but local_ai.usage.embeddings
+    fn embedding_settings_local_overrides_memory_config() {
+        // memory.embedding_provider says "cloud" — but a Some(local_model)
         // is the stronger signal and must override it.
         let mem = MemoryConfig::default(); // cloud by default
-        let mut local_ai = LocalAiConfig::default();
-        local_ai.runtime_enabled = true;
-        local_ai.usage.embeddings = true;
-        local_ai.embedding_model_id = "nomic-embed-text:latest".to_string();
-
-        let (provider, model, dims) = effective_embedding_settings(&mem, Some(&local_ai));
+        let (provider, model, dims) =
+            effective_embedding_settings(&mem, Some("nomic-embed-text:latest"));
         assert_eq!(
             provider, "ollama",
-            "local-AI opt-in must override memory.embedding_provider"
+            "Some(local_model) must override memory.embedding_provider"
         );
         assert_eq!(model, "nomic-embed-text:latest");
         assert_eq!(
@@ -546,16 +540,11 @@ mod tests {
     }
 
     #[test]
-    fn embedding_settings_local_ai_opt_in_with_empty_model_uses_default() {
+    fn embedding_settings_local_with_empty_model_uses_default() {
         // When the user has opted in but the model field is empty/whitespace,
         // the default Ollama model must be used rather than passing "" to Ollama.
         let mem = MemoryConfig::default();
-        let mut local_ai = LocalAiConfig::default();
-        local_ai.runtime_enabled = true;
-        local_ai.usage.embeddings = true;
-        local_ai.embedding_model_id = "   ".to_string(); // whitespace only
-
-        let (provider, model, dims) = effective_embedding_settings(&mem, Some(&local_ai));
+        let (provider, model, dims) = effective_embedding_settings(&mem, Some("   "));
         assert_eq!(provider, "ollama");
         assert_eq!(
             model,
@@ -603,11 +592,12 @@ mod tests {
         format!("http://127.0.0.1:{}", addr.port())
     }
 
-    fn local_ai_with_embeddings_on() -> LocalAiConfig {
-        let mut cfg = LocalAiConfig::default();
-        cfg.runtime_enabled = true;
-        cfg.usage.embeddings = true;
-        cfg
+    /// The parsed local-embedding model string that
+    /// `Config::workload_local_model("embeddings")` would have produced when
+    /// the legacy `local_ai.usage.embeddings = true` flag was set. Used so
+    /// the existing test scenarios continue to drive the local code path.
+    fn local_embedding_for_test() -> &'static str {
+        crate::openhuman::embeddings::DEFAULT_OLLAMA_MODEL
     }
 
     #[tokio::test]
@@ -657,10 +647,9 @@ mod tests {
         reset_health_gate_for_test();
 
         let mem = MemoryConfig::default();
-        let local_ai = local_ai_with_embeddings_on();
 
         let (provider, model, dims) =
-            effective_embedding_settings_probed(&mem, Some(&local_ai)).await;
+            effective_embedding_settings_probed(&mem, Some(local_embedding_for_test())).await;
 
         assert_eq!(
             provider, "cloud",
@@ -676,10 +665,9 @@ mod tests {
         let _env = EnvGuard::set(&url);
 
         let mem = MemoryConfig::default();
-        let local_ai = local_ai_with_embeddings_on();
 
         let (provider, _model, dims) =
-            effective_embedding_settings_probed(&mem, Some(&local_ai)).await;
+            effective_embedding_settings_probed(&mem, Some(local_embedding_for_test())).await;
 
         assert_eq!(provider, "ollama", "healthy Ollama must be honoured");
         assert_eq!(dims, DEFAULT_OLLAMA_DIMENSIONS);

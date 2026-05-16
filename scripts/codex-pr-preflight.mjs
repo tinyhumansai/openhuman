@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
 
-const REQUIRED_FILES = ['AGENTS.md', 'docs/src/README.md', 'Cargo.toml', 'app/package.json'];
+const REQUIRED_FILES = ['AGENTS.md', 'gitbooks/developing/README.md', 'Cargo.toml', 'app/package.json'];
 const APP_PATTERNS = [/^app\//, /^docs\//];
 const ROOT_RUST_PATTERNS = [/^src\//, /^tests\//, /^Cargo\.toml$/, /^Cargo\.lock$/];
 const TAURI_PATTERNS = [/^app\/src-tauri\//];
@@ -14,6 +14,19 @@ function hasPattern(files, patterns) {
 
 function runGit(command, repoRoot) {
   return execSync(command, { cwd: repoRoot, encoding: 'utf8' }).trim();
+}
+
+function currentRepoRoot() {
+  const physical = process.cwd();
+  const logical = process.env.PWD;
+  if (logical && path.resolve(logical) !== path.resolve(physical)) {
+    try {
+      if (fs.realpathSync(logical) === physical) return logical;
+    } catch {
+      // Fall back to Node's physical cwd below.
+    }
+  }
+  return physical;
 }
 
 function parseArgs(argv) {
@@ -57,7 +70,7 @@ function recommendations(changedFiles, lightweight) {
 
 function main() {
   const options = parseArgs(process.argv.slice(2));
-  const repoRoot = process.cwd();
+  const repoRoot = currentRepoRoot();
   const checks = [];
 
   checks.push(runCheck('working directory exists', fs.existsSync(repoRoot), repoRoot));

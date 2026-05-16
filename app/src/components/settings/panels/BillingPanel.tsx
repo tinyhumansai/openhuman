@@ -1,6 +1,7 @@
 import createDebug from 'debug';
 import { useEffect, useState } from 'react';
 
+import { useT } from '../../../lib/i18n/I18nContext';
 import { BILLING_DASHBOARD_URL } from '../../../utils/links';
 import { openUrl } from '../../../utils/openUrl';
 import PageBackButton from '../components/PageBackButton';
@@ -9,6 +10,7 @@ import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 const log = createDebug('openhuman:billing-panel');
 
 const BillingPanel = () => {
+  const { t } = useT();
   const { navigateBack, breadcrumbs } = useSettingsNavigation();
   const [status, setStatus] = useState<'opening' | 'idle' | 'error'>('opening');
 
@@ -41,7 +43,7 @@ const BillingPanel = () => {
     <div className="px-4 py-5 sm:px-6 lg:px-8">
       <div className="mx-auto max-w-3xl">
         <PageBackButton
-          label="Back"
+          label={t('common.back')}
           onClick={navigateBack}
           trailingContent={
             breadcrumbs.length > 0 ? (
@@ -64,12 +66,13 @@ const BillingPanel = () => {
           <div className="max-w-xl space-y-4">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.2em] text-stone-500">
-                Billing moved to the web
+                {t('settings.billing.movedToWeb')}
               </p>
-              <h1 className="mt-2 text-2xl font-semibold text-stone-900">Open billing dashboard</h1>
+              <h1 className="mt-2 text-2xl font-semibold text-stone-900">
+                {t('settings.billing.openDashboard')}
+              </h1>
               <p className="mt-2 text-sm leading-6 text-stone-600">
-                Subscription changes, payment methods, credits, and invoices are now managed at
-                TinyHumans on the web.
+                {t('settings.billing.movedToWebDesc')}
               </p>
             </div>
 
@@ -80,28 +83,24 @@ const BillingPanel = () => {
                   void openUrl(BILLING_DASHBOARD_URL);
                 }}
                 className="inline-flex items-center rounded-full bg-primary-500 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-primary-600">
-                Open dashboard
+                {t('settings.billing.openDashboard')}
               </button>
               <button
                 type="button"
                 onClick={navigateBack}
                 className="inline-flex items-center rounded-full border border-stone-200 bg-white px-4 py-2 text-sm font-semibold text-stone-700 transition-colors hover:bg-stone-50">
-                Back to settings
+                {t('settings.billing.backToSettings')}
               </button>
             </div>
 
             {status === 'opening' && (
-              <p className="text-xs text-stone-500">Opening your browser…</p>
+              <p className="text-xs text-stone-500">{t('settings.billing.openingBrowser')}</p>
             )}
             {status === 'idle' && (
-              <p className="text-xs text-stone-500">
-                If your browser did not open, use the button above.
-              </p>
+              <p className="text-xs text-stone-500">{t('settings.billing.browserNotOpen')}</p>
             )}
             {status === 'error' && (
-              <p className="text-xs text-coral-600">
-                The browser could not be opened automatically. Use the button above.
-              </p>
+              <p className="text-xs text-coral-600">{t('settings.billing.browserOpenFailed')}</p>
             )}
           </div>
         </div>

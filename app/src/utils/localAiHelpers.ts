@@ -1,6 +1,6 @@
 /**
  * Shared helpers for local AI download progress display.
- * Used by Home.tsx, LocalAIStep.tsx, LocalModelPanel.tsx, and LocalAIDownloadSnackbar.tsx.
+ * Used by Home.tsx, LocalAIStep.tsx, AIPanel.tsx, and LocalAIDownloadSnackbar.tsx.
  */
 import type { LocalAiDownloadsProgress, LocalAiStatus } from './tauriCommands';
 

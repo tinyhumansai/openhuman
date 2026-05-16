@@ -4,7 +4,7 @@
 import { invoke } from '@tauri-apps/api/core';
 
 import { callCoreRpc } from '../../services/coreRpcClient';
-import { IS_DEV } from '../config';
+import { IS_DEV_LIKE } from '../config';
 import { CommandResponse, isTauri } from './common';
 
 export interface CoreUpdateStatus {
@@ -79,7 +79,12 @@ export async function restartApp(): Promise<void> {
     console.debug('[app] restartApp: skipped — not running in Tauri');
     return;
   }
-  if (IS_DEV) {
+  // `IS_DEV_LIKE` is true for both `vite dev` (DEV=true) and the E2E build
+  // (`vite build --mode development` → DEV=false but MODE='development').
+  // Without the E2E case we'd hit the OS-level restart path in the packaged
+  // E2E binary and kill the WebDriver CDP target every time identity flips
+  // on login. See `app/src/utils/config.ts` for the canonical definition.
+  if (IS_DEV_LIKE) {
     console.debug('[app] restartApp: dev mode → window.location.reload()');
     window.location.reload();
     return;

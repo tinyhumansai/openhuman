@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 
+import { useT } from '../../../lib/i18n/I18nContext';
 import { openhumanAgentChat } from '../../../utils/tauriCommands';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
@@ -9,6 +10,7 @@ type ChatMessage = { role: 'user' | 'agent'; text: string };
 const STORAGE_KEY = 'openhuman.settings.agentChat.history';
 
 const AgentChatPanel = () => {
+  const { t } = useT();
   const { navigateBack, breadcrumbs } = useSettingsNavigation();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
@@ -74,7 +76,7 @@ const AgentChatPanel = () => {
   return (
     <div>
       <SettingsHeader
-        title="Agent Chat"
+        title={t('chat.agentChat')}
         showBackButton={true}
         onBack={navigateBack}
         breadcrumbs={breadcrumbs}
@@ -82,14 +84,11 @@ const AgentChatPanel = () => {
 
       <div className="p-4 space-y-4">
         <section className="space-y-3">
-          <h3 className="text-sm font-semibold text-stone-900">Overrides</h3>
-          <p className="text-sm text-stone-400">
-            Inference uses your OpenHuman backend (config API URL and session). Optional model and
-            temperature override the defaults for this panel only.
-          </p>
+          <h3 className="text-sm font-semibold text-stone-900">{t('chat.overrides')}</h3>
+          <p className="text-sm text-stone-400">{t('chat.agentChatDesc')}</p>
           <div className="grid gap-3 md:grid-cols-2">
             <label className="space-y-2 text-sm text-stone-600">
-              Model
+              {t('chat.model')}
               <input
                 className="input input-bordered w-full text-slate-900 bg-white"
                 placeholder="gpt-4o"
@@ -98,7 +97,7 @@ const AgentChatPanel = () => {
               />
             </label>
             <label className="space-y-2 text-sm text-stone-600">
-              Temperature
+              {t('chat.temperature')}
               <input
                 className="input input-bordered w-full text-slate-900 bg-white"
                 placeholder="0.7"
@@ -110,7 +109,7 @@ const AgentChatPanel = () => {
         </section>
 
         <section className="space-y-3">
-          <h3 className="text-sm font-semibold text-stone-900">Conversation</h3>
+          <h3 className="text-sm font-semibold text-stone-900">{t('chat.conversation')}</h3>
           {error && (
             <div className="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700">
               {error}
@@ -118,12 +117,12 @@ const AgentChatPanel = () => {
           )}
           <div className="rounded-xl border border-stone-200 bg-stone-50 p-4 space-y-3">
             {messages.length === 0 && (
-              <div className="text-sm text-stone-400">Start a conversation with the agent.</div>
+              <div className="text-sm text-stone-400">{t('chat.startAgentConversation')}</div>
             )}
             {messages.map((message, index) => (
               <div key={`${message.role}-${index}`} className="space-y-1">
                 <div className="text-[11px] uppercase tracking-wide text-stone-500">
-                  {message.role === 'user' ? 'You' : 'Agent'}
+                  {message.role === 'user' ? t('chat.you') : t('chat.agent')}
                 </div>
                 <div
                   className={`text-sm whitespace-pre-wrap ${
@@ -137,12 +136,12 @@ const AgentChatPanel = () => {
           <div className="space-y-2">
             <textarea
               className="textarea textarea-bordered w-full min-h-[140px] text-slate-900 bg-white"
-              placeholder="Ask the agent anything..."
+              placeholder={t('chat.askAgent')}
               value={input}
               onChange={event => setInput(event.target.value)}
             />
             <button className="btn btn-primary" onClick={sendMessage} disabled={sending}>
-              {sending ? 'Sending…' : 'Send Message'}
+              {sending ? t('common.loading') : t('chat.sendMessage')}
             </button>
           </div>
         </section>

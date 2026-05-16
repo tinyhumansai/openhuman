@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { useT } from '../../../lib/i18n/I18nContext';
 import { bootstrapLocalAiWithRecommendedPreset } from '../../../utils/localAiBootstrap';
 import { openhumanLocalAiPresets } from '../../../utils/tauriCommands';
 import OnboardingNextButton from '../components/OnboardingNextButton';
@@ -13,6 +14,7 @@ interface LocalAIStepProps {
 }
 
 const LocalAIStep = ({ onNext, onBack: _onBack, onDownloadError }: LocalAIStepProps) => {
+  const { t } = useT();
   const downloadStartedRef = useRef(false);
   const [recommendDisabled, setRecommendDisabled] = useState<boolean | null>(null);
 
@@ -78,37 +80,27 @@ const LocalAIStep = ({ onNext, onBack: _onBack, onDownloadError }: LocalAIStepPr
               />
             </svg>
           </div>
-          <h1 className="text-xl font-bold mb-2 text-stone-900">AI — Cloud Mode</h1>
-          <p className="text-stone-600 text-sm text-center">
-            Your device has limited RAM, so we&apos;ll use a fast, lightweight cloud model for AI
-            features. You can switch to local AI later in Settings.
-          </p>
+          <h1 className="text-xl font-bold mb-2 text-stone-900">{t('onboarding.localAI')}</h1>
+          <p className="text-stone-600 text-sm text-center">{t('onboarding.localAIDesc')}</p>
         </div>
 
         <div className="space-y-2 mb-5">
           <div className="rounded-xl border border-primary-200 bg-primary-50 px-3 py-2">
             <p className="text-xs text-stone-700">
-              <span className="font-semibold">Fast &amp; lightweight</span>
-              <span className="text-stone-600">
-                &nbsp;— uses a cheap cloud summarizer model with minimal latency.
-              </span>
+              <span className="font-semibold">{t('onboarding.localAI')}</span>
+              <span className="text-stone-600">&nbsp;— {t('onboarding.localAIDesc')}</span>
             </p>
           </div>
           <div className="rounded-xl border border-stone-200 bg-stone-50 px-3 py-2">
             <p className="text-xs text-stone-700">
-              <span className="font-semibold">No downloads needed</span>
-              <span className="text-stone-600">
-                &nbsp;— no large model files or Ollama install required.
-              </span>
+              <span className="font-semibold">{t('common.download')}</span>
+              <span className="text-stone-600">&nbsp;— {t('misc.downloading')}</span>
             </p>
           </div>
           <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
             <p className="text-xs text-stone-700">
-              <span className="font-semibold">Requires internet</span>
-              <span className="text-stone-600">
-                &nbsp;— AI features need an active connection. You can opt into local AI in Settings
-                if preferred.
-              </span>
+              <span className="font-semibold">{t('welcome.connect')}</span>
+              <span className="text-stone-600">&nbsp;— {t('onboarding.localAIDesc')}</span>
             </p>
           </div>
         </div>
@@ -144,37 +136,27 @@ const LocalAIStep = ({ onNext, onBack: _onBack, onDownloadError }: LocalAIStepPr
             />
           </svg>
         </div>
-        <h1 className="text-xl font-bold mb-2 text-stone-900">Choose how AI runs</h1>
-        <p className="text-stone-600 text-sm text-center">
-          We&apos;ll start with a fast cloud model so you&apos;re productive right away. You can
-          switch to fully local AI any time — either now or later from Settings.
-        </p>
+        <h1 className="text-xl font-bold mb-2 text-stone-900">{t('onboarding.localAI')}</h1>
+        <p className="text-stone-600 text-sm text-center">{t('onboarding.localAIDesc')}</p>
       </div>
 
       <div className="space-y-2 mb-5">
         <div className="rounded-xl border border-primary-200 bg-primary-50 px-3 py-2">
           <p className="text-xs text-stone-700">
-            <span className="font-semibold">Cloud AI (default)</span>
-            <span className="text-stone-600">
-              &nbsp;— fast, lightweight, no downloads. Requires an internet connection.
-            </span>
+            <span className="font-semibold">{t('onboarding.localAI')}</span>
+            <span className="text-stone-600">&nbsp;— {t('onboarding.localAIDesc')}</span>
           </p>
         </div>
         <div className="rounded-xl border border-stone-200 bg-stone-50 px-3 py-2">
           <p className="text-xs text-stone-700">
-            <span className="font-semibold">Local AI (opt-in)</span>
-            <span className="text-stone-600">
-              &nbsp;— runs fully on-device with Ollama for complete privacy. Uses disk space and
-              RAM.
-            </span>
+            <span className="font-semibold">{t('onboarding.localAI')}</span>
+            <span className="text-stone-600">&nbsp;— {t('onboarding.localAIDesc')}</span>
           </p>
         </div>
         <div className="rounded-xl border border-stone-200 bg-stone-50 px-3 py-2">
           <p className="text-xs text-stone-700">
-            <span className="font-semibold">Switch any time</span>
-            <span className="text-stone-600">
-              &nbsp;— change your AI mode later from Settings → Local AI Model.
-            </span>
+            <span className="font-semibold">{t('common.refresh')}</span>
+            <span className="text-stone-600">&nbsp;— {t('onboarding.localAIDesc')}</span>
           </p>
         </div>
       </div>

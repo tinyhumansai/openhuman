@@ -49,9 +49,11 @@ pub fn tools_schemas(function: &str) -> ControllerSchema {
         "tools_composio_execute" => ControllerSchema {
             namespace: "tools",
             function: "composio_execute",
-            description: "Execute a Composio action via the backend proxy. Thin wrapper \
-                          around `ComposioClient::execute_tool` exposed for Tauri-driven \
-                          flows (e.g. onboarding) that orchestrate tool calls themselves.",
+            description: "Execute a Composio action. Routes through the mode-aware \
+                          factory: backend mode proxies via the OpenHuman backend; \
+                          direct mode calls backend.composio.dev with the user's own \
+                          API key. Exposed for Tauri-driven flows (e.g. onboarding) \
+                          that orchestrate tool calls themselves.",
             inputs: vec![
                 FieldSchema {
                     name: "action",
@@ -239,15 +241,43 @@ fn handle_composio_execute(params: Map<String, Value>) -> ControllerFuture {
         let action_args = params.get("params").cloned();
 
         let config = config_rpc::load_config_with_timeout().await?;
-        let client = crate::openhuman::composio::client::build_composio_client(&config)
-            .ok_or_else(|| {
-                "composio client unavailable — user not signed in to backend".to_string()
-            })?;
-
-        let resp = client
-            .execute_tool(&action, action_args)
-            .await
-            .map_err(|e| format!("composio execute_tool failed: {e:#}"))?;
+        // Route through the mode-aware factory so direct-mode users
+        // hit their personal Composio tenant when the Tauri shell
+        // calls `tools.composio_execute` (e.g. onboarding-driven
+        // flows). Pre-fix, the controller hard-bound to the
+        // backend-only `build_composio_client` and silently 4xx'd for
+        // direct-mode users (#1710). Mirrors
+        // `composio::ops::composio_execute`.
+        use crate::openhuman::composio::client::{
+            create_composio_client, direct_execute, ComposioClientKind,
+        };
+        let kind =
+            create_composio_client(&config).map_err(|e| format!("tools.composio_execute: {e}"))?;
+        tracing::debug!(
+            action = %action,
+            mode = %config.composio.mode,
+            "[tools][composio_execute] executing action"
+        );
+        let resp = match kind {
+            ComposioClientKind::Backend(client) => {
+                tracing::debug!(action = %action, "[tools][composio_execute] branch=backend");
+                client
+                    .execute_tool(&action, action_args)
+                    .await
+                    .map_err(|e| format!("composio execute_tool (backend) failed: {e:#}"))?
+            }
+            ComposioClientKind::Direct(direct) => {
+                tracing::debug!(action = %action, "[tools][composio_execute] branch=direct");
+                direct_execute(&direct, &action, action_args, &config.composio.entity_id)
+                    .await
+                    .map_err(|e| format!("composio execute_tool (direct) failed: {e:#}"))?
+            }
+        };
+        tracing::debug!(
+            action = %action,
+            successful = resp.successful,
+            "[tools][composio_execute] complete"
+        );
 
         let payload = json!({
             "successful": resp.successful,

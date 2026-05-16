@@ -412,7 +412,7 @@ export function generateFooter(tools) {
 - Last Updated: ${new Date().toISOString()}
 
 *This file was automatically generated at build time from the V8 skills runtime.*
-*For the most up-to-date information, regenerate this file by running \`yarn tools:generate\`.*
+*For the most up-to-date information, regenerate this file by running \`pnpm tools:generate\`.*
 `;
 }
 

@@ -74,7 +74,7 @@ describe('MascotPanel', () => {
 
   it('invokes navigateBack from the header back button', () => {
     renderPanel();
-    fireEvent.click(screen.getByLabelText('Go back'));
+    fireEvent.click(screen.getByLabelText('Back'));
     expect(mockNavigateBack).toHaveBeenCalledTimes(1);
   });
 });

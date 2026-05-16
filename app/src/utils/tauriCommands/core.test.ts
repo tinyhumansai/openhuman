@@ -72,14 +72,12 @@ describe('tauriCommands/core', () => {
       debug.mockRestore();
     });
 
-    test('invokes restart_app in production mode (IS_DEV=false)', async () => {
-      // setup.ts globally mocks ../config with IS_DEV: true. Override with
-      // doMock + resetModules so a fresh import of ./core sees IS_DEV=false
-      // and runs the production branch (#1068 dev workaround should be inert).
-      vi.doMock('../config', () => ({
-        IS_DEV: false,
-        // Re-export anything else core.ts might end up using; today just IS_DEV.
-      }));
+    test('invokes restart_app in production mode (IS_DEV_LIKE=false)', async () => {
+      // setup.ts globally mocks ../config with IS_DEV_LIKE: true (because
+      // IS_DEV: true → derived IS_DEV_LIKE). Override with doMock +
+      // resetModules so a fresh import of ./core sees IS_DEV_LIKE=false and
+      // runs the production branch (#1068 dev workaround should be inert).
+      vi.doMock('../config', () => ({ IS_DEV: false, IS_DEV_LIKE: false }));
       vi.resetModules();
       const prodCore = await import('./core');
 

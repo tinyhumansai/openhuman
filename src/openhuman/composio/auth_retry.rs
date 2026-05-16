@@ -36,12 +36,6 @@ use std::time::Duration;
 use super::client::ComposioClient;
 use super::types::ComposioExecuteResponse;
 
-/// Literal error strings Composio's gateway emits during the post-OAuth
-/// readiness gap. Matching is `error.contains(needle)` so trailing
-/// punctuation and capitalisation drift on the gateway side does not
-/// silently disable the retry.
-pub(crate) const RETRYABLE_AUTH_ERRORS: &[&str] = &["Connection error, try to authenticate"];
-
 /// Backoff before the single retry. 8s sits in the middle of the 5-10s
 /// recommendation in issue #1688 — long enough for Composio's action
 /// gateway to sync the token, short enough that a genuine auth failure
@@ -69,72 +63,28 @@ pub(crate) async fn execute_with_auth_retry_inner(
     args: Option<serde_json::Value>,
     backoff: Duration,
 ) -> anyhow::Result<ComposioExecuteResponse> {
+    let tool = slug.trim();
+    if tool.is_empty() {
+        tracing::debug!(
+            target: "composio",
+            raw_slug_len = slug.len(),
+            "[composio][auth_retry] rejecting empty tool slug"
+        );
+        anyhow::bail!("composio.execute_tool: tool slug must not be empty");
+    }
+    let arguments = args.unwrap_or(serde_json::Value::Object(Default::default()));
+    let has_args = arguments.as_object().is_some_and(|a| !a.is_empty());
+    let body = serde_json::json!({ "tool": tool, "arguments": arguments });
+
     tracing::debug!(
         target: "composio",
-        slug = %slug,
-        has_args = args.is_some(),
+        slug = %tool,
+        has_args,
         "[composio][auth_retry] execute start"
     );
-    let first = client.execute_tool_once(slug, args.clone()).await?;
-    if first.successful {
-        tracing::debug!(
-            target: "composio",
-            slug = %slug,
-            "[composio][auth_retry] first attempt successful; no retry"
-        );
-        return Ok(first);
-    }
-    let err_text = first.error.as_deref().unwrap_or("");
-    let matched = match_retryable_auth_error(err_text);
-    let Some(matched) = matched else {
-        // Surface the response unchanged. We deliberately do NOT log
-        // `err_text` here — upstream provider messages can embed
-        // identifiers (emails, file IDs, channel names) and a `warn`
-        // line at every non-retryable failure would broadcast them.
-        tracing::debug!(
-            target: "composio",
-            slug = %slug,
-            has_error = !err_text.is_empty(),
-            "[composio][auth_retry] non-retryable payload; returning first response"
-        );
-        return Ok(first);
-    };
-    tracing::warn!(
-        target: "composio",
-        slug = %slug,
-        retry_reason = matched,
-        sleep_ms = backoff.as_millis() as u64,
-        "[composio] post-OAuth auth error on first action call; sleeping and retrying once (#1688)"
-    );
-    tokio::time::sleep(backoff).await;
-    let second = client.execute_tool_once(slug, args).await?;
-    tracing::debug!(
-        target: "composio",
-        slug = %slug,
-        successful = second.successful,
-        "[composio][auth_retry] retry attempt completed"
-    );
-    Ok(second)
-}
-
-/// Returns the matched needle (a static label safe to log) when the
-/// provider error text matches one of [`RETRYABLE_AUTH_ERRORS`]. Match
-/// is case-insensitive so capitalisation drift on Composio's side does
-/// not silently disable the retry.
-fn match_retryable_auth_error(err: &str) -> Option<&'static str> {
-    if err.is_empty() {
-        return None;
-    }
-    let err_lc = err.to_ascii_lowercase();
-    RETRYABLE_AUTH_ERRORS
-        .iter()
-        .copied()
-        .find(|needle| err_lc.contains(&needle.to_ascii_lowercase()))
-}
-
-#[cfg(test)]
-fn is_retryable_auth_error(err: &str) -> bool {
-    match_retryable_auth_error(err).is_some()
+    client
+        .execute_tool_with_post_oauth_retry(tool, &body, backoff)
+        .await
 }
 
 #[cfg(test)]

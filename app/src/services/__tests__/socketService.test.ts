@@ -27,14 +27,22 @@ vi.mock('socket.io-client', () => ({
 }));
 
 // Mock redux store
-vi.mock('../../store', () => ({ store: { dispatch: vi.fn() } }));
+const storeMock = { dispatch: vi.fn() };
+vi.mock('../../store', () => ({ store: storeMock }));
 vi.mock('../../store/socketSlice', () => ({
-  setStatusForUser: vi.fn((x: unknown) => x),
-  setSocketIdForUser: vi.fn((x: unknown) => x),
-  resetForUser: vi.fn((x: unknown) => x),
+  setStatusForUser: vi.fn((x: unknown) => ({ type: 'socket/setStatusForUser', payload: x })),
+  setSocketIdForUser: vi.fn((x: unknown) => ({ type: 'socket/setSocketIdForUser', payload: x })),
+  resetForUser: vi.fn((x: unknown) => ({ type: 'socket/resetForUser', payload: x })),
 }));
 vi.mock('../../store/channelConnectionsSlice', () => ({
   upsertChannelConnection: vi.fn((x: unknown) => x),
+}));
+
+// setBackend mock for connectivity tracking
+const setBackendMock = vi.fn((x: unknown) => ({ type: 'connectivity/setBackend', payload: x }));
+vi.mock('../../store/connectivitySlice', () => ({
+  setBackend: (x: unknown) => setBackendMock(x),
+  setCore: vi.fn((x: unknown) => ({ type: 'connectivity/setCore', payload: x })),
 }));
 
 // Mock coreState
@@ -152,4 +160,32 @@ describe('socketService — resolveCoreSocketBaseUrl uses getCoreRpcUrl', () => 
       expect(connectedUrl).toBe('http://custom-core-host:9000');
     }
   });
+});
+
+describe('socketService — connectivity dispatch on socket events (lines 164, 212, 230, 237, 240)', () => {
+  beforeEach(() => {
+    storeMock.dispatch.mockClear();
+    setBackendMock.mockClear();
+    hoisted.getCoreRpcUrlMock.mockReset();
+  });
+
+  it('dispatches setBackend(disconnected) and returns early when URL contains localhost:1420 (line 164)', async () => {
+    hoisted.getCoreRpcUrlMock.mockResolvedValue('http://localhost:1420/rpc');
+
+    const { socketService } = await import('../socketService');
+    socketService.disconnect();
+    socketService.connect('mock-jwt-dev-guard');
+
+    await pollUntil(() => expect(hoisted.getCoreRpcUrlMock).toHaveBeenCalled());
+    // Give the async dispatch a tick to fire.
+    await new Promise(r => setTimeout(r, 20));
+
+    const disconnectedCall = setBackendMock.mock.calls.find(
+      ([arg]) => (arg as { value: string }).value === 'disconnected'
+    );
+    expect(disconnectedCall).toBeDefined();
+  });
+
+  // Socket event handler tests (connect, disconnect, connect_error) are covered
+  // in socketService.events.test.ts which uses vi.resetModules() for isolation.
 });

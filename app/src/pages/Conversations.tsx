@@ -15,6 +15,7 @@ import MicComposer from '../features/human/MicComposer';
 // import { ONBOARDING_WELCOME_THREAD_LABEL } from '../constants/onboardingChat';
 import { useStickToBottom } from '../hooks/useStickToBottom';
 import { useUsageState } from '../hooks/useUsageState';
+import { useT } from '../lib/i18n/I18nContext';
 import { trackEvent } from '../services/analytics';
 // [#1123] getCoreStateSnapshot and isWelcomeLocked commented out — welcome-agent onboarding replaced by Joyride walkthrough
 // import { getCoreStateSnapshot, isWelcomeLocked } from '../lib/coreState/store';
@@ -112,6 +113,24 @@ export function isComposerInteractionBlocked(args: {
   return !args.rustChat || Boolean(args.activeThreadId) || args.welcomePending;
 }
 
+interface ImeKeyboardEventLike {
+  isComposing?: boolean;
+  keyCode?: number;
+  which?: number;
+  nativeEvent?: { isComposing?: boolean; keyCode?: number; which?: number };
+}
+
+export function isImeCompositionKeyEvent(event: ImeKeyboardEventLike): boolean {
+  return (
+    event.isComposing === true ||
+    event.nativeEvent?.isComposing === true ||
+    event.nativeEvent?.keyCode === 229 ||
+    event.nativeEvent?.which === 229 ||
+    event.keyCode === 229 ||
+    event.which === 229
+  );
+}
+
 /**
  * Normalise the value thrown out of `dispatch(loadThreads()).unwrap()` into a
  * displayable string. `createAsyncThunk` re-throws Redux's `SerializedError`
@@ -157,6 +176,7 @@ export function formatThreadLoadError(err: unknown): string {
 // }
 
 const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsProps = {}) => {
+  const { t } = useT();
   const dispatch = useAppDispatch();
   const navigate = useNavigate();
   const {
@@ -239,6 +259,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
   });
 
   const textInputRef = useRef<HTMLTextAreaElement>(null);
+  const isComposingTextRef = useRef(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -401,12 +422,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
     sendingThreadIdRef.current = threadId;
     sendingTimeoutRef.current = setTimeout(() => {
       console.warn('[chat] silence timeout: no inference signal for 120s');
-      setSendError(
-        chatSendError(
-          'safety_timeout',
-          'No response from the agent after 2 minutes. Try again or check your connection.'
-        )
-      );
+      setSendError(chatSendError('safety_timeout', t('chat.safetyTimeout')));
       dispatch(clearRuntimeForThread({ threadId }));
       dispatch(setActiveThread(null));
       sendingTimeoutRef.current = null;
@@ -817,6 +833,8 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
   }, [messages, replyMode, rustChat]);
 
   const handleInputKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (isComposingTextRef.current || isImeCompositionKeyEvent(e)) return;
+
     const inlineSuffix = getInlineCompletionSuffix(inputValue, inlineSuggestionValue);
     const textarea = e.currentTarget;
     const caretAtEnd =
@@ -976,10 +994,10 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
   // Fixed tab set so categories don't disappear when empty and the active
   // filter state remains unambiguous regardless of what threads exist.
   const labelTabs = [
-    { label: 'All', value: 'all' },
-    { label: 'Work', value: 'work' },
-    { label: 'Briefing', value: 'briefing' },
-    { label: 'Notification', value: 'notification' },
+    { label: t('chat.filter.all'), value: 'all' },
+    { label: t('chat.filter.work'), value: 'work' },
+    { label: t('chat.filter.briefing'), value: 'briefing' },
+    { label: t('chat.filter.notification'), value: 'notification' },
   ];
 
   const isSidebar = variant === 'sidebar';
@@ -993,8 +1011,8 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
   // Stable title resolver used by both the sidebar thread list and the header.
   // [#1123] welcome-lock title override removed — Joyride walkthrough replaced welcome-agent
   const resolveThreadDisplayTitle = (threadId: string | null): string => {
-    if (!threadId) return 'Select a thread';
-    const t = threads.find(thr => thr.id === threadId);
+    if (!threadId) return t('chat.selectThread');
+    const thr = threads.find(th => th.id === threadId);
     // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
     // if (
     //   welcomeLocked &&
@@ -1003,7 +1021,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
     // ) {
     //   return 'Onboarding';
     // }
-    return t?.title ?? 'Select a thread';
+    return thr?.title ?? t('chat.selectThread');
   };
 
   return (
@@ -1020,12 +1038,12 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
       {!isSidebar && effectiveShowSidebar && (
         <div className="w-64 flex-shrink-0 flex flex-col bg-white rounded-2xl shadow-soft border border-stone-200 overflow-hidden">
           <div className="flex items-center justify-between px-4 py-3 border-b border-stone-100">
-            <h2 className="text-sm font-semibold text-stone-700">Threads</h2>
+            <h2 className="text-sm font-semibold text-stone-700">{t('chat.threads')}</h2>
             {/* [#1123] welcomeLocked guard removed — always show new thread button */}
             <button
               onClick={() => void handleCreateNewThread()}
               className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-stone-100 text-stone-500 hover:text-stone-700 transition-colors"
-              title="New thread">
+              title={t('chat.newThread')}>
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path
                   strokeLinecap="round"
@@ -1048,7 +1066,9 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
           <div className="flex-1 overflow-y-auto">
             {sortedThreads.length === 0 ? (
               <p className="px-4 py-6 text-xs text-stone-400 text-center">
-                {selectedLabel === 'all' ? 'No threads yet' : `No "${selectedLabel}" threads`}
+                {selectedLabel === 'all'
+                  ? t('chat.noThreads')
+                  : t('chat.noLabelThreads').replace('{label}', selectedLabel)}
               </p>
             ) : (
               sortedThreads.map(thread => (
@@ -1088,10 +1108,13 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                         e.stopPropagation();
                         setDeleteModal({
                           isOpen: true,
-                          title: 'Delete thread',
-                          message: `Are you sure you want to delete "${thread.title || 'Untitled thread'}"? This cannot be undone.`,
-                          confirmText: 'Delete',
-                          cancelText: 'Cancel',
+                          title: t('chat.deleteThread'),
+                          message: t('chat.deleteThreadConfirm').replace(
+                            '{title}',
+                            thread.title || t('chat.untitledThread')
+                          ),
+                          confirmText: t('common.delete'),
+                          cancelText: t('common.cancel'),
                           destructive: true,
                           onConfirm: () => {
                             void dispatch(deleteThread(thread.id));
@@ -1100,7 +1123,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                         });
                       }}
                       className="ml-2 p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-stone-200 text-stone-400 hover:text-coral-500 transition-all flex-shrink-0"
-                      title="Delete thread">
+                      title={t('chat.deleteThread')}>
                       <svg
                         className="w-3 h-3"
                         fill="none"
@@ -1150,7 +1173,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
             <button
               onClick={() => setShowSidebar(prev => !prev)}
               className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-stone-100 text-stone-500 hover:text-stone-700 transition-colors"
-              title={effectiveShowSidebar ? 'Hide sidebar' : 'Show sidebar'}>
+              title={effectiveShowSidebar ? t('chat.hideSidebar') : t('chat.showSidebar')}>
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path
                   strokeLinecap="round"
@@ -1169,8 +1192,8 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
               <button
                 onClick={() => void handleCreateNewThread()}
                 className="px-2.5 py-1 rounded-lg text-xs font-medium text-primary-600 hover:bg-primary-50 transition-colors"
-                title="New thread (/new)">
-                + New
+                title={t('chat.newThreadShortcut')}>
+                {t('chat.new')}
               </button>
             </>
           </div>
@@ -1202,12 +1225,12 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                   d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
                 />
               </svg>
-              <p className="text-sm text-stone-400 mb-1">Failed to load messages</p>
+              <p className="text-sm text-stone-400 mb-1">{t('chat.failedToLoadMessages')}</p>
               <p className="text-xs text-stone-600 mb-3 text-center">{messagesError}</p>
               <button
                 onClick={() => window.location.reload()}
                 className="text-xs text-primary-400 hover:text-primary-300 transition-colors">
-                Reload
+                {t('common.reload')}
               </button>
             </div>
           ) : hasVisibleMessages ? (
@@ -1277,7 +1300,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                       <button
                         onClick={() => handleCopyMessage(msg.id, msg.content)}
                         className={`absolute -top-1 ${msg.sender === 'user' ? '-left-8' : '-right-8'} p-1 rounded-md opacity-0 group-hover/msg:opacity-100 hover:bg-stone-100 text-stone-400 hover:text-stone-600 transition-all`}
-                        title="Copy message">
+                        title={t('chat.copyResponse')}>
                         {copiedMessageId === msg.id ? (
                           <svg
                             className="w-3.5 h-3.5 text-sage-500"
@@ -1409,7 +1432,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                         <details className="mb-1.5 bg-stone-100 rounded-lg px-3 py-1.5 text-xs text-stone-600 open:bg-stone-100">
                           <summary className="cursor-pointer select-none flex items-center gap-1.5">
                             <span className="inline-block w-1.5 h-1.5 rounded-full bg-primary-400 animate-pulse" />
-                            <span>Thinking…</span>
+                            <span>{t('chat.thinking')}</span>
                           </summary>
                           <pre className="whitespace-pre-wrap break-words mt-1.5 font-sans text-[11px] text-stone-500">
                             {selectedStreamingAssistant.thinking.slice(-STREAMING_PREVIEW_CHARS)}
@@ -1436,8 +1459,11 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                   <span>
                     {selectedInferenceStatus.phase === 'thinking' &&
                       (selectedInferenceStatus.iteration > 0
-                        ? `Thinking (iteration ${selectedInferenceStatus.iteration})...`
-                        : 'Thinking...')}
+                        ? t('chat.thinkingIteration').replace(
+                            '{n}',
+                            String(selectedInferenceStatus.iteration)
+                          )
+                        : t('chat.thinkingDots'))}
                     {selectedInferenceStatus.phase === 'tool_use' &&
                       `${
                         formatTimelineEntry(
@@ -1475,7 +1501,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                       if (selectedThreadId) void chatCancel(selectedThreadId);
                     }}
                     className="text-xs text-stone-500 hover:text-stone-700 transition-colors">
-                    Cancel
+                    {t('common.cancel')}
                   </button>
                 </div>
               )}
@@ -1497,7 +1523,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
             //     <WelcomeThinkingTypewriter />
             //   </div>
             <div className="flex-1 flex items-center justify-center h-full">
-              <p className="text-sm text-stone-600">No messages yet</p>
+              <p className="text-sm text-stone-600">{t('chat.noMessages')}</p>
             </div>
           )}
         </div>
@@ -1512,9 +1538,12 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                 <div className="mb-3">
                   <UpsellBanner
                     variant="warning"
-                    title="Approaching usage limit"
-                    message={`You've used ${Math.round(Math.max(usagePct10h, usagePct7d) * 100)}% of your inference budget. Upgrade for higher limits.`}
-                    ctaLabel="Upgrade"
+                    title={t('chat.approachingLimit')}
+                    message={t('chat.approachingLimitMsg').replace(
+                      '{pct}',
+                      String(Math.round(Math.max(usagePct10h, usagePct7d) * 100))
+                    )}
+                    ctaLabel={t('chat.upgrade')}
                     onCtaClick={() => {
                       void openUrl(BILLING_DASHBOARD_URL);
                     }}
@@ -1541,9 +1570,9 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                   <p className="text-xs text-coral-600 truncate">
                     {shouldShowBudgetCompletedMessage
                       ? teamUsage.cycleBudgetUsd > 0
-                        ? `You've hit your weekly limit.${teamUsage.cycleEndsAt ? ` Resets ${formatResetTime(teamUsage.cycleEndsAt)}.` : ''} Top up to continue.`
-                        : 'Your included budget is complete. Add credits or upgrade to continue.'
-                      : `10-hour rate limit reached.${teamUsage.fiveHourResetsAt ? ` Resets ${formatResetTime(teamUsage.fiveHourResetsAt)}.` : ''}`}
+                        ? `${t('chat.weeklyLimitHit')}${teamUsage.cycleEndsAt ? ` ${t('chat.resets')} ${formatResetTime(teamUsage.cycleEndsAt)}.` : ''} ${t('chat.topUpToContinue')}`
+                        : t('chat.budgetComplete')
+                      : `${t('chat.rateLimitReached')}${teamUsage.fiveHourResetsAt ? ` ${t('chat.resets')} ${formatResetTime(teamUsage.fiveHourResetsAt)}.` : ''}`}
                   </p>
                 </div>
                 {shouldShowBudgetCompletedMessage && (
@@ -1552,7 +1581,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                       void openUrl(BILLING_DASHBOARD_URL);
                     }}
                     className="flex-shrink-0 px-3 py-1.5 rounded-lg bg-coral-500 hover:bg-coral-400 text-white text-xs font-medium transition-colors">
-                    Top Up
+                    {t('chat.topUp')}
                   </button>
                 )}
               </div>
@@ -1589,33 +1618,35 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                       />
                     </div>
                   ) : (
-                    <span className="text-[10px] text-stone-400 animate-pulse">loading…</span>
+                    <span className="text-[10px] text-stone-400 animate-pulse">
+                      {t('common.loading')}
+                    </span>
                   )}
                   {teamUsage && (
                     <div className="absolute bottom-full right-0 mb-2 hidden group-hover:block z-50">
                       <div className="bg-stone-900 text-white text-[10px] rounded-lg px-3 py-2 shadow-lg whitespace-nowrap space-y-1.5">
                         {!teamUsage.bypassCycleLimit && (
                           <div className="flex items-center justify-between gap-4">
-                            <span className="text-stone-400">5-hour limit</span>
+                            <span className="text-stone-400">{t('chat.fiveHourLimit')}</span>
                             <span>
                               ${(teamUsage.cycleLimit5hr ?? 0).toFixed(2)} / $
                               {(teamUsage.fiveHourCapUsd ?? 0).toFixed(2)}
                               {teamUsage.fiveHourResetsAt && (
                                 <span className="text-stone-400 ml-1">
-                                  — resets {formatResetTime(teamUsage.fiveHourResetsAt)}
+                                  — {t('chat.resets')} {formatResetTime(teamUsage.fiveHourResetsAt)}
                                 </span>
                               )}
                             </span>
                           </div>
                         )}
                         <div className="flex items-center justify-between gap-4">
-                          <span className="text-stone-400">Weekly limit</span>
+                          <span className="text-stone-400">{t('chat.weeklyLimit')}</span>
                           <span>
                             ${(teamUsage.remainingUsd ?? 0).toFixed(2)} / $
-                            {(teamUsage.cycleBudgetUsd ?? 0).toFixed(2)} left
+                            {(teamUsage.cycleBudgetUsd ?? 0).toFixed(2)} {t('chat.left')}
                             {teamUsage.cycleEndsAt && (
                               <span className="text-stone-400 ml-1">
-                                — resets {formatResetTime(teamUsage.cycleEndsAt)}
+                                — {t('chat.resets')} {formatResetTime(teamUsage.cycleEndsAt)}
                               </span>
                             )}
                           </span>
@@ -1636,7 +1667,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
               <button
                 onClick={() => setSendAdvisory(null)}
                 className="text-xs text-stone-500 hover:text-stone-700 transition-colors ml-2">
-                Dismiss
+                {t('common.dismiss')}
               </button>
             </div>
           )}
@@ -1660,13 +1691,13 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                       navigate('/settings/voice');
                     }}
                     className="text-xs text-primary-500 hover:text-primary-600 font-medium transition-colors">
-                    Set up
+                    {t('chat.setup')}
                   </button>
                 )}
                 <button
                   onClick={() => setSendError(null)}
                   className="text-xs text-stone-500 hover:text-stone-700 transition-colors">
-                  Dismiss
+                  {t('common.dismiss')}
                 </button>
               </div>
             </div>
@@ -1695,8 +1726,14 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                   ref={textInputRef}
                   value={inputValue}
                   onChange={e => setInputValue(e.target.value)}
+                  onCompositionStart={() => {
+                    isComposingTextRef.current = true;
+                  }}
+                  onCompositionEnd={() => {
+                    isComposingTextRef.current = false;
+                  }}
                   onKeyDown={handleInputKeyDown}
-                  placeholder="Type a message..."
+                  placeholder={t('chat.typeMessage')}
                   rows={1}
                   disabled={composerInteractionBlocked}
                   className="relative z-10 w-full resize-none border-0 bg-transparent pl-4 pr-10 py-2.5 text-sm leading-normal whitespace-pre-wrap break-words font-sans text-stone-900 placeholder:text-stone-400 outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0 max-h-32 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -1704,8 +1741,8 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                 {/* Voice input mic hidden per #717 (inputMode='voice' path retained). */}
               </div>
               <button
-                aria-label="Send message"
-                title="Send message"
+                aria-label={t('chat.send')}
+                title={t('chat.send')}
                 onClick={() => {
                   void handleSendMessage();
                 }}
@@ -1746,7 +1783,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                 onClick={() => setInputMode('text')}
                 disabled={isRecording || isTranscribing}
                 className="w-10 h-10 flex items-center justify-center rounded-full border border-stone-200 bg-white text-stone-500 hover:text-stone-700 hover:border-stone-300 transition-colors disabled:opacity-40"
-                title="Switch to text input">
+                title={t('chat.switchToText')}>
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path
                     strokeLinecap="round"
@@ -1767,15 +1804,19 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                     ? 'bg-coral-500 hover:bg-coral-400 text-white'
                     : 'bg-primary-600 hover:bg-primary-500 text-white'
                 } disabled:opacity-40 disabled:cursor-not-allowed`}>
-                {isTranscribing ? 'Transcribing…' : isRecording ? 'Stop & Send' : 'Start Talking'}
+                {isTranscribing
+                  ? t('chat.transcribing')
+                  : isRecording
+                    ? t('chat.stopAndSend')
+                    : t('chat.startTalking')}
               </button>
               <p className="text-xs text-stone-400 truncate">
                 {voiceStatus ??
                   (isPlayingReply && replyMode === 'voice'
-                    ? 'Playing voice reply…'
+                    ? t('chat.playingVoiceReply')
                     : canUseMicrophoneApi
-                      ? 'Click "Start Talking" to speak to the agent.'
-                      : 'Microphone input is not available in this runtime.')}
+                      ? t('chat.voiceHint')
+                      : t('chat.micUnavailable'))}
               </p>
             </div>
           )}

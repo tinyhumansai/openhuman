@@ -181,6 +181,15 @@ fn split_sentences_single_sentence_without_terminator() {
 }
 
 #[test]
+fn split_sentences_splits_on_cjk_terminators() {
+    let out = split_sentences("你好世界。今天天气很好！你觉得呢？");
+    assert_eq!(out.len(), 3);
+    assert_eq!(out[0], "你好世界。");
+    assert_eq!(out[1], "今天天气很好！");
+    assert_eq!(out[2], "你觉得呢？");
+}
+
+#[test]
 fn group_sentences_single_entry_roundtrip() {
     let v: Vec<String> = vec!["Hello world".into()];
     let out = group_sentences(&v);

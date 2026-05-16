@@ -1,6 +1,7 @@
 import debug from 'debug';
 import { useEffect, useRef, useState } from 'react';
 
+import { useT } from '../../lib/i18n/I18nContext';
 import { transcribeWithFactory } from './voice/sttClient';
 import { encodeBlobToWav } from './voice/wavEncoder';
 
@@ -66,6 +67,7 @@ export function MicComposer({
   language = 'en',
   showDeviceSelector = false,
 }: MicComposerProps) {
+  const { t } = useT();
   const [state, setState] = useState<RecordingState>('idle');
   const [devices, setDevices] = useState<AudioInputDevice[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
@@ -223,7 +225,7 @@ export function MicComposer({
   async function startRecording() {
     if (state !== 'idle' || disabled || startInFlightRef.current) return;
     if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
-      onError?.('Microphone access is not available in this runtime.');
+      onError?.(t('mic.unavailable'));
       return;
     }
     startInFlightRef.current = true;
@@ -261,7 +263,7 @@ export function MicComposer({
       composerLog('getUserMedia rejected: %s', msg);
       if (err instanceof DOMException) {
         if (err.name === 'NotAllowedError' || err.name === 'SecurityError') {
-          onError?.(`Microphone permission denied: ${msg}`);
+          onError?.(`${t('mic.permissionDenied')}: ${msg}`);
         } else if (err.name === 'NotFoundError' || err.name === 'OverconstrainedError') {
           onError?.('Selected microphone is unavailable — try a different device.');
         } else if (err.name === 'NotReadableError') {
@@ -296,7 +298,7 @@ export function MicComposer({
       stream.getTracks().forEach(t => t.stop());
       startInFlightRef.current = false;
       const msg = err instanceof Error ? err.message : String(err);
-      onError?.(`Failed to start recorder: ${msg}`);
+      onError?.(`${t('mic.failedToStartRecorder')}: ${msg}`);
       return;
     }
 
@@ -327,7 +329,7 @@ export function MicComposer({
       // resets `state`, leaving the UI stuck on "Transcribing…". Recover here.
       composerLog('recorder.stop threw: %s', err);
       const msg = err instanceof Error ? err.message : String(err);
-      onError?.(`Failed to stop recording: ${msg}`);
+      onError?.(t('mic.failedToStopRecording').replace('{message}', msg));
       stopStream();
       recorderRef.current = null;
       setState('idle');
@@ -356,14 +358,14 @@ export function MicComposer({
 
     if (blob.size === 0) {
       setState('idle');
-      onError?.('No audio captured. Try holding the mic a little longer.');
+      onError?.(t('mic.noAudioCaptured'));
       return;
     }
 
     try {
       const transcript = await transcribeWithFallback(blob);
       if (!transcript) {
-        onError?.('No speech detected. Try again.');
+        onError?.(t('mic.noSpeechDetected'));
         setState('idle');
         return;
       }
@@ -371,7 +373,7 @@ export function MicComposer({
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       composerLog('transcribe failed: %s', msg);
-      onError?.(`Voice transcription failed: ${msg}`);
+      onError?.(t('mic.transcriptionFailed').replace('{message}', msg));
     } finally {
       setState('idle');
     }
@@ -421,12 +423,12 @@ export function MicComposer({
   const buttonDisabled = disabled || isBusy;
 
   const label = isBusy
-    ? 'Transcribing…'
+    ? t('mic.transcribing')
     : isRecording
-      ? 'Tap to send'
+      ? t('mic.tapToSend')
       : disabled
-        ? 'Waiting for the agent…'
-        : 'Tap and speak';
+        ? t('mic.waitingForAgent')
+        : t('mic.tapAndSpeak');
 
   return (
     <div className="flex flex-col items-center gap-2">
@@ -447,7 +449,7 @@ export function MicComposer({
       <div className="flex items-center justify-center gap-3">
         <button
           type="button"
-          aria-label={isRecording ? 'Stop recording and send' : 'Start recording'}
+          aria-label={isRecording ? t('mic.stopRecording') : t('mic.startRecording')}
           onClick={() => (isRecording ? stopRecording() : void startRecording())}
           disabled={buttonDisabled}
           className={`relative w-14 h-14 flex items-center justify-center rounded-full text-white shadow-soft transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${

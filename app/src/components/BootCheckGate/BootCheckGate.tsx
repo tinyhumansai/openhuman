@@ -6,13 +6,14 @@
  *   2. Subsequent launches: run version / reachability check and block until
  *      the result is `match`.
  *
- * Visual language follows ServiceBlockingGate.tsx (bg-stone-950/80 overlay,
- * bg-stone-900 panel, ocean-500 / coral-500 semantics).
+ * Visual language matches the rest of the app shell: light stone palette,
+ * primary-500 accent, soft-shadow card on a stone-100 backdrop.
  */
 import debug from 'debug';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { type BootCheckResult, runBootCheck } from '../../lib/bootCheck';
+import { useT } from '../../lib/i18n/I18nContext';
 import { bootCheckTransport } from '../../services/bootCheckService';
 import {
   clearCoreRpcTokenCache,
@@ -30,6 +31,8 @@ import {
   storeRpcUrl,
 } from '../../utils/configPersistence';
 import { isTauri } from '../../utils/tauriCommands/common';
+import AppBackground from '../AppBackground';
+import LanguageSelect from '../LanguageSelect';
 
 const log = debug('boot-check');
 const logError = debug('boot-check:error');
@@ -53,10 +56,20 @@ interface PanelProps {
 
 function Panel({ children }: PanelProps) {
   return (
-    <div className="fixed inset-0 z-[10000] bg-stone-950/80 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="w-full max-w-xl rounded-2xl border border-stone-700/50 bg-stone-900 p-6 shadow-2xl">
+    <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-[#f5f5f5] p-4">
+      <AppBackground />
+      <div className="relative z-10 w-full max-w-xl rounded-2xl border border-stone-200 bg-white p-10 shadow-soft animate-fade-up">
         {children}
       </div>
+    </div>
+  );
+}
+
+function BootCheckLanguageSelect() {
+  const { t } = useT();
+  return (
+    <div className="absolute right-5 top-5">
+      <LanguageSelect id="boot-check-language" ariaLabel={t('settings.language')} />
     </div>
   );
 }
@@ -82,6 +95,7 @@ type TestStatus =
 const DESKTOP_DOWNLOAD_URL = 'https://github.com/tinyhumansai/openhuman/releases/latest';
 
 function ModePicker({ onConfirm }: PickerProps) {
+  const { t } = useT();
   // Web build cannot spawn a local sidecar, so the only viable choice is
   // cloud. Default the selection accordingly and hide the local option in
   // the render path below.
@@ -108,13 +122,13 @@ function ModePicker({ onConfirm }: PickerProps) {
   const validateInputs = (): { url: string; token: string } | null => {
     const trimmedUrl = cloudUrl.trim();
     if (!trimmedUrl) {
-      setUrlError('Please enter a core URL.');
+      setUrlError(t('bootCheck.invalidUrl'));
       return null;
     }
     try {
       const parsed = new URL(trimmedUrl);
       if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-        setUrlError('URL must start with http:// or https://');
+        setUrlError(t('bootCheck.urlMustStartWith'));
         return null;
       }
       if (parsed.protocol === 'http:' && !isLocalOrPrivateNetworkHost(parsed.hostname)) {
@@ -124,14 +138,14 @@ function ModePicker({ onConfirm }: PickerProps) {
         return null;
       }
     } catch {
-      setUrlError('Please enter a valid URL (e.g. https://core.example.com/rpc)');
+      setUrlError(t('bootCheck.validUrlRequired'));
       return null;
     }
     setUrlError(null);
 
     const trimmedToken = cloudToken.trim();
     if (!trimmedToken) {
-      setTokenError('Please enter the core auth token.');
+      setTokenError(t('bootCheck.tokenRequired'));
       return null;
     }
     setTokenError(null);
@@ -197,26 +211,25 @@ function ModePicker({ onConfirm }: PickerProps) {
 
   return (
     <Panel>
-      <h2 className="text-xl font-semibold text-white">
-        {isDesktop ? 'Choose core mode' : 'Connect to your core'}
+      <BootCheckLanguageSelect />
+      <h2 className="text-xl font-semibold text-stone-900">
+        {isDesktop ? t('bootCheck.chooseCoreMode') : t('bootCheck.connectToCore')}
       </h2>
-      <p className="mt-2 text-sm text-stone-300">
-        {isDesktop
-          ? 'OpenHuman needs a running core to operate. Choose how you want to connect.'
-          : 'OpenHuman on the web connects to a remote core you control. Enter its URL and auth token, or install the desktop app to run one locally.'}
+      <p className="mt-2 text-sm text-stone-600">
+        {isDesktop ? t('bootCheck.desktopDescription') : t('bootCheck.webDescription')}
       </p>
 
       {!isDesktop && (
         <div
-          className="mt-4 rounded-xl border border-stone-700 bg-stone-800/60 p-3 text-xs text-stone-300"
+          className="mt-4 rounded-xl border border-stone-200 bg-stone-50 p-3 text-xs text-stone-600"
           data-testid="web-download-cta">
-          Prefer to run everything on your own device?{' '}
+          {t('bootCheck.preferDesktop')}{' '}
           <a
             href={DESKTOP_DOWNLOAD_URL}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-ocean-400 underline hover:text-ocean-300">
-            Download the desktop app
+            className="text-primary-500 underline hover:text-primary-600">
+            {t('bootCheck.downloadDesktop')}
           </a>
           .
         </div>
@@ -228,15 +241,14 @@ function ModePicker({ onConfirm }: PickerProps) {
           <button
             type="button"
             onClick={() => setSelected('local')}
-            className={`rounded-xl border p-4 text-left transition-colors ${
+            aria-pressed={selected === 'local'}
+            className={`rounded-xl border-2 p-5 text-left transition-colors focus:outline-none ${
               selected === 'local'
-                ? 'border-ocean-500 bg-ocean-500/10 text-white'
-                : 'border-stone-700 text-stone-300 hover:border-stone-500 hover:bg-stone-800'
+                ? '!border-primary-500 bg-primary-50 text-stone-900 shadow-sm'
+                : '!border-stone-200 bg-white text-stone-700 hover:!border-stone-300 hover:bg-stone-50'
             }`}>
-            <div className="font-medium">Local (recommended)</div>
-            <div className="mt-0.5 text-xs text-stone-400">
-              Embedded core runs on this device — fastest, no configuration required.
-            </div>
+            <div className="font-medium">{t('bootCheck.localRecommended')}</div>
+            <div className="mt-0.5 text-xs text-stone-500">{t('bootCheck.localDescription')}</div>
           </button>
         )}
 
@@ -245,56 +257,57 @@ function ModePicker({ onConfirm }: PickerProps) {
           <button
             type="button"
             onClick={() => setSelected('cloud')}
-            className={`rounded-xl border p-4 text-left transition-colors ${
+            aria-pressed={selected === 'cloud'}
+            className={`rounded-xl border-2 p-5 text-left transition-colors focus:outline-none ${
               selected === 'cloud'
-                ? 'border-ocean-500 bg-ocean-500/10 text-white'
-                : 'border-stone-700 text-stone-300 hover:border-stone-500 hover:bg-stone-800'
+                ? '!border-primary-500 bg-primary-50 text-stone-900 shadow-sm'
+                : '!border-stone-200 bg-white text-stone-700 hover:!border-stone-300 hover:bg-stone-50'
             }`}>
-            <div className="font-medium">Cloud</div>
-            <div className="mt-0.5 text-xs text-stone-400">
-              Connect to a remote core at a custom URL.
-            </div>
+            <div className="font-medium">{t('bootCheck.cloudMode')}</div>
+            <div className="mt-0.5 text-xs text-stone-500">{t('bootCheck.cloudDescription')}</div>
           </button>
         )}
 
         {selected === 'cloud' && (
           <div className="mt-1 flex flex-col gap-3">
             <div className="flex flex-col gap-1">
-              <label className="text-xs font-medium text-stone-300">Core RPC URL</label>
+              <label className="text-xs font-medium text-stone-700">
+                {t('bootCheck.coreRpcUrl')}
+              </label>
               <input
                 type="url"
-                placeholder="https://core.example.com/rpc"
+                placeholder={t('bootCheck.rpcUrlPlaceholder')}
                 value={cloudUrl}
                 onChange={e => {
                   setCloudUrl(e.target.value);
                   setUrlError(null);
                   setTestStatus({ kind: 'idle' });
                 }}
-                className="rounded-lg border border-stone-600 bg-stone-800 px-3 py-2 text-sm text-white placeholder-stone-500 focus:border-ocean-500 focus:outline-none"
+                className="rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm text-stone-900 placeholder-stone-400 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
               />
-              {urlError && <p className="text-xs text-coral-400">{urlError}</p>}
+              {urlError && <p className="text-xs text-red-600">{urlError}</p>}
             </div>
             <div className="flex flex-col gap-1">
-              <label className="text-xs font-medium text-stone-300">
-                Auth token (<code className="text-[10px]">OPENHUMAN_CORE_TOKEN</code>)
+              <label className="text-xs font-medium text-stone-700">
+                {t('bootCheck.authToken')} (
+                <code className="text-[10px]">OPENHUMAN_CORE_TOKEN</code>)
               </label>
               <input
                 type="password"
                 autoComplete="off"
                 spellCheck={false}
-                placeholder="Bearer token configured on the remote core"
+                placeholder={t('bootCheck.bearerTokenPlaceholder')}
                 value={cloudToken}
                 onChange={e => {
                   setCloudToken(e.target.value);
                   setTokenError(null);
                   setTestStatus({ kind: 'idle' });
                 }}
-                className="rounded-lg border border-stone-600 bg-stone-800 px-3 py-2 text-sm text-white placeholder-stone-500 focus:border-ocean-500 focus:outline-none"
+                className="rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm text-stone-900 placeholder-stone-400 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
               />
-              {tokenError && <p className="text-xs text-coral-400">{tokenError}</p>}
-              <p className="text-[11px] text-stone-500">
-                Stored on this device only. Required for remote cores — the desktop sends it as{' '}
-                <code>Authorization: Bearer …</code> on every RPC.
+              {tokenError && <p className="text-xs text-red-600">{tokenError}</p>}
+              <p className="text-[11px] text-stone-500 leading-snug">
+                {t('bootCheck.storedLocally')} <code>Authorization: Bearer …</code> on every RPC.
               </p>
             </div>
 
@@ -303,22 +316,24 @@ function ModePicker({ onConfirm }: PickerProps) {
                 type="button"
                 onClick={handleTestConnection}
                 disabled={testStatus.kind === 'testing'}
-                className="rounded-lg border border-stone-600 px-3 py-1.5 text-xs text-stone-100 hover:bg-stone-800 disabled:opacity-60">
-                {testStatus.kind === 'testing' ? 'Testing…' : 'Test connection'}
+                className="rounded-lg border border-stone-300 bg-white px-3 py-1.5 text-xs text-stone-700 hover:bg-stone-50 disabled:opacity-60">
+                {testStatus.kind === 'testing'
+                  ? t('bootCheck.testing')
+                  : t('bootCheck.testConnection')}
               </button>
               {testStatus.kind === 'ok' && (
-                <span className="text-xs text-emerald-400" data-testid="test-status-ok">
-                  Connected ✓
+                <span className="text-xs text-emerald-600" data-testid="test-status-ok">
+                  {t('bootCheck.connectedOk')}
                 </span>
               )}
               {testStatus.kind === 'auth' && (
-                <span className="text-xs text-coral-400" data-testid="test-status-auth">
-                  Auth failed — check the token (got 401/403).
+                <span className="text-xs text-red-600" data-testid="test-status-auth">
+                  {t('bootCheck.authFailed')}
                 </span>
               )}
               {testStatus.kind === 'unreachable' && (
-                <span className="text-xs text-coral-400" data-testid="test-status-unreachable">
-                  Unreachable: {testStatus.reason}
+                <span className="text-xs text-red-600" data-testid="test-status-unreachable">
+                  {t('bootCheck.unreachablePrefix')} {testStatus.reason}
                 </span>
               )}
             </div>
@@ -330,8 +345,8 @@ function ModePicker({ onConfirm }: PickerProps) {
         <button
           type="button"
           onClick={handleContinue}
-          className="rounded-lg bg-ocean-500 px-5 py-2 text-sm font-medium text-white hover:bg-ocean-600">
-          Continue
+          className="rounded-lg bg-primary-500 px-5 py-2 text-sm font-medium text-white hover:bg-primary-600">
+          {t('common.continue')}
         </button>
       </div>
     </Panel>
@@ -343,11 +358,12 @@ function ModePicker({ onConfirm }: PickerProps) {
 // ---------------------------------------------------------------------------
 
 function CheckingScreen() {
+  const { t } = useT();
   return (
     <Panel>
       <div className="flex flex-col items-center gap-4 py-4">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-stone-600 border-t-ocean-500" />
-        <p className="text-sm text-stone-300">Checking core…</p>
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-stone-300 border-t-primary-500" />
+        <p className="text-sm text-stone-600">{t('bootCheck.checkingCore')}</p>
       </div>
     </Panel>
   );
@@ -376,35 +392,36 @@ function ResultScreen({
   actionError,
   onAction,
 }: ResultScreenProps) {
+  const { t } = useT();
   if (result.kind === 'match') return null;
 
   if (result.kind === 'unreachable') {
     return (
       <Panel>
-        <h2 className="text-xl font-semibold text-white">Could not reach core</h2>
-        <p className="mt-2 text-sm text-stone-300">
-          {result.reason || 'The core process is unreachable. Try switching to a different mode.'}
+        <h2 className="text-xl font-semibold text-stone-900">{t('bootCheck.cannotReach')}</h2>
+        <p className="mt-2 text-sm text-stone-600">
+          {result.reason || t('bootCheck.cannotReachDesc')}
         </p>
-        {actionError && <p className="mt-3 text-xs text-coral-400">{actionError}</p>}
+        {actionError && <p className="mt-3 text-xs text-red-600 font-medium">{actionError}</p>}
         <div className="mt-5 flex gap-3">
           <button
             type="button"
             onClick={onRetry}
             disabled={actionBusy}
-            className="rounded-lg border border-stone-600 px-4 py-2 text-sm text-stone-100 hover:bg-stone-800 disabled:opacity-60">
-            Retry
+            className="rounded-lg border border-stone-300 bg-white px-4 py-2 text-sm text-stone-700 hover:bg-stone-50 disabled:opacity-60">
+            {t('common.retry')}
           </button>
           <button
             type="button"
             onClick={onSwitchMode}
-            className="rounded-lg border border-stone-600 px-4 py-2 text-sm text-stone-100 hover:bg-stone-800">
-            Switch mode
+            className="rounded-lg border border-stone-300 bg-white px-4 py-2 text-sm text-stone-700 hover:bg-stone-50">
+            {t('bootCheck.switchMode')}
           </button>
           <button
             type="button"
             onClick={onQuit}
-            className="rounded-lg bg-coral-500 px-4 py-2 text-sm font-medium text-white hover:bg-coral-600">
-            Quit
+            className="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700">
+            {t('bootCheck.quit')}
           </button>
         </div>
       </Panel>
@@ -414,26 +431,23 @@ function ResultScreen({
   if (result.kind === 'daemonDetected') {
     return (
       <Panel>
-        <h2 className="text-xl font-semibold text-white">Legacy background core detected</h2>
-        <p className="mt-2 text-sm text-stone-300">
-          A separately-installed OpenHuman daemon is running on this device. It must be removed
-          before the embedded core can take over.
-        </p>
-        {actionError && <p className="mt-3 text-xs text-coral-400">{actionError}</p>}
+        <h2 className="text-xl font-semibold text-stone-900">{t('bootCheck.legacyDetected')}</h2>
+        <p className="mt-2 text-sm text-stone-600">{t('bootCheck.legacyDescription')}</p>
+        {actionError && <p className="mt-3 text-xs text-red-600 font-medium">{actionError}</p>}
         <div className="mt-5 flex gap-3">
           <button
             type="button"
             onClick={onAction}
             disabled={actionBusy}
-            className="rounded-lg bg-coral-500 px-4 py-2 text-sm font-medium text-white hover:bg-coral-600 disabled:opacity-60">
-            {actionBusy ? 'Removing…' : 'Remove and continue'}
+            className="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-60">
+            {actionBusy ? t('bootCheck.removing') : t('bootCheck.removeContinue')}
           </button>
           <button
             type="button"
             onClick={onSwitchMode}
             disabled={actionBusy}
-            className="rounded-lg border border-stone-600 px-4 py-2 text-sm text-stone-100 hover:bg-stone-800 disabled:opacity-60">
-            Switch mode
+            className="rounded-lg border border-stone-300 bg-white px-4 py-2 text-sm text-stone-700 hover:bg-stone-50 disabled:opacity-60">
+            {t('bootCheck.switchMode')}
           </button>
         </div>
       </Panel>
@@ -443,26 +457,23 @@ function ResultScreen({
   if (result.kind === 'outdatedLocal') {
     return (
       <Panel>
-        <h2 className="text-xl font-semibold text-white">Local core needs a restart</h2>
-        <p className="mt-2 text-sm text-stone-300">
-          The local core version does not match this app build. Restarting it will load the correct
-          version.
-        </p>
-        {actionError && <p className="mt-3 text-xs text-coral-400">{actionError}</p>}
+        <h2 className="text-xl font-semibold text-stone-900">{t('bootCheck.localNeedsRestart')}</h2>
+        <p className="mt-2 text-sm text-stone-600">{t('bootCheck.localNeedsRestartDesc')}</p>
+        {actionError && <p className="mt-3 text-xs text-red-600 font-medium">{actionError}</p>}
         <div className="mt-5 flex gap-3">
           <button
             type="button"
             onClick={onAction}
             disabled={actionBusy}
-            className="rounded-lg bg-ocean-500 px-4 py-2 text-sm font-medium text-white hover:bg-ocean-600 disabled:opacity-60">
-            {actionBusy ? 'Restarting…' : 'Restart core'}
+            className="rounded-lg bg-primary-500 px-4 py-2 text-sm font-medium text-white hover:bg-primary-600 disabled:opacity-60">
+            {actionBusy ? t('bootCheck.restarting') : t('bootCheck.restartCore')}
           </button>
           <button
             type="button"
             onClick={onSwitchMode}
             disabled={actionBusy}
-            className="rounded-lg border border-stone-600 px-4 py-2 text-sm text-stone-100 hover:bg-stone-800 disabled:opacity-60">
-            Switch mode
+            className="rounded-lg border border-stone-300 bg-white px-4 py-2 text-sm text-stone-700 hover:bg-stone-50 disabled:opacity-60">
+            {t('bootCheck.switchMode')}
           </button>
         </div>
       </Panel>
@@ -472,26 +483,23 @@ function ResultScreen({
   if (result.kind === 'outdatedCloud') {
     return (
       <Panel>
-        <h2 className="text-xl font-semibold text-white">Cloud core needs an update</h2>
-        <p className="mt-2 text-sm text-stone-300">
-          The cloud core version does not match this app build. Run the core updater to resolve the
-          mismatch.
-        </p>
-        {actionError && <p className="mt-3 text-xs text-coral-400">{actionError}</p>}
+        <h2 className="text-xl font-semibold text-stone-900">{t('bootCheck.cloudNeedsUpdate')}</h2>
+        <p className="mt-2 text-sm text-stone-600">{t('bootCheck.cloudNeedsUpdateDesc')}</p>
+        {actionError && <p className="mt-3 text-xs text-red-600 font-medium">{actionError}</p>}
         <div className="mt-5 flex gap-3">
           <button
             type="button"
             onClick={onAction}
             disabled={actionBusy}
-            className="rounded-lg bg-ocean-500 px-4 py-2 text-sm font-medium text-white hover:bg-ocean-600 disabled:opacity-60">
-            {actionBusy ? 'Updating…' : 'Update cloud core'}
+            className="rounded-lg bg-primary-500 px-4 py-2 text-sm font-medium text-white hover:bg-primary-600 disabled:opacity-60">
+            {actionBusy ? t('bootCheck.updating') : t('bootCheck.updateCloudCore')}
           </button>
           <button
             type="button"
             onClick={onSwitchMode}
             disabled={actionBusy}
-            className="rounded-lg border border-stone-600 px-4 py-2 text-sm text-stone-100 hover:bg-stone-800 disabled:opacity-60">
-            Switch mode
+            className="rounded-lg border border-stone-300 bg-white px-4 py-2 text-sm text-stone-700 hover:bg-stone-50 disabled:opacity-60">
+            {t('bootCheck.switchMode')}
           </button>
         </div>
       </Panel>
@@ -501,26 +509,23 @@ function ResultScreen({
   // noVersionMethod — treat like outdated, user picks which flavor of action
   return (
     <Panel>
-      <h2 className="text-xl font-semibold text-white">Core version check failed</h2>
-      <p className="mt-2 text-sm text-stone-300">
-        The core is running but does not expose a version endpoint. It may be outdated. Restart or
-        update the core to continue.
-      </p>
-      {actionError && <p className="mt-3 text-xs text-coral-400">{actionError}</p>}
+      <h2 className="text-xl font-semibold text-stone-900">{t('bootCheck.versionCheckFailed')}</h2>
+      <p className="mt-2 text-sm text-stone-600">{t('bootCheck.versionCheckFailedDesc')}</p>
+      {actionError && <p className="mt-3 text-xs text-red-600 font-medium">{actionError}</p>}
       <div className="mt-5 flex gap-3">
         <button
           type="button"
           onClick={onAction}
           disabled={actionBusy}
-          className="rounded-lg bg-ocean-500 px-4 py-2 text-sm font-medium text-white hover:bg-ocean-600 disabled:opacity-60">
-          {actionBusy ? 'Working…' : 'Restart / update core'}
+          className="rounded-lg bg-primary-500 px-4 py-2 text-sm font-medium text-white hover:bg-primary-600 disabled:opacity-60">
+          {actionBusy ? t('bootCheck.working') : t('bootCheck.restartUpdateCore')}
         </button>
         <button
           type="button"
           onClick={onSwitchMode}
           disabled={actionBusy}
-          className="rounded-lg border border-stone-600 px-4 py-2 text-sm text-stone-100 hover:bg-stone-800 disabled:opacity-60">
-          Switch mode
+          className="rounded-lg border border-stone-300 bg-white px-4 py-2 text-sm text-stone-700 hover:bg-stone-50 disabled:opacity-60">
+          {t('bootCheck.switchMode')}
         </button>
       </div>
     </Panel>
@@ -536,6 +541,7 @@ interface BootCheckGateProps {
 }
 
 export default function BootCheckGate({ children }: BootCheckGateProps) {
+  const { t } = useT();
   const dispatch = useAppDispatch();
   const coreMode = useAppSelector(state => state.coreMode.mode);
 
@@ -582,7 +588,7 @@ export default function BootCheckGate({ children }: BootCheckGateProps) {
         setPhase('result');
         setResult({
           kind: 'unreachable',
-          reason: err instanceof Error ? err.message : 'Unexpected boot-check error',
+          reason: err instanceof Error ? err.message : t('bootCheck.unexpectedError'),
         });
       } finally {
         runningRef.current = false;
@@ -701,7 +707,7 @@ export default function BootCheckGate({ children }: BootCheckGateProps) {
       }
     } catch (err) {
       logError('[boot-check] gate — action error: %o', err);
-      setActionError(err instanceof Error ? err.message : 'Action failed — please try again.');
+      setActionError(err instanceof Error ? err.message : t('bootCheck.actionFailed'));
     } finally {
       setActionBusy(false);
     }

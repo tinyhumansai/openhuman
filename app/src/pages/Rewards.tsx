@@ -4,6 +4,7 @@ import PillTabBar from '../components/PillTabBar';
 import RewardsCommunityTab from '../components/rewards/RewardsCommunityTab';
 import RewardsRedeemTab from '../components/rewards/RewardsRedeemTab';
 import RewardsReferralsTab from '../components/rewards/RewardsReferralsTab';
+import { useT } from '../lib/i18n/I18nContext';
 import { rewardsApi } from '../services/api/rewardsApi';
 import type { RewardsSnapshot } from '../types/rewards';
 
@@ -16,10 +17,11 @@ function errorMessage(err: unknown): string {
   if (err instanceof Error) {
     return err.message;
   }
-  return 'Unable to load rewards';
+  return 'Unable to load rewards'; // fallback — translated at call site
 }
 
 const Rewards = () => {
+  const { t } = useT();
   const [selectedTab, setSelectedTab] = useState<RewardsTab>('rewards');
   const [snapshot, setSnapshot] = useState<RewardsSnapshot | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -73,9 +75,9 @@ const Rewards = () => {
       <div className="mx-auto max-w-2xl space-y-4">
         <PillTabBar
           items={[
-            { label: 'Referrals', value: 'referrals' },
-            { label: 'Rewards', value: 'rewards' },
-            { label: 'Redeem', value: 'redeem' },
+            { label: t('rewards.referrals'), value: 'referrals' },
+            { label: t('rewards.title'), value: 'rewards' },
+            { label: t('rewards.coupons'), value: 'redeem' },
           ]}
           selected={selectedTab}
           onChange={handleTabChange}

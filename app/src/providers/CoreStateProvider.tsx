@@ -44,6 +44,7 @@ const log = debugFactory('core-state');
 
 const POLL_MS = 2000;
 const MAX_BOOTSTRAP_RETRIES = 5;
+const SUPPRESS_POLL_WARNING_AT = MAX_BOOTSTRAP_RETRIES + 1;
 
 /** Extract only non-sensitive fields from an RPC/fetch error. */
 function sanitizeError(error: unknown): { message?: string; code?: string; status?: number } {
@@ -59,6 +60,19 @@ function sanitizeError(error: unknown): { message?: string; code?: string; statu
     };
   }
   return { message: String(error) };
+}
+
+export function coreStatePollFailureWarningMessage(failureCount: number): string | null {
+  if (failureCount <= 0) {
+    return null;
+  }
+  if (failureCount <= MAX_BOOTSTRAP_RETRIES) {
+    return `[core-state] poll failed (attempt ${failureCount}/${MAX_BOOTSTRAP_RETRIES}):`;
+  }
+  if (failureCount === SUPPRESS_POLL_WARNING_AT) {
+    return '[core-state] poll failed repeatedly; suppressing further warnings until core state recovers:';
+  }
+  return null;
 }
 
 interface CoreStateContextValue extends CoreState {
@@ -375,10 +389,10 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
             MAX_BOOTSTRAP_RETRIES,
             safe
           );
-          console.warn(
-            `[core-state] poll failed (attempt ${bootstrapFailCountRef.current}/${MAX_BOOTSTRAP_RETRIES}):`,
-            safe
-          );
+          const warningMessage = coreStatePollFailureWarningMessage(bootstrapFailCountRef.current);
+          if (warningMessage) {
+            console.warn(warningMessage, safe);
+          }
           if (bootstrapFailCountRef.current >= MAX_BOOTSTRAP_RETRIES) {
             commitState(previous => {
               if (previous.isBootstrapping) {

@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import NotificationCenter from '../components/notifications/NotificationCenter';
+import { useT } from '../lib/i18n/I18nContext';
 import { resolveSystemRoute } from '../lib/notificationRouter';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import {
@@ -13,32 +14,42 @@ import {
   selectUnreadCount,
 } from '../store/notificationSlice';
 
-const CATEGORY_LABEL: Record<NotificationCategory, string> = {
-  messages: 'Messages',
-  agents: 'Agents',
-  skills: 'Skills',
-  system: 'System',
-  meetings: 'Meetings',
-  reminders: 'Reminders',
-  important: 'Important',
-};
-
-function formatTime(ts: number): string {
+function formatTime(ts: number, t: (key: string) => string): string {
   const delta = Date.now() - ts;
   const min = Math.floor(delta / 60000);
-  if (min < 1) return 'just now';
-  if (min < 60) return `${min}m ago`;
+  if (min < 1) return t('notifications.justNow');
+  if (min < 60) return t('notifications.minAgo').replace('{n}', String(min));
   const hr = Math.floor(min / 60);
-  if (hr < 24) return `${hr}h ago`;
+  if (hr < 24) return t('notifications.hrAgo').replace('{n}', String(hr));
   const d = Math.floor(hr / 24);
-  return `${d}d ago`;
+  return t('notifications.dayAgo').replace('{n}', String(d));
 }
 
 const Notifications = () => {
+  const { t } = useT();
   const items = useAppSelector(s => s.notifications.items);
   const dispatch = useAppDispatch();
   const navigate = useNavigate();
   const unread = useMemo(() => selectUnreadCount(items), [items]);
+
+  const categoryLabel = (category: NotificationCategory): string => {
+    switch (category) {
+      case 'messages':
+        return t('notifications.category.messages');
+      case 'agents':
+        return t('notifications.category.agents');
+      case 'skills':
+        return t('notifications.category.skills');
+      case 'system':
+        return t('notifications.category.system');
+      case 'meetings':
+        return t('notifications.category.meetings');
+      case 'reminders':
+        return t('notifications.category.reminders');
+      case 'important':
+        return t('notifications.category.important');
+    }
+  };
 
   const handleClick = (item: NotificationItem) => {
     if (!item.read) dispatch(markRead({ id: item.id }));
@@ -60,9 +71,9 @@ const Notifications = () => {
         className="max-w-2xl mx-auto bg-white rounded-2xl shadow-soft border border-stone-200 overflow-hidden">
         <div className="flex items-center justify-between border-b border-stone-100 px-4 py-3">
           <div>
-            <h1 className="text-lg font-semibold text-stone-900">System Events</h1>
+            <h1 className="text-lg font-semibold text-stone-900">{t('alerts.title')}</h1>
             <p className="text-xs text-stone-500">
-              {unread > 0 ? `${unread} unread` : 'All caught up'}
+              {unread > 0 ? `${unread} ${t('alerts.unread')}` : t('alerts.empty')}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -71,20 +82,20 @@ const Notifications = () => {
               onClick={() => dispatch(markAllRead())}
               disabled={unread === 0}
               className="text-xs font-medium text-stone-600 hover:text-stone-900 disabled:opacity-40 disabled:cursor-not-allowed">
-              Mark all read
+              {t('alerts.markAllRead')}
             </button>
             <button
               type="button"
               onClick={() => dispatch(clearAll())}
               disabled={items.length === 0}
               className="text-xs font-medium text-stone-600 hover:text-stone-900 disabled:opacity-40 disabled:cursor-not-allowed">
-              Clear
+              {t('common.clear')}
             </button>
           </div>
         </div>
 
         {items.length === 0 ? (
-          <div className="px-6 py-16 text-center text-sm text-stone-500">No notifications yet.</div>
+          <div className="px-6 py-16 text-center text-sm text-stone-500">{t('alerts.empty')}</div>
         ) : (
           <ul className="divide-y divide-stone-100">
             {items.map(item => (
@@ -101,11 +112,11 @@ const Notifications = () => {
                         {!item.read && (
                           <span
                             className="w-2 h-2 rounded-full bg-primary-500"
-                            aria-label="unread"
+                            aria-label={t('alerts.unread')}
                           />
                         )}
                         <span className="text-xs uppercase tracking-wide text-stone-400">
-                          {CATEGORY_LABEL[item.category]}
+                          {categoryLabel(item.category)}
                         </span>
                       </div>
                       <p className="mt-1 text-sm font-semibold text-stone-900 truncate">
@@ -114,7 +125,7 @@ const Notifications = () => {
                       <p className="mt-0.5 text-sm text-stone-600 line-clamp-2">{item.body}</p>
                     </div>
                     <span className="text-[11px] text-stone-400 whitespace-nowrap">
-                      {formatTime(item.timestamp)}
+                      {formatTime(item.timestamp, t)}
                     </span>
                   </div>
                 </button>

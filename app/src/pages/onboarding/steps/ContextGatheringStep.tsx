@@ -286,10 +286,10 @@ const ContextGatheringStep = ({
     return (
       <div className="rounded-2xl border border-stone-200 bg-white p-8 shadow-soft animate-fade-up">
         <div className="flex flex-col items-center justify-center gap-5">
-          <h1 className="text-xl font-bold text-stone-900">Almost there!</h1>
+          <h1 className="text-xl font-bold text-stone-900">Context Gathering</h1>
           <p className="text-sm text-stone-600 text-center max-w-xs leading-relaxed">
             We couldn&apos;t build your full profile right now, but that&apos;s okay — you can
-            always update it later.
+            continue and your profile will build over time.
           </p>
           <OnboardingNextButton label="Continue to chat" onClick={continueToChat} />
         </div>
@@ -305,7 +305,9 @@ const ContextGatheringStep = ({
 
         {/* Title */}
         <h1 className="text-xl font-bold text-stone-900 animate-pulse">Building your profile...</h1>
-        <p className="text-sm text-stone-500 leading-relaxed">This will only take a moment.</p>
+        <p className="text-sm text-stone-500 leading-relaxed">
+          Connecting your integrations and building your personal context.
+        </p>
 
         {/* Skeleton bars */}
         <div className="w-64 flex flex-col gap-3 mt-2">

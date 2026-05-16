@@ -20,13 +20,37 @@ pub struct McpToolSpec {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ToolCallError {
+    /// Client-side problem: malformed arguments, unknown tool, validation
+    /// failure. Maps to JSON-RPC `-32602 Invalid params`.
     InvalidParams(String),
+    /// Server-side problem outside the caller's control: config load failure,
+    /// missing platform resources. Maps to JSON-RPC `-32603 Internal error`.
+    /// Kept distinct from `InvalidParams` so MCP clients don't display
+    /// internal failures as if the user supplied bad arguments.
+    Internal(String),
 }
 
 impl ToolCallError {
     pub fn message(&self) -> &str {
         match self {
-            Self::InvalidParams(message) => message,
+            Self::InvalidParams(message) | Self::Internal(message) => message,
+        }
+    }
+
+    /// JSON-RPC error code corresponding to this variant.
+    pub fn code(&self) -> i64 {
+        match self {
+            Self::InvalidParams(_) => -32602,
+            Self::Internal(_) => -32603,
+        }
+    }
+
+    /// JSON-RPC error `message` field (short, spec-canonical phrase). The
+    /// human-readable detail belongs in the response's `data` field.
+    pub fn jsonrpc_message(&self) -> &'static str {
+        match self {
+            Self::InvalidParams(_) => "Invalid params",
+            Self::Internal(_) => "Internal error",
         }
     }
 }
@@ -236,7 +260,16 @@ fn optional_limit(args: &Map<String, Value>) -> Result<u64, ToolCallError> {
             "argument `k` must be greater than zero".to_string(),
         ));
     }
-    Ok(limit.min(MAX_LIMIT))
+    if limit > MAX_LIMIT {
+        // Reject explicitly instead of silently clamping. The schema advertises
+        // `maximum: MAX_LIMIT`, so a higher value is a client bug; surfacing it
+        // lets the LLM self-correct on the next call instead of believing it
+        // received the page size it asked for.
+        return Err(ToolCallError::InvalidParams(format!(
+            "argument `k` must not exceed {MAX_LIMIT} (got {limit})"
+        )));
+    }
+    Ok(limit)
 }
 
 fn validate_controller_params(
@@ -253,10 +286,24 @@ fn validate_controller_params(
 }
 
 async fn enforce_read_policy(tool_name: &str) -> Result<(), ToolCallError> {
-    let config = config_rpc::load_config_with_timeout()
-        .await
-        .map_err(|err| ToolCallError::InvalidParams(format!("failed to load config: {err}")))?;
+    // Config-load failure is an internal/server issue (disk error, corrupt
+    // config), not bad client input — report it as `-32603 Internal error`
+    // rather than `-32602 Invalid params`.
+    let config = match config_rpc::load_config_with_timeout().await {
+        Ok(config) => config,
+        Err(err) => {
+            log::warn!(
+                "[mcp_server] enforce_read_policy config load failed tool={tool_name} error={err}"
+            );
+            return Err(ToolCallError::Internal(format!(
+                "failed to load config: {err}"
+            )));
+        }
+    };
     let policy = SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir);
+    // A policy denial *is* something the caller can act on (toggle autonomy,
+    // approve the tool) — keep that as `InvalidParams` so clients surface the
+    // reason text instead of a generic internal-error banner.
     policy
         .enforce_tool_operation(ToolOperation::Read, tool_name)
         .map_err(ToolCallError::InvalidParams)
@@ -325,18 +372,72 @@ mod tests {
     }
 
     #[test]
-    fn memory_search_params_default_and_clamp_k() {
+    fn memory_search_params_trim_query_and_use_default_k() {
         let params = build_rpc_params(
             "memory.search",
             json!({
                 "query": " phoenix migration ",
-                "k": 999
             }),
         )
         .expect("params");
 
         assert_eq!(params["query"], "phoenix migration");
+        assert_eq!(params["k"], DEFAULT_LIMIT);
+    }
+
+    #[test]
+    fn memory_search_rejects_k_above_max() {
+        // Reject (don't silent-clamp) so the LLM can self-correct on the next
+        // call. Silent clamping makes the model believe it got the page size
+        // it asked for and prevents the corrective feedback loop.
+        let err = build_rpc_params(
+            "memory.search",
+            json!({
+                "query": "phoenix",
+                "k": MAX_LIMIT + 1
+            }),
+        )
+        .expect_err("must reject k > MAX_LIMIT");
+
+        let message = err.message();
+        assert!(
+            message.contains("must not exceed"),
+            "error should mention the cap, got: {message}"
+        );
+        assert!(
+            message.contains(&MAX_LIMIT.to_string()),
+            "error should mention the limit value, got: {message}"
+        );
+    }
+
+    #[test]
+    fn memory_search_accepts_k_at_max() {
+        let params = build_rpc_params(
+            "memory.search",
+            json!({ "query": "phoenix", "k": MAX_LIMIT }),
+        )
+        .expect("k = MAX_LIMIT must be accepted (boundary inclusive)");
         assert_eq!(params["k"], MAX_LIMIT);
+    }
+
+    #[test]
+    fn tool_call_error_invalid_params_maps_to_jsonrpc_invalid_params() {
+        let err = ToolCallError::InvalidParams("missing query".to_string());
+        assert_eq!(err.code(), -32602);
+        assert_eq!(err.jsonrpc_message(), "Invalid params");
+        assert_eq!(err.message(), "missing query");
+    }
+
+    #[test]
+    fn tool_call_error_internal_maps_to_jsonrpc_internal_error() {
+        // Server-side failures (config load, missing resources) must surface
+        // as `-32603 Internal error`, not `-32602 Invalid params`, so the MCP
+        // client doesn't mislead the user / LLM into retrying with different
+        // arguments.
+        let err = ToolCallError::Internal("disk read failed".to_string());
+        assert_eq!(err.code(), -32603);
+        assert_eq!(err.jsonrpc_message(), "Internal error");
+        assert_eq!(err.message(), "disk read failed");
     }
 
     #[test]

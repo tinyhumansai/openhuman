@@ -1,5 +1,6 @@
 import { useState } from 'react';
 
+import { useT } from '../../lib/i18n/I18nContext';
 import type { ConfirmationModal as ConfirmationModalType } from '../../types/intelligence';
 
 interface ConfirmationModalProps {
@@ -8,6 +9,7 @@ interface ConfirmationModalProps {
 }
 
 export function ConfirmationModal({ modal, onClose }: ConfirmationModalProps) {
+  const { t } = useT();
   const [dontShowAgain, setDontShowAgain] = useState(false);
 
   if (!modal.isOpen) return null;
@@ -73,7 +75,7 @@ export function ConfirmationModal({ modal, onClose }: ConfirmationModalProps) {
                 onChange={e => setDontShowAgain(e.target.checked)}
                 className="rounded border-stone-300 bg-stone-100 text-primary-500 focus:ring-primary-500 focus:ring-offset-0"
               />
-              Don't show similar suggestions
+              {t('modal.dontShowAgain')}
             </label>
           </div>
         )}
@@ -83,7 +85,7 @@ export function ConfirmationModal({ modal, onClose }: ConfirmationModalProps) {
           <button
             onClick={handleCancel}
             className="px-4 py-2 text-sm font-medium text-stone-600 hover:text-stone-900 rounded-lg hover:bg-stone-100 transition-colors">
-            {modal.cancelText || 'Cancel'}
+            {modal.cancelText || t('common.cancel')}
           </button>
           <button
             onClick={handleConfirm}
@@ -95,7 +97,7 @@ export function ConfirmationModal({ modal, onClose }: ConfirmationModalProps) {
                   : 'bg-primary-500 hover:bg-primary-600 text-white'
               }
             `}>
-            {modal.confirmText || 'Confirm'}
+            {modal.confirmText || t('common.confirm')}
           </button>
         </div>
       </div>
