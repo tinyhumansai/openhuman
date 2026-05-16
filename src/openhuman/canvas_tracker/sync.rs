@@ -84,6 +84,66 @@ pub fn normalize_assignment(
     task
 }
 
+pub async fn sync_once(
+    store: super::store::CanvasTrackerStore,
+    settings: &super::types::CanvasTrackerSettings,
+    token: &str,
+    now: DateTime<Utc>,
+) -> Result<super::types::SyncSummary, String> {
+    let client = super::client::CanvasClient::new(&settings.host, token.to_string())
+        .map_err(|e| e.to_string())?;
+    let courses: Vec<CanvasCourseDto> = client
+        .get_json(super::client::CanvasEndpoint::Courses)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let mut used_courses = Vec::new();
+    let mut ignored = 0usize;
+    for course in courses.iter() {
+        let id = id_to_string(&course.id);
+        let name = course.name.clone().unwrap_or_default();
+        if super::policy::course_matches_allowlist(Some(&id), &name, &settings.allowlisted_courses)
+        {
+            used_courses.push((id, name));
+        } else {
+            ignored += 1;
+        }
+    }
+
+    let mut tasks = Vec::new();
+    for (course_id, course_name) in used_courses.iter() {
+        let assignments: Vec<CanvasAssignmentDto> = client
+            .get_json(super::client::CanvasEndpoint::Assignments {
+                course_id: course_id.clone(),
+            })
+            .await
+            .map_err(|e| e.to_string())?;
+        for assignment in assignments {
+            tasks.push(normalize_assignment(
+                course_id,
+                course_name,
+                assignment,
+                now,
+            ));
+        }
+    }
+
+    let upserted = store.upsert_tasks(&tasks).map_err(|e| e.to_string())?;
+    let summary = super::types::SyncSummary {
+        synced: true,
+        courses_seen: courses.len(),
+        courses_used: used_courses.len(),
+        courses_ignored: ignored,
+        assignments_seen: tasks.len(),
+        tasks_upserted: upserted,
+        previous_tasks_preserved: true,
+        errors: vec![],
+        synced_at: now.to_rfc3339(),
+    };
+    store.record_sync_run(&summary).map_err(|e| e.to_string())?;
+    Ok(summary)
+}
+
 fn id_to_string(value: &Value) -> String {
     match value {
         Value::String(value) => value.clone(),
