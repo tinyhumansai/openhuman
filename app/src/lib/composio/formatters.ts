@@ -11,6 +11,29 @@
  * 4. dedupe leading provider prefix when it reappears
  * 5. split on _, title-case each token, join with space
  */
+/**
+ * Parse a classified Composio error (`[composio:error:<class>] …`) for UI copy.
+ */
+export function formatComposioToolError(raw: string | null | undefined): string {
+  if (!raw) return '';
+  const match = /^\[composio:error:([a-z_]+)\]\s*(.*)$/is.exec(raw.trim());
+  if (!match) return raw.trim();
+
+  const [, className, body] = match;
+  switch (className) {
+    case 'validation':
+      return body || 'Invalid tool arguments.';
+    case 'insufficient_scope':
+      return body || 'Reconnect this integration and grant the requested permissions.';
+    case 'rate_limited':
+      return body || 'The upstream service is rate-limiting requests. Try again shortly.';
+    case 'gateway':
+      return body || 'Temporary connection issue. Try again in a moment.';
+    default:
+      return body || raw.trim();
+  }
+}
+
 export function formatTriggerLabel(
   slug: string | null | undefined,
   opts?: { overrides?: Record<string, string> }

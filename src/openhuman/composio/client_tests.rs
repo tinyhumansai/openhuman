@@ -750,7 +750,9 @@ async fn execute_tool_surfaces_non_successful_provider_response() {
     );
     let base = start_mock_backend(app).await;
     let client = build_client_for(base);
-    let resp = client.execute_tool("GMAIL_SEND_EMAIL", None).await.unwrap();
+    // Use a slug that bypasses local arg validation in `execute_prepare`
+    // so the test exercises the gateway-response path, not the pre-flight.
+    let resp = client.execute_tool("ANY_TOOL", None).await.unwrap();
     assert!(
         !resp.successful,
         "non-successful provider response must be surfaced via the successful flag"
@@ -854,103 +856,11 @@ async fn execute_tool_sends_tool_slug_in_request_body() {
         "tool slug must be forwarded in request body"
     );
 }
-// ── Calendar query argument normalization ───────────────────────
-
-#[test]
-fn is_bare_date_rejects_non_date_strings() {
-    assert!(!is_bare_date(""));
-    assert!(!is_bare_date("2026-05"));
-    assert!(!is_bare_date("2026-05-14T00:00:00Z"));
-    assert!(!is_bare_date("2026/05/14"));
-    assert!(!is_bare_date("hello-world"));
-    assert!(!is_bare_date("2026-5-14"));
-    assert!(!is_bare_date("2026-05-144"));
-}
-
-#[test]
-fn is_bare_date_accepts_valid_date_strings() {
-    assert!(is_bare_date("2026-05-14"));
-    assert!(is_bare_date("2025-01-01"));
-    assert!(is_bare_date("1999-12-31"));
-    assert!(is_bare_date("0001-01-01"));
-}
-
-#[test]
-fn normalize_calendar_query_args_ignores_non_calendar_slugs() {
-    let mut args = serde_json::json!({ "timeMin": "2026-05-14" });
-    normalize_calendar_query_args("GMAIL_SEND_EMAIL", &mut args);
-    assert_eq!(args["timeMin"], "2026-05-14");
-}
-
-#[test]
-fn normalize_calendar_query_args_converts_bare_date_to_rfc3339() {
-    let mut args = serde_json::json!({
-        "connectionId": "conn-1",
-        "timeMin": "2026-05-14",
-        "timeMax": "2026-05-15",
-    });
-    normalize_calendar_query_args("GOOGLECALENDAR_EVENTS_LIST", &mut args);
-    assert_eq!(args["timeMin"], "2026-05-14T00:00:00Z");
-    assert_eq!(args["timeMax"], "2026-05-15T00:00:00Z");
-    assert_eq!(args["connectionId"], "conn-1");
-}
-
-#[test]
-fn normalize_calendar_query_args_preserves_rfc3339_timestamp() {
-    let mut args = serde_json::json!({
-        "timeMin": "2026-05-14T00:00:00+05:30",
-        "timeMax": "2026-05-14T23:59:59Z",
-    });
-    normalize_calendar_query_args("GOOGLECALENDAR_EVENTS_LIST", &mut args);
-    assert_eq!(args["timeMin"], "2026-05-14T00:00:00+05:30");
-    assert_eq!(args["timeMax"], "2026-05-14T23:59:59Z");
-}
-
-#[test]
-fn normalize_calendar_query_args_handles_missing_time_fields() {
-    let mut args = serde_json::json!({ "connectionId": "conn-1" });
-    normalize_calendar_query_args("GOOGLECALENDAR_EVENTS_LIST", &mut args);
-    assert_eq!(args["connectionId"], "conn-1");
-    // timeMin/timeMax should not be inserted if absent
-    assert!(args.get("timeMin").is_none());
-}
-
-#[test]
-fn normalize_calendar_query_args_handles_non_object_arguments() {
-    let mut args = serde_json::json!("just a string");
-    normalize_calendar_query_args("GOOGLECALENDAR_EVENTS_LIST", &mut args);
-    assert_eq!(args, "just a string");
-}
-
-#[test]
-fn normalize_calendar_query_args_handles_calendar_find_event_slug() {
-    let mut args = serde_json::json!({ "timeMin": "2026-06-01" });
-    normalize_calendar_query_args("GOOGLECALENDAR_FIND_EVENT", &mut args);
-    assert_eq!(args["timeMin"], "2026-06-01T00:00:00Z");
-}
-
-#[test]
-fn normalize_calendar_query_args_normalizes_one_side_when_other_absent() {
-    // Asymmetric: only timeMin present, timeMax missing. The normalizer
-    // must convert timeMin without inserting a synthetic timeMax.
-    let mut args = serde_json::json!({ "timeMin": "2026-05-14" });
-    normalize_calendar_query_args("GOOGLECALENDAR_EVENTS_LIST", &mut args);
-    assert_eq!(args["timeMin"], "2026-05-14T00:00:00Z");
-    assert!(args.get("timeMax").is_none());
-}
-
-#[test]
-fn normalize_calendar_query_args_skips_non_string_values() {
-    // Non-string values (numbers, bools, nulls, objects) must be left
-    // untouched — the normalizer only rewrites string bare-date inputs.
-    let mut args = serde_json::json!({
-        "timeMin": 42,
-        "timeMax": null,
-    });
-    normalize_calendar_query_args("GOOGLECALENDAR_EVENTS_LIST", &mut args);
-    assert_eq!(args["timeMin"], 42);
-    assert!(args["timeMax"].is_null());
-}
+// Calendar bare-date → RFC 3339 normalization is now covered by
+// `execute_prepare::prepare_execute_arguments` (PR #1827); see
+// `execute_prepare_tests.rs` for the equivalent test surface that
+// supersedes the per-slug `normalize_calendar_query_args` helper
+// removed alongside the upstream-main merge.
 
 // ── Factory tests (`create_composio_client`) ────────────────────────
 //

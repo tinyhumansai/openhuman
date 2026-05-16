@@ -34,9 +34,7 @@ use crate::openhuman::tools::traits::{
     PermissionLevel, Tool, ToolCallOptions, ToolCategory, ToolResult,
 };
 
-use super::client::{
-    create_composio_client, direct_execute, direct_list_connections, ComposioClientKind,
-};
+use super::client::{create_composio_client, direct_list_connections, ComposioClientKind};
 use super::providers::{
     catalog_for_toolkit, classify_unknown, find_curated, get_provider, load_user_scope_or_default,
     toolkit_from_slug, ToolScope, UserScopePref,
@@ -952,24 +950,15 @@ impl Tool for ComposioExecuteTool {
         };
 
         let started = std::time::Instant::now();
-        let res = match kind {
-            ComposioClientKind::Backend(client) => {
-                tracing::debug!(tool = %tool, "[composio] tool execute.execute: backend variant");
-                // Backend path retains the upstream `auth_retry` wrapper
-                // so a 401 from a stale tinyhumans-tenant token is
-                // refreshed-and-replayed exactly once before surfacing.
-                super::auth_retry::execute_with_auth_retry(&client, &tool, arguments).await
-            }
-            ComposioClientKind::Direct(direct) => {
-                tracing::debug!(tool = %tool, "[composio] tool execute.execute: direct variant");
-                // Direct path skips `auth_retry`: the user's stored
-                // Composio API key doesn't have a backend-side refresh
-                // surface and a 401 here is a config issue (rotated key,
-                // wrong key, deleted) that should surface to the user
-                // rather than retry-loop.
-                direct_execute(&direct, &tool, arguments, &live_config.composio.entity_id).await
-            }
-        };
+        // Centralized prepare → retry → error-mapping pipeline (#1797),
+        // mode-aware over the backend/direct split (#1710).
+        let res = super::execute_dispatch::execute_composio_action_kind(
+            kind,
+            &tool,
+            arguments,
+            &live_config.composio.entity_id,
+        )
+        .await;
         let elapsed_ms = started.elapsed().as_millis() as u64;
         match res {
             Ok(resp) => {
@@ -1012,7 +1001,7 @@ impl Tool for ComposioExecuteTool {
                         elapsed_ms,
                     },
                 );
-                Ok(ToolResult::error(format!("composio_execute failed: {e}")))
+                Ok(ToolResult::error(e))
             }
         }
     }

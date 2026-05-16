@@ -161,44 +161,71 @@ impl ComposioClient {
         tool: &str,
         arguments: Option<serde_json::Value>,
     ) -> Result<ComposioExecuteResponse> {
-        let (tool, body) = Self::execute_tool_request_body(tool, arguments)?;
+        let tool = tool.trim();
+        if tool.is_empty() {
+            anyhow::bail!("composio.execute_tool: tool slug must not be empty");
+        }
+        // PR #1827 routes all execute-side argument normalization
+        // (including the bare-date → RFC 3339 fix #1802 brought to
+        // `normalize_calendar_query_args` on `main`) through the
+        // centralized `prepare_execute_arguments` helper. The helper
+        // covers the same calendar query case and is the shared entry
+        // point for `composio_execute`, per-action tools, and direct-
+        // mode dispatch.
+        let arguments = super::execute_prepare::prepare_execute_arguments(tool, arguments)
+            .map_err(anyhow::Error::msg)?;
         tracing::debug!(tool = %tool, "[composio] execute_tool");
-        self.execute_tool_with_post_oauth_retry(&tool, &body, POST_OAUTH_ACTION_RETRY_DELAY)
-            .await
+        let body = json!({ "tool": tool, "arguments": arguments });
+        let mut resp = self
+            .execute_tool_with_post_oauth_retry(tool, &body, POST_OAUTH_ACTION_RETRY_DELAY)
+            .await?;
+        if !resp.successful {
+            if let Some(ref err) = resp.error {
+                resp.error = Some(super::error_mapping::format_provider_error(tool, err));
+            }
+        }
+        Ok(resp)
     }
 
-    /// Single-shot `execute_tool` — same body construction and slug validation
-    /// as [`Self::execute_tool`], but **without** the inner post-OAuth retry
-    /// that [`Self::execute_tool_with_post_oauth_retry`] performs. Reserved
-    /// for callers that already own a higher-level retry policy and would
-    /// otherwise stack two retry layers (4 hits to the gateway instead of 2).
-    /// In particular, [`super::auth_retry::execute_with_auth_retry`] uses
-    /// this entry point so its `must retry exactly once` contract still
-    /// holds after PR #1707 introduced the inner retry.
+    /// `POST /agent-integrations/composio/execute` — single, non-retrying
+    /// HTTP round-trip. Use this when the caller owns the retry loop
+    /// (e.g. `auth_retry`) to avoid double-retry. In particular,
+    /// [`super::auth_retry::execute_with_auth_retry`] uses this entry
+    /// point so its `must retry exactly once` contract still holds
+    /// after PR #1707 introduced the inner retry.
     pub(crate) async fn execute_tool_once(
         &self,
         tool: &str,
         arguments: Option<serde_json::Value>,
     ) -> Result<ComposioExecuteResponse> {
-        let (tool, body) = Self::execute_tool_request_body(tool, arguments)?;
-        tracing::debug!(tool = %tool, "[composio] execute_tool_once");
-        self.post_execute_tool(&body).await
-    }
-
-    fn execute_tool_request_body(
-        tool: &str,
-        arguments: Option<serde_json::Value>,
-    ) -> Result<(String, serde_json::Value)> {
         let tool = tool.trim();
         if tool.is_empty() {
-            anyhow::bail!("composio.execute_tool: tool slug must not be empty");
+            anyhow::bail!("composio.execute_tool_once: tool slug must not be empty");
         }
-        let mut arguments = arguments.unwrap_or(serde_json::Value::Object(Default::default()));
-        normalize_calendar_query_args(tool, &mut arguments);
-        Ok((
-            tool.to_string(),
-            json!({ "tool": tool, "arguments": arguments }),
-        ))
+        let arguments = super::execute_prepare::prepare_execute_arguments(tool, arguments)
+            .map_err(anyhow::Error::msg)?;
+        tracing::debug!(tool = %tool, "[composio] execute_tool_once (no built-in retry)");
+        let body = json!({ "tool": tool, "arguments": arguments });
+        let result = self.post_execute_tool(&body).await;
+        match &result {
+            Ok(resp) => tracing::debug!(
+                tool = %tool,
+                successful = resp.successful,
+                has_error = resp.error.is_some(),
+                "[composio] execute_tool_once completed"
+            ),
+            Err(err) => tracing::error!(
+                tool = %tool,
+                error = %err,
+                "[composio] execute_tool_once failed"
+            ),
+        }
+        result.map_err(|e| {
+            anyhow::Error::msg(super::error_mapping::remap_transport_error(
+                tool,
+                &e.to_string(),
+            ))
+        })
     }
 
     pub(super) async fn execute_tool_with_post_oauth_retry(
@@ -500,58 +527,6 @@ impl ComposioClient {
             anyhow::anyhow!("Backend returned success but no data for DELETE {}", url)
         })
     }
-}
-
-/// Calendar query slugs whose `timeMin`/`timeMax` values should be
-/// normalized to RFC 3339 timestamps. LLM-generated arguments sometimes
-/// emit bare dates like `"2026-05-14"` instead of
-/// `"2026-05-14T00:00:00Z"`, which Google Calendar rejects.
-const CALENDAR_QUERY_SLUGS: &[&str] = &["GOOGLECALENDAR_EVENTS_LIST", "GOOGLECALENDAR_FIND_EVENT"];
-
-/// Normalize `timeMin`/`timeMax` from bare dates to RFC 3339 for
-/// Google Calendar query slugs. The LLM prompt instructs the model to
-/// use RFC 3339 format, but some model invocations still produce bare
-/// `YYYY-MM-DD` strings.
-fn normalize_calendar_query_args(tool: &str, arguments: &mut serde_json::Value) {
-    if !CALENDAR_QUERY_SLUGS.contains(&tool) {
-        return;
-    }
-    let Some(map) = arguments.as_object_mut() else {
-        return;
-    };
-    for key in &["timeMin", "timeMax"] {
-        if let Some(serde_json::Value::String(val)) = map.get(*key).cloned() {
-            if is_bare_date(&val) {
-                let normalized = format!("{}T00:00:00Z", val);
-                tracing::debug!(
-                    tool = %tool,
-                    key = %key,
-                    normalized = %normalized,
-                    "[composio] normalized bare date to RFC 3339 for calendar query"
-                );
-                map.insert((*key).to_string(), serde_json::Value::String(normalized));
-            }
-        }
-    }
-}
-
-/// Returns `true` when `s` is a bare date string like `"2026-05-14"`
-/// with no time component.
-fn is_bare_date(s: &str) -> bool {
-    if s.len() != 10 {
-        return false;
-    }
-    let bytes = s.as_bytes();
-    bytes[0].is_ascii_digit()
-        && bytes[1].is_ascii_digit()
-        && bytes[2].is_ascii_digit()
-        && bytes[3].is_ascii_digit()
-        && bytes[4] == b'-'
-        && bytes[5].is_ascii_digit()
-        && bytes[6].is_ascii_digit()
-        && bytes[7] == b'-'
-        && bytes[8].is_ascii_digit()
-        && bytes[9].is_ascii_digit()
 }
 
 fn is_post_oauth_auth_readiness_error(resp: &ComposioExecuteResponse) -> bool {

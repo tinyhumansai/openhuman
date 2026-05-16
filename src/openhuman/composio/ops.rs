@@ -22,8 +22,8 @@ type OpResult<T> = std::result::Result<T, String>;
 use std::sync::Arc;
 
 use super::client::{
-    build_composio_client, create_composio_client, direct_authorize, direct_execute,
-    direct_list_connections, direct_list_tools, ComposioClient, ComposioClientKind,
+    build_composio_client, create_composio_client, direct_authorize, direct_list_connections,
+    direct_list_tools, ComposioClient, ComposioClientKind,
 };
 use super::providers::{
     get_provider, ProviderContext, ProviderUserProfile, SyncOutcome, SyncReason,
@@ -571,16 +571,18 @@ pub async fn composio_execute(
     // body preference, and cost-USD log line all stay uniform (#1710).
     let kind = create_composio_client(config).map_err(|e| format!("[composio] execute: {e}"))?;
     let started = std::time::Instant::now();
-    let result = match kind {
-        ComposioClientKind::Backend(client) => {
-            tracing::debug!(tool = %tool, "[composio] execute: backend variant");
-            client.execute_tool(tool, arguments).await
-        }
-        ComposioClientKind::Direct(direct) => {
-            tracing::debug!(tool = %tool, "[composio-direct] execute: direct variant");
-            direct_execute(&direct, tool, arguments, &config.composio.entity_id).await
-        }
-    };
+    // Centralized prepare → retry → error-mapping pipeline (#1797),
+    // mode-aware over the backend/direct split (#1710). The dispatcher
+    // returns pre-formatted `[composio:error:<class>] …` strings so the
+    // frontend formatter at `app/src/lib/composio/formatters.ts` can
+    // parse the class regardless of which mode produced the failure.
+    let result = super::execute_dispatch::execute_composio_action_kind(
+        kind,
+        tool,
+        arguments,
+        &config.composio.entity_id,
+    )
+    .await;
     let elapsed_ms = started.elapsed().as_millis() as u64;
 
     match result {
@@ -616,7 +618,21 @@ pub async fn composio_execute(
                 },
             );
             report_composio_op_error("execute", &e);
-            Err(format!("[composio] execute failed: {e:#}"))
+            // Preserve already-classified errors from the dispatcher
+            // (`[composio:error:<class>] …`) so the frontend formatter at
+            // `app/src/lib/composio/formatters.ts` can still parse the class.
+            let is_classified = e.starts_with("[composio:error:");
+            tracing::debug!(
+                tool = %tool,
+                elapsed_ms,
+                classified = is_classified,
+                "[composio] rpc execute error mapped"
+            );
+            if is_classified {
+                Err(e)
+            } else {
+                Err(format!("[composio] execute failed: {e}"))
+            }
         }
     }
 }

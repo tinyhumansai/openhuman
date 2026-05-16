@@ -405,7 +405,15 @@ async fn composio_execute_via_mock_propagates_backend_error() {
     let err = composio_execute(&config, "ANY_TOOL", None)
         .await
         .unwrap_err();
-    assert!(err.contains("execute failed"));
+    // The dispatcher (`execute_composio_action`) classifies transport
+    // failures and prefixes them with `[composio:error:<class>] …`; ops.rs
+    // preserves that prefix so the frontend formatter can parse the class.
+    // For an unrecognised tool slug and a 502-shaped envelope the only
+    // signal we get is the backend error text, so assert on its contents.
+    assert!(
+        err.starts_with("[composio:error:") && err.contains("rate limited"),
+        "got: {err}"
+    );
 }
 
 #[tokio::test]

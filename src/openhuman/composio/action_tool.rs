@@ -29,7 +29,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::Value;
 
-use super::client::{create_composio_client, direct_execute, ComposioClientKind};
+use super::client::create_composio_client;
 use super::providers::ToolScope;
 use super::tools::resolve_action_scope;
 use crate::openhuman::agent::harness::current_sandbox_mode;
@@ -195,33 +195,18 @@ impl Tool for ComposioActionTool {
         };
 
         let started = std::time::Instant::now();
-        let res = match kind {
-            ComposioClientKind::Backend(client) => {
-                tracing::debug!(
-                    tool = %self.action_name,
-                    "[composio] per-action execute: backend variant"
-                );
-                // Wrap with auth_retry so a stale tinyhumans-tenant
-                // JWT gets refreshed-and-replayed once before surfacing
-                // (upstream behaviour).
-                super::auth_retry::execute_with_auth_retry(&client, &self.action_name, args).await
-            }
-            ComposioClientKind::Direct(direct) => {
-                tracing::debug!(
-                    tool = %self.action_name,
-                    "[composio] per-action execute: direct variant"
-                );
-                // Direct path skips auth_retry — see ComposioExecuteTool
-                // for rationale (no backend refresh surface).
-                direct_execute(
-                    &direct,
-                    &self.action_name,
-                    args,
-                    &live_config.composio.entity_id,
-                )
-                .await
-            }
-        };
+        // Route through the centralized dispatcher (#1797) so both
+        // backend and direct variants share the same prepare/retry/error-
+        // mapping pipeline. The dispatcher applies `format_provider_error`
+        // to failures (transport + provider) so downstream consumers can
+        // parse `[composio:error:<class>] …`.
+        let res = super::execute_dispatch::execute_composio_action_kind(
+            kind,
+            &self.action_name,
+            args,
+            &live_config.composio.entity_id,
+        )
+        .await;
         let elapsed_ms = started.elapsed().as_millis() as u64;
 
         match res {
@@ -267,7 +252,7 @@ impl Tool for ComposioActionTool {
                         elapsed_ms,
                     },
                 );
-                Ok(ToolResult::error(format!("{}: {e}", self.action_name)))
+                Ok(ToolResult::error(e))
             }
         }
     }
