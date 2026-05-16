@@ -824,29 +824,30 @@ impl Agent {
                         .join("agent")
                         .join("prompts")
                         .join(path);
-                    let body_text = match validate_prompt_path(&workspace_path, &config.workspace_dir) {
-                        Ok(Some(resolved)) => {
-                            std::fs::read_to_string(&resolved).unwrap_or_else(|e| {
+                    let body_text = if workspace_path.is_file() {
+                        match validate_prompt_path(&workspace_path, &config.workspace_dir) {
+                            Ok(resolved) => {
+                                std::fs::read_to_string(&resolved).unwrap_or_else(|e| {
+                                    log::warn!(
+                                        "[agent::builder] failed to read prompt {}: {e} — using empty body",
+                                        workspace_path.display()
+                                    );
+                                    String::new()
+                                })
+                            }
+                            Err(e) => {
                                 log::warn!(
-                                    "[agent::builder] failed to read prompt {}: {e} — using empty body",
-                                    resolved.display()
+                                    "[agent::builder] prompt path rejected: {e} — using empty body"
                                 );
                                 String::new()
-                            })
+                            }
                         }
-                        Ok(None) => {
-                            log::debug!(
-                                "[agent::builder] prompt file {} not found — using empty body",
-                                path
-                            );
-                            String::new()
-                        }
-                        Err(e) => {
-                            log::warn!(
-                                "[agent::builder] prompt path rejected: {e} — using empty body"
-                            );
-                            String::new()
-                        }
+                    } else {
+                        log::debug!(
+                            "[agent::builder] prompt file {} not found — using empty body",
+                            path
+                        );
+                        String::new()
                     };
                     SystemPromptBuilder::for_subagent(
                         body_text,
@@ -1331,24 +1332,18 @@ impl Agent {
 /// Validate that a prompt file path resolves within the workspace root.
 /// Prevents path traversal via `..` segments in agent definition TOML files.
 ///
-/// Returns:
-/// - `Ok(Some(resolved))` if the file exists and is inside the workspace.
-/// - `Ok(None)` if the file does not exist (normal miss — no warning needed).
-/// - `Err(msg)` if the path escapes the workspace (traversal attempt).
+/// Callers should check `.is_file()` before calling to avoid false-positive
+/// warnings for normal missing-override cases.
 fn validate_prompt_path(
     candidate: &std::path::Path,
     workspace_root: &std::path::Path,
-) -> Result<Option<std::path::PathBuf>, String> {
+) -> Result<std::path::PathBuf, String> {
     let root = workspace_root
         .canonicalize()
         .map_err(|e| format!("workspace root: {e}"))?;
-
-    // File doesn't exist yet — normal case for missing workspace overrides.
-    let resolved = match candidate.canonicalize() {
-        Ok(r) => r,
-        Err(_) => return Ok(None),
-    };
-
+    let resolved = candidate
+        .canonicalize()
+        .map_err(|e| format!("{}: {e}", candidate.display()))?;
     if !resolved.starts_with(&root) {
         return Err(format!(
             "prompt path escapes workspace: {} is not under {}",
@@ -1356,7 +1351,7 @@ fn validate_prompt_path(
             root.display()
         ));
     }
-    Ok(Some(resolved))
+    Ok(resolved)
 }
 
 fn prefetch_tool_memory_rules_blocking(
