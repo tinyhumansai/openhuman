@@ -735,7 +735,6 @@ mod tests {
             session_id: "session-test".into(),
             channel: "test".into(),
             connected_integrations: Vec::new(),
-            composio_client: None,
             tool_call_format: ToolCallFormat::PFormat,
             session_key: "0_test".into(),
             session_parent_prefix: None,
