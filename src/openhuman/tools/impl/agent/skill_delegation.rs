@@ -195,7 +195,14 @@ impl Tool for SkillDelegationTool {
             slug,
             prompt.chars().count()
         );
-        super::dispatch_subagent("integrations_agent", &self.tool_name, &prompt, Some(&slug)).await
+        super::dispatch_subagent(
+            "integrations_agent",
+            &self.tool_name,
+            &prompt,
+            Some(&slug),
+            None,
+        )
+        .await
     }
 }
 

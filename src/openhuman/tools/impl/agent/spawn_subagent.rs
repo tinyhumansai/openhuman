@@ -122,6 +122,10 @@ impl Tool for SpawnSubagentTool {
                     "type": "string",
                     "description": "Optional context blob from prior task results. Rendered as a `[Context]` block before the prompt."
                 },
+                "model": {
+                    "type": "string",
+                    "description": "Optional exact model id for this spawn only. Keeps the parent provider/routing, but pins the child agent to this model instead of the agent definition's default."
+                },
                 "toolkit": {
                     "type": "string",
                     "description": "Composio toolkit slug to scope this spawn to — e.g. `gmail`, `notion`, `slack`. REQUIRED when `agent_id = \"integrations_agent\"`. Narrows the sub-agent's visible Composio actions AND its Connected Integrations prompt section to only that toolkit's catalogue, so the sub-agent's context window only carries the platform it was asked to operate on. Must match a currently-connected integration (see the Delegation Guide)."
@@ -159,6 +163,12 @@ impl Tool for SpawnSubagentTool {
             .get("context")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
+
+        let model_override = args
+            .get("model")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
 
         let toolkit_override = args
             .get("toolkit")
@@ -398,6 +408,7 @@ impl Tool for SpawnSubagentTool {
             skill_filter_override: None,
             toolkit_override,
             context,
+            model_override,
             task_id: Some(task_id.clone()),
             worker_thread_id: None,
         };
@@ -667,6 +678,20 @@ mod tests {
             .get("required")
             .and_then(|v| v.as_array())
             .map(|arr| arr.iter().all(|s| s.as_str() != Some("dedicated_thread")))
+            .unwrap_or(true));
+    }
+
+    #[test]
+    fn parameters_schema_advertises_optional_model_override() {
+        let tool = SpawnSubagentTool;
+        let schema = tool.parameters_schema();
+        let props = schema.get("properties").expect("schema has properties");
+        let model = props.get("model").expect("model override advertised");
+        assert_eq!(model.get("type").and_then(|v| v.as_str()), Some("string"));
+        assert!(schema
+            .get("required")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().all(|s| s.as_str() != Some("model")))
             .unwrap_or(true));
     }
 
