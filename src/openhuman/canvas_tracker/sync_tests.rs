@@ -1,8 +1,15 @@
+use std::sync::{Arc, Mutex};
+
 use chrono::{TimeZone, Utc};
 use serde_json::json;
+use tempfile::tempdir;
 
-use super::sync::{normalize_assignment, CanvasAssignmentDto};
-use super::types::{LocalStatus, UrgencyLevel};
+use super::store::CanvasTrackerStore;
+use super::sync::{
+    normalize_assignment, sync_once_with_client, CanvasAssignmentDto, CanvasCourseDto,
+    CanvasPlannerItemDto, CanvasSyncApi,
+};
+use super::types::{CanvasTrackerSettings, CourseMatcher, LocalStatus, UrgencyLevel};
 
 #[test]
 fn normalize_assignment_extracts_required_fields() {
@@ -83,6 +90,30 @@ fn normalize_assignment_marks_missing_due_date_unclear() {
 }
 
 #[test]
+fn normalize_assignment_marks_malformed_due_date_unclear() {
+    let now = Utc.with_ymd_and_hms(2026, 5, 16, 6, 0, 0).unwrap();
+    let assignment: CanvasAssignmentDto = serde_json::from_value(json!({
+        "id": "bad-due",
+        "name": "Ambiguous due date",
+        "description": "Check Canvas.",
+        "due_at": "next Friday",
+        "submission_types": ["online_text_entry"]
+    }))
+    .unwrap();
+
+    let task = normalize_assignment("101", "Soil", assignment, now);
+
+    assert!(task.due_at.is_none());
+    assert!(task.due_at_unclear);
+    assert_eq!(task.urgency_level, UrgencyLevel::Unclear);
+    assert!(task.recommended_start_at.is_none());
+    assert!(task
+        .reminders_needed
+        .iter()
+        .any(|r| r.kind == "due_unclear"));
+}
+
+#[test]
 fn normalize_assignment_marks_submitted_canvas_states() {
     let now = Utc.with_ymd_and_hms(2026, 5, 16, 6, 0, 0).unwrap();
 
@@ -128,4 +159,109 @@ fn normalize_assignment_accepts_numeric_and_string_ids() {
         normalize_assignment("101", "Soil", string, now).assignment_id,
         "assignment-55"
     );
+}
+
+#[derive(Default)]
+struct FakeCanvasApi {
+    calls: Arc<Mutex<Vec<String>>>,
+}
+
+impl FakeCanvasApi {
+    fn calls(&self) -> Vec<String> {
+        self.calls.lock().unwrap().clone()
+    }
+}
+
+#[async_trait::async_trait]
+impl CanvasSyncApi for FakeCanvasApi {
+    async fn get_courses(&self) -> Result<Vec<CanvasCourseDto>, String> {
+        self.calls.lock().unwrap().push("courses".to_string());
+        Ok(vec![
+            serde_json::from_value(json!({
+                "id": "101",
+                "name": "361100-Secrets of the Soil-Lec.001 | 801[3/68]"
+            }))
+            .unwrap(),
+            serde_json::from_value(json!({
+                "id": "303",
+                "name": "001201 - CRIT READ AND EFFEC WRITE"
+            }))
+            .unwrap(),
+        ])
+    }
+
+    async fn get_planner_items(
+        &self,
+        context_codes: Vec<String>,
+    ) -> Result<Vec<CanvasPlannerItemDto>, String> {
+        self.calls
+            .lock()
+            .unwrap()
+            .push(format!("planner:{}", context_codes.join(",")));
+        Ok(vec![serde_json::from_value(json!({
+            "course_id": "101",
+            "plannable_type": "assignment",
+            "plannable_id": "55",
+            "plannable": {
+                "id": "55",
+                "name": "Planner assignment",
+                "description": "<p>Upload a PDF.</p>",
+                "due_at": "2026-05-20T06:00:00Z",
+                "submission_types": ["online_upload"],
+                "submission": { "workflow_state": "unsubmitted" }
+            }
+        }))
+        .unwrap()])
+    }
+
+    async fn get_assignments(&self, course_id: String) -> Result<Vec<CanvasAssignmentDto>, String> {
+        self.calls
+            .lock()
+            .unwrap()
+            .push(format!("assignments:{course_id}"));
+        Ok(vec![])
+    }
+
+    async fn get_assignment(
+        &self,
+        course_id: String,
+        assignment_id: String,
+    ) -> Result<CanvasAssignmentDto, String> {
+        self.calls
+            .lock()
+            .unwrap()
+            .push(format!("assignment:{course_id}:{assignment_id}"));
+        Err("unexpected assignment detail fetch".to_string())
+    }
+}
+
+#[tokio::test]
+async fn sync_fetches_planner_items_for_approved_courses_only() {
+    let temp = tempdir().unwrap();
+    let store = CanvasTrackerStore::new(temp.path()).unwrap();
+    let mut settings = CanvasTrackerSettings::default();
+    settings.allowlisted_courses = vec![CourseMatcher {
+        canvas_id: Some("303".to_string()),
+        name: "001201 - CRIT READ AND EFFEC WRITE".to_string(),
+    }];
+    let now = Utc.with_ymd_and_hms(2026, 5, 16, 6, 0, 0).unwrap();
+    let api = FakeCanvasApi::default();
+
+    let summary = sync_once_with_client(&api, store, &settings, now)
+        .await
+        .unwrap();
+
+    assert_eq!(summary.courses_seen, 2);
+    assert_eq!(summary.courses_used, 1);
+    assert_eq!(summary.courses_ignored, 1);
+    assert_eq!(summary.assignments_seen, 1);
+    let calls = api.calls();
+    assert!(calls.contains(&"planner:course_101".to_string()));
+    assert!(calls.contains(&"assignments:101".to_string()));
+    assert!(!calls.iter().any(|call| call.contains("303")));
+
+    let store = CanvasTrackerStore::new(temp.path()).unwrap();
+    let tasks = store.list_tasks().unwrap();
+    assert_eq!(tasks.len(), 1);
+    assert_eq!(tasks[0].assignment_name, "Planner assignment");
 }

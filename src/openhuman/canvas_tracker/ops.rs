@@ -24,6 +24,7 @@ pub async fn update_settings(
     clear_token: bool,
 ) -> Result<RpcOutcome<CanvasTrackerSettings>, String> {
     let store = CanvasTrackerStore::new(&config.workspace_dir).map_err(|e| e.to_string())?;
+    settings.enforce_approved_allowlist();
 
     if clear_token {
         clear_canvas_token(config).await?;

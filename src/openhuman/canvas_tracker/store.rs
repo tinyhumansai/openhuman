@@ -99,8 +99,12 @@ impl CanvasTrackerStore {
             .context("[canvas_tracker::store] failed to load settings")?;
 
         match value {
-            Some(value) => serde_json::from_str(&value)
-                .context("[canvas_tracker::store] failed to parse settings JSON"),
+            Some(value) => {
+                let mut settings: CanvasTrackerSettings = serde_json::from_str(&value)
+                    .context("[canvas_tracker::store] failed to parse settings JSON")?;
+                settings.enforce_approved_allowlist();
+                Ok(settings)
+            }
             None => {
                 let settings = CanvasTrackerSettings::default();
                 self.save_settings(&settings)?;
@@ -110,7 +114,9 @@ impl CanvasTrackerStore {
     }
 
     pub fn save_settings(&self, settings: &CanvasTrackerSettings) -> Result<()> {
-        let value = serde_json::to_string(settings)
+        let mut safe_settings = settings.clone();
+        safe_settings.enforce_approved_allowlist();
+        let value = serde_json::to_string(&safe_settings)
             .context("[canvas_tracker::store] failed to serialize settings")?;
         self.conn
             .execute(

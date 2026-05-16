@@ -17,21 +17,31 @@ pub struct CanvasTrackerSettings {
     pub token_set: bool,
 }
 
+pub fn approved_course_matchers() -> Vec<CourseMatcher> {
+    vec![
+        CourseMatcher {
+            canvas_id: None,
+            name: "361100-Secrets of the Soil-Lec.001 | 801[3/68]".to_string(),
+        },
+        CourseMatcher {
+            canvas_id: None,
+            name: "515101-Radiation in Everyday Life-Lec.002[3/68]".to_string(),
+        },
+    ]
+}
+
+impl CanvasTrackerSettings {
+    pub fn enforce_approved_allowlist(&mut self) {
+        self.allowlisted_courses = approved_course_matchers();
+    }
+}
+
 impl Default for CanvasTrackerSettings {
     fn default() -> Self {
         Self {
             enabled: true,
             host: DEFAULT_CANVAS_HOST.to_string(),
-            allowlisted_courses: vec![
-                CourseMatcher {
-                    canvas_id: None,
-                    name: "361100-Secrets of the Soil-Lec.001 | 801[3/68]".to_string(),
-                },
-                CourseMatcher {
-                    canvas_id: None,
-                    name: "515101-Radiation in Everyday Life-Lec.002[3/68]".to_string(),
-                },
-            ],
+            allowlisted_courses: approved_course_matchers(),
             token_set: false,
         }
     }

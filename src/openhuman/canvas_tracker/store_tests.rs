@@ -1,7 +1,10 @@
 use tempfile::tempdir;
 
 use super::store::CanvasTrackerStore;
-use super::types::{CanvasTask, LocalStatus, SyncSummary, UrgencyLevel};
+use super::types::{
+    approved_course_matchers, CanvasTask, CanvasTrackerSettings, CourseMatcher, LocalStatus,
+    SyncSummary, UrgencyLevel,
+};
 
 fn task(id: &str, status: LocalStatus) -> CanvasTask {
     CanvasTask {
@@ -43,6 +46,22 @@ fn settings_round_trip_uses_defaults() {
     assert!(settings.enabled);
     assert_eq!(settings.allowlisted_courses.len(), 2);
     assert_eq!(settings.host, "https://mango-cmu.instructure.com");
+}
+
+#[test]
+fn saved_settings_cannot_replace_server_owned_course_allowlist() {
+    let temp = tempdir().unwrap();
+    let store = CanvasTrackerStore::new(temp.path()).unwrap();
+    let mut settings = CanvasTrackerSettings::default();
+    settings.allowlisted_courses = vec![CourseMatcher {
+        canvas_id: Some("303".to_string()),
+        name: "001201 - CRIT READ AND EFFEC WRITE".to_string(),
+    }];
+
+    store.save_settings(&settings).unwrap();
+
+    let stored = store.get_settings().unwrap();
+    assert_eq!(stored.allowlisted_courses, approved_course_matchers());
 }
 
 #[test]
