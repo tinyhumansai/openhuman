@@ -116,7 +116,7 @@ fn find_body_tier3_does_not_drop_single_word_body() {
 }
 
 #[test]
-fn capture_pipeline_emits_at_least_one_body() {
+fn capture_pipeline_extracts_all_four_bodies() {
     let snap = load_fixture();
     let report = report_from_snapshot(&snap);
     assert!(
