@@ -30,4 +30,64 @@ if [[ "$missing_platform_rc" -ne 3 ]]; then
   exit 1
 fi
 
+(
+  CURL_CALLS=""
+  curl() {
+    CURL_CALLS="${CURL_CALLS}|$*"
+    case " $* " in
+      *" --http1.1 "*) return 0 ;;
+      *) return 16 ;;
+    esac
+  }
+
+  if ! curl_head_with_http_fallback "https://example.invalid/OpenHuman.app.tar.gz"; then
+    echo "FAIL: reachability fallback should succeed when HTTP/1.1 retry succeeds"
+    exit 1
+  fi
+  if [[ "${CURL_CALLS}" != *"--http1.1"* ]]; then
+    echo "FAIL: reachability check did not retry with --http1.1"
+    exit 1
+  fi
+)
+
+(
+  CURL_CALLS=""
+  curl() {
+    CURL_CALLS="${CURL_CALLS}|$*"
+    case " $* " in
+      *" --http1.1 "*) return 0 ;;
+      *) return 16 ;;
+    esac
+  }
+
+  if ! curl_get_file "https://example.invalid/latest.json" "/tmp/openhuman-test-latest.json"; then
+    echo "FAIL: metadata fetch fallback should succeed when HTTP/1.1 retry succeeds"
+    exit 1
+  fi
+  if [[ "${CURL_CALLS}" != *"--http1.1"* ]]; then
+    echo "FAIL: metadata fetch did not retry with --http1.1"
+    exit 1
+  fi
+)
+
+(
+  CURL_CALLS=""
+  curl() {
+    CURL_CALLS="${CURL_CALLS}|$*"
+    case " $* " in
+      *" --http1.1 "*) return 0 ;;
+      *) return 16 ;;
+    esac
+  }
+
+  if ! curl_download_file "https://example.invalid/OpenHuman.app.tar.gz" "/tmp/openhuman-test-download"; then
+    echo "FAIL: download fallback should succeed when HTTP/1.1 retry succeeds"
+    exit 1
+  fi
+  if [[ "${CURL_CALLS}" != *"--http1.1"* ]]; then
+    echo "FAIL: download did not retry with --http1.1"
+    exit 1
+  fi
+)
+
 echo "PASS"
