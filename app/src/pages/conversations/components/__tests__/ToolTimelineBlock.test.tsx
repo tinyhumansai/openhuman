@@ -155,4 +155,17 @@ describe('ToolTimelineBlock — worker thread ref status propagation', () => {
     const badge = screen.getByTestId('worker-thread-status-badge');
     expect(badge.getAttribute('data-status')).toBe('failed');
   });
+
+  // Defensive fallback: if the entry arrives with an unrecognised status
+  // (e.g. the union grows in the future, or a malformed payload slips
+  // through), the card is rendered as label-only so it can never display a
+  // misleading lifecycle state. The status badge must be absent in that case.
+  it('omits the status badge when the parent entry has an unknown status', () => {
+    const malformed = {
+      ...entryWithStatus('success'),
+      status: 'queued' as unknown as ToolTimelineEntry['status'],
+    };
+    renderInStore(<ToolTimelineBlock entries={[malformed]} />);
+    expect(screen.queryByTestId('worker-thread-status-badge')).toBeNull();
+  });
 });

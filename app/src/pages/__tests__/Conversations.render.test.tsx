@@ -17,7 +17,7 @@ import { threadApi } from '../../services/api/threadApi';
 import { chatSend } from '../../services/chatService';
 import chatRuntimeReducer from '../../store/chatRuntimeSlice';
 import socketReducer from '../../store/socketSlice';
-import threadReducer from '../../store/threadSlice';
+import threadReducer, { setSelectedThread } from '../../store/threadSlice';
 import type { Thread } from '../../types/thread';
 
 // ── Hoisted mock state ─────────────────────────────────────────────────────
@@ -811,5 +811,130 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     await waitFor(() => {
       expect(screen.getByText(/"work" threads/i)).toBeInTheDocument();
     });
+  });
+
+  // #1624 — Workers tab is the dedicated entry-point for sub-agent threads.
+  // When the active workspace has no worker threads (parentThreadId set), the
+  // empty state must use the friendly "No worker threads yet" copy rather
+  // than `No "workers" threads`.
+  it('shows the worker-specific empty message when the Workers tab is selected', async () => {
+    await act(async () => {
+      await renderConversations({ thread: emptyThreadState });
+    });
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Workers' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('No worker threads yet')).toBeInTheDocument();
+    });
+  });
+});
+
+// #1624 — When a worker thread is the active selection, the header surfaces
+// a "back to <parent title>" button that navigates the user back to the
+// parent conversation. Covers the `selectedThreadParent` derivation and the
+// click handler that dispatches setSelectedThread + loadThreadMessages.
+describe('Conversations — worker thread back-to-parent navigation (#1624)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetThreads.mockResolvedValue({ threads: [], count: 0 });
+    mockGetThreadMessages.mockResolvedValue({ messages: [], count: 0 });
+  });
+
+  it('renders a back-to-parent button when the active thread has a parent', async () => {
+    const parent = makeThread({ id: 't-parent', title: 'Parent Conversation' });
+    const child = makeThread({ id: 't-child', title: 'Worker Task', parentThreadId: 't-parent' });
+    mockGetThreads.mockResolvedValue({ threads: [parent, child], count: 2 });
+
+    let store: ReturnType<typeof buildStore> | undefined;
+    await act(async () => {
+      store = await renderConversations({
+        thread: {
+          ...emptyThreadState,
+          threads: [parent, child],
+          selectedThreadId: child.id,
+          messagesByThreadId: { [child.id]: [] },
+        },
+      });
+    });
+
+    // The mount effect resumes onto a *visible* (non-worker) thread, so even
+    // though the preloaded state pointed at the child, the page auto-selects
+    // the parent. Re-select the worker thread now that mount has settled to
+    // mimic the user clicking through to a worker from the Workers tab.
+    await act(async () => {
+      store!.dispatch(setSelectedThread('t-child'));
+    });
+
+    const backBtn = await screen.findByTestId('worker-thread-back-to-parent');
+    expect(backBtn.textContent).toContain('Parent Conversation');
+  });
+
+  it('falls back to a generic title when the parent thread is missing from the list', async () => {
+    const parent = makeThread({ id: 't-parent', title: 'Other Parent' });
+    const child = makeThread({
+      id: 't-child',
+      title: 'Worker Task',
+      parentThreadId: 't-missing-parent',
+    });
+    // The parent referenced by `parentThreadId` is intentionally absent from
+    // the thread list so the `selectedThreadParent` resolver hits its fallback
+    // branch. A separate parent is kept around so mount-time resume has a
+    // visible thread to land on.
+    mockGetThreads.mockResolvedValue({ threads: [parent, child], count: 2 });
+
+    let store: ReturnType<typeof buildStore> | undefined;
+    await act(async () => {
+      store = await renderConversations({
+        thread: {
+          ...emptyThreadState,
+          threads: [parent, child],
+          selectedThreadId: child.id,
+          messagesByThreadId: { [child.id]: [] },
+        },
+      });
+    });
+    await act(async () => {
+      store!.dispatch(setSelectedThread('t-child'));
+    });
+
+    const backBtn = await screen.findByTestId('worker-thread-back-to-parent');
+    expect(backBtn.textContent).toContain('parent thread');
+  });
+
+  it('dispatches selection + load when the back-to-parent button is clicked', async () => {
+    const parent = makeThread({ id: 't-parent', title: 'Parent Conversation' });
+    const child = makeThread({ id: 't-child', title: 'Worker Task', parentThreadId: 't-parent' });
+    mockGetThreads.mockResolvedValue({ threads: [parent, child], count: 2 });
+
+    let store: ReturnType<typeof buildStore> | undefined;
+    await act(async () => {
+      store = await renderConversations({
+        thread: {
+          ...emptyThreadState,
+          threads: [parent, child],
+          selectedThreadId: child.id,
+          messagesByThreadId: { [child.id]: [] },
+        },
+      });
+    });
+    await act(async () => {
+      store!.dispatch(setSelectedThread('t-child'));
+    });
+
+    const backBtn = await screen.findByTestId('worker-thread-back-to-parent');
+    await act(async () => {
+      fireEvent.click(backBtn);
+    });
+
+    // After click, the redux store should reflect the parent thread as the
+    // newly selected conversation.
+    await waitFor(() => {
+      const state = store!.getState() as { thread: { selectedThreadId: string | null } };
+      expect(state.thread.selectedThreadId).toBe('t-parent');
+    });
+    // The loadThreadMessages thunk goes through the threadApi.getThreadMessages
+    // helper — verify it was kicked off for the parent thread.
+    expect(mockGetThreadMessages).toHaveBeenCalledWith('t-parent');
   });
 });
