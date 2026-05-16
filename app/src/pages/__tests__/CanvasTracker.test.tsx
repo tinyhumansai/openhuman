@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { CanvasTrackerSettings } from '../../lib/canvasTracker/types';
 import CanvasTracker from '../CanvasTracker';
 
 vi.mock('../../lib/canvasTracker/hooks', () => ({ useCanvasTracker: vi.fn() }));
@@ -13,16 +14,20 @@ describe('CanvasTracker', () => {
   });
 
   it('renders allowlisted courses without showing a token', () => {
+    const rawCanvasToken = 'canvas-secret-token-123';
+    const settingsWithRawToken = {
+      enabled: true,
+      host: 'https://mango-cmu.instructure.com',
+      token_set: true,
+      allowlisted_courses: [
+        { name: '361100-Secrets of the Soil-Lec.001 | 801[3/68]' },
+        { name: '515101-Radiation in Everyday Life-Lec.002[3/68]' },
+      ],
+      access_token: rawCanvasToken,
+    } as CanvasTrackerSettings & { access_token: string };
+
     useCanvasTracker.mockReturnValue({
-      settings: {
-        enabled: true,
-        host: 'https://mango-cmu.instructure.com',
-        token_set: true,
-        allowlisted_courses: [
-          { name: '361100-Secrets of the Soil-Lec.001 | 801[3/68]' },
-          { name: '515101-Radiation in Everyday Life-Lec.002[3/68]' },
-        ],
-      },
+      settings: settingsWithRawToken,
       tasks: [],
       loading: false,
       syncing: false,
@@ -40,7 +45,8 @@ describe('CanvasTracker', () => {
     expect(screen.getByText(/Radiation in Everyday Life/)).toBeInTheDocument();
     expect(screen.getByText('Token saved locally')).toBeInTheDocument();
     expect(screen.queryByLabelText(/token/i)).not.toBeInTheDocument();
-    expect(screen.queryByText('canvas-secret-token-123')).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toContain(rawCanvasToken);
+    expect(screen.queryByDisplayValue(rawCanvasToken)).not.toBeInTheDocument();
   });
 
   it('updates local status without submitting to Canvas', async () => {
