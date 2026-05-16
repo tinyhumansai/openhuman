@@ -825,7 +825,7 @@ impl Agent {
                         .join("prompts")
                         .join(path);
                     let body_text = match validate_prompt_path(&workspace_path, &config.workspace_dir) {
-                        Ok(resolved) if resolved.is_file() => {
+                        Ok(Some(resolved)) => {
                             std::fs::read_to_string(&resolved).unwrap_or_else(|e| {
                                 log::warn!(
                                     "[agent::builder] failed to read prompt {}: {e} — using empty body",
@@ -834,10 +834,10 @@ impl Agent {
                                 String::new()
                             })
                         }
-                        Ok(resolved) => {
-                            log::warn!(
+                        Ok(None) => {
+                            log::debug!(
                                 "[agent::builder] prompt file {} not found — using empty body",
-                                resolved.display()
+                                path
                             );
                             String::new()
                         }
@@ -1330,16 +1330,25 @@ impl Agent {
 /// merely seeds the rules that exist at session start.
 /// Validate that a prompt file path resolves within the workspace root.
 /// Prevents path traversal via `..` segments in agent definition TOML files.
+///
+/// Returns:
+/// - `Ok(Some(resolved))` if the file exists and is inside the workspace.
+/// - `Ok(None)` if the file does not exist (normal miss — no warning needed).
+/// - `Err(msg)` if the path escapes the workspace (traversal attempt).
 fn validate_prompt_path(
     candidate: &std::path::Path,
     workspace_root: &std::path::Path,
-) -> Result<std::path::PathBuf, String> {
-    let resolved = candidate
-        .canonicalize()
-        .map_err(|e| format!("{}: {e}", candidate.display()))?;
+) -> Result<Option<std::path::PathBuf>, String> {
     let root = workspace_root
         .canonicalize()
         .map_err(|e| format!("workspace root: {e}"))?;
+
+    // File doesn't exist yet — normal case for missing workspace overrides.
+    let resolved = match candidate.canonicalize() {
+        Ok(r) => r,
+        Err(_) => return Ok(None),
+    };
+
     if !resolved.starts_with(&root) {
         return Err(format!(
             "prompt path escapes workspace: {} is not under {}",
@@ -1347,7 +1356,7 @@ fn validate_prompt_path(
             root.display()
         ));
     }
-    Ok(resolved)
+    Ok(Some(resolved))
 }
 
 fn prefetch_tool_memory_rules_blocking(

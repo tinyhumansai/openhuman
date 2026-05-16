@@ -179,16 +179,25 @@ pub(crate) fn filter_tool_indices(
 ///
 /// Validate that a prompt file path resolves within the workspace root.
 /// Prevents path traversal via `..` segments in agent definition TOML files.
+///
+/// Returns:
+/// - `Ok(Some(resolved))` if the file exists and is inside the workspace.
+/// - `Ok(None)` if the file does not exist (normal miss — no warning needed).
+/// - `Err(msg)` if the path escapes the workspace (traversal attempt).
 fn validate_prompt_path(
     candidate: &std::path::Path,
     workspace_root: &std::path::Path,
-) -> Result<std::path::PathBuf, String> {
-    let resolved = candidate
-        .canonicalize()
-        .map_err(|e| format!("{}: {e}", candidate.display()))?;
+) -> Result<Option<std::path::PathBuf>, String> {
     let root = workspace_root
         .canonicalize()
         .map_err(|e| format!("workspace root: {e}"))?;
+
+    // File doesn't exist yet — normal case for missing workspace overrides.
+    let resolved = match candidate.canonicalize() {
+        Ok(r) => r,
+        Err(_) => return Ok(None),
+    };
+
     if !resolved.starts_with(&root) {
         return Err(format!(
             "prompt path escapes workspace: {} is not under {}",
@@ -196,7 +205,7 @@ fn validate_prompt_path(
             root.display()
         ));
     }
-    Ok(resolved)
+    Ok(Some(resolved))
 }
 
 /// Exposed `pub(crate)` so the debug dump path in
@@ -218,8 +227,8 @@ pub(crate) fn load_prompt_source(
             // override built-in prompts), then fall back to the crate's
             // own bundled prompts via `include_str!`-style lookup.
             let workspace_path = workspace_dir.join("agent").join("prompts").join(path);
-            if let Ok(resolved) = validate_prompt_path(&workspace_path, workspace_dir) {
-                if resolved.is_file() {
+            match validate_prompt_path(&workspace_path, workspace_dir) {
+                Ok(Some(resolved)) => {
                     return std::fs::read_to_string(&resolved).map_err(|e| {
                         SubagentRunError::PromptLoad {
                             path: resolved.display().to_string(),
@@ -227,11 +236,11 @@ pub(crate) fn load_prompt_source(
                         }
                     });
                 }
-            } else {
-                tracing::warn!(
-                    "[subagent_runner] prompt path escapes workspace, skipping: {}",
-                    workspace_path.display()
-                );
+                Err(e) => {
+                    tracing::warn!("[subagent_runner] {e} — using empty body");
+                    return Ok(String::new());
+                }
+                Ok(None) => { /* not found, try fallback */ }
             }
             // Built-in prompt fallback. The agent prompts directory is
             // already shipped at `src/openhuman/agent/prompts/` and
@@ -244,8 +253,8 @@ pub(crate) fn load_prompt_source(
             // missing files as an empty body (the runner will fall
             // back to a generic role hint).
             let workspace_root_path = workspace_dir.join(path);
-            if let Ok(resolved) = validate_prompt_path(&workspace_root_path, workspace_dir) {
-                if resolved.is_file() {
+            match validate_prompt_path(&workspace_root_path, workspace_dir) {
+                Ok(Some(resolved)) => {
                     return std::fs::read_to_string(&resolved).map_err(|e| {
                         SubagentRunError::PromptLoad {
                             path: resolved.display().to_string(),
@@ -253,11 +262,11 @@ pub(crate) fn load_prompt_source(
                         }
                     });
                 }
-            } else {
-                tracing::warn!(
-                    "[subagent_runner] fallback prompt path escapes workspace, skipping: {}",
-                    workspace_root_path.display()
-                );
+                Err(e) => {
+                    tracing::warn!("[subagent_runner] {e} — using empty body");
+                    return Ok(String::new());
+                }
+                Ok(None) => { /* not found, fall through to empty body */ }
             }
             tracing::warn!(
                 path = %path,
