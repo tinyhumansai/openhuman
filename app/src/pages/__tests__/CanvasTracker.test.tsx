@@ -38,6 +38,8 @@ describe('CanvasTracker', () => {
     expect(screen.getByText('Canvas Tracker')).toBeInTheDocument();
     expect(screen.getByText(/Secrets of the Soil/)).toBeInTheDocument();
     expect(screen.getByText(/Radiation in Everyday Life/)).toBeInTheDocument();
+    expect(screen.getByText('Token saved locally')).toBeInTheDocument();
+    expect(screen.queryByLabelText(/token/i)).not.toBeInTheDocument();
     expect(screen.queryByText('canvas-secret-token-123')).not.toBeInTheDocument();
   });
 
@@ -75,7 +77,11 @@ describe('CanvasTracker', () => {
     });
 
     render(<CanvasTracker />);
-    fireEvent.change(screen.getByLabelText('Status for Soil reflection'), {
+    expect(
+      screen.getByText('Local status changes update OpenHuman only; they never submit to Canvas.')
+    ).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Local status for Soil reflection'), {
       target: { value: 'in_progress' },
     });
 

@@ -53,7 +53,7 @@ function TaskRow({
       <td className="px-3 py-3 text-sm text-stone-700">{task.submission_type || 'not visible'}</td>
       <td className="px-3 py-3">
         <select
-          aria-label={`Status for ${task.assignment_name}`}
+          aria-label={`Local status for ${task.assignment_name}`}
           className="rounded-sm border border-stone-300 bg-white px-2 py-1 text-sm"
           value={task.local_status}
           onChange={event => onStatus(task, event.target.value as LocalStatus)}>
@@ -123,7 +123,7 @@ export default function CanvasTracker() {
           <div className="rounded-sm border border-stone-200 bg-white p-4">
             <div className="text-xs font-semibold uppercase text-stone-500">Connection</div>
             <div className="mt-2 text-sm text-stone-800">
-              {settings?.token_set ? 'Configured' : 'Not configured'}
+              {settings?.token_set ? 'Token saved locally' : 'Token not configured'}
             </div>
             <div className="mt-1 text-xs text-stone-500">
               {settings?.host ?? 'https://mango-cmu.instructure.com'}
@@ -147,6 +147,9 @@ export default function CanvasTracker() {
               <h2 className="text-sm font-semibold">Tasks</h2>
               <p className="text-xs text-stone-500">
                 {lastSync ? `Last sync ${formatDate(lastSync.synced_at)}` : 'Manual sync only'}
+              </p>
+              <p className="mt-1 text-xs text-stone-500">
+                Local status changes update OpenHuman only; they never submit to Canvas.
               </p>
             </div>
             <select
@@ -178,7 +181,7 @@ export default function CanvasTracker() {
                     <th className="w-80 px-3 py-2">Assignment</th>
                     <th className="w-40 px-3 py-2">Due</th>
                     <th className="w-36 px-3 py-2">Submission</th>
-                    <th className="w-40 px-3 py-2">Status</th>
+                    <th className="w-40 px-3 py-2">Local status</th>
                     <th className="w-28 px-3 py-2">Urgency</th>
                     <th className="w-40 px-3 py-2">Start</th>
                     <th className="w-64 px-3 py-2">Reminders</th>
