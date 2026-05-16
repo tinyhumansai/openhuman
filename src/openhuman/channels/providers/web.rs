@@ -9,9 +9,7 @@ use uuid::Uuid;
 use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::socketio::{SubagentProgressDetail, WebChannelEvent};
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
-use crate::openhuman::agent::profiles::{
-    AgentProfile, AgentProfileStore, DEFAULT_PROFILE_ID,
-};
+use crate::openhuman::agent::profiles::{AgentProfile, AgentProfileStore, DEFAULT_PROFILE_ID};
 use crate::openhuman::agent::Agent;
 use crate::openhuman::config::rpc as config_rpc;
 use crate::openhuman::config::Config;

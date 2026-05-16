@@ -27,6 +27,8 @@ vi.mock('../../../../utils/config', () => ({
   // Pulled transitively via `resetWalkthrough` → configPersistence.
   CORE_RPC_URL: 'http://127.0.0.1:7788/rpc',
   BACKEND_URL: 'http://localhost:5005',
+  // Required by coreModeSlice (pulled transitively via renderWithProviders).
+  E2E_DEFAULT_CORE_MODE: '',
 }));
 
 vi.mock('../../../walkthrough/AppWalkthrough', () => ({

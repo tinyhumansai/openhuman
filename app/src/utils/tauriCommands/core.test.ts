@@ -67,7 +67,7 @@ describe('tauriCommands/core', () => {
       expect(reloadSpy).toHaveBeenCalledTimes(1);
       expect(mockInvoke).not.toHaveBeenCalled();
       expect(debug).toHaveBeenCalledWith(
-        expect.stringContaining('restartApp: window.location.reload()')
+        expect.stringContaining('restartApp: dev mode → window.location.reload()')
       );
       debug.mockRestore();
     });
