@@ -813,6 +813,33 @@ impl SecurityPolicy {
     }
 }
 
+/// Validate that a file path resolves within a given root directory.
+/// Canonicalizes both paths and checks that the resolved candidate
+/// starts with the root. Callers should check `.is_file()` first
+/// to avoid errors on non-existent paths (normal missing-file case).
+///
+/// Used to prevent path traversal in agent definition TOML files and
+/// other user-controllable file references.
+pub fn validate_path_within_root(
+    candidate: &std::path::Path,
+    root: &std::path::Path,
+) -> Result<std::path::PathBuf, String> {
+    let resolved_root = root
+        .canonicalize()
+        .map_err(|e| format!("workspace root: {e}"))?;
+    let resolved = candidate
+        .canonicalize()
+        .map_err(|e| format!("{}: {e}", candidate.display()))?;
+    if !resolved.starts_with(&resolved_root) {
+        return Err(format!(
+            "path escapes root: {} is not under {}",
+            resolved.display(),
+            resolved_root.display()
+        ));
+    }
+    Ok(resolved)
+}
+
 #[cfg(test)]
 #[path = "policy_tests.rs"]
 mod tests;

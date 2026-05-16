@@ -176,31 +176,6 @@ pub(crate) fn filter_tool_indices(
 /// return immediately, `Dynamic` calls the builder with the supplied
 /// [`PromptContext`], `File` sources are read from disk relative to the
 /// workspace `prompts/` directory or the agent crate's bundled prompts.
-///
-/// Validate that a prompt file path resolves within the workspace root.
-/// Prevents path traversal via `..` segments in agent definition TOML files.
-///
-/// Callers should check `.is_file()` before calling to avoid false-positive
-/// warnings for normal missing-override cases.
-fn validate_prompt_path(
-    candidate: &std::path::Path,
-    workspace_root: &std::path::Path,
-) -> Result<std::path::PathBuf, String> {
-    let root = workspace_root
-        .canonicalize()
-        .map_err(|e| format!("workspace root: {e}"))?;
-    let resolved = candidate
-        .canonicalize()
-        .map_err(|e| format!("{}: {e}", candidate.display()))?;
-    if !resolved.starts_with(&root) {
-        return Err(format!(
-            "prompt path escapes workspace: {} is not under {}",
-            resolved.display(),
-            root.display()
-        ));
-    }
-    Ok(resolved)
-}
 
 /// Exposed `pub(crate)` so the debug dump path in
 /// [`crate::openhuman::agent::debug`] loads prompts through the
@@ -222,7 +197,7 @@ pub(crate) fn load_prompt_source(
             // own bundled prompts via `include_str!`-style lookup.
             let workspace_path = workspace_dir.join("agent").join("prompts").join(path);
             if workspace_path.is_file() {
-                if let Ok(resolved) = validate_prompt_path(&workspace_path, workspace_dir) {
+                if let Ok(resolved) = crate::openhuman::security::validate_path_within_root(&workspace_path, workspace_dir) {
                     return std::fs::read_to_string(&resolved).map_err(|e| {
                         SubagentRunError::PromptLoad {
                             path: resolved.display().to_string(),
@@ -247,7 +222,7 @@ pub(crate) fn load_prompt_source(
             // back to a generic role hint).
             let workspace_root_path = workspace_dir.join(path);
             if workspace_root_path.is_file() {
-                if let Ok(resolved) = validate_prompt_path(&workspace_root_path, workspace_dir) {
+                if let Ok(resolved) = crate::openhuman::security::validate_path_within_root(&workspace_root_path, workspace_dir) {
                     return std::fs::read_to_string(&resolved).map_err(|e| {
                         SubagentRunError::PromptLoad {
                             path: resolved.display().to_string(),
