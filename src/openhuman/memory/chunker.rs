@@ -213,8 +213,19 @@ fn split_on_lines(text: &str, max_chars: usize) -> Vec<String> {
     let mut chunks = Vec::with_capacity(text.len() / effective_max + 1);
     let mut current = String::new();
 
+    log::trace!(
+        "[memory::chunker] split_on_lines: entry text_len={} max_chars={}",
+        text.len(),
+        effective_max
+    );
+
     for line in text.lines() {
         if line.len() > effective_max {
+            log::debug!(
+                "[memory::chunker] split_on_lines: oversize line detected line_len={} max_chars={}",
+                line.len(),
+                effective_max
+            );
             // Flush anything accumulated before the oversize line.
             if !current.is_empty() {
                 chunks.push(std::mem::take(&mut current));
@@ -248,6 +259,12 @@ fn split_within_line(line: &str, max_chars: usize) -> Vec<String> {
     let mut start = 0;
     let bytes = line.as_bytes();
 
+    log::trace!(
+        "[memory::chunker] split_within_line: entry line_len={} max_chars={}",
+        line.len(),
+        max_chars
+    );
+
     while start < line.len() {
         let remaining = line.len() - start;
         if remaining <= max_chars {
@@ -262,6 +279,20 @@ fn split_within_line(line: &str, max_chars: usize) -> Vec<String> {
             end -= 1;
         }
 
+        // If max_chars is smaller than the next character (e.g., a 4-byte emoji
+        // with max_chars=1), `end` can equal `start`. Advance to the next char
+        // boundary to guarantee progress and avoid an infinite loop.
+        if end == start {
+            end = start + 1;
+            while end < line.len() && !line.is_char_boundary(end) {
+                end += 1;
+            }
+            log::debug!(
+                "[memory::chunker] split_within_line: forced advance past multi-byte char start={} end={}",
+                start, end
+            );
+        }
+
         // Try to find a space to break on (scan backwards from `end`).
         let mut split_at = end;
         while split_at > start && bytes[split_at - 1] != b' ' {
@@ -271,6 +302,10 @@ fn split_within_line(line: &str, max_chars: usize) -> Vec<String> {
         // If we couldn't find a space within the range, hard-split at `end`.
         if split_at == start {
             split_at = end;
+            log::debug!(
+                "[memory::chunker] split_within_line: hard split at {} (no word boundary)",
+                split_at
+            );
         }
 
         chunks.push(format!("{}\n", &line[start..split_at]));
@@ -282,6 +317,10 @@ fn split_within_line(line: &str, max_chars: usize) -> Vec<String> {
         }
     }
 
+    log::trace!(
+        "[memory::chunker] split_within_line: exit parts={}",
+        chunks.len()
+    );
     chunks
 }
 

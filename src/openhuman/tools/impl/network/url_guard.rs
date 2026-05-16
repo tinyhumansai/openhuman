@@ -85,17 +85,27 @@ pub(super) fn validate_url_with_dns_check(
 
     // Resolve the hostname and check all returned addresses.
     let socket_addr = format!("{host}:443");
-    let addrs: Vec<std::net::SocketAddr> = socket_addr.to_socket_addrs().map_err(|e| {
-        anyhow::anyhow!("DNS resolution failed for '{host}': {e}")
-    })?.collect();
+    log::debug!("[url_guard] resolving DNS for host={host}");
+    let addrs: Vec<std::net::SocketAddr> = socket_addr
+        .to_socket_addrs()
+        .map_err(|e| {
+            log::debug!("[url_guard] DNS resolution failed host={host} error={e}");
+            anyhow::anyhow!("DNS resolution failed for '{host}': {e}")
+        })?
+        .collect();
 
     if addrs.is_empty() {
         anyhow::bail!("DNS resolution returned no addresses for '{host}'");
     }
 
+    log::debug!("[url_guard] DNS resolved host={host} addrs={}", addrs.len());
+
     for addr in &addrs {
         let ip_str = addr.ip().to_string();
         if is_private_or_local_host(&ip_str) {
+            log::debug!(
+                "[url_guard] DNS rebinding blocked host={host} resolved_ip={ip_str}"
+            );
             anyhow::bail!(
                 "DNS rebinding blocked: '{host}' resolved to private/local address {ip_str}"
             );

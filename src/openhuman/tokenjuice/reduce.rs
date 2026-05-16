@@ -879,31 +879,21 @@ impl OrEmpty for String {
 use std::cell::RefCell;
 
 thread_local! {
-    static REGEX_CACHE: RefCell<HashMap<&'static str, regex::Regex>> =
+    static REGEX_CACHE: RefCell<HashMap<String, regex::Regex>> =
         RefCell::new(HashMap::with_capacity(32));
 }
 
-/// Get or compile a regex for a static pattern string. Patterns in TokenJuice
-/// rules are all string literals, so we use `&'static str` keys. For dynamic
-/// patterns (which don't exist in practice), this falls back to compiling fresh.
+/// Get or compile a regex, caching by owned pattern string. Avoids repeated
+/// `Regex::new()` calls for patterns used in loops (e.g., per-line processing).
 fn get_or_compile(pattern: &str) -> Option<regex::Regex> {
-    // SAFETY: rule patterns are string literals living for the program's lifetime.
-    // We transmute the lifetime to avoid allocating a String key for the cache.
-    // If a caller passes a non-static pattern, the worst case is a cache miss
-    // on a subsequent call with a different pointer to the same content — still
-    // correct, just slightly less efficient.
-    let static_pattern: &'static str = unsafe { std::mem::transmute(pattern) };
-
     REGEX_CACHE.with(|cache| {
         let mut map = cache.borrow_mut();
-        match map.entry(static_pattern) {
-            std::collections::hash_map::Entry::Occupied(e) => Some(e.get().clone()),
-            std::collections::hash_map::Entry::Vacant(e) => {
-                let re = regex::Regex::new(pattern).ok()?;
-                e.insert(re.clone());
-                Some(re)
-            }
+        if let Some(re) = map.get(pattern) {
+            return Some(re.clone());
         }
+        let re = regex::Regex::new(pattern).ok()?;
+        map.insert(pattern.to_owned(), re.clone());
+        Some(re)
     })
 }
 
