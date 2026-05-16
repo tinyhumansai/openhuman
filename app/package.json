@@ -57,7 +57,7 @@
     "format:check": "prettier --check . && pnpm rust:format:check",
     "lint": "eslint . --ext .ts,.tsx --cache",
     "lint:fix": "eslint . --ext .ts,.tsx --fix --cache",
-    "lint:commands-tokens": "bash -c '! rg -nU \"(bg|text|border|ring|shadow)-(neutral|primary|sage|amber|canvas|stone|slate)\" src/components/commands/'",
+    "lint:commands-tokens": "bash -c 'command -v rg >/dev/null 2>&1 || { echo \"lint:commands-tokens requires ripgrep. Install: brew install ripgrep (macOS) / apt install ripgrep (Debian/Ubuntu) / see https://github.com/BurntSushi/ripgrep#installation\" >&2; exit 1; }; ! rg -nU \"(bg|text|border|ring|shadow)-(neutral|primary|sage|amber|canvas|stone|slate)\" src/components/commands/'",
     "knip": "knip --config knip.json",
     "knip:production": "knip --config knip.json --production"
   },

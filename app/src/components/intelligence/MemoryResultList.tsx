@@ -153,6 +153,7 @@ export function MemoryResultList({
                   key={chunk.id}
                   ref={isActive ? activeRowRef : undefined}
                   className={`mw-result-row${isActive ? ' is-active' : ''}`}
+                  aria-pressed={isActive}
                   onClick={() => onSelectChunk(chunk.id)}
                   data-chunk-id={chunk.id}>
                   <span className="mw-result-time">

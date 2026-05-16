@@ -108,6 +108,14 @@ describe('SettingsHome', () => {
     });
   });
 
+  describe('language selector', () => {
+    it('offers Bahasa Indonesia as a display language', () => {
+      renderSettingsHome();
+
+      expect(screen.getByRole('option', { name: /Bahasa Indonesia/ })).toHaveValue('id');
+    });
+  });
+
   describe('existing navigation items', () => {
     it('navigates to account settings when Account is clicked', async () => {
       const user = userEvent.setup();

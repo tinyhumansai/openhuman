@@ -196,6 +196,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("get_meet_settings"),
         schemas("agent_server_status"),
         schemas("reset_local_data"),
+        schemas("get_data_paths"),
         schemas("get_onboarding_completed"),
         schemas("set_onboarding_completed"),
         schemas("get_dictation_settings"),
@@ -284,6 +285,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("reset_local_data"),
             handler: handle_reset_local_data,
+        },
+        RegisteredController {
+            schema: schemas("get_data_paths"),
+            handler: handle_get_data_paths,
         },
         RegisteredController {
             schema: schemas("get_onboarding_completed"),
@@ -688,6 +693,17 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 "Delete local OpenHuman data for the active config/workspace so the next restart boots clean.",
             inputs: vec![],
             outputs: vec![json_output("result", "Reset result with removed paths.")],
+        },
+        "get_data_paths" => ControllerSchema {
+            namespace: "config",
+            function: "get_data_paths",
+            description:
+                "Resolve the OpenHuman data directories (current workspace, default ~/.openhuman, active workspace marker) that reset_local_data would remove. Read-only — performs no filesystem changes.",
+            inputs: vec![],
+            outputs: vec![json_output(
+                "paths",
+                "Resolved data paths: current_openhuman_dir, default_openhuman_dir, active_workspace_marker_path.",
+            )],
         },
         "get_onboarding_completed" => ControllerSchema {
             namespace: "config",
@@ -1182,6 +1198,22 @@ fn handle_agent_server_status(_params: Map<String, Value>) -> ControllerFuture {
 
 fn handle_reset_local_data(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async { to_json(config_rpc::reset_local_data().await?) })
+}
+
+fn handle_get_data_paths(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async {
+        log::debug!("[config][rpc] get_data_paths enter");
+        match config_rpc::get_data_paths().await {
+            Ok(outcome) => {
+                log::debug!("[config][rpc] get_data_paths ok");
+                to_json(outcome)
+            }
+            Err(err) => {
+                log::warn!("[config][rpc] get_data_paths fail: {err}");
+                Err(err)
+            }
+        }
+    })
 }
 
 fn handle_get_onboarding_completed(_params: Map<String, Value>) -> ControllerFuture {

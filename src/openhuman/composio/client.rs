@@ -193,7 +193,8 @@ impl ComposioClient {
         if tool.is_empty() {
             anyhow::bail!("composio.execute_tool: tool slug must not be empty");
         }
-        let arguments = arguments.unwrap_or(serde_json::Value::Object(Default::default()));
+        let mut arguments = arguments.unwrap_or(serde_json::Value::Object(Default::default()));
+        normalize_calendar_query_args(tool, &mut arguments);
         Ok((
             tool.to_string(),
             json!({ "tool": tool, "arguments": arguments }),
@@ -499,6 +500,58 @@ impl ComposioClient {
             anyhow::anyhow!("Backend returned success but no data for DELETE {}", url)
         })
     }
+}
+
+/// Calendar query slugs whose `timeMin`/`timeMax` values should be
+/// normalized to RFC 3339 timestamps. LLM-generated arguments sometimes
+/// emit bare dates like `"2026-05-14"` instead of
+/// `"2026-05-14T00:00:00Z"`, which Google Calendar rejects.
+const CALENDAR_QUERY_SLUGS: &[&str] = &["GOOGLECALENDAR_EVENTS_LIST", "GOOGLECALENDAR_FIND_EVENT"];
+
+/// Normalize `timeMin`/`timeMax` from bare dates to RFC 3339 for
+/// Google Calendar query slugs. The LLM prompt instructs the model to
+/// use RFC 3339 format, but some model invocations still produce bare
+/// `YYYY-MM-DD` strings.
+fn normalize_calendar_query_args(tool: &str, arguments: &mut serde_json::Value) {
+    if !CALENDAR_QUERY_SLUGS.contains(&tool) {
+        return;
+    }
+    let Some(map) = arguments.as_object_mut() else {
+        return;
+    };
+    for key in &["timeMin", "timeMax"] {
+        if let Some(serde_json::Value::String(val)) = map.get(*key).cloned() {
+            if is_bare_date(&val) {
+                let normalized = format!("{}T00:00:00Z", val);
+                tracing::debug!(
+                    tool = %tool,
+                    key = %key,
+                    normalized = %normalized,
+                    "[composio] normalized bare date to RFC 3339 for calendar query"
+                );
+                map.insert((*key).to_string(), serde_json::Value::String(normalized));
+            }
+        }
+    }
+}
+
+/// Returns `true` when `s` is a bare date string like `"2026-05-14"`
+/// with no time component.
+fn is_bare_date(s: &str) -> bool {
+    if s.len() != 10 {
+        return false;
+    }
+    let bytes = s.as_bytes();
+    bytes[0].is_ascii_digit()
+        && bytes[1].is_ascii_digit()
+        && bytes[2].is_ascii_digit()
+        && bytes[3].is_ascii_digit()
+        && bytes[4] == b'-'
+        && bytes[5].is_ascii_digit()
+        && bytes[6].is_ascii_digit()
+        && bytes[7] == b'-'
+        && bytes[8].is_ascii_digit()
+        && bytes[9].is_ascii_digit()
 }
 
 fn is_post_oauth_auth_readiness_error(resp: &ComposioExecuteResponse) -> bool {

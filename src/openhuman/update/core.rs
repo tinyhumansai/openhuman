@@ -9,6 +9,7 @@ use std::os::unix::fs::PermissionsExt as _;
 
 use crate::openhuman::config::UpdateRestartStrategy;
 use crate::openhuman::update::types::{GitHubAsset, GitHubRelease, UpdateApplyResult, UpdateInfo};
+use crate::openhuman::util::utf8_safe_prefix_at_byte_boundary;
 
 /// GitHub owner/repo for the core binary releases.
 const GITHUB_OWNER: &str = "tinyhumansai";
@@ -139,7 +140,7 @@ pub async fn check_available() -> Result<UpdateInfo, String> {
         log::warn!(
             "[update] GitHub API returned {}: {}",
             status,
-            &body[..body.len().min(200)]
+            utf8_safe_prefix_at_byte_boundary(&body, 200)
         );
         let msg = format!("GitHub API error: {status}");
         if crate::core::observability::is_updater_transient_http_status(status.as_u16()) {

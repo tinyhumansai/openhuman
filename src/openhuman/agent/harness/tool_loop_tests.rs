@@ -878,7 +878,7 @@ async fn run_tool_call_loop_applies_per_tool_max_result_size_cap() {
     assert!(
         tool_results.content.contains("[truncated by tool cap:"),
         "expected truncation marker, got body: {}",
-        &tool_results.content[..tool_results.content.len().min(200)]
+        crate::openhuman::util::utf8_safe_prefix_at_byte_boundary(&tool_results.content, 200)
     );
     assert!(
         tool_results.content.len() < 1_000,

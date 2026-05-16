@@ -2,6 +2,7 @@ import { createContext, type ReactNode, useCallback, useContext, useMemo } from 
 
 import { useAppSelector } from '../../store/hooks';
 import en from './en';
+import id from './id';
 import type { Locale } from './types';
 import zhCN from './zh-CN';
 
@@ -10,7 +11,7 @@ interface I18nContextValue {
   locale: Locale;
 }
 
-const translations: Record<Locale, Record<string, string>> = { en, 'zh-CN': zhCN };
+const translations: Record<Locale, Record<string, string>> = { en, id, 'zh-CN': zhCN };
 
 // Resolve the effective English map at call time. `en` may be wrapped in
 // `{ default: { ... } }` by CJS/ESM interop in test runners, or tree-shaken
@@ -45,7 +46,6 @@ export function I18nProvider({ children }: { children: ReactNode }) {
       const map = translations[locale] ?? resolveEn();
       return map[key] ?? resolveEn()[key] ?? key;
     },
-
     [locale]
   );
 

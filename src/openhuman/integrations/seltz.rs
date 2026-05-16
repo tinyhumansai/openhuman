@@ -11,6 +11,7 @@
 //! integration, this calls the Seltz API directly — no backend proxy needed.
 
 use crate::openhuman::tools::traits::{Tool, ToolCallOptions, ToolResult};
+use crate::openhuman::util::utf8_safe_prefix_at_byte_boundary;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -290,11 +291,7 @@ impl Tool for SeltzSearchTool {
         let status = resp.status();
         if !status.is_success() {
             let body_text = resp.text().await.unwrap_or_default();
-            let detail = if body_text.len() > 500 {
-                &body_text[..500]
-            } else {
-                &body_text
-            };
+            let detail = utf8_safe_prefix_at_byte_boundary(&body_text, 500);
             tracing::warn!(
                 status = %status,
                 "[seltz] non-2xx response: {detail}"

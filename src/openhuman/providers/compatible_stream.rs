@@ -52,8 +52,7 @@ pub(crate) fn sse_bytes_to_chunks(
 
                     // Process complete lines
                     while let Some(pos) = buffer.find('\n') {
-                        let line = buffer.drain(..=pos).collect::<String>();
-                        buffer = buffer[pos + 1..].to_string();
+                        let line: String = buffer.drain(..=pos).collect();
 
                         match parse_sse_line(&line) {
                             Ok(Some(content)) => {

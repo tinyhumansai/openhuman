@@ -261,14 +261,21 @@ export async function resetOpenHumanDataAndRestartCore(): Promise<void> {
     console.debug('[core] resetOpenHumanDataAndRestartCore: skipped — not running in Tauri');
     return;
   }
-  console.debug(
-    '[core] resetOpenHumanDataAndRestartCore: invoking openhuman.config_reset_local_data'
-  );
-  await callCoreRpc({ method: 'openhuman.config_reset_local_data' });
-  console.debug(
-    '[core] resetOpenHumanDataAndRestartCore: local data reset complete, restarting core'
-  );
-  await restartCoreProcess();
+  // Single Tauri command: the shell stops the embedded core (dropping
+  // every open file handle inside the data directory), removes the
+  // resolved data paths, then restarts the core. Previously this was a
+  // two-step `callCoreRpc('config_reset_local_data') + restartCoreProcess()`
+  // dance, but the core RPC ran the remove *inside* the running core's
+  // tokio task — on Windows that hit `ERROR_SHARING_VIOLATION` (os error
+  // 32) because the core still held SQLite / log / Sentry handles open in
+  // the directory it was trying to delete (OPENHUMAN-TAURI-AF).
+  console.debug('[core] resetOpenHumanDataAndRestartCore: invoking reset_local_data');
+  try {
+    await invoke<void>('reset_local_data');
+  } catch (err) {
+    console.error('[core] resetOpenHumanDataAndRestartCore: reset_local_data failed', err);
+    throw err;
+  }
   console.debug('[core] resetOpenHumanDataAndRestartCore: done');
 }
 

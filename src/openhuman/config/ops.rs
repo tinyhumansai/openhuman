@@ -1088,11 +1088,53 @@ pub fn agent_server_status() -> RpcOutcome<serde_json::Value> {
 }
 
 /// Deletes all local data directories and workspace markers.
+///
+/// Runs **inside the core's tokio task**, which means the running core
+/// holds open handles to SQLite databases, log files, the Sentry session
+/// store, etc. On Windows, `remove_dir_all` therefore fails with
+/// `ERROR_SHARING_VIOLATION` (os error 32) — see OPENHUMAN-TAURI-AF.
+///
+/// GUI callers must use the Tauri-side `reset_local_data` command instead:
+/// it stops the embedded core via `CoreProcessHandle::shutdown` (dropping
+/// the file handles), removes the directories from the Tauri host process,
+/// and restarts the core. This JSON-RPC method is kept for headless / CLI
+/// callers where in-process removal is acceptable (POSIX file semantics
+/// tolerate unlinking open files; on Windows the CLI invocation runs
+/// without the core attached, so no handle is in the way).
 pub async fn reset_local_data() -> Result<RpcOutcome<serde_json::Value>, String> {
     let config = load_config_with_timeout().await?;
     let current_openhuman_dir = config_openhuman_dir(&config);
     let default_openhuman_dir = default_openhuman_dir();
     reset_local_data_for_paths(&current_openhuman_dir, &default_openhuman_dir).await
+}
+
+/// Reports the resolved paths that `reset_local_data` would remove, without
+/// performing any filesystem changes.
+///
+/// Lets the Tauri-side `reset_local_data` command discover the active
+/// workspace dir, the default `~/.openhuman` dir (which can differ when
+/// `OPENHUMAN_WORKSPACE` is set or a staging build is in use), and the
+/// active workspace marker file **before** the core sidecar is shut down —
+/// after which the Tauri shell removes them while no process holds open
+/// handles. See OPENHUMAN-TAURI-AF for the Windows file-locking failure
+/// that motivated the split.
+pub async fn get_data_paths() -> Result<RpcOutcome<serde_json::Value>, String> {
+    let config = load_config_with_timeout().await?;
+    let current_openhuman_dir = config_openhuman_dir(&config);
+    let default_openhuman_dir = default_openhuman_dir();
+    let active_workspace_marker = active_workspace_marker_path(&default_openhuman_dir);
+    Ok(RpcOutcome::new(
+        json!({
+            "current_openhuman_dir": current_openhuman_dir.display().to_string(),
+            "default_openhuman_dir": default_openhuman_dir.display().to_string(),
+            "active_workspace_marker_path": active_workspace_marker.display().to_string(),
+        }),
+        vec![format!(
+            "data paths resolved (current={}, default={})",
+            current_openhuman_dir.display(),
+            default_openhuman_dir.display()
+        )],
+    ))
 }
 
 #[cfg(test)]

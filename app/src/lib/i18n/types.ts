@@ -1,4 +1,4 @@
-export type Locale = 'en' | 'zh-CN';
+export type Locale = 'en' | 'id' | 'zh-CN';
 
 export interface TranslationMap {
   [key: string]: string;

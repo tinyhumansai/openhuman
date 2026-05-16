@@ -5,7 +5,9 @@ import type { Locale } from '../lib/i18n/types';
 function detectLocale(): Locale {
   try {
     const nav = navigator.language;
-    if (nav && nav.toLowerCase().startsWith('zh')) return 'zh-CN';
+    const normalized = nav?.toLowerCase();
+    if (normalized?.startsWith('zh')) return 'zh-CN';
+    if (normalized?.startsWith('id') || normalized?.startsWith('in')) return 'id';
   } catch {
     // browser API unavailable
   }

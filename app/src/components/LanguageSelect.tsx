@@ -4,6 +4,7 @@ import { setLocale } from '../store/localeSlice';
 
 const LOCALE_OPTIONS: Array<{ value: Locale; flag: string; label: string }> = [
   { value: 'en', flag: '🇬🇧', label: 'English' },
+  { value: 'id', flag: '🇮🇩', label: 'Bahasa Indonesia' },
   { value: 'zh-CN', flag: '🇨🇳', label: '中文' },
 ];
 
