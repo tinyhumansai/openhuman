@@ -103,9 +103,7 @@ pub(super) fn validate_url_with_dns_check(
     for addr in &addrs {
         let ip_str = addr.ip().to_string();
         if is_private_or_local_host(&ip_str) {
-            log::debug!(
-                "[url_guard] DNS rebinding blocked host={host} resolved_ip={ip_str}"
-            );
+            log::debug!("[url_guard] DNS rebinding blocked host={host} resolved_ip={ip_str}");
             anyhow::bail!(
                 "DNS rebinding blocked: '{host}' resolved to private/local address {ip_str}"
             );
