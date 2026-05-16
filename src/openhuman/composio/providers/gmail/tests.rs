@@ -1,5 +1,6 @@
 //! Unit tests for the Gmail provider.
 
+use super::provider::{BASE_QUERY, SENT_QUERIES};
 use super::sync::{
     cursor_to_gmail_after_epoch_filter, cursor_to_gmail_after_filter, extract_messages,
     extract_page_token, now_ms, parse_cursor_to_epoch_secs,
@@ -261,37 +262,37 @@ fn provider_source_does_not_restrict_to_inbox() {
     );
 }
 
-/// The base sync query (no cursor) must exclude spam and trash but NOT
-/// restrict to inbox — omitting `in:inbox` is what enables sent-mail retrieval.
+/// The base sync query must exclude spam and trash but NOT restrict to inbox.
+/// Asserts against the canonical `BASE_QUERY` constant from provider.rs so
+/// any change to the production value is caught immediately.
 #[test]
 fn sync_base_query_excludes_spam_and_trash_without_inbox_restriction() {
-    // Mirror the query string from provider.rs to pin it here.
-    // Any change to the provider's query shape must also update this test.
-    let base_query = "-in:spam -in:trash";
-
     assert!(
-        base_query.contains("-in:spam"),
-        "base query must exclude spam"
+        BASE_QUERY.contains("-in:spam"),
+        "BASE_QUERY must exclude spam (got: {BASE_QUERY:?})"
     );
     assert!(
-        base_query.contains("-in:trash"),
-        "base query must exclude trash"
+        BASE_QUERY.contains("-in:trash"),
+        "BASE_QUERY must exclude trash (got: {BASE_QUERY:?})"
     );
     assert!(
-        !base_query.contains("in:inbox"),
-        "base query must NOT restrict to inbox — omitting this allows sent \
-         mail to be fetched and ingested (issue #1713)"
+        !BASE_QUERY.contains("in:inbox"),
+        "BASE_QUERY must NOT restrict to inbox — omitting this allows sent \
+         mail to be fetched and ingested (issue #1713). Got: {BASE_QUERY:?}"
     );
 }
 
-/// Documents and locks in the Gmail search query strings the agent (or user)
-/// can pass to GMAIL_FETCH_EMAILS to retrieve sent mail.
+/// Sent-mail query strings must be non-empty and must not restrict to inbox.
+/// Iterates `SENT_QUERIES` from provider.rs — the canonical list of query
+/// strings a user or agent can pass to GMAIL_FETCH_EMAILS for sent mail.
 #[test]
 fn sent_mail_query_strings_are_well_formed() {
-    // These are the query strings that work for fetching sent mail.
-    let sent_queries = ["from:me", "label:SENT", "in:sent"];
-    for q in &sent_queries {
-        assert!(!q.is_empty(), "sent-mail query '{q}' must not be empty");
+    assert!(!SENT_QUERIES.is_empty(), "SENT_QUERIES must not be empty");
+    for q in SENT_QUERIES {
+        assert!(
+            !q.is_empty(),
+            "sent-mail query must not be empty, got empty string in SENT_QUERIES"
+        );
         assert!(
             !q.starts_with("in:inbox"),
             "sent-mail query '{q}' must not restrict to inbox"
