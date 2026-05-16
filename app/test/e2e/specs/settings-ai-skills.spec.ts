@@ -1,75 +1,50 @@
-import { waitForApp, waitForAppReady } from '../helpers/app-helpers';
-import { triggerAuthDeepLinkBypass } from '../helpers/deep-link-helpers';
-import {
-  textExists,
-  waitForText,
-  waitForWebView,
-  waitForWindowVisible,
-} from '../helpers/element-helpers';
-import { supportsExecuteScript } from '../helpers/platform';
-import { completeOnboardingIfVisible, navigateViaHash } from '../helpers/shared-flows';
+// @ts-nocheck
+/**
+ * Settings → AI & Skills (capability 13.3).
+ *
+ * Rewritten to follow the cron-jobs-flow reference: one `resetApp(...)` at
+ * the top establishes a fresh-install baseline (auth + onboarding via
+ * real UI), then each test navigates to a sub-route and asserts the panel
+ * actually mounted. No more per-suite ad-hoc auth bootstrapping.
+ *
+ * Covers:
+ *   - 13.3.1 Local AI Model panel renders presets (Balanced / Performance)
+ *   - 13.3.2 Tools panel renders at least one tool toggle
+ */
+import { waitForApp } from '../helpers/app-helpers';
+import { textExists, waitForText } from '../helpers/element-helpers';
+import { resetApp } from '../helpers/reset-app';
+import { navigateViaHash } from '../helpers/shared-flows';
 import { startMockServer, stopMockServer } from '../mock-server';
 
-/**
- * AI & Skills E2E spec (ID 13.3).
- * Covers:
- * - 13.3.1 Model Configuration switch
- * - 13.3.2 Skill Toggle on/off persistence (covered by skill-lifecycle.spec.ts,
- *   but added here for completeness of section 13.3)
- */
-
-function stepLog(message: string, context?: unknown): void {
-  const stamp = new Date().toISOString();
-  if (context === undefined) {
-    console.log(`[SettingsAISkillsE2E][${stamp}] ${message}`);
-    return;
-  }
-  console.log(`[SettingsAISkillsE2E][${stamp}] ${message}`, JSON.stringify(context, null, 2));
-}
+const USER_ID = 'e2e-settings-ai-skills';
 
 describe('Settings - AI & Skills', () => {
-  before(async function beforeSuite() {
-    if (!supportsExecuteScript()) {
-      stepLog('Skipping suite on Mac2 — navigation helpers require browser.execute');
-      this.skip();
-    }
-
-    stepLog('starting mock server');
+  before(async () => {
     await startMockServer();
-    stepLog('waiting for app');
     await waitForApp();
-    stepLog('triggering auth bypass deep link');
-    await triggerAuthDeepLinkBypass('e2e-ai-skills');
-    await waitForWindowVisible(25_000);
-    await waitForWebView(15_000);
-    await waitForAppReady(15_000);
-    await completeOnboardingIfVisible('[SettingsAISkillsE2E]');
+    await resetApp(USER_ID);
   });
 
   after(async () => {
-    stepLog('stopping mock server');
     await stopMockServer();
   });
 
   it('mounts Local AI Model panel and shows presets (13.3.1)', async () => {
-    stepLog('navigating to /settings/local-model');
     await navigateViaHash('/settings/local-model');
 
     await waitForText('Local AI Model', 15_000);
     await waitForText('Device Compatibility', 15_000);
-
-    // Presets should be loaded from mock
     await waitForText('Preset Tiers', 15_000);
+
     expect(await textExists('Balanced')).toBe(true);
     expect(await textExists('Performance')).toBe(true);
   });
 
   it('mounts Tools panel and shows skill toggles (13.3.2)', async () => {
-    stepLog('navigating to /settings/tools');
     await navigateViaHash('/settings/tools');
 
     await waitForText('Tools', 15_000);
-    // At least one tool should be visible
     const toolVisible = (await textExists('Filesystem')) || (await textExists('Shell'));
     expect(toolVisible).toBe(true);
   });

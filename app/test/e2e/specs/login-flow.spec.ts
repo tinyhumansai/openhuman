@@ -39,6 +39,7 @@ import {
   waitForWebView,
   waitForWindowVisible,
 } from '../helpers/element-helpers';
+import { resetApp } from '../helpers/reset-app';
 import {
   clearRequestLog,
   getRequestLog,
@@ -124,6 +125,11 @@ describe('Login flow — complete with mock data (Linux)', () => {
     resetMockBehavior();
     setMockBehavior('composioConnections', '[]');
     await waitForApp();
+    // Wipe any state from prior specs in this single-session run, but
+    // stop BEFORE the auth deep-link / onboarding walk — this spec
+    // exercises that login flow itself, so it has to start from the
+    // Welcome screen.
+    await resetApp('e2e-login-flow', { skipAuth: true });
     clearRequestLog();
     hadOnboardingWalkthrough = false;
   });

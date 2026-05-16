@@ -31,11 +31,14 @@ else
   echo "Skipping cargo clean (default incremental E2E build)."
 fi
 
-if [ -f .env ]; then
+if [ -f "$REPO_ROOT/.env" ]; then
   # shellcheck source=/dev/null
   source "$REPO_ROOT/scripts/load-dotenv.sh"
 else
-  echo "No .env file — skipping load-dotenv (optional for CI)."
+  # `-f` returns false on a dangling symlink (the Docker bootstrap case
+  # where .env -> ../secrets/openhuman/.env but secrets/ isn't mounted),
+  # so this branch covers both "no .env" and "broken-symlink .env".
+  echo "No usable .env at $REPO_ROOT/.env — skipping load-dotenv (optional for CI)."
 fi
 
 export VITE_BACKEND_URL="http://127.0.0.1:${E2E_MOCK_PORT:-18473}"

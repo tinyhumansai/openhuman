@@ -2,13 +2,13 @@ import * as path from 'node:path';
 import { spawn } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 
-import { waitForApp, waitForAppReady } from '../helpers/app-helpers';
+// @ts-nocheck
+import { waitForApp } from '../helpers/app-helpers';
 import { callOpenhumanRpc } from '../helpers/core-rpc';
-import { triggerAuthDeepLinkBypass } from '../helpers/deep-link-helpers';
-import { waitForWebView, waitForWindowVisible } from '../helpers/element-helpers';
-import { supportsExecuteScript } from '../helpers/platform';
-import { completeOnboardingIfVisible } from '../helpers/shared-flows';
+import { resetApp } from '../helpers/reset-app';
 import { startMockServer, stopMockServer } from '../mock-server';
+
+const USER_ID = 'e2e-tool-shell-git';
 
 /**
  * Shell + Git tool E2E spec — coverage matrix rows 6.2.1 (shell exec),
@@ -148,22 +148,10 @@ async function makeFixtureRepo(absRepoDir: string): Promise<void> {
 }
 
 describe('System tools — Shell + Git (registry, denial envelope, fixture repo)', () => {
-  before(async function beforeSuite() {
-    if (!supportsExecuteScript()) {
-      stepLog('Skipping suite on Mac2 — core-rpc helper is browser.execute-bound');
-      this.skip();
-    }
-
-    stepLog('starting mock server');
+  before(async () => {
     await startMockServer();
-    stepLog('waiting for app');
     await waitForApp();
-    stepLog('triggering auth bypass deep link');
-    await triggerAuthDeepLinkBypass('e2e-tool-shell-git');
-    await waitForWindowVisible(25_000);
-    await waitForWebView(15_000);
-    await waitForAppReady(15_000);
-    await completeOnboardingIfVisible('[ToolShellGitE2E]');
+    await resetApp(USER_ID);
 
     // Seed a deterministic git repo inside the workspace so the read/write
     // assertions below have something to point at. The fixture is rebuilt
@@ -174,7 +162,6 @@ describe('System tools — Shell + Git (registry, denial envelope, fixture repo)
   });
 
   after(async () => {
-    stepLog('stopping mock server');
     await stopMockServer();
   });
 

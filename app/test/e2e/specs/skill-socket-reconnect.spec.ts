@@ -1,23 +1,24 @@
 // @ts-nocheck
 /**
- * Socket reconnect + skill sync (issue #223).
- * Ensures app still reaches a healthy post-auth state; full reconnect is integration-tested in app code.
+ * Socket reconnect + skill sync smoke (issue #223).
+ *
+ * Ensures the app reaches a healthy post-auth Home state — the baseline
+ * any future reconnect/`tool:sync` flow would build on. Full reconnect
+ * behavior is integration-tested in app code.
  */
-import { waitForApp, waitForAppReady } from '../helpers/app-helpers';
-import { triggerAuthDeepLinkBypass } from '../helpers/deep-link-helpers';
-import { textExists, waitForWebView, waitForWindowVisible } from '../helpers/element-helpers';
-import {
-  completeOnboardingIfVisible,
-  navigateToHome,
-  waitForHomePage,
-} from '../helpers/shared-flows';
-import { clearRequestLog, startMockServer, stopMockServer } from '../mock-server';
+import { waitForApp } from '../helpers/app-helpers';
+import { textExists } from '../helpers/element-helpers';
+import { resetApp } from '../helpers/reset-app';
+import { navigateToHome, waitForHomePage } from '../helpers/shared-flows';
+import { startMockServer, stopMockServer } from '../mock-server';
+
+const USER_ID = 'e2e-skill-socket-reconnect';
 
 describe('Socket reconnect skill sync smoke', () => {
   before(async () => {
     await startMockServer();
     await waitForApp();
-    clearRequestLog();
+    await resetApp(USER_ID);
   });
 
   after(async () => {
@@ -25,15 +26,11 @@ describe('Socket reconnect skill sync smoke', () => {
   });
 
   it('reaches Home after login (baseline for post-reconnect tool:sync)', async () => {
-    await triggerAuthDeepLinkBypass('e2e-reconnect-token');
-    await waitForWindowVisible(25_000);
-    await waitForWebView(15_000);
-    await waitForAppReady(15_000);
-    await completeOnboardingIfVisible('[ReconnectE2E]');
-
-    let home = await waitForHomePage(20_000);
-    if (!home) await navigateToHome();
-    home = await waitForHomePage(15_000);
+    let home = await waitForHomePage(15_000);
+    if (!home) {
+      await navigateToHome();
+      home = await waitForHomePage(15_000);
+    }
 
     const ok =
       home || (await textExists('Message OpenHuman')) || (await textExists('Upgrade to Premium'));

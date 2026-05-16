@@ -1,24 +1,14 @@
 // @ts-nocheck
 import { browser, expect } from '@wdio/globals';
 
-import { waitForApp, waitForAppReady } from '../helpers/app-helpers';
+import { waitForApp } from '../helpers/app-helpers';
 import { callOpenhumanRpc } from '../helpers/core-rpc';
-import { triggerAuthDeepLinkBypass } from '../helpers/deep-link-helpers';
-import {
-  clickText,
-  dumpAccessibilityTree,
-  textExists,
-  waitForText,
-  waitForWebView,
-  waitForWindowVisible,
-} from '../helpers/element-helpers';
-import { supportsExecuteScript } from '../helpers/platform';
-import {
-  completeOnboardingIfVisible,
-  navigateToSettings,
-  navigateViaHash,
-} from '../helpers/shared-flows';
+import { dumpAccessibilityTree, textExists, waitForText } from '../helpers/element-helpers';
+import { resetApp } from '../helpers/reset-app';
+import { navigateViaHash } from '../helpers/shared-flows';
 import { clearRequestLog, startMockServer, stopMockServer } from '../mock-server';
+
+const USER_ID = 'e2e-webhooks-ingress';
 
 function stepLog(message: string, context?: unknown): void {
   const stamp = new Date().toISOString();
@@ -30,20 +20,14 @@ function stepLog(message: string, context?: unknown): void {
 }
 
 async function openWebhooksDebugPanel(): Promise<void> {
-  if (supportsExecuteScript()) {
-    await navigateViaHash('/settings/webhooks-debug');
-    return;
-  }
-
-  await navigateToSettings();
-  await clickText('Developer Options', 12_000);
-  await clickText('Webhooks', 12_000);
+  await navigateViaHash('/settings/webhooks-debug');
 }
 
 describe('Webhooks ingress surface (stub-level)', () => {
   before(async () => {
     await startMockServer();
     await waitForApp();
+    await resetApp(USER_ID);
     clearRequestLog();
   });
 
@@ -51,13 +35,7 @@ describe('Webhooks ingress surface (stub-level)', () => {
     await stopMockServer();
   });
 
-  it('authenticates and reaches the app shell', async () => {
-    await triggerAuthDeepLinkBypass('e2e-webhooks-ingress-user');
-    await waitForWindowVisible(25_000);
-    await waitForWebView(15_000);
-    await waitForAppReady(15_000);
-    await completeOnboardingIfVisible('[WebhooksIngressE2E]');
-
+  it('reaches the app shell after onboarding', async () => {
     const atHome =
       (await textExists('Message OpenHuman')) ||
       (await textExists('Good morning')) ||
@@ -107,11 +85,9 @@ describe('Webhooks ingress surface (stub-level)', () => {
   it('renders the webhooks debug panel empty states', async () => {
     await openWebhooksDebugPanel();
 
-    if (supportsExecuteScript()) {
-      const currentHash = await browser.execute(() => window.location.hash);
-      stepLog('Navigated to webhooks debug route', { currentHash });
-      expect(String(currentHash)).toContain('/settings/webhooks-debug');
-    }
+    const currentHash = await browser.execute(() => window.location.hash);
+    stepLog('Navigated to webhooks debug route', { currentHash });
+    expect(String(currentHash)).toContain('/settings/webhooks-debug');
 
     await waitForText('Webhooks Debug', 12_000);
     await waitForText('Registered Webhooks', 12_000);

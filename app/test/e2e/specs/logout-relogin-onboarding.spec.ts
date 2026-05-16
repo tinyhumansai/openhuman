@@ -19,6 +19,7 @@ import {
   waitForWebView,
   waitForWindowVisible,
 } from '../helpers/element-helpers';
+import { resetApp } from '../helpers/reset-app';
 import {
   isOnboardingOverlayVisible,
   logoutViaSettings,
@@ -109,6 +110,8 @@ describe('Logout -> re-login onboarding overlay', () => {
   before(async () => {
     await startMockServer();
     await waitForApp();
+    // Reach Welcome screen first (this spec drives login itself).
+    await resetApp('e2e-logout-relogin-reset', { skipAuth: true });
     clearRequestLog();
     resetMockBehavior();
   });
