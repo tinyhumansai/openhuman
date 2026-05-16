@@ -92,6 +92,42 @@ fn config_openhuman_dir(config: &Config) -> PathBuf {
         .map_or_else(|| PathBuf::from("."), PathBuf::from)
 }
 
+fn is_windows_file_lock_error(error: &std::io::Error) -> bool {
+    cfg!(windows) && matches!(error.raw_os_error(), Some(32 | 33))
+}
+
+fn reset_local_data_remove_error(path: &Path, error: &std::io::Error) -> String {
+    if is_windows_file_lock_error(error) {
+        tracing::warn!(
+            path = %path.display(),
+            error = %error,
+            "[config] reset_local_data: Windows file lock blocked local data deletion"
+        );
+        return format!(
+            "Failed to remove {} because it is locked by another OpenHuman window or process. Close all OpenHuman windows and try again. ({error})",
+            path.display()
+        );
+    }
+
+    format!("Failed to remove {}: {error}", path.display())
+}
+
+fn reset_local_data_marker_remove_error(path: &Path, error: &std::io::Error) -> String {
+    if is_windows_file_lock_error(error) {
+        tracing::warn!(
+            marker = %path.display(),
+            error = %error,
+            "[config] reset_local_data: Windows file lock blocked active workspace marker deletion"
+        );
+        return format!(
+            "Failed to remove active workspace marker {} because it is locked by another OpenHuman window or process. Close all OpenHuman windows and try again. ({error})",
+            path.display()
+        );
+    }
+
+    format!("Failed to remove active workspace marker: {error}")
+}
+
 /// Internal helper to reset local data by removing specific directories and markers.
 async fn reset_local_data_for_paths(
     current_openhuman_dir: &Path,
@@ -108,9 +144,12 @@ async fn reset_local_data_for_paths(
     let mut removed_paths = Vec::new();
 
     if active_workspace_marker.exists() {
-        tokio::fs::remove_file(&active_workspace_marker)
-            .await
-            .map_err(|e| format!("Failed to remove active workspace marker: {e}"))?;
+        if let Err(error) = tokio::fs::remove_file(&active_workspace_marker).await {
+            return Err(reset_local_data_marker_remove_error(
+                &active_workspace_marker,
+                &error,
+            ));
+        }
         tracing::debug!(
             marker = %active_workspace_marker.display(),
             "[config] reset_local_data: removed active workspace marker"
@@ -127,9 +166,9 @@ async fn reset_local_data_for_paths(
             continue;
         }
 
-        tokio::fs::remove_dir_all(target_dir)
-            .await
-            .map_err(|e| format!("Failed to remove {}: {e}", target_dir.display()))?;
+        if let Err(error) = tokio::fs::remove_dir_all(target_dir).await {
+            return Err(reset_local_data_remove_error(target_dir, &error));
+        }
         tracing::debug!(
             dir = %target_dir.display(),
             "[config] reset_local_data: removed directory"

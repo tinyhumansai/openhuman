@@ -179,5 +179,35 @@ describe('SettingsHome', () => {
       expect(args).toMatchObject({ userId: null });
       expect(typeof args.clearSession).toBe('function');
     });
+
+    it('surfaces the core error message when clearAllAppData fails (Windows file-lock guidance)', async () => {
+      const user = userEvent.setup();
+      mockClearAllAppData.mockRejectedValueOnce(
+        new Error(
+          'Failed to remove C:\\Users\\me\\.openhuman because it is locked by another OpenHuman window or process. Close all OpenHuman windows and try again.'
+        )
+      );
+      renderSettingsHome();
+
+      await user.click(screen.getByText('Clear App Data').closest('button')!);
+      const confirmButtons = screen.getAllByRole('button', { name: /Clear App Data/i });
+      await user.click(confirmButtons[confirmButtons.length - 1]);
+
+      expect(
+        await screen.findByText(/locked by another OpenHuman window or process/)
+      ).toBeInTheDocument();
+    });
+
+    it('falls back to the translated message when the error has no message', async () => {
+      const user = userEvent.setup();
+      mockClearAllAppData.mockRejectedValueOnce(new Error(''));
+      renderSettingsHome();
+
+      await user.click(screen.getByText('Clear App Data').closest('button')!);
+      const confirmButtons = screen.getAllByRole('button', { name: /Clear App Data/i });
+      await user.click(confirmButtons[confirmButtons.length - 1]);
+
+      expect(await screen.findByText(/Failed to clear data and logout/)).toBeInTheDocument();
+    });
   });
 });

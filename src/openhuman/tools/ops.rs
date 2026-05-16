@@ -155,6 +155,7 @@ pub fn all_tools_with_runtime(
             security.clone(),
             workspace_dir.to_path_buf(),
         )),
+        Box::new(GmailUnsubscribeTool),
     ];
 
     if browser_config.enabled {

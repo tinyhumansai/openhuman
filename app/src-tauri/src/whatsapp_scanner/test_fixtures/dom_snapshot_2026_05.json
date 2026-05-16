@@ -1,0 +1,53 @@
+{
+  "_comment": "Synthetic CDP DOMSnapshot.captureSnapshot fixture for issue #1376 regression tests. Replace with a real WA Web capture once available. Four message rows: tier 1 (selectable-text class), tier 2 (dir=ltr), tier 3 multi-word body (descendant text fallback), and tier 3 single-word body (regression guard: must not be filtered by looks_like_icon_ligature). One conversation-header gives parse_active_chat_name something to resolve.",
+  "documents": [
+    {
+      "nodes": {
+        "parentIndex": [-1,  0,  1,  2,  0,  4,  5,  0,  7,  8,  0, 10, 11,  0, 13, 14],
+        "nodeType":    [ 1,  1,  1,  3,  1,  1,  3,  1,  1,  3,  1,  1,  3,  1,  1,  3],
+        "nodeName":    [ 0,  1,  4, -1,  6,  4, -1,  6,  4, -1,  6,  6, -1,  6,  6, -1],
+        "nodeValue":   [-1, -1, -1,  5, -1, -1, 11, -1, -1, 15, -1, -1, 17, -1, -1, 19],
+        "attributes": [
+          [],
+          [2, 3],
+          [],
+          [],
+          [7, 8],
+          [9, 10],
+          [],
+          [7, 12],
+          [13, 14],
+          [],
+          [7, 16],
+          [],
+          [],
+          [7, 18],
+          [],
+          []
+        ]
+      }
+    }
+  ],
+  "strings": [
+    "html",
+    "header",
+    "data-testid",
+    "conversation-header",
+    "span",
+    "Test Chat",
+    "div",
+    "data-id",
+    "false_chat1@c.us_msgABC123",
+    "class",
+    "selectable-text",
+    "hello tier 1",
+    "false_chat1@c.us_msgDEF456",
+    "dir",
+    "ltr",
+    "hello tier 2",
+    "false_chat1@c.us_msgGHI789",
+    "hello tier 3",
+    "false_chat1@c.us_msgJKL012",
+    "ok"
+  ]
+}

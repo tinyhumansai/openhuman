@@ -56,6 +56,34 @@ impl DomMessage {
     }
 }
 
+/// Per-stage telemetry produced by [`capture_messages`]. The counters
+/// disambiguate the three failure modes that `dom=0` used to collapse into
+/// a single number (issue #1376): rows never matched, rows matched but
+/// body extraction returned empty, or active chat name failed to resolve
+/// (forcing rows to be filtered out downstream by the merge step).
+///
+/// Field invariants:
+/// * `rows_seen` — `[data-id]` elements that parsed as message rows BEFORE
+///   any body filter. Counts every accepted `data-id` shape (legacy
+///   compound + bare-msgId).
+/// * `rows_with_body` — subset where [`find_body`] returned a non-empty
+///   string. `rows_seen - rows_with_body` is bodies that vanished.
+/// * `rows_dropped_no_body` — convenience, equals
+///   `rows_seen - rows_with_body`.
+/// * `active_chat_resolved` — true when
+///   `header[data-testid="conversation-header"]` produced a display name
+///   (precondition for the chat-id reverse lookup in `mod.rs`).
+#[derive(Debug, Clone, Default)]
+pub struct CaptureReport {
+    pub rows: Vec<DomMessage>,
+    pub hash: u64,
+    pub active_chat_name: Option<String>,
+    pub rows_seen: usize,
+    pub rows_with_body: usize,
+    pub rows_dropped_no_body: usize,
+    pub active_chat_resolved: bool,
+}
+
 /// Run `DOMSnapshot.captureSnapshot` against an attached page session and
 /// return parsed message rows, a FNV-1a hash over (dataId, body), and the
 /// active conversation's display name (from
@@ -64,10 +92,10 @@ impl DomMessage {
 /// modern WhatsApp Web omits the chat JID from the URL, from `data-id`, and
 /// from any DOM attribute, so the merge step in `mod.rs` reverse-looks-up
 /// `chats[*].name → chats[*].jid` to stamp `chatId` onto DOM rows.
-pub async fn capture_messages(
-    cdp: &mut CdpConn,
-    session: &str,
-) -> Result<(Vec<DomMessage>, u64, Option<String>), String> {
+///
+/// Returns a [`CaptureReport`] with per-stage counters. See the type doc
+/// for invariants.
+pub async fn capture_messages(cdp: &mut CdpConn, session: &str) -> Result<CaptureReport, String> {
     // `computedStyles` is a required array — empty is fine, we don't need
     // any CSS. The other flags default sensibly; explicitly disable the
     // heavy paint/rect output to keep payloads small.
@@ -84,16 +112,32 @@ pub async fn capture_messages(
         .await?;
     let snap: CaptureSnapshot =
         serde_json::from_value(raw).map_err(|e| format!("decode DOMSnapshot: {e}"))?;
-    let rows = parse_rows(&snap);
-    let hash = fnv_hash(&rows);
-    let active_chat_name = parse_active_chat_name(&snap);
-    Ok((rows, hash, active_chat_name))
+    Ok(report_from_snapshot(&snap))
+}
+
+/// Synthesize a [`CaptureReport`] from a parsed `CaptureSnapshot`. Split
+/// out from [`capture_messages`] so unit tests can drive the body-finder
+/// + counters off a JSON fixture without mocking CDP.
+pub(crate) fn report_from_snapshot(snap: &CaptureSnapshot) -> CaptureReport {
+    let stats = parse_rows(snap);
+    let hash = fnv_hash(&stats.rows);
+    let active_chat_name = parse_active_chat_name(snap);
+    let active_chat_resolved = active_chat_name.is_some();
+    CaptureReport {
+        rows: stats.rows,
+        hash,
+        active_chat_name,
+        rows_seen: stats.rows_seen,
+        rows_with_body: stats.rows_with_body,
+        rows_dropped_no_body: stats.rows_seen.saturating_sub(stats.rows_with_body),
+        active_chat_resolved,
+    }
 }
 
 // ─── CDP response shape ─────────────────────────────────────────────
 
 #[derive(Deserialize, Debug, Default)]
-struct CaptureSnapshot {
+pub(crate) struct CaptureSnapshot {
     #[serde(default)]
     documents: Vec<DocumentSnap>,
     #[serde(default)]
@@ -123,6 +167,18 @@ struct NodeTreeSnap {
     attributes: Vec<Vec<i32>>,
 }
 
+/// Output of [`parse_rows`] including per-stage counters used to populate
+/// [`CaptureReport`]. `rows` is the filtered keep-set (rows with body OR
+/// `data-pre-plain-text`); `rows_seen` is the count of accepted `data-id`
+/// shapes BEFORE any body/chrome filter; `rows_with_body` is the count
+/// where [`find_body`] returned non-empty for a row in `rows_seen`.
+#[derive(Debug, Default)]
+pub(crate) struct ParseStats {
+    pub rows: Vec<DomMessage>,
+    pub rows_seen: usize,
+    pub rows_with_body: usize,
+}
+
 const NODE_TYPE_ELEMENT: i32 = 1;
 const NODE_TYPE_TEXT: i32 = 3;
 /// Hard cap on body length to mirror `dom_scan.js` (which sliced at 4000).
@@ -130,17 +186,17 @@ const MAX_BODY_CHARS: usize = 4000;
 
 // ─── parsing ────────────────────────────────────────────────────────
 
-fn parse_rows(snap: &CaptureSnapshot) -> Vec<DomMessage> {
+fn parse_rows(snap: &CaptureSnapshot) -> ParseStats {
     // Main frame only — iframes aren't used by WhatsApp's message list.
     let doc = match snap.documents.first() {
         Some(d) => d,
-        None => return Vec::new(),
+        None => return ParseStats::default(),
     };
     let nodes = &doc.nodes;
     let strings = &snap.strings;
     let count = nodes.node_type.len();
     if count == 0 {
-        return Vec::new();
+        return ParseStats::default();
     }
 
     // Precompute children map so descendant walks are O(subtree) instead of
@@ -154,6 +210,8 @@ fn parse_rows(snap: &CaptureSnapshot) -> Vec<DomMessage> {
 
     let mut out = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
+    let mut rows_seen = 0usize;
+    let mut rows_with_body = 0usize;
 
     for i in 0..count {
         if nodes.node_type.get(i).copied().unwrap_or(0) != NODE_TYPE_ELEMENT {
@@ -174,10 +232,20 @@ fn parse_rows(snap: &CaptureSnapshot) -> Vec<DomMessage> {
             continue;
         }
 
+        // Telemetry: count every accepted data-id BEFORE the body filter so
+        // the per-stage counts in `CaptureReport` distinguish "no rows
+        // matched at all" from "rows matched but body extraction failed".
+        rows_seen += 1;
+
         let (pre_ts, author) = find_pre_plain(nodes, strings, &children, i);
         let body = find_body(nodes, strings, &children, i);
+        if !body.is_empty() {
+            rows_with_body += 1;
+        }
         // A row with neither a body nor a pre-plain-text tag is just chrome
-        // (avatar wrapper, reaction chip, etc) — skip it.
+        // (avatar wrapper, reaction chip, etc) — skip it. Note: this still
+        // contributes to `rows_seen` because the goal of that counter is
+        // "did we find rows at all", not "did we keep them".
         if body.is_empty() && pre_ts.is_none() {
             continue;
         }
@@ -193,7 +261,11 @@ fn parse_rows(snap: &CaptureSnapshot) -> Vec<DomMessage> {
         });
     }
 
-    out
+    ParseStats {
+        rows: out,
+        rows_seen,
+        rows_with_body,
+    }
 }
 
 /// Find the `header[data-testid="conversation-header"]` element and return
@@ -276,16 +348,24 @@ fn parse_active_chat_name(snap: &CaptureSnapshot) -> Option<String> {
 /// `arrow_forward`). These appear as the first SPAN inside icon wrappers
 /// and would otherwise win the chat-title race in `parse_active_chat_name`.
 ///
-/// Heuristic: starts with `wds-ic-` / `wds-icon` (WhatsApp Design System
-/// icon prefix), or is a single token with no whitespace whose chars are
-/// all `[a-z0-9_-]` (Material Icon ligature shape).
+/// **Two-pass heuristic (issue #1376 fix):**
+/// 1. Explicit WDS prefix: `wds-ic-*` / `wds-icon*` — always icon.
+/// 2. Token-shape check: no whitespace, all chars `[a-z0-9_-]`, AND the
+///    token must contain at least one `-` or `_` delimiter. This distinguishes
+///    icon names like `arrow_forward` / `material-icons` from plain one-word
+///    message bodies like "ok", "hello", "yes" — real words never contain
+///    hyphens or underscores in this context, but icon ligature names always do.
 fn looks_like_icon_ligature(s: &str) -> bool {
-    if s.starts_with("wds-ic-") || s.starts_with("wds-icon") {
+    let t = s.trim();
+    if t.starts_with("wds-ic-") || t.starts_with("wds-icon") {
         return true;
     }
-    !s.is_empty()
-        && !s.contains(char::is_whitespace)
-        && s.chars()
+    // Require at least one delimiter so plain lowercase words (e.g. "ok",
+    // "hello") are NOT treated as ligatures.
+    !t.is_empty()
+        && !t.contains(char::is_whitespace)
+        && (t.contains('-') || t.contains('_'))
+        && t.chars()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-')
 }
 
@@ -399,17 +479,35 @@ fn find_pre_plain(
     (None, None)
 }
 
-/// Pick the longest rendered body text inside the row. WhatsApp puts each
-/// message's text in a descendant `span.selectable-text` or a
-/// `span[dir="ltr|rtl"]`; walking every such span and keeping the longest
-/// one matches `dom_scan.js`. Falls back to the row's full text with the
-/// "[HH:MM, D/M/YYYY] Author:" prefix stripped.
+/// Pick the longest rendered body text inside the row.
+///
+/// Three tiers, tried in order — each tier only runs when the previous
+/// returned empty:
+///
+/// **Tier 1** — descendant `span.selectable-text` (legacy WhatsApp Web).
+/// **Tier 2** — descendant `span[dir="ltr"|"rtl"]` (current WhatsApp Web
+/// drops the `selectable-text` class but keeps the `dir` hint on text
+/// spans). Both tiers walk every match and keep the longest, mirroring
+/// the original `dom_scan.js` behavior.
+///
+/// **Tier 3 fallback (issue #1376)** — when WhatsApp Web layout drift
+/// strips both class+dir hints from the message body, walk every
+/// descendant TEXT node, skip icon ligatures (`wds-ic-*`, `wds-icon`)
+/// and chrome strings (timestamps `H:MM`, status indicators ✓ ✓✓ 🔇),
+/// concatenate the remainder. This is the broadest recovery path and
+/// catches rows that render their body via a plain `<div>` or unhinted
+/// `<span>` wrapper. Capped at [`MAX_BODY_CHARS`].
+///
+/// Final fallback (unchanged): everything under the row with the
+/// `"[HH:MM, D/M/YYYY] Author:"` prefix stripped — handles rows rendered
+/// without any dedicated text span at all.
 fn find_body(
     nodes: &NodeTreeSnap,
     strings: &[String],
     children: &[Vec<usize>],
     root: usize,
 ) -> String {
+    // Tiers 1 + 2 — span-attribute-driven discovery (longest wins).
     let mut best = String::new();
     let mut stack = vec![root];
     while let Some(idx) = stack.pop() {
@@ -440,10 +538,128 @@ fn find_body(
     if !best.is_empty() {
         return best;
     }
-    // Fallback: everything under the row, with the "[HH:MM, ...] Author:"
-    // prefix stripped — handles rows rendered without a dedicated text span.
+
+    // Tier 3 fallback (issue #1376): walk every descendant text node,
+    // filter out icon ligatures + chrome strings, concatenate.
+    let tier3 = collect_descendant_text_filtered(nodes, strings, children, root);
+    if !tier3.is_empty() {
+        return truncate_chars(&tier3, MAX_BODY_CHARS);
+    }
+
+    // Last-resort: everything under the row, with the
+    // "[HH:MM, ...] Author:" prefix stripped — handles rows rendered
+    // without a dedicated text span.
     let full = collect_text(nodes, strings, children, root);
     strip_pre_prefix(full.trim()).to_string()
+}
+
+/// Tier-3 helper for [`find_body`] (issue #1376). Walks every TEXT node
+/// under `root` whose nearest element ancestor is NOT an icon wrapper
+/// (`wds-ic-*` / `wds-icon` class) and whose trimmed value is NOT a
+/// chrome string (timestamp `H:MM[ AM/PM]`, single status indicator).
+/// Joins surviving snippets with spaces.
+///
+/// Skip rules (in the order they're checked):
+/// 1. Element ancestor's `class` contains `wds-icon` or any `wds-ic-*`
+///    token — entire icon subtree is ignored.
+/// 2. Trimmed text matches the timestamp regex shape `H:MM` /
+///    `HH:MM` / `H:MM AM` / `H:MM PM` (case-insensitive). Captures
+///    WhatsApp's per-bubble timestamp + delivery clock chip.
+/// 3. Trimmed text is a single delivery-status glyph (✓, ✓✓, ✓✓ tinted
+///    blue, 🔇, 📌, 📷, 🎤, 🎥, 📎, 📄). The first two are the only
+///    common ones today; the rest are defensive against future glyph
+///    drift.
+fn collect_descendant_text_filtered(
+    nodes: &NodeTreeSnap,
+    strings: &[String],
+    children: &[Vec<usize>],
+    root: usize,
+) -> String {
+    // Build "is this node inside an icon wrapper?" lookup as we walk —
+    // cheaper than recomputing per text node.
+    let mut out_parts: Vec<String> = Vec::new();
+    // Stack carries (node_idx, ancestor_is_icon).
+    let mut stack: Vec<(usize, bool)> = vec![(root, false)];
+    while let Some((idx, ancestor_is_icon)) = stack.pop() {
+        let node_type = nodes.node_type.get(idx).copied().unwrap_or(0);
+        let mut now_is_icon = ancestor_is_icon;
+        if node_type == NODE_TYPE_ELEMENT {
+            let attrs = attrs_map(nodes, idx, strings);
+            if let Some(class) = attrs.get("class") {
+                if class
+                    .split_whitespace()
+                    .any(|w| w == "wds-icon" || w.starts_with("wds-ic-"))
+                {
+                    now_is_icon = true;
+                }
+            }
+        } else if node_type == NODE_TYPE_TEXT && !ancestor_is_icon {
+            let raw = str_at(strings, *nodes.node_value.get(idx).unwrap_or(&-1));
+            let trimmed = raw.trim();
+            if !trimmed.is_empty()
+                && !looks_like_timestamp(trimmed)
+                && !looks_like_status_glyph(trimmed)
+                && !looks_like_icon_ligature(trimmed)
+            {
+                out_parts.push(trimmed.to_string());
+            }
+        }
+        if let Some(kids) = children.get(idx) {
+            for &k in kids.iter().rev() {
+                stack.push((k, now_is_icon));
+            }
+        }
+    }
+    out_parts.join(" ").trim().to_string()
+}
+
+/// Returns true when `s` looks like a WhatsApp Web message-bubble
+/// timestamp: `H:MM`, `HH:MM`, optionally followed by ` AM` / ` PM`
+/// (any case). Reject anything else so real bodies that happen to
+/// include digits aren't dropped.
+fn looks_like_timestamp(s: &str) -> bool {
+    let t = s.trim();
+    if t.is_empty() {
+        return false;
+    }
+    // Optional trailing AM/PM after a single space — accept and strip.
+    let upper = t.to_ascii_uppercase();
+    let core = if let Some(stripped) = upper
+        .strip_suffix(" AM")
+        .or_else(|| upper.strip_suffix(" PM"))
+    {
+        stripped
+    } else {
+        upper.as_str()
+    };
+    // Now `core` must be exactly H:MM or HH:MM with both halves digits.
+    let mut parts = core.split(':');
+    let (Some(h), Some(m), None) = (parts.next(), parts.next(), parts.next()) else {
+        return false;
+    };
+    if h.is_empty() || h.len() > 2 || m.len() != 2 {
+        return false;
+    }
+    h.bytes().all(|b| b.is_ascii_digit()) && m.bytes().all(|b| b.is_ascii_digit())
+}
+
+/// Returns true when `s` is a single delivery-status glyph WhatsApp
+/// renders next to message bubbles (e.g. ✓, ✓✓, 🔇). The check is
+/// intentionally conservative: short string AND every char is in a
+/// small allow-list of known glyph code points. Real one-char message
+/// bodies (e.g. emoji-only "👍" reactions still render as a separate
+/// bubble) are NOT in the list and survive the filter.
+fn looks_like_status_glyph(s: &str) -> bool {
+    let t = s.trim();
+    if t.is_empty() || t.chars().count() > 2 {
+        return false;
+    }
+    t.chars().all(|c| {
+        matches!(
+            c,
+            '\u{2713}' | '\u{2714}' | '\u{1F507}' | '\u{1F508}' | '\u{1F509}'
+        )
+    })
 }
 
 /// Concatenate every TEXT_NODE nodeValue under `root` in document order.
@@ -511,6 +727,34 @@ fn truncate_chars(s: &str, max: usize) -> String {
         return s.to_string();
     }
     s.chars().take(max).collect()
+}
+
+/// Render a TRACE-friendly preview of a `DomMessage` row for the
+/// per-row debug dump in `mod.rs::scan_once`. Each entry is a
+/// `(attribute key, snippet)` pair drawn from the row's identifying
+/// attributes and the first few non-icon child text nodes (≤ `cap` chars
+/// each, no PII beyond what already lives in the row).
+///
+/// Designed for `log::trace!` only — keep payloads small so the lines fit
+/// in stdout without scrolling. The icon filter reuses
+/// [`looks_like_icon_ligature`] so `wds-ic-*` ligatures don't dominate
+/// previews of rows that render mostly chrome.
+pub(crate) fn text_snippet_preview(row: &DomMessage, cap: usize) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    out.push(("dataId".to_string(), truncate_chars(&row.data_id, cap)));
+    out.push(("msgId".to_string(), truncate_chars(&row.msg_id, cap)));
+    if !row.chat_id.is_empty() {
+        out.push(("chatId".to_string(), truncate_chars(&row.chat_id, cap)));
+    }
+    if let Some(author) = &row.author {
+        out.push(("author".to_string(), truncate_chars(author, cap)));
+    }
+    if let Some(pre) = &row.pre_timestamp {
+        out.push(("preTs".to_string(), truncate_chars(pre, cap)));
+    }
+    // Body preview always last so the visually heavy line wraps at the end.
+    out.push(("body".to_string(), truncate_chars(&row.body, cap)));
+    out
 }
 
 /// FNV-1a 32-bit rolling hash over `(dataId + 0x01 + body)` per row. Used
@@ -613,5 +857,47 @@ mod tests {
         let s = "💬💬💬💬💬";
         assert_eq!(truncate_chars(s, 3), "💬💬💬");
         assert_eq!(truncate_chars(s, 10), s);
+    }
+
+    // ── Issue #1376 — looks_like_icon_ligature must not drop real words ──
+
+    #[test]
+    fn icon_ligature_matches_wds_prefix() {
+        assert!(looks_like_icon_ligature("wds-ic-search"));
+        assert!(looks_like_icon_ligature("wds-ic-disappearing-messages"));
+        assert!(looks_like_icon_ligature("wds-icon"));
+        assert!(looks_like_icon_ligature("wds-icon-foo"));
+    }
+
+    #[test]
+    fn icon_ligature_matches_delimiter_tokens() {
+        // Material icon ligature names always contain a delimiter.
+        assert!(looks_like_icon_ligature("arrow_forward"));
+        assert!(looks_like_icon_ligature("material-icons"));
+        assert!(looks_like_icon_ligature("search-icon"));
+    }
+
+    #[test]
+    fn icon_ligature_does_not_match_plain_words() {
+        // These are ordinary one-word message bodies — must NOT be filtered.
+        assert!(!looks_like_icon_ligature("ok"));
+        assert!(!looks_like_icon_ligature("hello"));
+        assert!(!looks_like_icon_ligature("yes"));
+        assert!(!looks_like_icon_ligature("no"));
+        assert!(!looks_like_icon_ligature("thanks"));
+        assert!(!looks_like_icon_ligature("lol"));
+    }
+
+    #[test]
+    fn icon_ligature_does_not_match_multi_word() {
+        // Multi-word text is never a ligature (whitespace present).
+        assert!(!looks_like_icon_ligature("hello tier 3"));
+        assert!(!looks_like_icon_ligature("hello world"));
+    }
+
+    #[test]
+    fn icon_ligature_does_not_match_empty() {
+        assert!(!looks_like_icon_ligature(""));
+        assert!(!looks_like_icon_ligature("   "));
     }
 }

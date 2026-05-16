@@ -15,12 +15,20 @@ concurrency:
 #
 #   prepare-build
 #        │
+#        ├── pretest-tests   (reusable test-reusable.yml — unit + rust)
+#        ├── pretest-e2e     (reusable e2e-reusable.yml — all 3 OS, full suite)
+#        │
 #        ├── build-desktop      (delegated to .github/workflows/build-desktop.yml)
 #        ├── build-docker       (build only — no GHCR push on staging)
 #        │
 #   record-sentry-deploy
 #        │
 #   cleanup-failed-staging (on failure)
+#
+# The pretest jobs are a hard gate — `build-desktop` and `build-docker`
+# only start once unit/rust/E2E have all passed across every target. This
+# guarantees we never produce a staging tag whose installers were built
+# against unproven code.
 #
 # The actual desktop build / Sentry / artifact-upload pipeline lives in
 # `.github/workflows/build-desktop.yml` and is shared with
@@ -169,11 +177,34 @@ jobs:
           echo "base_url=https://staging-api.tinyhumans.ai/" >> "$GITHUB_OUTPUT"
 
   # =========================================================================
+  # Phase 1b: Pretest gate — run the full test + E2E suite across every
+  # target OS exactly once on the staging commit before any build job
+  # spins up. A failure here aborts the matrix (and `cleanup-failed-staging`
+  # deletes the tag) without burning four signed Tauri builds first.
+  # =========================================================================
+  pretest-tests:
+    name: Pretest — unit + rust
+    needs: [prepare-build]
+    uses: ./.github/workflows/test-reusable.yml
+    with:
+      ref: ${{ needs.prepare-build.outputs.build_ref }}
+  pretest-e2e:
+    name: Pretest — E2E (all OS, full suite)
+    needs: [prepare-build]
+    uses: ./.github/workflows/e2e-reusable.yml
+    with:
+      ref: ${{ needs.prepare-build.outputs.build_ref }}
+      run_linux: true
+      run_macos: true
+      run_windows: true
+      full: true
+
+  # =========================================================================
   # Phase 2: Build desktop artifacts (delegated to reusable workflow)
   # =========================================================================
   build-desktop:
     name: Build desktop matrix
-    needs: [prepare-build]
+    needs: [prepare-build, pretest-tests, pretest-e2e]
     uses: ./.github/workflows/build-desktop.yml
     secrets: inherit
     with:
@@ -215,7 +246,7 @@ jobs:
   # =========================================================================
   build-docker:
     name: "Docker: build (no push)"
-    needs: [prepare-build]
+    needs: [prepare-build, pretest-tests, pretest-e2e]
     runs-on: ubuntu-latest
     environment: Production
     steps:
@@ -294,11 +325,13 @@ jobs:
     name: Remove staging tag if build failed
     runs-on: ubuntu-latest
     environment: Production
-    needs: [prepare-build, build-desktop, build-docker]
+    needs: [prepare-build, pretest-tests, pretest-e2e, build-desktop, build-docker]
     if: >-
       always()
       && needs.prepare-build.result == 'success'
-      && (needs.build-desktop.result == 'failure' || needs.build-desktop.result == 'cancelled'
+      && (needs.pretest-tests.result == 'failure' || needs.pretest-tests.result == 'cancelled'
+          || needs.pretest-e2e.result == 'failure' || needs.pretest-e2e.result == 'cancelled'
+          || needs.build-desktop.result == 'failure' || needs.build-desktop.result == 'cancelled'
           || needs.build-docker.result == 'failure' || needs.build-docker.result == 'cancelled')
     steps:
       - name: Delete remote staging tag

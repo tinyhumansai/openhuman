@@ -34,7 +34,9 @@ const Welcome = () => {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       log('clearAllAppData failed: %s', message);
-      setResetError('Could not clear app data. Please quit and reopen OpenHuman, then try again.');
+      setResetError(
+        message || 'Could not clear app data. Please quit and reopen OpenHuman, then try again.'
+      );
       setIsClearingAppData(false);
     }
   };

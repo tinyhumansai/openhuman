@@ -50,8 +50,9 @@ const SettingsHome = () => {
       setError(null);
       const currentUserId = snapshot.auth.userId ?? snapshot.currentUser?._id ?? null;
       await clearAllAppData({ clearSession, userId: currentUserId }); // restarts the app
-    } catch (_error) {
-      setError(t('clearData.failed'));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setError(message || t('clearData.failed'));
     } finally {
       setIsLoading(false);
     }

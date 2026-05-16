@@ -112,6 +112,28 @@ fn config_openhuman_dir_returns_config_path_parent() {
     assert_eq!(config_openhuman_dir(&cfg), PathBuf::from("/tmp/xyz"));
 }
 
+#[cfg(windows)]
+#[test]
+fn reset_local_data_remove_error_explains_windows_file_locks() {
+    let err = std::io::Error::from_raw_os_error(32);
+    let msg =
+        reset_local_data_remove_error(std::path::Path::new("C:\\Users\\me\\.openhuman"), &err);
+
+    assert!(msg.contains("locked by another OpenHuman window or process"));
+    assert!(msg.contains("Close all OpenHuman windows and try again"));
+}
+
+#[cfg(windows)]
+#[test]
+fn reset_local_data_remove_error_explains_windows_lock_violation() {
+    let err = std::io::Error::from_raw_os_error(33);
+    let msg =
+        reset_local_data_remove_error(std::path::Path::new("C:\\Users\\me\\.openhuman"), &err);
+
+    assert!(msg.contains("locked by another OpenHuman window or process"));
+    assert!(msg.contains("Close all OpenHuman windows and try again"));
+}
+
 // ── get_runtime_flags / set_browser_allow_all ─────────────────
 
 #[test]

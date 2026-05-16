@@ -29,6 +29,9 @@ pub struct EmailMessage {
     /// Message-id header or provider URL; used for citation back to source.
     #[serde(default)]
     pub source_ref: Option<String>,
+    /// List-Unsubscribe header for one-click unsubscribe actions
+    #[serde(default)]
+    pub list_unsubscribe: Option<String>,
 }
 
 /// A whole email thread.
@@ -75,7 +78,12 @@ pub fn canonicalise(
             md.push_str(&format!("Cc: {}\n", msg.cc.join(", ")));
         }
         md.push_str(&format!("Subject: {}\n", msg.subject));
-        md.push_str(&format!("Date: {}\n\n", msg.sent_at.to_rfc3339()));
+        md.push_str(&format!("Date: {}\n", msg.sent_at.to_rfc3339()));
+
+        if let Some(unsub) = &msg.list_unsubscribe {
+            md.push_str(&format!("List-Unsubscribe: {}\n", unsub));
+        }
+        md.push_str("\n");
         let cleaned = email_clean::clean_body(msg.body.trim());
         if cleaned.is_empty() {
             md.push('\n');
@@ -115,6 +123,7 @@ mod tests {
             sent_at: Utc.timestamp_millis_opt(ts_ms).unwrap(),
             body: body.to_string(),
             source_ref: Some(format!("<msg-{ts_ms}@example.com>")),
+            list_unsubscribe: None,
         }
     }
 
@@ -175,6 +184,7 @@ mod tests {
                 sent_at: Utc.timestamp_millis_opt(5000).unwrap(),
                 body: body_with_footer.into(),
                 source_ref: None,
+                list_unsubscribe: None,
             }],
         };
         let out = canonicalise(
