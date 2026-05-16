@@ -1002,6 +1002,8 @@ const zhCN: TranslationMap = {
 
   // Composio: miscellaneous
   'composio.statusUnavailable': '状态不可用',
+  'composio.authExpired': '授权已过期',
+  'composio.reconnect': '重新连接',
   'composio.envVarOverrides': '已设置，将覆盖此设置。',
 
   // Memory: day-of-week labels for heatmap
