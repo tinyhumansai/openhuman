@@ -768,8 +768,22 @@ impl Agent {
             secrets_encrypt: config.secrets.encrypt,
             reasoning_enabled: config.runtime.reasoning_enabled,
         };
-        let (provider, model_name): (Box<dyn Provider>, String) =
+        let (provider, mut model_name): (Box<dyn Provider>, String) =
             crate::openhuman::providers::create_chat_provider("reasoning", config)?;
+        let target_agent_id = target_def
+            .map(|def| def.id.as_str())
+            .unwrap_or("orchestrator");
+        let target_is_lead = target_def
+            .map(|def| !def.subagents.is_empty())
+            .unwrap_or(true);
+        if let Some(pinned_model) = config.configured_agent_model(target_agent_id, target_is_lead) {
+            log::info!(
+                "[session-builder] agent_id={} using config-level model pin model={}",
+                target_agent_id,
+                pinned_model
+            );
+            model_name = pinned_model.to_string();
+        }
 
         // Dispatcher selection is deferred until after the tool list is
         // finalised (orchestrator tools are appended below). We capture

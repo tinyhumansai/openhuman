@@ -36,7 +36,10 @@ mod tools;
 mod update;
 
 pub use accessibility::ScreenIntelligenceConfig;
-pub use agent::{AgentConfig, DelegateAgentConfig, MemoryContextWindow, MemoryWindowLimits};
+pub use agent::{
+    AgentConfig, DelegateAgentConfig, MemoryContextWindow, MemoryWindowLimits,
+    OrchestratorModelConfig, TeamModelConfig,
+};
 pub use autocomplete::AutocompleteConfig;
 pub use autonomy::AutonomyConfig;
 pub use channels::{
