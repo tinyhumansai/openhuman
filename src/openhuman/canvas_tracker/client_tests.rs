@@ -24,7 +24,7 @@ fn request_policy_builds_only_allowed_canvas_api_urls() {
             })
             .unwrap()
             .as_str(),
-        "https://mango-cmu.instructure.com/api/v1/courses/101/assignments"
+        "https://mango-cmu.instructure.com/api/v1/courses/101/assignments?include%5B%5D=submission"
     );
     assert_eq!(
         policy
@@ -34,7 +34,7 @@ fn request_policy_builds_only_allowed_canvas_api_urls() {
             })
             .unwrap()
             .as_str(),
-        "https://mango-cmu.instructure.com/api/v1/courses/101/assignments/55"
+        "https://mango-cmu.instructure.com/api/v1/courses/101/assignments/55?include%5B%5D=submission"
     );
 }
 

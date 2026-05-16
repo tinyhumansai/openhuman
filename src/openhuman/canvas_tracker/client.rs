@@ -65,6 +65,7 @@ impl CanvasRequestPolicy {
                     &mut url,
                     &["api", "v1", "courses", &course_id, "assignments"],
                 )?;
+                append_submission_include(&mut url);
             }
             CanvasEndpoint::Assignment {
                 course_id,
@@ -83,6 +84,7 @@ impl CanvasRequestPolicy {
                         &assignment_id,
                     ],
                 )?;
+                append_submission_include(&mut url);
             }
         }
 
@@ -160,6 +162,10 @@ fn set_path_segments(url: &mut Url, segments: &[&str]) -> Result<()> {
     path_segments.clear();
     path_segments.extend(segments.iter().copied());
     Ok(())
+}
+
+fn append_submission_include(url: &mut Url) {
+    url.query_pairs_mut().append_pair("include[]", "submission");
 }
 
 fn validate_path_id(name: &str, value: &str) -> Result<()> {
