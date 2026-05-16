@@ -3,9 +3,10 @@
 //! The orchestrator follows a direct-first policy: respond directly or use
 //! cheap direct tools whenever possible, and delegate only for specialised
 //! execution. It never executes Composio actions itself; the integration
-//! block points to `delegate_{toolkit}` tools (synthesised by
-//! `orchestrator_tools::collect_orchestrator_tools`) for true
-//! external-service operations. That prose lives here (not in the shared
+//! block points to the single collapsed `delegate_to_integrations_agent`
+//! tool (synthesised by `orchestrator_tools::collect_orchestrator_tools`,
+//! #1335) for true external-service operations, with the toolkit slug
+//! passed as an argument. That prose lives here (not in the shared
 //! prompts module) so the skill-executor voice stays in
 //! `integrations_agent/prompt.rs` and nobody has to branch on `agent_id`
 //! in a shared section impl.
@@ -90,15 +91,16 @@ fn render_delegation_guide(integrations: &[ConnectedIntegration]) -> String {
     }
     let mut out = String::from(
         "## Connected Integrations\n\n\
-         Delegate tasks for these services using the matching `delegate_{toolkit}` tool:\n\n",
+         Delegate tasks for these services with `delegate_to_integrations_agent`, passing the toolkit slug as `toolkit`:\n\n",
     );
     for ci in connected {
         // Use the same slug canonicalisation as `collect_orchestrator_tools`
-        // so the tool name in the prompt always matches the synthesised tool.
+        // so the `toolkit` arg the orchestrator emits always matches the
+        // enum the synthesised tool accepts.
         let slug = sanitise_slug(&ci.toolkit);
         let _ = writeln!(
             out,
-            "- **{}** (delegate via `delegate_{}`): {}",
+            "- **{}** (`toolkit: \"{}\"`): {}",
             ci.toolkit, slug, ci.description
         );
     }
@@ -156,12 +158,16 @@ mod tests {
         let body = build(&ctx_with(&[])).unwrap();
         assert!(body.contains("## Delegation Decision Tree (Direct-First)"));
         assert!(body.contains(
-            "Default bias: **do not spawn a sub-agent when a direct response or direct tool call is sufficient**."
+            "Default bias: **do not spawn a sub-agent when a direct response or direct tool call is sufficient**"
         ));
+        // Step 2 of the decision tree now explicitly routes live external-service
+        // requests to `delegate_to_integrations_agent` rather than `memory_tree`.
+        assert!(body.contains("Does the request name (or imply) a connected external service?"));
+        assert!(body.contains("Do this even if `memory_tree` could plausibly answer"));
     }
 
     #[test]
-    fn build_emits_delegation_guide_with_spawn_snippet() {
+    fn build_emits_delegation_guide_with_collapsed_tool() {
         let integrations = vec![ConnectedIntegration {
             toolkit: "gmail".into(),
             description: "Email access.".into(),
@@ -170,7 +176,10 @@ mod tests {
         }];
         let body = build(&ctx_with(&integrations)).unwrap();
         assert!(body.contains("## Connected Integrations"));
-        assert!(body.contains("delegate_gmail"));
+        assert!(body.contains("delegate_to_integrations_agent"));
+        assert!(body.contains("toolkit: \"gmail\""));
+        // Must NOT contain the old per-toolkit fan-out tool names.
+        assert!(!body.contains("delegate_gmail"));
         // Must NOT contain the old verbose spawn_subagent snippet.
         assert!(!body.contains("spawn_subagent(agent_id=\"integrations_agent\""));
         // Delegator voice must NOT use the skill-executor wording.
@@ -178,7 +187,7 @@ mod tests {
     }
 
     #[test]
-    fn delegation_guide_uses_compact_delegate_format() {
+    fn delegation_guide_uses_compact_collapsed_format() {
         let integrations = vec![ConnectedIntegration {
             toolkit: "gmail".into(),
             description: "Email access.".into(),
@@ -187,15 +196,16 @@ mod tests {
         }];
         let body = build(&ctx_with(&integrations)).unwrap();
         assert!(body.contains("## Connected Integrations"));
-        assert!(body.contains("delegate_gmail"));
-        // Must NOT contain the old verbose spawn_subagent snippet.
+        assert!(body.contains("delegate_to_integrations_agent"));
+        // Old verbose / per-toolkit forms must be gone.
+        assert!(!body.contains("delegate_gmail"));
         assert!(!body.contains("spawn_subagent(agent_id=\"integrations_agent\""));
     }
 
     #[test]
     fn build_hides_unconnected_integrations() {
         // Only connected toolkits make it into the Delegation Guide
-        // — unconnected entries would just trigger a spawn_subagent
+        // — unconnected entries would just trigger a downstream
         // pre-flight rejection, so keeping them out keeps the prompt
         // focused on what the orchestrator can actually delegate.
         let integrations = vec![

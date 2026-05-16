@@ -1,4 +1,4 @@
-use crate::api::config::effective_api_url;
+use crate::api::config::effective_backend_api_url;
 use crate::api::jwt::get_session_token;
 use crate::api::BackendOAuthClient;
 use crate::openhuman::config::Config;
@@ -32,7 +32,7 @@ async fn get_authed_value(
     body: Option<Value>,
 ) -> Result<Value, String> {
     let token = require_token(config)?;
-    let api_url = effective_api_url(&config.api_url);
+    let api_url = effective_backend_api_url(&config.api_url);
     let client = BackendOAuthClient::new(&api_url).map_err(|e| e.to_string())?;
     client
         .authed_json(&token, method, path, body)

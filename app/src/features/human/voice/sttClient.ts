@@ -84,6 +84,89 @@ export async function transcribeCloud(
   return text;
 }
 
+export interface FactoryTranscribeOptions {
+  /** BCP-47 language hint, e.g. `'en'`. */
+  language?: string;
+  /** Override the server-side provider resolution (`'cloud'` | `'whisper'`).
+   *  When unset the core reads `config.local_ai.stt_provider`. */
+  provider?: 'cloud' | 'whisper';
+  /** Whisper model id (whisper branch only). */
+  model?: string;
+  /** Defaults derived from the recorded blob. */
+  mimeType?: string;
+  fileName?: string;
+}
+
+export interface FactoryTranscribeResult {
+  text: string;
+  /** Provider that actually ran ('cloud' or 'whisper'). */
+  provider: string;
+}
+
+/**
+ * Factory-dispatched transcription. Hits `openhuman.voice_stt_dispatch`
+ * — the core resolves the provider from config (or `opts.provider` when
+ * the caller forces one). Returns the transcript only; the renderer
+ * surfaces the provider id via debug logs.
+ *
+ * Goes through the same base64 encoding path as `transcribeCloud` so the
+ * MicComposer can swap implementations without re-tooling the recorder.
+ */
+export async function transcribeWithFactory(
+  blob: Blob,
+  opts: FactoryTranscribeOptions = {}
+): Promise<string> {
+  if (!blob || blob.size === 0) {
+    throw new Error('audio blob is empty');
+  }
+  const encodeStart = Date.now();
+  const audio_base64 = await blobToBase64(blob);
+  const encodeMs = Math.round(Date.now() - encodeStart);
+
+  const params: Record<string, unknown> = { audio_base64 };
+  const mime = (opts.mimeType ?? blob.type ?? 'audio/webm').split(';')[0].trim() || 'audio/webm';
+  params.mime_type = mime;
+  params.file_name = opts.fileName ?? `audio.${guessExtension(mime)}`;
+  if (opts.provider) params.provider = opts.provider;
+  if (opts.model) params.model = opts.model;
+  if (opts.language) params.language = opts.language;
+
+  sttLog(
+    '[voice-stt] transcribe-factory bytes=%d mime=%s provider=%s base64_ms=%d',
+    blob.size,
+    mime,
+    opts.provider ?? '<config>',
+    encodeMs
+  );
+
+  const rpcStart = Date.now();
+  let result: FactoryTranscribeResult;
+  try {
+    result = await callCoreRpc<FactoryTranscribeResult>({
+      method: 'openhuman.voice_stt_dispatch',
+      params,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes('unknown method')) {
+      sttLog('[voice-stt] dispatch stale-sidecar path: %s', msg);
+      throw new Error(
+        'Voice transcription is unavailable in this build. Restart the OpenHuman desktop app to pick up the latest core sidecar.'
+      );
+    }
+    sttLog('[voice-stt] dispatch failed (passthrough): %O', err);
+    throw err;
+  }
+  const text = result?.text?.trim() ?? '';
+  sttLog(
+    '[voice-stt] transcribed provider=%s chars=%d rpc_ms=%d',
+    result?.provider ?? '<unknown>',
+    text.length,
+    Math.round(Date.now() - rpcStart)
+  );
+  return text;
+}
+
 async function blobToBase64(blob: Blob): Promise<string> {
   const buf = await blob.arrayBuffer();
   const bytes = new Uint8Array(buf);

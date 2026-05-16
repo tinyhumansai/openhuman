@@ -59,6 +59,31 @@ pub struct SyncState {
     /// Rolling daily request budget.
     #[serde(default)]
     pub daily_budget: DailyBudget,
+
+    /// ID of the most recently synced item, used by providers (Gmail
+    /// today) to short-circuit a tick when the freshest server-side
+    /// item matches what we already have. Cheaper than re-walking the
+    /// `synced_ids` set — and crucially, it lets us bail out of
+    /// pagination on the very first page when nothing has changed,
+    /// instead of fetching `MAX_PAGES_PER_SYNC` worth of duplicates
+    /// before falling through the per-page dedup loop.
+    ///
+    /// `None` either when the state is fresh or when an older state
+    /// blob was loaded from disk that pre-dates this field.
+    #[serde(default)]
+    pub last_seen_id: Option<String>,
+
+    /// Unix milliseconds of the last successful sync that wrote into
+    /// memory. Lets the adaptive page-cap logic distinguish a "we
+    /// synced 30 seconds ago" tick (cap pages aggressively) from a
+    /// "we last synced two hours ago" tick (let pagination run to the
+    /// usual ceiling). Independent of the periodic scheduler's
+    /// in-process `LAST_SYNC_AT` map because that map is rebuilt on
+    /// every process restart whereas this value survives restarts.
+    ///
+    /// `None` until the first successful sync.
+    #[serde(default)]
+    pub last_sync_at_ms: Option<u64>,
 }
 
 /// Tracks the number of API requests made on a given calendar day.
@@ -125,7 +150,22 @@ impl SyncState {
             cursor: None,
             synced_ids: HashSet::new(),
             daily_budget: DailyBudget::default(),
+            last_seen_id: None,
+            last_sync_at_ms: None,
         }
+    }
+
+    /// Record the freshest item id observed on a successful sync.
+    /// Idempotent — repeated calls with the same id are no-ops.
+    pub fn set_last_seen_id(&mut self, item_id: impl Into<String>) {
+        self.last_seen_id = Some(item_id.into());
+    }
+
+    /// Record the wall-clock time of a successful sync (unix
+    /// milliseconds). Persisted alongside the cursor so the adaptive
+    /// page-cap survives process restarts.
+    pub fn set_last_sync_at_ms(&mut self, ms: u64) {
+        self.last_sync_at_ms = Some(ms);
     }
 
     /// Whether the daily request budget is exhausted.
@@ -369,6 +409,8 @@ mod tests {
         state.mark_synced("item_a");
         state.mark_synced("item_b");
         state.daily_budget.record_requests(42);
+        state.set_last_seen_id("msg_top");
+        state.set_last_sync_at_ms(1_700_000_000_000);
 
         let json = serde_json::to_value(&state).unwrap();
         let restored: SyncState = serde_json::from_value(json).unwrap();
@@ -380,6 +422,44 @@ mod tests {
         assert!(restored.synced_ids.contains("item_b"));
         assert_eq!(restored.synced_ids.len(), 2);
         assert_eq!(restored.daily_budget.requests_used, 42);
+        assert_eq!(restored.last_seen_id.as_deref(), Some("msg_top"));
+        assert_eq!(restored.last_sync_at_ms, Some(1_700_000_000_000));
+    }
+
+    #[test]
+    fn sync_state_deserializes_legacy_blob_without_new_fields() {
+        // Older state blobs serialized before #1404 had no
+        // `last_seen_id` / `last_sync_at_ms` keys — make sure the
+        // deserializer still accepts them so existing users don't
+        // lose their cursor + dedup set on first upgrade.
+        let legacy = serde_json::json!({
+            "toolkit": "gmail",
+            "connection_id": "conn_old",
+            "cursor": "1699000000000",
+            "synced_ids": ["m1", "m2"],
+            "daily_budget": { "date": today_str(), "requests_used": 7, "limit": 500 }
+        });
+        let restored: SyncState = serde_json::from_value(legacy).unwrap();
+        assert_eq!(restored.cursor.as_deref(), Some("1699000000000"));
+        assert_eq!(restored.synced_ids.len(), 2);
+        assert!(restored.last_seen_id.is_none());
+        assert!(restored.last_sync_at_ms.is_none());
+    }
+
+    #[test]
+    fn set_last_seen_id_overwrites_previous_value() {
+        let mut state = SyncState::new("gmail", "c");
+        state.set_last_seen_id("a");
+        state.set_last_seen_id("b");
+        assert_eq!(state.last_seen_id.as_deref(), Some("b"));
+    }
+
+    #[test]
+    fn set_last_sync_at_ms_records_value() {
+        let mut state = SyncState::new("gmail", "c");
+        state.set_last_sync_at_ms(123);
+        state.set_last_sync_at_ms(456);
+        assert_eq!(state.last_sync_at_ms, Some(456));
     }
 
     #[test]

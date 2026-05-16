@@ -26,6 +26,8 @@ use crate::openhuman::memory::tree::types::SourceKind;
 use crate::openhuman::memory::tree::util::redact::redact;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+const BODY_PREVIEW_MAX_BYTES: usize = 2048;
+
 /// Outcome of one ingest call.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct IngestResult {
@@ -158,19 +160,13 @@ async fn persist(
     let source_kind_for_store = canonical.metadata.source_kind;
 
     // Capture body_preview before the canonical markdown is moved into the chunker.
-    // For email and document sources: last ≤ 2 048 chars of the canonical markdown
-    // are enough for signature parsing and similar lightweight subscribers. Chat
-    // sources are conversational and have no trailing structure worth scanning, so
-    // they get body_preview = None.
+    // For email and document sources: the trailing canonical markdown, capped at
+    // 2 048 bytes, is enough for signature parsing and similar lightweight
+    // subscribers. Chat sources are conversational and have no trailing structure
+    // worth scanning, so they get body_preview = None.
     let body_preview: Option<String> = match source_kind_for_store {
         SourceKind::Email | SourceKind::Document => {
-            let md = &canonical.markdown;
-            let len = md.len();
-            Some(if len <= 2048 {
-                md.clone()
-            } else {
-                md[len - 2048..].to_string()
-            })
+            Some(markdown_body_preview(&canonical.markdown))
         }
         _ => None,
     };
@@ -361,6 +357,22 @@ async fn persist(
     })
 }
 
+/// Returns the trailing slice of `md` capped at [`BODY_PREVIEW_MAX_BYTES`] bytes.
+///
+/// Uses `ceil_char_boundary` (rounds the cut point *forward*) so the returned
+/// slice is always `<= BODY_PREVIEW_MAX_BYTES` bytes — `floor_char_boundary`
+/// (rounds backward) can return up to 3 extra bytes when the cut falls inside
+/// a multi-byte codepoint, violating the hard cap.
+fn markdown_body_preview(md: &str) -> String {
+    let len = md.len();
+    if len <= BODY_PREVIEW_MAX_BYTES {
+        md.to_string()
+    } else {
+        let start = crate::openhuman::util::ceil_char_boundary(md, len - BODY_PREVIEW_MAX_BYTES);
+        md[start..].to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -483,6 +495,41 @@ mod tests {
         assert_eq!(out.chunks_written, 0);
         assert_eq!(count_chunks(&cfg).unwrap(), 0);
         assert_eq!(count_scores(&cfg).unwrap(), 0);
+    }
+
+    #[test]
+    fn markdown_body_preview_respects_utf8_boundary_and_byte_cap() {
+        let md = format!("{}{}{}\n", "a".repeat(17), '\u{200c}', "b".repeat(2045));
+        let requested_start = md.len() - BODY_PREVIEW_MAX_BYTES;
+        assert!(
+            !md.is_char_boundary(requested_start),
+            "test fixture must put the requested preview boundary inside a multi-byte character"
+        );
+
+        let preview = markdown_body_preview(&md);
+
+        assert!(preview.len() <= BODY_PREVIEW_MAX_BYTES);
+        assert_eq!(preview, format!("{}\n", "b".repeat(2045)));
+    }
+
+    #[tokio::test]
+    async fn ingest_document_handles_utf8_at_body_preview_boundary() {
+        let (_tmp, cfg) = test_config();
+        let body = format!("{}{}{}", "a".repeat(17), '\u{200c}', "b".repeat(2045));
+
+        let doc = DocumentInput {
+            provider: "notion".into(),
+            title: "Unicode boundary".into(),
+            body,
+            modified_at: Utc.timestamp_millis_opt(1_700_000_000_000).unwrap(),
+            source_ref: Some("notion://page/unicode-boundary".into()),
+        };
+
+        let out = ingest_document(&cfg, "notion:utf8-boundary", "alice", vec![], doc)
+            .await
+            .unwrap();
+        assert!(!out.already_ingested);
+        assert!(out.chunks_written >= 1);
     }
 
     #[tokio::test]

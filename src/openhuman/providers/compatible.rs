@@ -12,7 +12,9 @@ mod compatible_stream;
 mod compatible_types;
 
 #[cfg(test)]
-pub(crate) use compatible_parse::{parse_sse_line, strip_think_tags};
+pub(crate) use compatible_parse::{
+    parse_provider_tool_call_from_value, parse_sse_line, strip_think_tags,
+};
 #[cfg(test)]
 pub(crate) use compatible_types::ResponsesResponse;
 
@@ -260,11 +262,17 @@ impl OpenAiCompatibleProvider {
                     .ends_with("/chat/completions")
             });
 
-        if has_full_endpoint {
+        let url = if has_full_endpoint {
             self.base_url.clone()
         } else {
             format!("{}/chat/completions", self.base_url)
-        }
+        };
+        log::info!(
+            "[provider:{}] outbound chat/completions -> {}",
+            self.name,
+            url
+        );
+        url
     }
 
     fn path_ends_with(&self, suffix: &str) -> bool {
@@ -392,7 +400,14 @@ impl OpenAiCompatibleProvider {
             let error = response.text().await?;
             let sanitized = super::sanitize_api_error(&error);
             let message = format!("{} Responses API error: {sanitized}", self.name);
-            if super::should_report_provider_http_failure(status) {
+            if super::is_budget_exhausted_http_400(status, &error) {
+                super::log_budget_exhausted_http_400(
+                    "responses_api",
+                    self.name.as_str(),
+                    Some(model),
+                    status,
+                );
+            } else if super::should_report_provider_http_failure(status) {
                 crate::core::observability::report_error(
                     message.as_str(),
                     "llm_provider",
@@ -728,7 +743,14 @@ impl OpenAiCompatibleProvider {
                 "{} streaming API error ({}): {}",
                 self.name, status, sanitized
             );
-            if super::should_report_provider_http_failure(status) {
+            if super::is_budget_exhausted_http_400(status, &body) {
+                super::log_budget_exhausted_http_400(
+                    "streaming_chat",
+                    self.name.as_str(),
+                    Some(native_request.model.as_str()),
+                    status,
+                );
+            } else if super::should_report_provider_http_failure(status) {
                 crate::core::observability::report_error(
                     message.as_str(),
                     "llm_provider",
@@ -987,10 +1009,12 @@ impl OpenAiCompatibleProvider {
                         None
                     } else {
                         // Try to parse as JSON first so downstream
-                        // `normalize_function_arguments` can handle the
-                        // usual Value path; fall back to a JSON-string
-                        // value if the accumulated text isn't valid
-                        // JSON yet.
+                        // `normalize_function_arguments` can take the
+                        // usual Value (object) path; fall back to a
+                        // JSON-string value for partially-assembled or
+                        // permanently malformed fragments.
+                        // `normalize_function_arguments` validates and
+                        // discards malformed strings (OPENHUMAN-TAURI-6F).
                         Some(
                             serde_json::from_str(&c.arguments)
                                 .unwrap_or(serde_json::Value::String(c.arguments)),
@@ -1180,7 +1204,14 @@ impl Provider for OpenAiCompatibleProvider {
 
             let status_str = status.as_u16().to_string();
             let message = format!("{} API error ({status}): {sanitized}", self.name);
-            if super::should_report_provider_http_failure(status) {
+            if super::is_budget_exhausted_http_400(status, &error) {
+                super::log_budget_exhausted_http_400(
+                    "chat_completions",
+                    self.name.as_str(),
+                    Some(model),
+                    status,
+                );
+            } else if super::should_report_provider_http_failure(status) {
                 crate::core::observability::report_error(
                     message.as_str(),
                     "llm_provider",
@@ -1564,7 +1595,14 @@ impl Provider for OpenAiCompatibleProvider {
 
             let status_str = status.as_u16().to_string();
             let message = format!("{} API error ({status}): {sanitized}", self.name);
-            if super::should_report_provider_http_failure(status) {
+            if super::is_budget_exhausted_http_400(status, &error) {
+                super::log_budget_exhausted_http_400(
+                    "native_chat",
+                    self.name.as_str(),
+                    Some(model),
+                    status,
+                );
+            } else if super::should_report_provider_http_failure(status) {
                 crate::core::observability::report_error(
                     message.as_str(),
                     "llm_provider",
@@ -1691,7 +1729,14 @@ impl Provider for OpenAiCompatibleProvider {
                 };
                 let sanitized_error = super::sanitize_api_error(&raw_error);
                 let message = format!("{}: {}", status, sanitized_error);
-                if super::should_report_provider_http_failure(status) {
+                if super::is_budget_exhausted_http_400(status, &raw_error) {
+                    super::log_budget_exhausted_http_400(
+                        "stream_chat",
+                        provider_name.as_str(),
+                        Some(model_owned.as_str()),
+                        status,
+                    );
+                } else if super::should_report_provider_http_failure(status) {
                     crate::core::observability::report_error(
                         message.as_str(),
                         "llm_provider",

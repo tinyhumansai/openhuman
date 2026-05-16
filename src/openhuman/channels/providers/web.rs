@@ -33,21 +33,47 @@ pub fn publish_web_channel_event(event: WebChannelEvent) {
     let _ = EVENT_BUS.send(event);
 }
 
+/// All inputs that the cached `SessionEntry`'s `Agent` was built from,
+/// captured at build time. The cache-hit predicate is a single
+/// `entry.fingerprint == current_fingerprint` comparison — pulling the
+/// fields into a named struct (instead of inlining four `&&`s) makes
+/// the predicate testable in isolation and makes "what invalidates the
+/// cache?" answerable in one place.
+///
+/// Adding a new dimension that should force a rebuild = add a field
+/// here and populate it both at insert time and at the call-site
+/// fingerprint construction.
+#[derive(PartialEq, Debug, Clone)]
+struct SessionCacheFingerprint {
+    /// Per-message `model_override` (clients can override the model
+    /// for an individual chat call).
+    model_override: Option<String>,
+    /// Per-message `temperature` override (same channel as
+    /// `model_override`).
+    temperature: Option<f64>,
+    /// Which agent definition was used to build `agent`. Without this
+    /// the cache hit short-circuited the welcome→orchestrator routing
+    /// fix — the very first turn picked welcome, welcome called
+    /// `complete_onboarding(complete)`, the flag flipped, but the next
+    /// turn read the cached welcome agent instead of invoking
+    /// `build_session_agent` to re-resolve the target.
+    target_agent_id: String,
+    /// `reasoning_provider` config value at build time. The cached
+    /// agent's provider was constructed from this string via
+    /// `create_chat_provider("reasoning", &config)`; without it the
+    /// next turn would reuse the stale provider after a Settings →
+    /// AI → LLM routing change until the cache evicts.
+    ///
+    /// Other workloads (`agentic`, `coding`, `memory`, …) are read
+    /// per call inside the factory, so they don't need to participate
+    /// in cache invalidation — only the orchestrator's reasoning
+    /// provider is bound to the cached `Agent`.
+    reasoning_provider: Option<String>,
+}
+
 struct SessionEntry {
     agent: Agent,
-    model_override: Option<String>,
-    temperature: Option<f64>,
-    /// Which agent definition was used to build `agent`. Recorded so
-    /// that the cache hit predicate in `run_chat_task` can detect
-    /// when the routing decision (welcome vs orchestrator) flips
-    /// between turns and rebuild instead of reusing a stale agent.
-    /// Without this field the cache hit short-circuited the routing
-    /// fix from Commit 8 — the very first turn picked welcome,
-    /// welcome called `complete_onboarding(complete)`, the flag
-    /// flipped, but the next turn read the cached welcome agent
-    /// instead of invoking `build_session_agent` to re-resolve the
-    /// target.
-    target_agent_id: String,
+    fingerprint: SessionCacheFingerprint,
 }
 
 /// Decide which agent definition this turn should run with.
@@ -130,22 +156,99 @@ fn generic_inference_error_user_message() -> &'static str {
     "Something went wrong. Please try again.\nThis error has been reported. You can also report it on Discord.\n<openhuman-link path=\"community/discord\">Report on Discord</openhuman-link>"
 }
 
-fn classify_inference_error(err: &str) -> (&'static str, &'static str) {
+/// Pull the structured provider error message out of a raw error string.
+///
+/// Provider error chains from OpenAI/Anthropic/OpenRouter/etc. arrive looking
+/// like `custom_openai API error (404 Not Found): {"error":{"message":"...","type":"..."}}`.
+/// We extract the `error.message` value so the UI can show the *real* reason
+/// — e.g. "Project ... does not have access to model `gpt-5.5`" — instead of
+/// a generic apology.
+///
+/// Returns `None` for transport-level failures (DNS, TLS, connect refused)
+/// where there is no provider body to quote — those have no actionable
+/// detail and the raw error text can leak internal infrastructure URLs,
+/// which the chat surface deliberately does not expose to end users.
+fn extract_provider_error_detail(err: &str) -> Option<String> {
+    const MAX_DETAIL_CHARS: usize = 300;
+
+    // Find the first `"message"` JSON field anywhere in the error chain.
+    let key = "\"message\"";
+    let idx = err.find(key)?;
+    let after_key = &err[idx + key.len()..];
+    // Skip whitespace and the colon to the opening quote of the value.
+    let after_colon = after_key.trim_start_matches(|c: char| c != '"');
+    let stripped = after_colon.strip_prefix('"')?;
+
+    // Manual unescape — handle `\"` and `\\` only; everything else passes
+    // through. Sufficient for OpenAI/Anthropic/etc. error bodies.
+    let mut out = String::new();
+    let mut chars = stripped.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '"' => {
+                let trimmed = out.trim();
+                if trimmed.is_empty() {
+                    return None;
+                }
+                let sanitized = crate::openhuman::providers::sanitize_api_error(trimmed);
+                return Some(crate::openhuman::util::truncate_with_ellipsis(
+                    &sanitized,
+                    MAX_DETAIL_CHARS,
+                ));
+            }
+            '\\' => {
+                if let Some(esc) = chars.next() {
+                    match esc {
+                        '"' => out.push('"'),
+                        '\\' => out.push('\\'),
+                        'n' => out.push('\n'),
+                        't' => out.push('\t'),
+                        other => out.push(other),
+                    }
+                }
+            }
+            other => out.push(other),
+        }
+    }
+
+    None
+}
+
+/// Append the upstream provider detail to a user-facing message, if a useful
+/// one can be extracted. Keeps the friendly summary first and the verbatim
+/// provider reason below as a quotable block.
+fn with_provider_detail(summary: &str, err: &str) -> String {
+    match extract_provider_error_detail(err) {
+        Some(detail) => format!("{summary}\n\n> {detail}"),
+        None => summary.to_string(),
+    }
+}
+
+fn classify_inference_error(err: &str) -> (&'static str, String) {
     let lower = err.to_lowercase();
     if lower.contains("rate limit") || lower.contains("429") {
         (
             "rate_limited",
-            "You're being rate-limited. Please wait a moment and try again.",
+            with_provider_detail(
+                "You're being rate-limited. Please wait a moment and try again.",
+                err,
+            ),
         )
     } else if lower.contains("timeout") || lower.contains("timed out") {
         (
             "timeout",
-            "The request timed out. Please check your connection and try again.",
+            with_provider_detail(
+                "The request timed out. Please check your connection and try again.",
+                err,
+            ),
         )
     } else if lower.contains("401") || lower.contains("unauthorized") || lower.contains("api key") {
         (
             "auth_error",
-            "There's an authentication issue with the AI provider. Please check your API key in settings.",
+            with_provider_detail(
+                "There's an authentication issue with the AI provider. Please check your API key in settings.",
+                err,
+            ),
         )
     } else if lower.contains("402")
         || lower.contains("payment required")
@@ -153,7 +256,7 @@ fn classify_inference_error(err: &str) -> (&'static str, &'static str) {
     {
         (
             "budget_exhausted",
-            "Insufficient credits. Please top up to continue.",
+            with_provider_detail("Insufficient credits. Please top up to continue.", err),
         )
     } else if lower.contains("500")
         || lower.contains("internal server")
@@ -162,7 +265,10 @@ fn classify_inference_error(err: &str) -> (&'static str, &'static str) {
     {
         (
             "provider_error",
-            "The AI provider is temporarily unavailable. Please try again later.",
+            with_provider_detail(
+                "The AI provider is temporarily unavailable. Please try again later.",
+                err,
+            ),
         )
     } else if lower.contains("context")
         && (lower.contains("length")
@@ -172,17 +278,29 @@ fn classify_inference_error(err: &str) -> (&'static str, &'static str) {
     {
         (
             "context_overflow",
-            "The conversation is too long. Please start a new chat.",
+            with_provider_detail(
+                "The conversation is too long. Please start a new chat.",
+                err,
+            ),
         )
     } else if lower.contains("model")
-        && (lower.contains("not found") || lower.contains("unavailable"))
+        && (lower.contains("not found")
+            || lower.contains("unavailable")
+            || lower.contains("does not exist")
+            || lower.contains("does not have access"))
     {
         (
             "model_unavailable",
-            "The selected model is not available. Please check your model settings.",
+            with_provider_detail(
+                "The selected model isn't available on your provider. Check your model settings.",
+                err,
+            ),
         )
     } else {
-        ("inference", generic_inference_error_user_message())
+        (
+            "inference",
+            with_provider_detail(generic_inference_error_user_message(), err),
+        )
     }
 }
 
@@ -337,25 +455,55 @@ pub async fn start_chat(
                     client_id_task, thread_id_task, request_id_task, err
                 );
                 let (classified_type, classified_message) = classify_inference_error(&err);
-                crate::core::observability::report_error(
-                    detailed.as_str(),
-                    "web_channel",
-                    "run_chat_task",
-                    &[
-                        ("channel", "web"),
-                        ("error_type", classified_type),
-                        ("thread_id", thread_id_task.as_str()),
-                        ("request_id", request_id_task.as_str()),
-                    ],
-                );
+                let classified_type_string = classified_type.to_string();
+                // Max-tool-iterations cap is a deterministic agent-state
+                // outcome surfaced to the user via the existing
+                // `WebChannelEvent::chat_error` event below. Skip the
+                // Sentry funnel entirely for that variant
+                // (OPENHUMAN-TAURI-98). Substring match is required here
+                // because the typed `AgentError` was flattened to a
+                // `String` at the native-bus boundary.
+                //
+                // Other errors flow through `report_error_or_expected`
+                // so transport-level transient failures (DNS/TCP/TLS
+                // handshake, ISP blocks — OPENHUMAN-TAURI-32 for the RU
+                // user who couldn't reach api.tinyhumans.ai at all) get
+                // logged as warn-level breadcrumbs instead of error
+                // events. Sentry has no signal to act on those — no
+                // status, no trace, no payload — and every retry
+                // exhaustion produces another noisy event.
+                if crate::openhuman::agent::error::is_max_iterations_error(&detailed) {
+                    log::info!(
+                        target: "web_channel",
+                        "[web_channel.run_chat_task] suppressed Sentry emission for max-iteration \
+                         cap client_id={} thread_id={} request_id={} error_type={} message={}",
+                        client_id_task,
+                        thread_id_task,
+                        request_id_task,
+                        classified_type,
+                        detailed
+                    );
+                } else {
+                    crate::core::observability::report_error_or_expected(
+                        detailed.as_str(),
+                        "web_channel",
+                        "run_chat_task",
+                        &[
+                            ("channel", "web"),
+                            ("error_type", classified_type),
+                            ("thread_id", thread_id_task.as_str()),
+                            ("request_id", request_id_task.as_str()),
+                        ],
+                    );
+                }
                 publish_web_channel_event(WebChannelEvent {
                     event: "chat_error".to_string(),
                     client_id: client_id_task.clone(),
                     thread_id: thread_id_task.clone(),
                     request_id: request_id_task.clone(),
                     full_response: None,
-                    message: Some(classified_message.to_string()),
-                    error_type: Some(classified_type.to_string()),
+                    message: Some(classified_message),
+                    error_type: Some(classified_type_string),
                     tool_name: None,
                     skill_id: None,
                     args: None,
@@ -502,6 +650,12 @@ async fn run_chat_task(
     // turn from the cached welcome agent — the cache hit predicate
     // didn't know about the routing decision before Commit 13.
     let target_agent_id = pick_target_agent_id(&config).to_string();
+    let current_fp = SessionCacheFingerprint {
+        model_override: model_override.clone(),
+        temperature,
+        target_agent_id: target_agent_id.clone(),
+        reasoning_provider: config.reasoning_provider.clone(),
+    };
 
     let prior = {
         let mut sessions = THREAD_SESSIONS.lock().await;
@@ -509,11 +663,7 @@ async fn run_chat_task(
     };
 
     let (mut agent, was_built_fresh) = match prior {
-        Some(entry)
-            if entry.model_override == model_override
-                && entry.temperature == temperature
-                && entry.target_agent_id == target_agent_id =>
-        {
+        Some(entry) if entry.fingerprint == current_fp => {
             log::info!(
                 "[web-channel] reusing cached session agent id={} for client={} thread={}",
                 target_agent_id,
@@ -524,9 +674,13 @@ async fn run_chat_task(
         }
         Some(prior_entry) => {
             log::info!(
-                "[web-channel] cache miss — rebuilding session agent (was id={}, now id={}) for client={} thread={}",
-                prior_entry.target_agent_id,
+                "[web-channel] cache miss — rebuilding session agent \
+                 (was id={}, now id={}; prior_reasoning_provider={:?}, now={:?}) \
+                 for client={} thread={}",
+                prior_entry.fingerprint.target_agent_id,
                 target_agent_id,
+                prior_entry.fingerprint.reasoning_provider,
+                current_fp.reasoning_provider,
                 client_id,
                 thread_id
             );
@@ -659,9 +813,7 @@ async fn run_chat_task(
             map_key,
             SessionEntry {
                 agent,
-                model_override,
-                temperature,
-                target_agent_id,
+                fingerprint: current_fp,
             },
         );
     }

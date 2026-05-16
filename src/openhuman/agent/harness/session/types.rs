@@ -71,7 +71,25 @@ pub struct Agent {
     /// Human-readable agent definition name (e.g. `"main"`,
     /// `"code_executor"`). Used as the `{agent}` component in session
     /// transcript paths: `sessions/DDMMYYYY/{agent}_{index}.md`.
+    ///
+    /// May be rewritten mid-session by
+    /// [`Agent::set_agent_definition_name`] (e.g. the web channel
+    /// stamps `"orchestrator_<short_thread>"` so each thread gets its
+    /// own transcript namespace). Anything that needs to resolve the
+    /// session back to its registry entry must use
+    /// [`Self::agent_definition_id`], not this field.
     pub(super) agent_definition_name: String,
+    /// Canonical agent id as registered in
+    /// [`AgentDefinitionRegistry`] (e.g. `"orchestrator"`,
+    /// `"integrations_agent"`). Set once at build time and never
+    /// rewritten — `set_agent_definition_name` only touches the
+    /// transcript-facing `agent_definition_name`, so registry lookups
+    /// (e.g. `refresh_delegation_tools` re-resolving the agent's
+    /// `subagents` list post-fetch) stay correct even after the web
+    /// channel's per-thread rename.
+    ///
+    /// [`AgentDefinitionRegistry`]: crate::openhuman::agent::harness::definition::AgentDefinitionRegistry
+    pub(super) agent_definition_id: String,
     /// Resolved filesystem path for this session's transcript file.
     /// Set on first write, reused for subsequent overwrites within the
     /// same session.
@@ -113,14 +131,6 @@ pub struct Agent {
     /// the delegator / skill-executor voices can render their own
     /// integration blocks.
     pub(super) connected_integrations: Vec<crate::openhuman::context::prompt::ConnectedIntegration>,
-    /// Composio client, built alongside `connected_integrations` and
-    /// shared into [`harness::ParentExecutionContext`] at turn start
-    /// so the sub-agent runner can dynamically construct per-action
-    /// [`crate::openhuman::composio::ComposioActionTool`] instances
-    /// when `integrations_agent` is spawned with a `toolkit` argument.
-    /// `None` when the user isn't signed in or the backend is
-    /// unreachable.
-    pub(super) composio_client: Option<crate::openhuman::composio::ComposioClient>,
     /// Mirrors the agent definition's `omit_profile` flag. Threaded into
     /// [`PromptContext::include_profile`] in `turn::build_system_prompt`
     /// so only user-facing agents (welcome, orchestrator, triggers)
@@ -138,6 +148,33 @@ pub struct Agent {
     /// summarizer sub-agent before they enter agent history.
     pub(super) payload_summarizer:
         Option<Arc<dyn crate::openhuman::agent::harness::payload_summarizer::PayloadSummarizer>>,
+    /// Hash of the Composio connection set this Agent last reconciled
+    /// against. Compared at top-of-turn to a fresh hash computed from
+    /// [`crate::openhuman::composio::cached_active_integrations`]; on
+    /// diff, [`Agent::refresh_delegation_tools`] re-synthesises the
+    /// `delegate_<toolkit>` surface to match the live connected set.
+    ///
+    /// Initialised to `0` at construction. Turn 1's existing refresh
+    /// path (gated by `history.is_empty()`) writes the first real hash
+    /// after [`Agent::fetch_connected_integrations`] populates
+    /// [`Agent::connected_integrations`], so the per-turn check is
+    /// dormant on session startup and only fires when integrations
+    /// actually change mid-conversation.
+    pub(super) last_seen_integrations_hash: u64,
+    /// Names of every tool currently in [`Agent::tools`] that was
+    /// produced by [`crate::openhuman::tools::orchestrator_tools::collect_orchestrator_tools`]
+    /// (i.e. `delegate_<toolkit>` skill tools and archetype-delegation
+    /// tools like `delegate_archivist`). Tracked so
+    /// [`Agent::refresh_delegation_tools`] can drop the entire
+    /// previously-synthesised subset on each refresh and append the
+    /// fresh set — without that mask we'd risk either leaking stale
+    /// `delegate_<toolkit>` entries on revoke or accidentally removing
+    /// direct tools (`query_memory`, `cron_add`, …) that share a name
+    /// prefix.
+    ///
+    /// Populated by `refresh_delegation_tools` itself; empty at
+    /// construction time.
+    pub(super) synthesized_tool_names: std::collections::HashSet<String>,
 }
 
 /// A builder for creating `Agent` instances with custom configuration.

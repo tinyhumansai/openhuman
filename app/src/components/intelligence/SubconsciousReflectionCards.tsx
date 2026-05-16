@@ -15,6 +15,7 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 
+import { useT } from '../../lib/i18n/I18nContext';
 import {
   actOnReflection,
   dismissReflection,
@@ -42,7 +43,7 @@ interface SubconsciousReflectionCardsProps {
   initialReflections?: Reflection[];
 }
 
-const KIND_LABEL: Record<ReflectionKind, string> = {
+const KIND_LABEL: Partial<Record<ReflectionKind, string>> = {
   hotness_spike: 'Hotness spike',
   cross_source_pattern: 'Cross-source pattern',
   daily_digest: 'Daily digest',
@@ -51,6 +52,10 @@ const KIND_LABEL: Record<ReflectionKind, string> = {
   opportunity: 'Opportunity',
 };
 
+function kindLabel(kind: ReflectionKind, _t: (key: string) => string): string {
+  return KIND_LABEL[kind] ?? kind;
+}
+
 /**
  * Render a `created_at` (epoch seconds, as Rust serializes `f64` from
  * `subconscious_reflections.created_at`) into a short relative-time
@@ -58,14 +63,17 @@ const KIND_LABEL: Record<ReflectionKind, string> = {
  * than ~7 days falls back to a fixed `MMM D` so cards aren't ambiguous
  * when the user scrolls into older reflections.
  */
-function formatRelativeTime(epochSeconds: number): string {
+function formatRelativeTime(epochSeconds: number, t: (key: string) => string): string {
   const nowMs = Date.now();
   const tsMs = epochSeconds * 1000;
-  const diffSec = Math.max(0, Math.round((nowMs - tsMs) / 1000));
-  if (diffSec < 45) return 'Just now';
-  if (diffSec < 3600) return `${Math.round(diffSec / 60)}m ago`;
-  if (diffSec < 86_400) return `${Math.round(diffSec / 3600)}h ago`;
-  if (diffSec < 604_800) return `${Math.round(diffSec / 86_400)}d ago`;
+  const diffSec = Math.max(0, Math.floor((nowMs - tsMs) / 1000));
+  if (diffSec < 45) return t('notifications.justNow');
+  if (diffSec < 3600)
+    return t('notifications.minAgo').replace('{n}', String(Math.floor(diffSec / 60)));
+  if (diffSec < 86_400)
+    return t('notifications.hrAgo').replace('{n}', String(Math.floor(diffSec / 3600)));
+  if (diffSec < 604_800)
+    return t('notifications.dayAgo').replace('{n}', String(Math.floor(diffSec / 86_400)));
   return new Date(tsMs).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
@@ -79,6 +87,7 @@ export default function SubconsciousReflectionCards({
   pollIntervalMs = 0,
   initialReflections,
 }: SubconsciousReflectionCardsProps) {
+  const { t } = useT();
   const [reflections, setReflections] = useState<Reflection[]>(initialReflections ?? []);
   const [hiddenIds, setHiddenIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(initialReflections === undefined);
@@ -165,7 +174,7 @@ export default function SubconsciousReflectionCards({
   if (loading) {
     return (
       <div data-testid="reflection-cards-loading" className="text-xs text-stone-400 py-2">
-        Loading reflections…
+        {t('reflections.loading')}
       </div>
     );
   }
@@ -173,7 +182,7 @@ export default function SubconsciousReflectionCards({
   if (visible.length === 0 && !error) {
     return (
       <div data-testid="reflection-cards-empty" className="text-xs text-stone-400 py-3">
-        No proactive observations yet — they appear after each subconscious tick.
+        {t('reflections.empty')}
       </div>
     );
   }
@@ -188,7 +197,7 @@ export default function SubconsciousReflectionCards({
       <div className="shrink-0 pb-3">
         <h3 className="text-sm font-semibold text-stone-900 flex items-center gap-2">
           <span className="w-2 h-2 rounded-full bg-primary-400" />
-          Reflections
+          {t('reflections.title')}
           <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-primary-50 text-primary-700">
             {visible.length}
           </span>
@@ -225,19 +234,19 @@ export default function SubconsciousReflectionCards({
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 mb-1">
                   <span className="text-[10px] px-2 py-0.5 rounded-full bg-stone-100 text-stone-600">
-                    {KIND_LABEL[r.kind] ?? r.kind}
+                    {kindLabel(r.kind, t)}
                   </span>
                   <span
                     data-testid={`reflection-timestamp-${r.id}`}
                     className="text-[10px] text-stone-400"
                     title={formatAbsoluteTime(r.created_at)}>
-                    {formatRelativeTime(r.created_at)}
+                    {formatRelativeTime(r.created_at, t)}
                   </span>
                 </div>
                 <p className="text-sm text-stone-900 whitespace-pre-line break-words">{r.body}</p>
                 {r.proposed_action && (
                   <p className="text-xs text-stone-500 mt-2">
-                    <em>Proposed action:</em> {r.proposed_action}
+                    <em>{t('reflections.proposedAction')}:</em> {r.proposed_action}
                   </p>
                 )}
               </div>
@@ -247,14 +256,14 @@ export default function SubconsciousReflectionCards({
                     data-testid={`reflection-act-${r.id}`}
                     onClick={() => void handleAct(r)}
                     className="px-3 py-1.5 text-xs bg-primary-500 hover:bg-primary-600 text-white rounded-lg transition-colors">
-                    Act
+                    {t('reflections.act')}
                   </button>
                 )}
                 <button
                   data-testid={`reflection-dismiss-${r.id}`}
                   onClick={() => void handleDismiss(r.id)}
                   className="px-3 py-1.5 text-xs bg-stone-100 hover:bg-stone-200 text-stone-600 rounded-lg transition-colors">
-                  Dismiss
+                  {t('reflections.dismiss')}
                 </button>
               </div>
             </div>

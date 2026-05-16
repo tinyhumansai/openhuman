@@ -15,6 +15,16 @@ fn enabled_config() -> Config {
     config
 }
 
+fn lm_studio_config(base: &str) -> Config {
+    let mut config = enabled_config();
+    config.local_ai.provider = "lm_studio".to_string();
+    config.local_ai.base_url = Some(format!("{base}/v1"));
+    config.local_ai.model_id = "local-model".to_string();
+    config.local_ai.chat_model_id = "local-model".to_string();
+    config.local_ai.opt_in_confirmed = true;
+    config
+}
+
 /// Build a LocalAiService pre-seeded to `ready` so inference calls skip
 /// `bootstrap()` and hit the HTTP path directly.
 fn ready_service(config: &Config) -> LocalAiService {
@@ -28,9 +38,7 @@ fn ready_service(config: &Config) -> LocalAiService {
 
 #[tokio::test]
 async fn inference_hits_ollama_generate_and_returns_response() {
-    let _guard = crate::openhuman::local_ai::LOCAL_AI_TEST_MUTEX
-        .lock()
-        .expect("local ai test mutex");
+    let _guard = crate::openhuman::local_ai::local_ai_test_guard();
 
     let app = Router::new().route(
         "/api/generate",
@@ -67,9 +75,7 @@ async fn inference_hits_ollama_generate_and_returns_response() {
 
 #[tokio::test]
 async fn inference_errors_on_non_success_status() {
-    let _guard = crate::openhuman::local_ai::LOCAL_AI_TEST_MUTEX
-        .lock()
-        .expect("local ai test mutex");
+    let _guard = crate::openhuman::local_ai::local_ai_test_guard();
 
     let app = Router::new().route(
         "/api/generate",
@@ -92,9 +98,7 @@ async fn inference_errors_on_non_success_status() {
 
 #[tokio::test]
 async fn inference_errors_on_empty_response_when_allow_empty_false() {
-    let _guard = crate::openhuman::local_ai::LOCAL_AI_TEST_MUTEX
-        .lock()
-        .expect("local ai test mutex");
+    let _guard = crate::openhuman::local_ai::local_ai_test_guard();
 
     let app = Router::new().route(
         "/api/generate",
@@ -127,6 +131,103 @@ async fn inference_errors_on_empty_response_when_allow_empty_false() {
         err.contains("empty"),
         "expected an empty-content error, got: {err}"
     );
+}
+
+#[tokio::test]
+async fn lm_studio_prompt_hits_openai_chat_completions() {
+    let _guard = crate::openhuman::local_ai::local_ai_test_guard();
+
+    let app = Router::new().route(
+        "/v1/chat/completions",
+        post(|Json(body): Json<serde_json::Value>| async move {
+            assert_eq!(body["model"], "local-model");
+            assert_eq!(body["stream"], false);
+            assert_eq!(body["max_tokens"], 16);
+            assert_eq!(body["messages"][0]["role"], "system");
+            assert_eq!(body["messages"][1]["role"], "user");
+            Json(json!({
+                "id": "chatcmpl-test",
+                "object": "chat.completion",
+                "choices": [{
+                    "index": 0,
+                    "message": { "role": "assistant", "content": "hello from lm studio" },
+                    "finish_reason": "stop"
+                }],
+                "usage": { "prompt_tokens": 7, "completion_tokens": 4, "total_tokens": 11 }
+            }))
+        }),
+    );
+    let base = spawn_mock(app).await;
+    let config = lm_studio_config(&base);
+    let service = ready_service(&config);
+
+    let reply = service
+        .prompt(&config, "hi", Some(16), true)
+        .await
+        .expect("lm studio prompt");
+
+    assert_eq!(reply, "hello from lm studio");
+    let status = service.status();
+    assert_eq!(status.provider, "lm_studio");
+    assert_eq!(status.state, "ready");
+}
+
+#[tokio::test]
+async fn lm_studio_chat_with_history_returns_response() {
+    let _guard = crate::openhuman::local_ai::local_ai_test_guard();
+
+    let app = Router::new().route(
+        "/v1/chat/completions",
+        post(|Json(body): Json<serde_json::Value>| async move {
+            assert_eq!(body["messages"][0]["role"], "system");
+            assert_eq!(body["messages"][1]["role"], "user");
+            Json(json!({
+                "choices": [{
+                    "message": { "role": "assistant", "content": "history reply" }
+                }]
+            }))
+        }),
+    );
+    let base = spawn_mock(app).await;
+    let config = lm_studio_config(&base);
+    let service = ready_service(&config);
+
+    let reply = service
+        .chat_with_history(
+            &config,
+            vec![
+                crate::openhuman::local_ai::ollama_api::OllamaChatMessage {
+                    role: "system".to_string(),
+                    content: "be terse".to_string(),
+                },
+                crate::openhuman::local_ai::ollama_api::OllamaChatMessage {
+                    role: "user".to_string(),
+                    content: "hi".to_string(),
+                },
+            ],
+            None,
+        )
+        .await
+        .expect("lm studio chat");
+
+    assert_eq!(reply, "history reply");
+}
+
+#[tokio::test]
+async fn lm_studio_prompt_errors_on_non_success_status() {
+    let _guard = crate::openhuman::local_ai::local_ai_test_guard();
+
+    let app = Router::new().route(
+        "/v1/chat/completions",
+        post(|| async { (axum::http::StatusCode::BAD_GATEWAY, "not ready") }),
+    );
+    let base = spawn_mock(app).await;
+    let config = lm_studio_config(&base);
+    let service = ready_service(&config);
+
+    let err = service.prompt(&config, "hi", None, true).await.unwrap_err();
+
+    assert!(err.contains("lm studio chat failed with status 502"));
 }
 
 #[tokio::test]
@@ -183,9 +284,7 @@ async fn inline_complete_interactive_disabled_returns_empty_string() {
 /// the permit it would deadlock or time out.
 #[tokio::test]
 async fn inline_complete_interactive_does_not_block_on_held_permit() {
-    let _guard = crate::openhuman::local_ai::LOCAL_AI_TEST_MUTEX
-        .lock()
-        .expect("local ai test mutex");
+    let _guard = crate::openhuman::local_ai::local_ai_test_guard();
 
     // Hold the global LLM permit for the duration of the test.
     let _held = crate::openhuman::scheduler_gate::gate::try_acquire_llm_permit()
@@ -242,9 +341,7 @@ async fn inline_complete_interactive_does_not_block_on_held_permit() {
 // safer trade-off. See PR #1524.
 #[ignore = "flaky timing under full-suite load — see PR #1524"]
 async fn gated_inline_complete_blocks_on_held_permit() {
-    let _guard = crate::openhuman::local_ai::LOCAL_AI_TEST_MUTEX
-        .lock()
-        .expect("local ai test mutex");
+    let _guard = crate::openhuman::local_ai::local_ai_test_guard();
 
     let held = crate::openhuman::scheduler_gate::gate::try_acquire_llm_permit()
         .expect("test must start with a free permit");

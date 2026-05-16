@@ -365,6 +365,7 @@ jobs:
           OPENHUMAN_APP_ENV: ${{ inputs.app_env }}
           VITE_OPENHUMAN_APP_ENV: ${{ inputs.app_env }}
           VITE_BACKEND_URL: ${{ inputs.base_url }}
+          VITE_GA_MEASUREMENT_ID: ${{ vars.VITE_GA_MEASUREMENT_ID }}
           # React frontend Sentry DSN — separate Sentry project. Baked by the
           # Vite plugin via `import.meta.env.VITE_SENTRY_DSN`.
           VITE_SENTRY_DSN: ${{ vars.OPENHUMAN_REACT_SENTRY_DSN }}

@@ -1,38 +1,69 @@
 ##
-# Run Linux E2E tests locally from macOS via Docker.
+# Run the Linux E2E flow locally on macOS via Docker.
+#
+# This mirrors the `e2e-linux` job in `.github/workflows/e2e.yml` so any
+# fix that turns the local run green is what CI will run too:
+#   - same image: ghcr.io/tinyhumansai/openhuman_ci:latest
+#   - same Xvfb + dbus bootstrap (via e2e/docker-entrypoint.sh)
+#   - same runner: app/scripts/e2e-run-session.sh (Appium chromium driver
+#     attached to CEF on :19222), NOT the retired tauri-driver path.
 #
 # Usage:
-#   # Build + run all E2E flows
-#   docker compose -f e2e/docker-compose.yml run --rm e2e
-#
-#   # Run a specific spec
+#   # Build the E2E app once (slow — produces the CEF bundle):
 #   docker compose -f e2e/docker-compose.yml run --rm e2e \
-#     bash app/scripts/e2e-run-spec.sh test/e2e/specs/smoke.spec.ts smoke
+#     bash -lc "pnpm install --frozen-lockfile && pnpm --filter openhuman-app test:e2e:build"
 #
-#   # Build the E2E app first (if not already built)
+#   # Then run a spec (smoke / mega-flow / etc):
 #   docker compose -f e2e/docker-compose.yml run --rm e2e \
-#     yarn workspace openhuman-app test:e2e:build
+#     bash -lc "bash app/scripts/e2e-run-session.sh test/e2e/specs/mega-flow.spec.ts mega-flow"
+#
+#   # Or run the full suite:
+#   docker compose -f e2e/docker-compose.yml run --rm e2e \
+#     bash -lc "bash app/scripts/e2e-run-session.sh"
 #
 # Notes:
-#   - Uses the same CI image from GHCR (built by .github/workflows/docker-ci-image.yml)
-#   - The repo is bind-mounted at /app so builds persist between runs
-#   - Rust target/ and node_modules/ are cached via named volumes
-#   - Xvfb provides a virtual display for webkit2gtk rendering
+#   - The repo is bind-mounted at /workspace so builds + edits round-trip.
+#   - Rust target/ and pnpm/npm caches live in named volumes so warm
+#     re-runs are fast.
+#   - Appium 3 + appium-chromium-driver are installed on first entry by
+#     the entrypoint (cached into the npm volume after that).
 #
 services:
   e2e:
-    image: ghcr.io/tinyhumansai/openhuman_ci:latest
-    entrypoint: ["/docker-entrypoint.sh"]
-    command: ["yarn", "workspace", "openhuman-app", "test:e2e:all"]
-    working_dir: /app
+    image: ${OPENHUMAN_CI_IMAGE:-ghcr.io/tinyhumansai/openhuman_ci:latest}
+    # Use the bind-mounted local bootstrap (Xvfb + dbus + Appium + pnpm).
+    # The image's baked-in /docker-entrypoint.sh is the CI version; the
+    # local wrapper additionally lazy-installs Appium and JS deps so a
+    # fresh checkout becomes runnable with one command.
+    entrypoint: ["/workspace/e2e/docker-local-bootstrap.sh"]
+    # Default to an interactive shell so the user can `docker compose run`
+    # without an explicit command. CI-style one-shot invocations override
+    # this on the command line.
+    command: ["bash", "-l"]
+    working_dir: /workspace
     volumes:
-      - ..:/app
+      - ../:/workspace
       - e2e-cargo-registry:/usr/local/cargo/registry
       - e2e-cargo-git:/usr/local/cargo/git
+      - e2e-rust-target:/workspace/target
+      - e2e-tauri-target:/workspace/app/src-tauri/target
+      - e2e-pnpm-store:/root/.local/share/pnpm/store
+      - e2e-npm-global:/usr/lib/node_modules
     environment:
       - DISPLAY=:99
       - CI=true
+      # Appium chromium driver downloads a chromedriver matching CEF's
+      # Chromium version; cache it next to the repo so re-runs are fast.
+      - WDIO_CHROMEDRIVER_CACHE=/workspace/.cache/chromedriver
+    # CEF spawns a lot of helper processes; the default IPC namespace
+    # sometimes runs out of shm. Bump it to match what GitHub-hosted
+    # ubuntu-22.04 runners give CEF.
+    shm_size: 2gb
 
 volumes:
   e2e-cargo-registry:
   e2e-cargo-git:
+  e2e-rust-target:
+  e2e-tauri-target:
+  e2e-pnpm-store:
+  e2e-npm-global:

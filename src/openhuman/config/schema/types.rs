@@ -9,6 +9,14 @@ use std::path::PathBuf;
 /// Standard model identifiers matching the backend model registry.
 pub const MODEL_AGENTIC_V1: &str = "agentic-v1";
 pub const MODEL_REASONING_V1: &str = "reasoning-v1";
+/// Low-latency chat tier. Backend maps this to Kimi K2.6 Turbo on
+/// Fireworks (128k context, `supportsThinking: false`) — tuned for
+/// time-to-first-token on conversational turns. See backend PR #760.
+/// The orchestrator (user-facing front-line agent) rides on this tier
+/// by default (via `hint:chat`) so chat responses feel snappy; reach
+/// for the slower `reasoning-v1` (DeepSeek V4 Pro) only when deep
+/// reasoning is needed.
+pub const MODEL_REASONING_QUICK_V1: &str = "reasoning-quick-v1";
 pub const MODEL_CODING_V1: &str = "coding-v1";
 /// Default model used when no explicit model is configured.
 ///
@@ -28,8 +36,22 @@ pub struct Config {
     pub workspace_dir: PathBuf,
     #[serde(skip)]
     pub config_path: PathBuf,
+    /// Workspace data-schema version. Bumped each time a one-shot data
+    /// migration under [`crate::openhuman::migrations`] runs successfully.
+    /// `#[serde(default)]` so existing `config.toml` files (which predate
+    /// the field) load as version `0` and pick up pending migrations on
+    /// the first launch of the new build.
+    #[serde(default)]
+    pub schema_version: u32,
     pub api_url: Option<String>,
     pub api_key: Option<String>,
+    /// Custom LLM inference endpoint (OpenAI-compatible). When set together
+    /// with `api_key`, the inference provider talks directly to this URL
+    /// instead of routing through the OpenHuman backend. Account/auth/billing
+    /// calls always continue to use `api_url` — keeping inference and
+    /// product-backend concerns cleanly separated.
+    #[serde(default)]
+    pub inference_url: Option<String>,
     pub default_model: Option<String>,
     #[serde(default = "default_temperature_value")]
     pub default_temperature: f64,
@@ -122,6 +144,9 @@ pub struct Config {
     pub multimodal: MultimodalConfig,
 
     #[serde(default)]
+    pub seltz: SeltzConfig,
+
+    #[serde(default)]
     pub web_search: WebSearchConfig,
 
     #[serde(default)]
@@ -138,6 +163,64 @@ pub struct Config {
 
     #[serde(default)]
     pub local_ai: LocalAiConfig,
+
+    // ── Unified AI provider routing ──────────────────────────────────────────
+    //
+    // Provider-string grammar (consumed by `providers::factory`):
+    //
+    //   "cloud"                → resolves to `primary_cloud`; if primary is
+    //                            openhuman, behaves identically to "openhuman"
+    //   "openhuman"            → OpenHuman backend (api_url + api_key session JWT)
+    //   "openai:<model>"       → look up cloud_providers entry of type=openai;
+    //                            build OpenAiCompatibleProvider with Bearer auth
+    //   "anthropic:<model>"    → type=anthropic; Bearer auth on the compat endpoint
+    //   "openrouter:<model>"   → type=openrouter; Bearer auth
+    //   "custom:<model>"       → type=custom; Bearer auth
+    //   "ollama:<model>"       → local Ollama at config.local_ai.base_url
+    //
+    // Per-workload fields default to None, which the factory treats as "cloud".
+    // Changing `primary_cloud` instantly re-routes every "cloud" workload.
+    /// Registered cloud providers. Index 0 is always the built-in OpenHuman
+    /// entry; additional entries are user-added third-party backends.
+    #[serde(default)]
+    pub cloud_providers: Vec<crate::openhuman::config::schema::cloud_providers::CloudProviderCreds>,
+
+    /// Id of the `cloud_providers` entry that "cloud" and "primary" resolve to.
+    /// When `None`, the factory falls back to the OpenHuman entry.
+    #[serde(default)]
+    pub primary_cloud: Option<String>,
+
+    /// Provider string for the main reasoning / chat workload.
+    #[serde(default)]
+    pub reasoning_provider: Option<String>,
+
+    /// Provider string for sub-agent execution and tool-loop workloads.
+    #[serde(default)]
+    pub agentic_provider: Option<String>,
+
+    /// Provider string for code generation and refactor workloads.
+    #[serde(default)]
+    pub coding_provider: Option<String>,
+
+    /// Provider string for memory-tree extract + summarise workloads.
+    #[serde(default)]
+    pub memory_provider: Option<String>,
+
+    /// Provider string for embedding generation.
+    #[serde(default)]
+    pub embeddings_provider: Option<String>,
+
+    /// Provider string for the heartbeat background-reasoning loop.
+    #[serde(default)]
+    pub heartbeat_provider: Option<String>,
+
+    /// Provider string for learning / reflection passes.
+    #[serde(default)]
+    pub learning_provider: Option<String>,
+
+    /// Provider string for subconscious evaluation and drift checks.
+    #[serde(default)]
+    pub subconscious_provider: Option<String>,
 
     /// Node.js managed runtime configuration (skills that need `node`/`npm`).
     #[serde(default)]
@@ -244,6 +327,47 @@ impl Config {
             .clone()
             .unwrap_or_else(|| self.workspace_dir.join("memory_tree").join("content"))
     }
+
+    /// Read the per-workload provider string and return the local model id
+    /// when the workload is routed to Ollama.
+    ///
+    /// Recognised workload names:
+    /// `"reasoning"`, `"agentic"`, `"coding"`, `"memory"`, `"embeddings"`,
+    /// `"heartbeat"`, `"learning"`, `"subconscious"`.
+    ///
+    /// Returns `None` when the provider isn't `"ollama:<model>"` (including
+    /// when the field is unset, blank, `"cloud"`, or any other prefix).
+    /// This is the single source of truth for "is this workload local?" —
+    /// callers MUST NOT consult the legacy `local_ai.usage.*` booleans or
+    /// `memory_tree.llm_backend`. Those fields are deprecated zombies kept
+    /// for migration only.
+    pub fn workload_local_model(&self, workload: &str) -> Option<String> {
+        let raw = match workload {
+            "reasoning" => self.reasoning_provider.as_deref(),
+            "agentic" => self.agentic_provider.as_deref(),
+            "coding" => self.coding_provider.as_deref(),
+            "memory" => self.memory_provider.as_deref(),
+            "embeddings" => self.embeddings_provider.as_deref(),
+            "heartbeat" => self.heartbeat_provider.as_deref(),
+            "learning" => self.learning_provider.as_deref(),
+            "subconscious" => self.subconscious_provider.as_deref(),
+            _ => None,
+        }?;
+        let trimmed = raw.trim();
+        let model = trimmed.strip_prefix("ollama:")?.trim();
+        if model.is_empty() {
+            None
+        } else {
+            Some(model.to_string())
+        }
+    }
+
+    /// `true` when `workload_local_model` returns `Some` for the named
+    /// workload. Convenience wrapper for the common "do I dispatch
+    /// locally?" branch.
+    pub fn workload_uses_local(&self, workload: &str) -> bool {
+        self.workload_local_model(workload).is_some()
+    }
 }
 
 impl Default for Config {
@@ -265,8 +389,10 @@ impl Default for Config {
         Self {
             workspace_dir: openhuman_dir.join("workspace"),
             config_path: openhuman_dir.join("config.toml"),
+            schema_version: 0,
             api_url: None,
             api_key: None,
+            inference_url: None,
             default_model: Some(DEFAULT_MODEL.to_string()),
             default_temperature: DEFAULT_TEMPERATURE,
             observability: ObservabilityConfig::default(),
@@ -294,12 +420,23 @@ impl Default for Config {
             curl: CurlConfig::default(),
             gitbooks: GitbooksConfig::default(),
             multimodal: MultimodalConfig::default(),
+            seltz: SeltzConfig::default(),
             web_search: WebSearchConfig::default(),
             proxy: ProxyConfig::default(),
             cost: CostConfig::default(),
             computer_control: ComputerControlConfig::default(),
             agents: HashMap::new(),
             local_ai: LocalAiConfig::default(),
+            cloud_providers: Vec::new(),
+            primary_cloud: None,
+            reasoning_provider: None,
+            agentic_provider: None,
+            coding_provider: None,
+            memory_provider: None,
+            embeddings_provider: None,
+            heartbeat_provider: None,
+            learning_provider: None,
+            subconscious_provider: None,
             node: NodeConfig::default(),
             voice_server: VoiceServerConfig::default(),
             integrations: IntegrationsConfig::default(),

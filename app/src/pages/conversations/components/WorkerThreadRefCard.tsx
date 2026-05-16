@@ -1,5 +1,6 @@
 import { useDispatch } from 'react-redux';
 
+import { useT } from '../../../lib/i18n/I18nContext';
 import { setActiveThread } from '../../../store/threadSlice';
 import type { WorkerThreadRef } from '../utils/workerThreadRef';
 
@@ -10,11 +11,12 @@ import type { WorkerThreadRef } from '../utils/workerThreadRef';
  * sub-agent's full transcript without losing the parent conversation.
  */
 export function WorkerThreadRefCard({ ref }: { ref: WorkerThreadRef }) {
+  const { t } = useT();
   const dispatch = useDispatch();
   const meta: string[] = [];
   if (ref.agentId) meta.push(ref.agentId);
   if (typeof ref.iterations === 'number') {
-    meta.push(`${ref.iterations} ${ref.iterations === 1 ? 'turn' : 'turns'}`);
+    meta.push(`${ref.iterations} ${ref.iterations === 1 ? t('chat.turn') : t('chat.turns')}`);
   }
   if (typeof ref.elapsedMs === 'number') {
     meta.push(`${Math.round(ref.elapsedMs)}ms`);
@@ -30,7 +32,9 @@ export function WorkerThreadRefCard({ ref }: { ref: WorkerThreadRef }) {
           <span className="rounded-full bg-primary-200 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary-800">
             {ref.label}
           </span>
-          <span className="truncate text-xs font-medium text-primary-900">Open worker thread</span>
+          <span className="truncate text-xs font-medium text-primary-900">
+            {t('chat.openWorkerThread')}
+          </span>
         </div>
         {meta.length > 0 ? (
           <div className="mt-0.5 text-[10px] text-primary-700/80">{meta.join(' · ')}</div>

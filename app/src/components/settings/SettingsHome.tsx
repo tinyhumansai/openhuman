@@ -1,16 +1,12 @@
 import { ReactNode, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
+import { useT } from '../../lib/i18n/I18nContext';
 import { useCoreState } from '../../providers/CoreStateProvider';
-import { persistor } from '../../store';
+import { clearAllAppData } from '../../utils/clearAllAppData';
 import { BILLING_DASHBOARD_URL } from '../../utils/links';
 import { openUrl } from '../../utils/openUrl';
-import {
-  resetOpenHumanDataAndRestartCore,
-  restartApp,
-  scheduleCefProfilePurge,
-} from '../../utils/tauriCommands';
-import { resetWalkthrough } from '../walkthrough/AppWalkthrough';
+import LanguageSelect from '../LanguageSelect';
 import SettingsHeader from './components/SettingsHeader';
 import SettingsMenuItem from './components/SettingsMenuItem';
 import { useSettingsNavigation } from './hooks/useSettingsNavigation';
@@ -25,23 +21,16 @@ interface SettingsItem {
   title: string;
   description: string;
   icon: ReactNode;
-  onClick: () => void;
+  onClick?: () => void;
   dangerous?: boolean;
+  rightElement?: ReactNode;
 }
-
-// Subtle uppercase section header label separating settings groups
-const SectionHeader = ({ label }: { label: string }) => (
-  <div className="px-4 pt-5 pb-1">
-    <span className="text-[10px] font-semibold tracking-widest uppercase text-stone-400">
-      {label}
-    </span>
-  </div>
-);
 
 const SettingsHome = () => {
   const navigate = useNavigate();
   const { navigateToSettings } = useSettingsNavigation();
   const { clearSession, snapshot } = useCoreState();
+  const { t } = useT();
   const [showLogoutAndClearModal, setShowLogoutAndClearModal] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -51,66 +40,18 @@ const SettingsHome = () => {
       await clearSession();
     } catch (err) {
       console.warn('[Settings] Rust logout failed:', err);
-      setError('Failed to log out. Please try again.');
+      setError(t('clearData.failedLogout'));
     }
-  };
-
-  const clearAllAppData = async () => {
-    const currentUserId = snapshot.auth.userId ?? snapshot.currentUser?._id ?? null;
-
-    // Queue the current user-scoped CEF profile for deletion on next launch.
-    // The active CEF browser process may still hold SQLite/cache file handles,
-    // so we delete after the shell restarts rather than relying on in-process
-    // removal to succeed everywhere.
-    try {
-      await scheduleCefProfilePurge(currentUserId);
-    } catch (err) {
-      console.warn('[Settings] Failed to queue CEF profile purge:', err);
-    }
-
-    // 1. Logout — clear session in core (auth_clear_session). Best-effort:
-    //    if the core process is wedged we still want to wipe local data.
-    try {
-      await clearSession();
-    } catch (err) {
-      console.warn('[Settings] Rust logout failed during clearAllAppData:', err);
-    }
-
-    // 2. Delete workspace folder + restart core. The core RPC removes both
-    //    the active openhuman_dir and the default ~/.openhuman, then we
-    //    restart the sidecar so it boots from a clean slate.
-    try {
-      await resetOpenHumanDataAndRestartCore();
-    } catch (err) {
-      console.warn('[Settings] Failed to reset OpenHuman data dir and restart core:', err);
-      throw err;
-    }
-
-    // 3. Purge redux-persist storage + browser storage. `persistor.purge()`
-    //    wipes the persisted backend; localStorage/sessionStorage clears
-    //    everything else (auth flags, theme, etc.).
-    try {
-      await persistor.purge();
-    } catch (err) {
-      console.warn('[Settings] persistor.purge failed:', err);
-      setError('Failed to clear persisted app state. Please try again.');
-      return;
-    }
-    window.localStorage.clear();
-    window.sessionStorage.clear();
-
-    // 4. Full app restart so the CEF runtime reboots into the fresh
-    //    pre-login profile instead of keeping the old browser process alive.
-    await restartApp();
   };
 
   const handleLogoutAndClearData = async () => {
     try {
       setIsLoading(true);
       setError(null);
-      await clearAllAppData(); // This will redirect to login
+      const currentUserId = snapshot.auth.userId ?? snapshot.currentUser?._id ?? null;
+      await clearAllAppData({ clearSession, userId: currentUserId }); // restarts the app
     } catch (_error) {
-      setError('Failed to clear data and logout. Please try again.');
+      setError(t('clearData.failed'));
     } finally {
       setIsLoading(false);
     }
@@ -118,12 +59,12 @@ const SettingsHome = () => {
 
   const settingsSections: SettingsSection[] = [
     {
-      label: 'General',
+      label: t('settings.general'),
       items: [
         {
           id: 'account',
-          title: 'Account',
-          description: 'Recovery phrase, team, connections, and privacy',
+          title: t('settings.account'),
+          description: t('settings.accountDesc'),
           icon: (
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path
@@ -137,9 +78,25 @@ const SettingsHome = () => {
           onClick: () => navigateToSettings('account'),
         },
         {
+          id: 'alerts',
+          title: t('nav.alerts'),
+          description: t('settings.alertsDesc'),
+          icon: (
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"
+              />
+            </svg>
+          ),
+          onClick: () => navigate('/notifications'),
+        },
+        {
           id: 'notifications',
-          title: 'Notifications',
-          description: 'Do Not Disturb and per-account notification controls',
+          title: t('settings.notifications'),
+          description: t('settings.notificationsDesc'),
           icon: (
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path
@@ -152,52 +109,50 @@ const SettingsHome = () => {
           ),
           onClick: () => navigateToSettings('notifications'),
         },
-      ],
-    },
-    {
-      label: 'Features & AI',
-      items: [
         {
-          id: 'features',
-          title: 'Features',
-          description: 'Screen awareness, messaging, and tools',
+          id: 'language',
+          title: t('settings.language'),
+          description: t('settings.languageDesc'),
           icon: (
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path
                 strokeLinecap="round"
                 strokeLinejoin="round"
                 strokeWidth={2}
-                d="M13 10V3L4 14h7v7l9-11h-7z"
+                d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129"
               />
             </svg>
           ),
-          onClick: () => navigateToSettings('features'),
+          rightElement: <LanguageSelect ariaLabel={t('settings.language')} />,
         },
         {
-          id: 'ai-models',
-          title: 'AI & Models',
-          description: 'Local AI model setup, downloads, and LLM provider',
+          id: 'mascot',
+          title: 'Mascot',
+          description: 'Pick the mascot color used across the app',
           icon: (
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path
                 strokeLinecap="round"
                 strokeLinejoin="round"
                 strokeWidth={2}
-                d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"
+                d="M12 21a9 9 0 100-18 9 9 0 000 18zM9 10h.01M15 10h.01M9.5 15c.83.67 1.67 1 2.5 1s1.67-.33 2.5-1"
               />
             </svg>
           ),
-          onClick: () => navigateToSettings('ai-models'),
+          onClick: () => navigateToSettings('mascot'),
         },
       ],
     },
+    // Features tile (Screen Awareness / Messaging Channels / Notifications /
+    // Tools) used to live here. Everything under it moved into Advanced
+    // (DeveloperOptionsPanel), so the section is gone from the home menu.
     {
-      label: 'Billing & Rewards',
+      label: t('settings.billingAndRewards'),
       items: [
         {
           id: 'billing',
-          title: 'Billing & Usage',
-          description: 'Subscription plan, credits, and payment methods',
+          title: t('settings.billingUsage'),
+          description: t('settings.billingUsageDesc'),
           icon: (
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path
@@ -212,71 +167,15 @@ const SettingsHome = () => {
             openUrl(BILLING_DASHBOARD_URL).catch(() => {});
           },
         },
-        {
-          id: 'rewards',
-          title: 'Rewards',
-          description: 'Referrals, coupons, and earned credits',
-          icon: (
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M12 8v13m0-13V6a2 2 0 112 2h-2zm0 0V5.5A2.5 2.5 0 109.5 8H12zm-7 4h14M5 12a2 2 0 110-4h14a2 2 0 110 4M5 12v7a2 2 0 002 2h10a2 2 0 002-2v-7"
-              />
-            </svg>
-          ),
-          onClick: () => navigate('/rewards'),
-        },
       ],
     },
     {
-      label: 'Support',
-      items: [
-        {
-          id: 'restart-tour',
-          title: 'Restart Tour',
-          description: 'Replay the product walkthrough from the beginning',
-          icon: (
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-              />
-            </svg>
-          ),
-          onClick: () => {
-            resetWalkthrough();
-            navigate('/home');
-          },
-        },
-        {
-          id: 'about',
-          title: 'About',
-          description: 'App version and software updates',
-          icon: (
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-              />
-            </svg>
-          ),
-          onClick: () => navigateToSettings('about'),
-        },
-      ],
-    },
-    {
-      label: 'Advanced',
+      label: t('settings.advanced'),
       items: [
         {
           id: 'developer-options',
-          title: 'Developer Options',
-          description: 'Diagnostics, debug panels, webhooks, and memory inspection',
+          title: t('settings.developerOptions'),
+          description: t('settings.developerOptionsDesc'),
           icon: (
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path
@@ -297,8 +196,8 @@ const SettingsHome = () => {
   const destructiveItems: SettingsItem[] = [
     {
       id: 'logout-and-clear',
-      title: 'Clear App Data',
-      description: 'Sign out and permanently clear all local app data',
+      title: t('settings.clearAppData'),
+      description: t('settings.clearAppDataDesc'),
       icon: (
         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path
@@ -314,8 +213,8 @@ const SettingsHome = () => {
     },
     {
       id: 'logout',
-      title: 'Log out',
-      description: 'Sign out of your account',
+      title: t('settings.logOut'),
+      description: t('settings.logOutDesc'),
       icon: (
         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path
@@ -338,39 +237,24 @@ const SettingsHome = () => {
       </div>
 
       <div>
-        {/* Grouped sections with section headers */}
-        {settingsSections.map(section => (
-          <div key={section.label}>
-            <SectionHeader label={section.label} />
-            {section.items.map((item, index) => (
-              <SettingsMenuItem
-                key={item.id}
-                icon={item.icon}
-                title={item.title}
-                description={item.description}
-                onClick={item.onClick}
-                dangerous={item.dangerous}
-                isFirst={index === 0}
-                isLast={index === section.items.length - 1}
-              />
-            ))}
-          </div>
-        ))}
-
-        {/* Danger Zone */}
-        <SectionHeader label="Danger Zone" />
-        {destructiveItems.map((item, index) => (
-          <SettingsMenuItem
-            key={item.id}
-            icon={item.icon}
-            title={item.title}
-            description={item.description}
-            onClick={item.onClick}
-            dangerous={item.dangerous}
-            isFirst={index === 0}
-            isLast={index === destructiveItems.length - 1}
-          />
-        ))}
+        {/* Flat list — group titles removed for clarity. Regular items first,
+            destructive items appended at the end. */}
+        {(() => {
+          const flatItems = settingsSections.flatMap(s => s.items).concat(destructiveItems);
+          return flatItems.map((item, index) => (
+            <SettingsMenuItem
+              key={item.id}
+              icon={item.icon}
+              title={item.title}
+              description={item.description}
+              onClick={item.onClick}
+              dangerous={item.dangerous}
+              isFirst={index === 0}
+              isLast={index === flatItems.length - 1}
+              rightElement={item.rightElement}
+            />
+          ));
+        })()}
       </div>
 
       {/* Log Out & Clear Data Confirmation Modal */}
@@ -393,20 +277,20 @@ const SettingsHome = () => {
                 </svg>
               </div>
               <div>
-                <h3 className="text-lg font-semibold text-stone-900">Clear App Data</h3>
+                <h3 className="text-lg font-semibold text-stone-900">{t('clearData.title')}</h3>
               </div>
             </div>
 
             <div className="mb-6">
               <div className="text-stone-700 text-sm leading-relaxed">
-                <p>This will sign you out and permanently delete local app data including:</p>
+                <p>{t('clearData.warning')}</p>
                 <ul className="list-disc pl-5 mt-2 space-y-1">
-                  <li>App settings and conversations</li>
-                  <li>All local integration cache data</li>
-                  <li>Workspace data</li>
-                  <li>All other local data</li>
+                  <li>{t('clearData.bulletSettings')}</li>
+                  <li>{t('clearData.bulletCache')}</li>
+                  <li>{t('clearData.bulletWorkspace')}</li>
+                  <li>{t('clearData.bulletOther')}</li>
                 </ul>
-                <p className="mt-3">This action cannot be undone.</p>
+                <p className="mt-3">{t('clearData.irreversible')}</p>
               </div>
 
               {error && (
@@ -424,7 +308,7 @@ const SettingsHome = () => {
                 }}
                 disabled={isLoading}
                 className="flex-1 px-4 py-2 rounded-lg border border-stone-200 text-stone-700 hover:bg-stone-100 transition-colors disabled:opacity-50">
-                Cancel
+                {t('common.cancel')}
               </button>
               <button
                 onClick={handleLogoutAndClearData}
@@ -447,7 +331,7 @@ const SettingsHome = () => {
                     />
                   </svg>
                 )}
-                {isLoading ? 'Clearing App Data...' : 'Clear App Data'}
+                {isLoading ? t('clearData.clearing') : t('clearData.title')}
               </button>
             </div>
           </div>

@@ -1,6 +1,6 @@
 use super::{
-    current_rpc_token, default_core_port, generate_rpc_token, is_openhuman_root_body,
-    parse_lsof_pid, parse_netstat_pid, CoreProcessHandle,
+    current_rpc_token, default_core_port, generate_rpc_token, is_expected_port_clash,
+    is_openhuman_root_body, parse_lsof_pid, parse_netstat_pid, CoreProcessHandle,
 };
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
@@ -125,6 +125,43 @@ fn is_openhuman_root_body_rejects_other_services() {
     assert!(!is_openhuman_root_body(""));
     // Wrong type for `name`.
     assert!(!is_openhuman_root_body(r#"{"name": 42}"#));
+}
+
+#[test]
+fn expected_port_clash_classifier_matches_benign_probe_shapes() {
+    assert!(is_expected_port_clash(
+        "probe GET / failed: error sending request for url (http://127.0.0.1:7788/)"
+    ));
+    assert!(is_expected_port_clash(
+        "probe GET / failed: connection refused"
+    ));
+    assert!(is_expected_port_clash(
+        "probe GET / returned status 404 Not Found"
+    ));
+    assert!(is_expected_port_clash("probe GET / returned status 200 OK"));
+    assert!(is_expected_port_clash(
+        "probe GET / body did not identify as openhuman (\"hello\")"
+    ));
+}
+
+#[test]
+fn expected_port_clash_classifier_matches_windows_acl_bind_shapes() {
+    assert!(is_expected_port_clash(
+        "Failed to bind to 127.0.0.1:7788: access denied (os error 10013)"
+    ));
+    assert!(is_expected_port_clash(
+        "Failed to bind to 127.0.0.1:7788: WSAEACCES"
+    ));
+}
+
+#[test]
+fn expected_port_clash_classifier_rejects_unknown_probe_shapes() {
+    assert!(!is_expected_port_clash(
+        "probe GET / failed: TLS handshake failed: protocol error"
+    ));
+    assert!(!is_expected_port_clash(
+        "probe GET / body read failed: unexpected eof"
+    ));
 }
 
 #[test]

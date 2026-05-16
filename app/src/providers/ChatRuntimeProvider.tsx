@@ -120,6 +120,13 @@ function deleteSegmentDelivery(deliveries: Map<string, SegmentDelivery>, key: st
   deliveries.delete(key);
 }
 
+// Delivery is complete iff every expected segment_index arrived. Do NOT also
+// compare reconstructed segments against event.full_response — the server
+// trims each segment and normalises joiners during segmentation
+// (presentation.rs::segment_for_delivery), while full_response keeps the raw
+// LLM text. A byte-equality check therefore fails on virtually every
+// multi-segment turn and triggers the reconciliation path, producing a
+// duplicate assistant message.
 function hasCompleteSegmentDelivery(
   event: ChatDoneEvent,
   delivery: SegmentDelivery | undefined
@@ -127,14 +134,10 @@ function hasCompleteSegmentDelivery(
   const expected = event.segment_total ?? 0;
   if (expected <= 0 || !delivery) return false;
   if (delivery.segments.size < expected) return false;
-
-  let reconstructed = '';
   for (let i = 0; i < expected; i += 1) {
-    const segment = delivery.segments.get(i);
-    if (segment === undefined) return false;
-    reconstructed += segment;
+    if (!delivery.segments.has(i)) return false;
   }
-  return reconstructed === event.full_response;
+  return true;
 }
 
 function chatDoneExtraMetadata(event: ChatDoneEvent): Record<string, unknown> | undefined {

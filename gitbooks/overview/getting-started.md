@@ -25,7 +25,7 @@ The first time you launch OpenHuman, the OS will prompt for the permissions the 
 
 ## 1. Download and install
 
-Get the OpenHuman desktop app from [http://tinyhumans.ai/openhuman](https://openhuman.ai) or via your platform's package manager. Open the app once it's installed.
+Get the OpenHuman desktop app from [http://tinyhumans.ai/openhuman](http://tinyhumans.ai/openhuman) or via your platform's package manager. Open the app once it's installed.
 
 ## 2. Sign in
 

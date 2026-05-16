@@ -307,6 +307,13 @@ fn all_variants_have_correct_domain() {
             },
             "composio",
         ),
+        (
+            DomainEvent::ComposioConfigChanged {
+                mode: "direct".into(),
+                api_key_set: true,
+            },
+            "composio",
+        ),
         // Triage
         (
             DomainEvent::TriggerEvaluated {

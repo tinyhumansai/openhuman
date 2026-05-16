@@ -38,8 +38,8 @@ pub fn build_summary_extractor(config: &Config) -> Arc<dyn EntityExtractor> {
     let Some(model) = model else {
         log::debug!(
             "[memory_tree::extract] summary extractor: LLM model not resolvable for \
-             llm_backend={} — using regex-only",
-            config.memory_tree.llm_backend.as_str()
+             memory_provider={:?} — using regex-only",
+            config.memory_provider.as_deref().unwrap_or("cloud")
         );
         return Arc::new(CompositeExtractor::regex_only());
     };
@@ -76,37 +76,37 @@ pub fn build_summary_extractor(config: &Config) -> Arc<dyn EntityExtractor> {
 /// Resolve the model identifier the extractor's [`ChatProvider`] should
 /// target, returning `None` when the configured backend can't be served:
 ///
-/// - `Cloud`: always returns the configured `cloud_llm_model` or its
-///   `summarization-v1` default.
-/// - `Local`: returns `Some(model)` only when both
-///   `llm_extractor_endpoint` AND `llm_extractor_model` are set —
-///   otherwise the legacy regex-only path engages.
+/// - Cloud (i.e. `Config::workload_uses_local("memory")` is false): always
+///   returns the configured `cloud_llm_model` or its `summarization-v1`
+///   default.
+/// - Local (i.e. `memory_provider = "ollama:<m>"`): returns `Some(model)`
+///   only when both `llm_extractor_endpoint` AND `llm_extractor_model` are
+///   set — otherwise the legacy regex-only path engages.
 pub(super) fn resolve_extractor_model(config: &Config) -> Option<String> {
-    match config.memory_tree.llm_backend {
-        LlmBackend::Cloud => Some(
+    if config.workload_uses_local("memory") {
+        let endpoint = config
+            .memory_tree
+            .llm_extractor_endpoint
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        let model = config
+            .memory_tree
+            .llm_extractor_model
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        match (endpoint, model) {
+            (Some(_), Some(m)) => Some(m.to_string()),
+            _ => None,
+        }
+    } else {
+        Some(
             config
                 .memory_tree
                 .cloud_llm_model
                 .clone()
                 .unwrap_or_else(|| DEFAULT_CLOUD_LLM_MODEL.to_string()),
-        ),
-        LlmBackend::Local => {
-            let endpoint = config
-                .memory_tree
-                .llm_extractor_endpoint
-                .as_deref()
-                .map(str::trim)
-                .filter(|s| !s.is_empty());
-            let model = config
-                .memory_tree
-                .llm_extractor_model
-                .as_deref()
-                .map(str::trim)
-                .filter(|s| !s.is_empty());
-            match (endpoint, model) {
-                (Some(_), Some(m)) => Some(m.to_string()),
-                _ => None,
-            }
-        }
+        )
     }
 }

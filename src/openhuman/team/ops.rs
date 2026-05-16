@@ -13,7 +13,7 @@ use reqwest::{Method, Url};
 use serde::Serialize;
 use serde_json::{json, Value};
 
-use crate::api::config::effective_api_url;
+use crate::api::config::effective_backend_api_url;
 use crate::api::jwt::get_session_token;
 use crate::api::BackendOAuthClient;
 use crate::openhuman::config::Config;
@@ -62,12 +62,23 @@ async fn get_authed_value(
     body: Option<Value>,
 ) -> Result<Value, String> {
     let token = require_token(config)?;
-    let api_url = effective_api_url(&config.api_url);
-    let client = BackendOAuthClient::new(&api_url).map_err(|e| e.to_string())?;
+    let api_url = effective_backend_api_url(&config.api_url);
+    let client = BackendOAuthClient::new(&api_url).map_err(|e| format!("{e:#}"))?;
+    // `{e:#}` renders the full anyhow chain. `authed_json` wraps the
+    // underlying reqwest error with `.context(format!("backend request {} {}", …))`
+    // (`api/rest.rs::authed_json`), so plain `e.to_string()` only emits
+    // the outer "backend request GET /teams" label and drops the cause
+    // (connect timeout, DNS failure, TLS handshake, non-2xx status, …)
+    // before the JSON-RPC layer reports it to Sentry. OPENHUMAN-TAURI-AD
+    // is the canonical instance: 2 events on `0.53.35` from a Russia
+    // user, all with the truncated label and elapsed_ms=49 — far too
+    // short for a real timeout, so the underlying cause is the only
+    // signal worth surfacing. Same failure mode the `report_error`
+    // doc-string in `core/observability.rs` calls out (TAURI-B2).
     client
         .authed_json(&token, method, path, body)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| format!("{e:#}"))
 }
 
 pub async fn get_usage(config: &Config) -> Result<RpcOutcome<Value>, String> {

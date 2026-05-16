@@ -47,6 +47,15 @@ const GITHUB_RELEASES_METADATA: Option<CapabilityPrivacy> = Some(CapabilityPriva
     destinations: &["GitHub Releases"],
 });
 
+// Direct-mode Composio: the user's API key and tool arguments leave the
+// device — they are sent to backend.composio.dev, not the OpenHuman backend.
+// LOCAL_CREDENTIALS was incorrect here because leaves_device must be true.
+const COMPOSIO_DIRECT_CREDENTIALS: Option<CapabilityPrivacy> = Some(CapabilityPrivacy {
+    leaves_device: true,
+    data_kind: PrivacyDataKind::Credentials,
+    destinations: &["Composio (backend.composio.dev)"],
+});
+
 const CAPABILITIES: &[Capability] = &[
     Capability {
         id: "conversation.create",
@@ -209,6 +218,21 @@ const CAPABILITIES: &[Capability] = &[
         privacy: None,
     },
     Capability {
+        id: "intelligence.agentmemory_backend",
+        name: "agentmemory Memory Backend",
+        domain: "intelligence",
+        category: CapabilityCategory::Intelligence,
+        description: "Opt-in Memory trait backend that delegates every store/recall/get/list/forget \
+            call to a locally-running agentmemory REST server. Selected via \
+            `memory.backend = \"agentmemory\"` in config.toml. Allows users who self-host \
+            agentmemory across Claude Code, Cursor, Codex, and OpenCode to share a single durable \
+            memory store. Default backend remains sqlite; selecting agentmemory is non-breaking.",
+        how_to: "Set `memory.backend = \"agentmemory\"` in config.toml. \
+            See gitbooks/features/obsidian-wiki/agentmemory-backend.md for setup and config keys.",
+        status: CapabilityStatus::Beta,
+        privacy: LOCAL_RAW,
+    },
+    Capability {
         id: "intelligence.memory_workspace",
         name: "Memory Workspace",
         domain: "intelligence",
@@ -239,6 +263,16 @@ const CAPABILITIES: &[Capability] = &[
         category: CapabilityCategory::Intelligence,
         description: "Ask questions about your ingested email/chat/document memory in chat. The orchestrator can resolve names to canonical ids, query summaries by source/topic/global window, drill into details, and cite raw chunks.",
         how_to: "Chat > ask the assistant about people, conversations, or windows",
+        status: CapabilityStatus::Beta,
+        privacy: LOCAL_RAW,
+    },
+    Capability {
+        id: "intelligence.mcp_server",
+        name: "MCP Server",
+        domain: "intelligence",
+        category: CapabilityCategory::Intelligence,
+        description: "Expose a curated, read-only memory-tree tool surface over stdio MCP for local MCP-compatible clients.",
+        how_to: "Run `openhuman-core mcp` and configure the local MCP client to launch that command.",
         status: CapabilityStatus::Beta,
         privacy: LOCAL_RAW,
     },
@@ -372,6 +406,43 @@ const CAPABILITIES: &[Capability] = &[
         status: CapabilityStatus::Beta,
         privacy: None,
     },
+    // ── Composio direct mode (BYO API key) ──────────────────────────
+    //
+    // Composio shipped with two integration paths:
+    //   1. Backend-proxied (default) — calls through api.tinyhumans.ai;
+    //      backend owns the Composio API key, billing, allowlist, and
+    //      HMAC-verified trigger fan-out via socket.io.
+    //   2. Direct (BYO key) — core calls backend.composio.dev directly
+    //      with the user's own key. Sovereign / offline-friendly, but
+    //      tool execution only — real-time trigger webhooks are NOT
+    //      routed in direct mode (they still require the backend).
+    Capability {
+        id: "composio.direct_mode",
+        name: "Composio Direct Mode (BYO API Key)",
+        domain: "skills",
+        category: CapabilityCategory::Skills,
+        description:
+            "Route Composio tool calls directly to backend.composio.dev with your own API key, \
+             bypassing the OpenHuman backend proxy. Tool execution only — trigger webhooks still \
+             require backend mode.",
+        how_to: "Settings > Skills > Composio > Direct mode",
+        status: CapabilityStatus::Beta,
+        privacy: COMPOSIO_DIRECT_CREDENTIALS,
+    },
+    Capability {
+        id: "composio.direct_mode_triggers_gap",
+        name: "Composio Triggers (Direct Mode — Limited)",
+        domain: "skills",
+        category: CapabilityCategory::Skills,
+        description:
+            "Composio real-time trigger webhooks (Gmail new-message, Slack new-message, …) \
+             currently arrive over wss://api.tinyhumans.ai/socket.io and require backend mode. \
+             Direct-mode users get synchronous tool execution but not async trigger push in \
+             this release.",
+        how_to: "Switch to Backend mode to receive triggers, or wait for the direct trigger sink follow-up",
+        status: CapabilityStatus::ComingSoon,
+        privacy: None,
+    },
     Capability {
         id: "skills.connect_google",
         name: "Connect Google",
@@ -433,6 +504,16 @@ const CAPABILITIES: &[Capability] = &[
         privacy: MODEL_DOWNLOAD,
     },
     Capability {
+        id: "local_ai.configure_provider",
+        name: "Configure Local Provider",
+        domain: "local_ai",
+        category: CapabilityCategory::LocalAI,
+        description: "Select Ollama or LM Studio as the local model provider and configure the local server endpoint.",
+        how_to: "Settings > Local AI Model",
+        status: CapabilityStatus::Beta,
+        privacy: None,
+    },
+    Capability {
         id: "local_ai.manage_model_assets",
         name: "Manage Model Assets",
         domain: "local_ai",
@@ -454,21 +535,27 @@ const CAPABILITIES: &[Capability] = &[
     },
     Capability {
         id: "local_ai.speech_to_text",
-        name: "Speech Recognition",
+        name: "Speech Recognition (Local)",
         domain: "local_ai",
         category: CapabilityCategory::LocalAI,
-        description: "Transcribe audio into text using local speech recognition.",
-        how_to: "Settings > Local AI Model > Advanced > Test Voice Input",
+        description:
+            "Transcribe audio into text using local whisper.cpp via the voice STT factory. \
+             Pick the model size (tiny / base / small / medium / large-v3-turbo) in \
+             Settings > Voice; the factory routes through WHISPER_BIN or the in-process engine.",
+        how_to: "Settings > Voice > STT Provider = Whisper",
         status: CapabilityStatus::Beta,
         privacy: None,
     },
     Capability {
         id: "local_ai.text_to_speech",
-        name: "Text to Speech",
+        name: "Text to Speech (Local)",
         domain: "local_ai",
         category: CapabilityCategory::LocalAI,
-        description: "Synthesize speech from text using local voice models.",
-        how_to: "Settings > Local AI Model > Advanced > Test Voice Output",
+        description:
+            "Synthesize speech locally with Piper via the voice TTS factory. PIPER_BIN points \
+             at the binary; the voice .onnx ships with the installer. Returns a synthetic \
+             viseme timeline (full forced-alignment lives behind the cloud provider for now).",
+        how_to: "Settings > Voice > TTS Provider = Piper",
         status: CapabilityStatus::Beta,
         privacy: None,
     },
@@ -491,6 +578,34 @@ const CAPABILITIES: &[Capability] = &[
         how_to: "Settings > Local AI Model > Advanced > Test Custom Prompt",
         status: CapabilityStatus::Beta,
         privacy: None,
+    },
+    Capability {
+        id: "local_ai.whisper_installer",
+        name: "Whisper Installer (Local STT)",
+        domain: "local_ai",
+        category: CapabilityCategory::LocalAI,
+        description:
+            "One-click download of the whisper.cpp GGML model (and on Windows the whisper-cli \
+             binary) into the workspace so local Speech-to-Text runs without manual setup. \
+             Streams to disk via a .part file + atomic rename so a crash never leaves a corrupt \
+             model behind.",
+        how_to: "Settings > Voice > Voice Providers > Install Whisper",
+        status: CapabilityStatus::Beta,
+        privacy: MODEL_DOWNLOAD,
+    },
+    Capability {
+        id: "local_ai.piper_installer",
+        name: "Piper Installer (Local TTS)",
+        domain: "local_ai",
+        category: CapabilityCategory::LocalAI,
+        description:
+            "One-click download of the Piper binary archive and the bundled en_US-lessac-medium \
+             voice (.onnx + .onnx.json) into the workspace so local Text-to-Speech runs without \
+             manual setup. Atomic rename guarantees no half-written voice files are ever read \
+             by the runtime.",
+        how_to: "Settings > Voice > Voice Providers > Install Piper",
+        status: CapabilityStatus::Beta,
+        privacy: MODEL_DOWNLOAD,
     },
     Capability {
         id: "team.create",
@@ -886,6 +1001,21 @@ const CAPABILITIES: &[Capability] = &[
         how_to: "Automatic after onboarding (runs daily at 7 AM). Adjust schedule via Settings > Cron Jobs.",
         status: CapabilityStatus::Beta,
         privacy: None,
+    },
+    Capability {
+        id: "automation.crypto_agent",
+        name: "Crypto Agent",
+        domain: "automation",
+        category: CapabilityCategory::Automation,
+        description: "Dedicated wallet & market specialist sub-agent. The orchestrator \
+                      routes transfers, swaps, contract calls, balance lookups, and \
+                      exchange trading requests here. The agent enforces a read → \
+                      simulate → confirm → execute flow, refuses to fabricate chain ids \
+                      or token addresses, and gates every write call behind explicit \
+                      user confirmation.",
+        how_to: "Automatic — invoked by the orchestrator when a crypto wallet or market action is requested. Connect a wallet via Settings > Recovery Phrase first.",
+        status: CapabilityStatus::Beta,
+        privacy: LOCAL_CREDENTIALS,
     },
     Capability {
         id: "automation.welcome_agent",

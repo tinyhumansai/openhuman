@@ -1,4 +1,5 @@
 import { useUsageState } from '../../hooks/useUsageState';
+import { useT } from '../../lib/i18n/I18nContext';
 import { useAppSelector } from '../../store/hooks';
 import { BILLING_DASHBOARD_URL } from '../../utils/links';
 import { openUrl } from '../../utils/openUrl';
@@ -42,6 +43,7 @@ function severityFromPct(pct: number): PillSeverity {
 }
 
 const TokenUsagePill = () => {
+  const { t } = useT();
   const sessionTokens = useAppSelector(state => state.chatRuntime.sessionTokenUsage);
   const { usagePct10h, usagePct7d, isAtLimit, isNearLimit, currentTier, teamUsage } =
     useUsageState();
@@ -54,9 +56,9 @@ const TokenUsagePill = () => {
   const showPlanPill = teamUsage !== null;
 
   const planTitle = (() => {
-    if (isAtLimit) return 'Usage limit reached — click to top up';
-    if (isNearLimit) return 'Approaching usage limit';
-    return `${currentTier.toLowerCase()} plan — click for details`;
+    if (isAtLimit) return t('token.usageLimitReached');
+    if (isNearLimit) return t('token.approachingLimit');
+    return `${currentTier.toLowerCase()} ${t('token.planClickForDetails')}`;
   })();
 
   if (!showSessionCounter && !showPlanPill) return null;
@@ -66,7 +68,10 @@ const TokenUsagePill = () => {
       {showSessionCounter ? (
         <span
           className="inline-flex items-center gap-1 rounded-full bg-stone-100 px-2 py-1 font-mono text-stone-600 ring-1 ring-stone-200/60"
-          title={`Session tokens: ${sessionTokens.inputTokens.toLocaleString()} in / ${sessionTokens.outputTokens.toLocaleString()} out across ${sessionTokens.turns} turn(s)`}>
+          title={t('token.sessionTokens')
+            .replace('{in}', sessionTokens.inputTokens.toLocaleString())
+            .replace('{out}', sessionTokens.outputTokens.toLocaleString())
+            .replace('{turns}', String(sessionTokens.turns))}>
           <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path
               strokeLinecap="round"
@@ -86,7 +91,7 @@ const TokenUsagePill = () => {
           }}
           title={planTitle}
           className={`inline-flex items-center gap-1 rounded-full px-2 py-1 font-medium ring-1 transition-colors ${planSeverity.bg} ${planSeverity.text} ${planSeverity.ring} hover:opacity-80`}>
-          {isAtLimit ? 'Limit' : planSeverity.label}
+          {isAtLimit ? t('token.limit') : planSeverity.label}
         </button>
       ) : null}
     </div>

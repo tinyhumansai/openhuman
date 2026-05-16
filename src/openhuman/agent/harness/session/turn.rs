@@ -82,6 +82,18 @@ impl Agent {
             // inference backend has already tokenised. Fetching it later
             // would just burn memory-store reads on data we throw away.
             self.fetch_connected_integrations().await;
+            // The synchronous builder couldn't synthesise `delegate_*`
+            // tools for connected Composio toolkits (no async runtime
+            // handle for the Composio fetcher), so it baked in `&[]`.
+            // Now that integrations are live, inject the matching
+            // delegation tools so the orchestrator's prompt + tool-spec
+            // list actually expose `delegate_gmail`, `delegate_notion`,
+            // etc. The shared-Arc failure path returns `false`, but on
+            // turn 1 the Arc is uniquely owned (no sub-agent has run
+            // yet); a `false` return here would indicate a programmer
+            // error and the warn-level log inside the helper already
+            // surfaces it, so we ignore the return value here.
+            let _ = self.refresh_delegation_tools();
             let learned = self.fetch_learned_context().await;
             let rendered_prompt = self.build_system_prompt(learned)?;
             log::info!("[agent] system prompt built — initialising conversation history");
@@ -111,6 +123,11 @@ impl Agent {
                 .push(ConversationMessage::Chat(ChatMessage::system(
                     rendered_prompt,
                 )));
+            // Seed the per-turn mid-session refresh baseline with the
+            // hash of whatever Composio actually returned just now.
+            // Subsequent turns short-circuit unless this hash changes.
+            self.last_seen_integrations_hash =
+                crate::openhuman::composio::connected_set_hash(&self.connected_integrations);
         } else {
             // Deliberately do NOT rebuild the system prompt on subsequent
             // turns. The rendered prompt is the KV-cache prefix the inference
@@ -121,6 +138,75 @@ impl Agent {
             // rides on the user message via `memory_loader.load_context()`
             // — that's where the caller should inject anything that varies
             // between turns.
+            //
+            // *** Mid-session schema-only refresh ***
+            //
+            // The system prompt stays frozen, but the function-calling
+            // schema (the `tools` field in the provider request) is sent
+            // fresh on every API call — it's not part of the KV-cache
+            // prefix. So we *can* react to Composio connect/disconnect
+            // events mid-session by re-synthesising the `delegate_<toolkit>`
+            // surface on `self.tools` / `self.tool_specs` and letting
+            // the next provider call carry the new schema. KV cache stays
+            // intact; the system prompt's `## Connected Integrations`
+            // block goes mildly stale until the next session, but the
+            // schema is the source of truth the model actually routes
+            // against.
+            //
+            // The signal we react to is the process-wide
+            // [`crate::openhuman::composio::INTEGRATIONS_CACHE`], kept
+            // current by (a) the desktop UI's 5 s
+            // `composio_list_connections` poll, (b) the post-OAuth
+            // `ComposioConnectionCreatedSubscriber` invalidation, and
+            // (c) the 60 s TTL fallback. We read it via the read-only
+            // [`crate::openhuman::composio::cached_active_integrations`]
+            // helper — never trigger a backend fetch ourselves, never
+            // block on a writer.
+            //
+            // We need a `Config` to key into `INTEGRATIONS_CACHE`. The
+            // `Config::load_or_init()` call is cached internally so this
+            // is cheap on the hot path. On config-load failure we skip
+            // the refresh — no signal we can safely act on, same as
+            // when the cache itself is empty.
+            if let Ok(cfg) = crate::openhuman::config::Config::load_or_init().await {
+                if let Some(cache_view) =
+                    crate::openhuman::composio::cached_active_integrations(&cfg)
+                {
+                    let new_hash = crate::openhuman::composio::connected_set_hash(&cache_view);
+                    if new_hash != self.last_seen_integrations_hash {
+                        log::info!(
+                            "[agent_loop] connection set changed mid-session (hash {:x} -> {:x}); refreshing tool schema (system prompt left intact for KV cache)",
+                            self.last_seen_integrations_hash,
+                            new_hash
+                        );
+                        // Snapshot the previous integration list so we
+                        // can roll back if `refresh_delegation_tools`
+                        // bails on a shared `Arc` — otherwise the
+                        // agent's `connected_integrations` and its
+                        // schema would disagree until the next
+                        // event-driven refresh, and the
+                        // `last_seen_integrations_hash` advance below
+                        // would suppress retries.
+                        let prev_integrations =
+                            std::mem::replace(&mut self.connected_integrations, cache_view);
+                        if self.refresh_delegation_tools() {
+                            self.last_seen_integrations_hash = new_hash;
+                        } else {
+                            // Reconcile aborted (shared Arc) — restore
+                            // the previous integration list so the
+                            // next turn re-detects the same change and
+                            // retries cleanly. We deliberately do NOT
+                            // advance `last_seen_integrations_hash`.
+                            self.connected_integrations = prev_integrations;
+                        }
+                    }
+                }
+            }
+            // Cache empty/expired or config unavailable => no signal.
+            // We leave the current tool surface alone and pick up any
+            // real change on the next turn after the UI's 5 s poll has
+            // repopulated [`INTEGRATIONS_CACHE`].
+
             log::trace!(
                 "[agent_loop] system prompt reused (history_len={}) — KV cache prefix preserved",
                 self.history.len()
@@ -773,10 +859,18 @@ impl Agent {
                 "[agent_loop] exceeded maximum tool iterations max={}",
                 self.config.max_tool_iterations
             );
-            anyhow::bail!(
-                "Agent exceeded maximum tool iterations ({})",
-                self.config.max_tool_iterations
-            )
+            // Return the typed `AgentError::MaxIterationsExceeded` variant
+            // (boxed through `anyhow::Error`) so `Agent::run_single` can
+            // downcast at the Sentry funnel and suppress emission — this is
+            // a deterministic agent-state outcome, not a bug (OPENHUMAN-
+            // TAURI-99 / -98). The `Display` text is preserved verbatim so
+            // the user-visible chat-rendered "Error: Agent exceeded
+            // maximum tool iterations" string is unchanged.
+            Err(anyhow::Error::new(
+                crate::openhuman::agent::error::AgentError::MaxIterationsExceeded {
+                    max: self.config.max_tool_iterations,
+                },
+            ))
         }; // end of `turn_body` async block
 
         // Run the turn body inside the parent-execution-context scope so
@@ -1068,7 +1162,6 @@ impl Agent {
             session_id: self.event_session_id().to_string(),
             channel: self.event_channel().to_string(),
             connected_integrations: self.connected_integrations.clone(),
-            composio_client: self.composio_client.clone(),
             tool_call_format: self.tool_dispatcher.tool_call_format(),
             session_key: self.session_key.clone(),
             session_parent_prefix: self.session_parent_prefix.clone(),
@@ -1230,12 +1323,19 @@ impl Agent {
 
     /// Fetches the user's active Composio connections and populates
     /// `self.connected_integrations` so the system prompt can surface them.
-    /// Also caches a [`ComposioClient`] on the session so the sub-agent
-    /// runner can construct per-action tools for `integrations_agent` spawns
-    /// without rebuilding the client on every call.
     ///
     /// Delegates to the shared [`crate::openhuman::composio::fetch_connected_integrations`]
     /// which is the single source of truth for integration discovery.
+    ///
+    /// **No session-scoped Composio client is cached on the agent any
+    /// more (#1710 Wave 2)**. Every downstream caller that needs to
+    /// dispatch a Composio action now resolves a fresh client via
+    /// [`crate::openhuman::composio::client::create_composio_client`]
+    /// at call time so the live `composio.mode` toggle is honoured
+    /// without rebuilding the session — see `ComposioActionTool`,
+    /// `ProviderContext::execute`, the 5 migrated agent tools in
+    /// `composio/tools.rs`, and the spawn-time per-action tool build
+    /// path in `subagent_runner/ops.rs`.
     pub async fn fetch_connected_integrations(&mut self) {
         let config = match crate::openhuman::config::Config::load_or_init().await {
             Ok(c) => c,
@@ -1248,7 +1348,180 @@ impl Agent {
         };
         self.connected_integrations =
             crate::openhuman::composio::fetch_connected_integrations(&config).await;
-        self.composio_client = crate::openhuman::composio::build_composio_client(&config);
+    }
+
+    /// Re-synthesise `delegate_*` tools for the orchestrator's `subagents`
+    /// declaration using the live `connected_integrations` slice, and
+    /// reconcile the resulting set into `self.tools` / `self.tool_specs` /
+    /// `self.visible_tool_specs` / `self.visible_tool_names`.
+    ///
+    /// **Reconciliation strategy** — full rebuild of the synthesised
+    /// subset:
+    ///
+    ///   1. Drop every tool whose name was in [`Self::synthesized_tool_names`]
+    ///      from the previous synthesis. Direct tools (`query_memory`,
+    ///      `cron_add`, …) are untouched because their names are not in
+    ///      that set.
+    ///   2. Append the freshly collected synthesis output verbatim.
+    ///   3. Replace `synthesized_tool_names` with the new set so the
+    ///      next refresh has a clean mask to undo.
+    ///
+    /// This is safer than appending-only or strict-diff reconcile:
+    ///
+    ///   * Stale tools after a revoke can never leak — anything from the
+    ///     previous synthesis is unconditionally dropped, the new set is
+    ///     authoritative.
+    ///   * Direct tools can never be accidentally removed — only names
+    ///     in `synthesized_tool_names` are touched.
+    ///   * Duplicate registration is impossible — retain+extend
+    ///     guarantees every final entry is either a non-synthesised
+    ///     direct tool or a member of the fresh `synthed` set.
+    ///
+    /// **When to call**: on turn 1 (after [`Agent::fetch_connected_integrations`]
+    /// populates `self.connected_integrations` for the first time) and
+    /// on any subsequent turn where the connection set has changed
+    /// since the last reconcile (detected via
+    /// [`Self::last_seen_integrations_hash`] vs.
+    /// [`crate::openhuman::composio::cached_active_integrations`]).
+    ///
+    /// **Atomicity**: when `Arc::get_mut` fails (a sub-agent or other
+    /// caller has already captured a clone of the tool list), we restore
+    /// the previous `synthesized_tool_names` and bail. The next refresh
+    /// attempt will re-apply the full transition cleanly rather than
+    /// resuming from a partial state. This should never happen on a turn
+    /// boundary in production — sub-agents always drop their snapshots
+    /// before the parent's next turn — but it's defended against anyway.
+    ///
+    /// **Return value** — `true` when the agent's tool surface is now
+    /// consistent with `self.connected_integrations` (either because a
+    /// successful reconcile applied, or because no reconcile was needed).
+    /// `false` only when the Arc was shared and the reconcile was
+    /// aborted; callers should treat this as "retry next turn" and
+    /// **not** advance any signal they use to gate future refreshes
+    /// (e.g. `last_seen_integrations_hash`) — otherwise a one-shot
+    /// shared-Arc collision could suppress further reconciliation until
+    /// another integration event happened to bump the hash again.
+    pub fn refresh_delegation_tools(&mut self) -> bool {
+        use crate::openhuman::agent::harness::definition::AgentDefinitionRegistry;
+        use crate::openhuman::tools::orchestrator_tools::collect_orchestrator_tools;
+
+        let Some(reg) = AgentDefinitionRegistry::global() else {
+            // No registry — there's nothing we can do until the
+            // registry is initialised. The agent's surface stays at
+            // whatever the builder produced; callers can safely treat
+            // this as "no reconcile needed right now".
+            return true;
+        };
+        let Some(def) = reg.get(&self.agent_definition_id) else {
+            log::debug!(
+                "[agent] refresh_delegation_tools: definition '{}' not in registry — skipping",
+                self.agent_definition_id
+            );
+            return true;
+        };
+        if def.subagents.is_empty() {
+            return true;
+        }
+
+        let synthed = collect_orchestrator_tools(def, reg, &self.connected_integrations);
+        let synthed_names: std::collections::HashSet<String> =
+            synthed.iter().map(|t| t.name().to_string()).collect();
+        let synthed_specs: Vec<crate::openhuman::tools::ToolSpec> =
+            synthed.iter().map(|t| t.spec()).collect();
+
+        // Skip the Arc mutation entirely when neither the previous nor
+        // the next synthesis produced any names — saves an
+        // `Arc::get_mut` probe on agents that don't declare `subagents`.
+        if self.synthesized_tool_names.is_empty() && synthed_names.is_empty() {
+            return true;
+        }
+
+        // Mask used to drop the previous synthesis. We `take` it now so
+        // the restore-on-failure path below can put it back if the Arc
+        // turns out to be shared.
+        let old_synth = std::mem::take(&mut self.synthesized_tool_names);
+
+        match (
+            Arc::get_mut(&mut self.tools),
+            Arc::get_mut(&mut self.tool_specs),
+        ) {
+            (Some(tools_vec), Some(specs_vec)) => {
+                tools_vec.retain(|t| !old_synth.contains(t.name()));
+                specs_vec.retain(|s| !old_synth.contains(&s.name));
+                tools_vec.extend(synthed);
+                specs_vec.extend(synthed_specs);
+            }
+            _ => {
+                log::warn!(
+                    "[agent] refresh_delegation_tools: tools/tool_specs Arc is shared — \
+                     cannot reconcile delegation surface (would have produced {} synthesised tool(s)). \
+                     Restoring previous synthesized_tool_names so the next refresh retries cleanly.",
+                    synthed_names.len()
+                );
+                self.synthesized_tool_names = old_synth;
+                return false;
+            }
+        }
+
+        // `visible_tool_names` carries an explicit allowlist for
+        // [`ToolScope::Named`] agents. Drop the previously-synthesised
+        // names and add the new ones so the visible set tracks the
+        // tool list. Wildcard-scope agents keep this empty ("no
+        // filter") and never need touching.
+        if !self.visible_tool_names.is_empty() {
+            for name in &old_synth {
+                self.visible_tool_names.remove(name);
+            }
+            for name in &synthed_names {
+                self.visible_tool_names.insert(name.clone());
+            }
+        }
+
+        // Rebuild the visible-spec cache from the new tool_specs so the
+        // next provider call carries the reconciled schema. Dedup
+        // afterward so a delegate synthesised here (e.g.
+        // `delegate_name = "research"`) doesn't collide with a
+        // same-named skill tool on the wire — Anthropic 400s on dup
+        // tool names where OpenHuman's backend silently accepts.
+        let visible_specs: Vec<crate::openhuman::tools::ToolSpec> =
+            if self.visible_tool_names.is_empty() {
+                (*self.tool_specs).clone()
+            } else {
+                self.tool_specs
+                    .iter()
+                    .filter(|spec| self.visible_tool_names.contains(&spec.name))
+                    .cloned()
+                    .collect()
+            };
+        self.visible_tool_specs = Arc::new(super::builder::dedup_visible_tool_specs(visible_specs));
+
+        // Compute add/remove deltas for the log line — useful when
+        // diagnosing a Composio connect/revoke that should have rebuilt
+        // the surface but didn't. Materialise to owned `Vec<String>`
+        // so we can move `synthed_names` into `self.synthesized_tool_names`
+        // below without the log-statement reborrow blocking the move.
+        let added: Vec<String> = synthed_names
+            .iter()
+            .filter(|n| !old_synth.contains(n.as_str()))
+            .cloned()
+            .collect();
+        let removed: Vec<String> = old_synth
+            .iter()
+            .filter(|n| !synthed_names.contains(n.as_str()))
+            .cloned()
+            .collect();
+
+        self.synthesized_tool_names = synthed_names;
+
+        log::info!(
+            "[agent] refresh_delegation_tools: reconciled delegation surface for agent '{}' (display='{}'); now {} synthesised tool(s); added={:?} removed={:?}",
+            self.agent_definition_id,
+            self.agent_definition_name,
+            self.synthesized_tool_names.len(),
+            added,
+            removed
+        );
+        true
     }
 
     /// Builds the system prompt for the current turn, including tool

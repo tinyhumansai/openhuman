@@ -1,4 +1,6 @@
+pub mod billing_error;
 pub mod compatible;
+pub mod factory;
 pub mod openhuman_backend;
 pub mod ops;
 pub mod reliable;
@@ -12,4 +14,6 @@ pub use traits::{
     ProviderDelta, ToolCall, ToolResultMessage, UsageInfo,
 };
 
+pub use billing_error::is_budget_exhausted_message;
+pub use factory::{create_chat_provider, provider_for_role};
 pub use ops::*;

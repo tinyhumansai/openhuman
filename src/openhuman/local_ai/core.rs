@@ -14,6 +14,15 @@ pub fn global(config: &Config) -> Arc<LocalAiService> {
         .clone()
 }
 
+/// Like [`global`] but returns `None` instead of initialising the singleton.
+///
+/// Useful from shutdown paths where lazy-creating the service just to call a
+/// no-op cleanup would be wasteful — if local AI was never used in this
+/// process, there's nothing to clean up.
+pub fn try_global() -> Option<Arc<LocalAiService>> {
+    LOCAL_AI.get().cloned()
+}
+
 pub fn model_artifact_path(config: &Config) -> PathBuf {
     let root = crate::openhuman::config::default_root_openhuman_dir().unwrap_or_else(|_| {
         config

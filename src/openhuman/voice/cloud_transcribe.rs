@@ -14,7 +14,7 @@ use reqwest::header::AUTHORIZATION;
 use reqwest::multipart::{Form, Part};
 use serde::{Deserialize, Serialize};
 
-use crate::api::config::effective_api_url;
+use crate::api::config::effective_backend_api_url;
 use crate::api::jwt::get_session_token;
 use crate::api::BackendOAuthClient;
 use crate::openhuman::config::Config;
@@ -75,7 +75,7 @@ pub async fn transcribe_cloud(
         })
         .ok_or_else(|| "no backend session token; sign in first".to_string())?;
 
-    let api_url = effective_api_url(&config.api_url);
+    let api_url = effective_backend_api_url(&config.api_url);
     let client = BackendOAuthClient::new(&api_url).map_err(|e| e.to_string())?;
     let url = client
         .url_for("/openai/v1/audio/transcriptions")

@@ -5,9 +5,8 @@
  *
  *   1. Composio Gmail search (`tools_composio_execute` -> `GMAIL_FETCH_EMAILS`)
  *      to find a LinkedIn profile URL in the user's recent mail.
- *   2. Apify LinkedIn scrape (`tools_apify_linkedin_scrape`) to pull a
- *      structured public profile snapshot and render it as markdown.
- *   3. Persist the assembled markdown via `learning_save_profile` with
+ *   2. Apify LinkedIn scrape — disabled (unreliable); stage is skipped.
+ *   3. Persist a URL-only markdown via `learning_save_profile` with
  *      `summarize=true` so the core LLM compresses it into PROFILE.md.
  *
  * External calls still go through core (auth, proxy, billing). Only the
@@ -138,16 +137,6 @@ async function findLinkedInUrlViaComposio(): Promise<string | null> {
   return null;
 }
 
-async function apifyScrapeLinkedIn(profileUrl: string): Promise<string> {
-  console.debug('[onboarding:context] apify_linkedin_scrape', { profileUrl });
-  const raw = await callCoreRpc<unknown>({
-    method: 'openhuman.tools_apify_linkedin_scrape',
-    params: { profile_url: profileUrl },
-  });
-  const result = unwrapCliEnvelope<{ data: unknown; markdown: string }>(raw);
-  return result.markdown ?? '';
-}
-
 async function saveProfile(markdown: string): Promise<void> {
   await callCoreRpc<unknown>({
     method: 'openhuman.learning_save_profile',
@@ -224,27 +213,10 @@ const ContextGatheringStep = ({
       return;
     }
 
-    // Stage 2 — Apify LinkedIn scrape
-    const scrapeStartedAt = stageNow();
-    setStage('linkedin-scrape', 'active');
-    let scrapedMarkdown = '';
-    try {
-      scrapedMarkdown = await apifyScrapeLinkedIn(profileUrl);
-      setStage(
-        'linkedin-scrape',
-        scrapedMarkdown.trim() ? 'done' : 'skipped',
-        durationMs(scrapeStartedAt),
-        scrapedMarkdown.trim() ? undefined : 'empty_markdown'
-      );
-    } catch (e) {
-      const reason = errorReason(e);
-      console.warn('[onboarding:context] apify_linkedin_scrape stage failed', {
-        durationMs: durationMs(scrapeStartedAt),
-        reason,
-      });
-      setStage('linkedin-scrape', 'error', durationMs(scrapeStartedAt), reason);
-      // Continue — save_profile can still write a URL-only file.
-    }
+    // Stage 2 — Apify LinkedIn scrape (disabled: unreliable, skipped during
+    // profile build). PROFILE.md is built URL-only from stage 3.
+    setStage('linkedin-scrape', 'skipped', 0, 'apify_disabled');
+    const scrapedMarkdown = '';
 
     // Stage 3 — summarize + persist via core LLM compressor
     const profileStartedAt = stageNow();
@@ -314,10 +286,10 @@ const ContextGatheringStep = ({
     return (
       <div className="rounded-2xl border border-stone-200 bg-white p-8 shadow-soft animate-fade-up">
         <div className="flex flex-col items-center justify-center gap-5">
-          <h1 className="text-xl font-bold text-stone-900">Almost there!</h1>
+          <h1 className="text-xl font-bold text-stone-900">Context Gathering</h1>
           <p className="text-sm text-stone-600 text-center max-w-xs leading-relaxed">
             We couldn&apos;t build your full profile right now, but that&apos;s okay — you can
-            always update it later.
+            continue and your profile will build over time.
           </p>
           <OnboardingNextButton label="Continue to chat" onClick={continueToChat} />
         </div>
@@ -333,7 +305,9 @@ const ContextGatheringStep = ({
 
         {/* Title */}
         <h1 className="text-xl font-bold text-stone-900 animate-pulse">Building your profile...</h1>
-        <p className="text-sm text-stone-500 leading-relaxed">This will only take a moment.</p>
+        <p className="text-sm text-stone-500 leading-relaxed">
+          Connecting your integrations and building your personal context.
+        </p>
 
         {/* Skeleton bars */}
         <div className="w-64 flex flex-col gap-3 mt-2">

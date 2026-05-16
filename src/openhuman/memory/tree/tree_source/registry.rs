@@ -107,9 +107,8 @@ fn new_tree_id(kind: TreeKind) -> String {
 /// sized for uniqueness across the file-system and Obsidian wikilink
 /// namespaces.
 pub fn new_summary_id(level: u32) -> String {
-    use rand::Rng;
     let ms = chrono::Utc::now().timestamp_millis() as u64;
-    let rand_tail: u32 = rand::thread_rng().gen();
+    let rand_tail: u32 = rand::random();
     format!("summary:{:013}:L{}-{:08x}", ms, level, rand_tail)
 }
 

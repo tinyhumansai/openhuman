@@ -334,7 +334,7 @@ just do it.\n\
 /// the current user prompt, post it through the backend, and return
 /// the assistant's reply (trimmed, possibly empty).
 async fn llm_meeting(prompt: &str, history: &[ConversationTurn]) -> Result<String, String> {
-    use crate::api::config::effective_api_url;
+    use crate::api::config::effective_backend_api_url;
     use crate::api::jwt::get_session_token;
     use crate::api::BackendOAuthClient;
     use reqwest::Method;
@@ -345,7 +345,7 @@ async fn llm_meeting(prompt: &str, history: &[ConversationTurn]) -> Result<Strin
         .filter(|t| !t.trim().is_empty())
         .ok_or_else(|| "no backend session token".to_string())?;
 
-    let api_url = effective_api_url(&config.api_url);
+    let api_url = effective_backend_api_url(&config.api_url);
     let client = BackendOAuthClient::new(&api_url).map_err(|e| e.to_string())?;
 
     let mut messages: Vec<Value> = Vec::with_capacity(history.len() + 2);

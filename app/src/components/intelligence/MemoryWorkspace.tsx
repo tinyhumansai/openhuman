@@ -27,6 +27,7 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 
+import { useT } from '../../lib/i18n/I18nContext';
 import type { ToastNotification } from '../../types/intelligence';
 import { openUrl } from '../../utils/openUrl';
 import {
@@ -81,6 +82,7 @@ async function openVaultInObsidian(contentRootAbs: string): Promise<void> {
 }
 
 export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
+  const { t } = useT();
   const [graph, setGraph] = useState<GraphExportResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [building, setBuilding] = useState(false);
@@ -119,10 +121,7 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
 
   const handleWipe = useCallback(async () => {
     // Two-step confirm so accidental clicks can't nuke a workspace.
-    const ok = window.confirm(
-      'This deletes every chunk, summary, and raw markdown file in this workspace. ' +
-        'Re-syncing afterwards will re-ingest from upstream. Continue?'
-    );
+    const ok = window.confirm(t('workspace.wipeConfirm'));
     if (!ok) return;
     setWiping(true);
     try {
@@ -157,12 +156,7 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
   }, [onToast, mode]);
 
   const handleResetTree = useCallback(async () => {
-    const ok = window.confirm(
-      'This deletes every summary, buffer, and tree job — but keeps chunks ' +
-        'and raw markdown intact. Every chunk gets re-queued through extraction ' +
-        'and the tree rebuilds from scratch on the *current* summariser. ' +
-        'No upstream re-fetch. Continue?'
-    );
+    const ok = window.confirm(t('workspace.resetTreeConfirm'));
     if (!ok) return;
     setResetting(true);
     try {
@@ -259,14 +253,14 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
                        text-coral-700 shadow-sm transition-colors hover:bg-coral-50
                        disabled:cursor-not-allowed disabled:opacity-50
                        focus:outline-none focus:ring-2 focus:ring-coral-200"
-            title="Delete every chunk, summary, and raw file in this workspace">
+            title={t('workspace.wipeTitle')}>
             {wiping ? (
               <>
-                <Spinner /> Resetting…
+                <Spinner /> {t('workspace.resetting')}
               </>
             ) : (
               <>
-                <TrashIcon /> Reset memory
+                <TrashIcon /> {t('workspace.resetMemory')}
               </>
             )}
           </button>
@@ -280,14 +274,14 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
                        text-amber-800 shadow-sm transition-colors hover:bg-amber-50
                        disabled:cursor-not-allowed disabled:opacity-50
                        focus:outline-none focus:ring-2 focus:ring-amber-200"
-            title="Wipe summaries + buffers and re-summarise existing chunks (no upstream re-fetch)">
+            title={t('workspace.resetTreeTitle')}>
             {resetting ? (
               <>
-                <Spinner /> Rebuilding…
+                <Spinner /> {t('workspace.rebuilding')}
               </>
             ) : (
               <>
-                <RefreshIcon /> Reset memory tree
+                <RefreshIcon /> {t('workspace.resetMemoryTree')}
               </>
             )}
           </button>
@@ -303,11 +297,11 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
                        focus:outline-none focus:ring-2 focus:ring-primary-200">
             {building ? (
               <>
-                <Spinner /> Building…
+                <Spinner /> {t('workspace.building')}
               </>
             ) : (
               <>
-                <BrainIcon /> Build summary trees
+                <BrainIcon /> {t('workspace.buildSummaryTrees')}
               </>
             )}
           </button>
@@ -322,7 +316,7 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
                          focus:outline-none focus:ring-2 focus:ring-violet-300"
               title={`obsidian://open?path=${graph.content_root_abs}`}>
               <ExternalLinkIcon />
-              View vault in Obsidian
+              {t('workspace.viewVault')}
             </button>
           )}
         </div>
@@ -330,11 +324,11 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
 
       {error ? (
         <div className="rounded-lg border border-coral-200 bg-coral-50 px-4 py-3 text-sm text-coral-800">
-          Failed to load memory graph: {error}
+          {t('workspace.graphLoadFailed')}: {error}
         </div>
       ) : !graph ? (
         <div className="flex h-[640px] items-center justify-center rounded-lg border border-stone-100 bg-stone-50/40 text-sm text-stone-500">
-          Loading graph…
+          {t('workspace.loadingGraph')}
         </div>
       ) : (
         <MemoryGraph
@@ -354,6 +348,7 @@ interface ModeToggleProps {
 }
 
 function ModeToggle({ mode, onChange }: ModeToggleProps) {
+  const { t } = useT();
   const baseBtn =
     'px-3 py-1.5 text-xs font-medium rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-primary-200';
   const active = 'bg-primary-500 text-white shadow-sm';
@@ -362,7 +357,7 @@ function ModeToggle({ mode, onChange }: ModeToggleProps) {
     <div
       className="inline-flex items-center gap-1 rounded-lg border border-stone-200 bg-stone-50 p-1"
       role="tablist"
-      aria-label="Graph view mode"
+      aria-label={t('workspace.graphViewMode')}
       data-testid="memory-graph-mode-toggle">
       <button
         type="button"
@@ -371,7 +366,7 @@ function ModeToggle({ mode, onChange }: ModeToggleProps) {
         role="tab"
         aria-selected={mode === 'tree'}
         data-testid="memory-graph-mode-tree">
-        Trees
+        {t('workspace.trees')}
       </button>
       <button
         type="button"
@@ -380,7 +375,7 @@ function ModeToggle({ mode, onChange }: ModeToggleProps) {
         role="tab"
         aria-selected={mode === 'contacts'}
         data-testid="memory-graph-mode-contacts">
-        Contacts
+        {t('workspace.contacts')}
       </button>
     </div>
   );

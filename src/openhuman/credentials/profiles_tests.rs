@@ -154,6 +154,68 @@ fn corrupt_store_is_quarantined_and_reset() {
     assert_eq!(reloaded.profiles.len(), 1);
 }
 
+/// When the encrypted-secrets key file has rotated between writes and reads
+/// (e.g. `.secret_key` got regenerated underneath an existing
+/// auth-profiles.json — observed when a workspace gets partially restored
+/// or when OPENHUMAN_WORKSPACE points at a half-populated test dir), the
+/// store must silently drop the unrecoverable profile and rewrite the
+/// file. Without this, `app_state_snapshot` polls infinite-loop on
+/// "Decryption failed — wrong key or tampered data" and the user can
+/// never log in cleanly because every read pre-empts before reaching
+/// the "no profile" code path.
+#[test]
+fn load_drops_profiles_whose_decryption_fails_under_rotated_key() {
+    // The SecretStore caches keys by canonicalised path in a process-wide
+    // OnceCell. Use a fresh temp dir per test so we don't pick up a
+    // sibling test's cached key.
+    let tmp = TempDir::new().unwrap();
+    let store = AuthProfilesStore::new(tmp.path(), true);
+
+    // Seed two profiles. One ("doomed") will be made unrecoverable by
+    // rewriting the encrypted token under a new key; the other
+    // ("plain-fine") uses kind=Token with a plaintext token that the
+    // legacy `enc:` / plaintext branch decrypts trivially, so even
+    // after key rotation it survives.
+    let doomed = AuthProfile::new_token("app-session", "default", "real-jwt-payload".into());
+    store.upsert_profile(doomed.clone(), true).unwrap();
+
+    // Manually corrupt the persisted token: rewrite it as a syntactically
+    // valid enc2: hex blob that the *current* key cannot decrypt.
+    // (Easier than rotating the key file because the SecretStore caches
+    // by canonical path.)
+    let path = store.path().to_path_buf();
+    let mut data: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    let profile_id = doomed.id.clone();
+    data["profiles"][&profile_id]["token"] = serde_json::Value::String(
+        // 12-byte nonce + 32 bytes of "ciphertext" that won't authenticate
+        // under any random key — hex-encoded, prefixed with enc2:.
+        "enc2:000102030405060708090a0b\
+              deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+            .to_string(),
+    );
+    std::fs::write(&path, serde_json::to_string_pretty(&data).unwrap()).unwrap();
+
+    // First load: should silently drop the doomed profile rather than
+    // bubbling the decrypt error and breaking every poll.
+    let loaded = store.load().expect(
+        "load must succeed by dropping unrecoverable profiles, not by propagating decrypt errors",
+    );
+    assert!(
+        !loaded.profiles.contains_key(&profile_id),
+        "doomed profile must be purged from the in-memory view"
+    );
+    assert!(
+        !loaded.active_profiles.values().any(|v| v == &profile_id),
+        "active_profiles pointer to the doomed profile must also be cleared"
+    );
+
+    // Subsequent load: file was rewritten without the bad profile, so
+    // there's nothing to drop on the second pass — same clean state.
+    let loaded2 = store.load().unwrap();
+    assert!(!loaded2.profiles.contains_key(&profile_id));
+}
+
 #[test]
 fn remove_nonexistent_profile_returns_false() {
     let tmp = TempDir::new().unwrap();
@@ -271,6 +333,113 @@ fn upsert_preserves_created_at_on_update() {
     let data = store.load().unwrap();
     let loaded = data.profiles.get(&id).unwrap();
     assert_eq!(loaded.created_at, created);
+}
+
+// --- Issue #1612: stale auth-profiles.lock recovery -----------------------
+
+/// A pid we expect to be safely above any real process id on macOS / Linux /
+/// Windows test runners. Used to simulate a lock file written by a process
+/// that has since exited.
+const SYNTHETIC_DEAD_PID: u32 = i32::MAX as u32;
+
+#[test]
+fn is_pid_alive_detects_current_process() {
+    assert!(is_pid_alive(std::process::id()));
+}
+
+#[test]
+fn is_pid_alive_returns_false_for_synthetic_dead_pid() {
+    assert!(!is_pid_alive(SYNTHETIC_DEAD_PID));
+}
+
+#[test]
+fn acquire_lock_clears_stale_lock_with_dead_pid() {
+    let tmp = TempDir::new().unwrap();
+    let store = AuthProfilesStore::new(tmp.path(), false);
+
+    let lock_path = tmp.path().join(LOCK_FILENAME);
+    std::fs::write(&lock_path, format!("pid={SYNTHETIC_DEAD_PID}\n")).unwrap();
+    assert!(lock_path.exists());
+
+    // A no-op call that goes through acquire_lock should succeed quickly
+    // by recognising the previous lock as stale and removing it.
+    let data = store.load().unwrap();
+    assert!(data.profiles.is_empty());
+    assert!(
+        !lock_path.exists(),
+        "guard should have removed the lock on drop"
+    );
+}
+
+#[test]
+fn acquire_lock_recovers_after_upsert_when_dead_pid_lock_left_behind() {
+    let tmp = TempDir::new().unwrap();
+    let store = AuthProfilesStore::new(tmp.path(), false);
+
+    // Pre-existing lock from a crashed previous run.
+    let lock_path = tmp.path().join(LOCK_FILENAME);
+    std::fs::write(&lock_path, format!("pid={SYNTHETIC_DEAD_PID}\n")).unwrap();
+
+    let profile = AuthProfile::new_token("openai", "default", "tok".into());
+    let id = profile.id.clone();
+    store.upsert_profile(profile, true).unwrap();
+
+    let data = store.load().unwrap();
+    assert!(data.profiles.contains_key(&id));
+    assert!(!lock_path.exists());
+}
+
+#[test]
+fn clear_lock_if_stale_leaves_live_pid_alone() {
+    let tmp = TempDir::new().unwrap();
+    let store = AuthProfilesStore::new(tmp.path(), false);
+
+    let lock_path = tmp.path().join(LOCK_FILENAME);
+    std::fs::write(&lock_path, format!("pid={}\n", std::process::id())).unwrap();
+
+    assert!(!store.clear_lock_if_stale());
+    assert!(lock_path.exists(), "lock for live pid must not be removed");
+}
+
+#[test]
+fn clear_lock_if_stale_leaves_malformed_lock_alone() {
+    let tmp = TempDir::new().unwrap();
+    let store = AuthProfilesStore::new(tmp.path(), false);
+
+    let lock_path = tmp.path().join(LOCK_FILENAME);
+    std::fs::write(&lock_path, "garbage without a pid line\n").unwrap();
+
+    assert!(!store.clear_lock_if_stale());
+    assert!(
+        lock_path.exists(),
+        "malformed lock should not be auto-removed; fall back to busy-wait + timeout"
+    );
+}
+
+#[test]
+fn clear_lock_if_stale_is_noop_when_lock_missing() {
+    let tmp = TempDir::new().unwrap();
+    let store = AuthProfilesStore::new(tmp.path(), false);
+    assert!(!store.clear_lock_if_stale());
+}
+
+#[test]
+fn acquire_lock_writes_pid_so_future_callers_can_recover() {
+    let tmp = TempDir::new().unwrap();
+    let store = AuthProfilesStore::new(tmp.path(), false);
+
+    // Drive a real acquire/release cycle and snapshot the on-disk lock
+    // while the guard is held.
+    let lock_path = tmp.path().join(LOCK_FILENAME);
+    let observed = {
+        let _guard = store.acquire_lock().unwrap();
+        std::fs::read_to_string(&lock_path).unwrap()
+    };
+    assert!(
+        observed.contains(&format!("pid={}", std::process::id())),
+        "lock file should embed the owning pid, got {observed:?}"
+    );
+    assert!(!lock_path.exists(), "guard must remove lock on drop");
 }
 
 #[test]

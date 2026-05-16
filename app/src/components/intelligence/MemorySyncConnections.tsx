@@ -9,6 +9,7 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 
+import { useT } from '../../lib/i18n/I18nContext';
 import {
   type FreshnessLabel,
   type MemorySyncStatus,
@@ -20,11 +21,10 @@ interface MemorySyncConnectionsProps {
   pollIntervalMs?: number;
 }
 
-const FRESHNESS_LABEL: Record<FreshnessLabel, string> = {
-  active: 'Active',
-  recent: 'Recent',
-  idle: 'Idle',
-};
+function useFreshnessLabel() {
+  const { t } = useT();
+  return { active: t('sync.active'), recent: t('sync.recent'), idle: t('sync.idle') } as const;
+}
 
 const PROVIDER_LABEL: Record<string, string> = {
   slack: 'Slack',
@@ -72,6 +72,7 @@ interface SourceCardProps {
 }
 
 function SourceCard({ status }: SourceCardProps) {
+  const { t } = useT();
   const label = PROVIDER_LABEL[status.provider] ?? status.provider;
   const lastSync = relativeTimestamp(status.last_chunk_at_ms);
   const lifetime = status.chunks_synced;
@@ -97,14 +98,18 @@ function SourceCard({ status }: SourceCardProps) {
             <span
               className={`rounded-md px-2 py-0.5 text-xs font-medium ${freshnessBadgeClass(status.freshness)}`}
               data-testid={`memory-sync-freshness-${status.provider}`}>
-              {FRESHNESS_LABEL[status.freshness]}
+              {useFreshnessLabel()[status.freshness]}
             </span>
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-stone-500">
             <span data-testid={`memory-sync-chunks-${status.provider}`}>
-              {lifetime.toLocaleString()} chunks
+              {lifetime.toLocaleString()} {t('sync.chunks')}
             </span>
-            {lastSync && <span>Last chunk {lastSync}</span>}
+            {lastSync && (
+              <span>
+                {t('sync.lastChunk')} {lastSync}
+              </span>
+            )}
           </div>
         </div>
       </div>
@@ -123,10 +128,14 @@ function SourceCard({ status }: SourceCardProps) {
           </div>
           <div className="mt-1 text-xs text-stone-500">
             <span data-testid={`memory-sync-pending-${status.provider}`}>
-              {batchProcessed.toLocaleString()} of {batchTotal.toLocaleString()} processed
+              {batchProcessed.toLocaleString()} / {batchTotal.toLocaleString()}{' '}
+              {t('sync.processed')}
             </span>
             {pending > 0 && (
-              <span className="text-stone-400"> · {pending.toLocaleString()} pending</span>
+              <span className="text-stone-400">
+                {' '}
+                · {pending.toLocaleString()} {t('sync.pending')}
+              </span>
             )}
           </div>
         </div>
@@ -136,6 +145,7 @@ function SourceCard({ status }: SourceCardProps) {
 }
 
 export function MemorySyncConnections({ pollIntervalMs }: MemorySyncConnectionsProps) {
+  const { t } = useT();
   const [statuses, setStatuses] = useState<MemorySyncStatus[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -177,8 +187,8 @@ export function MemorySyncConnections({ pollIntervalMs }: MemorySyncConnectionsP
   if (loading) {
     return (
       <section className="memory-sync-connections" data-testid="memory-sync-connections">
-        <h3 className="text-sm font-semibold text-stone-700">Memory sources</h3>
-        <p className="mt-2 text-xs text-stone-500">Loading…</p>
+        <h3 className="text-sm font-semibold text-stone-700">{t('sync.memorySources')}</h3>
+        <p className="mt-2 text-xs text-stone-500">{t('common.loading')}</p>
       </section>
     );
   }
@@ -186,9 +196,9 @@ export function MemorySyncConnections({ pollIntervalMs }: MemorySyncConnectionsP
   if (loadError) {
     return (
       <section className="memory-sync-connections" data-testid="memory-sync-connections">
-        <h3 className="text-sm font-semibold text-stone-700">Memory sources</h3>
+        <h3 className="text-sm font-semibold text-stone-700">{t('sync.memorySources')}</h3>
         <p className="mt-2 rounded-md bg-coral-50 p-2 text-xs text-coral-800 break-words">
-          Failed to load sync status: {loadError}
+          {t('sync.failedToLoad')}: {loadError}
         </p>
       </section>
     );
@@ -197,17 +207,15 @@ export function MemorySyncConnections({ pollIntervalMs }: MemorySyncConnectionsP
   if (statuses.length === 0) {
     return (
       <section className="memory-sync-connections" data-testid="memory-sync-connections">
-        <h3 className="text-sm font-semibold text-stone-700">Memory sources</h3>
-        <p className="mt-2 text-xs text-stone-500">
-          No content has been synced into memory yet. Connect an integration to start.
-        </p>
+        <h3 className="text-sm font-semibold text-stone-700">{t('sync.memorySources')}</h3>
+        <p className="mt-2 text-xs text-stone-500">{t('sync.noContent')}</p>
       </section>
     );
   }
 
   return (
     <section className="memory-sync-connections" data-testid="memory-sync-connections">
-      <h3 className="text-sm font-semibold text-stone-700">Memory sources</h3>
+      <h3 className="text-sm font-semibold text-stone-700">{t('sync.memorySources')}</h3>
       <div className="mt-2 space-y-2">
         {statuses.map(s => (
           <SourceCard key={s.provider} status={s} />

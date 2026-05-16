@@ -205,6 +205,10 @@ pub fn register_notification_bridge_subscriber() {
 }
 
 #[cfg(test)]
+#[path = "bus_tests.rs"]
+mod bus_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

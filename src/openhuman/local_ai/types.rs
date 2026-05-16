@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use super::model_ids;
 use super::presets;
+use super::provider::provider_from_config;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LocalAiStatus {
@@ -43,6 +44,7 @@ pub struct LocalAiStatus {
 impl LocalAiStatus {
     pub(crate) fn disabled(config: &Config) -> Self {
         let vision_mode = presets::vision_mode_for_config(&config.local_ai);
+        let provider = provider_from_config(config);
         Self {
             state: "disabled".to_string(),
             model_id: model_ids::effective_chat_model_id(config),
@@ -57,7 +59,7 @@ impl LocalAiStatus {
             embedding_state: "disabled".to_string(),
             stt_state: "disabled".to_string(),
             tts_state: "disabled".to_string(),
-            provider: "ollama".to_string(),
+            provider: provider.as_str().to_string(),
             download_progress: None,
             downloaded_bytes: None,
             total_bytes: None,
@@ -67,7 +69,7 @@ impl LocalAiStatus {
             error_detail: None,
             error_category: None,
             model_path: None,
-            active_backend: "ollama".to_string(),
+            active_backend: provider.as_str().to_string(),
             backend_reason: None,
             last_latency_ms: None,
             prompt_toks_per_sec: None,
@@ -169,6 +171,18 @@ mod tests {
         assert_eq!(status.tts_state, "disabled");
         assert_eq!(status.provider, "ollama");
         assert_eq!(status.active_backend, "ollama");
+    }
+
+    #[test]
+    fn disabled_status_reflects_lm_studio_provider() {
+        use crate::openhuman::local_ai::provider::LocalAiProvider;
+
+        let mut config = Config::default();
+        config.local_ai.provider = LocalAiProvider::LmStudio.as_str().to_string();
+        let status = LocalAiStatus::disabled(&config);
+
+        assert_eq!(status.provider, "lm_studio");
+        assert_eq!(status.active_backend, "lm_studio");
     }
 
     #[test]

@@ -163,10 +163,65 @@ fn classify_string_recognises_top_up_and_out_of_credits_as_budget_exhausted() {
             ArmError::Retryable { .. } => "Retryable",
             ArmError::Fatal(_) => "Fatal",
             ArmError::BudgetExhausted(_) => "BudgetExhausted",
+            ArmError::SafetyFlagged(_) => "SafetyFlagged",
         };
         assert!(
             matches!(&err, ArmError::BudgetExhausted(_)),
             "expected BudgetExhausted for {msg:?}, got {label}"
+        );
+    }
+}
+
+fn arm_error_label(err: &ArmError) -> &'static str {
+    match err {
+        ArmError::Retryable { .. } => "Retryable",
+        ArmError::Fatal(_) => "Fatal",
+        ArmError::BudgetExhausted(_) => "BudgetExhausted",
+        ArmError::SafetyFlagged(_) => "SafetyFlagged",
+    }
+}
+
+#[test]
+fn classify_string_recognises_prompt_guard_rejection_as_safety_flagged() {
+    // OPENHUMAN-TAURI-X regression: the exact phrase our prompt-injection
+    // guard emits from `agent::bus::enforce_prompt_input` /
+    // `agent::harness::session::runtime` when it refuses to dispatch a
+    // turn. Was previously classified as Fatal, which paged Sentry for
+    // every adversarial Gmail message the triage agent saw.
+    for raw in [
+        "Prompt flagged for security review and was not processed.",
+        "Prompt flagged for security review and was not processed. Please rephrase clearly.",
+        "Prompt blocked by security policy.",
+        // Wrapped in caller context (the agent bus surfaces the
+        // verdict via `NativeRequestError::HandlerFailed` whose
+        // message may carry additional prefix) — substring match
+        // must still classify.
+        "[agent.run_turn dispatch] HandlerFailed: Prompt flagged for security review and was not processed.",
+    ] {
+        let err = classify_error(raw.to_string());
+        let label = arm_error_label(&err);
+        assert!(
+            matches!(&err, ArmError::SafetyFlagged(_)),
+            "expected SafetyFlagged for {raw:?}, got {label}"
+        );
+    }
+}
+
+#[test]
+fn classify_string_does_not_misclassify_unrelated_security_phrases() {
+    // Conservative: only the verbatim guard phrases match. A doc-string
+    // mentioning "security review" generically must NOT classify, or
+    // we'd silently hide real issues from Sentry.
+    for raw in [
+        "scheduling a quarterly security review",
+        "the runbook covers security policy violations",
+        "ai security report attached",
+    ] {
+        let err = classify_error(raw.to_string());
+        let label = arm_error_label(&err);
+        assert!(
+            matches!(&err, ArmError::Fatal(_)),
+            "expected Fatal for {raw:?}, got {label}"
         );
     }
 }
@@ -554,6 +609,128 @@ async fn cloud_budget_exhausted_without_local_returns_deferred_not_err() {
         counter.load(Ordering::SeqCst),
         1,
         "no retry — budget would block the second cloud call too"
+    );
+}
+
+#[tokio::test]
+async fn cloud_safety_flagged_then_local_flagged_defers_not_errs() {
+    // Regression for OPENHUMAN-TAURI-X (regressed): the prompt-injection
+    // guard fires the same verdict on cloud and local arms (the guard
+    // runs in `agent::bus::run_turn` before either model is contacted),
+    // so the realistic path is cloud-flagged → local-flagged → defer.
+    // Previously this paged Sentry every time an adversarial Gmail
+    // triage attempt fired (118 hits in 6 days).
+    AgentDefinitionRegistry::init_global_builtins().expect("init_global_builtins");
+    let counter = StdArc::new(AtomicUsize::new(0));
+    let counter_for_stub = StdArc::clone(&counter);
+
+    let _guard = mock_agent_run_turn(move |_req| {
+        let counter = StdArc::clone(&counter_for_stub);
+        async move {
+            counter.fetch_add(1, Ordering::SeqCst);
+            // Verbatim string our prompt-injection guard emits.
+            Err("Prompt flagged for security review and was not processed.".to_string())
+        }
+    })
+    .await;
+
+    let outcome = run_triage_with_arms_for_test(cloud_arm(), Some(local_arm()), &envelope())
+        .await
+        .expect("safety-flagged must not surface as Err — must Defer");
+
+    match outcome {
+        TriageOutcome::Deferred { reason, .. } => {
+            assert!(
+                reason.to_lowercase().contains("prompt-guard"),
+                "deferral reason should name the prompt-guard cause: {reason}"
+            );
+        }
+        TriageOutcome::Decision(_) => panic!("expected Deferred, got Decision"),
+    }
+    assert_eq!(
+        counter.load(Ordering::SeqCst),
+        2,
+        "1 cloud (safety-flagged, no retry) + 1 local (same verdict) = 2"
+    );
+}
+
+#[tokio::test]
+async fn cloud_safety_flagged_then_local_recovers_decides_on_local() {
+    // Defense in depth: while in practice cloud + local share the
+    // guard verdict, the chain must still cleanly dispatch to local
+    // if cloud is the only arm that flagged. Locks in the
+    // skip-retry-and-fall-through semantics independently of whether
+    // local also flags.
+    AgentDefinitionRegistry::init_global_builtins().expect("init_global_builtins");
+    let counter = StdArc::new(AtomicUsize::new(0));
+    let counter_for_stub = StdArc::clone(&counter);
+
+    let _guard = mock_agent_run_turn(move |req| {
+        let counter = StdArc::clone(&counter_for_stub);
+        async move {
+            let n = counter.fetch_add(1, Ordering::SeqCst);
+            if n == 0 {
+                assert_eq!(req.provider_name, "stub-cloud", "first call must hit cloud");
+                Err("Prompt flagged for security review and was not processed.".to_string())
+            } else {
+                assert_eq!(
+                    req.provider_name, "stub-local",
+                    "safety-flagged on cloud must skip cloud retry and dispatch to local"
+                );
+                Ok(AgentTurnResponse {
+                    text: VALID_JSON_REPLY.to_string(),
+                })
+            }
+        }
+    })
+    .await;
+
+    let outcome = run_triage_with_arms_for_test(cloud_arm(), Some(local_arm()), &envelope())
+        .await
+        .expect("safety-flagged must not surface as Err");
+
+    let run = outcome.into_decision().expect("decision");
+    assert_eq!(run.resolution_path, TriageResolutionPath::LocalFallback);
+    assert!(run.used_local);
+    assert_eq!(
+        counter.load(Ordering::SeqCst),
+        2,
+        "1 cloud (safety-flagged) + 1 local = 2 (no cloud retry)"
+    );
+}
+
+#[tokio::test]
+async fn cloud_safety_flagged_without_local_returns_deferred_not_err() {
+    AgentDefinitionRegistry::init_global_builtins().expect("init_global_builtins");
+    let counter = StdArc::new(AtomicUsize::new(0));
+    let counter_for_stub = StdArc::clone(&counter);
+
+    let _guard = mock_agent_run_turn(move |_req| {
+        let counter = StdArc::clone(&counter_for_stub);
+        async move {
+            counter.fetch_add(1, Ordering::SeqCst);
+            Err("Prompt flagged for security review and was not processed.".to_string())
+        }
+    })
+    .await;
+
+    let outcome = run_triage_with_arms_for_test(cloud_arm(), None, &envelope())
+        .await
+        .expect("safety-flagged with no local must Defer, not Err");
+
+    match outcome {
+        TriageOutcome::Deferred { reason, .. } => {
+            assert!(
+                reason.to_lowercase().contains("prompt-guard"),
+                "deferral reason should name the prompt-guard cause: {reason}"
+            );
+        }
+        TriageOutcome::Decision(_) => panic!("expected Deferred"),
+    }
+    assert_eq!(
+        counter.load(Ordering::SeqCst),
+        1,
+        "no retry — guard would block the second cloud call too"
     );
 }
 

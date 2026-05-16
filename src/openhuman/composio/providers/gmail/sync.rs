@@ -39,8 +39,12 @@ pub(crate) fn extract_page_token(data: &Value) -> Option<String> {
 }
 
 /// Convert a cursor value (epoch millis or date string) into a Gmail
-/// `after:YYYY/MM/DD` filter component. Returns `None` if the cursor
-/// cannot be parsed.
+/// `after:YYYY/MM/DD` filter component. Day-level precision — kept as a
+/// last-resort filter for non-numeric cursors and for back-compat with
+/// the older day-cursor write path. New code should prefer
+/// [`cursor_to_gmail_after_epoch_filter`] which produces a
+/// second-precision `after:<unix>` filter and so avoids re-fetching
+/// large same-day windows on every tick.
 pub(crate) fn cursor_to_gmail_after_filter(cursor: &str) -> Option<String> {
     let cursor = cursor.trim();
     // Try parsing as epoch millis first (Gmail's internalDate).
@@ -56,6 +60,39 @@ pub(crate) fn cursor_to_gmail_after_filter(cursor: &str) -> Option<String> {
     }
     if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(cursor) {
         return Some(dt.format("%Y/%m/%d").to_string());
+    }
+    None
+}
+
+/// Convert a cursor value (epoch millis or date string) into a Gmail
+/// `after:<unix_seconds>` filter component. Gmail's search syntax
+/// accepts a bare unix-seconds value for `after:` / `before:`, so the
+/// filter is second-precision rather than the day-level
+/// `after:YYYY/MM/DD` form. Used by the incremental sync path so a
+/// same-day re-tick does not re-fetch every message Gmail has filed
+/// today.
+///
+/// Returns `None` when the cursor cannot be parsed; callers should
+/// fall back to the coarse day filter to avoid sending an unbounded
+/// query.
+pub(crate) fn cursor_to_gmail_after_epoch_filter(cursor: &str) -> Option<String> {
+    let secs = parse_cursor_to_epoch_secs(cursor)?;
+    Some(secs.to_string())
+}
+
+/// Parse a cursor (epoch millis as string, `YYYY-MM-DD`, or RFC3339)
+/// into unix-seconds. Shared by the epoch filter and by the adaptive
+/// page-cap recency check.
+pub(crate) fn parse_cursor_to_epoch_secs(cursor: &str) -> Option<i64> {
+    let cursor = cursor.trim();
+    if let Ok(millis) = cursor.parse::<i64>() {
+        return Some(millis / 1000);
+    }
+    if let Ok(date) = chrono::NaiveDate::parse_from_str(cursor, "%Y-%m-%d") {
+        return date.and_hms_opt(0, 0, 0).map(|dt| dt.and_utc().timestamp());
+    }
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(cursor) {
+        return Some(dt.timestamp());
     }
     None
 }
@@ -157,5 +194,49 @@ mod tests {
     #[test]
     fn now_ms_returns_nonzero() {
         assert!(now_ms() > 0);
+    }
+
+    // ── second-precision cursor ──────────────────────────────────
+
+    #[test]
+    fn epoch_filter_emits_unix_seconds_for_internal_date_millis() {
+        let filter = cursor_to_gmail_after_epoch_filter("1700000000000").unwrap();
+        assert_eq!(filter, "1700000000");
+    }
+
+    #[test]
+    fn epoch_filter_handles_iso_date() {
+        let filter = cursor_to_gmail_after_epoch_filter("2024-01-15").unwrap();
+        // 2024-01-15 00:00:00 UTC == 1705276800.
+        assert_eq!(filter, "1705276800");
+    }
+
+    #[test]
+    fn epoch_filter_handles_rfc3339() {
+        let filter = cursor_to_gmail_after_epoch_filter("2024-06-01T12:00:00Z").unwrap();
+        assert_eq!(filter, "1717243200");
+    }
+
+    #[test]
+    fn epoch_filter_returns_none_for_garbage() {
+        assert!(cursor_to_gmail_after_epoch_filter("not-a-date").is_none());
+    }
+
+    #[test]
+    fn epoch_filter_trims_whitespace() {
+        let filter = cursor_to_gmail_after_epoch_filter("  2024-01-15  ").unwrap();
+        assert_eq!(filter, "1705276800");
+    }
+
+    #[test]
+    fn parse_cursor_round_trip_matches_epoch_filter() {
+        // The adaptive page-cap relies on parse_cursor_to_epoch_secs
+        // agreeing with cursor_to_gmail_after_epoch_filter — both must
+        // emit the same seconds value for any given input.
+        for cursor in ["1700000000000", "2024-01-15", "2024-06-01T12:00:00Z"] {
+            let secs = parse_cursor_to_epoch_secs(cursor).unwrap();
+            let filter = cursor_to_gmail_after_epoch_filter(cursor).unwrap();
+            assert_eq!(filter, secs.to_string(), "cursor `{cursor}`");
+        }
     }
 }

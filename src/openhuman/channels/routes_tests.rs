@@ -124,6 +124,7 @@ fn runtime_context(workspace_dir: PathBuf) -> ChannelRuntimeContext {
         provider_cache: ProviderCacheMap::default(),
         route_overrides: RouteSelectionMap::default(),
         api_url: None,
+        inference_url: None,
         reliability: Arc::new(crate::openhuman::config::ReliabilityConfig::default()),
         provider_runtime_options: crate::openhuman::providers::ProviderRuntimeOptions::default(),
         workspace_dir: Arc::new(workspace_dir),

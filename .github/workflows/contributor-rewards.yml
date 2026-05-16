@@ -1,0 +1,288 @@
+---
+name: Contributor Rewards
+
+on:
+  pull_request_target:
+    types: [closed, labeled]
+  issues:
+    types: [labeled]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+concurrency:
+  group: contributor-rewards-${{ github.event.pull_request.number || github.event.issue.number || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  reward:
+    name: Invite eligible contributor
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request_target' &&
+        github.event.action == 'closed' &&
+        github.event.pull_request.merged == true) ||
+      (github.event.action == 'labeled' &&
+        github.event.label.name == 'reward user')
+    steps:
+      - name: Post reward invite when eligible
+        uses: actions/github-script@v8
+        env:
+          CONTRIBUTOR_REWARD_TRIGGER_LABEL: reward user
+          CONTRIBUTOR_REWARD_SENT_LABEL: reward sent
+          CONTRIBUTOR_REWARD_DISCORD_URL: ${{ vars.CONTRIBUTOR_REWARD_DISCORD_URL }}
+          CONTRIBUTOR_REWARD_MERCH_URL: ${{ vars.CONTRIBUTOR_REWARD_MERCH_URL }}
+          CONTRIBUTOR_REWARD_MESSAGE: ${{ vars.CONTRIBUTOR_REWARD_MESSAGE }}
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const triggerLabel = (process.env.CONTRIBUTOR_REWARD_TRIGGER_LABEL || 'reward user').trim();
+            const sentLabel = (process.env.CONTRIBUTOR_REWARD_SENT_LABEL || 'reward sent').trim();
+            const discordUrl =
+              (process.env.CONTRIBUTOR_REWARD_DISCORD_URL || 'https://discord.tinyhumans.ai/').trim();
+            const merchUrl = (process.env.CONTRIBUTOR_REWARD_MERCH_URL || '').trim();
+            const customMessage = (process.env.CONTRIBUTOR_REWARD_MESSAGE || '').trim();
+
+            const normalize = value => String(value || '').trim().toLowerCase();
+            const triggerLabelKey = normalize(triggerLabel);
+
+            function markerFor(login) {
+              return `<!-- openhuman-contributor-reward:user=${normalize(login)} -->`;
+            }
+
+            async function ensureLabel(name, color, description) {
+              try {
+                await github.rest.issues.getLabel({ owner, repo, name });
+                return;
+              } catch (error) {
+                if (error.status !== 404) throw error;
+              }
+
+              try {
+                await github.rest.issues.createLabel({ owner, repo, name, color, description });
+                core.info(`Created label "${name}".`);
+              } catch (error) {
+                if (error.status !== 422) throw error;
+                core.info(`Label "${name}" already exists.`);
+              }
+            }
+
+            function labeledWithTrigger() {
+              return normalize(context.payload.label?.name) === triggerLabelKey;
+            }
+
+            function actorIsBot(target) {
+              return target.userType === 'Bot' || /\[bot\]$/i.test(target.login);
+            }
+
+            function targetFromEvent() {
+              if (context.eventName === 'workflow_dispatch') {
+                return { bootstrapOnly: true };
+              }
+
+              if (context.eventName === 'pull_request_target') {
+                const pr = context.payload.pull_request;
+                if (!pr) return null;
+
+                if (context.payload.action === 'closed') {
+                  if (!pr.merged) {
+                    core.info(`PR #${pr.number} was closed without merge; skipping reward flow.`);
+                    return null;
+                  }
+
+                  return {
+                    kind: 'pull request',
+                    number: pr.number,
+                    htmlUrl: pr.html_url,
+                    login: pr.user.login,
+                    userType: pr.user.type,
+                    reason: 'first merged pull request',
+                    manualOverride: false,
+                    requireFirstMergedPr: true,
+                  };
+                }
+
+                if (context.payload.action === 'labeled') {
+                  if (!labeledWithTrigger()) {
+                    core.info(`Label "${context.payload.label?.name}" is not "${triggerLabel}"; skipping.`);
+                    return null;
+                  }
+
+                  return {
+                    kind: 'pull request',
+                    number: pr.number,
+                    htmlUrl: pr.html_url,
+                    login: pr.user.login,
+                    userType: pr.user.type,
+                    reason: `maintainer-applied "${triggerLabel}" label on a pull request`,
+                    manualOverride: true,
+                    requireFirstMergedPr: false,
+                  };
+                }
+              }
+
+              if (context.eventName === 'issues') {
+                const issue = context.payload.issue;
+                if (!issue) return null;
+
+                if (issue.pull_request) {
+                  core.info(`Issue event is for PR #${issue.number}; pull_request_target handles PR labels.`);
+                  return null;
+                }
+
+                if (!labeledWithTrigger()) {
+                  core.info(`Label "${context.payload.label?.name}" is not "${triggerLabel}"; skipping.`);
+                  return null;
+                }
+
+                return {
+                  kind: 'issue',
+                  number: issue.number,
+                  htmlUrl: issue.html_url,
+                  login: issue.user.login,
+                  userType: issue.user.type,
+                  reason: `maintainer-applied "${triggerLabel}" label on an issue`,
+                  manualOverride: true,
+                  requireFirstMergedPr: false,
+                };
+              }
+
+              core.info(`Unsupported event "${context.eventName}"; skipping.`);
+              return null;
+            }
+
+            async function isFirstMergedPullRequest(login, currentNumber) {
+              const query = `repo:${owner}/${repo} is:pr is:merged author:${login}`;
+              const response = await github.rest.search.issuesAndPullRequests({
+                q: query,
+                per_page: 100,
+              });
+              const previous = response.data.items.filter(item => item.number !== currentNumber);
+              core.info(
+                `Found ${previous.length} earlier merged PR(s) for ${login} while evaluating #${currentNumber}.`
+              );
+              return previous.length === 0;
+            }
+
+            async function targetAlreadyRewarded(target) {
+              const marker = markerFor(target.login);
+              const comments = await github.paginate(github.rest.issues.listComments, {
+                owner,
+                repo,
+                issue_number: target.number,
+                per_page: 100,
+              });
+              return comments.some(comment => comment.body?.includes(marker));
+            }
+
+            async function contributorAlreadyRewardedElsewhere(target) {
+              const markerNeedle = `openhuman-contributor-reward:user=${normalize(target.login)}`;
+              const query = `repo:${owner}/${repo} "${markerNeedle}" in:comments`;
+              const response = await github.rest.search.issuesAndPullRequests({
+                q: query,
+                per_page: 10,
+              });
+              return response.data.items.some(item => item.number !== target.number);
+            }
+
+            function renderCustomMessage(target) {
+              const replacements = {
+                '{user}': `@${target.login}`,
+                '{login}': target.login,
+                '{discord_url}': discordUrl,
+                '{merch_url}': merchUrl,
+                '{reason}': target.reason,
+                '{target_url}': target.htmlUrl,
+              };
+
+              let body = customMessage;
+              for (const [token, value] of Object.entries(replacements)) {
+                body = body.split(token).join(value);
+              }
+              return `${markerFor(target.login)}\n${body}`;
+            }
+
+            function renderDefaultMessage(target) {
+              const merchLine = merchUrl
+                ? `3. Claim merch: ${merchUrl}`
+                : '3. For merch, ask a maintainer in Discord. Keep shipping details out of GitHub comments.';
+
+              return [
+                markerFor(target.login),
+                `Thanks @${target.login} for contributing to OpenHuman.`,
+                '',
+                'You are eligible for the contributor reward flow:',
+                '',
+                `1. Join the OpenHuman Discord: ${discordUrl}`,
+                `2. Share this ${target.kind} link so maintainers can verify your GitHub handle: ${target.htmlUrl}`,
+                merchLine,
+                '',
+                `*Reason: ${target.reason}. Automatic rewards are idempotent per GitHub user; maintainer-applied "${triggerLabel}" labels can intentionally start the flow for special cases.*`,
+              ].join('\n');
+            }
+
+            const target = targetFromEvent();
+
+            await ensureLabel(triggerLabel, 'fbca04', 'Maintainer-triggered contributor reward invite');
+            await ensureLabel(sentLabel, '0e8a16', 'Contributor reward invite has been posted');
+
+            if (!target) {
+              await core.summary.addHeading('Contributor Rewards').addRaw('No eligible target for this event.').write();
+              return;
+            }
+
+            if (target.bootstrapOnly) {
+              await core.summary
+                .addHeading('Contributor Rewards')
+                .addRaw(`Labels "${triggerLabel}" and "${sentLabel}" are ready.`)
+                .write();
+              return;
+            }
+
+            if (actorIsBot(target)) {
+              core.info(`Skipping bot account ${target.login}.`);
+              return;
+            }
+
+            if (target.requireFirstMergedPr) {
+              const firstMergedPr = await isFirstMergedPullRequest(target.login, target.number);
+              if (!firstMergedPr) {
+                core.info(`${target.login} already has a merged PR; skipping automatic reward.`);
+                return;
+              }
+            }
+
+            if (await targetAlreadyRewarded(target)) {
+              core.info(`#${target.number} already has a reward marker for ${target.login}; skipping.`);
+              return;
+            }
+
+            if (!target.manualOverride && (await contributorAlreadyRewardedElsewhere(target))) {
+              core.info(`${target.login} already has a reward marker elsewhere; skipping automatic reward.`);
+              return;
+            }
+
+            const body = customMessage ? renderCustomMessage(target) : renderDefaultMessage(target);
+
+            await github.rest.issues.createComment({
+              owner,
+              repo,
+              issue_number: target.number,
+              body,
+            });
+            await github.rest.issues.addLabels({
+              owner,
+              repo,
+              issue_number: target.number,
+              labels: [sentLabel],
+            });
+
+            core.info(`Posted contributor reward invite for ${target.login} on #${target.number}.`);
+            await core.summary
+              .addHeading('Contributor Rewards')
+              .addRaw(`Posted reward invite for @${target.login} on ${target.htmlUrl}.`)
+              .write();

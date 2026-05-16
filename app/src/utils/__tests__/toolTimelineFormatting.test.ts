@@ -57,6 +57,45 @@ describe('formatTimelineEntry', () => {
     });
   });
 
+  it('formats delegate_to_integrations_agent with a known toolkit arg', () => {
+    expect(
+      formatTimelineEntry(
+        entry({
+          name: 'delegate_to_integrations_agent',
+          argsBuffer: JSON.stringify({
+            toolkit: 'gmail',
+            prompt: 'Find the latest invoice from Stripe.',
+          }),
+        })
+      )
+    ).toEqual({
+      title: 'Making requests to your Gmail account',
+      detail: 'Find the latest invoice from Stripe.',
+    });
+  });
+
+  it('formats delegate_to_integrations_agent with an unknown toolkit arg', () => {
+    expect(
+      formatTimelineEntry(
+        entry({
+          name: 'delegate_to_integrations_agent',
+          argsBuffer: JSON.stringify({ toolkit: 'slack_bot', prompt: 'post update' }),
+        })
+      )
+    ).toEqual({ title: 'Checking your Slack Bot', detail: 'post update' });
+  });
+
+  it('formats delegate_to_integrations_agent without a toolkit arg as a generic connected-app label', () => {
+    expect(
+      formatTimelineEntry(
+        entry({
+          name: 'delegate_to_integrations_agent',
+          argsBuffer: JSON.stringify({ prompt: 'do something useful' }),
+        })
+      )
+    ).toEqual({ title: 'Checking your connected app', detail: 'do something useful' });
+  });
+
   it('formats delegate_tools_agent with toolkit context from args', () => {
     expect(
       formatTimelineEntry(

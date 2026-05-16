@@ -223,11 +223,17 @@ impl Tool for NodeExecTool {
                 let mut stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
                 if stdout.len() > MAX_OUTPUT_BYTES {
-                    stdout.truncate(stdout.floor_char_boundary(MAX_OUTPUT_BYTES));
+                    stdout.truncate(crate::openhuman::util::floor_char_boundary(
+                        &stdout,
+                        MAX_OUTPUT_BYTES,
+                    ));
                     stdout.push_str("\n... [stdout truncated at 1MB]");
                 }
                 if stderr.len() > MAX_OUTPUT_BYTES {
-                    stderr.truncate(stderr.floor_char_boundary(MAX_OUTPUT_BYTES));
+                    stderr.truncate(crate::openhuman::util::floor_char_boundary(
+                        &stderr,
+                        MAX_OUTPUT_BYTES,
+                    ));
                     stderr.push_str("\n... [stderr truncated at 1MB]");
                 }
 

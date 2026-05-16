@@ -261,3 +261,7 @@ fn optional_string(name: &'static str, comment: &'static str) -> FieldSchema {
         required: false,
     }
 }
+
+#[cfg(test)]
+#[path = "schemas_tests.rs"]
+mod tests;

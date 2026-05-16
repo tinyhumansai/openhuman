@@ -250,9 +250,7 @@ mod tests {
 
     #[tokio::test]
     async fn embed_against_mock_returns_vectors_with_dimensions() {
-        let _guard = crate::openhuman::local_ai::LOCAL_AI_TEST_MUTEX
-            .lock()
-            .expect("local ai mutex");
+        let _guard = crate::openhuman::local_ai::local_ai_test_guard();
 
         let app = mock_with_tags_and(
             "/api/embed",
@@ -283,9 +281,7 @@ mod tests {
 
     #[tokio::test]
     async fn embed_rejects_all_empty_inputs_before_network_call() {
-        let _guard = crate::openhuman::local_ai::LOCAL_AI_TEST_MUTEX
-            .lock()
-            .expect("local ai mutex");
+        let _guard = crate::openhuman::local_ai::local_ai_test_guard();
 
         // Even without a working mock server, entirely-empty inputs must be
         // rejected before any HTTP call.

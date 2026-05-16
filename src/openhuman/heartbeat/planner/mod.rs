@@ -228,6 +228,41 @@ mod tests {
         );
     }
 
+    /// Regression for issue #1714 — an event stored against a
+    /// non-UTC zone (here `+05:30` IST) must still classify into the
+    /// window when its UTC-normalised start falls inside it. The
+    /// extractor relies on RFC3339 offset parsing rather than naive
+    /// string comparison; this test pins that behaviour so a future
+    /// regression to "compare local-date strings" gets caught.
+    #[test]
+    fn calendar_events_with_non_utc_timezone_offset_are_kept() {
+        // Window covers 06:00 → 09:00 UTC on 2026-05-14.
+        let now = Utc.with_ymd_and_hms(2026, 5, 14, 6, 0, 0).unwrap();
+        let payload = json!({
+            "items": [
+                {
+                    "id": "evt-ist",
+                    "summary": "Daily stand-up",
+                    "start": { "dateTime": "2026-05-14T12:00:00+05:30" },
+                    "htmlLink": "https://calendar.google.com/event?evt=ist"
+                }
+            ]
+        });
+
+        let events = extract_calendar_events(
+            &payload,
+            "googlecalendar",
+            "conn-ist",
+            now,
+            now + Duration::hours(3),
+        );
+
+        // 12:00 IST == 06:30 UTC — inside the window.
+        assert_eq!(events.len(), 1, "IST-offset event must be kept: {events:?}");
+        assert_eq!(events[0].source_event_id, "evt-ist");
+        assert_eq!(events[0].title, "Daily stand-up");
+    }
+
     #[test]
     fn all_day_calendar_events_are_skipped() {
         let now = Utc.with_ymd_and_hms(2026, 5, 8, 0, 0, 0).unwrap();

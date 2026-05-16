@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 
+import { useT } from '../../../lib/i18n/I18nContext';
 import { useCoreState } from '../../../providers/CoreStateProvider';
 import { teamApi } from '../../../services/api/teamApi';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
 const TeamManagementPanel = () => {
+  const { t } = useT();
   const { teamId } = useParams<{ teamId: string }>();
   const { navigateBack, navigateToSettings, breadcrumbs } = useSettingsNavigation();
   const { teams, refreshTeams } = useCoreState();
@@ -90,13 +92,13 @@ const TeamManagementPanel = () => {
     return (
       <div className="">
         <SettingsHeader
-          title="Team Management"
+          title={t('team.management')}
           showBackButton={true}
           onBack={navigateBack}
           breadcrumbs={breadcrumbs}
         />
         <div className="flex-1 flex items-center justify-center">
-          <p className="text-sm text-stone-500">Team not found</p>
+          <p className="text-sm text-stone-500">{t('team.notFound')}</p>
         </div>
       </div>
     );
@@ -106,13 +108,13 @@ const TeamManagementPanel = () => {
     return (
       <div className="">
         <SettingsHeader
-          title="Team Management"
+          title={t('team.management')}
           showBackButton={true}
           onBack={navigateBack}
           breadcrumbs={breadcrumbs}
         />
         <div className="flex-1 flex items-center justify-center">
-          <p className="text-sm text-stone-500">Access denied</p>
+          <p className="text-sm text-stone-500">{t('team.accessDenied')}</p>
         </div>
       </div>
     );

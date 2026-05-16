@@ -4,7 +4,7 @@
 import { invoke } from '@tauri-apps/api/core';
 
 import { callCoreRpc } from '../../services/coreRpcClient';
-import { IS_DEV } from '../config';
+import { IS_DEV_LIKE } from '../config';
 import { CommandResponse, isTauri } from './common';
 
 export interface CoreUpdateStatus {
@@ -79,7 +79,12 @@ export async function restartApp(): Promise<void> {
     console.debug('[app] restartApp: skipped — not running in Tauri');
     return;
   }
-  if (IS_DEV) {
+  // `IS_DEV_LIKE` is true for both `vite dev` (DEV=true) and the E2E build
+  // (`vite build --mode development` → DEV=false but MODE='development').
+  // Without the E2E case we'd hit the OS-level restart path in the packaged
+  // E2E binary and kill the WebDriver CDP target every time identity flips
+  // on login. See `app/src/utils/config.ts` for the canonical definition.
+  if (IS_DEV_LIKE) {
     console.debug('[app] restartApp: dev mode → window.location.reload()');
     window.location.reload();
     return;
@@ -256,14 +261,21 @@ export async function resetOpenHumanDataAndRestartCore(): Promise<void> {
     console.debug('[core] resetOpenHumanDataAndRestartCore: skipped — not running in Tauri');
     return;
   }
-  console.debug(
-    '[core] resetOpenHumanDataAndRestartCore: invoking openhuman.config_reset_local_data'
-  );
-  await callCoreRpc({ method: 'openhuman.config_reset_local_data' });
-  console.debug(
-    '[core] resetOpenHumanDataAndRestartCore: local data reset complete, restarting core'
-  );
-  await restartCoreProcess();
+  // Single Tauri command: the shell stops the embedded core (dropping
+  // every open file handle inside the data directory), removes the
+  // resolved data paths, then restarts the core. Previously this was a
+  // two-step `callCoreRpc('config_reset_local_data') + restartCoreProcess()`
+  // dance, but the core RPC ran the remove *inside* the running core's
+  // tokio task — on Windows that hit `ERROR_SHARING_VIOLATION` (os error
+  // 32) because the core still held SQLite / log / Sentry handles open in
+  // the directory it was trying to delete (OPENHUMAN-TAURI-AF).
+  console.debug('[core] resetOpenHumanDataAndRestartCore: invoking reset_local_data');
+  try {
+    await invoke<void>('reset_local_data');
+  } catch (err) {
+    console.error('[core] resetOpenHumanDataAndRestartCore: reset_local_data failed', err);
+    throw err;
+  }
   console.debug('[core] resetOpenHumanDataAndRestartCore: done');
 }
 

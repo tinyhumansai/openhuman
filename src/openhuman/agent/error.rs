@@ -76,7 +76,7 @@ impl fmt::Display for AgentError {
                 )
             }
             Self::MaxIterationsExceeded { max } => {
-                write!(f, "Agent exceeded maximum tool iterations ({max})")
+                write!(f, "{MAX_ITERATIONS_ERROR_PREFIX} ({max})")
             }
             Self::CompactionFailed {
                 message,
@@ -121,6 +121,31 @@ impl From<anyhow::Error> for AgentError {
     }
 }
 
+/// Canonical user-facing prefix for the max-tool-iterations cap.
+///
+/// Single source of truth for:
+/// - `AgentError::MaxIterationsExceeded` `Display` (in this file)
+/// - Substring detection at Sentry-emit funnels where the typed variant has
+///   already been marshalled through `String` (channels dispatch path,
+///   web-channel run_chat_task, optional `before_send` defense)
+///
+/// Keep the literal **exactly** in sync with the `Display` impl above — UI
+/// surfaces and tests grep for this prefix.
+pub const MAX_ITERATIONS_ERROR_PREFIX: &str = "Agent exceeded maximum tool iterations";
+
+/// Returns true when an error rendering contains the canonical
+/// max-tool-iterations cap message.
+///
+/// Use this at Sentry-emit sites (`channels::dispatch`, `web_channel::
+/// run_chat_task`, and Sentry `before_send` filters) where the typed
+/// [`AgentError::MaxIterationsExceeded`] variant has already been flattened
+/// to a `String` by the native bus / handler boundary and cannot be
+/// downcast directly. Sites that still hold an `anyhow::Error` should
+/// prefer `err.downcast_ref::<AgentError>()` for precision.
+pub fn is_max_iterations_error(error_msg: &str) -> bool {
+    error_msg.contains(MAX_ITERATIONS_ERROR_PREFIX)
+}
+
 /// Check if an error message indicates a context/prompt-too-long failure.
 pub fn is_context_limit_error(error_msg: &str) -> bool {
     let lower = error_msg.to_lowercase();
@@ -156,6 +181,25 @@ mod tests {
         assert!(is_context_limit_error("prompt is too long for model"));
         assert!(is_context_limit_error("context_length_exceeded"));
         assert!(!is_context_limit_error("rate limit exceeded"));
+    }
+
+    #[test]
+    fn max_iterations_detection_matches_display() {
+        // The substring helper must match the variant's own Display output —
+        // the channels dispatch / web_channel sites flatten the typed error
+        // through a `String` boundary, so any drift between the constant
+        // and `Display` silently re-enables Sentry emission for the cap
+        // (OPENHUMAN-TAURI-99 / -98).
+        let rendered = AgentError::MaxIterationsExceeded { max: 8 }.to_string();
+        assert!(is_max_iterations_error(&rendered));
+        assert!(is_max_iterations_error(
+            "run_chat_task failed client_id=abc thread_id=t1 \
+             error=Agent exceeded maximum tool iterations (10)"
+        ));
+        assert!(!is_max_iterations_error("provider returned 503"));
+        assert!(!is_max_iterations_error(
+            "Tool execution error [shell]: denied"
+        ));
     }
 
     #[test]

@@ -107,6 +107,19 @@ set -e
 
 # Exit with error if any command still fails after fixes
 if [ $FORMAT_EXIT -ne 0 ] || [ $LINT_EXIT -ne 0 ] || [ $COMPILE_EXIT -ne 0 ] || [ $RUST_CHECK_EXIT -ne 0 ] || [ $CMD_TOKENS_EXIT -ne 0 ]; then
-  echo "Pre-push checks failed. Please fix format (Prettier + cargo fmt for core and Tauri), lint, TypeScript, and/or Rust errors before pushing."
+  echo
+  echo "============================================================"
+  echo "Pre-push checks failed."
+  if [ $FORMAT_EXIT -ne 0 ] || [ $LINT_EXIT -ne 0 ]; then
+    echo "Formatting and/or lint auto-fixes have been applied to your"
+    echo "working tree. Please re-commit and push again:"
+    echo "    git add -A && git commit -m 'chore: apply auto-fixes'"
+    echo "    git push"
+  fi
+  if [ $COMPILE_EXIT -ne 0 ] || [ $RUST_CHECK_EXIT -ne 0 ] || [ $CMD_TOKENS_EXIT -ne 0 ]; then
+    echo "Fix the remaining errors above (TypeScript / Rust / cmd-tokens)"
+    echo "before re-pushing — these have no auto-fix path."
+  fi
+  echo "============================================================"
   exit 1
 fi

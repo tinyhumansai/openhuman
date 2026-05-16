@@ -77,12 +77,13 @@ impl AccessibilityEngine {
             }
         }
 
-        if !spawned_new_session {
-            return Ok(self.status().await.session);
+        let status = self.status().await;
+        if spawned_new_session {
+            self.spawn_workers().await;
+            Ok(self.status().await.session)
+        } else {
+            Ok(status.session)
         }
-
-        self.spawn_workers().await;
-        Ok(self.status().await.session)
     }
 
     pub async fn start_session(
@@ -101,40 +102,49 @@ impl AccessibilityEngine {
             .unwrap_or(ScreenIntelligenceConfig::default().session_ttl_secs)
             .clamp(30, 3600);
 
+        let mut spawned_new_session = false;
         {
             let mut state = self.inner.lock().await;
             if state.session.is_some() {
-                return Err("session already active".to_string());
+                tracing::debug!(
+                    "[screen_intelligence] start_session requested while session already active"
+                );
+            } else {
+                state.permissions = detect_permissions();
+                if state.permissions.accessibility != PermissionState::Granted {
+                    return Err("accessibility permission is not granted".to_string());
+                }
+
+                let screen_monitoring_requested = params.screen_monitoring.unwrap_or(true);
+                if screen_monitoring_requested
+                    && state.permissions.screen_recording != PermissionState::Granted
+                {
+                    return Err("screen recording permission is not granted".to_string());
+                }
+
+                let now = now_ms();
+                let expires_at_ms = now + (ttl_secs as i64 * 1000);
+                state.features.screen_monitoring = screen_monitoring_requested;
+
+                state.session = Some(new_session_runtime(
+                    &state.config,
+                    now,
+                    expires_at_ms,
+                    ttl_secs,
+                ));
+                state.last_event = Some("session_started".to_string());
+                state.last_error = None;
+                spawned_new_session = true;
             }
-
-            state.permissions = detect_permissions();
-            if state.permissions.accessibility != PermissionState::Granted {
-                return Err("accessibility permission is not granted".to_string());
-            }
-
-            let screen_monitoring_requested = params.screen_monitoring.unwrap_or(true);
-            if screen_monitoring_requested
-                && state.permissions.screen_recording != PermissionState::Granted
-            {
-                return Err("screen recording permission is not granted".to_string());
-            }
-
-            let now = now_ms();
-            let expires_at_ms = now + (ttl_secs as i64 * 1000);
-            state.features.screen_monitoring = screen_monitoring_requested;
-
-            state.session = Some(new_session_runtime(
-                &state.config,
-                now,
-                expires_at_ms,
-                ttl_secs,
-            ));
-            state.last_event = Some("session_started".to_string());
-            state.last_error = None;
         }
 
-        self.spawn_workers().await;
-        Ok(self.status().await.session)
+        let status = self.status().await;
+        if spawned_new_session {
+            self.spawn_workers().await;
+            Ok(self.status().await.session)
+        } else {
+            Ok(status.session)
+        }
     }
 
     pub async fn disable(&self, reason: Option<String>) -> SessionStatus {

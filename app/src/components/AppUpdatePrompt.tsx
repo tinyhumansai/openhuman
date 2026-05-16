@@ -13,7 +13,7 @@
  * Visual conventions mirror `LocalAIDownloadSnackbar` — bottom-right portal,
  * stone-900 panel, primary gradient progress bar.
  */
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 import { useAppUpdate } from '../hooks/useAppUpdate';
@@ -48,12 +48,14 @@ const AppUpdatePrompt = (props: AppUpdatePromptProps) => {
 
   const [dismissed, setDismissed] = useState(false);
   const [prevPhase, setPrevPhase] = useState(phase);
-  // Re-show on every transition INTO a visible phase, even if the user had
-  // dismissed a previous error/prompt earlier in the session.
+  const dismissedErrorRef = useRef<string | null>(null);
+  const currentErrorKey = error ?? 'Update failed. See logs for details.';
+  // Re-show on every transition INTO a visible non-error phase, or when a new
+  // error differs from the one the user already dismissed this session.
   if (phase !== prevPhase) {
     setPrevPhase(phase);
     if (shouldShow(phase) && !shouldShow(prevPhase)) {
-      setDismissed(false);
+      setDismissed(phase === 'error' && dismissedErrorRef.current === currentErrorKey);
     }
   }
 
@@ -66,15 +68,17 @@ const AppUpdatePrompt = (props: AppUpdatePromptProps) => {
   }, []);
 
   const handleRetryDownload = useCallback(() => {
+    dismissedErrorRef.current = null;
     setDismissed(false);
     reset();
     void download();
   }, [reset, download]);
 
   const handleDismissError = useCallback(() => {
+    dismissedErrorRef.current = currentErrorKey;
     reset();
     setDismissed(true);
-  }, [reset]);
+  }, [currentErrorKey, reset]);
 
   if (!shouldShow(phase) || dismissed) return null;
 

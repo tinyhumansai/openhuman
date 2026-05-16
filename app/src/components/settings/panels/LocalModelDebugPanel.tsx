@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 
+import { useT } from '../../../lib/i18n/I18nContext';
 import {
   formatBytes,
   formatEta,
@@ -31,7 +32,6 @@ import {
 } from '../../../utils/tauriCommands';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
-import CustomModelSection from './local-model/CustomModelSection';
 import ModelDownloadSection from './local-model/ModelDownloadSection';
 import ModelStatusSection from './local-model/ModelStatusSection';
 
@@ -53,6 +53,7 @@ const statusTone = (state: string): string => {
 };
 
 const LocalModelDebugPanel = () => {
+  const { t } = useT();
   const { navigateBack, breadcrumbs } = useSettingsNavigation();
 
   const [status, setStatus] = useState<LocalAiStatus | null>(null);
@@ -346,7 +347,7 @@ const LocalModelDebugPanel = () => {
   return (
     <div>
       <SettingsHeader
-        title="Local Model Debug"
+        title={t('localModel.debugTitle')}
         showBackButton={true}
         onBack={navigateBack}
         breadcrumbs={breadcrumbs}
@@ -427,8 +428,6 @@ const LocalModelDebugPanel = () => {
           onSetTtsOutputPath={setTtsOutputPath}
           onRunTtsTest={() => void runTtsTest()}
         />
-
-        <CustomModelSection />
       </div>
     </div>
   );

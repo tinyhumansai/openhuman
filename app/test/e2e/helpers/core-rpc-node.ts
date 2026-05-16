@@ -1,10 +1,43 @@
 /**
  * Core JSON-RPC from the Node/WebdriverIO process (no WebView `execute`).
  * Required for Appium Mac2, which does not support W3C Execute Script in WKWebView.
+ *
+ * Auth: the in-process core requires a per-launch bearer token that lives only
+ * inside the Tauri host. For e2e, debug builds of the Tauri shell write that
+ * token to `${tmpdir}/openhuman-e2e-rpc-token` (see
+ * `app/src-tauri/src/core_process.rs`). We read it here and attach
+ * `Authorization: Bearer …` to every probe + call. Release builds never write
+ * the file, so this code degrades to unauthenticated requests (which the core
+ * will reject — acceptable since release builds are not the e2e target).
  */
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
 import type { RpcCallResult } from './core-rpc-webview';
 
 let cachedRpcUrl: string | null = null;
+
+const E2E_TOKEN_FILENAME = 'openhuman-e2e-rpc-token';
+
+function readBearerToken(): string | null {
+  const tokenPath = path.join(os.tmpdir(), E2E_TOKEN_FILENAME);
+  try {
+    const value = fs.readFileSync(tokenPath, 'utf8').trim();
+    return value.length > 0 ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function buildHeaders(includeAuth = true): Record<string, string> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (includeAuth) {
+    const token = readBearerToken();
+    if (token) headers.Authorization = `Bearer ${token}`;
+  }
+  return headers;
+}
 
 function normalizeRpcUrl(raw: string): string {
   const t = raw.trim().replace(/\/$/, '');
@@ -31,11 +64,17 @@ function defaultPortProbeList(): number[] {
 
 async function tryPingRpc(url: string): Promise<boolean> {
   try {
+    // Probe without the bearer token: we're iterating candidate ports, and
+    // any non-core service that happens to be bound to one of them shouldn't
+    // receive our auth credential as a side effect of discovery.
     const res = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: buildHeaders(false),
       body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'core.ping', params: {} }),
     });
+    // 401 means "endpoint exists, auth required" — that's a positive match
+    // for the core RPC URL; the real call will retry with auth attached.
+    if (res.status === 401) return true;
     if (!res.ok) return false;
     const json = (await res.json()) as { error?: { message?: string } };
     return !json.error;
@@ -86,7 +125,7 @@ export async function callOpenhumanRpcNode<T = unknown>(
     const id = Math.floor(Math.random() * 1e9);
     const res = await fetch(rpcUrl, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: buildHeaders(),
       body: JSON.stringify({ jsonrpc: '2.0', id, method, params }),
     });
     const text = await res.text();

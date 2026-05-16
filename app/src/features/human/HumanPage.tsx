@@ -1,12 +1,16 @@
 import { useEffect, useState } from 'react';
 
+import { useT } from '../../lib/i18n/I18nContext';
 import Conversations from '../../pages/Conversations';
+import { useAppSelector } from '../../store/hooks';
+import { selectMascotColor } from '../../store/mascotSlice';
 import { YellowMascot } from './Mascot';
 import { useHumanMascot } from './useHumanMascot';
 
 const SPEAK_REPLIES_KEY = 'human.speakReplies';
 
 const HumanPage = () => {
+  const { t } = useT();
   const [speakReplies, setSpeakReplies] = useState<boolean>(() => {
     const raw = window.localStorage.getItem(SPEAK_REPLIES_KEY);
     return raw === null ? true : raw === '1';
@@ -18,6 +22,7 @@ const HumanPage = () => {
 
   // Visemes are intentionally unused — the YellowMascot has its own talking lipsync.
   const { face } = useHumanMascot({ speakReplies });
+  const mascotColor = useAppSelector(selectMascotColor);
 
   // Sidebar reserves ~436px (420px panel + 16px gutter) on the right; the
   // mascot stage takes the remaining width so the two never overlap.
@@ -33,7 +38,7 @@ const HumanPage = () => {
       {/* Mascot stage — fills the area to the left of the reserved sidebar column. */}
       <div className="absolute inset-y-0 left-0 right-[436px] flex items-center justify-center">
         <div className="relative w-[min(80vh,90%)] aspect-square">
-          <YellowMascot face={face} />
+          <YellowMascot face={face} mascotColor={mascotColor} />
         </div>
       </div>
 
@@ -44,7 +49,7 @@ const HumanPage = () => {
           onChange={e => setSpeakReplies(e.target.checked)}
           className="cursor-pointer"
         />
-        Speak replies
+        {t('voice.pushToTalk')}
       </label>
 
       {/* Chat sidebar — vertically centered above the BottomTabBar (~80px). */}

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 
+import { useT } from '../../../lib/i18n/I18nContext';
 import { useCoreState } from '../../../providers/CoreStateProvider';
 import { referralApi } from '../../../services/api/referralApi';
 
@@ -15,6 +16,7 @@ interface ReferralApplyStepProps {
  * Only eligible if the user has not yet subscribed.
  */
 const ReferralApplyStep = ({ onNext, onApplied }: ReferralApplyStepProps) => {
+  const { t } = useT();
   const { refresh } = useCoreState();
   const [code, setCode] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -71,11 +73,8 @@ const ReferralApplyStep = ({ onNext, onApplied }: ReferralApplyStepProps) => {
   return (
     <div className="rounded-2xl border border-stone-200 bg-white p-8 shadow-soft animate-fade-up">
       <div className="text-center mb-6">
-        <h1 className="text-xl font-bold mb-2 text-stone-900">Referral code</h1>
-        <p className="text-stone-600 text-sm">
-          If a friend shared OpenHuman with you, enter their referral code here. You can skip—this
-          stays available on the Rewards page while you&apos;re eligible.
-        </p>
+        <h1 className="text-xl font-bold mb-2 text-stone-900">{t('onboarding.referral')}</h1>
+        <p className="text-stone-600 text-sm">{t('onboarding.referralDesc')}</p>
       </div>
 
       {success ? (
@@ -94,7 +93,7 @@ const ReferralApplyStep = ({ onNext, onApplied }: ReferralApplyStepProps) => {
               />
             </svg>
           </div>
-          <p className="text-sage-600 font-medium text-sm">Referral code applied.</p>
+          <p className="text-sage-600 font-medium text-sm">{t('common.success')}</p>
         </div>
       ) : (
         <>
@@ -104,7 +103,7 @@ const ReferralApplyStep = ({ onNext, onApplied }: ReferralApplyStepProps) => {
               value={code}
               onChange={e => setCode(e.target.value.toUpperCase())}
               onKeyDown={e => e.key === 'Enter' && void handleApply()}
-              placeholder="Enter referral code"
+              placeholder={t('rewards.referralCode')}
               className="w-full px-4 py-3 bg-stone-50 border border-stone-200 rounded-xl text-center font-mono text-lg tracking-widest text-stone-900 placeholder:text-stone-400 placeholder:tracking-normal placeholder:font-sans placeholder:text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500/50 transition-all"
               disabled={isLoading}
             />
@@ -117,14 +116,14 @@ const ReferralApplyStep = ({ onNext, onApplied }: ReferralApplyStepProps) => {
               onClick={onNext}
               disabled={isLoading}
               className="flex-1 py-2.5 text-sm font-medium rounded-xl border border-stone-200 text-stone-500 hover:text-stone-700 hover:border-stone-300 transition-colors">
-              Skip for now
+              {t('onboarding.skip')}
             </button>
             <button
               type="button"
               onClick={() => void handleApply()}
               disabled={isLoading || !code.trim()}
               className="btn-primary flex-1 py-2.5 text-sm font-medium rounded-xl disabled:opacity-50 disabled:cursor-not-allowed">
-              {isLoading ? 'Applying…' : 'Apply code'}
+              {isLoading ? t('common.loading') : t('common.submit')}
             </button>
           </div>
         </>

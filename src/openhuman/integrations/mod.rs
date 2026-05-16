@@ -8,17 +8,19 @@ pub mod apify;
 pub mod client;
 pub mod google_places;
 pub mod parallel;
+pub mod seltz;
 pub mod stock_prices;
 pub mod twilio;
 pub mod types;
 
 pub use apify::{ApifyGetRunResultsTool, ApifyGetRunStatusTool, ApifyRunActorTool};
-pub use client::{build_client, IntegrationClient};
+pub use client::{build_client, pricing_for_config, IntegrationClient};
 pub use google_places::{GooglePlacesDetailsTool, GooglePlacesSearchTool};
 pub use parallel::{
     ParallelChatTool, ParallelDatasetTool, ParallelEnrichTool, ParallelExtractTool,
     ParallelResearchTool, ParallelSearchTool,
 };
+pub use seltz::SeltzSearchTool;
 pub use stock_prices::{
     StockCommodityTool, StockCryptoSeriesTool, StockExchangeRateTool, StockOptionsTool,
     StockQuoteTool,

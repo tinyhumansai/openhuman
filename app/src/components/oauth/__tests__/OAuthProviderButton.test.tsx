@@ -35,7 +35,11 @@ describe('OAuthProviderButton', () => {
     vi.mocked(getBackendUrl).mockResolvedValue('https://backend.test');
     vi.mocked(openUrl).mockResolvedValue(undefined);
     vi.mocked(isTauri).mockReturnValue(true);
-    vi.mocked(getDeepLinkAuthState).mockReturnValue({ isProcessing: false, errorMessage: null });
+    vi.mocked(getDeepLinkAuthState).mockReturnValue({
+      isProcessing: false,
+      errorMessage: null,
+      requiresAppDataReset: false,
+    });
   });
 
   afterEach(() => {
@@ -82,7 +86,11 @@ describe('OAuthProviderButton', () => {
   });
 
   it('does NOT reset isLoading on focus when a deep-link auth round-trip is processing', async () => {
-    vi.mocked(getDeepLinkAuthState).mockReturnValue({ isProcessing: true, errorMessage: null });
+    vi.mocked(getDeepLinkAuthState).mockReturnValue({
+      isProcessing: true,
+      errorMessage: null,
+      requiresAppDataReset: false,
+    });
 
     render(<OAuthProviderButton provider={stubProvider} />);
 

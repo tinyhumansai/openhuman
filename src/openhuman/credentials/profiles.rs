@@ -233,15 +233,60 @@ impl AuthProfilesStore {
     fn load_locked(&self) -> Result<AuthProfilesData> {
         let mut persisted = self.read_persisted_locked()?;
         let mut migrated = false;
+        let mut dropped_ids: Vec<String> = Vec::new();
 
         let mut profiles = BTreeMap::new();
         for (id, p) in &mut persisted.profiles {
-            let (access_token, access_migrated) =
-                self.decrypt_optional(p.access_token.as_deref())?;
-            let (refresh_token, refresh_migrated) =
-                self.decrypt_optional(p.refresh_token.as_deref())?;
-            let (id_token, id_migrated) = self.decrypt_optional(p.id_token.as_deref())?;
-            let (token, token_migrated) = self.decrypt_optional(p.token.as_deref())?;
+            // Decrypt all four optional secret fields. A decryption
+            // failure here means the secret was encrypted with a
+            // `.secret_key` that no longer exists (manual deletion,
+            // partial workspace restore, key rotation across machines).
+            // The profile is unrecoverable — drop it from the store
+            // instead of poisoning every reader. The user falls back
+            // to a clean "logged out" state and the next login
+            // re-encrypts cleanly under the current key.
+            let decrypted = (|| -> Result<_> {
+                let (access_token, access_migrated) =
+                    self.decrypt_optional(p.access_token.as_deref())?;
+                let (refresh_token, refresh_migrated) =
+                    self.decrypt_optional(p.refresh_token.as_deref())?;
+                let (id_token, id_migrated) = self.decrypt_optional(p.id_token.as_deref())?;
+                let (token, token_migrated) = self.decrypt_optional(p.token.as_deref())?;
+                Ok((
+                    access_token,
+                    access_migrated,
+                    refresh_token,
+                    refresh_migrated,
+                    id_token,
+                    id_migrated,
+                    token,
+                    token_migrated,
+                ))
+            })();
+
+            let (
+                access_token,
+                access_migrated,
+                refresh_token,
+                refresh_migrated,
+                id_token,
+                id_migrated,
+                token,
+                token_migrated,
+            ) = match decrypted {
+                Ok(v) => v,
+                Err(e) => {
+                    log::warn!(
+                        "[auth] dropping unrecoverable profile provider={}: {e}. \
+                         Most likely cause: .secret_key was regenerated after this profile \
+                         was stored. The store will be rewritten without this entry; \
+                         re-authenticate to restore the session.",
+                        p.provider
+                    );
+                    dropped_ids.push(id.clone());
+                    continue;
+                }
+            };
 
             if let Some(value) = access_migrated {
                 p.access_token = Some(value);
@@ -296,7 +341,25 @@ impl AuthProfilesStore {
             );
         }
 
-        if migrated {
+        // Purge dropped profiles from the on-disk persisted view AND
+        // any `active_profiles` pointers that referenced them, so the
+        // next read returns a clean "no active session" state.
+        if !dropped_ids.is_empty() {
+            for id in &dropped_ids {
+                persisted.profiles.remove(id);
+            }
+            persisted
+                .active_profiles
+                .retain(|_, profile_id| !dropped_ids.contains(profile_id));
+            persisted.updated_at = Utc::now().to_rfc3339();
+            log::warn!(
+                "[auth] purged {} unrecoverable profile(s) from store at {} \
+                 (provider list redacted to avoid leaking PII)",
+                dropped_ids.len(),
+                self.path.display(),
+            );
+            self.write_persisted_locked(&persisted)?;
+        } else if migrated {
             self.write_persisted_locked(&persisted)?;
         }
 
@@ -467,32 +530,150 @@ impl AuthProfilesStore {
         }
 
         let mut waited = 0_u64;
+        let mut cleared_stale = false;
         loop {
-            match OpenOptions::new()
-                .create_new(true)
-                .write(true)
-                .open(&self.lock_path)
-            {
+            let open_result = crate::openhuman::util::retry_with_backoff(
+                "create auth profile lock",
+                6,
+                100,
+                || {
+                    OpenOptions::new()
+                        .create_new(true)
+                        .write(true)
+                        .open(&self.lock_path)
+                        .context("open lock file")
+                },
+            );
+
+            match open_result {
                 Ok(mut file) => {
-                    let _ = writeln!(file, "pid={}", std::process::id());
+                    // Issue #1612 — writing the pid line is what later lets
+                    // a future acquirer recognise a crashed owner; if the
+                    // write fails we must NOT report the lock as held with
+                    // a malformed/empty file behind us, or stale recovery
+                    // would silently degrade to the full 10s timeout for
+                    // every subsequent acquire.
+                    if let Err(e) = writeln!(file, "pid={}", std::process::id()) {
+                        let _ = fs::remove_file(&self.lock_path);
+                        return Err(e).with_context(|| {
+                            "Failed to write auth profile lock owner".to_string()
+                        });
+                    }
                     return Ok(AuthProfileLockGuard {
                         lock_path: self.lock_path.clone(),
                     });
                 }
-                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                    if waited >= LOCK_TIMEOUT_MS {
-                        anyhow::bail!("Timed out waiting for auth profile lock");
-                    }
-                    thread::sleep(Duration::from_millis(LOCK_WAIT_MS));
-                    waited = waited.saturating_add(LOCK_WAIT_MS);
-                }
                 Err(e) => {
-                    return Err(e)
-                        .with_context(|| "Failed to create auth profile lock".to_string());
+                    let is_already_exists = e
+                        .chain()
+                        .find_map(|e| e.downcast_ref::<std::io::Error>())
+                        .map_or(false, |ioe| ioe.kind() == std::io::ErrorKind::AlreadyExists);
+
+                    if is_already_exists {
+                        // Issue #1612 — a previous openhuman crash can leave a
+                        // stale auth-profiles.lock behind, after which every RPC
+                        // path that touches the auth profile store fails for the
+                        // 10s LOCK_TIMEOUT_MS window and the user gets stuck in a
+                        // retry storm. Before falling back to the busy-wait, try
+                        // once to peek at the writer's recorded PID and remove
+                        // the lock if that process is no longer alive. Flag is
+                        // flipped on the first probe (not only on success) so a
+                        // live-pid / malformed / unreadable lock doesn't trigger
+                        // a fresh sysinfo probe + log line on every busy-wait
+                        // iteration.
+                        if !cleared_stale {
+                            cleared_stale = true;
+                            if self.clear_lock_if_stale() {
+                                continue;
+                            }
+                        }
+                        if waited >= LOCK_TIMEOUT_MS {
+                            anyhow::bail!("Timed out waiting for auth profile lock");
+                        }
+                        thread::sleep(Duration::from_millis(LOCK_WAIT_MS));
+                        waited = waited.saturating_add(LOCK_WAIT_MS);
+                    } else {
+                        return Err(e).context("Failed to create auth profile lock");
+                    }
                 }
             }
         }
     }
+
+    /// Returns `true` if an existing lock file was detected as stale (its
+    /// recorded PID is no longer running) and successfully removed.
+    /// Malformed locks (no `pid=` line) and locks whose PID is still alive
+    /// are left in place so the caller falls back to the normal busy-wait
+    /// and timeout path.
+    fn clear_lock_if_stale(&self) -> bool {
+        let content = match fs::read_to_string(&self.lock_path) {
+            Ok(s) => s,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return false,
+            Err(e) => {
+                tracing::warn!(
+                    target: "auth-profiles",
+                    "[credentials] failed to read lock file at {} for stale check: {e}",
+                    self.lock_path.display()
+                );
+                return false;
+            }
+        };
+
+        let pid = content
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("pid=")?.trim().parse::<u32>().ok());
+
+        let Some(pid) = pid else {
+            tracing::warn!(
+                target: "auth-profiles",
+                "[credentials] lock at {} has no parseable pid line; leaving in place",
+                self.lock_path.display()
+            );
+            return false;
+        };
+
+        if is_pid_alive(pid) {
+            return false;
+        }
+
+        match fs::remove_file(&self.lock_path) {
+            Ok(()) => {
+                tracing::info!(
+                    target: "auth-profiles",
+                    "[credentials] removed stale auth profile lock at {} (pid {pid} not alive)",
+                    self.lock_path.display()
+                );
+                true
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => true,
+            Err(e) => {
+                tracing::warn!(
+                    target: "auth-profiles",
+                    "[credentials] failed to remove stale lock at {}: {e}",
+                    self.lock_path.display()
+                );
+                false
+            }
+        }
+    }
+}
+
+/// Cross-platform best-effort check that a given OS process id is currently
+/// running. Used by [`AuthProfilesStore::clear_lock_if_stale`] to decide
+/// whether a recorded lock owner is still alive; a false negative just
+/// means we keep waiting on a lock that was actually already gone, which
+/// is the safe direction. Backed by sysinfo so we don't grow a new libc /
+/// windows-sys dependency for one syscall.
+fn is_pid_alive(pid: u32) -> bool {
+    use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
+    let target = Pid::from_u32(pid);
+    let mut sys = System::new();
+    sys.refresh_processes_specifics(
+        ProcessesToUpdate::Some(&[target]),
+        true,
+        ProcessRefreshKind::nothing(),
+    );
+    sys.process(target).is_some()
 }
 
 struct AuthProfileLockGuard {

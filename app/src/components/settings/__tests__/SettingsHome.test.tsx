@@ -1,9 +1,16 @@
+import { configureStore } from '@reduxjs/toolkit';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { Provider } from 'react-redux';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import localeReducer from '../../../store/localeSlice';
 import SettingsHome from '../SettingsHome';
+
+function makeTestStore() {
+  return configureStore({ reducer: { locale: localeReducer } });
+}
 
 // --- hoisted mocks ---
 
@@ -40,15 +47,24 @@ vi.mock('../../../utils/tauriCommands', () => ({
   scheduleCefProfilePurge: vi.fn().mockResolvedValue(undefined),
 }));
 
+const { mockClearAllAppData } = vi.hoisted(() => ({
+  mockClearAllAppData: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock('../../../utils/clearAllAppData', () => ({
+  clearAllAppData: (...args: unknown[]) => mockClearAllAppData(...args),
+}));
+
 vi.mock('../../walkthrough/AppWalkthrough', () => ({ resetWalkthrough: vi.fn() }));
 
 // --- helpers ---
 
 function renderSettingsHome() {
   return render(
-    <MemoryRouter>
-      <SettingsHome />
-    </MemoryRouter>
+    <Provider store={makeTestStore()}>
+      <MemoryRouter>
+        <SettingsHome />
+      </MemoryRouter>
+    </Provider>
   );
 }
 
@@ -59,123 +75,36 @@ describe('SettingsHome', () => {
     vi.clearAllMocks();
   });
 
-  describe('section headers', () => {
-    it('renders the General section header', () => {
-      renderSettingsHome();
-      expect(screen.getByText('General')).toBeInTheDocument();
-    });
+  describe('flat menu', () => {
+    // Section headers ("General", "Features & AI", "Billing & Rewards",
+    // "Support", "Danger Zone") were intentionally removed — the menu is
+    // now a single flat list to reduce visual noise.
+    it.each(['General', 'Features & AI', 'Billing & Rewards', 'Support', 'Danger Zone'])(
+      'does not render section header: %s',
+      label => {
+        renderSettingsHome();
+        expect(screen.queryByText(label)).not.toBeInTheDocument();
+      }
+    );
 
-    it('renders the Features & AI section header', () => {
+    it('renders the core menu items in a single list', () => {
       renderSettingsHome();
-      expect(screen.getByText('Features & AI')).toBeInTheDocument();
-    });
-
-    it('renders the Billing & Rewards section header', () => {
-      renderSettingsHome();
-      expect(screen.getByText('Billing & Rewards')).toBeInTheDocument();
-    });
-
-    it('renders the Support section header', () => {
-      renderSettingsHome();
-      expect(screen.getByText('Support')).toBeInTheDocument();
-    });
-
-    it('renders the Advanced section header', () => {
-      renderSettingsHome();
+      expect(screen.getByText('Account')).toBeInTheDocument();
+      expect(screen.getByText('Alerts')).toBeInTheDocument();
+      expect(screen.getByText('Notifications')).toBeInTheDocument();
+      expect(screen.getByText('Billing & Usage')).toBeInTheDocument();
       expect(screen.getByText('Advanced')).toBeInTheDocument();
+      expect(screen.getByText('Clear App Data')).toBeInTheDocument();
+      expect(screen.getByText('Log out')).toBeInTheDocument();
     });
 
-    it('renders the Danger Zone section header', () => {
+    it('no longer renders Features / AI / Rewards / Restart Tour / About on the home screen', () => {
       renderSettingsHome();
-      expect(screen.getByText('Danger Zone')).toBeInTheDocument();
-    });
-  });
-
-  describe('item grouping order', () => {
-    it('places Account and Notifications under General', () => {
-      renderSettingsHome();
-      const generalHeader = screen.getByText('General');
-      const accountItem = screen.getByText('Account');
-      const notificationsItem = screen.getByText('Notifications');
-
-      // All should appear after the General header in DOM order
-      expect(generalHeader.compareDocumentPosition(accountItem)).toBe(
-        Node.DOCUMENT_POSITION_FOLLOWING
-      );
-      expect(generalHeader.compareDocumentPosition(notificationsItem)).toBe(
-        Node.DOCUMENT_POSITION_FOLLOWING
-      );
-    });
-
-    it('places Features, AI & Models under Features & AI', () => {
-      renderSettingsHome();
-      const header = screen.getByText('Features & AI');
-      expect(header.compareDocumentPosition(screen.getByText('Features'))).toBe(
-        Node.DOCUMENT_POSITION_FOLLOWING
-      );
-      expect(header.compareDocumentPosition(screen.getByText('AI & Models'))).toBe(
-        Node.DOCUMENT_POSITION_FOLLOWING
-      );
-    });
-
-    it('places Billing & Usage and Rewards under Billing & Rewards', () => {
-      renderSettingsHome();
-      const header = screen.getByText('Billing & Rewards');
-      expect(header.compareDocumentPosition(screen.getByText('Billing & Usage'))).toBe(
-        Node.DOCUMENT_POSITION_FOLLOWING
-      );
-      expect(header.compareDocumentPosition(screen.getByText('Rewards'))).toBe(
-        Node.DOCUMENT_POSITION_FOLLOWING
-      );
-    });
-
-    it('places Restart Tour and About under Support', () => {
-      renderSettingsHome();
-      const header = screen.getByText('Support');
-      expect(header.compareDocumentPosition(screen.getByText('Restart Tour'))).toBe(
-        Node.DOCUMENT_POSITION_FOLLOWING
-      );
-      expect(header.compareDocumentPosition(screen.getByText('About'))).toBe(
-        Node.DOCUMENT_POSITION_FOLLOWING
-      );
-    });
-
-    it('places Developer Options under Advanced', () => {
-      renderSettingsHome();
-      const header = screen.getByText('Advanced');
-      expect(header.compareDocumentPosition(screen.getByText('Developer Options'))).toBe(
-        Node.DOCUMENT_POSITION_FOLLOWING
-      );
-    });
-
-    it('places Clear App Data and Log out under Danger Zone', () => {
-      renderSettingsHome();
-      const header = screen.getByText('Danger Zone');
-      expect(header.compareDocumentPosition(screen.getByText('Clear App Data'))).toBe(
-        Node.DOCUMENT_POSITION_FOLLOWING
-      );
-      expect(header.compareDocumentPosition(screen.getByText('Log out'))).toBe(
-        Node.DOCUMENT_POSITION_FOLLOWING
-      );
-    });
-  });
-
-  describe('Rewards menu item', () => {
-    it('renders the Rewards item', () => {
-      renderSettingsHome();
-      expect(screen.getByText('Rewards')).toBeInTheDocument();
-    });
-
-    it('navigates to /rewards when clicked', async () => {
-      const user = userEvent.setup();
-      renderSettingsHome();
-
-      // The Rewards item description is used to find the right button
-      const rewardsButton = screen.getByText('Rewards').closest('button');
-      expect(rewardsButton).toBeTruthy();
-      await user.click(rewardsButton!);
-
-      expect(mockNavigate).toHaveBeenCalledWith('/rewards');
+      expect(screen.queryByText('Features')).not.toBeInTheDocument();
+      expect(screen.queryByText('AI Configuration')).not.toBeInTheDocument();
+      expect(screen.queryByText('Rewards')).not.toBeInTheDocument();
+      expect(screen.queryByText('Restart Tour')).not.toBeInTheDocument();
+      expect(screen.queryByText('About')).not.toBeInTheDocument();
     });
   });
 
@@ -196,28 +125,12 @@ describe('SettingsHome', () => {
       expect(mockNavigateToSettings).toHaveBeenCalledWith('notifications');
     });
 
-    it('navigates to /home when Restart Tour is clicked', async () => {
+    it('navigates to /notifications inbox when Alerts is clicked', async () => {
       const user = userEvent.setup();
       renderSettingsHome();
 
-      await user.click(screen.getByText('Restart Tour').closest('button')!);
-      expect(mockNavigate).toHaveBeenCalledWith('/home');
-    });
-
-    it('navigates to features settings when Features is clicked', async () => {
-      const user = userEvent.setup();
-      renderSettingsHome();
-
-      await user.click(screen.getByText('Features').closest('button')!);
-      expect(mockNavigateToSettings).toHaveBeenCalledWith('features');
-    });
-
-    it('navigates to ai-models settings when AI & Models is clicked', async () => {
-      const user = userEvent.setup();
-      renderSettingsHome();
-
-      await user.click(screen.getByText('AI & Models').closest('button')!);
-      expect(mockNavigateToSettings).toHaveBeenCalledWith('ai-models');
+      await user.click(screen.getByText('Alerts').closest('button')!);
+      expect(mockNavigate).toHaveBeenCalledWith('/notifications');
     });
 
     it('opens billing URL when Billing & Usage is clicked', async () => {
@@ -229,20 +142,34 @@ describe('SettingsHome', () => {
       expect(openUrl).toHaveBeenCalledWith('https://billing.example.com');
     });
 
-    it('navigates to about settings when About is clicked', async () => {
+    it('navigates to developer-options when Advanced is clicked', async () => {
       const user = userEvent.setup();
       renderSettingsHome();
 
-      await user.click(screen.getByText('About').closest('button')!);
-      expect(mockNavigateToSettings).toHaveBeenCalledWith('about');
+      await user.click(screen.getByText('Advanced').closest('button')!);
+      expect(mockNavigateToSettings).toHaveBeenCalledWith('developer-options');
+    });
+  });
+
+  describe('Clear App Data flow', () => {
+    beforeEach(() => {
+      mockClearAllAppData.mockReset().mockResolvedValue(undefined);
     });
 
-    it('navigates to developer-options settings when Developer Options is clicked', async () => {
+    it('passes the current snapshot user id + clearSession to clearAllAppData', async () => {
       const user = userEvent.setup();
       renderSettingsHome();
 
-      await user.click(screen.getByText('Developer Options').closest('button')!);
-      expect(mockNavigateToSettings).toHaveBeenCalledWith('developer-options');
+      await user.click(screen.getByText('Clear App Data').closest('button')!);
+      // Confirm in the modal
+      const confirmButtons = screen.getAllByRole('button', { name: /Clear App Data/i });
+      // The last one is the modal confirm button (first is the menu item we just clicked).
+      await user.click(confirmButtons[confirmButtons.length - 1]);
+
+      expect(mockClearAllAppData).toHaveBeenCalledTimes(1);
+      const args = mockClearAllAppData.mock.calls[0][0];
+      expect(args).toMatchObject({ userId: null });
+      expect(typeof args.clearSession).toBe('function');
     });
   });
 });

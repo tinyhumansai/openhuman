@@ -98,18 +98,10 @@ const BASE_PROVIDERS: ProviderDescriptor[] = [
     description: 'Discord servers and DMs — channel list and unread counts.',
     serviceUrl: 'https://discord.com/channels/@me',
   },
-  {
-    id: 'google-meet',
-    label: 'Google Meet',
-    description: 'Join Google Meet calls and capture live captions.',
-    serviceUrl: 'https://meet.google.com/',
-  },
-  {
-    id: 'zoom',
-    label: 'Zoom',
-    description: 'Zoom web client — log in and join meetings from inside the app.',
-    serviceUrl: 'https://zoom.us/',
-  },
+  // Google Meet + Zoom are hidden from the picker for now — usage is low
+  // and the integrations need more polish before re-surfacing them. Their
+  // AccountProvider ids stay in the type union so existing accounts keep
+  // rendering correctly.
 ];
 
 const DEV_PROVIDERS: ProviderDescriptor[] = [

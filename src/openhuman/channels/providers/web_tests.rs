@@ -1,9 +1,10 @@
 use super::{
     all_web_channel_controller_schemas, all_web_channel_registered_controllers, cancel_chat,
-    event_session_id_for, generic_inference_error_user_message,
-    inference_budget_exceeded_user_message, is_inference_budget_exceeded_error, json_output,
-    key_for, normalize_model_override, optional_f64, optional_string, required_string, schemas,
-    set_test_forced_run_chat_task_error, start_chat, subscribe_web_channel_events,
+    classify_inference_error, event_session_id_for, extract_provider_error_detail,
+    generic_inference_error_user_message, inference_budget_exceeded_user_message,
+    is_inference_budget_exceeded_error, json_output, key_for, normalize_model_override,
+    optional_f64, optional_string, required_string, schemas, set_test_forced_run_chat_task_error,
+    start_chat, subscribe_web_channel_events,
 };
 use crate::core::TypeSchema;
 use tokio::time::{timeout, Duration};
@@ -132,6 +133,37 @@ fn budget_exceeded_copy_mentions_top_up() {
     let message = inference_budget_exceeded_user_message();
     assert!(message.contains("top up"));
     assert!(message.contains("credits"));
+}
+
+#[test]
+fn extract_provider_error_detail_pulls_openai_message() {
+    let raw = r#"custom_openai API error (404 Not Found): {"error":{"message":"Project `proj_X` does not have access to model `gpt-5.5`","type":"invalid_request_error","param":null,"code":"model_not_found"}}"#;
+    let detail = extract_provider_error_detail(raw).expect("expected JSON message");
+    assert!(
+        detail.contains("does not have access to model"),
+        "got: {detail}"
+    );
+    assert!(detail.contains("gpt-5.5"));
+}
+
+#[test]
+fn extract_provider_error_detail_returns_none_for_transport_errors() {
+    // Plain transport failure — no provider JSON body to quote. Surfacing
+    // raw transport text would leak internal infra URLs.
+    let raw = "error sending request for url (https://internal-api.example.invalid/openai/v1/chat/completions)";
+    assert!(extract_provider_error_detail(raw).is_none());
+}
+
+#[test]
+fn classify_inference_error_quotes_model_unavailable_detail() {
+    let raw = r#"custom_openai API error (404 Not Found): {"error":{"message":"The model `gpt-5.5` does not exist or you do not have access to it.","code":"model_not_found"}}"#;
+    let (category, message) = classify_inference_error(raw);
+    assert_eq!(category, "model_unavailable");
+    assert!(message.contains("Check your model settings"));
+    assert!(
+        message.contains("gpt-5.5"),
+        "should quote model name: {message}"
+    );
 }
 
 #[test]
@@ -268,4 +300,95 @@ fn json_output_is_required_json_field() {
     let f = json_output("ack", "c");
     assert!(f.required);
     assert!(matches!(f.ty, TypeSchema::Json));
+}
+
+// ── SessionCacheFingerprint (thread-session cache invalidation) ───────
+
+use super::SessionCacheFingerprint;
+
+fn fp(
+    model_override: Option<&str>,
+    temperature: Option<f64>,
+    target: &str,
+    reasoning_provider: Option<&str>,
+) -> SessionCacheFingerprint {
+    SessionCacheFingerprint {
+        model_override: model_override.map(String::from),
+        temperature,
+        target_agent_id: target.to_string(),
+        reasoning_provider: reasoning_provider.map(String::from),
+    }
+}
+
+#[test]
+fn fingerprint_identical_inputs_are_cache_hit() {
+    let a = fp(
+        None,
+        None,
+        "orchestrator",
+        Some("anthropic:claude-sonnet-4-6"),
+    );
+    let b = fp(
+        None,
+        None,
+        "orchestrator",
+        Some("anthropic:claude-sonnet-4-6"),
+    );
+    assert_eq!(
+        a, b,
+        "identical fingerprints must compare equal (cache hit)"
+    );
+}
+
+#[test]
+fn fingerprint_reasoning_provider_change_forces_rebuild() {
+    // The whole point of adding reasoning_provider to the fingerprint:
+    // changing the workload routing in Settings → AI → LLM mid-thread
+    // must invalidate the cached agent so the next turn rebuilds with
+    // the new provider.
+    let warm = fp(None, None, "orchestrator", Some("cloud"));
+    let after_settings_change = fp(
+        None,
+        None,
+        "orchestrator",
+        Some("anthropic:claude-sonnet-4-6"),
+    );
+    assert_ne!(
+        warm, after_settings_change,
+        "reasoning_provider change must produce a different fingerprint (cache miss → rebuild)"
+    );
+}
+
+#[test]
+fn fingerprint_reasoning_provider_none_vs_some_differs() {
+    // Unset → explicitly-set is also a routing change (None resolves to
+    // 'cloud' via the factory, an explicit value does not).
+    let unset = fp(None, None, "orchestrator", None);
+    let set = fp(None, None, "orchestrator", Some("cloud"));
+    assert_ne!(unset, set);
+}
+
+#[test]
+fn fingerprint_target_agent_flip_forces_rebuild() {
+    // welcome → orchestrator routing flip (onboarding completion) must
+    // still invalidate — regression guard for the original cache bug
+    // this struct also protects.
+    let welcome = fp(None, None, "welcome", Some("cloud"));
+    let orchestrator = fp(None, None, "orchestrator", Some("cloud"));
+    assert_ne!(welcome, orchestrator);
+}
+
+#[test]
+fn fingerprint_model_override_and_temperature_participate() {
+    let base = fp(None, None, "orchestrator", Some("cloud"));
+    assert_ne!(
+        base,
+        fp(Some("gpt-4o"), None, "orchestrator", Some("cloud")),
+        "per-message model_override must invalidate"
+    );
+    assert_ne!(
+        base,
+        fp(None, Some(0.9), "orchestrator", Some("cloud")),
+        "per-message temperature must invalidate"
+    );
 }

@@ -157,10 +157,11 @@ pub struct AgentDefinition {
     ///   agent's `delegate_name` override) and whose description is the
     ///   target agent's [`AgentDefinition::when_to_use`].
     ///
-    /// * [`SubagentEntry::Skills`] — one [`SkillDelegationTool`] per
-    ///   connected Composio toolkit, each named `delegate_{toolkit}`,
-    ///   all routing to the generic `integrations_agent` with an appropriate
-    ///   `skill_filter` pre-populated.
+    /// * [`SubagentEntry::Skills`] — a single collapsed
+    ///   [`SkillDelegationTool`] named `delegate_to_integrations_agent`
+    ///   that takes the toolkit slug as an argument and routes to the
+    ///   generic `integrations_agent` with the corresponding
+    ///   `skill_filter` pre-populated (#1335).
     ///
     /// `subagents` is intentionally separate from [`AgentDefinition::tools`]
     /// so that reading a TOML makes the distinction obvious: `tools` is
@@ -207,9 +208,11 @@ pub struct AgentDefinition {
 pub enum SubagentEntry {
     /// Delegate to a specific built-in or custom agent by id.
     AgentId(String),
-    /// Expand at build time to one `delegate_{toolkit}` tool per
-    /// connected Composio toolkit, each routing to the generic
-    /// `integrations_agent` with `skill_filter` pre-set.
+    /// Expand at build time to a single collapsed
+    /// `delegate_to_integrations_agent` tool whose `toolkit` argument
+    /// selects which connected Composio toolkit to route to, with
+    /// `skill_filter` pre-set on the underlying `integrations_agent`
+    /// dispatch (#1335).
     Skills(SkillsWildcard),
 }
 

@@ -3,6 +3,7 @@ workflow
 create_issue
 review_pr
 sentry_bugs
+remove_dupe_nonsense_issues
 
 # Diagnostic harness output (scripts/diagnose-cef-runtime.mjs)
 diagnosis-*.json
@@ -74,6 +75,10 @@ wdio-logs/
 test-results/
 coverage/
 app/public/generated/remotion/
+app/test/e2e/artifacts/
+
+# Local pnpm store (created when network-restricted hosts cache the store inside the repo)
+.pnpm-store/
 
 tauri.key
 tauri.key.pub
@@ -87,3 +92,10 @@ overlay/src-tauri/target/
 .claude/*.lock
 app/.claude/scheduled_tasks.lock
 target-test-run
+# CocoIndex Code (ccc)
+/.cocoindex_code/
+
+tmp/
+app/test/e2e/.cache/
+test-map.md
+.test-gap-analysis.md

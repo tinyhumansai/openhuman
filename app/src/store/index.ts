@@ -15,7 +15,10 @@ import { IS_DEV } from '../utils/config';
 import accountsReducer from './accountsSlice';
 import channelConnectionsReducer from './channelConnectionsSlice';
 import chatRuntimeReducer from './chatRuntimeSlice';
+import connectivityReducer from './connectivitySlice';
 import coreModeReducer from './coreModeSlice';
+import localeReducer from './localeSlice';
+import mascotReducer from './mascotSlice';
 import notificationReducer from './notificationSlice';
 import providerSurfacesReducer from './providerSurfaceSlice';
 import socketReducer from './socketSlice';
@@ -71,6 +74,9 @@ const coreModePersistConfig = {
 };
 const persistedCoreModeReducer = persistReducer(coreModePersistConfig, coreModeReducer);
 
+const localePersistConfig = { key: 'locale', storage: localStorageAdapter, whitelist: ['current'] };
+const persistedLocaleReducer = persistReducer(localePersistConfig, localeReducer);
+
 const channelConnectionsPersistConfig = {
   key: 'channelConnections',
   storage,
@@ -104,9 +110,18 @@ const persistedNotificationReducer = persistReducer(notificationPersistConfig, n
 const threadPersistConfig = { key: 'thread', storage, whitelist: ['selectedThreadId'] };
 const persistedThreadReducer = persistReducer(threadPersistConfig, threadReducer);
 
+// Mascot appearance + voice — color and voiceId preferences are per-user
+// so they travel with the account on logout/login rather than leaking
+// across users. `voiceId` is the user's chosen ElevenLabs voice for
+// reply speech (issue #1762); `null` falls back to the build-time
+// default in `app/src/utils/config.ts::MASCOT_VOICE_ID`.
+const mascotPersistConfig = { key: 'mascot', storage, whitelist: ['color', 'voiceId'] };
+const persistedMascotReducer = persistReducer(mascotPersistConfig, mascotReducer);
+
 export const store = configureStore({
   reducer: {
     socket: socketReducer,
+    connectivity: connectivityReducer,
     thread: persistedThreadReducer,
     chatRuntime: chatRuntimeReducer,
     channelConnections: persistedChannelConnectionsReducer,
@@ -114,6 +129,8 @@ export const store = configureStore({
     notifications: persistedNotificationReducer,
     providerSurfaces: providerSurfacesReducer,
     coreMode: persistedCoreModeReducer,
+    locale: persistedLocaleReducer,
+    mascot: persistedMascotReducer,
   },
   middleware: getDefaultMiddleware => {
     const middleware = getDefaultMiddleware({

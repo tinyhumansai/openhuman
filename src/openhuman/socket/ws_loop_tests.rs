@@ -168,6 +168,19 @@ fn handle_eio_message_close_and_noop_do_not_panic() {
     handle_eio_message("9", &tx, &shared); // unknown
 }
 
+#[test]
+fn handle_eio_message_unknown_packet_is_utf8_safe_at_preview_boundary() {
+    let previous_max_level = log::max_level();
+    log::set_max_level(log::LevelFilter::Trace);
+    let shared = make_shared();
+    let (tx, _rx) = mpsc::unbounded_channel::<String>();
+    let packet = format!("9{}{}", "a".repeat(28), "魔");
+    assert!(!packet.is_char_boundary(30));
+
+    handle_eio_message(&packet, &tx, &shared);
+    log::set_max_level(previous_max_level);
+}
+
 // ── handle_sio_packet ──────────────────────────────────────────
 
 #[test]
@@ -188,6 +201,32 @@ fn handle_sio_packet_event_with_unparseable_payload_is_logged_only() {
     handle_sio_packet("2not-json", &tx, &shared);
     // Unparseable SIO events must not change status.
     assert_eq!(*shared.status.read(), ConnectionStatus::Disconnected);
+}
+
+#[test]
+fn handle_sio_packet_unparseable_event_is_utf8_safe_at_preview_boundary() {
+    let previous_max_level = log::max_level();
+    log::set_max_level(log::LevelFilter::Trace);
+    let shared = make_shared();
+    let (tx, _rx) = mpsc::unbounded_channel::<String>();
+    let packet = format!("2{}{}", "a".repeat(78), "魔");
+    assert!(!packet.is_char_boundary(80));
+
+    handle_sio_packet(&packet, &tx, &shared);
+    log::set_max_level(previous_max_level);
+}
+
+#[test]
+fn handle_sio_packet_unknown_type_is_utf8_safe_at_preview_boundary() {
+    let previous_max_level = log::max_level();
+    log::set_max_level(log::LevelFilter::Trace);
+    let shared = make_shared();
+    let (tx, _rx) = mpsc::unbounded_channel::<String>();
+    let packet = format!("9{}{}", "a".repeat(28), "魔");
+    assert!(!packet.is_char_boundary(30));
+
+    handle_sio_packet(&packet, &tx, &shared);
+    log::set_max_level(previous_max_level);
 }
 
 #[test]
@@ -275,6 +314,50 @@ fn fail_escalate_threshold_is_five() {
         FAIL_ESCALATE_THRESHOLD, 5,
         "FAIL_ESCALATE_THRESHOLD changed — update the doc comment to reflect the \
          new backoff accumulation before the first Sentry event"
+    );
+}
+
+/// Regression guard for OPENHUMAN-TAURI-BH: the exact wire shape the
+/// sustained-outage escalation builds for an offline user
+/// (`Network is unreachable (os error 51)`) must classify as a
+/// network-unreachable expected error so the observability layer routes
+/// it to a warn breadcrumb rather than a Sentry event. If the format
+/// string in `log_connection_failure` drifts away from the substrings
+/// `is_network_unreachable_message` matches on, an offline Mac will
+/// start spamming Sentry again — exactly the regression this guards.
+#[test]
+fn sustained_outage_for_network_unreachable_classifies_as_expected() {
+    use crate::core::observability::{expected_error_kind, ExpectedErrorKind};
+
+    let reason = "WebSocket connect: IO error: Network is unreachable (os error 51)";
+    let detailed = format!(
+        "[socket] Connection failed (sustained outage after {FAIL_ESCALATE_THRESHOLD} attempts): {reason}"
+    );
+    assert_eq!(
+        expected_error_kind(&detailed),
+        Some(ExpectedErrorKind::NetworkUnreachable),
+        "offline-user shape must classify as expected; got message: {detailed}"
+    );
+}
+
+/// Counterpart: a genuine outage that lacks any of the transport-level
+/// markers (e.g. a server-side HTTP 500 wrapped by tungstenite) must
+/// still surface as an actionable Sentry event — i.e. not classify as
+/// any expected kind. Pins the OPENHUMAN-TAURI-8M invariant ("one event
+/// per sustained outage") so the BH fix doesn't accidentally silence
+/// real outages.
+#[test]
+fn sustained_outage_for_actionable_server_error_does_not_classify() {
+    use crate::core::observability::expected_error_kind;
+
+    let reason = "SIO CONNECT: Socket.IO connect error: internal server error";
+    let detailed = format!(
+        "[socket] Connection failed (sustained outage after {FAIL_ESCALATE_THRESHOLD} attempts): {reason}"
+    );
+    assert_eq!(
+        expected_error_kind(&detailed),
+        None,
+        "actionable outage must not be silenced; got message: {detailed}"
     );
 }
 

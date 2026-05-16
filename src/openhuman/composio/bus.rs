@@ -55,6 +55,7 @@ use crate::core::event_bus::{subscribe_global, DomainEvent, EventHandler, Subscr
 use crate::openhuman::agent::triage::{apply_decision, run_triage, TriageOutcome, TriggerEnvelope};
 use crate::openhuman::composio::trigger_history;
 use crate::openhuman::config::rpc as config_rpc;
+use crate::openhuman::config::schema::COMPOSIO_MODE_DIRECT;
 
 use super::client::ComposioClient;
 use super::providers::{get_provider, ProviderContext};
@@ -81,6 +82,7 @@ const CONNECTION_READY_MAX_BACKOFF: Duration = Duration::from_secs(4);
 
 static COMPOSIO_TRIGGER_HANDLE: OnceLock<SubscriptionHandle> = OnceLock::new();
 static COMPOSIO_CONNECTION_HANDLE: OnceLock<SubscriptionHandle> = OnceLock::new();
+static COMPOSIO_CONFIG_HANDLE: OnceLock<SubscriptionHandle> = OnceLock::new();
 
 /// Register both long-lived composio subscribers on the global event
 /// bus, and initialise the default provider registry. Idempotent.
@@ -113,6 +115,20 @@ pub fn register_composio_trigger_subscriber() {
             None => {
                 log::warn!(
                     "[event_bus] failed to register composio connection_created subscriber — bus not initialized"
+                );
+            }
+        }
+    }
+
+    if COMPOSIO_CONFIG_HANDLE.get().is_none() {
+        match subscribe_global(Arc::new(ComposioConfigChangedSubscriber::new())) {
+            Some(handle) => {
+                let _ = COMPOSIO_CONFIG_HANDLE.set(handle);
+                log::debug!("[event_bus] composio config_changed subscriber registered");
+            }
+            None => {
+                log::warn!(
+                    "[event_bus] failed to register composio config_changed subscriber — bus not initialized"
                 );
             }
         }
@@ -165,6 +181,36 @@ impl EventHandler for ComposioTriggerSubscriber {
             payload_bytes = payload.to_string().len(),
             "[composio:bus] trigger received"
         );
+
+        // [composio-direct] Direct-mode trigger gate.
+        //
+        // Inbound `composio:trigger` events ride the backend socket
+        // (`wss://api.tinyhumans.ai`) which only fans out events from
+        // the tinyhumans Composio tenant. When the user has switched
+        // to direct mode, that tenant is no longer their active source
+        // of truth — connections live on `backend.composio.dev` under
+        // their own API key, and any backend-tenant triggers that keep
+        // firing are ghosts from the prior mode. Drop them here so the
+        // user doesn't see triage runs or history entries originating
+        // from a tenant they've moved away from. Real-time triggers
+        // for direct-mode users are tracked as a follow-up — see the
+        // `composio.direct_mode_triggers_gap` capability and
+        // `periodic.rs` docstring.
+        //
+        // Fail-open on config load error: if config is unreadable, we
+        // let the event through rather than silently dropping it. The
+        // existing env-var / config triage flags below remain the
+        // backend-mode gates.
+        if let Ok(config) = config_rpc::load_config_with_timeout().await {
+            if config.composio.mode == COMPOSIO_MODE_DIRECT {
+                tracing::info!(
+                    toolkit = %toolkit,
+                    trigger = %trigger,
+                    "[composio:trigger] dropped — direct mode active (backend-tenant event ignored)"
+                );
+                return;
+            }
+        }
 
         if let Some(store) = trigger_history::global() {
             let toolkit_owned = toolkit.clone();
@@ -368,14 +414,19 @@ impl EventHandler for ComposioConnectionCreatedSubscriber {
             "[composio:bus] connection_created"
         );
 
-        let Some(provider) = get_provider(toolkit) else {
-            tracing::debug!(
-                toolkit = %toolkit,
-                "[composio:bus] no provider registered, skipping connection_created hook"
-            );
-            return;
-        };
-
+        // Run the post-active cache refresh for EVERY toolkit, not just
+        // ones with a registered provider. Earlier shape gated the
+        // entire spawn block on `get_provider(toolkit)` — that meant
+        // toolkits without a provider (most of the 119 Composio
+        // toolkits, e.g. `googlecalendar`) bypassed the eager cache
+        // warm and had to wait for the desktop UI's 5 s
+        // `composio_list_connections` diff-poll to invalidate the
+        // stale cache. The chat-runtime then missed the new connection
+        // on any turn that fell inside that window. Decoupling the
+        // cache refresh from provider routing fixes it: every
+        // connect → invalidate + eager warm, provider hook becomes a
+        // downstream optional step gated on its own `get_provider`
+        // lookup.
         let toolkit = toolkit.clone();
         let connection_id = connection_id.clone();
 
@@ -385,8 +436,8 @@ impl EventHandler for ComposioConnectionCreatedSubscriber {
             // has actually clicked through. Resolve the config + client
             // first, then poll the backend for the connection record
             // until we observe ACTIVE/CONNECTED (or hit the timeout).
-            // Only then do we run the provider hook, so the very first
-            // provider call doesn't race the OAuth handshake.
+            // Only then do we invalidate + warm the cache so we never
+            // surface a half-finished connection to the chat runtime.
             //
             // NOTE: Future improvement — listen for an explicit
             // "connection_active" backend event instead of polling.
@@ -413,18 +464,70 @@ impl EventHandler for ComposioConnectionCreatedSubscriber {
                 return;
             };
 
-            match wait_for_connection_active(&ctx.client, &connection_id).await {
+            // `wait_for_connection_active` is a backend-only metadata
+            // probe (`list_connections`). Resolve a backend
+            // `ComposioClient` from the live config for it; direct-mode
+            // users surface a clear error here rather than silently
+            // routing through the wrong tenant (#1710).
+            let backend_client = match ctx.backend_client().await {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::debug!(
+                        toolkit = %toolkit,
+                        error = %e,
+                        "[composio:bus] backend client unavailable for connection-readiness poll; skipping"
+                    );
+                    return;
+                }
+            };
+            match wait_for_connection_active(&backend_client, &connection_id).await {
                 Ok(status) => {
                     tracing::info!(
                         toolkit = %toolkit,
                         connection_id = %connection_id,
                         status = %status,
-                        "[composio:bus] connection observed active, dispatching on_connection_created"
+                        "[composio:bus] connection observed active; invalidating + eagerly warming integrations cache"
                     );
                     // Bust the prompt-level integrations cache now that
                     // the connection is confirmed ACTIVE, so the next
                     // agent session picks up the newly connected toolkit.
                     super::ops::invalidate_connected_integrations_cache();
+                    // Eagerly warm the cache from the backend so the
+                    // very next `cached_active_integrations` read
+                    // (typically the orchestrator's next-turn refresh,
+                    // or the desktop UI's 5 s `composio_list_connections`
+                    // poll — whichever fires first) returns the new
+                    // toolkit immediately instead of waiting for a
+                    // cache-miss round trip on the hot path. Cost: one
+                    // background `list_connections` call per OAuth
+                    // completion. Best-effort — on backend failure the
+                    // UI poll will repopulate within ~5 s as a safety
+                    // net.
+                    //
+                    // Use the status-distinguishing fetcher so we log
+                    // `Authoritative(empty)` and backend unavailability
+                    // differently — `fetch_connected_integrations`
+                    // collapses both to `Vec::new()` and would
+                    // otherwise hide auth/backend failures from
+                    // incident triage.
+                    match super::ops::fetch_connected_integrations_status(ctx.config.as_ref()).await
+                    {
+                        super::ops::FetchConnectedIntegrationsStatus::Authoritative(entries) => {
+                            tracing::debug!(
+                                toolkit = %toolkit,
+                                connection_id = %connection_id,
+                                cached_entries = entries.len(),
+                                "[composio:bus] eagerly warmed integrations cache after connection became active"
+                            );
+                        }
+                        super::ops::FetchConnectedIntegrationsStatus::Unavailable => {
+                            tracing::warn!(
+                                toolkit = %toolkit,
+                                connection_id = %connection_id,
+                                "[composio:bus] eager cache warm after connection became active skipped: backend unavailable"
+                            );
+                        }
+                    }
                 }
                 Err(WaitError::Timeout { last_status }) => {
                     tracing::warn!(
@@ -432,7 +535,7 @@ impl EventHandler for ComposioConnectionCreatedSubscriber {
                         connection_id = %connection_id,
                         last_status = ?last_status,
                         timeout_secs = CONNECTION_READY_TIMEOUT.as_secs(),
-                        "[composio:bus] timed out waiting for connection to become active; aborting on_connection_created"
+                        "[composio:bus] timed out waiting for connection to become active; skipping cache refresh + provider hook"
                     );
                     return;
                 }
@@ -441,11 +544,23 @@ impl EventHandler for ComposioConnectionCreatedSubscriber {
                         toolkit = %toolkit,
                         connection_id = %connection_id,
                         error = %error,
-                        "[composio:bus] backend lookup failed while waiting for connection; aborting on_connection_created"
+                        "[composio:bus] backend lookup failed while waiting for connection; skipping cache refresh + provider hook"
                     );
                     return;
                 }
             }
+
+            // Optional provider-specific post-OAuth hook (e.g. gmail's
+            // inbox ingest). Only fires for toolkits that registered a
+            // provider; the rest just got the cache refresh above and
+            // we're done.
+            let Some(provider) = get_provider(&toolkit) else {
+                tracing::debug!(
+                    toolkit = %toolkit,
+                    "[composio:bus] no provider registered for toolkit; cache refreshed, no provider hook to dispatch"
+                );
+                return;
+            };
 
             if let Err(e) = provider.on_connection_created(&ctx).await {
                 tracing::warn!(
@@ -536,6 +651,60 @@ async fn wait_for_connection_active(
 
         tokio::time::sleep(backoff).await;
         backoff = (backoff * 2).min(CONNECTION_READY_MAX_BACKOFF);
+    }
+}
+
+// ── Config-changed subscriber ───────────────────────────────────────
+
+/// Drops the prompt-level integrations cache whenever the user flips
+/// `config.composio.mode` between `"backend"` and `"direct"` or
+/// stores/clears the direct-mode API key. Without this, the chat
+/// runtime keeps the old tenant's tool catalogue / connection list
+/// pinned for up to `CACHE_TTL` (60s) — that's the regression behind
+/// "I switched to Direct and my old integrations are still showing"
+/// (#1710).
+///
+/// The subscriber is intentionally tiny: it only clears the cache,
+/// which guarantees the very next `fetch_connected_integrations` /
+/// `cached_active_integrations` read hits the new client. We don't
+/// eagerly warm the cache here because we don't have a config handle
+/// in the event payload and `load_config_with_timeout` would race the
+/// concurrent `cfg_mut.save()` call that produced this event.
+pub struct ComposioConfigChangedSubscriber;
+
+impl ComposioConfigChangedSubscriber {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Default for ComposioConfigChangedSubscriber {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl EventHandler for ComposioConfigChangedSubscriber {
+    fn name(&self) -> &str {
+        "composio::config_changed"
+    }
+
+    fn domains(&self) -> Option<&[&str]> {
+        Some(&["composio"])
+    }
+
+    async fn handle(&self, event: &DomainEvent) {
+        let DomainEvent::ComposioConfigChanged { mode, api_key_set } = event else {
+            return;
+        };
+
+        tracing::info!(
+            mode = %mode,
+            api_key_set = api_key_set,
+            "[composio-cache] config changed — invalidating integrations cache"
+        );
+        super::ops::invalidate_connected_integrations_cache();
     }
 }
 

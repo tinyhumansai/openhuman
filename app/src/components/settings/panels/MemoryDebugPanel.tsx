@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
+import { useT } from '../../../lib/i18n/I18nContext';
 import {
   memoryClearNamespace,
   type MemoryDebugDocument,
@@ -16,6 +17,7 @@ import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 import { normalizeMemoryDocuments } from './memoryDebugUtils';
 
 const MemoryDebugPanel = () => {
+  const { t } = useT();
   const { navigateBack, breadcrumbs } = useSettingsNavigation();
   const [documents, setDocuments] = useState<MemoryDebugDocument[]>([]);
   const [documentsRaw, setDocumentsRaw] = useState<unknown>(null);
@@ -172,7 +174,7 @@ const MemoryDebugPanel = () => {
   return (
     <div>
       <SettingsHeader
-        title="Memory Debug"
+        title={t('memory.debugTitle')}
         showBackButton={true}
         onBack={navigateBack}
         breadcrumbs={breadcrumbs}

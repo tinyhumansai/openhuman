@@ -25,3 +25,4 @@ dist-ssr
 
 # ESLint cache
 .eslintcache
+app/test/e2e/.cache/

@@ -2,6 +2,7 @@ import { type ComponentProps, useRef, useState } from 'react';
 
 import ScreenIntelligenceDebugPanel from '../../../components/intelligence/ScreenIntelligenceDebugPanel';
 import { useScreenIntelligenceState } from '../../../features/screen-intelligence/useScreenIntelligenceState';
+import { useT } from '../../../lib/i18n/I18nContext';
 import { isTauri, openhumanUpdateScreenIntelligenceSettings } from '../../../utils/tauriCommands';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
@@ -28,6 +29,7 @@ const DebugSection = ({
 };
 
 const ScreenAwarenessDebugPanel = () => {
+  const { t } = useT();
   const { navigateBack, breadcrumbs } = useSettingsNavigation();
   const {
     status,
@@ -99,7 +101,7 @@ const ScreenAwarenessDebugPanel = () => {
   return (
     <div className="z-10 relative">
       <SettingsHeader
-        title="Screen Awareness Debug"
+        title={t('screenAwareness.debugTitle')}
         showBackButton={true}
         onBack={navigateBack}
         breadcrumbs={breadcrumbs}

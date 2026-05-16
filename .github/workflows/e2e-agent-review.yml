@@ -1,12 +1,13 @@
 ---
 name: E2E (Linux) - agent-review
-# CEF LIMITATION: Linux E2E via tauri-driver requires WebKitWebDriver
-# (webkit2gtk), but this app uses the CEF runtime (tauri-runtime-cef).
-# WebKitWebDriver cannot drive a CEF-backed WebView, so Linux CEF E2E is not
-# a supported CI gate. Keep this workflow manual/diagnostic until the CEF fork
-# adds a ChromeDriver-based automation path or an alternative harness is wired.
-# Use macOS/Appium for supported local or manual desktop E2E runs.
-# See also: test.yml where the e2e-linux job is commented out for the same reason.
+#
+# Runs the agent-review spec on Linux via the unified Appium Chromium
+# driver attached to CEF's CDP port. Same driver path as `e2e.yml`; this
+# workflow exists because agent-review needs a longer timeout and its own
+# artifact retention.
+#
+# Previously: tauri-driver + WebKitWebDriver, which can't drive a
+# CEF-backed WebView. That path is dead.
 on:
   workflow_dispatch:
 permissions:
@@ -16,7 +17,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   e2e-agent-review:
-    name: E2E agent-review (Linux / tauri-driver)
+    name: E2E agent-review (Linux / Appium Chromium)
     runs-on: ubuntu-22.04
     timeout-minutes: 60
     steps:
@@ -47,7 +48,7 @@ jobs:
       - name: Install Rust (rust-toolchain.toml)
         if: steps.gate.outputs.present == 'true'
         uses: dtolnay/rust-toolchain@1.93.0
-      - name: Install system dependencies
+      - name: Install system dependencies (CEF + Xvfb)
         if: steps.gate.outputs.present == 'true'
         run: |
           sudo apt-get update
@@ -55,8 +56,8 @@ jobs:
             libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev \
             librsvg2-dev patchelf \
             xvfb at-spi2-core dbus-x11 \
-            webkit2gtk-driver \
-            libasound2-dev libxdo-dev libxtst-dev libx11-dev libevdev-dev
+            libasound2-dev libxdo-dev libxtst-dev libx11-dev libevdev-dev \
+            unzip curl python3
       - name: Cargo.lock fingerprint (deps only)
         if: steps.gate.outputs.present == 'true'
         id: cargo-lock-fingerprint
@@ -76,9 +77,11 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-e2e-agentreview-cargo-
             ${{ runner.os }}-e2e-cargo-
-      - name: Install tauri-driver
+      - name: Install Appium and chromium driver
         if: steps.gate.outputs.present == 'true'
-        run: cargo install tauri-driver --version 2.0.5
+        run: |
+          npm install -g appium@3
+          appium driver install --source=npm appium-chromium-driver
       - name: Install JS dependencies
         if: steps.gate.outputs.present == 'true'
         run: pnpm install --frozen-lockfile
@@ -90,7 +93,6 @@ jobs:
       - name: Build E2E app
         if: steps.gate.outputs.present == 'true'
         run: pnpm --filter openhuman-app test:e2e:build
-      # Core is linked in-process — no sidecar staging needed.
       - name: Run agent-review E2E spec under Xvfb
         if: steps.gate.outputs.present == 'true'
         run: |
@@ -100,11 +102,10 @@ jobs:
           eval "$(dbus-launch --sh-syntax)"
           mkdir -p ~/.local/share/applications
           export RUST_BACKTRACE=1
-          cd app
-          mkdir -p test/e2e/artifacts
-          if ! bash scripts/e2e-run-spec.sh test/e2e/specs/agent-review.spec.ts agent-review; then
+          mkdir -p app/test/e2e/artifacts
+          if ! bash app/scripts/e2e-run-session.sh test/e2e/specs/agent-review.spec.ts agent-review; then
             echo "First agent-review run failed; retrying once..."
-            bash scripts/e2e-run-spec.sh test/e2e/specs/agent-review.spec.ts agent-review-retry
+            bash app/scripts/e2e-run-session.sh test/e2e/specs/agent-review.spec.ts agent-review-retry
           fi
       - name: Upload E2E artifacts
         if: always() && steps.gate.outputs.present == 'true'
@@ -113,6 +114,7 @@ jobs:
           name: e2e-agent-review-artifacts
           path: |
             app/test/e2e/artifacts/**
-            /tmp/tauri-driver-e2e-agent-review.log
+            /tmp/openhuman-e2e-app-*.log
+            /tmp/appium-e2e-*.log
           if-no-files-found: ignore
           retention-days: 7

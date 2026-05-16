@@ -220,10 +220,12 @@ async fn apply_model_settings_updates_fields_and_persists_snapshot() {
     let mut cfg = tmp_config(&tmp);
     let patch = ModelSettingsPatch {
         api_url: Some("https://api.example.test".into()),
+        inference_url: None,
         api_key: None,
         default_model: Some("gpt-4o".into()),
         default_temperature: Some(0.25),
         model_routes: None,
+        ..Default::default()
     };
     let outcome = apply_model_settings(&mut cfg, patch).await.expect("apply");
     assert_eq!(cfg.api_url.as_deref(), Some("https://api.example.test"));
@@ -243,20 +245,24 @@ async fn apply_model_settings_stores_api_key_and_clears_when_empty() {
     let mut cfg = tmp_config(&tmp);
     let set = ModelSettingsPatch {
         api_url: Some("https://llm.example.test/v1".into()),
+        inference_url: None,
         api_key: Some("  sk-test-1234  ".into()),
         default_model: Some("gpt-4o-mini".into()),
         default_temperature: None,
         model_routes: None,
+        ..Default::default()
     };
     let _ = apply_model_settings(&mut cfg, set).await.expect("set");
     assert_eq!(cfg.api_key.as_deref(), Some("sk-test-1234"));
 
     let clear = ModelSettingsPatch {
         api_url: None,
+        inference_url: None,
         api_key: Some("".into()),
         default_model: None,
         default_temperature: None,
         model_routes: None,
+        ..Default::default()
     };
     let _ = apply_model_settings(&mut cfg, clear).await.expect("clear");
     assert!(cfg.api_key.is_none());
@@ -275,6 +281,7 @@ async fn apply_model_settings_replaces_model_routes_when_some_and_keeps_when_non
     let mut cfg = tmp_config(&tmp);
     let set_routes = ModelSettingsPatch {
         api_url: None,
+        inference_url: None,
         api_key: None,
         default_model: None,
         default_temperature: None,
@@ -288,6 +295,7 @@ async fn apply_model_settings_replaces_model_routes_when_some_and_keeps_when_non
                 model: "gpt-4o".into(),
             },
         ]),
+        ..Default::default()
     };
     let _ = apply_model_settings(&mut cfg, set_routes)
         .await
@@ -298,10 +306,12 @@ async fn apply_model_settings_replaces_model_routes_when_some_and_keeps_when_non
     // None — leave routes alone.
     let touch_other = ModelSettingsPatch {
         api_url: Some("https://x.test/v1".into()),
+        inference_url: None,
         api_key: None,
         default_model: None,
         default_temperature: None,
         model_routes: None,
+        ..Default::default()
     };
     let _ = apply_model_settings(&mut cfg, touch_other)
         .await
@@ -312,10 +322,12 @@ async fn apply_model_settings_replaces_model_routes_when_some_and_keeps_when_non
     // Empty vec — clear.
     let clear_routes = ModelSettingsPatch {
         api_url: None,
+        inference_url: None,
         api_key: None,
         default_model: None,
         default_temperature: None,
         model_routes: Some(vec![]),
+        ..Default::default()
     };
     let _ = apply_model_settings(&mut cfg, clear_routes)
         .await
@@ -330,10 +342,12 @@ async fn apply_model_settings_empty_strings_clear_optional_fields() {
     cfg.default_model = Some("prev-model".into());
     let patch = ModelSettingsPatch {
         api_url: Some("".into()),
+        inference_url: None,
         api_key: None,
         default_model: Some("".into()),
         default_temperature: None,
         model_routes: None,
+        ..Default::default()
     };
     let _ = apply_model_settings(&mut cfg, patch).await.expect("apply");
     assert!(cfg.api_url.is_none());
@@ -428,6 +442,62 @@ async fn apply_browser_settings_updates_enabled_flag() {
     .await
     .expect("apply");
     assert!(cfg.browser.enabled);
+}
+
+#[tokio::test]
+async fn apply_local_ai_settings_updates_lm_studio_provider_fields() {
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+    cfg.local_ai.model_id = "old-default".into();
+    cfg.local_ai.chat_model_id = "old-chat".into();
+
+    let patch = LocalAiSettingsPatch {
+        runtime_enabled: Some(true),
+        opt_in_confirmed: Some(true),
+        provider: Some("lm-studio".into()),
+        base_url: Some(" http://localhost:1234/v1/ ".into()),
+        model_id: Some(" local-default ".into()),
+        chat_model_id: Some(" local-chat ".into()),
+        usage_embeddings: Some(true),
+        usage_heartbeat: Some(true),
+        usage_learning_reflection: Some(false),
+        usage_subconscious: Some(true),
+    };
+
+    let outcome = apply_local_ai_settings(&mut cfg, patch)
+        .await
+        .expect("apply local ai");
+
+    assert!(cfg.local_ai.runtime_enabled);
+    assert!(cfg.local_ai.opt_in_confirmed);
+    assert_eq!(cfg.local_ai.provider, "lm_studio");
+    assert_eq!(
+        cfg.local_ai.base_url.as_deref(),
+        Some("http://localhost:1234/v1/")
+    );
+    assert_eq!(cfg.local_ai.model_id, "local-default");
+    assert_eq!(cfg.local_ai.chat_model_id, "local-chat");
+    assert!(cfg.local_ai.usage.embeddings);
+    assert!(cfg.local_ai.usage.heartbeat);
+    assert!(!cfg.local_ai.usage.learning_reflection);
+    assert!(cfg.local_ai.usage.subconscious);
+    assert_eq!(outcome.value["config"]["local_ai"]["provider"], "lm_studio");
+
+    let clear_and_fallback = LocalAiSettingsPatch {
+        provider: Some("unknown-provider".into()),
+        base_url: Some("   ".into()),
+        model_id: Some("   ".into()),
+        chat_model_id: Some("".into()),
+        ..LocalAiSettingsPatch::default()
+    };
+    apply_local_ai_settings(&mut cfg, clear_and_fallback)
+        .await
+        .expect("clear local ai");
+
+    assert_eq!(cfg.local_ai.provider, "ollama");
+    assert!(cfg.local_ai.base_url.is_none());
+    assert_eq!(cfg.local_ai.model_id, "");
+    assert_eq!(cfg.local_ai.chat_model_id, "");
 }
 
 #[tokio::test]
