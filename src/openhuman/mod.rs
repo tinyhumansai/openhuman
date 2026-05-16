@@ -21,6 +21,7 @@ pub mod app_state;
 pub mod approval;
 pub mod autocomplete;
 pub mod billing;
+pub mod canvas_tracker;
 pub mod channels;
 pub mod composio;
 pub mod config;
