@@ -26,7 +26,11 @@ interface Envelope<T> {
 
 function unwrapEnvelope<T>(response: Envelope<T> | T): T {
   if (response && typeof response === 'object' && 'data' in response) {
-    return (response as Envelope<T>).data as T;
+    const envelope = response as Envelope<T>;
+    if (envelope.data === undefined) {
+      throw new Error('RPC envelope contains undefined data');
+    }
+    return envelope.data;
   }
   return response as T;
 }
