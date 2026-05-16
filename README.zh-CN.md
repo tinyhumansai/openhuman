@@ -43,7 +43,7 @@
 
 要安装或开始使用，请从 [tinyhumans.ai/openhuman](https://tinyhumans.ai/openhuman?utm_source=github&utm_medium=readme) 下载，或在终端中运行：
 
-```
+```bash
 # 从 https://tinyhumans.ai/openhuman?utm_source=github&utm_medium=readme 下载 DMG、EXE，或在终端中运行
 
 # macOS 或 Linux x64
@@ -84,7 +84,7 @@ OpenHuman 是一个开源智能助手，旨在融入你的日常生活。以下�
 OpenHuman 是首个能在几分钟内了解你的智能体框架。灵感来源于 [Karpathy 的 LLM 知识库](https://x.com/karpathy/status/2039805659525644595)。大多数智能体从零开始——Hermes 通过观察你的工作来学习；OpenClaw 等待插件输送上下文。无论哪种方式，你都需要花费数天甚至数周时间，智能体才能对你的技术栈有足够的了解从而真正发挥作用。
 
 <p align="center">
- <img src="./gitbooks/.gitbook/assets/image (1).png" />
+ <img src="./gitbooks/.gitbook/assets/image (1).png" alt="OpenHuman 上下文构建示意图" />
 </p>
 
 > OpenHuman 将你的所有文档、邮件和聊天记录进行摘要和压缩，并创建一个记忆图谱，让你的智能体记住关于你的一切。
