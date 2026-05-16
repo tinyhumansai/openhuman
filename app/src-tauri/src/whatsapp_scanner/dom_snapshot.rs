@@ -348,16 +348,24 @@ fn parse_active_chat_name(snap: &CaptureSnapshot) -> Option<String> {
 /// `arrow_forward`). These appear as the first SPAN inside icon wrappers
 /// and would otherwise win the chat-title race in `parse_active_chat_name`.
 ///
-/// Heuristic: starts with `wds-ic-` / `wds-icon` (WhatsApp Design System
-/// icon prefix), or is a single token with no whitespace whose chars are
-/// all `[a-z0-9_-]` (Material Icon ligature shape).
+/// **Two-pass heuristic (issue #1376 fix):**
+/// 1. Explicit WDS prefix: `wds-ic-*` / `wds-icon*` — always icon.
+/// 2. Token-shape check: no whitespace, all chars `[a-z0-9_-]`, AND the
+///    token must contain at least one `-` or `_` delimiter. This distinguishes
+///    icon names like `arrow_forward` / `material-icons` from plain one-word
+///    message bodies like "ok", "hello", "yes" — real words never contain
+///    hyphens or underscores in this context, but icon ligature names always do.
 fn looks_like_icon_ligature(s: &str) -> bool {
-    if s.starts_with("wds-ic-") || s.starts_with("wds-icon") {
+    let t = s.trim();
+    if t.starts_with("wds-ic-") || t.starts_with("wds-icon") {
         return true;
     }
-    !s.is_empty()
-        && !s.contains(char::is_whitespace)
-        && s.chars()
+    // Require at least one delimiter so plain lowercase words (e.g. "ok",
+    // "hello") are NOT treated as ligatures.
+    !t.is_empty()
+        && !t.contains(char::is_whitespace)
+        && (t.contains('-') || t.contains('_'))
+        && t.chars()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-')
 }
 
@@ -849,5 +857,47 @@ mod tests {
         let s = "💬💬💬💬💬";
         assert_eq!(truncate_chars(s, 3), "💬💬💬");
         assert_eq!(truncate_chars(s, 10), s);
+    }
+
+    // ── Issue #1376 — looks_like_icon_ligature must not drop real words ──
+
+    #[test]
+    fn icon_ligature_matches_wds_prefix() {
+        assert!(looks_like_icon_ligature("wds-ic-search"));
+        assert!(looks_like_icon_ligature("wds-ic-disappearing-messages"));
+        assert!(looks_like_icon_ligature("wds-icon"));
+        assert!(looks_like_icon_ligature("wds-icon-foo"));
+    }
+
+    #[test]
+    fn icon_ligature_matches_delimiter_tokens() {
+        // Material icon ligature names always contain a delimiter.
+        assert!(looks_like_icon_ligature("arrow_forward"));
+        assert!(looks_like_icon_ligature("material-icons"));
+        assert!(looks_like_icon_ligature("search-icon"));
+    }
+
+    #[test]
+    fn icon_ligature_does_not_match_plain_words() {
+        // These are ordinary one-word message bodies — must NOT be filtered.
+        assert!(!looks_like_icon_ligature("ok"));
+        assert!(!looks_like_icon_ligature("hello"));
+        assert!(!looks_like_icon_ligature("yes"));
+        assert!(!looks_like_icon_ligature("no"));
+        assert!(!looks_like_icon_ligature("thanks"));
+        assert!(!looks_like_icon_ligature("lol"));
+    }
+
+    #[test]
+    fn icon_ligature_does_not_match_multi_word() {
+        // Multi-word text is never a ligature (whitespace present).
+        assert!(!looks_like_icon_ligature("hello tier 3"));
+        assert!(!looks_like_icon_ligature("hello world"));
+    }
+
+    #[test]
+    fn icon_ligature_does_not_match_empty() {
+        assert!(!looks_like_icon_ligature(""));
+        assert!(!looks_like_icon_ligature("   "));
     }
 }
