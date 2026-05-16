@@ -60,8 +60,6 @@ export async function updateCanvasTaskStatus(input: {
 }
 
 export async function listCanvasTrackerReminders(): Promise<ReminderRecommendation[]> {
-  const raw = await callCoreRpc<unknown>({
-    method: 'openhuman.canvas_tracker_list_reminders',
-  });
+  const raw = await callCoreRpc<unknown>({ method: 'openhuman.canvas_tracker_list_reminders' });
   return unwrapCliEnvelope<ReminderRecommendation[]>(raw);
 }

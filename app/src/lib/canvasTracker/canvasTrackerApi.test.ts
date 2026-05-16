@@ -2,13 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { getCanvasTrackerSettings, updateCanvasTrackerSettings } from './canvasTrackerApi';
 
-const { callCoreRpc } = vi.hoisted(() => ({
-  callCoreRpc: vi.fn(),
-}));
+const { callCoreRpc } = vi.hoisted(() => ({ callCoreRpc: vi.fn() }));
 
-vi.mock('../../services/coreRpcClient', () => ({
-  callCoreRpc,
-}));
+vi.mock('../../services/coreRpcClient', () => ({ callCoreRpc }));
 
 describe('canvasTrackerApi', () => {
   beforeEach(() => {
@@ -30,9 +26,7 @@ describe('canvasTrackerApi', () => {
       enabled: true,
       token_set: false,
     });
-    expect(callCoreRpc).toHaveBeenCalledWith({
-      method: 'openhuman.canvas_tracker_get_settings',
-    });
+    expect(callCoreRpc).toHaveBeenCalledWith({ method: 'openhuman.canvas_tracker_get_settings' });
   });
 
   it('sends token only to update_settings and never returns it', async () => {

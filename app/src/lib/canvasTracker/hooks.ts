@@ -8,13 +8,7 @@ import {
 } from './canvasTrackerApi';
 import type { CanvasTask, CanvasTrackerSettings, LocalStatus, SyncSummary } from './types';
 
-const urgencyRank: Record<string, number> = {
-  critical: 0,
-  high: 1,
-  medium: 2,
-  unclear: 3,
-  low: 4,
-};
+const urgencyRank: Record<string, number> = { critical: 0, high: 1, medium: 2, unclear: 3, low: 4 };
 
 export function sortCanvasTasks(tasks: CanvasTask[]): CanvasTask[] {
   return [...tasks].sort((a, b) => {
