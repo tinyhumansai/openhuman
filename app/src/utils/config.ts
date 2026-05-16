@@ -66,6 +66,17 @@ export const E2E_RESTART_APP_AS_RELOAD =
 export const E2E_DEFAULT_CORE_MODE =
   (import.meta.env.VITE_OPENHUMAN_E2E_DEFAULT_CORE_MODE as string | undefined) || '';
 
+/**
+ * True when the build behaves like a dev build for runtime purposes — either
+ * a real `vite dev` (DEV=true) or a `vite build --mode development` (the E2E
+ * harness — DEV=false but MODE='development'). `IS_DEV` alone is insufficient
+ * for the E2E case because `vite build` always sets PROD=true / DEV=false
+ * regardless of `--mode`. Consumers gating behavior that should NOT happen in
+ * shipped binaries (e.g. the `restartApp` reload-instead-of-restart path)
+ * should read this flag rather than touch `import.meta.env` directly.
+ */
+export const IS_DEV_LIKE = IS_DEV || import.meta.env.MODE === 'development';
+
 /** Dev only: skip `.skip_onboarding` workspace check and ignore onboarded state so `/onboarding` always shows. Set `VITE_DEV_FORCE_ONBOARDING=true` in `.env.local`. */
 export const DEV_FORCE_ONBOARDING =
   import.meta.env.DEV && import.meta.env.VITE_DEV_FORCE_ONBOARDING === 'true';

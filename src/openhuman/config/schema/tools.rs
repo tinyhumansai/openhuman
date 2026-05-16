@@ -290,6 +290,28 @@ impl Default for WebSearchConfig {
     }
 }
 
+/// Composio integration routing mode for the main backend-proxied flow.
+///
+/// `"backend"` (default) — every Composio call (toolkits, connections,
+/// authorize, tools, execute, triggers, …) is proxied through the
+/// OpenHuman backend (`api.tinyhumans.ai/agent-integrations/composio/*`).
+/// The backend owns the Composio API key, allowlist, billing/margin, and
+/// HMAC-verified trigger webhooks fanned out over socket.io.
+///
+/// `"direct"` — the core hits `https://backend.composio.dev/api/v{2,3}`
+/// directly with the user's own Composio API key (BYO). Tool execution is
+/// synchronous and works fully sovereign. Real-time **trigger webhooks**
+/// (the async push surface that the backend currently mediates via
+/// socket.io) do not work in direct mode — the user has to enable them
+/// out-of-band on Composio's dashboard and configure their own webhook
+/// sink. See `tools/impl/network/composio.rs` for the underlying client.
+pub const COMPOSIO_MODE_BACKEND: &str = "backend";
+pub const COMPOSIO_MODE_DIRECT: &str = "direct";
+
+fn default_composio_mode() -> String {
+    COMPOSIO_MODE_BACKEND.into()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct ComposioConfig {
@@ -308,6 +330,25 @@ pub struct ComposioConfig {
     /// field (e.g. `["gmail", "slack"]`).
     #[serde(default)]
     pub triage_disabled_toolkits: Vec<String>,
+
+    /// Routing mode for the main Composio integration flow. One of
+    /// [`COMPOSIO_MODE_BACKEND`] (default — proxied through the OpenHuman
+    /// backend) or [`COMPOSIO_MODE_DIRECT`] (BYO API key, calls
+    /// `backend.composio.dev` directly).
+    ///
+    /// The user-provided API key for direct mode is *not* stored in the
+    /// TOML — it lives in the encrypted keychain via
+    /// [`crate::openhuman::credentials`] under the
+    /// `composio-direct` provider slot. We only persist the mode here so
+    /// the factory can pick the right client at construction time.
+    #[serde(default = "default_composio_mode")]
+    pub mode: String,
+
+    /// **Deprecated for direct storage** — present so users that hand-edit
+    /// `config.toml` can drop the key in here. The factory still prefers
+    /// the keychain-backed value over this field. Default `None`.
+    #[serde(default)]
+    pub api_key: Option<String>,
 }
 
 fn default_entity_id() -> String {
@@ -321,6 +362,8 @@ impl Default for ComposioConfig {
             entity_id: default_entity_id(),
             triage_disabled: false,
             triage_disabled_toolkits: Vec::new(),
+            mode: default_composio_mode(),
+            api_key: None,
         }
     }
 }

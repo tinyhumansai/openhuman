@@ -235,11 +235,53 @@ async fn run_agent_job(config: &Config, job: &CronJob) -> (bool, String, Option<
                     max_iterations = def.max_iterations,
                     "[cron] applying agent definition overrides"
                 );
+                // Resolve the agent definition's model spec into an
+                // exact model id. `ModelSpec::resolve` synthesises
+                // `{hint}-v1` for Hint specs, which only the OpenHuman
+                // backend understands as a tier hint — Anthropic and
+                // every other provider 404 on names like `agentic-v1`.
+                // Route Hint specs through the per-workload factory so
+                // we get the exact model the user has configured for
+                // that workload, regardless of which provider it lives
+                // on. Inherit / Exact keep their literal `resolve()`
+                // behaviour because neither relies on the `-v1` trick.
+                use crate::openhuman::agent::harness::definition::ModelSpec;
                 let fallback_model = effective
                     .default_model
                     .clone()
                     .unwrap_or_else(|| crate::openhuman::config::DEFAULT_MODEL.to_string());
-                effective.default_model = Some(def.model.resolve(&fallback_model));
+                let resolved_model = match &def.model {
+                    ModelSpec::Hint(workload) => {
+                        match crate::openhuman::providers::create_chat_provider(
+                            workload, &effective,
+                        ) {
+                            Ok((_, m)) => {
+                                tracing::debug!(
+                                    job_id = %job.id,
+                                    agent_id = %agent_id,
+                                    workload = %workload,
+                                    model = %m,
+                                    "[cron] resolved Hint via workload factory"
+                                );
+                                m
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    job_id = %job.id,
+                                    agent_id = %agent_id,
+                                    workload = %workload,
+                                    error = %e,
+                                    fallback = %fallback_model,
+                                    "[cron] workload factory failed; using fallback model"
+                                );
+                                fallback_model.clone()
+                            }
+                        }
+                    }
+                    ModelSpec::Inherit => fallback_model.clone(),
+                    ModelSpec::Exact(name) => name.clone(),
+                };
+                effective.default_model = Some(resolved_model);
                 effective.agent.max_tool_iterations = def.max_iterations;
             } else {
                 tracing::warn!(

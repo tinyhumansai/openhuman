@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+use crate::openhuman::util::floor_char_boundary;
+
 /// How much autonomy the agent has
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
@@ -498,7 +500,7 @@ impl SecurityPolicy {
         if !self.is_command_allowed(command) {
             log::warn!(
                 "[openhuman:policy] Command blocked by allowlist: {}",
-                &command[..command.len().min(80)]
+                &command[..floor_char_boundary(command, 80)]
             );
             return Err(format!("Command not allowed by security policy: {command}"));
         }
@@ -509,14 +511,14 @@ impl SecurityPolicy {
             if self.block_high_risk_commands {
                 log::warn!(
                     "[openhuman:policy] High-risk command blocked: {}",
-                    &command[..command.len().min(80)]
+                    &command[..floor_char_boundary(command, 80)]
                 );
                 return Err("Command blocked: high-risk command is disallowed by policy".into());
             }
             if self.autonomy == AutonomyLevel::Supervised && !approved {
                 log::warn!(
                     "[openhuman:policy] High-risk command needs approval: {}",
-                    &command[..command.len().min(80)]
+                    &command[..floor_char_boundary(command, 80)]
                 );
                 return Err(
                     "Command requires explicit approval (approved=true): high-risk operation"
@@ -532,7 +534,7 @@ impl SecurityPolicy {
         {
             log::info!(
                 "[openhuman:policy] Medium-risk command needs approval: {}",
-                &command[..command.len().min(80)]
+                &command[..floor_char_boundary(command, 80)]
             );
             return Err(
                 "Command requires explicit approval (approved=true): medium-risk operation".into(),
@@ -543,7 +545,7 @@ impl SecurityPolicy {
             "[openhuman:policy] Command validated: risk={:?}, approved={}, cmd={}",
             risk,
             approved,
-            &command[..command.len().min(80)]
+            &command[..floor_char_boundary(command, 80)]
         );
         Ok(risk)
     }

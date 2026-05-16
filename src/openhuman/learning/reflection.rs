@@ -160,7 +160,7 @@ impl ReflectionHook {
                 // Gate: local reflection requires the per-feature flag.
                 // When off, fall back to a cloud provider if one is configured;
                 // otherwise no-op silently rather than erroring the turn.
-                if !self.full_config.local_ai.use_local_for_learning() {
+                if !self.full_config.workload_uses_local("learning") {
                     if let Some(provider) = self.provider.as_ref() {
                         tracing::info!(
                             "[learning::reflection] local_ai.usage.learning_reflection not enabled — \

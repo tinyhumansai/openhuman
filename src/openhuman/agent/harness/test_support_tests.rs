@@ -628,12 +628,23 @@ async fn fake_composio_backend_serves_realistic_toolkits() {
 #[tokio::test]
 async fn harness_invokes_composio_action_tool_against_fake_backend() {
     use crate::openhuman::composio::ComposioActionTool;
+    use crate::openhuman::config::TEST_ENV_LOCK;
+
+    // Post-#1710-Wave-4, `ComposioActionTool::execute` reloads config via
+    // `load_config_with_timeout()` per call, so the injected `Arc<Config>`
+    // only routes to the fake backend if it is the live on-disk config.
+    // Hold `TEST_ENV_LOCK` and point `OPENHUMAN_WORKSPACE` at the
+    // persisted fake-backend workspace.
+    let _env_guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
     let backend = spawn_fake_composio_backend(ComposioFixture::realistic()).await;
-    let client = backend.client();
+    let (config, workspace_root) = backend.config_persisted().await;
+    unsafe {
+        std::env::set_var("OPENHUMAN_WORKSPACE", &workspace_root);
+    }
 
     let tool = ComposioActionTool::new(
-        client,
+        config,
         "GMAIL_SEND_EMAIL".to_string(),
         "Send a Gmail email".to_string(),
         Some(json!({"type": "object"})),
@@ -683,6 +694,10 @@ async fn harness_invokes_composio_action_tool_against_fake_backend() {
         .expect("execute call must have hit the backend");
     assert_eq!(exec.2["tool"], "GMAIL_SEND_EMAIL");
     assert_eq!(exec.2["arguments"]["recipient_email"], "alice@example.com");
+
+    unsafe {
+        std::env::remove_var("OPENHUMAN_WORKSPACE");
+    }
 }
 
 // ── 13. Orchestrator-prompt → delegation → Composio round-trip ────
@@ -824,6 +839,13 @@ async fn orchestrator_prompt_drives_composio_call_via_delegation_chain() {
     use crate::openhuman::agent::agents::orchestrator::prompt as orch_prompt;
     use crate::openhuman::agent::prompts::types::ConnectedIntegration;
     use crate::openhuman::composio::ComposioActionTool;
+    use crate::openhuman::config::TEST_ENV_LOCK;
+
+    // Post-#1710-Wave-4, `ComposioActionTool::execute` reloads config via
+    // `load_config_with_timeout()` per call. Hold `TEST_ENV_LOCK` and
+    // point `OPENHUMAN_WORKSPACE` at the persisted fake-backend
+    // workspace so the tool routes to the fake backend.
+    let _env_guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
     // ── 1. Build the orchestrator's system prompt with gmail wired in.
     let integrations = vec![ConnectedIntegration {
@@ -864,9 +886,12 @@ async fn orchestrator_prompt_drives_composio_call_via_delegation_chain() {
 
     // ── 2. Spawn the fake Composio backend + wire a ComposioActionTool.
     let backend = spawn_fake_composio_backend(ComposioFixture::realistic()).await;
-    let composio_client = backend.client();
+    let (composio_config, workspace_root) = backend.config_persisted().await;
+    unsafe {
+        std::env::set_var("OPENHUMAN_WORKSPACE", &workspace_root);
+    }
     let gmail_action_tool: Box<dyn Tool> = Box::new(ComposioActionTool::new(
-        composio_client,
+        composio_config,
         "GMAIL_SEND_EMAIL".to_string(),
         "Send a Gmail email".to_string(),
         Some(json!({"type": "object"})),
@@ -975,4 +1000,8 @@ async fn orchestrator_prompt_drives_composio_call_via_delegation_chain() {
             .any(|t| t.rule_keyword.as_deref() == Some("toolkit=gmail")),
         "integrations agent must have matched its tool-call rule"
     );
+
+    unsafe {
+        std::env::remove_var("OPENHUMAN_WORKSPACE");
+    }
 }

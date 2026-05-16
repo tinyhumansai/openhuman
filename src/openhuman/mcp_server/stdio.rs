@@ -19,9 +19,7 @@ pub fn run_stdio_from_cli(args: &[String]) -> Result<()> {
         }
     }
 
-    if verbose {
-        crate::core::logging::init_for_cli_run(true, CliLogDefault::Global);
-    }
+    init_mcp_logging(verbose);
 
     log::debug!("[mcp_server] starting stdio MCP server");
     let rt = tokio::runtime::Builder::new_multi_thread()
@@ -29,6 +27,25 @@ pub fn run_stdio_from_cli(args: &[String]) -> Result<()> {
         .build()?;
     rt.block_on(async { run_stdio(tokio::io::stdin(), tokio::io::stdout()).await })?;
     Ok(())
+}
+
+/// Initialize logging for the stdio MCP server.
+///
+/// MCP servers run as subprocesses of clients (Claude Desktop, Cursor, …) which
+/// surface the server's stderr to the user when something goes wrong. We
+/// therefore always install the tracing subscriber — otherwise `log::error!` /
+/// `log::warn!` events get silently dropped and field-debugging requires
+/// re-running with `--verbose`.
+///
+/// Default level is `warn` to keep the stderr stream quiet under normal use
+/// while still surfacing problems; `--verbose` promotes it to `debug` so
+/// `[mcp_server]` traces become visible. A user-set `RUST_LOG` always wins.
+fn init_mcp_logging(verbose: bool) {
+    if std::env::var_os("RUST_LOG").is_none() {
+        let level = if verbose { "debug" } else { "warn" };
+        std::env::set_var("RUST_LOG", level);
+    }
+    crate::core::logging::init_for_cli_run(verbose, CliLogDefault::Global);
 }
 
 pub async fn run_stdio<R, W>(reader: R, mut writer: W) -> Result<()>
@@ -53,15 +70,18 @@ where
 }
 
 fn print_help() {
-    println!("Usage: openhuman-core mcp [-v|--verbose]");
-    println!();
-    println!("Start an opt-in stdio Model Context Protocol server.");
-    println!("The server exposes a curated read-only memory surface:");
-    println!("  memory.search");
-    println!("  memory.recall");
-    println!("  tree.read_chunk");
-    println!();
-    println!("Logging is written to stderr. JSON-RPC protocol messages are written to stdout.");
+    // Use stderr so the help output never collides with the protocol stream,
+    // matching the banner-suppression contract in `core/cli.rs` for the `mcp`
+    // subcommand: stdout is reserved for JSON-RPC frames.
+    eprintln!("Usage: openhuman-core mcp [-v|--verbose]");
+    eprintln!();
+    eprintln!("Start an opt-in stdio Model Context Protocol server.");
+    eprintln!("The server exposes a curated read-only memory surface:");
+    eprintln!("  memory.search");
+    eprintln!("  memory.recall");
+    eprintln!("  tree.read_chunk");
+    eprintln!();
+    eprintln!("Logging is written to stderr. JSON-RPC protocol messages are written to stdout.");
 }
 
 #[cfg(test)]

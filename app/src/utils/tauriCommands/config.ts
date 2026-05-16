@@ -16,6 +16,22 @@ export interface ModelRoute {
   model: string;
 }
 
+/** Cloud provider type discriminator. Lowercase JSON wire format. */
+export type CloudProviderType = 'openhuman' | 'openai' | 'anthropic' | 'openrouter' | 'custom';
+
+/**
+ * Endpoint config for one cloud LLM provider. API keys are NOT carried on
+ * this struct — they live in `auth-profiles.json` via the AuthService
+ * (set/cleared through the `auth_*` RPCs).
+ */
+export interface CloudProviderCreds {
+  /** Opaque stable id, e.g. `"p_openai_a8c3f"`. Never shown in UI. */
+  id: string;
+  type: CloudProviderType;
+  endpoint: string;
+  default_model: string;
+}
+
 export interface ModelSettingsUpdate {
   /**
    * OpenHuman product backend URL. Almost always left untouched; the
@@ -38,6 +54,22 @@ export interface ModelSettingsUpdate {
    * on its own). Omit to leave existing routes untouched.
    */
   model_routes?: ModelRoute[] | null;
+  /**
+   * When present, REPLACES `config.cloud_providers` wholesale. API keys are
+   * NOT carried here — store them via `authStoreProviderCredentials`.
+   */
+  cloud_providers?: CloudProviderCreds[] | null;
+  /** Id of the `cloud_providers` entry used when a workload routes to "cloud". */
+  primary_cloud?: string | null;
+  /** Per-workload provider strings — see Rust `providers::factory` grammar. */
+  reasoning_provider?: string | null;
+  agentic_provider?: string | null;
+  coding_provider?: string | null;
+  memory_provider?: string | null;
+  embeddings_provider?: string | null;
+  heartbeat_provider?: string | null;
+  learning_provider?: string | null;
+  subconscious_provider?: string | null;
 }
 
 /**
@@ -88,6 +120,13 @@ export interface ScreenIntelligenceSettingsUpdate {
 
 export interface LocalAiSettingsUpdate {
   runtime_enabled?: boolean | null;
+  /**
+   * MVP opt-in marker. Bootstrap hard-overrides status to "disabled" when
+   * this is `false`, regardless of `runtime_enabled`. The unified AI panel
+   * toggle flips this in tandem with `runtime_enabled` so a single click
+   * actually turns local AI on — without it, the daemon spawns but
+   * bootstrap immediately forces status back to disabled (cloud fallback).
+   */
   opt_in_confirmed?: boolean | null;
   provider?: string | null;
   base_url?: string | null;
@@ -145,19 +184,29 @@ export interface ClientConfig {
   /** OpenHuman product backend URL (auth/billing/voice). */
   api_url: string | null;
   /**
-   * Custom OpenAI-compatible LLM endpoint. When set with an api_key, the
-   * core routes inference directly to this URL instead of the OpenHuman
-   * backend. This is what the LLM Provider settings panel reads/writes.
+   * Custom OpenAI-compatible LLM endpoint. Legacy field, retained for
+   * back-compat — the new AI settings panel reads/writes
+   * `cloud_providers` + `*_provider` fields instead.
    */
   inference_url: string | null;
   default_model: string | null;
   app_version: string;
   api_key_set: boolean;
-  /**
-   * Persisted task-hint -> model id pairs the core router will obey. Empty
-   * when the OpenHuman built-in router is active.
-   */
+  /** Legacy per-task-hint model overrides (deprecated; will be removed). */
   model_routes: ModelRoute[];
+  /** Configured cloud providers (no API keys — those live in auth-profiles.json). */
+  cloud_providers: CloudProviderCreds[];
+  /** Id of the `cloud_providers` entry resolved by the `"cloud"` sentinel. */
+  primary_cloud: string | null;
+  /** Per-workload provider strings (e.g. `"cloud"`, `"ollama:llama3.1:8b"`, `"openai:gpt-4o"`). */
+  reasoning_provider: string | null;
+  agentic_provider: string | null;
+  coding_provider: string | null;
+  memory_provider: string | null;
+  embeddings_provider: string | null;
+  heartbeat_provider: string | null;
+  learning_provider: string | null;
+  subconscious_provider: string | null;
 }
 
 export async function openhumanGetClientConfig(): Promise<CommandResponse<ClientConfig>> {

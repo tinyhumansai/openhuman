@@ -4,6 +4,7 @@ import {
   evaluateComposerSend,
   getComposerBlockedSendFeedback,
   handleComposerSlashCommand,
+  shouldSendComposerKeyDown,
 } from './composerSendDecision';
 
 describe('evaluateComposerSend', () => {
@@ -101,6 +102,30 @@ describe('handleComposerSlashCommand', () => {
 
   it('ignores normal chat text', () => {
     expect(handleComposerSlashCommand('hello', false)).toEqual({ kind: 'not_handled' });
+  });
+});
+
+describe('shouldSendComposerKeyDown', () => {
+  it('allows Enter to send when IME composition is inactive', () => {
+    expect(shouldSendComposerKeyDown({ key: 'Enter' })).toBe(true);
+  });
+
+  it('does not send on Shift+Enter', () => {
+    expect(shouldSendComposerKeyDown({ key: 'Enter', shiftKey: true })).toBe(false);
+  });
+
+  it('does not send while React reports IME composition', () => {
+    expect(shouldSendComposerKeyDown({ key: 'Enter', nativeEvent: { isComposing: true } })).toBe(
+      false
+    );
+  });
+
+  it('does not send while the browser reports legacy IME keyCode 229', () => {
+    expect(shouldSendComposerKeyDown({ key: 'Enter', nativeEvent: { keyCode: 229 } })).toBe(false);
+  });
+
+  it('does not send while textarea composition state is active', () => {
+    expect(shouldSendComposerKeyDown({ key: 'Enter' }, true)).toBe(false);
   });
 });
 

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { useBackendUrl } from '../../../hooks/useBackendUrl';
+import { useT } from '../../../lib/i18n/I18nContext';
 import { tunnelsApi } from '../../../services/api/tunnelsApi';
 import { getCoreHttpBaseUrl } from '../../../services/coreRpcClient';
 import {
@@ -39,6 +40,7 @@ function prettyJson(value: unknown): string {
 }
 
 const WebhooksDebugPanel = () => {
+  const { t } = useT();
   const { navigateBack, breadcrumbs } = useSettingsNavigation();
   const backendUrl = useBackendUrl();
   const [registrations, setRegistrations] = useState<WebhookDebugRegistration[]>([]);
@@ -140,7 +142,7 @@ const WebhooksDebugPanel = () => {
   return (
     <div>
       <SettingsHeader
-        title="Webhooks Debug"
+        title={t('webhooks.debugTitle')}
         showBackButton={true}
         onBack={navigateBack}
         breadcrumbs={breadcrumbs}

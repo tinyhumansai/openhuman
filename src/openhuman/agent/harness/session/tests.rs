@@ -388,6 +388,16 @@ async fn turn_with_native_dispatcher_persists_fallback_tool_calls() {
 /// - AgentDefinitionRegistry::global lookup
 /// - run_subagent → run_inner_loop with the parent's provider
 /// - Result returned as a ToolResult and threaded back into history
+///
+/// Uses the `#[cfg(test)]`-only `__test_inherit_echo` sub-agent
+/// (`ModelSpec::Inherit`) rather than `researcher`. After #1710,
+/// sub-agents with a `Hint(workload)` spec build a fresh provider via
+/// `create_chat_provider(...)` and therefore can't share this test's
+/// `MockProvider` — so a Hint sub-agent here would leak the scripted
+/// chain. `Inherit` keeps `parent.provider`, which is exactly the
+/// plumbing this test asserts. Provider *routing* for Hint sub-agents
+/// is covered independently by
+/// `subagent_runner::ops::tests::resolve_subagent_provider_*`.
 #[tokio::test]
 async fn turn_dispatches_spawn_subagent_through_full_path() {
     use crate::openhuman::agent::harness::AgentDefinitionRegistry;
@@ -411,7 +421,7 @@ async fn turn_dispatches_spawn_subagent_through_full_path() {
                     id: "call-spawn".into(),
                     name: "spawn_subagent".into(),
                     arguments: serde_json::json!({
-                        "agent_id": "researcher",
+                        "agent_id": "__test_inherit_echo",
                         "prompt": "find out about X"
                     })
                     .to_string(),

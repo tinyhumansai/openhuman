@@ -80,16 +80,15 @@ pub fn build_embedder_from_config(config: &Config) -> Result<Box<dyn Embedder>> 
             )))
         }
         _ => {
-            // Honor the Local AI Settings "Memory embeddings" checkbox.
-            // `use_local_for_embeddings()` is `runtime_enabled && usage.embeddings`
-            // so we never route to a disabled local runtime.
-            if config.local_ai.use_local_for_embeddings() {
-                let model = config.local_ai.embedding_model_id.clone();
+            // Honour the unified AI settings: `embeddings_provider` is the
+            // single source of truth. When it parses as `ollama:<model>` we
+            // route locally; otherwise we fall back to the cloud session.
+            if let Some(model) = config.workload_local_model("embeddings") {
                 let endpoint = ollama_base_url();
                 let timeout_ms = tree_cfg.embedding_timeout_ms.unwrap_or(0);
                 log::debug!(
-                    "[memory_tree::embed::factory] usage.embeddings=true — using local Ollama endpoint={} model={} timeout_ms={}",
-                    endpoint, model, timeout_ms
+                    "[memory_tree::embed::factory] embeddings_provider=ollama:{} — using local Ollama endpoint={} timeout_ms={}",
+                    model, endpoint, timeout_ms
                 );
                 Ok(Box::new(OllamaEmbedder::new(endpoint, model, timeout_ms)))
             } else if cloud_session_available(config) {
@@ -213,16 +212,17 @@ mod tests {
 
     #[test]
     fn local_ai_usage_embeddings_routes_to_ollama() {
-        // When the Local AI Settings "Memory embeddings" checkbox is on
-        // (runtime_enabled && usage.embeddings), memory tree routes to
-        // Ollama using the user's chosen `embedding_model_id`. The
-        // explicit endpoint/model override is left unset so we exercise
-        // the use_local_for_embeddings() branch.
+        // After #1710 the local-vs-cloud decision for embeddings is
+        // driven by `embeddings_provider` (via
+        // `Config::workload_uses_local("embeddings")`), not the legacy
+        // `local_ai.usage.embeddings` flag. Set the new workload field
+        // so the local branch is taken; `embedding_model_id` is still
+        // the model name source for the Ollama provider.
         let (_tmp, mut cfg) = test_config();
         cfg.memory_tree.embedding_endpoint = None;
         cfg.memory_tree.embedding_model = None;
+        cfg.embeddings_provider = Some("ollama:all-minilm:latest".into());
         cfg.local_ai.runtime_enabled = true;
-        cfg.local_ai.usage.embeddings = true;
         cfg.local_ai.embedding_model_id = "all-minilm:latest".to_string();
         let e = build_embedder_from_config(&cfg).expect("ollama path should build");
         assert_eq!(e.name(), "ollama");

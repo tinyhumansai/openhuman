@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 
+import { useT } from '../../../lib/i18n/I18nContext';
 import {
   fetchNotificationStats,
   getNotificationSettings,
@@ -18,6 +19,7 @@ const PROVIDERS = ['gmail', 'slack', 'discord', 'whatsapp'];
  * controls will populate here as providers are connected.
  */
 const NotificationRoutingPanel = () => {
+  const { t } = useT();
   const { navigateBack, breadcrumbs } = useSettingsNavigation();
   const providers = PROVIDERS;
   const [stats, setStats] = useState<NotificationStats | null>(null);
@@ -103,7 +105,7 @@ const NotificationRoutingPanel = () => {
   return (
     <div>
       <SettingsHeader
-        title="Notification Routing"
+        title={t('notifications.routingTitle')}
         showBackButton={true}
         onBack={navigateBack}
         breadcrumbs={breadcrumbs}

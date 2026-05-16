@@ -105,7 +105,7 @@ pub async fn execute_task(
     } else {
         // Simple text-only task. Use local model if configured for subconscious
         // tasks, otherwise fall back to the cloud agentic analysis path.
-        if config.local_ai.use_local_for_subconscious() {
+        if config.workload_uses_local("subconscious") {
             debug!(
                 "[subconscious:executor] text task: id={} — using local model",
                 task.id

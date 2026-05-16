@@ -20,15 +20,19 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: hoisted.invoke, isTauri: hoiste
 
 vi.mock('../../../../services/analytics', () => ({ triggerSentryTestEvent: hoisted.trigger }));
 
-vi.mock('../../../../utils/config', async importOriginal => {
-  const actual = await importOriginal<typeof import('../../../../utils/config')>();
-  return {
-    ...actual,
-    get APP_ENVIRONMENT() {
-      return hoisted.appEnvironment;
-    },
-  };
-});
+vi.mock('../../../../utils/config', () => ({
+  get APP_ENVIRONMENT() {
+    return hoisted.appEnvironment;
+  },
+  // Pulled transitively via `resetWalkthrough` → configPersistence.
+  CORE_RPC_URL: 'http://127.0.0.1:7788/rpc',
+  BACKEND_URL: 'http://localhost:5005',
+}));
+
+vi.mock('../../../walkthrough/AppWalkthrough', () => ({
+  resetWalkthrough: vi.fn(),
+  setWalkthroughPending: vi.fn(),
+}));
 
 vi.mock('../../hooks/useSettingsNavigation', () => ({
   useSettingsNavigation: () => ({

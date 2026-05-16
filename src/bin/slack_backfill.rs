@@ -39,14 +39,46 @@ use std::time::Instant;
 use anyhow::{bail, Context, Result};
 use clap::Parser;
 
-use openhuman_core::openhuman::composio::client::build_composio_client;
+use openhuman_core::openhuman::composio::client::{
+    create_composio_client, direct_execute, direct_list_connections, ComposioClientKind,
+};
 use openhuman_core::openhuman::composio::providers::registry::{
     get_provider, init_default_providers,
 };
 use openhuman_core::openhuman::composio::providers::slack::run_backfill_via_search;
 use openhuman_core::openhuman::composio::providers::{ProviderContext, SyncReason};
+use openhuman_core::openhuman::composio::types::{
+    ComposioConnectionsResponse, ComposioExecuteResponse,
+};
 use openhuman_core::openhuman::config::Config;
 use openhuman_core::openhuman::memory;
+
+/// Dispatch a Composio action through the live `ComposioClientKind`.
+/// Centralises the backend-vs-direct branch so the per-call sites in
+/// `main` don't each have to match on the kind (#1710 Wave 2).
+async fn execute_action(
+    client_kind: &ComposioClientKind,
+    config: &Config,
+    tool: &str,
+    arguments: Option<serde_json::Value>,
+) -> anyhow::Result<ComposioExecuteResponse> {
+    match client_kind {
+        ComposioClientKind::Backend(client) => client.execute_tool(tool, arguments).await,
+        ComposioClientKind::Direct(direct) => {
+            direct_execute(direct, tool, arguments, &config.composio.entity_id).await
+        }
+    }
+}
+
+/// Mode-aware counterpart to `ComposioClient::list_connections()`.
+async fn list_connections_via_kind(
+    client_kind: &ComposioClientKind,
+) -> anyhow::Result<ComposioConnectionsResponse> {
+    match client_kind {
+        ComposioClientKind::Backend(client) => client.list_connections().await,
+        ComposioClientKind::Direct(direct) => direct_list_connections(direct).await,
+    }
+}
 
 #[derive(Parser, Debug)]
 #[command(
@@ -166,10 +198,14 @@ async fn main() -> Result<()> {
         anyhow::anyhow!("SlackProvider not registered after init_default_providers")
     })?;
 
-    let client = build_composio_client(&config).ok_or_else(|| {
+    // Resolve through the mode-aware factory so the backfill runs in
+    // EITHER backend mode (legacy JWT-driven path) OR direct mode (BYO
+    // Composio API key on the user's personal tenant) — #1710 Wave 2.
+    let client_kind = create_composio_client(&config).map_err(|e| {
         anyhow::anyhow!(
-            "No Composio client — user not signed in (no JWT). \
-             Sign in via the desktop app first, then re-run this binary."
+            "No Composio client — user not signed in (backend session) and no direct-mode \
+             API key configured. Sign in via the desktop app or set a Composio API key, \
+             then re-run this binary. ({e})"
         )
     })?;
 
@@ -242,8 +278,7 @@ async fn main() -> Result<()> {
             "[slack_backfill] probing SLACK_SEARCH_MESSAGES with query={}",
             args["query"]
         );
-        let resp = client
-            .execute_tool("SLACK_SEARCH_MESSAGES", Some(args))
+        let resp = execute_action(&client_kind, &config, "SLACK_SEARCH_MESSAGES", Some(args))
             .await
             .map_err(|e| anyhow::anyhow!("SLACK_SEARCH_MESSAGES failed: {e:#}"))?;
         println!("=== SLACK_SEARCH_MESSAGES probe ===");
@@ -266,13 +301,14 @@ async fn main() -> Result<()> {
         // Composio/Slack rate-limit behaviour without contaminating the
         // memory tree or burning extra quota on retries.
         log::info!("[probe-ratelimit] requesting one channel via SLACK_LIST_CONVERSATIONS");
-        let list_resp = client
-            .execute_tool(
-                "SLACK_LIST_CONVERSATIONS",
-                Some(serde_json::json!({ "exclude_archived": true, "limit": 1 })),
-            )
-            .await
-            .map_err(|e| anyhow::anyhow!("SLACK_LIST_CONVERSATIONS failed: {e:#}"))?;
+        let list_resp = execute_action(
+            &client_kind,
+            &config,
+            "SLACK_LIST_CONVERSATIONS",
+            Some(serde_json::json!({ "exclude_archived": true, "limit": 1 })),
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("SLACK_LIST_CONVERSATIONS failed: {e:#}"))?;
         if !list_resp.successful {
             anyhow::bail!(
                 "SLACK_LIST_CONVERSATIONS returned non-success: {:?}",
@@ -305,12 +341,13 @@ async fn main() -> Result<()> {
                 tokio::time::sleep(std::time::Duration::from_millis(cli.probe_pacing_ms)).await;
             }
             let t0 = Instant::now();
-            let resp = client
-                .execute_tool(
-                    "SLACK_FETCH_CONVERSATION_HISTORY",
-                    Some(serde_json::json!({ "channel": channel_id, "limit": 1000 })),
-                )
-                .await;
+            let resp = execute_action(
+                &client_kind,
+                &config,
+                "SLACK_FETCH_CONVERSATION_HISTORY",
+                Some(serde_json::json!({ "channel": channel_id, "limit": 1000 })),
+            )
+            .await;
             let dt = t0.elapsed();
             let outcome = match resp {
                 Err(e) => Outcome::Transport(format!("{e:#}")),
@@ -382,8 +419,7 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    let connections = client
-        .list_connections()
+    let connections = list_connections_via_kind(&client_kind)
         .await
         .map_err(|e| anyhow::anyhow!("list_connections failed: {e:#}"))?;
 
@@ -406,9 +442,12 @@ async fn main() -> Result<()> {
         let started = Instant::now();
         let mut total_buckets = 0usize;
         for conn in &slack_conns {
+            // `ProviderContext` no longer caches a pre-baked client —
+            // `ctx.execute(...)` resolves via the mode-aware factory
+            // per call (#1710 / Wave 1). The local `client` handle is
+            // still used above for backend-only metadata probes.
             let ctx = ProviderContext {
                 config: Arc::clone(&config),
-                client: client.clone(),
                 toolkit: conn.toolkit.clone(),
                 connection_id: Some(conn.id.clone()),
             };
@@ -506,7 +545,6 @@ async fn main() -> Result<()> {
         }
         let ctx = ProviderContext {
             config: Arc::clone(&config),
-            client: client.clone(),
             toolkit: conn.toolkit.clone(),
             connection_id: Some(conn.id.clone()),
         };

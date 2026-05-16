@@ -185,9 +185,10 @@ pub async fn start_channels(config: Config) -> Result<()> {
         .clone()
         .unwrap_or_else(|| crate::openhuman::config::DEFAULT_MODEL.into());
     let temperature = config.default_temperature;
+    let local_embedding = config.workload_local_model("embeddings");
     let mem: Arc<dyn Memory> = Arc::from(memory::create_memory_with_local_ai(
         &config.memory,
-        &config.local_ai,
+        local_embedding.as_deref(),
         &[],
         Some(&config.storage.provider.config),
         &config.workspace_dir,

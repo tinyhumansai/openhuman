@@ -10,7 +10,7 @@ use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::socketio::{SubagentProgressDetail, WebChannelEvent};
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 use crate::openhuman::agent::profiles::{
-    profile_signature, AgentProfile, AgentProfileStore, DEFAULT_PROFILE_ID,
+    AgentProfile, AgentProfileStore, DEFAULT_PROFILE_ID,
 };
 use crate::openhuman::agent::Agent;
 use crate::openhuman::config::rpc as config_rpc;
@@ -36,23 +36,47 @@ pub fn publish_web_channel_event(event: WebChannelEvent) {
     let _ = EVENT_BUS.send(event);
 }
 
+/// All inputs that the cached `SessionEntry`'s `Agent` was built from,
+/// captured at build time. The cache-hit predicate is a single
+/// `entry.fingerprint == current_fingerprint` comparison — pulling the
+/// fields into a named struct (instead of inlining four `&&`s) makes
+/// the predicate testable in isolation and makes "what invalidates the
+/// cache?" answerable in one place.
+///
+/// Adding a new dimension that should force a rebuild = add a field
+/// here and populate it both at insert time and at the call-site
+/// fingerprint construction.
+#[derive(PartialEq, Debug, Clone)]
+struct SessionCacheFingerprint {
+    /// Per-message `model_override` (clients can override the model
+    /// for an individual chat call).
+    model_override: Option<String>,
+    /// Per-message `temperature` override (same channel as
+    /// `model_override`).
+    temperature: Option<f64>,
+    /// Which agent definition was used to build `agent`. Without this
+    /// the cache hit short-circuited the welcome→orchestrator routing
+    /// fix — the very first turn picked welcome, welcome called
+    /// `complete_onboarding(complete)`, the flag flipped, but the next
+    /// turn read the cached welcome agent instead of invoking
+    /// `build_session_agent` to re-resolve the target.
+    target_agent_id: String,
+    /// `reasoning_provider` config value at build time. The cached
+    /// agent's provider was constructed from this string via
+    /// `create_chat_provider("reasoning", &config)`; without it the
+    /// next turn would reuse the stale provider after a Settings →
+    /// AI → LLM routing change until the cache evicts.
+    ///
+    /// Other workloads (`agentic`, `coding`, `memory`, …) are read
+    /// per call inside the factory, so they don't need to participate
+    /// in cache invalidation — only the orchestrator's reasoning
+    /// provider is bound to the cached `Agent`.
+    reasoning_provider: Option<String>,
+}
+
 struct SessionEntry {
     agent: Agent,
-    model_override: Option<String>,
-    temperature: Option<f64>,
-    profile_id: String,
-    profile_signature: String,
-    /// Which agent definition was used to build `agent`. Recorded so
-    /// that the cache hit predicate in `run_chat_task` can detect
-    /// when the routing decision (welcome vs orchestrator) flips
-    /// between turns and rebuild instead of reusing a stale agent.
-    /// Without this field the cache hit short-circuited the routing
-    /// fix from Commit 8 — the very first turn picked welcome,
-    /// welcome called `complete_onboarding(complete)`, the flag
-    /// flipped, but the next turn read the cached welcome agent
-    /// instead of invoking `build_session_agent` to re-resolve the
-    /// target.
-    target_agent_id: String,
+    fingerprint: SessionCacheFingerprint,
 }
 
 /// Decide which agent definition this turn should run with.
@@ -635,9 +659,6 @@ async fn run_chat_task(
     let model_override = normalize_model_override(profile.model_override.clone())
         .or_else(|| normalize_model_override(model_override));
     let temperature = profile.temperature.or(temperature);
-    let active_profile_id = profile.id.clone();
-    let active_profile_signature = profile_signature(&profile);
-
     // Compute the routing decision up front so the cache lookup can
     // detect when it has changed. Without this, a turn that flips
     // `chat_onboarding_completed` (welcome agent calling
@@ -645,6 +666,12 @@ async fn run_chat_task(
     // turn from the cached welcome agent — the cache hit predicate
     // didn't know about the routing decision before Commit 13.
     let target_agent_id = pick_target_agent_id(&config, &profile);
+    let current_fp = SessionCacheFingerprint {
+        model_override: model_override.clone(),
+        temperature,
+        target_agent_id: target_agent_id.clone(),
+        reasoning_provider: config.reasoning_provider.clone(),
+    };
 
     let prior = {
         let mut sessions = THREAD_SESSIONS.lock().await;
@@ -652,13 +679,7 @@ async fn run_chat_task(
     };
 
     let (mut agent, was_built_fresh) = match prior {
-        Some(entry)
-            if entry.model_override == model_override
-                && entry.temperature == temperature
-                && entry.profile_id == active_profile_id
-                && entry.profile_signature == active_profile_signature
-                && entry.target_agent_id == target_agent_id =>
-        {
+        Some(entry) if entry.fingerprint == current_fp => {
             log::info!(
                 "[web-channel] reusing cached session agent id={} for client={} thread={}",
                 target_agent_id,
@@ -669,9 +690,13 @@ async fn run_chat_task(
         }
         Some(prior_entry) => {
             log::info!(
-                "[web-channel] cache miss — rebuilding session agent (was id={}, now id={}) for client={} thread={}",
-                prior_entry.target_agent_id,
+                "[web-channel] cache miss — rebuilding session agent \
+                 (was id={}, now id={}; prior_reasoning_provider={:?}, now={:?}) \
+                 for client={} thread={}",
+                prior_entry.fingerprint.target_agent_id,
                 target_agent_id,
+                prior_entry.fingerprint.reasoning_provider,
+                current_fp.reasoning_provider,
                 client_id,
                 thread_id
             );
@@ -808,11 +833,7 @@ async fn run_chat_task(
             map_key,
             SessionEntry {
                 agent,
-                model_override,
-                temperature,
-                profile_id: active_profile_id,
-                profile_signature: active_profile_signature,
-                target_agent_id,
+                fingerprint: current_fp,
             },
         );
     }

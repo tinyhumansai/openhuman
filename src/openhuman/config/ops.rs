@@ -181,6 +181,23 @@ pub struct ModelSettingsPatch {
     /// router picks per-task models on its own). Leave `None` to keep the
     /// current routes untouched.
     pub model_routes: Option<Vec<crate::openhuman::config::ModelRouteConfig>>,
+    /// When `Some`, REPLACES the entire `config.cloud_providers` array with
+    /// the supplied entries (each lacking the API key — those live in
+    /// `auth-profiles.json` via [`crate::openhuman::credentials::AuthService`]).
+    /// Pass `Some(vec![])` to clear all third-party cloud providers.
+    pub cloud_providers:
+        Option<Vec<crate::openhuman::config::schema::cloud_providers::CloudProviderCreds>>,
+    /// Id of the `cloud_providers` entry used when a workload routes to
+    /// `"cloud"`. Empty string clears (factory falls back to OpenHuman).
+    pub primary_cloud: Option<String>,
+    pub reasoning_provider: Option<String>,
+    pub agentic_provider: Option<String>,
+    pub coding_provider: Option<String>,
+    pub memory_provider: Option<String>,
+    pub embeddings_provider: Option<String>,
+    pub heartbeat_provider: Option<String>,
+    pub learning_provider: Option<String>,
+    pub subconscious_provider: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -236,6 +253,11 @@ pub struct MeetSettingsPatch {
 #[derive(Debug, Clone, Default)]
 pub struct LocalAiSettingsPatch {
     pub runtime_enabled: Option<bool>,
+    /// MVP opt-in marker. Bootstrap hard-overrides status to "disabled"
+    /// when this is `false`, regardless of `runtime_enabled`. The unified
+    /// AI panel ties the two together (both flip on enable, both flip
+    /// off on disable) so a single toggle gives the user the obvious
+    /// behaviour without needing to apply a preset first.
     pub opt_in_confirmed: Option<bool>,
     pub provider: Option<String>,
     pub base_url: Option<String>,
@@ -315,6 +337,51 @@ pub async fn apply_model_settings(
         // (or an empty vec when switching back to the OpenHuman in-built router).
         config.model_routes = routes;
     }
+    if let Some(providers) = update.cloud_providers {
+        config.cloud_providers = providers;
+    }
+    if let Some(primary) = update.primary_cloud {
+        config.primary_cloud = if primary.trim().is_empty() {
+            None
+        } else {
+            Some(primary)
+        };
+    }
+
+    // Per-workload provider strings. Empty / blank → None (factory default).
+    let normalise_provider = |s: String| -> Option<String> {
+        let t = s.trim();
+        if t.is_empty() {
+            None
+        } else {
+            Some(t.to_string())
+        }
+    };
+    if let Some(s) = update.reasoning_provider {
+        config.reasoning_provider = normalise_provider(s);
+    }
+    if let Some(s) = update.agentic_provider {
+        config.agentic_provider = normalise_provider(s);
+    }
+    if let Some(s) = update.coding_provider {
+        config.coding_provider = normalise_provider(s);
+    }
+    if let Some(s) = update.memory_provider {
+        config.memory_provider = normalise_provider(s);
+    }
+    if let Some(s) = update.embeddings_provider {
+        config.embeddings_provider = normalise_provider(s);
+    }
+    if let Some(s) = update.heartbeat_provider {
+        config.heartbeat_provider = normalise_provider(s);
+    }
+    if let Some(s) = update.learning_provider {
+        config.learning_provider = normalise_provider(s);
+    }
+    if let Some(s) = update.subconscious_provider {
+        config.subconscious_provider = normalise_provider(s);
+    }
+
     config.save().await.map_err(|e| e.to_string())?;
     let snapshot = snapshot_config_json(config)?;
     Ok(RpcOutcome::new(
