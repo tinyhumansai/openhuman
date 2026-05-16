@@ -824,20 +824,29 @@ impl Agent {
                         .join("agent")
                         .join("prompts")
                         .join(path);
-                    let body_text = if workspace_path.is_file() {
-                        std::fs::read_to_string(&workspace_path).unwrap_or_else(|e| {
+                    let body_text = match validate_prompt_path(&workspace_path, &config.workspace_dir) {
+                        Ok(resolved) if resolved.is_file() => {
+                            std::fs::read_to_string(&resolved).unwrap_or_else(|e| {
+                                log::warn!(
+                                    "[agent::builder] failed to read prompt {}: {e} — using empty body",
+                                    resolved.display()
+                                );
+                                String::new()
+                            })
+                        }
+                        Ok(resolved) => {
                             log::warn!(
-                                "[agent::builder] failed to read prompt {}: {e} — using empty body",
-                                workspace_path.display()
+                                "[agent::builder] prompt file {} not found — using empty body",
+                                resolved.display()
                             );
                             String::new()
-                        })
-                    } else {
-                        log::warn!(
-                            "[agent::builder] prompt file {} not found — using empty body",
-                            path
-                        );
-                        String::new()
+                        }
+                        Err(e) => {
+                            log::warn!(
+                                "[agent::builder] prompt path rejected: {e} — using empty body"
+                            );
+                            String::new()
+                        }
                     };
                     SystemPromptBuilder::for_subagent(
                         body_text,
@@ -1319,6 +1328,28 @@ impl Agent {
 /// Critical / High rules captured later in the session are still
 /// available via the `memory_tool_rules_for_prompt` RPC; this prefetch
 /// merely seeds the rules that exist at session start.
+/// Validate that a prompt file path resolves within the workspace root.
+/// Prevents path traversal via `..` segments in agent definition TOML files.
+fn validate_prompt_path(
+    candidate: &std::path::Path,
+    workspace_root: &std::path::Path,
+) -> Result<std::path::PathBuf, String> {
+    let resolved = candidate
+        .canonicalize()
+        .map_err(|e| format!("{}: {e}", candidate.display()))?;
+    let root = workspace_root
+        .canonicalize()
+        .map_err(|e| format!("workspace root: {e}"))?;
+    if !resolved.starts_with(&root) {
+        return Err(format!(
+            "prompt path escapes workspace: {} is not under {}",
+            resolved.display(),
+            root.display()
+        ));
+    }
+    Ok(resolved)
+}
+
 fn prefetch_tool_memory_rules_blocking(
     memory: Arc<dyn Memory>,
     tool_names: &[String],
