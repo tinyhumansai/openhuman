@@ -30,6 +30,22 @@ if [[ "$missing_platform_rc" -ne 3 ]]; then
   exit 1
 fi
 
+assert_retry_shape() {
+  local calls="$1" label="$2"
+  local _ first second extra
+  IFS='|' read -r _ first second extra <<<"${calls}"
+
+  if [[ -z "${first:-}" || -z "${second:-}" || -n "${extra:-}" ]]; then
+    echo "FAIL: ${label} should issue exactly 2 curl calls (base + HTTP/1.1 retry)"
+    exit 1
+  fi
+
+  if [[ "${first}" == *"--http1.1"* || "${second}" != *"--http1.1"* ]]; then
+    echo "FAIL: ${label} should retry with --http1.1 only on the second call"
+    exit 1
+  fi
+}
+
 (
   CURL_CALLS=""
   curl() {
@@ -44,10 +60,7 @@ fi
     echo "FAIL: reachability fallback should succeed when HTTP/1.1 retry succeeds"
     exit 1
   fi
-  if [[ "${CURL_CALLS}" != *"--http1.1"* ]]; then
-    echo "FAIL: reachability check did not retry with --http1.1"
-    exit 1
-  fi
+  assert_retry_shape "${CURL_CALLS}" "reachability check"
 )
 
 (
@@ -64,10 +77,7 @@ fi
     echo "FAIL: metadata fetch fallback should succeed when HTTP/1.1 retry succeeds"
     exit 1
   fi
-  if [[ "${CURL_CALLS}" != *"--http1.1"* ]]; then
-    echo "FAIL: metadata fetch did not retry with --http1.1"
-    exit 1
-  fi
+  assert_retry_shape "${CURL_CALLS}" "metadata fetch"
 )
 
 (
@@ -84,10 +94,7 @@ fi
     echo "FAIL: download fallback should succeed when HTTP/1.1 retry succeeds"
     exit 1
   fi
-  if [[ "${CURL_CALLS}" != *"--http1.1"* ]]; then
-    echo "FAIL: download did not retry with --http1.1"
-    exit 1
-  fi
+  assert_retry_shape "${CURL_CALLS}" "download"
 )
 
 echo "PASS"
