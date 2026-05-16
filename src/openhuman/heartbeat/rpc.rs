@@ -90,6 +90,14 @@ pub async fn settings_set(
         e.to_string()
     })?;
 
+    if config.heartbeat.enabled {
+        if let Err(error) = crate::openhuman::subconscious::global::bootstrap_after_login().await {
+            warn!("[heartbeat][rpc] settings_set: heartbeat bootstrap failed: {error}");
+        }
+    } else {
+        crate::openhuman::subconscious::global::stop_heartbeat_loop().await;
+    }
+
     debug!("[heartbeat][rpc] settings_set: exit ok");
     Ok(RpcOutcome::single_log(
         json!({ "settings": view(&config) }),

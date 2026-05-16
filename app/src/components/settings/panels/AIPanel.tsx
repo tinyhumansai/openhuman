@@ -22,7 +22,20 @@ import {
   saveAISettings,
   setCloudProviderKey,
 } from '../../../services/api/aiSettingsApi';
+import {
+  creditsApi,
+  type CreditTransaction,
+  type TeamUsage,
+} from '../../../services/api/creditsApi';
 import type { AuthStyle } from '../../../utils/tauriCommands/config';
+import {
+  type HeartbeatPlannerSummary,
+  type HeartbeatSettings,
+  type HeartbeatSettingsPatch,
+  openhumanHeartbeatSettingsGet,
+  openhumanHeartbeatSettingsSet,
+  openhumanHeartbeatTickNow,
+} from '../../../utils/tauriCommands/heartbeat';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
@@ -492,6 +505,499 @@ const ProviderKeyDialog = ({
           </button>
         </div>
       </div>
+    </div>
+  );
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Background loop controls + usage diagnostics
+// ─────────────────────────────────────────────────────────────────────────────
+
+const USD = new Intl.NumberFormat('en-US', {
+  style: 'currency',
+  currency: 'USD',
+  minimumFractionDigits: 4,
+  maximumFractionDigits: 6,
+});
+
+const formatUsd = (value: number): string => USD.format(Number.isFinite(value) ? value : 0);
+
+const spendAmount = (tx: CreditTransaction): number => {
+  const amount = Number(tx.amountUsd);
+  return Number.isFinite(amount) ? Math.abs(amount) : 0;
+};
+
+function summarizeSpendByAction(
+  transactions: CreditTransaction[]
+): Array<[string, number, number]> {
+  const byAction = new Map<string, { count: number; total: number }>();
+  for (const tx of transactions) {
+    if (tx.type !== 'SPEND') continue;
+    const key = tx.action || 'SPEND';
+    const prev = byAction.get(key) ?? { count: 0, total: 0 };
+    prev.count += 1;
+    prev.total += spendAmount(tx);
+    byAction.set(key, prev);
+  }
+  return Array.from(byAction.entries())
+    .map(([action, value]) => [action, value.count, value.total] as [string, number, number])
+    .sort((a, b) => b[2] - a[2])
+    .slice(0, 4);
+}
+
+function summarizeSpendByHour(transactions: CreditTransaction[]): Array<[string, number]> {
+  const byHour = new Map<string, number>();
+  for (const tx of transactions) {
+    if (tx.type !== 'SPEND') continue;
+    const date = new Date(tx.createdAt);
+    if (Number.isNaN(date.getTime())) continue;
+    date.setMinutes(0, 0, 0);
+    const key = date.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric' });
+    byHour.set(key, (byHour.get(key) ?? 0) + spendAmount(tx));
+  }
+  return Array.from(byHour.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 4);
+}
+
+function describeProvider(ref: ProviderRef, providers: CloudProvider[]): string {
+  if (ref.kind === 'openhuman') return 'OpenHuman';
+  if (ref.kind === 'local') return `Local ${ref.model}`;
+  const provider = providers.find(p => p.slug === ref.providerSlug);
+  return `${provider?.label ?? ref.providerSlug} ${ref.model || 'custom model'}`;
+}
+
+const LoopToggle = ({
+  label,
+  description,
+  checked,
+  busy,
+  onToggle,
+}: {
+  label: string;
+  description: string;
+  checked: boolean;
+  busy: boolean;
+  onToggle: () => void;
+}) => (
+  <div className="flex items-center justify-between gap-3 rounded-lg border border-stone-200 bg-white px-3 py-2">
+    <div className="min-w-0">
+      <div className="text-sm font-medium text-stone-900">{label}</div>
+      <div className="text-xs text-stone-500">{description}</div>
+    </div>
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      disabled={busy}
+      onClick={onToggle}
+      className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors disabled:cursor-wait disabled:opacity-60 ${checked ? 'bg-primary-500' : 'bg-stone-300'}`}>
+      <span
+        aria-hidden
+        className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${checked ? 'translate-x-4' : 'translate-x-0.5'}`}
+      />
+    </button>
+  </div>
+);
+
+const BackgroundLoopControls = ({
+  routing,
+  cloudProviders,
+}: {
+  routing: RoutingMap;
+  cloudProviders: CloudProvider[];
+}) => {
+  const [settings, setSettings] = useState<HeartbeatSettings | null>(null);
+  const [usage, setUsage] = useState<TeamUsage | null>(null);
+  const [transactions, setTransactions] = useState<CreditTransaction[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState<string | null>(null);
+  const [runningTick, setRunningTick] = useState(false);
+  const [plannerSummary, setPlannerSummary] = useState<HeartbeatPlannerSummary | null>(null);
+  const [error, setError] = useState<string>('');
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    const [heartbeatResult, usageResult, transactionsResult] = await Promise.allSettled([
+      openhumanHeartbeatSettingsGet(),
+      creditsApi.getTeamUsage(),
+      creditsApi.getTransactions(200, 0),
+    ]);
+
+    if (heartbeatResult.status === 'fulfilled') {
+      setSettings(heartbeatResult.value.result.settings);
+    } else {
+      setError(
+        heartbeatResult.reason instanceof Error ? heartbeatResult.reason.message : 'Load failed'
+      );
+    }
+
+    if (usageResult.status === 'fulfilled') {
+      setUsage(usageResult.value);
+    }
+
+    if (transactionsResult.status === 'fulfilled') {
+      setTransactions(transactionsResult.value.transactions ?? []);
+    }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  const applyHeartbeatPatch = useCallback(
+    async (patch: HeartbeatSettingsPatch) => {
+      if (!settings) return;
+      const savingKey = Object.keys(patch).join(',');
+      const previous = settings;
+      setSaving(savingKey);
+      setError('');
+      setSettings({ ...settings, ...patch });
+      try {
+        const response = await openhumanHeartbeatSettingsSet(patch);
+        setSettings(response.result.settings);
+      } catch (err) {
+        setSettings(previous);
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setSaving(null);
+      }
+    },
+    [settings]
+  );
+
+  const runPlannerNow = useCallback(async () => {
+    setRunningTick(true);
+    setError('');
+    try {
+      const response = await openhumanHeartbeatTickNow();
+      setPlannerSummary(response.result.summary);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRunningTick(false);
+    }
+  }, [refresh]);
+
+  const spendRows = transactions.filter(tx => tx.type === 'SPEND');
+  const spendTotal = spendRows.reduce((sum, tx) => sum + spendAmount(tx), 0);
+  const actionSummary = summarizeSpendByAction(transactions);
+  const hourSummary = summarizeSpendByHour(transactions);
+  const latestSpend = spendRows[0] ?? null;
+
+  const loops = [
+    {
+      name: 'Heartbeat planner',
+      enabled: Boolean(settings?.enabled),
+      cadence: `${settings?.interval_minutes ?? 5} min`,
+      route: describeProvider(routing.heartbeat, cloudProviders),
+      work: 'Runs proactive collectors: cron reminders, calendar meetings, relevant notifications.',
+      risk: 'Calendar collector can call GOOGLECALENDAR_EVENTS_LIST for active Google Calendar links.',
+    },
+    {
+      name: 'Subconscious tick',
+      enabled: Boolean(settings?.enabled && settings?.inference_enabled),
+      cadence: `${settings?.interval_minutes ?? 5} min`,
+      route: describeProvider(routing.subconscious, cloudProviders),
+      work: 'Evaluates subconscious tasks/reflections through kind=subconscious_tick.',
+      risk: 'Default route uses hosted summarization-v1; local/custom route controls cost.',
+    },
+    {
+      name: 'Memory tree workers',
+      enabled: true,
+      cadence: 'queue',
+      route: describeProvider(routing.memory, cloudProviders),
+      work: 'Extracts chunks, seals branches, runs daily digests, routes topics.',
+      risk: 'Spend follows memory workload route when ingestion creates queued LLM jobs.',
+    },
+    {
+      name: 'Learning rebuild',
+      enabled: true,
+      cadence: '30 min',
+      route: describeProvider(routing.learning, cloudProviders),
+      work: 'Refreshes learning/reflection state after memory activity.',
+      risk: 'Use local/custom routing for this row to keep background reflection off hosted credits.',
+    },
+    {
+      name: 'Composio sync',
+      enabled: true,
+      cadence: '20 min',
+      route: 'Integration APIs',
+      work: 'Polls connected tools when provider sync is due.',
+      risk: 'Cost depends on connected integration and backend billing metadata.',
+    },
+  ];
+
+  return (
+    <div className="space-y-4">
+      <div className="border-b border-stone-200 pb-2">
+        <h2 className="text-base font-semibold text-stone-900">Background loops</h2>
+        <p className="mt-0.5 text-xs text-stone-500">
+          See what runs without a chat message, pause heartbeat work, and inspect recent credit
+          ledger rows.
+        </p>
+      </div>
+
+      {error && (
+        <div className="rounded-md border border-coral-200 bg-coral-50 px-3 py-2 text-xs text-coral-700">
+          {error}
+        </div>
+      )}
+
+      <section className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(300px,0.8fr)]">
+        <div className="space-y-3">
+          <div className="rounded-lg border border-stone-200 bg-stone-50 p-3">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div>
+                <div className="text-sm font-semibold text-stone-900">Heartbeat controls</div>
+                <div className="text-xs text-stone-500">
+                  Defaults off. Enabling starts the loop; disabling aborts the running task.
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => void refresh()}
+                disabled={loading}
+                className="rounded-md border border-stone-200 bg-white px-2 py-1 text-xs font-medium text-stone-700 hover:bg-stone-50 disabled:opacity-50">
+                Refresh
+              </button>
+            </div>
+
+            {settings ? (
+              <div className="space-y-2">
+                <LoopToggle
+                  label="Heartbeat loop"
+                  description="Master scheduler for planner + optional subconscious inference."
+                  checked={settings.enabled}
+                  busy={saving === 'enabled'}
+                  onToggle={() => void applyHeartbeatPatch({ enabled: !settings.enabled })}
+                />
+                <LoopToggle
+                  label="Subconscious inference"
+                  description="Runs model-backed task/reflection evaluation on heartbeat ticks."
+                  checked={settings.inference_enabled}
+                  busy={saving === 'inference_enabled'}
+                  onToggle={() =>
+                    void applyHeartbeatPatch({ inference_enabled: !settings.inference_enabled })
+                  }
+                />
+                <LoopToggle
+                  label="Calendar meeting checks"
+                  description="Calls calendar event list for active Google Calendar connections."
+                  checked={settings.notify_meetings}
+                  busy={saving === 'notify_meetings'}
+                  onToggle={() =>
+                    void applyHeartbeatPatch({ notify_meetings: !settings.notify_meetings })
+                  }
+                />
+                <LoopToggle
+                  label="Cron reminder checks"
+                  description="Scans enabled cron jobs for reminder-like upcoming items."
+                  checked={settings.notify_reminders}
+                  busy={saving === 'notify_reminders'}
+                  onToggle={() =>
+                    void applyHeartbeatPatch({ notify_reminders: !settings.notify_reminders })
+                  }
+                />
+                <LoopToggle
+                  label="Relevant notification checks"
+                  description="Promotes urgent local notifications into proactive alerts."
+                  checked={settings.notify_relevant_events}
+                  busy={saving === 'notify_relevant_events'}
+                  onToggle={() =>
+                    void applyHeartbeatPatch({
+                      notify_relevant_events: !settings.notify_relevant_events,
+                    })
+                  }
+                />
+                <LoopToggle
+                  label="External delivery"
+                  description="Lets heartbeat alerts send proactive messages to external channels."
+                  checked={settings.external_delivery_enabled}
+                  busy={saving === 'external_delivery_enabled'}
+                  onToggle={() =>
+                    void applyHeartbeatPatch({
+                      external_delivery_enabled: !settings.external_delivery_enabled,
+                    })
+                  }
+                />
+
+                <div className="flex flex-wrap items-center gap-2 rounded-lg border border-stone-200 bg-white px-3 py-2">
+                  <label
+                    className="text-xs font-medium text-stone-700"
+                    htmlFor="heartbeat-interval">
+                    Interval
+                  </label>
+                  <select
+                    id="heartbeat-interval"
+                    value={settings.interval_minutes}
+                    disabled={saving === 'interval_minutes'}
+                    onChange={e =>
+                      void applyHeartbeatPatch({ interval_minutes: Number(e.target.value) })
+                    }
+                    className="rounded-md border border-stone-200 bg-white px-2 py-1 text-xs text-stone-900 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500">
+                    {[5, 10, 15, 30, 60].map(minutes => (
+                      <option key={minutes} value={minutes}>
+                        {minutes} min
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => void runPlannerNow()}
+                    disabled={runningTick}
+                    className="ml-auto rounded-md border border-stone-200 bg-white px-2 py-1 text-xs font-medium text-stone-700 hover:bg-stone-50 disabled:opacity-50">
+                    {runningTick ? 'Running...' : 'Planner tick now'}
+                  </button>
+                </div>
+
+                {plannerSummary && (
+                  <div className="rounded-md border border-primary-100 bg-primary-50 px-3 py-2 text-xs text-primary-900">
+                    Planner: {plannerSummary.source_events} source events,{' '}
+                    {plannerSummary.deliveries_sent} sent, {plannerSummary.deliveries_skipped_dedup}{' '}
+                    deduped.
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="text-xs text-stone-500">
+                {loading ? 'Loading heartbeat controls...' : 'Heartbeat controls unavailable.'}
+              </div>
+            )}
+          </div>
+
+          <div className="overflow-hidden rounded-lg border border-stone-200 bg-stone-50">
+            <div className="border-b border-stone-200 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-stone-400">
+              Loop map
+            </div>
+            <div className="divide-y divide-stone-200">
+              {loops.map(loop => (
+                <div key={loop.name} className="grid gap-2 px-3 py-3 md:grid-cols-[150px_1fr]">
+                  <div>
+                    <div className="text-sm font-medium text-stone-900">{loop.name}</div>
+                    <div className="mt-0.5 flex flex-wrap gap-1 text-[11px] text-stone-500">
+                      <span>{loop.enabled ? 'on' : 'off'}</span>
+                      <span>{loop.cadence}</span>
+                    </div>
+                  </div>
+                  <div className="text-xs text-stone-600">
+                    <div>{loop.work}</div>
+                    <div className="mt-1 font-mono text-[11px] text-stone-500">
+                      route: {loop.route}
+                    </div>
+                    <div className="mt-1 text-stone-500">{loop.risk}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-stone-200 bg-white p-3">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <div className="text-sm font-semibold text-stone-900">Recent usage ledger</div>
+              <div className="text-xs text-stone-500">
+                Backend rows expose action/time today; source tags need backend support.
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => void refresh()}
+              disabled={loading}
+              className="rounded-md border border-stone-200 px-2 py-1 text-xs font-medium text-stone-700 hover:bg-stone-50 disabled:opacity-50">
+              Reload
+            </button>
+          </div>
+
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <div className="rounded-md bg-stone-50 px-3 py-2">
+              <div className="text-[10px] font-semibold uppercase tracking-wide text-stone-400">
+                Week used
+              </div>
+              <div className="mt-1 text-sm font-semibold text-stone-900">
+                {usage ? formatUsd(usage.cycleLimit7day) : 'n/a'}
+              </div>
+            </div>
+            <div className="rounded-md bg-stone-50 px-3 py-2">
+              <div className="text-[10px] font-semibold uppercase tracking-wide text-stone-400">
+                Remaining
+              </div>
+              <div className="mt-1 text-sm font-semibold text-stone-900">
+                {usage ? formatUsd(usage.remainingUsd) : 'n/a'}
+              </div>
+            </div>
+            <div className="rounded-md bg-stone-50 px-3 py-2">
+              <div className="text-[10px] font-semibold uppercase tracking-wide text-stone-400">
+                Recent rows
+              </div>
+              <div className="mt-1 text-sm font-semibold text-stone-900">{spendRows.length}</div>
+            </div>
+            <div className="rounded-md bg-stone-50 px-3 py-2">
+              <div className="text-[10px] font-semibold uppercase tracking-wide text-stone-400">
+                Recent spend
+              </div>
+              <div className="mt-1 text-sm font-semibold text-stone-900">
+                {formatUsd(spendTotal)}
+              </div>
+            </div>
+          </div>
+
+          {latestSpend && (
+            <div className="mt-3 rounded-md border border-stone-200 bg-stone-50 px-3 py-2 text-xs text-stone-600">
+              Latest spend: {formatUsd(spendAmount(latestSpend))} at{' '}
+              {new Date(latestSpend.createdAt).toLocaleString()} ({latestSpend.action})
+            </div>
+          )}
+
+          <div className="mt-3 space-y-3">
+            <div>
+              <div className="text-[10px] font-semibold uppercase tracking-wide text-stone-400">
+                Top actions
+              </div>
+              <div className="mt-1 space-y-1">
+                {actionSummary.length > 0 ? (
+                  actionSummary.map(([action, count, total]) => (
+                    <div
+                      key={action}
+                      className="flex items-center justify-between gap-2 text-xs text-stone-600">
+                      <span className="truncate font-mono">{action}</span>
+                      <span className="shrink-0 text-stone-500">
+                        {count} / {formatUsd(total)}
+                      </span>
+                    </div>
+                  ))
+                ) : (
+                  <div className="text-xs text-stone-500">No spend rows loaded.</div>
+                )}
+              </div>
+            </div>
+
+            <div>
+              <div className="text-[10px] font-semibold uppercase tracking-wide text-stone-400">
+                Top hours
+              </div>
+              <div className="mt-1 space-y-1">
+                {hourSummary.length > 0 ? (
+                  hourSummary.map(([hour, total]) => (
+                    <div
+                      key={hour}
+                      className="flex items-center justify-between gap-2 text-xs text-stone-600">
+                      <span>{hour}</span>
+                      <span className="font-mono text-stone-500">{formatUsd(total)}</span>
+                    </div>
+                  ))
+                ) : (
+                  <div className="text-xs text-stone-500">No hourly spend yet.</div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
     </div>
   );
 };
@@ -1042,6 +1548,8 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
           </section>
         </div>
         {/* end of Routing section */}
+
+        <BackgroundLoopControls routing={draft.routing} cloudProviders={draft.cloudProviders} />
       </div>
 
       {isDirty && (

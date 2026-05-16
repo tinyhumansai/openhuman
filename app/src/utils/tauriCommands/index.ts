@@ -14,6 +14,7 @@ export * from './subconscious';
 export * from './localAi';
 export * from './config';
 export * from './cron';
+export * from './heartbeat';
 export * from './service';
 export * from './accessibility';
 export * from './autocomplete';

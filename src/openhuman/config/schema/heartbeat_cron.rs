@@ -4,31 +4,32 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// Heartbeat configuration — periodic background loop that evaluates
-/// HEARTBEAT.md tasks against workspace state using local model inference.
+/// HEARTBEAT.md tasks and proactive notification sources.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct HeartbeatConfig {
-    /// Enable the heartbeat loop.
-    #[serde(default = "default_true")]
+    /// Enable the heartbeat loop. Opt-in because ticks may call hosted models
+    /// and integration APIs depending on routing and enabled collectors.
+    #[serde(default)]
     pub enabled: bool,
     /// Tick interval in minutes (minimum 5).
     #[serde(default = "default_interval_minutes")]
     pub interval_minutes: u32,
-    /// Enable subconscious inference (local model evaluation).
-    /// When false, the heartbeat only counts tasks without reasoning.
-    #[serde(default = "default_true")]
+    /// Enable subconscious inference. When false, heartbeat only counts tasks
+    /// without model-backed reasoning.
+    #[serde(default)]
     pub inference_enabled: bool,
     /// Maximum token budget for the situation report (default 40k).
     #[serde(default = "default_context_budget")]
     pub context_budget_tokens: u32,
     /// Enable proactive notifications for upcoming meetings.
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub notify_meetings: bool,
     /// Enable proactive notifications for reminders and scheduled items.
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub notify_reminders: bool,
     /// Enable proactive notifications for urgent/relevant events.
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub notify_relevant_events: bool,
     /// Allow heartbeat proactive events to also deliver to active external channel.
     /// Defaults to false and acts as an explicit consent gate.
@@ -46,10 +47,6 @@ fn default_context_budget() -> u32 {
     40_000
 }
 
-fn default_true() -> bool {
-    true
-}
-
 fn default_interval_minutes() -> u32 {
     5
 }
@@ -65,17 +62,34 @@ fn default_reminder_lookahead_minutes() -> u32 {
 impl Default for HeartbeatConfig {
     fn default() -> Self {
         Self {
-            enabled: default_true(),
+            enabled: false,
             interval_minutes: default_interval_minutes(),
-            inference_enabled: default_true(),
+            inference_enabled: false,
             context_budget_tokens: default_context_budget(),
-            notify_meetings: default_true(),
-            notify_reminders: default_true(),
-            notify_relevant_events: default_true(),
+            notify_meetings: false,
+            notify_reminders: false,
+            notify_relevant_events: false,
             external_delivery_enabled: false,
             meeting_lookahead_minutes: default_meeting_lookahead_minutes(),
             reminder_lookahead_minutes: default_reminder_lookahead_minutes(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn heartbeat_defaults_are_opt_in() {
+        let config = HeartbeatConfig::default();
+        assert!(!config.enabled);
+        assert!(!config.inference_enabled);
+        assert!(!config.notify_meetings);
+        assert!(!config.notify_reminders);
+        assert!(!config.notify_relevant_events);
+        assert!(!config.external_delivery_enabled);
+        assert_eq!(config.interval_minutes, 5);
     }
 }
 
