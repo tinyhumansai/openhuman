@@ -820,3 +820,91 @@ async fn workspace_onboarding_flag_set_round_trip() {
         std::env::remove_var("OPENHUMAN_WORKSPACE");
     }
 }
+
+#[tokio::test]
+async fn apply_model_settings_trims_and_clears_optional_provider_fields() {
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+
+    let set = ModelSettingsPatch {
+        inference_url: Some(" https://llm.example.test/v1 ".into()),
+        primary_cloud: Some(" provider-a ".into()),
+        reasoning_provider: Some(" provider-reasoning ".into()),
+        agentic_provider: Some(" provider-agentic ".into()),
+        coding_provider: Some(" provider-coding ".into()),
+        memory_provider: Some(" provider-memory ".into()),
+        embeddings_provider: Some(" provider-embed ".into()),
+        heartbeat_provider: Some(" provider-heartbeat ".into()),
+        learning_provider: Some(" provider-learning ".into()),
+        subconscious_provider: Some(" provider-sub ".into()),
+        ..Default::default()
+    };
+    apply_model_settings(&mut cfg, set)
+        .await
+        .expect("set providers");
+    assert_eq!(
+        cfg.inference_url.as_deref(),
+        Some("https://llm.example.test/v1")
+    );
+    assert_eq!(cfg.primary_cloud.as_deref(), Some("provider-a"));
+    assert_eq!(
+        cfg.reasoning_provider.as_deref(),
+        Some("provider-reasoning")
+    );
+    assert_eq!(cfg.subconscious_provider.as_deref(), Some("provider-sub"));
+
+    let clear = ModelSettingsPatch {
+        inference_url: Some("   ".into()),
+        primary_cloud: Some("".into()),
+        reasoning_provider: Some(" ".into()),
+        agentic_provider: Some(" ".into()),
+        coding_provider: Some(" ".into()),
+        memory_provider: Some(" ".into()),
+        embeddings_provider: Some(" ".into()),
+        heartbeat_provider: Some(" ".into()),
+        learning_provider: Some(" ".into()),
+        subconscious_provider: Some(" ".into()),
+        ..Default::default()
+    };
+    apply_model_settings(&mut cfg, clear)
+        .await
+        .expect("clear providers");
+    assert!(cfg.inference_url.is_none());
+    assert!(cfg.primary_cloud.is_none());
+    assert!(cfg.reasoning_provider.is_none());
+    assert!(cfg.agentic_provider.is_none());
+    assert!(cfg.coding_provider.is_none());
+    assert!(cfg.memory_provider.is_none());
+    assert!(cfg.embeddings_provider.is_none());
+    assert!(cfg.heartbeat_provider.is_none());
+    assert!(cfg.learning_provider.is_none());
+    assert!(cfg.subconscious_provider.is_none());
+}
+
+#[tokio::test]
+async fn apply_screen_intelligence_settings_clamps_baseline_fps() {
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+
+    apply_screen_intelligence_settings(
+        &mut cfg,
+        ScreenIntelligenceSettingsPatch {
+            baseline_fps: Some(99.0),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("high clamp");
+    assert!((cfg.screen_intelligence.baseline_fps - 30.0).abs() < f32::EPSILON);
+
+    apply_screen_intelligence_settings(
+        &mut cfg,
+        ScreenIntelligenceSettingsPatch {
+            baseline_fps: Some(0.01),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("low clamp");
+    assert!((cfg.screen_intelligence.baseline_fps - 0.2).abs() < f32::EPSILON);
+}

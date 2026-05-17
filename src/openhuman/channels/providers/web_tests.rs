@@ -3,8 +3,8 @@ use super::{
     classify_inference_error, event_session_id_for, extract_provider_error_detail,
     generic_inference_error_user_message, inference_budget_exceeded_user_message,
     is_inference_budget_exceeded_error, json_output, key_for, normalize_model_override,
-    optional_f64, optional_string, required_string, schemas, set_test_forced_run_chat_task_error,
-    start_chat, subscribe_web_channel_events,
+    optional_f64, optional_string, provider_role_for_model_override, required_string, schemas,
+    set_test_forced_run_chat_task_error, start_chat, subscribe_web_channel_events,
 };
 use crate::core::TypeSchema;
 use tokio::time::{timeout, Duration};
@@ -316,30 +316,20 @@ fn fp(
     model_override: Option<&str>,
     temperature: Option<f64>,
     target: &str,
-    reasoning_provider: Option<&str>,
+    provider_binding: &str,
 ) -> SessionCacheFingerprint {
     SessionCacheFingerprint {
         model_override: model_override.map(String::from),
         temperature,
         target_agent_id: target.to_string(),
-        reasoning_provider: reasoning_provider.map(String::from),
+        provider_binding: provider_binding.to_string(),
     }
 }
 
 #[test]
 fn fingerprint_identical_inputs_are_cache_hit() {
-    let a = fp(
-        None,
-        None,
-        "orchestrator",
-        Some("anthropic:claude-sonnet-4-6"),
-    );
-    let b = fp(
-        None,
-        None,
-        "orchestrator",
-        Some("anthropic:claude-sonnet-4-6"),
-    );
+    let a = fp(None, None, "orchestrator", "anthropic:claude-sonnet-4-6");
+    let b = fp(None, None, "orchestrator", "anthropic:claude-sonnet-4-6");
     assert_eq!(
         a, b,
         "identical fingerprints must compare equal (cache hit)"
@@ -347,31 +337,53 @@ fn fingerprint_identical_inputs_are_cache_hit() {
 }
 
 #[test]
-fn fingerprint_reasoning_provider_change_forces_rebuild() {
-    // The whole point of adding reasoning_provider to the fingerprint:
+fn fingerprint_provider_binding_change_forces_rebuild() {
+    // The whole point of adding provider_binding to the fingerprint:
     // changing the workload routing in Settings → AI → LLM mid-thread
     // must invalidate the cached agent so the next turn rebuilds with
     // the new provider.
-    let warm = fp(None, None, "orchestrator", Some("cloud"));
-    let after_settings_change = fp(
-        None,
-        None,
-        "orchestrator",
-        Some("anthropic:claude-sonnet-4-6"),
-    );
+    let warm = fp(None, None, "orchestrator", "cloud");
+    let after_settings_change = fp(None, None, "orchestrator", "anthropic:claude-sonnet-4-6");
     assert_ne!(
         warm, after_settings_change,
-        "reasoning_provider change must produce a different fingerprint (cache miss → rebuild)"
+        "provider binding change must produce a different fingerprint (cache miss → rebuild)"
     );
 }
 
 #[test]
-fn fingerprint_reasoning_provider_none_vs_some_differs() {
-    // Unset → explicitly-set is also a routing change (None resolves to
-    // 'cloud' via the factory, an explicit value does not).
-    let unset = fp(None, None, "orchestrator", None);
-    let set = fp(None, None, "orchestrator", Some("cloud"));
+fn fingerprint_provider_binding_variants_differ() {
+    let unset = fp(None, None, "orchestrator", "openhuman");
+    let set = fp(None, None, "orchestrator", "cloud");
     assert_ne!(unset, set);
+}
+
+#[test]
+fn provider_role_override_routes_hint_workloads() {
+    assert_eq!(
+        provider_role_for_model_override(Some("hint:agentic")),
+        "agentic"
+    );
+    assert_eq!(
+        provider_role_for_model_override(Some("agentic-v1")),
+        "agentic"
+    );
+    assert_eq!(
+        provider_role_for_model_override(Some("hint:coding")),
+        "coding"
+    );
+    assert_eq!(
+        provider_role_for_model_override(Some("summarization-v1")),
+        "summarization"
+    );
+    assert_eq!(
+        provider_role_for_model_override(Some("hint:reasoning")),
+        "reasoning"
+    );
+    assert_eq!(
+        provider_role_for_model_override(Some("gpt-4.1-mini")),
+        "reasoning"
+    );
+    assert_eq!(provider_role_for_model_override(None), "reasoning");
 }
 
 #[test]
@@ -379,22 +391,22 @@ fn fingerprint_target_agent_flip_forces_rebuild() {
     // welcome → orchestrator routing flip (onboarding completion) must
     // still invalidate — regression guard for the original cache bug
     // this struct also protects.
-    let welcome = fp(None, None, "welcome", Some("cloud"));
-    let orchestrator = fp(None, None, "orchestrator", Some("cloud"));
+    let welcome = fp(None, None, "welcome", "cloud");
+    let orchestrator = fp(None, None, "orchestrator", "cloud");
     assert_ne!(welcome, orchestrator);
 }
 
 #[test]
 fn fingerprint_model_override_and_temperature_participate() {
-    let base = fp(None, None, "orchestrator", Some("cloud"));
+    let base = fp(None, None, "orchestrator", "cloud");
     assert_ne!(
         base,
-        fp(Some("gpt-4o"), None, "orchestrator", Some("cloud")),
+        fp(Some("gpt-4o"), None, "orchestrator", "cloud"),
         "per-message model_override must invalidate"
     );
     assert_ne!(
         base,
-        fp(None, Some(0.9), "orchestrator", Some("cloud")),
+        fp(None, Some(0.9), "orchestrator", "cloud"),
         "per-message temperature must invalidate"
     );
 }

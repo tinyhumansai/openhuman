@@ -83,7 +83,7 @@ async fn wait_until_port_released(port: u16) {
 /// `CancellationToken` is fired.
 ///
 /// **Ignored by default.** This test calls `run_server_embedded`,
-/// which triggers the full production bootstrap (`bootstrap_skill_runtime`
+/// which triggers the full production bootstrap (`bootstrap_core_runtime`
 /// → `register_domain_subscribers` → `scheduler_gate::init_global` +
 /// `memory::tree::jobs::start` + `composio::start_periodic_sync` +
 /// cron scheduler). Those code paths spawn detached `tokio::spawn`

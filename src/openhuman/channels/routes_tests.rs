@@ -4,7 +4,7 @@ use crate::openhuman::channels::context::{
 };
 use crate::openhuman::channels::traits::ChannelMessage;
 use crate::openhuman::memory::{Memory, MemoryCategory, MemoryEntry};
-use crate::openhuman::providers::Provider;
+use crate::openhuman::providers::{ChatMessage, Provider};
 use crate::openhuman::tools::{Tool, ToolResult};
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -104,6 +104,27 @@ impl Tool for DummyTool {
 
     async fn execute(&self, _args: serde_json::Value) -> anyhow::Result<ToolResult> {
         Ok(ToolResult::success("ok"))
+    }
+}
+
+#[derive(Default)]
+struct RecordingChannel {
+    sent: Mutex<Vec<SendMessage>>,
+}
+
+#[async_trait]
+impl Channel for RecordingChannel {
+    fn name(&self) -> &str {
+        "recording"
+    }
+
+    async fn send(&self, message: &SendMessage) -> anyhow::Result<()> {
+        self.sent.lock().unwrap().push(message.clone());
+        Ok(())
+    }
+
+    async fn listen(&self, _tx: tokio::sync::mpsc::Sender<ChannelMessage>) -> anyhow::Result<()> {
+        Ok(())
     }
 }
 
@@ -253,4 +274,86 @@ fn model_command_messages_use_thread_aware_history_keys() {
         super::super::context::conversation_history_key(&msg),
         "discord_alice_room_thread:thread-1"
     );
+}
+
+#[test]
+fn load_cached_model_preview_returns_empty_when_cache_json_is_invalid() {
+    let tempdir = tempfile::tempdir().unwrap();
+    let state_dir = tempdir.path().join("state");
+    std::fs::create_dir_all(&state_dir).unwrap();
+    std::fs::write(
+        state_dir.join(MODEL_CACHE_FILE),
+        "{ definitely invalid json",
+    )
+    .unwrap();
+
+    assert!(load_cached_model_preview(tempdir.path(), "openai").is_empty());
+}
+
+#[tokio::test]
+async fn handle_runtime_command_unknown_provider_sends_helpful_error() {
+    let ctx = runtime_context(PathBuf::from("/tmp"));
+    let channel_impl = Arc::new(RecordingChannel::default());
+    let channel: Arc<dyn Channel> = channel_impl.clone();
+    let msg = ChannelMessage {
+        id: "1".into(),
+        sender: "alice".into(),
+        reply_target: "room".into(),
+        content: "/models definitely-not-a-provider".into(),
+        channel: "telegram".into(),
+        timestamp: 0,
+        thread_ts: Some("thread-1".into()),
+    };
+
+    let handled = handle_runtime_command_if_needed(&ctx, &msg, Some(&channel)).await;
+    assert!(handled);
+
+    let sent = channel_impl.sent.lock().unwrap();
+    assert_eq!(sent.len(), 1);
+    assert!(sent[0]
+        .content
+        .contains("Unknown provider `definitely-not-a-provider`"));
+    assert_eq!(sent[0].thread_ts.as_deref(), Some("thread-1"));
+}
+
+#[tokio::test]
+async fn handle_runtime_command_set_model_clears_sender_history_and_persists_route_override() {
+    let ctx = runtime_context(PathBuf::from("/tmp"));
+    let key = "telegram_alice_room";
+    ctx.conversation_histories
+        .lock()
+        .unwrap()
+        .insert(key.to_string(), vec![ChatMessage::user("old history")]);
+    let channel_impl = Arc::new(RecordingChannel::default());
+    let channel: Arc<dyn Channel> = channel_impl.clone();
+    let msg = ChannelMessage {
+        id: "1".into(),
+        sender: "alice".into(),
+        reply_target: "room".into(),
+        content: "/model gpt-5-mini".into(),
+        channel: "telegram".into(),
+        timestamp: 0,
+        thread_ts: None,
+    };
+
+    let handled = handle_runtime_command_if_needed(&ctx, &msg, Some(&channel)).await;
+    assert!(handled);
+
+    assert!(ctx
+        .conversation_histories
+        .lock()
+        .unwrap()
+        .get(key)
+        .is_none());
+    assert_eq!(
+        get_route_selection(&ctx, key),
+        ChannelRouteSelection {
+            provider: "openai".into(),
+            model: "gpt-5-mini".into()
+        }
+    );
+
+    let sent = channel_impl.sent.lock().unwrap();
+    assert_eq!(sent.len(), 1);
+    assert!(sent[0].content.contains("Model switched to `gpt-5-mini`"));
 }

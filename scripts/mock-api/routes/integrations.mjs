@@ -1,5 +1,6 @@
 import { json } from "../http.mjs";
 import { behavior, parseBehaviorJson, setMockBehavior } from "../state.mjs";
+import { listMockLlmModels } from "./llm/shared.mjs";
 
 export function handleIntegrations(ctx) {
   const { method, url, parsedBody, res } = ctx;
@@ -137,7 +138,7 @@ export function handleIntegrations(ctx) {
 
   // ── OpenAI proxy ───────────────────────────────────────────
   if (method === "GET" && /^\/openai\/v1\/models\/?(\?.*)?$/.test(url)) {
-    json(res, 200, { data: [{ id: "e2e-mock-model", object: "model" }] });
+    json(res, 200, { data: listMockLlmModels() });
     return true;
   }
 
@@ -287,12 +288,16 @@ export function handleIntegrations(ctx) {
             messages: [
               {
                 id: "e2e-gmail-message-1",
-                snippet: "Welcome to OpenHuman. No profile link is required for this run.",
+                snippet:
+                  "Welcome to OpenHuman. No profile link is required for this run.",
               },
             ],
           }
         : { ok: true };
-    json(res, 200, { success: true, data: { successful: true, data, error: null } });
+    json(res, 200, {
+      success: true,
+      data: { successful: true, data, error: null },
+    });
     return true;
   }
 
@@ -308,7 +313,11 @@ export function handleIntegrations(ctx) {
     } else {
       json(res, 200, {
         success: true,
-        data: { id: runId, status: "SUCCEEDED", finishedAt: new Date().toISOString() },
+        data: {
+          id: runId,
+          status: "SUCCEEDED",
+          finishedAt: new Date().toISOString(),
+        },
       });
     }
     return true;

@@ -157,6 +157,16 @@ async fn store_provider_credentials_rejects_when_no_credentials_supplied() {
 }
 
 #[tokio::test]
+async fn store_provider_credentials_rejects_blank_token_without_fields() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+    let err = store_provider_credentials(&config, "openai", None, Some("   ".into()), None, None)
+        .await
+        .unwrap_err();
+    assert!(err.contains("at least one credential"));
+}
+
+#[tokio::test]
 async fn store_provider_credentials_stores_token_and_persists_to_disk() {
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
@@ -189,6 +199,23 @@ async fn store_provider_credentials_extracts_token_from_fields() {
         None,
         None,
         Some(json!({ "token": "from-fields", "extra": "value" })),
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(result.value.has_token);
+}
+
+#[tokio::test]
+async fn store_provider_credentials_extracts_api_key_from_fields() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+    let result = store_provider_credentials(
+        &config,
+        "openai",
+        None,
+        None,
+        Some(json!({ "api_key": "from-api-key-field" })),
         None,
     )
     .await

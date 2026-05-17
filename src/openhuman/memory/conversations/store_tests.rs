@@ -560,3 +560,32 @@ fn delete_thread_clears_stats_from_index() {
         .unwrap();
     assert!(store.list_threads().unwrap().is_empty());
 }
+
+#[test]
+fn update_thread_labels_missing_thread_returns_error() {
+    let (_temp, store) = make_store();
+    let err = store
+        .update_thread_labels("missing", vec!["work".into()], "2026-04-10T12:05:00Z")
+        .unwrap_err();
+    assert!(err.contains("thread missing not found"));
+}
+
+#[test]
+fn read_jsonl_skips_invalid_lines_but_keeps_valid_ones() {
+    let tmp = TempDir::new().unwrap();
+    let path = tmp.path().join("messages.jsonl");
+    std::fs::write(
+        &path,
+        concat!(
+            "{\"id\":\"m1\",\"content\":\"ok\",\"type\":\"text\",\"extraMetadata\":{},\"sender\":\"user\",\"createdAt\":\"2026-04-10T12:00:00Z\"}\n",
+            "{not valid json}\n",
+            "{\"id\":\"m2\",\"content\":\"ok2\",\"type\":\"text\",\"extraMetadata\":{},\"sender\":\"agent\",\"createdAt\":\"2026-04-10T12:01:00Z\"}\n"
+        ),
+    )
+    .unwrap();
+
+    let messages: Vec<ConversationMessage> = read_jsonl(&path).expect("read jsonl");
+    assert_eq!(messages.len(), 2);
+    assert_eq!(messages[0].id, "m1");
+    assert_eq!(messages[1].id, "m2");
+}

@@ -224,6 +224,7 @@ impl Tool for SpawnWorkerThreadTool {
             skill_filter_override: None,
             toolkit_override,
             context,
+            model_override: None,
             task_id: None,
             worker_thread_id: Some(worker_thread_id.clone()),
         };

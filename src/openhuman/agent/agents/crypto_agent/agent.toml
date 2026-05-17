@@ -32,8 +32,10 @@ named = [
     # Read-only wallet inspection.
     "wallet_status",
     "wallet_balances",
+    "wallet_network_defaults",
     "wallet_supported_assets",
     "wallet_chain_status",
+    "wallet_encode_erc20_transfer",
     # Quote / prepare. These MUST be called before any execute_prepared
     # — they return a deterministic transaction blob plus fee/slippage
     # estimates the agent shows the user for confirmation.

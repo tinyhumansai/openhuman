@@ -122,6 +122,10 @@ impl Tool for SpawnSubagentTool {
                     "type": "string",
                     "description": "Optional context blob from prior task results. Rendered as a `[Context]` block before the prompt."
                 },
+                "model": {
+                    "type": "string",
+                    "description": "Optional exact model id for this spawn only. Keeps the parent provider/routing, but pins the child agent to this model instead of the agent definition's default."
+                },
                 "toolkit": {
                     "type": "string",
                     "description": "Composio toolkit slug to scope this spawn to — e.g. `gmail`, `notion`, `slack`. REQUIRED when `agent_id = \"integrations_agent\"`. Narrows the sub-agent's visible Composio actions AND its Connected Integrations prompt section to only that toolkit's catalogue, so the sub-agent's context window only carries the platform it was asked to operate on. Must match a currently-connected integration (see the Delegation Guide)."
@@ -159,6 +163,12 @@ impl Tool for SpawnSubagentTool {
             .get("context")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
+
+        let model_override = args
+            .get("model")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
 
         let toolkit_override = args
             .get("toolkit")
@@ -398,6 +408,7 @@ impl Tool for SpawnSubagentTool {
             skill_filter_override: None,
             toolkit_override,
             context,
+            model_override,
             task_id: Some(task_id.clone()),
             worker_thread_id: None,
         };
@@ -671,6 +682,20 @@ mod tests {
     }
 
     #[test]
+    fn parameters_schema_advertises_optional_model_override() {
+        let tool = SpawnSubagentTool;
+        let schema = tool.parameters_schema();
+        let props = schema.get("properties").expect("schema has properties");
+        let model = props.get("model").expect("model override advertised");
+        assert_eq!(model.get("type").and_then(|v| v.as_str()), Some("string"));
+        assert!(schema
+            .get("required")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().all(|s| s.as_str() != Some("model")))
+            .unwrap_or(true));
+    }
+
+    #[test]
     fn render_worker_thread_result_carries_machine_readable_envelope() {
         let outcome = sample_outcome("done");
         let rendered = render_worker_thread_result("worker-abc", "researcher", &outcome);
@@ -782,5 +807,84 @@ mod tests {
         let out = result.output();
         // Should list at least one valid built-in.
         assert!(out.contains("code_executor") || out.contains("researcher"));
+    }
+
+    #[test]
+    fn classify_subagent_failure_reframes_upstream_provider_outages() {
+        let msg = SpawnSubagentTool::classify_subagent_failure(
+            "provider call failed: all providers/models failed: upstream unavailable",
+        );
+        assert!(msg.contains("upstream inference unavailable"));
+        assert!(msg.contains("NOT a Composio/integration auth issue"));
+    }
+
+    #[tokio::test]
+    async fn dedicated_thread_flag_is_rejected_explicitly() {
+        let tool = SpawnSubagentTool;
+        let result = tool
+            .execute(json!({
+                "agent_id": "researcher",
+                "prompt": "find x",
+                "dedicated_thread": true,
+            }))
+            .await
+            .unwrap();
+        assert!(result.is_error);
+        assert!(result.output().contains("temporarily disabled"));
+    }
+
+    #[tokio::test]
+    async fn legacy_archetype_alias_is_accepted_for_lookup() {
+        let _ = AgentDefinitionRegistry::init_global_builtins();
+        let tool = SpawnSubagentTool;
+        let result = tool
+            .execute(json!({
+                "archetype": "totally_made_up",
+                "prompt": "x",
+            }))
+            .await
+            .unwrap();
+        assert!(result.is_error);
+        assert!(result
+            .output()
+            .contains("unknown agent_id 'totally_made_up'"));
+    }
+
+    #[tokio::test]
+    async fn integrations_agent_requires_toolkit_argument() {
+        let _ = AgentDefinitionRegistry::init_global_builtins();
+        let tool = SpawnSubagentTool;
+        let result = tool
+            .execute(json!({
+                "agent_id": "integrations_agent",
+                "prompt": "check gmail",
+            }))
+            .await
+            .unwrap();
+        assert!(result.is_error);
+        let out = result.output();
+        assert!(out.contains("`toolkit` argument is required"));
+        assert!(out.contains("currently-connected toolkits"));
+    }
+
+    #[tokio::test]
+    async fn integrations_agent_rejects_toolkit_outside_allowlist() {
+        let _ = AgentDefinitionRegistry::init_global_builtins();
+        let tool = SpawnSubagentTool;
+        let toolkit = "totally_not_a_real_toolkit_slug";
+        let result = tool
+            .execute(json!({
+                "agent_id": "integrations_agent",
+                "prompt": "check gmail",
+                "toolkit": toolkit,
+            }))
+            .await
+            .unwrap();
+        assert!(result.is_error);
+        let out = result.output();
+        assert!(out.contains(&format!(
+            "toolkit '{toolkit}' is not in the backend allowlist"
+        )));
+        assert!(out.contains("Valid toolkits"));
     }
 }
