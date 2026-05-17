@@ -340,7 +340,14 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             names,
-            vec!["memory.search", "memory.recall", "tree.read_chunk"]
+            vec![
+                "memory.search",
+                "memory.recall",
+                "tree.read_chunk",
+                "tree.browse",
+                "tree.top_entities",
+                "tree.list_sources",
+            ]
         );
     }
 
