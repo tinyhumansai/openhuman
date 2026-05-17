@@ -858,6 +858,15 @@ fn failure_reason_upstream_unhealthy_wins_over_all_others() {
 // re-reading the docs.
 
 #[test]
+fn rotated_key_log_detail_does_not_expose_key_suffix() {
+    let detail = rotated_key_log_detail(2, 4);
+
+    assert_eq!(detail, "slot=2/4");
+    assert!(!detail.contains("sk-"));
+    assert!(!detail.contains("..."));
+}
+
+#[test]
 fn format_failure_aggregate_prepends_user_hint_when_no_fallbacks_configured() {
     let failures = vec![
         "provider=custom_openai model=reasoning-v1 attempt 1/1: non_retryable; \
