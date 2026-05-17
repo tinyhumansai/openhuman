@@ -28,12 +28,22 @@ pub struct TeamModelConfig {
 
 impl TeamModelConfig {
     pub fn model_for_role(&self, is_team_lead: bool) -> Option<&str> {
-        let preferred = if is_team_lead {
-            self.lead_model.as_deref().or(self.agent_model.as_deref())
+        let lead_model = self
+            .lead_model
+            .as_deref()
+            .map(str::trim)
+            .filter(|model| !model.is_empty());
+        let agent_model = self
+            .agent_model
+            .as_deref()
+            .map(str::trim)
+            .filter(|model| !model.is_empty());
+
+        if is_team_lead {
+            lead_model.or(agent_model)
         } else {
-            self.agent_model.as_deref().or(self.lead_model.as_deref())
-        };
-        preferred.map(str::trim).filter(|model| !model.is_empty())
+            agent_model.or(lead_model)
+        }
     }
 }
 
