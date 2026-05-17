@@ -29,6 +29,11 @@ pub struct SubagentRunOptions {
     /// task prompt. Rendered as a `[Context]\n…\n` prefix.
     pub context: Option<String>,
 
+    /// Optional exact model id for this single spawn. When present it
+    /// wins over the agent definition's model spec but keeps the
+    /// parent's provider/routing unchanged.
+    pub model_override: Option<String>,
+
     /// Stable id for tracing / DomainEvents (defaults to a UUID).
     pub task_id: Option<String>,
 

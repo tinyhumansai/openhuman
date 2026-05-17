@@ -144,6 +144,7 @@ use std::sync::Arc;
 struct CapturedRequest {
     messages: Vec<crate::openhuman::providers::ChatMessage>,
     tool_count: usize,
+    model: String,
 }
 
 struct ScriptedProvider {
@@ -175,12 +176,13 @@ impl Provider for ScriptedProvider {
     async fn chat(
         &self,
         request: PChatRequest<'_>,
-        _model: &str,
+        model: &str,
         _temperature: f64,
     ) -> anyhow::Result<ChatResponse> {
         self.captured.lock().push(CapturedRequest {
             messages: request.messages.to_vec(),
             tool_count: request.tools.map_or(0, |tools| tools.len()),
+            model: model.to_string(),
         });
         let mut q = self.responses.lock();
         if q.is_empty() {
@@ -378,6 +380,7 @@ async fn typed_mode_returns_text_through_runner() {
                 skill_filter_override: None,
                 toolkit_override: None,
                 context: None,
+                model_override: None,
                 task_id: Some("t1".into()),
                 worker_thread_id: None,
             },
@@ -486,6 +489,7 @@ async fn typed_mode_filters_tools_by_skill_filter() {
                 skill_filter_override: Some("notion".into()),
                 toolkit_override: None,
                 context: None,
+                model_override: None,
                 task_id: None,
                 worker_thread_id: None,
             },
@@ -588,6 +592,31 @@ async fn runner_errors_outside_parent_context() {
     let def = make_def_named_tools(&[]);
     let result = run_subagent(&def, "x", SubagentRunOptions::default()).await;
     assert!(matches!(result, Err(SubagentRunError::NoParentContext)));
+}
+
+#[tokio::test]
+async fn typed_mode_model_override_pins_exact_model_for_spawn() {
+    let provider = ScriptedProvider::new(vec![text_response("ok")]);
+    let parent = make_parent(provider.clone(), vec![]);
+    let mut def = make_def_named_tools(&[]);
+    def.model = ModelSpec::Inherit;
+
+    let _ = with_parent_context(parent, async {
+        run_subagent(
+            &def,
+            "use the pinned model",
+            SubagentRunOptions {
+                model_override: Some("deepseek/deepseek-r2".into()),
+                ..Default::default()
+            },
+        )
+        .await
+    })
+    .await
+    .expect("runner should succeed");
+
+    let captured = provider.captured.lock();
+    assert_eq!(captured[0].model, "deepseek/deepseek-r2");
 }
 
 /// #1122 — when the parent attaches a progress sink, the inner loop
@@ -705,6 +734,7 @@ fn resolve_subagent_provider_inherit_uses_parent_provider_and_model() {
         None,
         parent.clone(),
         "parent-model-x".to_string(),
+        None,
     );
     assert!(
         arc_ptr_eq(&parent, &resolved_provider),
@@ -725,12 +755,31 @@ fn resolve_subagent_provider_exact_overrides_only_model() {
         None,
         parent.clone(),
         "parent-model-x".to_string(),
+        None,
     );
     assert!(
         arc_ptr_eq(&parent, &resolved_provider),
         "Exact must keep the parent's provider — only the model name changes"
     );
     assert_eq!(resolved_model, "haiku-mini");
+}
+
+#[test]
+fn resolve_subagent_provider_spawn_override_wins_over_definition_model() {
+    let parent: Arc<dyn Provider> = ScriptedProvider::new(vec![]);
+    let (resolved_provider, resolved_model) = super::resolve_subagent_provider(
+        &ModelSpec::Exact("definition-model".to_string()),
+        "test_agent",
+        None,
+        parent.clone(),
+        "parent-model-x".to_string(),
+        Some("spawn-model-y"),
+    );
+    assert!(
+        arc_ptr_eq(&parent, &resolved_provider),
+        "inline spawn override should not change the provider"
+    );
+    assert_eq!(resolved_model, "spawn-model-y");
 }
 
 #[test]
@@ -747,6 +796,7 @@ fn resolve_subagent_provider_hint_with_no_config_falls_back() {
         None, // no config loaded
         parent.clone(),
         "real-claude-id".to_string(),
+        None,
     );
     assert!(
         arc_ptr_eq(&parent, &resolved_provider),
@@ -781,6 +831,7 @@ fn resolve_subagent_provider_hint_with_config_routes_via_factory() {
         Some(&config),
         parent.clone(),
         "parent-model-ignored-on-hint".to_string(),
+        None,
     );
     assert_eq!(
         resolved_model, "agentic-specific-model",
@@ -807,6 +858,7 @@ fn resolve_subagent_provider_hint_falls_back_on_factory_error() {
         Some(&config),
         parent.clone(),
         "fallback-model".to_string(),
+        None,
     );
     assert!(
         arc_ptr_eq(&parent, &resolved_provider),

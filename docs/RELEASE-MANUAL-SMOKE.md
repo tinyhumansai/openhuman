@@ -13,12 +13,17 @@ This is the **only** acceptable substitute for a `🚫` row in [`TEST-COVERAGE-M
 3. Tick each box only after you have verified the expected outcome with your own eyes.
 4. Paste the completed checklist + sign-off block into the release PR description.
 5. Any item that is genuinely not applicable for this release: mark `N/A` with a one-line reason; do not silently skip.
+6. If `release-staging.yml` was dispatched with `skip_e2e=true`, record the reason and link the most recent relevant green pretest evidence in the PR notes (unit/rust and E2E as applicable). That override is for operator recovery, not the default release path.
 
 ---
 
 ## Per-release smoke
 
 Applies to every release, all platforms.
+
+### Public installer script
+
+- [ ] **`scripts/install.sh` downloads the latest asset on a proxy/VPN network** — From a clean checkout, run `bash scripts/install.sh --dry-run --verbose`, then run the public `curl -fsSL https://raw.githubusercontent.com/tinyhumansai/openhuman/main/scripts/install.sh | bash` flow on one macOS or Linux host. Expected: release metadata resolves, the asset downloads successfully, and transient GitHub/CDN HTTP/2 failures retry over HTTP/1.1 instead of surfacing `curl: (16) Error in the HTTP2 framing layer`.
 
 ### macOS
 

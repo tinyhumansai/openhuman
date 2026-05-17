@@ -36,6 +36,8 @@ fn accessors() {
     assert_eq!(p.base_url(), "http://x");
     assert_eq!(p.model(), "m");
     assert_eq!(p.name(), "openai");
+    assert_eq!(p.model_id(), "m");
+    assert_eq!(p.signature(), "provider=openai;model=m;dims=1");
 }
 
 #[test]

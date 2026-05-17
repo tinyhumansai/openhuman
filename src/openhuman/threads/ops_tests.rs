@@ -4,6 +4,9 @@
 //! the async `ops::*` entry points rely on.
 use super::*;
 use crate::openhuman::threads::title::collapse_whitespace;
+use crate::openhuman::threads::turn_state::{
+    self, ClearTurnStateRequest, GetTurnStateRequest, TurnState,
+};
 use crate::openhuman::threads::ThreadsError;
 use serde_json::{json, Value};
 use std::ffi::OsString;
@@ -475,4 +478,216 @@ async fn generate_title_returns_typed_not_found_for_stale_thread() {
         }
     );
     assert_eq!(err.to_string(), "thread thread-missing not found");
+}
+
+async fn create_thread_with_title(_workspace: &tempfile::TempDir, thread_id: &str, title: &str) {
+    let dir = crate::openhuman::config::Config::load_or_init()
+        .await
+        .expect("load config")
+        .workspace_dir;
+    conversations::ensure_thread(
+        dir,
+        CreateConversationThread {
+            id: thread_id.to_string(),
+            title: title.to_string(),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            parent_thread_id: None,
+            labels: None,
+        },
+    )
+    .expect("ensure thread");
+}
+
+#[tokio::test]
+async fn generate_title_leaves_custom_title_unchanged() {
+    let _env_lock = crate::openhuman::config::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let workspace = tempfile::tempdir().expect("workspace");
+    let _workspace_guard = EnvVarGuard::set_to_path("OPENHUMAN_WORKSPACE", workspace.path());
+    let thread_id = "thread-custom";
+    create_thread_with_title(&workspace, thread_id, "Already named").await;
+    let dir = crate::openhuman::config::Config::load_or_init()
+        .await
+        .expect("load config")
+        .workspace_dir;
+    conversations::append_message(
+        dir,
+        thread_id,
+        ConversationMessage {
+            id: "msg-1".into(),
+            content: "Please summarize my notes".into(),
+            message_type: "text".into(),
+            extra_metadata: Value::Null,
+            sender: "user".into(),
+            created_at: "2026-01-01T00:01:00Z".into(),
+        },
+    )
+    .unwrap();
+
+    let outcome = thread_generate_title(GenerateConversationThreadTitleRequest {
+        thread_id: thread_id.to_string(),
+        assistant_message: None,
+    })
+    .await
+    .expect("generate title");
+
+    assert_eq!(
+        outcome.value.data.as_ref().unwrap().title,
+        "Already named",
+        "non-placeholder titles must not be replaced"
+    );
+}
+
+#[tokio::test]
+async fn generate_title_returns_existing_title_when_no_user_message_exists() {
+    let _env_lock = crate::openhuman::config::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let workspace = tempfile::tempdir().expect("workspace");
+    let _workspace_guard = EnvVarGuard::set_to_path("OPENHUMAN_WORKSPACE", workspace.path());
+    let thread_id = "thread-no-user";
+    create_thread_with_title(&workspace, thread_id, "Chat Jan 1 1:00 AM").await;
+
+    let outcome = thread_generate_title(GenerateConversationThreadTitleRequest {
+        thread_id: thread_id.to_string(),
+        assistant_message: Some("assistant reply".into()),
+    })
+    .await
+    .expect("generate title");
+
+    assert_eq!(
+        outcome.value.data.as_ref().unwrap().title,
+        "Chat Jan 1 1:00 AM"
+    );
+}
+
+#[tokio::test]
+async fn generate_title_falls_back_to_first_user_message_when_assistant_missing() {
+    let _env_lock = crate::openhuman::config::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let workspace = tempfile::tempdir().expect("workspace");
+    let _workspace_guard = EnvVarGuard::set_to_path("OPENHUMAN_WORKSPACE", workspace.path());
+    let thread_id = "thread-fallback";
+    create_thread_with_title(&workspace, thread_id, "Chat Jan 1 1:00 AM").await;
+    let dir = crate::openhuman::config::Config::load_or_init()
+        .await
+        .expect("load config")
+        .workspace_dir;
+    let user_message = "Please summarize the latest five email threads for me.";
+    conversations::append_message(
+        dir,
+        thread_id,
+        ConversationMessage {
+            id: "msg-1".into(),
+            content: user_message.into(),
+            message_type: "text".into(),
+            extra_metadata: Value::Null,
+            sender: "user".into(),
+            created_at: "2026-01-01T00:01:00Z".into(),
+        },
+    )
+    .unwrap();
+
+    let outcome = thread_generate_title(GenerateConversationThreadTitleRequest {
+        thread_id: thread_id.to_string(),
+        assistant_message: None,
+    })
+    .await
+    .expect("generate title");
+
+    assert_eq!(
+        outcome.value.data.as_ref().unwrap().title,
+        title_from_user_message(user_message).unwrap()
+    );
+}
+
+#[tokio::test]
+async fn thread_delete_removes_persisted_turn_state_snapshot() {
+    let _env_lock = crate::openhuman::config::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let workspace = tempfile::tempdir().expect("workspace");
+    let _workspace_guard = EnvVarGuard::set_to_path("OPENHUMAN_WORKSPACE", workspace.path());
+    let thread_id = "thread-delete";
+    create_thread_with_title(&workspace, thread_id, "Chat Jan 1 1:00 AM").await;
+    let dir = crate::openhuman::config::Config::load_or_init()
+        .await
+        .expect("load config")
+        .workspace_dir;
+
+    let snapshot = TurnState::started(thread_id, "req-1", 4, "2026-01-01T00:00:00Z");
+    turn_state::store::put(dir.clone(), &snapshot).expect("put snapshot");
+    assert!(turn_state::store::get(dir, thread_id).unwrap().is_some());
+
+    thread_delete(DeleteConversationThreadRequest {
+        thread_id: thread_id.to_string(),
+        deleted_at: "2026-01-01T00:02:00Z".into(),
+    })
+    .await
+    .expect("delete thread");
+
+    let turn_state = turn_state_get(GetTurnStateRequest {
+        thread_id: thread_id.to_string(),
+    })
+    .await
+    .expect("turn_state_get");
+    assert!(turn_state.value.data.unwrap().turn_state.is_none());
+}
+
+#[tokio::test]
+async fn threads_purge_removes_valid_and_corrupted_turn_state_files() {
+    let _env_lock = crate::openhuman::config::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let workspace = tempfile::tempdir().expect("workspace");
+    let _workspace_guard = EnvVarGuard::set_to_path("OPENHUMAN_WORKSPACE", workspace.path());
+    create_thread_with_title(&workspace, "thread-a", "Chat Jan 1 1:00 AM").await;
+    create_thread_with_title(&workspace, "thread-b", "Chat Jan 1 1:01 AM").await;
+    let dir = crate::openhuman::config::Config::load_or_init()
+        .await
+        .expect("load config")
+        .workspace_dir;
+
+    let snapshot = TurnState::started("thread-a", "req-1", 4, "2026-01-01T00:00:00Z");
+    turn_state::store::put(dir.clone(), &snapshot).expect("put snapshot");
+
+    let turn_state_dir = dir.join("memory").join("conversations").join("turn_states");
+    std::fs::create_dir_all(&turn_state_dir).unwrap();
+    std::fs::write(
+        turn_state_dir.join("corrupted.json"),
+        "{ definitely not json",
+    )
+    .unwrap();
+
+    threads_purge(EmptyRequest {})
+        .await
+        .expect("purge threads should also clear snapshots");
+
+    if turn_state_dir.exists() {
+        let remaining_json: Vec<_> = std::fs::read_dir(&turn_state_dir)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.path().extension().and_then(|s| s.to_str()) == Some("json"))
+            .collect();
+        assert!(remaining_json.is_empty(), "expected no snapshot json files");
+    }
+}
+
+#[tokio::test]
+async fn turn_state_clear_reports_false_when_snapshot_is_absent() {
+    let _env_lock = crate::openhuman::config::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let workspace = tempfile::tempdir().expect("workspace");
+    let _workspace_guard = EnvVarGuard::set_to_path("OPENHUMAN_WORKSPACE", workspace.path());
+
+    let outcome = turn_state_clear(ClearTurnStateRequest {
+        thread_id: "missing-thread".into(),
+    })
+    .await
+    .expect("turn_state_clear");
+
+    assert!(!outcome.value.data.unwrap().cleared);
 }

@@ -1,4 +1,4 @@
-//! Shared tool result types retained after QuickJS runtime removal.
+//! Shared tool result types used by the tool and node runtime surfaces.
 
 use serde::{Deserialize, Serialize};
 

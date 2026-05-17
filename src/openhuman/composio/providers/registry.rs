@@ -74,7 +74,7 @@ pub fn all_providers() -> Vec<ProviderArc> {
 }
 
 /// Register the built-in providers shipped with the core. Called once
-/// from `start_channels` / `bootstrap_skill_runtime` startup paths.
+/// from `start_channels` / `bootstrap_core_runtime` startup paths.
 ///
 /// Idempotent: re-running just re-registers (no-op in practice).
 pub fn init_default_providers() {

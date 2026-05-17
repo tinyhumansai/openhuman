@@ -13,6 +13,7 @@ export interface WalletStatus {
   configured: boolean;
   onboardingCompleted: boolean;
   consentGranted: boolean;
+  secretStored: boolean;
   source: WalletSetupSource | null;
   mnemonicWordCount: number | null;
   accounts: WalletAccount[];
@@ -23,6 +24,7 @@ export interface SetupWalletParams {
   consentGranted: boolean;
   source: WalletSetupSource;
   mnemonicWordCount: number;
+  encryptedMnemonic?: string;
   accounts: WalletAccount[];
 }
 

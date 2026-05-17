@@ -207,24 +207,120 @@ fn split_on_blank_lines(text: &str) -> Vec<String> {
 }
 
 /// Splits text into chunks based on line boundaries to ensure size constraints.
+/// Lines exceeding `max_chars` are further split on word boundaries.
 fn split_on_lines(text: &str, max_chars: usize) -> Vec<String> {
-    let mut chunks = Vec::with_capacity(text.len() / max_chars.max(1) + 1);
+    let effective_max = max_chars.max(1);
+    let mut chunks = Vec::with_capacity(text.len() / effective_max + 1);
     let mut current = String::new();
 
+    log::trace!(
+        "[memory::chunker] split_on_lines: entry text_len={} max_chars={}",
+        text.len(),
+        effective_max
+    );
+
     for line in text.lines() {
-        // If the current line itself is larger than max_chars, it will be added anyway.
-        // We don't currently split *within* a single line.
-        if current.len() + line.len() + 1 > max_chars && !current.is_empty() {
+        if line.len() > effective_max {
+            log::debug!(
+                "[memory::chunker] split_on_lines: oversize line detected line_len={} max_chars={}",
+                line.len(),
+                effective_max
+            );
+            // Flush anything accumulated before the oversize line.
+            if !current.is_empty() {
+                chunks.push(std::mem::take(&mut current));
+            }
+            // Split the oversize line itself on word boundaries.
+            for part in split_within_line(line, effective_max) {
+                chunks.push(part);
+            }
+        } else if current.len() + line.len() + 1 > effective_max && !current.is_empty() {
             chunks.push(std::mem::take(&mut current));
+            current.push_str(line);
+            current.push('\n');
+        } else {
+            current.push_str(line);
+            current.push('\n');
         }
-        current.push_str(line);
-        current.push('\n');
     }
 
     if !current.is_empty() {
         chunks.push(current);
     }
 
+    chunks
+}
+
+/// Splits a single oversize line into chunks of at most `max_chars`, preferring
+/// word boundaries (spaces) to avoid cutting mid-word. Falls back to hard
+/// character splits when no boundary exists within the limit.
+fn split_within_line(line: &str, max_chars: usize) -> Vec<String> {
+    let mut chunks = Vec::new();
+    let mut start = 0;
+    let bytes = line.as_bytes();
+
+    log::trace!(
+        "[memory::chunker] split_within_line: entry line_len={} max_chars={}",
+        line.len(),
+        max_chars
+    );
+
+    while start < line.len() {
+        let remaining = line.len() - start;
+        if remaining <= max_chars {
+            chunks.push(format!("{}\n", &line[start..]));
+            break;
+        }
+
+        // Find the end boundary, staying on a valid char boundary.
+        let mut end = start + max_chars;
+        // Walk back to a valid UTF-8 char boundary.
+        while end > start && !line.is_char_boundary(end) {
+            end -= 1;
+        }
+
+        // If max_chars is smaller than the next character (e.g., a 4-byte emoji
+        // with max_chars=1), `end` can equal `start`. Advance to the next char
+        // boundary to guarantee progress and avoid an infinite loop.
+        if end == start {
+            end = start + 1;
+            while end < line.len() && !line.is_char_boundary(end) {
+                end += 1;
+            }
+            log::debug!(
+                "[memory::chunker] split_within_line: forced advance past multi-byte char start={} end={}",
+                start, end
+            );
+        }
+
+        // Try to find a space to break on (scan backwards from `end`).
+        let mut split_at = end;
+        while split_at > start && bytes[split_at - 1] != b' ' {
+            split_at -= 1;
+        }
+
+        // If we couldn't find a space within the range, hard-split at `end`.
+        if split_at == start {
+            split_at = end;
+            log::debug!(
+                "[memory::chunker] split_within_line: hard split at {} (no word boundary)",
+                split_at
+            );
+        }
+
+        chunks.push(format!("{}\n", &line[start..split_at]));
+        // Skip the space we split on (if it was a space).
+        if split_at < line.len() && bytes[split_at] == b' ' {
+            start = split_at + 1;
+        } else {
+            start = split_at;
+        }
+    }
+
+    log::trace!(
+        "[memory::chunker] split_within_line: exit parts={}",
+        chunks.len()
+    );
     chunks
 }
 
@@ -389,11 +485,63 @@ mod tests {
 
     #[test]
     fn very_long_single_line_no_newlines() {
-        // One giant line with no newlines — can't split on lines effectively
-        let text = "word ".repeat(5000);
-        let chunks = chunk_markdown(&text, 50);
-        // Should produce at least 1 chunk without panicking
-        assert!(!chunks.is_empty());
+        // One giant line with no newlines — must split within the line
+        let text = "word ".repeat(5000); // 25000 chars
+        let max_tokens = 50; // 200 chars
+        let max_chars = max_tokens * 4;
+        let chunks = chunk_markdown(&text, max_tokens);
+        assert!(
+            chunks.len() > 1,
+            "Expected multiple chunks for a 25KB single-line input, got {}",
+            chunks.len()
+        );
+        for chunk in &chunks {
+            // Each chunk must respect the size limit (with reasonable slack for
+            // trailing newline and word overshoot).
+            assert!(
+                chunk.content.len() <= max_chars + 50,
+                "Chunk exceeds max_chars: {} chars (limit {})",
+                chunk.content.len(),
+                max_chars
+            );
+        }
+    }
+
+    #[test]
+    fn oversize_line_splits_on_word_boundary() {
+        // A single line of 100 words, each 5 chars + space = 600 chars
+        let line = "abcde ".repeat(100);
+        let text = format!("# Heading\n{line}");
+        let chunks = chunk_markdown(&text, 25); // 25 tokens = 100 chars max
+        assert!(chunks.len() > 1);
+        // Verify no chunk contains a split mid-word
+        for chunk in &chunks {
+            // Words should be intact (no "abc\nde" splits)
+            for word in chunk.content.split_whitespace() {
+                if word.starts_with('#') {
+                    continue; // heading
+                }
+                assert!(
+                    word == "abcde" || word == "Heading",
+                    "Unexpected split word: '{word}'"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn oversize_line_no_spaces_hard_splits() {
+        // A single line with no word boundaries at all
+        let text = "x".repeat(1000);
+        let chunks = chunk_markdown(&text, 25); // 100 chars max
+        assert!(
+            chunks.len() > 1,
+            "Should hard-split when no spaces exist, got {} chunk(s)",
+            chunks.len()
+        );
+        // Reconstruct and verify no data loss
+        let reassembled: String = chunks.iter().map(|c| c.content.trim()).collect();
+        assert_eq!(reassembled.len(), 1000);
     }
 
     #[test]

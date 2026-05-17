@@ -11,6 +11,9 @@ impl EmbeddingProvider for FakeEmbedding {
     fn name(&self) -> &str {
         "fake"
     }
+    fn model_id(&self) -> &str {
+        "fake"
+    }
     fn dimensions(&self) -> usize {
         self.dims
     }
@@ -38,6 +41,9 @@ struct MismatchEmbedding;
 #[async_trait::async_trait]
 impl EmbeddingProvider for MismatchEmbedding {
     fn name(&self) -> &str {
+        "mismatch"
+    }
+    fn model_id(&self) -> &str {
         "mismatch"
     }
     fn dimensions(&self) -> usize {

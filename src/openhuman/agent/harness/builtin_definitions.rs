@@ -8,7 +8,9 @@
 //! Custom TOML definitions loaded later by
 //! [`super::definition_loader`] override any built-in with the same id.
 
-use super::definition::{AgentDefinition, DefinitionSource};
+use super::definition::AgentDefinition;
+#[cfg(test)]
+use super::definition::DefinitionSource;
 
 /// All built-in definitions, in stable order.
 ///
@@ -30,7 +32,10 @@ pub fn all() -> Vec<AgentDefinition> {
     let mut defs = crate::openhuman::agent::agents::load_builtins()
         .expect("built-in agent TOML must always parse (see agents/*/agent.toml)");
     #[cfg(test)]
-    defs.push(test_inherit_echo_def());
+    {
+        defs.push(test_inherit_echo_def());
+        defs.push(test_inherit_parallel_worker_def());
+    }
     defs
 }
 
@@ -72,6 +77,40 @@ pub(crate) fn test_inherit_echo_def() -> AgentDefinition {
     }
 }
 
+/// Test-only sub-agent: inherits the parent's provider and exposes a
+/// single named tool so long-running parallel fan-out tests can drive
+/// repeated nested tool calls through the real sub-agent loop.
+#[cfg(test)]
+pub(crate) fn test_inherit_parallel_worker_def() -> AgentDefinition {
+    use super::definition::{ModelSpec, PromptSource, SandboxMode, ToolScope};
+    AgentDefinition {
+        id: "__test_inherit_parallel_worker".into(),
+        when_to_use: "test-only parallel sub-agent that inherits the parent provider".into(),
+        display_name: None,
+        system_prompt: PromptSource::Inline("You are a test parallel worker.".into()),
+        omit_identity: true,
+        omit_memory_context: true,
+        omit_safety_preamble: true,
+        omit_skills_catalog: true,
+        omit_profile: true,
+        omit_memory_md: true,
+        model: ModelSpec::Inherit,
+        temperature: 0.0,
+        tools: ToolScope::Named(vec!["fixture_step".into()]),
+        disallowed_tools: vec![],
+        skill_filter: None,
+        extra_tools: vec![],
+        max_iterations: 6,
+        max_result_chars: None,
+        timeout_secs: None,
+        sandbox_mode: SandboxMode::None,
+        background: false,
+        subagents: vec![],
+        delegate_name: None,
+        source: DefinitionSource::Builtin,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -79,10 +118,10 @@ mod tests {
     #[test]
     fn all_definitions_present() {
         let defs = all();
-        // +1 for the cfg(test) `__test_inherit_echo` def appended by all().
+        // +2 for the cfg(test) inherit-based test defs appended by all().
         assert_eq!(
             defs.len(),
-            crate::openhuman::agent::agents::BUILTINS.len() + 1
+            crate::openhuman::agent::agents::BUILTINS.len() + 2
         );
     }
 
@@ -96,6 +135,23 @@ mod tests {
         assert!(
             matches!(def.model, ModelSpec::Inherit),
             "must be Inherit so the sub-agent uses the parent's (mock) provider"
+        );
+    }
+
+    #[test]
+    fn test_inherit_parallel_worker_is_present_and_inherits() {
+        use super::super::definition::{ModelSpec, ToolScope};
+        let def = all()
+            .into_iter()
+            .find(|d| d.id == "__test_inherit_parallel_worker")
+            .expect("test-only parallel worker must be registered in test builds");
+        assert!(
+            matches!(def.model, ModelSpec::Inherit),
+            "must be Inherit so the sub-agent uses the parent's (mock) provider"
+        );
+        assert!(
+            matches!(def.tools, ToolScope::Named(ref names) if names == &vec!["fixture_step".to_string()]),
+            "parallel worker must expose only the fixture_step tool"
         );
     }
 
@@ -120,6 +176,7 @@ mod tests {
             "code_executor",
             "integrations_agent",
             "tool_maker",
+            "skill_creator",
             "researcher",
             "critic",
             "archivist",

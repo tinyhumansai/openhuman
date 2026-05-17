@@ -177,7 +177,7 @@ fn all_variants_have_correct_domain() {
         (
             DomainEvent::SkillLoaded {
                 skill_id: "s".into(),
-                runtime: "quickjs".into(),
+                runtime: "nodejs".into(),
             },
             "skill",
         ),

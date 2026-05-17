@@ -54,12 +54,12 @@ pub async fn start_channels(config: Config) -> Result<()> {
     // a thin tokio task that ticks every minute and dispatches into
     // any provider whose `sync_interval_secs` has elapsed for an
     // active Composio connection. Safe to call here even though
-    // `bootstrap_skill_runtime` may also start it — `start_periodic_sync`
+    // `bootstrap_core_runtime` may also start it — `start_periodic_sync`
     // is intentionally cheap and the loop body no-ops when there are
     // no connections.
     crate::openhuman::composio::start_periodic_sync();
     // Native request handlers. Re-registering is safe (latest wins) so
-    // this is idempotent even if `bootstrap_skill_runtime` also runs.
+    // this is idempotent even if `bootstrap_core_runtime` also runs.
     // Must happen before `run_message_dispatch_loop` begins, because
     // channel dispatch calls `request_native_global("agent.run_turn", …)`
     // for every inbound message.
@@ -141,7 +141,7 @@ pub async fn start_channels(config: Config) -> Result<()> {
     tracing::debug!("[event_bus] global singleton initialized in start_channels");
 
     // Initialise the sub-agent definition registry from this workspace.
-    // Idempotent — `bootstrap_skill_runtime` may also call it.
+    // Idempotent — `bootstrap_core_runtime` may also call it.
     if let Err(err) = crate::openhuman::agent::harness::AgentDefinitionRegistry::init_global(
         &config.workspace_dir,
     ) {
@@ -151,7 +151,7 @@ pub async fn start_channels(config: Config) -> Result<()> {
         );
     }
     // Note: WebhookRequestSubscriber and ChannelInboundSubscriber are registered
-    // in bootstrap_skill_runtime() (src/core/jsonrpc.rs) to avoid double-registration
+    // in bootstrap_core_runtime() (src/core/jsonrpc.rs) to avoid double-registration
     // when both startup paths run in the same process.
 
     let provider_runtime_options = providers::ProviderRuntimeOptions {

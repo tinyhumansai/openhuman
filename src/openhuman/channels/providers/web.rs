@@ -59,17 +59,16 @@ struct SessionCacheFingerprint {
     /// turn read the cached welcome agent instead of invoking
     /// `build_session_agent` to re-resolve the target.
     target_agent_id: String,
-    /// `reasoning_provider` config value at build time. The cached
-    /// agent's provider was constructed from this string via
-    /// `create_chat_provider("reasoning", &config)`; without it the
-    /// next turn would reuse the stale provider after a Settings →
-    /// AI → LLM routing change until the cache evicts.
+    /// Bound provider string at build time for the selected workload
+    /// role (`reasoning`, `agentic`, `coding`, `summarization`).
     ///
-    /// Other workloads (`agentic`, `coding`, `memory`, …) are read
-    /// per call inside the factory, so they don't need to participate
-    /// in cache invalidation — only the orchestrator's reasoning
-    /// provider is bound to the cached `Agent`.
-    reasoning_provider: Option<String>,
+    /// Web-chat sessions cache a fully constructed `Agent`, which in
+    /// turn holds a concrete provider instance chosen up front by the
+    /// session builder. If the bound provider string changes in
+    /// Settings, the cache must invalidate so the next turn rebuilds
+    /// against the updated provider rather than silently reusing the
+    /// stale instance.
+    provider_binding: String,
 }
 
 struct SessionEntry {
@@ -677,11 +676,12 @@ async fn run_chat_task(
     // turn from the cached welcome agent — the cache hit predicate
     // didn't know about the routing decision before Commit 13.
     let target_agent_id = pick_target_agent_id(&config, &profile);
+    let provider_role = provider_role_for_model_override(model_override.as_deref());
     let current_fp = SessionCacheFingerprint {
         model_override: model_override.clone(),
         temperature,
         target_agent_id: target_agent_id.clone(),
-        reasoning_provider: config.reasoning_provider.clone(),
+        provider_binding: crate::openhuman::providers::provider_for_role(provider_role, &config),
     };
 
     let prior = {
@@ -702,12 +702,12 @@ async fn run_chat_task(
         Some(prior_entry) => {
             log::info!(
                 "[web-channel] cache miss — rebuilding session agent \
-                 (was id={}, now id={}; prior_reasoning_provider={:?}, now={:?}) \
+                 (was id={}, now id={}; prior_provider_binding={}, now={}) \
                  for client={} thread={}",
                 prior_entry.fingerprint.target_agent_id,
                 target_agent_id,
-                prior_entry.fingerprint.reasoning_provider,
-                current_fp.reasoning_provider,
+                prior_entry.fingerprint.provider_binding,
+                current_fp.provider_binding,
                 client_id,
                 thread_id
             );
@@ -1332,6 +1332,15 @@ fn normalize_model_override(model_override: Option<String>) -> Option<String> {
         .filter(|model| !model.is_empty())
 }
 
+fn provider_role_for_model_override(model_override: Option<&str>) -> &'static str {
+    match model_override.map(str::trim) {
+        Some("hint:agentic") | Some("agentic-v1") => "agentic",
+        Some("hint:coding") | Some("coding-v1") => "coding",
+        Some("hint:summarization") | Some("summarization-v1") => "summarization",
+        _ => "reasoning",
+    }
+}
+
 fn build_session_agent(
     config: &Config,
     client_id: &str,
@@ -1345,6 +1354,7 @@ fn build_session_agent(
     if let Some(model) = model_override {
         effective.default_model = Some(model);
     }
+    let provider_role = provider_role_for_model_override(effective.default_model.as_deref());
     if let Some(temp) = temperature {
         effective.default_temperature = temp;
     }
@@ -1374,9 +1384,10 @@ fn build_session_agent(
     // both flags reflect the current persisted state — no cache to
     // invalidate.
     log::info!(
-        "[web-channel] routing chat turn to '{}' via profile '{}' (chat_onboarding_completed={}, ui_onboarding_completed={}, client_id={}, thread_id={})",
+        "[web-channel] routing chat turn to '{}' via profile '{}' provider_role='{}' (chat_onboarding_completed={}, ui_onboarding_completed={}, client_id={}, thread_id={})",
         target_agent_id,
         profile.id,
+        provider_role,
         effective.chat_onboarding_completed,
         effective.onboarding_completed,
         client_id,
