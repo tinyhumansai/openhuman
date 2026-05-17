@@ -480,11 +480,16 @@ impl WebhookRouter {
         WEBHOOK_DEBUG_EVENTS.subscribe()
     }
 
-    /// Persist current routes to disk.
+    /// Persist current routes to disk (best-effort).
     ///
     /// Serialization happens on the calling thread (cheap), but the actual
     /// file write is offloaded to a blocking thread via `tokio::task::spawn_blocking`
     /// to avoid stalling the async runtime under rapid registration churn.
+    ///
+    /// **Note:** Because the write is fire-and-forget, it may not complete
+    /// before process exit. Routes are re-registered on next startup from
+    /// the persisted file, so a lost write only means the most recent
+    /// registration change is replayed.
     fn persist(&self) {
         let Some(ref path) = self.persist_path else {
             return;
@@ -522,8 +527,10 @@ impl WebhookRouter {
         // Offload to a blocking thread if a tokio runtime is available,
         // otherwise write synchronously (e.g. in unit tests).
         if tokio::runtime::Handle::try_current().is_ok() {
+            debug!("[webhooks] persist: offloading write to blocking thread pool");
             tokio::task::spawn_blocking(do_write);
         } else {
+            debug!("[webhooks] persist: no tokio runtime, writing synchronously");
             do_write();
         }
     }

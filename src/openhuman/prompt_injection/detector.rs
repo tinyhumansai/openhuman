@@ -215,16 +215,30 @@ fn optional_classifier() -> Option<&'static dyn OptionalClassifier> {
     OPTIONAL_CLASSIFIER.as_deref()
 }
 
+/// Returns `true` for zero-width, formatting, and obfuscation characters that
+/// should be stripped during prompt normalization. Shared between the `had_zwsp`
+/// detection flag and the normalization stripping logic to prevent drift.
+fn is_obfuscation_char(ch: char) -> bool {
+    matches!(
+        ch,
+        '\u{200b}'
+            | '\u{200c}'
+            | '\u{200d}'
+            | '\u{2060}'
+            | '\u{feff}'
+            | '\u{00ad}'
+            | '\u{034f}'
+            | '\u{180e}'
+            | '\u{200e}'
+            | '\u{200f}'
+            | '\u{202a}'..='\u{202e}'
+            | '\u{2066}'..='\u{2069}'
+    )
+}
+
 fn normalize_prompt(input: &str) -> NormalizedPrompt {
     let lowered = input.to_lowercase();
-    let had_zwsp = lowered.chars().any(|ch| {
-        matches!(
-            ch,
-            '\u{200b}' | '\u{200c}' | '\u{200d}' | '\u{2060}' | '\u{feff}'
-                | '\u{00ad}' | '\u{034f}' | '\u{180e}' | '\u{200e}' | '\u{200f}'
-                | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}'
-        )
-    });
+    let had_zwsp = lowered.chars().any(is_obfuscation_char);
     let has_base64_marker = BASE64_RE.is_match(&lowered);
 
     let mut buffer = String::with_capacity(lowered.len());
@@ -253,18 +267,7 @@ fn normalize_prompt(input: &str) -> NormalizedPrompt {
             '\u{04bb}' => 'h', // һ → h
             '\u{0501}' => 'd', // ԁ → d
             // Zero-width and formatting characters → strip
-            '\u{200b}'
-            | '\u{200c}'
-            | '\u{200d}'
-            | '\u{2060}'
-            | '\u{feff}'
-            | '\u{00ad}'
-            | '\u{034f}'
-            | '\u{180e}'
-            | '\u{200e}'
-            | '\u{200f}'
-            | '\u{202a}'..='\u{202e}'
-            | '\u{2066}'..='\u{2069}' => continue,
+            ch if is_obfuscation_char(ch) => continue,
             // Fullwidth ASCII → normal ASCII (U+FF01..U+FF5E → U+0021..U+007E)
             '\u{ff01}'..='\u{ff5e}' => {
                 let ascii = (ch as u32 - 0xff00 + 0x20) as u8 as char;
