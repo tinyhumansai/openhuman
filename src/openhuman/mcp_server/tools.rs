@@ -473,6 +473,7 @@ fn optional_string_array(
         )));
     };
     let mut out = Vec::with_capacity(items.len());
+    let mut dropped_blank = 0usize;
     for item in items {
         let Some(s) = item.as_str() else {
             return Err(ToolCallError::InvalidParams(format!(
@@ -482,9 +483,18 @@ fn optional_string_array(
         };
         let trimmed = s.trim();
         if trimmed.is_empty() {
+            dropped_blank += 1;
             continue;
         }
         out.push(trimmed.to_string());
+    }
+    if dropped_blank > 0 {
+        // Visibility for the silent-drop behaviour: callers don't see how many
+        // entries were skipped, and a downstream "the filter didn't match"
+        // bug is much faster to triage when this trace is in the log.
+        log::trace!(
+            "[mcp_server] optional_string_array key={key} dropped_blank_entries={dropped_blank}"
+        );
     }
     Ok(Some(out))
 }
