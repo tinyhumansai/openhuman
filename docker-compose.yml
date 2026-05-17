@@ -36,6 +36,19 @@ services:
       RUST_LOG: ${RUST_LOG:-info}
     volumes:
       - openhuman-workspace:/home/openhuman/.openhuman
+    # Security hardening: drop all capabilities, prevent privilege escalation,
+    # and cap resource usage to limit blast radius of a container compromise.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: '4.0'
+    tmpfs:
+      - /tmp:size=256M
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:7788/health"]
       interval: 30s

@@ -481,6 +481,10 @@ impl WebhookRouter {
     }
 
     /// Persist current routes to disk.
+    ///
+    /// Serialization happens on the calling thread (cheap), but the actual
+    /// file write is offloaded to a blocking thread via `tokio::task::spawn_blocking`
+    /// to avoid stalling the async runtime under rapid registration churn.
     fn persist(&self) {
         let Some(ref path) = self.persist_path else {
             return;
@@ -497,19 +501,30 @@ impl WebhookRouter {
             }
         };
 
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-
-        match serde_json::to_string_pretty(&persisted) {
-            Ok(json) => {
-                if let Err(e) = std::fs::write(path, json) {
-                    warn!("[webhooks] Failed to persist routes to {:?}: {}", path, e);
-                }
-            }
+        let json = match serde_json::to_string_pretty(&persisted) {
+            Ok(j) => j,
             Err(e) => {
                 warn!("[webhooks] Failed to serialize routes: {}", e);
+                return;
             }
+        };
+
+        let path = path.clone();
+        let do_write = move || {
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            if let Err(e) = std::fs::write(&path, json) {
+                warn!("[webhooks] Failed to persist routes to {:?}: {}", path, e);
+            }
+        };
+
+        // Offload to a blocking thread if a tokio runtime is available,
+        // otherwise write synchronously (e.g. in unit tests).
+        if tokio::runtime::Handle::try_current().is_ok() {
+            tokio::task::spawn_blocking(do_write);
+        } else {
+            do_write();
         }
     }
 
