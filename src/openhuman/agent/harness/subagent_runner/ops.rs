@@ -116,7 +116,7 @@ pub(super) fn resolve_subagent_provider(
         .map(str::trim)
         .filter(|model| !model.is_empty())
     {
-        log::info!(
+        log::debug!(
             "[subagent_runner] agent_id={} using inline model override model={}",
             agent_id,
             model
@@ -125,7 +125,7 @@ pub(super) fn resolve_subagent_provider(
     }
 
     if let Some(model) = config.and_then(|cfg| cfg.configured_agent_model(agent_id, is_team_lead)) {
-        log::info!(
+        log::debug!(
             "[subagent_runner] agent_id={} using config-level model pin model={}",
             agent_id,
             model
