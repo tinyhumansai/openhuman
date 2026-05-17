@@ -153,14 +153,35 @@ static DETECTION_RULES: Lazy<Vec<DetectionRule>> = Lazy::new(|| {
             )
             .expect("exfiltrate.system_prompt regex"),
         },
+        // Weak signal: a credential noun appearing anywhere. Common in
+        // benign questions like "how do I rotate my api key" or "what does
+        // JWT stand for", so the weight stays well below the Review
+        // threshold on its own. The companion rule `exfiltrate.credentials_with_intent`
+        // adds the extra score when an extraction verb actually targets the noun.
         DetectionRule {
             code: "exfiltrate.secrets",
-            message: "Attempts to exfiltrate secrets, credentials, or private data.",
-            score: 0.42,
+            message: "Mentions secret-bearing nouns (potentially benign on its own).",
+            score: 0.18,
             regex: Regex::new(
                 r"(api\s*key|secret|token|password|private\s+key|credentials?|session\s+cookie|jwt|bearer)",
             )
             .expect("exfiltrate.secrets regex"),
+        },
+        // Strong signal: extraction verb directly targeting a credential noun.
+        // The window between verb and noun is bounded so that a long phrase
+        // separating them (e.g. "reveal how to configure my api key") does NOT
+        // match. Up to 2 filler words are allowed between verb and determiner
+        // ("show me the X", "give me your X") so common phrasings still trip.
+        // The determiner is required, which is what excludes the benign
+        // "reveal how to set ..." case from issue #1940.
+        DetectionRule {
+            code: "exfiltrate.credentials_with_intent",
+            message: "Attempts to extract credentials, secrets, or tokens (verb + target).",
+            score: 0.46,
+            regex: Regex::new(
+                r"(reveal|show|print|dump|leak|display|share|expose|give|tell|fetch|return|output)\s+(\S+\s+){0,2}(the|your|my|all|stored|active|internal|hidden|configured|saved|env|environment)\s+(\S+\s+){0,3}(api\s*key|secret|token|password|private\s+key|credentials?|session\s+cookie|jwt|bearer)",
+            )
+            .expect("exfiltrate.credentials_with_intent regex"),
         },
         DetectionRule {
             code: "tool.abuse",
@@ -226,10 +247,29 @@ fn normalize_prompt(input: &str) -> NormalizedPrompt {
         || collapsed.contains("ignore all previous instructions")
         || compact.contains("ignoreallpreviousinstructions")
         || compact.contains("ignorepreviousinstructions");
+    // Exfiltration-intent signal. Phrases that strongly imply the user is
+    // targeting internal/hidden state fire on their own; the bare word
+    // "reveal" used to fire here too, but that caused false positives on
+    // benign queries like "Can you reveal how to set my api key?" (issue #1940).
+    // Now "reveal" only counts when it co-occurs with a target-state hint.
+    let reveal_target_hints = [
+        "system",
+        "hidden",
+        "developer",
+        "internal",
+        "prompt",
+        "instruction",
+        "rule",
+        "secret",
+    ];
     let has_exfiltration_intent = collapsed.contains("system prompt")
         || collapsed.contains("developer instructions")
         || collapsed.contains("hidden prompt")
-        || collapsed.contains("reveal");
+        || collapsed.contains("internal instructions")
+        || (collapsed.contains("reveal")
+            && reveal_target_hints
+                .iter()
+                .any(|hint| collapsed.contains(hint)));
 
     NormalizedPrompt {
         lowered,

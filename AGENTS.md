@@ -469,6 +469,7 @@ In the parent **OpenHuman** desktop app, **Tauri / Rust is a delivery vehicle**:
 
 ## Git workflow
 
+- **Never write code on `main`.** Before making any code changes, fork a new branch off the latest `main` (`git fetch upstream && git checkout -b <branch> upstream/main`). All work happens on that feature branch; `main` stays clean and only advances via merged PRs.
 - **GitHub issues on upstream** — File and track issues on **[tinyhumansai/openhuman](https://github.com/tinyhumansai/openhuman/)** ([Issues](https://github.com/tinyhumansai/openhuman/issues)), not only a fork’s tracker, unless the workflow explicitly says otherwise.
 - **GitHub issue templates** — Use **[`.github/ISSUE_TEMPLATE/feature.md`](.github/ISSUE_TEMPLATE/feature.md)** for new features and **[`.github/ISSUE_TEMPLATE/bug.md`](.github/ISSUE_TEMPLATE/bug.md)** for bugs; keep the same section structure and fill every required part. AI-authored issues should follow those templates verbatim.
 - **Open pull requests on upstream** — Always create PRs against **[tinyhumansai/openhuman](https://github.com/tinyhumansai/openhuman)** ([pull requests](https://github.com/tinyhumansai/openhuman/pulls)), not only a fork’s default remote, unless the workflow explicitly says otherwise.

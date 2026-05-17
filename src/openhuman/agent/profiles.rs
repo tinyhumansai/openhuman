@@ -504,7 +504,7 @@ mod tests {
                 model_override: Some(" agentic-v1 ".into()),
                 temperature: Some(0.25),
                 system_prompt_suffix: Some("  Be brief. ".into()),
-                allowed_tools: Some(vec![" todowrite ".into(), "".into()]),
+                allowed_tools: Some(vec![" todo ".into(), "".into()]),
                 built_in: false,
             })
             .expect("upsert");
@@ -522,7 +522,7 @@ mod tests {
         assert_eq!(custom.agent_id, "planner");
         assert_eq!(
             custom.allowed_tools.as_deref(),
-            Some(vec!["todowrite".to_string()].as_slice())
+            Some(vec!["todo".to_string()].as_slice())
         );
 
         let resolved = store.resolve(Some("custom-profile")).expect("resolve").1;
@@ -584,7 +584,7 @@ mod tests {
                 model_override: Some(" agentic-v1 ".into()),
                 temperature: Some(0.3),
                 system_prompt_suffix: Some(" suffix ".into()),
-                allowed_tools: Some(vec![" todowrite ".into()]),
+                allowed_tools: Some(vec![" todo ".into()]),
                 built_in: false,
             })
             .expect("upsert default");

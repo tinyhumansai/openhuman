@@ -860,7 +860,7 @@ mod tests {
                 "modelOverride": "agentic-v1",
                 "temperature": 0.2,
                 "systemPromptSuffix": "Use a crisp tone.",
-                "allowedTools": ["todowrite"],
+                "allowedTools": ["todo"],
                 "builtIn": false,
             }),
         )]))

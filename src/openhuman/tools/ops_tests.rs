@@ -412,7 +412,7 @@ fn all_tools_default_registry_contains_expected_baseline_surface() {
             "csv_export",
             "spawn_subagent",
             "spawn_parallel_agents",
-            "todowrite",
+            "todo",
             "plan_exit",
             "check_onboarding_status",
             "complete_onboarding",

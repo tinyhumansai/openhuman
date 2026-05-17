@@ -221,6 +221,8 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(crate::openhuman::learning::all_learning_registered_controllers());
     // Conversation thread and message management
     controllers.extend(crate::openhuman::threads::all_threads_registered_controllers());
+    // Per-thread todo list (agent task board CRUD over RPC)
+    controllers.extend(crate::openhuman::todos::all_todos_registered_controllers());
     // Embedded webview native notifications
     controllers.extend(
         crate::openhuman::webview_notifications::all_webview_notifications_registered_controllers(),
@@ -313,6 +315,8 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::learning::all_learning_controller_schemas());
     // Conversation thread and message management
     schemas.extend(crate::openhuman::threads::all_threads_controller_schemas());
+    // Per-thread todo list (agent task board CRUD over RPC)
+    schemas.extend(crate::openhuman::todos::all_todos_controller_schemas());
     // Embedded webview native notifications
     schemas.extend(
         crate::openhuman::webview_notifications::all_webview_notifications_controller_schemas(),

@@ -88,4 +88,28 @@ describe('Skills page — Composio catalog fallback', () => {
     fireEvent.click(screen.getAllByRole('button', { name: 'Retry' })[0]);
     expect(composioRefresh).toHaveBeenCalledTimes(1);
   });
+
+  it('surfaces expired Composio auth as reconnectable from the Gmail tile', () => {
+    composioToolkits = ['gmail'];
+    composioConnectionByToolkit = new Map([
+      ['gmail', { id: 'ca_expired', toolkit: 'gmail', status: 'EXPIRED' }],
+    ]);
+
+    renderWithProviders(<Skills />, { initialEntries: ['/skills'] });
+
+    const integrationsSection = screen
+      .getByRole('heading', { name: 'Integrations' })
+      .closest('.rounded-2xl');
+    expect(integrationsSection).not.toBeNull();
+    const gmailTile = within(integrationsSection as HTMLElement).getByRole('button', {
+      name: /Gmail.*Auth expired.*Reconnect/i,
+    });
+
+    expect(within(gmailTile).getByText('Auth expired')).toBeInTheDocument();
+
+    fireEvent.click(gmailTile);
+
+    expect(screen.getByText(/Gmail authorization expired/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Reconnect Gmail/i })).toBeInTheDocument();
+  });
 });

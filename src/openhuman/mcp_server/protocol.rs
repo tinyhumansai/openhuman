@@ -347,7 +347,10 @@ mod tests {
                 "agent.run_subagent",
                 "memory.search",
                 "memory.recall",
-                "tree.read_chunk"
+                "tree.read_chunk",
+                "tree.browse",
+                "tree.top_entities",
+                "tree.list_sources",
             ]
         );
     }

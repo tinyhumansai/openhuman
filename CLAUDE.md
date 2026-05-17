@@ -249,6 +249,7 @@ Tauri/Rust in the shell is a **delivery vehicle** (windowing, process lifecycle,
 
 ## Git workflow
 
+- **Never write code on `main`.** Before making any code changes, fork a new branch off the latest `main` (`git fetch upstream && git checkout -b <branch> upstream/main`). All work happens on that feature branch; `main` stays clean and only advances via merged PRs.
 - Issues and PRs on upstream **[tinyhumansai/openhuman](https://github.com/tinyhumansai/openhuman)** — not a fork — unless explicitly told otherwise.
 - Issue templates: [`.github/ISSUE_TEMPLATE/feature.md`](.github/ISSUE_TEMPLATE/feature.md), [`.github/ISSUE_TEMPLATE/bug.md`](.github/ISSUE_TEMPLATE/bug.md). PR template: [`.github/PULL_REQUEST_TEMPLATE.md`](.github/PULL_REQUEST_TEMPLATE.md). AI-authored text should follow them verbatim.
 - PRs target **`main`**.

@@ -3,7 +3,7 @@ import { openUrl as tauriOpenUrl } from '@tauri-apps/plugin-opener';
 
 import { isTauri } from './tauriCommands/common';
 
-const isHttpUrl = (url: string): boolean => /^https?:\/\//i.test(url);
+const isHttpUrl = (url: string): boolean => /^https?:\/\//i.test(url.trim());
 
 /**
  * Returns a low-PII representation of `url` for telemetry breadcrumbs.
@@ -48,22 +48,24 @@ const getTelemetryUrl = (url: string): string => {
  * `https://` / `mailto:` links still work for dev/preview builds.
  */
 export const openUrl = async (url: string): Promise<void> => {
+  const normalizedUrl = url.trim();
+
   if (isTauri()) {
     try {
-      await tauriOpenUrl(url);
+      await tauriOpenUrl(normalizedUrl);
       return;
     } catch (err) {
       Sentry.addBreadcrumb({
         category: 'ipc',
         level: 'warning',
         message: 'tauriOpenUrl failed; evaluating fallback',
-        data: { url: getTelemetryUrl(url), error: String(err) },
+        data: { url: getTelemetryUrl(normalizedUrl), error: String(err) },
       });
-      if (!isHttpUrl(url)) {
+      if (!isHttpUrl(normalizedUrl)) {
         throw err;
       }
       // http(s) URL — safe to fall back to window.open.
     }
   }
-  window.open(url, '_blank', 'noopener,noreferrer');
+  window.open(normalizedUrl, '_blank', 'noopener,noreferrer');
 };

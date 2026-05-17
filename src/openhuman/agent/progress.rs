@@ -133,7 +133,7 @@ pub enum AgentProgress {
     },
 
     /// The agent rewrote the per-thread task board. Emitted by the
-    /// `todowrite` tool after the board has been persisted.
+    /// `todo` tool (or `openhuman.todos_*` RPC) after the board has been persisted.
     TaskBoardUpdated {
         board: crate::openhuman::agent::task_board::TaskBoard,
     },

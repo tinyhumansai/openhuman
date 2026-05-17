@@ -825,21 +825,28 @@ impl Agent {
                     def.omit_skills_catalog,
                 ),
                 PromptSource::File { path } => {
-                    let workspace_path = config
-                        .workspace_dir
-                        .join("agent")
-                        .join("prompts")
-                        .join(path);
+                    let prompt_root = config.workspace_dir.join("agent").join("prompts");
+                    let workspace_path = prompt_root.join(path);
                     let body_text = if workspace_path.is_file() {
-                        std::fs::read_to_string(&workspace_path).unwrap_or_else(|e| {
-                            log::warn!(
-                                "[agent::builder] failed to read prompt {}: {e} — using empty body",
-                                workspace_path.display()
-                            );
-                            String::new()
-                        })
+                        match crate::openhuman::security::validate_path_within_root(&workspace_path, &prompt_root) {
+                            Ok(resolved) => {
+                                std::fs::read_to_string(&resolved).unwrap_or_else(|e| {
+                                    log::warn!(
+                                        "[agent::builder] failed to read prompt {}: {e} — using empty body",
+                                        workspace_path.display()
+                                    );
+                                    String::new()
+                                })
+                            }
+                            Err(e) => {
+                                log::warn!(
+                                    "[agent::builder] prompt path rejected: {e} — using empty body"
+                                );
+                                String::new()
+                            }
+                        }
                     } else {
-                        log::warn!(
+                        log::debug!(
                             "[agent::builder] prompt file {} not found — using empty body",
                             path
                         );

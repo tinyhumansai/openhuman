@@ -223,6 +223,23 @@ describe('<ComposioConnectModal>', () => {
     expect(screen.queryByText('(oxox)')).not.toBeInTheDocument();
   });
 
+  it('shows an expired-auth recovery state with a reconnect CTA', () => {
+    const connection: ComposioConnection = {
+      id: 'ca_expired',
+      toolkit: 'gmail',
+      status: 'EXPIRED',
+    };
+
+    render(
+      <ComposioConnectModal toolkit={mockToolkit} connection={connection} onClose={() => {}} />
+    );
+
+    expect(screen.getByText(/Gmail authorization expired/i)).toBeInTheDocument();
+    expect(screen.getByText(/Reconnect to re-enable Gmail tools/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Reconnect Gmail/i })).toBeInTheDocument();
+    expect(screen.queryByText(/ca_expired/)).not.toBeInTheDocument();
+  });
+
   // ── Connect flow → openUrl(connectUrl) ───────────────────────────
   //
   // Verifies the end-to-end OAuth handoff plumbing for #1710:

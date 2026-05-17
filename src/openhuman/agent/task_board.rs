@@ -1,8 +1,9 @@
 //! Persistent per-thread task board used by the agent kanban UI.
 //!
 //! Boards live under `<workspace>/agent_task_boards/<hex(thread_id)>.json`.
-//! The agent updates them through the `todowrite` tool; the UI can fetch or
-//! replace them through the thread RPC surface.
+//! The agent updates them through the `todo` tool; the UI can fetch or
+//! replace them through the `threads.task_board_*` and granular
+//! `openhuman.todos_*` RPC surfaces.
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};

@@ -4,8 +4,20 @@ import { Provider } from 'react-redux';
 import { describe, expect, it } from 'vitest';
 
 import localeReducer, { setLocale } from '../../../store/localeSlice';
+import en from '../en';
 import { I18nProvider, useT } from '../I18nContext';
-import type { Locale } from '../types';
+import type { Locale, TranslationMap } from '../types';
+import zhCN from '../zh-CN';
+
+function unwrapTranslationMap(map: TranslationMap): TranslationMap {
+  const raw = map as unknown as Record<string, unknown>;
+  return raw != null &&
+    typeof raw === 'object' &&
+    'default' in raw &&
+    typeof raw.default === 'object'
+    ? (raw.default as TranslationMap)
+    : map;
+}
 
 function Probe() {
   const { locale, t } = useT();
@@ -41,5 +53,14 @@ describe('I18nProvider', () => {
     expect(screen.getByText('Bahasa')).toBeInTheDocument();
     expect(screen.getByText('Bersihkan Data Aplikasi')).toBeInTheDocument();
     expect(screen.getByText('Quit')).toBeInTheDocument();
+  });
+
+  it('keeps the Simplified Chinese locale complete against English keys', () => {
+    const englishKeys = Object.keys(unwrapTranslationMap(en));
+    const simplifiedChinese = unwrapTranslationMap(zhCN);
+    const missingKeys = englishKeys.filter(key => !(key in simplifiedChinese));
+
+    expect(englishKeys.length).toBeGreaterThan(0);
+    expect(missingKeys).toEqual([]);
   });
 });
