@@ -45,6 +45,13 @@ function makeSnapshot(overrides: {
   };
 }
 
+function makeJwt(payload: Record<string, unknown>): string {
+  const encode = (value: Record<string, unknown>) =>
+    window.btoa(JSON.stringify(value)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+  return `${encode({ alg: 'none', typ: 'JWT' })}.${encode(payload)}.signature`;
+}
+
 type CoreStateContextValue = ReturnType<typeof useCoreState>;
 
 function Consumer({ captureCtx }: { captureCtx?: (ctx: CoreStateContextValue) => void }) {
@@ -269,6 +276,56 @@ describe('CoreStateProvider — identity-change cache clearing', () => {
     await waitFor(() =>
       expect(ctx?.snapshot.currentUser).toEqual({ first_name: 'Ada', username: 'ada' })
     );
+  });
+
+  it('ignores malformed session-token-updated events (#1937)', async () => {
+    fetchSnapshot.mockResolvedValue(makeSnapshot({ userId: null, sessionToken: null }));
+    listTeams.mockResolvedValue([]);
+
+    render(
+      <CoreStateProvider>
+        <Consumer />
+      </CoreStateProvider>
+    );
+
+    await waitFor(() => expect(screen.getByTestId('ready').textContent).toBe('ready'));
+
+    await act(async () => {
+      window.dispatchEvent(
+        new CustomEvent('core-state:session-token-updated', {
+          detail: { sessionToken: 'not-a-jwt' },
+        })
+      );
+    });
+
+    expect(screen.getByTestId('token').textContent).toBe('none');
+    expect(fetchSnapshot).toHaveBeenCalledTimes(1);
+  });
+
+  it('accepts unexpired JWT-shaped session-token-updated events (#1937)', async () => {
+    const token = makeJwt({ exp: Math.floor(Date.now() / 1000) + 60 });
+    fetchSnapshot
+      .mockResolvedValueOnce(makeSnapshot({ userId: null, sessionToken: null }))
+      .mockResolvedValueOnce(
+        makeSnapshot({ userId: null, sessionToken: token, isAuthenticated: true })
+      );
+    listTeams.mockResolvedValue([]);
+
+    render(
+      <CoreStateProvider>
+        <Consumer />
+      </CoreStateProvider>
+    );
+
+    await waitFor(() => expect(screen.getByTestId('ready').textContent).toBe('ready'));
+
+    await act(async () => {
+      window.dispatchEvent(
+        new CustomEvent('core-state:session-token-updated', { detail: { sessionToken: token } })
+      );
+    });
+
+    expect(screen.getByTestId('token').textContent).toBe(token);
   });
 
   it('setMeetAutoOrchestratorHandoff(true) calls update RPC + flips snapshot optimistically (#1299)', async () => {

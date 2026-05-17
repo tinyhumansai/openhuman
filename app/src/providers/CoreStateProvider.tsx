@@ -75,6 +75,31 @@ export function coreStatePollFailureWarningMessage(failureCount: number): string
   return null;
 }
 
+function decodeJwtPayload(token: string): Record<string, unknown> | null {
+  const [, payload] = token.split('.');
+  if (!payload) return null;
+
+  try {
+    const base64 = payload.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '=');
+    const decoded = window.atob(padded);
+    return JSON.parse(decoded) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function isPlausibleSessionToken(token: unknown): token is string {
+  if (typeof token !== 'string') return false;
+  if (token.trim() !== token || token.length === 0) return false;
+  if (token.split('.').length !== 3) return false;
+
+  const payload = decodeJwtPayload(token);
+  if (!payload || typeof payload.exp !== 'number') return false;
+
+  return payload.exp * 1000 > Date.now();
+}
+
 interface CoreStateContextValue extends CoreState {
   refresh: () => Promise<void>;
   refreshTeams: () => Promise<void>;
@@ -441,7 +466,7 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
     const onSessionTokenUpdated = (event: Event) => {
       const customEvent = event as CustomEvent<{ sessionToken?: string | null }>;
       const token = customEvent.detail?.sessionToken;
-      if (!token) {
+      if (!isPlausibleSessionToken(token)) {
         return;
       }
 
