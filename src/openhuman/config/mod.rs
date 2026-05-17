@@ -34,9 +34,9 @@ pub use schema::{
     MultimodalConfig, ObservabilityConfig, ProxyConfig, ProxyScope, ReflectionSource,
     ReliabilityConfig, ResourceLimitsConfig, RuntimeConfig, SandboxBackend, SandboxConfig,
     SchedulerConfig, SchedulerGateConfig, SchedulerGateMode, ScreenIntelligenceConfig,
-    SecretsConfig, SecurityConfig, SlackConfig, StorageConfig, StorageProviderConfig,
-    StorageProviderSection, StreamMode, TelegramConfig, UpdateConfig, UpdateRestartStrategy,
-    VoiceActivationMode, VoiceServerConfig, WebSearchConfig, WebhookConfig,
+    SearxngConfig, SecretsConfig, SecurityConfig, SlackConfig, StorageConfig,
+    StorageProviderConfig, StorageProviderSection, StreamMode, TelegramConfig, UpdateConfig,
+    UpdateRestartStrategy, VoiceActivationMode, VoiceServerConfig, WebSearchConfig, WebhookConfig,
     DEFAULT_CLOUD_LLM_MODEL, DEFAULT_MODEL, MODEL_AGENTIC_V1, MODEL_CODING_V1,
     MODEL_REASONING_QUICK_V1, MODEL_REASONING_V1,
 };

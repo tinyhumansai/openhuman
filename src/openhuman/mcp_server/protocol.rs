@@ -139,7 +139,7 @@ async fn handle_request(id: Value, method: &str, params: Value) -> Value {
     match method {
         "initialize" => success_response(id, initialize_result(params)),
         "ping" => success_response(id, json!({})),
-        "tools/list" => success_response(id, tools::list_tools_result()),
+        "tools/list" => success_response(id, tools::list_tools_result().await),
         "tools/call" => match parse_tool_call_params(params) {
             Ok((name, arguments)) => {
                 log::debug!(
@@ -227,7 +227,7 @@ fn initialize_result(params: Value) -> Value {
             "name": "openhuman-core",
             "version": env!("CARGO_PKG_VERSION")
         },
-        "instructions": "OpenHuman MCP exposes first-level core integration: inspect the live tool catalog with core.list_tools or core.tool_instructions, inspect subagents with agent.list_subagents, run a standalone subagent with agent.run_subagent, and use memory.search or memory.recall plus tree.read_chunk for local memory reads."
+        "instructions": "OpenHuman MCP exposes first-level core integration: inspect the live tool catalog with core.list_tools or core.tool_instructions, inspect subagents with agent.list_subagents, run a standalone subagent with agent.run_subagent, use searxng_search when self-hosted search is enabled, and use memory.search or memory.recall plus tree.read_chunk for local memory reads."
     })
 }
 
@@ -338,21 +338,20 @@ mod tests {
             .iter()
             .map(|tool| tool["name"].as_str().expect("name"))
             .collect::<Vec<_>>();
-        assert_eq!(
-            names,
-            vec![
-                "core.list_tools",
-                "core.tool_instructions",
-                "agent.list_subagents",
-                "agent.run_subagent",
-                "memory.search",
-                "memory.recall",
-                "tree.read_chunk",
-                "tree.browse",
-                "tree.top_entities",
-                "tree.list_sources",
-            ]
-        );
+        for expected in [
+            "core.list_tools",
+            "core.tool_instructions",
+            "agent.list_subagents",
+            "agent.run_subagent",
+            "memory.search",
+            "memory.recall",
+            "tree.read_chunk",
+            "tree.browse",
+            "tree.top_entities",
+            "tree.list_sources",
+        ] {
+            assert!(names.contains(&expected), "missing {expected}");
+        }
     }
 
     #[tokio::test]

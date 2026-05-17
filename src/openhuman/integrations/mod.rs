@@ -8,6 +8,7 @@ pub mod apify;
 pub mod client;
 pub mod google_places;
 pub mod parallel;
+pub mod searxng;
 pub mod seltz;
 pub mod stock_prices;
 pub mod twilio;
@@ -20,6 +21,7 @@ pub use parallel::{
     ParallelChatTool, ParallelDatasetTool, ParallelEnrichTool, ParallelExtractTool,
     ParallelResearchTool, ParallelSearchTool,
 };
+pub use searxng::{SearxngSearchArgs, SearxngSearchResponse, SearxngSearchTool};
 pub use seltz::SeltzSearchTool;
 pub use stock_prices::{
     StockCommodityTool, StockCryptoSeriesTool, StockExchangeRateTool, StockOptionsTool,
