@@ -72,6 +72,7 @@ pub mod text_input;
 pub mod threads;
 pub mod todos;
 pub mod tokenjuice;
+pub mod tool_registry;
 pub mod tool_timeout;
 pub mod tools;
 pub mod tree_summarizer;

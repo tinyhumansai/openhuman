@@ -36,6 +36,21 @@ accepts optional `source_kinds`, `source_ids`, `entity_ids`, `since_ms`,
 `until_ms`, `query`, `k`, and `offset`. `tree.top_entities` accepts optional
 `kind` and `k`. `tree.list_sources` accepts an optional `user_email_hint`.
 
+## Tool Registry
+
+The HTTP JSON-RPC server also exposes a read-only global tool registry for
+agents and dashboards that need discovery metadata without opening an MCP stdio
+session:
+
+| RPC method | Purpose |
+| --- | --- |
+| `openhuman.tool_registry_list` | List MCP stdio tools and controller-backed tools with stable `tool_id`, route, version, input/output schemas, allowed agents, tags, enabled state, and health. |
+| `openhuman.tool_registry_get` | Return one registry entry by `tool_id`, for example `memory.search` or `tools.web_search`. |
+
+The registry is discovery-only. It does not change tool dispatch or permission
+checks; MCP calls still go through `tools/call`, and controller-backed tools
+still route through their existing JSON-RPC methods.
+
 ## Smoke Test
 
 ```bash
@@ -46,9 +61,9 @@ printf '%s\n' \
   | openhuman-core mcp
 ```
 
-The response should include `capabilities.tools` from `initialize` and all six
-tool names from `tools/list`. A successful run writes exactly two compact JSON
-response lines to stdout; the `notifications/initialized` message is a
+The response should include `capabilities.tools` from `initialize` and the
+curated tool names from `tools/list`. A successful run writes exactly two compact
+JSON response lines to stdout; the `notifications/initialized` message is a
 notification and has no response.
 
 ```text
