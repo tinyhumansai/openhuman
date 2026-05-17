@@ -26,14 +26,14 @@ use super::client::{
     direct_list_tools, ComposioClient, ComposioClientKind,
 };
 use super::providers::{
-    get_provider, ProviderContext, ProviderUserProfile, SyncOutcome, SyncReason,
+    capability_matrix, get_provider, ProviderContext, ProviderUserProfile, SyncOutcome, SyncReason,
 };
 use super::types::{
     ComposioActiveTriggersResponse, ComposioAuthorizeResponse, ComposioAvailableTriggersResponse,
-    ComposioConnectionsResponse, ComposioCreateTriggerResponse, ComposioDeleteResponse,
-    ComposioDisableTriggerResponse, ComposioEnableTriggerResponse, ComposioExecuteResponse,
-    ComposioGithubReposResponse, ComposioToolkitsResponse, ComposioToolsResponse,
-    ComposioTriggerHistoryResult,
+    ComposioCapabilitiesResponse, ComposioConnectionsResponse, ComposioCreateTriggerResponse,
+    ComposioDeleteResponse, ComposioDisableTriggerResponse, ComposioEnableTriggerResponse,
+    ComposioExecuteResponse, ComposioGithubReposResponse, ComposioToolkitsResponse,
+    ComposioToolsResponse, ComposioTriggerHistoryResult,
 };
 
 /// Resolve a backend-mode [`ComposioClient`] from the root config, or
@@ -195,6 +195,20 @@ pub async fn composio_list_toolkits(
             ))
         }
     }
+}
+
+pub async fn composio_list_capabilities(
+    _config: &Config,
+) -> OpResult<RpcOutcome<ComposioCapabilitiesResponse>> {
+    tracing::debug!("[composio] rpc list_capabilities");
+    let resp = ComposioCapabilitiesResponse {
+        capabilities: capability_matrix(),
+    };
+    let count = resp.capabilities.len();
+    Ok(RpcOutcome::new(
+        resp,
+        vec![format!("composio: {count} capability row(s) listed")],
+    ))
 }
 
 // ── Connections ─────────────────────────────────────────────────────

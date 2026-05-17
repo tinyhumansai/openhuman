@@ -65,6 +65,21 @@ async fn composio_list_toolkits_errors_without_session() {
 }
 
 #[tokio::test]
+async fn composio_list_capabilities_does_not_require_session() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config = test_config(&tmp);
+    let outcome = composio_list_capabilities(&config).await.unwrap();
+    assert!(outcome
+        .value
+        .capabilities
+        .iter()
+        .any(|entry| { entry.toolkit == "gmail" && entry.native_provider && entry.memory_ingest }));
+    assert!(outcome.value.capabilities.iter().any(|entry| {
+        entry.toolkit == "googlecalendar" && !entry.native_provider && entry.curated_tools
+    }));
+}
+
+#[tokio::test]
 async fn composio_list_connections_errors_without_session() {
     let tmp = tempfile::tempdir().unwrap();
     let config = test_config(&tmp);
