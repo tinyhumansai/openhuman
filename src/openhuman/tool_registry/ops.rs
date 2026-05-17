@@ -46,15 +46,27 @@ pub fn registry_entries() -> Vec<ToolRegistryEntry> {
 
     for spec in crate::openhuman::mcp_server::tool_specs() {
         let entry = mcp_tool_entry(spec);
-        entries.insert(entry.tool_id.clone(), entry);
+        insert_registry_entry(&mut entries, entry, "mcp_stdio");
     }
 
     for schema in crate::openhuman::tools::all_tools_controller_schemas() {
         let entry = controller_tool_entry(&schema);
-        entries.insert(entry.tool_id.clone(), entry);
+        insert_registry_entry(&mut entries, entry, "controller");
     }
 
     entries.into_values().collect()
+}
+
+fn insert_registry_entry(
+    entries: &mut BTreeMap<String, ToolRegistryEntry>,
+    entry: ToolRegistryEntry,
+    source: &str,
+) {
+    let key = entry.tool_id.clone();
+    assert!(
+        entries.insert(key.clone(), entry).is_none(),
+        "duplicate tool_id in registry: {key} from {source}"
+    );
 }
 
 fn mcp_tool_entry(spec: McpToolSpec) -> ToolRegistryEntry {
@@ -268,6 +280,30 @@ mod tests {
         sorted.dedup();
 
         assert_eq!(ids, sorted);
+    }
+
+    #[test]
+    #[should_panic(expected = "duplicate tool_id in registry")]
+    fn insert_registry_entry_panics_on_duplicate_tool_id() {
+        let mut entries = BTreeMap::new();
+        let entry = ToolRegistryEntry {
+            tool_id: "duplicate.tool".to_string(),
+            name: "duplicate.tool".to_string(),
+            title: "Duplicate Tool".to_string(),
+            description: "Test duplicate entry.".to_string(),
+            version: REGISTRY_ENTRY_VERSION.to_string(),
+            transport: ToolRegistryTransport::JsonRpc,
+            route: json!({}),
+            input_schema: json!({}),
+            output_schema: json!({}),
+            allowed_agents: vec!["*".to_string()],
+            tags: vec!["test".to_string()],
+            enabled: true,
+            health: ToolRegistryHealth::Available,
+        };
+
+        insert_registry_entry(&mut entries, entry.clone(), "first");
+        insert_registry_entry(&mut entries, entry, "second");
     }
 
     #[test]

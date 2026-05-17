@@ -477,11 +477,11 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 
 | Status           | Count                                            |
 | ---------------- | ------------------------------------------------ |
-| ✅ Covered       | 64                                               |
+| ✅ Covered       | 65                                               |
 | 🟡 Partial       | 27                                               |
 | ❌ Missing       | 27                                               |
 | 🚫 Manual smoke  | 11                                               |
-| **Total leaves** | **129 explicit + nested = 200 product features** |
+| **Total leaves** | **130 explicit + nested = 201 product features** |
 
 PR-A delta: 13 leaves moved from ❌ → ✅ via 5 WDIO specs + 2 Vitest + 1 Rust integration test.
 Remaining gaps tracked under sub-issues #965 (process), #966 (docs), #967 (tools), #968 (auth/perm), #969 (settings), #970 (rewards), #971 (manual smoke).
