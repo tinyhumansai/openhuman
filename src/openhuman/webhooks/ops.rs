@@ -136,7 +136,7 @@ pub async fn unregister_echo(
 /// Register an agent-backed webhook tunnel.
 ///
 /// Incoming requests on this tunnel will be routed to the triage
-/// pipeline instead of the (removed) skill runtime.
+/// pipeline instead of direct skill dispatch.
 pub async fn register_agent(
     tunnel_uuid: &str,
     agent_id: Option<String>,

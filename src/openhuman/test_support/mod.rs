@@ -5,7 +5,11 @@
 //! the process. As new domains add persistent state, extend `rpc::reset` to
 //! wipe them too — every new domain that survives a `test_reset` is a leak
 //! that will make specs interfere with each other.
+//!
+//! `introspect` adds read-only RPCs that let specs verify state on disk
+//! and in the live process (workspace tree, files, IN_FLIGHT chat map).
 
+pub mod introspect;
 pub mod rpc;
 mod schemas;
 

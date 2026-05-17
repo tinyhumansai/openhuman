@@ -5,10 +5,29 @@ import { MemoryRouter } from 'react-router-dom';
 import { REHYDRATE } from 'redux-persist';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import mascotReducer, { DEFAULT_MASCOT_COLOR, setMascotColor } from '../../../../store/mascotSlice';
+import mascotReducer, {
+  DEFAULT_MASCOT_COLOR,
+  setMascotColor,
+  setSelectedMascotId,
+} from '../../../../store/mascotSlice';
 import MascotPanel from '../MascotPanel';
 
-const { mockNavigateBack } = vi.hoisted(() => ({ mockNavigateBack: vi.fn() }));
+const { mockNavigateBack, fetchMascotListMock, getCachedMascotDetailMock } = vi.hoisted(() => ({
+  mockNavigateBack: vi.fn(),
+  fetchMascotListMock: vi.fn(),
+  getCachedMascotDetailMock: vi.fn(),
+}));
+
+vi.mock('../../../../services/mascotService', () => ({
+  fetchMascotList: (...args: unknown[]) => fetchMascotListMock(...args),
+  getCachedMascotDetail: (...args: unknown[]) => getCachedMascotDetailMock(...args),
+}));
+
+vi.mock('../../../../features/human/Mascot/backend/BackendMascot', () => ({
+  BackendMascot: ({ mascot }: { mascot: { id: string } }) => (
+    <div data-testid={`backend-mascot-preview-${mascot.id}`} />
+  ),
+}));
 
 vi.mock('../../hooks/useSettingsNavigation', () => ({
   useSettingsNavigation: () => ({
@@ -37,11 +56,13 @@ function renderPanel(store = buildStore()) {
 describe('MascotPanel', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    fetchMascotListMock.mockResolvedValue([]);
+    getCachedMascotDetailMock.mockResolvedValue(null);
   });
 
   it('renders a radio swatch for each supported color', () => {
     renderPanel();
-    expect(screen.getByRole('radiogroup', { name: 'Mascot color' })).toBeInTheDocument();
+    expect(screen.getByRole('radiogroup', { name: 'OpenHuman color' })).toBeInTheDocument();
     for (const label of ['Yellow', 'Burgundy', 'Black', 'Navy', 'Green']) {
       expect(screen.getByRole('radio', { name: label })).toBeInTheDocument();
     }
@@ -125,5 +146,81 @@ describe('MascotPanel — mascotSlice rehydrate guard', () => {
     );
     expect(screen.getByRole('radio', { name: 'Green' })).toHaveAttribute('aria-checked', 'true');
     expect(screen.getByRole('radio', { name: 'Yellow' })).toHaveAttribute('aria-checked', 'false');
+  });
+
+  describe('backend mascot library', () => {
+    const summary = {
+      id: 'yellow',
+      name: 'Yellow',
+      version: '1.0.0',
+      description: '',
+      states: [{ id: 'idle', label: 'Idle', description: '' }],
+      hasVisemes: true,
+    };
+    const detail = {
+      id: 'yellow',
+      name: 'Yellow',
+      version: '1.0.0',
+      description: '',
+      viewBox: '0 0 1 1',
+      defaultState: 'idle',
+      variables: [],
+      states: [{ id: 'idle', label: 'Idle', description: '', svg: '<svg/>' }],
+      visemes: [],
+    };
+
+    it('renders the picker entries returned by the API', async () => {
+      fetchMascotListMock.mockResolvedValueOnce([summary]);
+      renderPanel();
+      expect(await screen.findByTestId('backend-mascot-yellow')).toBeInTheDocument();
+      // Default-row (local) sentinel
+      expect(screen.getByText(/Local OpenHuman/)).toBeInTheDocument();
+    });
+
+    it('shows a friendly empty state when the library is empty', async () => {
+      fetchMascotListMock.mockResolvedValueOnce([]);
+      renderPanel();
+      expect(
+        await screen.findByText(/No OpenHuman characters are available yet/i)
+      ).toBeInTheDocument();
+    });
+
+    it('shows an error when the library endpoint rejects', async () => {
+      fetchMascotListMock.mockRejectedValueOnce(new Error('offline'));
+      renderPanel();
+      expect(
+        await screen.findByText(/OpenHuman library unavailable: offline/i)
+      ).toBeInTheDocument();
+    });
+
+    it('dispatches setSelectedMascotId when a backend mascot is picked', async () => {
+      fetchMascotListMock.mockResolvedValueOnce([summary]);
+      getCachedMascotDetailMock.mockResolvedValueOnce(detail);
+      const { store } = renderPanel();
+      const row = await screen.findByTestId('backend-mascot-yellow');
+      fireEvent.click(row);
+      expect(store.getState().mascot.selectedMascotId).toBe('yellow');
+    });
+
+    it('loads + previews the active backend mascot detail', async () => {
+      const store = buildStore();
+      store.dispatch(setSelectedMascotId('yellow'));
+      fetchMascotListMock.mockResolvedValueOnce([summary]);
+      getCachedMascotDetailMock.mockResolvedValueOnce(detail);
+      renderPanel(store);
+      expect(await screen.findByTestId('backend-mascot-preview-yellow')).toBeInTheDocument();
+      expect(getCachedMascotDetailMock).toHaveBeenCalledWith('yellow');
+    });
+
+    it('clearing the selection returns to the local default', async () => {
+      const store = buildStore();
+      store.dispatch(setSelectedMascotId('yellow'));
+      fetchMascotListMock.mockResolvedValueOnce([summary]);
+      getCachedMascotDetailMock.mockResolvedValueOnce(detail);
+      renderPanel(store);
+      const localRow = await screen.findByText(/Local OpenHuman/);
+      fireEvent.click(localRow);
+      expect(store.getState().mascot.selectedMascotId).toBeNull();
+    });
   });
 });

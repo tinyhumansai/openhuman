@@ -4,7 +4,7 @@
 //! Sibling to [`crate::openhuman::tools::impl::system::shell::ShellTool`]: same
 //! security gates, same env hygiene, but the command is pinned to the `node`
 //! binary resolved by
-//! [`crate::openhuman::node_runtime::NodeBootstrap`].
+//! [`crate::openhuman::javascript::NodeBootstrap`].
 //!
 //! Two input modes:
 //!
@@ -22,7 +22,7 @@
 //! `PATH`. Subsequent calls reuse the cached install.
 
 use crate::openhuman::agent::host_runtime::RuntimeAdapter;
-use crate::openhuman::node_runtime::NodeBootstrap;
+use crate::openhuman::javascript::NodeBootstrap;
 use crate::openhuman::security::SecurityPolicy;
 use crate::openhuman::tools::traits::{Tool, ToolResult};
 use async_trait::async_trait;

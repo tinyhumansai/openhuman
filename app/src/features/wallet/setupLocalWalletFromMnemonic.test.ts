@@ -3,9 +3,14 @@ import { describe, expect, it, vi } from 'vitest';
 import { persistLocalWalletFromMnemonic } from './setupLocalWalletFromMnemonic';
 
 const mockSetupLocalWallet = vi.fn();
+const mockEncryptSecret = vi.fn();
 
 vi.mock('../../services/walletApi', () => ({
   setupLocalWallet: (...args: unknown[]) => mockSetupLocalWallet(...args),
+}));
+
+vi.mock('../../utils/tauriCommands/auth', () => ({
+  openhumanEncryptSecret: (...args: unknown[]) => mockEncryptSecret(...args),
 }));
 
 describe('persistLocalWalletFromMnemonic', () => {
@@ -15,11 +20,13 @@ describe('persistLocalWalletFromMnemonic', () => {
       configured: true,
       onboardingCompleted: true,
       consentGranted: true,
+      secretStored: true,
       source: 'generated',
       mnemonicWordCount: 12,
       accounts: [],
       updatedAtMs: 123,
     });
+    mockEncryptSecret.mockResolvedValueOnce({ result: 'enc2:wallet-secret' });
 
     const mnemonic =
       'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
@@ -33,6 +40,7 @@ describe('persistLocalWalletFromMnemonic', () => {
       consentGranted: true,
       source: 'generated',
       mnemonicWordCount: 12,
+      encryptedMnemonic: 'enc2:wallet-secret',
       accounts: [
         {
           chain: 'evm',
@@ -61,10 +69,31 @@ describe('persistLocalWalletFromMnemonic', () => {
   it('rejects whitespace-only input without touching encryption key or wallet store', async () => {
     const setEncryptionKey = vi.fn(async () => undefined);
     mockSetupLocalWallet.mockReset();
+    mockEncryptSecret.mockReset();
 
     await expect(
       persistLocalWalletFromMnemonic({ mnemonic: '   \t  ', source: 'imported', setEncryptionKey })
     ).rejects.toThrow(/recovery phrase is required/i);
+    expect(setEncryptionKey).not.toHaveBeenCalled();
+    expect(mockEncryptSecret).not.toHaveBeenCalled();
+    expect(mockSetupLocalWallet).not.toHaveBeenCalled();
+  });
+
+  it('rejects empty encrypted mnemonic output before persisting wallet state', async () => {
+    const setEncryptionKey = vi.fn(async () => undefined);
+    mockSetupLocalWallet.mockReset();
+    mockEncryptSecret.mockReset();
+    mockEncryptSecret.mockResolvedValueOnce({ result: '   ' });
+
+    await expect(
+      persistLocalWalletFromMnemonic({
+        mnemonic:
+          'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about',
+        source: 'imported',
+        setEncryptionKey,
+      })
+    ).rejects.toThrow(/failed to secure recovery phrase/i);
+
     expect(setEncryptionKey).not.toHaveBeenCalled();
     expect(mockSetupLocalWallet).not.toHaveBeenCalled();
   });

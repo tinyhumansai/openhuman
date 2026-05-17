@@ -6,8 +6,10 @@ import reducer, {
   MAX_MASCOT_VOICE_ID_LEN,
   selectMascotColor,
   selectMascotVoiceId,
+  selectSelectedMascotId,
   setMascotColor,
   setMascotVoiceId,
+  setSelectedMascotId,
   SUPPORTED_MASCOT_COLORS,
 } from '../mascotSlice';
 import { resetUserScopedState } from '../resetActions';
@@ -139,6 +141,62 @@ describe('mascotSlice', () => {
       const state = reducer(undefined, rehydrate('mascot', { color: 'green' }));
       expect(state.color).toBe('green');
       expect(state.voiceId).toBeNull();
+    });
+  });
+
+  describe('selected backend mascot id', () => {
+    it('defaults to null', () => {
+      const state = reducer(undefined, { type: '@@INIT' });
+      expect(state.selectedMascotId).toBeNull();
+      expect(selectSelectedMascotId({ mascot: state })).toBeNull();
+    });
+
+    it('setSelectedMascotId trims and stores a valid id', () => {
+      const state = reducer(undefined, setSelectedMascotId('  yellow  '));
+      expect(state.selectedMascotId).toBe('yellow');
+    });
+
+    it('null payload clears the override', () => {
+      let state = reducer(undefined, setSelectedMascotId('yellow'));
+      state = reducer(state, setSelectedMascotId(null));
+      expect(state.selectedMascotId).toBeNull();
+    });
+
+    it('empty / whitespace input is treated as a reset', () => {
+      const state = reducer(
+        reducer(undefined, setSelectedMascotId('yellow')),
+        setSelectedMascotId('   ')
+      );
+      expect(state.selectedMascotId).toBeNull();
+    });
+
+    it('over-long input is dropped to null', () => {
+      const tooLong = 'x'.repeat(MAX_MASCOT_VOICE_ID_LEN + 1);
+      const state = reducer(undefined, setSelectedMascotId(tooLong));
+      expect(state.selectedMascotId).toBeNull();
+    });
+
+    it('resetUserScopedState clears the override', () => {
+      let state = reducer(undefined, setSelectedMascotId('yellow'));
+      state = reducer(state, resetUserScopedState());
+      expect(state.selectedMascotId).toBeNull();
+    });
+
+    const rehydrate = (key: string, payload?: unknown) => ({ type: REHYDRATE, key, payload });
+
+    it('restores a valid persisted id', () => {
+      const state = reducer(undefined, rehydrate('mascot', { selectedMascotId: 'yellow' }));
+      expect(state.selectedMascotId).toBe('yellow');
+    });
+
+    it('scrubs an invalid persisted id back to null', () => {
+      const state = reducer(undefined, rehydrate('mascot', { selectedMascotId: '   ' }));
+      expect(state.selectedMascotId).toBeNull();
+    });
+
+    it('treats a missing selectedMascotId field (older builds) as null', () => {
+      const state = reducer(undefined, rehydrate('mascot', { color: 'navy' }));
+      expect(state.selectedMascotId).toBeNull();
     });
   });
 });

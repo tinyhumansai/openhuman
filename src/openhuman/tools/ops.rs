@@ -2,8 +2,8 @@ use super::*;
 
 use crate::openhuman::agent::host_runtime::{NativeRuntime, RuntimeAdapter};
 use crate::openhuman::config::{Config, DelegateAgentConfig};
+use crate::openhuman::javascript::NodeBootstrap;
 use crate::openhuman::memory::Memory;
-use crate::openhuman::node_runtime::NodeBootstrap;
 use crate::openhuman::security::SecurityPolicy;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -155,6 +155,15 @@ pub fn all_tools_with_runtime(
             security.clone(),
             workspace_dir.to_path_buf(),
         )),
+        Box::new(AudioGeneratePodcastTool::new(
+            config.clone(),
+            security.clone(),
+        )),
+        Box::new(AudioEmailPodcastTool::new(config.clone(), security.clone())),
+        Box::new(AudioGenerateAndEmailPodcastTool::new(
+            config.clone(),
+            security.clone(),
+        )),
         Box::new(GmailUnsubscribeTool),
     ];
 
@@ -231,6 +240,26 @@ pub fn all_tools_with_runtime(
             root_config.gitbooks.timeout_secs,
         )));
         tracing::debug!("[gitbooks] registered gitbooks_search + gitbooks_get_page");
+    }
+
+    // Generic remote MCP bridge tools. These let the agent enumerate
+    // named MCP servers and forward `tools/call` through the core
+    // instead of hardcoding one bespoke MCP integration per server.
+    let mcp_registry =
+        Arc::new(crate::openhuman::mcp_client::McpServerRegistry::from_config(root_config));
+    if !mcp_registry.is_empty() {
+        tools.push(Box::new(McpListServersTool::new(Arc::clone(&mcp_registry))));
+        tools.push(Box::new(McpListToolsTool::new(Arc::clone(&mcp_registry))));
+        tools.push(Box::new(McpCallTool::new(
+            Arc::clone(&mcp_registry),
+            security.clone(),
+        )));
+        tracing::debug!(
+            count = mcp_registry.list().len(),
+            "[mcp_client] registered generic MCP bridge tools"
+        );
+    } else {
+        tracing::debug!("[mcp_client] no MCP servers registered — bridge tools skipped");
     }
 
     // Web search — always registered. Result/timeout budget

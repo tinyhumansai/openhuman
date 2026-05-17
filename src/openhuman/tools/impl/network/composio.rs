@@ -499,7 +499,10 @@ impl Tool for ComposioTool {
     fn description(&self) -> &str {
         "Execute actions on 1000+ apps via Composio (Gmail, Notion, GitHub, Slack, etc.). \
          Use action='list' to see available actions, action='execute' with action_name/tool_slug, params, and optional connected_account_id, \
-         or action='connect' with app/auth_config_id to get OAuth URL."
+         or action='connect' with app/auth_config_id to get OAuth URL. \
+         For Gmail: GMAIL_FETCH_EMAILS supports standard Gmail search syntax in the 'query' param — \
+         use query='from:me' or query='label:SENT' to retrieve sent emails, query='label:INBOX' for inbox, \
+         query='is:unread' for unread mail, etc. Sent mail is synced and searchable."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {

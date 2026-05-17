@@ -14,7 +14,7 @@ use async_imap::types::Fetch;
 use async_imap::Session;
 use async_trait::async_trait;
 use futures::TryStreamExt;
-use lettre::message::SinglePart;
+use lettre::message::{header::ContentType, Attachment, MultiPart, SinglePart};
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::{Message, SmtpTransport, Transport};
 use mail_parser::{MessageParser, MimeHeaders};
@@ -477,6 +477,50 @@ impl EmailChannel {
         };
         Ok(transport)
     }
+
+    pub fn send_message(&self, email: Message) -> Result<()> {
+        let transport = self.create_smtp_transport()?;
+        transport.send(&email)?;
+        info!("Email sent");
+        Ok(())
+    }
+
+    pub fn build_plain_message(
+        &self,
+        recipient: &str,
+        subject: &str,
+        body: &str,
+    ) -> Result<Message> {
+        Message::builder()
+            .from(self.config.from_address.parse()?)
+            .to(recipient.parse()?)
+            .subject(subject)
+            .singlepart(SinglePart::plain(body.to_string()))
+            .map_err(Into::into)
+    }
+
+    pub fn build_message_with_attachment(
+        &self,
+        recipient: &str,
+        subject: &str,
+        body: &str,
+        attachment_name: &str,
+        content_type: ContentType,
+        attachment_bytes: Vec<u8>,
+    ) -> Result<Message> {
+        let attachment =
+            Attachment::new(attachment_name.to_string()).body(attachment_bytes, content_type);
+        Message::builder()
+            .from(self.config.from_address.parse()?)
+            .to(recipient.parse()?)
+            .subject(subject)
+            .multipart(
+                MultiPart::mixed()
+                    .singlepart(SinglePart::plain(body.to_string()))
+                    .singlepart(attachment),
+            )
+            .map_err(Into::into)
+    }
 }
 
 /// Internal struct for parsed email data
@@ -515,14 +559,8 @@ impl Channel for EmailChannel {
             ("OpenHuman Message", message.content.as_str())
         };
 
-        let email = Message::builder()
-            .from(self.config.from_address.parse()?)
-            .to(message.recipient.parse()?)
-            .subject(subject)
-            .singlepart(SinglePart::plain(body.to_string()))?;
-
-        let transport = self.create_smtp_transport()?;
-        transport.send(&email)?;
+        let email = self.build_plain_message(message.recipient.as_str(), subject, body)?;
+        self.send_message(email)?;
         info!("Email sent to {}", message.recipient);
         Ok(())
     }

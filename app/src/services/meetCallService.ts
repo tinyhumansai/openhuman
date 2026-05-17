@@ -12,6 +12,7 @@
 import { invoke } from '@tauri-apps/api/core';
 
 import { isTauri } from '../utils/tauriCommands/common';
+import { apiClient } from './apiClient';
 import { callCoreRpc } from './coreRpcClient';
 
 export type MeetJoinCallInput = { meetUrl: string; displayName: string };
@@ -79,4 +80,82 @@ export async function joinMeetCall(input: MeetJoinCallInput): Promise<MeetJoinCa
 export async function closeMeetCall(requestId: string): Promise<boolean> {
   if (!isTauri()) return false;
   return invoke<boolean>('meet_call_close_window', { requestId });
+}
+
+/**
+ * Backend-driven meet bot join (PR tinyhumansai/backend#773).
+ *
+ * Hits `POST /mascots/join-meeting` which:
+ *  - gates free users with a 429 (SERVER_OVERLOADED) — surfaced verbatim
+ *    so callers can show the user-facing capacity message;
+ *  - launches the Camoufox mascot bot for `gmeet`;
+ *  - 400s on `zoom` / `teams` with "not yet supported".
+ *
+ * Distinct from `joinMeetCall` (which opens a CEF webview locally) —
+ * this is a fire-and-forget request that runs the mascot bot in the
+ * backend and streams events over Socket.IO.
+ */
+export type MascotMeetPlatform = 'gmeet' | 'zoom' | 'teams';
+
+export interface MascotJoinMeetingInput {
+  platform: MascotMeetPlatform;
+  meetUrl: string;
+  displayName?: string;
+}
+
+export interface MascotJoinMeetingResult {
+  success: boolean;
+  data?: unknown;
+}
+
+/**
+ * The 429 capacity-gate message the backend emits for free users. Treated
+ * as the canonical user-facing copy so the UI can show a tailored notice
+ * without leaking the underlying paid-plan rule.
+ */
+export const SERVER_OVERLOADED_MESSAGE =
+  'OpenHuman is under heavy load right now. Please try again in a few minutes.';
+
+export interface MascotJoinMeetingError {
+  /** User-safe error text. Falls back to a generic message. */
+  message: string;
+  /** True when the backend returned the 429 capacity gate. */
+  isCapacityGated: boolean;
+}
+
+function isApiErrorLike(value: unknown): value is { error?: unknown; message?: unknown } {
+  return !!value && typeof value === 'object' && ('error' in value || 'message' in value);
+}
+
+export async function joinMeetingViaMascotBot(
+  input: MascotJoinMeetingInput
+): Promise<MascotJoinMeetingResult> {
+  const meetUrl = input.meetUrl.trim();
+  if (!meetUrl) {
+    throw { message: 'Please paste a meeting link.', isCapacityGated: false };
+  }
+  try {
+    return await apiClient.post<MascotJoinMeetingResult>('/mascots/join-meeting', {
+      platform: input.platform,
+      meetUrl,
+      displayName: input.displayName?.trim() || undefined,
+    });
+  } catch (err) {
+    // apiClient throws `{ success:false, error, message? }`. The 429 body
+    // is `{ error: SERVER_OVERLOADED_MESSAGE, errorCode: 'SERVER_OVERLOADED' }`
+    // — `errorCode` is dropped by the shared client (see apiClient.ts:96),
+    // so we detect capacity by matching the canonical message.
+    const text = isApiErrorLike(err)
+      ? typeof err.error === 'string'
+        ? err.error
+        : typeof err.message === 'string'
+          ? err.message
+          : 'Failed to start meeting bot.'
+      : err instanceof Error
+        ? err.message
+        : 'Failed to start meeting bot.';
+    const isCapacityGated = text === SERVER_OVERLOADED_MESSAGE;
+    const wrapped: MascotJoinMeetingError = { message: text, isCapacityGated };
+    throw wrapped;
+  }
 }

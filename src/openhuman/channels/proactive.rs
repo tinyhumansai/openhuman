@@ -29,7 +29,7 @@ use std::sync::{Arc, RwLock};
 
 /// Register a web-only proactive message subscriber on the global event
 /// bus. Guarded by `std::sync::Once` so it is safe to call from both
-/// `bootstrap_skill_runtime` (desktop/JSON-RPC) and domain-level
+/// `bootstrap_core_runtime` (desktop/JSON-RPC) and domain-level
 /// startup — only the first call takes effect.
 pub fn register_web_only_proactive_subscriber() {
     use std::sync::Once;

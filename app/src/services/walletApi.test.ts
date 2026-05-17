@@ -17,6 +17,7 @@ describe('walletApi', () => {
         configured: true,
         onboardingCompleted: true,
         consentGranted: true,
+        secretStored: true,
         source: 'generated',
         mnemonicWordCount: 12,
         accounts: [],
@@ -36,6 +37,7 @@ describe('walletApi', () => {
       consentGranted: true,
       source: 'imported' as const,
       mnemonicWordCount: 24,
+      encryptedMnemonic: 'enc2:wallet-secret',
       accounts: [{ chain: 'evm' as const, address: '0xabc', derivationPath: "m/44'/60'/0'/0/0" }],
     };
     mockCallCoreRpc.mockResolvedValueOnce({ result: { configured: true } });

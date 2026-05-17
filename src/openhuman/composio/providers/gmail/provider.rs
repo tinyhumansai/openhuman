@@ -36,6 +36,20 @@ use crate::openhuman::composio::providers::{
 const ACTION_GET_PROFILE: &str = "GMAIL_GET_PROFILE";
 const ACTION_FETCH_EMAILS: &str = "GMAIL_FETCH_EMAILS";
 
+/// Base Gmail search query used on every sync pass.
+///
+/// Excludes spam and trash but intentionally does NOT restrict to `in:inbox` —
+/// that restriction (issue #1713) prevented sent emails from ever being ingested.
+/// Exported `pub(super)` so `tests.rs` can assert against the canonical value
+/// rather than a duplicated literal.
+pub(super) const BASE_QUERY: &str = "-in:spam -in:trash";
+
+/// Gmail search query strings that retrieve sent mail.
+///
+/// Any of these can be passed as the `query` parameter to `GMAIL_FETCH_EMAILS`
+/// to fetch outbound messages. Exported `pub(super)` for use in regression tests.
+pub(super) const SENT_QUERIES: &[&str] = &["from:me", "label:SENT", "in:sent"];
+
 /// Page size per API call. Kept moderate so each call is fast and we
 /// get frequent checkpoints for the daily budget.
 const PAGE_SIZE: u32 = 25;
@@ -283,7 +297,14 @@ impl ComposioProvider for GmailProvider {
             // so same-day re-ticks do not re-fetch a whole day's
             // window every time. Fall back to the day filter only when
             // the cursor cannot be parsed as a timestamp.
-            let mut query = "in:inbox -in:spam -in:trash".to_string();
+            //
+            // NOTE: We intentionally do NOT restrict to `in:inbox` here.
+            // The original query `in:inbox -in:spam -in:trash` meant sent
+            // emails (label:SENT) were never fetched and therefore the
+            // agent could not answer questions about outbound mail (issue #1713).
+            // Removing `in:inbox` lets Gmail return both inbox and sent
+            // messages while still excluding spam and trash.
+            let mut query = BASE_QUERY.to_string();
             if let Some(ref cursor) = state.cursor {
                 if let Some(epoch_filter) = sync::cursor_to_gmail_after_epoch_filter(cursor) {
                     query.push_str(&format!(" after:{epoch_filter}"));

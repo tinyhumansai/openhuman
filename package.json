@@ -24,6 +24,7 @@
     "test": "pnpm --filter openhuman-app test",
     "test:coverage": "pnpm --filter openhuman-app test:coverage",
     "test:rust": "pnpm --filter openhuman-app test:rust",
+    "test:rust:e2e": "bash scripts/test-rust-e2e.sh",
     "mascot:render": "pnpm --dir remotion render:runtime-assets",
     "merge-pr": "bash scripts/shortcuts/review/merge.sh",
     "mock:api": "node scripts/mock-api-server.mjs",
