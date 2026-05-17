@@ -26,6 +26,8 @@ function statusDotClass(connection: ComposioConnection | undefined): string {
       return 'bg-sage-500';
     case 'pending':
       return 'bg-amber-500 animate-pulse';
+    case 'expired':
+      return 'bg-coral-500';
     case 'error':
       return 'bg-coral-500';
     default:
@@ -42,6 +44,8 @@ function statusLabel(
       return t('skills.connected');
     case 'pending':
       return t('channels.status.connecting');
+    case 'expired':
+      return t('composio.authExpired');
     case 'error':
       return t('common.error');
     default:
@@ -55,6 +59,8 @@ function statusColor(state: ReturnType<typeof deriveComposioState>): string {
       return 'text-sage-600';
     case 'pending':
       return 'text-amber-600';
+    case 'expired':
+      return 'text-coral-600';
     case 'error':
       return 'text-coral-600';
     default:
@@ -147,9 +153,15 @@ const SkillsStep = ({ onNext, onBack: _onBack }: SkillsStepProps) => {
                   ? 'border-sage-200 bg-sage-50 text-sage-700'
                   : gmailState === 'pending'
                     ? 'border-amber-200 bg-amber-50 text-amber-700'
-                    : 'border-primary-200 bg-primary-50 text-primary-700'
+                    : gmailState === 'expired'
+                      ? 'border-coral-200 bg-coral-50 text-coral-700'
+                      : 'border-primary-200 bg-primary-50 text-primary-700'
               }`}>
-              {gmailConnected ? t('skills.configure') : t('skills.connect')}
+              {gmailConnected
+                ? t('skills.configure')
+                : gmailState === 'expired'
+                  ? t('composio.reconnect')
+                  : t('skills.connect')}
             </span>
           </button>
         )}

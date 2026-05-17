@@ -14,6 +14,7 @@ pub mod morning_briefing;
 pub mod orchestrator;
 pub mod planner;
 pub mod researcher;
+pub mod skill_creator;
 pub mod summarizer;
 pub mod tool_maker;
 pub mod tools_agent;

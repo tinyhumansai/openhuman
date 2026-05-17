@@ -1008,3 +1008,84 @@ fn is_path_allowed_blocks_url_encoded_traversal() {
         "URL-encoded parent dir traversal must be blocked"
     );
 }
+
+// ── validate_path_within_root ─────────────────────────────────────────────
+
+#[test]
+fn validate_path_within_root_allows_contained_path() {
+    let root = tempfile::tempdir().unwrap();
+    let file = root.path().join("prompt.md");
+    std::fs::write(&file, b"hello").unwrap();
+    let result = validate_path_within_root(&file, root.path());
+    assert!(result.is_ok(), "contained path must be allowed: {result:?}");
+    assert_eq!(result.unwrap(), file.canonicalize().unwrap());
+}
+
+#[test]
+fn validate_path_within_root_blocks_parent_traversal() {
+    let root = tempfile::tempdir().unwrap();
+    let subdir = root.path().join("prompts");
+    std::fs::create_dir(&subdir).unwrap();
+    // Create a file one level above the prompts subdir but still within root.
+    let victim = root.path().join("secret.txt");
+    std::fs::write(&victim, b"secret").unwrap();
+    // Construct a traversal path: <root>/prompts/../secret.txt
+    let traversal = subdir.join("..").join("secret.txt");
+    // With the prompts dir as root, the traversal must be blocked.
+    let result = validate_path_within_root(&traversal, &subdir);
+    assert!(
+        result.is_err(),
+        "path escaping root via '..' must be blocked"
+    );
+}
+
+#[test]
+fn validate_path_within_root_blocks_absolute_escape() {
+    let root = tempfile::tempdir().unwrap();
+    let file = root.path().join("a.md");
+    std::fs::write(&file, b"x").unwrap();
+    // Use a completely different tempdir as the root — file is outside it.
+    let other_root = tempfile::tempdir().unwrap();
+    let result = validate_path_within_root(&file, other_root.path());
+    assert!(
+        result.is_err(),
+        "path outside root must be blocked: {result:?}"
+    );
+}
+
+#[test]
+fn validate_path_within_root_fails_on_nonexistent_candidate() {
+    let root = tempfile::tempdir().unwrap();
+    let missing = root.path().join("does_not_exist.md");
+    // canonicalize() will fail — we expect an error, not a panic.
+    let result = validate_path_within_root(&missing, root.path());
+    assert!(
+        result.is_err(),
+        "non-existent candidate must return an error"
+    );
+}
+
+#[test]
+fn validate_path_within_root_blocks_symlink_escape() {
+    let root = tempfile::tempdir().unwrap();
+    let prompts_dir = root.path().join("prompts");
+    std::fs::create_dir(&prompts_dir).unwrap();
+    // Create a target file outside the prompts dir.
+    let outside = root.path().join("outside.txt");
+    std::fs::write(&outside, b"sensitive").unwrap();
+    // Create a symlink inside prompts/ pointing outside.
+    let link = prompts_dir.join("evil.md");
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&outside, &link).unwrap();
+    #[cfg(not(unix))]
+    {
+        // Skip symlink test on non-Unix where symlink creation may require
+        // elevated privileges.
+        return;
+    }
+    let result = validate_path_within_root(&link, &prompts_dir);
+    assert!(
+        result.is_err(),
+        "symlink escaping prompt root must be blocked"
+    );
+}

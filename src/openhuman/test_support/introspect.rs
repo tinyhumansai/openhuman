@@ -16,6 +16,7 @@ use tokio::fs;
 
 use crate::openhuman::channels::providers::web::in_flight_entries_for_test;
 use crate::openhuman::config::Config;
+use crate::openhuman::wallet::prepared_quotes_for_test;
 use crate::rpc::RpcOutcome;
 
 /// Maximum bytes returned by `read_workspace_file`. Specs that need bigger
@@ -261,5 +262,23 @@ pub async fn in_flight_chats() -> Result<RpcOutcome<InFlightResult>, String> {
     Ok(RpcOutcome::single_log(
         InFlightResult { entries },
         format!("in_flight_chats: {count} entries"),
+    ))
+}
+
+// ── wallet_prepared_quotes ────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreparedQuotesResult {
+    pub count: usize,
+    pub quotes: Vec<crate::openhuman::wallet::PreparedTransaction>,
+}
+
+pub async fn wallet_prepared_quotes() -> Result<RpcOutcome<PreparedQuotesResult>, String> {
+    let quotes = prepared_quotes_for_test();
+    let count = quotes.len();
+    Ok(RpcOutcome::single_log(
+        PreparedQuotesResult { count, quotes },
+        format!("wallet_prepared_quotes: {count} quotes"),
     ))
 }

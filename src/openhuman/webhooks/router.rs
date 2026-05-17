@@ -128,7 +128,7 @@ impl WebhookRouter {
     /// Register an agent-backed webhook tunnel.
     ///
     /// Requests arriving on this tunnel are routed into the triage
-    /// pipeline rather than the skill runtime. `agent_id` is stored
+    /// pipeline rather than direct skill dispatch. `agent_id` is stored
     /// for observability and rebind validation; the triage evaluator
     /// currently selects the target agent dynamically regardless of
     /// this value.

@@ -53,6 +53,12 @@ interface ChannelConnectionUpdatedEvent {
   capabilities?: string[];
 }
 
+interface PendingSocketListener {
+  event: string;
+  callback: (...args: unknown[]) => void;
+  once: boolean;
+}
+
 function normalizeChannelConnectionUpdatePayload(
   value: unknown
 ): ChannelConnectionUpdatedEvent | null {
@@ -115,7 +121,7 @@ class SocketService {
   private socket: Socket | null = null;
   private token: string | null = null;
   private mcpTransport: SocketIOMCPTransportImpl | null = null;
-  private pendingListeners: Array<{ event: string; callback: (...args: unknown[]) => void }> = [];
+  private pendingListeners: PendingSocketListener[] = [];
   // Maps original caller callbacks → wrapped callbacks so off() can locate the
   // exact function references that were registered with socket.io, scoped by event.
   private listenerMap = new Map<
@@ -185,8 +191,12 @@ class SocketService {
     // Flush any listeners that were registered before the socket existed.
     if (this.pendingListeners.length > 0) {
       socketLog('Flushing pending listeners', { count: this.pendingListeners.length });
-      for (const { event, callback } of this.pendingListeners) {
-        this.socket.on(event, callback);
+      for (const { event, callback, once } of this.pendingListeners) {
+        if (once) {
+          this.socket.once(event, callback);
+        } else {
+          this.socket.on(event, callback);
+        }
       }
       this.pendingListeners = [];
     }
@@ -372,7 +382,7 @@ class SocketService {
       this.socket.on(event, wrappedCallback);
     } else {
       socketLog('Socket not ready, queuing listener', { event });
-      this.pendingListeners.push({ event, callback: wrappedCallback });
+      this.pendingListeners.push({ event, callback: wrappedCallback, once: false });
     }
   }
 
@@ -441,7 +451,7 @@ class SocketService {
       this.socket.once(event, wrappedCallback);
     } else {
       socketLog('Socket not ready, queuing once listener', { event });
-      this.pendingListeners.push({ event, callback: wrappedCallback });
+      this.pendingListeners.push({ event, callback: wrappedCallback, once: true });
     }
   }
 }

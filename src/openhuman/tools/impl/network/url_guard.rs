@@ -14,6 +14,16 @@
 //! (octal, hex, decimal) because Rust's `IpAddr::parse` rejects them —
 //! they fall through and get rejected by the allowlist instead. See the
 //! tests in `http_request.rs` for the documented behaviour.
+//!
+//! ## DNS Rebinding Protection
+//!
+//! Hostname validation alone is insufficient: an attacker can register a
+//! domain that alternates DNS responses between a public IP (passing the
+//! allowlist) and a private IP (e.g. 127.0.0.1). To close this gap,
+//! callers should use [`validate_url_with_dns_check`] which resolves the
+//! hostname and re-validates the resolved IPs before the request is made.
+
+use std::net::ToSocketAddrs;
 
 /// Validate a URL against the allowlist + SSRF rules. Returns the
 /// original URL on success.
@@ -49,6 +59,58 @@ pub(super) fn validate_url(raw_url: &str, allowed_domains: &[String]) -> anyhow:
     }
 
     Ok(url.to_string())
+}
+
+/// Like [`validate_url`] but also resolves the hostname via DNS and
+/// verifies that none of the resolved IPs are private/local. This
+/// defends against DNS rebinding attacks where an attacker's domain
+/// initially resolves to a public IP (passing the allowlist) and then
+/// flips to 127.0.0.1 at request time.
+///
+/// Callers should use this function instead of `validate_url` in all
+/// paths that make outbound HTTP requests.
+pub(super) fn validate_url_with_dns_check(
+    raw_url: &str,
+    allowed_domains: &[String],
+) -> anyhow::Result<String> {
+    let url = validate_url(raw_url, allowed_domains)?;
+
+    let host = extract_host(&url)?;
+
+    // If the host is already a valid IP literal, `is_private_or_local_host`
+    // has already checked it above. We only need DNS resolution for hostnames.
+    if host.parse::<std::net::IpAddr>().is_ok() {
+        return Ok(url);
+    }
+
+    // Resolve the hostname and check all returned addresses.
+    let socket_addr = format!("{host}:443");
+    log::debug!("[url_guard] resolving DNS for host={host}");
+    let addrs: Vec<std::net::SocketAddr> = socket_addr
+        .to_socket_addrs()
+        .map_err(|e| {
+            log::debug!("[url_guard] DNS resolution failed host={host} error={e}");
+            anyhow::anyhow!("DNS resolution failed for '{host}': {e}")
+        })?
+        .collect();
+
+    if addrs.is_empty() {
+        anyhow::bail!("DNS resolution returned no addresses for '{host}'");
+    }
+
+    log::debug!("[url_guard] DNS resolved host={host} addrs={}", addrs.len());
+
+    for addr in &addrs {
+        let ip_str = addr.ip().to_string();
+        if is_private_or_local_host(&ip_str) {
+            log::debug!("[url_guard] DNS rebinding blocked host={host} resolved_ip={ip_str}");
+            anyhow::bail!(
+                "DNS rebinding blocked: '{host}' resolved to private/local address {ip_str}"
+            );
+        }
+    }
+
+    Ok(url)
 }
 
 pub(super) fn normalize_allowed_domains(domains: Vec<String>) -> Vec<String> {
@@ -471,5 +533,50 @@ mod tests {
                 "Expected allowlist rejection for {notation}, got: {err}"
             );
         }
+    }
+
+    // ── DNS rebinding protection ─────────────────────────────────
+
+    #[test]
+    fn dns_check_blocks_localhost_resolution() {
+        // "localhost" resolves to 127.0.0.1 on most systems. Even if
+        // someone adds it to the allowlist, the DNS check should block it.
+        let allow = vec!["localhost".to_string()];
+        // validate_url itself already blocks "localhost" via the hostname check,
+        // but validate_url_with_dns_check should also catch it.
+        let err = validate_url_with_dns_check("https://localhost", &allow)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("local/private") || err.contains("rebinding"),
+            "Expected SSRF block for localhost, got: {err}"
+        );
+    }
+
+    #[test]
+    fn dns_check_passes_for_public_domain() {
+        // google.com should resolve to public IPs and pass.
+        let allow = vec!["google.com".to_string()];
+        // This test requires network; skip gracefully if DNS fails (CI).
+        match validate_url_with_dns_check("https://google.com", &allow) {
+            Ok(url) => assert_eq!(url, "https://google.com"),
+            Err(e) => {
+                let msg = e.to_string();
+                // DNS failure in sandboxed CI is acceptable
+                assert!(
+                    msg.contains("DNS resolution failed"),
+                    "Unexpected error: {msg}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn dns_check_rejects_ip_literal_private() {
+        let allow = vec!["10.0.0.1".to_string()];
+        let err = validate_url_with_dns_check("https://10.0.0.1", &allow)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("local/private"));
     }
 }

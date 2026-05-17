@@ -16,6 +16,7 @@ vi.mock('../../../../services/walletApi', () => ({
     configured: true,
     onboardingCompleted: true,
     consentGranted: true,
+    secretStored: true,
     source: 'generated',
     mnemonicWordCount: 12,
     accounts: [],

@@ -12,6 +12,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("list_workspace_files"),
         schemas("read_workspace_file"),
         schemas("in_flight_chats"),
+        schemas("wallet_prepared_quotes"),
     ]
 }
 
@@ -36,6 +37,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("in_flight_chats"),
             handler: handle_in_flight_chats,
+        },
+        RegisteredController {
+            schema: schemas("wallet_prepared_quotes"),
+            handler: handle_wallet_prepared_quotes,
         },
     ]
 }
@@ -215,6 +220,35 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 required: true,
             }],
         },
+        "wallet_prepared_quotes" => ControllerSchema {
+            namespace: "test_support",
+            function: "wallet_prepared_quotes",
+            description:
+                "Snapshot the in-memory wallet prepared-quote store so E2E specs can prove \
+                 agent-driven wallet flows reached the quote/simulate boundary.",
+            inputs: vec![],
+            outputs: vec![FieldSchema {
+                name: "result",
+                ty: TypeSchema::Object {
+                    fields: vec![
+                        FieldSchema {
+                            name: "count",
+                            ty: TypeSchema::U64,
+                            comment: "Number of non-consumed prepared quotes currently retained.",
+                            required: true,
+                        },
+                        FieldSchema {
+                            name: "quotes",
+                            ty: TypeSchema::String,
+                            comment: "Array of prepared-transaction objects (serialized).",
+                            required: true,
+                        },
+                    ],
+                },
+                comment: "Prepared-quote snapshot.",
+                required: true,
+            }],
+        },
         _other => ControllerSchema {
             namespace: "test_support",
             function: "unknown",
@@ -271,6 +305,10 @@ fn handle_read_workspace_file(params: Map<String, Value>) -> ControllerFuture {
 
 fn handle_in_flight_chats(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move { to_json(introspect::in_flight_chats().await?) })
+}
+
+fn handle_wallet_prepared_quotes(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move { to_json(introspect::wallet_prepared_quotes().await?) })
 }
 
 fn to_json<T: serde::Serialize>(outcome: RpcOutcome<T>) -> Result<Value, String> {

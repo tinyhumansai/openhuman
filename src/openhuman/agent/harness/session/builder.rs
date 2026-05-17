@@ -768,8 +768,14 @@ impl Agent {
             secrets_encrypt: config.secrets.encrypt,
             reasoning_enabled: config.runtime.reasoning_enabled,
         };
+        let provider_role = match config.default_model.as_deref().map(str::trim) {
+            Some("hint:agentic") | Some("agentic-v1") => "agentic",
+            Some("hint:coding") | Some("coding-v1") => "coding",
+            Some("hint:summarization") | Some("summarization-v1") => "summarization",
+            _ => "reasoning",
+        };
         let (provider, mut model_name): (Box<dyn Provider>, String) =
-            crate::openhuman::providers::create_chat_provider("reasoning", config)?;
+            crate::openhuman::providers::create_chat_provider(provider_role, config)?;
         let target_agent_id = target_def
             .map(|def| def.id.as_str())
             .unwrap_or("orchestrator");
@@ -833,21 +839,28 @@ impl Agent {
                     def.omit_skills_catalog,
                 ),
                 PromptSource::File { path } => {
-                    let workspace_path = config
-                        .workspace_dir
-                        .join("agent")
-                        .join("prompts")
-                        .join(path);
+                    let prompt_root = config.workspace_dir.join("agent").join("prompts");
+                    let workspace_path = prompt_root.join(path);
                     let body_text = if workspace_path.is_file() {
-                        std::fs::read_to_string(&workspace_path).unwrap_or_else(|e| {
-                            log::warn!(
-                                "[agent::builder] failed to read prompt {}: {e} — using empty body",
-                                workspace_path.display()
-                            );
-                            String::new()
-                        })
+                        match crate::openhuman::security::validate_path_within_root(&workspace_path, &prompt_root) {
+                            Ok(resolved) => {
+                                std::fs::read_to_string(&resolved).unwrap_or_else(|e| {
+                                    log::warn!(
+                                        "[agent::builder] failed to read prompt {}: {e} — using empty body",
+                                        workspace_path.display()
+                                    );
+                                    String::new()
+                                })
+                            }
+                            Err(e) => {
+                                log::warn!(
+                                    "[agent::builder] prompt path rejected: {e} — using empty body"
+                                );
+                                String::new()
+                            }
+                        }
                     } else {
-                        log::warn!(
+                        log::debug!(
                             "[agent::builder] prompt file {} not found — using empty body",
                             path
                         );

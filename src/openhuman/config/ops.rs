@@ -380,10 +380,11 @@ pub async fn apply_model_settings(
         config.cloud_providers = providers;
     }
     if let Some(primary) = update.primary_cloud {
-        config.primary_cloud = if primary.trim().is_empty() {
+        let trimmed = primary.trim();
+        config.primary_cloud = if trimmed.is_empty() {
             None
         } else {
-            Some(primary)
+            Some(trimmed.to_string())
         };
     }
 
@@ -817,17 +818,49 @@ pub fn get_runtime_flags() -> RpcOutcome<RuntimeFlagsOut> {
 }
 
 /// Updates the `OPENHUMAN_BROWSER_ALLOW_ALL` environment flag.
+///
+/// **Security note:** when enabled, this disables the browser tool's
+/// per-domain allowlist for the entire process. Both transitions are
+/// audit-logged at WARN level with a `[SECURITY]` prefix so operators
+/// (and `journalctl -g '\[SECURITY\]'` style scrapes) can spot
+/// allowlist toggles in the live log stream.
+///
+/// `is_private_host` checks still apply to the resolved IP, so this
+/// flag does not unlock loopback / RFC1918 destinations.
 pub fn set_browser_allow_all(enabled: bool) -> RpcOutcome<RuntimeFlagsOut> {
+    let was_enabled = env_flag_enabled("OPENHUMAN_BROWSER_ALLOW_ALL");
     if enabled {
         std::env::set_var("OPENHUMAN_BROWSER_ALLOW_ALL", "1");
     } else {
         std::env::remove_var("OPENHUMAN_BROWSER_ALLOW_ALL");
     }
+    let now_enabled = env_flag_enabled("OPENHUMAN_BROWSER_ALLOW_ALL");
     let flags = RuntimeFlagsOut {
-        browser_allow_all: env_flag_enabled("OPENHUMAN_BROWSER_ALLOW_ALL"),
+        browser_allow_all: now_enabled,
         log_prompts: env_flag_enabled("OPENHUMAN_LOG_PROMPTS"),
     };
-    RpcOutcome::single_log(flags, "browser allow-all flag updated")
+
+    if was_enabled != now_enabled {
+        if now_enabled {
+            tracing::warn!(
+                "[SECURITY] browser allow-all enabled via RPC: \
+                 per-domain allowlist is now bypassed for all sessions \
+                 (private-host check still applies)"
+            );
+        } else {
+            tracing::info!(
+                "[SECURITY] browser allow-all disabled via RPC: \
+                 per-domain allowlist re-enforced"
+            );
+        }
+    }
+
+    let log_msg = if now_enabled {
+        "[SECURITY] browser allow-all flag set to enabled"
+    } else {
+        "[SECURITY] browser allow-all flag set to disabled"
+    };
+    RpcOutcome::single_log(flags, log_msg)
 }
 
 /// Checks if a specific onboarding flag file exists in the workspace.

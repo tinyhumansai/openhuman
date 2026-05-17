@@ -1137,6 +1137,8 @@ const en: TranslationMap = {
 
   // Composio: miscellaneous
   'composio.statusUnavailable': 'Status unavailable',
+  'composio.authExpired': 'Auth expired',
+  'composio.reconnect': 'Reconnect',
   'composio.envVarOverrides': 'is set, it overrides this setting.',
 
   // Memory: day-of-week labels for heatmap

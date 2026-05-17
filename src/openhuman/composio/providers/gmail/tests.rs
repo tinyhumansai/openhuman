@@ -1,5 +1,6 @@
 //! Unit tests for the Gmail provider.
 
+use super::provider::{BASE_QUERY, SENT_QUERIES};
 use super::sync::{
     cursor_to_gmail_after_epoch_filter, cursor_to_gmail_after_filter, extract_messages,
     extract_page_token, now_ms, parse_cursor_to_epoch_secs,
@@ -238,3 +239,63 @@ fn extract_messages_handles_deep_nesting() {
 // live `ComposioClient` (HTTP) plus the global `MemoryClient` singleton.
 // Those go through the integration test suite. Here we just lock in
 // the provider's identity surface and helpers.
+
+// ── Regression tests for issue #1713: sent-mail retrieval ───────────────────
+//
+// Before the fix the sync query was `in:inbox -in:spam -in:trash`, which meant
+// sent emails (label:SENT) were never fetched or ingested into the memory tree.
+// The fix removes `in:inbox` so both inbox and sent mail are fetched.
+
+/// Guard: the provider source must NOT contain the `in:inbox` restriction.
+/// If this test fails, someone reintroduced the inbox-only query that caused
+/// issue #1713.
+#[test]
+fn provider_source_does_not_restrict_to_inbox() {
+    let source = include_str!("provider.rs");
+    // The old restriction started with `"in:inbox`. The double-quote is part
+    // of the Rust string literal, so this catches the exact regression pattern.
+    assert!(
+        !source.contains("\"in:inbox"),
+        "provider.rs sync query must NOT start with 'in:inbox' — this \
+         restriction prevents sent emails from being ingested (issue #1713). \
+         Use '-in:spam -in:trash' to allow both inbox and sent mail."
+    );
+}
+
+/// The base sync query must exclude spam and trash but NOT restrict to inbox.
+/// Asserts against the canonical `BASE_QUERY` constant from provider.rs so
+/// any change to the production value is caught immediately.
+#[test]
+fn sync_base_query_excludes_spam_and_trash_without_inbox_restriction() {
+    assert!(
+        BASE_QUERY.contains("-in:spam"),
+        "BASE_QUERY must exclude spam (got: {BASE_QUERY:?})"
+    );
+    assert!(
+        BASE_QUERY.contains("-in:trash"),
+        "BASE_QUERY must exclude trash (got: {BASE_QUERY:?})"
+    );
+    assert!(
+        !BASE_QUERY.contains("in:inbox"),
+        "BASE_QUERY must NOT restrict to inbox — omitting this allows sent \
+         mail to be fetched and ingested (issue #1713). Got: {BASE_QUERY:?}"
+    );
+}
+
+/// Sent-mail query strings must be non-empty and must not restrict to inbox.
+/// Iterates `SENT_QUERIES` from provider.rs — the canonical list of query
+/// strings a user or agent can pass to GMAIL_FETCH_EMAILS for sent mail.
+#[test]
+fn sent_mail_query_strings_are_well_formed() {
+    assert!(!SENT_QUERIES.is_empty(), "SENT_QUERIES must not be empty");
+    for q in SENT_QUERIES {
+        assert!(
+            !q.is_empty(),
+            "sent-mail query must not be empty, got empty string in SENT_QUERIES"
+        );
+        assert!(
+            !q.starts_with("in:inbox"),
+            "sent-mail query '{q}' must not restrict to inbox"
+        );
+    }
+}

@@ -12,6 +12,7 @@ import { ToastContainer } from '../components/intelligence/Toast';
 import AutocompleteSetupModal from '../components/skills/AutocompleteSetupModal';
 import CreateSkillModal from '../components/skills/CreateSkillModal';
 import InstallSkillDialog from '../components/skills/InstallSkillDialog';
+import MeetingBotsCard from '../components/skills/MeetingBotsCard';
 import ScreenIntelligenceSetupModal from '../components/skills/ScreenIntelligenceSetupModal';
 import UnifiedSkillCard from '../components/skills/SkillCard';
 import { SKILL_CATEGORY_ORDER, type SkillCategory } from '../components/skills/skillCategories';
@@ -80,6 +81,8 @@ function composioStatusLabel(
       return t('skills.connected');
     case 'pending':
       return t('channels.status.connecting');
+    case 'expired':
+      return t('composio.authExpired');
     case 'error':
       return t('common.error');
     default:
@@ -93,6 +96,8 @@ function composioStatusColor(connection: ComposioConnection | undefined): string
       return 'text-sage-600';
     case 'pending':
       return 'text-amber-600';
+    case 'expired':
+      return 'text-coral-600';
     case 'error':
       return 'text-coral-600';
     default:
@@ -107,10 +112,12 @@ function composioSortRank(connection: ComposioConnection | undefined): number {
       return 0;
     case 'pending':
       return 1;
-    case 'error':
+    case 'expired':
       return 2;
-    default:
+    case 'error':
       return 3;
+    default:
+      return 4;
   }
 }
 
@@ -140,12 +147,15 @@ function ComposioConnectorTile({
       ? t('skills.configure')
       : state === 'pending'
         ? t('skills.connect')
-        : state === 'error'
-          ? t('common.retry')
-          : t('skills.connect');
+        : state === 'expired'
+          ? t('composio.reconnect')
+          : state === 'error'
+            ? t('common.retry')
+            : t('skills.connect');
 
   const isConnected = state === 'connected';
   const isPending = state === 'pending';
+  const isExpired = state === 'expired';
   const isError = state === 'error' || hasComposioError;
 
   const handleClick = () => {
@@ -167,7 +177,7 @@ function ComposioConnectorTile({
           ? 'border-sage-300 bg-sage-50/80 shadow-[0_0_0_1px_rgba(34,197,94,0.12)] hover:bg-sage-50'
           : isPending
             ? 'border-amber-200 bg-amber-50/40 hover:bg-amber-50/70'
-            : isError
+            : isExpired || isError
               ? 'border-coral-200 bg-coral-50/30 hover:bg-coral-50/50'
               : 'border-stone-200 bg-white hover:bg-stone-50'
       }`}>
@@ -823,6 +833,8 @@ export default function Skills() {
                     </div>
                   </div>
                 )}
+
+                <MeetingBotsCard onToast={addToast} />
 
                 <div className="rounded-2xl border border-stone-200 bg-white p-3 shadow-soft animate-fade-up">
                   <div className="px-1 pb-3 pt-1">

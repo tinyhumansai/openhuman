@@ -52,9 +52,22 @@ export interface MascotState {
    * reset is just `setMascotVoiceId(null)`.
    */
   voiceId: string | null;
+  /**
+   * Server-side mascot id selected from the backend mascot library
+   * (PR tinyhumansai/backend#770). `null` keeps the local YellowMascot
+   * renderer; any non-empty value tells `BackendMascot` (loaded via
+   * `mascotService`) to take over. The id is opaque server-side and
+   * length-capped at the same threshold as voiceId to keep the
+   * persisted blob bounded.
+   */
+  selectedMascotId: string | null;
 }
 
-const initialState: MascotState = { color: DEFAULT_MASCOT_COLOR, voiceId: null };
+const initialState: MascotState = {
+  color: DEFAULT_MASCOT_COLOR,
+  voiceId: null,
+  selectedMascotId: null,
+};
 
 function isMascotColor(value: unknown): value is MascotColor {
   return (
@@ -77,6 +90,21 @@ const mascotSlice = createSlice({
      * (falling back to the build-time default voice). Pass `null` from
      * the UI's Reset button to explicitly drop the override.
      */
+    /**
+     * Select a backend mascot by id. Trimmed; empty / oversize / null
+     * clears the override and falls back to the local YellowMascot.
+     */
+    setSelectedMascotId(state, action: PayloadAction<string | null>) {
+      if (action.payload == null) {
+        state.selectedMascotId = null;
+        return;
+      }
+      if (isMascotVoiceId(action.payload)) {
+        state.selectedMascotId = action.payload.trim();
+      } else {
+        state.selectedMascotId = null;
+      }
+    },
     setMascotVoiceId(state, action: PayloadAction<string | null>) {
       if (action.payload == null) {
         state.voiceId = null;
@@ -100,11 +128,18 @@ const mascotSlice = createSlice({
       const rehydrateAction = action as {
         type: typeof REHYDRATE;
         key: string;
-        payload?: { color?: unknown; voiceId?: unknown };
+        payload?: { color?: unknown; voiceId?: unknown; selectedMascotId?: unknown };
       };
       if (rehydrateAction.key !== 'mascot') return;
       const restoredColor = rehydrateAction.payload?.color;
       state.color = isMascotColor(restoredColor) ? restoredColor : DEFAULT_MASCOT_COLOR;
+      const restoredSelectedMascotId = rehydrateAction.payload?.selectedMascotId;
+      state.selectedMascotId =
+        restoredSelectedMascotId == null
+          ? null
+          : isMascotVoiceId(restoredSelectedMascotId)
+            ? (restoredSelectedMascotId as string).trim()
+            : null;
       // `voiceId` is optional in older persisted blobs (pre-#1762) — the
       // `null` fallback is the intended default and matches a fresh
       // install. Invalid values are scrubbed so a corrupted localStorage
@@ -120,13 +155,16 @@ const mascotSlice = createSlice({
   },
 });
 
-export const { setMascotColor, setMascotVoiceId } = mascotSlice.actions;
+export const { setMascotColor, setMascotVoiceId, setSelectedMascotId } = mascotSlice.actions;
 
 export const selectMascotColor = (state: { mascot: MascotState }): MascotColor =>
   state.mascot.color;
 
 export const selectMascotVoiceId = (state: { mascot: MascotState }): string | null =>
   state.mascot.voiceId;
+
+export const selectSelectedMascotId = (state: { mascot: MascotState }): string | null =>
+  state.mascot.selectedMascotId;
 
 export { mascotSlice };
 export default mascotSlice.reducer;
