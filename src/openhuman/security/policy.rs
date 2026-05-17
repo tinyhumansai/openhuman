@@ -498,8 +498,17 @@ impl SecurityPolicy {
         approved: bool,
     ) -> Result<CommandRiskLevel, String> {
         if !self.is_command_allowed(command) {
-            let truncated: String = command.chars().take(80).collect();
-            log::warn!("[openhuman:policy] Command blocked by allowlist: {truncated}");
+            // Truncate the command in BOTH the log and the Err return: the Err
+            // string is bubbled back to the frontend, and a full untruncated
+            // command can leak secrets in args (e.g. `curl -H "Authorization:
+            // Bearer …"`, `psql "postgres://user:pass@…"`). The 80-char cap
+            // matches the log truncation so a long base command with safe args
+            // still shows enough context to diagnose the block.
+            let truncated = &command[..floor_char_boundary(command, 80)];
+            log::warn!(
+                "[openhuman:policy] Command blocked by allowlist: {}",
+                truncated
+            );
             return Err(format!(
                 "Command not allowed by security policy: {truncated}"
             ));

@@ -1,12 +1,12 @@
-use crate::openhuman::config::HeartbeatConfig;
+use crate::openhuman::config::{Config, HeartbeatConfig};
 use crate::openhuman::subconscious::global::get_or_init_engine;
 use anyhow::Result;
 use std::path::Path;
 use tokio::time::{self, Duration};
 use tracing::{info, warn};
 
-/// Heartbeat engine — periodic scheduler that delegates to the subconscious
-/// loop for task-driven evaluation via local model inference.
+/// Heartbeat engine — periodic scheduler that delegates to planner collectors
+/// and optional subconscious model inference.
 pub struct HeartbeatEngine {
     config: HeartbeatConfig,
     workspace_dir: std::path::PathBuf,
@@ -21,30 +21,73 @@ impl HeartbeatEngine {
     }
 
     /// Start the heartbeat loop (runs until cancelled).
-    /// On each tick, delegates to the shared global subconscious engine.
+    /// Sleeps before the first tick so fresh login never burns budget
+    /// immediately, then reloads config before every tick so UI changes apply
+    /// without an app restart.
     pub async fn run(&self) -> Result<()> {
-        if !self.config.enabled {
+        let mut current = self.config.clone();
+
+        if !current.enabled {
             info!("[heartbeat] disabled");
             return Ok(());
         }
 
-        let interval_mins = self.config.interval_minutes.max(5);
+        let mut logged_settings = (
+            current.interval_minutes.max(5),
+            current.inference_enabled,
+            current.notify_meetings,
+            current.notify_reminders,
+            current.notify_relevant_events,
+        );
         info!(
-            "[heartbeat] started: every {} minutes, subconscious inference {}",
-            interval_mins,
-            if self.config.inference_enabled {
-                "enabled"
-            } else {
-                "disabled (task counting only)"
-            }
+            interval_minutes = logged_settings.0,
+            subconscious_inference = logged_settings.1,
+            notify_meetings = logged_settings.2,
+            notify_reminders = logged_settings.3,
+            notify_relevant_events = logged_settings.4,
+            "[heartbeat] started"
         );
 
-        let sleep_secs = u64::from(interval_mins) * 60;
-
         loop {
-            self.run_event_planner_tick().await;
+            let sleep_secs = u64::from(current.interval_minutes.max(5)) * 60;
+            time::sleep(Duration::from_secs(sleep_secs)).await;
 
-            if self.config.inference_enabled {
+            let config = match Config::load_or_init().await {
+                Ok(config) => config,
+                Err(error) => {
+                    warn!("[heartbeat] tick skipped: failed to load config: {error}");
+                    continue;
+                }
+            };
+
+            current = config.heartbeat.clone();
+            if !current.enabled {
+                info!("[heartbeat] stopped: disabled in config");
+                return Ok(());
+            }
+
+            let next_settings = (
+                current.interval_minutes.max(5),
+                current.inference_enabled,
+                current.notify_meetings,
+                current.notify_reminders,
+                current.notify_relevant_events,
+            );
+            if next_settings != logged_settings {
+                logged_settings = next_settings;
+                info!(
+                    interval_minutes = logged_settings.0,
+                    subconscious_inference = logged_settings.1,
+                    notify_meetings = logged_settings.2,
+                    notify_reminders = logged_settings.3,
+                    notify_relevant_events = logged_settings.4,
+                    "[heartbeat] settings reloaded"
+                );
+            }
+
+            self.run_event_planner_tick_for_config(&config).await;
+
+            if current.inference_enabled {
                 // Get the shared global engine (same instance as RPC handlers)
                 let lock = match get_or_init_engine().await {
                     Ok(l) => l,
@@ -86,35 +129,33 @@ impl HeartbeatEngine {
                     }
                 }
             }
-
-            time::sleep(Duration::from_secs(sleep_secs)).await;
         }
     }
 
-    async fn run_event_planner_tick(&self) {
-        match crate::openhuman::config::Config::load_or_init().await {
-            Ok(config) => {
-                if !config.heartbeat.enabled {
-                    tracing::debug!("[heartbeat] planner skipped: heartbeat disabled");
-                    return;
-                }
-                let summary = crate::openhuman::heartbeat::planner::evaluate_and_dispatch(
-                    &config,
-                    chrono::Utc::now(),
-                )
-                .await;
-                tracing::debug!(
-                    source_events = summary.source_events,
-                    deliveries_attempted = summary.deliveries_attempted,
-                    deliveries_sent = summary.deliveries_sent,
-                    deliveries_skipped_dedup = summary.deliveries_skipped_dedup,
-                    "[heartbeat] planner tick summary"
-                );
-            }
-            Err(error) => {
-                warn!("[heartbeat] planner skipped: failed to load config: {error}");
-            }
+    async fn run_event_planner_tick_for_config(&self, config: &Config) {
+        if !config.heartbeat.enabled {
+            tracing::debug!("[heartbeat] planner skipped: heartbeat disabled");
+            return;
         }
+
+        if !(config.heartbeat.notify_meetings
+            || config.heartbeat.notify_reminders
+            || config.heartbeat.notify_relevant_events)
+        {
+            tracing::debug!("[heartbeat] planner skipped: notification categories disabled");
+            return;
+        }
+
+        let summary =
+            crate::openhuman::heartbeat::planner::evaluate_and_dispatch(config, chrono::Utc::now())
+                .await;
+        tracing::debug!(
+            source_events = summary.source_events,
+            deliveries_attempted = summary.deliveries_attempted,
+            deliveries_sent = summary.deliveries_sent,
+            deliveries_skipped_dedup = summary.deliveries_skipped_dedup,
+            "[heartbeat] planner tick summary"
+        );
     }
 
     /// Read HEARTBEAT.md and return all parsed tasks.

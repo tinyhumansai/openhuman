@@ -87,6 +87,19 @@ pub struct Config {
     #[serde(default)]
     pub agent: AgentConfig,
 
+    /// Optional model pin for the front-line orchestrator. Provider
+    /// selection still follows the normal reasoning workload; this only
+    /// replaces the resolved model id when set.
+    #[serde(default)]
+    pub orchestrator: OrchestratorModelConfig,
+
+    /// Optional per-team model pins for delegated swarms.
+    ///
+    /// Example:
+    /// `[teams.research] lead_model = "minimax/m2" agent_model = "deepseek/v3.2"`.
+    #[serde(default)]
+    pub teams: HashMap<String, TeamModelConfig>,
+
     /// Global context management configuration — budget thresholds,
     /// summarization trigger, microcompact/autocompact toggles, and the
     /// session-memory extraction cadence. Consumed by
@@ -379,6 +392,66 @@ impl Config {
     pub fn workload_uses_local(&self, workload: &str) -> bool {
         self.workload_local_model(workload).is_some()
     }
+
+    /// Resolve an exact model pin for an agent, if configured.
+    ///
+    /// Precedence is intentionally narrow and deterministic:
+    /// 1. `orchestrator.model` when resolving the front-line orchestrator.
+    /// 2. `[teams.<agent_id>]` entries, with `lead_model` used for agents
+    ///    that can delegate and `agent_model` used for leaf workers.
+    /// 3. Built-in aliases such as `[teams.research]` for `researcher` and
+    ///    `[teams.code]` for `code_executor`, matching the issue examples.
+    ///
+    /// Empty strings are ignored so partially-written configs fall back to
+    /// the existing auto-routing path.
+    pub fn configured_agent_model(&self, agent_id: &str, is_team_lead: bool) -> Option<&str> {
+        fn clean(model: Option<&str>) -> Option<&str> {
+            model.map(str::trim).filter(|value| !value.is_empty())
+        }
+
+        let agent_id = agent_id.trim();
+        if agent_id.is_empty() {
+            return None;
+        }
+
+        if agent_id == "orchestrator" {
+            if let Some(model) = clean(self.orchestrator.model.as_deref()) {
+                return Some(model);
+            }
+        }
+
+        if let Some(model) = self
+            .teams
+            .get(agent_id)
+            .and_then(|team| team.model_for_role(is_team_lead))
+        {
+            return Some(model);
+        }
+
+        if let Some(stripped) = agent_id.strip_suffix("_agent") {
+            if let Some(model) = self
+                .teams
+                .get(stripped)
+                .and_then(|team| team.model_for_role(is_team_lead))
+            {
+                return Some(model);
+            }
+        }
+
+        let aliases: &[&str] = match agent_id {
+            "researcher" => &["research"],
+            "code_executor" => &["code"],
+            "tool_maker" | "tools_agent" => &["tools"],
+            "integrations_agent" => &["integrations"],
+            _ => &[],
+        };
+
+        aliases.iter().find_map(|alias| {
+            self.teams
+                .get(*alias)
+                .and_then(|team| team.model_for_role(is_team_lead))
+        })
+    }
 }
 
 impl Default for Config {
@@ -415,6 +488,8 @@ impl Default for Config {
             scheduler: SchedulerConfig::default(),
             scheduler_gate: SchedulerGateConfig::default(),
             agent: AgentConfig::default(),
+            orchestrator: OrchestratorModelConfig::default(),
+            teams: HashMap::new(),
             context: ContextConfig::default(),
             model_routes: Vec::new(),
             embedding_routes: Vec::new(),
@@ -465,3 +540,59 @@ impl Default for Config {
 }
 
 // Load/save and env overrides extend Config in load.rs
+
+#[cfg(test)]
+mod model_pin_tests {
+    use super::*;
+
+    #[test]
+    fn config_parses_orchestrator_and_team_model_pins() {
+        let config: Config = toml::from_str(
+            r#"
+                [orchestrator]
+                model = "deepseek/deepseek-r2"
+
+                [teams.research]
+                lead_model = "minimax/m2"
+                agent_model = "deepseek/v3.2"
+
+                [teams.code]
+                agent_model = "qwen/qwen3"
+            "#,
+        )
+        .expect("config should parse model pin tables");
+
+        assert_eq!(
+            config.configured_agent_model("orchestrator", true),
+            Some("deepseek/deepseek-r2")
+        );
+        assert_eq!(
+            config.configured_agent_model("researcher", false),
+            Some("deepseek/v3.2")
+        );
+        assert_eq!(
+            config.configured_agent_model("researcher", true),
+            Some("minimax/m2")
+        );
+        assert_eq!(
+            config.configured_agent_model("code_executor", false),
+            Some("qwen/qwen3")
+        );
+    }
+
+    #[test]
+    fn empty_model_pin_values_fall_back_to_auto_routing() {
+        let mut config = Config::default();
+        config.orchestrator.model = Some("   ".to_string());
+        config.teams.insert(
+            "research".to_string(),
+            TeamModelConfig {
+                lead_model: Some("".to_string()),
+                agent_model: Some("  ".to_string()),
+            },
+        );
+
+        assert_eq!(config.configured_agent_model("orchestrator", true), None);
+        assert_eq!(config.configured_agent_model("researcher", false), None);
+    }
+}

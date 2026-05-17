@@ -47,7 +47,9 @@ vi.mock('../../store/connectivitySlice', () => ({
 
 // Mock coreState
 vi.mock('../../lib/coreState/store', () => ({
-  getCoreStateSnapshot: vi.fn(() => ({ snapshot: { sessionToken: null } })),
+  getCoreStateSnapshot: vi.fn(() => ({
+    snapshot: { auth: { userId: 'core-user-id' }, sessionToken: null },
+  })),
 }));
 
 // Mock MCP as a class so `new SocketIOMCPTransportImpl(...)` works at runtime.
@@ -96,6 +98,61 @@ describe('socketService — resolveCoreSocketBaseUrl uses getCoreRpcUrl', () => 
 
     // Wait until getCoreRpcUrl has actually been invoked (deterministic, no sleep)
     await pollUntil(() => expect(hoisted.getCoreRpcUrlMock).toHaveBeenCalled());
+  });
+
+  it('scopes socket state from core auth userId instead of decoding the JWT payload', async () => {
+    const { getCoreStateSnapshot } = await import('../../lib/coreState/store');
+    const { setStatusForUser } = await import('../../store/socketSlice');
+    const setStatusForUserMock = vi.mocked(setStatusForUser);
+    setStatusForUserMock.mockClear();
+
+    vi.mocked(getCoreStateSnapshot).mockReturnValue({
+      snapshot: {
+        auth: { userId: 'core-user-id' },
+        sessionToken: 'header.eyJ1c2VySWQiOiJqd3QtdXNlci1pZCJ9.signature',
+      },
+    } as ReturnType<typeof getCoreStateSnapshot>);
+
+    hoisted.getCoreRpcUrlMock.mockResolvedValue('http://127.0.0.1:7788/rpc');
+
+    const { socketService } = await import('../socketService');
+    socketService.disconnect();
+    socketService.connect('header.eyJ1c2VySWQiOiJqd3QtdXNlci1pZCJ9.signature');
+
+    await pollUntil(() =>
+      expect(setStatusForUserMock).toHaveBeenCalledWith({
+        userId: 'core-user-id',
+        status: 'connecting',
+      })
+    );
+    expect(setStatusForUserMock).not.toHaveBeenCalledWith({
+      userId: 'jwt-user-id',
+      status: 'connecting',
+    });
+  });
+
+  it('falls back to pending when the core auth snapshot is not available yet', async () => {
+    const { getCoreStateSnapshot } = await import('../../lib/coreState/store');
+    const { setStatusForUser } = await import('../../store/socketSlice');
+    const setStatusForUserMock = vi.mocked(setStatusForUser);
+
+    vi.mocked(getCoreStateSnapshot).mockReturnValue({
+      snapshot: { sessionToken: 'mock-token' },
+    } as ReturnType<typeof getCoreStateSnapshot>);
+
+    hoisted.getCoreRpcUrlMock.mockResolvedValue('http://127.0.0.1:7788/rpc');
+
+    const { socketService } = await import('../socketService');
+    socketService.disconnect();
+    setStatusForUserMock.mockClear();
+    socketService.connect('mock-token-with-missing-auth');
+
+    await pollUntil(() =>
+      expect(setStatusForUserMock).toHaveBeenCalledWith({
+        userId: '__pending__',
+        status: 'connecting',
+      })
+    );
   });
 
   it('strips /rpc suffix from the resolved RPC URL to derive the socket base', async () => {

@@ -1009,6 +1009,63 @@ fn is_path_allowed_blocks_url_encoded_traversal() {
     );
 }
 
+// Regression: #1941. The allowlist-miss Err return used to echo the full
+// untruncated command, leaking secrets in args (e.g. an Authorization Bearer
+// header in a `curl` invocation that the agent issued). The log already
+// truncated at 80 chars; the Err path now matches.
+#[test]
+fn validate_command_truncates_secrets_in_allowlist_miss_error() {
+    // Use a base command NOT on the default allowlist so we hit the
+    // allowlist-miss branch. Pad the command so the secret sits past byte 80.
+    let prefix = "totallybogusbin --really-long-flag-that-eats-the-budget=";
+    let padding = "x".repeat(80usize.saturating_sub(prefix.len()));
+    let secret = "Bearer SECRETTOKEN_DO_NOT_LEAK_ME_123";
+    let cmd = format!("{prefix}{padding} -H \"Authorization: {secret}\"");
+    assert!(
+        cmd.len() > 80,
+        "fixture must be longer than the 80-char truncation cap"
+    );
+    assert!(
+        cmd.contains(secret),
+        "fixture must contain the secret token so the test can check it leaks"
+    );
+
+    let p = default_policy();
+    let err = p
+        .validate_command_execution(&cmd, false)
+        .expect_err("unknown command should be rejected");
+
+    assert!(
+        !err.contains(secret),
+        "Err return leaked the secret past the 80-char truncation boundary: {err}"
+    );
+    assert!(
+        err.starts_with("Command not allowed by security policy: "),
+        "Err return should still carry the policy-decision prefix: {err}"
+    );
+}
+
+// Regression: #1941. Mirrors the log-truncation multi-byte safety net (#1813)
+// for the Err path. A multi-byte UTF-8 char straddling byte 80 of the command
+// would panic the formatter if we did a naked `&command[..80]` slice.
+#[test]
+fn validate_command_err_truncation_handles_multibyte_char_at_boundary() {
+    let prefix = "totallybogusbin ";
+    let filler = "a".repeat(80 - prefix.len() - 1);
+    let cmd = format!("{prefix}{filler}魔 trailing");
+    assert!(
+        !cmd.is_char_boundary(80),
+        "fixture must place a multi-byte char across byte 80"
+    );
+
+    let p = default_policy();
+    let result = p.validate_command_execution(&cmd, false);
+    assert!(
+        result.is_err(),
+        "fixture must hit the allowlist-miss Err path"
+    );
+}
+
 // ── validate_path_within_root ─────────────────────────────────────────────
 
 #[test]

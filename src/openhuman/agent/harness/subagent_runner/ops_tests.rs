@@ -734,6 +734,7 @@ fn resolve_subagent_provider_inherit_uses_parent_provider_and_model() {
         None,
         parent.clone(),
         "parent-model-x".to_string(),
+        false,
         None,
     );
     assert!(
@@ -755,6 +756,7 @@ fn resolve_subagent_provider_exact_overrides_only_model() {
         None,
         parent.clone(),
         "parent-model-x".to_string(),
+        false,
         None,
     );
     assert!(
@@ -773,6 +775,7 @@ fn resolve_subagent_provider_spawn_override_wins_over_definition_model() {
         None,
         parent.clone(),
         "parent-model-x".to_string(),
+        false,
         Some("spawn-model-y"),
     );
     assert!(
@@ -780,6 +783,88 @@ fn resolve_subagent_provider_spawn_override_wins_over_definition_model() {
         "inline spawn override should not change the provider"
     );
     assert_eq!(resolved_model, "spawn-model-y");
+}
+
+#[test]
+fn resolve_subagent_provider_config_model_wins_over_definition_model() {
+    use crate::openhuman::config::{Config, TeamModelConfig};
+
+    let mut config = Config::default();
+    config.teams.insert(
+        "test_agent".to_string(),
+        TeamModelConfig {
+            lead_model: None,
+            agent_model: Some("configured-agent-model".to_string()),
+        },
+    );
+
+    let parent: Arc<dyn Provider> = ScriptedProvider::new(vec![]);
+    let (resolved_provider, resolved_model) = super::resolve_subagent_provider(
+        &ModelSpec::Exact("definition-model".to_string()),
+        "test_agent",
+        Some(&config),
+        parent.clone(),
+        "parent-model-x".to_string(),
+        false,
+        None,
+    );
+    assert!(
+        arc_ptr_eq(&parent, &resolved_provider),
+        "config model pin should not change the provider"
+    );
+    assert_eq!(resolved_model, "configured-agent-model");
+}
+
+#[test]
+fn resolve_subagent_provider_inline_override_wins_over_config_model() {
+    use crate::openhuman::config::{Config, TeamModelConfig};
+
+    let mut config = Config::default();
+    config.teams.insert(
+        "test_agent".to_string(),
+        TeamModelConfig {
+            lead_model: None,
+            agent_model: Some("configured-agent-model".to_string()),
+        },
+    );
+
+    let parent: Arc<dyn Provider> = ScriptedProvider::new(vec![]);
+    let (_resolved_provider, resolved_model) = super::resolve_subagent_provider(
+        &ModelSpec::Exact("definition-model".to_string()),
+        "test_agent",
+        Some(&config),
+        parent.clone(),
+        "parent-model-x".to_string(),
+        false,
+        Some("inline-model"),
+    );
+    assert_eq!(resolved_model, "inline-model");
+}
+
+#[test]
+fn resolve_subagent_provider_config_alias_matches_issue_team_examples() {
+    use crate::openhuman::config::{Config, TeamModelConfig};
+
+    let mut config = Config::default();
+    config.teams.insert(
+        "research".to_string(),
+        TeamModelConfig {
+            lead_model: Some("research-lead-model".to_string()),
+            agent_model: Some("research-agent-model".to_string()),
+        },
+    );
+
+    let parent: Arc<dyn Provider> = ScriptedProvider::new(vec![]);
+    let (_provider, resolved_model) = super::resolve_subagent_provider(
+        &ModelSpec::Hint("agentic".to_string()),
+        "researcher",
+        Some(&config),
+        parent,
+        "parent-model-x".to_string(),
+        false,
+        None,
+    );
+    assert_eq!(resolved_model, "research-agent-model");
 }
 
 #[test]
@@ -796,6 +881,7 @@ fn resolve_subagent_provider_hint_with_no_config_falls_back() {
         None, // no config loaded
         parent.clone(),
         "real-claude-id".to_string(),
+        false,
         None,
     );
     assert!(
@@ -831,6 +917,7 @@ fn resolve_subagent_provider_hint_with_config_routes_via_factory() {
         Some(&config),
         parent.clone(),
         "parent-model-ignored-on-hint".to_string(),
+        false,
         None,
     );
     assert_eq!(
@@ -858,6 +945,7 @@ fn resolve_subagent_provider_hint_falls_back_on_factory_error() {
         Some(&config),
         parent.clone(),
         "fallback-model".to_string(),
+        false,
         None,
     );
     assert!(

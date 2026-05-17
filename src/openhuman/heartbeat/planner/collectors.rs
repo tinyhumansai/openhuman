@@ -4,7 +4,7 @@ use serde_json::json;
 use crate::openhuman::composio::client::{
     create_composio_client, direct_execute, direct_list_connections, ComposioClientKind,
 };
-use crate::openhuman::composio::types::ComposioExecuteResponse;
+use crate::openhuman::composio::types::{ComposioConnection, ComposioExecuteResponse};
 use crate::openhuman::config::Config;
 use crate::openhuman::cron;
 use crate::openhuman::notifications::store as notifications_store;
@@ -87,6 +87,66 @@ fn is_reminder_like_job(job: &cron::CronJob) -> bool {
         || lowered.contains("follow up")
 }
 
+fn is_calendar_connection(connection: &ComposioConnection) -> bool {
+    if !connection.is_active() {
+        return false;
+    }
+
+    let toolkit = connection.normalized_toolkit();
+    toolkit == "googlecalendar" || toolkit == "google_calendar" || toolkit == "calendar"
+}
+
+fn select_calendar_connections_for_tick(
+    connections: Vec<ComposioConnection>,
+    limit: usize,
+    now: DateTime<Utc>,
+    interval_minutes: u32,
+) -> Vec<ComposioConnection> {
+    let eligible: Vec<_> = connections
+        .into_iter()
+        .filter(is_calendar_connection)
+        .collect();
+    let eligible_count = eligible.len();
+    let selected_count = eligible_count.min(limit.max(1));
+
+    if selected_count == 0 {
+        tracing::debug!(
+            target: "composio",
+            eligible = eligible_count,
+            cap = limit.max(1),
+            selected = 0,
+            "[heartbeat:planner] calendar-fanout: eligible=0 cap={} selected=0",
+            limit.max(1)
+        );
+        return Vec::new();
+    }
+
+    let interval_seconds = i64::from(interval_minutes.max(5)) * 60;
+    let tick_index = now.timestamp().div_euclid(interval_seconds);
+    let offset = tick_index.rem_euclid(eligible_count as i64) as usize;
+    let selected = eligible
+        .iter()
+        .cycle()
+        .skip(offset)
+        .take(selected_count)
+        .cloned()
+        .collect::<Vec<_>>();
+
+    tracing::debug!(
+        target: "composio",
+        eligible = eligible_count,
+        cap = limit.max(1),
+        selected = selected_count,
+        offset,
+        "[heartbeat:planner] calendar-fanout: eligible={} cap={} selected={}",
+        eligible_count,
+        limit.max(1),
+        selected_count
+    );
+
+    selected
+}
+
 pub(crate) async fn collect_calendar_meetings(
     config: &Config,
     now: DateTime<Utc>,
@@ -151,11 +211,15 @@ pub(crate) async fn collect_calendar_meetings(
     let end_window = now + lookahead;
 
     let mut out = Vec::new();
-    for conn in connections.into_iter().filter(|c| c.is_active()) {
+    let calendar_connection_limit =
+        config.heartbeat.max_calendar_connections_per_tick.max(1) as usize;
+    for conn in select_calendar_connections_for_tick(
+        connections,
+        calendar_connection_limit,
+        now,
+        config.heartbeat.interval_minutes,
+    ) {
         let toolkit = conn.normalized_toolkit();
-        if toolkit != "googlecalendar" && toolkit != "google_calendar" && toolkit != "calendar" {
-            continue;
-        }
 
         // Build base args, then let the shared transformer fill in
         // `timeZone` + `singleEvents` so this poller behaves identically
@@ -428,4 +492,84 @@ pub(crate) fn collect_relevant_notifications(
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::TimeZone;
+
+    use super::*;
+
+    fn conn(id: &str, toolkit: &str, status: &str) -> ComposioConnection {
+        ComposioConnection {
+            id: id.to_string(),
+            toolkit: toolkit.to_string(),
+            status: status.to_string(),
+            created_at: None,
+        }
+    }
+
+    #[test]
+    fn calendar_selection_rotates_across_tick_buckets() {
+        let connections = vec![
+            conn("cal-1", "googlecalendar", "ACTIVE"),
+            conn("cal-2", "google_calendar", "CONNECTED"),
+            conn("cal-3", "calendar", "ACTIVE"),
+        ];
+        let first_tick = Utc.timestamp_opt(0, 0).single().unwrap();
+        let second_tick = Utc.timestamp_opt(300, 0).single().unwrap();
+
+        let first = select_calendar_connections_for_tick(connections.clone(), 2, first_tick, 5)
+            .into_iter()
+            .map(|c| c.id)
+            .collect::<Vec<_>>();
+        let second = select_calendar_connections_for_tick(connections, 2, second_tick, 5)
+            .into_iter()
+            .map(|c| c.id)
+            .collect::<Vec<_>>();
+
+        assert_eq!(first, vec!["cal-1", "cal-2"]);
+        assert_eq!(second, vec!["cal-2", "cal-3"]);
+    }
+
+    #[test]
+    fn calendar_selection_uses_heartbeat_interval_floor() {
+        let connections = vec![
+            conn("cal-1", "googlecalendar", "ACTIVE"),
+            conn("cal-2", "google_calendar", "CONNECTED"),
+            conn("cal-3", "calendar", "ACTIVE"),
+        ];
+        let one_minute_later = Utc.timestamp_opt(60, 0).single().unwrap();
+        let five_minutes_later = Utc.timestamp_opt(300, 0).single().unwrap();
+
+        let first =
+            select_calendar_connections_for_tick(connections.clone(), 2, one_minute_later, 1)
+                .into_iter()
+                .map(|c| c.id)
+                .collect::<Vec<_>>();
+        let second = select_calendar_connections_for_tick(connections, 2, five_minutes_later, 1)
+            .into_iter()
+            .map(|c| c.id)
+            .collect::<Vec<_>>();
+
+        assert_eq!(first, vec!["cal-1", "cal-2"]);
+        assert_eq!(second, vec!["cal-2", "cal-3"]);
+    }
+
+    #[test]
+    fn calendar_selection_filters_inactive_and_non_calendar_connections() {
+        let connections = vec![
+            conn("slack", "slack", "ACTIVE"),
+            conn("pending-cal", "googlecalendar", "PENDING"),
+            conn("active-cal", "googlecalendar", "ACTIVE"),
+        ];
+        let now = Utc.timestamp_opt(0, 0).single().unwrap();
+
+        let selected = select_calendar_connections_for_tick(connections, 10, now, 5)
+            .into_iter()
+            .map(|c| c.id)
+            .collect::<Vec<_>>();
+
+        assert_eq!(selected, vec!["active-cal"]);
+    }
 }

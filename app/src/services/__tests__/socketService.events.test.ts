@@ -27,7 +27,9 @@ vi.mock('../../store/channelConnectionsSlice', () => ({
   upsertChannelConnection: vi.fn((x: unknown) => x),
 }));
 vi.mock('../../lib/coreState/store', () => ({
-  getCoreStateSnapshot: vi.fn(() => ({ snapshot: { sessionToken: null } })),
+  getCoreStateSnapshot: vi.fn(() => ({
+    snapshot: { auth: { userId: 'core-user-id' }, sessionToken: null },
+  })),
 }));
 class MockMCPTransport {}
 vi.mock('../../lib/mcp', () => ({ SocketIOMCPTransportImpl: MockMCPTransport }));
