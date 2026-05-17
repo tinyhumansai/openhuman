@@ -1,13 +1,20 @@
-import { fireEvent, screen, waitFor } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { listConnections as listComposioConnections } from '../../../../lib/composio/composioApi';
 import {
   loadAISettings,
   loadLocalProviderSnapshot,
   saveAISettings,
   setCloudProviderKey,
 } from '../../../../services/api/aiSettingsApi';
+import { creditsApi } from '../../../../services/api/creditsApi';
 import { renderWithProviders } from '../../../../test/test-utils';
+import {
+  openhumanHeartbeatSettingsGet,
+  openhumanHeartbeatSettingsSet,
+  openhumanHeartbeatTickNow,
+} from '../../../../utils/tauriCommands/heartbeat';
 import AIPanel from '../AIPanel';
 
 vi.mock('../../../../services/api/aiSettingsApi', () => ({
@@ -44,6 +51,18 @@ vi.mock('../../hooks/useSettingsNavigation', () => ({
   }),
 }));
 
+vi.mock('../../../../utils/tauriCommands/heartbeat', () => ({
+  openhumanHeartbeatSettingsGet: vi.fn(),
+  openhumanHeartbeatSettingsSet: vi.fn(),
+  openhumanHeartbeatTickNow: vi.fn(),
+}));
+
+vi.mock('../../../../services/api/creditsApi', () => ({
+  creditsApi: { getTeamUsage: vi.fn(), getTransactions: vi.fn() },
+}));
+
+vi.mock('../../../../lib/composio/composioApi', () => ({ listConnections: vi.fn() }));
+
 const baseSettings = {
   cloudProviders: [
     {
@@ -69,11 +88,95 @@ const baseSettings = {
 
 const baseLocalSnapshot = { status: null, diagnostics: null, presets: null, installedModels: [] };
 
+const baseHeartbeatSettings = {
+  enabled: true,
+  interval_minutes: 15,
+  inference_enabled: true,
+  notify_meetings: true,
+  notify_reminders: true,
+  notify_relevant_events: false,
+  external_delivery_enabled: false,
+  meeting_lookahead_minutes: 60,
+  max_calendar_connections_per_tick: 2,
+  reminder_lookahead_minutes: 30,
+};
+
+const baseUsage = {
+  remainingUsd: 1.5,
+  cycleBudgetUsd: 10,
+  cycleLimit5hr: 0.12,
+  cycleLimit7day: 8.5,
+  fiveHourCapUsd: 1,
+  fiveHourResetsAt: '2026-05-17T08:00:00.000Z',
+  cycleStartDate: '2026-05-14T00:00:00.000Z',
+  cycleEndsAt: '2026-05-21T00:00:00.000Z',
+};
+
+const baseTransactions = [
+  {
+    id: 'older',
+    type: 'SPEND' as const,
+    action: 'SPEND:USAGE_DEDUCTION:USER',
+    amountUsd: -0.25,
+    balanceAfterUsd: 9.75,
+    createdAt: '2026-05-17T01:00:00.000Z',
+  },
+  {
+    id: 'earn',
+    type: 'EARN' as const,
+    action: 'TOPUP',
+    amountUsd: 1,
+    balanceAfterUsd: 10.75,
+    createdAt: '2026-05-17T02:00:00.000Z',
+  },
+  {
+    id: 'latest',
+    type: 'SPEND' as const,
+    action: 'HEARTBEAT',
+    amountUsd: -0.5,
+    balanceAfterUsd: 9.25,
+    createdAt: '2026-05-17T03:00:00.000Z',
+  },
+];
+
+const baseConnections = [
+  { id: 'cal-1', toolkit: 'googlecalendar', status: 'ACTIVE' },
+  { id: 'cal-2', toolkit: 'calendar', status: 'CONNECTED' },
+  { id: 'cal-3', toolkit: 'google_calendar', status: 'ACTIVE' },
+  { id: 'slack-1', toolkit: 'slack', status: 'ACTIVE' },
+  { id: 'pending-cal', toolkit: 'googlecalendar', status: 'PENDING' },
+];
+
 describe('AIPanel', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(loadAISettings).mockResolvedValue(baseSettings);
     vi.mocked(loadLocalProviderSnapshot).mockResolvedValue(baseLocalSnapshot);
+    vi.mocked(openhumanHeartbeatSettingsGet).mockResolvedValue({
+      result: { settings: baseHeartbeatSettings },
+      logs: [],
+    });
+    vi.mocked(openhumanHeartbeatSettingsSet).mockResolvedValue({
+      result: { settings: baseHeartbeatSettings },
+      logs: [],
+    });
+    vi.mocked(openhumanHeartbeatTickNow).mockResolvedValue({
+      result: {
+        summary: {
+          source_events: 3,
+          deliveries_attempted: 2,
+          deliveries_sent: 1,
+          deliveries_skipped_dedup: 1,
+        },
+      },
+      logs: [],
+    });
+    vi.mocked(creditsApi.getTeamUsage).mockResolvedValue(baseUsage);
+    vi.mocked(creditsApi.getTransactions).mockResolvedValue({
+      transactions: baseTransactions,
+      total: baseTransactions.length,
+    });
+    vi.mocked(listComposioConnections).mockResolvedValue({ connections: baseConnections });
   });
 
   it('renders the LLM Providers + Routing top-level section headers', async () => {
@@ -315,5 +418,132 @@ describe('AIPanel', () => {
 
     // Specifically: no "Disconnect OpenAI" switch (chip is still in off state).
     expect(screen.queryByRole('switch', { name: /Disconnect OpenAI/i })).not.toBeInTheDocument();
+  });
+
+  it('renders background loop diagnostics with newest spend row and budget math', async () => {
+    renderWithProviders(<AIPanel />);
+
+    await waitFor(() => expect(screen.getByText('Background loops')).toBeInTheDocument());
+
+    expect(screen.getByText('Heartbeat controls')).toBeInTheDocument();
+    expect(screen.getByText('Recent usage ledger')).toBeInTheDocument();
+    expect(screen.getByText('Loop map')).toBeInTheDocument();
+    expect(screen.getByText('Heartbeat planner')).toBeInTheDocument();
+    expect(screen.getByText('Subconscious tick')).toBeInTheDocument();
+    expect(screen.getByText('Memory tree workers')).toBeInTheDocument();
+    expect(screen.getByText('Reflection rebuild')).toBeInTheDocument();
+    expect(screen.getByText('Composio sync')).toBeInTheDocument();
+
+    expect(screen.getByText('Week budget')).toBeInTheDocument();
+    expect(screen.getByText('$10.0000')).toBeInTheDocument();
+    expect(screen.getByText('Week remaining')).toBeInTheDocument();
+    expect(screen.getByText('$1.5000')).toBeInTheDocument();
+    expect(screen.getByText('Avg spend row')).toBeInTheDocument();
+    expect(screen.getByText('Bg API reads')).toBeInTheDocument();
+    expect(screen.getByText('Bg wakeups')).toBeInTheDocument();
+
+    expect(screen.getByText('Rows left')).toBeInTheDocument();
+    expect(screen.getByText('Rows per full week budget')).toBeInTheDocument();
+    expect(screen.getByText('Sample burn rate')).toBeInTheDocument();
+    expect(screen.getByText('Projected empty')).toBeInTheDocument();
+    expect(screen.getByText('API reads per $ remaining')).toBeInTheDocument();
+    expect(screen.getByText('Loop call budget')).toBeInTheDocument();
+    expect(screen.getByText('Calendar fanout cap')).toBeInTheDocument();
+    expect(screen.getByText('Subconscious model calls')).toBeInTheDocument();
+    expect(screen.getByText('Composio sync scans')).toBeInTheDocument();
+    expect(screen.getByText('Memory worker polls')).toBeInTheDocument();
+
+    expect(screen.getByText(/3 Composio read call\(s\)\/tick/)).toBeInTheDocument();
+    expect(screen.getByText(/1 calendar link\(s\) over cap skipped/)).toBeInTheDocument();
+    expect(screen.getByText(/2\/3 conn\/tick/)).toBeInTheDocument();
+    expect(screen.getByText('HEARTBEAT')).toBeInTheDocument();
+    expect(screen.getByText('SPEND:USAGE_DEDUCTION:USER')).toBeInTheDocument();
+    expect(screen.getByText(/Latest spend: \$0\.5000/)).toBeInTheDocument();
+  });
+
+  it('patches heartbeat controls and runs a manual planner tick', async () => {
+    let currentSettings = { ...baseHeartbeatSettings };
+    vi.mocked(openhumanHeartbeatSettingsGet).mockImplementation(async () => ({
+      result: { settings: currentSettings },
+      logs: [],
+    }));
+    vi.mocked(openhumanHeartbeatSettingsSet).mockImplementation(async patch => {
+      currentSettings = { ...currentSettings, ...patch };
+      return { result: { settings: currentSettings }, logs: [] };
+    });
+
+    renderWithProviders(<AIPanel />);
+    await waitFor(() => expect(screen.getByText('Heartbeat controls')).toBeInTheDocument());
+
+    const clickToggle = async (label: string, expectedPatch: Record<string, unknown>) => {
+      const row = screen.getByText(label).parentElement!.parentElement!;
+      fireEvent.click(within(row).getByRole('switch'));
+      await waitFor(() =>
+        expect(vi.mocked(openhumanHeartbeatSettingsSet)).toHaveBeenLastCalledWith(expectedPatch)
+      );
+    };
+
+    await clickToggle('Heartbeat loop', { enabled: false });
+    await clickToggle('Subconscious inference', { inference_enabled: false });
+    await clickToggle('Calendar meeting checks', { notify_meetings: false });
+    await clickToggle('Cron reminder checks', { notify_reminders: false });
+    await clickToggle('Relevant notification checks', { notify_relevant_events: true });
+    await clickToggle('External delivery', { external_delivery_enabled: true });
+
+    fireEvent.change(screen.getByLabelText('Calendar cap'), { target: { value: '3' } });
+    await waitFor(() =>
+      expect(vi.mocked(openhumanHeartbeatSettingsSet)).toHaveBeenLastCalledWith({
+        max_calendar_connections_per_tick: 3,
+      })
+    );
+
+    fireEvent.change(screen.getByLabelText('Meeting lookahead'), { target: { value: '120' } });
+    await waitFor(() =>
+      expect(vi.mocked(openhumanHeartbeatSettingsSet)).toHaveBeenLastCalledWith({
+        meeting_lookahead_minutes: 120,
+      })
+    );
+
+    fireEvent.change(screen.getByLabelText('Reminder lookahead'), { target: { value: '60' } });
+    await waitFor(() =>
+      expect(vi.mocked(openhumanHeartbeatSettingsSet)).toHaveBeenLastCalledWith({
+        reminder_lookahead_minutes: 60,
+      })
+    );
+
+    fireEvent.change(screen.getByLabelText('Interval'), { target: { value: '30' } });
+    await waitFor(() =>
+      expect(vi.mocked(openhumanHeartbeatSettingsSet)).toHaveBeenLastCalledWith({
+        interval_minutes: 30,
+      })
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Planner tick now' }));
+    await waitFor(() => expect(vi.mocked(openhumanHeartbeatTickNow)).toHaveBeenCalled());
+    await waitFor(() => expect(screen.getByText(/Planner: 3 source events/)).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Reload' }));
+    await waitFor(() => expect(vi.mocked(openhumanHeartbeatSettingsGet)).toHaveBeenCalled());
+  });
+
+  it('shows heartbeat load and planner errors without crashing diagnostics', async () => {
+    vi.mocked(openhumanHeartbeatSettingsGet).mockRejectedValueOnce(new Error('heartbeat offline'));
+    vi.mocked(openhumanHeartbeatTickNow).mockRejectedValueOnce(new Error('tick failed'));
+
+    renderWithProviders(<AIPanel />);
+
+    await waitFor(() => expect(screen.getByText('heartbeat offline')).toBeInTheDocument());
+    expect(screen.getByText('Heartbeat controls unavailable.')).toBeInTheDocument();
+
+    vi.mocked(openhumanHeartbeatSettingsGet).mockResolvedValueOnce({
+      result: { settings: baseHeartbeatSettings },
+      logs: [],
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    await waitFor(() => expect(screen.getByText('Heartbeat controls')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Planner tick now' }));
+    await waitFor(() => expect(screen.getByText('tick failed')).toBeInTheDocument());
   });
 });

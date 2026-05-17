@@ -100,6 +100,29 @@ mod tests {
         assert_eq!(config.interval_minutes, 5);
         assert_eq!(config.max_calendar_connections_per_tick, 2);
     }
+
+    #[test]
+    fn heartbeat_deserialization_fills_opt_in_defaults() {
+        let config: HeartbeatConfig = serde_json::from_str("{}").unwrap();
+        assert!(!config.enabled);
+        assert!(!config.inference_enabled);
+        assert!(!config.notify_meetings);
+        assert!(!config.notify_reminders);
+        assert!(!config.notify_relevant_events);
+        assert!(!config.external_delivery_enabled);
+        assert_eq!(config.interval_minutes, 5);
+        assert_eq!(config.max_calendar_connections_per_tick, 2);
+        assert_eq!(config.meeting_lookahead_minutes, 120);
+        assert_eq!(config.reminder_lookahead_minutes, 30);
+
+        let partial: HeartbeatConfig =
+            serde_json::from_str(r#"{"enabled":true,"interval_minutes":15}"#).unwrap();
+        assert!(partial.enabled);
+        assert_eq!(partial.interval_minutes, 15);
+        assert!(!partial.inference_enabled);
+        assert!(!partial.notify_meetings);
+        assert_eq!(partial.max_calendar_connections_per_tick, 2);
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

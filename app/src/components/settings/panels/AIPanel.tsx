@@ -599,7 +599,9 @@ function summarizeSpendByHour(transactions: CreditTransaction[]): Array<[string,
 }
 
 function summarizeSpendSample(transactions: CreditTransaction[]) {
-  const rows = transactions.filter(tx => tx.type === 'SPEND');
+  const rows = transactions
+    .filter(tx => tx.type === 'SPEND')
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   const total = rows.reduce((sum, tx) => sum + spendAmount(tx), 0);
   const avgRowUsd = rows.length > 0 ? total / rows.length : 0;
   const times = rows
@@ -695,7 +697,13 @@ const BackgroundLoopControls = ({
   const [runningTick, setRunningTick] = useState(false);
   const [plannerSummary, setPlannerSummary] = useState<HeartbeatPlannerSummary | null>(null);
   const [error, setError] = useState<string>('');
+  const settingsRef = useRef<HeartbeatSettings | null>(null);
   const patchRequestIdRef = useRef(0);
+
+  const commitSettings = useCallback((nextSettings: HeartbeatSettings | null) => {
+    settingsRef.current = nextSettings;
+    setSettings(nextSettings);
+  }, []);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -709,7 +717,7 @@ const BackgroundLoopControls = ({
       ]);
 
     if (heartbeatResult.status === 'fulfilled') {
-      setSettings(heartbeatResult.value.result.settings);
+      commitSettings(heartbeatResult.value.result.settings);
     } else {
       setError(
         heartbeatResult.reason instanceof Error ? heartbeatResult.reason.message : 'Load failed'
@@ -728,46 +736,45 @@ const BackgroundLoopControls = ({
       setConnections(connectionsResult.value.connections ?? []);
     }
     setLoading(false);
-  }, []);
+  }, [commitSettings]);
 
   useEffect(() => {
     void refresh();
   }, [refresh]);
 
-  const applyHeartbeatPatch = useCallback(async (patch: HeartbeatSettingsPatch) => {
-    const requestId = patchRequestIdRef.current + 1;
-    patchRequestIdRef.current = requestId;
-    const savingKey = Object.keys(patch).join(',');
-    let previous: HeartbeatSettings | null = null;
-    setError('');
-    setSaving(savingKey);
-    setSettings(current => {
-      if (!current) return current;
-      previous = current;
-      return { ...current, ...patch };
-    });
-    if (!previous) {
-      // No baseline to patch against — abandon this request.
-      if (patchRequestIdRef.current === requestId) {
-        setSaving(null);
+  const applyHeartbeatPatch = useCallback(
+    async (patch: HeartbeatSettingsPatch) => {
+      const requestId = patchRequestIdRef.current + 1;
+      patchRequestIdRef.current = requestId;
+      const savingKey = Object.keys(patch).join(',');
+      const previous = settingsRef.current;
+      setError('');
+      setSaving(savingKey);
+      if (!previous) {
+        // No baseline to patch against — abandon this request.
+        if (patchRequestIdRef.current === requestId) {
+          setSaving(null);
+        }
+        return;
       }
-      return;
-    }
-    try {
-      const response = await openhumanHeartbeatSettingsSet(patch);
-      // Stale response — a newer patch superseded us; drop this result.
-      if (patchRequestIdRef.current !== requestId) return;
-      setSettings(response.result.settings);
-    } catch (err) {
-      if (patchRequestIdRef.current !== requestId) return;
-      setSettings(previous);
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      if (patchRequestIdRef.current === requestId) {
-        setSaving(null);
+      commitSettings({ ...previous, ...patch });
+      try {
+        const response = await openhumanHeartbeatSettingsSet(patch);
+        // Stale response — a newer patch superseded us; drop this result.
+        if (patchRequestIdRef.current !== requestId) return;
+        commitSettings(response.result.settings);
+      } catch (err) {
+        if (patchRequestIdRef.current !== requestId) return;
+        commitSettings(previous);
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        if (patchRequestIdRef.current === requestId) {
+          setSaving(null);
+        }
       }
-    }
-  }, []);
+    },
+    [commitSettings]
+  );
 
   const runPlannerNow = useCallback(async () => {
     setRunningTick(true);
