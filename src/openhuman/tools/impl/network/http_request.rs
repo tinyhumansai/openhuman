@@ -1,4 +1,4 @@
-use super::url_guard::{normalize_allowed_domains, validate_url};
+use super::url_guard::{normalize_allowed_domains, validate_url_with_dns_check};
 use crate::openhuman::security::SecurityPolicy;
 use crate::openhuman::tools::traits::{Tool, ToolResult};
 use async_trait::async_trait;
@@ -31,7 +31,7 @@ impl HttpRequestTool {
     }
 
     fn validate_url(&self, raw_url: &str) -> anyhow::Result<String> {
-        validate_url(raw_url, &self.allowed_domains)
+        validate_url_with_dns_check(raw_url, &self.allowed_domains)
     }
 
     fn validate_method(&self, method: &str) -> anyhow::Result<reqwest::Method> {
