@@ -125,7 +125,9 @@ describe('openUrl', () => {
 
   it('trims surrounding whitespace before classifying an http URL for fallback', async () => {
     isTauriMock.mockReturnValue(true);
-    tauriOpenUrlMock.mockRejectedValue(new TypeError("Cannot read properties of undefined (reading 'postMessage')"));
+    tauriOpenUrlMock.mockRejectedValue(
+      new TypeError("Cannot read properties of undefined (reading 'postMessage')")
+    );
 
     const { openUrl } = await import('./openUrl');
     await openUrl('  https://tinyhumans.ai/dashboard?token=secret-redact-me  ');
@@ -139,9 +141,7 @@ describe('openUrl', () => {
       'noopener,noreferrer'
     );
     expect(addBreadcrumbMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({ url: 'https://tinyhumans.ai' }),
-      })
+      expect.objectContaining({ data: expect.objectContaining({ url: 'https://tinyhumans.ai' }) })
     );
   });
 });
