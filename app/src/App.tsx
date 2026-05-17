@@ -63,14 +63,16 @@ startNativeNotificationsService();
 startInternetStatusListener();
 startCoreHealthMonitor();
 
+export function stopBootServicesForHmr(): void {
+  stopWebviewAccountService();
+  stopWebviewNotificationsService();
+  stopNativeNotificationsService();
+  stopInternetStatusListener();
+  stopCoreHealthMonitor();
+}
+
 if (import.meta.hot) {
-  import.meta.hot.dispose(() => {
-    stopWebviewAccountService();
-    stopWebviewNotificationsService();
-    stopNativeNotificationsService();
-    stopInternetStatusListener();
-    stopCoreHealthMonitor();
-  });
+  import.meta.hot.dispose(stopBootServicesForHmr);
 }
 
 function App() {
