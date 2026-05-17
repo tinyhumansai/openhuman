@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import localeReducer, { setLocale } from '../../../store/localeSlice';
 import en from '../en';
 import { I18nProvider, useT } from '../I18nContext';
+import ru from '../ru';
 import type { Locale, TranslationMap } from '../types';
 import zhCN from '../zh-CN';
 
@@ -62,5 +63,23 @@ describe('I18nProvider', () => {
 
     expect(englishKeys.length).toBeGreaterThan(0);
     expect(missingKeys).toEqual([]);
+  });
+
+  it('keeps the Russian locale complete against English keys', () => {
+    const englishKeys = Object.keys(unwrapTranslationMap(en));
+    const russian = unwrapTranslationMap(ru);
+    const missingKeys = englishKeys.filter(key => !(key in russian));
+
+    expect(englishKeys.length).toBeGreaterThan(0);
+    expect(missingKeys).toEqual([]);
+  });
+
+  it('serves Russian translations end-to-end', () => {
+    renderWithLocale('ru');
+
+    expect(screen.getByTestId('locale')).toHaveTextContent('ru');
+    expect(screen.getByText('Язык')).toBeInTheDocument();
+    expect(screen.getByText('Очистка данных приложения')).toBeInTheDocument();
+    expect(screen.getByText('Выйти')).toBeInTheDocument();
   });
 });

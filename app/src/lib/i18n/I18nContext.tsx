@@ -3,6 +3,7 @@ import { createContext, type ReactNode, useCallback, useContext, useMemo } from 
 import { useAppSelector } from '../../store/hooks';
 import en from './en';
 import id from './id';
+import ru from './ru';
 import type { Locale } from './types';
 import zhCN from './zh-CN';
 
@@ -11,7 +12,7 @@ interface I18nContextValue {
   locale: Locale;
 }
 
-const translations: Record<Locale, Record<string, string>> = { en, id, 'zh-CN': zhCN };
+const translations: Record<Locale, Record<string, string>> = { en, id, ru, 'zh-CN': zhCN };
 
 // Resolve the effective English map at call time. `en` may be wrapped in
 // `{ default: { ... } }` by CJS/ESM interop in test runners, or tree-shaken
