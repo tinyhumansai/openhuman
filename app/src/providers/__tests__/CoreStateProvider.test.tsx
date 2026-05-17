@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import * as coreStateApi from '../../services/coreStateApi';
 import * as tauriCommands from '../../utils/tauriCommands';
-import { setCoreStateSnapshot } from '../../lib/coreState/store';
+import { getCoreStateSnapshot, setCoreStateSnapshot } from '../../lib/coreState/store';
 import { setActiveUserId } from '../../store/userScopedStorage';
 import CoreStateProvider, {
   coreStatePollFailureWarningMessage,
@@ -43,6 +43,16 @@ function makeSnapshot(overrides: {
       service: null as never,
     },
   };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
 }
 
 type CoreStateContextValue = ReturnType<typeof useCoreState>;
@@ -219,6 +229,32 @@ describe('CoreStateProvider — identity-change cache clearing', () => {
 
     expect(screen.getByTestId('ready').textContent).toBe('boot');
     await waitFor(() => expect(screen.getByTestId('ready').textContent).toBe('ready'));
+  });
+
+  it('does not commit a poll snapshot after the provider unmounts (#1934)', async () => {
+    const pendingSnapshot = deferred<Snapshot>();
+    fetchSnapshot.mockReturnValue(pendingSnapshot.promise);
+    listTeams.mockResolvedValue([]);
+
+    const { unmount } = render(
+      <CoreStateProvider>
+        <Consumer />
+      </CoreStateProvider>
+    );
+
+    expect(screen.getByTestId('ready').textContent).toBe('boot');
+
+    unmount();
+
+    await act(async () => {
+      pendingSnapshot.resolve(makeSnapshot({ userId: 'late-user', sessionToken: 'late-token' }));
+      await pendingSnapshot.promise;
+    });
+
+    const snapshot = getCoreStateSnapshot();
+    expect(snapshot.isReady).toBe(false);
+    expect(snapshot.snapshot.auth.userId).toBeNull();
+    expect(snapshot.snapshot.sessionToken).toBeNull();
   });
 
   it('warns when the initial core state poll fails', async () => {

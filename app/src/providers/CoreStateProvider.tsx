@@ -190,7 +190,20 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
   const logoutGuardUntilRef = useRef(0);
   const bootstrapFailCountRef = useRef(0);
   const refreshInFlightRef = useRef<Promise<void> | null>(null);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
   const commitState = useCallback((updater: (previous: CoreState) => CoreState) => {
+    if (!mountedRef.current) {
+      return;
+    }
+
     setState(previous => {
       const next = updater(previous);
       setCoreStateSnapshot(next);
