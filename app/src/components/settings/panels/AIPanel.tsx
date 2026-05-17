@@ -643,6 +643,7 @@ const LoopToggle = ({
     <button
       type="button"
       role="switch"
+      aria-label={label}
       aria-checked={checked}
       disabled={busy}
       onClick={onToggle}

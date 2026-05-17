@@ -2,7 +2,7 @@
  * Heartbeat loop commands.
  */
 import { callCoreRpc } from '../../services/coreRpcClient';
-import { CommandResponse, isTauri } from './common';
+import { type CommandResponse, isTauri } from './common';
 
 export interface HeartbeatSettings {
   enabled: boolean;
