@@ -27,6 +27,10 @@ impl Tool for ArchetypeDelegationTool {
                 "prompt": {
                     "type": "string",
                     "description": "Clear instruction for what to do. Include all relevant context — the sub-agent has no memory of your conversation."
+                },
+                "model": {
+                    "type": "string",
+                    "description": "Optional exact model id for this delegation only. Keeps the parent provider/routing, but pins the child agent to this model instead of the agent definition's default."
                 }
             }
         })
@@ -55,7 +59,20 @@ impl Tool for ArchetypeDelegationTool {
             )));
         }
 
-        super::dispatch_subagent(&self.agent_id, &self.tool_name, &prompt, None).await
+        let model_override = args
+            .get("model")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+
+        super::dispatch_subagent(
+            &self.agent_id,
+            &self.tool_name,
+            &prompt,
+            None,
+            model_override,
+        )
+        .await
     }
 }
 

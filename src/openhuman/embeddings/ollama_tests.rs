@@ -121,7 +121,9 @@ fn accessor_methods() {
     let p = OllamaEmbedding::new("http://x:1", "m", 42);
     assert_eq!(p.base_url(), "http://x:1");
     assert_eq!(p.model(), "m");
+    assert_eq!(p.model_id(), "m");
     assert_eq!(p.dimensions(), 42);
+    assert_eq!(p.signature(), "provider=ollama;model=m;dims=42");
 }
 
 // ── embed — empty / whitespace ──────────────────────────

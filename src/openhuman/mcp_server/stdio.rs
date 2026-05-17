@@ -76,7 +76,12 @@ fn print_help() {
     eprintln!("Usage: openhuman-core mcp [-v|--verbose]");
     eprintln!();
     eprintln!("Start an opt-in stdio Model Context Protocol server.");
-    eprintln!("The server exposes a curated read-only memory surface:");
+    eprintln!("The server exposes first-level core MCP tools:");
+    eprintln!("  core.list_tools");
+    eprintln!("  core.tool_instructions");
+    eprintln!("  agent.list_subagents");
+    eprintln!("  agent.run_subagent");
+    eprintln!("And the read-only memory surface:");
     eprintln!("  memory.search");
     eprintln!("  memory.recall");
     eprintln!("  tree.read_chunk");

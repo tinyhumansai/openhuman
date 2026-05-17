@@ -155,47 +155,5 @@ pub async fn load_or_default(toolkit: &str) -> UserScopePref {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn default_is_read_write_no_admin() {
-        let p = UserScopePref::default();
-        assert!(p.read);
-        assert!(p.write);
-        assert!(!p.admin);
-    }
-
-    #[test]
-    fn allows_matches_scope() {
-        let p = UserScopePref {
-            read: true,
-            write: false,
-            admin: false,
-        };
-        assert!(p.allows(ToolScope::Read));
-        assert!(!p.allows(ToolScope::Write));
-        assert!(!p.allows(ToolScope::Admin));
-    }
-
-    #[test]
-    fn round_trip_serde() {
-        let p = UserScopePref {
-            read: true,
-            write: true,
-            admin: true,
-        };
-        let v = serde_json::to_value(p).unwrap();
-        let back: UserScopePref = serde_json::from_value(v).unwrap();
-        assert_eq!(p, back);
-    }
-
-    #[test]
-    fn missing_fields_default_to_true_for_read_write() {
-        // Forward-compat: if we ever drop a field, existing stored
-        // documents still deserialize sensibly.
-        let v = serde_json::json!({});
-        let p: UserScopePref = serde_json::from_value(v).unwrap();
-        assert_eq!(p, UserScopePref::default());
-    }
-}
+#[path = "user_scopes_test.rs"]
+mod tests;

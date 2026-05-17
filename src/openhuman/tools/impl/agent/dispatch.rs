@@ -11,6 +11,7 @@ pub(crate) async fn dispatch_subagent(
     tool_name: &str,
     prompt: &str,
     skill_filter: Option<&str>,
+    model_override: Option<&str>,
 ) -> anyhow::Result<ToolResult> {
     let registry = match AgentDefinitionRegistry::global() {
         Some(reg) => reg,
@@ -67,6 +68,7 @@ pub(crate) async fn dispatch_subagent(
         skill_filter_override: None,
         toolkit_override: skill_filter.map(str::to_string),
         context: None,
+        model_override: model_override.map(str::to_string),
         task_id: Some(task_id.clone()),
         worker_thread_id: None,
     };
@@ -128,6 +130,7 @@ mod tests {
             "__definitely_not_a_real_agent__",
             "test_tool",
             "irrelevant prompt",
+            None,
             None,
         )
         .await

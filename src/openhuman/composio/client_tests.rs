@@ -1049,7 +1049,7 @@ fn store_get_clear_composio_api_key_roundtrip() {
 //     400-class user error.
 //   * `direct_execute` accepts a None-arguments call and falls
 //     through to the underlying tool surface (which then errors on the
-//     network call — covered by the integration test in `ops_tests.rs`).
+//     network call — covered by the integration test in `ops_test.rs`).
 //   * `direct_list_connections` is a thin mapper; the real coverage
 //     for its row → ComposioConnection translation lives in the
 //     `connected_account_*` tests in `composio_tests.rs`.

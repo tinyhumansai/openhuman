@@ -1,11 +1,13 @@
 import { json, setCors } from "../http.mjs";
-import { behavior, parseBehaviorJson, setMockBehavior } from "../state.mjs";
-
-function headerValue(headers, name) {
-  const raw = headers?.[name];
-  if (Array.isArray(raw)) return raw.join(", ");
-  return typeof raw === "string" ? raw : "";
-}
+import {
+  behavior,
+  getMockLlmThread,
+  parseBehaviorJson,
+  recordMockLlmTurn,
+  setMockBehavior,
+} from "../state.mjs";
+import { buildDynamicCompletion } from "./llm/dynamic.mjs";
+import { headerValue, pickProbeText, resolveThreadKey } from "./llm/shared.mjs";
 
 function requestRuleMatches(rule, ctx) {
   if (!rule || typeof rule !== "object") return false;
@@ -221,7 +223,14 @@ function defaultStreamScript({ content, toolCalls }) {
   return script;
 }
 
-function handleStreamingCompletion({ res, model, mockBehavior, parsedBody, rule }) {
+function handleStreamingCompletion({
+  res,
+  model,
+  mockBehavior,
+  parsedBody,
+  rule,
+  dynamic,
+}) {
   writeSseHead(res);
 
   // 1. Explicit streaming script overrides everything.
@@ -264,17 +273,24 @@ function handleStreamingCompletion({ res, model, mockBehavior, parsedBody, rule 
 
   if (!Array.isArray(script)) {
     // 4. Default: stream a short greeting in a few chunks.
-    const fallback =
-      typeof rule?.content === "string" && rule.content.length > 0
-        ? rule.content
-        : typeof mockBehavior.llmFallbackContent === "string" &&
-            mockBehavior.llmFallbackContent.length > 0
-          ? mockBehavior.llmFallbackContent
-        : "Hello from e2e mock agent";
-    script = defaultStreamScript({
-      content: fallback,
-      toolCalls: Array.isArray(rule?.toolCalls) ? rule.toolCalls : undefined,
-    });
+    if (
+      Array.isArray(dynamic?.streamScript) &&
+      dynamic.streamScript.length > 0
+    ) {
+      script = dynamic.streamScript;
+    } else {
+      const fallback =
+        typeof rule?.content === "string" && rule.content.length > 0
+          ? rule.content
+          : typeof mockBehavior.llmFallbackContent === "string" &&
+              mockBehavior.llmFallbackContent.length > 0
+            ? mockBehavior.llmFallbackContent
+            : "Hello from e2e mock agent";
+      script = defaultStreamScript({
+        content: fallback,
+        toolCalls: Array.isArray(rule?.toolCalls) ? rule.toolCalls : undefined,
+      });
+    }
   }
 
   const defaultDelayMs = Number.isFinite(
@@ -309,7 +325,9 @@ async function streamScriptToResponse({ res, model, script, defaultDelayMs }) {
   let trailingUsage = null;
   for (let i = 0; i < script.length; i += 1) {
     const entry = script[i] ?? {};
-    const delay = Number.isFinite(entry.delayMs) ? entry.delayMs : defaultDelayMs;
+    const delay = Number.isFinite(entry.delayMs)
+      ? entry.delayMs
+      : defaultDelayMs;
     if (delay > 0) await sleep(delay);
 
     if (entry.error) {
@@ -325,10 +343,7 @@ async function streamScriptToResponse({ res, model, script, defaultDelayMs }) {
     }
 
     if (typeof entry.text === "string") {
-      writeSseEvent(
-        res,
-        sseChunkEnvelope({ model, contentDelta: entry.text }),
-      );
+      writeSseEvent(res, sseChunkEnvelope({ model, contentDelta: entry.text }));
       continue;
     }
 
@@ -441,24 +456,6 @@ async function streamScriptToResponse({ res, model, script, defaultDelayMs }) {
  * mental model applies on both sides of the FFI.
  */
 
-function pickProbeText(parsedBody) {
-  if (!parsedBody || !Array.isArray(parsedBody.messages)) return "";
-  for (let i = parsedBody.messages.length - 1; i >= 0; i -= 1) {
-    const m = parsedBody.messages[i];
-    if (!m || typeof m !== "object") continue;
-    if (m.role === "user" || m.role === "tool") {
-      if (typeof m.content === "string") return m.content;
-      if (Array.isArray(m.content)) {
-        return m.content
-          .filter((c) => c && c.type === "text" && typeof c.text === "string")
-          .map((c) => c.text)
-          .join(" ");
-      }
-    }
-  }
-  return "";
-}
-
 function makeChoice({ content, toolCalls, callIdSeed }) {
   const message = { role: "assistant", content: content ?? "" };
   if (Array.isArray(toolCalls) && toolCalls.length > 0) {
@@ -475,7 +472,11 @@ function makeChoice({ content, toolCalls, callIdSeed }) {
     }));
     if (!content) message.content = null;
   }
-  return { index: 0, message, finish_reason: toolCalls?.length ? "tool_calls" : "stop" };
+  return {
+    index: 0,
+    message,
+    finish_reason: toolCalls?.length ? "tool_calls" : "stop",
+  };
 }
 
 function buildResponse({ model, content, toolCalls }) {
@@ -514,8 +515,15 @@ export function handleLlmCompletions(ctx) {
   const model =
     typeof parsedBody?.model === "string" ? parsedBody.model : "e2e-mock-model";
   const requestRule = resolveRequestRule(ctx);
+  const threadKey = resolveThreadKey(ctx);
+  const thread = threadKey ? getMockLlmThread(threadKey) : null;
+  const dynamic = buildDynamicCompletion({ model, parsedBody, thread });
+  const requestText = pickProbeText(parsedBody);
 
-  if (requestRule?.error || (requestRule?.status && requestRule.status >= 400)) {
+  if (
+    requestRule?.error ||
+    (requestRule?.status && requestRule.status >= 400)
+  ) {
     if (
       parsedBody?.stream === true &&
       requestRule?.error &&
@@ -524,8 +532,7 @@ export function handleLlmCompletions(ctx) {
       writeSseHead(res);
       writeSseEvent(res, {
         error: {
-          message:
-            requestRule?.error || "mock LLM streaming request rejected",
+          message: requestRule?.error || "mock LLM streaming request rejected",
           type: requestRule?.type || "invalid_request_error",
           code: requestRule?.code || null,
         },
@@ -543,17 +550,47 @@ export function handleLlmCompletions(ctx) {
   // attached, which is the production code path — non-streaming is
   // only the OH-backend fallback. See compatible.rs `chat()`.
   if (parsedBody?.stream === true) {
+    const recordTurn = (result) => {
+      if (!threadKey) return;
+      recordMockLlmTurn(threadKey, {
+        requestText,
+        responseText: result?.content ?? null,
+        toolCalls: result?.toolCalls ?? [],
+        model,
+        family: result?.family ?? dynamic.family,
+        codeLanguage: result?.codeLanguage ?? null,
+      });
+    };
+
+    if (
+      requestRule?.streamScript ||
+      requestRule?.content ||
+      requestRule?.toolCalls
+    ) {
+      recordTurn({
+        content: requestRule?.content ?? "",
+        toolCalls: requestRule?.toolCalls ?? [],
+        family: dynamic.family,
+      });
+    } else {
+      recordTurn(dynamic);
+    }
     return handleStreamingCompletion({
       res,
       model,
       mockBehavior,
       parsedBody,
       rule: requestRule,
+      dynamic,
     });
   }
 
   if (requestRule?.body && typeof requestRule.body === "object") {
-    json(res, Number.isInteger(requestRule.status) ? requestRule.status : 200, requestRule.body);
+    json(
+      res,
+      Number.isInteger(requestRule.status) ? requestRule.status : 200,
+      requestRule.body,
+    );
     return true;
   }
 
@@ -561,6 +598,15 @@ export function handleLlmCompletions(ctx) {
     Array.isArray(requestRule?.toolCalls) ||
     typeof requestRule?.content === "string"
   ) {
+    if (threadKey) {
+      recordMockLlmTurn(threadKey, {
+        requestText,
+        responseText: requestRule?.content ?? "",
+        toolCalls: requestRule?.toolCalls ?? [],
+        model,
+        family: dynamic.family,
+      });
+    }
     json(
       res,
       Number.isInteger(requestRule?.status) ? requestRule.status : 200,
@@ -579,6 +625,15 @@ export function handleLlmCompletions(ctx) {
     const next = forced.shift();
     // Persist the shrunk queue back so subsequent requests advance.
     setMockBehavior("llmForcedResponses", JSON.stringify(forced));
+    if (threadKey) {
+      recordMockLlmTurn(threadKey, {
+        requestText,
+        responseText: next.content ?? "",
+        toolCalls: next.toolCalls ?? [],
+        model,
+        family: dynamic.family,
+      });
+    }
     json(res, 200, buildResponse({ model, ...next }));
     return true;
   }
@@ -590,6 +645,15 @@ export function handleLlmCompletions(ctx) {
     for (const rule of rules) {
       if (!rule || typeof rule.keyword !== "string") continue;
       if (probe.includes(rule.keyword.toLowerCase())) {
+        if (threadKey) {
+          recordMockLlmTurn(threadKey, {
+            requestText,
+            responseText: rule.content ?? "",
+            toolCalls: rule.toolCalls ?? [],
+            model,
+            family: dynamic.family,
+          });
+        }
         json(
           res,
           200,
@@ -606,10 +670,30 @@ export function handleLlmCompletions(ctx) {
 
   // 3. Default fallback.
   const fallback =
-    typeof mockBehavior.llmFallbackContent === "string" &&
+    dynamic.content ||
+    (typeof mockBehavior.llmFallbackContent === "string" &&
     mockBehavior.llmFallbackContent.length > 0
       ? mockBehavior.llmFallbackContent
-      : "Hello from e2e mock agent";
-  json(res, 200, buildResponse({ model, content: fallback }));
+      : "Hello from e2e mock agent");
+  if (threadKey) {
+    recordMockLlmTurn(threadKey, {
+      requestText,
+      responseText: fallback,
+      toolCalls: dynamic.toolCalls ?? [],
+      toolResultText: null,
+      model,
+      family: dynamic.family,
+      codeLanguage: dynamic.codeLanguage ?? null,
+    });
+  }
+  json(
+    res,
+    200,
+    buildResponse({
+      model,
+      content: fallback,
+      toolCalls: dynamic.toolCalls ?? [],
+    }),
+  );
   return true;
 }

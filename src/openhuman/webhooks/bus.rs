@@ -190,9 +190,9 @@ impl EventHandler for WebhookRequestSubscriber {
                 }
             }
             Some(ref reg) => {
-                // skill target kind or any other unrecognised kind — skill runtime not available
+                // skill target kind or any other unrecognised kind — direct skill dispatch is not available
                 tracing::debug!(
-                    "[webhook] skill tunnel {} (kind={}) — skill runtime not available",
+                    "[webhook] skill tunnel {} (kind={}) — direct skill dispatch not available",
                     tunnel_uuid,
                     reg.target_kind,
                 );
@@ -200,12 +200,12 @@ impl EventHandler for WebhookRequestSubscriber {
                     correlation_id: correlation_id.clone(),
                     status_code: 501,
                     headers: HashMap::new(),
-                    body: error_body("Skill runtime not available for direct dispatch"),
+                    body: error_body("Direct skill dispatch is not available"),
                 };
                 (
                     resp,
                     Some(reg.skill_id.clone()),
-                    Some("skill runtime not available".to_string()),
+                    Some("direct skill dispatch not available".to_string()),
                 )
             }
             None => {

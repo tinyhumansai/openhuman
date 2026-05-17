@@ -65,7 +65,7 @@ use super::providers::{get_provider, ProviderContext, SyncReason};
 const TICK_SECONDS: u64 = 1200;
 
 /// Process-wide guard so the scheduler is only started once even
-/// when both `start_channels` and `bootstrap_skill_runtime` call into
+/// when both `start_channels` and `bootstrap_core_runtime` call into
 /// us during startup. Without this we'd end up with two parallel tick
 /// loops competing for the same connections.
 static SCHEDULER_STARTED: OnceLock<()> = OnceLock::new();

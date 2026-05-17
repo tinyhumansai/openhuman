@@ -430,6 +430,7 @@ async fn run_one_parallel_task(
         skill_filter_override: None,
         toolkit_override: task.toolkit.clone(),
         context: task.context.clone(),
+        model_override: None,
         task_id: Some(task_id.clone()),
         worker_thread_id: None,
     };

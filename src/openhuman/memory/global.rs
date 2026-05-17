@@ -1,7 +1,7 @@
 //! Process-global memory client singleton.
 //!
 //! One `MemoryClient` (and its background ingestion-queue worker) lives for the
-//! entire core process. Every subsystem — RPC handlers, skills runtime, screen
+//! entire core process. Every subsystem — RPC handlers, node runtime, screen
 //! intelligence, CLI — shares this single instance so the worker is never
 //! prematurely dropped.
 //!

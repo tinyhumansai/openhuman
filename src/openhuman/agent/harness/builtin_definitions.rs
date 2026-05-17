@@ -176,6 +176,7 @@ mod tests {
             "code_executor",
             "integrations_agent",
             "tool_maker",
+            "skill_creator",
             "researcher",
             "critic",
             "archivist",
