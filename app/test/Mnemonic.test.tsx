@@ -35,12 +35,14 @@ const {
   mockValidateMnemonicPhrase,
   mockDeriveAesKey,
   mockSetEncryptionKey,
+  mockEncryptSecret,
   mockUseCoreState,
 } = vi.hoisted(() => ({
   mockGenerateMnemonicPhrase: vi.fn(() => FIXED_MNEMONIC),
   mockValidateMnemonicPhrase: vi.fn(() => true),
   mockDeriveAesKey: vi.fn(() => 'aes-key-hex'),
   mockSetEncryptionKey: vi.fn().mockResolvedValue(undefined),
+  mockEncryptSecret: vi.fn().mockResolvedValue({ result: 'enc2:wallet-secret' }),
   mockUseCoreState: vi.fn(),
 }));
 
@@ -52,6 +54,9 @@ vi.mock('../src/utils/cryptoKeys', () => ({
 }));
 
 vi.mock('../src/providers/CoreStateProvider', () => ({ useCoreState: () => mockUseCoreState() }));
+vi.mock('../src/utils/tauriCommands/auth', () => ({
+  openhumanEncryptSecret: (...args: unknown[]) => mockEncryptSecret(...args),
+}));
 
 // LottieAnimation makes network calls; stub it out
 vi.mock('../src/components/LottieAnimation', () => ({
@@ -93,6 +98,7 @@ beforeEach(() => {
   mockValidateMnemonicPhrase.mockClear();
   mockDeriveAesKey.mockClear();
   mockSetEncryptionKey.mockClear();
+  mockEncryptSecret.mockClear();
   mockUseCoreState.mockReturnValue({
     snapshot: { currentUser: mockUser, sessionToken: 'jwt-token' },
     setEncryptionKey: mockSetEncryptionKey,

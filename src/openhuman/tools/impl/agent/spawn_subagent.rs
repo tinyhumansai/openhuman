@@ -783,4 +783,83 @@ mod tests {
         // Should list at least one valid built-in.
         assert!(out.contains("code_executor") || out.contains("researcher"));
     }
+
+    #[test]
+    fn classify_subagent_failure_reframes_upstream_provider_outages() {
+        let msg = SpawnSubagentTool::classify_subagent_failure(
+            "provider call failed: all providers/models failed: upstream unavailable",
+        );
+        assert!(msg.contains("upstream inference unavailable"));
+        assert!(msg.contains("NOT a Composio/integration auth issue"));
+    }
+
+    #[tokio::test]
+    async fn dedicated_thread_flag_is_rejected_explicitly() {
+        let tool = SpawnSubagentTool;
+        let result = tool
+            .execute(json!({
+                "agent_id": "researcher",
+                "prompt": "find x",
+                "dedicated_thread": true,
+            }))
+            .await
+            .unwrap();
+        assert!(result.is_error);
+        assert!(result.output().contains("temporarily disabled"));
+    }
+
+    #[tokio::test]
+    async fn legacy_archetype_alias_is_accepted_for_lookup() {
+        let _ = AgentDefinitionRegistry::init_global_builtins();
+        let tool = SpawnSubagentTool;
+        let result = tool
+            .execute(json!({
+                "archetype": "totally_made_up",
+                "prompt": "x",
+            }))
+            .await
+            .unwrap();
+        assert!(result.is_error);
+        assert!(result
+            .output()
+            .contains("unknown agent_id 'totally_made_up'"));
+    }
+
+    #[tokio::test]
+    async fn integrations_agent_requires_toolkit_argument() {
+        let _ = AgentDefinitionRegistry::init_global_builtins();
+        let tool = SpawnSubagentTool;
+        let result = tool
+            .execute(json!({
+                "agent_id": "integrations_agent",
+                "prompt": "check gmail",
+            }))
+            .await
+            .unwrap();
+        assert!(result.is_error);
+        let out = result.output();
+        assert!(out.contains("`toolkit` argument is required"));
+        assert!(out.contains("currently-connected toolkits"));
+    }
+
+    #[tokio::test]
+    async fn integrations_agent_rejects_toolkit_outside_allowlist() {
+        let _ = AgentDefinitionRegistry::init_global_builtins();
+        let tool = SpawnSubagentTool;
+        let toolkit = "totally_not_a_real_toolkit_slug";
+        let result = tool
+            .execute(json!({
+                "agent_id": "integrations_agent",
+                "prompt": "check gmail",
+                "toolkit": toolkit,
+            }))
+            .await
+            .unwrap();
+        assert!(result.is_error);
+        let out = result.output();
+        assert!(out.contains(&format!(
+            "toolkit '{toolkit}' is not in the backend allowlist"
+        )));
+        assert!(out.contains("Valid toolkits"));
+    }
 }

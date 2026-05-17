@@ -380,10 +380,11 @@ pub async fn apply_model_settings(
         config.cloud_providers = providers;
     }
     if let Some(primary) = update.primary_cloud {
-        config.primary_cloud = if primary.trim().is_empty() {
+        let trimmed = primary.trim();
+        config.primary_cloud = if trimmed.is_empty() {
             None
         } else {
-            Some(primary)
+            Some(trimmed.to_string())
         };
     }
 

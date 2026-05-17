@@ -210,7 +210,7 @@ pub fn schemas(function: &str) -> ControllerSchema {
             function: "register_agent",
             description:
                 "Register an agent-backed webhook tunnel. Incoming requests on this tunnel \
-                 are routed to the triage pipeline instead of the skill runtime.",
+                 are routed to the triage pipeline instead of direct skill dispatch.",
             inputs: vec![
                 FieldSchema {
                     name: "tunnel_uuid",

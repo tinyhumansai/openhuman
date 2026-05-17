@@ -1,7 +1,17 @@
 ---
 name: Release Staging
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      skip_e2e:
+        description:
+          Skip the entire pretest phase (unit/rust plus E2E) and continue
+          directly to the desktop/docker staging build. Use only when the
+          required pretest signal is already known and you need to unblock a
+          staging cut.
+        required: false
+        type: boolean
+        default: false
 permissions:
   # `contents: write` is required for the patch bump commit and the
   # `v<version>-staging` tag push performed by `prepare-build` below.
@@ -15,8 +25,10 @@ concurrency:
 #
 #   prepare-build
 #        │
-#        ├── pretest-tests   (reusable test-reusable.yml — unit + rust)
-#        ├── pretest-e2e     (reusable e2e-reusable.yml — all 3 OS, full suite)
+#        ├── pretest-tests   (reusable test-reusable.yml — unit + rust;
+#        │                    optional when `skip_e2e` is true)
+#        ├── pretest-e2e     (reusable e2e-reusable.yml — all 3 OS, full suite;
+#        │                    optional when `skip_e2e` is true)
 #        │
 #        ├── build-desktop      (delegated to .github/workflows/build-desktop.yml)
 #        ├── build-docker       (build only — no GHCR push on staging)
@@ -185,12 +197,14 @@ jobs:
   pretest-tests:
     name: Pretest — unit + rust
     needs: [prepare-build]
+    if: ${{ !inputs.skip_e2e }}
     uses: ./.github/workflows/test-reusable.yml
     with:
       ref: ${{ needs.prepare-build.outputs.build_ref }}
   pretest-e2e:
     name: Pretest — E2E (all OS, full suite)
     needs: [prepare-build]
+    if: ${{ !inputs.skip_e2e }}
     uses: ./.github/workflows/e2e-reusable.yml
     with:
       ref: ${{ needs.prepare-build.outputs.build_ref }}
@@ -205,6 +219,12 @@ jobs:
   build-desktop:
     name: Build desktop matrix
     needs: [prepare-build, pretest-tests, pretest-e2e]
+    if: >-
+      always()
+      && (needs.pretest-tests.result == 'success'
+          || (inputs.skip_e2e && needs.pretest-tests.result == 'skipped'))
+      && (needs.pretest-e2e.result == 'success'
+          || (inputs.skip_e2e && needs.pretest-e2e.result == 'skipped'))
     uses: ./.github/workflows/build-desktop.yml
     secrets: inherit
     with:
@@ -234,6 +254,7 @@ jobs:
       # real consumer. Set `build_sidecar: true` to re-enable a per-platform
       # CLI Actions artifact + its Sentry DIF upload for QA spot-checks.
       build_sidecar: false
+      skip_pretests: ${{ inputs.skip_e2e }}
 
   # =========================================================================
   # Phase 2b: Build the openhuman-core Docker image without pushing.
@@ -247,6 +268,12 @@ jobs:
   build-docker:
     name: "Docker: build (no push)"
     needs: [prepare-build, pretest-tests, pretest-e2e]
+    if: >-
+      always()
+      && (needs.pretest-tests.result == 'success'
+          || (inputs.skip_e2e && needs.pretest-tests.result == 'skipped'))
+      && (needs.pretest-e2e.result == 'success'
+          || (inputs.skip_e2e && needs.pretest-e2e.result == 'skipped'))
     runs-on: ubuntu-latest
     environment: Production
     steps:

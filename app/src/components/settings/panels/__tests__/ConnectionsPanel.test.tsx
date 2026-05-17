@@ -21,6 +21,7 @@ const sampleConfigured = {
   configured: true,
   onboardingCompleted: true,
   consentGranted: true,
+  secretStored: true,
   source: 'generated' as const,
   mnemonicWordCount: 12,
   accounts: [
@@ -36,6 +37,7 @@ const sampleUnconfigured = {
   configured: false,
   onboardingCompleted: false,
   consentGranted: false,
+  secretStored: false,
   source: null,
   mnemonicWordCount: null,
   accounts: [],
