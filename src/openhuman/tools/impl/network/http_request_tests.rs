@@ -33,11 +33,12 @@ fn validate_rejects_invalid_method() {
     assert!(err.contains("Unsupported HTTP method"));
 }
 
-#[test]
-fn validate_url_rejects_disallowed_domain() {
+#[tokio::test]
+async fn validate_url_rejects_disallowed_domain() {
     let tool = test_tool(vec!["example.com"]);
     let err = tool
         .validate_url("https://evil.test/path")
+        .await
         .unwrap_err()
         .to_string();
     assert!(err.contains("allowed_domains"));

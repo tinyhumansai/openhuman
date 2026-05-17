@@ -23,6 +23,7 @@
 //! callers should use [`validate_url_with_dns_check`] which resolves the
 //! hostname and re-validates the resolved IPs before the request is made.
 
+use std::future::Future;
 use std::net::{IpAddr, ToSocketAddrs};
 
 /// Validate a URL against the allowlist + SSRF rules. Returns the
@@ -69,20 +70,21 @@ pub(super) fn validate_url(raw_url: &str, allowed_domains: &[String]) -> anyhow:
 ///
 /// Callers should use this function instead of `validate_url` in all
 /// paths that make outbound HTTP requests.
-pub(super) fn validate_url_with_dns_check(
+pub(super) async fn validate_url_with_dns_check(
     raw_url: &str,
     allowed_domains: &[String],
 ) -> anyhow::Result<String> {
-    validate_url_with_dns_check_with_resolver(raw_url, allowed_domains, resolve_host_ips)
+    validate_url_with_dns_check_with_resolver(raw_url, allowed_domains, resolve_host_ips).await
 }
 
-fn validate_url_with_dns_check_with_resolver<F>(
+async fn validate_url_with_dns_check_with_resolver<F, Fut>(
     raw_url: &str,
     allowed_domains: &[String],
     resolver: F,
 ) -> anyhow::Result<String>
 where
-    F: Fn(&str, u16) -> anyhow::Result<Vec<IpAddr>>,
+    F: FnOnce(String, u16) -> Fut,
+    Fut: Future<Output = anyhow::Result<Vec<IpAddr>>>,
 {
     let url = validate_url(raw_url, allowed_domains)?;
 
@@ -96,7 +98,7 @@ where
 
     let port = extract_port(&url)?;
     log::debug!("[url_guard] resolving DNS for host={host} port={port}");
-    let addrs = resolver(&host, port)?;
+    let addrs = resolver(host.clone(), port).await?;
 
     if addrs.is_empty() {
         anyhow::bail!("DNS resolution returned no addresses for '{host}'");
@@ -117,14 +119,22 @@ where
     Ok(url)
 }
 
-fn resolve_host_ips(host: &str, port: u16) -> anyhow::Result<Vec<IpAddr>> {
-    (host, port)
-        .to_socket_addrs()
-        .map_err(|e| {
-            log::debug!("[url_guard] DNS resolution failed host={host} port={port} error={e}");
-            anyhow::anyhow!("DNS resolution failed for '{host}': {e}")
-        })
-        .map(|iter| iter.map(|addr| addr.ip()).collect())
+async fn resolve_host_ips(host: String, port: u16) -> anyhow::Result<Vec<IpAddr>> {
+    let log_host = host.clone();
+    tokio::task::spawn_blocking(move || {
+        (host.as_str(), port)
+            .to_socket_addrs()
+            .map_err(|e| {
+                log::debug!("[url_guard] DNS resolution failed host={host} port={port} error={e}");
+                anyhow::anyhow!("DNS resolution failed for '{host}': {e}")
+            })
+            .map(|iter| iter.map(|addr| addr.ip()).collect())
+    })
+    .await
+    .map_err(|e| {
+        log::debug!("[url_guard] DNS resolution task failed host={log_host} port={port} error={e}");
+        anyhow::anyhow!("DNS resolution task failed for '{log_host}': {e}")
+    })?
 }
 
 pub(super) fn normalize_allowed_domains(domains: Vec<String>) -> Vec<String> {
@@ -579,14 +589,15 @@ mod tests {
 
     // ── DNS rebinding protection ─────────────────────────────────
 
-    #[test]
-    fn dns_check_blocks_localhost_resolution() {
+    #[tokio::test]
+    async fn dns_check_blocks_localhost_resolution() {
         // "localhost" resolves to 127.0.0.1 on most systems. Even if
         // someone adds it to the allowlist, the DNS check should block it.
         let allow = vec!["localhost".to_string()];
         // validate_url itself already blocks "localhost" via the hostname check,
         // but validate_url_with_dns_check should also catch it.
         let err = validate_url_with_dns_check("https://localhost", &allow)
+            .await
             .unwrap_err()
             .to_string();
         assert!(
@@ -595,66 +606,75 @@ mod tests {
         );
     }
 
-    #[test]
-    fn dns_check_passes_for_public_resolved_ip() {
+    #[tokio::test]
+    async fn dns_check_passes_for_public_resolved_ip() {
         let allow = vec!["example.com".to_string()];
         let got = validate_url_with_dns_check_with_resolver(
             "https://example.com",
             &allow,
-            |host, port| {
+            |host, port| async move {
                 assert_eq!(host, "example.com");
                 assert_eq!(port, 443);
                 Ok(vec!["93.184.216.34".parse().unwrap()])
             },
         )
+        .await
         .unwrap();
         assert_eq!(got, "https://example.com");
     }
 
-    #[test]
-    fn dns_check_blocks_private_resolved_ip() {
+    #[tokio::test]
+    async fn dns_check_blocks_private_resolved_ip() {
         let allow = vec!["example.com".to_string()];
-        let err =
-            validate_url_with_dns_check_with_resolver("https://example.com", &allow, |_, _| {
-                Ok(vec!["127.0.0.1".parse().unwrap()])
-            })
-            .unwrap_err()
-            .to_string();
+        let err = validate_url_with_dns_check_with_resolver(
+            "https://example.com",
+            &allow,
+            |_, _| async { Ok(vec!["127.0.0.1".parse().unwrap()]) },
+        )
+        .await
+        .unwrap_err()
+        .to_string();
         assert!(err.contains("DNS rebinding blocked"));
     }
 
-    #[test]
-    fn dns_check_uses_explicit_port_for_resolution() {
+    #[tokio::test]
+    async fn dns_check_uses_explicit_port_for_resolution() {
         let allow = vec!["api.example.com".to_string()];
         let got = validate_url_with_dns_check_with_resolver(
             "http://api.example.com:8080/status",
             &allow,
-            |host, port| {
+            |host, port| async move {
                 assert_eq!(host, "api.example.com");
                 assert_eq!(port, 8080);
                 Ok(vec!["93.184.216.34".parse().unwrap()])
             },
         )
+        .await
         .unwrap();
         assert_eq!(got, "http://api.example.com:8080/status");
     }
 
-    #[test]
-    fn dns_check_returns_resolver_failure() {
+    #[tokio::test]
+    async fn dns_check_returns_resolver_failure() {
         let allow = vec!["example.com".to_string()];
-        let err =
-            validate_url_with_dns_check_with_resolver("https://example.com", &allow, |host, _| {
+        let err = validate_url_with_dns_check_with_resolver(
+            "https://example.com",
+            &allow,
+            |host, _| async move {
                 anyhow::bail!("DNS resolution failed for '{host}': resolver unavailable")
-            })
-            .unwrap_err()
-            .to_string();
+            },
+        )
+        .await
+        .unwrap_err()
+        .to_string();
         assert!(err.contains("DNS resolution failed"));
     }
 
-    #[test]
-    fn dns_check_rejects_ip_literal_private() {
+    #[tokio::test]
+    async fn dns_check_rejects_ip_literal_private() {
         let allow = vec!["10.0.0.1".to_string()];
         let err = validate_url_with_dns_check("https://10.0.0.1", &allow)
+            .await
             .unwrap_err()
             .to_string();
         assert!(err.contains("local/private"));
