@@ -4,10 +4,12 @@ use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 use crate::rpc::RpcOutcome;
 
+/// Declared controller schemas for the `tool_registry` namespace.
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
     vec![schemas("list"), schemas("get")]
 }
 
+/// Registered controller handlers for the `tool_registry` namespace.
 pub fn all_registered_controllers() -> Vec<RegisteredController> {
     vec![
         RegisteredController {
@@ -21,6 +23,7 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
     ]
 }
 
+/// Return the schema for one `tool_registry` function.
 pub fn schemas(function: &str) -> ControllerSchema {
     match function {
         "list" => ControllerSchema {

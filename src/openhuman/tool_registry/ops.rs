@@ -13,6 +13,7 @@ use super::types::{
 
 const REGISTRY_ENTRY_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// Return the current read-only tool registry snapshot.
 pub fn list_tools() -> RpcOutcome<ToolRegistryList> {
     let tools = registry_entries();
     log::debug!(
@@ -22,6 +23,7 @@ pub fn list_tools() -> RpcOutcome<ToolRegistryList> {
     RpcOutcome::new(ToolRegistryList { tools }, vec![])
 }
 
+/// Look up one registry entry by stable `tool_id`.
 pub fn get_tool(tool_id: &str) -> Result<RpcOutcome<ToolRegistryEntry>, String> {
     let normalized = tool_id.trim();
     if normalized.is_empty() {
@@ -41,6 +43,7 @@ pub fn get_tool(tool_id: &str) -> Result<RpcOutcome<ToolRegistryEntry>, String> 
     Ok(RpcOutcome::new(tool, vec![]))
 }
 
+/// Build sorted registry entries from the current MCP and controller metadata.
 pub fn registry_entries() -> Vec<ToolRegistryEntry> {
     let mut entries = BTreeMap::new();
 
