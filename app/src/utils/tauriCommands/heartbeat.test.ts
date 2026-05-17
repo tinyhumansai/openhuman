@@ -56,4 +56,40 @@ describe('tauriCommands/heartbeat', () => {
       params: { enabled: true, interval_minutes: 15 },
     });
   });
+
+  test('runs a planner tick now', async () => {
+    const { openhumanHeartbeatTickNow } = await import('./heartbeat');
+    mockCallCoreRpc.mockResolvedValue({
+      result: {
+        summary: {
+          source_events: 3,
+          deliveries_attempted: 2,
+          deliveries_sent: 1,
+          deliveries_skipped_dedup: 1,
+        },
+      },
+      logs: [],
+    });
+
+    const out = await openhumanHeartbeatTickNow();
+
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({ method: 'openhuman.heartbeat_tick_now' });
+    expect(out.result.summary.deliveries_sent).toBe(1);
+  });
+
+  test('rejects when not running in Tauri', async () => {
+    mockIsTauri.mockReturnValue(false);
+    const {
+      openhumanHeartbeatSettingsGet,
+      openhumanHeartbeatSettingsSet,
+      openhumanHeartbeatTickNow,
+    } = await import('./heartbeat');
+
+    await expect(openhumanHeartbeatSettingsGet()).rejects.toThrow('Not running in Tauri');
+    await expect(openhumanHeartbeatSettingsSet({ enabled: true })).rejects.toThrow(
+      'Not running in Tauri'
+    );
+    await expect(openhumanHeartbeatTickNow()).rejects.toThrow('Not running in Tauri');
+    expect(mockCallCoreRpc).not.toHaveBeenCalled();
+  });
 });

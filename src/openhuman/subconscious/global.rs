@@ -129,7 +129,21 @@ pub async fn bootstrap_after_login() -> Result<(), String> {
 pub async fn stop_heartbeat_loop() {
     if let Some(handle) = heartbeat_slot().lock().await.take() {
         handle.abort();
-        tracing::info!("[heartbeat] loop aborted");
+        // Await the aborted task so it fully releases its engine reference
+        // before we let bootstrap_after_login spawn a fresh loop. Without this
+        // the old task can still be executing engine.run_tick() against a
+        // replaced engine state.
+        match handle.await {
+            Ok(()) => {
+                tracing::debug!("[heartbeat] loop exited before abort completed");
+            }
+            Err(join_err) if join_err.is_cancelled() => {
+                tracing::info!("[heartbeat] loop aborted");
+            }
+            Err(join_err) => {
+                tracing::warn!(error = %join_err, "[heartbeat] loop abort join failed");
+            }
+        }
     }
 
     BOOTSTRAPPED.store(false, Ordering::SeqCst);

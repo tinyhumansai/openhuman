@@ -97,10 +97,15 @@ pub async fn settings_set(
     })?;
 
     if config.heartbeat.enabled {
+        debug!("[heartbeat][rpc] settings_set: enabling — running bootstrap_after_login()");
         if let Err(error) = crate::openhuman::subconscious::global::bootstrap_after_login().await {
             warn!("[heartbeat][rpc] settings_set: heartbeat bootstrap failed: {error}");
+            return Err(format!(
+                "heartbeat settings saved, but failed to start heartbeat loop: {error}"
+            ));
         }
     } else {
+        debug!("[heartbeat][rpc] settings_set: disabling — stopping heartbeat loop");
         crate::openhuman::subconscious::global::stop_heartbeat_loop().await;
     }
 

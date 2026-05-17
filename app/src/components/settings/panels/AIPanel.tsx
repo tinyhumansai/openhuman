@@ -695,6 +695,7 @@ const BackgroundLoopControls = ({
   const [runningTick, setRunningTick] = useState(false);
   const [plannerSummary, setPlannerSummary] = useState<HeartbeatPlannerSummary | null>(null);
   const [error, setError] = useState<string>('');
+  const patchRequestIdRef = useRef(0);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -733,26 +734,40 @@ const BackgroundLoopControls = ({
     void refresh();
   }, [refresh]);
 
-  const applyHeartbeatPatch = useCallback(
-    async (patch: HeartbeatSettingsPatch) => {
-      if (!settings) return;
-      const savingKey = Object.keys(patch).join(',');
-      const previous = settings;
-      setSaving(savingKey);
-      setError('');
-      setSettings({ ...settings, ...patch });
-      try {
-        const response = await openhumanHeartbeatSettingsSet(patch);
-        setSettings(response.result.settings);
-      } catch (err) {
-        setSettings(previous);
-        setError(err instanceof Error ? err.message : String(err));
-      } finally {
+  const applyHeartbeatPatch = useCallback(async (patch: HeartbeatSettingsPatch) => {
+    const requestId = patchRequestIdRef.current + 1;
+    patchRequestIdRef.current = requestId;
+    const savingKey = Object.keys(patch).join(',');
+    let previous: HeartbeatSettings | null = null;
+    setError('');
+    setSaving(savingKey);
+    setSettings(current => {
+      if (!current) return current;
+      previous = current;
+      return { ...current, ...patch };
+    });
+    if (!previous) {
+      // No baseline to patch against — abandon this request.
+      if (patchRequestIdRef.current === requestId) {
         setSaving(null);
       }
-    },
-    [settings]
-  );
+      return;
+    }
+    try {
+      const response = await openhumanHeartbeatSettingsSet(patch);
+      // Stale response — a newer patch superseded us; drop this result.
+      if (patchRequestIdRef.current !== requestId) return;
+      setSettings(response.result.settings);
+    } catch (err) {
+      if (patchRequestIdRef.current !== requestId) return;
+      setSettings(previous);
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      if (patchRequestIdRef.current === requestId) {
+        setSaving(null);
+      }
+    }
+  }, []);
 
   const runPlannerNow = useCallback(async () => {
     setRunningTick(true);
