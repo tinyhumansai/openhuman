@@ -23,13 +23,15 @@ controller registry plus the core security policy read gate:
 
 | MCP tool | Backing RPC | Purpose |
 | --- | --- | --- |
-| `searxng_search` | `openhuman.tools_searxng_search` | Search a configured self-hosted SearXNG instance. |
+| `searxng_search`* | `openhuman.tools_searxng_search` | Search a configured self-hosted SearXNG instance. |
 | `memory.search` | `openhuman.memory_tree_search` | Keyword search over memory-tree chunks. |
 | `memory.recall` | `openhuman.memory_tree_recall` | Semantic recall over memory-tree summaries/chunks. |
 | `tree.read_chunk` | `openhuman.memory_tree_get_chunk` | Read one chunk returned by search or recall. |
 | `tree.browse` | `openhuman.memory_tree_list_chunks` | Paginated chunk listing with source / entity / time filters. |
 | `tree.top_entities` | `openhuman.memory_tree_top_entities` | Most-referenced canonical entities, optionally filtered by kind. |
 | `tree.list_sources` | `openhuman.memory_tree_list_sources` | Distinct ingest sources with chunk counts and last-activity timestamps. |
+
+* `searxng_search` is present only when SearXNG is enabled.
 
 `searxng_search` is added to the MCP catalog when SearXNG is enabled. It accepts
 `query`, optional `categories` (`web`, `news`, `images`), optional `language`,

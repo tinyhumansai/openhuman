@@ -16,24 +16,37 @@ const DEFAULT_SOURCE: &str = "searxng";
 const MAX_RESULTS: usize = 50;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Search arguments accepted by the SearXNG tool.
 pub struct SearxngSearchArgs {
+    /// Search query sent as SearXNG's `q` parameter.
     pub query: String,
+    /// Optional SearXNG categories. `web` is normalized to `general`.
     pub categories: Vec<String>,
+    /// Optional language code. Falls back to the configured default when absent.
     pub language: Option<String>,
+    /// Optional per-call result limit, clamped to the supported maximum.
     pub max_results: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+/// Normalized response returned to agents, RPC callers, and MCP clients.
 pub struct SearxngSearchResponse {
+    /// Trimmed query used for the search.
     pub query: String,
+    /// Normalized search results.
     pub results: Vec<SearxngSearchResult>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+/// One normalized SearXNG result.
 pub struct SearxngSearchResult {
+    /// Result title, or the URL when SearXNG omits a title.
     pub title: String,
+    /// Absolute result URL.
     pub url: String,
+    /// Result excerpt, if SearXNG returned one.
     pub snippet: String,
+    /// Search engine/source name.
     pub source: String,
 }
 
@@ -68,6 +81,7 @@ pub struct SearxngSearchTool {
 }
 
 impl SearxngSearchTool {
+    /// Build a SearXNG search tool for a user-configured endpoint.
     pub fn new(
         base_url: String,
         max_results: usize,
@@ -91,6 +105,7 @@ impl SearxngSearchTool {
         }
     }
 
+    /// Execute a SearXNG JSON search and normalize the returned result rows.
     pub async fn search(&self, args: SearxngSearchArgs) -> anyhow::Result<SearxngSearchResponse> {
         let query = args.query.trim();
         if query.is_empty() {
@@ -273,6 +288,7 @@ impl Tool for SearxngSearchTool {
     }
 }
 
+/// Normalize user-facing category aliases into SearXNG category names.
 pub fn normalize_categories(categories: Vec<String>) -> anyhow::Result<Vec<String>> {
     let mut normalized = Vec::new();
     for category in categories {
@@ -304,12 +320,7 @@ fn normalize_results(raw: RawSearxngResponse, max_results: usize) -> Vec<Searxng
                 return None;
             }
             let title = item.title.unwrap_or_default().trim().to_string();
-            let snippet = item
-                .content
-                .or(item.snippet)
-                .unwrap_or_default()
-                .trim()
-                .to_string();
+            let snippet = first_non_empty_trimmed([item.content, item.snippet]);
             let source = item
                 .engine
                 .filter(|value| !value.trim().is_empty())
@@ -330,6 +341,15 @@ fn normalize_results(raw: RawSearxngResponse, max_results: usize) -> Vec<Searxng
         })
         .take(max_results)
         .collect()
+}
+
+fn first_non_empty_trimmed(values: impl IntoIterator<Item = Option<String>>) -> String {
+    values
+        .into_iter()
+        .flatten()
+        .map(|value| value.trim().to_string())
+        .find(|value| !value.is_empty())
+        .unwrap_or_default()
 }
 
 fn parse_search_args(args: serde_json::Value) -> anyhow::Result<SearxngSearchArgs> {
@@ -357,16 +377,26 @@ fn parse_search_args(args: serde_json::Value) -> anyhow::Result<SearxngSearchArg
             .collect::<anyhow::Result<Vec<_>>>()?,
         None => Vec::new(),
     };
-    let language = object
-        .get("language")
-        .and_then(|value| value.as_str())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string);
-    let max_results = object
-        .get("max_results")
-        .and_then(|value| value.as_u64())
-        .map(|value| value.clamp(1, MAX_RESULTS as u64) as usize);
+    let language = match object.get("language") {
+        Some(value) => {
+            let language = value
+                .as_str()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| anyhow::anyhow!("language must be a non-empty string"))?;
+            Some(language.to_string())
+        }
+        None => None,
+    };
+    let max_results = match object.get("max_results") {
+        Some(value) => {
+            let max_results = value
+                .as_u64()
+                .ok_or_else(|| anyhow::anyhow!("max_results must be a positive integer"))?;
+            Some(max_results.clamp(1, MAX_RESULTS as u64) as usize)
+        }
+        None => None,
+    };
 
     Ok(SearxngSearchArgs {
         query,
@@ -400,6 +430,46 @@ mod tests {
     fn rejects_unknown_category() {
         let err = normalize_categories(vec!["videos".into()]).expect_err("must reject");
         assert!(err.to_string().contains("unsupported SearXNG category"));
+    }
+
+    #[test]
+    fn normalize_results_falls_back_to_snippet_when_content_is_blank() {
+        let results = normalize_results(
+            RawSearxngResponse {
+                results: vec![RawSearxngResult {
+                    title: Some("Result".into()),
+                    url: Some("https://example.com".into()),
+                    content: Some("   ".into()),
+                    snippet: Some("Useful fallback snippet".into()),
+                    engine: Some("engine".into()),
+                    engines: Vec::new(),
+                }],
+            },
+            5,
+        );
+
+        assert_eq!(results[0].snippet, "Useful fallback snippet");
+    }
+
+    #[test]
+    fn parse_search_args_rejects_malformed_optional_values() {
+        let language_err = parse_search_args(json!({
+            "query": "privacy search",
+            "language": 1
+        }))
+        .expect_err("language must reject wrong type");
+        assert!(language_err
+            .to_string()
+            .contains("language must be a non-empty string"));
+
+        let max_results_err = parse_search_args(json!({
+            "query": "privacy search",
+            "max_results": "10"
+        }))
+        .expect_err("max_results must reject wrong type");
+        assert!(max_results_err
+            .to_string()
+            .contains("max_results must be a positive integer"));
     }
 
     #[test]

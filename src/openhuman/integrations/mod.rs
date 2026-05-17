@@ -1,8 +1,10 @@
-//! Agent integration tools that proxy through the backend API.
+//! Agent integration tools.
 //!
-//! Each tool calls a backend endpoint (authenticated via JWT Bearer token) which
-//! handles external API calls, billing, rate limiting, and markup. The client
-//! never talks to external services directly.
+//! Most integrations proxy through backend endpoints authenticated with the
+//! user's session token, so billing, rate limiting, and provider markup stay
+//! server-side. Some integrations, such as SearXNG, call user-configured
+//! endpoints directly when enabled; those callers must keep configured base URLs
+//! trusted because requests leave the local core process.
 
 pub mod apify;
 pub mod client;

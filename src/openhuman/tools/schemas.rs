@@ -597,10 +597,12 @@ fn optional_string_array(params: &Map<String, Value>, key: &str) -> Result<Vec<S
         .ok_or_else(|| format!("`{key}` must be an array of strings"))?;
     items
         .iter()
-        .map(|item| {
-            item.as_str()
-                .map(str::to_string)
-                .ok_or_else(|| format!("`{key}` must contain only strings"))
+        .filter_map(|item| match item.as_str() {
+            Some(value) => {
+                let trimmed = value.trim();
+                (!trimmed.is_empty()).then(|| Ok(trimmed.to_string()))
+            }
+            None => Some(Err(format!("`{key}` must contain only strings"))),
         })
         .collect()
 }
@@ -656,6 +658,16 @@ mod tests {
         assert!(s.inputs.iter().any(|f| f.name == "query" && f.required));
         assert!(s.inputs.iter().any(|f| f.name == "categories"));
         assert!(s.inputs.iter().any(|f| f.name == "language"));
+    }
+
+    #[test]
+    fn optional_string_array_trims_and_drops_blank_entries() {
+        let params =
+            Map::from_iter([("categories".to_string(), json!([" web ", "", "  ", "news"]))]);
+
+        let values = optional_string_array(&params, "categories").expect("string array");
+
+        assert_eq!(values, vec!["web", "news"]);
     }
 
     #[test]
