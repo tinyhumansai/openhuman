@@ -176,7 +176,7 @@ pub(crate) fn filter_tool_indices(
 /// return immediately, `Dynamic` calls the builder with the supplied
 /// [`PromptContext`], `File` sources are read from disk relative to the
 /// workspace `prompts/` directory or the agent crate's bundled prompts.
-
+///
 /// Exposed `pub(crate)` so the debug dump path in
 /// [`crate::openhuman::agent::debug`] loads prompts through the
 /// exact same code the runner uses instead of keeping a separate copy.
@@ -198,7 +198,10 @@ pub(crate) fn load_prompt_source(
             let prompt_root = workspace_dir.join("agent").join("prompts");
             let workspace_path = prompt_root.join(path);
             if workspace_path.is_file() {
-                if let Ok(resolved) = crate::openhuman::security::validate_path_within_root(&workspace_path, &prompt_root) {
+                if let Ok(resolved) = crate::openhuman::security::validate_path_within_root(
+                    &workspace_path,
+                    &prompt_root,
+                ) {
                     return std::fs::read_to_string(&resolved).map_err(|e| {
                         SubagentRunError::PromptLoad {
                             path: resolved.display().to_string(),
@@ -223,7 +226,10 @@ pub(crate) fn load_prompt_source(
             // back to a generic role hint).
             let workspace_root_path = workspace_dir.join(path);
             if workspace_root_path.is_file() {
-                if let Ok(resolved) = crate::openhuman::security::validate_path_within_root(&workspace_root_path, workspace_dir) {
+                if let Ok(resolved) = crate::openhuman::security::validate_path_within_root(
+                    &workspace_root_path,
+                    workspace_dir,
+                ) {
                     return std::fs::read_to_string(&resolved).map_err(|e| {
                         SubagentRunError::PromptLoad {
                             path: resolved.display().to_string(),

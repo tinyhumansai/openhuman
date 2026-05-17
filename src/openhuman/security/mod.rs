@@ -22,11 +22,11 @@ pub use ops as rpc;
 pub use ops::*;
 #[allow(unused_imports)]
 pub use pairing::PairingGuard;
+pub use policy::validate_path_within_root;
 #[allow(unused_imports)]
 pub use policy::AutonomyLevel;
 pub use policy::SecurityPolicy;
 pub use policy::ToolOperation;
-pub use policy::validate_path_within_root;
 #[allow(unused_imports)]
 pub use secrets::SecretStore;
 #[allow(unused_imports)]
