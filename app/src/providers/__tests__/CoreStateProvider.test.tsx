@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import * as coreStateApi from '../../services/coreStateApi';
 import * as tauriCommands from '../../utils/tauriCommands';
-import { setCoreStateSnapshot } from '../../lib/coreState/store';
+import { getCoreStateSnapshot, setCoreStateSnapshot } from '../../lib/coreState/store';
 import { setActiveUserId } from '../../store/userScopedStorage';
 import CoreStateProvider, {
   coreStatePollFailureWarningMessage,
@@ -219,6 +219,32 @@ describe('CoreStateProvider — identity-change cache clearing', () => {
 
     expect(screen.getByTestId('ready').textContent).toBe('boot');
     await waitFor(() => expect(screen.getByTestId('ready').textContent).toBe('ready'));
+  });
+
+  it('does not commit a pending bootstrap refresh after unmount', async () => {
+    let resolveSnapshot!: (snapshot: Snapshot) => void;
+    const pendingSnapshot = new Promise<Snapshot>(resolve => {
+      resolveSnapshot = resolve;
+    });
+    fetchSnapshot.mockReturnValue(pendingSnapshot);
+    listTeams.mockResolvedValue([]);
+
+    const { unmount } = render(
+      <CoreStateProvider>
+        <Consumer />
+      </CoreStateProvider>
+    );
+
+    unmount();
+
+    await act(async () => {
+      resolveSnapshot(makeSnapshot({ userId: null, sessionToken: null }));
+      await pendingSnapshot;
+      await Promise.resolve();
+    });
+
+    expect(getCoreStateSnapshot().isReady).toBe(false);
+    expect(getCoreStateSnapshot().snapshot.auth.userId).toBeNull();
   });
 
   it('warns when the initial core state poll fails', async () => {
