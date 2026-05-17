@@ -40,13 +40,27 @@ interface OpenhumanLinkEvent {
 
 export const OPENHUMAN_LINK_EVENT = 'openhuman-link';
 
+const ALLOWED_PATHS = [
+  'settings/notifications',
+  'settings/billing',
+  'settings/messaging',
+  'community/discord',
+  'accounts/setup',
+] as const;
+
+type AllowedPath = (typeof ALLOWED_PATHS)[number];
+
+const ALLOWED_PATHS_SET = new Set<string>(ALLOWED_PATHS);
+
 const OpenhumanLinkModal = () => {
-  const [activePath, setActivePath] = useState<string | null>(null);
+  const [activePath, setActivePath] = useState<AllowedPath | null>(null);
 
   useEffect(() => {
     const handler = (event: Event) => {
       const detail = (event as CustomEvent<OpenhumanLinkEvent>).detail;
-      if (detail?.path) setActivePath(detail.path);
+      if (detail?.path && ALLOWED_PATHS_SET.has(detail.path)) {
+        setActivePath(detail.path as AllowedPath);
+      }
     };
     window.addEventListener(OPENHUMAN_LINK_EVENT, handler);
     return () => window.removeEventListener(OPENHUMAN_LINK_EVENT, handler);
@@ -143,7 +157,7 @@ const MessagingSetupBridge = ({ onClose }: { onClose: () => void }) => {
   return <ChannelSetupModal definition={telegram} onClose={onClose} />;
 };
 
-function titleForPath(path: string): string {
+function titleForPath(path: AllowedPath): string {
   switch (path) {
     case 'settings/notifications':
       return 'Allow notifications';
@@ -155,12 +169,10 @@ function titleForPath(path: string): string {
       return 'Join the community';
     case 'accounts/setup':
       return 'Connect your apps';
-    default:
-      return 'Settings';
   }
 }
 
-function renderBody(path: string, close: () => void) {
+function renderBody(path: AllowedPath, close: () => void) {
   switch (path) {
     case 'settings/notifications':
       return <NotificationsBody close={close} />;
@@ -176,16 +188,6 @@ function renderBody(path: string, close: () => void) {
       return <DiscordBody close={close} />;
     case 'accounts/setup':
       return <AccountsSetupBody close={close} />;
-    default:
-      return (
-        <div className="space-y-3 text-sm text-stone-700">
-          <p>
-            This setting isn't ready in the popup yet. Open the full settings page when you're
-            ready.
-          </p>
-          <DoneFooter close={close} />
-        </div>
-      );
   }
 }
 

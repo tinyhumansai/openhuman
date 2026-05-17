@@ -141,6 +141,9 @@ pub struct Config {
     pub gitbooks: GitbooksConfig,
 
     #[serde(default)]
+    pub mcp_client: McpClientConfig,
+
+    #[serde(default)]
     pub multimodal: MultimodalConfig,
 
     #[serde(default)]
@@ -225,6 +228,11 @@ pub struct Config {
     /// Node.js managed runtime configuration (skills that need `node`/`npm`).
     #[serde(default)]
     pub node: NodeConfig,
+
+    /// Python managed runtime configuration (Python-backed MCP servers and
+    /// other Python subprocess integrations).
+    #[serde(default)]
+    pub runtime_python: RuntimePythonConfig,
 
     #[serde(default)]
     pub voice_server: VoiceServerConfig,
@@ -419,6 +427,7 @@ impl Default for Config {
             http_request: HttpRequestConfig::default(),
             curl: CurlConfig::default(),
             gitbooks: GitbooksConfig::default(),
+            mcp_client: McpClientConfig::default(),
             multimodal: MultimodalConfig::default(),
             seltz: SeltzConfig::default(),
             web_search: WebSearchConfig::default(),
@@ -438,6 +447,7 @@ impl Default for Config {
             learning_provider: None,
             subconscious_provider: None,
             node: NodeConfig::default(),
+            runtime_python: RuntimePythonConfig::default(),
             voice_server: VoiceServerConfig::default(),
             integrations: IntegrationsConfig::default(),
             learning: LearningConfig::default(),

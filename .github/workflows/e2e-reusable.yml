@@ -125,9 +125,9 @@ jobs:
           if ! command -v appium >/dev/null 2>&1; then
             npm install -g appium@3
           fi
-          if ! appium driver list --installed 2>/dev/null | grep -q chromium; then
-            appium driver install --source=npm appium-chromium-driver
-          fi
+          # `appium driver list --installed` can miss cached installs on some
+          # Appium builds; install idempotently and ignore "already installed".
+          appium driver install --source=npm appium-chromium-driver >/dev/null 2>&1 || true
 
       - name: Build E2E app
         run: pnpm --filter openhuman-app test:e2e:build
@@ -293,9 +293,9 @@ jobs:
           if ! command -v appium >/dev/null 2>&1; then
             npm install -g appium@3
           fi
-          if ! appium driver list --installed 2>/dev/null | grep -q chromium; then
-            appium driver install --source=npm appium-chromium-driver
-          fi
+          # `appium driver list --installed` can miss cached installs on some
+          # Appium builds; install idempotently and ignore "already installed".
+          appium driver install --source=npm appium-chromium-driver >/dev/null 2>&1 || true
 
       - name: Build E2E app
         run: pnpm --filter openhuman-app test:e2e:build
@@ -387,9 +387,9 @@ jobs:
           if ! command -v appium >/dev/null 2>&1; then
             npm install -g appium@3
           fi
-          if ! appium driver list --installed 2>/dev/null | grep -q chromium; then
-            appium driver install --source=npm appium-chromium-driver
-          fi
+          # `appium driver list --installed` can miss cached installs on some
+          # Appium builds; install idempotently and ignore "already installed".
+          appium driver install --source=npm appium-chromium-driver >/dev/null 2>&1 || true
 
       - name: Build E2E app
         run: pnpm --filter openhuman-app test:e2e:build

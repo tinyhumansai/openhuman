@@ -334,6 +334,37 @@ pub struct ComposioFixture {
     pub tools: Vec<serde_json::Value>,
     /// Per-action canned execute responses, keyed by action slug.
     pub execute_responses: std::collections::HashMap<String, serde_json::Value>,
+    /// Ordered request-aware execute overrides. The first matching rule wins.
+    pub execute_rules: Vec<ComposioExecuteRule>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ComposioExecuteRule {
+    pub action: String,
+    pub argument_path: Option<String>,
+    pub argument_contains: Option<String>,
+    pub response: serde_json::Value,
+}
+
+impl ComposioExecuteRule {
+    pub fn new(action: impl Into<String>, response: serde_json::Value) -> Self {
+        Self {
+            action: action.into(),
+            argument_path: None,
+            argument_contains: None,
+            response,
+        }
+    }
+
+    pub fn when_argument_contains(
+        mut self,
+        path: impl Into<String>,
+        needle: impl Into<String>,
+    ) -> Self {
+        self.argument_path = Some(path.into());
+        self.argument_contains = Some(needle.into());
+        self
+    }
 }
 
 impl ComposioFixture {
@@ -448,8 +479,40 @@ impl ComposioFixture {
             ]
             .into_iter()
             .collect(),
+            execute_rules: Vec::new(),
         }
     }
+}
+
+fn json_path<'a>(value: &'a serde_json::Value, path: &str) -> Option<&'a serde_json::Value> {
+    path.split('.')
+        .filter(|segment| !segment.is_empty())
+        .try_fold(value, |current, segment| current.get(segment))
+}
+
+fn match_execute_rule(
+    rules: &[ComposioExecuteRule],
+    action: &str,
+    body: &serde_json::Value,
+) -> Option<serde_json::Value> {
+    rules.iter().find_map(|rule| {
+        if rule.action != action {
+            return None;
+        }
+        if let Some(path) = rule.argument_path.as_deref() {
+            let actual = json_path(body, path)?;
+            if let Some(needle) = rule.argument_contains.as_deref() {
+                if !actual
+                    .to_string()
+                    .to_ascii_lowercase()
+                    .contains(&needle.to_ascii_lowercase())
+                {
+                    return None;
+                }
+            }
+        }
+        Some(rule.response.clone())
+    })
 }
 
 #[derive(Clone)]
@@ -635,10 +698,8 @@ pub async fn spawn_fake_composio_backend(fixture: ComposioFixture) -> FakeCompos
                         .unwrap_or("")
                         .to_string();
                     let fx = st.fixture.lock();
-                    let response = fx
-                        .execute_responses
-                        .get(&action)
-                        .cloned()
+                    let response = match_execute_rule(&fx.execute_rules, &action, &body)
+                        .or_else(|| fx.execute_responses.get(&action).cloned())
                         .unwrap_or_else(|| json!({"ok": true, "action": action.clone()}));
                     // Wrap in the BackendResponse envelope expected by
                     // IntegrationClient, with the inner shape matching

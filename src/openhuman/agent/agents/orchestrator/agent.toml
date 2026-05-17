@@ -42,6 +42,7 @@ subagents = [
     "planner",
     "code_executor",
     "tools_agent",
+    "skill_creator",
     "critic",
     "archivist",
     # Crypto wallet & market specialist (#1397). Synthesised into a

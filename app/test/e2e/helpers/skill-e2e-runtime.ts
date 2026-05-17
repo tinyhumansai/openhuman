@@ -1,5 +1,5 @@
 /**
- * Seeds the minimal QuickJS echo skill used by Rust `json_rpc_skills_runtime_start_tools_call_stop`
+ * Seeds the minimal JavaScript echo skill used by Rust `json_rpc_skills_runtime_start_tools_call_stop`
  * so the desktop core can run `openhuman.skills_start` → `skills_call_tool` against a real skill tree.
  */
 import fs from 'node:fs/promises';
@@ -13,7 +13,7 @@ const MANIFEST = {
   name: 'E2E Runtime Skill',
   version: '1.0.0',
   description: 'Minimal skill for desktop E2E (echo tool)',
-  /** Matches `SkillManifest` docs (`manifest.rs`); executed via QuickJS like `quickjs` alias. */
+  /** Matches the legacy test manifest shape; executed as plain JavaScript. */
   runtime: 'javascript',
   entry: 'index.js',
   auto_start: false,

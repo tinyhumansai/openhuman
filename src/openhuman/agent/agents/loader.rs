@@ -93,6 +93,11 @@ pub const BUILTINS: &[BuiltinAgent] = &[
         prompt_fn: super::tool_maker::prompt::build,
     },
     BuiltinAgent {
+        id: "skill_creator",
+        toml: include_str!("skill_creator/agent.toml"),
+        prompt_fn: super::skill_creator::prompt::build,
+    },
+    BuiltinAgent {
         id: "researcher",
         toml: include_str!("researcher/agent.toml"),
         prompt_fn: super::researcher::prompt::build,
@@ -182,7 +187,7 @@ mod tests {
     fn all_builtins_parse() {
         let defs = load_builtins().expect("built-in TOML must parse");
         assert_eq!(defs.len(), BUILTINS.len());
-        assert_eq!(defs.len(), 16, "expected 16 built-in agents");
+        assert_eq!(defs.len(), 17, "expected 17 built-in agents");
     }
 
     #[test]
@@ -342,6 +347,25 @@ mod tests {
         assert_eq!(def.sandbox_mode, SandboxMode::Sandboxed);
         assert_eq!(def.max_iterations, 2);
         assert!(!def.omit_safety_preamble);
+    }
+
+    #[test]
+    fn skill_creator_is_sandboxed_and_has_node_tools() {
+        let def = find("skill_creator");
+        assert_eq!(def.sandbox_mode, SandboxMode::Sandboxed);
+        assert_eq!(def.max_iterations, 10);
+        assert!(!def.omit_safety_preamble);
+        match &def.tools {
+            ToolScope::Named(names) => {
+                for required in ["node_exec", "npm_exec", "apply_patch", "update_memory_md"] {
+                    assert!(
+                        names.iter().any(|name| name == required),
+                        "skill_creator tool list missing `{required}`"
+                    );
+                }
+            }
+            ToolScope::Wildcard => panic!("skill_creator must have named tool allowlist"),
+        }
     }
 
     #[test]
@@ -525,8 +549,10 @@ mod tests {
                 for required in [
                     "wallet_status",
                     "wallet_balances",
+                    "wallet_network_defaults",
                     "wallet_supported_assets",
                     "wallet_chain_status",
+                    "wallet_encode_erc20_transfer",
                 ] {
                     assert!(
                         tools.iter().any(|t| t == required),
@@ -628,6 +654,21 @@ mod tests {
             listed,
             "orchestrator.subagents must list `crypto_agent` so the \
              routing layer can synthesise `delegate_do_crypto`"
+        );
+    }
+
+    #[test]
+    fn orchestrator_subagents_include_skill_creator() {
+        use crate::openhuman::agent::harness::definition::SubagentEntry;
+        let def = find("orchestrator");
+        let listed = def.subagents.iter().any(|e| match e {
+            SubagentEntry::AgentId(id) => id == "skill_creator",
+            _ => false,
+        });
+        assert!(
+            listed,
+            "orchestrator.subagents must list `skill_creator` so the \
+             routing layer can synthesise `create_skill`"
         );
     }
 

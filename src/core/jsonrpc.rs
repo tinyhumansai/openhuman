@@ -872,8 +872,8 @@ async fn run_server_inner(
 
     let app = build_core_http_router(socketio_enabled);
 
-    // --- Skill runtime bootstrap -------------------------------------------
-    bootstrap_skill_runtime(embedded_core).await;
+    // --- Core runtime bootstrap --------------------------------------------
+    bootstrap_core_runtime(embedded_core).await;
 
     log::info!(
         "[core] OpenHuman core is ready — listening on http://{bind_addr} (version {})",
@@ -1052,7 +1052,7 @@ async fn run_server_inner(
 
 /// Registers all long-lived domain event-bus subscribers exactly once.
 ///
-/// Guarded by `std::sync::Once` so repeated calls to `bootstrap_skill_runtime`
+/// Guarded by `std::sync::Once` so repeated calls to `bootstrap_core_runtime`
 /// are safe and idempotent.
 fn register_domain_subscribers(
     workspace_dir: std::path::PathBuf,
@@ -1166,7 +1166,7 @@ fn register_domain_subscribers(
 }
 
 /// Initializes long-lived socket/event-bus infrastructure.
-pub async fn bootstrap_skill_runtime(embedded_core: bool) {
+pub async fn bootstrap_core_runtime(embedded_core: bool) {
     use crate::openhuman::socket::{set_global_socket_manager, SocketManager};
     use std::sync::Arc;
     let cfg = match crate::openhuman::config::Config::load_or_init().await {
@@ -1182,7 +1182,7 @@ pub async fn bootstrap_skill_runtime(embedded_core: bool) {
     // Ensure the global event bus is initialized (no-op if already done by start_channels).
     crate::core::event_bus::init_global(crate::core::event_bus::DEFAULT_CAPACITY);
     // Register domain subscribers for cross-module event handling.
-    // Uses a Once guard so repeated calls to bootstrap_skill_runtime()
+    // Uses a Once guard so repeated calls to bootstrap_core_runtime()
     // cannot double-subscribe.
     register_domain_subscribers(workspace_dir.clone(), cfg.clone(), embedded_core);
 

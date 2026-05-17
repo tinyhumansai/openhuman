@@ -8,8 +8,25 @@ pub trait EmbeddingProvider: Send + Sync {
     /// Returns the name of the provider (e.g., "ollama", "openai").
     fn name(&self) -> &str;
 
+    /// Returns the stable model identifier used to generate embeddings.
+    fn model_id(&self) -> &str;
+
     /// Returns the number of dimensions in the generated embeddings.
     fn dimensions(&self) -> usize;
+
+    /// Returns a stable signature for the embedding space.
+    ///
+    /// Changing any component means existing vectors may no longer be
+    /// comparable with newly-generated vectors and should be stored / queried
+    /// separately by follow-up storage migrations.
+    fn signature(&self) -> String {
+        format!(
+            "provider={};model={};dims={}",
+            self.name(),
+            self.model_id(),
+            self.dimensions()
+        )
+    }
 
     /// Generates embeddings for a batch of strings.
     async fn embed(&self, texts: &[&str]) -> anyhow::Result<Vec<Vec<f32>>>;

@@ -216,7 +216,7 @@ pub async fn sync_status_rpc(
 // runner: the existing pattern across this module is to assert factory
 // dispatch + error wrapping rather than mock the upstream HTTP. The
 // network-touching paths are smoke-tested upstream in
-// `composio::client_tests` / `composio::ops_tests` and the
+// `composio::client_tests` / `composio::ops_test` and the
 // direct-mode-toggle test in `action_tool.rs`.
 
 #[cfg(test)]

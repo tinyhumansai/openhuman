@@ -112,6 +112,42 @@ fn email_channel_name() {
     assert_eq!(channel.name(), "email");
 }
 
+#[test]
+fn build_plain_message_uses_subject_and_body() {
+    let channel = EmailChannel::new(EmailConfig {
+        from_address: "bot@example.com".to_string(),
+        ..Default::default()
+    });
+    let message = channel
+        .build_plain_message("listener@example.com", "Podcast", "Hello there")
+        .expect("plain message");
+    let wire = String::from_utf8_lossy(&message.formatted()).to_string();
+    assert!(wire.contains("Subject: Podcast"));
+    assert!(wire.contains("Hello there"));
+}
+
+#[test]
+fn build_message_with_attachment_adds_audio_part() {
+    let channel = EmailChannel::new(EmailConfig {
+        from_address: "bot@example.com".to_string(),
+        ..Default::default()
+    });
+    let message = channel
+        .build_message_with_attachment(
+            "listener@example.com",
+            "Weekly briefing",
+            "Attached.",
+            "briefing.mp3",
+            "audio/mpeg".parse().expect("content type"),
+            vec![1, 2, 3, 4],
+        )
+        .expect("attachment message");
+    let wire = String::from_utf8_lossy(&message.formatted()).to_string();
+    assert!(wire.contains("Subject: Weekly briefing"));
+    assert!(wire.contains("filename=\"briefing.mp3\""));
+    assert!(wire.contains("Content-Type: audio/mpeg"));
+}
+
 // is_sender_allowed tests
 
 #[test]

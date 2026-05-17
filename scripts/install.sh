@@ -200,11 +200,47 @@ PY
   printf '%s\n' "$url"
 }
 
+# curl can fail on GitHub/CDN HTTP/2 framing issues on some networks while the
+# same URL succeeds over HTTP/1.1. Try the normal path first, then a
+# compatibility retry before surfacing the failure.
+curl_get_file() {
+  local url="$1" output="$2" rc
+  if curl -fsSL "$url" -o "$output"; then
+    return 0
+  else
+    rc=$?
+  fi
+  log_warn "Request failed (curl rc=${rc}); retrying with HTTP/1.1."
+  curl --http1.1 -fsSL "$url" -o "$output"
+}
+
+curl_download_file() {
+  local url="$1" output="$2" rc
+  if curl -fL "$url" -o "$output"; then
+    return 0
+  else
+    rc=$?
+  fi
+  log_warn "Download failed (curl rc=${rc}); retrying with HTTP/1.1."
+  curl --http1.1 -fL "$url" -o "$output"
+}
+
+curl_head_with_http_fallback() {
+  local url="$1" rc
+  if curl -fsSI --max-time 10 "$url" >/dev/null 2>&1; then
+    return 0
+  else
+    rc=$?
+  fi
+  log_warn "Reachability check failed (curl rc=${rc}); retrying with HTTP/1.1."
+  curl --http1.1 -fsSI --max-time 10 "$url" >/dev/null 2>&1
+}
+
 # Retries an HTTP HEAD on the asset URL, fails loudly with the URL.
 verify_asset_reachable() {
   local url="$1" max_attempts=5 delay=2
   for i in $(seq 1 $max_attempts); do
-    if curl -fsSI --max-time 10 "$url" >/dev/null 2>&1; then
+    if curl_head_with_http_fallback "$url"; then
       return 0
     fi
     if [[ $i -lt $max_attempts ]]; then
@@ -217,7 +253,7 @@ verify_asset_reachable() {
 }
 
 resolve_from_latest_json() {
-  if ! curl -fsSL "${LATEST_JSON_URL}" -o "${LATEST_JSON_PATH}"; then
+  if ! curl_get_file "${LATEST_JSON_URL}" "${LATEST_JSON_PATH}"; then
     return 1
   fi
 
@@ -252,7 +288,7 @@ print(d.get('version', ''))
 }
 
 resolve_from_release_api() {
-  if ! curl -fsSL "${LATEST_RELEASE_API_URL}" -o "${RELEASE_JSON_PATH}"; then
+  if ! curl_get_file "${LATEST_RELEASE_API_URL}" "${RELEASE_JSON_PATH}"; then
     return 1
   fi
 
@@ -333,7 +369,7 @@ resolve_release_digest() {
     return 0
   fi
   if [ ! -s "${RELEASE_JSON_PATH}" ]; then
-    if ! curl -fsSL "${LATEST_RELEASE_API_URL}" -o "${RELEASE_JSON_PATH}"; then
+    if ! curl_get_file "${LATEST_RELEASE_API_URL}" "${RELEASE_JSON_PATH}"; then
       return 0
     fi
   fi
@@ -417,9 +453,9 @@ fi
 DOWNLOAD_PATH="${TMP_DIR}/${ASSET_NAME}"
 log_info "Downloading ${ASSET_NAME}"
 if [ "${DRY_RUN}" = true ]; then
-  echo "DRY RUN: curl -fL ${ASSET_URL} -o ${DOWNLOAD_PATH}"
+  echo "DRY RUN: curl -fL ${ASSET_URL} -o ${DOWNLOAD_PATH} (retrying with --http1.1 on failure)"
 else
-  curl -fL "${ASSET_URL}" -o "${DOWNLOAD_PATH}"
+  curl_download_file "${ASSET_URL}" "${DOWNLOAD_PATH}"
 fi
 
 compute_sha256() {

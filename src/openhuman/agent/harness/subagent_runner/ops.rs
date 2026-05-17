@@ -105,8 +105,21 @@ pub(super) fn resolve_subagent_provider(
     config: Option<&crate::openhuman::config::Config>,
     parent_provider: std::sync::Arc<dyn Provider>,
     parent_model: String,
+    model_override: Option<&str>,
 ) -> (std::sync::Arc<dyn Provider>, String) {
     use crate::openhuman::agent::harness::definition::ModelSpec;
+    if let Some(model) = model_override
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+    {
+        log::info!(
+            "[subagent_runner] agent_id={} using inline model override model={}",
+            agent_id,
+            model
+        );
+        return (parent_provider, model.to_string());
+    }
+
     match spec {
         ModelSpec::Hint(workload) => match config {
             Some(cfg) => match crate::openhuman::providers::create_chat_provider(workload, cfg) {
@@ -285,6 +298,7 @@ async fn run_typed_mode(
         config_loaded.as_ref().ok(),
         parent.provider.clone(),
         parent.model_name.clone(),
+        options.model_override.as_deref(),
     );
     let temperature = definition.temperature;
 

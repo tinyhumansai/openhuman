@@ -227,7 +227,7 @@ fn initialize_result(params: Value) -> Value {
             "name": "openhuman-core",
             "version": env!("CARGO_PKG_VERSION")
         },
-        "instructions": "OpenHuman MCP exposes a small read-only memory surface. Use memory.search or memory.recall first, then tree.read_chunk for source text."
+        "instructions": "OpenHuman MCP exposes first-level core integration: inspect the live tool catalog with core.list_tools or core.tool_instructions, inspect subagents with agent.list_subagents, run a standalone subagent with agent.run_subagent, and use memory.search or memory.recall plus tree.read_chunk for local memory reads."
     })
 }
 
@@ -324,7 +324,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tools_list_returns_curated_tools() {
+    async fn tools_list_returns_first_level_core_tools() {
         let response = request(json!({
             "jsonrpc": "2.0",
             "id": 2,
@@ -340,7 +340,15 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             names,
-            vec!["memory.search", "memory.recall", "tree.read_chunk"]
+            vec![
+                "core.list_tools",
+                "core.tool_instructions",
+                "agent.list_subagents",
+                "agent.run_subagent",
+                "memory.search",
+                "memory.recall",
+                "tree.read_chunk"
+            ]
         );
     }
 

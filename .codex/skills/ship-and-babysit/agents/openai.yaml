@@ -1,0 +1,4 @@
+interface:
+  display_name: "Ship and Babysit"
+  short_description: "Ship PRs and babysit CI and reviews"
+  default_prompt: "Use $ship-and-babysit to commit, push, open or reuse a PR, and babysit CI plus CodeRabbit until it is green and clean."

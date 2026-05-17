@@ -317,3 +317,119 @@ fn stats_reports_snapshot() {
     assert_eq!(s.session_memory_current_turn, 1);
     assert_eq!(s.session_memory_total_tool_calls, 3);
 }
+
+struct RecordingModelSummarizer {
+    model: Mutex<Option<String>>,
+}
+
+#[async_trait]
+impl Summarizer for RecordingModelSummarizer {
+    async fn summarize(
+        &self,
+        history: &mut Vec<ConversationMessage>,
+        model: &str,
+    ) -> anyhow::Result<SummaryStats> {
+        *self.model.lock().unwrap() = Some(model.to_string());
+        history.clear();
+        Ok(SummaryStats {
+            messages_removed: 0,
+            approx_tokens_freed: 0,
+            summary_chars: 0,
+        })
+    }
+}
+
+#[tokio::test]
+async fn new_honors_summarizer_model_override() {
+    let summarizer = Arc::new(RecordingModelSummarizer {
+        model: Mutex::new(None),
+    });
+    let mut config = ContextConfig::default();
+    config.summarizer_model = Some("compact-model".into());
+    let mut manager = ContextManager::new(
+        &config,
+        summarizer.clone(),
+        "main-model".into(),
+        SystemPromptBuilder::with_defaults(),
+    );
+    manager.record_usage(&UsageInfo {
+        input_tokens: 92_000,
+        output_tokens: 4_000,
+        context_window: 100_000,
+        ..Default::default()
+    });
+
+    let mut history = vec![user("one"), user("two"), user("three")];
+    let _ = manager
+        .reduce_before_call(&mut history)
+        .await
+        .expect("reduce");
+
+    assert_eq!(
+        summarizer.model.lock().unwrap().as_deref(),
+        Some("compact-model")
+    );
+}
+
+#[test]
+fn new_exposes_tool_budget_and_markdown_preference_from_config() {
+    let summarizer = MockSummarizer::ok();
+    let mut config = ContextConfig::default();
+    config.tool_result_budget_bytes = 4096;
+    config.prefer_markdown_tool_output = true;
+    let manager = ContextManager::new(
+        &config,
+        summarizer,
+        "main-model".into(),
+        SystemPromptBuilder::with_defaults(),
+    );
+
+    assert_eq!(manager.tool_result_budget_bytes(), 4096);
+    assert!(manager.prefer_markdown_tool_output());
+}
+
+#[test]
+fn session_memory_lifecycle_changes_should_extract_state() {
+    let summarizer = MockSummarizer::ok();
+    let mut manager = manager_with(summarizer);
+    manager.record_usage(&UsageInfo {
+        input_tokens: 20_000,
+        output_tokens: 0,
+        context_window: 100_000,
+        ..Default::default()
+    });
+    for _ in 0..5 {
+        manager.tick_turn();
+    }
+    manager.record_tool_calls(9);
+    assert!(manager.should_extract_session_memory());
+
+    manager.mark_session_memory_started();
+    assert!(!manager.should_extract_session_memory());
+
+    manager.mark_session_memory_failed();
+    assert!(manager.should_extract_session_memory());
+
+    manager.mark_session_memory_started();
+    manager.mark_session_memory_complete();
+    assert!(!manager.should_extract_session_memory());
+}
+
+#[test]
+fn session_memory_handle_mutations_are_reflected_in_manager_stats() {
+    let summarizer = MockSummarizer::ok();
+    let manager = manager_with(summarizer);
+    let handle = manager.session_memory_handle();
+    {
+        let mut state = handle.lock().unwrap();
+        state.current_turn = 7;
+        state.total_tool_calls = 9;
+        state.total_tokens = 222;
+        state.tokens_at_last_extract = 111;
+    }
+
+    let stats = manager.stats();
+    assert_eq!(stats.session_memory_current_turn, 7);
+    assert_eq!(stats.session_memory_total_tool_calls, 9);
+    assert_eq!(stats.session_memory_total_tokens, 222);
+}

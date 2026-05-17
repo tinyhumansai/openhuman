@@ -873,23 +873,44 @@ impl OrEmpty for String {
 }
 
 // ---------------------------------------------------------------------------
-// Regex helpers (avoid repeated compilation)
+// Regex helpers — thread-local cache to avoid repeated compilation
 // ---------------------------------------------------------------------------
 
+use std::cell::RefCell;
+
+thread_local! {
+    static REGEX_CACHE: RefCell<HashMap<String, regex::Regex>> =
+        RefCell::new(HashMap::with_capacity(32));
+}
+
+/// Get or compile a regex, caching by owned pattern string. Avoids repeated
+/// `Regex::new()` calls for patterns used in loops (e.g., per-line processing).
+fn get_or_compile(pattern: &str) -> Option<regex::Regex> {
+    REGEX_CACHE.with(|cache| {
+        let mut map = cache.borrow_mut();
+        if let Some(re) = map.get(pattern) {
+            return Some(re.clone());
+        }
+        let re = regex::Regex::new(pattern).ok()?;
+        map.insert(pattern.to_owned(), re.clone());
+        Some(re)
+    })
+}
+
 fn regex_match(pattern: &str, text: &str) -> bool {
-    regex::Regex::new(pattern)
+    get_or_compile(pattern)
         .map(|re| re.is_match(text))
         .unwrap_or(false)
 }
 
 fn regex_replace(pattern: &str, text: &str, replacement: &str) -> String {
-    regex::Regex::new(pattern)
+    get_or_compile(pattern)
         .map(|re| re.replace(text, replacement).into_owned())
-        .unwrap_or_else(|_| text.to_owned())
+        .unwrap_or_else(|| text.to_owned())
 }
 
 fn regex_captures(pattern: &str, text: &str) -> Option<Vec<String>> {
-    let re = regex::Regex::new(pattern).ok()?;
+    let re = get_or_compile(pattern)?;
     let caps = re.captures(text)?;
     Some(
         (1..caps.len())

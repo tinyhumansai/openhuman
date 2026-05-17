@@ -498,11 +498,11 @@ impl SecurityPolicy {
         approved: bool,
     ) -> Result<CommandRiskLevel, String> {
         if !self.is_command_allowed(command) {
-            log::warn!(
-                "[openhuman:policy] Command blocked by allowlist: {}",
-                &command[..floor_char_boundary(command, 80)]
-            );
-            return Err(format!("Command not allowed by security policy: {command}"));
+            let truncated: String = command.chars().take(80).collect();
+            log::warn!("[openhuman:policy] Command blocked by allowlist: {truncated}");
+            return Err(format!(
+                "Command not allowed by security policy: {truncated}"
+            ));
         }
 
         let risk = self.command_risk_level(command);

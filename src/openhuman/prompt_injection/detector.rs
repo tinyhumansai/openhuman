@@ -174,14 +174,24 @@ static DETECTION_RULES: Lazy<Vec<DetectionRule>> = Lazy::new(|| {
     ]
 });
 
-fn optional_classifier() -> Option<Box<dyn OptionalClassifier>> {
+static OPTIONAL_CLASSIFIER: Lazy<Option<Box<dyn OptionalClassifier>>> = Lazy::new(|| {
     let choice = env::var("OPENHUMAN_PROMPT_INJECTION_CLASSIFIER")
         .unwrap_or_else(|_| "off".to_string())
         .to_ascii_lowercase();
-    match choice.as_str() {
+    let classifier: Option<Box<dyn OptionalClassifier>> = match choice.as_str() {
         "heuristic" => Some(Box::new(HeuristicClassifier)),
         _ => None,
-    }
+    };
+    tracing::debug!(
+        "[prompt_injection] optional classifier resolved choice={:?} active={}",
+        choice,
+        classifier.is_some()
+    );
+    classifier
+});
+
+fn optional_classifier() -> Option<&'static dyn OptionalClassifier> {
+    OPTIONAL_CLASSIFIER.as_deref()
 }
 
 fn normalize_prompt(input: &str) -> NormalizedPrompt {
