@@ -44,7 +44,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use async_trait::async_trait;
 
-use crate::openhuman::config::{Config, LlmBackend, DEFAULT_CLOUD_LLM_MODEL};
+use crate::openhuman::config::{Config, DEFAULT_CLOUD_LLM_MODEL};
 
 pub mod cloud;
 pub mod local;

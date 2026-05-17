@@ -12,7 +12,7 @@ pub mod types;
 
 use std::sync::Arc;
 
-use crate::openhuman::config::{Config, LlmBackend, DEFAULT_CLOUD_LLM_MODEL};
+use crate::openhuman::config::{Config, DEFAULT_CLOUD_LLM_MODEL};
 use crate::openhuman::memory::tree::chat::{build_chat_provider, ChatConsumer};
 
 pub use extractor::{CompositeExtractor, EntityExtractor, RegexEntityExtractor};

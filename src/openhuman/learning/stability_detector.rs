@@ -32,7 +32,6 @@
 //! overflow pool holds up to `BUDGET_OVERFLOW` extra Provisional rows.
 
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use crate::core::event_bus;
 use crate::core::event_bus::DomainEvent;
