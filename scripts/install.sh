@@ -71,6 +71,11 @@ while [[ $# -gt 0 ]]; do
       exit 0
       ;;
     --channel)
+      if [[ $# -lt 2 || "${2:-}" == -* ]]; then
+        log_err "Missing value for --channel"
+        usage
+        exit 1
+      fi
       CHANNEL="${2:-}"
       shift 2
       ;;
