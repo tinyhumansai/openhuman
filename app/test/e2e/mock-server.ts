@@ -7,6 +7,7 @@
  */
 export {
   clearRequestLog,
+  emitMockAgentAudioStream,
   getMockBehavior,
   getRequestLog,
   resetMockBehavior,

@@ -247,6 +247,8 @@ run_case() {
 }
 ```
 
+- **Rust test file naming**: when extracting Rust tests out of an implementation file, prefer a sibling `*_test.rs` file wired in with `#[cfg(test)] #[path = "..._test.rs"] mod tests;`. Do not create ad hoc `_test/` or `_tests/` directories for single-module Rust tests unless a broader multi-file test fixture truly requires a directory.
+
 ### Test authoring checklist
 
 - Add/update unit tests for logic changes before stacking additional features.
@@ -471,6 +473,7 @@ In the parent **OpenHuman** desktop app, **Tauri / Rust is a delivery vehicle**:
 - **GitHub issue templates** — Use **[`.github/ISSUE_TEMPLATE/feature.md`](.github/ISSUE_TEMPLATE/feature.md)** for new features and **[`.github/ISSUE_TEMPLATE/bug.md`](.github/ISSUE_TEMPLATE/bug.md)** for bugs; keep the same section structure and fill every required part. AI-authored issues should follow those templates verbatim.
 - **Open pull requests on upstream** — Always create PRs against **[tinyhumansai/openhuman](https://github.com/tinyhumansai/openhuman)** ([pull requests](https://github.com/tinyhumansai/openhuman/pulls)), not only a fork’s default remote, unless the workflow explicitly says otherwise.
 - **Public repo**; push to your working branch; PRs target **`main`**.
+- **Agent branch rule** — If an agent starts work while checked out on `main`, it should create its own descriptive working branch before committing or pushing. Do not leave agent-authored commits on local `main`; move the pending work onto the new branch and ship from there.
 - Use [`.github/PULL_REQUEST_TEMPLATE.md`](.github/PULL_REQUEST_TEMPLATE.md); AI-generated PR text should follow its sections and checklist.
 
 ---

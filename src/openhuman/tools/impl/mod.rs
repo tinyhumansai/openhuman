@@ -1,4 +1,5 @@
 pub mod agent;
+pub mod audio;
 pub mod browser;
 pub mod computer;
 pub mod cron;
@@ -9,6 +10,7 @@ pub mod system;
 pub mod whatsapp_data;
 
 pub use agent::*;
+pub use audio::*;
 pub use browser::*;
 pub use computer::*;
 pub use cron::*;

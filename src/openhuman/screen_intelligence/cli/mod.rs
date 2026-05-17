@@ -1,7 +1,7 @@
 //! `openhuman screen-intelligence` — standalone CLI for the screen intelligence loop.
 //!
 //! Boots **only** the screen intelligence engine (accessibility capture + local-AI
-//! vision) without the full desktop app, Socket.IO, or skills runtime.  Useful for
+//! vision) without the full desktop app, Socket.IO, or the node/tool runtime. Useful for
 //! testing the capture → save → vision-analysis pipeline from a terminal.
 //!
 //! Usage:
@@ -175,7 +175,7 @@ pub(super) fn is_help(value: &str) -> bool {
 fn print_help() {
     println!("openhuman screen-intelligence — standalone screen intelligence runtime\n");
     println!("Boots only the screen intelligence engine (accessibility capture + local-AI");
-    println!("vision) without the full desktop app, Socket.IO, or skills runtime.\n");
+    println!("vision) without the full desktop app, Socket.IO, or the node/tool runtime.\n");
     println!("Usage:");
     println!("  openhuman screen-intelligence run       [--ttl <secs>] [--no-vision-model] [-v]");
     println!("  openhuman screen-intelligence status     [-v]");

@@ -768,8 +768,14 @@ impl Agent {
             secrets_encrypt: config.secrets.encrypt,
             reasoning_enabled: config.runtime.reasoning_enabled,
         };
+        let provider_role = match config.default_model.as_deref().map(str::trim) {
+            Some("hint:agentic") | Some("agentic-v1") => "agentic",
+            Some("hint:coding") | Some("coding-v1") => "coding",
+            Some("hint:summarization") | Some("summarization-v1") => "summarization",
+            _ => "reasoning",
+        };
         let (provider, model_name): (Box<dyn Provider>, String) =
-            crate::openhuman::providers::create_chat_provider("reasoning", config)?;
+            crate::openhuman::providers::create_chat_provider(provider_role, config)?;
 
         // Dispatcher selection is deferred until after the tool list is
         // finalised (orchestrator tools are appended below). We capture

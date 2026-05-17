@@ -14,6 +14,10 @@ impl EmbeddingProvider for NoopEmbedding {
         "none"
     }
 
+    fn model_id(&self) -> &str {
+        "none"
+    }
+
     fn dimensions(&self) -> usize {
         0
     }

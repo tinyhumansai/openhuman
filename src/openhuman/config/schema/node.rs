@@ -18,7 +18,7 @@ pub struct NodeConfig {
     #[serde(default = "default_version")]
     pub version: String,
     /// Absolute path to a directory where managed Node distributions are
-    /// extracted. Empty string means "use the default workspace cache dir"
+    /// extracted. Empty string means "use the default OpenHuman cache dir"
     /// (resolved by the runtime bootstrap).
     #[serde(default)]
     pub cache_dir: String,
