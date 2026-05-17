@@ -86,6 +86,8 @@ const zhCN: TranslationMap = {
   'settings.logOutDesc': '退出当前账户',
   'settings.language': '语言',
   'settings.languageDesc': '应用界面显示语言',
+  'settings.alerts': '通知',
+  'settings.alertsDesc': '查看收件箱中的最新通知和活动',
 
   // Settings: Account
   'settings.account.recoveryPhrase': '恢复短语',
@@ -223,6 +225,96 @@ const zhCN: TranslationMap = {
   'onboarding.skip': '跳过',
   'onboarding.getStarted': '开始使用',
 
+  // Onboarding: runtime-choice step (Cloud vs Custom)
+  'onboarding.runtimeChoice.title': '你希望如何运行 OpenHuman？',
+  'onboarding.runtimeChoice.subtitle': '选择最适合你的设置。之后可在设置中更改。',
+  'onboarding.runtimeChoice.cloud.title': '简单模式',
+  'onboarding.runtimeChoice.cloud.tagline': '让 OpenHuman 为你管理一切。',
+  'onboarding.runtimeChoice.cloud.f1': '内置安全保护',
+  'onboarding.runtimeChoice.cloud.f2': '令牌压缩，让用量更耐用',
+  'onboarding.runtimeChoice.cloud.f3': '一个订阅，包含所有模型',
+  'onboarding.runtimeChoice.cloud.f4': '无需管理 API 密钥',
+  'onboarding.runtimeChoice.cloud.f5': '设置简单',
+  'onboarding.runtimeChoice.custom.title': '自定义运行',
+  'onboarding.runtimeChoice.custom.tagline': '使用你自己的密钥。完全掌控使用的服务。',
+  'onboarding.runtimeChoice.custom.f1': '几乎所有功能都需要 API 密钥',
+  'onboarding.runtimeChoice.custom.f2': '可复用你已经付费的服务',
+  'onboarding.runtimeChoice.custom.f3': '如果全部本地运行，也可以免费',
+  'onboarding.runtimeChoice.custom.f4': '更多设置，更多可调选项',
+  'onboarding.runtimeChoice.custom.f5': '最适合高级用户和开发者',
+  'onboarding.runtimeChoice.cloud.creditHighlight': '赠送 $1 额度用于试用',
+  'onboarding.runtimeChoice.continueCloud': '继续使用简单模式',
+  'onboarding.runtimeChoice.continueCustom': '继续使用自定义模式',
+  'onboarding.runtimeChoice.recommended': '推荐',
+
+  // Onboarding: API keys step (only when Custom is picked)
+  'onboarding.apiKeys.title': '添加你的 API 密钥',
+  'onboarding.apiKeys.subtitle':
+    '你可以现在粘贴，也可以跳过并稍后在设置 › AI 中添加。密钥会加密存储在此设备上。',
+  'onboarding.apiKeys.openaiLabel': 'OpenAI API 密钥',
+  'onboarding.apiKeys.openaiPlaceholder': 'sk-...',
+  'onboarding.apiKeys.anthropicLabel': 'Anthropic API 密钥',
+  'onboarding.apiKeys.anthropicPlaceholder': 'sk-ant-...',
+  'onboarding.apiKeys.saveError': '无法保存该密钥。请仔细检查后重试。',
+  'onboarding.apiKeys.skipForNow': '暂时跳过',
+  'onboarding.apiKeys.continue': '保存并继续',
+  'onboarding.apiKeys.saving': '保存中…',
+
+  // Onboarding: Custom wizard (Inference / Voice / OAuth / Search / Memory)
+  'onboarding.custom.stepperInference': '推理',
+  'onboarding.custom.stepperVoice': '语音',
+  'onboarding.custom.stepperOAuth': 'OAuth',
+  'onboarding.custom.stepperSearch': '搜索',
+  'onboarding.custom.stepperMemory': '记忆',
+  'onboarding.custom.stepCounter': '第 {n} 步，共 {total} 步',
+  'onboarding.custom.defaultTitle': '默认',
+  'onboarding.custom.defaultSubtitle': '让 OpenHuman 为你管理。',
+  'onboarding.custom.configureTitle': '配置',
+  'onboarding.custom.configureSubtitle': '我来选择使用什么。',
+  'onboarding.custom.progressAriaLabel': '入门进度',
+  'onboarding.custom.continue': '继续',
+  'onboarding.custom.back': '返回',
+  'onboarding.custom.finish': '完成设置',
+  'onboarding.custom.configureLater':
+    '你可以在入门流程结束后继续配置。完成后，我们会带你前往对应的设置页面。',
+  'onboarding.custom.openSettings': '在设置中打开',
+
+  // Onboarding: Custom > Inference (text)
+  'onboarding.custom.inference.title': '推理（文本）',
+  'onboarding.custom.inference.subtitle': '哪个语言模型应该回答你的问题并运行你的智能体？',
+  'onboarding.custom.inference.defaultDesc':
+    'OpenHuman 会为每种工作负载路由到合适的默认模型。无需密钥，无需设置。',
+  'onboarding.custom.inference.configureDesc':
+    '使用你自己的 OpenAI 或 Anthropic 密钥。我们会将它用于所有文本类工作负载。',
+
+  // Onboarding: Custom > Voice
+  'onboarding.custom.voice.title': '语音',
+  'onboarding.custom.voice.subtitle': '用于语音模式的语音转文本和文本转语音。',
+  'onboarding.custom.voice.defaultDesc': 'OpenHuman 内置托管的 STT/TTS，开箱即用。无需额外配置。',
+  'onboarding.custom.voice.configureDesc':
+    '使用你自己的 ElevenLabs、OpenAI Whisper 等服务。在设置 › 语音中配置。',
+
+  // Onboarding: Custom > OAuth (Composio)
+  'onboarding.custom.oauth.title': '连接（OAuth）',
+  'onboarding.custom.oauth.subtitle': 'Gmail、Slack、Notion 以及其他需要 OAuth 的连接服务。',
+  'onboarding.custom.oauth.defaultDesc':
+    'OpenHuman 使用托管的 Composio 工作区。之后每个服务都可一键连接。',
+  'onboarding.custom.oauth.configureDesc':
+    '使用你自己的 Composio 账户或 API 密钥。在设置 › 连接中配置。',
+
+  // Onboarding: Custom > Search
+  'onboarding.custom.search.title': '网页搜索',
+  'onboarding.custom.search.subtitle': 'OpenHuman 如何代表你搜索网页。',
+  'onboarding.custom.search.defaultDesc': 'OpenHuman 使用托管搜索后端。无需密钥。',
+  'onboarding.custom.search.configureDesc':
+    '使用你自己的搜索提供商密钥（Tavily、Brave 等）。在设置 › 工具中配置。',
+
+  // Onboarding: Custom > Memory
+  'onboarding.custom.memory.title': '记忆',
+  'onboarding.custom.memory.subtitle': 'OpenHuman 如何记住你的上下文、偏好和历史对话。',
+  'onboarding.custom.memory.defaultDesc': 'OpenHuman 会自动管理记忆存储和检索。无需设置。',
+  'onboarding.custom.memory.configureDesc': '你可以自行查看、导出或清除记忆。在设置 › 记忆中配置。',
+
   // Accounts
   'accounts.addAccount': '添加账户',
   'accounts.manageAccounts': '管理账户',
@@ -293,6 +385,7 @@ const zhCN: TranslationMap = {
   'misc.downloading': '下载中...',
   'misc.installing': '安装中...',
   'misc.beta': '测试版',
+  'misc.betaFeedback': '发送反馈',
 
   // Mnemonic / Recovery
   'mnemonic.title': '恢复短语',
