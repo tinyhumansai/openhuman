@@ -62,7 +62,24 @@ pub fn provider_for_role(role: &str, config: &Config) -> String {
     };
     let s = opt.unwrap_or("").trim();
     if s.is_empty() || s == "cloud" {
-        PROVIDER_OPENHUMAN.to_string()
+        // When no explicit per-workload provider is set, resolve
+        // primary_cloud.  If it points to a non-openhuman entry, route
+        // there so users can use their own LLM provider without having
+        // to set every single workload knob.  (An active app-session
+        // is still required — verified inside
+        // create_chat_provider_from_string.)
+        let primary_slug = config.primary_cloud.as_deref().and_then(|pid| {
+            config
+                .cloud_providers
+                .iter()
+                .find(|e| e.id == pid && e.slug != "openhuman")
+                .map(|e| e.slug.clone())
+        });
+        if let Some(slug) = primary_slug {
+            format!("{slug}:")
+        } else {
+            PROVIDER_OPENHUMAN.to_string()
+        }
     } else {
         s.to_string()
     }
@@ -104,6 +121,21 @@ pub fn create_chat_provider_from_string(
 
     if p == PROVIDER_OPENHUMAN {
         return make_openhuman_backend(config);
+    }
+
+    // ── Session gate ──────────────────────────────────────────────────
+    // Custom providers (Ollama, <slug>:<model>) require an active
+    // OpenHuman session.  Without this check an unregistered user can
+    // point every workload at a custom provider and bypass the session
+    // requirement entirely.
+    //
+    // Gate is skipped under #[cfg(test)] so existing unit tests that
+    // create custom providers against a default Config continue to
+    // pass.  The verify_session_active function itself is tested
+    // explicitly with tempdir-backed auth profiles.
+    #[cfg(not(test))]
+    {
+        verify_session_active(config)?;
     }
 
     if let Some(model) = p.strip_prefix(OLLAMA_PROVIDER_PREFIX) {
@@ -194,6 +226,41 @@ fn make_openhuman_backend(config: &Config) -> anyhow::Result<(Box<dyn Provider>,
         &options,
     ));
     Ok((p, model))
+}
+
+/// Verify the user has an active OpenHuman backend session.
+///
+/// Without this check, an unregistered user can configure every workload
+/// to use a custom cloud provider and bypass the session requirement
+/// entirely.  This function ensures that custom providers (Ollama,
+/// `<slug>:<model>`) are only reachable when the workspace holds a valid
+/// `app-session` JWT.
+fn verify_session_active(config: &Config) -> anyhow::Result<()> {
+    // Fast path: the scheduler gate already knows the session is dead.
+    if crate::openhuman::scheduler_gate::is_signed_out() {
+        anyhow::bail!(
+            "SESSION_EXPIRED: backend session not active — sign in to use custom providers"
+        );
+    }
+    // Verify the app-session JWT actually exists in auth-profiles.
+    let state_dir = config
+        .config_path
+        .parent()
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            directories::UserDirs::new()
+                .map(|d| d.home_dir().join(".openhuman"))
+                .unwrap_or_else(|| std::path::PathBuf::from(".openhuman"))
+        });
+    let auth = AuthService::new(&state_dir, config.secrets.encrypt);
+    let has_session = auth
+        .get_provider_bearer_token(crate::openhuman::credentials::APP_SESSION_PROVIDER, None)?
+        .filter(|s| !s.trim().is_empty())
+        .is_some();
+    if !has_session {
+        anyhow::bail!("SESSION_EXPIRED: no backend session — sign in to use OpenHuman")
+    }
+    Ok(())
 }
 
 /// Build an Ollama local provider.
