@@ -409,7 +409,7 @@ fn verify_session_active_called_for_custom_provider_not_for_openhuman() {
     // by directly calling verify_session_active).
     let tmp = TempDir::new().expect("tempdir");
     let config = config_in_tempdir(&tmp);
-    let err = create_chat_provider_from_string("reasoning", "ollama:llama3", &config);
+    let _ = create_chat_provider_from_string("reasoning", "ollama:llama3", &config);
     // Under #[cfg(test)] the gate is skipped, so this succeeds.
     // We assert the gate *would* fire by testing verify_session_active directly.
     assert!(
