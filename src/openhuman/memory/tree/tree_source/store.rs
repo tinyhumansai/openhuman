@@ -290,6 +290,68 @@ pub fn get_summary_embedding(config: &Config, summary_id: &str) -> Result<Option
     })
 }
 
+/// Store a summary embedding for a specific provider/model/dimension signature.
+///
+/// This writes the #1574 per-model table only; the legacy
+/// `mem_tree_summaries.embedding` column remains available for dual-read
+/// fallback while query paths migrate.
+pub fn set_summary_embedding_for_signature(
+    config: &Config,
+    summary_id: &str,
+    model_signature: &str,
+    embedding: &[f32],
+) -> Result<()> {
+    let blob = pack_embedding_blob(embedding);
+    let dim = i64::try_from(embedding.len()).context("embedding dimension does not fit i64")?;
+    let created_at = Utc::now().timestamp_millis() as f64 / 1000.0;
+    with_connection(config, |conn| {
+        conn.execute(
+            "INSERT INTO mem_tree_summary_embeddings
+             (summary_id, model_signature, vector, dim, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(summary_id, model_signature) DO UPDATE SET
+                vector = excluded.vector,
+                dim = excluded.dim,
+                created_at = excluded.created_at",
+            params![summary_id, model_signature, blob, dim, created_at],
+        )?;
+        Ok(())
+    })
+}
+
+/// Fetch a summary embedding for exactly one provider/model/dimension signature.
+pub fn get_summary_embedding_for_signature(
+    config: &Config,
+    summary_id: &str,
+    model_signature: &str,
+) -> Result<Option<Vec<f32>>> {
+    with_connection(config, |conn| {
+        let row: Option<(Option<Vec<u8>>, i64)> = conn
+            .query_row(
+                "SELECT vector, dim
+                   FROM mem_tree_summary_embeddings
+                  WHERE summary_id = ?1 AND model_signature = ?2",
+                params![summary_id, model_signature],
+                |r| Ok((Some(r.get(0)?), r.get(1)?)),
+            )
+            .optional()?;
+        match row {
+            None => Ok(None),
+            Some((blob, dim)) => {
+                let decoded =
+                    decode_signature_blob(blob, dim, &format!("summary_id={summary_id}"))?;
+                if decoded.as_ref().is_some_and(|v| v.len() != dim as usize) {
+                    anyhow::bail!(
+                        "summary embedding dimension mismatch: dim column says {dim}, blob contains {} floats",
+                        decoded.as_ref().map_or(0, Vec::len)
+                    );
+                }
+                Ok(decoded)
+            }
+        }
+    })
+}
+
 /// Fetch one summary by id. Soft-deleted rows are returned with
 /// `deleted = true` so callers can decide filtering policy.
 pub fn get_summary(config: &Config, id: &str) -> Result<Option<SummaryNode>> {
@@ -515,6 +577,33 @@ fn row_to_buffer(row: &rusqlite::Row<'_>) -> rusqlite::Result<Buffer> {
         token_sum,
         oldest_at,
     })
+}
+
+fn pack_embedding_blob(embedding: &[f32]) -> Vec<u8> {
+    embedding.iter().flat_map(|f| f.to_le_bytes()).collect()
+}
+
+fn decode_signature_blob(blob: Option<Vec<u8>>, dim: i64, label: &str) -> Result<Option<Vec<f32>>> {
+    let Some(bytes) = blob else {
+        return Ok(None);
+    };
+    if dim < 0 {
+        anyhow::bail!("{label} has negative dimension {dim}");
+    }
+    if !bytes.len().is_multiple_of(4) {
+        anyhow::bail!("{label} blob length {} not a multiple of 4", bytes.len());
+    }
+    let floats: Vec<f32> = bytes
+        .chunks_exact(4)
+        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        .collect();
+    if floats.len() != dim as usize {
+        anyhow::bail!(
+            "summary embedding dimension mismatch: dim column says {dim}, blob contains {} floats",
+            floats.len()
+        );
+    }
+    Ok(Some(floats))
 }
 
 #[cfg(test)]
