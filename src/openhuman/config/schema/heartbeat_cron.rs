@@ -39,7 +39,10 @@ pub struct HeartbeatConfig {
     #[serde(default = "default_meeting_lookahead_minutes")]
     pub meeting_lookahead_minutes: u32,
     /// Maximum active calendar connections polled per heartbeat planner tick.
-    #[serde(default = "default_max_calendar_connections_per_tick")]
+    #[serde(
+        default = "default_max_calendar_connections_per_tick",
+        deserialize_with = "deserialize_calendar_connection_limit"
+    )]
     pub max_calendar_connections_per_tick: u32,
     /// Maximum lookahead window for reminder notifications.
     #[serde(default = "default_reminder_lookahead_minutes")]
@@ -60,6 +63,16 @@ fn default_meeting_lookahead_minutes() -> u32 {
 
 fn default_max_calendar_connections_per_tick() -> u32 {
     2
+}
+
+fn deserialize_calendar_connection_limit<'de, D>(deserializer: D) -> Result<u32, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<u32>::deserialize(deserializer)?;
+    Ok(value
+        .unwrap_or_else(default_max_calendar_connections_per_tick)
+        .max(1))
 }
 
 fn default_reminder_lookahead_minutes() -> u32 {
@@ -122,6 +135,18 @@ mod tests {
         assert!(!partial.inference_enabled);
         assert!(!partial.notify_meetings);
         assert_eq!(partial.max_calendar_connections_per_tick, 2);
+
+        let zero_cap: HeartbeatConfig =
+            serde_json::from_str(r#"{"max_calendar_connections_per_tick":0}"#).unwrap();
+        assert_eq!(zero_cap.max_calendar_connections_per_tick, 1);
+
+        let null_cap: HeartbeatConfig =
+            serde_json::from_str(r#"{"max_calendar_connections_per_tick":null}"#).unwrap();
+        assert_eq!(null_cap.max_calendar_connections_per_tick, 2);
+
+        let explicit_cap: HeartbeatConfig =
+            serde_json::from_str(r#"{"max_calendar_connections_per_tick":4}"#).unwrap();
+        assert_eq!(explicit_cap.max_calendar_connections_per_tick, 4);
     }
 }
 

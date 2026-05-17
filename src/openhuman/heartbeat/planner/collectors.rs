@@ -121,7 +121,7 @@ fn select_calendar_connections_for_tick(
         return Vec::new();
     }
 
-    let interval_seconds = i64::from(interval_minutes.max(1)) * 60;
+    let interval_seconds = i64::from(interval_minutes.max(5)) * 60;
     let tick_index = now.timestamp().div_euclid(interval_seconds);
     let offset = tick_index.rem_euclid(eligible_count as i64) as usize;
     let selected = eligible
@@ -524,6 +524,30 @@ mod tests {
             .map(|c| c.id)
             .collect::<Vec<_>>();
         let second = select_calendar_connections_for_tick(connections, 2, second_tick, 5)
+            .into_iter()
+            .map(|c| c.id)
+            .collect::<Vec<_>>();
+
+        assert_eq!(first, vec!["cal-1", "cal-2"]);
+        assert_eq!(second, vec!["cal-2", "cal-3"]);
+    }
+
+    #[test]
+    fn calendar_selection_uses_heartbeat_interval_floor() {
+        let connections = vec![
+            conn("cal-1", "googlecalendar", "ACTIVE"),
+            conn("cal-2", "google_calendar", "CONNECTED"),
+            conn("cal-3", "calendar", "ACTIVE"),
+        ];
+        let one_minute_later = Utc.timestamp_opt(60, 0).single().unwrap();
+        let five_minutes_later = Utc.timestamp_opt(300, 0).single().unwrap();
+
+        let first =
+            select_calendar_connections_for_tick(connections.clone(), 2, one_minute_later, 1)
+                .into_iter()
+                .map(|c| c.id)
+                .collect::<Vec<_>>();
+        let second = select_calendar_connections_for_tick(connections, 2, five_minutes_later, 1)
             .into_iter()
             .map(|c| c.id)
             .collect::<Vec<_>>();
