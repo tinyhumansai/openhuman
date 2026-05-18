@@ -1,0 +1,53 @@
+name: Refresh Tiny knowledge base
+
+# Trigger Tiny (the Discord support bot at tinyhumansai/support-automation)
+# to re-ingest the gitbooks corpus whenever the docs change on main.
+#
+# Setup: in this repo's Settings → Secrets and variables → Actions, add
+#   - TINY_WEBHOOK_URL    e.g. https://tiny-support.fly.dev/refresh-kb
+#   - TINY_WEBHOOK_SECRET matches the REFRESH_WEBHOOK_SECRET env on the bot
+#
+# If either secret is missing, the workflow skips silently — useful while
+# the bot isn't deployed yet.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'gitbooks/**'
+
+# Don't queue concurrent refreshes — if two PRs merge back-to-back,
+# the latest one wins and the older invocation is cancelled.
+concurrency:
+  group: refresh-tiny-kb
+  cancel-in-progress: true
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    # Skip cleanly when the bot isn't configured yet so this PR can
+    # merge before Tiny is deployed.
+    if: vars.TINY_WEBHOOK_URL != '' || secrets.TINY_WEBHOOK_URL != ''
+    steps:
+      - name: POST to Tiny refresh endpoint
+        env:
+          TINY_WEBHOOK_URL: ${{ secrets.TINY_WEBHOOK_URL }}
+          TINY_WEBHOOK_SECRET: ${{ secrets.TINY_WEBHOOK_SECRET }}
+        run: |
+          if [ -z "$TINY_WEBHOOK_URL" ] || [ -z "$TINY_WEBHOOK_SECRET" ]; then
+            echo "TINY_WEBHOOK_URL or TINY_WEBHOOK_SECRET unset — skipping refresh."
+            exit 0
+          fi
+          echo "Triggering Tiny refresh on docs change..."
+          # 30s connect + total timeout caps us under any sensible
+          # platform request budget. `--fail-with-body` surfaces non-2xx
+          # responses with the JSON the bot returned for easier triage.
+          curl --silent --show-error --fail-with-body \
+            --connect-timeout 10 \
+            --max-time 30 \
+            -X POST "$TINY_WEBHOOK_URL" \
+            -H "Authorization: Bearer $TINY_WEBHOOK_SECRET" \
+            -H "Content-Type: application/json" \
+            -d '{"source":"github-action","repo":"${{ github.repository }}","sha":"${{ github.sha }}"}'
+          echo ""
+          echo "Refresh request sent."
