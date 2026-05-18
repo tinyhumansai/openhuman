@@ -244,7 +244,14 @@ impl Tool for TinyFishSearchTool {
 
                 Ok(ToolResult::success(lines.join("\n")))
             }
-            Err(e) => Ok(ToolResult::error(format!("TinyFish search failed: {e}"))),
+            Err(e) => {
+                tracing::debug!(
+                    query = query,
+                    error = %e,
+                    "[tinyfish_search] request failed"
+                );
+                Ok(ToolResult::error(format!("TinyFish search failed: {e}")))
+            }
         }
     }
 }
@@ -413,7 +420,14 @@ impl Tool for TinyFishFetchTool {
 
                 Ok(ToolResult::success(lines.join("\n")))
             }
-            Err(e) => Ok(ToolResult::error(format!("TinyFish fetch failed: {e}"))),
+            Err(e) => {
+                tracing::debug!(
+                    url_count = normalized_urls.len(),
+                    error = %e,
+                    "[tinyfish_fetch] request failed"
+                );
+                Ok(ToolResult::error(format!("TinyFish fetch failed: {e}")))
+            }
         }
     }
 }
@@ -524,7 +538,7 @@ impl Tool for TinyFishAgentRunTool {
             body["credential_item_ids"] = ids.clone();
         }
 
-        tracing::info!(url = url, "[tinyfish_agent_run] starting automation");
+        tracing::debug!(url = url, "[tinyfish_agent_run] starting automation");
 
         match self
             .client
@@ -532,6 +546,12 @@ impl Tool for TinyFishAgentRunTool {
             .await
         {
             Ok(resp) => {
+                tracing::debug!(
+                    run_id = resp.run_id.as_deref().unwrap_or(""),
+                    status = resp.status.as_str(),
+                    has_error = resp.error.is_some(),
+                    "[tinyfish_agent_run] request finished"
+                );
                 let mut lines = vec!["TinyFish automation finished.".to_string()];
                 if let Some(run_id) = resp.run_id.as_deref() {
                     lines.push(format!("Run ID: {run_id}"));
@@ -555,9 +575,16 @@ impl Tool for TinyFishAgentRunTool {
                 }
                 Ok(ToolResult::success(lines.join("\n")))
             }
-            Err(e) => Ok(ToolResult::error(format!(
-                "TinyFish automation failed: {e}"
-            ))),
+            Err(e) => {
+                tracing::debug!(
+                    url = url,
+                    error = %e,
+                    "[tinyfish_agent_run] request failed"
+                );
+                Ok(ToolResult::error(format!(
+                    "TinyFish automation failed: {e}"
+                )))
+            }
         }
     }
 }
