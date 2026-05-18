@@ -51,12 +51,7 @@ async function fireRecipeEvent(evt: {
   const handler = listeners.get('webview:event');
   if (!handler) throw new Error('webview:event listener not attached');
   handler({
-    payload: {
-      account_id: ACCOUNT_ID,
-      provider: 'test-provider',
-      ts: Date.now(),
-      ...evt,
-    },
+    payload: { account_id: ACCOUNT_ID, provider: 'test-provider', ts: Date.now(), ...evt },
   });
   await new Promise(r => setTimeout(r, 0));
 }
@@ -169,10 +164,7 @@ describe('webviewAccountService — recipe event payload validation', () => {
   });
 
   it('skips ingestNotification when notify payload has no title or body', async () => {
-    await fireRecipeEvent({
-      kind: 'notify',
-      payload: { title: '', body: '' },
-    });
+    await fireRecipeEvent({ kind: 'notify', payload: { title: '', body: '' } });
 
     expect(ingestNotification).not.toHaveBeenCalled();
   });
