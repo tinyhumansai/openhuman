@@ -148,6 +148,16 @@ const CAPABILITIES: &[Capability] = &[
         privacy: None,
     },
     Capability {
+        id: "conversation.subagent_mascots",
+        name: "Subagent Mascots",
+        domain: "conversation",
+        category: CapabilityCategory::Conversation,
+        description: "Show delegated sub-agents as colored companion mascots with compact activity bubbles and running, completed, or failed states.",
+        how_to: "Human > ask the assistant to delegate work to sub-agents",
+        status: CapabilityStatus::Beta,
+        privacy: None,
+    },
+    Capability {
         id: "conversation.label_filter",
         name: "Thread Label Filters",
         domain: "conversation",
