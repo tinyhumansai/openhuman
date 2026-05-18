@@ -747,6 +747,14 @@ fn core_host() -> String {
         .unwrap_or_else(|| "127.0.0.1".to_string())
 }
 
+/// Metadata sent back to the Tauri host once the embedded core has selected
+/// and bound its listen port.
+#[derive(Debug, Clone)]
+pub struct EmbeddedReadySignal {
+    pub port: u16,
+    pub fallback_from: Option<u16>,
+}
+
 /// Runs the HTTP/JSON-RPC server.
 ///
 /// This function binds to the specified host and port, initializes the router,
@@ -756,7 +764,7 @@ pub async fn run_server(
     port: Option<u16>,
     socketio_enabled: bool,
 ) -> anyhow::Result<()> {
-    run_server_inner(host, port, socketio_enabled, false, None).await
+    run_server_inner(host, port, socketio_enabled, false, None, None).await
 }
 
 /// Like [`run_server`] but marks the instance as embedded.
@@ -766,7 +774,34 @@ pub async fn run_server_embedded(
     socketio_enabled: bool,
     shutdown_token: CancellationToken,
 ) -> anyhow::Result<()> {
-    run_server_inner(host, port, socketio_enabled, true, Some(shutdown_token)).await
+    run_server_inner(
+        host,
+        port,
+        socketio_enabled,
+        true,
+        Some(shutdown_token),
+        None,
+    )
+    .await
+}
+
+/// Embedded entrypoint with an explicit readiness callback.
+pub async fn run_server_embedded_with_ready(
+    host: Option<&str>,
+    port: Option<u16>,
+    socketio_enabled: bool,
+    shutdown_token: CancellationToken,
+    ready_tx: tokio::sync::oneshot::Sender<EmbeddedReadySignal>,
+) -> anyhow::Result<()> {
+    run_server_inner(
+        host,
+        port,
+        socketio_enabled,
+        true,
+        Some(shutdown_token),
+        Some(ready_tx),
+    )
+    .await
 }
 
 /// Internal server entrypoint.
@@ -776,6 +811,7 @@ async fn run_server_inner(
     socketio_enabled: bool,
     embedded_core: bool,
     shutdown_token: Option<CancellationToken>,
+    ready_tx: Option<tokio::sync::oneshot::Sender<EmbeddedReadySignal>>,
 ) -> anyhow::Result<()> {
     // Ensure all controllers are registered before starting.
     let _ = all::all_registered_controllers();
@@ -863,15 +899,20 @@ async fn run_server_inner(
         "[core] Bind resolution: host={resolved_host} (from {host_source}), port={resolved_port} (from {port_source})"
     );
 
-    let port = resolved_port;
+    let preferred_port = resolved_port;
     let host = resolved_host;
-    let bind_addr = format!("{host}:{port}");
-    let listener = tokio::net::TcpListener::bind((host.as_str(), port))
-        .await
-        .map_err(|e| {
-            log::error!("[core] Failed to bind to {bind_addr}: {e}");
-            e
-        })?;
+    let pick = crate::openhuman::connectivity::rpc::pick_listen_port_for_host(
+        host.as_str(),
+        preferred_port,
+    )
+    .await
+    .map_err(|err| {
+        log::error!("[core] Failed to bind to {host}:{preferred_port}: {err}");
+        anyhow::Error::new(err)
+    })?;
+    let listen_port = pick.port;
+    let bind_addr = format!("{host}:{listen_port}");
+    let listener = pick.listener;
 
     let app = build_core_http_router(socketio_enabled);
 
@@ -887,6 +928,13 @@ async fn run_server_inner(
         log::info!("[rpc:socketio] Socket.IO — ws://{bind_addr}/socket.io/ (same HTTP server)");
     } else {
         log::info!("[rpc:socketio] disabled (--jsonrpc-only)");
+    }
+
+    if let Some(tx) = ready_tx {
+        let _ = tx.send(EmbeddedReadySignal {
+            port: listen_port,
+            fallback_from: pick.fallback_from,
+        });
     }
 
     // Background bootstrap for services — gated on login state.
