@@ -37,7 +37,8 @@ OpenHuman is a desktop AI assistant app. The codebase has three main parts:
 
 ## Step 1 — Install the required tools
 
-### macOS (recommended for beginners)
+<details>
+<summary><strong>macOS setup</strong> (recommended for beginners)</summary>
 
 Install [Homebrew](https://brew.sh) first if you don't have it:
 
@@ -64,7 +65,7 @@ brew install cmake
 xcode-select --install
 ```
 
-### Verify everything is installed
+Verify everything is installed:
 
 ```bash
 node --version     # should be v24.x.x or higher
@@ -74,6 +75,67 @@ cmake --version    # any recent version
 ```
 
 > **Node version warning**: The project requires Node 24+. If you see a warning like `Unsupported engine: wanted >=24.0.0 (current: v22.x.x)`, upgrade Node. Using `nvm`? Run `nvm install 24 && nvm use 24`.
+
+</details>
+
+<details>
+<summary><strong>Windows setup</strong></summary>
+
+Open PowerShell or Windows Terminal.
+
+Install Node.js 24+ with `nvm-windows`:
+
+```powershell
+winget install CoreyButler.NVMforWindows
+```
+
+Close and reopen your terminal, then run:
+
+```powershell
+nvm install 24
+nvm use 24
+node --version     # should be v24.x.x or higher
+```
+
+Install pnpm:
+
+```powershell
+npm install -g pnpm@10.10.0
+pnpm --version     # should be 10.10.0
+```
+
+Install Rust:
+
+```powershell
+winget install Rustlang.Rustup
+```
+
+Close and reopen your terminal, then run:
+
+```powershell
+rustup toolchain install 1.93.0 --profile minimal
+rustup component add rustfmt clippy --toolchain 1.93.0
+rustc --version    # should be 1.93.0
+```
+
+Install CMake:
+
+```powershell
+winget install Kitware.CMake
+cmake --version    # any recent version
+```
+
+Install Visual Studio Build Tools:
+
+```powershell
+winget install Microsoft.VisualStudio.2022.BuildTools
+```
+
+When the installer opens, select **Desktop development with C++**. Make sure it includes the Windows SDK and MSVC v143 build tools.
+
+> **Node version warning**: The project requires Node 24+. If you see a warning like `Unsupported engine: wanted >=24.0.0 (current: v22.x.x)`, run `nvm install 24 && nvm use 24`.
+
+</details>
 
 ---
 
