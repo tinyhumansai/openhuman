@@ -2289,4 +2289,157 @@ mod tests {
         assert!(!is_max_iterations_event(&event_with_message("")));
         assert!(!is_max_iterations_event(&sentry::protocol::Event::default()));
     }
+
+    /// Verbatim body shape from OPENHUMAN-TAURI-R5 (~2.5k events): the
+    /// `integrations.get` site reaches the embedded core's `127.0.0.1:18474`
+    /// listener during the boot window and reqwest's source chain renders as
+    /// `error sending request for url (…) → client error (Connect) → tcp
+    /// connect error → Connection refused (os error 61)`.
+    const R5_BODY: &str = "error sending request for url \
+        (http://127.0.0.1:18474/agent-integrations/composio/connections) \
+        → client error (Connect) → tcp connect error → Connection refused (os error 61)";
+
+    /// Verbatim body shape from OPENHUMAN-TAURI-R6 (~2.5k events): the same
+    /// transport failure as R5, re-wrapped one frame up by the composio
+    /// op-layer and re-emitted at the `rpc.invoke_method` site so it lands in
+    /// Sentry under `domain=rpc` instead of `domain=integrations`.
+    const R6_BODY: &str = "[composio] list_connections failed: \
+        GET http://127.0.0.1:18474/agent-integrations/composio/connections failed: \
+        error sending request for url \
+        (http://127.0.0.1:18474/agent-integrations/composio/connections) \
+        → client error (Connect) → tcp connect error → Connection refused (os error 61)";
+
+    #[test]
+    fn classifies_r5_loopback_connect_refused_as_loopback_unavailable() {
+        assert_eq!(
+            expected_error_kind(R5_BODY),
+            Some(ExpectedErrorKind::LoopbackUnavailable),
+            "R5 body must classify as LoopbackUnavailable, not the broader NetworkUnreachable bucket"
+        );
+    }
+
+    #[test]
+    fn classifies_r6_rpc_wrapped_loopback_connect_refused_as_loopback_unavailable() {
+        assert_eq!(
+            expected_error_kind(R6_BODY),
+            Some(ExpectedErrorKind::LoopbackUnavailable),
+            "R6 body (rpc.invoke_method re-wrap) must classify as LoopbackUnavailable"
+        );
+    }
+
+    #[test]
+    fn classifies_loopback_connect_refused_across_platforms() {
+        // Linux WSL / native: os error 111. Windows WSAECONNREFUSED: 10061.
+        // Both must classify so the matcher works regardless of where the
+        // user's desktop happens to be running.
+        for raw in [
+            "error sending request for url (http://127.0.0.1:18474/x) \
+             → tcp connect error → Connection refused (os error 111)",
+            "error sending request for url (http://localhost:18474/x) \
+             → tcp connect error → Connection refused (os error 10061)",
+        ] {
+            assert_eq!(
+                expected_error_kind(raw),
+                Some(ExpectedErrorKind::LoopbackUnavailable),
+                "should classify as LoopbackUnavailable across platforms: {raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn loopback_unavailable_precedence_over_network_unreachable() {
+        // Precedence guard: a loopback `Connection refused (os error 61)`
+        // body would ALSO match `is_network_unreachable_message` because the
+        // broader matcher catches both `error sending request for url` and
+        // `connection refused`. The ladder must route through the
+        // loopback-specific bucket first so the two error classes stay
+        // distinguishable in Sentry.
+        let kind = expected_error_kind(R5_BODY);
+        assert_eq!(kind, Some(ExpectedErrorKind::LoopbackUnavailable));
+        assert_ne!(kind, Some(ExpectedErrorKind::NetworkUnreachable));
+    }
+
+    #[test]
+    fn does_not_classify_loopback_url_with_different_error_class_as_loopback() {
+        // A real upstream HTTP failure that happens to hit a developer's
+        // local proxy on `127.0.0.1:` (e.g. `mitmproxy`, `Charles`,
+        // `ngrok http`) must NOT be silenced as loopback noise — the body
+        // shape is a 503 status, not a transport-level connect-refused, and
+        // is actionable for Sentry.
+        let raw = "Backend returned 503 Service Unavailable for GET \
+                   http://127.0.0.1:8080/agent-integrations/composio/connections: \
+                   upstream timed out";
+        assert!(
+            !matches!(
+                expected_error_kind(raw),
+                Some(ExpectedErrorKind::LoopbackUnavailable)
+            ),
+            "loopback URL with non-transport error must not classify as LoopbackUnavailable"
+        );
+    }
+
+    #[test]
+    fn does_not_classify_non_loopback_connect_refused_as_loopback() {
+        // A `Connection refused` against a non-loopback host (DNS resolved
+        // to a remote IP, ISP-level block, captive portal) must fall
+        // through to `NetworkUnreachable`, not into the loopback bucket.
+        let raw = "error sending request for url \
+                   (https://api.tinyhumans.ai/agent-integrations/composio/connections) \
+                   → tcp connect error → Connection refused (os error 61)";
+        assert_eq!(
+            expected_error_kind(raw),
+            Some(ExpectedErrorKind::NetworkUnreachable)
+        );
+    }
+
+    #[test]
+    fn loopback_matcher_requires_both_host_and_errno_anchors() {
+        // Defense against the matcher being too eager: bodies that satisfy
+        // only one of the two conjunctive anchors must not classify into the
+        // loopback bucket. They may still demote via the broader
+        // `NetworkUnreachable` matcher — that is the correct fall-through —
+        // but the bucket must stay distinct so Sentry's "what class is
+        // spiking?" signal is preserved.
+        let loopback_host_no_errno =
+            "doctor: probed 127.0.0.1:18474 and got connection refused without errno detail";
+        assert_ne!(
+            expected_error_kind(loopback_host_no_errno),
+            Some(ExpectedErrorKind::LoopbackUnavailable),
+            "loopback host without `(os error N)` errno must not classify as LoopbackUnavailable"
+        );
+
+        let errno_no_loopback_host = "note: connection refused (os error 61) on retry";
+        assert_ne!(
+            expected_error_kind(errno_no_loopback_host),
+            Some(ExpectedErrorKind::LoopbackUnavailable),
+            "errno without loopback host anchor must not classify as LoopbackUnavailable"
+        );
+    }
+
+    #[test]
+    fn report_error_or_expected_routes_r5_r6_through_expected_path() {
+        // Smoke test: both verbatim Sentry bodies flow through
+        // `report_error_or_expected` without panicking. The classifier
+        // routes them to `report_expected_message` (debug breadcrumb,
+        // metadata-only) instead of `report_error_message`
+        // (`sentry::capture_message` at error level). We can't observe the
+        // Sentry hub from this test, but exercising the call path catches
+        // any future regression that re-introduces a panic or mis-types
+        // the arm.
+        report_error_or_expected(
+            R5_BODY,
+            "integrations",
+            "get",
+            &[
+                ("path", "/agent-integrations/composio/connections"),
+                ("failure", "transport"),
+            ],
+        );
+        report_error_or_expected(
+            R6_BODY,
+            "rpc",
+            "invoke_method",
+            &[("method", "openhuman.composio_list_connections")],
+        );
+    }
 }
