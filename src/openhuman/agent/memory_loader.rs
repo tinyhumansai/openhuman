@@ -344,6 +344,27 @@ impl MemoryLoader for DefaultMemoryLoader {
             entries
                 .into_iter()
                 .filter(|e| e.id.starts_with("episodic-cross:"))
+                .filter(|e| {
+                    // Fallback entries may carry a JSON session blob
+                    // (`{"thread_id": "...", "client_id": "..."}`) rather
+                    // than a bare thread_id, so the SQL-side exclusion
+                    // can miss. Re-check on this side using the same
+                    // normalization shape.
+                    let Some(current_tid) = current_thread_id.as_deref() else {
+                        return true;
+                    };
+                    let Some(raw_sid) = e.session_id.as_deref() else {
+                        return true;
+                    };
+                    let sid_thread = serde_json::from_str::<serde_json::Value>(raw_sid)
+                        .ok()
+                        .and_then(|v| {
+                            v.get("thread_id")
+                                .and_then(|t| t.as_str().map(|s| s.to_string()))
+                        })
+                        .unwrap_or_else(|| raw_sid.to_string());
+                    sid_thread != current_tid
+                })
                 .filter(|e| match e.score {
                     Some(score) => score >= self.min_relevance_score,
                     None => true,
