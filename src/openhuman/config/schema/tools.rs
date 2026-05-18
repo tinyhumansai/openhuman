@@ -566,7 +566,26 @@ fn default_polymarket_timeout_secs() -> u64 {
     15
 }
 
-/// Polymarket public API configuration (read-only, no wallet signing).
+fn default_polymarket_polygon_rpc_url() -> String {
+    "https://polygon-rpc.com".into()
+}
+
+fn default_polymarket_usdc_contract() -> String {
+    "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174".into()
+}
+
+fn default_polymarket_clob_exchange_contract() -> String {
+    "0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E".into()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct PolymarketClobCredentials {
+    pub api_key: String,
+    pub secret: String,
+    pub passphrase: String,
+}
+
+/// Polymarket API configuration (read + write actions via CLOB).
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct PolymarketConfig {
@@ -578,6 +597,16 @@ pub struct PolymarketConfig {
     pub clob_base_url: String,
     #[serde(default = "default_polymarket_timeout_secs")]
     pub timeout_secs: u64,
+    #[serde(default)]
+    pub eoa_address: Option<String>,
+    #[serde(default = "default_polymarket_polygon_rpc_url")]
+    pub polygon_rpc_url: String,
+    #[serde(default = "default_polymarket_usdc_contract")]
+    pub usdc_contract: String,
+    #[serde(default = "default_polymarket_clob_exchange_contract")]
+    pub clob_exchange_contract: String,
+    #[serde(default)]
+    pub derived_clob_credentials: Option<PolymarketClobCredentials>,
 }
 
 impl Default for PolymarketConfig {
@@ -587,6 +616,11 @@ impl Default for PolymarketConfig {
             gamma_base_url: default_polymarket_gamma_base_url(),
             clob_base_url: default_polymarket_clob_base_url(),
             timeout_secs: default_polymarket_timeout_secs(),
+            eoa_address: None,
+            polygon_rpc_url: default_polymarket_polygon_rpc_url(),
+            usdc_contract: default_polymarket_usdc_contract(),
+            clob_exchange_contract: default_polymarket_clob_exchange_contract(),
+            derived_clob_credentials: None,
         }
     }
 }
@@ -624,7 +658,7 @@ pub struct IntegrationsConfig {
     #[serde(default)]
     pub stock_prices: IntegrationToggle,
 
-    /// Polymarket public browse APIs (Gamma + CLOB read-only).
+    /// Polymarket browse + trading APIs (Gamma + CLOB).
     #[serde(default)]
     pub polymarket: PolymarketConfig,
 }

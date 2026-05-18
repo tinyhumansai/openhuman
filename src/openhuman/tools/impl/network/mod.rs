@@ -1,3 +1,4 @@
+mod clob_auth;
 mod composio;
 mod curl;
 mod gitbooks;
@@ -5,6 +6,7 @@ mod gmail_unsubscribe;
 mod http_request;
 mod mcp;
 mod polymarket;
+mod polymarket_orders;
 mod url_guard;
 mod web_fetch;
 mod web_search;
