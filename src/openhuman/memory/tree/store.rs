@@ -743,10 +743,7 @@ pub(crate) fn schema_apply_count_for_path_for_tests(path: &Path) -> usize {
 ///
 /// Visible to sibling modules (e.g. `score::store`) so Phase 2 can reuse
 /// the same connection setup / schema initialisation without duplication.
-pub(crate) fn with_connection<T>(
-    config: &Config,
-    f: impl FnOnce(&Connection) -> Result<T>,
-) -> Result<T> {
+pub fn with_connection<T>(config: &Config, f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
     let dir = config.workspace_dir.join(DB_DIR);
     std::fs::create_dir_all(&dir)
         .with_context(|| format!("Failed to create memory_tree dir: {}", dir.display()))?;
