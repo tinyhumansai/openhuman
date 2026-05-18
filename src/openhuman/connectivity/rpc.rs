@@ -214,27 +214,43 @@ async fn pick_listen_port_with_policy(
     }
 
     for fallback in fallback_ports {
-        match TcpListener::bind((host, *fallback)).await {
-            Ok(listener) => {
-                warn!(
-                    "[CORE] preferred port {} in use by {}; bound to {}",
-                    preferred,
-                    fingerprint.as_human_readable(),
-                    fallback
-                );
-                return Ok(PickListenPortResult {
-                    listener,
-                    port: *fallback,
-                    fallback_from: Some(preferred),
-                });
+        // Retry each fallback candidate on transient AddrInUse so a brief
+        // race on 7789–7798 (AV scanner / prior-instance teardown) doesn't
+        // surface as NoAvailablePort. Mirrors the preferred-port retry above.
+        let mut bound: Option<TcpListener> = None;
+        for attempt in 0..=retry_policy.attempts {
+            match TcpListener::bind((host, *fallback)).await {
+                Ok(listener) => {
+                    bound = Some(listener);
+                    break;
+                }
+                Err(err) if err.kind() == ErrorKind::AddrInUse => {
+                    if attempt < retry_policy.attempts {
+                        sleep(retry_policy.backoff).await;
+                        continue;
+                    }
+                }
+                Err(err) => {
+                    debug!(
+                        "[connectivity][rpc] fallback bind failed on {}:{}: {}",
+                        host, fallback, err
+                    );
+                    break;
+                }
             }
-            Err(err) if err.kind() == ErrorKind::AddrInUse => {}
-            Err(err) => {
-                debug!(
-                    "[connectivity][rpc] fallback bind failed on {}:{}: {}",
-                    host, fallback, err
-                );
-            }
+        }
+        if let Some(listener) = bound {
+            warn!(
+                "[CORE] preferred port {} in use by {}; bound to {}",
+                preferred,
+                fingerprint.as_human_readable(),
+                fallback
+            );
+            return Ok(PickListenPortResult {
+                listener,
+                port: *fallback,
+                fallback_from: Some(preferred),
+            });
         }
     }
 
