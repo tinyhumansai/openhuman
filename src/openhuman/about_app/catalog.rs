@@ -397,6 +397,17 @@ const CAPABILITIES: &[Capability] = &[
         privacy: None,
     },
     Capability {
+        id: "skills.tinyfish_web_automation",
+        name: "TinyFish Web Automation",
+        domain: "skills",
+        category: CapabilityCategory::Skills,
+        description:
+            "Search the web, render JavaScript-heavy pages, and run goal-based browser automations through TinyFish.",
+        how_to: "Conversations > Ask the assistant to search, fetch, or automate a website with TinyFish",
+        status: CapabilityStatus::Beta,
+        privacy: DERIVED_TO_BACKEND,
+    },
+    Capability {
         id: "skills.toggle_enabled",
         name: "Enable or Disable Skills",
         domain: "skills",

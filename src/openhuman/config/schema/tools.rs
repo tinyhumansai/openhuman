@@ -562,7 +562,7 @@ impl Default for IntegrationToggle {
 /// Composio in particular is unconditionally enabled and has no toggle:
 /// as long as the user is signed in, composio tools are available.
 ///
-/// The per-tool `apify`, `twilio`, `google_places`, and `parallel`
+/// The per-tool `apify`, `twilio`, `google_places`, `parallel`, and `tinyfish`
 /// flags below are preserved because those integrations incur per-call
 /// costs that the user may legitimately want to turn off; composio
 /// costs are metered server-side, so there is no client-side toggle
@@ -585,6 +585,10 @@ pub struct IntegrationsConfig {
     /// Parallel web search & content extraction integration.
     #[serde(default)]
     pub parallel: IntegrationToggle,
+
+    /// TinyFish web search, fetch, and browser automation integration.
+    #[serde(default)]
+    pub tinyfish: IntegrationToggle,
 
     /// Stock-price / market-data integration (Alpha Vantage on the backend).
     #[serde(default)]

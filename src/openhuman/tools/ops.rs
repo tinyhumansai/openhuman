@@ -401,6 +401,20 @@ pub fn all_tools_with_runtime(
         } else {
             tracing::debug!("[integrations] parallel disabled — skipping");
         }
+        if root_config.integrations.tinyfish.enabled {
+            tools.push(Box::new(
+                crate::openhuman::integrations::TinyFishSearchTool::new(Arc::clone(&client)),
+            ));
+            tools.push(Box::new(
+                crate::openhuman::integrations::TinyFishFetchTool::new(Arc::clone(&client)),
+            ));
+            tools.push(Box::new(
+                crate::openhuman::integrations::TinyFishAgentRunTool::new(Arc::clone(&client)),
+            ));
+            tracing::debug!("[integrations] registered tinyfish tools");
+        } else {
+            tracing::debug!("[integrations] tinyfish disabled — skipping");
+        }
         if root_config.integrations.stock_prices.enabled {
             tools.push(Box::new(
                 crate::openhuman::integrations::StockQuoteTool::new(Arc::clone(&client)),

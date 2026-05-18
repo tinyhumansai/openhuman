@@ -256,6 +256,7 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 | ----- | -------------------- | ----- | ----------------------------------- | ------ | ------------------ |
 | 7.2.1 | HTTP / API Requests  | RU+WD | `service-connectivity-flow.spec.ts` | ✅     |                    |
 | 7.2.2 | Web Search Execution | WD    | `skill-execution-flow.spec.ts`      | 🟡     | Generic skill path |
+| 7.2.3 | TinyFish Integration Tools | RU | `src/openhuman/integrations/tinyfish_tests.rs`, `src/openhuman/tools/ops_tests.rs::all_tools_executes_tinyfish_family_against_fake_backend` | ✅ | Backend-proxied Search, Fetch, and Agent run tools covered with fake backend |
 
 ---
 

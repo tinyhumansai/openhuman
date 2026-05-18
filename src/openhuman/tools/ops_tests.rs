@@ -53,6 +53,7 @@ fn integration_test_config(tmp: &TempDir, backend_url: &str) -> Config {
     cfg.integrations.apify.enabled = true;
     cfg.integrations.google_places.enabled = true;
     cfg.integrations.parallel.enabled = true;
+    cfg.integrations.tinyfish.enabled = true;
     cfg.integrations.stock_prices.enabled = true;
     cfg.integrations.twilio.enabled = true;
     cfg
@@ -872,6 +873,7 @@ fn all_tools_registers_integration_families_when_enabled_and_signed_in() {
     cfg.integrations.apify.enabled = true;
     cfg.integrations.google_places.enabled = true;
     cfg.integrations.parallel.enabled = true;
+    cfg.integrations.tinyfish.enabled = true;
     cfg.integrations.stock_prices.enabled = true;
     cfg.integrations.twilio.enabled = true;
     cfg.composio.enabled = true;
@@ -903,6 +905,9 @@ fn all_tools_registers_integration_families_when_enabled_and_signed_in() {
             "parallel_research",
             "parallel_enrich",
             "parallel_dataset",
+            "tinyfish_search",
+            "tinyfish_fetch",
+            "tinyfish_agent_run",
             "stock_quote",
             "stock_exchange_rate",
             "stock_options",
@@ -1159,6 +1164,77 @@ async fn all_tools_executes_parallel_and_web_search_family_against_fake_backend(
     );
     assert_eq!(requests[2].body["fullContent"], serde_json::json!(true));
     assert_eq!(requests[6].body["matchLimit"], serde_json::json!(25));
+}
+
+#[tokio::test]
+async fn all_tools_executes_tinyfish_family_against_fake_backend() {
+    let backend = integration_test_support::spawn_fake_integration_backend().await;
+    let tmp = TempDir::new().unwrap();
+    let cfg = integration_test_config(&tmp, &backend.base_url);
+    store_test_session_token(&cfg);
+    let tools = integration_tools_for_config(&tmp, &cfg);
+
+    let search = find_tool(&tools, "tinyfish_search")
+        .execute(serde_json::json!({
+            "query": "web automation",
+            "location": "US",
+            "language": "en",
+            "page": 2,
+            "include_thumbnail": true
+        }))
+        .await
+        .expect("tinyfish_search execute");
+    assert!(search
+        .output()
+        .contains("TinyFish returned 1 search result(s)"));
+    assert!(search
+        .output()
+        .contains("TinyFish result for web automation"));
+
+    let fetch = find_tool(&tools, "tinyfish_fetch")
+        .execute(serde_json::json!({
+            "urls": ["https://example.com/a"],
+            "format": "markdown",
+            "links": true,
+            "image_links": true
+        }))
+        .await
+        .expect("tinyfish_fetch execute");
+    assert!(fetch.output().contains("TinyFish fetched 1 page(s)"));
+    assert!(fetch
+        .output()
+        .contains("TinyFish content for https://example.com/a"));
+
+    let run = find_tool(&tools, "tinyfish_agent_run")
+        .execute(serde_json::json!({
+            "url": "https://example.com/shop",
+            "goal": "Extract product names. Return JSON.",
+            "browser_profile": "stealth",
+            "proxy_country_code": "US",
+            "output_schema": { "type": "object" }
+        }))
+        .await
+        .expect("tinyfish_agent_run execute");
+    assert!(run.output().contains("TinyFish automation finished."));
+    assert!(run.output().contains("run_tinyfish_fake"));
+    assert!(run.output().contains("\"ok\":true"));
+
+    let requests = backend.requests();
+    let paths: Vec<&str> = requests.iter().map(|req| req.path.as_str()).collect();
+    assert_eq!(
+        paths,
+        vec![
+            "/agent-integrations/tinyfish/search",
+            "/agent-integrations/tinyfish/fetch",
+            "/agent-integrations/tinyfish/agent/run",
+        ]
+    );
+    assert_eq!(requests[0].body["location"], serde_json::json!("US"));
+    assert_eq!(requests[1].body["links"], serde_json::json!(true));
+    assert_eq!(
+        requests[2].body["proxy_config"]["country_code"],
+        serde_json::json!("US")
+    );
 }
 
 #[tokio::test]
