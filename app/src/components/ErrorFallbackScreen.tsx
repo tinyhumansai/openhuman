@@ -1,3 +1,4 @@
+import { useT } from '../lib/i18n/I18nContext';
 import { LATEST_APP_DOWNLOAD_URL } from '../utils/config';
 import { openUrl } from '../utils/openUrl';
 
@@ -24,6 +25,7 @@ export default function ErrorFallbackScreen({
   componentStack,
   onReset,
 }: ErrorFallbackScreenProps) {
+  const { t } = useT();
   const errorName = error instanceof Error ? error.name : 'Error';
   const errorMessage = error instanceof Error ? error.message : String(error);
 
@@ -54,14 +56,12 @@ export default function ErrorFallbackScreen({
 
           {/* Title */}
           <h1 className="text-xl font-semibold text-white text-center mb-2">
-            Something went wrong
+            {t('app.errorFallback.heading')}
           </h1>
           <p className="text-sm text-stone-400 text-center mb-6">
-            The application encountered an unexpected error and could not recover.
+            {t('app.errorFallback.subheading')}
           </p>
-          <p className="text-xs text-stone-500 text-center mb-6">
-            If this keeps happening after restart, install the latest version.
-          </p>
+          <p className="text-xs text-stone-500 text-center mb-6">{t('app.errorFallback.hint')}</p>
 
           {/* Error details */}
           <div className="bg-stone-800/50 border border-stone-700/50 rounded-xl p-4 mb-6">
@@ -70,7 +70,7 @@ export default function ErrorFallbackScreen({
             {componentStack && (
               <details className="mt-3">
                 <summary className="text-xs text-stone-500 cursor-pointer hover:text-stone-300 transition-colors">
-                  Component stack
+                  {t('app.errorFallback.componentStack')}
                 </summary>
                 <pre className="mt-2 text-[11px] text-stone-500 whitespace-pre-wrap break-words max-h-[200px] overflow-auto">
                   {componentStack}
@@ -84,7 +84,7 @@ export default function ErrorFallbackScreen({
             <button
               onClick={onReset}
               className="bg-stone-700 hover:bg-stone-600 text-white text-sm font-medium rounded-xl px-4 py-3 transition-colors">
-              Try to Recover
+              {t('app.errorFallback.tryRecover')}
             </button>
             <button
               onClick={() => {
@@ -92,12 +92,12 @@ export default function ErrorFallbackScreen({
                 window.location.reload();
               }}
               className="bg-coral-500 hover:bg-coral-600 text-white text-sm font-medium rounded-xl px-4 py-3 transition-colors">
-              Reload App
+              {t('app.errorFallback.reloadApp')}
             </button>
             <button
               onClick={() => openUrl(LATEST_APP_DOWNLOAD_URL)}
               className="bg-stone-800 hover:bg-stone-700 text-white text-sm font-medium rounded-xl px-4 py-3 transition-colors border border-stone-600">
-              Download Latest
+              {t('app.errorFallback.downloadLatest')}
             </button>
           </div>
         </div>

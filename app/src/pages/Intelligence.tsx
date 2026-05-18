@@ -156,7 +156,7 @@ export default function Intelligence() {
                     className={`rounded-full border px-1.5 py-0.5 text-[10px] ${
                       active
                         ? 'border-white/30 bg-white/15 text-white'
-                        : 'border-stone-200 bg-stone-50 text-stone-500'
+                        : 'border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 text-stone-500 dark:text-neutral-400'
                     }`}>
                     {t('misc.beta')}
                   </span>
@@ -166,13 +166,13 @@ export default function Intelligence() {
           }}
         />
 
-        <div className="bg-white rounded-2xl shadow-soft border border-stone-200 p-6">
+        <div className="bg-white dark:bg-neutral-900 rounded-2xl shadow-soft border border-stone-200 dark:border-neutral-800 p-6">
           <div>
             {/* Header */}
             <div className="flex items-center justify-between mb-6">
               <div className="flex items-center gap-3">
                 <h1
-                  className="text-xl font-bold text-stone-900"
+                  className="text-xl font-bold text-stone-900 dark:text-neutral-100"
                   data-walkthrough="intelligence-header">
                   {t('memory.title')}
                 </h1>
@@ -189,13 +189,15 @@ export default function Intelligence() {
                 {activeTab === 'memory' && (
                   <div className="flex items-center gap-2">
                     <div className={`w-2 h-2 rounded-full ${systemStatusDot}`} />
-                    <span className="text-xs text-stone-400">{systemStatusLabel}</span>
+                    <span className="text-xs text-stone-400 dark:text-neutral-500">
+                      {systemStatusLabel}
+                    </span>
                   </div>
                 )}
                 {activeTab === 'memory' &&
                   (ingestionStatus.running || ingestionStatus.queueDepth > 0) && (
                     <div
-                      className="flex items-center gap-1.5 px-2 py-0.5 rounded-full border border-amber-200 bg-amber-50 text-amber-700"
+                      className="flex items-center gap-1.5 px-2 py-0.5 rounded-full border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-300"
                       title={
                         ingestionStatus.running
                           ? ingestionStatus.currentTitle

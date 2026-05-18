@@ -12,9 +12,10 @@ use std::time::{Duration, Instant};
 #[tokio::test]
 async fn message_dispatch_processes_messages_in_parallel() {
     // Install a deterministic stub that takes 250ms per turn. Two messages
-    // should complete in ~250ms when processed concurrently (vs ~500ms
-    // sequentially), which keeps this test robust even if the real handler's
-    // latency profile changes.
+    // should complete materially faster than a fully sequential path. In
+    // practice the test harness adds non-trivial fixed overhead (channel
+    // typing/reply work, bus dispatch, CI scheduling), so the assertion
+    // targets "well below sequential" instead of the ideal 250ms floor.
     let _bus_guard = mock_agent_run_turn(|_req: AgentTurnRequest| async move {
         tokio::time::sleep(Duration::from_millis(250)).await;
         Ok(AgentTurnResponse {
@@ -23,38 +24,64 @@ async fn message_dispatch_processes_messages_in_parallel() {
     })
     .await;
 
-    let channel_impl = Arc::new(RecordingChannel::default());
-    let channel: Arc<dyn Channel> = channel_impl.clone();
+    let build_runtime = || {
+        let channel_impl = Arc::new(RecordingChannel::default());
+        let channel: Arc<dyn Channel> = channel_impl.clone();
 
-    let mut channels_by_name = HashMap::new();
-    channels_by_name.insert(channel.name().to_string(), channel);
+        let mut channels_by_name = HashMap::new();
+        channels_by_name.insert(channel.name().to_string(), channel);
 
-    let runtime_ctx = Arc::new(ChannelRuntimeContext {
-        channels_by_name: Arc::new(channels_by_name),
-        provider: Arc::new(SlowProvider {
-            delay: Duration::from_millis(5),
-        }),
-        default_provider: Arc::new("test-provider".to_string()),
-        memory: Arc::new(NoopMemory),
-        tools_registry: Arc::new(vec![]),
-        system_prompt: Arc::new("test-system-prompt".to_string()),
-        model: Arc::new("test-model".to_string()),
-        temperature: 0.0,
-        auto_save_memory: false,
-        max_tool_iterations: 10,
-        min_relevance_score: 0.0,
-        conversation_histories: Arc::new(Mutex::new(HashMap::new())),
-        provider_cache: Arc::new(Mutex::new(HashMap::new())),
-        route_overrides: Arc::new(Mutex::new(HashMap::new())),
-        api_url: None,
-        inference_url: None,
-        reliability: Arc::new(crate::openhuman::config::ReliabilityConfig::default()),
-        provider_runtime_options: provider::ProviderRuntimeOptions::default(),
-        workspace_dir: Arc::new(std::env::temp_dir()),
-        message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
-        multimodal: crate::openhuman::config::MultimodalConfig::default(),
-    });
+        let runtime_ctx = Arc::new(ChannelRuntimeContext {
+            channels_by_name: Arc::new(channels_by_name),
+            provider: Arc::new(SlowProvider {
+                delay: Duration::from_millis(5),
+            }),
+            default_provider: Arc::new("test-provider".to_string()),
+            memory: Arc::new(NoopMemory),
+            tools_registry: Arc::new(vec![]),
+            system_prompt: Arc::new("test-system-prompt".to_string()),
+            model: Arc::new("test-model".to_string()),
+            temperature: 0.0,
+            auto_save_memory: false,
+            max_tool_iterations: 10,
+            min_relevance_score: 0.0,
+            conversation_histories: Arc::new(Mutex::new(HashMap::new())),
+            provider_cache: Arc::new(Mutex::new(HashMap::new())),
+            route_overrides: Arc::new(Mutex::new(HashMap::new())),
+            api_url: None,
+            inference_url: None,
+            reliability: Arc::new(crate::openhuman::config::ReliabilityConfig::default()),
+            provider_runtime_options: provider::ProviderRuntimeOptions::default(),
+            workspace_dir: Arc::new(std::env::temp_dir()),
+            message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
+            multimodal: crate::openhuman::config::MultimodalConfig::default(),
+        });
 
+        (channel_impl, runtime_ctx)
+    };
+
+    let (baseline_channel, baseline_ctx) = build_runtime();
+    let (baseline_tx, baseline_rx) = tokio::sync::mpsc::channel::<traits::ChannelMessage>(2);
+    baseline_tx
+        .send(traits::ChannelMessage {
+            id: "baseline".to_string(),
+            sender: "alice".to_string(),
+            reply_target: "alice".to_string(),
+            content: "hello".to_string(),
+            channel: "test-channel".to_string(),
+            timestamp: 1,
+            thread_ts: None,
+        })
+        .await
+        .unwrap();
+    drop(baseline_tx);
+
+    let baseline_started = Instant::now();
+    run_message_dispatch_loop(baseline_rx, baseline_ctx, 1).await;
+    let baseline_elapsed = baseline_started.elapsed();
+    assert_eq!(baseline_channel.sent_messages.lock().await.len(), 1);
+
+    let (parallel_channel, parallel_ctx) = build_runtime();
     let (tx, rx) = tokio::sync::mpsc::channel::<traits::ChannelMessage>(4);
     tx.send(traits::ChannelMessage {
         id: "1".to_string(),
@@ -81,16 +108,19 @@ async fn message_dispatch_processes_messages_in_parallel() {
     drop(tx);
 
     let started = Instant::now();
-    run_message_dispatch_loop(rx, runtime_ctx, 2).await;
+    run_message_dispatch_loop(rx, parallel_ctx, 2).await;
     let elapsed = started.elapsed();
 
+    let allowed_parallel = baseline_elapsed + Duration::from_millis(180);
     assert!(
-        elapsed < Duration::from_millis(430),
-        "expected parallel dispatch (<430ms), got {:?}",
+        elapsed < allowed_parallel,
+        "expected parallel dispatch (< {:?}) based on single-message baseline {:?}, got {:?}",
+        allowed_parallel,
+        baseline_elapsed,
         elapsed
     );
 
-    let sent_messages = channel_impl.sent_messages.lock().await;
+    let sent_messages = parallel_channel.sent_messages.lock().await;
     assert_eq!(sent_messages.len(), 2);
 }
 

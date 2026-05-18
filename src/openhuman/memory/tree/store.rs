@@ -71,6 +71,21 @@ CREATE INDEX IF NOT EXISTS idx_mem_tree_chunks_owner
 CREATE INDEX IF NOT EXISTS idx_mem_tree_chunks_source_seq
     ON mem_tree_chunks(source_kind, source_id, seq_in_source);
 
+-- Per-(chunk, embedding model) vectors (#1574). The legacy
+-- mem_tree_chunks.embedding column remains in place during the dual-write
+-- migration; this table lets multiple vector spaces coexist safely.
+CREATE TABLE IF NOT EXISTS mem_tree_chunk_embeddings (
+    chunk_id               TEXT NOT NULL REFERENCES mem_tree_chunks(id) ON DELETE CASCADE,
+    model_signature        TEXT NOT NULL,
+    vector                 BLOB NOT NULL,
+    dim                    INTEGER NOT NULL,
+    created_at             REAL NOT NULL,
+    PRIMARY KEY (chunk_id, model_signature)
+);
+
+CREATE INDEX IF NOT EXISTS idx_mem_tree_chunk_embeddings_model
+    ON mem_tree_chunk_embeddings(model_signature);
+
 -- Phase 2 (#708): per-chunk score rationale for admission debugging.
 CREATE TABLE IF NOT EXISTS mem_tree_score (
     chunk_id               TEXT PRIMARY KEY,
@@ -162,6 +177,21 @@ CREATE INDEX IF NOT EXISTS idx_mem_tree_summaries_sealed_at
     ON mem_tree_summaries(sealed_at_ms);
 CREATE INDEX IF NOT EXISTS idx_mem_tree_summaries_deleted
     ON mem_tree_summaries(deleted);
+
+-- Per-(summary, embedding model) vectors (#1574). Kept separate from the
+-- legacy mem_tree_summaries.embedding column so provider/model switches can
+-- be query-time filters instead of destructive rewrites.
+CREATE TABLE IF NOT EXISTS mem_tree_summary_embeddings (
+    summary_id             TEXT NOT NULL REFERENCES mem_tree_summaries(id) ON DELETE CASCADE,
+    model_signature        TEXT NOT NULL,
+    vector                 BLOB NOT NULL,
+    dim                    INTEGER NOT NULL,
+    created_at             REAL NOT NULL,
+    PRIMARY KEY (summary_id, model_signature)
+);
+
+CREATE INDEX IF NOT EXISTS idx_mem_tree_summary_embeddings_model
+    ON mem_tree_summary_embeddings(model_signature);
 
 -- `mem_tree_buffers` holds the unsealed frontier per (tree, level). One row
 -- per active level per tree; deleted when the buffer seals (clears) in the
@@ -933,6 +963,58 @@ pub fn set_chunk_embedding(config: &Config, chunk_id: &str, embedding: &[f32]) -
     })
 }
 
+/// Store a chunk embedding for a specific provider/model/dimension signature.
+///
+/// This is the Stage-1 per-model table write path for #1574. The legacy
+/// `mem_tree_chunks.embedding` column is intentionally left untouched by this
+/// helper so callers can dual-write while query paths migrate.
+pub fn set_chunk_embedding_for_signature(
+    config: &Config,
+    chunk_id: &str,
+    model_signature: &str,
+    embedding: &[f32],
+) -> Result<()> {
+    let bytes = embedding_to_blob(embedding);
+    let dim = i64::try_from(embedding.len()).context("embedding dimension does not fit i64")?;
+    let created_at = Utc::now().timestamp_millis() as f64 / 1000.0;
+    with_connection(config, |conn| {
+        conn.execute(
+            "INSERT INTO mem_tree_chunk_embeddings
+             (chunk_id, model_signature, vector, dim, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(chunk_id, model_signature) DO UPDATE SET
+                vector = excluded.vector,
+                dim = excluded.dim,
+                created_at = excluded.created_at",
+            rusqlite::params![chunk_id, model_signature, bytes, dim, created_at],
+        )?;
+        Ok(())
+    })
+}
+
+/// Fetch a chunk embedding for exactly one provider/model/dimension signature.
+pub fn get_chunk_embedding_for_signature(
+    config: &Config,
+    chunk_id: &str,
+    model_signature: &str,
+) -> Result<Option<Vec<f32>>> {
+    with_connection(config, |conn| {
+        let row: Option<(Vec<u8>, i64)> = conn
+            .query_row(
+                "SELECT vector, dim
+                   FROM mem_tree_chunk_embeddings
+                  WHERE chunk_id = ?1 AND model_signature = ?2",
+                rusqlite::params![chunk_id, model_signature],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
+        match row {
+            None => Ok(None),
+            Some((bytes, dim)) => embedding_from_blob(&bytes, dim, "chunk embedding"),
+        }
+    })
+}
+
 /// Fetch a chunk's embedding, decoding the stored little-endian `f32` blob.
 ///
 /// Returns `Ok(None)` if the chunk doesn't exist or has no embedding stored.
@@ -959,6 +1041,30 @@ pub fn get_chunk_embedding(config: &Config, chunk_id: &str) -> Result<Option<Vec
             }
         }
     })
+}
+
+fn embedding_to_blob(embedding: &[f32]) -> Vec<u8> {
+    embedding.iter().flat_map(|f| f.to_le_bytes()).collect()
+}
+
+fn embedding_from_blob(bytes: &[u8], dim: i64, label: &str) -> Result<Option<Vec<f32>>> {
+    if dim < 0 {
+        anyhow::bail!("{label} has negative dimension {dim}");
+    }
+    if !bytes.len().is_multiple_of(4) {
+        anyhow::bail!("{label} blob length {} not a multiple of 4", bytes.len());
+    }
+    let floats: Vec<f32> = bytes
+        .chunks_exact(4)
+        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        .collect();
+    if floats.len() != dim as usize {
+        anyhow::bail!(
+            "{label} dimension mismatch: dim column says {dim}, blob contains {} floats",
+            floats.len()
+        );
+    }
+    Ok(Some(floats))
 }
 
 #[cfg(test)]

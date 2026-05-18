@@ -141,12 +141,14 @@ const CronJobsPanel = () => {
 
       <div className="p-4 space-y-4">
         <section className="space-y-1">
-          <h3 className="text-sm font-semibold text-stone-900">{t('cron.scheduledJobs')}</h3>
-          <p className="text-xs text-stone-400">{t('cron.manageCronJobs')}</p>
+          <h3 className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
+            {t('cron.scheduledJobs')}
+          </h3>
+          <p className="text-xs text-stone-400 dark:text-neutral-500">{t('cron.manageCronJobs')}</p>
         </section>
 
         {coreError && (
-          <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+          <div className="rounded-lg border border-amber-300 dark:border-amber-500/40 bg-amber-50 dark:bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-300">
             {coreError}
           </div>
         )}

@@ -6,7 +6,7 @@
 //! the agent reaches for when researching: returns the response body
 //! as text, capped, with a tiny preamble (status + final URL).
 
-use super::url_guard::{normalize_allowed_domains, validate_url};
+use super::url_guard::{normalize_allowed_domains, validate_url_with_dns_check};
 use crate::openhuman::security::SecurityPolicy;
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
 use async_trait::async_trait;
@@ -109,7 +109,7 @@ impl Tool for WebFetchTool {
             ));
         }
 
-        let url = match validate_url(raw_url, &self.allowed_domains) {
+        let url = match validate_url_with_dns_check(raw_url, &self.allowed_domains).await {
             Ok(u) => u,
             Err(e) => return Ok(ToolResult::error(format!("URL rejected: {e}"))),
         };

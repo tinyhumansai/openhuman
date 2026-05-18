@@ -26,6 +26,7 @@ fn make_def_named_tools(names: &[&str]) -> AgentDefinition {
         background: false,
         subagents: vec![],
         delegate_name: None,
+        agent_tier: crate::openhuman::agent::harness::definition::AgentTier::Worker,
         source: crate::openhuman::agent::harness::definition::DefinitionSource::Builtin,
     }
 }

@@ -102,13 +102,17 @@ export default function IntelligenceCallsTab({ onToast }: Props) {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-base font-semibold text-stone-900">{t('calls.joinMeet')}</h2>
-        <p className="mt-1 text-sm text-stone-500">{t('calls.joinMeetDescription')}</p>
+        <h2 className="text-base font-semibold text-stone-900 dark:text-neutral-100">
+          {t('calls.joinMeet')}
+        </h2>
+        <p className="mt-1 text-sm text-stone-500 dark:text-neutral-400">
+          {t('calls.joinMeetDescription')}
+        </p>
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-4">
         <label className="block">
-          <span className="text-xs font-medium uppercase tracking-wide text-stone-500">
+          <span className="text-xs font-medium uppercase tracking-wide text-stone-500 dark:text-neutral-400">
             {t('calls.meetLink')}
           </span>
           <input
@@ -119,13 +123,13 @@ export default function IntelligenceCallsTab({ onToast }: Props) {
             value={meetUrl}
             onChange={e => setMeetUrl(e.target.value)}
             placeholder={PLACEHOLDER_URL}
-            className="mt-1 w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-100"
+            className="mt-1 w-full rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 placeholder:text-stone-400 dark:text-neutral-500 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-100"
             required
           />
         </label>
 
         <label className="block">
-          <span className="text-xs font-medium uppercase tracking-wide text-stone-500">
+          <span className="text-xs font-medium uppercase tracking-wide text-stone-500 dark:text-neutral-400">
             {t('calls.displayName')}
           </span>
           <input
@@ -133,7 +137,7 @@ export default function IntelligenceCallsTab({ onToast }: Props) {
             value={displayName}
             onChange={e => setDisplayName(e.target.value)}
             maxLength={64}
-            className="mt-1 w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-100"
+            className="mt-1 w-full rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-100"
             required
           />
         </label>
@@ -141,7 +145,7 @@ export default function IntelligenceCallsTab({ onToast }: Props) {
         {error && (
           <div
             role="alert"
-            className="rounded-xl border border-coral-200 bg-coral-50 px-3 py-2 text-sm text-coral-700">
+            className="rounded-xl border border-coral-200 dark:border-coral-500/30 bg-coral-50 dark:bg-coral-500/10 px-3 py-2 text-sm text-coral-700 dark:text-coral-300">
             {error}
           </div>
         )}
@@ -156,24 +160,26 @@ export default function IntelligenceCallsTab({ onToast }: Props) {
 
       {activeCalls.length > 0 && (
         <div className="space-y-2">
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-stone-500">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-stone-500 dark:text-neutral-400">
             {t('calls.activeCalls')}
           </h3>
           <ul className="space-y-2">
             {activeCalls.map(call => (
               <li
                 key={call.requestId}
-                className="flex items-center justify-between gap-3 rounded-xl border border-stone-200 bg-stone-50 px-3 py-2">
+                className="flex items-center justify-between gap-3 rounded-xl border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 px-3 py-2">
                 <div className="min-w-0">
-                  <div className="truncate text-sm font-medium text-stone-900">
+                  <div className="truncate text-sm font-medium text-stone-900 dark:text-neutral-100">
                     {call.displayName}
                   </div>
-                  <div className="truncate text-xs text-stone-500">{call.meetUrl}</div>
+                  <div className="truncate text-xs text-stone-500 dark:text-neutral-400">
+                    {call.meetUrl}
+                  </div>
                 </div>
                 <button
                   type="button"
                   onClick={() => handleClose(call.requestId)}
-                  className="shrink-0 rounded-lg border border-stone-200 bg-white px-3 py-1 text-xs text-stone-600 hover:border-coral-300 hover:text-coral-600">
+                  className="shrink-0 rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-1 text-xs text-stone-600 dark:text-neutral-300 hover:border-coral-300 hover:text-coral-600 dark:text-coral-300">
                   {t('calls.leave')}
                 </button>
               </li>

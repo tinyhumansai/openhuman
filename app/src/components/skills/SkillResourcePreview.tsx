@@ -13,6 +13,7 @@
 import { useEffect, useState } from 'react';
 import debug from 'debug';
 
+import { useT } from '../../lib/i18n/I18nContext';
 import { skillsApi } from '../../services/api/skillsApi';
 
 const log = debug('skills:resource-preview');
@@ -37,6 +38,7 @@ function formatBytes(bytes: number): string {
 }
 
 export default function SkillResourcePreview({ skillId, relativePath, onDismiss }: Props) {
+  const { t } = useT();
   const [state, setState] = useState<LoadState>({ status: 'loading' });
 
   useEffect(() => {
@@ -65,11 +67,11 @@ export default function SkillResourcePreview({ skillId, relativePath, onDismiss 
   }, [skillId, relativePath]);
 
   return (
-    <div className="overflow-hidden rounded-xl border border-stone-200 bg-white shadow-soft">
-      <div className="flex items-center justify-between gap-2 border-b border-stone-200 bg-stone-50 px-3 py-2">
+    <div className="overflow-hidden rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 shadow-soft">
+      <div className="flex items-center justify-between gap-2 border-b border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 px-3 py-2">
         <div className="min-w-0 flex-1">
           <p
-            className="truncate font-mono text-[11px] text-stone-700"
+            className="truncate font-mono text-[11px] text-stone-700 dark:text-neutral-200"
             title={relativePath}>
             {relativePath}
           </p>
@@ -80,8 +82,8 @@ export default function SkillResourcePreview({ skillId, relativePath, onDismiss 
             log('dismiss skillId=%s path=%s', skillId, relativePath);
             onDismiss();
           }}
-          aria-label="Close preview"
-          className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md text-stone-400 transition-colors hover:bg-stone-100 hover:text-stone-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-1">
+          aria-label={t('skills.resource.preview.closeAriaLabel')}
+          className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md text-stone-400 dark:text-neutral-500 transition-colors hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 hover:text-stone-700 dark:hover:text-neutral-200 dark:text-neutral-200 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-1">
           <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path
               strokeLinecap="round"
@@ -94,13 +96,13 @@ export default function SkillResourcePreview({ skillId, relativePath, onDismiss 
       </div>
 
       {state.status === 'loading' ? (
-        <div className="flex items-center justify-center gap-2 px-3 py-6 text-xs text-stone-500">
+        <div className="flex items-center justify-center gap-2 px-3 py-6 text-xs text-stone-500 dark:text-neutral-400">
           <svg
             className="h-4 w-4 animate-spin text-primary-500"
             fill="none"
             viewBox="0 0 24 24"
             role="status"
-            aria-label="Loading">
+            aria-label={t('common.loading')}>
             <circle
               className="opacity-25"
               cx="12"
@@ -115,14 +117,14 @@ export default function SkillResourcePreview({ skillId, relativePath, onDismiss 
               d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"
             />
           </svg>
-          <span>Loading preview…</span>
+          <span>{t('skills.resource.preview.loading')}</span>
         </div>
       ) : null}
 
       {state.status === 'error' ? (
         <div className="border-t border-coral-200 bg-coral-50 px-3 py-3">
           <p className="text-[11px] font-semibold uppercase tracking-wide text-coral-900">
-            Preview failed
+            {t('skills.resource.preview.failed')}
           </p>
           <p className="mt-1 break-words font-mono text-[11px] leading-relaxed text-coral-800">
             {state.error}
@@ -132,11 +134,11 @@ export default function SkillResourcePreview({ skillId, relativePath, onDismiss 
 
       {state.status === 'success' ? (
         <>
-          <pre className="max-h-[320px] overflow-auto px-3 py-3 font-mono text-[11px] leading-relaxed text-stone-900 whitespace-pre-wrap break-words">
+          <pre className="max-h-[320px] overflow-auto px-3 py-3 font-mono text-[11px] leading-relaxed text-stone-900 dark:text-neutral-100 whitespace-pre-wrap break-words">
             {state.content}
           </pre>
-          <div className="flex items-center justify-end border-t border-stone-200 bg-stone-50 px-3 py-1.5">
-            <span className="text-[10px] font-mono text-stone-500">
+          <div className="flex items-center justify-end border-t border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 px-3 py-1.5">
+            <span className="text-[10px] font-mono text-stone-500 dark:text-neutral-400">
               {typeof state.bytes === 'number' ? formatBytes(state.bytes) : ''}
             </span>
           </div>

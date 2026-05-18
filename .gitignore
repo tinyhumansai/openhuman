@@ -97,5 +97,6 @@ target-test-run
 
 tmp/
 app/test/e2e/.cache/
+.cache/cargo-install/
 test-map.md
 .test-gap-analysis.md

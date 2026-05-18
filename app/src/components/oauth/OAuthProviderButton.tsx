@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 
+import { useT } from '../../lib/i18n/I18nContext';
 import { getBackendUrl } from '../../services/backendUrl';
 import { getDeepLinkAuthState } from '../../store/deepLinkAuthState';
 import type { OAuthProviderConfig } from '../../types/oauth';
@@ -47,6 +48,7 @@ const OAuthProviderButton = ({
   disabled: externalDisabled = false,
   onClickOverride,
 }: OAuthProviderButtonProps) => {
+  const { t } = useT();
   const [isLoading, setIsLoading] = useState(false);
   const [startupError, setStartupError] = useState<string | null>(null);
 
@@ -158,7 +160,9 @@ const OAuthProviderButton = ({
         ) : (
           <IconComponent className="w-5 h-5" />
         )}
-        <span className={provider.textColor}>{isLoading ? 'Connecting...' : provider.name}</span>
+        <span className={provider.textColor}>
+          {isLoading ? t('oauth.button.connecting') : provider.name}
+        </span>
       </button>
       {startupError ? (
         <p role="alert" className="mt-2 text-xs leading-5 text-red-600">

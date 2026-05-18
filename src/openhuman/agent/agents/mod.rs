@@ -22,4 +22,4 @@ pub mod trigger_reactor;
 pub mod trigger_triage;
 pub mod welcome;
 
-pub use loader::{load_builtins, BuiltinAgent, BUILTINS};
+pub use loader::{load_builtins, validate_tier_hierarchy, BuiltinAgent, BUILTINS};

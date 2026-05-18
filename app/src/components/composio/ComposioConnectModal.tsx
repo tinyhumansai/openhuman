@@ -34,6 +34,7 @@ import {
   type ComposioUserScopePref,
   deriveComposioState,
 } from '../../lib/composio/types';
+import { useT } from '../../lib/i18n/I18nContext';
 import { openUrl } from '../../utils/openUrl';
 import type { ComposioToolkitMeta } from './toolkitMeta';
 import TriggerToggles from './TriggerToggles';
@@ -149,6 +150,7 @@ export default function ComposioConnectModal({
   onChanged,
   onClose,
 }: ComposioConnectModalProps) {
+  const { t } = useT();
   const modalRef = useRef<HTMLDivElement>(null);
   const pollTimerRef = useRef<number | null>(null);
   const pollDeadlineRef = useRef<number>(0);
@@ -236,9 +238,7 @@ export default function ComposioConnectModal({
       if (Date.now() > pollDeadlineRef.current) {
         stopPolling();
         setPhase('error');
-        setError(
-          'Timed out waiting for OAuth to complete. Please retry or check that the browser finished the flow.'
-        );
+        setError(t('composio.connect.oauthTimeout'));
         return;
       }
       inFlightRef.current = true;
@@ -260,7 +260,7 @@ export default function ComposioConnectModal({
           if (state === 'error') {
             stopPolling();
             setPhase('error');
-            setError(`Connection failed (status: ${hit.status}).`);
+            setError(`${t('composio.connect.connectionFailed')} (status: ${hit.status}).`);
             return;
           }
           if (state === 'expired') {
@@ -304,20 +304,17 @@ export default function ComposioConnectModal({
    */
   const validateRequiredFields = useCallback((): boolean => {
     if (needsWabaId && !wabaId.trim()) {
-      setError('Please enter your WhatsApp Business Account ID (WABA ID) to continue.');
+      setError(t('composio.connect.wabaIdRequired'));
       return false;
     }
     if (needsAtlassianSubdomain) {
       const trimmed = atlassianSubdomain.trim();
       if (!trimmed) {
-        setSubdomainError('Please enter your Atlassian subdomain to continue.');
+        setSubdomainError(t('composio.connect.subdomainRequired'));
         return false;
       }
       if (!isValidAtlassianSubdomain(trimmed)) {
-        setSubdomainError(
-          'Enter the short subdomain only (e.g. "acme"), not the full URL. ' +
-            'It should contain only letters, numbers, and hyphens.'
-        );
+        setSubdomainError(t('composio.connect.subdomainInvalid'));
         return false;
       }
     }
@@ -383,9 +380,7 @@ export default function ComposioConnectModal({
           setError(null);
         } else {
           setPhase('error');
-          setError(
-            'This connection requires additional configuration. Please contact support for assistance.'
-          );
+          setError(t('composio.connect.additionalConfigRequired'));
         }
         return;
       }
@@ -417,7 +412,7 @@ export default function ComposioConnectModal({
       } catch (err) {
         if (!cancelled) {
           const msg = err instanceof Error ? err.message : String(err);
-          setScopeError(`Couldn't load scope preferences: ${msg}`);
+          setScopeError(`${t('composio.connect.scopeLoadError')}: ${msg}`);
         }
       }
     })();
@@ -467,7 +462,7 @@ export default function ComposioConnectModal({
           err
         );
         setScopes(scopes);
-        setScopeError(`Couldn't save ${key} scope: ${msg}`);
+        setScopeError(`${t('composio.connect.scopeSaveError').replace('{key}', key)}: ${msg}`);
       } finally {
         setSavingScope(null);
       }
@@ -487,7 +482,7 @@ export default function ComposioConnectModal({
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setPhase('error');
-      setError(`Disconnect failed: ${msg}`);
+      setError(`${t('composio.connect.disconnectFailed')}: ${msg}`);
     }
   }, [activeConnection, onChanged]);
 
@@ -497,10 +492,10 @@ export default function ComposioConnectModal({
 
   const headerTitle =
     phase === 'connected'
-      ? `Manage ${toolkit.name}`
+      ? `${t('composio.connect.manage')} ${toolkit.name}`
       : phase === 'expired'
-        ? `Reconnect ${toolkit.name}`
-        : `Connect ${toolkit.name}`;
+        ? `${t('composio.reconnect')} ${toolkit.name}`
+        : `${t('composio.connect.connect')} ${toolkit.name}`;
 
   const modalContent = (
     <div
@@ -511,7 +506,7 @@ export default function ComposioConnectModal({
       aria-labelledby="composio-setup-title">
       <div
         ref={modalRef}
-        className="bg-white border border-stone-200 rounded-3xl shadow-large w-full max-w-[460px] overflow-hidden animate-fade-up focus:outline-none focus:ring-0"
+        className="bg-white dark:bg-neutral-900 border border-stone-200 dark:border-neutral-800 rounded-3xl shadow-large w-full max-w-[460px] overflow-hidden animate-fade-up focus:outline-none focus:ring-0"
         style={{
           animationDuration: '200ms',
           animationTimingFunction: 'cubic-bezier(0.25, 0.46, 0.45, 0.94)',
@@ -520,22 +515,26 @@ export default function ComposioConnectModal({
         tabIndex={-1}
         onClick={e => e.stopPropagation()}>
         {/* Header */}
-        <div className="p-4 border-b border-stone-200">
+        <div className="p-4 border-b border-stone-200 dark:border-neutral-800">
           <div className="flex items-start justify-between">
             <div className="flex-1 min-w-0 pr-2">
               <div className="flex items-center gap-2">
                 {toolkit.icon}
-                <h2 id="composio-setup-title" className="text-base font-semibold text-stone-900">
+                <h2
+                  id="composio-setup-title"
+                  className="text-base font-semibold text-stone-900 dark:text-neutral-100">
                   {headerTitle}
                 </h2>
               </div>
-              <p className="text-xs text-stone-400 mt-1.5 line-clamp-2">{toolkit.description}</p>
+              <p className="text-xs text-stone-400 dark:text-neutral-500 mt-1.5 line-clamp-2">
+                {toolkit.description}
+              </p>
             </div>
             <button
               type="button"
               onClick={onClose}
-              className="p-1 text-stone-400 hover:text-stone-900 transition-colors rounded-lg hover:bg-stone-100 flex-shrink-0"
-              aria-label="Close">
+              className="p-1 text-stone-400 dark:text-neutral-500 hover:text-stone-900 dark:hover:text-neutral-100 dark:text-neutral-100 dark:hover:text-neutral-100 transition-colors rounded-lg hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 dark:hover:bg-neutral-800/60 flex-shrink-0"
+              aria-label={t('common.close')}>
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path
                   strokeLinecap="round"
@@ -552,24 +551,22 @@ export default function ComposioConnectModal({
         <div className="p-4 space-y-3">
           {phase === 'idle' && (
             <>
-              <p className="text-sm text-stone-600">
-                Connect your {toolkit.name} account. We&apos;ll open a browser window, you approve
-                access there, and this app will detect the connection automatically.
+              <p className="text-sm text-stone-600 dark:text-neutral-300">
+                {`${t('composio.connect.idleDescription')} ${toolkit.name} ${t('composio.connect.idleDescriptionSuffix')}`}
               </p>
-              <div className="rounded-xl border border-stone-200 bg-stone-50 p-3">
-                <p className="mt-1 text-xs leading-relaxed text-stone-600">
-                  {toolkit.name} can expose{' '}
-                  <span className="font-medium">{toolkit.permissionLabel}</span>. After you connect,
-                  OpenHuman&apos;s own agent permissions are controlled below as read, write, and
-                  admin toggles.
+              <div className="rounded-xl border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 p-3">
+                <p className="mt-1 text-xs leading-relaxed text-stone-600 dark:text-neutral-300">
+                  {toolkit.name} {t('composio.connect.permissionsNote')}{' '}
+                  <span className="font-medium">{toolkit.permissionLabel}</span>.{' '}
+                  {t('composio.connect.permissionsNoteSuffix')}
                 </p>
               </div>
               {needsWabaId && (
                 <div className="space-y-1.5">
                   <label
                     htmlFor="waba-id-input"
-                    className="block text-xs font-medium text-stone-700">
-                    WhatsApp Business Account ID (WABA ID)
+                    className="block text-xs font-medium text-stone-700 dark:text-neutral-200">
+                    {t('composio.connect.wabaIdLabel')}
                     <span className="ml-1 text-coral-500">*</span>
                   </label>
                   <input
@@ -581,9 +578,9 @@ export default function ComposioConnectModal({
                       if (error) setError(null);
                     }}
                     placeholder="e.g. 123456789012345"
-                    className="w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-100"
+                    className="w-full rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 placeholder:text-stone-400 dark:placeholder:text-neutral-500 focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-100"
                   />
-                  <p className="text-[11px] leading-relaxed text-stone-400">
+                  <p className="text-[11px] leading-relaxed text-stone-400 dark:text-neutral-500">
                     Find it via <span className="font-mono">GET /me/businesses</span> then{' '}
                     <span className="font-mono">
                       GET /&#123;business_id&#125;/owned_whatsapp_business_accounts
@@ -607,17 +604,15 @@ export default function ComposioConnectModal({
                 type="button"
                 onClick={() => void handleConnect()}
                 className="w-full rounded-xl bg-primary-500 text-white text-sm font-medium py-2.5 hover:bg-primary-600 transition-colors">
-                Connect {toolkit.name}
+                {`${t('composio.connect.connect')} ${toolkit.name}`}
               </button>
             </>
           )}
 
           {phase === 'needs-subdomain' && (
             <>
-              <p className="text-sm text-stone-600">
-                To connect {toolkit.name}, enter your Atlassian subdomain (e.g.{' '}
-                <span className="font-mono">acme</span> for{' '}
-                <span className="font-mono">acme.atlassian.net</span>) and try again.
+              <p className="text-sm text-stone-600 dark:text-neutral-300">
+                {`${t('composio.connect.needsSubdomain')} ${toolkit.name}, ${t('composio.connect.needsSubdomainSuffix')}`}
               </p>
               <AtlassianSubdomainInput
                 value={atlassianSubdomain}
@@ -632,7 +627,7 @@ export default function ComposioConnectModal({
                 type="button"
                 onClick={() => void handleConnect()}
                 className="w-full rounded-xl bg-primary-500 text-white text-sm font-medium py-2.5 hover:bg-primary-600 transition-colors">
-                Retry connection
+                {t('composio.connect.retryConnection')}
               </button>
               <button
                 type="button"
@@ -641,33 +636,34 @@ export default function ComposioConnectModal({
                   setSubdomainError(null);
                   setError(null);
                 }}
-                className="w-full rounded-xl border border-stone-200 bg-white text-stone-600 text-xs font-medium py-2 hover:bg-stone-50 transition-colors">
-                Cancel
+                className="w-full rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-stone-600 dark:text-neutral-300 text-xs font-medium py-2 hover:bg-stone-50 dark:hover:bg-neutral-800/60 transition-colors">
+                {t('common.cancel')}
               </button>
             </>
           )}
 
           {phase === 'authorizing' && (
-            <p className="text-sm text-stone-500">Requesting connect URL…</p>
+            <p className="text-sm text-stone-500 dark:text-neutral-400">
+              {t('composio.connect.requestingUrl')}
+            </p>
           )}
 
           {phase === 'waiting' && (
             <>
-              <div className="flex items-center gap-2 text-sm text-stone-700">
+              <div className="flex items-center gap-2 text-sm text-stone-700 dark:text-neutral-200">
                 <div className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
-                Waiting for {toolkit.name} OAuth to complete…
+                {`${t('composio.connect.waitingFor')} ${toolkit.name} ${t('composio.connect.oauthComplete')}`}
               </div>
               {connectUrl && (
                 <button
                   type="button"
                   onClick={() => void openUrl(connectUrl)}
-                  className="w-full rounded-xl border border-stone-200 bg-stone-50 text-stone-700 text-xs font-medium py-2 hover:bg-stone-100 transition-colors">
-                  Reopen browser
+                  className="w-full rounded-xl border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 text-stone-700 dark:text-neutral-200 text-xs font-medium py-2 hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 transition-colors">
+                  {t('composio.connect.reopenBrowser')}
                 </button>
               )}
-              <p className="text-xs text-stone-400">
-                Complete the sign-in in your browser. This window will update when the connection is
-                active.
+              <p className="text-xs text-stone-400 dark:text-neutral-500">
+                {t('composio.connect.waitingHint')}
               </p>
             </>
           )}
@@ -698,9 +694,9 @@ export default function ComposioConnectModal({
               <div className="flex items-center gap-2 text-sm text-sage-700">
                 <div className="w-2 h-2 rounded-full bg-sage-500" />
                 <div>
-                  {toolkit.name} is connected. &nbsp;
+                  {`${toolkit.name} ${t('composio.connect.isConnected')}`} &nbsp;
                   {activeConnection && deriveConnectionLabel(activeConnection) && (
-                    <span className="text-[11px] text-stone-400 font-mono">
+                    <span className="text-[11px] text-stone-400 dark:text-neutral-500 font-mono">
                       ({deriveConnectionLabel(activeConnection)})
                     </span>
                   )}
@@ -724,24 +720,28 @@ export default function ComposioConnectModal({
                   type="button"
                   onClick={() => void handleDisconnect()}
                   className="w-full rounded-xl border border-coral-200 bg-coral-50 text-coral-700 text-sm font-medium py-2.5 hover:bg-coral-100 transition-colors">
-                  Disconnect
+                  {t('skills.disconnect')}
                 </button>
                 <button
                   type="button"
                   onClick={onClose}
                   className="w-full rounded-xl bg-primary-500 text-white text-sm font-medium py-2.5 hover:bg-primary-600 transition-colors">
-                  Close
+                  {t('common.close')}
                 </button>
               </div>
             </>
           )}
 
-          {phase === 'disconnecting' && <p className="text-sm text-stone-500">Disconnecting…</p>}
+          {phase === 'disconnecting' && (
+            <p className="text-sm text-stone-500 dark:text-neutral-400">
+              {t('composio.connect.disconnecting')}
+            </p>
+          )}
 
           {phase === 'error' && (
             <>
               <div className="rounded-xl border border-coral-200 bg-coral-50 p-3">
-                <p className="text-sm text-coral-700">{error ?? 'Something went wrong.'}</p>
+                <p className="text-sm text-coral-700">{error ?? t('misc.somethingWentWrong')}</p>
               </div>
               <button
                 type="button"
@@ -751,8 +751,8 @@ export default function ComposioConnectModal({
                   );
                   setError(null);
                 }}
-                className="w-full rounded-xl border border-stone-200 bg-white text-stone-700 text-sm font-medium py-2 hover:bg-stone-50 transition-colors">
-                Dismiss
+                className="w-full rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-stone-700 dark:text-neutral-200 text-sm font-medium py-2 hover:bg-stone-50 dark:hover:bg-neutral-800/60 transition-colors">
+                {t('common.dismiss')}
               </button>
             </>
           )}
@@ -766,21 +766,23 @@ export default function ComposioConnectModal({
 
 // ── Scope toggles ───────────────────────────────────────────────────
 
-const SCOPE_ROWS: Array<{ key: keyof ComposioUserScopePref; label: string; hint: string }> = [
+type ScopeRowDef = { key: keyof ComposioUserScopePref; labelKey: string; hintKey: string };
+
+const SCOPE_ROWS: Array<ScopeRowDef> = [
   {
     key: 'read',
-    label: 'Read',
-    hint: 'Allow listing, fetching, searching (e.g. read emails / pages).',
+    labelKey: 'composio.connect.scope.read',
+    hintKey: 'composio.connect.scope.readHint',
   },
   {
     key: 'write',
-    label: 'Write',
-    hint: 'Allow sending, creating, updating (e.g. send emails, create pages).',
+    labelKey: 'composio.connect.scope.write',
+    hintKey: 'composio.connect.scope.writeHint',
   },
   {
     key: 'admin',
-    label: 'Admin',
-    hint: 'Allow destructive or permission-changing actions (delete, share, etc.).',
+    labelKey: 'composio.connect.scope.admin',
+    hintKey: 'composio.connect.scope.adminHint',
   },
 ];
 
@@ -792,42 +794,51 @@ interface ScopeTogglesProps {
 }
 
 function ScopeToggles({ scopes, savingScope, onToggle, error }: ScopeTogglesProps) {
+  const { t } = useT();
   // Render skeleton placeholders while we wait on the initial load so
   // the modal layout doesn't jump when the pref arrives.
   const loading = scopes === null;
 
   return (
-    <div className="border-t border-stone-100 pt-3 mt-1 space-y-2">
+    <div className="border-t border-stone-100 dark:border-neutral-800 pt-3 mt-1 space-y-2">
       <div className="flex items-baseline justify-between">
-        <h3 className="text-xs font-semibold text-stone-700 uppercase tracking-wide">
-          Permissions
+        <h3 className="text-xs font-semibold text-stone-700 dark:text-neutral-200 uppercase tracking-wide">
+          {t('composio.connect.permissions')}
         </h3>
-        <p className="text-[10px] text-stone-400">Read + Write enabled by default</p>
+        <p className="text-[10px] text-stone-400 dark:text-neutral-500">
+          {t('composio.connect.permissionsDefault')}
+        </p>
       </div>
       <ul className="space-y-1.5">
         {SCOPE_ROWS.map(row => {
           const enabled = scopes?.[row.key] ?? false;
           const isSaving = savingScope === row.key;
+          const rowLabel = t(row.labelKey as Parameters<typeof t>[0]);
+          const rowHint = t(row.hintKey as Parameters<typeof t>[0]);
           return (
             <li
               key={row.key}
-              className="flex items-start justify-between gap-3 rounded-lg px-2 py-1.5 hover:bg-stone-50">
+              className="flex items-start justify-between gap-3 rounded-lg px-2 py-1.5 hover:bg-stone-50 dark:hover:bg-neutral-800/60">
               <div className="min-w-0 flex-1">
-                <span className="text-sm font-medium text-stone-900">{row.label}</span>
-                <p className="text-[11px] text-stone-400 leading-snug">{row.hint}</p>
+                <span className="text-sm font-medium text-stone-900 dark:text-neutral-100">
+                  {rowLabel}
+                </span>
+                <p className="text-[11px] text-stone-400 dark:text-neutral-500 leading-snug">
+                  {rowHint}
+                </p>
               </div>
               <button
                 type="button"
                 role="switch"
                 aria-checked={enabled}
-                aria-label={`${enabled ? 'Disable' : 'Enable'} ${row.label} scope`}
+                aria-label={`${enabled ? t('common.disable') : t('common.enable')} ${rowLabel} scope`}
                 disabled={loading || savingScope !== null}
                 onClick={() => onToggle(row.key)}
                 className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50 ${
                   enabled ? 'bg-primary-500' : 'bg-stone-300'
                 }`}>
                 <span
-                  className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${
+                  className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white dark:bg-neutral-900 shadow transition-transform ${
                     enabled ? 'translate-x-5' : 'translate-x-0.5'
                   } ${isSaving ? 'animate-pulse' : ''}`}
                 />
@@ -863,15 +874,16 @@ function AtlassianSubdomainInput({
   onChange,
   autoFocus,
 }: AtlassianSubdomainInputProps) {
+  const { t } = useT();
   return (
     <div className="space-y-1.5">
       <label
         htmlFor="atlassian-subdomain-input"
-        className="block text-xs font-medium text-stone-700">
-        Atlassian subdomain
+        className="block text-xs font-medium text-stone-700 dark:text-neutral-200">
+        {t('composio.connect.atlassianSubdomainLabel')}
         <span className="ml-1 text-coral-500">*</span>
       </label>
-      <div className="flex items-center rounded-xl border border-stone-200 bg-white focus-within:border-primary-400 focus-within:ring-2 focus-within:ring-primary-100 overflow-hidden">
+      <div className="flex items-center rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 focus-within:border-primary-400 focus-within:ring-2 focus-within:ring-primary-100 overflow-hidden">
         <input
           id="atlassian-subdomain-input"
           type="text"
@@ -881,9 +893,9 @@ function AtlassianSubdomainInput({
           placeholder="your-subdomain"
           aria-describedby="atlassian-subdomain-hint"
           aria-invalid={!!error}
-          className="flex-1 min-w-0 px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 bg-transparent focus:outline-none"
+          className="flex-1 min-w-0 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 placeholder:text-stone-400 dark:placeholder:text-neutral-500 bg-transparent focus:outline-none"
         />
-        <span className="pr-3 text-xs text-stone-400 select-none whitespace-nowrap">
+        <span className="pr-3 text-xs text-stone-400 dark:text-neutral-500 select-none whitespace-nowrap">
           .atlassian.net
         </span>
       </div>
@@ -895,9 +907,10 @@ function AtlassianSubdomainInput({
           {error}
         </p>
       ) : (
-        <p id="atlassian-subdomain-hint" className="text-[11px] leading-relaxed text-stone-400">
-          Enter the short subdomain only — e.g. <span className="font-mono">acme</span> for{' '}
-          <span className="font-mono">acme.atlassian.net</span>. Do not paste the full URL.
+        <p
+          id="atlassian-subdomain-hint"
+          className="text-[11px] leading-relaxed text-stone-400 dark:text-neutral-500">
+          {t('composio.connect.atlassianSubdomainHint')}
         </p>
       )}
     </div>

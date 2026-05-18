@@ -3,6 +3,7 @@
 //! Exposes the domain over the shared registry at
 //! `openhuman.composio_*`:
 //!   - `composio.list_toolkits`       → `openhuman.composio_list_toolkits`
+//!   - `composio.list_capabilities`   → `openhuman.composio_list_capabilities`
 //!   - `composio.list_connections`    → `openhuman.composio_list_connections`
 //!   - `composio.authorize`           → `openhuman.composio_authorize`
 //!   - `composio.delete_connection`   → `openhuman.composio_delete_connection`
@@ -60,6 +61,7 @@ struct EnableTriggerParams {
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
     vec![
         schemas("list_toolkits"),
+        schemas("list_capabilities"),
         schemas("list_connections"),
         schemas("authorize"),
         schemas("delete_connection"),
@@ -88,6 +90,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("list_toolkits"),
             handler: handle_list_toolkits,
+        },
+        RegisteredController {
+            schema: schemas("list_capabilities"),
+            handler: handle_list_capabilities,
         },
         RegisteredController {
             schema: schemas("list_connections"),
@@ -183,6 +189,18 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 name: "toolkits",
                 ty: TypeSchema::Array(Box::new(TypeSchema::String)),
                 comment: "Toolkit slugs enabled by the backend (e.g. gmail, notion).",
+                required: true,
+            }],
+        },
+        "list_capabilities" => ControllerSchema {
+            namespace: "composio",
+            function: "list_capabilities",
+            description: "List OpenHuman's built-in Composio capability matrix without requiring a signed-in Composio session.",
+            inputs: vec![],
+            outputs: vec![FieldSchema {
+                name: "capabilities",
+                ty: TypeSchema::Json,
+                comment: "Array of capability rows describing native providers, curated catalogs, sync, trigger, and memory-ingest support.",
                 required: true,
             }],
         },
@@ -676,6 +694,13 @@ fn handle_list_toolkits(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async {
         let config = config_rpc::load_config_with_timeout().await?;
         to_json(super::ops::composio_list_toolkits(&config).await?)
+    })
+}
+
+fn handle_list_capabilities(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async {
+        let config = config_rpc::load_config_with_timeout().await?;
+        to_json(super::ops::composio_list_capabilities(&config).await?)
     })
 }
 

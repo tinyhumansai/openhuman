@@ -54,6 +54,83 @@ pub mod registry;
 pub mod slack;
 pub mod sync_state;
 
+use crate::openhuman::composio::types::ComposioCapability;
+
+const CAPABILITY_TOOLKITS: &[&str] = &[
+    "gmail",
+    "notion",
+    "slack",
+    "github",
+    "discord",
+    "googlecalendar",
+    "googledrive",
+    "googledocs",
+    "googlesheets",
+    "outlook",
+    "microsoft_teams",
+    "linear",
+    "jira",
+    "trello",
+    "asana",
+    "dropbox",
+    "twitter",
+    "spotify",
+    "telegram",
+    "whatsapp",
+    "shopify",
+    "stripe",
+    "hubspot",
+    "salesforce",
+    "airtable",
+    "figma",
+    "youtube",
+];
+
+fn native_provider_sync_interval(toolkit: &str) -> Option<u64> {
+    match toolkit {
+        "gmail" => Some(gmail::GmailProvider::new().sync_interval_secs()),
+        "notion" => Some(notion::NotionProvider::new().sync_interval_secs()),
+        "slack" => Some(slack::SlackProvider::new().sync_interval_secs()),
+        _ => None,
+    }
+    .flatten()
+}
+
+fn has_native_provider(toolkit: &str) -> bool {
+    matches!(toolkit, "gmail" | "notion" | "slack")
+}
+
+/// Static overview of the Composio integrations supported by this core build.
+///
+/// This deliberately does not consult the live Composio backend/direct tenant:
+/// it is an observability surface for OpenHuman's own capability tiers. Use
+/// `composio_list_toolkits` / `composio_list_connections` when callers need
+/// the currently signed-in user's allowlist or OAuth state.
+pub fn capability_matrix() -> Vec<ComposioCapability> {
+    CAPABILITY_TOOLKITS
+        .iter()
+        .map(|toolkit| {
+            let native_provider = has_native_provider(toolkit);
+            let catalog = catalog_for_toolkit(toolkit);
+            let sync_interval_secs = native_provider_sync_interval(toolkit);
+            ComposioCapability {
+                toolkit: (*toolkit).to_string(),
+                description: toolkit_description(toolkit).to_string(),
+                native_provider,
+                curated_tools: catalog.is_some(),
+                curated_tool_count: catalog.map_or(0, <[CuratedTool]>::len),
+                tool_execution: catalog.is_some(),
+                user_profile: native_provider,
+                initial_sync: native_provider,
+                periodic_sync: sync_interval_secs.is_some(),
+                sync_interval_secs,
+                trigger_webhooks: native_provider,
+                memory_ingest: native_provider,
+            }
+        })
+        .collect()
+}
+
 /// Static toolkit → curated catalog map.
 ///
 /// This is consulted by the meta-tool layer alongside any registered
@@ -204,6 +281,39 @@ mod tests {
         assert_eq!(s, "\"connection_created\"");
         let back: SyncReason = serde_json::from_str(&s).unwrap();
         assert_eq!(back, SyncReason::ConnectionCreated);
+    }
+
+    #[test]
+    fn capability_matrix_distinguishes_native_from_catalog_only_toolkits() {
+        let matrix = capability_matrix();
+
+        let gmail = matrix
+            .iter()
+            .find(|entry| entry.toolkit == "gmail")
+            .expect("gmail capability row");
+        assert!(gmail.native_provider);
+        assert!(gmail.curated_tools);
+        assert!(gmail.curated_tool_count > 0);
+        assert!(gmail.user_profile);
+        assert!(gmail.initial_sync);
+        assert!(gmail.periodic_sync);
+        assert_eq!(gmail.sync_interval_secs, Some(15 * 60));
+        assert!(gmail.trigger_webhooks);
+        assert!(gmail.memory_ingest);
+
+        let google_calendar = matrix
+            .iter()
+            .find(|entry| entry.toolkit == "googlecalendar")
+            .expect("googlecalendar capability row");
+        assert!(!google_calendar.native_provider);
+        assert!(google_calendar.curated_tools);
+        assert!(google_calendar.curated_tool_count > 0);
+        assert!(google_calendar.tool_execution);
+        assert!(!google_calendar.user_profile);
+        assert!(!google_calendar.initial_sync);
+        assert!(!google_calendar.periodic_sync);
+        assert_eq!(google_calendar.sync_interval_secs, None);
+        assert!(!google_calendar.memory_ingest);
     }
 
     #[test]

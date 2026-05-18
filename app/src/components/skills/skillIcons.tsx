@@ -69,8 +69,8 @@ export const CHANNEL_ICONS: Record<string, ReactNode> = {
     <SkillIconBadge
       icon={FaGlobe}
       label="Web"
-      bgClassName="bg-stone-100"
-      iconClassName="text-stone-600"
+      bgClassName="bg-stone-100 dark:bg-neutral-800"
+      iconClassName="text-stone-600 dark:text-neutral-300"
     />
   ),
   imessage: (
@@ -89,9 +89,9 @@ const CATEGORY_META: Record<
 > = {
   All: {
     icon: LuBlocks,
-    chipClassName: 'bg-stone-100 text-stone-600',
-    iconClassName: 'text-stone-500',
-    headingClassName: 'text-stone-500',
+    chipClassName: 'bg-stone-100 dark:bg-neutral-800 text-stone-600 dark:text-neutral-300',
+    iconClassName: 'text-stone-500 dark:text-neutral-400',
+    headingClassName: 'text-stone-500 dark:text-neutral-400',
   },
   'Built-in': {
     icon: LuSparkles,
@@ -137,9 +137,9 @@ const CATEGORY_META: Record<
   },
   Other: {
     icon: LuBlocks,
-    chipClassName: 'bg-stone-100 text-stone-700',
-    iconClassName: 'text-stone-500',
-    headingClassName: 'text-stone-500',
+    chipClassName: 'bg-stone-100 dark:bg-neutral-800 text-stone-700 dark:text-neutral-200',
+    iconClassName: 'text-stone-500 dark:text-neutral-400',
+    headingClassName: 'text-stone-500 dark:text-neutral-400',
   },
 };
 

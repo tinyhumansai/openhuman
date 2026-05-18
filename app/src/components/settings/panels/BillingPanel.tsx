@@ -47,13 +47,13 @@ const BillingPanel = () => {
           onClick={navigateBack}
           trailingContent={
             breadcrumbs.length > 0 ? (
-              <div className="flex flex-wrap items-center gap-2 text-xs text-stone-500">
+              <div className="flex flex-wrap items-center gap-2 text-xs text-stone-500 dark:text-neutral-400">
                 {breadcrumbs.map((crumb, index) => (
                   <button
                     key={`${crumb.label}-${index}`}
                     type="button"
                     onClick={crumb.onClick}
-                    className="rounded-full border border-stone-200 bg-white px-3 py-1 font-medium text-stone-600 transition-colors hover:bg-stone-50">
+                    className="rounded-full border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-1 font-medium text-stone-600 dark:text-neutral-300 transition-colors hover:bg-stone-50 dark:hover:bg-neutral-800/60 dark:bg-neutral-800/60 dark:hover:bg-neutral-800/60">
                     {crumb.label}
                   </button>
                 ))}
@@ -62,16 +62,16 @@ const BillingPanel = () => {
           }
         />
 
-        <div className="mt-6 rounded-3xl border border-stone-200 bg-white p-6 shadow-soft">
+        <div className="mt-6 rounded-3xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-6 shadow-soft">
           <div className="max-w-xl space-y-4">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-stone-500">
+              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-stone-500 dark:text-neutral-400">
                 {t('settings.billing.movedToWeb')}
               </p>
-              <h1 className="mt-2 text-2xl font-semibold text-stone-900">
+              <h1 className="mt-2 text-2xl font-semibold text-stone-900 dark:text-neutral-100">
                 {t('settings.billing.openDashboard')}
               </h1>
-              <p className="mt-2 text-sm leading-6 text-stone-600">
+              <p className="mt-2 text-sm leading-6 text-stone-600 dark:text-neutral-300">
                 {t('settings.billing.movedToWebDesc')}
               </p>
             </div>
@@ -88,19 +88,25 @@ const BillingPanel = () => {
               <button
                 type="button"
                 onClick={navigateBack}
-                className="inline-flex items-center rounded-full border border-stone-200 bg-white px-4 py-2 text-sm font-semibold text-stone-700 transition-colors hover:bg-stone-50">
+                className="inline-flex items-center rounded-full border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-4 py-2 text-sm font-semibold text-stone-700 dark:text-neutral-200 transition-colors hover:bg-stone-50 dark:hover:bg-neutral-800/60 dark:bg-neutral-800/60 dark:hover:bg-neutral-800/60">
                 {t('settings.billing.backToSettings')}
               </button>
             </div>
 
             {status === 'opening' && (
-              <p className="text-xs text-stone-500">{t('settings.billing.openingBrowser')}</p>
+              <p className="text-xs text-stone-500 dark:text-neutral-400">
+                {t('settings.billing.openingBrowser')}
+              </p>
             )}
             {status === 'idle' && (
-              <p className="text-xs text-stone-500">{t('settings.billing.browserNotOpen')}</p>
+              <p className="text-xs text-stone-500 dark:text-neutral-400">
+                {t('settings.billing.browserNotOpen')}
+              </p>
             )}
             {status === 'error' && (
-              <p className="text-xs text-coral-600">{t('settings.billing.browserOpenFailed')}</p>
+              <p className="text-xs text-coral-600 dark:text-coral-300">
+                {t('settings.billing.browserOpenFailed')}
+              </p>
             )}
           </div>
         </div>

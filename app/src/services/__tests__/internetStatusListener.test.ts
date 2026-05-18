@@ -17,23 +17,26 @@ vi.mock('../../store/connectivitySlice', () => ({
 }));
 
 describe('internetStatusListener', () => {
+  let stopCurrentListener: (() => void) | null = null;
+
   // Each test needs a fresh module so the `started` singleton is reset.
   beforeEach(() => {
     vi.resetModules();
     dispatchMock.mockClear();
     setInternetMock.mockClear();
+    stopCurrentListener = null;
   });
 
   afterEach(() => {
-    // Remove any event listeners that were added during the test.
-    window.removeEventListener('online', () => {});
-    window.removeEventListener('offline', () => {});
+    stopCurrentListener?.();
   });
 
   it('dispatches online when navigator.onLine is true on start (line 15-16)', async () => {
     Object.defineProperty(navigator, 'onLine', { value: true, configurable: true });
 
-    const { startInternetStatusListener } = await import('../internetStatusListener');
+    const { startInternetStatusListener, stopInternetStatusListener } =
+      await import('../internetStatusListener');
+    stopCurrentListener = stopInternetStatusListener;
     startInternetStatusListener();
 
     expect(setInternetMock).toHaveBeenCalledWith({ value: 'online' });
@@ -43,7 +46,9 @@ describe('internetStatusListener', () => {
   it('dispatches offline when navigator.onLine is false on start (line 15-16)', async () => {
     Object.defineProperty(navigator, 'onLine', { value: false, configurable: true });
 
-    const { startInternetStatusListener } = await import('../internetStatusListener');
+    const { startInternetStatusListener, stopInternetStatusListener } =
+      await import('../internetStatusListener');
+    stopCurrentListener = stopInternetStatusListener;
     startInternetStatusListener();
 
     expect(setInternetMock).toHaveBeenCalledWith({ value: 'offline' });
@@ -53,7 +58,9 @@ describe('internetStatusListener', () => {
   it('is idempotent — second call is a no-op (line 20)', async () => {
     Object.defineProperty(navigator, 'onLine', { value: true, configurable: true });
 
-    const { startInternetStatusListener } = await import('../internetStatusListener');
+    const { startInternetStatusListener, stopInternetStatusListener } =
+      await import('../internetStatusListener');
+    stopCurrentListener = stopInternetStatusListener;
     startInternetStatusListener();
     startInternetStatusListener(); // second call must not add extra listeners or dispatch
 
@@ -64,7 +71,9 @@ describe('internetStatusListener', () => {
   it('dispatches online when the window online event fires (lines 24-26)', async () => {
     Object.defineProperty(navigator, 'onLine', { value: false, configurable: true });
 
-    const { startInternetStatusListener } = await import('../internetStatusListener');
+    const { startInternetStatusListener, stopInternetStatusListener } =
+      await import('../internetStatusListener');
+    stopCurrentListener = stopInternetStatusListener;
     startInternetStatusListener();
 
     dispatchMock.mockClear();
@@ -81,7 +90,9 @@ describe('internetStatusListener', () => {
   it('dispatches offline when the window offline event fires (lines 24-26)', async () => {
     Object.defineProperty(navigator, 'onLine', { value: true, configurable: true });
 
-    const { startInternetStatusListener } = await import('../internetStatusListener');
+    const { startInternetStatusListener, stopInternetStatusListener } =
+      await import('../internetStatusListener');
+    stopCurrentListener = stopInternetStatusListener;
     startInternetStatusListener();
 
     dispatchMock.mockClear();
@@ -92,5 +103,24 @@ describe('internetStatusListener', () => {
 
     expect(setInternetMock).toHaveBeenCalledWith({ value: 'offline' });
     expect(dispatchMock).toHaveBeenCalled();
+  });
+
+  it('removes event listeners when stopped', async () => {
+    Object.defineProperty(navigator, 'onLine', { value: true, configurable: true });
+
+    const { startInternetStatusListener, stopInternetStatusListener } =
+      await import('../internetStatusListener');
+    stopCurrentListener = stopInternetStatusListener;
+    startInternetStatusListener();
+
+    dispatchMock.mockClear();
+    setInternetMock.mockClear();
+
+    stopInternetStatusListener();
+    Object.defineProperty(navigator, 'onLine', { value: false, configurable: true });
+    window.dispatchEvent(new Event('offline'));
+
+    expect(setInternetMock).not.toHaveBeenCalled();
+    expect(dispatchMock).not.toHaveBeenCalled();
   });
 });

@@ -36,15 +36,15 @@ function ConnectionOptionRow({
   const isDisabled = option.comingSoon;
 
   const badge = option.comingSoon ? (
-    <span className="px-2 py-0.5 text-[11px] font-medium rounded-full bg-stone-100 text-stone-500 border border-stone-200">
+    <span className="px-2 py-0.5 text-[11px] font-medium rounded-full bg-stone-100 dark:bg-neutral-800 text-stone-500 dark:text-neutral-400 border border-stone-200 dark:border-neutral-800">
       {t('connections.comingSoon')}
     </span>
   ) : option.statusLabel ? (
-    <span className="px-2 py-0.5 text-[11px] font-medium rounded-full bg-sage-50 text-sage-700 border border-sage-200">
+    <span className="px-2 py-0.5 text-[11px] font-medium rounded-full bg-sage-50 dark:bg-sage-500/10 text-sage-700 dark:text-sage-300 border border-sage-200 dark:border-sage-500/30">
       {option.statusLabel}
     </span>
   ) : (
-    <span className="px-2 py-0.5 text-[11px] font-medium rounded-full bg-primary-50 text-primary-600 border border-primary-100">
+    <span className="px-2 py-0.5 text-[11px] font-medium rounded-full bg-primary-50 dark:bg-primary-500/10 text-primary-600 dark:text-primary-300 border border-primary-100 dark:border-primary-500/30">
       {t('connections.setUp')}
     </span>
   );
@@ -53,20 +53,24 @@ function ConnectionOptionRow({
     <button
       onClick={() => onConnect(option)}
       disabled={isDisabled}
-      className={`group w-full flex items-center justify-between p-4 bg-white text-left transition-colors duration-150 ${
-        isLast ? '' : 'border-b border-stone-200'
+      className={`group w-full flex items-center justify-between p-4 bg-white dark:bg-neutral-900 text-left transition-colors duration-150 ${
+        isLast ? '' : 'border-b border-stone-200 dark:border-neutral-800'
       } ${isFirst ? 'rounded-t-2xl' : ''} ${isLast ? 'rounded-b-2xl' : ''} ${
-        isDisabled ? 'opacity-70 cursor-not-allowed' : 'hover:bg-stone-50 focus-visible:bg-stone-50'
+        isDisabled
+          ? 'opacity-70 cursor-not-allowed'
+          : 'hover:bg-stone-50 dark:hover:bg-neutral-800/60 dark:bg-neutral-800/60 dark:hover:bg-neutral-800/60 focus-visible:bg-stone-50 dark:bg-neutral-800/60 dark:focus-visible:bg-neutral-800/60'
       } focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/40`}>
       <div
-        className={`w-5 h-5 flex-shrink-0 mr-3 text-stone-700 ${
+        className={`w-5 h-5 flex-shrink-0 mr-3 text-stone-700 dark:text-neutral-200 ${
           isDisabled ? 'opacity-50' : 'opacity-80 group-hover:opacity-100'
         } transition-opacity`}>
         {option.icon}
       </div>
       <div className="flex-1 min-w-0">
-        <div className="font-medium text-sm text-stone-900 leading-snug">{option.name}</div>
-        <p className="text-xs text-stone-500 mt-0.5 leading-relaxed truncate">
+        <div className="font-medium text-sm text-stone-900 dark:text-neutral-100 leading-snug">
+          {option.name}
+        </div>
+        <p className="text-xs text-stone-500 dark:text-neutral-400 mt-0.5 leading-relaxed truncate">
           {option.description}
         </p>
       </div>
@@ -169,7 +173,7 @@ const ConnectionsPanel = () => {
 
       <div>
         <div className="p-4 space-y-4">
-          <div className="rounded-2xl border border-stone-200 overflow-hidden bg-white">
+          <div className="rounded-2xl border border-stone-200 dark:border-neutral-800 overflow-hidden bg-white dark:bg-neutral-900">
             {connectOptions.map((option, index) => (
               <ConnectionOptionRow
                 key={option.id}
@@ -183,23 +187,25 @@ const ConnectionsPanel = () => {
           </div>
 
           {walletConfigured && walletStatus ? (
-            <div className="rounded-2xl border border-stone-200 bg-white p-4 space-y-3">
+            <div className="rounded-2xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 space-y-3">
               <div>
-                <p className="font-medium text-stone-900 text-sm">
+                <p className="font-medium text-stone-900 dark:text-neutral-100 text-sm">
                   {t('connections.walletIdentities')}
                 </p>
-                <p className="text-xs text-stone-500 mt-1">{t('connections.walletDerived')}</p>
+                <p className="text-xs text-stone-500 dark:text-neutral-400 mt-1">
+                  {t('connections.walletDerived')}
+                </p>
               </div>
               <div className="grid gap-2">
                 {walletStatus.accounts.map(account => (
                   <div
                     key={account.chain}
-                    className="rounded-xl border border-stone-200 bg-stone-50 px-3 py-2">
+                    className="rounded-xl border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 px-3 py-2">
                     <div className="flex items-center justify-between gap-3">
-                      <span className="text-xs font-semibold uppercase tracking-wide text-stone-500">
+                      <span className="text-xs font-semibold uppercase tracking-wide text-stone-500 dark:text-neutral-400">
                         {account.chain}
                       </span>
-                      <span className="text-xs font-mono text-stone-700 truncate">
+                      <span className="text-xs font-mono text-stone-700 dark:text-neutral-200 truncate">
                         {account.address}
                       </span>
                     </div>
@@ -209,10 +215,10 @@ const ConnectionsPanel = () => {
             </div>
           ) : null}
 
-          <div className="p-4 bg-stone-50 rounded-xl border border-stone-200">
+          <div className="p-4 bg-stone-50 dark:bg-neutral-800/60 rounded-xl border border-stone-200 dark:border-neutral-800">
             <div className="flex items-start space-x-3">
               <svg
-                className="w-5 h-5 text-stone-400 mt-0.5 flex-shrink-0"
+                className="w-5 h-5 text-stone-400 dark:text-neutral-500 mt-0.5 flex-shrink-0"
                 fill="currentColor"
                 viewBox="0 0 20 20">
                 <path
@@ -222,10 +228,10 @@ const ConnectionsPanel = () => {
                 />
               </svg>
               <div>
-                <p className="font-medium text-stone-900 text-sm">
+                <p className="font-medium text-stone-900 dark:text-neutral-100 text-sm">
                   {t('connections.privacySecurity')}
                 </p>
-                <p className="text-xs text-stone-500 mt-1 leading-relaxed">
+                <p className="text-xs text-stone-500 dark:text-neutral-400 mt-1 leading-relaxed">
                   {t('connections.privacySecurityDesc')}
                 </p>
               </div>

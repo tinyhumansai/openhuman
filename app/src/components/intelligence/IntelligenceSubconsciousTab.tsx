@@ -175,19 +175,19 @@ export default function IntelligenceSubconsciousTab({
   return (
     <div className="space-y-6 animate-fade-up">
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2 text-xs text-stone-400">
+        <div className="flex items-center gap-2 text-xs text-stone-400 dark:text-neutral-500">
           {status && (
             <>
               <span>
                 {status.task_count} {t('subconscious.tasks')}
               </span>
-              <span className="text-stone-300">|</span>
+              <span className="text-stone-300 dark:text-neutral-600">|</span>
               <span>
                 {status.total_ticks} {t('subconscious.ticks')}
               </span>
               {status.last_tick_at && (
                 <>
-                  <span className="text-stone-300">|</span>
+                  <span className="text-stone-300 dark:text-neutral-600">|</span>
                   <span>
                     {t('subconscious.last')}:{' '}
                     {new Date(status.last_tick_at * 1000).toLocaleTimeString()}
@@ -196,7 +196,7 @@ export default function IntelligenceSubconsciousTab({
               )}
               {status.consecutive_failures > 0 && (
                 <>
-                  <span className="text-stone-300">|</span>
+                  <span className="text-stone-300 dark:text-neutral-600">|</span>
                   <span className="text-coral-500">
                     {status.consecutive_failures} {t('subconscious.failed')}
                   </span>
@@ -208,7 +208,7 @@ export default function IntelligenceSubconsciousTab({
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-1.5">
             <svg
-              className="w-3 h-3 text-stone-400"
+              className="w-3 h-3 text-stone-400 dark:text-neutral-500"
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24">
@@ -226,7 +226,7 @@ export default function IntelligenceSubconsciousTab({
               }}
               disabled
               title={t('subconscious.tickInterval')}
-              className="text-xs bg-stone-50 border border-stone-200 rounded px-1.5 py-0.5 text-stone-500 cursor-not-allowed">
+              className="text-xs bg-stone-50 dark:bg-neutral-800/60 border border-stone-200 dark:border-neutral-800 rounded px-1.5 py-0.5 text-stone-500 dark:text-neutral-400 cursor-not-allowed">
               <option value={5}>5 min</option>
               <option value={10}>10 min</option>
               <option value={15}>15 min</option>
@@ -240,7 +240,7 @@ export default function IntelligenceSubconsciousTab({
           <button
             onClick={() => void handleRunTick()}
             disabled={triggering}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-stone-50 hover:bg-stone-100 disabled:opacity-40 border border-stone-200 rounded-lg text-stone-600 transition-colors">
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-stone-50 dark:bg-neutral-800/60 hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 disabled:opacity-40 border border-stone-200 dark:border-neutral-800 rounded-lg text-stone-600 dark:text-neutral-300 transition-colors">
             {triggering ? (
               <div className="w-3 h-3 border border-stone-400 border-t-transparent rounded-full animate-spin" />
             ) : (
@@ -265,32 +265,38 @@ export default function IntelligenceSubconsciousTab({
 
       {escalations.length > 0 && (
         <div>
-          <h3 className="text-sm font-semibold text-stone-900 mb-3 flex items-center gap-2">
+          <h3 className="text-sm font-semibold text-stone-900 dark:text-neutral-100 mb-3 flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
             {t('subconscious.approvalNeeded')}
-            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700">
+            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-300">
               {escalations.length}
             </span>
           </h3>
           <div className="space-y-2">
             {escalations.map(esc => (
-              <div key={esc.id} className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+              <div
+                key={esc.id}
+                className="bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 rounded-xl p-4">
                 <div className="flex items-start justify-between">
                   <div className="flex-1">
-                    <p className="text-sm font-medium text-stone-900">{esc.title}</p>
-                    <p className="text-xs text-stone-500 mt-1">{esc.description}</p>
+                    <p className="text-sm font-medium text-stone-900 dark:text-neutral-100">
+                      {esc.title}
+                    </p>
+                    <p className="text-xs text-stone-500 dark:text-neutral-400 mt-1">
+                      {esc.description}
+                    </p>
                     <div className="flex items-center gap-2 mt-2">
                       <span
                         className={`text-[10px] px-2 py-0.5 rounded-full ${
                           esc.priority === 'critical'
-                            ? 'bg-coral-100 text-coral-700'
+                            ? 'bg-coral-100 dark:bg-coral-500/20 text-coral-700 dark:text-coral-300'
                             : esc.priority === 'important'
-                              ? 'bg-amber-100 text-amber-700'
-                              : 'bg-stone-100 text-stone-600'
+                              ? 'bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-300'
+                              : 'bg-stone-100 dark:bg-neutral-800 text-stone-600 dark:text-neutral-300'
                         }`}>
                         {esc.priority}
                       </span>
-                      <span className="text-[10px] text-stone-400">
+                      <span className="text-[10px] text-stone-400 dark:text-neutral-500">
                         {t('subconscious.requiresApproval')}
                       </span>
                     </div>
@@ -311,7 +317,7 @@ export default function IntelligenceSubconsciousTab({
                     )}
                     <button
                       onClick={() => void handleDismissEscalation(esc.id)}
-                      className="px-3 py-1.5 text-xs bg-stone-100 hover:bg-stone-200 text-stone-600 rounded-lg transition-colors">
+                      className="px-3 py-1.5 text-xs bg-stone-100 dark:bg-neutral-800 hover:bg-stone-200  text-stone-600 dark:text-neutral-300 rounded-lg transition-colors">
                       {t('common.skip')}
                     </button>
                   </div>
@@ -323,24 +329,30 @@ export default function IntelligenceSubconsciousTab({
       )}
 
       <div>
-        <h3 className="text-sm font-semibold text-stone-900 mb-3">
+        <h3 className="text-sm font-semibold text-stone-900 dark:text-neutral-100 mb-3">
           {t('subconscious.activeTasks')}
         </h3>
         {loading && tasks.length === 0 ? (
           <div className="text-center py-4">
-            <div className="w-6 h-6 mx-auto border-2 border-stone-300 border-t-transparent rounded-full animate-spin" />
+            <div className="w-6 h-6 mx-auto border-2 border-stone-300 dark:border-neutral-700 border-t-transparent rounded-full animate-spin" />
           </div>
         ) : tasks.filter(t => !t.completed).length === 0 ? (
-          <p className="text-xs text-stone-400 py-3">{t('subconscious.noActiveTasks')}</p>
+          <p className="text-xs text-stone-400 dark:text-neutral-500 py-3">
+            {t('subconscious.noActiveTasks')}
+          </p>
         ) : (
           <div className="space-y-1.5">
             {tasks
               .filter(t => !t.completed && t.source === 'system')
               .map(task => (
-                <div key={task.id} className="flex items-center py-2 px-3 bg-stone-50 rounded-lg">
+                <div
+                  key={task.id}
+                  className="flex items-center py-2 px-3 bg-stone-50 dark:bg-neutral-800/60 rounded-lg">
                   <div className="w-1.5 h-1.5 rounded-full bg-sage-400 flex-shrink-0 mr-2.5" />
-                  <span className="text-sm text-stone-900 truncate flex-1">{task.title}</span>
-                  <span className="text-[10px] text-stone-400 flex-shrink-0 px-1.5 py-0.5 rounded bg-stone-100">
+                  <span className="text-sm text-stone-900 dark:text-neutral-100 truncate flex-1">
+                    {task.title}
+                  </span>
+                  <span className="text-[10px] text-stone-400 dark:text-neutral-500 flex-shrink-0 px-1.5 py-0.5 rounded bg-stone-100 dark:bg-neutral-800">
                     {t('subconscious.default')}
                   </span>
                 </div>
@@ -350,7 +362,7 @@ export default function IntelligenceSubconsciousTab({
               .map(task => (
                 <div
                   key={task.id}
-                  className="flex items-center justify-between py-2 px-3 bg-stone-50 rounded-lg group">
+                  className="flex items-center justify-between py-2 px-3 bg-stone-50 dark:bg-neutral-800/60 rounded-lg group">
                   <div className="flex items-center gap-2.5 flex-1 min-w-0">
                     <button
                       type="button"
@@ -361,13 +373,13 @@ export default function IntelligenceSubconsciousTab({
                         task.enabled ? 'bg-sage-500' : 'bg-stone-300'
                       }`}>
                       <span
-                        className={`absolute top-0.5 left-0.5 w-3 h-3 rounded-full bg-white shadow transition-transform ${
+                        className={`absolute top-0.5 left-0.5 w-3 h-3 rounded-full bg-white dark:bg-neutral-900 shadow transition-transform ${
                           task.enabled ? 'translate-x-3' : 'translate-x-0'
                         }`}
                       />
                     </button>
                     <span
-                      className={`text-sm truncate ${task.enabled ? 'text-stone-900' : 'text-stone-400'}`}>
+                      className={`text-sm truncate ${task.enabled ? 'text-stone-900 dark:text-neutral-100' : 'text-stone-400 dark:text-neutral-500'}`}>
                       {task.title}
                     </span>
                   </div>
@@ -375,7 +387,7 @@ export default function IntelligenceSubconsciousTab({
                     type="button"
                     aria-label={`${t('common.remove')} ${task.title}`}
                     onClick={() => void handleRemoveTask(task.id, task.title)}
-                    className="opacity-0 group-hover:opacity-100 p-1 text-stone-400 hover:text-coral-500 transition-all">
+                    className="opacity-0 group-hover:opacity-100 p-1 text-stone-400 dark:text-neutral-500 hover:text-coral-500 transition-all">
                     <svg
                       className="w-3.5 h-3.5"
                       fill="none"
@@ -400,7 +412,7 @@ export default function IntelligenceSubconsciousTab({
             placeholder={t('subconscious.addTaskPlaceholder')}
             value={newTaskTitle}
             onChange={e => setNewTaskTitle(e.target.value)}
-            className="flex-1 px-3 py-2 text-sm bg-white border border-stone-200 rounded-lg text-stone-900 placeholder-stone-400 focus:outline-none focus:border-primary-500/50 transition-colors"
+            className="flex-1 px-3 py-2 text-sm bg-white dark:bg-neutral-900 border border-stone-200 dark:border-neutral-800 rounded-lg text-stone-900 dark:text-neutral-100 placeholder-stone-400 focus:outline-none focus:border-primary-500/50 transition-colors"
           />
           <button
             type="submit"
@@ -412,16 +424,18 @@ export default function IntelligenceSubconsciousTab({
       </div>
 
       <div>
-        <h3 className="text-sm font-semibold text-stone-900 mb-3">
+        <h3 className="text-sm font-semibold text-stone-900 dark:text-neutral-100 mb-3">
           {t('subconscious.activityLog')}
         </h3>
         {logEntries.length === 0 ? (
-          <p className="text-xs text-stone-400 py-3">{t('subconscious.noActivity')}</p>
+          <p className="text-xs text-stone-400 dark:text-neutral-500 py-3">
+            {t('subconscious.noActivity')}
+          </p>
         ) : (
           <div className="space-y-1 max-h-64 overflow-y-auto">
             {logEntries.map(entry => (
               <div key={entry.id} className="flex items-start gap-2 py-1.5 px-2 text-xs">
-                <span className="text-stone-400 flex-shrink-0 w-14">
+                <span className="text-stone-400 dark:text-neutral-500 flex-shrink-0 w-14">
                   {new Date(entry.tick_at * 1000).toLocaleTimeString([], {
                     hour: '2-digit',
                     minute: '2-digit',
@@ -441,17 +455,17 @@ export default function IntelligenceSubconsciousTab({
                               ? 'bg-stone-300'
                               : entry.decision === 'dismissed'
                                 ? 'bg-stone-300'
-                                : 'bg-stone-200'
+                                : 'bg-stone-200 dark:bg-neutral-800'
                   }`}
                 />
                 <span
                   className={`break-words min-w-0 ${
                     entry.decision === 'in_progress'
-                      ? 'text-stone-400'
+                      ? 'text-stone-400 dark:text-neutral-500'
                       : entry.decision === 'failed'
                         ? 'text-coral-500'
-                        : 'text-stone-600'
-                  } ${entry.result && entry.result.length > 120 ? 'cursor-pointer hover:text-stone-900' : ''}`}
+                        : 'text-stone-600 dark:text-neutral-300'
+                  } ${entry.result && entry.result.length > 120 ? 'cursor-pointer hover:text-stone-900 dark:hover:text-neutral-100 dark:text-neutral-100' : ''}`}
                   onClick={() => {
                     if (entry.result && entry.result.length > 120) {
                       setExpandedLogIds(prev => {
@@ -485,7 +499,7 @@ export default function IntelligenceSubconsciousTab({
                                   : entry.decision}
                 </span>
                 {entry.duration_ms != null && (
-                  <span className="text-stone-300 flex-shrink-0 ml-auto">
+                  <span className="text-stone-300 dark:text-neutral-600 flex-shrink-0 ml-auto">
                     {entry.duration_ms > 1000
                       ? `${(entry.duration_ms / 1000).toFixed(1)}s`
                       : `${entry.duration_ms}ms`}

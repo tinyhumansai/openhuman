@@ -8,3 +8,4 @@ mod stdio;
 mod tools;
 
 pub use stdio::run_stdio_from_cli;
+pub use tools::{tool_specs, McpToolSpec};

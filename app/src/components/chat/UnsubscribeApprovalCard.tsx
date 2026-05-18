@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 
+import { useT } from '../../lib/i18n/I18nContext';
 import { callCoreRpc } from '../../services/coreRpcClient';
 import Button from '../ui/Button';
 
@@ -14,6 +15,7 @@ interface Props {
 }
 
 export const UnsubscribeApprovalCard: React.FC<Props> = ({ payload }) => {
+  const { t } = useT();
   const [status, setStatus] = useState<'pending' | 'approved' | 'denied'>('pending');
   const [isProcessing, setIsProcessing] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -59,7 +61,7 @@ export const UnsubscribeApprovalCard: React.FC<Props> = ({ payload }) => {
         <div className="text-xl">📧</div>
         <div className="flex-1">
           <h4 className="font-semibold text-sm text-gray-900 dark:text-gray-100">
-            Unsubscribe Request
+            {t('chat.unsubscribeApproval.title')}
           </h4>
           <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
             {payload.metadata.message}
@@ -77,21 +79,25 @@ export const UnsubscribeApprovalCard: React.FC<Props> = ({ payload }) => {
           {status === 'pending' && (
             <div className="flex gap-2 mt-4">
               <Button variant="primary" size="sm" onClick={handleApprove} disabled={isProcessing}>
-                {isProcessing ? 'Processing...' : 'Approve & Unsubscribe'}
+                {isProcessing
+                  ? t('chat.unsubscribeApproval.processing')
+                  : t('chat.unsubscribeApproval.approve')}
               </Button>
               <Button variant="secondary" size="sm" onClick={handleDeny} disabled={isProcessing}>
-                Deny
+                {t('chat.unsubscribeApproval.deny')}
               </Button>
             </div>
           )}
 
           {status === 'approved' && (
             <div className="text-sm text-green-600 font-medium mt-3">
-              ✓ Successfully unsubscribed.
+              {t('chat.unsubscribeApproval.approved')}
             </div>
           )}
           {status === 'denied' && (
-            <div className="text-sm text-red-600 font-medium mt-3">✕ Request denied.</div>
+            <div className="text-sm text-red-600 font-medium mt-3">
+              {t('chat.unsubscribeApproval.denied')}
+            </div>
           )}
         </div>
       </div>

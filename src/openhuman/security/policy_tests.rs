@@ -201,6 +201,30 @@ fn command_risk_high_for_dangerous_commands() {
 }
 
 #[test]
+fn command_risk_high_for_command_executors() {
+    let p = default_policy();
+    for command in [
+        "xargs rm",
+        "awk 'BEGIN{system(\"id\")}'",
+        "perl -e 'system \"id\"'",
+        "python3 -c 'import os; os.system(\"id\")'",
+        "pythonw3 -c 'import os; os.system(\"id\")'",
+        "ruby -e 'system \"id\"'",
+        "bash -lc 'id'",
+        "sh -c 'id'",
+        "C:\\Python312\\python.EXE -c 'print(1)'",
+        "C:\\Python312\\pythonw3.12.exe -c 'print(1)'",
+        "/usr/bin/env python3 -c 'print(1)'",
+    ] {
+        assert_eq!(
+            p.command_risk_level(command),
+            CommandRiskLevel::High,
+            "{command} should be high risk"
+        );
+    }
+}
+
+#[test]
 fn validate_command_requires_approval_for_medium_risk() {
     let p = SecurityPolicy {
         autonomy: AutonomyLevel::Supervised,
@@ -603,6 +627,51 @@ fn command_argument_injection_blocked() {
     assert!(p.is_command_allowed("find . -name '*.txt'"));
     assert!(p.is_command_allowed("git status"));
     assert!(p.is_command_allowed("git add ."));
+}
+
+#[test]
+fn custom_allowlist_cannot_enable_command_executors() {
+    let p = SecurityPolicy {
+        allowed_commands: vec![
+            "echo".into(),
+            "xargs".into(),
+            "awk".into(),
+            "perl".into(),
+            "python".into(),
+            "python3".into(),
+            "python3.12".into(),
+            "python.EXE".into(),
+            "pythonw3".into(),
+            "pythonw3.12.exe".into(),
+            "ruby".into(),
+            "bash".into(),
+            "sh".into(),
+            "env".into(),
+        ],
+        ..SecurityPolicy::default()
+    };
+
+    for command in [
+        "echo rm -rf / | xargs",
+        "awk 'BEGIN{system(\"id\")}'",
+        "perl -e 'system \"id\"'",
+        "python -c 'import os; os.system(\"id\")'",
+        "python3 exploit.py",
+        "python3.12 -c 'print(1)'",
+        "/usr/bin/python3.12 -c 'print(1)'",
+        "C:\\Python312\\python.EXE -c 'print(1)'",
+        "pythonw3 exploit.py",
+        "C:\\Python312\\pythonw3.12.exe -c 'print(1)'",
+        "ruby -e 'system \"id\"'",
+        "bash -lc 'id'",
+        "sh -c 'id'",
+        "/usr/bin/env python3 -c 'print(1)'",
+    ] {
+        assert!(
+            !p.is_command_allowed(command),
+            "{command} should remain blocked even when allowlisted"
+        );
+    }
 }
 
 #[test]

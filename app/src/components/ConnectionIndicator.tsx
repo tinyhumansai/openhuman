@@ -1,3 +1,4 @@
+import { useT } from '../lib/i18n/I18nContext';
 import { selectBlockingState } from '../store/connectivitySelectors';
 import { useAppSelector } from '../store/hooks';
 import { selectSocketStatus } from '../store/socketSelectors';
@@ -31,40 +32,44 @@ const ConnectionIndicator = ({
   status: overrideStatus,
   className = '',
 }: ConnectionIndicatorProps) => {
+  const { t } = useT();
   const blocking = useAppSelector(selectBlockingState);
   const legacyStatus = useAppSelector(selectSocketStatus);
 
   const config: StatusConfig = (() => {
     if (overrideStatus) {
-      return legacyMap[overrideStatus];
+      return legacyMap(t)[overrideStatus];
     }
     switch (blocking) {
       case 'ok':
         return {
           color: 'bg-sage-500',
           textColor: 'text-sage-500',
-          text: 'Connected to OpenHuman AI 🚀',
+          text: t('app.connectionIndicator.connected'),
           pulse: true,
         };
       case 'internet-offline':
         return {
           color: 'bg-coral-500',
           textColor: 'text-coral-500',
-          text: 'Offline',
+          text: t('app.connectionIndicator.offline'),
           pulse: false,
         };
       case 'core-unreachable':
         return {
           color: 'bg-amber-500',
           textColor: 'text-amber-500',
-          text: 'Core offline',
+          text: t('app.connectionIndicator.coreOffline'),
           pulse: false,
         };
       case 'backend-only':
         return {
           color: 'bg-amber-500',
           textColor: 'text-amber-500',
-          text: legacyStatus === 'connecting' ? 'Connecting' : 'Reconnecting…',
+          text:
+            legacyStatus === 'connecting'
+              ? t('app.connectionIndicator.connecting')
+              : t('app.connectionIndicator.reconnecting'),
           pulse: false,
         };
     }
@@ -72,7 +77,7 @@ const ConnectionIndicator = ({
 
   return (
     <div className={`${className}`}>
-      <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-stone-50 border border-stone-200">
+      <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-stone-50 dark:bg-neutral-800/60 border border-stone-200 dark:border-neutral-800">
         <div
           className={`w-2 h-2 ${config.color} rounded-full ${config.pulse ? 'animate-pulse' : ''}`}
         />
@@ -82,25 +87,27 @@ const ConnectionIndicator = ({
   );
 };
 
-const legacyMap: Record<'connected' | 'disconnected' | 'connecting', StatusConfig> = {
+const legacyMap = (
+  t: (k: string) => string
+): Record<'connected' | 'disconnected' | 'connecting', StatusConfig> => ({
   connected: {
     color: 'bg-sage-500',
     textColor: 'text-sage-500',
-    text: 'Connected to OpenHuman AI 🚀',
+    text: t('app.connectionIndicator.connected'),
     pulse: true,
   },
   disconnected: {
     color: 'bg-coral-500',
     textColor: 'text-coral-500',
-    text: 'Disconnected',
+    text: t('app.connectionIndicator.disconnected'),
     pulse: false,
   },
   connecting: {
     color: 'bg-amber-500',
     textColor: 'text-amber-500',
-    text: 'Connecting',
+    text: t('app.connectionIndicator.connecting'),
     pulse: false,
   },
-};
+});
 
 export default ConnectionIndicator;

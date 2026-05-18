@@ -34,6 +34,17 @@ fn validate_rejects_invalid_method() {
 }
 
 #[tokio::test]
+async fn validate_url_rejects_disallowed_domain() {
+    let tool = test_tool(vec!["example.com"]);
+    let err = tool
+        .validate_url("https://evil.test/path")
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("allowed_domains"));
+}
+
+#[tokio::test]
 async fn execute_blocks_readonly_mode() {
     let security = Arc::new(SecurityPolicy {
         autonomy: AutonomyLevel::ReadOnly,

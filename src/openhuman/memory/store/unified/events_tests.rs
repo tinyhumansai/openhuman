@@ -210,3 +210,52 @@ fn event_fts_matches_subject_field() {
     assert_eq!(by_subject.len(), 1, "FTS should match on subject field");
     assert_eq!(by_subject[0].event_id, "evt-subj");
 }
+
+#[test]
+fn event_embeddings_are_scoped_by_model_signature() {
+    let conn = setup_db();
+    let event = EventRecord {
+        event_id: "evt-embed".into(),
+        segment_id: "seg-1".into(),
+        session_id: "s1".into(),
+        namespace: "global".into(),
+        event_type: EventType::Fact,
+        content: "The user prefers Korean summaries".into(),
+        subject: Some("language preference".into()),
+        timestamp_ref: None,
+        confidence: 0.9,
+        embedding: None,
+        source_turn_ids: None,
+        created_at: 1000.0,
+    };
+    event_insert(&conn, &event).unwrap();
+
+    event_embedding_upsert(
+        &conn,
+        "evt-embed",
+        "openai/text-embedding-3-small@1536",
+        &[0.1, 0.2],
+        1001.0,
+    )
+    .unwrap();
+    event_embedding_upsert(
+        &conn,
+        "evt-embed",
+        "local/bge-small@384",
+        &[0.3, 0.4, 0.5],
+        1002.0,
+    )
+    .unwrap();
+
+    assert_eq!(
+        event_embedding_get(&conn, "evt-embed", "openai/text-embedding-3-small@1536").unwrap(),
+        Some(vec![0.1, 0.2])
+    );
+    assert_eq!(
+        event_embedding_get(&conn, "evt-embed", "local/bge-small@384").unwrap(),
+        Some(vec![0.3, 0.4, 0.5])
+    );
+    assert!(event_embedding_get(&conn, "evt-embed", "missing/model@1")
+        .unwrap()
+        .is_none());
+}

@@ -164,14 +164,16 @@ const Home = () => {
         {/* Main card — data-walkthrough target for step 1 */}
         <div
           data-walkthrough="home-card"
-          className="bg-white rounded-2xl shadow-soft border border-stone-200 p-6 animate-fade-up">
+          className="bg-white dark:bg-neutral-900 rounded-2xl shadow-soft border border-stone-200 dark:border-neutral-800 p-6 animate-fade-up">
           {/* Header row: logo + version + settings */}
           <div className="flex items-center justify-center mb-4">
-            <span className="text-xs text-center text-stone-400">v{APP_VERSION}</span>
+            <span className="text-xs text-center text-stone-400 dark:text-neutral-500">
+              v{APP_VERSION}
+            </span>
           </div>
 
           {/* Welcome title */}
-          <h1 className="min-h-[3.5rem] text-32l font-bold text-stone-900 text-center">
+          <h1 className="min-h-[3.5rem] text-32l font-bold text-stone-900 dark:text-neutral-100 text-center">
             {typedWelcome}
             <span aria-hidden="true" className="ml-0.5 inline-block text-primary-500 animate-pulse">
               |
@@ -186,7 +188,9 @@ const Home = () => {
           {/* Description — copy mirrors the active blocking state so the
               user never sees a "connected" message while the pill shows a
               failure. (#1527) */}
-          <p className="text-sm text-stone-500 text-center mb-6 leading-relaxed">{statusCopy}</p>
+          <p className="text-sm text-stone-500 dark:text-neutral-400 text-center mb-6 leading-relaxed">
+            {statusCopy}
+          </p>
 
           {/* Recovery action: only shown when the local core sidecar is
               the broken link — internet/backend outages are not actionable

@@ -127,6 +127,22 @@ const SettingsHome = () => {
           rightElement: <LanguageSelect ariaLabel={t('settings.language')} />,
         },
         {
+          id: 'appearance',
+          title: 'Appearance',
+          description: 'Pick light, dark, or match your system theme',
+          icon: (
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"
+              />
+            </svg>
+          ),
+          onClick: () => navigateToSettings('appearance'),
+        },
+        {
           id: 'mascot',
           title: 'Mascot',
           description: 'Pick the mascot color used across the app',
@@ -261,9 +277,9 @@ const SettingsHome = () => {
       {/* Log Out & Clear Data Confirmation Modal */}
       {showLogoutAndClearModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/30">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 border border-stone-200">
+          <div className="bg-white dark:bg-neutral-900 rounded-2xl max-w-md w-full p-6 border border-stone-200 dark:border-neutral-800">
             <div className="flex items-center gap-3 mb-4">
-              <div className="w-10 h-10 rounded-lg bg-amber-100 flex items-center justify-center">
+              <div className="w-10 h-10 rounded-lg bg-amber-100 dark:bg-amber-500/20 flex items-center justify-center">
                 <svg
                   className="w-5 h-5 text-amber-400"
                   fill="none"
@@ -278,12 +294,14 @@ const SettingsHome = () => {
                 </svg>
               </div>
               <div>
-                <h3 className="text-lg font-semibold text-stone-900">{t('clearData.title')}</h3>
+                <h3 className="text-lg font-semibold text-stone-900 dark:text-neutral-100">
+                  {t('clearData.title')}
+                </h3>
               </div>
             </div>
 
             <div className="mb-6">
-              <div className="text-stone-700 text-sm leading-relaxed">
+              <div className="text-stone-700 dark:text-neutral-200 text-sm leading-relaxed">
                 <p>{t('clearData.warning')}</p>
                 <ul className="list-disc pl-5 mt-2 space-y-1">
                   <li>{t('clearData.bulletSettings')}</li>
@@ -295,8 +313,8 @@ const SettingsHome = () => {
               </div>
 
               {error && (
-                <div className="mt-3 p-3 rounded-lg bg-coral-100 border border-coral-500/20">
-                  <p className="text-coral-600 text-sm">{error}</p>
+                <div className="mt-3 p-3 rounded-lg bg-coral-100 dark:bg-coral-500/20 border border-coral-500/20">
+                  <p className="text-coral-600 dark:text-coral-300 text-sm">{error}</p>
                 </div>
               )}
             </div>
@@ -308,7 +326,7 @@ const SettingsHome = () => {
                   setError(null);
                 }}
                 disabled={isLoading}
-                className="flex-1 px-4 py-2 rounded-lg border border-stone-200 text-stone-700 hover:bg-stone-100 transition-colors disabled:opacity-50">
+                className="flex-1 px-4 py-2 rounded-lg border border-stone-200 dark:border-neutral-800 text-stone-700 dark:text-neutral-200 hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 dark:hover:bg-neutral-800 transition-colors disabled:opacity-50">
                 {t('common.cancel')}
               </button>
               <button

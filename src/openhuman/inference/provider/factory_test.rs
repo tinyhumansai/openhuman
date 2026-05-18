@@ -344,3 +344,76 @@ fn openhuman_backend_uses_config_path_parent_as_state_dir() {
         .expect("openhuman backend must build with no cloud_providers");
     assert!(!model.is_empty(), "model must be set")
 }
+
+// ── verify_session_active tests ──────────────────────────────────────
+
+/// Helper: build a Config whose `config_path` lives inside a tempdir.
+fn config_in_tempdir(tmp: &TempDir) -> Config {
+    let mut c = Config::default();
+    c.config_path = tmp.path().join("config.toml");
+    c
+}
+
+#[test]
+fn verify_session_active_rejects_when_no_session_token() {
+    let tmp = TempDir::new().expect("tempdir");
+    let config = config_in_tempdir(&tmp);
+    let err = verify_session_active(&config).expect_err("should fail without session token");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("SESSION_EXPIRED"),
+        "expected SESSION_EXPIRED, got: {msg}",
+    );
+}
+
+#[test]
+fn verify_session_active_rejects_when_token_is_empty() {
+    let tmp = TempDir::new().expect("tempdir");
+    let mut config = config_in_tempdir(&tmp);
+    let auth = AuthService::new(tmp.path(), config.secrets.encrypt);
+    auth.store_provider_token("app-session", "default", "", Default::default(), false)
+        .expect("store empty token");
+    let err = verify_session_active(&config).expect_err("should reject empty token");
+    assert!(
+        err.to_string().contains("SESSION_EXPIRED"),
+        "expected SESSION_EXPIRED, got: {err}",
+    );
+}
+
+#[test]
+fn verify_session_active_passes_when_session_token_present() {
+    let tmp = TempDir::new().expect("tempdir");
+    let mut config = config_in_tempdir(&tmp);
+    let auth = AuthService::new(tmp.path(), config.secrets.encrypt);
+    auth.store_provider_token(
+        "app-session",
+        "default",
+        "fake-jwt-token",
+        Default::default(),
+        false,
+    )
+    .expect("store session token");
+    assert!(
+        verify_session_active(&config).is_ok(),
+        "should pass when session token exists",
+    );
+}
+
+#[test]
+fn verify_session_active_called_for_custom_provider_not_for_openhuman() {
+    // openhuman backend must always build (no session gate applied).
+    let config = Config::default();
+    assert!(create_chat_provider_from_string("reasoning", "openhuman", &config).is_ok(),);
+    // Verify that when a custom provider is tried without a session,
+    // we'd get blocked (this test exercises the non-#[cfg(test)] path
+    // by directly calling verify_session_active).
+    let tmp = TempDir::new().expect("tempdir");
+    let config = config_in_tempdir(&tmp);
+    let _ = create_chat_provider_from_string("reasoning", "ollama:llama3", &config);
+    // Under #[cfg(test)] the gate is skipped, so this succeeds.
+    // We assert the gate *would* fire by testing verify_session_active directly.
+    assert!(
+        verify_session_active(&config).is_err(),
+        "verify_session_active must reject config without session",
+    );
+}

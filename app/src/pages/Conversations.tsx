@@ -194,7 +194,7 @@ function formatAgentProfileAgentLabel(agentId: string): string {
 //   }, [text.length, visibleChars]);
 //
 //   return (
-//     <p className="flex items-center text-sm text-stone-600 font-mono tracking-tight">
+//     <p className="flex items-center text-sm text-stone-600 dark:text-neutral-300 font-mono tracking-tight">
 //       <span>{text.slice(0, visibleChars)}</span>
 //       <span
 //         aria-hidden="true"
@@ -1220,13 +1220,15 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
           During welcome lockdown the sidebar is always open (effectiveShowSidebar
           is clamped to true) so the single onboarding thread is always visible. */}
       {!isSidebar && effectiveShowSidebar && (
-        <div className="w-64 flex-shrink-0 flex flex-col bg-white rounded-2xl shadow-soft border border-stone-200 overflow-hidden">
-          <div className="flex items-center justify-between px-4 py-3 border-b border-stone-100">
-            <h2 className="text-sm font-semibold text-stone-700">{t('chat.threads')}</h2>
+        <div className="w-64 flex-shrink-0 flex flex-col bg-white dark:bg-neutral-900 rounded-2xl shadow-soft border border-stone-200 dark:border-neutral-800 overflow-hidden">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-stone-100 dark:border-neutral-800">
+            <h2 className="text-sm font-semibold text-stone-700 dark:text-neutral-200">
+              {t('chat.threads')}
+            </h2>
             {/* [#1123] welcomeLocked guard removed — always show new thread button */}
             <button
               onClick={() => void handleCreateNewThread()}
-              className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-stone-100 text-stone-500 hover:text-stone-700 transition-colors"
+              className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 dark:hover:bg-neutral-800/60 text-stone-500 dark:text-neutral-400 hover:text-stone-700 dark:hover:text-neutral-200 dark:text-neutral-200 dark:hover:text-neutral-200 transition-colors"
               title={t('chat.newThread')}>
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path
@@ -1239,7 +1241,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
             </button>
           </div>
           {/* [#1123] welcomeLocked guard removed — always show label filter */}
-          <div className="px-4 py-2 border-b border-stone-50">
+          <div className="px-4 py-2 border-b border-stone-50 dark:border-neutral-800">
             <PillTabBar
               items={labelTabs}
               selected={selectedLabel}
@@ -1249,7 +1251,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
           </div>
           <div className="flex-1 overflow-y-auto">
             {sortedThreads.length === 0 ? (
-              <p className="px-4 py-6 text-xs text-stone-400 text-center">
+              <p className="px-4 py-6 text-xs text-stone-400 dark:text-neutral-500 text-center">
                 {selectedLabel === 'all'
                   ? t('chat.noThreads')
                   : selectedLabel === WORKERS_TAB_VALUE
@@ -1274,17 +1276,17 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                       void dispatch(loadThreadMessages(thread.id));
                     }
                   }}
-                  className={`w-full text-left px-4 py-3 border-b border-stone-50 transition-colors group cursor-pointer ${
+                  className={`w-full text-left px-4 py-3 border-b border-stone-50 dark:border-neutral-800 transition-colors group cursor-pointer ${
                     selectedThreadId === thread.id
                       ? 'bg-primary-50 border-l-2 border-l-primary-500'
-                      : 'hover:bg-stone-50'
+                      : 'hover:bg-stone-50 dark:hover:bg-neutral-800/60'
                   }`}>
                   <div className="flex items-center justify-between">
                     <p
                       className={`text-sm truncate flex-1 ${
                         selectedThreadId === thread.id
                           ? 'font-medium text-primary-700'
-                          : 'text-stone-700'
+                          : 'text-stone-700 dark:text-neutral-200'
                       }`}>
                       {resolveThreadDisplayTitle(thread.id)}
                     </p>
@@ -1308,7 +1310,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                           onCancel: () => {},
                         });
                       }}
-                      className="ml-2 p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-stone-200 text-stone-400 hover:text-coral-500 transition-all flex-shrink-0"
+                      className="ml-2 p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-stone-200 dark:bg-neutral-800 dark:hover:bg-neutral-800 text-stone-400 dark:text-neutral-500 hover:text-coral-500 transition-all flex-shrink-0"
                       title={t('chat.deleteThread')}>
                       <svg
                         className="w-3 h-3"
@@ -1325,11 +1327,11 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                     </button>
                   </div>
                   {/* <div className="flex items-center gap-2 mt-0.5">
-                    <span className="text-[10px] text-stone-400">
+                    <span className="text-[10px] text-stone-400 dark:text-neutral-500">
                       {formatRelativeTime(thread.lastMessageAt)}
                     </span>
                     {thread.messageCount > 0 && (
-                      <span className="text-[10px] text-stone-400">
+                      <span className="text-[10px] text-stone-400 dark:text-neutral-500">
                         {thread.messageCount} msg{thread.messageCount !== 1 ? 's' : ''}
                       </span>
                     )}
@@ -1345,8 +1347,8 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
       <div
         className={
           isSidebar
-            ? 'flex-1 flex flex-col min-w-0 bg-white border-l border-stone-200 overflow-hidden'
-            : 'flex-1 flex flex-col min-w-0 max-w-2xl bg-white rounded-2xl shadow-soft border border-stone-200 overflow-hidden'
+            ? 'flex-1 flex flex-col min-w-0 bg-white dark:bg-neutral-900 border-l border-stone-200 dark:border-neutral-800 overflow-hidden'
+            : 'flex-1 flex flex-col min-w-0 max-w-2xl bg-white dark:bg-neutral-900 rounded-2xl shadow-soft border border-stone-200 dark:border-neutral-800 overflow-hidden'
         }>
         {/* Chat header — only shown in page mode; the sidebar embed uses the
             parent page's chrome instead. Hidden entirely during welcome
@@ -1354,11 +1356,11 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
             with no chrome around it. */}
         {!isSidebar && (
           <div
-            className="flex items-center gap-2 px-4 py-2.5 border-b border-stone-100"
+            className="flex items-center gap-2 px-4 py-2.5 border-b border-stone-100 dark:border-neutral-800"
             data-walkthrough="chat-agent-panel">
             <button
               onClick={() => setShowSidebar(prev => !prev)}
-              className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-stone-100 text-stone-500 hover:text-stone-700 transition-colors"
+              className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 dark:hover:bg-neutral-800/60 text-stone-500 dark:text-neutral-400 hover:text-stone-700 dark:hover:text-neutral-200 dark:text-neutral-200 dark:hover:text-neutral-200 transition-colors"
               title={effectiveShowSidebar ? t('chat.hideSidebar') : t('chat.showSidebar')}>
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path
@@ -1385,7 +1387,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                   </span>
                 </button>
               ) : null}
-              <h3 className="text-sm font-medium text-stone-700 truncate">
+              <h3 className="text-sm font-medium text-stone-700 dark:text-neutral-200 truncate">
                 {resolveThreadDisplayTitle(selectedThreadId)}
               </h3>
             </div>
@@ -1396,7 +1398,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                   aria-label="Agent profile"
                   value={selectedAgentProfileId}
                   onChange={event => void handleSelectAgentProfile(event.target.value)}
-                  className="h-7 max-w-[120px] rounded-lg border border-stone-200 bg-white px-2 text-xs text-stone-700 outline-none transition-colors focus:border-primary-400">
+                  className="h-7 max-w-[120px] rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-2 text-xs text-stone-700 dark:text-neutral-200 outline-none transition-colors focus:border-primary-400">
                   {agentProfiles.map(profile => (
                     <option key={profile.id} value={profile.id}>
                       {profile.name}
@@ -1406,7 +1408,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                 <button
                   type="button"
                   onClick={() => setProfileDraftOpen(prev => !prev)}
-                  className="h-7 w-7 rounded-lg text-xs font-medium text-stone-500 transition-colors hover:bg-stone-100 hover:text-stone-700"
+                  className="h-7 w-7 rounded-lg text-xs font-medium text-stone-500 dark:text-neutral-400 transition-colors hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 dark:hover:bg-neutral-800/60 hover:text-stone-700 dark:hover:text-neutral-200 dark:text-neutral-200 dark:hover:text-neutral-200"
                   title="Create agent profile"
                   aria-label="Create agent profile">
                   +
@@ -1423,20 +1425,20 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
           </div>
         )}
         {!isSidebar && profileDraftOpen && (
-          <div className="border-b border-stone-100 bg-white px-4 py-3">
+          <div className="border-b border-stone-100 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-4 py-3">
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_140px]">
               <input
                 value={profileDraft.name}
                 onChange={event => setProfileDraft(prev => ({ ...prev, name: event.target.value }))}
                 placeholder="Profile name"
-                className="h-8 rounded-lg border border-stone-200 px-3 text-xs outline-none focus:border-primary-400"
+                className="h-8 rounded-lg border border-stone-200 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-200 px-3 text-xs outline-none focus:border-primary-400"
               />
               <select
                 value={profileDraft.agentId}
                 onChange={event =>
                   setProfileDraft(prev => ({ ...prev, agentId: event.target.value }))
                 }
-                className="h-8 rounded-lg border border-stone-200 px-2 text-xs outline-none focus:border-primary-400">
+                className="h-8 rounded-lg border border-stone-200 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-200 px-2 text-xs outline-none focus:border-primary-400">
                 {agentProfileAgentOptions.map(agent => (
                   <option key={agent.id} value={agent.id}>
                     {agent.label}
@@ -1451,7 +1453,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
               }
               placeholder="Prompt style"
               rows={2}
-              className="mt-2 w-full resize-none rounded-lg border border-stone-200 px-3 py-2 text-xs outline-none focus:border-primary-400"
+              className="mt-2 w-full resize-none rounded-lg border border-stone-200 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-200 px-3 py-2 text-xs outline-none focus:border-primary-400"
             />
             <div className="mt-2 flex items-center gap-2">
               <input
@@ -1460,7 +1462,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                   setProfileDraft(prev => ({ ...prev, allowedTools: event.target.value }))
                 }
                 placeholder="Allowed tools"
-                className="h-8 min-w-0 flex-1 rounded-lg border border-stone-200 px-3 text-xs outline-none focus:border-primary-400"
+                className="h-8 min-w-0 flex-1 rounded-lg border border-stone-200 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-200 px-3 text-xs outline-none focus:border-primary-400"
               />
               <button
                 type="button"
@@ -1475,19 +1477,21 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                   setProfileDraft(DEFAULT_PROFILE_DRAFT);
                   setProfileDraftOpen(false);
                 }}
-                className="h-8 rounded-lg border border-stone-200 px-3 text-xs font-medium text-stone-600 transition-colors hover:bg-stone-50">
+                className="h-8 rounded-lg border border-stone-200 dark:border-neutral-800 px-3 text-xs font-medium text-stone-600 dark:text-neutral-300 transition-colors hover:bg-stone-50 dark:hover:bg-neutral-800/60">
                 Cancel
               </button>
             </div>
           </div>
         )}
-        <div ref={messagesContainerRef} className="flex-1 overflow-y-auto px-5 py-4 bg-[#f6f6f6]">
+        <div
+          ref={messagesContainerRef}
+          className="flex-1 overflow-y-auto px-5 py-4 bg-[#f6f6f6] dark:bg-neutral-950">
           {isLoadingMessages ? (
             <div className="space-y-4">
               {Array.from({ length: 4 }).map((_, i) => (
                 <div key={i} className={`flex ${i % 2 === 0 ? 'justify-start' : 'justify-end'}`}>
                   <div
-                    className={`h-12 rounded-2xl animate-pulse bg-stone-100 ${
+                    className={`h-12 rounded-2xl animate-pulse bg-stone-100 dark:bg-neutral-800 ${
                       i % 2 === 0 ? 'w-2/3' : 'w-1/2'
                     }`}
                   />
@@ -1508,8 +1512,12 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                   d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
                 />
               </svg>
-              <p className="text-sm text-stone-400 mb-1">{t('chat.failedToLoadMessages')}</p>
-              <p className="text-xs text-stone-600 mb-3 text-center">{messagesError}</p>
+              <p className="text-sm text-stone-400 dark:text-neutral-500 mb-1">
+                {t('chat.failedToLoadMessages')}
+              </p>
+              <p className="text-xs text-stone-600 dark:text-neutral-300 mb-3 text-center">
+                {messagesError}
+              </p>
               <button
                 onClick={() => window.location.reload()}
                 className="text-xs text-primary-400 hover:text-primary-300 transition-colors">
@@ -1574,7 +1582,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                             return <CitationChips citations={citations} />;
                           })()}
                           {latestVisibleMessage?.id === msg.id && (
-                            <p className="px-1 text-[10px] text-stone-400">
+                            <p className="px-1 text-[10px] text-stone-400 dark:text-neutral-500">
                               {formatRelativeTime(msg.createdAt)}
                             </p>
                           )}
@@ -1591,7 +1599,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                       )}
                       <button
                         onClick={() => handleCopyMessage(msg.id, msg.content)}
-                        className={`absolute -top-1 ${msg.sender === 'user' ? '-left-8' : '-right-8'} p-1 rounded-md opacity-0 group-hover/msg:opacity-100 hover:bg-stone-100 text-stone-400 hover:text-stone-600 transition-all`}
+                        className={`absolute -top-1 ${msg.sender === 'user' ? '-left-8' : '-right-8'} p-1 rounded-md opacity-0 group-hover/msg:opacity-100 hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 dark:hover:bg-neutral-800 text-stone-400 dark:text-neutral-500 hover:text-stone-600 dark:hover:text-neutral-300 transition-all`}
                         title={t('chat.copyResponse')}>
                         {copiedMessageId === msg.id ? (
                           <svg
@@ -1650,7 +1658,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                             ))}
                             {msg.sender === 'agent' &&
                               (reactionPickerMsgId === msg.id ? (
-                                <div className="flex items-center gap-0.5 px-1 py-0.5 rounded-full bg-stone-100">
+                                <div className="flex items-center gap-0.5 px-1 py-0.5 rounded-full bg-stone-100 dark:bg-neutral-800">
                                   {['👍', '❤️', '😂', '🔥', '👀', '🎯'].map(emoji => (
                                     <button
                                       key={emoji}
@@ -1673,14 +1681,14 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                                   ))}
                                   <button
                                     onClick={() => setReactionPickerMsgId(null)}
-                                    className="ml-0.5 text-stone-600 hover:text-stone-400 text-xs px-0.5">
+                                    className="ml-0.5 text-stone-600 dark:text-neutral-300 hover:text-stone-400 dark:hover:text-neutral-500 text-xs px-0.5">
                                     ✕
                                   </button>
                                 </div>
                               ) : (
                                 <button
                                   onClick={() => setReactionPickerMsgId(msg.id)}
-                                  className="opacity-0 group-hover/msg:opacity-100 flex items-center px-1.5 py-0.5 rounded-full bg-stone-50 hover:bg-stone-200 text-stone-500 hover:text-stone-300 text-xs transition-all"
+                                  className="opacity-0 group-hover/msg:opacity-100 flex items-center px-1.5 py-0.5 rounded-full bg-stone-50 dark:bg-neutral-800/60 hover:bg-stone-200 dark:bg-neutral-800 dark:hover:bg-neutral-800 text-stone-500 dark:text-neutral-400 hover:text-stone-300 dark:hover:text-neutral-600 text-xs transition-all"
                                   title="Add reaction">
                                   +
                                 </button>
@@ -1702,11 +1710,11 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                   (selectedStreamingAssistant?.thinking.length ?? 0) > 0
                 ) && (
                   <div className="flex justify-start">
-                    <div className="bg-stone-200/80 rounded-2xl rounded-bl-md px-4 py-3">
+                    <div className="bg-stone-200/80 dark:bg-neutral-800 rounded-2xl rounded-bl-md px-4 py-3">
                       <div className="flex items-center gap-1">
-                        <span className="w-1.5 h-1.5 rounded-full bg-stone-500 animate-bounce [animation-delay:0ms]" />
-                        <span className="w-1.5 h-1.5 rounded-full bg-stone-500 animate-bounce [animation-delay:150ms]" />
-                        <span className="w-1.5 h-1.5 rounded-full bg-stone-500 animate-bounce [animation-delay:300ms]" />
+                        <span className="w-1.5 h-1.5 rounded-full bg-stone-50 dark:bg-neutral-800/600 animate-bounce [animation-delay:0ms]" />
+                        <span className="w-1.5 h-1.5 rounded-full bg-stone-50 dark:bg-neutral-800/600 animate-bounce [animation-delay:150ms]" />
+                        <span className="w-1.5 h-1.5 rounded-full bg-stone-50 dark:bg-neutral-800/600 animate-bounce [animation-delay:300ms]" />
                       </div>
                     </div>
                   </div>
@@ -1721,21 +1729,23 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                   <div className="flex justify-start">
                     <div className="relative w-fit max-w-[75%]">
                       {selectedStreamingAssistant.thinking.length > 0 && (
-                        <details className="mb-1.5 bg-stone-100 rounded-lg px-3 py-1.5 text-xs text-stone-600 open:bg-stone-100">
+                        <details className="mb-1.5 bg-stone-100 dark:bg-neutral-800 rounded-lg px-3 py-1.5 text-xs text-stone-600 dark:text-neutral-300 open:bg-stone-100 dark:bg-neutral-800 dark:open:bg-neutral-800">
                           <summary className="cursor-pointer select-none flex items-center gap-1.5">
                             <span className="inline-block w-1.5 h-1.5 rounded-full bg-primary-400 animate-pulse" />
                             <span>{t('chat.thinking')}</span>
                           </summary>
-                          <pre className="whitespace-pre-wrap break-words mt-1.5 font-sans text-[11px] text-stone-500">
+                          <pre className="whitespace-pre-wrap break-words mt-1.5 font-sans text-[11px] text-stone-500 dark:text-neutral-400">
                             {selectedStreamingAssistant.thinking.slice(-STREAMING_PREVIEW_CHARS)}
                           </pre>
                         </details>
                       )}
                       {selectedStreamingAssistant.content.length > 0 && (
-                        <div className="rounded-2xl rounded-bl-md px-3 py-1.5 bg-stone-200/80 text-stone-900">
-                          <p className="text-xs text-stone-700 font-mono whitespace-pre-wrap break-words leading-snug">
+                        <div className="rounded-2xl rounded-bl-md px-3 py-1.5 bg-stone-200/80 dark:bg-neutral-800 text-stone-900 dark:text-neutral-100">
+                          <p className="text-xs text-stone-700 dark:text-neutral-200 font-mono whitespace-pre-wrap break-words leading-snug">
                             {selectedStreamingAssistant.content.length >
-                              STREAMING_PREVIEW_CHARS && <span className="text-stone-400">…</span>}
+                              STREAMING_PREVIEW_CHARS && (
+                              <span className="text-stone-400 dark:text-neutral-500">…</span>
+                            )}
                             {selectedStreamingAssistant.content.slice(-STREAMING_PREVIEW_CHARS)}
                             <span className="inline-block w-1 h-3 ml-0.5 align-middle bg-primary-400 animate-pulse" />
                           </p>
@@ -1746,7 +1756,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                 )}
               {/* Inference status indicator */}
               {selectedInferenceStatus && (
-                <div className="flex items-center gap-2 px-1 py-1.5 text-xs text-stone-500">
+                <div className="flex items-center gap-2 px-1 py-1.5 text-xs text-stone-500 dark:text-neutral-400">
                   <span className="inline-block w-2 h-2 rounded-full bg-primary-400 animate-pulse" />
                   <span>
                     {selectedInferenceStatus.phase === 'thinking' &&
@@ -1792,7 +1802,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                     onClick={() => {
                       if (selectedThreadId) void chatCancel(selectedThreadId);
                     }}
-                    className="text-xs text-stone-500 hover:text-stone-700 transition-colors">
+                    className="text-xs text-stone-500 dark:text-neutral-400 hover:text-stone-700 dark:hover:text-neutral-200 dark:text-neutral-200 dark:hover:text-neutral-200 transition-colors">
                     {t('common.cancel')}
                   </button>
                 </div>
@@ -1808,19 +1818,19 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
             //   // `hasVisibleMessages` branch above).
             //   <div className="flex-1 flex flex-col items-center justify-center h-full gap-3">
             //     <div className="flex items-center gap-1">
-            //       <span className="w-2 h-2 rounded-full bg-stone-500 animate-bounce [animation-delay:0ms]" />
-            //       <span className="w-2 h-2 rounded-full bg-stone-500 animate-bounce [animation-delay:150ms]" />
-            //       <span className="w-2 h-2 rounded-full bg-stone-500 animate-bounce [animation-delay:300ms]" />
+            //       <span className="w-2 h-2 rounded-full bg-stone-50 dark:bg-neutral-800/600 animate-bounce [animation-delay:0ms]" />
+            //       <span className="w-2 h-2 rounded-full bg-stone-50 dark:bg-neutral-800/600 animate-bounce [animation-delay:150ms]" />
+            //       <span className="w-2 h-2 rounded-full bg-stone-50 dark:bg-neutral-800/600 animate-bounce [animation-delay:300ms]" />
             //     </div>
             //     <WelcomeThinkingTypewriter />
             //   </div>
             <div className="flex-1 flex items-center justify-center h-full">
-              <p className="text-sm text-stone-600">{t('chat.noMessages')}</p>
+              <p className="text-sm text-stone-600 dark:text-neutral-300">{t('chat.noMessages')}</p>
             </div>
           )}
         </div>
 
-        <div className="flex-shrink-0 border-t border-stone-200 px-4 py-3">
+        <div className="flex-shrink-0 border-t border-stone-200 dark:border-neutral-800 px-4 py-3">
           {/* [#1123] welcomeLocked and welcomePending guards removed — Joyride walkthrough replaced welcome-agent */}
           <>
             {isNearLimit &&
@@ -1910,7 +1920,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                       />
                     </div>
                   ) : (
-                    <span className="text-[10px] text-stone-400 animate-pulse">
+                    <span className="text-[10px] text-stone-400 dark:text-neutral-500 animate-pulse">
                       {t('common.loading')}
                     </span>
                   )}
@@ -1919,12 +1929,14 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                       <div className="bg-stone-900 text-white text-[10px] rounded-lg px-3 py-2 shadow-lg whitespace-nowrap space-y-1.5">
                         {!teamUsage.bypassCycleLimit && (
                           <div className="flex items-center justify-between gap-4">
-                            <span className="text-stone-400">{t('chat.fiveHourLimit')}</span>
+                            <span className="text-stone-400 dark:text-neutral-500">
+                              {t('chat.fiveHourLimit')}
+                            </span>
                             <span>
                               ${(teamUsage.cycleLimit5hr ?? 0).toFixed(2)} / $
                               {(teamUsage.fiveHourCapUsd ?? 0).toFixed(2)}
                               {teamUsage.fiveHourResetsAt && (
-                                <span className="text-stone-400 ml-1">
+                                <span className="text-stone-400 dark:text-neutral-500 ml-1">
                                   — {t('chat.resets')} {formatResetTime(teamUsage.fiveHourResetsAt)}
                                 </span>
                               )}
@@ -1932,12 +1944,14 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                           </div>
                         )}
                         <div className="flex items-center justify-between gap-4">
-                          <span className="text-stone-400">{t('chat.weeklyLimit')}</span>
+                          <span className="text-stone-400 dark:text-neutral-500">
+                            {t('chat.weeklyLimit')}
+                          </span>
                           <span>
                             ${(teamUsage.remainingUsd ?? 0).toFixed(2)} / $
                             {(teamUsage.cycleBudgetUsd ?? 0).toFixed(2)} {t('chat.left')}
                             {teamUsage.cycleEndsAt && (
-                              <span className="text-stone-400 ml-1">
+                              <span className="text-stone-400 dark:text-neutral-500 ml-1">
                                 — {t('chat.resets')} {formatResetTime(teamUsage.cycleEndsAt)}
                               </span>
                             )}
@@ -1958,7 +1972,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
               </p>
               <button
                 onClick={() => setSendAdvisory(null)}
-                className="text-xs text-stone-500 hover:text-stone-700 transition-colors ml-2">
+                className="text-xs text-stone-500 dark:text-neutral-400 hover:text-stone-700 dark:hover:text-neutral-200 dark:text-neutral-200 dark:hover:text-neutral-200 transition-colors ml-2">
                 {t('common.dismiss')}
               </button>
             </div>
@@ -1988,7 +2002,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                 )}
                 <button
                   onClick={() => setSendError(null)}
-                  className="text-xs text-stone-500 hover:text-stone-700 transition-colors">
+                  className="text-xs text-stone-500 dark:text-neutral-400 hover:text-stone-700 dark:hover:text-neutral-200 dark:text-neutral-200 dark:hover:text-neutral-200 transition-colors">
                   {t('common.dismiss')}
                 </button>
               </div>
@@ -2007,12 +2021,14 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
             />
           ) : inputMode === 'text' ? (
             <div className="flex items-end gap-3">
-              <div className="relative flex flex-1 items-center justify-center rounded-xl border border-stone-200 bg-white transition-all focus-within:border-primary-500/50 focus-within:ring-1 focus-within:ring-primary-500/50">
+              <div className="relative flex flex-1 items-center justify-center rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 transition-all focus-within:border-primary-500/50 focus-within:ring-1 focus-within:ring-primary-500/50">
                 <div
                   aria-hidden
                   className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-4 py-2.5 text-sm leading-normal font-sans">
                   <span className="invisible">{inputValue}</span>
-                  <span className="text-stone-500/50">{inlineCompletionSuffix}</span>
+                  <span className="text-stone-500 dark:text-neutral-400/50">
+                    {inlineCompletionSuffix}
+                  </span>
                 </div>
                 <textarea
                   ref={textInputRef}
@@ -2028,7 +2044,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                   placeholder={t('chat.typeMessage')}
                   rows={1}
                   disabled={composerInteractionBlocked}
-                  className="relative z-10 w-full resize-none border-0 bg-transparent pl-4 pr-10 py-2.5 text-sm leading-normal whitespace-pre-wrap break-words font-sans text-stone-900 placeholder:text-stone-400 outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0 max-h-32 disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="relative z-10 w-full resize-none border-0 bg-transparent pl-4 pr-10 py-2.5 text-sm leading-normal whitespace-pre-wrap break-words font-sans text-stone-900 dark:text-neutral-100 placeholder:text-stone-400 dark:placeholder:text-neutral-500 outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0 max-h-32 disabled:opacity-50 disabled:cursor-not-allowed"
                 />
                 {/* Voice input mic hidden per #717 (inputMode='voice' path retained). */}
               </div>
@@ -2074,7 +2090,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                 type="button"
                 onClick={() => setInputMode('text')}
                 disabled={isRecording || isTranscribing}
-                className="w-10 h-10 flex items-center justify-center rounded-full border border-stone-200 bg-white text-stone-500 hover:text-stone-700 hover:border-stone-300 transition-colors disabled:opacity-40"
+                className="w-10 h-10 flex items-center justify-center rounded-full border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-stone-500 dark:text-neutral-400 hover:text-stone-700 dark:hover:text-neutral-200 dark:text-neutral-200 dark:hover:text-neutral-200 hover:border-stone-300 dark:hover:border-neutral-700 transition-colors disabled:opacity-40"
                 title={t('chat.switchToText')}>
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path
@@ -2102,7 +2118,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                     ? t('chat.stopAndSend')
                     : t('chat.startTalking')}
               </button>
-              <p className="text-xs text-stone-400 truncate">
+              <p className="text-xs text-stone-400 dark:text-neutral-500 truncate">
                 {voiceStatus ??
                   (isPlayingReply && replyMode === 'voice'
                     ? t('chat.playingVoiceReply')

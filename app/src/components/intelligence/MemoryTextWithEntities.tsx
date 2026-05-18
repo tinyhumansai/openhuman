@@ -11,6 +11,7 @@
  * structured `entities` array is provided, it also renders a compact
  * entity chip bar above the text.
  */
+import { useT } from '../../lib/i18n/I18nContext';
 import type { MemoryRetrievalEntity } from '../../utils/tauriCommands';
 
 interface MemoryTextWithEntitiesProps {
@@ -89,6 +90,7 @@ function EntityChip({ entity }: { entity: MemoryRetrievalEntity }) {
 }
 
 export function MemoryTextWithEntities({ text, entities, className }: MemoryTextWithEntitiesProps) {
+  const { t } = useT();
   if (!text && (!entities || entities.length === 0)) return null;
 
   const hasStructuredEntities = entities && entities.length > 0;
@@ -114,7 +116,7 @@ export function MemoryTextWithEntities({ text, entities, className }: MemoryText
                   <span
                     key={i}
                     className={`inline-block mx-0.5 px-1 py-px rounded text-[9px] leading-tight font-semibold ${colorForType(seg.value).bg} ${colorForType(seg.value).text} border ${colorForType(seg.value).border} uppercase tracking-wide align-baseline`}
-                    title={`Entity type: ${seg.value}`}>
+                    title={`${t('intelligence.memoryText.entityTypePrefix')}: ${seg.value}`}>
                     {seg.value}
                   </span>
                 ) : (

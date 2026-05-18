@@ -8,7 +8,7 @@
  * actually mounted. No more per-suite ad-hoc auth bootstrapping.
  *
  * Covers:
- *   - 13.3.1 Local AI Model panel renders presets (Balanced / Performance)
+ *   - 13.3.1 LLM panel renders AI routing/provider controls
  *   - 13.3.2 Tools panel renders at least one tool toggle
  */
 import { waitForApp } from '../helpers/app-helpers';
@@ -30,15 +30,15 @@ describe('Settings - AI & Skills', () => {
     await stopMockServer();
   });
 
-  it('mounts Local AI Model panel and shows presets (13.3.1)', async () => {
-    await navigateViaHash('/settings/local-model');
+  it('mounts LLM panel and shows provider/routing controls (13.3.1)', async () => {
+    await navigateViaHash('/settings/llm');
 
-    await waitForText('Local AI Model', 15_000);
-    await waitForText('Device Compatibility', 15_000);
-    await waitForText('Preset Tiers', 15_000);
-
-    expect(await textExists('Balanced')).toBe(true);
-    expect(await textExists('Performance')).toBe(true);
+    await waitForText('AI', 15_000);
+    const hasAiSurface =
+      (await textExists('Cloud providers')) ||
+      (await textExists('Primary cloud')) ||
+      (await textExists('Reasoning'));
+    expect(hasAiSurface).toBe(true);
   });
 
   it('mounts Tools panel and shows skill toggles (13.3.2)', async () => {

@@ -394,6 +394,7 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 | 11.1.2 | Actionable Item Extraction | VU    | `app/src/components/intelligence/__tests__/utils.test.ts` (this PR)                                                 | ✅     | Was ❌                                                                                    |
 | 11.1.3 | Analyze Trigger            | WD    | `app/test/e2e/specs/insights-dashboard.spec.ts` mounts the route (this PR); explicit analyze-handler invocation TBD | 🟡     | Route mounts and search/filter UI assert — full analyze trigger flow tracked as follow-up |
 | 11.1.4 | MCP stdio server           | RU    | `src/openhuman/mcp_server/`                                                                                         | ✅     | Read-only initialize/tools/list/tools/call plus stdio framing; binary smoke in PR validation |
+| 11.1.5 | Global tool registry       | RI    | `src/openhuman/tool_registry/`, `tests/json_rpc_e2e.rs`                                                             | ✅     | Read-only MCP/controller discovery with routes, schemas, version, allowed agents, and health |
 
 ### 11.2 Insights Dashboard
 
@@ -476,11 +477,11 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 
 | Status           | Count                                            |
 | ---------------- | ------------------------------------------------ |
-| ✅ Covered       | 64                                               |
+| ✅ Covered       | 65                                               |
 | 🟡 Partial       | 27                                               |
 | ❌ Missing       | 27                                               |
 | 🚫 Manual smoke  | 11                                               |
-| **Total leaves** | **129 explicit + nested = 200 product features** |
+| **Total leaves** | **130 explicit + nested = 201 product features** |
 
 PR-A delta: 13 leaves moved from ❌ → ✅ via 5 WDIO specs + 2 Vitest + 1 Rust integration test.
 Remaining gaps tracked under sub-issues #965 (process), #966 (docs), #967 (tools), #968 (auth/perm), #969 (settings), #970 (rewards), #971 (manual smoke).

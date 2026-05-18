@@ -1,4 +1,5 @@
 import type { WebhookActivityEntry } from '../../features/webhooks/types';
+import { useT } from '../../lib/i18n/I18nContext';
 
 interface WebhookActivityProps {
   activity: WebhookActivityEntry[];
@@ -29,13 +30,12 @@ function formatTime(ts: number): string {
 }
 
 export default function WebhookActivity({ activity }: WebhookActivityProps) {
+  const { t } = useT();
   if (activity.length === 0) {
     return (
       <div className="space-y-3">
-        <h3 className="text-lg font-semibold text-stone-900">Recent Activity</h3>
-        <p className="text-sm text-stone-500 text-center py-6">
-          No webhook activity yet. Events will appear here when webhooks are received.
-        </p>
+        <h3 className="text-lg font-semibold text-stone-900">{t('webhooks.activity.title')}</h3>
+        <p className="text-sm text-stone-500 text-center py-6">{t('webhooks.activity.empty')}</p>
       </div>
     );
   }
@@ -43,7 +43,7 @@ export default function WebhookActivity({ activity }: WebhookActivityProps) {
   return (
     <div className="space-y-3">
       <h3 className="text-lg font-semibold text-stone-900">
-        Recent Activity{' '}
+        {t('webhooks.activity.title')}{' '}
         <span className="text-sm font-normal text-stone-400">({activity.length})</span>
       </h3>
       <div className="space-y-1">
