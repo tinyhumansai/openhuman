@@ -262,6 +262,36 @@ impl Tool for ComposioActionTool {
 mod tests {
     use super::*;
     use crate::openhuman::agent::harness::with_current_sandbox_mode;
+    use std::path::Path;
+
+    struct WorkspaceEnvGuard {
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl WorkspaceEnvGuard {
+        fn set(path: &Path) -> Self {
+            let previous = std::env::var_os("OPENHUMAN_WORKSPACE");
+            Self::set_current(path);
+            Self { previous }
+        }
+
+        fn set_current(path: &Path) {
+            unsafe {
+                std::env::set_var("OPENHUMAN_WORKSPACE", path);
+            }
+        }
+    }
+
+    impl Drop for WorkspaceEnvGuard {
+        fn drop(&mut self) {
+            unsafe {
+                match self.previous.take() {
+                    Some(value) => std::env::set_var("OPENHUMAN_WORKSPACE", value),
+                    None => std::env::remove_var("OPENHUMAN_WORKSPACE"),
+                }
+            }
+        }
+    }
 
     /// Build a minimal `Arc<Config>` with `composio.mode = "backend"`
     /// (the default). The sandbox gate runs *before* any HTTP call or
@@ -352,9 +382,7 @@ mod tests {
         let _env_guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
         let tmp = tempfile::tempdir().expect("tempdir");
-        unsafe {
-            std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
-        }
+        let _workspace_guard = WorkspaceEnvGuard::set(tmp.path());
 
         let mut config = Config::default();
         config.config_path = tmp.path().join("config.toml");
@@ -373,10 +401,6 @@ mod tests {
             !msg.contains("strict read-only"),
             "unset sandbox must never trigger the gate, got: {msg}"
         );
-
-        unsafe {
-            std::env::remove_var("OPENHUMAN_WORKSPACE");
-        }
     }
 
     // ── Factory routing (#1710) ──────────────────────────────────────
@@ -405,9 +429,7 @@ mod tests {
         let _env_guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
         let tmp = tempfile::tempdir().expect("tempdir");
-        unsafe {
-            std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
-        }
+        let _workspace_guard = WorkspaceEnvGuard::set(tmp.path());
 
         let mut config = Config::default();
         config.config_path = tmp.path().join("config.toml");
@@ -433,10 +455,6 @@ mod tests {
             !msg.contains("direct mode"),
             "backend-mode failure must not surface direct-mode artifacts: {msg}"
         );
-
-        unsafe {
-            std::env::remove_var("OPENHUMAN_WORKSPACE");
-        }
     }
 
     #[tokio::test]
@@ -454,9 +472,7 @@ mod tests {
         let _env_guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
         let tmp = tempfile::tempdir().expect("tempdir");
-        unsafe {
-            std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
-        }
+        let _workspace_guard = WorkspaceEnvGuard::set(tmp.path());
 
         let mut config = Config::default();
         config.config_path = tmp.path().join("config.toml");
@@ -482,10 +498,6 @@ mod tests {
             "direct-mode dispatch must not leak backend session / staging-api \
              artifacts: {msg}"
         );
-
-        unsafe {
-            std::env::remove_var("OPENHUMAN_WORKSPACE");
-        }
     }
 
     #[tokio::test]
@@ -513,9 +525,7 @@ mod tests {
 
         // ── Backend half ────────────────────────────────────────────
         let tmp_backend = tempfile::tempdir().expect("tempdir backend");
-        unsafe {
-            std::env::set_var("OPENHUMAN_WORKSPACE", tmp_backend.path());
-        }
+        let _workspace_guard = WorkspaceEnvGuard::set(tmp_backend.path());
         let mut backend_config = Config::default();
         backend_config.config_path = tmp_backend.path().join("config.toml");
         backend_config.workspace_dir = tmp_backend.path().join("workspace");
@@ -540,9 +550,7 @@ mod tests {
 
         // ── Direct half ─────────────────────────────────────────────
         let tmp_direct = tempfile::tempdir().expect("tempdir direct");
-        unsafe {
-            std::env::set_var("OPENHUMAN_WORKSPACE", tmp_direct.path());
-        }
+        WorkspaceEnvGuard::set_current(tmp_direct.path());
         let mut direct_config = Config::default();
         direct_config.config_path = tmp_direct.path().join("config.toml");
         direct_config.workspace_dir = tmp_direct.path().join("workspace");
@@ -572,9 +580,5 @@ mod tests {
             !direct_msg.contains("no backend session"),
             "direct-mode tool must not surface backend-session artifacts: {direct_msg}"
         );
-
-        unsafe {
-            std::env::remove_var("OPENHUMAN_WORKSPACE");
-        }
     }
 }
