@@ -34,6 +34,12 @@ impl Tool for GmailUnsubscribeTool {
         ToolCategory::Skill
     }
 
+    fn external_effect(&self) -> bool {
+        // Unsubscribe fires an outbound HTTP / mailto request the
+        // recipient can see. Issue #1339 — route through gate.
+        true
+    }
+
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
         let sender = args
             .get("sender")

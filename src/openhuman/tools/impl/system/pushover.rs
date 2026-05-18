@@ -111,6 +111,12 @@ impl Tool for PushoverTool {
         })
     }
 
+    fn external_effect(&self) -> bool {
+        // Push notifications cross the Pushover network into the
+        // user's device — outbound side effect, gated per #1339.
+        true
+    }
+
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
         if !self.security.can_act() {
             return Ok(ToolResult::error("Action blocked: autonomy is read-only"));

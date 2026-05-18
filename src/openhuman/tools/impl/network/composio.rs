@@ -554,6 +554,23 @@ impl Tool for ComposioTool {
         ToolCategory::Skill
     }
 
+    fn external_effect(&self) -> bool {
+        // Composio fans out to outbound SaaS writes (Slack post,
+        // Gmail send, calendar create, …). Issue #1339 requires
+        // explicit user approval before any of those fire. The
+        // `action=="list"` / `action=="connect"` branches are
+        // read-only and harmless — we still surface them in the
+        // gate because the trait signature carries no args; the
+        // session-allowlist short-circuit means the second `list`
+        // call is free once the user accepts the first prompt for
+        // the tool.
+        //
+        // Follow-up #1339-v2: when Composio's write-action metadata
+        // is mapped per-slug, switch this to args-aware gating so
+        // pure reads bypass the prompt entirely.
+        true
+    }
+
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
         let action = args
             .get("action")
