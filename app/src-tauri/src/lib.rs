@@ -1622,7 +1622,79 @@ fn append_platform_cef_gpu_workarounds(args: &mut Vec<CefCommandLineArg>, os: &s
     }
 }
 
+/// Linux only: replace Xlib's default error handler with a logging no-op.
+///
+/// Why: on Wayland sessions (GNOME/KDE/Hyprland) running CEF via XWayland,
+/// the CEF browser process issues `XConfigureWindow` against a window the
+/// XWayland server hasn't fully realized yet, and Xlib's *default* error
+/// handler reacts to the resulting `BadWindow` by calling `exit(1)` — which
+/// kills the entire app before the main window ever paints. This reproduces
+/// reliably on Ubuntu 26.04 + GNOME-Wayland with the locally-built AppImage
+/// (issue #2001 item #2 — was punted as "separate display-side concerns"
+/// in PR #2032 but blocks any actual use of the app on a Wayland host).
+///
+/// XSetErrorHandler is a process-global registration; safe to install before
+/// any X display is opened. libX11 is already a runtime dep (verified via
+/// ldd of the compiled OpenHuman binary).
+#[cfg(target_os = "linux")]
+fn install_silent_x_error_handler() {
+    use std::ffi::c_void;
+    use std::os::raw::{c_int, c_uchar, c_ulong};
+    use std::sync::Once;
+
+    #[repr(C)]
+    struct XErrorEvent {
+        type_: c_int,
+        display: *mut c_void,
+        resourceid: c_ulong,
+        serial: c_ulong,
+        error_code: c_uchar,
+        request_code: c_uchar,
+        minor_code: c_uchar,
+    }
+
+    type ErrorHandler = unsafe extern "C" fn(*mut c_void, *mut XErrorEvent) -> c_int;
+    unsafe extern "C" {
+        fn XSetErrorHandler(handler: Option<ErrorHandler>) -> Option<ErrorHandler>;
+    }
+
+    unsafe extern "C" fn silent_handler(_display: *mut c_void, ev: *mut XErrorEvent) -> c_int {
+        if !ev.is_null() {
+            let e = unsafe { &*ev };
+            log::warn!(
+                "[x11] suppressed X protocol error: code={} request={} minor={} resource=0x{:x} serial={}",
+                e.error_code,
+                e.request_code,
+                e.minor_code,
+                e.resourceid,
+                e.serial
+            );
+        } else {
+            log::warn!("[x11] suppressed X protocol error (null event)");
+        }
+        0
+    }
+
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        unsafe {
+            XSetErrorHandler(Some(silent_handler));
+        }
+        log::info!(
+            "[x11] installed silent X error handler to prevent BadWindow exits on Wayland-XWayland (issue #2001 item #2)"
+        );
+    });
+}
+
+#[cfg(not(target_os = "linux"))]
+fn install_silent_x_error_handler() {}
+
 pub fn run() {
+    // Must run before any GTK/CEF code that could trigger X calls — otherwise
+    // Xlib's default handler calls exit(1) on the first BadWindow and we never
+    // reach this line. See helper doc above for the full reasoning.
+    install_silent_x_error_handler();
+
     // ── Install a custom tokio runtime for tauri::async_runtime ─────────
     //
     // Tauri's default async runtime uses tokio multi-thread workers with
