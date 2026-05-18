@@ -210,6 +210,21 @@ pub trait Tool: Send + Sync {
         false
     }
 
+    /// Args-aware version of [`Self::external_effect`]. Tools whose
+    /// classification depends on the call arguments (e.g. the
+    /// `composio` tool gates `action="execute"` but lets
+    /// `action="list"` / `action="connect"` flow through unprompted)
+    /// override this method to peek at `args`.
+    ///
+    /// The harness calls this method (not the arg-less variant) at
+    /// the gate-decision point, so most tools that need per-call
+    /// gating should override here rather than [`Self::external_effect`].
+    /// Default: defer to the arg-less classification so existing
+    /// overrides keep working without changes.
+    fn external_effect_with_args(&self, _args: &serde_json::Value) -> bool {
+        self.external_effect()
+    }
+
     /// Per-tool cap on the character length of the result body sent
     /// back to the model.
     ///

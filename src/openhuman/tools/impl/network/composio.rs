@@ -555,20 +555,26 @@ impl Tool for ComposioTool {
     }
 
     fn external_effect(&self) -> bool {
-        // Composio fans out to outbound SaaS writes (Slack post,
-        // Gmail send, calendar create, …). Issue #1339 requires
-        // explicit user approval before any of those fire. The
-        // `action=="list"` / `action=="connect"` branches are
-        // read-only and harmless — we still surface them in the
-        // gate because the trait signature carries no args; the
-        // session-allowlist short-circuit means the second `list`
-        // call is free once the user accepts the first prompt for
-        // the tool.
-        //
-        // Follow-up #1339-v2: when Composio's write-action metadata
-        // is mapped per-slug, switch this to args-aware gating so
-        // pure reads bypass the prompt entirely.
+        // Conservative default for the arg-less path: assume any
+        // composio call is a write so callers that don't reach the
+        // args-aware override still get gated. The harness uses
+        // `external_effect_with_args` (below) which inspects
+        // `action` and lets read-only branches through.
         true
+    }
+
+    fn external_effect_with_args(&self, args: &serde_json::Value) -> bool {
+        // `action="list"` enumerates available Composio actions —
+        // a read-only catalog call. `action="connect"` only returns
+        // an OAuth URL the user then visits manually; the
+        // subsequent OAuth handoff is its own consent flow so the
+        // tool call itself has no outbound side effect to gate.
+        // `action="execute"` (or anything unknown / missing) is the
+        // write path and routes through the approval gate.
+        match args.get("action").and_then(|v| v.as_str()) {
+            Some("list") | Some("connect") => false,
+            _ => true,
+        }
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {

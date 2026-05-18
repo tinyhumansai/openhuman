@@ -652,7 +652,7 @@ pub(crate) async fn run_tool_call_loop(
             // is `None` when supervised mode is disabled or in test
             // envs — behavior matches the pre-#1339 path.
             if let Some(tool) = tool_opt {
-                if tool.external_effect() {
+                if tool.external_effect_with_args(&call.arguments) {
                     if let Some(gate) = crate::openhuman::approval::ApprovalGate::try_global() {
                         let summary = crate::openhuman::approval::summarize_action(
                             &call.name,
