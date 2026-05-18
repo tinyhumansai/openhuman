@@ -86,6 +86,7 @@ impl AgentBuilder {
             omit_profile: None,
             omit_memory_md: None,
             payload_summarizer: None,
+            tool_policy: None,
         }
     }
 
@@ -313,6 +314,18 @@ impl AgentBuilder {
         self
     }
 
+    /// Installs pre-execution policy middleware for tool calls.
+    ///
+    /// The default policy allows all calls. Custom policies can deny a call
+    /// before `Tool::execute_with_options` runs.
+    pub fn tool_policy(
+        mut self,
+        policy: Arc<dyn crate::openhuman::agent::tool_policy::ToolPolicy>,
+    ) -> Self {
+        self.tool_policy = Some(policy);
+        self
+    }
+
     /// Validates the configuration and constructs a new `Agent` instance.
     ///
     /// This method is responsible for wiring together the provided components,
@@ -461,6 +474,9 @@ impl AgentBuilder {
             omit_profile: self.omit_profile.unwrap_or(true),
             omit_memory_md: self.omit_memory_md.unwrap_or(true),
             payload_summarizer: self.payload_summarizer,
+            tool_policy: self.tool_policy.unwrap_or_else(|| {
+                Arc::new(crate::openhuman::agent::tool_policy::AllowAllToolPolicy)
+            }),
             last_seen_integrations_hash: 0,
             synthesized_tool_names: std::collections::HashSet::new(),
         })

@@ -10,6 +10,7 @@ use crate::openhuman::agent::dispatcher::ToolDispatcher;
 use crate::openhuman::agent::hooks::PostTurnHook;
 use crate::openhuman::agent::memory_loader::MemoryLoader;
 use crate::openhuman::agent::progress::AgentProgress;
+use crate::openhuman::agent::tool_policy::ToolPolicy;
 use crate::openhuman::context::prompt::SystemPromptBuilder;
 use crate::openhuman::context::ContextManager;
 use crate::openhuman::inference::provider::{ChatMessage, ConversationMessage, Provider};
@@ -148,6 +149,10 @@ pub struct Agent {
     /// summarizer sub-agent before they enter agent history.
     pub(super) payload_summarizer:
         Option<Arc<dyn crate::openhuman::agent::harness::payload_summarizer::PayloadSummarizer>>,
+    /// Pre-execution policy hook for tool calls in this session. The
+    /// default policy allows all calls so existing agents keep their
+    /// behaviour unless a caller opts into stricter policy.
+    pub(super) tool_policy: Arc<dyn ToolPolicy>,
     /// Hash of the Composio connection set this Agent last reconciled
     /// against. Compared at top-of-turn to a fresh hash computed from
     /// [`crate::openhuman::composio::cached_active_integrations`]; on
@@ -220,6 +225,8 @@ pub struct AgentBuilder {
     /// to a `SubagentPayloadSummarizer` instance.
     pub(super) payload_summarizer:
         Option<Arc<dyn crate::openhuman::agent::harness::payload_summarizer::PayloadSummarizer>>,
+    /// Optional pre-execution tool policy. Defaults to allow-all.
+    pub(super) tool_policy: Option<Arc<dyn ToolPolicy>>,
 }
 
 impl Default for AgentBuilder {
