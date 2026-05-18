@@ -1429,7 +1429,7 @@ async fn run_inner_loop(
                 // ── External-effect approval gate (#1339) ─────
                 // Subagents share the same gate as the parent loop;
                 // see `tool_loop.rs` for the rationale.
-                let gate_denial: Option<String> = if tool.external_effect() {
+                let gate_denial: Option<String> = if tool.external_effect_with_args(&args) {
                     if let Some(gate) = crate::openhuman::approval::ApprovalGate::try_global() {
                         let summary =
                             crate::openhuman::approval::summarize_action(&call.name, &args);
@@ -1453,7 +1453,12 @@ async fn run_inner_loop(
                 };
 
                 if let Some(reason) = gate_denial {
-                    reason
+                    // Prefix as Error so the downstream `call_success`
+                    // computation (`!result_text.starts_with("Error")`)
+                    // marks the denial as a failed tool call in
+                    // progress events and tool_result blocks.
+                    // (CodeRabbit review on PR #2149.)
+                    format!("Error: {reason}")
                 } else {
                     match tokio::time::timeout(timeout, tool.execute(args)).await {
                         Ok(Ok(result)) => {
