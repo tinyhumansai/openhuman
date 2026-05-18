@@ -22,8 +22,8 @@ class MockEventSource {
 // `vi.mock` calls are hoisted above all `const` declarations, so any
 // references the factory closures over must live inside `vi.hoisted` too.
 const { mockGetCoreRpcToken, mockGetCoreHttpBaseUrl, sessionTokenRef } = vi.hoisted(() => ({
-  mockGetCoreRpcToken: vi.fn<[], Promise<string | null>>(),
-  mockGetCoreHttpBaseUrl: vi.fn<[], Promise<string>>(),
+  mockGetCoreRpcToken: vi.fn<() => Promise<string | null>>(),
+  mockGetCoreHttpBaseUrl: vi.fn<() => Promise<string>>(),
   sessionTokenRef: { current: 'session-1' as string | null },
 }));
 
