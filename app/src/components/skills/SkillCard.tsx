@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 
+import { useT } from '../../lib/i18n/I18nContext';
+
 export interface UnifiedSkillCardProps {
   icon: ReactNode;
   title: string;
@@ -49,6 +51,7 @@ export function UnifiedSkillCard({
   syncSummaryText,
   ctaDisabled,
 }: UnifiedSkillCardProps) {
+  const { t } = useT();
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -121,7 +124,7 @@ export function UnifiedSkillCard({
                 setMenuOpen(prev => !prev);
               }}
               className="flex h-7 w-7 items-center justify-center rounded-lg text-stone-400 transition-colors hover:bg-stone-100 hover:text-stone-700"
-              title="More actions">
+              title={t('skills.card.moreActions')}>
               <svg className="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 24 24">
                 <circle cx="5" cy="12" r="2" />
                 <circle cx="12" cy="12" r="2" />

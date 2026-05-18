@@ -895,6 +895,99 @@ fn ensure_test_rpc_auth() {
 }
 
 #[tokio::test]
+async fn json_rpc_tool_registry_lists_and_gets_entries() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{rpc_addr}");
+
+    let list = post_json_rpc(&rpc_base, 1848_1, "openhuman.tool_registry_list", json!({})).await;
+    let list_result = assert_no_jsonrpc_error(&list, "tool_registry_list");
+    let tools = list_result
+        .get("tools")
+        .and_then(Value::as_array)
+        .expect("tool registry list should return tools array");
+
+    let memory_search = tools
+        .iter()
+        .find(|tool| tool.get("tool_id").and_then(Value::as_str) == Some("memory.search"))
+        .expect("registry should include memory.search");
+    assert_eq!(
+        memory_search.get("transport").and_then(Value::as_str),
+        Some("mcp_stdio")
+    );
+    assert_eq!(
+        memory_search
+            .get("route")
+            .and_then(|route| route.get("method"))
+            .and_then(Value::as_str),
+        Some("tools/call")
+    );
+    assert!(memory_search.get("input_schema").is_some());
+    assert!(memory_search.get("output_schema").is_some());
+
+    let controller_tool = tools
+        .iter()
+        .find(|tool| tool.get("tool_id").and_then(Value::as_str) == Some("tools.web_search"))
+        .expect("registry should include tools.web_search");
+    assert_eq!(
+        controller_tool.get("transport").and_then(Value::as_str),
+        Some("json_rpc")
+    );
+    assert_eq!(
+        controller_tool
+            .get("route")
+            .and_then(|route| route.get("method"))
+            .and_then(Value::as_str),
+        Some("openhuman.tools_web_search")
+    );
+    assert_eq!(
+        controller_tool.get("health").and_then(Value::as_str),
+        Some("available")
+    );
+
+    let get = post_json_rpc(
+        &rpc_base,
+        1848_2,
+        "openhuman.tool_registry_get",
+        json!({ "tool_id": "tools.web_search" }),
+    )
+    .await;
+    let get_result = assert_no_jsonrpc_error(&get, "tool_registry_get");
+    assert_eq!(
+        get_result.get("tool_id").and_then(Value::as_str),
+        Some("tools.web_search")
+    );
+    assert_eq!(
+        get_result
+            .get("input_schema")
+            .and_then(|schema| schema.get("properties"))
+            .and_then(|properties| properties.get("query"))
+            .and_then(|query| query.get("type"))
+            .and_then(Value::as_str),
+        Some("string")
+    );
+
+    let missing = post_json_rpc(
+        &rpc_base,
+        1848_3,
+        "openhuman.tool_registry_get",
+        json!({ "tool_id": "missing.tool" }),
+    )
+    .await;
+    let missing_error = assert_jsonrpc_error(&missing, "tool_registry_get missing");
+    assert!(
+        missing_error
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .contains("tool not found"),
+        "unexpected missing-tool error: {missing_error}"
+    );
+
+    rpc_join.abort();
+}
+
+#[tokio::test]
 async fn json_rpc_protocol_auth_and_agent_hello() {
     let _env_lock = json_rpc_e2e_env_lock();
     let tmp = tempdir().expect("tempdir");

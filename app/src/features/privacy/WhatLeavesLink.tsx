@@ -1,5 +1,6 @@
 import { useState } from 'react';
 
+import { useT } from '../../lib/i18n/I18nContext';
 import WhatLeavesMyComputerSheet from './WhatLeavesMyComputerSheet';
 
 export interface WhatLeavesLinkProps {
@@ -12,7 +13,9 @@ export interface WhatLeavesLinkProps {
  * cause a network call (model download, skill connect, provider selection).
  * Invisible when not needed, one click away when it is.
  */
-const WhatLeavesLink = ({ label = 'What leaves my computer?', className }: WhatLeavesLinkProps) => {
+const WhatLeavesLink = ({ label, className }: WhatLeavesLinkProps) => {
+  const { t } = useT();
+  const resolvedLabel = label ?? t('privacy.whatLeaves.link.label');
   const [open, setOpen] = useState(false);
   const base =
     'text-sm text-neutral-500 underline underline-offset-2 hover:text-neutral-700 ' +
@@ -24,7 +27,7 @@ const WhatLeavesLink = ({ label = 'What leaves my computer?', className }: WhatL
         type="button"
         className={[base, className ?? ''].filter(Boolean).join(' ')}
         onClick={() => setOpen(true)}>
-        {label}
+        {resolvedLabel}
       </button>
       <WhatLeavesMyComputerSheet open={open} onClose={() => setOpen(false)} />
     </>

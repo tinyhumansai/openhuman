@@ -30,6 +30,20 @@ if [[ "$missing_platform_rc" -ne 3 ]]; then
   exit 1
 fi
 
+set +e
+missing_channel_output=$(bash "$REPO_ROOT/scripts/install.sh" --channel 2>&1)
+missing_channel_rc=$?
+set -e
+if [[ "$missing_channel_rc" -eq 0 ]]; then
+  echo "FAIL: install.sh --channel should fail when the value is missing"
+  exit 1
+fi
+if [[ "$missing_channel_output" != *"Missing value for --channel"* ]]; then
+  echo "FAIL: install.sh --channel should explain that the value is missing"
+  echo "$missing_channel_output"
+  exit 1
+fi
+
 assert_retry_shape() {
   local calls="$1" label="$2"
   local _ first second extra

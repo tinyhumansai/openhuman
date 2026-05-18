@@ -1,3 +1,4 @@
+import { useT } from '../../lib/i18n/I18nContext';
 import type { ChannelDefinition } from '../../types/channels';
 import ChannelStatusBadge from './ChannelStatusBadge';
 
@@ -6,6 +7,7 @@ interface WebChannelConfigProps {
 }
 
 const WebChannelConfig = ({ definition: _definition }: WebChannelConfigProps) => {
+  const { t } = useT();
   return (
     <div className="space-y-3">
       <div className="flex items-start justify-between">
@@ -13,9 +15,7 @@ const WebChannelConfig = ({ definition: _definition }: WebChannelConfigProps) =>
           <ChannelStatusBadge status="connected" />
         </div>
       </div>
-      <p className="text-sm text-stone-500">
-        The web channel is always available — no setup required.
-      </p>
+      <p className="text-sm text-stone-500">{t('channels.web.alwaysAvailable')}</p>
     </div>
   );
 };

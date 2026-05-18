@@ -8,6 +8,7 @@ import {
 } from '../../lib/composio/composioApi';
 import { formatTriggerLabel } from '../../lib/composio/formatters';
 import type { ComposioActiveTrigger, ComposioAvailableTrigger } from '../../lib/composio/types';
+import { useT } from '../../lib/i18n/I18nContext';
 
 /**
  * Stable signature for matching an `AvailableTrigger` to an
@@ -47,6 +48,7 @@ export default function TriggerToggles({
   toolkitName,
   connectionId,
 }: TriggerTogglesProps) {
+  const { t } = useT();
   const [available, setAvailable] = useState<ComposioAvailableTrigger[] | null>(null);
   const [activeBySignature, setActiveBySignature] = useState<Map<string, ComposioActiveTrigger>>(
     new Map()
@@ -78,7 +80,7 @@ export default function TriggerToggles({
       } catch (err) {
         if (cancelled) return;
         const msg = err instanceof Error ? err.message : String(err);
-        setLoadError(`Couldn't load triggers: ${msg}`);
+        setLoadError(`${t('composio.triggers.loadError')}: ${msg}`);
       }
     })();
     return () => {
@@ -123,9 +125,8 @@ export default function TriggerToggles({
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        setRowError(
-          `${existing ? 'Disable' : 'Enable'} failed for ${formatTriggerLabel(entry.slug)}: ${msg}`
-        );
+        const actionWord = existing ? t('common.disable') : t('common.enable');
+        setRowError(`${actionWord} failed for ${formatTriggerLabel(entry.slug)}: ${msg}`);
       } finally {
         setPendingSignature(null);
       }
@@ -144,8 +145,10 @@ export default function TriggerToggles({
   if (available === null) {
     return (
       <div className="border-t border-stone-100 pt-3 mt-1">
-        <h3 className="text-xs font-semibold text-stone-700 uppercase tracking-wide">Triggers</h3>
-        <p className="mt-1 text-[11px] text-stone-400">Loading…</p>
+        <h3 className="text-xs font-semibold text-stone-700 uppercase tracking-wide">
+          {t('composio.triggers.heading')}
+        </h3>
+        <p className="mt-1 text-[11px] text-stone-400">{t('composio.triggers.loading')}</p>
       </div>
     );
   }
@@ -153,9 +156,11 @@ export default function TriggerToggles({
   if (available.length === 0) {
     return (
       <div className="border-t border-stone-100 pt-3 mt-1">
-        <h3 className="text-xs font-semibold text-stone-700 uppercase tracking-wide">Triggers</h3>
+        <h3 className="text-xs font-semibold text-stone-700 uppercase tracking-wide">
+          {t('composio.triggers.heading')}
+        </h3>
         <p className="mt-1 text-[11px] text-stone-400">
-          No triggers are currently available for {toolkitName}.
+          {`${t('composio.triggers.noneAvailable')} ${toolkitName}.`}
         </p>
       </div>
     );
@@ -164,8 +169,10 @@ export default function TriggerToggles({
   return (
     <div className="border-t border-stone-100 pt-3 mt-1 space-y-2" data-testid="trigger-toggles">
       <div className="flex items-baseline justify-between">
-        <h3 className="text-xs font-semibold text-stone-700 uppercase tracking-wide">Triggers</h3>
-        <p className="text-[10px] text-stone-400">Listen for events from {toolkitName}</p>
+        <h3 className="text-xs font-semibold text-stone-700 uppercase tracking-wide">
+          {t('composio.triggers.heading')}
+        </h3>
+        <p className="text-[10px] text-stone-400">{`${t('composio.triggers.listenFrom')} ${toolkitName}`}</p>
       </div>
       <ul className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
         {available.map(entry => {
@@ -185,9 +192,9 @@ export default function TriggerToggles({
             entry.scope === 'github_repo'
               ? formatTriggerLabel(entry.slug)
               : requiresConfig
-                ? 'Needs configuration'
+                ? t('composio.triggers.needsConfiguration')
                 : '';
-          const action = enabled ? 'Disable' : 'Enable';
+          const action = enabled ? t('common.disable') : t('common.enable');
           const triggerName = formatTriggerLabel(entry.slug);
           const ariaLabel =
             entry.scope === 'github_repo' && entry.repo

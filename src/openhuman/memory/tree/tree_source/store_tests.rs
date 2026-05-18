@@ -103,6 +103,50 @@ fn summary_insert_is_idempotent_on_id() {
 }
 
 #[test]
+fn summary_embeddings_are_scoped_by_model_signature() {
+    let (_tmp, cfg) = test_config();
+    insert_tree(&cfg, &sample_tree("tree-1", "slack:#eng")).unwrap();
+    let node = sample_summary("sum-embed", "tree-1", 1);
+    with_connection(&cfg, |conn| {
+        let tx = conn.unchecked_transaction()?;
+        insert_summary_tx(&tx, &node, None)?;
+        tx.commit()?;
+        Ok(())
+    })
+    .unwrap();
+
+    set_summary_embedding_for_signature(
+        &cfg,
+        "sum-embed",
+        "openai/text-embedding-3-small@1536",
+        &[0.1, 0.2],
+    )
+    .unwrap();
+    set_summary_embedding_for_signature(&cfg, "sum-embed", "local/bge-small@384", &[0.3, 0.4, 0.5])
+        .unwrap();
+
+    assert_eq!(
+        get_summary_embedding_for_signature(
+            &cfg,
+            "sum-embed",
+            "openai/text-embedding-3-small@1536",
+        )
+        .unwrap(),
+        Some(vec![0.1, 0.2])
+    );
+    assert_eq!(
+        get_summary_embedding_for_signature(&cfg, "sum-embed", "local/bge-small@384").unwrap(),
+        Some(vec![0.3, 0.4, 0.5])
+    );
+    assert!(
+        get_summary_embedding_for_signature(&cfg, "sum-embed", "missing/model@1")
+            .unwrap()
+            .is_none()
+    );
+    assert!(get_summary_embedding(&cfg, "sum-embed").unwrap().is_none());
+}
+
+#[test]
 fn buffer_upsert_and_clear() {
     let (_tmp, cfg) = test_config();
     insert_tree(&cfg, &sample_tree("tree-1", "slack:#eng")).unwrap();

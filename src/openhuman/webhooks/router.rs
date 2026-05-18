@@ -10,7 +10,8 @@ use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
-use std::sync::RwLock;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::broadcast;
 
@@ -38,6 +39,9 @@ pub struct WebhookRouter {
     debug_logs: RwLock<VecDeque<WebhookDebugLogEntry>>,
     /// Path to the persistence file (e.g. `~/.openhuman/webhook_routes.json`).
     persist_path: Option<PathBuf>,
+    /// Monotonic generation counter — stale writes are dropped when a newer
+    /// snapshot has already been queued.
+    persist_generation: Arc<AtomicU64>,
 }
 
 impl WebhookRouter {
@@ -84,6 +88,7 @@ impl WebhookRouter {
             routes: RwLock::new(routes),
             debug_logs: RwLock::new(VecDeque::new()),
             persist_path,
+            persist_generation: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -481,6 +486,10 @@ impl WebhookRouter {
     }
 
     /// Persist current routes to disk.
+    ///
+    /// When called from an async context, file I/O is offloaded to a blocking
+    /// thread via [`tokio::task::spawn_blocking`] so the tokio worker is never
+    /// stalled. Falls back to inline I/O when no runtime is available (e.g. tests).
     fn persist(&self) {
         let Some(ref path) = self.persist_path else {
             return;
@@ -497,19 +506,38 @@ impl WebhookRouter {
             }
         };
 
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
+        // Bump generation — any previously spawned write with a lower generation
+        // will detect it is stale and skip the disk write.
+        let gen = self.persist_generation.fetch_add(1, Ordering::SeqCst) + 1;
+        let gen_ref = Arc::clone(&self.persist_generation);
 
-        match serde_json::to_string_pretty(&persisted) {
-            Ok(json) => {
-                if let Err(e) = std::fs::write(path, json) {
-                    warn!("[webhooks] Failed to persist routes to {:?}: {}", path, e);
+        let path = path.clone();
+        let do_write = move || {
+            // Drop stale writes: a newer persist() was already queued.
+            if gen_ref.load(Ordering::SeqCst) != gen {
+                return;
+            }
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            match serde_json::to_string_pretty(&persisted) {
+                Ok(json) => {
+                    if let Err(e) = std::fs::write(&path, json) {
+                        warn!("[webhooks] Failed to persist routes to {:?}: {}", path, e);
+                    }
+                }
+                Err(e) => {
+                    warn!("[webhooks] Failed to serialize routes: {}", e);
                 }
             }
-            Err(e) => {
-                warn!("[webhooks] Failed to serialize routes: {}", e);
-            }
+        };
+
+        // Offload to a blocking thread when inside a tokio runtime;
+        // otherwise execute inline (sync tests, CLI one-shots).
+        if tokio::runtime::Handle::try_current().is_ok() {
+            tokio::task::spawn_blocking(do_write);
+        } else {
+            do_write();
         }
     }
 

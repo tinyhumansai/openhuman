@@ -381,6 +381,34 @@ describe('CoreStateProvider — identity-change cache clearing', () => {
     expect(vi.mocked(tauriCommands.logout)).toHaveBeenCalledTimes(1);
   });
 
+  it('ignores forged session-token-updated events that do not match the core snapshot (#1937)', async () => {
+    fetchSnapshot.mockResolvedValue(makeSnapshot({ userId: 'u1', sessionToken: 'tok1' }));
+    listTeams.mockResolvedValue([]);
+
+    render(
+      <CoreStateProvider>
+        <Consumer />
+      </CoreStateProvider>
+    );
+
+    await waitFor(() => expect(screen.getByTestId('token').textContent).toBe('tok1'));
+
+    // Keep the follow-up refresh pending so this assertion observes the
+    // event handler itself. A forged event must not be able to replace the
+    // in-memory auth token before refreshCore re-pulls authoritative state.
+    fetchSnapshot.mockImplementation(() => new Promise(() => {}) as never);
+
+    await act(async () => {
+      window.dispatchEvent(
+        new CustomEvent('core-state:session-token-updated', {
+          detail: { sessionToken: 'attacker-controlled-token' },
+        })
+      );
+    });
+
+    expect(screen.getByTestId('token').textContent).toBe('tok1');
+  });
+
   it('setMeetAutoOrchestratorHandoff swallows refresh errors after the RPC succeeds (#1299)', async () => {
     fetchSnapshot.mockResolvedValueOnce(makeSnapshot({ userId: 'u1', sessionToken: 'tok1' }));
     listTeams.mockResolvedValue([]);

@@ -1,3 +1,4 @@
+import { useT } from '../../../../lib/i18n/I18nContext';
 import { statusLabel } from '../../../../utils/localAiHelpers';
 import type {
   LocalAiAssetsStatus,
@@ -101,13 +102,16 @@ const ModelDownloadSection = ({
   onSetTtsOutputPath,
   onRunTtsTest,
 }: ModelDownloadSectionProps) => {
+  const { t } = useT();
   return (
     <>
       <section className="space-y-3">
-        <h3 className="text-sm font-semibold text-stone-900">Capability Assets</h3>
+        <h3 className="text-sm font-semibold text-stone-900">
+          {t('settings.localModel.download.capabilityAssets')}
+        </h3>
         <div className="bg-stone-50 rounded-lg border border-stone-200 p-4 space-y-3">
           <div className="text-xs text-stone-500">
-            Quantization preference: {assets?.quantization ?? 'q4'}
+            {t('settings.localModel.download.quantizationPref')} {assets?.quantization ?? 'q4'}
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
             {[
@@ -128,14 +132,16 @@ const ModelDownloadSection = ({
                 )}
                 {item?.provider === 'ollama' || item?.provider === 'lm_studio' ? (
                   <div className="mt-2 text-[10px] text-stone-500">
-                    Manage this model in your external runtime.
+                    {t('settings.localModel.download.manageExternal')}
                   </div>
                 ) : (
                   <button
                     onClick={() => onTriggerAssetDownload(key)}
                     disabled={!runtimeEnabled || assetDownloadBusy[key]}
                     className="mt-2 px-2 py-1 text-[10px] rounded border border-stone-200 hover:border-stone-300 disabled:opacity-60 text-stone-600">
-                    {assetDownloadBusy[key] ? 'Downloading...' : 'Download'}
+                    {assetDownloadBusy[key]
+                      ? t('settings.localModel.download.downloading')
+                      : t('common.download')}
                   </button>
                 )}
               </div>
@@ -145,12 +151,14 @@ const ModelDownloadSection = ({
       </section>
 
       <section className="space-y-3">
-        <h3 className="text-sm font-semibold text-stone-900">Test Summarization</h3>
+        <h3 className="text-sm font-semibold text-stone-900">
+          {t('settings.localModel.download.testSummarization')}
+        </h3>
         <div className="bg-stone-50 rounded-lg border border-stone-200 p-4 space-y-3">
           <textarea
             value={summaryInput}
             onChange={e => onSetSummaryInput(e.target.value)}
-            placeholder="Paste text to summarize with the local model..."
+            placeholder={t('settings.localModel.download.summarizePlaceholder')}
             className="w-full min-h-28 rounded-md bg-white border border-stone-200 px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 focus:outline-none focus:ring-1 focus:ring-primary-500"
           />
           <div className="flex items-center justify-between">
@@ -161,7 +169,9 @@ const ModelDownloadSection = ({
               onClick={onRunSummaryTest}
               disabled={!runtimeEnabled || isSummaryLoading || !summaryInput.trim()}
               className="px-3 py-1.5 text-xs rounded-md bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white">
-              {isSummaryLoading ? 'Running...' : 'Run Summary Test'}
+              {isSummaryLoading
+                ? t('settings.localModel.download.running')
+                : t('settings.localModel.download.runSummaryTest')}
             </button>
           </div>
           {summaryOutput && (
@@ -173,12 +183,14 @@ const ModelDownloadSection = ({
       </section>
 
       <section className="space-y-3">
-        <h3 className="text-sm font-semibold text-stone-900">Test Custom Prompt</h3>
+        <h3 className="text-sm font-semibold text-stone-900">
+          {t('settings.localModel.download.testCustomPrompt')}
+        </h3>
         <div className="bg-stone-50 rounded-lg border border-stone-200 p-4 space-y-3">
           <textarea
             value={promptInput}
             onChange={e => onSetPromptInput(e.target.value)}
-            placeholder="Type any prompt and run it against the local model..."
+            placeholder={t('settings.localModel.download.promptPlaceholder')}
             className="w-full min-h-28 rounded-md bg-white border border-stone-200 px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 focus:outline-none focus:ring-1 focus:ring-primary-500"
           />
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -189,19 +201,21 @@ const ModelDownloadSection = ({
                 onChange={e => onSetPromptNoThink(e.target.checked)}
                 className="h-3.5 w-3.5 rounded border-stone-300 bg-white text-primary-500 focus:ring-primary-500"
               />
-              No-think mode
+              {t('settings.localModel.download.noThinkMode')}
             </label>
             <button
               onClick={onRunPromptTest}
               disabled={!runtimeEnabled || isPromptLoading || !promptInput.trim()}
               className="px-3 py-1.5 text-xs rounded-md bg-primary-600 hover:bg-primary-700 disabled:opacity-60 text-white">
-              {isPromptLoading ? 'Running...' : 'Run Prompt Test'}
+              {isPromptLoading
+                ? t('settings.localModel.download.running')
+                : t('settings.localModel.download.runPromptTest')}
             </button>
           </div>
           {isPromptLoading && (
             <div className="flex items-center gap-2 text-xs text-primary-600">
               <div className="h-3 w-3 rounded-full border-2 border-blue-400 border-t-transparent animate-spin" />
-              Running prompt against local model...
+              {t('settings.localModel.download.runningPrompt')}
             </div>
           )}
           {promptError && (
@@ -218,18 +232,20 @@ const ModelDownloadSection = ({
       </section>
 
       <section className="space-y-3">
-        <h3 className="text-sm font-semibold text-stone-900">Test Vision Prompt</h3>
+        <h3 className="text-sm font-semibold text-stone-900">
+          {t('settings.localModel.download.testVisionPrompt')}
+        </h3>
         <div className="bg-stone-50 rounded-lg border border-stone-200 p-4 space-y-3">
           <textarea
             value={visionPromptInput}
             onChange={e => onSetVisionPromptInput(e.target.value)}
-            placeholder="Enter a prompt for the vision model..."
+            placeholder={t('settings.localModel.download.visionPromptPlaceholder')}
             className="w-full min-h-20 rounded-md bg-white border border-stone-200 px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 focus:outline-none focus:ring-1 focus:ring-primary-400"
           />
           <textarea
             value={visionImageInput}
             onChange={e => onSetVisionImageInput(e.target.value)}
-            placeholder="One image reference per line (data URI, URL, or local path marker)"
+            placeholder={t('settings.localModel.download.visionImagePlaceholder')}
             className="w-full min-h-20 rounded-md bg-white border border-stone-200 px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 focus:outline-none focus:ring-1 focus:ring-primary-400"
           />
           <button
@@ -241,7 +257,9 @@ const ModelDownloadSection = ({
               !visionImageInput.trim()
             }
             className="px-3 py-1.5 text-xs rounded-md bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white">
-            {isVisionLoading ? 'Running...' : 'Run Vision Test'}
+            {isVisionLoading
+              ? t('settings.localModel.download.running')
+              : t('settings.localModel.download.runVisionTest')}
           </button>
           {visionOutput && (
             <pre className="whitespace-pre-wrap rounded-md bg-stone-50 border border-stone-200 p-3 text-xs text-stone-700">
@@ -252,19 +270,23 @@ const ModelDownloadSection = ({
       </section>
 
       <section className="space-y-3">
-        <h3 className="text-sm font-semibold text-stone-900">Test Embeddings</h3>
+        <h3 className="text-sm font-semibold text-stone-900">
+          {t('settings.localModel.download.testEmbeddings')}
+        </h3>
         <div className="bg-stone-50 rounded-lg border border-stone-200 p-4 space-y-3">
           <textarea
             value={embeddingInput}
             onChange={e => onSetEmbeddingInput(e.target.value)}
-            placeholder="One input string per line..."
+            placeholder={t('settings.localModel.download.embeddingPlaceholder')}
             className="w-full min-h-20 rounded-md bg-white border border-stone-200 px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 focus:outline-none focus:ring-1 focus:ring-primary-400"
           />
           <button
             onClick={onRunEmbeddingTest}
             disabled={!runtimeEnabled || isEmbeddingLoading || !embeddingInput.trim()}
             className="px-3 py-1.5 text-xs rounded-md bg-teal-600 hover:bg-teal-700 disabled:opacity-60 text-white">
-            {isEmbeddingLoading ? 'Running...' : 'Run Embedding Test'}
+            {isEmbeddingLoading
+              ? t('settings.localModel.download.running')
+              : t('settings.localModel.download.runEmbeddingTest')}
           </button>
           {embeddingOutput && (
             <div className="rounded-md bg-stone-50 border border-stone-200 p-3 text-xs text-stone-700 space-y-1">
@@ -277,19 +299,23 @@ const ModelDownloadSection = ({
       </section>
 
       <section className="space-y-3">
-        <h3 className="text-sm font-semibold text-stone-900">Test Voice Input (STT)</h3>
+        <h3 className="text-sm font-semibold text-stone-900">
+          {t('settings.localModel.download.testVoiceInput')}
+        </h3>
         <div className="bg-stone-50 rounded-lg border border-stone-200 p-4 space-y-3">
           <input
             value={audioPathInput}
             onChange={e => onSetAudioPathInput(e.target.value)}
-            placeholder="Absolute path to audio file"
+            placeholder={t('settings.localModel.download.audioPathPlaceholder')}
             className="w-full rounded-md bg-white border border-stone-200 px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 focus:outline-none focus:ring-1 focus:ring-primary-400"
           />
           <button
             onClick={onRunTranscribeTest}
             disabled={!runtimeEnabled || isTranscribeLoading || !audioPathInput.trim()}
             className="px-3 py-1.5 text-xs rounded-md bg-purple-600 hover:bg-purple-700 disabled:opacity-60 text-white">
-            {isTranscribeLoading ? 'Running...' : 'Run Transcription Test'}
+            {isTranscribeLoading
+              ? t('settings.localModel.download.running')
+              : t('settings.localModel.download.runTranscriptionTest')}
           </button>
           {transcribeOutput && (
             <div className="rounded-md bg-stone-50 border border-stone-200 p-3 text-xs text-stone-700 space-y-2">
@@ -304,25 +330,29 @@ const ModelDownloadSection = ({
       </section>
 
       <section className="space-y-3">
-        <h3 className="text-sm font-semibold text-stone-900">Test Voice Output (TTS)</h3>
+        <h3 className="text-sm font-semibold text-stone-900">
+          {t('settings.localModel.download.testVoiceOutput')}
+        </h3>
         <div className="bg-stone-50 rounded-lg border border-stone-200 p-4 space-y-3">
           <textarea
             value={ttsInput}
             onChange={e => onSetTtsInput(e.target.value)}
-            placeholder="Enter text to synthesize..."
+            placeholder={t('settings.localModel.download.ttsPlaceholder')}
             className="w-full min-h-20 rounded-md bg-white border border-stone-200 px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 focus:outline-none focus:ring-1 focus:ring-primary-400"
           />
           <input
             value={ttsOutputPath}
             onChange={e => onSetTtsOutputPath(e.target.value)}
-            placeholder="Optional output WAV path"
+            placeholder={t('settings.localModel.download.ttsOutputPlaceholder')}
             className="w-full rounded-md bg-white border border-stone-200 px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 focus:outline-none focus:ring-1 focus:ring-primary-400"
           />
           <button
             onClick={onRunTtsTest}
             disabled={!runtimeEnabled || isTtsLoading || !ttsInput.trim()}
             className="px-3 py-1.5 text-xs rounded-md bg-rose-600 hover:bg-rose-700 disabled:opacity-60 text-white">
-            {isTtsLoading ? 'Running...' : 'Run TTS Test'}
+            {isTtsLoading
+              ? t('settings.localModel.download.running')
+              : t('settings.localModel.download.runTtsTest')}
           </button>
           {ttsOutput && (
             <div className="rounded-md bg-stone-50 border border-stone-200 p-3 text-xs text-stone-700 space-y-1">

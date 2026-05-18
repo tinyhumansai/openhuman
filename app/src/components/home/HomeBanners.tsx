@@ -1,3 +1,4 @@
+import { useT } from '../../lib/i18n/I18nContext';
 import { BILLING_DASHBOARD_URL, DISCORD_INVITE_URL } from '../../utils/links';
 import { openUrl } from '../../utils/openUrl';
 
@@ -59,6 +60,7 @@ export function UsageLimitBanner({
 }
 
 export function PromotionalCreditsBanner({ promoCredits }: { promoCredits: number }) {
+  const { t } = useT();
   return (
     <div className="mb-3 rounded-2xl border border-amber-200 bg-gradient-to-r from-amber-50 via-orange-50 to-rose-50 px-4 py-4 text-left shadow-soft">
       <div className="flex items-start gap-3">
@@ -67,19 +69,19 @@ export function PromotionalCreditsBanner({ promoCredits }: { promoCredits: numbe
         </div>
         <div className="min-w-0 flex-1">
           <p className="text-sm font-semibold text-amber-700">
-            You have {formatUsd(promoCredits)} of promotional credits.
+            {t('home.banners.promoCreditsTitle').replace('{amount}', formatUsd(promoCredits))}
           </p>
           <p className="mt-1 text-sm leading-relaxed text-amber-600">
-            Give OpenHuman a spin, and when you&apos;re ready for more,{' '}
+            {t('home.banners.promoCreditsBody')}{' '}
             <button
               type="button"
               onClick={() => {
                 void openUrl(BILLING_DASHBOARD_URL);
               }}
               className="cursor-pointer border-b border-amber-700 border-dashed font-bold text-amber-700 hover:text-amber-800">
-              get a subscription
+              {t('home.banners.getSubscription')}
             </button>{' '}
-            and get 10x more usage.
+            {t('home.banners.promoCreditsUsage')}
           </p>
         </div>
       </div>
@@ -88,13 +90,14 @@ export function PromotionalCreditsBanner({ promoCredits }: { promoCredits: numbe
 }
 
 export function EarlyBirdyBanner({ onDismiss }: { onDismiss?: () => void }) {
+  const { t } = useT();
   return (
     <div className="relative mb-3 mt-3 rounded-2xl border border-orange-200 bg-gradient-to-r from-orange-50 via-amber-50 to-orange-50 px-4 py-4 text-left shadow-soft">
       {onDismiss && (
         <button
           type="button"
           onClick={onDismiss}
-          aria-label="Dismiss early bird banner"
+          aria-label={t('home.banners.earlyBirdDismiss')}
           className="absolute right-3 top-3 rounded-md p-1 text-orange-500 hover:bg-orange-100 hover:text-orange-700">
           ✕
         </button>
@@ -105,21 +108,21 @@ export function EarlyBirdyBanner({ onDismiss }: { onDismiss?: () => void }) {
         </div>
         <div className="min-w-0 flex-1">
           <p className="text-sm font-semibold text-orange-700">
-            The first 1,000 users get 60% off.
+            {t('home.banners.earlyBirdTitle')}
           </p>
           <p className="mt-1 text-sm leading-relaxed text-orange-600">
-            Use discount code{' '}
+            {t('home.banners.earlyBirdUseCode')}{' '}
             <span className="rounded-md border border-orange-300 bg-white px-1.5 py-0.5 font-mono text-[12px] font-bold text-orange-700">
               EARLYBIRDY
             </span>{' '}
-            on your{' '}
+            {t('home.banners.earlyBirdOn')}{' '}
             <button
               type="button"
               onClick={() => {
                 void openUrl(BILLING_DASHBOARD_URL);
               }}
               className="cursor-pointer border-b border-amber-700 border-dashed font-bold text-amber-700 hover:text-amber-800">
-              first subscription.
+              {t('home.banners.earlyBirdFirstSub')}
             </button>{' '}
           </p>
         </div>
@@ -129,6 +132,7 @@ export function EarlyBirdyBanner({ onDismiss }: { onDismiss?: () => void }) {
 }
 
 export function DiscordBanner() {
+  const { t } = useT();
   return (
     <button
       type="button"
@@ -143,10 +147,8 @@ export function DiscordBanner() {
           </svg>
         </div>
         <div className="min-w-0 flex-1">
-          <div className="text-sm font-semibold">Join Our Discord</div>
-          <div className="mt-0.5 text-sm text-[#5E66BC]">
-            Get updates, free merch, credits, report bugs, and be part of the OpenHuman community.
-          </div>
+          <div className="text-sm font-semibold">{t('home.banners.discordTitle')}</div>
+          <div className="mt-0.5 text-sm text-[#5E66BC]">{t('home.banners.discordSubtitle')}</div>
         </div>
       </div>
     </button>

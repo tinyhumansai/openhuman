@@ -190,17 +190,9 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
   const logoutGuardUntilRef = useRef(0);
   const bootstrapFailCountRef = useRef(0);
   const refreshInFlightRef = useRef<Promise<void> | null>(null);
-  const mountedRef = useRef(true);
-
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
-
+  const isMountedRef = useRef(true);
   const commitState = useCallback((updater: (previous: CoreState) => CoreState) => {
-    if (!mountedRef.current) {
+    if (!isMountedRef.current) {
       return;
     }
 
@@ -211,9 +203,21 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
     });
   }, []);
 
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      snapshotRequestIdRef.current += 1;
+      teamsRequestIdRef.current += 1;
+    };
+  }, []);
+
   const refreshCore = useCallback(async () => {
     const requestId = ++snapshotRequestIdRef.current;
     const snapshot = normalizeSnapshot(await fetchCoreAppSnapshot());
+    if (!isMountedRef.current) {
+      return;
+    }
     if (!snapshot.sessionToken) {
       logoutGuardUntilRef.current = 0;
     }
@@ -454,24 +458,12 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
     const onSessionTokenUpdated = (event: Event) => {
       const customEvent = event as CustomEvent<{ sessionToken?: string | null }>;
       const token = customEvent.detail?.sessionToken;
-      if (!token) {
+      if (typeof token !== 'string' || token.length === 0) {
         return;
       }
 
       snapshotRequestIdRef.current += 1;
       logoutGuardUntilRef.current = 0;
-
-      memoryTokenRef.current = token;
-      commitState(previous => ({
-        ...previous,
-        isBootstrapping: false,
-        isReady: true,
-        snapshot: {
-          ...previous.snapshot,
-          auth: { ...previous.snapshot.auth, isAuthenticated: true },
-          sessionToken: token,
-        },
-      }));
 
       void refresh().catch(err => {
         log('refresh failed after deep-link session update: %O', sanitizeError(err));

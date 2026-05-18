@@ -371,6 +371,7 @@ async fn composio_delete_connection_via_mock() {
 #[tokio::test]
 async fn composio_get_user_profile_via_mock_returns_provider_profile() {
     use crate::openhuman::config::TEST_ENV_LOCK;
+    let _cache_guard = CACHE_TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let _env_guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
     crate::openhuman::composio::providers::init_default_providers();
@@ -508,6 +509,7 @@ async fn composio_sync_gmail_via_mock_archives_raw_email_and_updates_outcome() {
     use crate::openhuman::config::TEST_ENV_LOCK;
     use crate::openhuman::memory::tree::content_store::raw::{raw_rel_path, RawKind};
     use crate::openhuman::memory::tree::rpc::{list_chunks_rpc, ListChunksRequest};
+    let _cache_guard = CACHE_TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let _env_guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
     crate::openhuman::composio::providers::init_default_providers();

@@ -44,11 +44,36 @@ export RUST_BACKTRACE=1
 mkdir -p "${HOME}/.local/share/applications"
 
 # 2. Appium + chromium driver — install once, cache via the npm_global volume.
+resolve_appium_bin() {
+  if command -v appium >/dev/null 2>&1; then
+    command -v appium
+    return 0
+  fi
+
+  local npm_prefix=""
+  npm_prefix="$(npm prefix -g 2>/dev/null || true)"
+  for candidate in \
+    "${npm_prefix}/bin/appium" \
+    "/usr/bin/appium" \
+    "/usr/local/bin/appium"; do
+    if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+      echo "$candidate"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
 if ! command -v appium >/dev/null 2>&1; then
   echo "[e2e-bootstrap] Installing Appium 3 + chromium driver..."
   npm install -g appium@3 >/dev/null
-  appium driver install --source=npm appium-chromium-driver >/dev/null
 fi
+APPIUM_BIN="$(resolve_appium_bin)" || {
+  echo "[e2e-bootstrap] ERROR: Appium installed but binary not found on PATH" >&2
+  exit 1
+}
+"$APPIUM_BIN" driver install --source=npm appium-chromium-driver >/dev/null
 
 # 3. JS deps — only run pnpm install when node_modules is empty or stale.
 #    `pnpm install --frozen-lockfile` is a no-op when up to date, so this

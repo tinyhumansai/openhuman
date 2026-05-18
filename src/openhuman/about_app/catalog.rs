@@ -277,6 +277,16 @@ const CAPABILITIES: &[Capability] = &[
         privacy: LOCAL_RAW,
     },
     Capability {
+        id: "intelligence.tool_registry",
+        name: "Tool Registry",
+        domain: "intelligence",
+        category: CapabilityCategory::Intelligence,
+        description: "Discover OpenHuman's MCP stdio tools and controller-backed tools from one local registry, including versions, routes, input/output schemas, allowed agents, and health state.",
+        how_to: "Call openhuman.tool_registry_list over core JSON-RPC, or openhuman.tool_registry_get with a tool_id such as memory.search.",
+        status: CapabilityStatus::Beta,
+        privacy: LOCAL_RAW,
+    },
+    Capability {
         id: "intelligence.orchestrator_worker_thread",
         name: "Worker Thread Delegation",
         domain: "intelligence",

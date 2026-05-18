@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 
 import AddAccountModal from '../components/accounts/AddAccountModal';
 import { AgentIcon, ProviderIcon } from '../components/accounts/providerIcons';
-// import RespondQueuePanel from '../components/accounts/RespondQueuePanel';
+import RespondQueuePanel from '../components/accounts/RespondQueuePanel';
 import WebviewHost from '../components/accounts/WebviewHost';
 import { usePrewarmMostRecentAccount } from '../hooks/usePrewarmMostRecentAccount';
 // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
@@ -109,11 +109,11 @@ const Accounts = () => {
   // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
   // const { snapshot } = useCoreState();
   // const welcomeLocked = isWelcomeLocked(snapshot);
-  // Respond-queue selectors disabled while RespondQueuePanel is hidden.
-  // const respondQueue = useAppSelector(state => state.providerSurfaces.queue);
-  // const respondQueueCount = useAppSelector(state => state.providerSurfaces.count);
-  // const respondQueueStatus = useAppSelector(state => state.providerSurfaces.status);
-  // const respondQueueError = useAppSelector(state => state.providerSurfaces.error);
+  // Respond-queue selectors enabled
+  const respondQueue = useAppSelector(state => state.providerSurfaces.queue);
+  const respondQueueCount = useAppSelector(state => state.providerSurfaces.count);
+  const respondQueueStatus = useAppSelector(state => state.providerSurfaces.status);
+  const respondQueueError = useAppSelector(state => state.providerSurfaces.error);
 
   const [addOpen, setAddOpen] = useState(false);
   const [ctxMenu, setCtxMenu] = useState<ContextMenuState | null>(null);
@@ -281,9 +281,8 @@ const Accounts = () => {
             <div className="min-w-0 flex-1">
               <AgentChatPanel />
             </div>
-            {/* Respond queue side panel hidden for now — bring back when
-                the cross-provider surface is ready to ship. */}
-            {/* <RespondQueuePanel
+            {/* Respond queue side panel restored */}
+            <RespondQueuePanel
               items={respondQueue}
               count={respondQueueCount}
               status={respondQueueStatus}
@@ -291,7 +290,7 @@ const Accounts = () => {
               onRefresh={() => {
                 void dispatch(fetchRespondQueue());
               }}
-            /> */}
+            />
           </div>
         ) : active ? (
           <div className="flex-1 py-3 pr-3">

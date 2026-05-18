@@ -17,6 +17,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 VENDOR_CLI="$ROOT_DIR/app/src-tauri/vendor/tauri-cef/crates/tauri-cli"
 VENDOR_CARGO_TOML="$VENDOR_CLI/Cargo.toml"
+INSTALL_ROOT="${OPENHUMAN_CARGO_INSTALL_ROOT:-$ROOT_DIR/.cache/cargo-install}"
+export PATH="$INSTALL_ROOT/bin:$PATH"
 
 if [[ ! -f "$VENDOR_CARGO_TOML" ]]; then
   echo "[ensure-tauri-cli] vendored tauri-cli not found at $VENDOR_CLI" >&2
@@ -34,10 +36,11 @@ fi
 # bindings and the loaded framework are out of sync.
 export CEF_PATH="${CEF_PATH:-$HOME/Library/Caches/tauri-cef}"
 mkdir -p "$CEF_PATH"
+mkdir -p "$INSTALL_ROOT"
 
 # Detect whether the currently installed cargo-tauri came from our vendored path.
-CRATES_TOML="${CARGO_HOME:-$HOME/.cargo}/.crates.toml"
-INSTALLED_CARGO_TAURI="${CARGO_HOME:-$HOME/.cargo}/bin/cargo-tauri"
+CRATES_TOML="$INSTALL_ROOT/.crates.toml"
+INSTALLED_CARGO_TAURI="$INSTALL_ROOT/bin/cargo-tauri"
 if [[ -f "$CRATES_TOML" ]] && grep -q "tauri-cli.*$VENDOR_CLI" "$CRATES_TOML" 2>/dev/null; then
   if [[ -x "$INSTALLED_CARGO_TAURI" ]]; then
     # Reinstall if any vendored tauri-cef source is newer than the installed CLI.
@@ -55,5 +58,6 @@ fi
 
 echo "[ensure-tauri-cli] installing vendored CEF-aware tauri-cli from $VENDOR_CLI"
 echo "[ensure-tauri-cli] CEF_PATH=$CEF_PATH"
+echo "[ensure-tauri-cli] INSTALL_ROOT=$INSTALL_ROOT"
 echo "[ensure-tauri-cli] (first install only — takes a few minutes; subsequent runs are instant)"
-cargo install --locked --path "$VENDOR_CLI"
+cargo install --root "$INSTALL_ROOT" --locked --path "$VENDOR_CLI"
