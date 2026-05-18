@@ -168,7 +168,14 @@ impl ConversationStore {
             let path = self.thread_messages_path(&thread.id);
             let messages = match read_jsonl::<ConversationMessage>(&path) {
                 Ok(m) => m,
-                Err(_) => continue,
+                Err(err) => {
+                    tracing::warn!(
+                        "[conversations] cross-thread scan skipped unreadable file path={} error={}",
+                        path.display(),
+                        err
+                    );
+                    continue;
+                }
             };
             for msg in messages {
                 let content_lower = msg.content.to_lowercase();
