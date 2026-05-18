@@ -323,7 +323,12 @@ mod tests {
         let result = tool.execute(json!({"path": "escape.txt"})).await.unwrap();
 
         assert!(result.is_error);
-        assert!(result.output().contains("escapes workspace"));
+        // is_path_allowed now resolves symlinks eagerly, so the block is
+        // caught before canonicalize — error says "not allowed" rather than
+        // "escapes workspace", but the operation is still correctly blocked.
+        assert!(
+            result.output().contains("not allowed") || result.output().contains("escapes workspace")
+        );
 
         let _ = tokio::fs::remove_dir_all(&root).await;
     }

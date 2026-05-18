@@ -319,7 +319,12 @@ mod tests {
             .unwrap();
 
         assert!(result.is_error);
-        assert!(result.output().contains("escapes workspace"));
+        // is_path_allowed now resolves symlinks eagerly, so the block is
+        // caught before canonicalize — error says "not allowed" rather than
+        // "escapes workspace", but the operation is still correctly blocked.
+        assert!(
+            result.output().contains("not allowed") || result.output().contains("escapes workspace")
+        );
         assert!(!outside.join("hijack.txt").exists());
 
         let _ = tokio::fs::remove_dir_all(&root).await;
@@ -395,9 +400,13 @@ mod tests {
             .unwrap();
 
         assert!(result.is_error, "writing through symlink must be blocked");
+        // is_path_allowed now resolves symlinks eagerly; the block is caught
+        // before the explicit symlink-target check in file_write, so the error
+        // says "not allowed" instead of explicitly mentioning "symlink".
         assert!(
-            result.output().contains("symlink"),
-            "error should mention symlink"
+            result.output().contains("symlink") || result.output().contains("not allowed"),
+            "error should indicate symlink/policy block; got: {}",
+            result.output()
         );
 
         // Verify original file was not modified
