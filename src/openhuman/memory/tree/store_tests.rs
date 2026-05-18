@@ -286,6 +286,59 @@ fn with_connection_serialises_concurrent_schema_init() {
     );
 }
 
+/// Directly pins the `is_transient_cold_start` classifier — the
+/// gatekeeper for the retry loop in `open_and_init_with_retry`. The
+/// concurrent-init test above only exercises it indirectly (and only
+/// if a transient happens to fire on the dev box). A targeted test
+/// catches regressions if the match arms are edited.
+#[test]
+fn is_transient_cold_start_classifies_known_extended_codes() {
+    use rusqlite::ffi;
+    use rusqlite::ErrorCode;
+
+    // The three SHMmap/WAL bootstrap codes that fire under cold-start
+    // contention. All must classify as transient → retried.
+    for extended in [
+        14,   // CANTOPEN
+        1546, // IOERR_TRUNCATE
+        4874, // IOERR_SHMMAP
+    ] {
+        let err = anyhow::Error::from(rusqlite::Error::SqliteFailure(
+            ffi::Error {
+                code: ErrorCode::SystemIoFailure,
+                extended_code: extended,
+            },
+            None,
+        ));
+        assert!(
+            super::is_transient_cold_start(&err),
+            "extended_code {extended} must classify as transient cold-start"
+        );
+    }
+
+    // SQLITE_BUSY (extended code 5) is a real lock-contention signal,
+    // NOT a cold-start race — the caller handles it via `busy_timeout`
+    // not via this retry loop. Must NOT classify.
+    let busy = anyhow::Error::from(rusqlite::Error::SqliteFailure(
+        ffi::Error {
+            code: ErrorCode::DatabaseBusy,
+            extended_code: 5,
+        },
+        None,
+    ));
+    assert!(
+        !super::is_transient_cold_start(&busy),
+        "DatabaseBusy must not be classified as cold-start transient"
+    );
+
+    // Non-SQLite error in the chain — must not classify.
+    let other: anyhow::Error = anyhow::anyhow!("not a sqlite error");
+    assert!(
+        !super::is_transient_cold_start(&other),
+        "non-SQLite errors must not classify as transient cold-start"
+    );
+}
+
 /// Regression: `PRAGMA foreign_keys` is connection-local in SQLite and
 /// must be re-set on every `Connection::open`. After the schema-init
 /// refactor, the pragma moved out of `SCHEMA` (which only runs on

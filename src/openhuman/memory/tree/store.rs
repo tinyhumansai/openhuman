@@ -838,13 +838,27 @@ fn try_open_and_init(db_path: &Path) -> Result<Connection> {
     Ok(conn)
 }
 
+/// SQLite extended result code `CANTOPEN` — surfaces when a cold-start
+/// caller races the lockfile/WAL creation done by another connection.
+const SQLITE_CANTOPEN: i32 = 14;
+/// SQLite extended result code `IOERR_TRUNCATE` — fires when the WAL is
+/// being truncated by another connection during bootstrap.
+const SQLITE_IOERR_TRUNCATE: i32 = 1546;
+/// SQLite extended result code `IOERR_SHMMAP` — fires when the shared
+/// memory file is resized by another connection during bootstrap.
+const SQLITE_IOERR_SHMMAP: i32 = 4874;
+
 /// True if `err` (or anything in its cause chain) is one of the three
 /// SQLite codes that fire during cold-start WAL/SHM bootstrap races:
-/// 14 (CANTOPEN), 1546 (IOERR_TRUNCATE), 4874 (IOERR_SHMMAP).
+/// `CANTOPEN`, `IOERR_TRUNCATE`, `IOERR_SHMMAP` (see the `SQLITE_*`
+/// const block above).
 fn is_transient_cold_start(err: &anyhow::Error) -> bool {
     fn is_transient_sqlite(e: &(dyn std::error::Error + 'static)) -> bool {
         if let Some(rusqlite::Error::SqliteFailure(ffi, _)) = e.downcast_ref::<rusqlite::Error>() {
-            return matches!(ffi.extended_code, 14 | 1546 | 4874);
+            return matches!(
+                ffi.extended_code,
+                SQLITE_CANTOPEN | SQLITE_IOERR_TRUNCATE | SQLITE_IOERR_SHMMAP
+            );
         }
         false
     }
