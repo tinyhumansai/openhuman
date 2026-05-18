@@ -450,6 +450,16 @@ pub fn all_tools_with_runtime(
         );
     }
 
+    if root_config.integrations.polymarket.enabled {
+        tools.push(Box::new(PolymarketTool::new(
+            &root_config.integrations.polymarket,
+            security.clone(),
+        )));
+        tracing::debug!("[integrations] registered polymarket tool (read-only)");
+    } else {
+        tracing::debug!("[integrations] polymarket disabled — skipping");
+    }
+
     // Coding-harness `lsp` tool (issue #1205) — capability-gated by the
     // OPENHUMAN_LSP_ENABLED env var. The backend (real language-server
     // bridge) is a follow-up; today the gate just controls visibility
