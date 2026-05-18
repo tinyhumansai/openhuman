@@ -470,6 +470,7 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 | 13.5.1 | Clear App Data   | WD    | `app/test/e2e/specs/settings-data-management.spec.ts`   | ✅     | Destructive — confirm-then-reset       |
 | 13.5.2 | Cache Reset      | WD    | `app/test/e2e/specs/settings-data-management.spec.ts`   | ✅     |                                        |
 | 13.5.3 | Full State Reset | WD    | `app/test/e2e/specs/settings-data-management.spec.ts`   | ✅     | Restart-and-verify fresh-install state |
+| 13.5.4 | Migration from another assistant (OpenClaw) | VU+RU | `app/src/components/settings/panels/__tests__/MigrationPanel.test.tsx` (this PR), `src/openhuman/migration/ops.rs` (existing) | ✅ | Was ❌ — UI now wraps the existing `openhuman.migrate_openclaw` RPC with preview-then-apply + confirm. Hermes tracked as follow-up under #1440 (#1440) |
 
 ---
 
