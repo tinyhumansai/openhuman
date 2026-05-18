@@ -123,8 +123,9 @@ pub async fn rpc_handler(State(state): State<AppState>, Json(req): Json<RpcReque
                 // query params, or pasted-through provider error text that
                 // includes tokens. `sanitize_api_error` runs the same scrub
                 // used in the SessionExpired publish path below.
-                let redacted =
-                    crate::openhuman::providers::ops::sanitize_api_error(&display_message);
+                let redacted = crate::openhuman::inference::provider::ops::sanitize_api_error(
+                    &display_message,
+                );
                 tracing::warn!(
                     method = %method,
                     elapsed_ms = ms as u64,
@@ -189,7 +190,7 @@ pub async fn invoke_method(state: AppState, method: &str, params: Value) -> Resu
             crate::core::event_bus::publish_global(
                 crate::core::event_bus::DomainEvent::SessionExpired {
                     source: format!("jsonrpc.invoke_method:{method}"),
-                    reason: crate::openhuman::providers::ops::sanitize_api_error(msg),
+                    reason: crate::openhuman::inference::provider::ops::sanitize_api_error(msg),
                 },
             );
         }
@@ -554,6 +555,8 @@ pub fn build_core_http_router(socketio_enabled: bool) -> Router {
         .route("/rpc", post(rpc_handler))
         .route("/ws/dictation", get(dictation_ws_handler))
         .route("/auth/telegram", get(telegram_auth_handler))
+        // OpenAI-compatible inference endpoint (/v1/chat/completions, /v1/models)
+        .nest("/v1", crate::openhuman::inference::http::router())
         .fallback(not_found_handler)
         .layer(middleware::from_fn(http_request_log_middleware))
         .layer(middleware::from_fn(crate::core::auth::rpc_auth_middleware))
@@ -1033,7 +1036,7 @@ async fn run_server_inner(
     // daemon was externally managed) and clear the spawn marker so the
     // next launch doesn't try to reclaim a daemon that's already dead.
     // Bounded so a wedged Ollama can't hold up app shutdown.
-    if let Some(svc) = crate::openhuman::local_ai::try_global() {
+    if let Some(svc) = crate::openhuman::inference::local::try_global() {
         let cfg = crate::openhuman::config::Config::load_or_init()
             .await
             .unwrap_or_default();

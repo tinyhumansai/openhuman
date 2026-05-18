@@ -33,7 +33,7 @@ use anyhow::Result;
 
 use super::{CloudEmbedder, Embedder, InertEmbedder, OllamaEmbedder};
 use crate::openhuman::config::Config;
-use crate::openhuman::local_ai::ollama_base_url;
+use crate::openhuman::inference::local::ollama_base_url;
 
 /// Cheap heuristic for "is a backend session reachable?" — the cloud
 /// embedder needs one and bails on first embed call without it. We use

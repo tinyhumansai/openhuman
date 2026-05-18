@@ -11,11 +11,11 @@ use super::types::{Agent, AgentBuilder};
 use crate::core::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::agent::dispatcher::ParsedToolCall;
 use crate::openhuman::agent::error::AgentError;
+use crate::openhuman::inference::provider::{self, ConversationMessage, Provider, ToolCall};
 use crate::openhuman::memory::Memory;
 use crate::openhuman::prompt_injection::{
     enforce_prompt_input, PromptEnforcementAction, PromptEnforcementContext,
 };
-use crate::openhuman::providers::{self, ConversationMessage, Provider, ToolCall};
 use crate::openhuman::tools::{Tool, ToolSpec};
 use crate::openhuman::util::truncate_with_ellipsis;
 use anyhow::Result;
@@ -276,21 +276,21 @@ impl Agent {
         let learned = crate::openhuman::agent::prompts::LearnedContextData::default();
         let system_prompt = self.build_system_prompt(learned)?;
 
-        let mut cached: Vec<crate::openhuman::providers::ChatMessage> =
+        let mut cached: Vec<crate::openhuman::inference::provider::ChatMessage> =
             Vec::with_capacity(prior.len() + 1);
-        cached.push(crate::openhuman::providers::ChatMessage::system(
+        cached.push(crate::openhuman::inference::provider::ChatMessage::system(
             system_prompt,
         ));
         for (role, content) in prior {
             let chat = match role.as_str() {
-                "user" => crate::openhuman::providers::ChatMessage::user(content),
+                "user" => crate::openhuman::inference::provider::ChatMessage::user(content),
                 "agent" | "assistant" => {
-                    crate::openhuman::providers::ChatMessage::assistant(content)
+                    crate::openhuman::inference::provider::ChatMessage::assistant(content)
                 }
                 // Fall back to user role for unknown senders rather than
                 // dropping the message — losing context is worse than
                 // mislabelling a system/tool message.
-                _ => crate::openhuman::providers::ChatMessage::user(content),
+                _ => crate::openhuman::inference::provider::ChatMessage::user(content),
             };
             cached.push(chat);
         }
@@ -376,7 +376,7 @@ impl Agent {
             return kind.to_string();
         }
 
-        let scrubbed = providers::sanitize_api_error(&err.to_string())
+        let scrubbed = provider::sanitize_api_error(&err.to_string())
             .replace(['\n', '\r', '\t'], " ")
             .split_whitespace()
             .collect::<Vec<_>>()
@@ -405,7 +405,7 @@ impl Agent {
     /// If the provider response already contains native tool calls, they are
     /// returned as-is.
     pub(super) fn persisted_tool_calls_for_history(
-        response: &crate::openhuman::providers::ChatResponse,
+        response: &crate::openhuman::inference::provider::ChatResponse,
         parsed_calls: &[ParsedToolCall],
         iteration: usize,
     ) -> Vec<ToolCall> {

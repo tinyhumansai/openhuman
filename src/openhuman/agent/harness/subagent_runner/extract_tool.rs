@@ -28,7 +28,7 @@ use super::handoff::{chunk_content, ResultHandoffCache, HANDOFF_MAX_ENTRIES};
 use crate::openhuman::agent::harness::session::transcript::{
     resolve_keyed_transcript_path, write_transcript, MessageUsage, TranscriptMeta, TurnUsage,
 };
-use crate::openhuman::providers::{ChatMessage, Provider};
+use crate::openhuman::inference::provider::{ChatMessage, Provider};
 use crate::openhuman::tools::{Tool, ToolCategory, ToolResult};
 
 // ── Tunables ──────────────────────────────────────────────────────────
@@ -485,7 +485,7 @@ fn write_extract_transcript(
         output_tokens: 0,
         cached_input_tokens: 0,
         charged_amount_usd: 0.0,
-        thread_id: crate::openhuman::providers::thread_context::current_thread_id(),
+        thread_id: crate::openhuman::inference::provider::thread_context::current_thread_id(),
     };
 
     if let Err(e) = write_transcript(&path, &messages, &meta, Some(&turn_usage)) {

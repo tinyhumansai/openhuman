@@ -895,6 +895,99 @@ fn ensure_test_rpc_auth() {
 }
 
 #[tokio::test]
+async fn json_rpc_tool_registry_lists_and_gets_entries() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{rpc_addr}");
+
+    let list = post_json_rpc(&rpc_base, 1848_1, "openhuman.tool_registry_list", json!({})).await;
+    let list_result = assert_no_jsonrpc_error(&list, "tool_registry_list");
+    let tools = list_result
+        .get("tools")
+        .and_then(Value::as_array)
+        .expect("tool registry list should return tools array");
+
+    let memory_search = tools
+        .iter()
+        .find(|tool| tool.get("tool_id").and_then(Value::as_str) == Some("memory.search"))
+        .expect("registry should include memory.search");
+    assert_eq!(
+        memory_search.get("transport").and_then(Value::as_str),
+        Some("mcp_stdio")
+    );
+    assert_eq!(
+        memory_search
+            .get("route")
+            .and_then(|route| route.get("method"))
+            .and_then(Value::as_str),
+        Some("tools/call")
+    );
+    assert!(memory_search.get("input_schema").is_some());
+    assert!(memory_search.get("output_schema").is_some());
+
+    let controller_tool = tools
+        .iter()
+        .find(|tool| tool.get("tool_id").and_then(Value::as_str) == Some("tools.web_search"))
+        .expect("registry should include tools.web_search");
+    assert_eq!(
+        controller_tool.get("transport").and_then(Value::as_str),
+        Some("json_rpc")
+    );
+    assert_eq!(
+        controller_tool
+            .get("route")
+            .and_then(|route| route.get("method"))
+            .and_then(Value::as_str),
+        Some("openhuman.tools_web_search")
+    );
+    assert_eq!(
+        controller_tool.get("health").and_then(Value::as_str),
+        Some("available")
+    );
+
+    let get = post_json_rpc(
+        &rpc_base,
+        1848_2,
+        "openhuman.tool_registry_get",
+        json!({ "tool_id": "tools.web_search" }),
+    )
+    .await;
+    let get_result = assert_no_jsonrpc_error(&get, "tool_registry_get");
+    assert_eq!(
+        get_result.get("tool_id").and_then(Value::as_str),
+        Some("tools.web_search")
+    );
+    assert_eq!(
+        get_result
+            .get("input_schema")
+            .and_then(|schema| schema.get("properties"))
+            .and_then(|properties| properties.get("query"))
+            .and_then(|query| query.get("type"))
+            .and_then(Value::as_str),
+        Some("string")
+    );
+
+    let missing = post_json_rpc(
+        &rpc_base,
+        1848_3,
+        "openhuman.tool_registry_get",
+        json!({ "tool_id": "missing.tool" }),
+    )
+    .await;
+    let missing_error = assert_jsonrpc_error(&missing, "tool_registry_get missing");
+    assert!(
+        missing_error
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .contains("tool not found"),
+        "unexpected missing-tool error: {missing_error}"
+    );
+
+    rpc_join.abort();
+}
+
+#[tokio::test]
 async fn json_rpc_protocol_auth_and_agent_hello() {
     let _env_lock = json_rpc_e2e_env_lock();
     let tmp = tempdir().expect("tempdir");
@@ -2247,9 +2340,11 @@ async fn json_rpc_web_chat_custom_reasoning_provider_with_auth_none_omits_auth_h
     let loaded_config = openhuman_core::openhuman::config::load_config_with_timeout()
         .await
         .expect("load_config after auth-none update");
-    let (provider, model) =
-        openhuman_core::openhuman::providers::create_chat_provider("reasoning", &loaded_config)
-            .expect("custom auth-none provider should build");
+    let (provider, model) = openhuman_core::openhuman::inference::provider::create_chat_provider(
+        "reasoning",
+        &loaded_config,
+    )
+    .expect("custom auth-none provider should build");
     let direct = provider
         .simple_chat("direct custom-provider smoke test", &model, 0.0)
         .await
@@ -3353,13 +3448,14 @@ async fn json_rpc_local_ai_device_profile_and_presets() {
     let profile = post_json_rpc(
         &rpc_base,
         30,
-        "openhuman.local_ai_device_profile",
+        "openhuman.inference_device_profile",
         json!({}),
     )
     .await;
     let profile_result = assert_no_jsonrpc_error(&profile, "device_profile");
+    let profile_payload = profile_result.get("result").unwrap_or(profile_result);
     assert!(
-        profile_result
+        profile_payload
             .get("total_ram_bytes")
             .and_then(Value::as_u64)
             .unwrap_or(0)
@@ -3367,7 +3463,7 @@ async fn json_rpc_local_ai_device_profile_and_presets() {
         "expected positive RAM: {profile_result}"
     );
     assert!(
-        profile_result
+        profile_payload
             .get("cpu_count")
             .and_then(Value::as_u64)
             .unwrap_or(0)
@@ -3376,9 +3472,10 @@ async fn json_rpc_local_ai_device_profile_and_presets() {
     );
 
     // --- presets ---
-    let presets = post_json_rpc(&rpc_base, 31, "openhuman.local_ai_presets", json!({})).await;
+    let presets = post_json_rpc(&rpc_base, 31, "openhuman.inference_presets", json!({})).await;
     let presets_result = assert_no_jsonrpc_error(&presets, "presets");
-    let presets_arr = presets_result
+    let presets_payload = presets_result.get("result").unwrap_or(presets_result);
+    let presets_arr = presets_payload
         .get("presets")
         .and_then(Value::as_array)
         .expect("presets should be an array");
@@ -3393,7 +3490,7 @@ async fn json_rpc_local_ai_device_profile_and_presets() {
         "only the ram_2_4gb (1B) preset should be exposed: {presets_result}"
     );
 
-    let recommended = presets_result
+    let recommended = presets_payload
         .get("recommended_tier")
         .and_then(Value::as_str)
         .expect("should have recommended_tier");
@@ -3402,7 +3499,7 @@ async fn json_rpc_local_ai_device_profile_and_presets() {
         "MVP recommends the only allowed tier: {recommended}"
     );
 
-    let current = presets_result
+    let current = presets_payload
         .get("current_tier")
         .and_then(Value::as_str)
         .expect("should have current_tier");
@@ -3416,29 +3513,34 @@ async fn json_rpc_local_ai_device_profile_and_presets() {
     let apply = post_json_rpc(
         &rpc_base,
         32,
-        "openhuman.local_ai_apply_preset",
+        "openhuman.inference_apply_preset",
         json!({"tier": "ram_2_4gb"}),
     )
     .await;
     let apply_result = assert_no_jsonrpc_error(&apply, "apply_preset");
+    let apply_payload = apply_result.get("result").unwrap_or(apply_result);
     assert_eq!(
-        apply_result.get("applied_tier").and_then(Value::as_str),
+        apply_payload.get("applied_tier").and_then(Value::as_str),
         Some("ram_2_4gb")
     );
     assert_eq!(
-        apply_result.get("chat_model_id").and_then(Value::as_str),
+        apply_payload.get("chat_model_id").and_then(Value::as_str),
         Some("gemma3:1b-it-qat")
     );
     assert_eq!(
-        apply_result.get("vision_mode").and_then(Value::as_str),
+        apply_payload.get("vision_mode").and_then(Value::as_str),
         Some("disabled")
     );
 
     // --- verify presets reflects the change ---
-    let presets_after = post_json_rpc(&rpc_base, 33, "openhuman.local_ai_presets", json!({})).await;
+    let presets_after =
+        post_json_rpc(&rpc_base, 33, "openhuman.inference_presets", json!({})).await;
     let presets_after_result = assert_no_jsonrpc_error(&presets_after, "presets_after");
+    let presets_after_payload = presets_after_result
+        .get("result")
+        .unwrap_or(presets_after_result);
     assert_eq!(
-        presets_after_result
+        presets_after_payload
             .get("current_tier")
             .and_then(Value::as_str),
         Some("ram_2_4gb"),
@@ -3449,7 +3551,7 @@ async fn json_rpc_local_ai_device_profile_and_presets() {
     let bad_apply = post_json_rpc(
         &rpc_base,
         34,
-        "openhuman.local_ai_apply_preset",
+        "openhuman.inference_apply_preset",
         json!({"tier": "ultra"}),
     )
     .await;
@@ -3540,7 +3642,7 @@ async fn json_rpc_local_ai_lm_studio_config_diagnostics_and_prompt() {
     let update = post_json_rpc(
         &rpc_base,
         36,
-        "openhuman.config_update_local_ai_settings",
+        "openhuman.inference_update_local_settings",
         json!({
             "runtime_enabled": true,
             "opt_in_confirmed": true,
@@ -3572,7 +3674,7 @@ async fn json_rpc_local_ai_lm_studio_config_diagnostics_and_prompt() {
     );
 
     let diagnostics =
-        post_json_rpc(&rpc_base, 37, "openhuman.local_ai_diagnostics", json!({})).await;
+        post_json_rpc(&rpc_base, 37, "openhuman.inference_diagnostics", json!({})).await;
     let diagnostics_result = assert_no_jsonrpc_error(&diagnostics, "lm_studio_diagnostics");
     assert_eq!(
         diagnostics_result.get("provider").and_then(Value::as_str),
@@ -3595,7 +3697,7 @@ async fn json_rpc_local_ai_lm_studio_config_diagnostics_and_prompt() {
     let prompt = post_json_rpc(
         &rpc_base,
         38,
-        "openhuman.local_ai_prompt",
+        "openhuman.inference_prompt",
         json!({
             "prompt": "hello",
             "max_tokens": 16,
@@ -3610,6 +3712,238 @@ async fn json_rpc_local_ai_lm_studio_config_diagnostics_and_prompt() {
     );
 
     lm_join.abort();
+    mock_join.abort();
+    rpc_join.abort();
+}
+
+#[tokio::test]
+async fn json_rpc_inference_namespace_lm_studio_prompt_and_status() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+    let _tier_guard = EnvVarGuard::unset("OPENHUMAN_LOCAL_AI_TIER");
+    let _lm_env_guard = EnvVarGuard::unset("OPENHUMAN_LM_STUDIO_BASE_URL");
+    let _lm_alias_env_guard = EnvVarGuard::unset("LM_STUDIO_BASE_URL");
+
+    let (mock_addr, mock_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let mock_origin = format!("http://{}", mock_addr);
+    write_min_config(&openhuman_home, &mock_origin);
+
+    let lm_app = Router::new()
+        .route(
+            "/v1/models",
+            get(|| async {
+                Json(json!({
+                    "object": "list",
+                    "data": [
+                        { "id": "local-model", "object": "model", "owned_by": "lm-studio" }
+                    ]
+                }))
+            }),
+        )
+        .route(
+            "/v1/chat/completions",
+            post(|Json(_body): Json<Value>| async move {
+                Json(json!({
+                    "id": "chatcmpl-inference-e2e",
+                    "object": "chat.completion",
+                    "choices": [{
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": "hello from inference namespace"
+                        },
+                        "finish_reason": "stop"
+                    }],
+                    "usage": {
+                        "prompt_tokens": 7,
+                        "completion_tokens": 5,
+                        "total_tokens": 12
+                    }
+                }))
+            }),
+        );
+    let (lm_addr, lm_join) = serve_on_ephemeral(lm_app).await;
+    let lm_base = format!("http://{lm_addr}/v1");
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{}", rpc_addr);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let update = post_json_rpc(
+        &rpc_base,
+        360,
+        "openhuman.inference_update_local_settings",
+        json!({
+            "runtime_enabled": true,
+            "opt_in_confirmed": true,
+            "provider": "lm_studio",
+            "base_url": lm_base,
+            "model_id": "local-model",
+            "chat_model_id": "local-model"
+        }),
+    )
+    .await;
+    assert_no_jsonrpc_error(&update, "update_local_ai_settings for inference namespace");
+
+    let status = post_json_rpc(&rpc_base, 361, "openhuman.inference_status", json!({})).await;
+    let status_result = assert_no_jsonrpc_error(&status, "inference_status");
+    let status_payload = status_result.get("result").unwrap_or(status_result);
+    assert_eq!(
+        status_payload.get("provider").and_then(Value::as_str),
+        Some("lm_studio")
+    );
+
+    let prompt = post_json_rpc(
+        &rpc_base,
+        362,
+        "openhuman.inference_prompt",
+        json!({
+            "prompt": "hello",
+            "max_tokens": 16,
+            "no_think": true
+        }),
+    )
+    .await;
+    let prompt_result = assert_no_jsonrpc_error(&prompt, "inference_prompt");
+    assert_eq!(
+        extract_string_outcome(prompt_result),
+        "hello from inference namespace"
+    );
+
+    let summarize = post_json_rpc(
+        &rpc_base,
+        363,
+        "openhuman.inference_summarize",
+        json!({
+            "text": "summarize me",
+            "max_tokens": 16
+        }),
+    )
+    .await;
+    let summarize_result = assert_no_jsonrpc_error(&summarize, "inference_summarize");
+    assert_eq!(
+        extract_string_outcome(summarize_result),
+        "hello from inference namespace"
+    );
+
+    // openhuman.inference_update_model_settings — mutate `default_model`
+    // through the RPC transport so a controller-registration or param-shape
+    // regression surfaces here instead of in the settings-save UI flow.
+    // (We assert on `default_model` because that field is exposed by
+    // `inference_get_client_config`; `default_temperature` is not.)
+    let model_update = post_json_rpc(
+        &rpc_base,
+        366,
+        "openhuman.inference_update_model_settings",
+        json!({ "default_model": "e2e-updated-model" }),
+    )
+    .await;
+    assert_no_jsonrpc_error(&model_update, "inference_update_model_settings");
+    let client_cfg = post_json_rpc(
+        &rpc_base,
+        367,
+        "openhuman.inference_get_client_config",
+        json!({}),
+    )
+    .await;
+    let client_cfg_result = assert_no_jsonrpc_error(&client_cfg, "inference_get_client_config");
+    let updated_model = client_cfg_result
+        .pointer("/result/default_model")
+        .or_else(|| client_cfg_result.get("default_model"))
+        .and_then(Value::as_str);
+    assert_eq!(
+        updated_model,
+        Some("e2e-updated-model"),
+        "inference_get_client_config did not reflect updated default_model: {client_cfg_result}"
+    );
+
+    // openhuman.inference_list_models — no cloud provider configured for this
+    // local-only test, so we expect a structured error rather than a panic.
+    // Asserting an error here proves the controller is registered and reaches
+    // its handler over the RPC transport (the empty-picker symptom CodeRabbit
+    // flagged would surface as a controller-not-found error instead).
+    let list_models = post_json_rpc(
+        &rpc_base,
+        368,
+        "openhuman.inference_list_models",
+        json!({ "provider_id": "does-not-exist" }),
+    )
+    .await;
+    let _ = assert_jsonrpc_error(
+        &list_models,
+        "inference_list_models with unknown provider id",
+    );
+
+    lm_join.abort();
+    mock_join.abort();
+    rpc_join.abort();
+}
+
+#[tokio::test]
+async fn json_rpc_inference_prompt_requires_external_ollama_runtime_when_unreachable() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+    let _tier_guard = EnvVarGuard::unset("OPENHUMAN_LOCAL_AI_TIER");
+    let _ollama_url_guard = EnvVarGuard::set("OPENHUMAN_OLLAMA_BASE_URL", "http://127.0.0.1:1");
+
+    let (mock_addr, mock_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let mock_origin = format!("http://{}", mock_addr);
+    write_min_config(&openhuman_home, &mock_origin);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{}", rpc_addr);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let update = post_json_rpc(
+        &rpc_base,
+        364,
+        "openhuman.inference_update_local_settings",
+        json!({
+            "runtime_enabled": true,
+            "opt_in_confirmed": true,
+            "provider": "ollama",
+            "model_id": "gemma3:1b-it-qat",
+            "chat_model_id": "gemma3:1b-it-qat"
+        }),
+    )
+    .await;
+    assert_no_jsonrpc_error(&update, "update_local_ai_settings for unreachable ollama");
+
+    let prompt = post_json_rpc(
+        &rpc_base,
+        365,
+        "openhuman.inference_prompt",
+        json!({
+            "prompt": "hello",
+            "max_tokens": 16,
+            "no_think": true
+        }),
+    )
+    .await;
+    let prompt_err = assert_jsonrpc_error(&prompt, "inference_prompt unreachable ollama");
+    let prompt_err_message = prompt_err
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    assert!(
+        prompt_err_message.contains("routes inference through an external Ollama endpoint"),
+        "unexpected error: {prompt_err}"
+    );
+
     mock_join.abort();
     rpc_join.abort();
 }

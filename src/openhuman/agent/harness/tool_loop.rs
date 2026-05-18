@@ -3,7 +3,7 @@ use crate::openhuman::agent::multimodal;
 use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::agent::stop_hooks::{current_stop_hooks, StopDecision, TurnState};
 use crate::openhuman::approval::{ApprovalManager, ApprovalRequest, ApprovalResponse};
-use crate::openhuman::providers::{
+use crate::openhuman::inference::provider::{
     ChatMessage, ChatRequest, Provider, ProviderCapabilityError, ProviderDelta,
 };
 use crate::openhuman::tools::traits::ToolScope;
@@ -417,8 +417,12 @@ pub(crate) async fn run_tool_call_loop(
                     // signal and floods Sentry — see OPENHUMAN-TAURI-3Y/3Z
                     // (~46 events combined) and the underlying TAURI-2E/84/T
                     // (~3300 events from raw per-attempt 429/503/504 reports).
-                    let transient = crate::openhuman::providers::reliable::is_rate_limited(&e)
-                        || crate::openhuman::providers::reliable::is_upstream_unhealthy(&e);
+                    let transient = crate::openhuman::inference::provider::reliable::is_rate_limited(
+                        &e,
+                    )
+                        || crate::openhuman::inference::provider::reliable::is_upstream_unhealthy(
+                            &e,
+                        );
                     if transient {
                         tracing::warn!(
                             domain = "agent",

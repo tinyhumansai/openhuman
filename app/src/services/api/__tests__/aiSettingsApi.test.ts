@@ -13,11 +13,14 @@ import {
   clearCloudProviderKey,
   listProviderModels,
   loadAISettings,
+  loadLocalProviderSnapshot,
+  localProvider,
   parseProviderString,
   type ProviderRef,
   saveAISettings,
   serializeProviderRef,
   setCloudProviderKey,
+  setLocalRuntimeEnabled,
 } from '../aiSettingsApi';
 
 // ─── Mock declarations (must be hoisted before imports) ───────────────────────
@@ -25,10 +28,15 @@ import {
 const mockOpenhumanGetClientConfig = vi.fn();
 const mockAuthListProviderCredentials = vi.fn();
 const mockOpenhumanUpdateModelSettings = vi.fn();
+const mockOpenhumanUpdateLocalAiSettings = vi.fn();
 const mockAuthStoreProviderCredentials = vi.fn();
 const mockAuthRemoveProviderCredentials = vi.fn();
 const mockCallCoreRpc = vi.fn();
 const mockIsTauri = vi.fn(() => true);
+const mockOpenhumanLocalAiStatus = vi.fn();
+const mockOpenhumanLocalAiDiagnostics = vi.fn();
+const mockOpenhumanLocalAiPresets = vi.fn();
+const mockOpenhumanLocalAiApplyPreset = vi.fn();
 
 vi.mock('../../coreRpcClient', () => ({ callCoreRpc: (a: unknown) => mockCallCoreRpc(a) }));
 
@@ -46,17 +54,14 @@ vi.mock('../../../utils/tauriCommands/auth', () => ({
 vi.mock('../../../utils/tauriCommands/config', () => ({
   openhumanGetClientConfig: () => mockOpenhumanGetClientConfig(),
   openhumanUpdateModelSettings: (a: unknown) => mockOpenhumanUpdateModelSettings(a),
-  openhumanUpdateLocalAiSettings: vi.fn().mockResolvedValue({ result: {} }),
+  openhumanUpdateLocalAiSettings: (a: unknown) => mockOpenhumanUpdateLocalAiSettings(a),
 }));
 
 vi.mock('../../../utils/tauriCommands/localAi', () => ({
-  openhumanLocalAiStatus: vi.fn().mockResolvedValue({ result: null }),
-  openhumanLocalAiDiagnostics: vi.fn().mockResolvedValue(null),
-  openhumanLocalAiPresets: vi.fn().mockResolvedValue(null),
-  openhumanLocalAiApplyPreset: vi.fn().mockResolvedValue({}),
-  openhumanLocalAiDownload: vi.fn().mockResolvedValue({}),
-  openhumanLocalAiSetOllamaPath: vi.fn().mockResolvedValue({}),
-  openhumanLocalAiShutdownOwned: vi.fn().mockResolvedValue({}),
+  openhumanLocalAiStatus: (...args: unknown[]) => mockOpenhumanLocalAiStatus(...args),
+  openhumanLocalAiDiagnostics: (...args: unknown[]) => mockOpenhumanLocalAiDiagnostics(...args),
+  openhumanLocalAiPresets: (...args: unknown[]) => mockOpenhumanLocalAiPresets(...args),
+  openhumanLocalAiApplyPreset: (...args: unknown[]) => mockOpenhumanLocalAiApplyPreset(...args),
 }));
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -174,6 +179,11 @@ describe('loadAISettings', () => {
   beforeEach(() => {
     mockOpenhumanGetClientConfig.mockReset();
     mockAuthListProviderCredentials.mockReset();
+    mockOpenhumanUpdateLocalAiSettings.mockReset();
+    mockOpenhumanLocalAiStatus.mockReset();
+    mockOpenhumanLocalAiDiagnostics.mockReset();
+    mockOpenhumanLocalAiPresets.mockReset();
+    mockOpenhumanLocalAiApplyPreset.mockReset();
   });
 
   it('returns cloudProviders with has_api_key=false when no profiles stored', async () => {
@@ -362,6 +372,69 @@ describe('loadAISettings', () => {
   });
 });
 
+describe('local provider facade', () => {
+  beforeEach(() => {
+    mockOpenhumanUpdateLocalAiSettings.mockReset();
+    mockOpenhumanLocalAiStatus.mockReset();
+    mockOpenhumanLocalAiDiagnostics.mockReset();
+    mockOpenhumanLocalAiPresets.mockReset();
+    mockOpenhumanLocalAiApplyPreset.mockReset();
+  });
+
+  it('loadLocalProviderSnapshot joins status diagnostics and presets', async () => {
+    mockOpenhumanLocalAiStatus.mockResolvedValue({ result: { state: 'ready' } });
+    mockOpenhumanLocalAiDiagnostics.mockResolvedValue({
+      installed_models: [{ name: 'gemma3:1b-it-qat', size: 123 }],
+    });
+    mockOpenhumanLocalAiPresets.mockResolvedValue({
+      recommended_tier: 'ram_2_4gb',
+      current_tier: 'ram_2_4gb',
+      selected_tier: 'ram_2_4gb',
+      presets: [],
+      device: {
+        total_ram_bytes: 1,
+        cpu_count: 1,
+        cpu_brand: 'cpu',
+        os_name: 'os',
+        os_version: '1',
+        has_gpu: false,
+        gpu_description: null,
+      },
+    });
+
+    const snapshot = await loadLocalProviderSnapshot();
+
+    expect(snapshot.status).toEqual({ state: 'ready' });
+    expect(snapshot.installedModels).toEqual([{ name: 'gemma3:1b-it-qat', size: 123 }]);
+    expect(snapshot.presets?.recommended_tier).toBe('ram_2_4gb');
+  });
+
+  it('setLocalRuntimeEnabled updates runtime_enabled and opt_in_confirmed together', async () => {
+    mockOpenhumanUpdateLocalAiSettings.mockResolvedValue({ result: {} });
+
+    await setLocalRuntimeEnabled(true);
+
+    expect(mockOpenhumanUpdateLocalAiSettings).toHaveBeenCalledWith({
+      runtime_enabled: true,
+      opt_in_confirmed: true,
+    });
+  });
+
+  it('localProvider facade delegates applyPreset and setEnabled', async () => {
+    mockOpenhumanLocalAiApplyPreset.mockResolvedValue({ applied_tier: 'ram_2_4gb' });
+    mockOpenhumanUpdateLocalAiSettings.mockResolvedValue({ result: {} });
+
+    await localProvider.applyPreset('ram_2_4gb');
+    await localProvider.setEnabled(false);
+
+    expect(mockOpenhumanLocalAiApplyPreset).toHaveBeenCalledWith('ram_2_4gb');
+    expect(mockOpenhumanUpdateLocalAiSettings).toHaveBeenCalledWith({
+      runtime_enabled: false,
+      opt_in_confirmed: false,
+    });
+  });
+});
+
 // ─── saveAISettings ──────────────────────────────────────────────────────────
 
 describe('saveAISettings', () => {
@@ -539,7 +612,7 @@ describe('listProviderModels', () => {
     mockIsTauri.mockReturnValue(true);
   });
 
-  it('dispatches openhuman.providers_list_models with provider_id and returns models', async () => {
+  it('dispatches openhuman.inference_list_models with provider_id and returns models', async () => {
     mockCallCoreRpc.mockResolvedValue({
       result: {
         models: [
@@ -552,7 +625,7 @@ describe('listProviderModels', () => {
     const models = await listProviderModels('p_openai_1');
 
     expect(mockCallCoreRpc).toHaveBeenCalledWith({
-      method: 'openhuman.providers_list_models',
+      method: 'openhuman.inference_list_models',
       params: { provider_id: 'p_openai_1' },
     });
     expect(models).toHaveLength(2);

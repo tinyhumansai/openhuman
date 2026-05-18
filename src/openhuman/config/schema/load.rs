@@ -1138,9 +1138,9 @@ impl Config {
             let tier_str = tier_str.trim().to_ascii_lowercase();
             if !tier_str.is_empty() {
                 if let Some(tier) =
-                    crate::openhuman::local_ai::presets::ModelTier::from_str_opt(&tier_str)
+                    crate::openhuman::inference::presets::ModelTier::from_str_opt(&tier_str)
                 {
-                    if tier == crate::openhuman::local_ai::presets::ModelTier::Custom {
+                    if tier == crate::openhuman::inference::presets::ModelTier::Custom {
                         tracing::warn!(
                             tier = %tier_str,
                             "ignoring custom OPENHUMAN_LOCAL_AI_TIER; only built-in presets are supported"
@@ -1151,7 +1151,7 @@ impl Config {
                             "ignoring OPENHUMAN_LOCAL_AI_TIER outside the 1B local-model allowlist"
                         );
                     } else {
-                        crate::openhuman::local_ai::presets::apply_preset_to_config(
+                        crate::openhuman::inference::presets::apply_preset_to_config(
                             &mut self.local_ai,
                             tier,
                         );

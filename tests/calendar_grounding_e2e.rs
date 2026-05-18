@@ -2,7 +2,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use openhuman_core::openhuman::agent::dispatcher::NativeToolDispatcher;
 use openhuman_core::openhuman::agent::Agent;
-use openhuman_core::openhuman::providers::{
+use openhuman_core::openhuman::inference::provider::{
     ChatMessage, ChatRequest, ChatResponse, Provider, ToolCall,
 };
 use openhuman_core::openhuman::tools::{PermissionLevel, Tool, ToolResult};

@@ -9,7 +9,7 @@ use super::test_support::{
     KeywordScriptedProvider, ScriptedToolCall,
 };
 use super::tool_loop::run_tool_call_loop;
-use crate::openhuman::providers::{ChatMessage, ChatRequest, ChatResponse, Provider};
+use crate::openhuman::inference::provider::{ChatMessage, ChatRequest, ChatResponse, Provider};
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolCategory, ToolResult, ToolScope};
 use async_trait::async_trait;
 use serde_json::json;

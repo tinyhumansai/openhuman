@@ -21,10 +21,10 @@ use tokio::sync::mpsc;
 use crate::core::event_bus::register_native_global;
 use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::config::MultimodalConfig;
+use crate::openhuman::inference::provider::{ChatMessage, Provider};
 use crate::openhuman::prompt_injection::{
     enforce_prompt_input, PromptEnforcementAction, PromptEnforcementContext,
 };
-use crate::openhuman::providers::{ChatMessage, Provider};
 use crate::openhuman::tools::Tool;
 
 use super::harness::definition::{AgentDefinitionRegistry, SandboxMode};

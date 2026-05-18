@@ -1,5 +1,5 @@
 <p align="right">
-  🌐 <a href="./README.md">English</a> | <a href="./README.zh-CN.md">简体中文</a>
+  🌐 <a href="./README.md">English</a> | <a href="./README.zh-CN.md">简体中文</a> | <a href="./README.ja-JP.md">日本語</a>
 </p>
 
 <h1 align="center">OpenHuman</h1>
@@ -11,11 +11,12 @@
 <p align="center" style="display: inline-block">
  <a href="https://trendshift.io/repositories/23680" target="_blank" style="display: inline-block">
   <img src="https://trendshift.io/api/badge/repositories/23680" alt="tinyhumansai%2Fopenhuman | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/>
+ </a> 
+ &nbsp;
+ <a href="https://www.producthunt.com/products/openhuman?embed=true&amp;utm_source=badge-top-post-badge&amp;utm_medium=badge&amp;utm_campaign=badge-openhuman" target="_blank" rel="noopener noreferrer">
+  <img alt="OpenHuman - An open source AI harness built with the human in mind | Product Hunt" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/top-post-badge.svg?post_id=1136902&amp;theme=light&amp;period=daily&amp;t=1778916022823">
  </a>
-</p>
-
-<p align="center" style="display: inline-block">
- <a href="https://www.producthunt.com/products/openhuman?embed=true&amp;utm_source=badge-featured&amp;utm_medium=badge&amp;utm_campaign=badge-openhuman" target="_blank" rel="noopener noreferrer"><img alt="OpenHuman - An open source AI harness built with the human in mind | Product Hunt" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1136902&amp;theme=light&amp;t=1778829432446"></a>
+ 
 </p>
 
 <p align="center">
@@ -44,7 +45,7 @@
 要安装或开始使用，请从 [tinyhumans.ai/openhuman](https://tinyhumans.ai/openhuman?utm_source=github&utm_medium=readme) 下载，或在终端中运行：
 
 ```bash
-# 从 https://tinyhumans.ai/openhuman?utm_source=github&utm_medium=readme 下载 DMG、EXE，或在终端中运行
+# 从 https://tinyhumans.ai/openhuman 下载 DMG、EXE，或在终端中运行
 
 # macOS 或 Linux x64
 curl -fsSL https://raw.githubusercontent.com/tinyhumansai/openhuman/main/scripts/install.sh | bash
@@ -65,7 +66,7 @@ OpenHuman 是一个开源智能助手，旨在融入你的日常生活。以下�
 
 - **开箱即用**：默认内置网络搜索、网页抓取[爬虫](https://tinyhumans.gitbook.io/openhuman/features/native-tools)、完整的编码工具集（文件系统、git、lint、test、grep）以及[原生语音](https://tinyhumans.gitbook.io/openhuman/features/voice)（STT 输入、ElevenLabs TTS 输出、吉祥物口型同步、实时 Google Meet 智能体）。[模型路由](https://tinyhumans.gitbook.io/openhuman/features/model-routing)在一个订阅下将每个任务分派到合适的 LLM（推理型、快速型或视觉型）。没有"安装插件才能读文件"的摩擦。[可选通过 Ollama 使用本地 AI](https://tinyhumans.gitbook.io/openhuman/features/model-routing/local-ai) 处理端侧工作负载。
 
-- **[智能 Token 压缩（TokenJuice）](https://tinyhumans.gitbook.io/openhuman/features/token-compression)**：每个工具调用、抓取结果、邮件正文和搜索载荷在触达任何 LLM 模型之前都会经过 token 压缩层处理。HTML 被转换为 Markdown，长 URL 被缩短，非 ASCII 字符被移除等等。你获得相同的信息，但 token 消耗仅为原来的几分之一。最多可降低 80% 的成本和延迟。
+- **[智能 Token 压缩（TokenJuice）](https://tinyhumans.gitbook.io/openhuman/features/token-compression)**：每个工具调用、抓取结果、邮件正文和搜索载荷在触达任何 LLM 模型之前都会经过 token 压缩层处理。HTML 被转换为 Markdown，长 URL 被缩短，冗长的工具输出会通过可配置的规则层去重并摘要等等。中文、emoji 等多字节字符按字形（grapheme）完整保留，绝不丢弃。你获得相同的信息，但 token 消耗仅为原来的几分之一。最多可降低 80% 的成本和延迟。
 
 - **[消息渠道](https://tinyhumans.gitbook.io/openhuman/features/integrations#messaging-channels)** 与 **[隐私与安全](https://tinyhumans.gitbook.io/openhuman/features/privacy-and-security)**：通过你日常使用的渠道进行收发，工作流数据保留在设备上，本地加密，始终属于你。
 

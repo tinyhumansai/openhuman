@@ -9,7 +9,7 @@
 
 use super::test_support::{KeywordRule, KeywordScriptedProvider, ScriptedToolCall};
 use super::tool_loop::run_tool_call_loop;
-use crate::openhuman::providers::{ChatMessage, ChatResponse, ToolCall};
+use crate::openhuman::inference::provider::{ChatMessage, ChatResponse, ToolCall};
 use crate::openhuman::tools::traits::{Tool, ToolResult};
 use async_trait::async_trait;
 use parking_lot::Mutex;

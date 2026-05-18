@@ -1,3 +1,5 @@
+import { useT } from '../../lib/i18n/I18nContext';
+
 interface SkillSearchBarProps {
   value: string;
   onChange: (value: string) => void;
@@ -7,8 +9,10 @@ interface SkillSearchBarProps {
 export default function SkillSearchBar({
   value,
   onChange,
-  placeholder = 'Search skills...',
+  placeholder,
 }: SkillSearchBarProps) {
+  const { t } = useT();
+  const effectivePlaceholder = placeholder ?? t('skills.search.placeholder');
   return (
     <div className="relative">
       <div className="pointer-events-none absolute inset-y-0 left-3 flex items-center">
@@ -29,7 +33,7 @@ export default function SkillSearchBar({
         type="text"
         value={value}
         onChange={e => onChange(e.target.value)}
-        placeholder={placeholder}
+        placeholder={effectivePlaceholder}
         className="w-full rounded-xl border border-stone-200 bg-white py-2 pl-9 pr-9 text-sm text-stone-900 placeholder-stone-400 focus:border-primary-300 focus:outline-none focus:ring-1 focus:ring-primary-200"
       />
       {value && (

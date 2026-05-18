@@ -139,16 +139,11 @@ jobs:
             bash app/scripts/e2e-run-session.sh test/e2e/specs/smoke.spec.ts smoke
 
       # Mega-flow exercises the OAuth-success-deep-link and Composio
-      # trigger-lifecycle paths. Both currently hit a pre-existing race
-      # in the deep-link → custom-event propagation on the Linux CI
-      # image (smoke.spec.ts has a related skipped `it()` with the
-      # same root cause). Keep mega-flow visible in CI as a signal but
-      # non-blocking, mirroring the pre-refactor behavior — once the
-      # auth/oauth deep-link race lands a fix, drop the
-      # `continue-on-error` and consolidate the two steps.
-      - name: Run E2E (mega-flow, non-blocking)
+      # trigger-lifecycle paths. Hard-fails on regressions — if the
+      # deep-link → custom-event propagation race resurfaces, fix it
+      # at the source rather than re-adding `continue-on-error`.
+      - name: Run E2E (mega-flow)
         if: ${{ !inputs.full }}
-        continue-on-error: true
         run: |
           xvfb-run -a --server-args="-screen 0 1280x960x24" \
             bash app/scripts/e2e-run-session.sh test/e2e/specs/mega-flow.spec.ts mega-flow

@@ -309,7 +309,7 @@ async fn write_profile_md(
 /// Ask the backend LLM to distil the raw LinkedIn Markdown into a
 /// concise, high-signal profile document suitable for agent context.
 pub async fn summarise_profile_with_llm(config: &Config, raw_md: &str) -> anyhow::Result<String> {
-    use crate::openhuman::providers::ops::{
+    use crate::openhuman::inference::provider::ops::{
         create_backend_inference_provider, ProviderRuntimeOptions,
     };
 

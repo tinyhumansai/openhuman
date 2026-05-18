@@ -15,7 +15,15 @@ export const CORE_RPC_METHODS = {
   configWorkspaceOnboardingFlagExists: 'openhuman.config_workspace_onboarding_flag_exists',
   configWorkspaceOnboardingFlagSet: 'openhuman.config_workspace_onboarding_flag_set',
   corePing: 'core.ping',
-  providersListModels: 'openhuman.providers_list_models',
+  inferenceApplyPreset: 'openhuman.inference_apply_preset',
+  inferenceDiagnostics: 'openhuman.inference_diagnostics',
+  inferenceDeviceProfile: 'openhuman.inference_device_profile',
+  inferenceGetClientConfig: 'openhuman.inference_get_client_config',
+  inferenceListModels: 'openhuman.inference_list_models',
+  inferencePresets: 'openhuman.inference_presets',
+  inferenceUpdateLocalSettings: 'openhuman.inference_update_local_settings',
+  inferenceUpdateModelSettings: 'openhuman.inference_update_model_settings',
+  providersListModels: 'openhuman.inference_list_models',
   screenIntelligenceStatus: 'openhuman.screen_intelligence_status',
 } as const;
 
@@ -32,15 +40,20 @@ export const LEGACY_METHOD_ALIASES: Record<string, CoreRpcMethod> = {
   'openhuman.update_browser_settings': CORE_RPC_METHODS.configUpdateBrowserSettings,
   'openhuman.update_composio_trigger_settings':
     CORE_RPC_METHODS.configUpdateComposioTriggerSettings,
-  'openhuman.update_local_ai_settings': CORE_RPC_METHODS.configUpdateLocalAiSettings,
+  'openhuman.update_local_ai_settings': CORE_RPC_METHODS.inferenceUpdateLocalSettings,
   'openhuman.update_memory_settings': CORE_RPC_METHODS.configUpdateMemorySettings,
-  'openhuman.update_model_settings': CORE_RPC_METHODS.configUpdateModelSettings,
+  'openhuman.update_model_settings': CORE_RPC_METHODS.inferenceUpdateModelSettings,
   'openhuman.update_runtime_settings': CORE_RPC_METHODS.configUpdateRuntimeSettings,
   'openhuman.update_screen_intelligence_settings':
     CORE_RPC_METHODS.configUpdateScreenIntelligenceSettings,
   'openhuman.workspace_onboarding_flag_exists':
     CORE_RPC_METHODS.configWorkspaceOnboardingFlagExists,
   'openhuman.workspace_onboarding_flag_set': CORE_RPC_METHODS.configWorkspaceOnboardingFlagSet,
+  'openhuman.local_ai_apply_preset': CORE_RPC_METHODS.inferenceApplyPreset,
+  'openhuman.local_ai_device_profile': CORE_RPC_METHODS.inferenceDeviceProfile,
+  'openhuman.local_ai_diagnostics': CORE_RPC_METHODS.inferenceDiagnostics,
+  'openhuman.local_ai_presets': CORE_RPC_METHODS.inferencePresets,
+  'openhuman.providers_list_models': CORE_RPC_METHODS.inferenceListModels,
 };
 
 export function normalizeRpcMethod(method: string): string {

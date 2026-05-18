@@ -53,7 +53,7 @@ fn main() {
             // still fires for genuine outages. Per-attempt reports flood
             // Sentry — see OPENHUMAN-TAURI-2E (~1393 events), -84 (~1050),
             // -T (~871). The primary fix lives in
-            // `openhuman::providers::ops::should_report_provider_http_failure`
+            // `openhuman::inference::provider::ops::should_report_provider_http_failure`
             // (transient codes excluded). This filter catches any future call
             // site that bypasses it.
             if openhuman_core::core::observability::is_transient_provider_http_failure(&event) {
@@ -86,7 +86,7 @@ fn main() {
             // Drop 401 "Session expired. Please log in again." bodies surfaced
             // by llm_provider / backend_api, plus pre-flight "no session token
             // stored" guards from the rpc dispatcher. Primary suppression
-            // lives at the call sites (`openhuman::providers::ops::api_error`
+            // lives at the call sites (`openhuman::inference::provider::ops::api_error`
             // publishes a SessionExpired event_bus signal and short-circuits;
             // the rpc dispatcher's `is_session_expired_error` skip-path in
             // `src/core/jsonrpc.rs` redirects to a tracing::info). This

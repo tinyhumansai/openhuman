@@ -2,6 +2,7 @@ import { IS_DEV } from '../utils/config';
 
 export type AccountProvider =
   | 'whatsapp'
+  | 'wechat'
   | 'telegram'
   | 'linkedin'
   | 'slack'
@@ -73,6 +74,12 @@ const BASE_PROVIDERS: ProviderDescriptor[] = [
     label: 'WhatsApp Web',
     description: 'Open web.whatsapp.com inside the app and stream chat updates.',
     serviceUrl: 'https://web.whatsapp.com/',
+  },
+  {
+    id: 'wechat',
+    label: 'WeChat Web',
+    description: 'Open WeChat in-app for QR sign-in and desktop chat access.',
+    serviceUrl: 'https://web.wechat.com/',
   },
   {
     id: 'telegram',

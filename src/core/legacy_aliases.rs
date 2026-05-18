@@ -53,7 +53,7 @@ const LEGACY_ALIASES: &[(&str, &str)] = &[
     ),
     (
         "openhuman.update_local_ai_settings",
-        "openhuman.config_update_local_ai_settings",
+        "openhuman.inference_update_local_settings",
     ),
     (
         "openhuman.update_memory_settings",
@@ -61,7 +61,7 @@ const LEGACY_ALIASES: &[(&str, &str)] = &[
     ),
     (
         "openhuman.update_model_settings",
-        "openhuman.config_update_model_settings",
+        "openhuman.inference_update_model_settings",
     ),
     (
         "openhuman.update_runtime_settings",
@@ -78,6 +78,23 @@ const LEGACY_ALIASES: &[(&str, &str)] = &[
     (
         "openhuman.workspace_onboarding_flag_set",
         "openhuman.config_workspace_onboarding_flag_set",
+    ),
+    (
+        "openhuman.local_ai_apply_preset",
+        "openhuman.inference_apply_preset",
+    ),
+    (
+        "openhuman.local_ai_device_profile",
+        "openhuman.inference_device_profile",
+    ),
+    (
+        "openhuman.local_ai_diagnostics",
+        "openhuman.inference_diagnostics",
+    ),
+    ("openhuman.local_ai_presets", "openhuman.inference_presets"),
+    (
+        "openhuman.providers_list_models",
+        "openhuman.inference_list_models",
     ),
 ];
 

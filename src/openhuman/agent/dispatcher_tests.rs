@@ -21,7 +21,7 @@ fn xml_dispatcher_parses_tool_calls() {
 fn native_dispatcher_roundtrip() {
     let response = ChatResponse {
         text: Some("ok".into()),
-        tool_calls: vec![crate::openhuman::providers::ToolCall {
+        tool_calls: vec![crate::openhuman::inference::provider::ToolCall {
             id: "tc1".into(),
             name: "file_read".into(),
             arguments: "{\"path\":\"a.txt\"}".into(),

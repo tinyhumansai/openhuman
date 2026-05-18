@@ -7,8 +7,8 @@
 
 use super::types::{Agent, AgentBuilder};
 use crate::openhuman::agent::dispatcher::{NativeToolDispatcher, XmlToolDispatcher};
+use crate::openhuman::inference::provider::{ChatRequest, ConversationMessage, Provider};
 use crate::openhuman::memory::Memory;
-use crate::openhuman::providers::{ChatRequest, ConversationMessage, Provider};
 use crate::openhuman::tools::Tool;
 use anyhow::Result;
 use async_trait::async_trait;
@@ -16,7 +16,7 @@ use parking_lot::Mutex;
 use std::sync::Arc;
 
 struct MockProvider {
-    responses: Mutex<Vec<crate::openhuman::providers::ChatResponse>>,
+    responses: Mutex<Vec<crate::openhuman::inference::provider::ChatResponse>>,
 }
 
 #[async_trait]
@@ -36,10 +36,10 @@ impl Provider for MockProvider {
         _request: ChatRequest<'_>,
         _model: &str,
         _temperature: f64,
-    ) -> Result<crate::openhuman::providers::ChatResponse> {
+    ) -> Result<crate::openhuman::inference::provider::ChatResponse> {
         let mut guard = self.responses.lock();
         if guard.is_empty() {
-            return Ok(crate::openhuman::providers::ChatResponse {
+            return Ok(crate::openhuman::inference::provider::ChatResponse {
                 text: Some("done".into()),
                 tool_calls: vec![],
                 usage: None,
@@ -56,7 +56,7 @@ impl Provider for MockProvider {
 #[derive(Default)]
 struct RecordingProvider {
     captures: Mutex<Vec<CapturedCall>>,
-    responses: Mutex<Vec<crate::openhuman::providers::ChatResponse>>,
+    responses: Mutex<Vec<crate::openhuman::inference::provider::ChatResponse>>,
 }
 
 #[derive(Clone)]
@@ -82,7 +82,7 @@ impl Provider for RecordingProvider {
         request: ChatRequest<'_>,
         model: &str,
         _temperature: f64,
-    ) -> Result<crate::openhuman::providers::ChatResponse> {
+    ) -> Result<crate::openhuman::inference::provider::ChatResponse> {
         let system_prompt = request
             .messages
             .iter()
@@ -95,7 +95,7 @@ impl Provider for RecordingProvider {
 
         let mut guard = self.responses.lock();
         if guard.is_empty() {
-            return Ok(crate::openhuman::providers::ChatResponse {
+            return Ok(crate::openhuman::inference::provider::ChatResponse {
                 text: Some("done".into()),
                 tool_calls: vec![],
                 usage: None,
@@ -248,7 +248,7 @@ async fn turn_without_tools_returns_text() {
     let workspace_path = workspace.path().to_path_buf();
 
     let provider = Box::new(MockProvider {
-        responses: Mutex::new(vec![crate::openhuman::providers::ChatResponse {
+        responses: Mutex::new(vec![crate::openhuman::inference::provider::ChatResponse {
             text: Some("hello".into()),
             tool_calls: vec![],
             usage: None,
@@ -282,16 +282,16 @@ async fn turn_with_native_dispatcher_handles_tool_results_variant() {
 
     let provider = Box::new(MockProvider {
         responses: Mutex::new(vec![
-            crate::openhuman::providers::ChatResponse {
+            crate::openhuman::inference::provider::ChatResponse {
                 text: Some(String::new()),
-                tool_calls: vec![crate::openhuman::providers::ToolCall {
+                tool_calls: vec![crate::openhuman::inference::provider::ToolCall {
                     id: "tc1".into(),
                     name: "echo".into(),
                     arguments: "{}".into(),
                 }],
                 usage: None,
             },
-            crate::openhuman::providers::ChatResponse {
+            crate::openhuman::inference::provider::ChatResponse {
                 text: Some("done".into()),
                 tool_calls: vec![],
                 usage: None,
@@ -330,7 +330,7 @@ async fn turn_with_native_dispatcher_persists_fallback_tool_calls() {
 
     let provider = Box::new(MockProvider {
         responses: Mutex::new(vec![
-            crate::openhuman::providers::ChatResponse {
+            crate::openhuman::inference::provider::ChatResponse {
                 text: Some(
                     "Checking...\n<tool_call>{\"name\":\"echo\",\"arguments\":{}}</tool_call>"
                         .into(),
@@ -338,7 +338,7 @@ async fn turn_with_native_dispatcher_persists_fallback_tool_calls() {
                 tool_calls: vec![],
                 usage: None,
             },
-            crate::openhuman::providers::ChatResponse {
+            crate::openhuman::inference::provider::ChatResponse {
                 text: Some("done".into()),
                 tool_calls: vec![],
                 usage: None,
@@ -415,9 +415,9 @@ async fn turn_dispatches_spawn_subagent_through_full_path() {
     //   3. Parent turn iter 1 — fold sub-agent result into "Based on the research, X is Y."
     let provider = Box::new(MockProvider {
         responses: Mutex::new(vec![
-            crate::openhuman::providers::ChatResponse {
+            crate::openhuman::inference::provider::ChatResponse {
                 text: Some(String::new()),
-                tool_calls: vec![crate::openhuman::providers::ToolCall {
+                tool_calls: vec![crate::openhuman::inference::provider::ToolCall {
                     id: "call-spawn".into(),
                     name: "spawn_subagent".into(),
                     arguments: serde_json::json!({
@@ -428,12 +428,12 @@ async fn turn_dispatches_spawn_subagent_through_full_path() {
                 }],
                 usage: None,
             },
-            crate::openhuman::providers::ChatResponse {
+            crate::openhuman::inference::provider::ChatResponse {
                 text: Some("X is Y".into()),
                 tool_calls: vec![],
                 usage: None,
             },
-            crate::openhuman::providers::ChatResponse {
+            crate::openhuman::inference::provider::ChatResponse {
                 text: Some("Based on the research, X is Y.".into()),
                 tool_calls: vec![],
                 usage: None,
@@ -510,17 +510,17 @@ async fn system_prompt_and_model_are_byte_stable_across_turns() {
 
     let provider = Arc::new(RecordingProvider {
         responses: Mutex::new(vec![
-            crate::openhuman::providers::ChatResponse {
+            crate::openhuman::inference::provider::ChatResponse {
                 text: Some("first".into()),
                 tool_calls: vec![],
                 usage: None,
             },
-            crate::openhuman::providers::ChatResponse {
+            crate::openhuman::inference::provider::ChatResponse {
                 text: Some("second".into()),
                 tool_calls: vec![],
                 usage: None,
             },
-            crate::openhuman::providers::ChatResponse {
+            crate::openhuman::inference::provider::ChatResponse {
                 text: Some("third".into()),
                 tool_calls: vec![],
                 usage: None,
@@ -690,8 +690,8 @@ fn seed_resume_from_messages_primes_cached_transcript() {
 fn seed_resume_from_messages_is_noop_on_warm_agent() {
     let mut agent = build_minimal_agent_with_definition_name(Some("orchestrator"));
     agent.cached_transcript_messages = Some(vec![
-        crate::openhuman::providers::ChatMessage::system("warm prefix"),
-        crate::openhuman::providers::ChatMessage::user("hi"),
+        crate::openhuman::inference::provider::ChatMessage::system("warm prefix"),
+        crate::openhuman::inference::provider::ChatMessage::user("hi"),
     ]);
     agent
         .seed_resume_from_messages(vec![("user".into(), "different".into())], "different")

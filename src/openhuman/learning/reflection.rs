@@ -44,7 +44,7 @@ pub struct ReflectionHook {
     config: LearningConfig,
     full_config: Arc<Config>,
     memory: Arc<dyn Memory>,
-    provider: Option<Arc<dyn crate::openhuman::providers::Provider>>,
+    provider: Option<Arc<dyn crate::openhuman::inference::provider::Provider>>,
     /// Per-session reflection counts for throttling. Key is session_id (or "__global__").
     session_counts: Mutex<HashMap<String, usize>>,
 }
@@ -54,7 +54,7 @@ impl ReflectionHook {
         config: LearningConfig,
         full_config: Arc<Config>,
         memory: Arc<dyn Memory>,
-        provider: Option<Arc<dyn crate::openhuman::providers::Provider>>,
+        provider: Option<Arc<dyn crate::openhuman::inference::provider::Provider>>,
     ) -> Self {
         Self {
             config,
@@ -186,7 +186,7 @@ impl ReflectionHook {
                 log::debug!(
                     "[learning::reflection] local route — gate permit acquired via LocalAiService"
                 );
-                let service = crate::openhuman::local_ai::global(&self.full_config);
+                let service = crate::openhuman::inference::local::global(&self.full_config);
                 service
                     .prompt(&self.full_config, prompt, Some(512), true)
                     .await

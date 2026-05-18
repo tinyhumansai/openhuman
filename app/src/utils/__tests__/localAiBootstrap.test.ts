@@ -7,7 +7,6 @@ import {
 
 vi.mock('../tauriCommands', () => ({
   openhumanLocalAiApplyPreset: vi.fn(),
-  openhumanLocalAiDownloadAllAssets: vi.fn(),
   openhumanLocalAiPresets: vi.fn(),
 }));
 
@@ -16,7 +15,7 @@ describe('localAiBootstrap', () => {
     vi.clearAllMocks();
   });
 
-  it('applies the recommended preset before starting background downloads when no tier is selected', async () => {
+  it('applies the recommended preset when no tier is selected', async () => {
     const tauriCommands = await import('../tauriCommands');
     vi.mocked(tauriCommands.openhumanLocalAiPresets).mockResolvedValue({
       presets: [],
@@ -40,21 +39,10 @@ describe('localAiBootstrap', () => {
       embedding_model_id: 'all-minilm:latest',
       quantization: 'qat',
     });
-    vi.mocked(tauriCommands.openhumanLocalAiDownloadAllAssets).mockResolvedValue({
-      result: { state: 'downloading', progress: 0 } as never,
-      logs: [],
-    });
-
     const result = await bootstrapLocalAiWithRecommendedPreset(false, '[test]');
 
     expect(tauriCommands.openhumanLocalAiPresets).toHaveBeenCalledOnce();
     expect(tauriCommands.openhumanLocalAiApplyPreset).toHaveBeenCalledWith('ram_2_4gb');
-    expect(tauriCommands.openhumanLocalAiDownloadAllAssets).toHaveBeenCalledWith(false);
-    expect(
-      vi.mocked(tauriCommands.openhumanLocalAiApplyPreset).mock.invocationCallOrder[0]
-    ).toBeLessThan(
-      vi.mocked(tauriCommands.openhumanLocalAiDownloadAllAssets).mock.invocationCallOrder[0]
-    );
     expect(result.preset.hadSelectedTier).toBe(false);
     expect(result.preset.appliedTier).toBe('ram_2_4gb');
   });

@@ -892,6 +892,7 @@ const VoicePanel = ({ embedded = false }: VoicePanelProps = {}) => {
                 <label className="flex items-center gap-2 text-sm text-stone-700">
                   <input
                     type="checkbox"
+                    data-testid="voice-auto-start-toggle"
                     checked={settings.auto_start}
                     onChange={e => updateSetting('auto_start', e.target.checked)}
                     className="h-4 w-4 rounded border-stone-300 text-primary-600 focus:ring-primary-500"
@@ -987,6 +988,7 @@ const VoicePanel = ({ embedded = false }: VoicePanelProps = {}) => {
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
+                data-testid="voice-save-settings"
                 onClick={() => void saveSettings(true)}
                 disabled={disabled || isSaving || !hasUnsavedChanges}
                 className="px-3 py-1.5 text-xs rounded-md bg-primary-600 hover:bg-primary-700 disabled:opacity-60 text-white">

@@ -73,6 +73,7 @@ pub(crate) fn test_inherit_echo_def() -> AgentDefinition {
         background: false,
         subagents: vec![],
         delegate_name: None,
+        agent_tier: crate::openhuman::agent::harness::definition::AgentTier::Worker,
         source: DefinitionSource::Builtin,
     }
 }
@@ -107,6 +108,7 @@ pub(crate) fn test_inherit_parallel_worker_def() -> AgentDefinition {
         background: false,
         subagents: vec![],
         delegate_name: None,
+        agent_tier: crate::openhuman::agent::harness::definition::AgentTier::Worker,
         source: DefinitionSource::Builtin,
     }
 }

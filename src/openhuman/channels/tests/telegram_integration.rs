@@ -13,7 +13,7 @@ use super::super::traits;
 use super::super::{Channel, SendMessage};
 use super::common::{NoopMemory, SlowProvider};
 use crate::openhuman::agent::bus::{mock_agent_run_turn, AgentTurnResponse};
-use crate::openhuman::providers::{ChatMessage, Provider};
+use crate::openhuman::inference::provider::{ChatMessage, Provider};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -110,7 +110,8 @@ fn make_test_context(
         api_url: None,
         inference_url: None,
         reliability: Arc::new(crate::openhuman::config::ReliabilityConfig::default()),
-        provider_runtime_options: crate::openhuman::providers::ProviderRuntimeOptions::default(),
+        provider_runtime_options:
+            crate::openhuman::inference::provider::ProviderRuntimeOptions::default(),
         workspace_dir: Arc::new(std::env::temp_dir()),
         message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
         multimodal: crate::openhuman::config::MultimodalConfig::default(),

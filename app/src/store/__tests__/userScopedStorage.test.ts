@@ -90,4 +90,38 @@ describe('userScopedStorage', () => {
       setItemSpy.mockRestore();
     }
   });
+
+  test('userScopedStorage redacts auth/session tokens before persisting redux blobs (#1938)', async () => {
+    const mod = await importModule();
+    mod.primeActiveUserId('user-123');
+
+    const persistedReduxBlob = JSON.stringify({
+      sessionToken: 'top-level-token',
+      auth: JSON.stringify({
+        isAuthenticated: true,
+        sessionToken: 'nested-token',
+        accessToken: 'nested-access-token',
+      }),
+      nestedObject: {
+        token: 'object-token',
+        child: { refreshToken: 'object-refresh-token', safe: 'keep-me' },
+      },
+      nestedArray: [{ accessToken: 'array-access-token', safe: 'array-safe' }],
+      harmless: JSON.stringify({ theme: 'dark' }),
+    });
+
+    await mod.userScopedStorage.setItem('persist:coreState', persistedReduxBlob);
+
+    const stored = localStorage.getItem('user-123:persist:coreState');
+    expect(stored).not.toBeNull();
+    expect(stored).not.toContain('top-level-token');
+    expect(stored).not.toContain('nested-token');
+    expect(stored).not.toContain('nested-access-token');
+    expect(stored).not.toContain('object-token');
+    expect(stored).not.toContain('object-refresh-token');
+    expect(stored).not.toContain('array-access-token');
+    expect(stored).toContain('keep-me');
+    expect(stored).toContain('array-safe');
+    expect(stored).toContain('dark');
+  });
 });

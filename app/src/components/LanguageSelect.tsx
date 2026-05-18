@@ -2,10 +2,20 @@ import type { Locale } from '../lib/i18n/types';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import { setLocale } from '../store/localeSlice';
 
+// Listed roughly by speaker count (English first as the source-of-truth locale).
+// Labels are intentionally rendered in each locale's own script so the picker
+// is recognisable to a native speaker even before the rest of the UI rerenders.
 const LOCALE_OPTIONS: Array<{ value: Locale; flag: string; label: string }> = [
   { value: 'en', flag: '🇬🇧', label: 'English' },
-  { value: 'id', flag: '🇮🇩', label: 'Bahasa Indonesia' },
   { value: 'zh-CN', flag: '🇨🇳', label: '中文' },
+  { value: 'hi', flag: '🇮🇳', label: 'हिन्दी' },
+  { value: 'es', flag: '🇪🇸', label: 'Español' },
+  { value: 'ar', flag: '🇸🇦', label: 'العربية' },
+  { value: 'fr', flag: '🇫🇷', label: 'Français' },
+  { value: 'bn', flag: '🇧🇩', label: 'বাংলা' },
+  { value: 'pt', flag: '🇵🇹', label: 'Português' },
+  { value: 'ru', flag: '🇷🇺', label: 'Русский' },
+  { value: 'id', flag: '🇮🇩', label: 'Bahasa Indonesia' },
 ];
 
 interface LanguageSelectProps {

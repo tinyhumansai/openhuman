@@ -20,7 +20,7 @@ use async_trait::async_trait;
 use crate::openhuman::config::{
     MODEL_AGENTIC_V1, MODEL_CODING_V1, MODEL_REASONING_QUICK_V1, MODEL_REASONING_V1,
 };
-use crate::openhuman::providers::traits::{
+use crate::openhuman::inference::provider::traits::{
     ChatMessage, ChatRequest, ChatResponse, Provider, ProviderCapabilities, StreamChunk,
     StreamError, StreamOptions, StreamResult, ToolsPayload,
 };

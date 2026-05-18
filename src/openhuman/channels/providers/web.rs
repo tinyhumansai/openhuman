@@ -194,7 +194,7 @@ fn extract_provider_error_detail(err: &str) -> Option<String> {
                 if trimmed.is_empty() {
                     return None;
                 }
-                let sanitized = crate::openhuman::providers::sanitize_api_error(trimmed);
+                let sanitized = crate::openhuman::inference::provider::sanitize_api_error(trimmed);
                 return Some(crate::openhuman::util::truncate_with_ellipsis(
                     &sanitized,
                     MAX_DETAIL_CHARS,
@@ -681,7 +681,10 @@ async fn run_chat_task(
         model_override: model_override.clone(),
         temperature,
         target_agent_id: target_agent_id.clone(),
-        provider_binding: crate::openhuman::providers::provider_for_role(provider_role, &config),
+        provider_binding: crate::openhuman::inference::provider::provider_for_role(
+            provider_role,
+            &config,
+        ),
     };
 
     let prior = {
@@ -803,7 +806,7 @@ async fn run_chat_task(
     // `thread_context::current_thread_id()` and forwards it on
     // `/openai/v1/chat/completions` so the backend can group
     // InferenceLog entries and reuse the KV cache for this thread.
-    let result = match crate::openhuman::providers::thread_context::with_thread_id(
+    let result = match crate::openhuman::inference::provider::thread_context::with_thread_id(
         thread_id.to_string(),
         agent.run_single(message),
     )

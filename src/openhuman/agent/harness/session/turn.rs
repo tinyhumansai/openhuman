@@ -27,8 +27,10 @@ use crate::openhuman::agent::memory_loader::collect_recall_citations;
 use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::context::prompt::{LearnedContextData, PromptContext, PromptTool};
 use crate::openhuman::context::{ReductionOutcome, ARCHIVIST_EXTRACTION_PROMPT};
+use crate::openhuman::inference::provider::{
+    ChatMessage, ChatRequest, ConversationMessage, ProviderDelta,
+};
 use crate::openhuman::memory::MemoryCategory;
-use crate::openhuman::providers::{ChatMessage, ChatRequest, ConversationMessage, ProviderDelta};
 use crate::openhuman::tools::traits::ToolCallOptions;
 use crate::openhuman::tools::Tool;
 use crate::openhuman::util::truncate_with_ellipsis;
@@ -1664,7 +1666,7 @@ impl Agent {
             output_tokens,
             cached_input_tokens,
             charged_amount_usd,
-            thread_id: crate::openhuman::providers::thread_context::current_thread_id(),
+            thread_id: crate::openhuman::inference::provider::thread_context::current_thread_id(),
         };
 
         if let Err(err) = transcript::write_transcript(path, messages, &meta, turn_usage) {

@@ -31,8 +31,8 @@ use crate::openhuman::channels::whatsapp_web::WhatsAppWebChannel;
 use crate::openhuman::channels::Channel;
 use crate::openhuman::config::Config;
 use crate::openhuman::context::channels_prompt::build_system_prompt;
+use crate::openhuman::inference::provider::{self, Provider};
 use crate::openhuman::memory::{self, Memory};
-use crate::openhuman::providers::{self, Provider};
 use crate::openhuman::security::SecurityPolicy;
 use crate::openhuman::tools;
 use anyhow::Result;
@@ -154,13 +154,13 @@ pub async fn start_channels(config: Config) -> Result<()> {
     // in bootstrap_core_runtime() (src/core/jsonrpc.rs) to avoid double-registration
     // when both startup paths run in the same process.
 
-    let provider_runtime_options = providers::ProviderRuntimeOptions {
+    let provider_runtime_options = provider::ProviderRuntimeOptions {
         auth_profile_override: None,
         openhuman_dir: config.config_path.parent().map(std::path::PathBuf::from),
         secrets_encrypt: config.secrets.encrypt,
         reasoning_enabled: config.runtime.reasoning_enabled,
     };
-    let provider: Arc<dyn Provider> = Arc::from(providers::create_intelligent_routing_provider(
+    let provider: Arc<dyn Provider> = Arc::from(provider::create_intelligent_routing_provider(
         config.inference_url.as_deref(),
         config.api_url.as_deref(),
         config.api_key.as_deref(),
@@ -572,7 +572,7 @@ pub async fn start_channels(config: Config) -> Result<()> {
 
     println!("  🚦 In-flight message limit: {max_in_flight_messages}");
 
-    let provider_name = providers::INFERENCE_BACKEND_ID.to_string();
+    let provider_name = provider::INFERENCE_BACKEND_ID.to_string();
     let mut provider_cache_seed: HashMap<String, Arc<dyn Provider>> = HashMap::new();
     provider_cache_seed.insert(provider_name.clone(), Arc::clone(&provider));
     let message_timeout_secs =

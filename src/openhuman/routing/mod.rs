@@ -24,8 +24,8 @@
 //! ```rust,ignore
 //! use std::sync::Arc;
 //! use crate::openhuman::routing;
-//! use crate::openhuman::providers::create_backend_inference_provider;
-//! use crate::openhuman::providers::compatible::{AuthStyle, OpenAiCompatibleProvider};
+//! use crate::openhuman::inference::provider::create_backend_inference_provider;
+//! use crate::openhuman::inference::provider::compatible::{AuthStyle, OpenAiCompatibleProvider};
 //!
 //! let remote = create_backend_inference_provider(api_url, &opts)?;
 //! let provider = routing::new_provider(remote, &config.local_ai, &config.default_model);

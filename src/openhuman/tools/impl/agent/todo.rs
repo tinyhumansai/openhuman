@@ -8,7 +8,7 @@
 //! rendering so transcripts read cleanly.
 
 use crate::openhuman::agent::task_board::{TaskBoardCard, TaskCardStatus};
-use crate::openhuman::providers::thread_context;
+use crate::openhuman::inference::provider::thread_context;
 use crate::openhuman::todos::ops::{self, BoardLocation, CardPatch};
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
 use async_trait::async_trait;

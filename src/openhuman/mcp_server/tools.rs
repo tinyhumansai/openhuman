@@ -4,7 +4,7 @@ use crate::core::all;
 use crate::openhuman::agent::harness::AgentDefinitionRegistry;
 use crate::openhuman::agent::Agent;
 use crate::openhuman::config::rpc as config_rpc;
-use crate::openhuman::providers::traits::build_tool_instructions_text;
+use crate::openhuman::inference::provider::traits::build_tool_instructions_text;
 use crate::openhuman::security::{SecurityPolicy, ToolOperation};
 
 const DEFAULT_LIMIT: u64 = 10;

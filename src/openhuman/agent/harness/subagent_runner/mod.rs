@@ -13,7 +13,7 @@
 //!    definition asks to omit (`omit_identity`, `omit_memory_context`,
 //!    `omit_safety_preamble`, `omit_skills_catalog`).
 //! 5. Runs a slim inner tool-call loop using the parent's
-//!    [`crate::openhuman::providers::Provider`] and returns a single
+//!    [`crate::openhuman::inference::provider::Provider`] and returns a single
 //!    text result. The intra-sub-agent history never leaks back to the
 //!    parent — the parent only sees one compact tool result.
 //!

@@ -1,5 +1,5 @@
 use super::*;
-use crate::openhuman::providers::{ChatResponse, ToolCall, ToolResultMessage};
+use crate::openhuman::inference::provider::{ChatResponse, ToolCall, ToolResultMessage};
 use async_trait::async_trait;
 use std::sync::Mutex;
 
@@ -75,7 +75,7 @@ impl Provider for StubProvider {
 
     async fn chat(
         &self,
-        _request: crate::openhuman::providers::ChatRequest<'_>,
+        _request: crate::openhuman::inference::provider::ChatRequest<'_>,
         _model: &str,
         _temperature: f64,
     ) -> anyhow::Result<ChatResponse> {

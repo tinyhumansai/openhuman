@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 
 import { resolvePreferredAuthModeForChannel } from '../../lib/channels/routing';
+import { useT } from '../../lib/i18n/I18nContext';
 import { useAppSelector } from '../../store/hooks';
 import type { ChannelDefinition, ChannelType } from '../../types/channels';
 import ChannelStatusBadge from './ChannelStatusBadge';
@@ -11,31 +12,30 @@ interface ChannelSelectorProps {
   onSelectChannel: (channel: ChannelType) => void;
 }
 
-const CHANNEL_ICONS: Record<string, string> = {
-  telegram: '\u2708\uFE0F',
-  discord: '\uD83C\uDFAE',
-  web: '\uD83C\uDF10',
-};
+const CHANNEL_ICONS: Record<string, string> = { telegram: '✈️', discord: '🎮', web: '🌐' };
 
 const ChannelSelector = ({
   definitions,
   selectedChannel,
   onSelectChannel,
 }: ChannelSelectorProps) => {
+  const { t } = useT();
   const channelConnections = useAppSelector(state => state.channelConnections);
 
   const activeRoute = useMemo(() => {
     const channel = channelConnections.defaultMessagingChannel;
     const authMode = resolvePreferredAuthModeForChannel(channelConnections, channel);
-    return authMode ? `${channel} via ${authMode}` : 'No active route';
-  }, [channelConnections]);
+    return authMode
+      ? t('channels.activeRouteValue').replace('{channel}', channel).replace('{authMode}', authMode)
+      : t('channels.noActiveRoute');
+  }, [channelConnections, t]);
 
   return (
     <section className="rounded-xl border border-stone-200 bg-white p-4 space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-stone-900">Channels</h2>
+        <h2 className="text-sm font-semibold text-stone-900">{t('channels.title')}</h2>
         <p className="text-xs text-stone-400">
-          Active route: <span className="text-primary-600">{activeRoute}</span>
+          {t('channels.activeRoute')}: <span className="text-primary-600">{activeRoute}</span>
         </p>
       </div>
 

@@ -5,11 +5,11 @@ use crate::openhuman::agent::harness::fork_context::{with_parent_context, Parent
 use crate::openhuman::agent::Agent;
 use crate::openhuman::config::AgentConfig;
 use crate::openhuman::context::prompt::ToolCallFormat;
-use crate::openhuman::memory::{Memory, MemoryCategory, MemoryEntry, NamespaceSummary, RecallOpts};
-use crate::openhuman::providers::traits::ProviderCapabilities;
-use crate::openhuman::providers::{
+use crate::openhuman::inference::provider::traits::ProviderCapabilities;
+use crate::openhuman::inference::provider::{
     ChatRequest, ChatResponse, ConversationMessage, Provider, ToolCall,
 };
+use crate::openhuman::memory::{Memory, MemoryCategory, MemoryEntry, NamespaceSummary, RecallOpts};
 use crate::openhuman::tools::{PermissionLevel, Tool, ToolResult};
 use async_trait::async_trait;
 use parking_lot::Mutex;

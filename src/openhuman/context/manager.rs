@@ -37,7 +37,7 @@ use super::prompt::{PromptContext, SystemPromptBuilder};
 use super::session_memory::SessionMemoryConfig;
 use super::summarizer::{Summarizer, SummaryStats};
 use crate::openhuman::config::ContextConfig;
-use crate::openhuman::providers::{ConversationMessage, UsageInfo};
+use crate::openhuman::inference::provider::{ConversationMessage, UsageInfo};
 use anyhow::Result;
 
 /// Outcome of a reduction pass driven by [`ContextManager::reduce_before_call`].

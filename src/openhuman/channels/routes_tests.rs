@@ -3,8 +3,8 @@ use crate::openhuman::channels::context::{
     ChannelRuntimeContext, ProviderCacheMap, RouteSelectionMap,
 };
 use crate::openhuman::channels::traits::ChannelMessage;
+use crate::openhuman::inference::provider::{ChatMessage, Provider};
 use crate::openhuman::memory::{Memory, MemoryCategory, MemoryEntry};
-use crate::openhuman::providers::{ChatMessage, Provider};
 use crate::openhuman::tools::{Tool, ToolResult};
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -147,7 +147,8 @@ fn runtime_context(workspace_dir: PathBuf) -> ChannelRuntimeContext {
         api_url: None,
         inference_url: None,
         reliability: Arc::new(crate::openhuman::config::ReliabilityConfig::default()),
-        provider_runtime_options: crate::openhuman::providers::ProviderRuntimeOptions::default(),
+        provider_runtime_options:
+            crate::openhuman::inference::provider::ProviderRuntimeOptions::default(),
         workspace_dir: Arc::new(workspace_dir),
         message_timeout_secs: 60,
         multimodal: crate::openhuman::config::MultimodalConfig::default(),
@@ -182,7 +183,7 @@ fn runtime_command_parsing_and_provider_support_are_channel_scoped() {
 
 #[test]
 fn provider_alias_and_route_selection_round_trip() {
-    let first_provider = providers::list_providers()
+    let first_provider = provider::list_providers()
         .into_iter()
         .next()
         .expect("provider registry should not be empty");

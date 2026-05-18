@@ -34,6 +34,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { io, Socket } from 'socket.io-client';
 
 import RotatingTetrahedronCanvas from '../components/RotatingTetrahedronCanvas';
+import { useT } from '../lib/i18n/I18nContext';
 import { callCoreRpc, getCoreHttpBaseUrl } from '../services/coreRpcClient';
 
 const OVERLAY_IDLE_WIDTH = 50;
@@ -150,6 +151,7 @@ function OverlayBubbleChip({ bubble }: { bubble: OverlayBubble }) {
 // ── Main overlay root ────────────────────────────────────────────────────
 
 export default function OverlayApp() {
+  const { t } = useT();
   const [mode, setMode] = useState<OverlayMode>('idle');
   const [bubble, setBubble] = useState<OverlayBubble | null>(null);
   const [isHovered, setIsHovered] = useState(false);
@@ -616,10 +618,10 @@ export default function OverlayApp() {
             type="button"
             aria-label={
               mode === 'stt'
-                ? 'Voice input active'
+                ? t('overlay.ariaVoiceActive')
                 : mode === 'attention'
-                  ? 'Attention message'
-                  : 'OpenHuman overlay'
+                  ? t('overlay.ariaAttention')
+                  : t('overlay.ariaOrb')
             }
             onMouseDown={handleDragStart}
             onMouseMove={handleMouseMove}
@@ -633,7 +635,7 @@ export default function OverlayApp() {
             }}
             className={`group relative flex cursor-grab items-center justify-center overflow-hidden rounded-full border transition-all duration-200 active:cursor-grabbing ${orbClassName} ${orbSizeClassName}`}
             style={orbStyle}
-            title="Drag to move · Double-click to reset position">
+            title={t('overlay.orbTitle')}>
             <div
               className={`pointer-events-none opacity-95 transition-transform duration-300 group-hover:scale-105 ${orbCanvasClassName}`}>
               <RotatingTetrahedronCanvas inverted={tetrahedronInverted} />

@@ -1,5 +1,5 @@
 use super::*;
-use crate::openhuman::providers::{ChatMessage, ToolCall, ToolResultMessage};
+use crate::openhuman::inference::provider::{ChatMessage, ToolCall, ToolResultMessage};
 use async_trait::async_trait;
 use std::sync::Mutex;
 

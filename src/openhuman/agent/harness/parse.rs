@@ -1,4 +1,4 @@
-use crate::openhuman::providers::ToolCall;
+use crate::openhuman::inference::provider::ToolCall;
 use crate::openhuman::tools::Tool;
 use regex::Regex;
 use std::sync::LazyLock;

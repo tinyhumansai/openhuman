@@ -1,4 +1,4 @@
-import { FaLinkedin } from 'react-icons/fa';
+import { FaLinkedin, FaWeixin } from 'react-icons/fa';
 import { SiDiscord, SiGooglemeet, SiSlack, SiTelegram, SiWhatsapp, SiZoom } from 'react-icons/si';
 import { TbRobot } from 'react-icons/tb';
 
@@ -11,6 +11,7 @@ import type { AccountProvider } from '../../types/accounts';
  */
 const PROVIDER_COLOR: Record<AccountProvider, string> = {
   whatsapp: '#25D366',
+  wechat: '#07C160',
   telegram: '#229ED9',
   linkedin: '#0A66C2',
   slack: '#4A154B',
@@ -36,6 +37,8 @@ export const ProviderIcon = ({
   switch (provider) {
     case 'whatsapp':
       return <SiWhatsapp className={className} style={style} />;
+    case 'wechat':
+      return <FaWeixin className={className} style={style} />;
     case 'telegram':
       return <SiTelegram className={className} style={style} />;
     case 'linkedin':

@@ -396,7 +396,8 @@ async fn try_reaction(user_message: &str) -> Option<String> {
         return None;
     }
 
-    match crate::openhuman::local_ai::ops::local_ai_should_react(&config, user_message, "web").await
+    match crate::openhuman::inference::ops::inference_should_react(&config, user_message, "web")
+        .await
     {
         Ok(outcome) => {
             let decision = outcome.value;

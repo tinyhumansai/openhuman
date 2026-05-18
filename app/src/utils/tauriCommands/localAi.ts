@@ -1,5 +1,9 @@
 /**
- * Local AI / Ollama commands.
+ * Local AI / Ollama-facing commands routed through the core.
+ *
+ * The renderer never talks to Ollama directly. It always calls the core, and
+ * the core decides whether to route a request to the configured inference
+ * backend (for example an external Ollama endpoint).
  */
 import { callCoreRpc } from '../../services/coreRpcClient';
 import { CommandResponse, isTauri, tauriErrorMessage } from './common';
@@ -51,10 +55,9 @@ export interface LocalAiAssetsStatus {
   tts: LocalAiAssetStatus;
   quantization: string;
   /**
-   * True when the core can find an Ollama binary on disk. When false the UI
-   * should render an "Install Ollama" CTA instead of model state — every
-   * Ollama-backed asset will be reported as `missing` and `/api/tags`
-   * probes are skipped entirely (no 30s timeout).
+   * True when the configured Ollama endpoint is reachable enough for model
+   * checks. When false the UI should render external-runtime guidance instead
+   * of pretending the app can install or launch Ollama itself.
    */
   ollama_available: boolean;
 }
@@ -123,38 +126,6 @@ export interface SentimentResult {
   emotion: string;
   valence: string;
   confidence: number;
-}
-
-export interface GifDecision {
-  should_send_gif: boolean;
-  search_query: string | null;
-}
-
-export interface TenorMediaFormat {
-  url: string;
-  dims: [number, number];
-  size: number;
-  duration?: number;
-}
-
-export interface TenorGifResult {
-  id: string;
-  title: string;
-  contentDescription: string;
-  url: string;
-  media: {
-    gif?: TenorMediaFormat;
-    tinygif?: TenorMediaFormat;
-    mediumgif?: TenorMediaFormat;
-    mp4?: TenorMediaFormat;
-    tinymp4?: TenorMediaFormat;
-  };
-  created: number;
-}
-
-export interface TenorSearchResult {
-  results: TenorGifResult[];
-  next: string;
 }
 
 export interface DeviceProfileResult {
@@ -245,11 +216,11 @@ export async function openhumanAgentChat(
 export async function openhumanLocalAiStatus(): Promise<CommandResponse<LocalAiStatus>> {
   try {
     return await callCoreRpc<CommandResponse<LocalAiStatus>>({
-      method: 'openhuman.local_ai_status',
+      method: 'openhuman.inference_status',
     });
   } catch (err) {
     const message = tauriErrorMessage(err);
-    if (message.includes('unknown method: openhuman.local_ai_status')) {
+    if (message.includes('unknown method: openhuman.inference_status')) {
       throw new Error(
         'Local model runtime is unavailable in this core build. Restart app after updating to the latest build.'
       );
@@ -258,38 +229,12 @@ export async function openhumanLocalAiStatus(): Promise<CommandResponse<LocalAiS
   }
 }
 
-export async function openhumanLocalAiDownload(
-  force?: boolean
-): Promise<CommandResponse<LocalAiStatus>> {
-  try {
-    return await callCoreRpc<CommandResponse<LocalAiStatus>>({
-      method: 'openhuman.local_ai_download',
-      params: { force: force ?? false },
-    });
-  } catch (err) {
-    const message = tauriErrorMessage(err);
-    if (message.includes('unknown method: openhuman.local_ai_download')) {
-      return await openhumanLocalAiStatus();
-    }
-    throw new Error(message);
-  }
-}
-
-export async function openhumanLocalAiDownloadAllAssets(
-  force?: boolean
-): Promise<CommandResponse<LocalAiDownloadsProgress>> {
-  return await callCoreRpc<CommandResponse<LocalAiDownloadsProgress>>({
-    method: 'openhuman.local_ai_download_all_assets',
-    params: { force: force ?? false },
-  });
-}
-
 export async function openhumanLocalAiSummarize(
   text: string,
   maxTokens?: number
 ): Promise<CommandResponse<string>> {
   return await callCoreRpc<CommandResponse<string>>({
-    method: 'openhuman.local_ai_summarize',
+    method: 'openhuman.inference_summarize',
     params: { text, max_tokens: maxTokens },
   });
 }
@@ -300,7 +245,7 @@ export async function openhumanLocalAiPrompt(
   noThink?: boolean
 ): Promise<CommandResponse<string>> {
   return await callCoreRpc<CommandResponse<string>>({
-    method: 'openhuman.local_ai_prompt',
+    method: 'openhuman.inference_prompt',
     params: { prompt, max_tokens: maxTokens, no_think: noThink },
   });
 }
@@ -311,7 +256,7 @@ export async function openhumanLocalAiVisionPrompt(
   maxTokens?: number
 ): Promise<CommandResponse<string>> {
   return await callCoreRpc<CommandResponse<string>>({
-    method: 'openhuman.local_ai_vision_prompt',
+    method: 'openhuman.inference_vision_prompt',
     params: { prompt, image_refs: imageRefs, max_tokens: maxTokens },
   });
 }
@@ -320,7 +265,7 @@ export async function openhumanLocalAiEmbed(
   inputs: string[]
 ): Promise<CommandResponse<LocalAiEmbeddingResult>> {
   return await callCoreRpc<CommandResponse<LocalAiEmbeddingResult>>({
-    method: 'openhuman.local_ai_embed',
+    method: 'openhuman.inference_embed',
     params: { inputs },
   });
 }
@@ -355,67 +300,42 @@ export async function openhumanLocalAiTts(
 }
 
 /**
- * Multi-turn chat completion via the local Ollama model.
+ * Multi-turn chat completion via the configured inference provider.
  */
 export async function openhumanLocalAiChat(
   messages: LocalAiChatMessage[],
   maxTokens?: number
 ): Promise<CommandResponse<string>> {
   return await callCoreRpc<CommandResponse<string>>({
-    method: 'openhuman.local_ai_chat',
+    method: 'openhuman.inference_chat',
     params: { messages, max_tokens: maxTokens },
   });
 }
 
 /**
- * Ask the local model whether the assistant should react to a user message
- * with an emoji.
+ * Ask the configured inference provider whether the assistant should react to
+ * a user message with an emoji.
  */
 export async function openhumanLocalAiShouldReact(
   message: string,
   channelType: string
 ): Promise<CommandResponse<ReactionDecision>> {
   return await callCoreRpc<CommandResponse<ReactionDecision>>({
-    method: 'openhuman.local_ai_should_react',
+    method: 'openhuman.inference_should_react',
     params: { message, channel_type: channelType },
   });
 }
 
 /**
- * Classify the emotion and sentiment of a user message via the local model.
+ * Classify the emotion and sentiment of a user message via the configured
+ * inference provider.
  */
 export async function openhumanLocalAiAnalyzeSentiment(
   message: string
 ): Promise<CommandResponse<SentimentResult>> {
   return await callCoreRpc<CommandResponse<SentimentResult>>({
-    method: 'openhuman.local_ai_analyze_sentiment',
+    method: 'openhuman.inference_analyze_sentiment',
     params: { message },
-  });
-}
-
-/**
- * Ask the local model whether a GIF response is appropriate for this message.
- */
-export async function openhumanLocalAiShouldSendGif(
-  message: string,
-  channelType: string
-): Promise<CommandResponse<GifDecision>> {
-  return await callCoreRpc<CommandResponse<GifDecision>>({
-    method: 'openhuman.local_ai_should_send_gif',
-    params: { message, channel_type: channelType },
-  });
-}
-
-/**
- * Search for GIFs via the backend Tenor proxy.
- */
-export async function openhumanLocalAiTenorSearch(
-  query: string,
-  limit?: number
-): Promise<CommandResponse<TenorSearchResult>> {
-  return await callCoreRpc<CommandResponse<TenorSearchResult>>({
-    method: 'openhuman.local_ai_tenor_search',
-    params: { query, limit },
   });
 }
 
@@ -445,44 +365,23 @@ export async function openhumanLocalAiDownloadAsset(
 }
 
 export async function openhumanLocalAiDeviceProfile(): Promise<DeviceProfileResult> {
-  return await callCoreRpc<DeviceProfileResult>({ method: 'openhuman.local_ai_device_profile' });
+  return await callCoreRpc<DeviceProfileResult>({ method: 'openhuman.inference_device_profile' });
 }
 
 export async function openhumanLocalAiPresets(): Promise<PresetsResponse> {
-  return await callCoreRpc<PresetsResponse>({ method: 'openhuman.local_ai_presets' });
+  return await callCoreRpc<PresetsResponse>({ method: 'openhuman.inference_presets' });
 }
 
 export async function openhumanLocalAiApplyPreset(tier: string): Promise<ApplyPresetResult> {
   return await callCoreRpc<ApplyPresetResult>({
-    method: 'openhuman.local_ai_apply_preset',
+    method: 'openhuman.inference_apply_preset',
     params: { tier },
   });
 }
 
 export async function openhumanLocalAiDiagnostics(): Promise<LocalAiDiagnostics> {
   return await callCoreRpc<LocalAiDiagnostics>({
-    method: 'openhuman.local_ai_diagnostics',
-    params: {},
-  });
-}
-
-export async function openhumanLocalAiSetOllamaPath(
-  path: string
-): Promise<{ ollama_binary_path: string | null; status: LocalAiStatus }> {
-  return await callCoreRpc<{ ollama_binary_path: string | null; status: LocalAiStatus }>({
-    method: 'openhuman.local_ai_set_ollama_path',
-    params: { path },
-  });
-}
-
-/**
- * Gate off the local-AI runtime: kills the Ollama daemon only if OpenHuman
- * spawned it (external daemons are left running), and forces status to
- * `"disabled"` so the UI flips immediately.
- */
-export async function openhumanLocalAiShutdownOwned(): Promise<CommandResponse<LocalAiStatus>> {
-  return await callCoreRpc<CommandResponse<LocalAiStatus>>({
-    method: 'openhuman.local_ai_shutdown_owned',
+    method: 'openhuman.inference_diagnostics',
     params: {},
   });
 }

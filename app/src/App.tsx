@@ -22,15 +22,27 @@ import { MascotFrameProducer } from './features/meet/MascotFrameProducer';
 import { I18nProvider } from './lib/i18n/I18nContext';
 // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
 // import { isWelcomeLocked } from './lib/coreState/store';
-import { startNativeNotificationsService } from './lib/nativeNotifications';
-import { startWebviewNotificationsService } from './lib/webviewNotifications';
+import {
+  startNativeNotificationsService,
+  stopNativeNotificationsService,
+} from './lib/nativeNotifications';
+import {
+  startWebviewNotificationsService,
+  stopWebviewNotificationsService,
+} from './lib/webviewNotifications';
 import ChatRuntimeProvider from './providers/ChatRuntimeProvider';
 import CoreStateProvider, { useCoreState } from './providers/CoreStateProvider';
 import SocketProvider from './providers/SocketProvider';
 import { trackPageView } from './services/analytics';
-import { startCoreHealthMonitor } from './services/coreHealthMonitor';
-import { startInternetStatusListener } from './services/internetStatusListener';
-import { startWebviewAccountService } from './services/webviewAccountService';
+import { startCoreHealthMonitor, stopCoreHealthMonitor } from './services/coreHealthMonitor';
+import {
+  startInternetStatusListener,
+  stopInternetStatusListener,
+} from './services/internetStatusListener';
+import {
+  startWebviewAccountService,
+  stopWebviewAccountService,
+} from './services/webviewAccountService';
 import { persistor, store } from './store';
 // [#1123] useAppDispatch commented out — welcome-agent onboarding replaced by Joyride walkthrough
 import { useAppSelector } from './store/hooks';
@@ -50,6 +62,18 @@ startNativeNotificationsService();
 // health poll. Both idempotent via internal `started` guards.
 startInternetStatusListener();
 startCoreHealthMonitor();
+
+export function stopBootServicesForHmr(): void {
+  stopWebviewAccountService();
+  stopWebviewNotificationsService();
+  stopNativeNotificationsService();
+  stopInternetStatusListener();
+  stopCoreHealthMonitor();
+}
+
+if (import.meta.hot) {
+  import.meta.hot.dispose(stopBootServicesForHmr);
+}
 
 function App() {
   return (

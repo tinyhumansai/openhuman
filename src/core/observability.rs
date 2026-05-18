@@ -31,7 +31,7 @@ pub type Tag<'a> = (&'a str, &'a str);
 /// - **504** Gateway Timeout
 ///
 /// Single source of truth for both the call-site classifier
-/// (`openhuman::providers::ops::should_report_provider_http_failure`) and the
+/// (`openhuman::inference::provider::ops::should_report_provider_http_failure`) and the
 /// `before_send` filter (`is_transient_provider_http_failure`). Update here
 /// and both sites pick it up — keeps the two layers from drifting.
 pub const TRANSIENT_PROVIDER_HTTP_STATUSES: &[u16] = &[408, 429, 502, 503, 504, 520];
@@ -123,7 +123,7 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     if is_local_ai_capability_unavailable_message(&lower) {
         return Some(ExpectedErrorKind::LocalAiCapabilityUnavailable);
     }
-    if crate::openhuman::providers::is_budget_exhausted_message(message) {
+    if crate::openhuman::inference::provider::is_budget_exhausted_message(message) {
         return Some(ExpectedErrorKind::BudgetExhausted);
     }
     if is_session_expired_message(message) {
@@ -617,7 +617,7 @@ pub(crate) fn report_error_message(
 /// that the reliable-provider layer already handles via retry + fallback.
 ///
 /// The primary suppression lives at the call site
-/// (`openhuman::providers::ops::should_report_provider_http_failure`),
+/// (`openhuman::inference::provider::ops::should_report_provider_http_failure`),
 /// which short-circuits transient codes before `report_error` ever fires.
 /// This helper is intended for use inside the `sentry::ClientOptions`
 /// `before_send` hook as defense-in-depth — it catches any future call
@@ -920,7 +920,7 @@ fn event_contains_budget_exhausted_message(event: &sentry::protocol::Event<'_>) 
     if event
         .message
         .as_deref()
-        .is_some_and(crate::openhuman::providers::is_budget_exhausted_message)
+        .is_some_and(crate::openhuman::inference::provider::is_budget_exhausted_message)
     {
         return true;
     }
@@ -929,7 +929,7 @@ fn event_contains_budget_exhausted_message(event: &sentry::protocol::Event<'_>) 
         exception
             .value
             .as_deref()
-            .is_some_and(crate::openhuman::providers::is_budget_exhausted_message)
+            .is_some_and(crate::openhuman::inference::provider::is_budget_exhausted_message)
     })
 }
 
@@ -2130,7 +2130,7 @@ mod tests {
             "local ai is disabled",
             "rpc",
             "invoke_method",
-            &[("method", "openhuman.local_ai_prompt")],
+            &[("method", "openhuman.inference_prompt")],
         );
         report_error_or_expected(
             "ollama API key not set",

@@ -1,5 +1,5 @@
 use crate::openhuman::config::Config;
-use crate::openhuman::local_ai;
+use crate::openhuman::inference::local as local_ai;
 use chrono::Utc;
 use once_cell::sync::Lazy;
 use std::sync::{Arc, Once};

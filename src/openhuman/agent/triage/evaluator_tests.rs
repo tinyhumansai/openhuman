@@ -2,7 +2,7 @@ use super::*;
 use crate::openhuman::agent::agents::BUILTINS;
 use crate::openhuman::agent::bus::{mock_agent_run_turn, AgentTurnResponse};
 use crate::openhuman::agent::harness::AgentDefinitionRegistry;
-use crate::openhuman::providers::Provider;
+use crate::openhuman::inference::provider::Provider;
 use async_trait::async_trait;
 use serde_json::json;
 use std::sync::atomic::{AtomicUsize, Ordering};

@@ -56,6 +56,12 @@ pub struct Config {
     #[serde(default = "default_temperature_value")]
     pub default_temperature: f64,
 
+    /// Models (by exact ID match OR shell-style glob like `gpt-5*`, `o1-*`) that
+    /// MUST NOT receive a `temperature` parameter. Used for reasoning models
+    /// that error out when temperature is set (OpenAI o-series, GPT-5).
+    #[serde(default = "default_temperature_unsupported_models")]
+    pub temperature_unsupported_models: Vec<String>,
+
     #[serde(default)]
     pub observability: ObservabilityConfig,
 
@@ -336,6 +342,18 @@ fn default_temperature_value() -> f64 {
     DEFAULT_TEMPERATURE
 }
 
+/// Returns the default list of model glob patterns that do not support the
+/// `temperature` parameter. These cover OpenAI o-series and GPT-5 reasoning
+/// models that return an error when `temperature` is included in the request.
+fn default_temperature_unsupported_models() -> Vec<String> {
+    vec![
+        "o1*".to_string(),
+        "o3*".to_string(),
+        "o4*".to_string(),
+        "gpt-5*".to_string(),
+    ]
+}
+
 impl Config {
     /// Resolve the root directory where chunk `.md` files are stored.
     ///
@@ -479,6 +497,7 @@ impl Default for Config {
             inference_url: None,
             default_model: Some(DEFAULT_MODEL.to_string()),
             default_temperature: DEFAULT_TEMPERATURE,
+            temperature_unsupported_models: default_temperature_unsupported_models(),
             observability: ObservabilityConfig::default(),
             autonomy: AutonomyConfig::default(),
             runtime: RuntimeConfig::default(),

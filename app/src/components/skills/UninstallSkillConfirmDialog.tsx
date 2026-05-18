@@ -27,6 +27,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import debug from 'debug';
 
+import { useT } from '../../lib/i18n/I18nContext';
 import {
   skillsApi,
   type SkillSummary,
@@ -48,6 +49,7 @@ interface Props {
 }
 
 export default function UninstallSkillConfirmDialog({ skill, onClose, onUninstalled }: Props) {
+  const { t } = useT();
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const cancelBtnRef = useRef<HTMLButtonElement | null>(null);
@@ -88,10 +90,10 @@ export default function UninstallSkillConfirmDialog({ skill, onClose, onUninstal
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       log('confirm: error=%s', msg);
-      setError(`Couldn't uninstall skill: ${msg}`);
+      setError(msg);
       setSubmitting(false);
     }
-  }, [skill.id, skill.name, onUninstalled, onClose]);
+  }, [skill.id, skill.name, onUninstalled, onClose, t]);
 
   return createPortal(
     <div
@@ -104,11 +106,10 @@ export default function UninstallSkillConfirmDialog({ skill, onClose, onUninstal
       }}>
       <div className="w-[420px] max-w-[90vw] rounded-2xl bg-white p-5 shadow-2xl">
         <h2 id="uninstall-skill-title" className="text-base font-semibold text-stone-900">
-          Uninstall {skill.name}?
+          {t('skills.uninstall.title')} {skill.name}?
         </h2>
         <p className="mt-2 text-sm text-stone-600">
-          This permanently deletes the skill directory and all its bundled resources. The agent
-          will stop seeing it at the next turn.
+          {t('skills.uninstall.description')}
         </p>
         {skill.location && (
           <p className="mt-3 break-all rounded-lg bg-stone-50 px-3 py-2 font-mono text-[11px] text-stone-600">
@@ -117,7 +118,7 @@ export default function UninstallSkillConfirmDialog({ skill, onClose, onUninstal
         )}
         {error && (
           <div className="mt-3 rounded-lg border border-coral-200 bg-coral-50 px-3 py-2 text-xs text-coral-700">
-            <div className="font-medium">Could not uninstall</div>
+            <div className="font-medium">{t('skills.uninstall.couldNotUninstall')}</div>
             <div className="mt-1 break-words font-mono text-[11px] text-coral-700/90">{error}</div>
           </div>
         )}
@@ -128,7 +129,7 @@ export default function UninstallSkillConfirmDialog({ skill, onClose, onUninstal
             disabled={submitting}
             onClick={onClose}
             className="rounded-lg border border-stone-200 bg-white px-3 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50">
-            Cancel
+            {t('common.cancel')}
           </button>
           <button
             type="button"
@@ -136,7 +137,7 @@ export default function UninstallSkillConfirmDialog({ skill, onClose, onUninstal
             onClick={handleConfirm}
             data-testid="uninstall-skill-confirm"
             className="rounded-lg border border-coral-300 bg-coral-50 px-3 py-1.5 text-xs font-medium text-coral-700 hover:bg-coral-100 disabled:cursor-not-allowed disabled:opacity-50">
-            {submitting ? 'Uninstalling…' : 'Uninstall'}
+            {submitting ? t('skills.uninstall.uninstalling') : t('skills.uninstall.uninstallBtn')}
           </button>
         </div>
       </div>

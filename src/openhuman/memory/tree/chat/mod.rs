@@ -15,7 +15,7 @@
 //!
 //! ## Why a memory-tree-local trait
 //!
-//! The existing top-level [`crate::openhuman::providers::Provider`] trait
+//! The existing top-level [`crate::openhuman::inference::provider::Provider`] trait
 //! is rich (streaming, native tool calling, vision, …) and depends on the
 //! agent's full conversation surface. The extractor and summariser only
 //! need:
@@ -44,7 +44,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use async_trait::async_trait;
 
-use crate::openhuman::config::{Config, LlmBackend, DEFAULT_CLOUD_LLM_MODEL};
+use crate::openhuman::config::{Config, DEFAULT_CLOUD_LLM_MODEL};
 
 pub mod cloud;
 pub mod local;

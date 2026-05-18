@@ -5,8 +5,8 @@ use super::parse::{
     parse_tool_calls, parse_tool_calls_from_json_value, tools_to_openai_format,
 };
 use super::tool_loop::{run_tool_call_loop, DEFAULT_MAX_TOOL_ITERATIONS};
-use crate::openhuman::providers::traits::ProviderCapabilities;
-use crate::openhuman::providers::{ChatMessage, ChatRequest, ChatResponse, Provider};
+use crate::openhuman::inference::provider::traits::ProviderCapabilities;
+use crate::openhuman::inference::provider::{ChatMessage, ChatRequest, ChatResponse, Provider};
 use crate::openhuman::tools::{self, Tool};
 use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD, Engine as _};

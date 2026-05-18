@@ -180,7 +180,7 @@ impl StopHook for MaxIterationsStopHook {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::openhuman::providers::UsageInfo;
+    use crate::openhuman::inference::provider::UsageInfo;
 
     fn cost_with_usd(usd: f64) -> TurnCost {
         let mut tc = TurnCost::new();

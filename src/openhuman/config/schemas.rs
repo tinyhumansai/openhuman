@@ -873,71 +873,13 @@ fn handle_get_config(_params: Map<String, Value>) -> ControllerFuture {
 fn handle_get_client_config(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         log::debug!("[config][rpc] get_client_config enter");
-        let config = match config_rpc::load_config_with_timeout().await {
-            Ok(c) => c,
+        match config_rpc::load_and_get_client_config_snapshot().await {
+            Ok(snapshot) => to_json(snapshot),
             Err(err) => {
                 log::warn!("[config][rpc] get_client_config load failed: {err}");
-                return Err(err);
+                Err(err)
             }
-        };
-        let app_version =
-            std::env::var("OPENHUMAN_APP_VERSION").unwrap_or_else(|_| "unknown".to_string());
-        let api_key_set = config
-            .api_key
-            .as_deref()
-            .map(|k| !k.trim().is_empty())
-            .unwrap_or(false);
-        let model_routes: Vec<serde_json::Value> = config
-            .model_routes
-            .iter()
-            .map(|r| serde_json::json!({ "hint": r.hint, "model": r.model }))
-            .collect();
-
-        // Surface the new unified AI routing surface (cloud_providers + the
-        // 8 per-workload provider strings + primary_cloud) so the AI
-        // settings panel doesn't have to round-trip the full Config blob.
-        let cloud_providers: Vec<serde_json::Value> = config
-            .cloud_providers
-            .iter()
-            .map(|c| {
-                serde_json::json!({
-                    "id": c.id,
-                    "slug": c.slug,
-                    "label": c.label,
-                    "endpoint": c.endpoint,
-                    "auth_style": c.auth_style.as_str(),
-                })
-            })
-            .collect();
-
-        log::debug!(
-            "[config][rpc] get_client_config ok api_key_set={} model_routes_count={} \
-             cloud_providers_count={}",
-            api_key_set,
-            model_routes.len(),
-            cloud_providers.len(),
-        );
-        to_json(RpcOutcome::new(
-            serde_json::json!({
-                "api_url": config.api_url,
-                "inference_url": config.inference_url,
-                "default_model": config.default_model,
-                "app_version": app_version,
-                "api_key_set": api_key_set,
-                "model_routes": model_routes,
-                "cloud_providers": cloud_providers,
-                "primary_cloud": config.primary_cloud,
-                "reasoning_provider": config.reasoning_provider,
-                "agentic_provider": config.agentic_provider,
-                "coding_provider": config.coding_provider,
-                "memory_provider": config.memory_provider,
-                "embeddings_provider": config.embeddings_provider,
-                "heartbeat_provider": config.heartbeat_provider,
-                "learning_provider": config.learning_provider,
-                "subconscious_provider": config.subconscious_provider,
-            }),
-            vec!["client config read".to_string()],
-        ))
+        }
     })
 }
 

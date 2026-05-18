@@ -1,8 +1,8 @@
 use super::*;
 use crate::openhuman::approval::ApprovalManager;
 use crate::openhuman::config::AutonomyConfig;
-use crate::openhuman::providers::traits::ProviderCapabilities;
-use crate::openhuman::providers::ChatResponse;
+use crate::openhuman::inference::provider::traits::ProviderCapabilities;
+use crate::openhuman::inference::provider::ChatResponse;
 use crate::openhuman::security::AutonomyLevel;
 use crate::openhuman::tools::{ToolResult, ToolScope};
 use async_trait::async_trait;
@@ -388,7 +388,7 @@ async fn run_tool_call_loop_persists_native_tool_results_as_tool_messages() {
         responses: Mutex::new(vec![
             Ok(ChatResponse {
                 text: Some(String::new()),
-                tool_calls: vec![crate::openhuman::providers::ToolCall {
+                tool_calls: vec![crate::openhuman::inference::provider::ToolCall {
                     id: "call-1".into(),
                     name: "echo".into(),
                     arguments: "{}".into(),

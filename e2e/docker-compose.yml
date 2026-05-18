@@ -65,6 +65,11 @@ services:
       # each platform's tree separate.
       - e2e-node-modules:/workspace/node_modules
       - e2e-app-node-modules:/workspace/app/node_modules
+      # CEF binary download cache — cef-dll-sys writes to ~/Library/Caches/tauri-cef
+      # inside the container. Without a named volume this is lost between runs and
+      # every new container re-downloads the ~400 MB CEF archive (which also fails
+      # when the container has no outbound DNS / TLS access to the CDN).
+      - e2e-cef-cache:/root/Library/Caches/tauri-cef
     environment:
       - DISPLAY=:99
       - CI=true
@@ -76,6 +81,19 @@ services:
     # ubuntu-22.04 runners give CEF.
     shm_size: 2gb
 
+  # Rust inference provider E2E tests (wiremock-based, no live LLM needed).
+  # Run: docker compose -f e2e/docker-compose.yml run --rm inference-e2e
+  inference-e2e:
+    image: ${OPENHUMAN_CI_IMAGE:-ghcr.io/tinyhumansai/openhuman_ci:latest}
+    working_dir: /workspace
+    volumes:
+      - ../:/workspace
+      - e2e-cargo-registry:/usr/local/cargo/registry
+      - e2e-cargo-git:/usr/local/cargo/git
+      - e2e-rust-target:/workspace/target
+    entrypoint: ["bash", "-lc"]
+    command: ["./scripts/test-rust-inference-e2e.sh"]
+
 volumes:
   e2e-cargo-registry:
   e2e-cargo-git:
@@ -86,3 +104,4 @@ volumes:
   e2e-node-modules:
   e2e-app-node-modules:
   e2e-pnpm-project-store:
+  e2e-cef-cache:

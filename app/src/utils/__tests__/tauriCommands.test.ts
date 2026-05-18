@@ -98,7 +98,7 @@ describe('tauriCommands', () => {
   });
 
   test('openhumanLocalAiStatus returns upgrade hint on unknown method', async () => {
-    mockCallCoreRpc.mockRejectedValueOnce(new Error('unknown method: openhuman.local_ai_status'));
+    mockCallCoreRpc.mockRejectedValueOnce(new Error('unknown method: openhuman.inference_status'));
 
     await expect(openhumanLocalAiStatus()).rejects.toThrow(
       'Local model runtime is unavailable in this core build. Restart app after updating to the latest build.'

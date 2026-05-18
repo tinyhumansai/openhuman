@@ -102,6 +102,7 @@ fn catalog_includes_additional_user_facing_surfaces() {
         "meet_agent.live_loop",
         "intelligence.mcp_server",
         "intelligence.searxng_search",
+        "intelligence.tool_registry",
     ] {
         assert!(
             ids.contains(expected),

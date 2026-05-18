@@ -35,7 +35,7 @@ describe('tauriCommands/config', () => {
       expect(mockCallCoreRpc).not.toHaveBeenCalled();
     });
 
-    test('forwards the patch to openhuman.config_update_local_ai_settings', async () => {
+    test('forwards the patch to openhuman.inference_update_local_settings', async () => {
       mockCallCoreRpc.mockResolvedValue({
         result: { config: {}, workspace_dir: '/tmp', config_path: '/tmp/cfg.toml' },
         logs: [],
@@ -52,7 +52,7 @@ describe('tauriCommands/config', () => {
       };
       await openhumanUpdateLocalAiSettings(patch);
       expect(mockCallCoreRpc).toHaveBeenCalledWith({
-        method: 'openhuman.config_update_local_ai_settings',
+        method: 'openhuman.inference_update_local_settings',
         params: patch,
       });
     });

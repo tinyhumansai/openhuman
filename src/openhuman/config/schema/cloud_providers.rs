@@ -2,7 +2,7 @@
 //!
 //! Each entry in `Config::cloud_providers` represents one configured LLM
 //! backend. Providers are keyed by a user-chosen `slug` (e.g. `"openai"`,
-//! `"my-deepseek"`). The factory in `crate::openhuman::providers::factory`
+//! `"my-deepseek"`). The factory in `crate::openhuman::inference::provider::factory`
 //! resolves workload-to-provider strings against this list at runtime using
 //! the grammar `"<slug>:<model>"`.
 //!
@@ -47,7 +47,7 @@ impl AuthStyle {
 /// `auth-profiles.json` via [`crate::openhuman::credentials::AuthService`],
 /// keyed by `provider:<slug>` (falling back to bare `<slug>` for legacy
 /// entries). The factory looks up the token at call time via
-/// [`crate::openhuman::providers::factory::auth_key_for_slug`].
+/// [`crate::openhuman::inference::provider::factory::auth_key_for_slug`].
 ///
 /// ## Back-compat
 ///

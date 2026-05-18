@@ -29,8 +29,8 @@ use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::context::prompt::{
     render_subagent_system_prompt, PromptContext, PromptTool, SubagentRenderOptions,
 };
+use crate::openhuman::inference::provider::{ChatMessage, ChatRequest, Provider, ToolCall};
 use crate::openhuman::memory::conversations::ConversationMessage;
-use crate::openhuman::providers::{ChatMessage, ChatRequest, Provider, ToolCall};
 use crate::openhuman::tools::{Tool, ToolCategory, ToolSpec};
 
 /// Prompt suffix injected into every typed sub-agent run.
@@ -135,23 +135,25 @@ pub(super) fn resolve_subagent_provider(
 
     match spec {
         ModelSpec::Hint(workload) => match config {
-            Some(cfg) => match crate::openhuman::providers::create_chat_provider(workload, cfg) {
-                Ok((p, m)) => {
-                    log::info!(
+            Some(cfg) => {
+                match crate::openhuman::inference::provider::create_chat_provider(workload, cfg) {
+                    Ok((p, m)) => {
+                        log::info!(
                         "[subagent_runner] role={} agent_id={} resolved via workload factory model={}",
                         workload, agent_id, m
                     );
-                    (std::sync::Arc::from(p), m)
-                }
-                Err(e) => {
-                    log::warn!(
+                        (std::sync::Arc::from(p), m)
+                    }
+                    Err(e) => {
+                        log::warn!(
                         "[subagent_runner] workload '{}' provider build failed ({}) for agent_id={} — \
                          falling back to parent provider + parent model '{}'",
                         workload, e, agent_id, parent_model
                     );
-                    (parent_provider, parent_model)
+                        (parent_provider, parent_model)
+                    }
                 }
-            },
+            }
             None => {
                 log::warn!(
                     "[subagent_runner] config load failed for workload '{}' (agent_id={}) — \
@@ -1184,7 +1186,7 @@ async fn run_inner_loop(
             output_tokens: usage.output_tokens,
             cached_input_tokens: usage.cached_input_tokens,
             charged_amount_usd: usage.charged_amount_usd,
-            thread_id: crate::openhuman::providers::thread_context::current_thread_id(),
+            thread_id: crate::openhuman::inference::provider::thread_context::current_thread_id(),
         };
         if let Err(err) = transcript::write_transcript(&path, history, &meta, None) {
             tracing::debug!(

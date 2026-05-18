@@ -240,7 +240,7 @@ fn handle_chat(params: Map<String, Value>) -> ControllerFuture {
         let p = deserialize_params::<AgentChatParams>(params)?;
         let mut config = config_rpc::load_config_with_timeout().await?;
         to_json(
-            crate::openhuman::local_ai::rpc::agent_chat(
+            crate::openhuman::inference::local::rpc::agent_chat(
                 &mut config,
                 &p.message,
                 p.model_override,
@@ -256,7 +256,7 @@ fn handle_chat_simple(params: Map<String, Value>) -> ControllerFuture {
         let p = deserialize_params::<AgentChatParams>(params)?;
         let config = config_rpc::load_config_with_timeout().await?;
         to_json(
-            crate::openhuman::local_ai::rpc::agent_chat_simple(
+            crate::openhuman::inference::local::rpc::agent_chat_simple(
                 &config,
                 &p.message,
                 p.model_override,

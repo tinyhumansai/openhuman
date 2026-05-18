@@ -199,17 +199,17 @@ async fn execute_with_local_model(
     let prompt_text = prompt::build_text_execution_prompt(task, situation_report, identity_context);
 
     let messages = vec![
-        crate::openhuman::local_ai::ops::LocalAiChatMessage {
+        crate::openhuman::inference::local::ops::LocalAiChatMessage {
             role: "system".to_string(),
             content: prompt_text,
         },
-        crate::openhuman::local_ai::ops::LocalAiChatMessage {
+        crate::openhuman::inference::local::ops::LocalAiChatMessage {
             role: "user".to_string(),
             content: "Execute the task now.".to_string(),
         },
     ];
 
-    let outcome = crate::openhuman::local_ai::ops::local_ai_chat(&config, messages, None)
+    let outcome = crate::openhuman::inference::ops::inference_chat(&config, messages, None)
         .await
         .map_err(|e| format!("local model: {e}"))?;
 
@@ -259,7 +259,8 @@ async fn agent_chat_with_retry(
 
     loop {
         let result =
-            crate::openhuman::local_ai::ops::agent_chat(config, prompt, None, Some(0.3)).await;
+            crate::openhuman::inference::local::ops::agent_chat(config, prompt, None, Some(0.3))
+                .await;
 
         match result {
             Ok(outcome) => return Ok(outcome.value),

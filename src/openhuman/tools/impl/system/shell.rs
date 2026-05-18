@@ -310,7 +310,7 @@ mod tests {
         Arc::new(SecurityPolicy {
             autonomy: AutonomyLevel::Supervised,
             workspace_dir: std::env::temp_dir(),
-            allowed_commands: vec!["env".into(), "echo".into(), "set".into(), "mkdir".into()],
+            allowed_commands: vec!["echo".into(), "mkdir".into()],
             ..SecurityPolicy::default()
         })
     }
@@ -345,8 +345,10 @@ mod tests {
         let _g1 = EnvGuard::set("API_KEY", "sk-test-secret-12345");
 
         let tool = ShellTool::new(test_security_with_env_cmd(), test_runtime());
-        let cmd = if cfg!(windows) { "set" } else { "env" };
-        let result = tool.execute(json!({"command": cmd})).await.unwrap();
+        let result = tool
+            .execute(json!({"command": "echo $API_KEY"}))
+            .await
+            .unwrap();
         assert!(!result.is_error, "{}", result.output());
         assert!(
             !result.output().contains("sk-test-secret-12345"),

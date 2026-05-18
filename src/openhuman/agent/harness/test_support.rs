@@ -39,8 +39,10 @@ use async_trait::async_trait;
 use parking_lot::Mutex;
 use serde_json::json;
 
-use crate::openhuman::providers::traits::ProviderCapabilities;
-use crate::openhuman::providers::{ChatMessage, ChatRequest, ChatResponse, Provider, ToolCall};
+use crate::openhuman::inference::provider::traits::ProviderCapabilities;
+use crate::openhuman::inference::provider::{
+    ChatMessage, ChatRequest, ChatResponse, Provider, ToolCall,
+};
 
 /// One scripted reaction the [`KeywordScriptedProvider`] can emit when
 /// it sees its keyword in the latest user/tool turn.

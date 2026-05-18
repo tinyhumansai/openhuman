@@ -16,6 +16,7 @@
 import debug from 'debug';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { useT } from '../../lib/i18n/I18nContext';
 import { TaskKanbanBoard } from '../../pages/conversations/components/TaskKanbanBoard';
 import { threadApi } from '../../services/api/threadApi';
 import { useAppSelector } from '../../store/hooks';
@@ -35,6 +36,7 @@ function shortId(threadId: string): string {
 }
 
 export default function IntelligenceTasksTab() {
+  const { t } = useT();
   const liveBoards = useAppSelector(state => state.chatRuntime.taskBoardByThread);
   const threads = useAppSelector(state => state.thread.threads ?? []);
 
@@ -89,7 +91,7 @@ export default function IntelligenceTasksTab() {
   // Build the merged, deduplicated board list. Live boards take priority
   // over persisted ones for the same thread (they reflect the latest agent
   // turn in progress).
-  const threadMap = new Map(threads.map(t => [t.id, t]));
+  const threadMap = new Map(threads.map(th => [th.id, th]));
   const allThreadIds = new Set([...Object.keys(liveBoards), ...Object.keys(persistedBoards)]);
 
   const boardEntries: ThreadTaskBoard[] = [];
@@ -103,7 +105,7 @@ export default function IntelligenceTasksTab() {
     const title =
       thread?.title && thread.title.trim().length > 0
         ? thread.title
-        : `Thread ${shortId(threadId)}`;
+        : `${t('intelligence.tasks.threadPrefix')} ${shortId(threadId)}`;
 
     boardEntries.push({ threadId, title, board, live: Boolean(liveBoard) });
   }
@@ -118,7 +120,7 @@ export default function IntelligenceTasksTab() {
     return (
       <div className="flex items-center justify-center py-12 text-stone-400">
         <div className="h-4 w-4 animate-spin rounded-full border-2 border-ocean-500 border-t-transparent mr-2" />
-        <span className="text-sm">Loading task boards…</span>
+        <span className="text-sm">{t('intelligence.tasks.loadingBoards')}</span>
       </div>
     );
   }
@@ -126,7 +128,7 @@ export default function IntelligenceTasksTab() {
   if (error) {
     return (
       <div className="rounded-xl border border-coral-200 bg-coral-50 px-4 py-3 text-sm text-coral-700">
-        Failed to load task boards: {error}
+        {t('intelligence.tasks.failedToLoad')}: {error}
       </div>
     );
   }
@@ -135,21 +137,21 @@ export default function IntelligenceTasksTab() {
     return (
       <div className="flex flex-col items-center gap-3 py-12 text-center text-stone-400">
         <div className="text-3xl">📋</div>
-        <p className="text-sm font-medium">No agent task boards yet</p>
-        <p className="text-xs text-stone-400">
-          Start a conversation and ask the agent to manage tasks — boards will appear here as cards
-          are created.
-        </p>
+        <p className="text-sm font-medium">{t('intelligence.tasks.empty')}</p>
+        <p className="text-xs text-stone-400">{t('intelligence.tasks.emptyHint')}</p>
       </div>
     );
   }
 
+  const boardCount = boardEntries.length;
+  const boardCountLabel =
+    boardCount === 1
+      ? t('intelligence.tasks.activeBoardOne')
+      : t('intelligence.tasks.activeBoardOther').replace('{count}', String(boardCount));
+
   return (
     <div className="space-y-6">
-      <p className="text-xs text-stone-400">
-        {boardEntries.length} active board{boardEntries.length !== 1 ? 's' : ''} across
-        conversations
-      </p>
+      <p className="text-xs text-stone-400">{boardCountLabel}</p>
       {boardEntries.map(entry => (
         <section key={entry.threadId} className="space-y-2">
           <div className="flex items-center gap-2">
@@ -159,7 +161,7 @@ export default function IntelligenceTasksTab() {
             {entry.live && (
               <span className="flex items-center gap-1 rounded-full border border-ocean-200 bg-ocean-50 px-2 py-0.5 text-[10px] font-medium text-ocean-600">
                 <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-ocean-500" />
-                live
+                {t('intelligence.tasks.live')}
               </span>
             )}
           </div>

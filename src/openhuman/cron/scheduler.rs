@@ -252,7 +252,7 @@ async fn run_agent_job(config: &Config, job: &CronJob) -> (bool, String, Option<
                     .unwrap_or_else(|| crate::openhuman::config::DEFAULT_MODEL.to_string());
                 let resolved_model = match &def.model {
                     ModelSpec::Hint(workload) => {
-                        match crate::openhuman::providers::create_chat_provider(
+                        match crate::openhuman::inference::provider::create_chat_provider(
                             workload, &effective,
                         ) {
                             Ok((_, m)) => {

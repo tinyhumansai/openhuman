@@ -1,3 +1,4 @@
+import { useT } from '../../lib/i18n/I18nContext';
 import type { PlanTier } from '../../types/api';
 import { BILLING_DASHBOARD_URL } from '../../utils/links';
 import { openUrl } from '../../utils/openUrl';
@@ -37,13 +38,17 @@ export default function UsageLimitModal({
   resetTime,
   currentTier,
 }: UsageLimitModalProps) {
+  const { t } = useT();
   const nextPlan = getNextPlan(currentTier);
 
   if (!open) return null;
 
+  const resetSuffix = resetTime
+    ? ` ${t('upsell.usageLimit.resetsIn').replace('{time}', formatResetTime(resetTime))}`
+    : '';
   const bodyText = isBudgetExhausted
-    ? `You've hit your weekly limit.${resetTime ? ` It resets ${formatResetTime(resetTime)}.` : ''} Upgrade your plan or top up credits to avoid limits.`
-    : `You've hit your 10-hour inference rate limit.${resetTime ? ` It resets ${formatResetTime(resetTime)}.` : ''} Upgrade for higher limits.`;
+    ? t('upsell.usageLimit.bodyBudget').replace('{reset}', resetSuffix)
+    : t('upsell.usageLimit.bodyRate').replace('{reset}', resetSuffix);
 
   return (
     <div className="fixed inset-0 z-[9999] bg-black/30 backdrop-blur-sm flex items-center justify-center">
@@ -63,7 +68,7 @@ export default function UsageLimitModal({
               />
             </svg>
           </div>
-          <h2 className="text-lg font-semibold text-stone-900">Usage Limit Reached</h2>
+          <h2 className="text-lg font-semibold text-stone-900">{t('upsell.usageLimit.heading')}</h2>
         </div>
 
         <p className="text-sm text-stone-600 text-center mb-4">{bodyText}</p>
@@ -71,15 +76,21 @@ export default function UsageLimitModal({
         {nextPlan && (
           <div className="rounded-xl bg-stone-50 border border-stone-200 p-3 mb-5">
             <p className="text-xs font-medium text-stone-700 mb-1">
-              {nextPlan.name} plan includes:
+              {t('upsell.usageLimit.planIncludes').replace('{plan}', nextPlan.name)}
             </p>
             <ul className="space-y-0.5">
               <li className="text-xs text-stone-600">
-                ${nextPlan.fiveHourCapUsd.toFixed(2)} per 10-hour window
+                {t('upsell.usageLimit.perWindow').replace(
+                  '{amount}',
+                  nextPlan.fiveHourCapUsd.toFixed(2)
+                )}
               </li>
               {nextPlan.weeklyBudgetUsd > 0 && (
                 <li className="text-xs text-stone-600">
-                  ${nextPlan.weeklyBudgetUsd}/week included inference
+                  {t('upsell.usageLimit.weeklyInference').replace(
+                    '{amount}',
+                    String(nextPlan.weeklyBudgetUsd)
+                  )}
                 </li>
               )}
             </ul>
@@ -93,12 +104,12 @@ export default function UsageLimitModal({
               void openUrl(BILLING_DASHBOARD_URL);
             }}
             className="w-full py-2.5 rounded-xl bg-primary-600 hover:bg-primary-500 text-white text-sm font-medium transition-colors">
-            Upgrade Plan
+            {t('upsell.usageLimit.upgradePlan')}
           </button>
           <button
             onClick={onClose}
             className="w-full py-2 text-sm text-stone-500 hover:text-stone-700 transition-colors">
-            Not Now
+            {t('upsell.usageLimit.notNow')}
           </button>
         </div>
       </div>

@@ -77,8 +77,9 @@ pub use trigger_history::{
     global as global_composio_trigger_history, init_global as init_composio_trigger_history,
 };
 pub use types::{
-    ComposioAuthorizeResponse, ComposioConnection, ComposioConnectionsResponse,
-    ComposioDeleteResponse, ComposioExecuteResponse, ComposioToolFunction, ComposioToolSchema,
-    ComposioToolkitsResponse, ComposioToolsResponse, ComposioTriggerEvent,
-    ComposioTriggerHistoryEntry, ComposioTriggerHistoryResult, ComposioTriggerMetadata,
+    ComposioAuthorizeResponse, ComposioCapabilitiesResponse, ComposioCapability,
+    ComposioConnection, ComposioConnectionsResponse, ComposioDeleteResponse,
+    ComposioExecuteResponse, ComposioToolFunction, ComposioToolSchema, ComposioToolkitsResponse,
+    ComposioToolsResponse, ComposioTriggerEvent, ComposioTriggerHistoryEntry,
+    ComposioTriggerHistoryResult, ComposioTriggerMetadata,
 };

@@ -9,7 +9,7 @@
 //!
 //! The JWT and API URL are resolved per call so a session refresh between
 //! embed batches is picked up transparently — matching
-//! [`crate::openhuman::providers::openhuman_backend::OpenHumanBackendProvider`].
+//! [`crate::openhuman::inference::provider::openhuman_backend::OpenHumanBackendProvider`].
 
 use std::path::PathBuf;
 

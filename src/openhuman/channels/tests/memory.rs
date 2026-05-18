@@ -6,8 +6,8 @@ use super::super::runtime::process_channel_message;
 use super::super::{traits, Channel};
 use super::common::{HistoryCaptureProvider, NoopMemory, RecordingChannel};
 use crate::openhuman::embeddings::NoopEmbedding;
+use crate::openhuman::inference::provider;
 use crate::openhuman::memory::{Memory, MemoryCategory, UnifiedMemory};
-use crate::openhuman::providers;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
@@ -153,7 +153,7 @@ async fn process_channel_message_restores_per_sender_history_on_follow_ups() {
         api_url: None,
         inference_url: None,
         reliability: Arc::new(crate::openhuman::config::ReliabilityConfig::default()),
-        provider_runtime_options: providers::ProviderRuntimeOptions::default(),
+        provider_runtime_options: provider::ProviderRuntimeOptions::default(),
         workspace_dir: Arc::new(std::env::temp_dir()),
         message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
         multimodal: crate::openhuman::config::MultimodalConfig::default(),
@@ -236,7 +236,7 @@ async fn process_channel_message_uses_autosaved_memory_after_history_is_cleared(
         api_url: None,
         inference_url: None,
         reliability: Arc::new(crate::openhuman::config::ReliabilityConfig::default()),
-        provider_runtime_options: providers::ProviderRuntimeOptions::default(),
+        provider_runtime_options: provider::ProviderRuntimeOptions::default(),
         workspace_dir: Arc::new(std::env::temp_dir()),
         message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
         multimodal: crate::openhuman::config::MultimodalConfig::default(),

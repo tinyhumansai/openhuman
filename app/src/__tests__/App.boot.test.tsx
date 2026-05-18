@@ -10,24 +10,40 @@ import { describe, expect, it, vi } from 'vitest';
 // ---- Service mocks that must be in place BEFORE App.tsx is imported ----
 
 const startInternetStatusListenerMock = vi.fn();
+const stopInternetStatusListenerMock = vi.fn();
 const startCoreHealthMonitorMock = vi.fn();
+const stopCoreHealthMonitorMock = vi.fn();
+const startWebviewAccountServiceMock = vi.fn();
+const stopWebviewAccountServiceMock = vi.fn();
+const startWebviewNotificationsServiceMock = vi.fn();
+const stopWebviewNotificationsServiceMock = vi.fn();
+const startNativeNotificationsServiceMock = vi.fn();
+const stopNativeNotificationsServiceMock = vi.fn();
 
 vi.mock('../services/internetStatusListener', () => ({
   startInternetStatusListener: startInternetStatusListenerMock,
+  stopInternetStatusListener: stopInternetStatusListenerMock,
 }));
 
 vi.mock('../services/coreHealthMonitor', () => ({
   startCoreHealthMonitor: startCoreHealthMonitorMock,
-  stopCoreHealthMonitor: vi.fn(),
+  stopCoreHealthMonitor: stopCoreHealthMonitorMock,
 }));
 
 // Stub out the heavy services that also run at module boot in App.tsx.
 vi.mock('../services/webviewAccountService', () => ({
-  startWebviewAccountService: vi.fn(),
+  startWebviewAccountService: startWebviewAccountServiceMock,
+  stopWebviewAccountService: stopWebviewAccountServiceMock,
   isTauri: vi.fn(() => false),
 }));
-vi.mock('../lib/webviewNotifications', () => ({ startWebviewNotificationsService: vi.fn() }));
-vi.mock('../lib/nativeNotifications', () => ({ startNativeNotificationsService: vi.fn() }));
+vi.mock('../lib/webviewNotifications', () => ({
+  startWebviewNotificationsService: startWebviewNotificationsServiceMock,
+  stopWebviewNotificationsService: stopWebviewNotificationsServiceMock,
+}));
+vi.mock('../lib/nativeNotifications', () => ({
+  startNativeNotificationsService: startNativeNotificationsServiceMock,
+  stopNativeNotificationsService: stopNativeNotificationsServiceMock,
+}));
 
 // Stub out all imports that would pull in Tauri or heavy React trees.
 vi.mock('../store', () => ({
@@ -78,5 +94,17 @@ describe('App.tsx boot-time service wiring (lines 50-51)', () => {
     await import('../App');
     expect(startInternetStatusListenerMock).toHaveBeenCalled();
     expect(startCoreHealthMonitorMock).toHaveBeenCalled();
+  });
+
+  it('stops boot-time services from the HMR cleanup helper', async () => {
+    const { stopBootServicesForHmr } = await import('../App');
+
+    stopBootServicesForHmr();
+
+    expect(stopWebviewAccountServiceMock).toHaveBeenCalled();
+    expect(stopWebviewNotificationsServiceMock).toHaveBeenCalled();
+    expect(stopNativeNotificationsServiceMock).toHaveBeenCalled();
+    expect(stopInternetStatusListenerMock).toHaveBeenCalled();
+    expect(stopCoreHealthMonitorMock).toHaveBeenCalled();
   });
 });

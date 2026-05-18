@@ -1,6 +1,6 @@
 //! Cloud chat provider — routes through the OpenHuman backend's
 //! `/openai/v1/chat/completions` surface using the existing
-//! [`crate::openhuman::providers::openhuman_backend::OpenHumanBackendProvider`].
+//! [`crate::openhuman::inference::provider::openhuman_backend::OpenHumanBackendProvider`].
 //!
 //! Used when `memory_tree.llm_backend = "cloud"` (the default). The
 //! request shape is the standard OpenAI-compatible chat-completions
@@ -16,9 +16,9 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 
-use crate::openhuman::providers::openhuman_backend::OpenHumanBackendProvider;
-use crate::openhuman::providers::traits::{ChatMessage, Provider};
-use crate::openhuman::providers::ProviderRuntimeOptions;
+use crate::openhuman::inference::provider::openhuman_backend::OpenHumanBackendProvider;
+use crate::openhuman::inference::provider::traits::{ChatMessage, Provider};
+use crate::openhuman::inference::provider::ProviderRuntimeOptions;
 
 use super::{ChatPrompt, ChatProvider};
 

@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import * as coreStateApi from '../../services/coreStateApi';
 import * as tauriCommands from '../../utils/tauriCommands';
-import { setCoreStateSnapshot } from '../../lib/coreState/store';
+import { getCoreStateSnapshot, setCoreStateSnapshot } from '../../lib/coreState/store';
 import { setActiveUserId } from '../../store/userScopedStorage';
 import CoreStateProvider, {
   coreStatePollFailureWarningMessage,
@@ -43,6 +43,13 @@ function makeSnapshot(overrides: {
       service: null as never,
     },
   };
+}
+
+function makeJwt(payload: Record<string, unknown>): string {
+  const encode = (value: Record<string, unknown>) =>
+    window.btoa(JSON.stringify(value)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+  return `${encode({ alg: 'none', typ: 'JWT' })}.${encode(payload)}.signature`;
 }
 
 type CoreStateContextValue = ReturnType<typeof useCoreState>;
@@ -221,6 +228,32 @@ describe('CoreStateProvider — identity-change cache clearing', () => {
     await waitFor(() => expect(screen.getByTestId('ready').textContent).toBe('ready'));
   });
 
+  it('does not commit a pending bootstrap refresh after unmount', async () => {
+    let resolveSnapshot!: (snapshot: Snapshot) => void;
+    const pendingSnapshot = new Promise<Snapshot>(resolve => {
+      resolveSnapshot = resolve;
+    });
+    fetchSnapshot.mockReturnValue(pendingSnapshot);
+    listTeams.mockResolvedValue([]);
+
+    const { unmount } = render(
+      <CoreStateProvider>
+        <Consumer />
+      </CoreStateProvider>
+    );
+
+    unmount();
+
+    await act(async () => {
+      resolveSnapshot(makeSnapshot({ userId: null, sessionToken: null }));
+      await pendingSnapshot;
+      await Promise.resolve();
+    });
+
+    expect(getCoreStateSnapshot().isReady).toBe(false);
+    expect(getCoreStateSnapshot().snapshot.auth.userId).toBeNull();
+  });
+
   it('warns when the initial core state poll fails', async () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
@@ -269,6 +302,81 @@ describe('CoreStateProvider — identity-change cache clearing', () => {
     await waitFor(() =>
       expect(ctx?.snapshot.currentUser).toEqual({ first_name: 'Ada', username: 'ada' })
     );
+  });
+
+  it('ignores malformed session-token-updated events (#1937)', async () => {
+    fetchSnapshot.mockResolvedValue(makeSnapshot({ userId: null, sessionToken: null }));
+    listTeams.mockResolvedValue([]);
+
+    render(
+      <CoreStateProvider>
+        <Consumer />
+      </CoreStateProvider>
+    );
+
+    await waitFor(() => expect(screen.getByTestId('ready').textContent).toBe('ready'));
+
+    await act(async () => {
+      window.dispatchEvent(
+        new CustomEvent('core-state:session-token-updated', {
+          detail: { sessionToken: 'not-a-jwt' },
+        })
+      );
+    });
+
+    expect(screen.getByTestId('token').textContent).toBe('none');
+    expect(fetchSnapshot).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores expired JWT-shaped session-token-updated events (#1937)', async () => {
+    const expiredToken = makeJwt({ exp: Math.floor(Date.now() / 1000) - 60 });
+    fetchSnapshot.mockResolvedValue(makeSnapshot({ userId: null, sessionToken: null }));
+    listTeams.mockResolvedValue([]);
+
+    render(
+      <CoreStateProvider>
+        <Consumer />
+      </CoreStateProvider>
+    );
+
+    await waitFor(() => expect(screen.getByTestId('ready').textContent).toBe('ready'));
+
+    await act(async () => {
+      window.dispatchEvent(
+        new CustomEvent('core-state:session-token-updated', {
+          detail: { sessionToken: expiredToken },
+        })
+      );
+    });
+
+    expect(screen.getByTestId('token').textContent).toBe('none');
+    expect(fetchSnapshot).toHaveBeenCalledTimes(1);
+  });
+
+  it('accepts unexpired JWT-shaped session-token-updated events (#1937)', async () => {
+    const token = makeJwt({ exp: Math.floor(Date.now() / 1000) + 60 });
+    fetchSnapshot
+      .mockResolvedValueOnce(makeSnapshot({ userId: null, sessionToken: null }))
+      .mockResolvedValueOnce(
+        makeSnapshot({ userId: null, sessionToken: token, isAuthenticated: true })
+      );
+    listTeams.mockResolvedValue([]);
+
+    render(
+      <CoreStateProvider>
+        <Consumer />
+      </CoreStateProvider>
+    );
+
+    await waitFor(() => expect(screen.getByTestId('ready').textContent).toBe('ready'));
+
+    await act(async () => {
+      window.dispatchEvent(
+        new CustomEvent('core-state:session-token-updated', { detail: { sessionToken: token } })
+      );
+    });
+
+    expect(screen.getByTestId('token').textContent).toBe(token);
   });
 
   it('setMeetAutoOrchestratorHandoff(true) calls update RPC + flips snapshot optimistically (#1299)', async () => {
@@ -343,6 +451,34 @@ describe('CoreStateProvider — identity-change cache clearing', () => {
     });
 
     expect(vi.mocked(tauriCommands.logout)).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores forged session-token-updated events that do not match the core snapshot (#1937)', async () => {
+    fetchSnapshot.mockResolvedValue(makeSnapshot({ userId: 'u1', sessionToken: 'tok1' }));
+    listTeams.mockResolvedValue([]);
+
+    render(
+      <CoreStateProvider>
+        <Consumer />
+      </CoreStateProvider>
+    );
+
+    await waitFor(() => expect(screen.getByTestId('token').textContent).toBe('tok1'));
+
+    // Keep the follow-up refresh pending so this assertion observes the
+    // event handler itself. A forged event must not be able to replace the
+    // in-memory auth token before refreshCore re-pulls authoritative state.
+    fetchSnapshot.mockImplementation(() => new Promise(() => {}) as never);
+
+    await act(async () => {
+      window.dispatchEvent(
+        new CustomEvent('core-state:session-token-updated', {
+          detail: { sessionToken: 'attacker-controlled-token' },
+        })
+      );
+    });
+
+    expect(screen.getByTestId('token').textContent).toBe('tok1');
   });
 
   it('setMeetAutoOrchestratorHandoff swallows refresh errors after the RPC succeeds (#1299)', async () => {

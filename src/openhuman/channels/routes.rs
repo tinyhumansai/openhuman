@@ -5,7 +5,7 @@ use super::context::{
 };
 use super::traits;
 use super::{Channel, SendMessage};
-use crate::openhuman::providers::{self, Provider};
+use crate::openhuman::inference::provider::{self, Provider};
 use serde::Deserialize;
 use std::fmt::Write;
 use std::path::Path;
@@ -83,7 +83,7 @@ fn resolve_provider_alias(name: &str) -> Option<String> {
         return None;
     }
 
-    let providers_list = providers::list_providers();
+    let providers_list = provider::list_providers();
     for provider in providers_list {
         if provider.name.eq_ignore_ascii_case(candidate)
             || provider
@@ -177,7 +177,7 @@ pub(crate) async fn get_or_create_provider(
         (None, None)
     };
 
-    let provider = providers::create_resilient_provider_with_options(
+    let provider = provider::create_resilient_provider_with_options(
         inference_url,
         backend_url,
         None,
@@ -237,7 +237,7 @@ fn build_providers_help_response(current: &ChannelRouteSelection) -> String {
     response.push_str("\nSwitch provider with `/models <provider>`.\n");
     response.push_str("Switch model with `/model <model-id>`.\n\n");
     response.push_str("Available providers:\n");
-    for provider in providers::list_providers() {
+    for provider in provider::list_providers() {
         if provider.aliases.is_empty() {
             let _ = writeln!(response, "- {}", provider.name);
         } else {
@@ -286,7 +286,7 @@ pub(crate) async fn handle_runtime_command_if_needed(
                         )
                     }
                     Err(err) => {
-                        let safe_err = providers::sanitize_api_error(&err.to_string());
+                        let safe_err = provider::sanitize_api_error(&err.to_string());
                         format!(
                             "Failed to initialize provider `{provider_name}`. Route unchanged.\nDetails: {safe_err}"
                         )

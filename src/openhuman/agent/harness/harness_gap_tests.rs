@@ -22,9 +22,9 @@
 use crate::openhuman::agent::error::AgentError;
 use crate::openhuman::agent::harness::tool_loop::run_tool_call_loop;
 use crate::openhuman::context::guard::{ContextCheckResult, ContextGuard};
-use crate::openhuman::providers::traits::ProviderCapabilities;
-use crate::openhuman::providers::Provider;
-use crate::openhuman::providers::{ChatMessage, ChatRequest, ChatResponse, UsageInfo};
+use crate::openhuman::inference::provider::traits::ProviderCapabilities;
+use crate::openhuman::inference::provider::Provider;
+use crate::openhuman::inference::provider::{ChatMessage, ChatRequest, ChatResponse, UsageInfo};
 use crate::openhuman::tool_timeout::parse_tool_timeout_secs;
 use crate::openhuman::tools::{Tool, ToolResult};
 use async_trait::async_trait;

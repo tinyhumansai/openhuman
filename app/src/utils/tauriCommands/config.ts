@@ -225,7 +225,7 @@ export async function openhumanGetClientConfig(): Promise<CommandResponse<Client
     throw new Error('Not running in Tauri');
   }
   return await callCoreRpc<CommandResponse<ClientConfig>>({
-    method: 'openhuman.config_get_client_config',
+    method: 'openhuman.inference_get_client_config',
   });
 }
 
@@ -236,7 +236,7 @@ export async function openhumanUpdateModelSettings(
     throw new Error('Not running in Tauri');
   }
   return await callCoreRpc<CommandResponse<ConfigSnapshot>>({
-    method: CORE_RPC_METHODS.configUpdateModelSettings,
+    method: 'openhuman.inference_update_model_settings',
     params: update,
   });
 }
@@ -296,7 +296,7 @@ export async function openhumanUpdateLocalAiSettings(
     throw new Error('Not running in Tauri');
   }
   return await callCoreRpc<CommandResponse<ConfigSnapshot>>({
-    method: 'openhuman.config_update_local_ai_settings',
+    method: 'openhuman.inference_update_local_settings',
     params: update,
   });
 }

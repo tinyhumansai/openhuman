@@ -205,6 +205,65 @@ pub fn snapshot_config_json(config: &Config) -> Result<serde_json::Value, String
     }))
 }
 
+/// Serializes the client-facing AI config slice consumed by the settings UI.
+pub fn client_config_json(config: &Config) -> serde_json::Value {
+    let app_version =
+        std::env::var("OPENHUMAN_APP_VERSION").unwrap_or_else(|_| "unknown".to_string());
+    let api_key_set = config
+        .api_key
+        .as_deref()
+        .map(|k| !k.trim().is_empty())
+        .unwrap_or(false);
+    let model_routes: Vec<serde_json::Value> = config
+        .model_routes
+        .iter()
+        .map(|r| serde_json::json!({ "hint": r.hint, "model": r.model }))
+        .collect();
+    let cloud_providers: Vec<serde_json::Value> = config
+        .cloud_providers
+        .iter()
+        .map(|c| {
+            serde_json::json!({
+                "id": c.id,
+                "slug": c.slug,
+                "label": c.label,
+                "endpoint": c.endpoint,
+                "auth_style": c.auth_style.as_str(),
+            })
+        })
+        .collect();
+
+    serde_json::json!({
+        "api_url": config.api_url,
+        "inference_url": config.inference_url,
+        "default_model": config.default_model,
+        "app_version": app_version,
+        "api_key_set": api_key_set,
+        "model_routes": model_routes,
+        "cloud_providers": cloud_providers,
+        "primary_cloud": config.primary_cloud,
+        "reasoning_provider": config.reasoning_provider,
+        "agentic_provider": config.agentic_provider,
+        "coding_provider": config.coding_provider,
+        "memory_provider": config.memory_provider,
+        "embeddings_provider": config.embeddings_provider,
+        "heartbeat_provider": config.heartbeat_provider,
+        "learning_provider": config.learning_provider,
+        "subconscious_provider": config.subconscious_provider,
+    })
+}
+
+/// Loads config and returns the client-facing AI config slice.
+pub async fn load_and_get_client_config_snapshot() -> Result<RpcOutcome<serde_json::Value>, String>
+{
+    let config = load_config_with_timeout().await?;
+    let snapshot = client_config_json(&config);
+    Ok(RpcOutcome::new(
+        snapshot,
+        vec!["client config read".to_string()],
+    ))
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct ModelSettingsPatch {
     pub api_url: Option<String>,
@@ -681,7 +740,7 @@ pub async fn apply_local_ai_settings(
     }
     if let Some(provider) = update.provider {
         config.local_ai.provider =
-            crate::openhuman::local_ai::provider::normalize_provider(&provider);
+            crate::openhuman::inference::local::provider::normalize_provider(&provider);
     }
     if let Some(base_url) = update.base_url {
         config.local_ai.base_url = if base_url.trim().is_empty() {

@@ -14,7 +14,7 @@
 //! - `memory_tree.llm_backend` (+ `cloud_llm_model`) — memory summariser
 //!
 //! After this migration there is one grammar — provider strings parsed by
-//! [`crate::openhuman::providers::factory`] — addressing all eight workloads
+//! [`crate::openhuman::inference::provider::factory`] — addressing all eight workloads
 //! uniformly:
 //!
 //! ```text
