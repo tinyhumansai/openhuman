@@ -323,7 +323,8 @@ mod tests {
         // caught before canonicalize — error says "not allowed" rather than
         // "escapes workspace", but the operation is still correctly blocked.
         assert!(
-            result.output().contains("not allowed") || result.output().contains("escapes workspace")
+            result.output().contains("not allowed")
+                || result.output().contains("escapes workspace")
         );
         assert!(!outside.join("hijack.txt").exists());
 
