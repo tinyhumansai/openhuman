@@ -478,9 +478,9 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 
 | Status           | Count                                            |
 | ---------------- | ------------------------------------------------ |
-| ✅ Covered       | 65                                               |
+| ✅ Covered       | 66                                               |
 | 🟡 Partial       | 27                                               |
-| ❌ Missing       | 27                                               |
+| ❌ Missing       | 26                                               |
 | 🚫 Manual smoke  | 11                                               |
 | **Total leaves** | **130 explicit + nested = 201 product features** |
 

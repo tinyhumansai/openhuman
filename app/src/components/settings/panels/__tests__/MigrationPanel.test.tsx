@@ -147,6 +147,25 @@ describe('MigrationPanel (#1440)', () => {
     confirmSpy.mockRestore();
   });
 
+  it('re-disables Apply when the source path is edited after a preview', async () => {
+    // CodeRabbit regression guard on PR #2087: previously the Apply button
+    // stayed unlocked after any prior preview, so editing the source path
+    // could run Apply against a workspace that was never previewed.
+    vi.mocked(openhumanMigrateOpenclaw).mockResolvedValueOnce({ result: makeReport(), logs: [] });
+    renderWithProviders(<MigrationPanel />);
+    const input = screen.getByTestId('migration-source-input') as HTMLInputElement;
+    const apply = screen.getByTestId('migration-apply-button');
+
+    // Preview with no source path → Apply unlocks.
+    fireEvent.click(screen.getByTestId('migration-preview-button'));
+    await waitFor(() => expect(apply).not.toBeDisabled());
+
+    // User edits the path after previewing — Apply must re-lock until
+    // they preview the new value.
+    fireEvent.change(input, { target: { value: '/opt/legacy/openclaw' } });
+    expect(apply).toBeDisabled();
+  });
+
   it('renders inline error on RPC failure without removing the form', async () => {
     vi.mocked(openhumanMigrateOpenclaw).mockRejectedValueOnce(
       new Error('OpenClaw workspace not found at /opt/legacy/openclaw')

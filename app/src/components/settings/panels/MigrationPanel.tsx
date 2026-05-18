@@ -26,28 +26,45 @@ const MigrationPanel = ({ embedded = false }: MigrationPanelProps = {}) => {
   const [vendor, setVendor] = useState<Vendor>('openclaw');
   const [sourcePath, setSourcePath] = useState<string>('');
   const [previewReport, setPreviewReport] = useState<MigrationReport | null>(null);
+  // Snapshot of `{ vendor, source }` that produced `previewReport`. Apply
+  // must match these exactly — otherwise the user could preview path A,
+  // edit the field to path B, and apply against B without ever seeing
+  // the diff. CodeRabbit flagged this on PR #2087.
+  const [previewInput, setPreviewInput] = useState<{
+    vendor: Vendor;
+    source: string | undefined;
+  } | null>(null);
   const [appliedReport, setAppliedReport] = useState<MigrationReport | null>(null);
   const [isPreviewing, setIsPreviewing] = useState(false);
   const [isApplying, setIsApplying] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Apply is only enabled after a successful Preview. Without that gate the
-  // user can mutate their workspace without ever seeing what would change —
-  // exactly the surprise the issue (#1440) calls out about the existing
-  // RPC's `dry_run=true` default.
-  const canApply = previewReport != null && !isApplying;
+  const normalizedSource = sourcePath.trim() || undefined;
+
+  // Apply is only enabled after a successful Preview *of the same input*.
+  // Without that gate the user can mutate their workspace without ever
+  // seeing what would change for the currently-typed path — exactly the
+  // surprise issue #1440 calls out about the existing RPC's `dry_run=true`
+  // default, and the regression CodeRabbit flagged on PR #2087.
+  const canApply =
+    previewReport != null &&
+    previewInput != null &&
+    previewInput.vendor === vendor &&
+    previewInput.source === normalizedSource &&
+    !isApplying &&
+    !isPreviewing;
 
   const runPreview = useCallback(async () => {
     setError(null);
     setIsPreviewing(true);
     setAppliedReport(null);
     try {
-      const sw = sourcePath.trim() || undefined;
-      log('[migration] preview start vendor=%s source=%s', vendor, sw ?? '<default>');
-      const response = await openhumanMigrateOpenclaw(sw, true);
+      log('[migration] preview start vendor=%s source=%s', vendor, normalizedSource ?? '<default>');
+      const response = await openhumanMigrateOpenclaw(normalizedSource, true);
       // `openhumanMigrateOpenclaw` returns `CommandResponse<MigrationReport>`
       // — `.result` is the actual report.
       setPreviewReport(response.result);
+      setPreviewInput({ vendor, source: normalizedSource });
       log(
         '[migration] preview ok stats=%o warnings=%d',
         response.result.stats,
@@ -58,33 +75,37 @@ const MigrationPanel = ({ embedded = false }: MigrationPanelProps = {}) => {
       log('[migration] preview failed: %s', message);
       setError(message);
       setPreviewReport(null);
+      setPreviewInput(null);
     } finally {
       setIsPreviewing(false);
     }
-  }, [vendor, sourcePath]);
+  }, [vendor, normalizedSource]);
 
   const runApply = useCallback(async () => {
-    if (previewReport == null) return;
+    if (!canApply || previewReport == null) return;
     const summary = previewReport.stats;
     const totalPlanned = summary.from_sqlite + summary.from_markdown - summary.skipped_unchanged;
+    const template = t(
+      totalPlanned === 1 ? 'migration.confirmImport.singular' : 'migration.confirmImport.plural'
+    );
     const ok = window.confirm(
-      `Import ${totalPlanned} entr${totalPlanned === 1 ? 'y' : 'ies'} into the current workspace?\n\n` +
-        `Source: ${previewReport.source_workspace}\n` +
-        `Target: ${previewReport.target_workspace}\n\n` +
-        'Existing memory will be backed up before the import runs.'
+      template
+        .replace('{count}', String(totalPlanned))
+        .replace('{source}', previewReport.source_workspace)
+        .replace('{target}', previewReport.target_workspace)
     );
     if (!ok) return;
 
     setError(null);
     setIsApplying(true);
     try {
-      const sw = sourcePath.trim() || undefined;
-      log('[migration] apply start vendor=%s source=%s', vendor, sw ?? '<default>');
-      const response = await openhumanMigrateOpenclaw(sw, false);
+      log('[migration] apply start vendor=%s source=%s', vendor, normalizedSource ?? '<default>');
+      const response = await openhumanMigrateOpenclaw(normalizedSource, false);
       setAppliedReport(response.result);
       // Clear preview so the operator can't accidentally re-apply the same
       // dry-run a second time without re-previewing the new on-disk state.
       setPreviewReport(null);
+      setPreviewInput(null);
       log('[migration] apply ok stats=%o', response.result.stats);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -93,7 +114,7 @@ const MigrationPanel = ({ embedded = false }: MigrationPanelProps = {}) => {
     } finally {
       setIsApplying(false);
     }
-  }, [vendor, sourcePath, previewReport]);
+  }, [vendor, normalizedSource, previewReport, canApply, t]);
 
   const reportToRender = appliedReport ?? previewReport;
 
@@ -135,15 +156,15 @@ const MigrationPanel = ({ embedded = false }: MigrationPanelProps = {}) => {
             <p
               className="text-xs text-stone-500 dark:text-neutral-400"
               data-testid="migration-hermes-coming-soon">
-              Hermes importer is on the roadmap — see{' '}
+              {t('migration.hermesComingSoonPrefix')}
               <a
                 href={HERMES_TRACKING_URL}
                 target="_blank"
                 rel="noreferrer"
                 className="text-primary-600 dark:text-primary-300 underline">
-                #1440
-              </a>{' '}
-              for context. Pick OpenClaw to migrate today; Hermes lands in a follow-up.
+                {t('migration.hermesLinkText')}
+              </a>
+              {t('migration.hermesComingSoonSuffix')}
             </p>
           )}
 
