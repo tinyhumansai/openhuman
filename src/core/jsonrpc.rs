@@ -914,6 +914,18 @@ async fn run_server_inner(
     let bind_addr = format!("{host}:{listen_port}");
     let listener = pick.listener;
 
+    // Synchronize OPENHUMAN_CORE_RPC_URL with the actual bound port so
+    // connectivity::rpc::resolve_listen_port() (used by openhuman.connectivity_diag)
+    // reports the live listener instead of the originally-requested port when
+    // fallback engaged. Embedded path also calls this via apply_embedded_ready_signal,
+    // but the standalone CLI never did before — leaving diag stale on fallback.
+    //
+    // SAFETY: set_var is process-global; this runs once during bind and the
+    // standalone CLI doesn't share its env with concurrent test threads.
+    unsafe {
+        std::env::set_var("OPENHUMAN_CORE_RPC_URL", format!("http://{bind_addr}/rpc"));
+    }
+
     let app = build_core_http_router(socketio_enabled);
 
     // --- Core runtime bootstrap --------------------------------------------
