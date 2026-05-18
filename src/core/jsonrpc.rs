@@ -1223,6 +1223,35 @@ pub async fn bootstrap_core_runtime(embedded_core: bool) {
         );
     }
 
+    // --- Approval gate (#1339) ---
+    // Opt-in via `OPENHUMAN_APPROVAL_GATE=1`. When enabled, tool calls
+    // with `external_effect() == true` (composio, pushover, gmail
+    // unsubscribe, proactive external sends, triage React/Escalate)
+    // route through `ApprovalGate::intercept` and park until the UI
+    // dispatches `approval_decide` (or the 10-minute TTL elapses and
+    // the call is denied). Off by default until the React UI
+    // (toast + settings panel) lands — otherwise gated tool calls
+    // would block the agent loop with nothing to release them.
+    if std::env::var("OPENHUMAN_APPROVAL_GATE")
+        .map(|v| matches!(v.trim(), "1" | "true" | "TRUE"))
+        .unwrap_or(false)
+    {
+        let session_id = std::env::var("OPENHUMAN_CORE_TOKEN")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| format!("session-{}", uuid::Uuid::new_v4()));
+        let _ = crate::openhuman::approval::ApprovalGate::init_global(cfg.clone(), session_id);
+        log::info!(
+            "[runtime] approval gate installed (OPENHUMAN_APPROVAL_GATE=1) — \
+             external-effect tool calls will block until approval_decide"
+        );
+    } else {
+        log::debug!(
+            "[runtime] approval gate disabled (OPENHUMAN_APPROVAL_GATE unset) — \
+             external-effect tool calls run unsupervised"
+        );
+    }
+
     // --- Session storage layout migration -------------------------------
     // One-shot move from `session_raw/{DDMMYYYY}/` (≤ 0.53.4) to the new
     // flat `session_raw/{stem}.jsonl` layout, plus DDMMYYYY → YYYY_MM_DD
