@@ -19,34 +19,50 @@
 //!   cargo run --bin memory-tree-init-smoke -- 32
 //! ```
 //!
-//! Arg is thread count (default 16). Higher = more contention.
+//! Arg is thread count (default 16, must be > 0). Higher = more contention.
+//! Use `RUST_LOG=debug` to see per-worker results.
 //!
 //! Exit code: 0 if all threads Ok, 1 if any failed.
 
 use std::path::PathBuf;
+use std::process::ExitCode;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use openhuman_core::openhuman::config::Config;
 use openhuman_core::openhuman::memory::tree::store::with_connection;
 
-fn main() {
-    let workspace = std::env::var("OPENHUMAN_WORKSPACE")
-        .map(PathBuf::from)
-        .expect("set OPENHUMAN_WORKSPACE to a writable directory");
-    let n: usize = std::env::args()
-        .nth(1)
-        .as_deref()
-        .unwrap_or("16")
-        .parse()
-        .expect("thread count must be a positive integer");
+fn main() -> ExitCode {
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+        .try_init()
+        .ok();
+
+    let workspace = match std::env::var("OPENHUMAN_WORKSPACE") {
+        Ok(v) => PathBuf::from(v),
+        Err(_) => {
+            log::error!("OPENHUMAN_WORKSPACE must be set to a writable directory");
+            return ExitCode::from(2);
+        }
+    };
+    let raw = std::env::args().nth(1).unwrap_or_else(|| "16".into());
+    let n: usize = match raw.parse() {
+        Ok(v) if v > 0 => v,
+        Ok(_) => {
+            log::error!("thread count must be a positive integer (> 0), got {raw}");
+            return ExitCode::from(2);
+        }
+        Err(e) => {
+            log::error!("thread count must be a positive integer, got {raw:?}: {e}");
+            return ExitCode::from(2);
+        }
+    };
 
     let mut cfg = Config::default();
     cfg.workspace_dir = workspace.clone();
 
     let db_path = workspace.join("memory_tree").join("chunks.db");
     let cold = !db_path.exists();
-    eprintln!(
+    log::info!(
         "[smoke] workspace={} cold_start={} threads={}",
         workspace.display(),
         cold,
@@ -62,11 +78,11 @@ fn main() {
             let errors = errors.clone();
             std::thread::spawn(move || match with_connection(&cfg, |_| Ok(())) {
                 Ok(_) => {
-                    println!("worker {i:3} ok");
+                    log::debug!("worker {i:3} ok");
                 }
                 Err(e) => {
                     errors.fetch_add(1, Ordering::Relaxed);
-                    eprintln!("worker {i:3} FAILED: {e:#}");
+                    log::error!("worker {i:3} FAILED: {e:#}");
                 }
             })
         })
@@ -78,7 +94,7 @@ fn main() {
 
     let failed = errors.load(Ordering::Relaxed);
     let elapsed = start.elapsed();
-    eprintln!(
+    log::info!(
         "[smoke] done in {:?} — {}/{} ok, {} failed",
         elapsed,
         n - failed,
@@ -87,6 +103,8 @@ fn main() {
     );
 
     if failed > 0 {
-        std::process::exit(1);
+        ExitCode::from(1)
+    } else {
+        ExitCode::SUCCESS
     }
 }
