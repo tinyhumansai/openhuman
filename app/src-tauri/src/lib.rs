@@ -1148,6 +1148,14 @@ fn set_main_window_hidden(hide: bool) {
 }
 
 fn show_main_window(app: &AppHandle<AppRuntime>) -> Result<(), String> {
+    // On macOS the close handler hides the whole NSApplication via
+    // `AppHandle::hide()` so the CEF host and browser surface are dismissed
+    // together. Unhide the application before touching the main window, then
+    // continue with the normal show/focus sequence below.
+    #[cfg(target_os = "macos")]
+    app.show()
+        .map_err(|err| format!("failed to show application: {err}"))?;
+
     // On Windows: surface the OS top-level Chrome_WidgetWin_1 frame BEFORE
     // any Tauri lookups. After our close handler's SW_HIDE the runtime
     // briefly drops the `WebviewWindow` record for "main" (CEF treats the
@@ -2761,10 +2769,10 @@ pub fn run() {
             // window from tray click: main window not found`
             // (OPENHUMAN-TAURI-2X — 21 events, Windows only).
             //
-            // macOS uses `window.hide()` because the vendored CEF runtime
-            // routes that through `set_application_visibility(false)` at the
-            // NSApplication level (`tauri-runtime-cef/src/lib.rs:588`), which
-            // hides the CEF browser surface together with the host window.
+            // macOS uses app-level hide because the vendored CEF runtime only
+            // routes `AppHandle::hide()` through `set_application_visibility(false)`
+            // at the NSApplication level. `WebviewWindow::hide()` targets the
+            // CEF window proxy and can leave the visible app window behind.
             // Windows is handled in the separate arm below — see issue #1607.
             //
             // Linux is left out: `setup_tray` early-returns on Linux because
@@ -2780,8 +2788,8 @@ pub fn run() {
                     "[window] close requested on main window — hiding instead of destroying"
                 );
                 api.prevent_close();
-                if let Some(window) = app_handle.get_webview_window("main") {
-                    let _ = window.hide();
+                if let Err(err) = app_handle.hide() {
+                    log::warn!("[macos] failed to hide application on main window close: {err}");
                 }
             }
             // Windows: full hide-to-tray.
