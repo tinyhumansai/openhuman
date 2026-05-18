@@ -46,9 +46,13 @@ pub const CHUNK_STATUS_SEALED: &str = "sealed";
 /// Chunk lifecycle: rejected by the admission gate (too low signal).
 pub const CHUNK_STATUS_DROPPED: &str = "dropped";
 
+// `PRAGMA foreign_keys = ON` is intentionally NOT in SCHEMA — it is
+// a connection-local pragma that resets to off on every new
+// `Connection::open`. SCHEMA only runs once per DB path (first-init);
+// applying foreign_keys here would leak FK-off into every later
+// `with_connection()` call that hits the fast path. The pragma is
+// set per-connection in `open_connection()` instead.
 const SCHEMA: &str = "
-PRAGMA foreign_keys = ON;
-
 CREATE TABLE IF NOT EXISTS mem_tree_chunks (
     id                     TEXT PRIMARY KEY,
     source_kind            TEXT NOT NULL,
@@ -757,6 +761,12 @@ fn open_connection(db_path: &Path) -> Result<Connection> {
         .with_context(|| format!("Failed to open memory_tree DB: {}", db_path.display()))?;
     conn.busy_timeout(SQLITE_BUSY_TIMEOUT)
         .context("Failed to configure memory_tree busy timeout")?;
+    // SQLite resets `foreign_keys` to off on every new connection, so
+    // this MUST run per-connection — not in `apply_schema()` which
+    // only fires on first init per DB path. Loses FK enforcement on
+    // the fast path otherwise.
+    conn.execute_batch("PRAGMA foreign_keys = ON;")
+        .context("Failed to enable memory_tree foreign_keys pragma")?;
     Ok(conn)
 }
 

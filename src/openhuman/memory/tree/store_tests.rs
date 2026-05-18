@@ -285,3 +285,31 @@ fn with_connection_serialises_concurrent_schema_init() {
         "apply_schema must run exactly once per DB path under concurrent init; ran {applied} times"
     );
 }
+
+/// Regression: `PRAGMA foreign_keys` is connection-local in SQLite and
+/// must be re-set on every `Connection::open`. After the schema-init
+/// refactor, the pragma moved out of `SCHEMA` (which only runs on
+/// first init per path) into `open_connection`. Verify both the
+/// cold-init path and the fast path return a connection with FK on.
+#[test]
+fn with_connection_keeps_foreign_keys_on_for_every_call() {
+    let (_tmp, cfg) = test_config();
+    // First call — exercises apply_schema + open_connection.
+    let fk_on_first: i64 = with_connection(&cfg, |conn| {
+        Ok(conn.query_row("PRAGMA foreign_keys;", params![], |r| r.get::<_, i64>(0))?)
+    })
+    .unwrap();
+    assert_eq!(
+        fk_on_first, 1,
+        "foreign_keys must be ON on first connection"
+    );
+    // Second call — fast path (schema init skipped); pragma must still be set.
+    let fk_on_second: i64 = with_connection(&cfg, |conn| {
+        Ok(conn.query_row("PRAGMA foreign_keys;", params![], |r| r.get::<_, i64>(0))?)
+    })
+    .unwrap();
+    assert_eq!(
+        fk_on_second, 1,
+        "foreign_keys must be ON on fast-path (post-init) connection"
+    );
+}
