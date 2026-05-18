@@ -217,22 +217,12 @@ impl Memory for UnifiedMemory {
                     .filter(|term| content_lower.contains(*term))
                     .count();
                 if matched_count == 0 {
-                    // FTS5 surfaced a porter-stemmed match that doesn't
-                    // line up with our literal substring scan — keep the
-                    // row but assign a small floor score so it sorts
-                    // below substring matches without being dropped.
-                    let ts_rfc3339 = timestamp_to_rfc3339(entry.timestamp);
-                    let floor = 0.1_f64.max(min_score);
-                    out.push(MemoryEntry {
-                        id: format!("episodic-cross:{}", entry.id.unwrap_or(0)),
-                        key: format!("{}:{}", entry.session_id, entry.role),
-                        content: entry.content,
-                        namespace: Some(namespace.to_string()),
-                        category: MemoryCategory::Conversation,
-                        timestamp: ts_rfc3339,
-                        session_id: Some(entry.session_id),
-                        score: Some(floor),
-                    });
+                    // FTS5 surfaced a porter-stemmed match with zero
+                    // literal query-term overlap. Drop it — the previous
+                    // `0.1_f64.max(min_score)` floor defeated the
+                    // downstream `score >= min_relevance_score` gate
+                    // (when min_score==0.4 the floor also became 0.4),
+                    // so those rows always survived. Skip outright.
                     continue;
                 }
                 let match_score = matched_count as f64 / query_terms.len().max(1) as f64;
