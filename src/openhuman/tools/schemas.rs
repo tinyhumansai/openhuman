@@ -11,6 +11,7 @@ use serde_json::{json, Map, Value};
 use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 use crate::openhuman::config::rpc as config_rpc;
+use crate::openhuman::integrations::searxng::MAX_RESULTS as SEARXNG_MAX_RESULTS;
 use crate::openhuman::tools::traits::Tool;
 use crate::rpc::RpcOutcome;
 
@@ -493,7 +494,7 @@ fn handle_searxng_search(params: Map<String, Value>) -> ControllerFuture {
         let max_results = params
             .get("max_results")
             .and_then(Value::as_u64)
-            .map(|n| n.clamp(1, 50) as usize);
+            .map(|n| n.clamp(1, SEARXNG_MAX_RESULTS as u64) as usize);
         let categories = optional_string_array(&params, "categories")?;
         let language = params
             .get("language")

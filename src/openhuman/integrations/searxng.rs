@@ -10,10 +10,26 @@ use anyhow::Context;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::sync::OnceLock;
 use std::time::Duration;
 
 const DEFAULT_SOURCE: &str = "searxng";
-const MAX_RESULTS: usize = 50;
+/// Maximum number of SearXNG results accepted by the public tool surface.
+pub const MAX_RESULTS: usize = 50;
+
+static SHARED_HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+
+fn shared_http_client() -> reqwest::Client {
+    SHARED_HTTP_CLIENT
+        .get_or_init(|| {
+            tracing::debug!("[searxng] initializing shared HTTP client");
+            reqwest::Client::builder()
+                .use_rustls_tls()
+                .build()
+                .expect("failed to build shared SearXNG HTTP client")
+        })
+        .clone()
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// Search arguments accepted by the SearXNG tool.
@@ -88,13 +104,24 @@ impl SearxngSearchTool {
         default_language: String,
         timeout_secs: u64,
     ) -> Self {
+        Self::with_http_client(
+            base_url,
+            max_results,
+            default_language,
+            timeout_secs,
+            shared_http_client(),
+        )
+    }
+
+    /// Build a SearXNG search tool with a caller-provided HTTP client.
+    pub fn with_http_client(
+        base_url: String,
+        max_results: usize,
+        default_language: String,
+        timeout_secs: u64,
+        http_client: reqwest::Client,
+    ) -> Self {
         let timeout = timeout_secs.max(1);
-        let http_client = reqwest::Client::builder()
-            .use_rustls_tls()
-            .timeout(Duration::from_secs(timeout))
-            .connect_timeout(Duration::from_secs(timeout.min(10)))
-            .build()
-            .expect("failed to build SearXNG HTTP client");
 
         Self {
             base_url,
@@ -148,6 +175,7 @@ impl SearxngSearchTool {
         let response = self
             .http_client
             .get(url.clone())
+            .timeout(Duration::from_secs(self.timeout_secs))
             .send()
             .await
             .map_err(|err| {

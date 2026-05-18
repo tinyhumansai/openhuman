@@ -5,6 +5,7 @@ use crate::openhuman::agent::harness::AgentDefinitionRegistry;
 use crate::openhuman::agent::Agent;
 use crate::openhuman::config::rpc as config_rpc;
 use crate::openhuman::inference::provider::traits::build_tool_instructions_text;
+use crate::openhuman::integrations::searxng::MAX_RESULTS as SEARXNG_MAX_RESULTS;
 use crate::openhuman::security::{SecurityPolicy, ToolOperation};
 
 const DEFAULT_LIMIT: u64 = 10;
@@ -311,8 +312,8 @@ fn searxng_search_schema() -> Value {
             "max_results": {
                 "type": "integer",
                 "minimum": 1,
-                "maximum": MAX_LIMIT,
-                "description": format!("Maximum results to return. Defaults to searxng.max_results; capped at {MAX_LIMIT}.")
+                "maximum": SEARXNG_MAX_RESULTS,
+                "description": format!("Maximum results to return. Defaults to searxng.max_results; capped at {SEARXNG_MAX_RESULTS}.")
             }
         },
         "required": ["query"],
@@ -757,9 +758,9 @@ fn optional_max_results(
             "argument `{key}` must be greater than zero"
         )));
     }
-    if limit > MAX_LIMIT {
+    if limit > SEARXNG_MAX_RESULTS as u64 {
         return Err(ToolCallError::InvalidParams(format!(
-            "argument `{key}` must not exceed {MAX_LIMIT} (got {limit})"
+            "argument `{key}` must not exceed {SEARXNG_MAX_RESULTS} (got {limit})"
         )));
     }
     Ok(Some(limit))
@@ -1149,7 +1150,7 @@ mod tests {
             "searxng_search",
             json!({
                 "query": "rust",
-                "max_results": MAX_LIMIT + 1
+                "max_results": SEARXNG_MAX_RESULTS + 1
             }),
         )
         .expect_err("must reject");

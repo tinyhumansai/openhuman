@@ -338,7 +338,12 @@ mod tests {
             .iter()
             .map(|tool| tool["name"].as_str().expect("name"))
             .collect::<Vec<_>>();
-        for expected in [
+        let mut base_names = names
+            .iter()
+            .copied()
+            .filter(|name| *name != "searxng_search")
+            .collect::<Vec<_>>();
+        let mut expected_base_names = vec![
             "core.list_tools",
             "core.tool_instructions",
             "agent.list_subagents",
@@ -349,9 +354,10 @@ mod tests {
             "tree.browse",
             "tree.top_entities",
             "tree.list_sources",
-        ] {
-            assert!(names.contains(&expected), "missing {expected}");
-        }
+        ];
+        base_names.sort_unstable();
+        expected_base_names.sort_unstable();
+        assert_eq!(base_names, expected_base_names);
     }
 
     #[tokio::test]
