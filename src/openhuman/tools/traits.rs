@@ -195,6 +195,21 @@ pub trait Tool: Send + Sync {
         false
     }
 
+    /// Whether this tool produces an externally-observable side effect
+    /// (outbound Slack/Telegram/email/calendar/webhook write, etc.).
+    ///
+    /// When `true`, the agent harness routes the call through the
+    /// `ApprovalGate` before `execute()` runs. Local file writes,
+    /// memory writes, and TTS `reply_speech` stay `false` — they are
+    /// either reversible inside the user's machine or considered
+    /// internal per issue #1339.
+    ///
+    /// Default: `false`. Override on tools that talk to external
+    /// services on the user's behalf.
+    fn external_effect(&self) -> bool {
+        false
+    }
+
     /// Per-tool cap on the character length of the result body sent
     /// back to the model.
     ///
@@ -321,6 +336,12 @@ mod tests {
     fn default_max_result_size_chars_is_none() {
         let tool = DummyTool;
         assert!(tool.max_result_size_chars().is_none());
+    }
+
+    #[test]
+    fn default_external_effect_is_false() {
+        let tool = DummyTool;
+        assert!(!tool.external_effect());
     }
 
     // ── PermissionLevel ordering ───────────────────────────────────
