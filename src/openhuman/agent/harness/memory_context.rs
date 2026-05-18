@@ -1,4 +1,5 @@
 use crate::openhuman::memory::Memory;
+use crate::openhuman::util::provenance_tag;
 use std::collections::HashSet;
 use std::fmt::Write;
 
@@ -13,19 +14,10 @@ pub(crate) const CROSS_CHAT_LIMIT: usize = 3;
 
 /// Maximum characters of any one cross-chat snippet rendered into the
 /// prompt. Keeps the block bounded even if a prior chat had long turns.
-const CROSS_CHAT_SNIPPET_CHARS: usize = 240;
-
-/// Render a short, non-leaky provenance tag for a cross-chat hit. The
-/// channel-side `session_id` is a JSON blob (`{"client_id": "...",
-/// "thread_id": "..."}`) — render only a short stable hash so the prompt
-/// never carries the raw `client_id` or socket UUID.
-fn provenance_tag(session_id: &str) -> String {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    session_id.hash(&mut hasher);
-    let h = hasher.finish();
-    format!("chat:{:08x}", (h & 0xFFFF_FFFF) as u32)
-}
+/// Shared across the harness path here and the loader-side path in
+/// `agent::memory_loader` so the same content renders at the same
+/// length regardless of which code path emitted it.
+pub(crate) const CROSS_CHAT_SNIPPET_CHARS: usize = 240;
 
 /// Trim a cross-chat snippet to a bounded preview without panicking on
 /// UTF-8 codepoint boundaries. Reuses the project-wide ellipsis helper

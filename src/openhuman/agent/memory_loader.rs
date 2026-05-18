@@ -1,11 +1,12 @@
 use std::path::PathBuf;
 
 use crate::openhuman::memory::Memory;
+use crate::openhuman::util::provenance_tag;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use super::harness::memory_context::{
-    CROSS_CHAT_LIMIT, WORKING_MEMORY_KEY_PREFIX, WORKING_MEMORY_LIMIT,
+    CROSS_CHAT_LIMIT, CROSS_CHAT_SNIPPET_CHARS, WORKING_MEMORY_KEY_PREFIX, WORKING_MEMORY_LIMIT,
 };
 use crate::openhuman::learning::transcript_ingest::CONVERSATION_MEMORY_NAMESPACE;
 use crate::openhuman::memory::conversations::ConversationStore;
@@ -19,25 +20,6 @@ const PRIOR_CONVERSATION_LIMIT: usize = 3;
 /// Medium/low entries stay queryable via the on-demand memory tool but
 /// do not auto-pollute every fresh chat.
 const PRIOR_CONVERSATION_KEY_PREFIX: &str = "high.";
-
-/// Per-snippet cap on the `[Cross-chat context]` block. Mirrors the
-/// harness-side helper but capped tighter for the loader path because
-/// loader runs against every turn (vs. build_context which is
-/// orchestrator-side).
-const CROSS_CHAT_LOADER_SNIPPET_CHARS: usize = 200;
-
-/// Render a short, non-leaky provenance tag for a cross-chat hit. The
-/// channel-side `session_id` is a JSON blob (`{"client_id": "...",
-/// "thread_id": "..."}`) — render only a short stable hash so the prompt
-/// never carries the raw `client_id` or socket UUID. See #1505 and the
-/// "Redact paths and IDs in public artifacts" auto-memory.
-fn provenance_tag(session_id: &str) -> String {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    session_id.hash(&mut hasher);
-    let h = hasher.finish();
-    format!("chat:{:08x}", (h & 0xFFFF_FFFF) as u32)
-}
 
 #[async_trait]
 pub trait MemoryLoader: Send + Sync {
@@ -382,10 +364,10 @@ impl MemoryLoader for DefaultMemoryLoader {
 
         let mut appended_cross_header = false;
         for (sid, content) in cross_hits {
-            let snippet = if content.chars().count() > CROSS_CHAT_LOADER_SNIPPET_CHARS {
+            let snippet = if content.chars().count() > CROSS_CHAT_SNIPPET_CHARS {
                 crate::openhuman::util::truncate_with_ellipsis(
                     &content,
-                    CROSS_CHAT_LOADER_SNIPPET_CHARS,
+                    CROSS_CHAT_SNIPPET_CHARS,
                 )
             } else {
                 content
