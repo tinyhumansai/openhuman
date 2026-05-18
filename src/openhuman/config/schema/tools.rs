@@ -554,6 +554,43 @@ impl Default for IntegrationToggle {
     }
 }
 
+fn default_polymarket_gamma_base_url() -> String {
+    "https://gamma-api.polymarket.com".into()
+}
+
+fn default_polymarket_clob_base_url() -> String {
+    "https://clob.polymarket.com".into()
+}
+
+fn default_polymarket_timeout_secs() -> u64 {
+    15
+}
+
+/// Polymarket public API configuration (read-only, no wallet signing).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct PolymarketConfig {
+    #[serde(default = "defaults::default_true")]
+    pub enabled: bool,
+    #[serde(default = "default_polymarket_gamma_base_url")]
+    pub gamma_base_url: String,
+    #[serde(default = "default_polymarket_clob_base_url")]
+    pub clob_base_url: String,
+    #[serde(default = "default_polymarket_timeout_secs")]
+    pub timeout_secs: u64,
+}
+
+impl Default for PolymarketConfig {
+    fn default() -> Self {
+        Self {
+            enabled: defaults::default_true(),
+            gamma_base_url: default_polymarket_gamma_base_url(),
+            clob_base_url: default_polymarket_clob_base_url(),
+            timeout_secs: default_polymarket_timeout_secs(),
+        }
+    }
+}
+
 /// Agent integration tools that proxy through the backend API.
 ///
 /// The backend URL and auth token are **not** configurable here —
@@ -562,11 +599,8 @@ impl Default for IntegrationToggle {
 /// Composio in particular is unconditionally enabled and has no toggle:
 /// as long as the user is signed in, composio tools are available.
 ///
-/// The per-tool `apify`, `twilio`, `google_places`, and `parallel`
-/// flags below are preserved because those integrations incur per-call
-/// costs that the user may legitimately want to turn off; composio
-/// costs are metered server-side, so there is no client-side toggle
-/// for it.
+/// The per-tool toggles below are preserved because integrations may
+/// incur per-call costs or may still be in phased rollout.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 #[serde(default)]
 pub struct IntegrationsConfig {
@@ -589,4 +623,8 @@ pub struct IntegrationsConfig {
     /// Stock-price / market-data integration (Alpha Vantage on the backend).
     #[serde(default)]
     pub stock_prices: IntegrationToggle,
+
+    /// Polymarket public browse APIs (Gamma + CLOB read-only).
+    #[serde(default)]
+    pub polymarket: PolymarketConfig,
 }

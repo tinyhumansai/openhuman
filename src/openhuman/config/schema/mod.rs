@@ -74,8 +74,8 @@ pub use storage_memory::{
 pub use tools::{
     BrowserComputerUseConfig, BrowserConfig, ComposioConfig, ComputerControlConfig, CurlConfig,
     GitbooksConfig, HttpRequestConfig, IntegrationToggle, IntegrationsConfig, McpAuthConfig,
-    McpClientConfig, McpClientIdentityConfig, McpServerConfig, MultimodalConfig, SecretsConfig,
-    SeltzConfig, WebSearchConfig, COMPOSIO_MODE_BACKEND, COMPOSIO_MODE_DIRECT,
+    McpClientConfig, McpClientIdentityConfig, McpServerConfig, MultimodalConfig, PolymarketConfig,
+    SecretsConfig, SeltzConfig, WebSearchConfig, COMPOSIO_MODE_BACKEND, COMPOSIO_MODE_DIRECT,
 };
 pub use update::{UpdateConfig, UpdateRestartStrategy};
 mod voice_server;
