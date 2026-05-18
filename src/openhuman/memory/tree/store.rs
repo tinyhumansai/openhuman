@@ -10,6 +10,9 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, TimeZone, Utc};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use crate::openhuman::config::Config;
@@ -689,6 +692,53 @@ fn ms_to_utc(ms: i64) -> rusqlite::Result<DateTime<Utc>> {
     })
 }
 
+/// Set of memory_tree DB paths whose schema has already been initialised
+/// in this process. Guards `apply_schema` so only the first caller per
+/// path executes WAL bootstrap + `SCHEMA` + `ALTER TABLE` migrations,
+/// while concurrent workers (see `memory::tree::jobs::worker`) queue on
+/// the mutex and skip the work once the path is recorded.
+///
+/// Three SQLite cold-start codes — 14 (CANTOPEN), 1546 (IOERR_TRUNCATE),
+/// 4874 (IOERR_SHMMAP) — were raining ~19k events/day across the worker
+/// pool before this guard landed (OPENHUMAN-TAURI-HH / -ZM / -MB), all
+/// caused by N tasks racing on the WAL + SHM bootstrap.
+///
+/// Keyed on `PathBuf` (not "process-wide once") so per-test `tempdir()`
+/// configs each initialise independently. See
+/// `feedback_oncelock_sqlite_test_isolation.md`.
+static SCHEMA_INITIALIZED: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
+
+fn schema_init_set() -> &'static Mutex<HashSet<PathBuf>> {
+    SCHEMA_INITIALIZED.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+/// Per-path counter of how many times `apply_schema` ran for each DB
+/// path. Lets the concurrent-init regression test assert "exactly once
+/// per path" without false positives from other tests in the same
+/// binary (which share `SCHEMA_INITIALIZED` but use their own tempdirs).
+static SCHEMA_APPLY_COUNTS: OnceLock<Mutex<HashMap<PathBuf, usize>>> = OnceLock::new();
+
+fn record_schema_apply(path: &Path) {
+    let counts = SCHEMA_APPLY_COUNTS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut guard = counts
+        .lock()
+        .expect("memory_tree schema apply count mutex poisoned");
+    *guard.entry(path.to_path_buf()).or_insert(0) += 1;
+}
+
+#[cfg(test)]
+#[doc(hidden)]
+pub(crate) fn schema_apply_count_for_path_for_tests(path: &Path) -> usize {
+    SCHEMA_APPLY_COUNTS
+        .get()
+        .and_then(|m| {
+            m.lock()
+                .ok()
+                .map(|guard| guard.get(path).copied().unwrap_or(0))
+        })
+        .unwrap_or(0)
+}
+
 /// Open the memory_tree SQLite DB and run a closure against it.
 ///
 /// Visible to sibling modules (e.g. `score::store`) so Phase 2 can reuse
@@ -701,10 +751,93 @@ pub(crate) fn with_connection<T>(
     std::fs::create_dir_all(&dir)
         .with_context(|| format!("Failed to create memory_tree dir: {}", dir.display()))?;
     let db_path = dir.join(DB_FILE);
-    let conn = Connection::open(&db_path)
+    let conn = open_and_init_with_retry(&db_path)?;
+    f(&conn)
+}
+
+fn open_connection(db_path: &Path) -> Result<Connection> {
+    let conn = Connection::open(db_path)
         .with_context(|| format!("Failed to open memory_tree DB: {}", db_path.display()))?;
     conn.busy_timeout(SQLITE_BUSY_TIMEOUT)
         .context("Failed to configure memory_tree busy timeout")?;
+    Ok(conn)
+}
+
+/// Open a connection and, if the schema for this path hasn't been
+/// initialised yet, run the WAL + `SCHEMA` + migration sequence under a
+/// process-wide mutex. Retries up to three times on the three transient
+/// cold-start codes (14 / 1546 / 4874) with 50→150→500ms backoff before
+/// surfacing the error.
+fn open_and_init_with_retry(db_path: &Path) -> Result<Connection> {
+    // Fast path: schema already initialised for this DB path.
+    if schema_init_set()
+        .lock()
+        .expect("memory_tree schema init mutex poisoned")
+        .contains(db_path)
+    {
+        return open_connection(db_path);
+    }
+
+    const BACKOFFS: [Duration; 3] = [
+        Duration::from_millis(50),
+        Duration::from_millis(150),
+        Duration::from_millis(500),
+    ];
+    let mut attempt = 0usize;
+    loop {
+        match try_open_and_init(db_path) {
+            Ok(conn) => return Ok(conn),
+            Err(err) if is_transient_cold_start(&err) && attempt < BACKOFFS.len() => {
+                log::warn!(
+                    "[memory_tree::store] schema init transient error on attempt {attempt}, \
+                     retrying after {:?}: {err:#}",
+                    BACKOFFS[attempt]
+                );
+                std::thread::sleep(BACKOFFS[attempt]);
+                attempt += 1;
+            }
+            Err(err) => return Err(err),
+        }
+    }
+}
+
+fn try_open_and_init(db_path: &Path) -> Result<Connection> {
+    let conn = open_connection(db_path)?;
+    let mut initialized = schema_init_set()
+        .lock()
+        .expect("memory_tree schema init mutex poisoned");
+    if !initialized.contains(db_path) {
+        apply_schema(&conn)?;
+        record_schema_apply(db_path);
+        initialized.insert(db_path.to_path_buf());
+    }
+    Ok(conn)
+}
+
+/// True if `err` (or anything in its cause chain) is one of the three
+/// SQLite codes that fire during cold-start WAL/SHM bootstrap races:
+/// 14 (CANTOPEN), 1546 (IOERR_TRUNCATE), 4874 (IOERR_SHMMAP).
+fn is_transient_cold_start(err: &anyhow::Error) -> bool {
+    fn is_transient_sqlite(e: &(dyn std::error::Error + 'static)) -> bool {
+        if let Some(rusqlite::Error::SqliteFailure(ffi, _)) = e.downcast_ref::<rusqlite::Error>() {
+            return matches!(ffi.extended_code, 14 | 1546 | 4874);
+        }
+        false
+    }
+    if is_transient_sqlite(err.root_cause()) {
+        return true;
+    }
+    let mut src: Option<&(dyn std::error::Error + 'static)> = Some(err.as_ref());
+    while let Some(cur) = src {
+        if is_transient_sqlite(cur) {
+            return true;
+        }
+        src = cur.source();
+    }
+    false
+}
+
+fn apply_schema(conn: &Connection) -> Result<()> {
     if let Err(wal_err) = conn.execute_batch("PRAGMA journal_mode=WAL;") {
         log::warn!(
             "[memory_tree] Failed to enable WAL mode (filesystem may not support it): {wal_err}"
@@ -713,28 +846,28 @@ pub(crate) fn with_connection<T>(
     conn.execute_batch(SCHEMA)
         .context("Failed to initialize memory_tree schema")?;
     // Phase 2 migrations — additive, idempotent.
-    add_column_if_missing(&conn, "mem_tree_chunks", "embedding", "BLOB")?;
+    add_column_if_missing(conn, "mem_tree_chunks", "embedding", "BLOB")?;
     // Phase 2 LLM-NER follow-up: per-chunk LLM importance signal +
     // human-readable reason. Both nullable; absence is treated as
     // "no LLM signal available" by readers.
-    add_column_if_missing(&conn, "mem_tree_score", "llm_importance", "REAL")?;
-    add_column_if_missing(&conn, "mem_tree_score", "llm_importance_reason", "TEXT")?;
+    add_column_if_missing(conn, "mem_tree_score", "llm_importance", "REAL")?;
+    add_column_if_missing(conn, "mem_tree_score", "llm_importance_reason", "TEXT")?;
     // Phase 3a (#709): parent-summary backlink on leaves. Populated when
     // the L0 buffer seals into an L1 summary so traversal can walk
     // leaf → parent without scanning `mem_tree_summaries.child_ids_json`.
-    add_column_if_missing(&conn, "mem_tree_chunks", "parent_summary_id", "TEXT")?;
+    add_column_if_missing(conn, "mem_tree_chunks", "parent_summary_id", "TEXT")?;
     // Phase 4 (#710): sealed-summary embeddings for semantic rerank.
     // Blob layout matches `mem_tree_chunks.embedding` — see
     // `score::embed::{pack_embedding, unpack_embedding}`. Nullable so
     // legacy summaries from Phases 1-3 read back as None; retrieval
     // tolerates NULL by dropping the row to the bottom of a rerank.
-    add_column_if_missing(&conn, "mem_tree_summaries", "embedding", "BLOB")?;
+    add_column_if_missing(conn, "mem_tree_summaries", "embedding", "BLOB")?;
     // Async-pipeline lifecycle flag. Default 'admitted' so chunks ingested
     // before the queue migration stay queryable. New writes start at
     // 'pending_extraction'; the extract handler advances them to 'admitted'
     // (then 'buffered' / 'sealed') or 'dropped'.
     add_column_if_missing(
-        &conn,
+        conn,
         "mem_tree_chunks",
         "lifecycle_status",
         "TEXT NOT NULL DEFAULT 'admitted'",
@@ -749,34 +882,34 @@ pub(crate) fn with_connection<T>(
     // ingested before this migration read back with NULL (body still in
     // `content`). New writes populate both columns. The `content` column
     // stores a 500-char plain-text preview instead of the full body.
-    add_column_if_missing(&conn, "mem_tree_chunks", "content_path", "TEXT")?;
-    add_column_if_missing(&conn, "mem_tree_chunks", "content_sha256", "TEXT")?;
+    add_column_if_missing(conn, "mem_tree_chunks", "content_path", "TEXT")?;
+    add_column_if_missing(conn, "mem_tree_chunks", "content_sha256", "TEXT")?;
     // Phase MD-content (summaries): same pointer pattern for summary nodes.
     // `content_path` is the relative path to the .md file under
     // `<content_root>/summaries/...`. `content_sha256` is the SHA-256 hex
     // of the body bytes only (front-matter excluded). Both nullable so
     // legacy rows (from before this migration) read back with NULL — callers
     // fall back to the `content` column for those rows.
-    add_column_if_missing(&conn, "mem_tree_summaries", "content_path", "TEXT")?;
-    add_column_if_missing(&conn, "mem_tree_summaries", "content_sha256", "TEXT")?;
+    add_column_if_missing(conn, "mem_tree_summaries", "content_path", "TEXT")?;
+    add_column_if_missing(conn, "mem_tree_summaries", "content_sha256", "TEXT")?;
     // Raw-archive pointer column. JSON array of {path, start, end} —
     // used by chunks whose body comes from one or more files under
     // `<content_root>/raw/...` (today: email). When set, `read_chunk_body`
     // reads + concatenates those byte ranges instead of fetching from
     // disk via `content_path` or falling back to the SQL `content`
     // preview. Nullable so legacy chunks keep working unchanged.
-    add_column_if_missing(&conn, "mem_tree_chunks", "raw_refs_json", "TEXT")?;
+    add_column_if_missing(conn, "mem_tree_chunks", "raw_refs_json", "TEXT")?;
     // #1365: is_user flag on indexed entity rows. Set at write time by
     // running the canonical id through the Composio identity registry
     // (`is_self_identity_any_toolkit`). Default 0 so legacy rows read
     // back as "not user" until the backfill job re-tags them.
     add_column_if_missing(
-        &conn,
+        conn,
         "mem_tree_entity_index",
         "is_user",
         "INTEGER NOT NULL DEFAULT 0",
     )?;
-    f(&conn)
+    Ok(())
 }
 
 /// One pointer into the raw archive. A chunk's body is reconstructed by
