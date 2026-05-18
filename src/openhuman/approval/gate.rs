@@ -16,9 +16,13 @@
 //!    into [`GateOutcome::Allow`] / `Deny`.
 //!
 //! Sessions: the gate is keyed by a per-launch `session_id` (the
-//! per-launch hex bearer the core hands out). Rows owned by a prior
-//! session are purged on init so a stale decision cannot leak from
-//! one launch to the next, per the security pitfall in the brief.
+//! per-launch hex bearer the core hands out) for audit grouping.
+//! Rows from prior launches are intentionally preserved on init —
+//! the issue #1339 acceptance criterion requires they survive
+//! restart so the UI can show / dismiss orphans. Decisions on
+//! orphan rows update the DB but cannot resume a parked future
+//! across processes — no side effect can fire across launches, so
+//! the security invariant is preserved without auto-purging.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, OnceLock};
@@ -120,7 +124,19 @@ impl ApprovalGate {
             expires_at,
         };
 
+        // Register the waiter BEFORE persisting the row so a fast
+        // `approval_decide` cannot mark the request approved while
+        // no waiter exists — would otherwise leave the parked call
+        // to time out and return `Deny` incorrectly. (CodeRabbit
+        // review on PR #2149.)
+        let (tx, rx) = oneshot::channel::<ApprovalDecision>();
+        {
+            let mut waiters = self.waiters.lock();
+            waiters.insert(request_id.clone(), tx);
+        }
+
         if let Err(err) = store::insert_pending(&self.config, &pending) {
+            self.evict_waiter(&request_id);
             tracing::error!(
                 error = %err,
                 tool = tool_name,
@@ -131,12 +147,6 @@ impl ApprovalGate {
                     "Approval gate could not persist the request — denying for safety: {err}"
                 ),
             };
-        }
-
-        let (tx, rx) = oneshot::channel::<ApprovalDecision>();
-        {
-            let mut waiters = self.waiters.lock();
-            waiters.insert(request_id.clone(), tx);
         }
 
         publish_global(DomainEvent::ApprovalRequested {
