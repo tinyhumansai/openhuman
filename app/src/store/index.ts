@@ -97,19 +97,10 @@ const persistedChannelConnectionsReducer = persistReducer(
 
 // Persist only the account list (not the live message stream / logs which
 // are re-ingested every time we open an account).
-//
-// Issue #2044 — `activeAccountId` is deliberately NOT persisted. It is a
-// per-session UX selection: persisting it caused provider webviews to
-// auto-surface on dev hot reload / app restart without an explicit user
-// click, because `Accounts.tsx` immediately mounts `WebviewHost` for the
-// active account and `WebviewHost` calls `openWebviewAccount` on mount.
-// `lastActiveAccountId` is still persisted so the off-screen MRU prewarm
-// can warm the same account in the background — that webview stays
-// hidden until the user clicks the rail.
 const accountsPersistConfig = {
   key: 'accounts',
   storage,
-  whitelist: ['accounts', 'order', 'lastActiveAccountId'],
+  whitelist: ['accounts', 'order', 'activeAccountId', 'lastActiveAccountId'],
 };
 const persistedAccountsReducer = persistReducer(accountsPersistConfig, accountsReducer);
 
