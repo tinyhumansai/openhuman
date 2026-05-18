@@ -32,6 +32,13 @@ pub const PROVIDER_OPENHUMAN: &str = "openhuman";
 /// Prefix for Ollama-local providers: `"ollama:<model>"`.
 pub const OLLAMA_PROVIDER_PREFIX: &str = "ollama:";
 
+fn is_abstract_tier_model(model: &str) -> bool {
+    matches!(
+        model.trim(),
+        "reasoning-v1" | "reasoning-quick-v1" | "agentic-v1" | "coding-v1" | "summarization-v1"
+    )
+}
+
 /// Auth-profile storage key for a slug-keyed provider.
 ///
 /// New writes use `"provider:<slug>"`. Lookups also try the bare `<slug>`
@@ -316,11 +323,38 @@ fn make_cloud_provider_by_slug(
 
     // Resolve effective model: use provided model if non-empty, else fall back
     // to the entry's legacy default_model (if any), else empty → error.
-    let effective_model = if model.trim().is_empty() {
+    let mut effective_model = if model.trim().is_empty() {
         entry.default_model.clone().unwrap_or_default()
     } else {
         model.to_string()
     };
+
+    if entry.auth_style != AuthStyle::OpenhumanJwt && is_abstract_tier_model(&effective_model) {
+        if let Some(default_model) = entry
+            .default_model
+            .as_deref()
+            .map(str::trim)
+            .filter(|m| !m.is_empty() && !is_abstract_tier_model(m))
+        {
+            log::info!(
+                "[providers][chat-factory] role={} slug={} remapping abstract model {} -> {}",
+                role,
+                slug,
+                effective_model,
+                default_model
+            );
+            effective_model = default_model.to_string();
+        } else {
+            anyhow::bail!(
+                "[chat-factory] model '{}' is an abstract tier for role '{}', \
+                 but cloud provider slug '{}' has no concrete default_model configured. \
+                 Set cloud_providers[].default_model to a provider-native model id (e.g. deepseek-v4-pro).",
+                effective_model,
+                role,
+                slug
+            );
+        }
+    }
 
     log::info!(
         "[providers][chat-factory] role={} slug={} model={} endpoint_host={}",
