@@ -84,9 +84,9 @@ describe('WebhooksDebugPanel — SSE auth wiring (#1922)', () => {
 
   beforeEach(() => {
     MockEventSource.instances.length = 0;
-    originalEventSource = (globalThis as { EventSource?: typeof MockEventSource }).EventSource as
-      | typeof globalThis.EventSource
-      | undefined;
+    originalEventSource = (
+      globalThis as unknown as { EventSource?: typeof globalThis.EventSource }
+    ).EventSource;
     (globalThis as unknown as { EventSource: typeof MockEventSource }).EventSource =
       MockEventSource;
     mockGetCoreRpcToken.mockReset();
