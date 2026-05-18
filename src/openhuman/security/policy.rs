@@ -383,6 +383,17 @@ fn contains_unquoted_char(command: &str, target: char) -> bool {
     false
 }
 
+fn resolve_existing_path_prefix(path: &Path) -> Option<PathBuf> {
+    let mut current = path;
+    loop {
+        if current.exists() {
+            return current.canonicalize().ok();
+        }
+
+        current = current.parent()?;
+    }
+}
+
 impl SecurityPolicy {
     /// Classify command risk. Any high-risk segment marks the whole command high.
     pub fn command_risk_level(&self, command: &str) -> CommandRiskLevel {
@@ -718,6 +729,15 @@ impl SecurityPolicy {
             let forbidden_path = Path::new(&forbidden_expanded);
             if expanded_path.starts_with(forbidden_path) {
                 return false;
+            }
+        }
+
+        if self.workspace_only && !path.is_empty() {
+            let candidate = self.workspace_dir.join(&expanded);
+            if let Some(resolved) = resolve_existing_path_prefix(&candidate) {
+                if !self.is_resolved_path_allowed(&resolved) {
+                    return false;
+                }
             }
         }
 

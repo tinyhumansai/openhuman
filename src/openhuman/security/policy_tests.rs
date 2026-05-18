@@ -987,6 +987,40 @@ fn resolved_path_blocks_symlink_escape() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+#[cfg(unix)]
+#[test]
+fn is_path_allowed_blocks_workspace_symlink_escape() {
+    use std::os::unix::fs::symlink;
+
+    let root = std::env::temp_dir().join(format!(
+        "openhuman_test_path_symlink_escape_{}",
+        std::process::id()
+    ));
+    let workspace = root.join("workspace");
+    let outside = root.join("outside_target");
+
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&workspace).unwrap();
+    std::fs::create_dir_all(&outside).unwrap();
+    symlink(&outside, workspace.join("escape_link")).unwrap();
+
+    let policy = SecurityPolicy {
+        workspace_dir: workspace,
+        ..SecurityPolicy::default()
+    };
+
+    assert!(
+        !policy.is_path_allowed("escape_link"),
+        "existing symlink targets outside the workspace must be blocked"
+    );
+    assert!(
+        !policy.is_path_allowed("escape_link/new-file.txt"),
+        "paths beneath symlinked directories outside the workspace must be blocked"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 #[test]
 fn is_path_allowed_blocks_null_bytes() {
     let policy = default_policy();
