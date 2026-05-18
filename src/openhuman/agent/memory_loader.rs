@@ -676,4 +676,89 @@ mod tests {
             "no cross-chat hits must produce no header, got:\n{out}"
         );
     }
+
+    /// Exercises the **primary** cross-chat path (JSONL scan via
+    /// `ConversationStore`, not the `Memory::recall` fallback). Writes
+    /// two threads through `ConversationStore`, wires `workspace_dir`
+    /// into the loader, and asserts the prompt picks up the hit from
+    /// the inactive thread with a redacted provenance tag.
+    ///
+    /// Production-critical because the fallback `MockMemory` path is
+    /// what the other loader tests cover — this is the one users
+    /// actually run.
+    #[tokio::test]
+    async fn loader_surfaces_jsonl_primary_path_with_workspace_dir() {
+        use crate::openhuman::memory::conversations::{
+            ConversationMessage, ConversationStore, CreateConversationThread,
+        };
+
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let store = ConversationStore::new(temp.path().to_path_buf());
+
+        // Chat A — durable fact lives here.
+        store
+            .ensure_thread(CreateConversationThread {
+                parent_thread_id: None,
+                id: "thread-a".to_string(),
+                title: "Chat A".to_string(),
+                created_at: "2026-04-10T12:00:00Z".to_string(),
+                labels: None,
+            })
+            .expect("ensure thread-a");
+        store
+            .append_message(
+                "thread-a",
+                ConversationMessage {
+                    id: "m-a-1".to_string(),
+                    content: "Remember: my project Phoenix uses Go and PostgreSQL.".to_string(),
+                    message_type: "text".to_string(),
+                    extra_metadata: serde_json::json!({}),
+                    sender: "user".to_string(),
+                    created_at: "2026-04-10T12:01:00Z".to_string(),
+                },
+            )
+            .expect("append a");
+
+        // Chat B — active chat (excluded by current_thread_id wiring is
+        // not exercised here; we just verify the JSONL path surfaces
+        // hits from other threads).
+        store
+            .ensure_thread(CreateConversationThread {
+                parent_thread_id: None,
+                id: "thread-b".to_string(),
+                title: "Chat B".to_string(),
+                created_at: "2026-04-10T13:00:00Z".to_string(),
+                labels: None,
+            })
+            .expect("ensure thread-b");
+
+        // MockMemory's cross_chat list is empty — if the loader fell
+        // back to the Memory::recall path we'd render nothing. Forcing
+        // a JSONL primary hit proves the workspace_dir branch ran.
+        let mem = MockMemory::new(Vec::new());
+        let loader = DefaultMemoryLoader::new(5, 0.4)
+            .with_workspace_dir(temp.path().to_path_buf());
+
+        let out = loader
+            .load_context(&mem, "What database does my project Phoenix use")
+            .await
+            .expect("loader must succeed");
+
+        assert!(
+            out.contains("[Cross-chat context]"),
+            "JSONL primary path must emit the cross-chat header, got:\n{out}"
+        );
+        assert!(
+            out.contains("PostgreSQL"),
+            "cross-chat block must carry the matched snippet, got:\n{out}"
+        );
+        assert!(
+            out.contains("chat:"),
+            "cross-chat block must render a `chat:<hash>` provenance tag, got:\n{out}"
+        );
+        assert!(
+            !out.contains("thread-a"),
+            "raw thread_id must not leak into the prompt, got:\n{out}"
+        );
+    }
 }
