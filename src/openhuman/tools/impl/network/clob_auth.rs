@@ -22,7 +22,7 @@ const CLOB_AUTH_MESSAGE: &str = "This message attests that I control the given w
 
 type HmacSha256 = Hmac<Sha256>;
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub(crate) struct ClobCredentials {
     pub api_key: String,
     pub secret: String,
@@ -34,6 +34,16 @@ impl ClobCredentials {
         !(self.api_key.trim().is_empty()
             || self.secret.trim().is_empty()
             || self.passphrase.trim().is_empty())
+    }
+}
+
+impl std::fmt::Debug for ClobCredentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ClobCredentials")
+            .field("api_key", &self.api_key)
+            .field("secret", &"<redacted>")
+            .field("passphrase", &"<redacted>")
+            .finish()
     }
 }
 
@@ -64,30 +74,70 @@ pub(crate) async fn derive_credentials(
     chain_id: u64,
     address: &str,
 ) -> Result<ClobCredentials> {
+    tracing::debug!(
+        base_url = %base_url,
+        chain_id,
+        address = %mask_address(address),
+        "[polymarket][clob_auth] derive_credentials: start"
+    );
+
     let timestamp = now_unix_secs()?;
     let create_path = "/auth/api-key";
     let create_headers = sign_l1_headers(signer, chain_id, address, 0, timestamp).await?;
 
+    tracing::trace!(
+        path = create_path,
+        "[polymarket][clob_auth] derive_credentials: request create api key"
+    );
     let create = http
         .post(format!("{base_url}{create_path}"))
         .headers(create_headers)
         .send()
         .await
         .with_context(|| format!("Failed to call Polymarket auth endpoint: POST {create_path}"))?;
+    tracing::debug!(
+        path = create_path,
+        status = create.status().as_u16(),
+        "[polymarket][clob_auth] derive_credentials: create response"
+    );
 
     if create.status().is_success() {
         let payload = create
             .json::<ClobAuthResponse>()
             .await
+            .map_err(|err| {
+                tracing::debug!(
+                    path = create_path,
+                    error = %err,
+                    "[polymarket][clob_auth] derive_credentials: create parse failed"
+                );
+                err
+            })
             .context("Failed to parse Polymarket /auth/api-key response")?;
         let creds = payload.into_credentials();
+        tracing::debug!(
+            path = create_path,
+            complete = creds.is_complete(),
+            api_key_chars = creds.api_key.chars().count(),
+            "[polymarket][clob_auth] derive_credentials: create credentials parsed"
+        );
         if creds.is_complete() {
             return Ok(creds);
         }
+    } else {
+        tracing::debug!(
+            path = create_path,
+            status = create.status().as_u16(),
+            "[polymarket][clob_auth] derive_credentials: fallback to derive endpoint"
+        );
     }
 
     let derive_path = "/auth/derive-api-key";
     let derive_headers = sign_l1_headers(signer, chain_id, address, 0, timestamp).await?;
+    tracing::trace!(
+        path = derive_path,
+        "[polymarket][clob_auth] derive_credentials: request derive api key"
+    );
     let derive = http
         .get(format!("{base_url}{derive_path}"))
         .headers(derive_headers)
@@ -96,16 +146,39 @@ pub(crate) async fn derive_credentials(
         .with_context(|| format!("Failed to call Polymarket auth endpoint: GET {derive_path}"))?;
 
     let derive_status = derive.status();
+    tracing::debug!(
+        path = derive_path,
+        status = derive_status.as_u16(),
+        "[polymarket][clob_auth] derive_credentials: derive response"
+    );
     if derive_status.is_success() {
         let payload = derive
             .json::<ClobAuthResponse>()
             .await
+            .map_err(|err| {
+                tracing::debug!(
+                    path = derive_path,
+                    error = %err,
+                    "[polymarket][clob_auth] derive_credentials: derive parse failed"
+                );
+                err
+            })
             .context("Failed to parse Polymarket /auth/derive-api-key response")?;
         let creds = payload.into_credentials();
+        tracing::debug!(
+            path = derive_path,
+            complete = creds.is_complete(),
+            api_key_chars = creds.api_key.chars().count(),
+            "[polymarket][clob_auth] derive_credentials: derive credentials parsed"
+        );
         if creds.is_complete() {
             return Ok(creds);
         }
 
+        tracing::debug!(
+            path = derive_path,
+            "[polymarket][clob_auth] derive_credentials: derive returned incomplete credentials"
+        );
         anyhow::bail!("Polymarket /auth/derive-api-key returned incomplete credentials")
     }
 
@@ -113,11 +186,25 @@ pub(crate) async fn derive_credentials(
         .text()
         .await
         .unwrap_or_else(|_| String::from("<failed to read response body>"));
+    tracing::debug!(
+        path = derive_path,
+        status = derive_status.as_u16(),
+        body = %body.trim(),
+        "[polymarket][clob_auth] derive_credentials: derive failed"
+    );
     anyhow::bail!(
         "Failed to derive Polymarket API credentials (status {}): {}",
         derive_status.as_u16(),
         body.trim()
     )
+}
+
+fn mask_address(address: &str) -> String {
+    let trimmed = address.trim();
+    if trimmed.len() <= 10 {
+        return "<redacted>".to_string();
+    }
+    format!("{}...{}", &trimmed[..6], &trimmed[trimmed.len() - 4..])
 }
 
 pub(crate) async fn sign_l1_headers(

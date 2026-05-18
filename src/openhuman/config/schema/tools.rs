@@ -582,11 +582,21 @@ fn default_polymarket_clob_exchange_contract() -> String {
     "0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E".into()
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct PolymarketClobCredentials {
     pub api_key: String,
     pub secret: String,
     pub passphrase: String,
+}
+
+impl std::fmt::Debug for PolymarketClobCredentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PolymarketClobCredentials")
+            .field("api_key", &self.api_key)
+            .field("secret", &"<redacted>")
+            .field("passphrase", &"<redacted>")
+            .finish()
+    }
 }
 
 /// Polymarket API configuration (read + write actions via CLOB).
