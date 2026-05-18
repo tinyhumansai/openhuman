@@ -201,8 +201,9 @@ impl CoreProcessHandle {
         for startup_attempt in 0..=1u8 {
             let mut retry_after_takeover = false;
             let shutdown_token = self.fresh_shutdown_token().await;
-            let (ready_tx, mut ready_rx) =
-                tokio::sync::oneshot::channel::<openhuman_core::core::jsonrpc::EmbeddedReadySignal>();
+            let (ready_tx, mut ready_rx) = tokio::sync::oneshot::channel::<
+                openhuman_core::core::jsonrpc::EmbeddedReadySignal,
+            >();
             let mut received_ready = false;
 
             {
@@ -254,7 +255,9 @@ impl CoreProcessHandle {
                             );
                         }
                     }
-                    log::info!("[core] spawning embedded in-process core server on preferred port {port}");
+                    log::info!(
+                        "[core] spawning embedded in-process core server on preferred port {port}"
+                    );
                     let task = tokio::spawn(async move {
                         openhuman_core::core::jsonrpc::run_server_embedded_with_ready(
                             None,
@@ -297,7 +300,8 @@ impl CoreProcessHandle {
                         drop(guard);
                         return match task.await {
                             Ok(Ok(())) => {
-                                Err("in-process core server exited before becoming ready".to_string())
+                                Err("in-process core server exited before becoming ready"
+                                    .to_string())
                             }
                             Ok(Err(err)) => {
                                 if let Some(openhuman_core::openhuman::connectivity::rpc::PickListenPortError::WouldTakeOver { preferred, .. }) = err
@@ -317,9 +321,9 @@ impl CoreProcessHandle {
                                     "in-process core server exited before becoming ready: {err}"
                                 ))
                             }
-                            Err(err) => {
-                                Err(format!("in-process core server task failed before ready: {err}"))
-                            }
+                            Err(err) => Err(format!(
+                                "in-process core server task failed before ready: {err}"
+                            )),
                         };
                     }
                 }
@@ -344,6 +348,12 @@ impl CoreProcessHandle {
         if let Some(preferred) = ready.fallback_from {
             let message = format!("port_fallback_engaged: {preferred} -> {}", ready.port);
             log::warn!("[core] {message}");
+            sentry::add_breadcrumb(sentry::Breadcrumb {
+                category: Some("core.port".to_string()),
+                level: sentry::Level::Warning,
+                message: Some(message),
+                ..Default::default()
+            });
             *self.last_port_fallback.write() = Some(PortFallbackNotice {
                 preferred_port: preferred,
                 chosen_port: ready.port,
