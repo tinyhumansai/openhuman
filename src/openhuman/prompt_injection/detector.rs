@@ -215,8 +215,52 @@ fn optional_classifier() -> Option<&'static dyn OptionalClassifier> {
     OPTIONAL_CLASSIFIER.as_deref()
 }
 
+/// Map fullwidth Unicode characters (U+FF01–U+FF5E) to their ASCII equivalents
+/// by subtracting the block offset (0xFEE0). Attackers use these to spell
+/// "ignore previous instructions" with visually-identical glyphs that bypass
+/// regex rules operating on ASCII bytes.
+#[inline]
+fn fullwidth_to_ascii(ch: char) -> Option<char> {
+    let c = ch as u32;
+    if (0xFF01..=0xFF5E).contains(&c) {
+        char::from_u32(c - 0xFEE0)
+    } else {
+        None
+    }
+}
+
+/// Map Cyrillic characters that are visually confusable with Latin letters
+/// (per Unicode UAX#39) to their Latin equivalents. The most impactful ones
+/// for prompt-injection attacks are those that appear in "ignore", "previous",
+/// "instructions", "system", and "reveal".
+#[inline]
+fn cyrillic_to_latin(ch: char) -> Option<char> {
+    match ch {
+        'а' => Some('a'), // U+0430 CYRILLIC SMALL LETTER A
+        'е' => Some('e'), // U+0435 CYRILLIC SMALL LETTER IE
+        'і' => Some('i'), // U+0456 CYRILLIC SMALL LETTER BYELORUSSIAN-UKRAINIAN I
+        'ј' => Some('j'), // U+0458 CYRILLIC SMALL LETTER JE
+        'о' => Some('o'), // U+043E CYRILLIC SMALL LETTER O
+        'р' => Some('p'), // U+0440 CYRILLIC SMALL LETTER ER
+        'с' => Some('c'), // U+0441 CYRILLIC SMALL LETTER ES
+        'у' => Some('y'), // U+0443 CYRILLIC SMALL LETTER U
+        'х' => Some('x'), // U+0445 CYRILLIC SMALL LETTER HA
+        _ => None,
+    }
+}
+
 fn normalize_prompt(input: &str) -> NormalizedPrompt {
-    let lowered = input.to_lowercase();
+    // Lower-case first so Cyrillic uppercase (А, С, …) becomes lowercase
+    // Cyrillic, which is then caught by cyrillic_to_latin below.
+    let lowered: String = input
+        .to_lowercase()
+        .chars()
+        .map(|ch| {
+            fullwidth_to_ascii(ch)
+                .or_else(|| cyrillic_to_latin(ch))
+                .unwrap_or(ch)
+        })
+        .collect();
     let had_zwsp = lowered.chars().any(|ch| {
         matches!(
             ch,
