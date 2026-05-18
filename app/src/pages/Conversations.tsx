@@ -251,6 +251,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
   const [inlineSuggestionValue, setInlineSuggestionValue] = useState('');
   const [sendError, setSendError] = useState<ChatSendError | null>(null);
   const [sendAdvisory, setSendAdvisory] = useState<string | null>(null);
+  const [pendingSendingThreadId, setPendingSendingThreadId] = useState<string | null>(null);
   const [profileDraftOpen, setProfileDraftOpen] = useState(false);
   const [profileDraft, setProfileDraft] = useState(DEFAULT_PROFILE_DRAFT);
   const socketStatus = useAppSelector(selectSocketStatus);
@@ -317,6 +318,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
 
   const textInputRef = useRef<HTMLTextAreaElement>(null);
   const isComposingTextRef = useRef(false);
+  const pendingSendRef = useRef<string | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -669,6 +671,8 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
   };
 
   const handleSendMessage = async (text?: string) => {
+    if (pendingSendRef.current) return;
+
     const normalized = text ?? inputValue;
     const trimmedInput = normalized.trim();
 
@@ -711,6 +715,8 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
 
     const sendingThreadId = selectedThreadId;
     if (!sendingThreadId) return;
+    pendingSendRef.current = sendingThreadId;
+    setPendingSendingThreadId(sendingThreadId);
     const userMessage: ThreadMessage = {
       id: `msg_${globalThis.crypto.randomUUID()}`,
       content: trimmed,
@@ -729,10 +735,14 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
       // unrelated errors whose `.toString()` happens to equal the sentinel.
       if (error === THREAD_NOT_FOUND_MESSAGE) {
         setSendError(null);
+        pendingSendRef.current = null;
+        setPendingSendingThreadId(null);
         return;
       }
       const msg = error instanceof Error ? error.message : String(error);
       setSendError(chatSendError('cloud_send_failed', msg));
+      pendingSendRef.current = null;
+      setPendingSendingThreadId(null);
       return;
     }
     setInputValue('');
@@ -783,6 +793,8 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
       }
       dispatch(clearRuntimeForThread({ threadId: sendingThreadId }));
       dispatch(setActiveThread(null));
+      pendingSendRef.current = null;
+      setPendingSendingThreadId(null);
     }
   };
 
@@ -1080,9 +1092,18 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
     });
     return () => window.cancelAnimationFrame(id);
   }, [selectedThreadId, composerInteractionBlocked, inputMode]);
+  useEffect(() => {
+    if (!pendingSendingThreadId) return;
+    const lifecycle = inferenceTurnLifecycleByThread[pendingSendingThreadId];
+    if (lifecycle === 'started' || lifecycle === 'streaming') {
+      pendingSendRef.current = null;
+      setPendingSendingThreadId(null);
+    }
+  }, [inferenceTurnLifecycleByThread, pendingSendingThreadId]);
   const isSending = Boolean(
     selectedThreadId &&
-    (inferenceTurnLifecycleByThread[selectedThreadId] === 'started' ||
+    (pendingSendingThreadId === selectedThreadId ||
+      inferenceTurnLifecycleByThread[selectedThreadId] === 'started' ||
       inferenceTurnLifecycleByThread[selectedThreadId] === 'streaming')
   );
   const shouldRenderTimelineBeforeLatestAgentMessage =
@@ -2014,7 +2035,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
               // Without `!selectedThreadId`, a mic submit before a thread is
               // ready hits `handleSendMessage`'s early return and the
               // transcript is silently dropped — the user spoke into the void.
-              disabled={composerInteractionBlocked || !selectedThreadId}
+              disabled={composerInteractionBlocked || isSending || !selectedThreadId}
               onSubmit={text => handleSendMessage(text)}
               onError={message => setSendError(chatSendError('voice_transcription', message))}
               showDeviceSelector
@@ -2043,7 +2064,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                   onKeyDown={handleInputKeyDown}
                   placeholder={t('chat.typeMessage')}
                   rows={1}
-                  disabled={composerInteractionBlocked}
+                  disabled={composerInteractionBlocked || isSending}
                   className="relative z-10 w-full resize-none border-0 bg-transparent pl-4 pr-10 py-2.5 text-sm leading-normal whitespace-pre-wrap break-words font-sans text-stone-900 dark:text-neutral-100 placeholder:text-stone-400 dark:placeholder:text-neutral-500 outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0 max-h-32 disabled:opacity-50 disabled:cursor-not-allowed"
                 />
                 {/* Voice input mic hidden per #717 (inputMode='voice' path retained). */}
@@ -2054,7 +2075,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                 onClick={() => {
                   void handleSendMessage();
                 }}
-                disabled={!inputValue.trim() || composerInteractionBlocked}
+                disabled={!inputValue.trim() || composerInteractionBlocked || isSending}
                 className="w-10 h-10 flex items-center justify-center rounded-full bg-primary-500 hover:bg-primary-600 text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex-shrink-0">
                 {isSending ? (
                   <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">

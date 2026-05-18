@@ -717,6 +717,45 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     });
   });
 
+  it('blocks duplicate sends while the first send is still pending', async () => {
+    let resolveSend: (() => void) | undefined;
+    vi.mocked(chatSend).mockImplementationOnce(
+      () =>
+        new Promise<void>(resolve => {
+          resolveSend = resolve;
+        })
+    );
+    const { textarea, thread } = await renderSelectedConversation();
+
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: 'slow backend' } });
+    });
+    await waitFor(() => {
+      expect(textarea).toHaveValue('slow backend');
+      expect(screen.getByRole('button', { name: 'Send message' })).not.toBeDisabled();
+    });
+
+    const sendButton = screen.getByRole('button', { name: 'Send message' });
+    await act(async () => {
+      fireEvent.click(sendButton);
+      fireEvent.click(sendButton);
+      fireEvent.click(sendButton);
+    });
+
+    await waitFor(() => {
+      expect(chatSend).toHaveBeenCalledTimes(1);
+    });
+    expect(threadApi.appendMessage).toHaveBeenCalledTimes(1);
+    expect(chatSend).toHaveBeenCalledWith({
+      threadId: thread.id,
+      message: 'slow backend',
+      model: 'reasoning-v1',
+      profileId: 'default',
+    });
+    expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
+    resolveSend?.();
+  });
+
   it('creates a custom agent profile from the header draft form', async () => {
     const thread = makeThread({ id: 'profile-thread', title: 'Profile Thread' });
     mockGetThreads.mockResolvedValue({ threads: [thread], count: 1 });
