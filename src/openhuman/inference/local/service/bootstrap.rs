@@ -1,0 +1,594 @@
+use crate::openhuman::config::Config;
+use crate::openhuman::inference::device::DeviceProfile;
+use crate::openhuman::inference::local::provider::{provider_from_config, LocalAiProvider};
+use crate::openhuman::inference::model_ids;
+use crate::openhuman::inference::presets::{self, VisionMode};
+use crate::openhuman::inference::types::LocalAiStatus;
+
+use super::LocalAiService;
+
+impl LocalAiService {
+    pub(crate) fn new(config: &Config) -> Self {
+        let model_id = model_ids::effective_chat_model_id(config);
+        let vision_model_id = model_ids::effective_vision_model_id(config);
+        let embedding_model_id = model_ids::effective_embedding_model_id(config);
+        let vision_mode = vision_mode_str(config);
+        let provider = provider_from_config(config);
+        Self {
+            whisper: super::whisper_engine::new_handle(),
+            status: parking_lot::Mutex::new(LocalAiStatus {
+                state: "idle".to_string(),
+                model_id: model_id.clone(),
+                chat_model_id: model_id.clone(),
+                vision_model_id: vision_model_id.clone(),
+                embedding_model_id: embedding_model_id.clone(),
+                stt_model_id: model_ids::effective_stt_model_id(config),
+                tts_voice_id: model_ids::effective_tts_voice_id(config),
+                quantization: model_ids::effective_quantization(config),
+                vision_state: initial_vision_state(config),
+                vision_mode,
+                embedding_state: "idle".to_string(),
+                stt_state: "idle".to_string(),
+                tts_state: "idle".to_string(),
+                provider: provider.as_str().to_string(),
+                download_progress: None,
+                downloaded_bytes: None,
+                total_bytes: None,
+                download_speed_bps: None,
+                eta_seconds: None,
+                warning: None,
+                error_detail: None,
+                error_category: None,
+                model_path: Some(model_path_for_config(config)),
+                active_backend: provider.as_str().to_string(),
+                backend_reason: None,
+                last_latency_ms: None,
+                prompt_toks_per_sec: None,
+                gen_toks_per_sec: None,
+            }),
+            bootstrap_lock: tokio::sync::Mutex::new(()),
+            whisper_load_lock: tokio::sync::Mutex::new(()),
+            last_memory_summary_at: parking_lot::Mutex::new(None),
+            owned_ollama: parking_lot::Mutex::new(None),
+            http: reqwest::Client::builder()
+                // Local models can take >30s on cold start and first-token generation.
+                // Keep the total timeout generous so inline autocomplete and local
+                // chat stay reliable.
+                .timeout(std::time::Duration::from_secs(120))
+                // ...but bound the *connect* phase tightly. When the Ollama server
+                // isn't running, the default connect timeout (long on Windows
+                // loopback) cascades through `has_model` × 3 in `assets_status`
+                // and blows past the 30s RPC envelope. 500ms is well under any
+                // realistic loopback connect latency; if the server is up,
+                // reqwest's per-request `.timeout()` still bounds the rest of
+                // the exchange.
+                .connect_timeout(std::time::Duration::from_millis(500))
+                .build()
+                .unwrap_or_else(|e| {
+                    log::warn!("[local_ai] reqwest client build failed, falling back to default client: {e}");
+                    reqwest::Client::new()
+                }),
+        }
+    }
+
+    pub fn status(&self) -> LocalAiStatus {
+        self.status.lock().clone()
+    }
+
+    pub fn reset_to_idle(&self, config: &Config) {
+        let model_id = model_ids::effective_chat_model_id(config);
+        let vision_mode = vision_mode_str(config);
+        let provider = provider_from_config(config);
+        let mut status = self.status.lock();
+        status.state = "idle".to_string();
+        status.model_id = model_id.clone();
+        status.chat_model_id = model_id.clone();
+        status.vision_model_id = model_ids::effective_vision_model_id(config);
+        status.embedding_model_id = model_ids::effective_embedding_model_id(config);
+        status.stt_model_id = model_ids::effective_stt_model_id(config);
+        status.tts_voice_id = model_ids::effective_tts_voice_id(config);
+        status.quantization = model_ids::effective_quantization(config);
+        status.vision_state = initial_vision_state(config);
+        status.vision_mode = vision_mode;
+        status.embedding_state = "idle".to_string();
+        status.stt_state = "idle".to_string();
+        status.tts_state = "idle".to_string();
+        status.provider = provider.as_str().to_string();
+        status.download_progress = None;
+        status.downloaded_bytes = None;
+        status.total_bytes = None;
+        status.download_speed_bps = None;
+        status.eta_seconds = None;
+        status.warning = None;
+        status.error_detail = None;
+        status.error_category = None;
+        status.model_path = Some(model_path_for_config(config));
+        status.active_backend = provider.as_str().to_string();
+        status.backend_reason = None;
+        status.last_latency_ms = None;
+        status.prompt_toks_per_sec = None;
+        status.gen_toks_per_sec = None;
+    }
+
+    pub fn mark_degraded(&self, warning: String) {
+        log::warn!("[local_ai] mark_degraded: {warning}");
+        let mut status = self.status.lock();
+        status.state = "degraded".to_string();
+        status.warning = Some(warning);
+    }
+
+    /// Force the status field to `"disabled"`. Used by the
+    /// `local_ai_shutdown_owned` RPC so the UI flips to the disabled
+    /// state immediately after the user toggles local AI off — without
+    /// waiting for the natural `local_ai_status` poll to re-bootstrap
+    /// (which it never does from the `"ready"` state).
+    pub fn mark_disabled(&self, config: &Config) {
+        log::info!("[local_ai] mark_disabled: status forced to disabled by gate toggle");
+        *self.status.lock() = LocalAiStatus::disabled(config);
+    }
+
+    pub async fn bootstrap(&self, config: &Config) {
+        let _guard = self.bootstrap_lock.lock().await;
+        let device = crate::openhuman::inference::device::detect_device_profile();
+        let effective_config = config_with_recommended_tier_if_unselected(config, &device);
+
+        if !effective_config.local_ai.runtime_enabled {
+            *self.status.lock() = LocalAiStatus::disabled(&effective_config);
+            return;
+        }
+
+        // Return early if already succeeded or previously degraded.
+        // "degraded" means a prior bootstrap attempt already failed; further
+        // automatic retries just spam Ollama pull requests.  An explicit retry
+        // (local_ai_download with force=true) resets to "idle" first.
+        if matches!(self.status.lock().state.as_str(), "ready" | "degraded") {
+            return;
+        }
+
+        {
+            let provider = provider_from_config(&effective_config);
+            let mut status = self.status.lock();
+            status.model_id = model_ids::effective_chat_model_id(&effective_config);
+            status.chat_model_id = model_ids::effective_chat_model_id(&effective_config);
+            status.vision_model_id = model_ids::effective_vision_model_id(&effective_config);
+            status.embedding_model_id = model_ids::effective_embedding_model_id(&effective_config);
+            status.stt_model_id = model_ids::effective_stt_model_id(&effective_config);
+            status.tts_voice_id = model_ids::effective_tts_voice_id(&effective_config);
+            status.quantization = model_ids::effective_quantization(&effective_config);
+            status.state = "loading".to_string();
+            status.provider = provider.as_str().to_string();
+            status.vision_mode = vision_mode_str(&effective_config);
+            status.warning = Some(format!(
+                "Connecting to local {} runtime",
+                provider.display_name()
+            ));
+            status.download_progress = None;
+            status.downloaded_bytes = None;
+            status.total_bytes = None;
+            status.download_speed_bps = None;
+            status.eta_seconds = None;
+            status.error_detail = None;
+            status.error_category = None;
+            status.active_backend = provider.as_str().to_string();
+            status.backend_reason = Some(format!(
+                "Inference delegated to {} runtime",
+                provider.display_name()
+            ));
+            status.model_path = Some(model_path_for_config(&effective_config));
+        }
+
+        if provider_from_config(&effective_config) == LocalAiProvider::LmStudio {
+            log::debug!(
+                "[local_ai] LM Studio bootstrap branch entry preload_embedding={} preload_stt={} preload_tts={}",
+                effective_config.local_ai.preload_embedding_model,
+                effective_config.local_ai.preload_stt_model,
+                effective_config.local_ai.preload_tts_voice
+            );
+            log::trace!("[local_ai] LM Studio bootstrap availability check start");
+            if let Err(err) = self.ensure_lm_studio_available(&effective_config).await {
+                log::debug!("[local_ai] LM Studio bootstrap degraded: {err}");
+                let mut status = self.status.lock();
+                status.state = "degraded".to_string();
+                status.error_category = Some("server".to_string());
+                status.warning = Some(err);
+                return;
+            }
+            log::debug!("[local_ai] LM Studio bootstrap availability check succeeded");
+
+            log::trace!(
+                "[local_ai] LM Studio bootstrap embedding preload decision: {}",
+                effective_config.local_ai.preload_embedding_model
+            );
+            if effective_config.local_ai.preload_embedding_model {
+                let embedding_model = model_ids::effective_embedding_model_id(&effective_config);
+                log::debug!(
+                    "[local_ai] LM Studio bootstrap embedding preload start model={embedding_model}"
+                );
+                {
+                    let mut status = self.status.lock();
+                    status.state = "downloading".to_string();
+                    status.embedding_state = "downloading".to_string();
+                    status.warning = Some(format!(
+                        "Downloading embedding model via Ollama: `{embedding_model}`"
+                    ));
+                }
+                if let Err(err) = async {
+                    log::trace!(
+                        "[local_ai] LM Studio bootstrap embedding ensure_ollama_server start"
+                    );
+                    self.ensure_ollama_server(&effective_config).await?;
+                    log::trace!(
+                        "[local_ai] LM Studio bootstrap embedding ensure_ollama_server succeeded"
+                    );
+                    log::trace!(
+                        "[local_ai] LM Studio bootstrap embedding ensure_ollama_model_available start model={embedding_model}"
+                    );
+                    self.ensure_ollama_model_available(&embedding_model, "embedding")
+                        .await?;
+                    log::trace!(
+                        "[local_ai] LM Studio bootstrap embedding ensure_ollama_model_available succeeded model={embedding_model}"
+                    );
+                    Ok::<(), String>(())
+                }
+                .await
+                {
+                    log::warn!("[local_ai] LM Studio bootstrap embedding preload failed: {err}");
+                    self.status.lock().embedding_state = "missing".to_string();
+                } else {
+                    log::debug!(
+                        "[local_ai] LM Studio bootstrap embedding preload succeeded model={embedding_model}"
+                    );
+                    self.status.lock().embedding_state = "ready".to_string();
+                }
+            }
+
+            log::trace!(
+                "[local_ai] LM Studio bootstrap STT preload decision: {}",
+                effective_config.local_ai.preload_stt_model
+            );
+            if effective_config.local_ai.preload_stt_model {
+                log::debug!("[local_ai] LM Studio bootstrap STT preload start");
+                if let Err(err) = self.ensure_stt_asset_available(&effective_config).await {
+                    log::warn!("[local_ai] LM Studio bootstrap STT preload failed: {err}");
+                    self.status.lock().stt_state = "missing".to_string();
+                } else {
+                    log::debug!("[local_ai] LM Studio bootstrap STT preload succeeded");
+                }
+            }
+            log::trace!(
+                "[local_ai] LM Studio bootstrap TTS preload decision: {}",
+                effective_config.local_ai.preload_tts_voice
+            );
+            if effective_config.local_ai.preload_tts_voice {
+                log::debug!("[local_ai] LM Studio bootstrap TTS preload start");
+                if let Err(err) = self.ensure_tts_asset_available(&effective_config).await {
+                    log::warn!("[local_ai] LM Studio bootstrap TTS preload failed: {err}");
+                    self.status.lock().tts_state = "missing".to_string();
+                } else {
+                    log::debug!("[local_ai] LM Studio bootstrap TTS preload succeeded");
+                }
+            }
+
+            let mut status = self.status.lock();
+            status.state = "ready".to_string();
+            status.vision_state = "disabled".to_string();
+            if !effective_config.local_ai.preload_embedding_model {
+                status.embedding_state = "idle".to_string();
+            } else if status.embedding_state != "ready" {
+                status.embedding_state = "missing".to_string();
+            }
+            if !effective_config.local_ai.preload_stt_model {
+                status.stt_state = "idle".to_string();
+            }
+            if !effective_config.local_ai.preload_tts_voice {
+                status.tts_state = "idle".to_string();
+            }
+            status.warning = None;
+            status.error_detail = None;
+            status.error_category = None;
+            status.download_progress = None;
+            status.downloaded_bytes = None;
+            status.total_bytes = None;
+            status.download_speed_bps = None;
+            status.eta_seconds = None;
+            status.model_path = Some(model_path_for_config(&effective_config));
+            log::debug!(
+                "[local_ai] LM Studio bootstrap ready embedding_state={} stt_state={} tts_state={}",
+                status.embedding_state,
+                status.stt_state,
+                status.tts_state
+            );
+            return;
+        }
+
+        if let Err(err) = self.ensure_ollama_server(&effective_config).await {
+            log::warn!(
+                "[local_ai] bootstrap degraded: external runtime connectivity check failed: {err}"
+            );
+            let mut status = self.status.lock();
+            status.state = "degraded".to_string();
+            status.error_category = Some("server".to_string());
+            status.warning = Some(format_degraded_warning(&err, &effective_config));
+            return;
+        }
+
+        if let Err(err) = self.ensure_models_available(&effective_config).await {
+            let mut status = self.status.lock();
+            status.state = "degraded".to_string();
+            status.error_category = Some("download".to_string());
+            status.warning = Some(format_degraded_warning(&err, &effective_config));
+            return;
+        }
+
+        // Attempt to load whisper model in-process if configured (blocking I/O).
+        // Pass GPU info from the device profile so whisper can use hardware acceleration.
+        if effective_config.local_ai.whisper_in_process {
+            if let Ok(model_path) =
+                crate::openhuman::inference::paths::resolve_stt_model_path(&effective_config)
+            {
+                let model = std::path::PathBuf::from(&model_path);
+                let handle = self.whisper.clone();
+                let gpu = device.has_gpu;
+                let gpu_desc = device.gpu_description.clone();
+                let load_result = tokio::task::spawn_blocking(move || {
+                    super::whisper_engine::load_engine(&handle, &model, gpu, gpu_desc.as_deref())
+                })
+                .await;
+                match load_result {
+                    Ok(Ok(())) => {
+                        log::info!("[local_ai] whisper engine loaded in-process: {model_path}");
+                    }
+                    Ok(Err(e)) => {
+                        log::warn!(
+                            "[local_ai] whisper in-process load failed, will fall back to CLI: {e}"
+                        );
+                    }
+                    Err(e) => {
+                        log::warn!("[local_ai] whisper load task panicked: {e}");
+                    }
+                }
+            } else {
+                log::debug!("[local_ai] STT model not found, whisper in-process not loaded");
+            }
+        }
+
+        let mut status = self.status.lock();
+        status.state = "ready".to_string();
+        status.vision_state = match presets::vision_mode_for_config(&effective_config.local_ai) {
+            VisionMode::Disabled => "disabled".to_string(),
+            VisionMode::Bundled => "ready".to_string(),
+            VisionMode::Ondemand => "idle".to_string(),
+        };
+        status.embedding_state = if effective_config.local_ai.preload_embedding_model {
+            "ready".to_string()
+        } else {
+            "idle".to_string()
+        };
+        if !effective_config.local_ai.preload_stt_model {
+            status.stt_state = "idle".to_string();
+        }
+        if !effective_config.local_ai.preload_tts_voice {
+            status.tts_state = "idle".to_string();
+        }
+        status.warning = None;
+        status.error_detail = None;
+        status.error_category = None;
+        status.download_progress = None;
+        status.downloaded_bytes = None;
+        status.total_bytes = None;
+        status.download_speed_bps = None;
+        status.eta_seconds = None;
+        status.model_path = Some(model_path_for_config(&effective_config));
+    }
+
+    pub fn should_run_memory_autosummary(&self, config: &Config) -> bool {
+        let mut guard = self.last_memory_summary_at.lock();
+        let now = std::time::Instant::now();
+        match *guard {
+            Some(last)
+                if now.duration_since(last).as_millis()
+                    < u128::from(config.local_ai.autosummary_debounce_ms) =>
+            {
+                false
+            }
+            _ => {
+                *guard = Some(now);
+                true
+            }
+        }
+    }
+}
+
+fn config_with_recommended_tier_if_unselected(config: &Config, device: &DeviceProfile) -> Config {
+    let current_tier =
+        crate::openhuman::inference::presets::current_tier_from_config(&config.local_ai);
+
+    // Local AI is opt-in on every device. The only way to keep it enabled
+    // across a restart is an explicit opt-in (`apply_preset` on a real tier),
+    // which sets `opt_in_confirmed = true`. Every other state — fresh install,
+    // pre-MVP upgrade with a stale `selected_tier`, manual config edit — is
+    // hard-overridden to disabled here, regardless of device RAM.
+    if !config.local_ai.opt_in_confirmed {
+        tracing::debug!(
+            total_ram_gb = device.total_ram_gb(),
+            min_required_gb = crate::openhuman::inference::presets::MIN_RAM_GB_FOR_LOCAL_AI,
+            ?current_tier,
+            selected_tier = ?config.local_ai.selected_tier,
+            "[local_ai] bootstrap: opt_in_confirmed=false, hard-overriding to disabled (cloud fallback)"
+        );
+        let mut effective_config = config.clone();
+        effective_config.local_ai.runtime_enabled = false;
+        return effective_config;
+    }
+
+    // User has explicitly opted in via apply_preset.
+    // Ensure runtime_enabled is true — the on-disk field may be stale (old
+    // installs that had `enabled = true` before the rename now serde-default to
+    // false, so we set it here based on the authoritative opt_in_confirmed flag).
+    let mut effective_config = config.clone();
+    effective_config.local_ai.runtime_enabled = true;
+    effective_config
+}
+
+fn format_degraded_warning(err: &str, config: &Config) -> String {
+    let current = crate::openhuman::inference::presets::current_tier_from_config(&config.local_ai);
+    match current {
+        crate::openhuman::inference::presets::ModelTier::Ram16PlusGb => {
+            format!(
+                "{err}. Hint: your device may not support the 16 GB+ tier model. \
+                 Try switching to the 8-16 GB or 4-8 GB tier in Settings > Local AI Model."
+            )
+        }
+        crate::openhuman::inference::presets::ModelTier::Ram8To16Gb => {
+            format!(
+                "{err}. Hint: your device may not support the 8-16 GB tier model. \
+                 Try switching to the 4-8 GB or 2-4 GB tier in Settings > Local AI Model."
+            )
+        }
+        crate::openhuman::inference::presets::ModelTier::Ram4To8Gb => format!(
+            "{err}. Hint: your device may not support the 4-8 GB tier vision sidecar. \
+             Try switching to the 2-4 GB tier for text-only local AI."
+        ),
+        _ => err.to_string(),
+    }
+}
+
+fn initial_vision_state(config: &Config) -> String {
+    match presets::vision_mode_for_config(&config.local_ai) {
+        VisionMode::Disabled => "disabled".to_string(),
+        VisionMode::Ondemand | VisionMode::Bundled => "idle".to_string(),
+    }
+}
+
+fn vision_mode_str(config: &Config) -> String {
+    format!("{:?}", presets::vision_mode_for_config(&config.local_ai)).to_ascii_lowercase()
+}
+
+fn model_path_for_config(config: &Config) -> String {
+    let model_id = model_ids::effective_chat_model_id(config);
+    match provider_from_config(config) {
+        LocalAiProvider::Ollama => format!("ollama://{model_id}"),
+        LocalAiProvider::LmStudio => format!("lmstudio://{model_id}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn autosummary_debounce_blocks_repeated_calls_inside_window() {
+        let mut config = Config::default();
+        config.local_ai.autosummary_debounce_ms = 60_000;
+        let service = LocalAiService::new(&config);
+
+        assert!(service.should_run_memory_autosummary(&config));
+        assert!(!service.should_run_memory_autosummary(&config));
+    }
+
+    fn test_device(ram_gb: u64) -> DeviceProfile {
+        DeviceProfile {
+            total_ram_bytes: ram_gb * 1024 * 1024 * 1024,
+            cpu_count: 4,
+            cpu_brand: String::new(),
+            os_name: String::new(),
+            os_version: String::new(),
+            has_gpu: false,
+            gpu_description: None,
+        }
+    }
+
+    #[test]
+    fn bootstrap_defaults_to_disabled_on_low_ram_device() {
+        let config = Config::default();
+        let device = test_device(4);
+
+        let effective = config_with_recommended_tier_if_unselected(&config, &device);
+
+        assert!(
+            !effective.local_ai.runtime_enabled,
+            "local_ai.runtime_enabled must default to false on <8 GB device"
+        );
+    }
+
+    #[test]
+    fn bootstrap_defaults_to_disabled_on_sufficient_ram_device() {
+        // Local AI is opt-in. Even with >= 8 GB RAM, an unselected tier must
+        // leave local AI disabled — the user has to explicitly turn it on.
+        let config = Config::default();
+        let device = test_device(16);
+
+        let effective = config_with_recommended_tier_if_unselected(&config, &device);
+
+        assert!(
+            !effective.local_ai.runtime_enabled,
+            "local_ai.runtime_enabled must default to false when no tier selected, regardless of RAM"
+        );
+    }
+
+    #[test]
+    fn bootstrap_honors_opt_in_on_low_ram_device() {
+        let mut config = Config::default();
+        config.local_ai.selected_tier = Some("ram_2_4gb".to_string());
+        config.local_ai.opt_in_confirmed = true;
+        crate::openhuman::inference::presets::apply_preset_to_config(
+            &mut config.local_ai,
+            crate::openhuman::inference::presets::ModelTier::Ram2To4Gb,
+        );
+        let device = test_device(4);
+
+        let effective = config_with_recommended_tier_if_unselected(&config, &device);
+
+        assert!(
+            effective.local_ai.runtime_enabled,
+            "explicit opt-in must be honored even on low-RAM device"
+        );
+    }
+
+    #[test]
+    fn bootstrap_honors_opt_in_on_sufficient_ram_device() {
+        let mut config = Config::default();
+        config.local_ai.selected_tier = Some("ram_2_4gb".to_string());
+        config.local_ai.opt_in_confirmed = true;
+        crate::openhuman::inference::presets::apply_preset_to_config(
+            &mut config.local_ai,
+            crate::openhuman::inference::presets::ModelTier::Ram2To4Gb,
+        );
+        let device = test_device(16);
+
+        let effective = config_with_recommended_tier_if_unselected(&config, &device);
+
+        assert!(
+            effective.local_ai.runtime_enabled,
+            "explicit opt-in on sufficient-RAM device must stay enabled"
+        );
+        assert_eq!(
+            effective.local_ai.chat_model_id, config.local_ai.chat_model_id,
+            "opt-in config must not be mutated"
+        );
+    }
+
+    #[test]
+    fn bootstrap_overrides_stale_selected_tier_without_opt_in() {
+        // Existing install (pre-MVP) had `selected_tier = "ram_2_4gb"` auto-populated
+        // by old RAM-based bootstrap logic, but never went through an explicit MVP
+        // opt-in. `opt_in_confirmed = false` must hard-override to disabled.
+        let mut config = Config::default();
+        config.local_ai.runtime_enabled = true;
+        config.local_ai.selected_tier = Some("ram_2_4gb".to_string());
+        config.local_ai.opt_in_confirmed = false;
+        let device = test_device(16);
+
+        let effective = config_with_recommended_tier_if_unselected(&config, &device);
+
+        assert!(
+            !effective.local_ai.runtime_enabled,
+            "stale selected_tier without opt_in_confirmed must be hard-overridden to disabled"
+        );
+        assert_eq!(
+            effective.local_ai.selected_tier.as_deref(),
+            Some("ram_2_4gb"),
+            "bootstrap must leave the persisted selected_tier untouched — only the effective `enabled` flips"
+        );
+    }
+}

@@ -31,8 +31,8 @@ use crate::openhuman::channels::whatsapp_web::WhatsAppWebChannel;
 use crate::openhuman::channels::Channel;
 use crate::openhuman::config::Config;
 use crate::openhuman::context::channels_prompt::build_system_prompt;
+use crate::openhuman::inference::provider::{self, Provider};
 use crate::openhuman::memory::{self, Memory};
-use crate::openhuman::providers::{self, Provider};
 use crate::openhuman::security::SecurityPolicy;
 use crate::openhuman::tools;
 use anyhow::Result;
@@ -54,12 +54,12 @@ pub async fn start_channels(config: Config) -> Result<()> {
     // a thin tokio task that ticks every minute and dispatches into
     // any provider whose `sync_interval_secs` has elapsed for an
     // active Composio connection. Safe to call here even though
-    // `bootstrap_skill_runtime` may also start it — `start_periodic_sync`
+    // `bootstrap_core_runtime` may also start it — `start_periodic_sync`
     // is intentionally cheap and the loop body no-ops when there are
     // no connections.
     crate::openhuman::composio::start_periodic_sync();
     // Native request handlers. Re-registering is safe (latest wins) so
-    // this is idempotent even if `bootstrap_skill_runtime` also runs.
+    // this is idempotent even if `bootstrap_core_runtime` also runs.
     // Must happen before `run_message_dispatch_loop` begins, because
     // channel dispatch calls `request_native_global("agent.run_turn", …)`
     // for every inbound message.
@@ -141,7 +141,7 @@ pub async fn start_channels(config: Config) -> Result<()> {
     tracing::debug!("[event_bus] global singleton initialized in start_channels");
 
     // Initialise the sub-agent definition registry from this workspace.
-    // Idempotent — `bootstrap_skill_runtime` may also call it.
+    // Idempotent — `bootstrap_core_runtime` may also call it.
     if let Err(err) = crate::openhuman::agent::harness::AgentDefinitionRegistry::init_global(
         &config.workspace_dir,
     ) {
@@ -151,16 +151,16 @@ pub async fn start_channels(config: Config) -> Result<()> {
         );
     }
     // Note: WebhookRequestSubscriber and ChannelInboundSubscriber are registered
-    // in bootstrap_skill_runtime() (src/core/jsonrpc.rs) to avoid double-registration
+    // in bootstrap_core_runtime() (src/core/jsonrpc.rs) to avoid double-registration
     // when both startup paths run in the same process.
 
-    let provider_runtime_options = providers::ProviderRuntimeOptions {
+    let provider_runtime_options = provider::ProviderRuntimeOptions {
         auth_profile_override: None,
         openhuman_dir: config.config_path.parent().map(std::path::PathBuf::from),
         secrets_encrypt: config.secrets.encrypt,
         reasoning_enabled: config.runtime.reasoning_enabled,
     };
-    let provider: Arc<dyn Provider> = Arc::from(providers::create_intelligent_routing_provider(
+    let provider: Arc<dyn Provider> = Arc::from(provider::create_intelligent_routing_provider(
         config.inference_url.as_deref(),
         config.api_url.as_deref(),
         config.api_key.as_deref(),
@@ -185,9 +185,10 @@ pub async fn start_channels(config: Config) -> Result<()> {
         .clone()
         .unwrap_or_else(|| crate::openhuman::config::DEFAULT_MODEL.into());
     let temperature = config.default_temperature;
+    let local_embedding = config.workload_local_model("embeddings");
     let mem: Arc<dyn Memory> = Arc::from(memory::create_memory_with_local_ai(
         &config.memory,
-        &config.local_ai,
+        local_embedding.as_deref(),
         &[],
         Some(&config.storage.provider.config),
         &config.workspace_dir,
@@ -571,7 +572,7 @@ pub async fn start_channels(config: Config) -> Result<()> {
 
     println!("  🚦 In-flight message limit: {max_in_flight_messages}");
 
-    let provider_name = providers::INFERENCE_BACKEND_ID.to_string();
+    let provider_name = provider::INFERENCE_BACKEND_ID.to_string();
     let mut provider_cache_seed: HashMap<String, Arc<dyn Provider>> = HashMap::new();
     provider_cache_seed.insert(provider_name.clone(), Arc::clone(&provider));
     let message_timeout_secs =

@@ -15,7 +15,8 @@ describe('sendEmailMagicLink', () => {
 
     await sendEmailMagicLink('user@example.com', 'openhuman://');
 
-    expect(fetchSpy).toHaveBeenCalledWith('http://localhost:5005/auth/email/send-link', {
+    const backendUrl = process.env.VITEST_MOCK_API_URL ?? 'http://localhost:5005';
+    expect(fetchSpy).toHaveBeenCalledWith(`${backendUrl}/auth/email/send-link`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-web-version': '0.0.0-test' },
       body: JSON.stringify({ email: 'user@example.com', frontendRedirectUri: 'openhuman://' }),

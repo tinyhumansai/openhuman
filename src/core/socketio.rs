@@ -80,6 +80,9 @@ pub struct WebChannelEvent {
     /// non-subagent event.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subagent: Option<SubagentProgressDetail>,
+    /// Per-thread task board snapshot carried by `task_board_updated`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task_board: Option<serde_json::Value>,
 }
 
 /// Per-event subagent progress detail attached to `WebChannelEvent`.
@@ -152,6 +155,8 @@ struct ChatStartPayload {
     model_override: Option<String>,
     #[serde(default)]
     temperature: Option<f64>,
+    #[serde(default)]
+    profile_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -250,6 +255,7 @@ pub fn attach_socketio() -> (socketioxide::layer::SocketIoLayer, SocketIo) {
                     &payload.message,
                     model_override,
                     payload.temperature,
+                    payload.profile_id,
                 )
                 .await
                 {

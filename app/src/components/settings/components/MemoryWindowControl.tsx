@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 
+import { useT } from '../../../lib/i18n/I18nContext';
 import {
   isTauri,
   MEMORY_CONTEXT_WINDOWS,
@@ -20,6 +21,9 @@ interface PresetMeta {
  * `src/openhuman/config/schema/agent.rs`) — these strings only describe
  * the UX tradeoff so users can pick without doing math.
  */
+// NOTE: MEMORY_WINDOW_PRESET_META is now built inside the component using t() so labels/badges/hints
+// are translated. The exported constant is kept for backwards-compat but callers that need
+// localised strings should use the hook.
 export const MEMORY_WINDOW_PRESET_META: Record<MemoryContextWindow, PresetMeta> = {
   minimal: {
     label: 'Minimal',
@@ -70,10 +74,34 @@ interface Props {
  *   the cost / continuity tradeoff.
  */
 const MemoryWindowControl = ({ onError, onSaved }: Props) => {
+  const { t } = useT();
   const [current, setCurrent] = useState<MemoryContextWindow>('balanced');
   const [pending, setPending] = useState<MemoryContextWindow | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState<MemoryContextWindow | null>(null);
+
+  const localizedMeta: Record<MemoryContextWindow, PresetMeta> = {
+    minimal: {
+      label: t('settings.memoryWindow.minimal.label'),
+      badge: t('settings.memoryWindow.minimal.badge'),
+      hint: t('settings.memoryWindow.minimal.hint'),
+    },
+    balanced: {
+      label: t('settings.memoryWindow.balanced.label'),
+      badge: t('settings.memoryWindow.balanced.badge'),
+      hint: t('settings.memoryWindow.balanced.hint'),
+    },
+    extended: {
+      label: t('settings.memoryWindow.extended.label'),
+      badge: t('settings.memoryWindow.extended.badge'),
+      hint: t('settings.memoryWindow.extended.hint'),
+    },
+    maximum: {
+      label: t('settings.memoryWindow.maximum.label'),
+      badge: t('settings.memoryWindow.maximum.badge'),
+      hint: t('settings.memoryWindow.maximum.hint'),
+    },
+  };
 
   useEffect(() => {
     if (!isTauri()) {
@@ -118,7 +146,7 @@ const MemoryWindowControl = ({ onError, onSaved }: Props) => {
   };
 
   const activeForUi = pending ?? current;
-  const meta = MEMORY_WINDOW_PRESET_META[activeForUi];
+  const meta = localizedMeta[activeForUi];
 
   return (
     <div
@@ -126,20 +154,16 @@ const MemoryWindowControl = ({ onError, onSaved }: Props) => {
       data-testid="memory-window-control">
       <div className="flex items-baseline justify-between">
         <div>
-          <h3 className="text-base font-semibold">Long-term memory window</h3>
-          <p className="text-sm text-muted-foreground">
-            How much remembered context OpenHuman injects into every new agent run. Larger windows
-            feel more aware of past conversations but use more tokens — and cost more — on every
-            run.
-          </p>
+          <h3 className="text-base font-semibold">{t('settings.memoryWindow.title')}</h3>
+          <p className="text-sm text-muted-foreground">{t('settings.memoryWindow.description')}</p>
         </div>
       </div>
       <div
         role="radiogroup"
-        aria-label="Long-term memory window"
+        aria-label={t('settings.memoryWindow.title')}
         className="grid grid-cols-2 gap-2">
         {MEMORY_CONTEXT_WINDOWS.map(option => {
-          const optionMeta = MEMORY_WINDOW_PRESET_META[option];
+          const optionMeta = localizedMeta[option];
           const isActive = activeForUi === option;
           const isSaving = saving === option;
           return (

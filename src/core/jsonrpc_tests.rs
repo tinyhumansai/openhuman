@@ -83,7 +83,7 @@ async fn wait_until_port_released(port: u16) {
 /// `CancellationToken` is fired.
 ///
 /// **Ignored by default.** This test calls `run_server_embedded`,
-/// which triggers the full production bootstrap (`bootstrap_skill_runtime`
+/// which triggers the full production bootstrap (`bootstrap_core_runtime`
 /// → `register_domain_subscribers` → `scheduler_gate::init_global` +
 /// `memory::tree::jobs::start` + `composio::start_periodic_sync` +
 /// cron scheduler). Those code paths spawn detached `tokio::spawn`
@@ -279,18 +279,6 @@ async fn invoke_migrate_openclaw_rejects_unknown_param() {
     .await
     .expect_err("unknown param should fail");
     assert!(err.contains("unknown param 'x'"));
-}
-
-#[tokio::test]
-async fn invoke_local_ai_download_asset_missing_required_param_fails_validation() {
-    let err = invoke_method(
-        default_state(),
-        "openhuman.local_ai_download_asset",
-        json!({}),
-    )
-    .await
-    .expect_err("missing capability should fail");
-    assert!(err.contains("missing required param 'capability'"));
 }
 
 #[test]

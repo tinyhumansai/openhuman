@@ -5,8 +5,8 @@
 
 use super::*;
 use crate::openhuman::agent::harness::session::transcript::{SessionTranscript, TranscriptMeta};
+use crate::openhuman::inference::provider::ChatMessage;
 use crate::openhuman::memory::{Memory, MemoryCategory, MemoryEntry, NamespaceSummary, RecallOpts};
-use crate::openhuman::providers::ChatMessage;
 use async_trait::async_trait;
 use std::path::PathBuf;
 use std::sync::Mutex;

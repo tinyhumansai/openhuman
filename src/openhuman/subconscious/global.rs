@@ -86,6 +86,7 @@ pub async fn bootstrap_after_login() -> Result<(), String> {
 
     if !config.heartbeat.enabled {
         tracing::info!("[subconscious] heartbeat disabled in config — bootstrap skipped");
+        BOOTSTRAPPED.store(false, Ordering::SeqCst);
         return Ok(());
     }
 
@@ -122,6 +123,32 @@ pub async fn bootstrap_after_login() -> Result<(), String> {
     Ok(())
 }
 
+/// Stop only the heartbeat loop. Keep the engine cache intact so manual
+/// subconscious RPCs can still inspect state, while a future enable can spawn
+/// a fresh loop.
+pub async fn stop_heartbeat_loop() {
+    if let Some(handle) = heartbeat_slot().lock().await.take() {
+        handle.abort();
+        // Await the aborted task so it fully releases its engine reference
+        // before we let bootstrap_after_login spawn a fresh loop. Without this
+        // the old task can still be executing engine.run_tick() against a
+        // replaced engine state.
+        match handle.await {
+            Ok(()) => {
+                tracing::debug!("[heartbeat] loop exited before abort completed");
+            }
+            Err(join_err) if join_err.is_cancelled() => {
+                tracing::info!("[heartbeat] loop aborted");
+            }
+            Err(join_err) => {
+                tracing::warn!(error = %join_err, "[heartbeat] loop abort join failed");
+            }
+        }
+    }
+
+    BOOTSTRAPPED.store(false, Ordering::SeqCst);
+}
+
 /// Tear down the engine + heartbeat loop so the next login rebuilds them
 /// against the new user's workspace. Call on logout or account switch.
 ///
@@ -129,15 +156,11 @@ pub async fn bootstrap_after_login() -> Result<(), String> {
 /// user's `workspace_dir` and subsequent ticks / RPC queries would leak
 /// into the wrong DB.
 pub async fn reset_engine_for_user_switch() {
-    if let Some(handle) = heartbeat_slot().lock().await.take() {
-        handle.abort();
-        tracing::info!("[heartbeat] loop aborted for user switch");
-    }
+    stop_heartbeat_loop().await;
 
     let lock = engine_lock();
     let mut guard = lock.lock().await;
     *guard = None;
 
-    BOOTSTRAPPED.store(false, Ordering::SeqCst);
     tracing::info!("[subconscious] engine reset for user switch");
 }

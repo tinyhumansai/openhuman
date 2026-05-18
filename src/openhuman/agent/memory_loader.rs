@@ -303,7 +303,8 @@ impl MemoryLoader for DefaultMemoryLoader {
         // through `memory.recall` with `cross_session=true` instead.
         // That path reads `episodic_log` (populated only by the
         // archivist tool) so it's a best-effort secondary signal.
-        let current_thread_id = crate::openhuman::providers::thread_context::current_thread_id();
+        let current_thread_id =
+            crate::openhuman::inference::provider::thread_context::current_thread_id();
         let cross_hits: Vec<(String, String)> = if let Some(workspace_dir) = &self.workspace_dir {
             let store = ConversationStore::new(workspace_dir.clone());
             match store.search_cross_thread_messages(

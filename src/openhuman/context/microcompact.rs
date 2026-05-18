@@ -23,7 +23,7 @@
 //! otherwise be too large to fit — the pipeline orchestrator handles
 //! gating.
 
-use crate::openhuman::providers::ConversationMessage;
+use crate::openhuman::inference::provider::ConversationMessage;
 
 /// Placeholder used in place of cleared tool-result bodies. Must be
 /// stable across versions so callers can pattern-match on it for
@@ -102,7 +102,7 @@ pub fn microcompact(history: &mut [ConversationMessage], keep_recent: usize) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::openhuman::providers::{ChatMessage, ToolCall, ToolResultMessage};
+    use crate::openhuman::inference::provider::{ChatMessage, ToolCall, ToolResultMessage};
 
     fn user(text: &str) -> ConversationMessage {
         ConversationMessage::Chat(ChatMessage::user(text))

@@ -201,6 +201,30 @@ fn command_risk_high_for_dangerous_commands() {
 }
 
 #[test]
+fn command_risk_high_for_command_executors() {
+    let p = default_policy();
+    for command in [
+        "xargs rm",
+        "awk 'BEGIN{system(\"id\")}'",
+        "perl -e 'system \"id\"'",
+        "python3 -c 'import os; os.system(\"id\")'",
+        "pythonw3 -c 'import os; os.system(\"id\")'",
+        "ruby -e 'system \"id\"'",
+        "bash -lc 'id'",
+        "sh -c 'id'",
+        "C:\\Python312\\python.EXE -c 'print(1)'",
+        "C:\\Python312\\pythonw3.12.exe -c 'print(1)'",
+        "/usr/bin/env python3 -c 'print(1)'",
+    ] {
+        assert_eq!(
+            p.command_risk_level(command),
+            CommandRiskLevel::High,
+            "{command} should be high risk"
+        );
+    }
+}
+
+#[test]
 fn validate_command_requires_approval_for_medium_risk() {
     let p = SecurityPolicy {
         autonomy: AutonomyLevel::Supervised,
@@ -249,6 +273,62 @@ fn validate_command_rejects_background_chain_bypass() {
     let result = p.validate_command_execution("ls & python3 -c 'print(1)'", false);
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("not allowed"));
+}
+
+// Regression: OPENHUMAN-TAURI-GW (#1813). A multi-byte UTF-8 char straddling
+// byte 80 of the command string used to panic the log truncator with
+// `byte index 80 is not a char boundary`, killing the core thread. All five
+// `&command[..80]` log sites must now round down to a UTF-8 boundary.
+#[test]
+fn validate_command_does_not_panic_on_multibyte_char_at_log_truncation_boundary() {
+    // Real-world Sentry repro: `cmd /c "dir /b "%USERPROFILE%\Desktop\*.lnk"
+    // 2>nul | findstr /i "Warcraft WoW 魔兽 Battle"` — the 3-byte `'魔'`
+    // occupies bytes 78..81, so a naked `&command[..80]` panics.
+    let cmd = "cmd /c \"dir /b \"%USERPROFILE%\\Desktop\\*.lnk\" 2>nul | findstr /i \"Warcraft WoW 魔兽 Battle\"";
+    assert!(
+        cmd.len() > 80,
+        "test fixture must be long enough to trigger truncation"
+    );
+    assert!(
+        !cmd.is_char_boundary(80),
+        "test fixture must place a multi-byte char across byte 80"
+    );
+
+    // Exercise the allowlist-deny path (cmd starts with "cmd" which is not on
+    // the default allowlist), which fires the truncating warn! at policy.rs.
+    let p = default_policy();
+    let result = p.validate_command_execution(cmd, false);
+    assert!(
+        result.is_err(),
+        "command should be blocked, but did not panic"
+    );
+
+    // And the high-risk-blocked path: allowlist passes (curl is allowed), then
+    // risk gate fires (curl is a high-risk command), exercising the truncating
+    // warn! site at the block_high_risk_commands branch.
+    let prefix = "curl https://example.com/";
+    let filler = "a".repeat(80 - prefix.len() - 1);
+    let high_risk_cmd = format!("{prefix}{filler}魔");
+    assert!(
+        !high_risk_cmd.is_char_boundary(80),
+        "fixture must straddle byte 80 with a multi-byte char"
+    );
+    let high_risk_policy = SecurityPolicy {
+        allowed_commands: vec!["curl".into()],
+        ..SecurityPolicy::default()
+    };
+    let blocked = high_risk_policy.validate_command_execution(&high_risk_cmd, true);
+    assert!(blocked.is_err());
+    assert!(blocked.unwrap_err().contains("high-risk"));
+}
+
+// Pathological short multi-byte command — exercises the boundary logic at the
+// edge case where `cmd.len() < 80`.
+#[test]
+fn validate_command_handles_short_multibyte_command() {
+    let p = default_policy();
+    // 6 bytes (two 3-byte CJK chars) — well under the 80-byte log cap.
+    let _ = p.validate_command_execution("魔兽", false);
 }
 
 // -- is_path_allowed ----------------------------------------------
@@ -547,6 +627,51 @@ fn command_argument_injection_blocked() {
     assert!(p.is_command_allowed("find . -name '*.txt'"));
     assert!(p.is_command_allowed("git status"));
     assert!(p.is_command_allowed("git add ."));
+}
+
+#[test]
+fn custom_allowlist_cannot_enable_command_executors() {
+    let p = SecurityPolicy {
+        allowed_commands: vec![
+            "echo".into(),
+            "xargs".into(),
+            "awk".into(),
+            "perl".into(),
+            "python".into(),
+            "python3".into(),
+            "python3.12".into(),
+            "python.EXE".into(),
+            "pythonw3".into(),
+            "pythonw3.12.exe".into(),
+            "ruby".into(),
+            "bash".into(),
+            "sh".into(),
+            "env".into(),
+        ],
+        ..SecurityPolicy::default()
+    };
+
+    for command in [
+        "echo rm -rf / | xargs",
+        "awk 'BEGIN{system(\"id\")}'",
+        "perl -e 'system \"id\"'",
+        "python -c 'import os; os.system(\"id\")'",
+        "python3 exploit.py",
+        "python3.12 -c 'print(1)'",
+        "/usr/bin/python3.12 -c 'print(1)'",
+        "C:\\Python312\\python.EXE -c 'print(1)'",
+        "pythonw3 exploit.py",
+        "C:\\Python312\\pythonw3.12.exe -c 'print(1)'",
+        "ruby -e 'system \"id\"'",
+        "bash -lc 'id'",
+        "sh -c 'id'",
+        "/usr/bin/env python3 -c 'print(1)'",
+    ] {
+        assert!(
+            !p.is_command_allowed(command),
+            "{command} should remain blocked even when allowlisted"
+        );
+    }
 }
 
 #[test]
@@ -950,5 +1075,143 @@ fn is_path_allowed_blocks_url_encoded_traversal() {
     assert!(
         !policy.is_path_allowed("subdir%2f..%2f..%2fetc"),
         "URL-encoded parent dir traversal must be blocked"
+    );
+}
+
+// Regression: #1941. The allowlist-miss Err return used to echo the full
+// untruncated command, leaking secrets in args (e.g. an Authorization Bearer
+// header in a `curl` invocation that the agent issued). The log already
+// truncated at 80 chars; the Err path now matches.
+#[test]
+fn validate_command_truncates_secrets_in_allowlist_miss_error() {
+    // Use a base command NOT on the default allowlist so we hit the
+    // allowlist-miss branch. Pad the command so the secret sits past byte 80.
+    let prefix = "totallybogusbin --really-long-flag-that-eats-the-budget=";
+    let padding = "x".repeat(80usize.saturating_sub(prefix.len()));
+    let secret = "Bearer SECRETTOKEN_DO_NOT_LEAK_ME_123";
+    let cmd = format!("{prefix}{padding} -H \"Authorization: {secret}\"");
+    assert!(
+        cmd.len() > 80,
+        "fixture must be longer than the 80-char truncation cap"
+    );
+    assert!(
+        cmd.contains(secret),
+        "fixture must contain the secret token so the test can check it leaks"
+    );
+
+    let p = default_policy();
+    let err = p
+        .validate_command_execution(&cmd, false)
+        .expect_err("unknown command should be rejected");
+
+    assert!(
+        !err.contains(secret),
+        "Err return leaked the secret past the 80-char truncation boundary: {err}"
+    );
+    assert!(
+        err.starts_with("Command not allowed by security policy: "),
+        "Err return should still carry the policy-decision prefix: {err}"
+    );
+}
+
+// Regression: #1941. Mirrors the log-truncation multi-byte safety net (#1813)
+// for the Err path. A multi-byte UTF-8 char straddling byte 80 of the command
+// would panic the formatter if we did a naked `&command[..80]` slice.
+#[test]
+fn validate_command_err_truncation_handles_multibyte_char_at_boundary() {
+    let prefix = "totallybogusbin ";
+    let filler = "a".repeat(80 - prefix.len() - 1);
+    let cmd = format!("{prefix}{filler}魔 trailing");
+    assert!(
+        !cmd.is_char_boundary(80),
+        "fixture must place a multi-byte char across byte 80"
+    );
+
+    let p = default_policy();
+    let result = p.validate_command_execution(&cmd, false);
+    assert!(
+        result.is_err(),
+        "fixture must hit the allowlist-miss Err path"
+    );
+}
+
+// ── validate_path_within_root ─────────────────────────────────────────────
+
+#[test]
+fn validate_path_within_root_allows_contained_path() {
+    let root = tempfile::tempdir().unwrap();
+    let file = root.path().join("prompt.md");
+    std::fs::write(&file, b"hello").unwrap();
+    let result = validate_path_within_root(&file, root.path());
+    assert!(result.is_ok(), "contained path must be allowed: {result:?}");
+    assert_eq!(result.unwrap(), file.canonicalize().unwrap());
+}
+
+#[test]
+fn validate_path_within_root_blocks_parent_traversal() {
+    let root = tempfile::tempdir().unwrap();
+    let subdir = root.path().join("prompts");
+    std::fs::create_dir(&subdir).unwrap();
+    // Create a file one level above the prompts subdir but still within root.
+    let victim = root.path().join("secret.txt");
+    std::fs::write(&victim, b"secret").unwrap();
+    // Construct a traversal path: <root>/prompts/../secret.txt
+    let traversal = subdir.join("..").join("secret.txt");
+    // With the prompts dir as root, the traversal must be blocked.
+    let result = validate_path_within_root(&traversal, &subdir);
+    assert!(
+        result.is_err(),
+        "path escaping root via '..' must be blocked"
+    );
+}
+
+#[test]
+fn validate_path_within_root_blocks_absolute_escape() {
+    let root = tempfile::tempdir().unwrap();
+    let file = root.path().join("a.md");
+    std::fs::write(&file, b"x").unwrap();
+    // Use a completely different tempdir as the root — file is outside it.
+    let other_root = tempfile::tempdir().unwrap();
+    let result = validate_path_within_root(&file, other_root.path());
+    assert!(
+        result.is_err(),
+        "path outside root must be blocked: {result:?}"
+    );
+}
+
+#[test]
+fn validate_path_within_root_fails_on_nonexistent_candidate() {
+    let root = tempfile::tempdir().unwrap();
+    let missing = root.path().join("does_not_exist.md");
+    // canonicalize() will fail — we expect an error, not a panic.
+    let result = validate_path_within_root(&missing, root.path());
+    assert!(
+        result.is_err(),
+        "non-existent candidate must return an error"
+    );
+}
+
+#[test]
+fn validate_path_within_root_blocks_symlink_escape() {
+    let root = tempfile::tempdir().unwrap();
+    let prompts_dir = root.path().join("prompts");
+    std::fs::create_dir(&prompts_dir).unwrap();
+    // Create a target file outside the prompts dir.
+    let outside = root.path().join("outside.txt");
+    std::fs::write(&outside, b"sensitive").unwrap();
+    // Create a symlink inside prompts/ pointing outside.
+    let link = prompts_dir.join("evil.md");
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&outside, &link).unwrap();
+    #[cfg(not(unix))]
+    {
+        // Skip symlink test on non-Unix where symlink creation may require
+        // elevated privileges.
+        return;
+    }
+    let result = validate_path_within_root(&link, &prompts_dir);
+    assert!(
+        result.is_err(),
+        "symlink escaping prompt root must be blocked"
     );
 }

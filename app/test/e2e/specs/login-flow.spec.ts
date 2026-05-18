@@ -39,6 +39,7 @@ import {
   waitForWebView,
   waitForWindowVisible,
 } from '../helpers/element-helpers';
+import { resetApp } from '../helpers/reset-app';
 import {
   clearRequestLog,
   getRequestLog,
@@ -121,7 +122,14 @@ let hadOnboardingWalkthrough = false;
 describe('Login flow — complete with mock data (Linux)', () => {
   before(async () => {
     await startMockServer();
+    resetMockBehavior();
+    setMockBehavior('composioConnections', '[]');
     await waitForApp();
+    // Wipe any state from prior specs in this single-session run, but
+    // stop BEFORE the auth deep-link / onboarding walk — this spec
+    // exercises that login flow itself, so it has to start from the
+    // Welcome screen.
+    await resetApp('e2e-login-flow', { skipAuth: true });
     clearRequestLog();
     hadOnboardingWalkthrough = false;
   });
@@ -209,9 +217,12 @@ describe('Login flow — complete with mock data (Linux)', () => {
 
     // Real onboarding step markers
     const onboardingCandidates = [
-      'Welcome', // WelcomeStep heading
+      "Hi. I'm OpenHuman.", // WelcomeStep heading
+      "Let's Start", // WelcomeStep CTA
+      'Connect your Gmail', // SkillsStep heading
+      'Skip for Now', // SkillsStep CTA when no source is connected
       'Skip', // Onboarding defer button (top-right)
-      'Continue', // WelcomeStep CTA
+      'Continue', // Later onboarding CTAs
     ];
     const homeCandidates = ['Home', 'Skills', 'Conversations'];
 
@@ -233,7 +244,9 @@ describe('Login flow — complete with mock data (Linux)', () => {
   it('walk through onboarding steps (if overlay is visible)', async () => {
     // Check if we're on the WelcomeStep or any onboarding step
     const onboardingVisible =
-      (await textExists('Welcome')) ||
+      (await textExists("Hi. I'm OpenHuman.")) ||
+      (await textExists("Let's Start")) ||
+      (await textExists('Connect your Gmail')) ||
       (await textExists('Skip')) ||
       (await textExists('Continue')) ||
       (await textExists('Finish Setup'));
@@ -246,16 +259,17 @@ describe('Login flow — complete with mock data (Linux)', () => {
 
     hadOnboardingWalkthrough = true;
 
-    // Step 0: WelcomeStep — click "Continue"
-    if (await textExists('Welcome')) {
-      const clicked = await clickFirstMatch(['Continue'], 10_000);
+    // Step 0: WelcomeStep — click the current CTA.
+    if ((await textExists("Hi. I'm OpenHuman.")) || (await textExists("Let's Start"))) {
+      const clicked = await clickFirstMatch(["Let's Start", 'Continue'], 10_000);
       console.log(`[LoginFlow] WelcomeStep: clicked "${clicked}"`);
       await browser.pause(2_000);
     }
 
     // Step 1: SkillsStep — click "Skip for Now" (no skills connected in E2E)
     {
-      const skillsVisible = await textExists('Connect Gmail');
+      const skillsVisible =
+        (await textExists('Connect your Gmail')) || (await textExists('Connect Gmail'));
       if (skillsVisible) {
         const clicked = await clickFirstMatch(['Skip for Now', 'Continue'], 10_000);
         if (clicked) {
@@ -265,20 +279,21 @@ describe('Login flow — complete with mock data (Linux)', () => {
       }
     }
 
-    // Step 2: ContextGatheringStep — intro gate. Heading is "Getting to know you"
-    // (pre-start) or "Reading your connected accounts" / "Context Ready" (post-start).
-    // We don't actually want the real LinkedIn enrichment pipeline to run in E2E
-    // (it would hit the Rust core), so prefer "Skip for now" when present.
-    // "Continue" covers both the no-Gmail branch (skipped stages render Continue
-    // immediately after Start) and the completed-pipeline final state.
+    // Step 2: ContextGatheringStep — current builds auto-start the profile
+    // pipeline and can land on either the progress state or the recoverable
+    // "Almost there!" fallback. In both cases "Continue to chat" is the final
+    // action that persists onboarding_completed and navigates to Home.
     {
       const contextVisible =
+        (await textExists('Building your profile')) ||
+        (await textExists('Almost there')) ||
+        (await textExists('Continue to chat')) ||
         (await textExists('Getting to know you')) ||
         (await textExists('Reading your connected accounts')) ||
         (await textExists('Context Ready'));
       if (contextVisible) {
         const clicked = await clickFirstMatch(
-          ['Skip for now', 'Continue', 'Start when ready'],
+          ['Continue to chat', 'Skip for now', 'Continue', 'Start when ready'],
           10_000
         );
         if (clicked) {

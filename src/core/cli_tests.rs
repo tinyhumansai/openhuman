@@ -24,6 +24,7 @@ fn grouped_schemas_contains_migrated_namespaces() {
     assert!(grouped.contains_key("auth"));
     assert!(grouped.contains_key("service"));
     assert!(grouped.contains_key("migrate"));
+    assert!(grouped.contains_key("inference"));
     assert!(grouped.contains_key("local_ai"));
 }
 
@@ -49,6 +50,37 @@ fn parse_function_params_rejects_unknown_param() {
     let args = vec!["--unknown".to_string(), "value".to_string()];
     let err = parse_function_params(&schema, &args).expect_err("unknown param should fail");
     assert!(err.contains("unknown param"));
+}
+
+#[test]
+fn parse_function_params_rejects_flag_like_missing_value() {
+    let schema = ControllerSchema {
+        namespace: "test",
+        function: "configure",
+        description: "test schema",
+        inputs: vec![
+            FieldSchema {
+                name: "enabled",
+                ty: TypeSchema::Bool,
+                required: true,
+                comment: "whether the feature is enabled",
+            },
+            FieldSchema {
+                name: "name",
+                ty: TypeSchema::String,
+                required: true,
+                comment: "feature name",
+            },
+        ],
+        outputs: vec![],
+    };
+    let args = vec![
+        "--enabled".to_string(),
+        "--name".to_string(),
+        "demo".to_string(),
+    ];
+    let err = parse_function_params(&schema, &args).expect_err("missing value should fail");
+    assert_eq!(err, "missing value for --enabled");
 }
 
 #[test]

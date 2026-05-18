@@ -23,21 +23,11 @@
  *  - ComposeIO history archive content — covered by `useComposeioTriggerHistory` hook
  *    unit tests and the core's ComposeIO handlers.
  */
-import { waitForApp, waitForAppReady } from '../helpers/app-helpers';
+import { waitForApp } from '../helpers/app-helpers';
 import { callOpenhumanRpc } from '../helpers/core-rpc';
-import { triggerAuthDeepLinkBypass } from '../helpers/deep-link-helpers';
-import {
-  dumpAccessibilityTree,
-  textExists,
-  waitForWebView,
-  waitForWindowVisible,
-} from '../helpers/element-helpers';
-import { supportsExecuteScript } from '../helpers/platform';
-import {
-  completeOnboardingIfVisible,
-  navigateViaHash,
-  waitForRequest,
-} from '../helpers/shared-flows';
+import { dumpAccessibilityTree, textExists } from '../helpers/element-helpers';
+import { resetApp } from '../helpers/reset-app';
+import { navigateViaHash, waitForRequest } from '../helpers/shared-flows';
 import {
   clearRequestLog,
   getRequestLog,
@@ -45,6 +35,8 @@ import {
   startMockServer,
   stopMockServer,
 } from '../mock-server';
+
+const USER_ID = 'e2e-webhooks-tunnel';
 
 function stepLog(message: string, context?: unknown): void {
   const stamp = new Date().toISOString();
@@ -71,31 +63,12 @@ function unwrapRpcValue<T = unknown>(raw: unknown): T | undefined {
   return raw as T;
 }
 
-/**
- * Authenticate via the deep-link bypass and wait for the app shell to be ready.
- * Extracted as a standalone helper so every `it` block that needs an authenticated
- * session can call it independently — tests must be runnable in isolation without
- * relying on a prior `it` having already stored a session.
- */
-async function authenticateAndReachShell(): Promise<void> {
-  await triggerAuthDeepLinkBypass('e2e-webhooks-tunnel-user');
-  await waitForWindowVisible(25_000);
-  await waitForWebView(15_000);
-  await waitForAppReady(15_000);
-  await completeOnboardingIfVisible('[WebhooksTunnelE2E]');
-
-  const atHome =
-    (await textExists('Message OpenHuman')) ||
-    (await textExists('Good morning')) ||
-    (await textExists('Upgrade to Premium'));
-  expect(atHome).toBe(true);
-}
-
 describe('Webhook tunnel CRUD (UI + core RPC + mock backend)', () => {
   before(async () => {
     await startMockServer();
     await resetMockBehavior();
     await waitForApp();
+    await resetApp(USER_ID);
     clearRequestLog();
   });
 
@@ -107,13 +80,15 @@ describe('Webhook tunnel CRUD (UI + core RPC + mock backend)', () => {
     await stopMockServer();
   });
 
-  it('authenticates via bypass deep link and reaches the logged-in shell', async () => {
-    await authenticateAndReachShell();
+  it('reached the logged-in shell after onboarding', async () => {
+    const atHome =
+      (await textExists('Message OpenHuman')) ||
+      (await textExists('Good morning')) ||
+      (await textExists('Upgrade to Premium'));
+    expect(atHome).toBe(true);
   });
 
   it('creates a tunnel → lists → deletes, with matching mock-backend traffic', async () => {
-    await authenticateAndReachShell();
-
     // Wait for the deep-link listener's async `storeSession()` to settle before
     // exercising tunnel RPCs (webhooks ops require a stored session token).
     await browser.waitUntil(
@@ -201,7 +176,6 @@ describe('Webhook tunnel CRUD (UI + core RPC + mock backend)', () => {
   });
 
   it('Webhooks page loads (ComposeIO trigger history surface)', async () => {
-    await authenticateAndReachShell();
     await navigateViaHash('/settings/webhooks-triggers');
 
     await browser.waitUntil(
@@ -216,10 +190,8 @@ describe('Webhook tunnel CRUD (UI + core RPC + mock backend)', () => {
       { timeout: 10_000, interval: 500, timeoutMsg: 'Webhooks page markers did not appear' }
     );
 
-    if (supportsExecuteScript()) {
-      const hash = await browser.execute(() => window.location.hash);
-      expect(String(hash)).toContain('/settings/webhooks-triggers');
-    }
+    const hash = await browser.execute(() => window.location.hash);
+    expect(String(hash)).toContain('/settings/webhooks-triggers');
 
     const visible =
       (await textExists('ComposeIO Triggers')) ||

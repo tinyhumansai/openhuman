@@ -72,6 +72,39 @@ fn reingest_preserves_existing_embedding() {
 }
 
 #[test]
+fn chunk_embeddings_are_scoped_by_model_signature() {
+    let (_tmp, cfg) = test_config();
+    let c = sample_chunk("slack:#eng", 0, 1_700_000_000_000);
+    upsert_chunks(&cfg, &[c.clone()]).unwrap();
+
+    set_chunk_embedding_for_signature(
+        &cfg,
+        &c.id,
+        "openai/text-embedding-3-small@1536",
+        &[0.1, 0.2],
+    )
+    .unwrap();
+    set_chunk_embedding_for_signature(&cfg, &c.id, "local/bge-small@384", &[0.3, 0.4, 0.5])
+        .unwrap();
+
+    assert_eq!(
+        get_chunk_embedding_for_signature(&cfg, &c.id, "openai/text-embedding-3-small@1536")
+            .unwrap(),
+        Some(vec![0.1, 0.2])
+    );
+    assert_eq!(
+        get_chunk_embedding_for_signature(&cfg, &c.id, "local/bge-small@384").unwrap(),
+        Some(vec![0.3, 0.4, 0.5])
+    );
+    assert!(
+        get_chunk_embedding_for_signature(&cfg, &c.id, "missing/model@1")
+            .unwrap()
+            .is_none()
+    );
+    assert!(get_chunk_embedding(&cfg, &c.id).unwrap().is_none());
+}
+
+#[test]
 fn list_filters_by_source_kind() {
     let (_tmp, cfg) = test_config();
     let c1 = sample_chunk("slack:#eng", 0, 1_700_000_000_000);

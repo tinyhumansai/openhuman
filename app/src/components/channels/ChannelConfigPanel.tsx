@@ -15,10 +15,14 @@ const ChannelConfigPanel = ({ selectedChannel, definitions }: ChannelConfigPanel
 
   return (
     <div className="space-y-4">
-      <section className="rounded-xl border border-stone-200 bg-white p-4 space-y-3">
+      <section className="rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 space-y-3">
         <div>
-          <h3 className="text-base font-semibold text-stone-900">{definition.display_name}</h3>
-          <p className="text-xs text-stone-500 mt-1">{definition.description}</p>
+          <h3 className="text-base font-semibold text-stone-900 dark:text-neutral-100">
+            {definition.display_name}
+          </h3>
+          <p className="text-xs text-stone-500 dark:text-neutral-400 mt-1">
+            {definition.description}
+          </p>
         </div>
         {selectedChannel === 'telegram' && <TelegramConfig definition={definition} />}
         {selectedChannel === 'discord' && <DiscordConfig definition={definition} />}

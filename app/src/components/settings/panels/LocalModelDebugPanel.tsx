@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 
+import { useT } from '../../../lib/i18n/I18nContext';
 import {
   formatBytes,
   formatEta,
@@ -16,13 +17,10 @@ import {
   type LocalAiTtsResult,
   openhumanLocalAiAssetsStatus,
   openhumanLocalAiDiagnostics,
-  openhumanLocalAiDownload,
-  openhumanLocalAiDownloadAllAssets,
   openhumanLocalAiDownloadAsset,
   openhumanLocalAiDownloadsProgress,
   openhumanLocalAiEmbed,
   openhumanLocalAiPrompt,
-  openhumanLocalAiSetOllamaPath,
   openhumanLocalAiStatus,
   openhumanLocalAiSummarize,
   openhumanLocalAiTranscribe,
@@ -37,29 +35,28 @@ import ModelStatusSection from './local-model/ModelStatusSection';
 const statusTone = (state: string): string => {
   switch (state) {
     case 'ready':
-      return 'text-green-600';
+      return 'text-green-600 dark:text-green-300';
     case 'downloading':
     case 'installing':
     case 'loading':
-      return 'text-primary-600';
+      return 'text-primary-600 dark:text-primary-300';
     case 'degraded':
-      return 'text-amber-700';
+      return 'text-amber-700 dark:text-amber-300';
     case 'disabled':
-      return 'text-stone-500';
+      return 'text-stone-500 dark:text-neutral-400';
     default:
-      return 'text-stone-700';
+      return 'text-stone-700 dark:text-neutral-200';
   }
 };
 
 const LocalModelDebugPanel = () => {
+  const { t } = useT();
   const { navigateBack, breadcrumbs } = useSettingsNavigation();
 
   const [status, setStatus] = useState<LocalAiStatus | null>(null);
   const [assets, setAssets] = useState<LocalAiAssetsStatus | null>(null);
   const [downloads, setDownloads] = useState<LocalAiDownloadsProgress | null>(null);
   const [statusError, setStatusError] = useState<string>('');
-  const [isTriggeringDownload, setIsTriggeringDownload] = useState(false);
-  const [bootstrapMessage, setBootstrapMessage] = useState<string>('');
   const [assetDownloadBusy, setAssetDownloadBusy] = useState<Record<string, boolean>>({});
 
   const [summaryInput, setSummaryInput] = useState('');
@@ -95,8 +92,6 @@ const LocalModelDebugPanel = () => {
   const [diagnosticsError, setDiagnosticsError] = useState('');
 
   const [showErrorDetail, setShowErrorDetail] = useState(false);
-  const [ollamaPathInput, setOllamaPathInput] = useState('');
-  const [isSettingPath, setIsSettingPath] = useState(false);
 
   const progress = useMemo(() => {
     const downloadProgress = progressFromDownloads(downloads);
@@ -155,29 +150,6 @@ const LocalModelDebugPanel = () => {
       window.clearInterval(timer);
     };
   }, []);
-
-  const triggerDownload = async (force: boolean) => {
-    if (!runtimeEnabled) return;
-    setIsTriggeringDownload(true);
-    setStatusError('');
-    setBootstrapMessage('');
-    try {
-      await openhumanLocalAiDownload(force);
-      await openhumanLocalAiDownloadAllAssets(force);
-      const freshStatus = await openhumanLocalAiStatus();
-      setStatus(freshStatus.result);
-      if (freshStatus.result?.state === 'ready') {
-        setBootstrapMessage(force ? 'Re-bootstrap complete' : 'Models verified');
-      }
-      setTimeout(() => setBootstrapMessage(''), 3000);
-    } catch (err) {
-      const message =
-        err instanceof Error ? err.message : 'Failed to trigger local model bootstrap';
-      setStatusError(message);
-    } finally {
-      setIsTriggeringDownload(false);
-    }
-  };
 
   const runSummaryTest = async () => {
     if (!runtimeEnabled || !summaryInput.trim()) return;
@@ -303,32 +275,6 @@ const LocalModelDebugPanel = () => {
     }
   };
 
-  const handleSetOllamaPath = async () => {
-    setIsSettingPath(true);
-    setStatusError('');
-    try {
-      await openhumanLocalAiSetOllamaPath(ollamaPathInput);
-      await loadStatus();
-    } catch (err) {
-      setStatusError(err instanceof Error ? err.message : 'Failed to set Ollama path');
-    } finally {
-      setIsSettingPath(false);
-    }
-  };
-
-  const handleClearOllamaPath = async () => {
-    setOllamaPathInput('');
-    setIsSettingPath(true);
-    try {
-      await openhumanLocalAiSetOllamaPath('');
-      await loadStatus();
-    } catch (err) {
-      setStatusError(err instanceof Error ? err.message : 'Failed to clear Ollama path');
-    } finally {
-      setIsSettingPath(false);
-    }
-  };
-
   const handleRunDiagnostics = async () => {
     setIsDiagnosticsLoading(true);
     setDiagnosticsError('');
@@ -345,7 +291,7 @@ const LocalModelDebugPanel = () => {
   return (
     <div>
       <SettingsHeader
-        title="Local Model Debug"
+        title={t('localModel.debugTitle')}
         showBackButton={true}
         onBack={navigateBack}
         breadcrumbs={breadcrumbs}
@@ -359,25 +305,25 @@ const LocalModelDebugPanel = () => {
           isDiagnosticsLoading={isDiagnosticsLoading}
           diagnosticsError={diagnosticsError}
           statusError={statusError}
-          isTriggeringDownload={isTriggeringDownload}
-          bootstrapMessage={bootstrapMessage}
+          isTriggeringDownload={false}
+          bootstrapMessage=""
           progress={progress}
           isIndeterminateDownload={isIndeterminateDownload}
           isInstalling={isInstalling}
           isInstallError={isInstallError}
           showErrorDetail={showErrorDetail}
-          ollamaPathInput={ollamaPathInput}
-          isSettingPath={isSettingPath}
+          ollamaPathInput=""
+          isSettingPath={false}
           downloadedText={downloadedText}
           speedText={speedText}
           etaText={etaText}
           statusTone={statusTone}
           runtimeEnabled={runtimeEnabled}
           onRefreshStatus={() => void loadStatus()}
-          onTriggerDownload={force => void triggerDownload(force)}
-          onSetOllamaPath={() => void handleSetOllamaPath()}
-          onClearOllamaPath={() => void handleClearOllamaPath()}
-          onSetOllamaPathInput={setOllamaPathInput}
+          onTriggerDownload={() => {}}
+          onSetOllamaPath={() => {}}
+          onClearOllamaPath={() => {}}
+          onSetOllamaPathInput={() => {}}
           onToggleErrorDetail={() => setShowErrorDetail(v => !v)}
           onRunDiagnostics={() => void handleRunDiagnostics()}
         />

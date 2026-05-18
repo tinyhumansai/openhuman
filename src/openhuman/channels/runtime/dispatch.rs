@@ -20,7 +20,7 @@ use crate::openhuman::channels::traits;
 use crate::openhuman::channels::{Channel, SendMessage};
 use crate::openhuman::composio::fetch_connected_integrations;
 use crate::openhuman::config::Config;
-use crate::openhuman::providers::{self, ChatMessage};
+use crate::openhuman::inference::provider::{self, ChatMessage};
 use crate::openhuman::tools::{orchestrator_tools, Tool};
 use crate::openhuman::util::truncate_with_ellipsis;
 use std::collections::HashSet;
@@ -389,7 +389,7 @@ async fn resolve_target_agent(channel: &str) -> AgentScoping {
     };
 
     // Welcome is **desktop-app only**. The web channel has its own
-    // bespoke chat path (`channels::providers::web::run_chat_task` →
+    // bespoke chat path (`channels::provider::web::run_chat_task` →
     // `pick_target_agent_id`) that routes to the welcome agent while
     // `chat_onboarding_completed` is false. Every other channel
     // (telegram, slack, discord, mattermost, signal, …) flows through
@@ -599,6 +599,7 @@ mod scoping_tests {
             background: false,
             subagents: vec![],
             delegate_name: None,
+            agent_tier: crate::openhuman::agent::harness::definition::AgentTier::Worker,
             source: DefinitionSource::Builtin,
         }
     }
@@ -798,7 +799,7 @@ pub(crate) async fn process_channel_message(
                     ("provider", route.provider.as_str()),
                 ],
             );
-            let safe_err = providers::sanitize_api_error(&err.to_string());
+            let safe_err = provider::sanitize_api_error(&err.to_string());
             let message = format!(
                 "⚠️ Failed to initialize provider `{}`. Please run `/models` to choose another provider.\nDetails: {safe_err}",
                 route.provider
@@ -1190,7 +1191,24 @@ pub(crate) async fn process_channel_message(
                     e
                 );
             } else {
-                crate::core::observability::report_error(
+                // Route through `report_error_or_expected` so
+                // transient-upstream provider HTTP errors that bubbled
+                // up via `agent.run_single` (`OpenHuman API error
+                // (502 Bad Gateway): …`) get demoted via
+                // `is_transient_upstream_http_message` — the agent
+                // re-emit at the dispatch layer was previously
+                // unconditionally calling `report_error`, which firehoses
+                // Sentry under `domain="channels"` even though the same
+                // chain was already classified at the provider + agent
+                // layers (OPENHUMAN-TAURI-4F ~157ev / -1C ~87ev / -8F
+                // ~39ev: provider 5xx that the reliable layer retried
+                // and exhausted, then the channels layer re-reported as
+                // a fresh per-attempt event). Genuine bugs (404 / 500
+                // / unrelated agent failures) still surface — the
+                // classifier only demotes the canonical transient
+                // shapes documented in
+                // `crate::core::observability::expected_error_kind`.
+                crate::core::observability::report_error_or_expected(
                     &e,
                     "channels",
                     "dispatch_llm_error",

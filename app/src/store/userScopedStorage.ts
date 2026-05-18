@@ -179,6 +179,66 @@ function namespacedKey(key: string): string | null {
   return `${activeUserId}:${key}`;
 }
 
+const SENSITIVE_PERSIST_KEYS = new Set(['sessionToken', 'token', 'accessToken', 'refreshToken']);
+
+function redactSensitivePersistValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(redactSensitivePersistValue);
+  }
+  if (!value || typeof value !== 'object') {
+    return value;
+  }
+
+  const next: Record<string, unknown> = {};
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    if (SENSITIVE_PERSIST_KEYS.has(key)) {
+      continue;
+    }
+    next[key] = redactSensitivePersistValue(child);
+  }
+  return next;
+}
+
+function sanitizePersistBlob(value: string): string {
+  try {
+    const parsed = JSON.parse(value) as Record<string, unknown>;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return value;
+    }
+
+    let changed = false;
+    const sanitized: Record<string, unknown> = {};
+    for (const [key, child] of Object.entries(parsed)) {
+      if (SENSITIVE_PERSIST_KEYS.has(key)) {
+        changed = true;
+        continue;
+      }
+
+      if (typeof child === 'string') {
+        try {
+          const nested = JSON.parse(child);
+          const redacted = redactSensitivePersistValue(nested);
+          const nextChild = JSON.stringify(redacted);
+          sanitized[key] = nextChild;
+          changed ||= nextChild !== child;
+          continue;
+        } catch {
+          // redux-persist stores many slice fields as JSON strings, but plain
+          // strings are valid too; leave non-JSON strings untouched.
+        }
+      }
+
+      const redacted = redactSensitivePersistValue(child);
+      sanitized[key] = redacted;
+      changed ||= redacted !== child;
+    }
+
+    return changed ? JSON.stringify(sanitized) : value;
+  } catch {
+    return value;
+  }
+}
+
 /**
  * `Storage`-shaped object compatible with redux-persist's storage contract.
  * Methods return promises because redux-persist treats storage as async.
@@ -199,7 +259,7 @@ export const userScopedStorage = {
     const ns = namespacedKey(key);
     if (!ns) return;
     try {
-      localStorage.setItem(ns, value);
+      localStorage.setItem(ns, sanitizePersistBlob(value));
     } catch {
       // ignore quota / unavailable
     }

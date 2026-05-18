@@ -13,11 +13,13 @@ import { Provider } from 'react-redux';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { agentProfilesApi } from '../../services/api/agentProfilesApi';
 import { threadApi } from '../../services/api/threadApi';
 import { chatSend } from '../../services/chatService';
+import agentProfileReducer from '../../store/agentProfileSlice';
 import chatRuntimeReducer from '../../store/chatRuntimeSlice';
 import socketReducer from '../../store/socketSlice';
-import threadReducer from '../../store/threadSlice';
+import threadReducer, { setSelectedThread } from '../../store/threadSlice';
 import type { Thread } from '../../types/thread';
 
 // ── Hoisted mock state ─────────────────────────────────────────────────────
@@ -64,6 +66,13 @@ vi.mock('../../services/api/threadApi', () => ({
     createNewThread: vi.fn().mockResolvedValue({ id: 'new-thread', labels: [] }),
     getThreads: mockGetThreads,
     getThreadMessages: mockGetThreadMessages,
+    getTurnState: vi.fn().mockResolvedValue(null),
+    getTaskBoard: vi
+      .fn()
+      .mockResolvedValue({ threadId: 't-1', cards: [], updatedAt: '2026-05-04T10:00:00Z' }),
+    putTaskBoard: vi
+      .fn()
+      .mockResolvedValue({ threadId: 't-1', cards: [], updatedAt: '2026-05-04T10:00:00Z' }),
     appendMessage: vi.fn().mockResolvedValue({}),
     deleteThread: vi.fn().mockResolvedValue({ deleted: true }),
     generateTitleIfNeeded: vi.fn().mockResolvedValue({}),
@@ -71,6 +80,41 @@ vi.mock('../../services/api/threadApi', () => ({
     purge: vi.fn().mockResolvedValue({}),
     updateLabels: vi.fn().mockResolvedValue({}),
     persistReaction: vi.fn().mockResolvedValue({}),
+  },
+}));
+
+vi.mock('../../services/api/agentProfilesApi', () => ({
+  agentProfilesApi: {
+    list: vi
+      .fn()
+      .mockResolvedValue({
+        activeProfileId: 'default',
+        profiles: [
+          {
+            id: 'default',
+            name: 'Default',
+            description: 'Default',
+            agentId: 'orchestrator',
+            builtIn: true,
+          },
+        ],
+      }),
+    select: vi
+      .fn()
+      .mockResolvedValue({
+        activeProfileId: 'default',
+        profiles: [
+          {
+            id: 'default',
+            name: 'Default',
+            description: 'Default',
+            agentId: 'orchestrator',
+            builtIn: true,
+          },
+        ],
+      }),
+    upsert: vi.fn().mockResolvedValue({ activeProfileId: 'default', profiles: [] }),
+    delete: vi.fn().mockResolvedValue({ activeProfileId: 'default', profiles: [] }),
   },
 }));
 
@@ -122,6 +166,7 @@ function buildStore(preload: Record<string, unknown> = {}) {
       thread: threadReducer,
       socket: socketReducer,
       chatRuntime: chatRuntimeReducer,
+      agentProfiles: agentProfileReducer,
     }),
     preloadedState: preload as never,
   });
@@ -668,6 +713,215 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
       threadId: thread.id,
       message: 'hello cloud',
       model: 'reasoning-v1',
+      profileId: 'default',
+    });
+  });
+
+  it('creates a custom agent profile from the header draft form', async () => {
+    const thread = makeThread({ id: 'profile-thread', title: 'Profile Thread' });
+    mockGetThreads.mockResolvedValue({ threads: [thread], count: 1 });
+    mockGetThreadMessages.mockResolvedValue({ messages: [], count: 0 });
+    vi.mocked(agentProfilesApi.upsert).mockResolvedValueOnce({
+      activeProfileId: 'custom',
+      profiles: [
+        {
+          id: 'custom',
+          name: 'Custom',
+          description: 'Custom agent profile',
+          agentId: 'orchestrator',
+          builtIn: false,
+        },
+      ],
+    });
+    vi.mocked(agentProfilesApi.select).mockResolvedValueOnce({
+      activeProfileId: 'custom',
+      profiles: [
+        {
+          id: 'custom',
+          name: 'Custom',
+          description: 'Custom agent profile',
+          agentId: 'orchestrator',
+          builtIn: false,
+        },
+      ],
+    });
+
+    await act(async () => {
+      await renderConversations({
+        thread: selectedThreadState(thread),
+        socket: socketState('connected'),
+      });
+    });
+
+    fireEvent.click(await screen.findByLabelText('Create agent profile'));
+    fireEvent.change(screen.getByPlaceholderText('Profile name'), { target: { value: 'Custom' } });
+    fireEvent.change(screen.getByPlaceholderText('Prompt style'), {
+      target: { value: 'Be concise' },
+    });
+    fireEvent.change(screen.getByPlaceholderText('Allowed tools'), {
+      target: { value: 'todowrite, spawn_parallel_agents' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(agentProfilesApi.upsert).toHaveBeenCalledTimes(1));
+    expect(agentProfilesApi.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'Custom',
+        systemPromptSuffix: 'Be concise',
+        allowedTools: ['todowrite', 'spawn_parallel_agents'],
+      })
+    );
+    expect(agentProfilesApi.select).toHaveBeenCalled();
+  });
+
+  it('shows validation when creating a duplicate profile name', async () => {
+    await act(async () => {
+      await renderConversations({ thread: emptyThreadState, socket: socketState('connected') });
+    });
+
+    fireEvent.click(await screen.findByLabelText('Create agent profile'));
+    fireEvent.change(screen.getByPlaceholderText('Profile name'), { target: { value: 'Default' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(await screen.findByText('Agent profile "Default" already exists.')).toBeInTheDocument();
+    expect(agentProfilesApi.upsert).not.toHaveBeenCalled();
+  });
+
+  it('rolls back and shows feedback when task board move persistence fails', async () => {
+    const thread = makeThread({ id: 'board-thread', title: 'Board Thread' });
+    const board = {
+      threadId: 'board-thread',
+      updatedAt: '2026-05-04T10:00:00Z',
+      cards: [
+        {
+          id: 'task-1',
+          title: 'Plan rollout',
+          status: 'todo' as const,
+          order: 0,
+          updatedAt: '2026-05-04T10:00:00Z',
+        },
+      ],
+    };
+    mockGetThreads.mockResolvedValue({ threads: [thread], count: 1 });
+    mockGetThreadMessages.mockResolvedValue({ messages: [], count: 0 });
+    vi.mocked(threadApi.getTaskBoard).mockResolvedValueOnce(board);
+    vi.mocked(threadApi.putTaskBoard).mockRejectedValueOnce(new Error('write failed'));
+
+    await act(async () => {
+      await renderConversations({
+        thread: selectedThreadState(thread),
+        socket: socketState('connected'),
+      });
+    });
+
+    expect(await screen.findByText('Plan rollout')).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText('Move right'));
+
+    await waitFor(() => {
+      expect(screen.getByText('Could not move task; changes were not saved.')).toBeInTheDocument();
+    });
+    expect(threadApi.putTaskBoard).toHaveBeenCalledWith(
+      'board-thread',
+      expect.arrayContaining([expect.objectContaining({ id: 'task-1', status: 'in_progress' })])
+    );
+  });
+
+  it('sends with Enter when the composer is not composing text', async () => {
+    const { textarea, thread } = await renderSelectedConversation();
+
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: 'enter send' } });
+    });
+    await waitFor(() => {
+      expect(textarea).toHaveValue('enter send');
+      expect(screen.getByRole('button', { name: 'Send message' })).not.toBeDisabled();
+    });
+
+    await act(async () => {
+      fireEvent.keyDown(textarea, { key: 'Enter' });
+    });
+
+    await waitFor(() => {
+      expect(chatSend).toHaveBeenCalledWith({
+        threadId: thread.id,
+        message: 'enter send',
+        model: 'reasoning-v1',
+        profileId: 'default',
+      });
+    });
+  });
+
+  it('does not send while an IME composition key event is confirming text', async () => {
+    const { textarea } = await renderSelectedConversation();
+
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: '你好' } });
+    });
+    await waitFor(() => {
+      expect(textarea).toHaveValue('你好');
+      expect(screen.getByRole('button', { name: 'Send message' })).not.toBeDisabled();
+    });
+
+    await act(async () => {
+      const event = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true });
+      Object.defineProperty(event, 'isComposing', { value: true });
+      textarea.dispatchEvent(event);
+    });
+
+    expect(chatSend).not.toHaveBeenCalled();
+    expect(textarea).toHaveValue('你好');
+  });
+
+  it('does not send for legacy IME keyCode 229 events', async () => {
+    const { textarea } = await renderSelectedConversation();
+
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: 'かな' } });
+    });
+    await waitFor(() => {
+      expect(textarea).toHaveValue('かな');
+      expect(screen.getByRole('button', { name: 'Send message' })).not.toBeDisabled();
+    });
+
+    await act(async () => {
+      fireEvent.keyDown(textarea, { key: 'Enter', keyCode: 229 });
+    });
+
+    expect(chatSend).not.toHaveBeenCalled();
+    expect(textarea).toHaveValue('かな');
+  });
+
+  it('does not send while composition is active even if keydown lacks IME flags', async () => {
+    const { textarea, thread } = await renderSelectedConversation();
+
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: '안녕' } });
+    });
+    await waitFor(() => {
+      expect(textarea).toHaveValue('안녕');
+      expect(screen.getByRole('button', { name: 'Send message' })).not.toBeDisabled();
+    });
+
+    await act(async () => {
+      fireEvent.compositionStart(textarea);
+      fireEvent.keyDown(textarea, { key: 'Enter' });
+    });
+
+    expect(chatSend).not.toHaveBeenCalled();
+    expect(textarea).toHaveValue('안녕');
+
+    await act(async () => {
+      fireEvent.compositionEnd(textarea);
+      fireEvent.keyDown(textarea, { key: 'Enter' });
+    });
+
+    await waitFor(() => {
+      expect(chatSend).toHaveBeenCalledWith({
+        threadId: thread.id,
+        message: '안녕',
+        model: 'reasoning-v1',
+        profileId: 'default',
+      });
     });
   });
 
@@ -714,5 +968,130 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     await waitFor(() => {
       expect(screen.getByText(/"work" threads/i)).toBeInTheDocument();
     });
+  });
+
+  // #1624 — Workers tab is the dedicated entry-point for sub-agent threads.
+  // When the active workspace has no worker threads (parentThreadId set), the
+  // empty state must use the friendly "No worker threads yet" copy rather
+  // than `No "workers" threads`.
+  it('shows the worker-specific empty message when the Workers tab is selected', async () => {
+    await act(async () => {
+      await renderConversations({ thread: emptyThreadState });
+    });
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Workers' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('No worker threads yet')).toBeInTheDocument();
+    });
+  });
+});
+
+// #1624 — When a worker thread is the active selection, the header surfaces
+// a "back to <parent title>" button that navigates the user back to the
+// parent conversation. Covers the `selectedThreadParent` derivation and the
+// click handler that dispatches setSelectedThread + loadThreadMessages.
+describe('Conversations — worker thread back-to-parent navigation (#1624)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetThreads.mockResolvedValue({ threads: [], count: 0 });
+    mockGetThreadMessages.mockResolvedValue({ messages: [], count: 0 });
+  });
+
+  it('renders a back-to-parent button when the active thread has a parent', async () => {
+    const parent = makeThread({ id: 't-parent', title: 'Parent Conversation' });
+    const child = makeThread({ id: 't-child', title: 'Worker Task', parentThreadId: 't-parent' });
+    mockGetThreads.mockResolvedValue({ threads: [parent, child], count: 2 });
+
+    let store: ReturnType<typeof buildStore> | undefined;
+    await act(async () => {
+      store = await renderConversations({
+        thread: {
+          ...emptyThreadState,
+          threads: [parent, child],
+          selectedThreadId: child.id,
+          messagesByThreadId: { [child.id]: [] },
+        },
+      });
+    });
+
+    // The mount effect resumes onto a *visible* (non-worker) thread, so even
+    // though the preloaded state pointed at the child, the page auto-selects
+    // the parent. Re-select the worker thread now that mount has settled to
+    // mimic the user clicking through to a worker from the Workers tab.
+    await act(async () => {
+      store!.dispatch(setSelectedThread('t-child'));
+    });
+
+    const backBtn = await screen.findByTestId('worker-thread-back-to-parent');
+    expect(backBtn.textContent).toContain('Parent Conversation');
+  });
+
+  it('falls back to a generic title when the parent thread is missing from the list', async () => {
+    const parent = makeThread({ id: 't-parent', title: 'Other Parent' });
+    const child = makeThread({
+      id: 't-child',
+      title: 'Worker Task',
+      parentThreadId: 't-missing-parent',
+    });
+    // The parent referenced by `parentThreadId` is intentionally absent from
+    // the thread list so the `selectedThreadParent` resolver hits its fallback
+    // branch. A separate parent is kept around so mount-time resume has a
+    // visible thread to land on.
+    mockGetThreads.mockResolvedValue({ threads: [parent, child], count: 2 });
+
+    let store: ReturnType<typeof buildStore> | undefined;
+    await act(async () => {
+      store = await renderConversations({
+        thread: {
+          ...emptyThreadState,
+          threads: [parent, child],
+          selectedThreadId: child.id,
+          messagesByThreadId: { [child.id]: [] },
+        },
+      });
+    });
+    await act(async () => {
+      store!.dispatch(setSelectedThread('t-child'));
+    });
+
+    const backBtn = await screen.findByTestId('worker-thread-back-to-parent');
+    expect(backBtn.textContent).toContain('parent thread');
+  });
+
+  it('dispatches selection + load when the back-to-parent button is clicked', async () => {
+    const parent = makeThread({ id: 't-parent', title: 'Parent Conversation' });
+    const child = makeThread({ id: 't-child', title: 'Worker Task', parentThreadId: 't-parent' });
+    mockGetThreads.mockResolvedValue({ threads: [parent, child], count: 2 });
+
+    let store: ReturnType<typeof buildStore> | undefined;
+    await act(async () => {
+      store = await renderConversations({
+        thread: {
+          ...emptyThreadState,
+          threads: [parent, child],
+          selectedThreadId: child.id,
+          messagesByThreadId: { [child.id]: [] },
+        },
+      });
+    });
+    await act(async () => {
+      store!.dispatch(setSelectedThread('t-child'));
+    });
+
+    const backBtn = await screen.findByTestId('worker-thread-back-to-parent');
+    await act(async () => {
+      fireEvent.click(backBtn);
+    });
+
+    // After click, the redux store should reflect the parent thread as the
+    // newly selected conversation.
+    await waitFor(() => {
+      const state = store!.getState() as { thread: { selectedThreadId: string | null } };
+      expect(state.thread.selectedThreadId).toBe('t-parent');
+    });
+    // The loadThreadMessages thunk goes through the threadApi.getThreadMessages
+    // helper — verify it was kicked off for the parent thread.
+    expect(mockGetThreadMessages).toHaveBeenCalledWith('t-parent');
   });
 });

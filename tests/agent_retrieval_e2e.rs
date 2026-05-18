@@ -129,6 +129,7 @@ fn alice_phoenix_thread() -> EmailThread {
                        I'm coordinating with the infra team and we land Friday."
                     .into(),
                 source_ref: Some("<phoenix-1@example.com>".into()),
+                list_unsubscribe: None,
             },
             EmailMessage {
                 from: "bob@example.com".into(),
@@ -138,6 +139,7 @@ fn alice_phoenix_thread() -> EmailThread {
                 sent_at: Utc.timestamp_millis_opt(1_700_000_060_000).unwrap(),
                 body: "Confirmed — I'll review the phoenix runbook tonight.".into(),
                 source_ref: Some("<phoenix-2@example.com>".into()),
+                list_unsubscribe: None,
             },
         ],
     }
@@ -485,6 +487,7 @@ async fn fetch_leaves_hydrates_source_ref_for_cited_chunks() {
                            flagship feature. pm@example.com signed off."
                         .into(),
                     source_ref: Some("<q3-roadmap-1@example.com>".into()),
+                    list_unsubscribe: None,
                 },
                 EmailMessage {
                     from: "alice@example.com".into(),
@@ -494,6 +497,7 @@ async fn fetch_leaves_hydrates_source_ref_for_cited_chunks() {
                     sent_at: Utc.timestamp_millis_opt(1_710_000_060_000).unwrap(),
                     body: "Confirmed. alice@example.com will own the Phoenix delivery.".into(),
                     source_ref: Some("<q3-roadmap-2@example.com>".into()),
+                    list_unsubscribe: None,
                 },
             ],
         },

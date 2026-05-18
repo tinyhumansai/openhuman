@@ -79,6 +79,13 @@ pub fn floor_char_boundary(s: &str, index: usize) -> usize {
     end
 }
 
+/// Return a prefix of `s` whose byte length is at most `max_bytes`, backing up
+/// to the nearest UTF-8 character boundary when `max_bytes` falls in the middle
+/// of a multi-byte character.
+pub fn utf8_safe_prefix_at_byte_boundary(s: &str, max_bytes: usize) -> &str {
+    &s[..floor_char_boundary(s, max_bytes)]
+}
+
 /// Round a byte index UP to the nearest UTF-8 character boundary.
 pub fn ceil_char_boundary(s: &str, index: usize) -> usize {
     if index >= s.len() {
@@ -225,6 +232,25 @@ mod tests {
         assert_eq!(floor_char_boundary(s, 5), 5); // After '🦀'
         assert_eq!(floor_char_boundary(s, 6), 6); // After 'C'
         assert_eq!(floor_char_boundary(s, 100), 6);
+    }
+
+    #[test]
+    fn test_utf8_safe_prefix_at_byte_boundary() {
+        let s = format!("{}{}tail", "a".repeat(79), "魔");
+        assert_eq!(utf8_safe_prefix_at_byte_boundary(&s, 80), "a".repeat(79));
+        assert_eq!(utf8_safe_prefix_at_byte_boundary(&s, s.len()), s);
+        assert_eq!(
+            utf8_safe_prefix_at_byte_boundary("ascii preview", 5),
+            "ascii"
+        );
+        assert_eq!(utf8_safe_prefix_at_byte_boundary("short", 80), "short");
+
+        for cap in [30, 40, 80, 200, 500] {
+            let preview = format!("{}{}tail", "a".repeat(cap - 1), "界");
+            let truncated = utf8_safe_prefix_at_byte_boundary(&preview, cap);
+            assert_eq!(truncated, "a".repeat(cap - 1));
+            assert!(preview.is_char_boundary(truncated.len()));
+        }
     }
 
     #[test]

@@ -2,6 +2,7 @@
  * Letterhead: the from / to / date frontmatter of a chunk, rendered
  * as correspondence (dl-style with monospace labels in a fixed column).
  */
+import { useT } from '../../lib/i18n/I18nContext';
 import type { Chunk } from '../../utils/tauriCommands';
 
 interface LetterheadParts {
@@ -46,12 +47,13 @@ function formatLetterDate(ms: number): string {
 }
 
 export function MemoryChunkLetterhead({ chunk }: { chunk: Chunk }) {
+  const { t } = useT();
   const parts = parseSourceParts(chunk);
   return (
     <header className="mw-letterhead" data-testid="memory-chunk-letterhead">
       <dl style={{ margin: 0 }}>
         <div className="mw-letterhead-row">
-          <dt className="mw-letterhead-label">from</dt>
+          <dt className="mw-letterhead-label">{t('intelligence.memoryChunk.letterhead.from')}</dt>
           <dd className="mw-letterhead-value" style={{ margin: 0 }}>
             {parts.fromName}
             {parts.fromAddress && parts.fromAddress !== parts.fromName && (
@@ -60,7 +62,7 @@ export function MemoryChunkLetterhead({ chunk }: { chunk: Chunk }) {
           </dd>
         </div>
         <div className="mw-letterhead-row">
-          <dt className="mw-letterhead-label">to</dt>
+          <dt className="mw-letterhead-label">{t('intelligence.memoryChunk.letterhead.to')}</dt>
           <dd className="mw-letterhead-value" style={{ margin: 0 }}>
             {parts.toAddress}
           </dd>

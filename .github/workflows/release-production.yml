@@ -41,6 +41,9 @@ concurrency:
 #
 #   prepare-build
 #        │
+#        ├─── pretest-tests   (reusable test-reusable.yml — unit + rust)
+#        ├─── pretest-e2e     (reusable e2e-reusable.yml — all 3 OS, full)
+#        │
 #        ├─── create-release
 #        │         │
 #        │    ┌────┴───────────────┬────────────────┐
@@ -296,13 +299,38 @@ jobs:
           echo "base_url=$BASE_URL" >> "$GITHUB_OUTPUT"
 
   # =========================================================================
+  # Phase 1b: Pretest gate — run the full test + E2E suite across every
+  # target OS exactly once on the build ref before we spin up the release
+  # draft or any signed-build matrix. Pretest failures abort the workflow
+  # before `create-release` runs, so a busted commit never produces a
+  # half-finished GH Release that has to be cleaned up.
+  # =========================================================================
+  pretest-tests:
+    name: Pretest — unit + rust
+    needs: [prepare-build]
+    uses: ./.github/workflows/test-reusable.yml
+    with:
+      ref: ${{ needs.prepare-build.outputs.build_ref }}
+  pretest-e2e:
+    name: Pretest — E2E (all OS, full suite)
+    needs: [prepare-build]
+    uses: ./.github/workflows/e2e-reusable.yml
+    with:
+      ref: ${{ needs.prepare-build.outputs.build_ref }}
+      run_linux: true
+      run_macos: true
+      run_windows: true
+      full: true
+
+  # =========================================================================
   # Phase 2: Create draft GitHub release
   # =========================================================================
   create-release:
     name: Create GitHub release
     runs-on: ubuntu-latest
     environment: Production
-    needs: prepare-build
+    needs: [prepare-build, pretest-tests, pretest-e2e]
+    if: needs.pretest-tests.result == 'success' && needs.pretest-e2e.result == 'success'
     outputs:
       release_id: ${{ steps.create.outputs.release_id }}
       upload_url: ${{ steps.create.outputs.upload_url }}
@@ -733,24 +761,39 @@ jobs:
     environment: Production
     needs:
       - prepare-build
+      - pretest-tests
+      - pretest-e2e
       - create-release
       - build-desktop
       - build-cli-linux
       - build-docker
       - publish-updater-manifest
+    # Two cleanup paths:
+    #   (a) pretest failed → no release yet, but `prepare-build` already
+    #       pushed a tag and (for main_head) a chore(release) commit; we
+    #       still need to delete the tag so a rerun doesn't trip the
+    #       "tag already exists" guard.
+    #   (b) any build phase failed after create-release succeeded — the
+    #       original behavior — delete the draft release, the tag, and any
+    #       pushed Docker image versions.
     if: >-
       always()
-      && needs.create-release.result == 'success'
-      && (needs.build-desktop.result == 'failure' || needs.build-desktop.result ==
-      'cancelled'
-          || needs.build-cli-linux.result == 'failure' || needs.build-cli-linux.result ==
-      'cancelled'
-          || needs.build-docker.result == 'failure' || needs.build-docker.result ==
-      'cancelled'
-          || needs.publish-updater-manifest.result == 'failure' || needs.publish-updater-manifest.result
-      == 'cancelled')
+      && needs.prepare-build.result == 'success'
+      && (
+        (needs.create-release.result != 'success'
+         && (needs.pretest-tests.result == 'failure' || needs.pretest-tests.result == 'cancelled'
+             || needs.pretest-e2e.result == 'failure' || needs.pretest-e2e.result == 'cancelled'))
+        || (needs.create-release.result == 'success'
+            && (needs.build-desktop.result == 'failure' || needs.build-desktop.result == 'cancelled'
+                || needs.build-cli-linux.result == 'failure' || needs.build-cli-linux.result == 'cancelled'
+                || needs.build-docker.result == 'failure' || needs.build-docker.result == 'cancelled'
+                || needs.publish-updater-manifest.result == 'failure' || needs.publish-updater-manifest.result == 'cancelled'))
+      )
     steps:
       - name: Delete GitHub release
+        # Skip on the pretest-failure cleanup path: create-release didn't run,
+        # so there's no draft release to delete (only an orphaned tag).
+        if: needs.create-release.result == 'success'
         uses: actions/github-script@v8
         with:
           script: |
@@ -790,7 +833,9 @@ jobs:
         # `:v<version>` and `:<version>` tags we just pushed and remove the
         # underlying package version. `:latest` is left alone — the previous
         # release is still pointed at it, and clobbering the moving tag here
-        # would orphan downstream pulls.
+        # would orphan downstream pulls. Skipped on the pretest-failure
+        # cleanup path where build-docker never ran.
+        if: needs.build-docker.result == 'success'
         continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

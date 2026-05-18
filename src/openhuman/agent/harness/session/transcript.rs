@@ -50,7 +50,7 @@
 //! the session transcript can eventually replace the separate thread
 //! message log without losing message-level addressing.
 
-use crate::openhuman::providers::ChatMessage;
+use crate::openhuman::inference::provider::ChatMessage;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

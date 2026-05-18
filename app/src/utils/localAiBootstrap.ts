@@ -1,6 +1,5 @@
 import {
   openhumanLocalAiApplyPreset,
-  openhumanLocalAiDownloadAllAssets,
   openhumanLocalAiPresets,
   type PresetsResponse,
 } from './tauriCommands';
@@ -95,23 +94,11 @@ export const ensureRecommendedLocalAiPresetIfNeeded = async (
   };
 };
 
-export const triggerLocalAiAssetBootstrap = async (
-  force = false,
-  logPrefix = '[local-ai-bootstrap]'
-) => {
-  console.debug(`${logPrefix} triggering local AI background bootstrap`, JSON.stringify({ force }));
-  return await retryLocalAiCommand(
-    force ? 're-bootstrap local AI assets' : 'bootstrap local AI assets',
-    () => openhumanLocalAiDownloadAllAssets(force),
-    logPrefix
-  );
-};
-
 export const bootstrapLocalAiWithRecommendedPreset = async (
   force = false,
   logPrefix = '[local-ai-bootstrap]'
 ) => {
+  void force;
   const preset = await ensureRecommendedLocalAiPresetIfNeeded(logPrefix);
-  const download = await triggerLocalAiAssetBootstrap(force, logPrefix);
-  return { preset, download };
+  return { preset };
 };

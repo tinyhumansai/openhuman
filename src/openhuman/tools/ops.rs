@@ -2,8 +2,8 @@ use super::*;
 
 use crate::openhuman::agent::host_runtime::{NativeRuntime, RuntimeAdapter};
 use crate::openhuman::config::{Config, DelegateAgentConfig};
+use crate::openhuman::javascript::NodeBootstrap;
 use crate::openhuman::memory::Memory;
-use crate::openhuman::node_runtime::NodeBootstrap;
 use crate::openhuman::security::SecurityPolicy;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -115,12 +115,13 @@ pub fn all_tools_with_runtime(
         // returns a single text result. See
         // `agent::harness::subagent_runner` for the dispatch path.
         Box::new(SpawnSubagentTool::new()),
+        Box::new(SpawnParallelAgentsTool::new()),
         // Coding-harness control flow (issue #1205): a process-global
         // todo registry the agent can rewrite end-to-end, plus the
         // `plan_exit` marker that hands a plan-mode pass off to a
         // build-mode pass. The plan→build mode switch itself is a
         // follow-up; the tool emits a stable marker today.
-        Box::new(TodoWriteTool::new(global_todo_store())),
+        Box::new(TodoTool::new()),
         Box::new(PlanExitTool::new()),
         Box::new(CheckOnboardingStatusTool::new()),
         Box::new(CompleteOnboardingTool::new()),
@@ -154,6 +155,16 @@ pub fn all_tools_with_runtime(
             security.clone(),
             workspace_dir.to_path_buf(),
         )),
+        Box::new(AudioGeneratePodcastTool::new(
+            config.clone(),
+            security.clone(),
+        )),
+        Box::new(AudioEmailPodcastTool::new(config.clone(), security.clone())),
+        Box::new(AudioGenerateAndEmailPodcastTool::new(
+            config.clone(),
+            security.clone(),
+        )),
+        Box::new(GmailUnsubscribeTool),
     ];
 
     if browser_config.enabled {
@@ -229,6 +240,26 @@ pub fn all_tools_with_runtime(
             root_config.gitbooks.timeout_secs,
         )));
         tracing::debug!("[gitbooks] registered gitbooks_search + gitbooks_get_page");
+    }
+
+    // Generic remote MCP bridge tools. These let the agent enumerate
+    // named MCP servers and forward `tools/call` through the core
+    // instead of hardcoding one bespoke MCP integration per server.
+    let mcp_registry =
+        Arc::new(crate::openhuman::mcp_client::McpServerRegistry::from_config(root_config));
+    if !mcp_registry.is_empty() {
+        tools.push(Box::new(McpListServersTool::new(Arc::clone(&mcp_registry))));
+        tools.push(Box::new(McpListToolsTool::new(Arc::clone(&mcp_registry))));
+        tools.push(Box::new(McpCallTool::new(
+            Arc::clone(&mcp_registry),
+            security.clone(),
+        )));
+        tracing::debug!(
+            count = mcp_registry.list().len(),
+            "[mcp_client] registered generic MCP bridge tools"
+        );
+    } else {
+        tracing::debug!("[mcp_client] no MCP servers registered — bridge tools skipped");
     }
 
     // Web search — always registered. Result/timeout budget
@@ -307,7 +338,7 @@ pub fn all_tools_with_runtime(
         tools.push(Box::new(DelegateTool::new_with_options(
             delegate_agents,
             security.clone(),
-            crate::openhuman::providers::ProviderRuntimeOptions {
+            crate::openhuman::inference::provider::ProviderRuntimeOptions {
                 auth_profile_override: None,
                 openhuman_dir: root_config
                     .config_path

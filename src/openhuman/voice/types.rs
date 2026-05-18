@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::openhuman::local_ai::{LocalAiSpeechResult, LocalAiTtsResult};
+use crate::openhuman::inference::{LocalAiSpeechResult, LocalAiTtsResult};
 
 /// Result of a speech-to-text transcription.
 #[derive(Debug, Clone, Serialize, Deserialize)]

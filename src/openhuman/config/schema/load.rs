@@ -586,6 +586,103 @@ pub(super) fn redact_url_for_log(raw: &str) -> String {
     "<unparseable url>".to_string()
 }
 
+/// Migrate `cloud_providers` entries to the new slug-keyed shape and rewrite
+/// any per-workload routing strings that still use the old bare-prefix grammar.
+///
+/// This is idempotent: entries that already have a slug/label are left
+/// untouched. Routing fields that already contain a `:` are assumed to be
+/// in the new `<slug>:<model>` form.
+fn migrate_cloud_provider_slugs(config: &mut Config) {
+    use super::cloud_providers::migrate_legacy_fields;
+
+    // Step 1: migrate every cloud_providers entry in-place.
+    for entry in &mut config.cloud_providers {
+        migrate_legacy_fields(entry);
+    }
+
+    // Step 2: rewrite per-workload routing strings from legacy bare grammar.
+    // Build a lookup: legacy type string → first entry with that slug.
+    // After migration, `entry.slug` is populated from `legacy_type` when it
+    // was empty, so we can look up by slug now.
+    let slug_to_id: std::collections::HashMap<String, String> = config
+        .cloud_providers
+        .iter()
+        .map(|e| (e.slug.clone(), e.id.clone()))
+        .collect();
+
+    // Helper: rewrite a single routing field.
+    // Legacy bare strings are: "cloud", "openhuman", "openai", "anthropic",
+    // "openrouter", "custom" (no ':').  New strings contain ':'.
+    let rewrite = |field: &mut Option<String>| {
+        let raw = match field.as_deref() {
+            Some(s) if !s.is_empty() => s.to_string(),
+            _ => return,
+        };
+        // Already in new grammar (contains ':') or is the openhuman sentinel.
+        if raw.contains(':') || raw == "openhuman" {
+            return;
+        }
+        match raw.as_str() {
+            "cloud" => {
+                // "cloud" sentinel: look for the primary or first non-openhuman entry.
+                // If none found, leave as "openhuman".
+                let primary_slug = config.primary_cloud.as_deref().and_then(|pid| {
+                    config
+                        .cloud_providers
+                        .iter()
+                        .find(|e| e.id == pid)
+                        .map(|e| e.slug.clone())
+                });
+                let slug = primary_slug.or_else(|| {
+                    config
+                        .cloud_providers
+                        .iter()
+                        .find(|e| e.slug != "openhuman")
+                        .map(|e| e.slug.clone())
+                });
+                if let Some(s) = slug {
+                    tracing::info!(
+                        "[config][migrate] rewriting routing 'cloud' → '{s}:' (empty model)"
+                    );
+                    *field = Some(format!("{s}:"));
+                } else {
+                    tracing::debug!(
+                        "[config][migrate] routing 'cloud' with no non-openhuman provider → 'openhuman'"
+                    );
+                    *field = Some("openhuman".to_string());
+                }
+            }
+            other => {
+                // Bare type string (e.g. "openai") — find entry by slug.
+                if slug_to_id.contains_key(other) {
+                    tracing::info!(
+                        "[config][migrate] rewriting bare routing '{}' → '{}:'",
+                        other,
+                        other
+                    );
+                    *field = Some(format!("{other}:"));
+                } else if other != "openhuman" {
+                    tracing::warn!(
+                        "[config][migrate] bare routing '{}' has no matching provider entry, \
+                         falling back to 'openhuman'",
+                        other
+                    );
+                    *field = Some("openhuman".to_string());
+                }
+            }
+        }
+    };
+
+    rewrite(&mut config.reasoning_provider);
+    rewrite(&mut config.agentic_provider);
+    rewrite(&mut config.coding_provider);
+    rewrite(&mut config.memory_provider);
+    rewrite(&mut config.embeddings_provider);
+    rewrite(&mut config.heartbeat_provider);
+    rewrite(&mut config.learning_provider);
+    rewrite(&mut config.subconscious_provider);
+}
+
 fn migrate_legacy_autocomplete_disabled_apps(config: &mut Config) {
     // Legacy defaults blocked both terminal and code, which prevented Codex/CLI usage.
     // Migrate only the exact legacy default so custom user preferences remain untouched.
@@ -623,9 +720,22 @@ async fn sync_directory(_path: &Path) -> Result<()> {
 impl Config {
     pub async fn load_or_init() -> Result<Self> {
         let (default_openhuman_dir, default_workspace_dir) = default_config_and_workspace_dirs()?;
+        Self::load_or_init_with_env_lookup(
+            &default_openhuman_dir,
+            &default_workspace_dir,
+            &ProcessEnv,
+        )
+        .await
+    }
 
+    async fn load_or_init_with_env_lookup(
+        default_openhuman_dir: &Path,
+        default_workspace_dir: &Path,
+        env: &(dyn EnvLookup + Send + Sync),
+    ) -> Result<Self> {
         let (openhuman_dir, workspace_dir, resolution_source) =
-            resolve_runtime_config_dirs(&default_openhuman_dir, &default_workspace_dir).await?;
+            resolve_runtime_config_dirs_with(default_openhuman_dir, default_workspace_dir, env)
+                .await?;
 
         let config_path = openhuman_dir.join("config.toml");
 
@@ -641,7 +751,7 @@ impl Config {
                 workspace_dir: workspace_dir.clone(),
                 ..Default::default()
             };
-            config.apply_env_overrides();
+            config.apply_env_overrides_from(env);
 
             tracing::debug!(
                 path = %config.config_path.display(),
@@ -692,7 +802,8 @@ impl Config {
             config.workspace_dir = workspace_dir;
             migrate_legacy_autocomplete_disabled_apps(&mut config);
             migrate_legacy_inference_url(&mut config);
-            config.apply_env_overrides();
+            migrate_cloud_provider_slugs(&mut config);
+            config.apply_env_overrides_from(env);
 
             if config_was_corrupted {
                 // Rename the corrupted primary away *before* calling save().
@@ -761,7 +872,7 @@ impl Config {
                 let _ = fs::set_permissions(&config_path, Permissions::from_mode(0o600)).await;
             }
 
-            config.apply_env_overrides();
+            config.apply_env_overrides_from(env);
 
             tracing::debug!(
                 path = %config.config_path.display(),
@@ -817,7 +928,11 @@ impl Config {
     }
 
     pub fn apply_env_overrides(&mut self) {
-        self.apply_env_overlay_with(&ProcessEnv);
+        self.apply_env_overrides_from(&ProcessEnv);
+    }
+
+    fn apply_env_overrides_from(&mut self, env: &(dyn EnvLookup + Send + Sync)) {
+        self.apply_env_overlay_with(env);
 
         // The pure overlay above never mutates process-level state. The
         // two side effects below remain here so tests driving
@@ -840,7 +955,7 @@ impl Config {
     /// [`Self::apply_env_overrides`] wrapper so unit tests can call this
     /// with a [`HashMapEnv`] (see tests) without requiring the
     /// `TEST_ENV_LOCK` or tainting sibling tests.
-    pub(crate) fn apply_env_overlay_with<E: EnvLookup>(&mut self, env: &E) {
+    pub(crate) fn apply_env_overlay_with<E: EnvLookup + ?Sized>(&mut self, env: &E) {
         if let Some(model) = env.get_any(&["OPENHUMAN_MODEL", "MODEL"]) {
             if !model.is_empty() {
                 self.default_model = Some(model);
@@ -981,9 +1096,9 @@ impl Config {
             let tier_str = tier_str.trim().to_ascii_lowercase();
             if !tier_str.is_empty() {
                 if let Some(tier) =
-                    crate::openhuman::local_ai::presets::ModelTier::from_str_opt(&tier_str)
+                    crate::openhuman::inference::presets::ModelTier::from_str_opt(&tier_str)
                 {
-                    if tier == crate::openhuman::local_ai::presets::ModelTier::Custom {
+                    if tier == crate::openhuman::inference::presets::ModelTier::Custom {
                         tracing::warn!(
                             tier = %tier_str,
                             "ignoring custom OPENHUMAN_LOCAL_AI_TIER; only built-in presets are supported"
@@ -994,7 +1109,7 @@ impl Config {
                             "ignoring OPENHUMAN_LOCAL_AI_TIER outside the 1B local-model allowlist"
                         );
                     } else {
-                        crate::openhuman::local_ai::presets::apply_preset_to_config(
+                        crate::openhuman::inference::presets::apply_preset_to_config(
                             &mut self.local_ai,
                             tier,
                         );
@@ -1031,6 +1146,35 @@ impl Config {
             if let Some(prefer_system) = parse_env_bool("OPENHUMAN_NODE_PREFER_SYSTEM", &flag) {
                 self.node.prefer_system = prefer_system;
             }
+        }
+
+        // Python runtime overrides
+        if let Some(flag) = env.get("OPENHUMAN_RUNTIME_PYTHON_ENABLED") {
+            if let Some(enabled) = parse_env_bool("OPENHUMAN_RUNTIME_PYTHON_ENABLED", &flag) {
+                self.runtime_python.enabled = enabled;
+            }
+        }
+        if let Some(version) = env.get("OPENHUMAN_RUNTIME_PYTHON_MINIMUM_VERSION") {
+            let trimmed = version.trim();
+            if !trimmed.is_empty() {
+                self.runtime_python.minimum_version = trimmed.to_string();
+            }
+        }
+        if let Some(dir) = env.get("OPENHUMAN_RUNTIME_PYTHON_CACHE_DIR") {
+            self.runtime_python.cache_dir = dir.trim().to_string();
+        }
+        if let Some(tag) = env.get("OPENHUMAN_RUNTIME_PYTHON_MANAGED_RELEASE_TAG") {
+            self.runtime_python.managed_release_tag = tag.trim().to_string();
+        }
+        if let Some(flag) = env.get("OPENHUMAN_RUNTIME_PYTHON_PREFER_SYSTEM") {
+            if let Some(prefer_system) =
+                parse_env_bool("OPENHUMAN_RUNTIME_PYTHON_PREFER_SYSTEM", &flag)
+            {
+                self.runtime_python.prefer_system = prefer_system;
+            }
+        }
+        if let Some(command) = env.get("OPENHUMAN_RUNTIME_PYTHON_PREFERRED_COMMAND") {
+            self.runtime_python.preferred_command = command.trim().to_string();
         }
 
         // Prefer the namespaced name. `OPENHUMAN_SENTRY_DSN` is the legacy

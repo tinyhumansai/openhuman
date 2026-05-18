@@ -11,24 +11,24 @@ interface UpsellBannerProps {
 
 const VARIANT_STYLES = {
   info: {
-    container: 'bg-blue-50 border-blue-200',
+    container: 'bg-blue-50 dark:bg-blue-500/15 border-blue-200 dark:border-blue-800',
     icon: 'text-blue-400',
-    title: 'text-blue-700',
-    text: 'text-blue-600',
+    title: 'text-blue-700 dark:text-blue-300',
+    text: 'text-blue-600 dark:text-blue-300',
     cta: 'bg-blue-500 hover:bg-blue-400 text-white',
   },
   warning: {
-    container: 'bg-amber-50 border-amber-200',
+    container: 'bg-amber-50 dark:bg-amber-500/15 border-amber-200 dark:border-amber-800',
     icon: 'text-amber-400',
-    title: 'text-amber-700',
-    text: 'text-amber-600',
+    title: 'text-amber-700 dark:text-amber-300',
+    text: 'text-amber-600 dark:text-amber-300',
     cta: 'bg-amber-500 hover:bg-amber-400 text-white',
   },
   upgrade: {
-    container: 'bg-amber-50 border-amber-200',
+    container: 'bg-amber-50 dark:bg-amber-500/15 border-amber-200 dark:border-amber-800',
     icon: 'text-amber-400',
-    title: 'text-amber-700',
-    text: 'text-amber-600',
+    title: 'text-amber-700 dark:text-amber-300',
+    text: 'text-amber-600 dark:text-amber-300',
     cta: 'bg-amber-500 hover:bg-amber-400 text-white',
   },
 };
@@ -77,7 +77,7 @@ export default function UpsellBanner({
         {dismissible && onDismiss && (
           <button
             onClick={onDismiss}
-            className="p-1 rounded text-stone-400 hover:text-stone-600 transition-colors"
+            className="p-1 rounded text-stone-400 dark:text-neutral-500 hover:text-stone-600 dark:hover:text-neutral-300 transition-colors"
             aria-label="Dismiss">
             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path

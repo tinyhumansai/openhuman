@@ -28,7 +28,7 @@
 //! complete turns.
 
 use super::microcompact::MicrocompactStats;
-use crate::openhuman::providers::{ChatMessage, ConversationMessage, Provider};
+use crate::openhuman::inference::provider::{ChatMessage, ConversationMessage, Provider};
 use anyhow::Result;
 use async_trait::async_trait;
 use std::fmt::Write as _;

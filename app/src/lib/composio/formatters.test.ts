@@ -1,6 +1,59 @@
 import { describe, expect, it } from 'vitest';
 
-import { formatTriggerLabel } from './formatters';
+import { formatComposioToolError, formatTriggerLabel } from './formatters';
+
+describe('formatComposioToolError', () => {
+  it('strips the classified prefix and returns the body', () => {
+    const raw =
+      '[composio:error:insufficient_scope] `GMAIL_FETCH_EMAILS` was rejected because the connected gmail account is missing required permissions.';
+    expect(formatComposioToolError(raw)).toContain('missing required permissions');
+    expect(formatComposioToolError(raw)).not.toContain('[composio:error:');
+  });
+
+  it('passes through unclassified messages', () => {
+    expect(formatComposioToolError('plain failure')).toBe('plain failure');
+  });
+
+  it('returns empty string for null/undefined/empty input', () => {
+    expect(formatComposioToolError(null)).toBe('');
+    expect(formatComposioToolError(undefined)).toBe('');
+    expect(formatComposioToolError('')).toBe('');
+  });
+
+  it('falls back to validation copy when body is empty', () => {
+    expect(formatComposioToolError('[composio:error:validation]')).toBe('Invalid tool arguments.');
+  });
+
+  it('falls back to insufficient_scope copy when body is empty', () => {
+    expect(formatComposioToolError('[composio:error:insufficient_scope]')).toBe(
+      'Reconnect this integration and grant the requested permissions.'
+    );
+  });
+
+  it('falls back to rate_limited copy when body is empty', () => {
+    expect(formatComposioToolError('[composio:error:rate_limited]')).toBe(
+      'The upstream service is rate-limiting requests. Try again shortly.'
+    );
+  });
+
+  it('falls back to gateway copy when body is empty', () => {
+    expect(formatComposioToolError('[composio:error:gateway]')).toBe(
+      'Temporary connection issue. Try again in a moment.'
+    );
+  });
+
+  it('returns body for unknown class when present', () => {
+    expect(formatComposioToolError('[composio:error:something_new] details here')).toBe(
+      'details here'
+    );
+  });
+
+  it('falls back to trimmed raw for unknown class with empty body', () => {
+    expect(formatComposioToolError('  [composio:error:something_new]  ')).toBe(
+      '[composio:error:something_new]'
+    );
+  });
+});
 
 describe('formatTriggerLabel', () => {
   it('formats GOOGLECALENDAR_GOOGLE_CALENDAR_EVENT_CREATED_TRIGGER correctly', () => {

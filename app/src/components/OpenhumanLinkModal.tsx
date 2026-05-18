@@ -14,6 +14,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import { useChannelDefinitions } from '../hooks/useChannelDefinitions';
+import { useT } from '../lib/i18n/I18nContext';
 import {
   ensureNotificationPermission,
   getNotificationPermissionState,
@@ -40,13 +41,28 @@ interface OpenhumanLinkEvent {
 
 export const OPENHUMAN_LINK_EVENT = 'openhuman-link';
 
+const ALLOWED_PATHS = [
+  'settings/notifications',
+  'settings/billing',
+  'settings/messaging',
+  'community/discord',
+  'accounts/setup',
+] as const;
+
+type AllowedPath = (typeof ALLOWED_PATHS)[number];
+
+const ALLOWED_PATHS_SET = new Set<string>(ALLOWED_PATHS);
+
 const OpenhumanLinkModal = () => {
-  const [activePath, setActivePath] = useState<string | null>(null);
+  const { t } = useT();
+  const [activePath, setActivePath] = useState<AllowedPath | null>(null);
 
   useEffect(() => {
     const handler = (event: Event) => {
       const detail = (event as CustomEvent<OpenhumanLinkEvent>).detail;
-      if (detail?.path) setActivePath(detail.path);
+      if (detail?.path && ALLOWED_PATHS_SET.has(detail.path)) {
+        setActivePath(detail.path as AllowedPath);
+      }
     };
     window.addEventListener(OPENHUMAN_LINK_EVENT, handler);
     return () => window.removeEventListener(OPENHUMAN_LINK_EVENT, handler);
@@ -70,15 +86,17 @@ const OpenhumanLinkModal = () => {
       role="dialog"
       aria-modal="true">
       <div
-        className="w-full max-w-md rounded-2xl bg-white shadow-xl overflow-hidden"
+        className="w-full max-w-md rounded-2xl bg-white dark:bg-neutral-900 shadow-xl overflow-hidden"
         onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between border-b border-stone-100 px-5 py-3">
-          <h2 className="text-sm font-semibold text-stone-900">{titleForPath(activePath)}</h2>
+        <div className="flex items-center justify-between border-b border-stone-100 dark:border-neutral-800 px-5 py-3">
+          <h2 className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
+            {titleForPath(activePath, t)}
+          </h2>
           <button
             type="button"
             onClick={close}
             aria-label="Close"
-            className="rounded p-1 text-stone-500 hover:bg-stone-100 hover:text-stone-800">
+            className="rounded p-1 text-stone-500 dark:text-neutral-400 hover:bg-stone-100 dark:hover:bg-neutral-800/60 hover:text-stone-800 dark:hover:text-neutral-100">
             <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
               <path
                 strokeLinecap="round"
@@ -102,14 +120,15 @@ const OpenhumanLinkModal = () => {
  * so the user gets feedback instead of a flashing screen.
  */
 const MessagingSetupBridge = ({ onClose }: { onClose: () => void }) => {
+  const { t } = useT();
   const { definitions, loading } = useChannelDefinitions();
   const telegram = useMemo(() => definitions.find(d => d.id === 'telegram') ?? null, [definitions]);
 
   if (loading && !telegram) {
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-        <div className="rounded-2xl bg-white px-6 py-4 text-sm text-stone-600 shadow-xl">
-          Loading channel setup…
+        <div className="rounded-2xl bg-white dark:bg-neutral-900 px-6 py-4 text-sm text-stone-600 dark:text-neutral-300 shadow-xl">
+          {t('app.openhumanLink.loadingChannelSetup')}
         </div>
       </div>
     );
@@ -121,18 +140,15 @@ const MessagingSetupBridge = ({ onClose }: { onClose: () => void }) => {
         className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
         onClick={onClose}>
         <div
-          className="rounded-2xl bg-white p-6 text-sm text-stone-700 shadow-xl max-w-sm"
+          className="rounded-2xl bg-white dark:bg-neutral-900 p-6 text-sm text-stone-700 dark:text-neutral-200 shadow-xl max-w-sm"
           onClick={e => e.stopPropagation()}>
-          <p>
-            Telegram channel definition isn't available right now. Try again from Settings →
-            Messaging.
-          </p>
+          <p>{t('app.openhumanLink.telegramUnavailable')}</p>
           <div className="mt-3 flex justify-end">
             <button
               type="button"
               onClick={onClose}
-              className="rounded-lg border border-stone-200 px-3 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-50">
-              Close
+              className="rounded-lg border border-stone-200 dark:border-neutral-800 px-3 py-1.5 text-xs font-medium text-stone-700 dark:text-neutral-200 hover:bg-stone-50 dark:hover:bg-neutral-800/60">
+              {t('common.close')}
             </button>
           </div>
         </div>
@@ -143,24 +159,22 @@ const MessagingSetupBridge = ({ onClose }: { onClose: () => void }) => {
   return <ChannelSetupModal definition={telegram} onClose={onClose} />;
 };
 
-function titleForPath(path: string): string {
+function titleForPath(path: AllowedPath, t: (k: string) => string): string {
   switch (path) {
     case 'settings/notifications':
-      return 'Allow notifications';
+      return t('app.openhumanLink.title.notifications');
     case 'settings/billing':
-      return 'Billing & credits';
+      return t('app.openhumanLink.title.billing');
     case 'settings/messaging':
-      return 'Connect a chat channel';
+      return t('app.openhumanLink.title.messaging');
     case 'community/discord':
-      return 'Join the community';
+      return t('app.openhumanLink.title.discord');
     case 'accounts/setup':
-      return 'Connect your apps';
-    default:
-      return 'Settings';
+      return t('app.openhumanLink.title.accounts');
   }
 }
 
-function renderBody(path: string, close: () => void) {
+function renderBody(path: AllowedPath, close: () => void) {
   switch (path) {
     case 'settings/notifications':
       return <NotificationsBody close={close} />;
@@ -176,22 +190,13 @@ function renderBody(path: string, close: () => void) {
       return <DiscordBody close={close} />;
     case 'accounts/setup':
       return <AccountsSetupBody close={close} />;
-    default:
-      return (
-        <div className="space-y-3 text-sm text-stone-700">
-          <p>
-            This setting isn't ready in the popup yet. Open the full settings page when you're
-            ready.
-          </p>
-          <DoneFooter close={close} />
-        </div>
-      );
   }
 }
 
 // ── Notifications ────────────────────────────────────────────────────────
 
 const NotificationsBody = ({ close }: { close: () => void }) => {
+  const { t } = useT();
   const [status, setStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
   const [error, setError] = useState<string | null>(null);
   const [permissionState, setPermissionState] = useState<NotificationPermissionState>('unknown');
@@ -255,25 +260,22 @@ const NotificationsBody = ({ close }: { close: () => void }) => {
   };
 
   return (
-    <div className="space-y-4 text-sm text-stone-700">
-      <p>
-        OpenHuman uses native notifications so it can ping you when something needs your attention,
-        even when the chat window is hidden.
-      </p>
+    <div className="space-y-4 text-sm text-stone-700 dark:text-neutral-200">
+      <p>{t('app.openhumanLink.notifications.intro')}</p>
       {permissionState === 'denied' && (
-        <div className="rounded-xl border border-coral-200 bg-coral-50 p-3 text-xs text-coral-700">
-          Notifications are currently blocked.
+        <div className="rounded-xl border border-coral-200 bg-coral-50 dark:bg-coral-500/15 p-3 text-xs text-coral-700 dark:text-coral-300">
+          {t('app.openhumanLink.notifications.blocked')}
           <br />
-          1. Open System Settings → Notifications → OpenHuman
+          {t('app.openhumanLink.notifications.blockedStep1')}
           <br />
-          2. Turn on Allow Notifications
+          {t('app.openhumanLink.notifications.blockedStep2')}
           <br />
-          3. Return here and tap Retry test notification
+          {t('app.openhumanLink.notifications.blockedStep3')}
         </div>
       )}
       {(permissionState === 'prompt' || permissionState === 'unknown') && (
-        <div className="rounded-xl border border-stone-200 bg-stone-50 p-3 text-xs text-stone-700">
-          First step: tap Send test notification and allow permission in the macOS prompt.
+        <div className="rounded-xl border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 p-3 text-xs text-stone-700 dark:text-neutral-200">
+          {t('app.openhumanLink.notifications.promptHint')}
         </div>
       )}
       <button
@@ -282,18 +284,19 @@ const NotificationsBody = ({ close }: { close: () => void }) => {
         disabled={status === 'sending'}
         className="w-full rounded-xl bg-primary-500 text-white text-sm font-medium py-2.5 hover:bg-primary-600 transition-colors disabled:opacity-60">
         {status === 'sending'
-          ? 'Asking your OS…'
+          ? t('app.openhumanLink.notifications.asking')
           : status === 'error'
-            ? 'Retry test notification'
-            : 'Send test notification'}
+            ? t('app.openhumanLink.notifications.retry')
+            : t('app.openhumanLink.notifications.send')}
       </button>
       {status === 'sent' && (
-        <p className="text-xs text-sage-700">
-          Test notification sent. If you didn’t receive it, go to System Settings → Notifications →
-          OpenHuman, turn on Allow Notifications, and set Banner Style to Persistent.
+        <p className="text-xs text-sage-700">{t('app.openhumanLink.notifications.sent')}</p>
+      )}
+      {status === 'error' && (
+        <p className="text-xs text-coral-600">
+          {t('app.openhumanLink.notifications.sendFailed').replace('{error}', error ?? '')}
         </p>
       )}
-      {status === 'error' && <p className="text-xs text-coral-600">Couldn't send: {error}</p>}
       <DoneFooter close={close} />
     </div>
   );
@@ -302,13 +305,16 @@ const NotificationsBody = ({ close }: { close: () => void }) => {
 // ── Billing ──────────────────────────────────────────────────────────────
 
 const BillingBody = ({ close }: { close: () => void }) => {
+  const { t } = useT();
   return (
-    <div className="space-y-4 text-sm text-stone-700">
-      <div className="rounded-xl border border-stone-200 bg-stone-50 p-4">
-        <p className="text-xs uppercase tracking-wide text-stone-500">Trial credit</p>
-        <p className="mt-1 text-2xl font-semibold text-stone-900">$1.00</p>
-        <p className="mt-1 text-xs text-stone-500">
-          More than enough to play around. Top up or pick a plan when you want real usage.
+    <div className="space-y-4 text-sm text-stone-700 dark:text-neutral-200">
+      <div className="rounded-xl border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 p-4">
+        <p className="text-xs uppercase tracking-wide text-stone-500 dark:text-neutral-400">
+          {t('app.openhumanLink.billing.trialCredit')}
+        </p>
+        <p className="mt-1 text-2xl font-semibold text-stone-900 dark:text-neutral-100">$1.00</p>
+        <p className="mt-1 text-xs text-stone-500 dark:text-neutral-400">
+          {t('app.openhumanLink.billing.trialDesc')}
         </p>
       </div>
       <button
@@ -317,9 +323,9 @@ const BillingBody = ({ close }: { close: () => void }) => {
           void openUrl(BILLING_DASHBOARD_URL).catch(() => {});
         }}
         className="w-full rounded-xl bg-primary-500 text-white text-sm font-medium py-2.5 hover:bg-primary-600 transition-colors">
-        Open dashboard in browser
+        {t('app.openhumanLink.billing.openDashboard')}
       </button>
-      <DoneFooter close={close} skipLabel="Stay on trial" />
+      <DoneFooter close={close} skipLabel={t('app.openhumanLink.billing.stayOnTrial')} />
     </div>
   );
 };
@@ -329,29 +335,26 @@ const BillingBody = ({ close }: { close: () => void }) => {
 const DISCORD_INVITE_URL = 'https://discord.tinyhumans.ai/';
 
 const DiscordBody = ({ close }: { close: () => void }) => {
+  const { t } = useT();
   return (
-    <div className="space-y-4 text-sm text-stone-700">
-      <p>
-        Hop into our Discord and link your OpenHuman account. You'll get exclusive early access to
-        features, free credits to play with, a great community to nerd out with, and yes, free
-        merch.
-      </p>
-      <ul className="space-y-1.5 text-xs text-stone-600 pl-1">
+    <div className="space-y-4 text-sm text-stone-700 dark:text-neutral-200">
+      <p>{t('app.openhumanLink.discord.intro')}</p>
+      <ul className="space-y-1.5 text-xs text-stone-600 dark:text-neutral-300 pl-1">
         <li className="flex items-center gap-2">
           <span className="h-1.5 w-1.5 rounded-full bg-primary-400 flex-shrink-0" />
-          Exclusive feature access
+          {t('app.openhumanLink.discord.perk1')}
         </li>
         <li className="flex items-center gap-2">
           <span className="h-1.5 w-1.5 rounded-full bg-primary-400 flex-shrink-0" />
-          Free credits for active members
+          {t('app.openhumanLink.discord.perk2')}
         </li>
         <li className="flex items-center gap-2">
           <span className="h-1.5 w-1.5 rounded-full bg-primary-400 flex-shrink-0" />
-          Community of builders and operators
+          {t('app.openhumanLink.discord.perk3')}
         </li>
         <li className="flex items-center gap-2">
           <span className="h-1.5 w-1.5 rounded-full bg-primary-400 flex-shrink-0" />
-          Free merch when you stick around
+          {t('app.openhumanLink.discord.perk4')}
         </li>
       </ul>
       <button
@@ -360,9 +363,9 @@ const DiscordBody = ({ close }: { close: () => void }) => {
           void openUrl(DISCORD_INVITE_URL).catch(() => {});
         }}
         className="w-full rounded-xl bg-primary-500 text-white text-sm font-medium py-2.5 hover:bg-primary-600 transition-colors">
-        Open Discord invite
+        {t('app.openhumanLink.discord.openInvite')}
       </button>
-      <DoneFooter close={close} skipLabel="Maybe later" />
+      <DoneFooter close={close} skipLabel={t('app.openhumanLink.maybeLater')} />
     </div>
   );
 };
@@ -377,6 +380,7 @@ const DiscordBody = ({ close }: { close: () => void }) => {
  */
 const ACCOUNTS_SETUP_PROVIDERS: readonly AccountProvider[] = [
   'whatsapp',
+  'wechat',
   'telegram',
   'slack',
   'discord',
@@ -414,6 +418,7 @@ function statusDisplay(status: AccountStatus): { label: string; dotClass: string
 }
 
 const AccountsSetupBody = ({ close }: { close: () => void }) => {
+  const { t } = useT();
   const dispatch = useAppDispatch();
   const navigate = useNavigate();
   const accountsById = useAppSelector(s => s.accounts.accounts);
@@ -478,15 +483,13 @@ const AccountsSetupBody = ({ close }: { close: () => void }) => {
 
   // Dynamic CTA based on what's been toggled on
   const firstNewLabel = [...newlyAdded.values()][0];
-  const doneLabel = firstNewLabel ? `Continue with ${firstNewLabel} sign-in` : 'Done';
+  const doneLabel = firstNewLabel
+    ? t('app.openhumanLink.accounts.continueWith').replace('{label}', firstNewLabel)
+    : t('app.openhumanLink.accounts.done');
 
   return (
-    <div className="space-y-4 text-sm text-stone-700">
-      <p>
-        Pick the chat apps and inboxes you already use. We'll add them as built-in webviews here so
-        you can ditch six browser tabs and stick with one app, and the agent can listen in across
-        all of them in the background.
-      </p>
+    <div className="space-y-4 text-sm text-stone-700 dark:text-neutral-200">
+      <p>{t('app.openhumanLink.accounts.intro')}</p>
       <div className="space-y-2">
         {providerDescriptors.map(p => {
           const acct = accountByProvider.get(p.id);
@@ -495,26 +498,32 @@ const AccountsSetupBody = ({ close }: { close: () => void }) => {
           return (
             <div
               key={p.id}
-              className="flex items-center gap-3 rounded-xl border border-stone-100 bg-white p-3">
+              className="flex items-center gap-3 rounded-xl border border-stone-100 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-3">
               <ProviderIcon provider={p.id} className="h-5 w-5 flex-none" />
               <div className="min-w-0 flex-1">
-                <div className="text-sm font-medium text-stone-900">{p.label}</div>
+                <div className="text-sm font-medium text-stone-900 dark:text-neutral-100">
+                  {p.label}
+                </div>
                 {on && status ? (
                   <div className="flex items-center gap-1.5">
                     <span
                       className={`inline-block h-1.5 w-1.5 rounded-full ${statusDisplay(status).dotClass}`}
                     />
-                    <span className="text-xs text-stone-500">{statusDisplay(status).label}</span>
+                    <span className="text-xs text-stone-500 dark:text-neutral-400">
+                      {statusDisplay(status).label}
+                    </span>
                   </div>
                 ) : (
-                  <p className="line-clamp-1 text-xs text-stone-500">{p.description}</p>
+                  <p className="line-clamp-1 text-xs text-stone-500 dark:text-neutral-400">
+                    {p.description}
+                  </p>
                 )}
               </div>
               <button
                 type="button"
                 role="switch"
                 aria-checked={on}
-                aria-label={`${on ? 'Disconnect' : 'Connect'} ${p.label}`}
+                aria-label={`${on ? t('skills.disconnect') : t('skills.connect')} ${p.label}`}
                 onClick={() => handleToggle(p.id, p.label, on)}
                 className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors ${
                   on ? 'bg-primary-500' : 'bg-stone-200'
@@ -529,9 +538,8 @@ const AccountsSetupBody = ({ close }: { close: () => void }) => {
           );
         })}
       </div>
-      <p className="text-xs text-stone-400">
-        Toggling on adds a private webview. You'll sign in the first time you open it — credentials
-        stay on your device.
+      <p className="text-xs text-stone-400 dark:text-neutral-500">
+        {t('app.openhumanLink.accounts.webviewNote')}
       </p>
       <DoneFooter close={close} onDone={handleDone} doneLabel={doneLabel} />
     </div>
@@ -543,28 +551,33 @@ const AccountsSetupBody = ({ close }: { close: () => void }) => {
 const DoneFooter = ({
   close,
   onDone,
-  doneLabel = 'Done',
-  skipLabel = 'Skip for now',
+  doneLabel,
+  skipLabel,
 }: {
   close: () => void;
   onDone?: () => void;
   doneLabel?: string;
   skipLabel?: string;
-}) => (
-  <div className="flex items-center justify-between gap-3 pt-1">
-    <button
-      type="button"
-      onClick={close}
-      className="text-xs font-medium text-stone-500 hover:text-stone-800">
-      {skipLabel}
-    </button>
-    <button
-      type="button"
-      onClick={onDone ?? close}
-      className="rounded-lg border border-stone-200 bg-white px-3 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-50">
-      {doneLabel}
-    </button>
-  </div>
-);
+}) => {
+  const { t } = useT();
+  const resolvedDone = doneLabel ?? t('app.openhumanLink.done');
+  const resolvedSkip = skipLabel ?? t('app.openhumanLink.skipForNow');
+  return (
+    <div className="flex items-center justify-between gap-3 pt-1">
+      <button
+        type="button"
+        onClick={close}
+        className="text-xs font-medium text-stone-500 dark:text-neutral-400 hover:text-stone-800 dark:hover:text-neutral-100">
+        {resolvedSkip}
+      </button>
+      <button
+        type="button"
+        onClick={onDone ?? close}
+        className="rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-1.5 text-xs font-medium text-stone-700 dark:text-neutral-200 hover:bg-stone-50 dark:hover:bg-neutral-800/60">
+        {resolvedDone}
+      </button>
+    </div>
+  );
+};
 
 export default OpenhumanLinkModal;

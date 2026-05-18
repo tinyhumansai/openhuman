@@ -1,4 +1,5 @@
 import { convertFileSrc } from '@tauri-apps/api/core';
+import debugFactory from 'debug';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
@@ -15,7 +16,9 @@ import MicComposer from '../features/human/MicComposer';
 // import { ONBOARDING_WELCOME_THREAD_LABEL } from '../constants/onboardingChat';
 import { useStickToBottom } from '../hooks/useStickToBottom';
 import { useUsageState } from '../hooks/useUsageState';
+import { useT } from '../lib/i18n/I18nContext';
 import { trackEvent } from '../services/analytics';
+import { threadApi } from '../services/api/threadApi';
 // [#1123] getCoreStateSnapshot and isWelcomeLocked commented out — welcome-agent onboarding replaced by Joyride walkthrough
 // import { getCoreStateSnapshot, isWelcomeLocked } from '../lib/coreState/store';
 // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
@@ -23,9 +26,17 @@ import { trackEvent } from '../services/analytics';
 import { chatCancel, chatSend, useRustChat } from '../services/chatService';
 import { store } from '../store';
 import {
+  loadAgentProfiles,
+  selectActiveAgentProfileId,
+  selectAgentProfile,
+  selectAgentProfiles,
+  upsertAgentProfile,
+} from '../store/agentProfileSlice';
+import {
   beginInferenceTurn,
   clearRuntimeForThread,
   fetchAndHydrateTurnState,
+  setTaskBoardForThread,
   setToolTimelineForThread,
 } from '../store/chatRuntimeSlice';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
@@ -41,8 +52,10 @@ import {
   setSelectedThread,
   THREAD_NOT_FOUND_MESSAGE,
 } from '../store/threadSlice';
+import type { AgentProfile } from '../types/agentProfile';
 import type { ConfirmationModal as ConfirmationModalType } from '../types/intelligence';
 import type { ThreadMessage } from '../types/thread';
+import type { TaskBoardCard, TaskBoardCardStatus } from '../types/turnState';
 import { splitAgentMessageIntoBubbles } from '../utils/agentMessageBubbles';
 import { BILLING_DASHBOARD_URL } from '../utils/links';
 import { openUrl } from '../utils/openUrl';
@@ -59,6 +72,7 @@ import { formatTimelineEntry } from '../utils/toolTimelineFormatting';
 import { AgentMessageBubble, BubbleMarkdown } from './conversations/components/AgentMessageBubble';
 import { CitationChips, type MessageCitation } from './conversations/components/CitationChips';
 import { LimitPill } from './conversations/components/LimitPill';
+import { TaskKanbanBoard } from './conversations/components/TaskKanbanBoard';
 import { ToolTimelineBlock } from './conversations/components/ToolTimelineBlock';
 import {
   evaluateComposerSend,
@@ -72,6 +86,7 @@ import {
   formatResetTime,
   getInlineCompletionSuffix,
 } from './conversations/utils/format';
+import { isThreadVisibleInTab, WORKERS_TAB_VALUE } from './conversations/utils/threadFilter';
 
 // Chat uses the reasoning model; `agentic-v1` is reserved for sub-agents
 // that execute tool calls, not the primary user-facing conversation.
@@ -85,6 +100,13 @@ type InputMode = 'text' | 'voice';
 type ReplyMode = 'text' | 'voice';
 const AUTOCOMPLETE_POLL_DEBOUNCE_MS = 320;
 const AUTOCOMPLETE_MIN_CONTEXT_CHARS = 3;
+const debug = debugFactory('conversations');
+const DEFAULT_PROFILE_DRAFT = {
+  name: '',
+  agentId: 'orchestrator',
+  systemPromptSuffix: '',
+  allowedTools: '',
+};
 
 interface ConversationsProps {
   /**
@@ -112,6 +134,24 @@ export function isComposerInteractionBlocked(args: {
   return !args.rustChat || Boolean(args.activeThreadId) || args.welcomePending;
 }
 
+interface ImeKeyboardEventLike {
+  isComposing?: boolean;
+  keyCode?: number;
+  which?: number;
+  nativeEvent?: { isComposing?: boolean; keyCode?: number; which?: number };
+}
+
+export function isImeCompositionKeyEvent(event: ImeKeyboardEventLike): boolean {
+  return (
+    event.isComposing === true ||
+    event.nativeEvent?.isComposing === true ||
+    event.nativeEvent?.keyCode === 229 ||
+    event.nativeEvent?.which === 229 ||
+    event.keyCode === 229 ||
+    event.which === 229
+  );
+}
+
 /**
  * Normalise the value thrown out of `dispatch(loadThreads()).unwrap()` into a
  * displayable string. `createAsyncThunk` re-throws Redux's `SerializedError`
@@ -130,6 +170,14 @@ export function formatThreadLoadError(err: unknown): string {
   return String(err);
 }
 
+function formatAgentProfileAgentLabel(agentId: string): string {
+  return agentId
+    .split(/[_-]+/)
+    .filter(Boolean)
+    .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
 // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
 // function WelcomeThinkingTypewriter() {
 //   const text = 'Your agent is thinking...';
@@ -146,7 +194,7 @@ export function formatThreadLoadError(err: unknown): string {
 //   }, [text.length, visibleChars]);
 //
 //   return (
-//     <p className="flex items-center text-sm text-stone-600 font-mono tracking-tight">
+//     <p className="flex items-center text-sm text-stone-600 dark:text-neutral-300 font-mono tracking-tight">
 //       <span>{text.slice(0, visibleChars)}</span>
 //       <span
 //         aria-hidden="true"
@@ -157,6 +205,7 @@ export function formatThreadLoadError(err: unknown): string {
 // }
 
 const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsProps = {}) => {
+  const { t } = useT();
   const dispatch = useAppDispatch();
   const navigate = useNavigate();
   const {
@@ -202,8 +251,13 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
   const [inlineSuggestionValue, setInlineSuggestionValue] = useState('');
   const [sendError, setSendError] = useState<ChatSendError | null>(null);
   const [sendAdvisory, setSendAdvisory] = useState<string | null>(null);
+  const [profileDraftOpen, setProfileDraftOpen] = useState(false);
+  const [profileDraft, setProfileDraft] = useState(DEFAULT_PROFILE_DRAFT);
   const socketStatus = useAppSelector(selectSocketStatus);
+  const agentProfiles = useAppSelector(selectAgentProfiles);
+  const selectedAgentProfileId = useAppSelector(selectActiveAgentProfileId);
   const toolTimelineByThread = useAppSelector(state => state.chatRuntime.toolTimelineByThread);
+  const taskBoardByThread = useAppSelector(state => state.chatRuntime.taskBoardByThread);
   const inferenceStatusByThread = useAppSelector(
     state => state.chatRuntime.inferenceStatusByThread
   );
@@ -237,8 +291,32 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
     onConfirm: () => {},
     onCancel: () => {},
   });
+  const agentProfileAgentOptions = useMemo(() => {
+    const seen = new Set<string>();
+    const options: Array<{ id: string; label: string }> = [];
+    for (const profile of agentProfiles) {
+      const id = profile.agentId.trim();
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      options.push({
+        id,
+        label: profile.builtIn ? profile.name : formatAgentProfileAgentLabel(id),
+      });
+    }
+    if (profileDraft.agentId && !seen.has(profileDraft.agentId)) {
+      options.push({
+        id: profileDraft.agentId,
+        label: formatAgentProfileAgentLabel(profileDraft.agentId),
+      });
+    }
+    if (options.length === 0) {
+      options.push({ id: 'orchestrator', label: 'Orchestrator' });
+    }
+    return options;
+  }, [agentProfiles, profileDraft.agentId]);
 
   const textInputRef = useRef<HTMLTextAreaElement>(null);
+  const isComposingTextRef = useRef(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -269,6 +347,50 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
     const thread = await dispatch(createNewThread()).unwrap();
     dispatch(setSelectedThread(thread.id));
     void dispatch(loadThreadMessages(thread.id));
+  };
+
+  const handleSelectAgentProfile = async (profileId: string) => {
+    try {
+      await dispatch(selectAgentProfile(profileId)).unwrap();
+    } catch (error) {
+      debug('agent profile select failed: %o', error);
+    }
+  };
+
+  const handleCreateAgentProfile = async () => {
+    const name = profileDraft.name.trim();
+    if (!name) return;
+    const duplicate = agentProfiles.some(
+      profile => profile.name.trim().toLowerCase() === name.toLowerCase()
+    );
+    if (duplicate) {
+      setSendAdvisory(`Agent profile "${name}" already exists.`);
+      return;
+    }
+    const id = `profile-${globalThis.crypto.randomUUID().slice(0, 8)}`;
+    const allowedTools = profileDraft.allowedTools
+      .split(',')
+      .map(tool => tool.trim())
+      .filter(Boolean);
+    const profile: AgentProfile = {
+      id,
+      name,
+      description: 'Custom agent profile',
+      agentId: profileDraft.agentId,
+      systemPromptSuffix: profileDraft.systemPromptSuffix.trim() || null,
+      allowedTools: allowedTools.length > 0 ? allowedTools : null,
+      builtIn: false,
+    };
+    try {
+      await dispatch(upsertAgentProfile(profile)).unwrap();
+      await dispatch(selectAgentProfile(id)).unwrap();
+      setProfileDraftOpen(false);
+      setProfileDraft(DEFAULT_PROFILE_DRAFT);
+      setSendAdvisory(null);
+    } catch (error) {
+      debug('agent profile create failed: %o', error);
+      setSendAdvisory('Could not create agent profile.');
+    }
   };
 
   useEffect(() => {
@@ -317,7 +439,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
       })
       .catch(err => {
         if (cancelled) return;
-        console.warn('[conversations] loadThreads failed on mount:', formatThreadLoadError(err));
+        debug('loadThreads failed on mount: %s', formatThreadLoadError(err));
       });
 
     return () => {
@@ -330,8 +452,26 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
     if (selectedThreadId) {
       void dispatch(loadThreadMessages(selectedThreadId));
       void dispatch(fetchAndHydrateTurnState(selectedThreadId));
+      void threadApi
+        .getTaskBoard(selectedThreadId)
+        .then(board => {
+          if (board) {
+            dispatch(setTaskBoardForThread({ threadId: selectedThreadId, board }));
+          }
+        })
+        .catch(error => {
+          debug('getTaskBoard failed: %o', error);
+        });
     }
   }, [selectedThreadId, dispatch]);
+
+  useEffect(() => {
+    void dispatch(loadAgentProfiles())
+      .unwrap()
+      .catch(error => {
+        debug('agent profiles load failed: %o', error);
+      });
+  }, [dispatch]);
 
   // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
   // Welcome lockdown unlock (#883) — when `chatOnboardingCompleted`
@@ -400,13 +540,8 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
     if (sendingTimeoutRef.current) clearTimeout(sendingTimeoutRef.current);
     sendingThreadIdRef.current = threadId;
     sendingTimeoutRef.current = setTimeout(() => {
-      console.warn('[chat] silence timeout: no inference signal for 120s');
-      setSendError(
-        chatSendError(
-          'safety_timeout',
-          'No response from the agent after 2 minutes. Try again or check your connection.'
-        )
-      );
+      debug('armSilenceTimer: no inference signal for 120s — clearing runtime');
+      setSendError(chatSendError('safety_timeout', t('chat.safetyTimeout')));
       dispatch(clearRuntimeForThread({ threadId }));
       dispatch(setActiveThread(null));
       sendingTimeoutRef.current = null;
@@ -618,7 +753,12 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
     // Local model (Ollama) is used only for supplementary features
     // (auto-react, autocomplete, etc.) — never as a primary chat path.
     try {
-      await chatSend({ threadId: sendingThreadId, message: trimmed, model: CHAT_MODEL_ID });
+      await chatSend({
+        threadId: sendingThreadId,
+        message: trimmed,
+        model: CHAT_MODEL_ID,
+        profileId: selectedAgentProfileId,
+      });
       trackEvent('chat_message_sent');
 
       // Active-thread reset happens in the global ChatRuntimeProvider events.
@@ -817,6 +957,8 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
   }, [messages, replyMode, rustChat]);
 
   const handleInputKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (isComposingTextRef.current || isImeCompositionKeyEvent(e)) return;
+
     const inlineSuffix = getInlineCompletionSuffix(inputValue, inlineSuggestionValue);
     const textarea = e.currentTarget;
     const caretAtEnd =
@@ -873,6 +1015,8 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
   const selectedThreadToolTimeline = selectedThreadId
     ? (toolTimelineByThread[selectedThreadId] ?? [])
     : [];
+  const selectedTaskBoard = selectedThreadId ? (taskBoardByThread[selectedThreadId] ?? null) : null;
+  const hasTaskBoard = Boolean(selectedTaskBoard?.cards.length);
   const visibleMessages = messages.filter(msg => !msg.extraMetadata?.hidden);
   const hasVisibleMessages = visibleMessages.length > 0;
   const latestVisibleMessage = visibleMessages[visibleMessages.length - 1] ?? null;
@@ -944,15 +1088,48 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
   const shouldRenderTimelineBeforeLatestAgentMessage =
     selectedThreadToolTimeline.length > 0 && !isSending && Boolean(latestVisibleAgentMessage);
 
+  const handleMoveTaskCard = async (
+    card: TaskBoardCard,
+    nextStatus: TaskBoardCardStatus
+  ): Promise<void> => {
+    if (!selectedThreadId || !selectedTaskBoard) return;
+    const now = new Date().toISOString();
+    const nextBoard = {
+      ...selectedTaskBoard,
+      cards: selectedTaskBoard.cards.map(existing =>
+        existing.id === card.id ? { ...existing, status: nextStatus, updatedAt: now } : existing
+      ),
+      updatedAt: now,
+    };
+    dispatch(setTaskBoardForThread({ threadId: selectedThreadId, board: nextBoard }));
+    try {
+      const saved = await threadApi.putTaskBoard(selectedThreadId, nextBoard.cards);
+      if (!saved) {
+        throw new Error('Task board update returned no board');
+      }
+      dispatch(setTaskBoardForThread({ threadId: selectedThreadId, board: saved }));
+    } catch (error) {
+      debug('putTaskBoard failed: %o', error);
+      setSendAdvisory('Could not move task; changes were not saved.');
+      dispatch(setTaskBoardForThread({ threadId: selectedThreadId, board: selectedTaskBoard }));
+    }
+  };
+
   const filteredThreads = useMemo(() => {
-    const base = threads.filter(t => {
-      // Hide worker/subagent threads from the conversation list. They are
-      // currently surfaced inline inside the parent thread via WorkerThreadRefCard.
-      // A dedicated showcase is tracked in tinyhumansai/openhuman#1624.
-      if (t.parentThreadId) return false;
-      if (selectedLabel === 'all') return true;
-      return t.labels?.includes(selectedLabel);
-    });
+    // Worker/subagent threads (any thread with `parentThreadId`) are
+    // surfaced through two intentional paths (issue #1624):
+    //   1. The dedicated `Workers` tab in the sidebar — pick that tab to
+    //      see only background work and jump into a worker transcript.
+    //   2. Inline inside the parent thread via `WorkerThreadRefCard`,
+    //      which now also renders a live running/completed/failed badge
+    //      derived from the parent timeline entry's status.
+    // The default ("All") and label-scoped tabs hide them so the main
+    // sidebar is dominated by user-initiated conversations rather than
+    // background reasoning threads. The actual rule lives in
+    // `isThreadVisibleInTab` so it is pure, unit-testable, and stays
+    // in lockstep with the sidebar tab definition (`labelTabs` below)
+    // via the shared `WORKERS_TAB_VALUE` sentinel.
+    const base = threads.filter(t => isThreadVisibleInTab(t, selectedLabel));
     // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
     // if (!welcomeLocked) return base;
     // // During welcome lockdown only the onboarding welcome thread should
@@ -975,11 +1152,17 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
 
   // Fixed tab set so categories don't disappear when empty and the active
   // filter state remains unambiguous regardless of what threads exist.
+  // The `workers` tab (issue #1624) is the deliberate UI surface for
+  // background sub-agent / worker threads — selecting it inverts the
+  // default `parentThreadId` filter in `filteredThreads` above so only
+  // worker threads show. Without this tab the only way into a worker
+  // transcript is the inline `WorkerThreadRefCard` inside the parent.
   const labelTabs = [
-    { label: 'All', value: 'all' },
-    { label: 'Work', value: 'work' },
-    { label: 'Briefing', value: 'briefing' },
-    { label: 'Notification', value: 'notification' },
+    { label: t('chat.filter.all'), value: 'all' },
+    { label: t('chat.filter.work'), value: 'work' },
+    { label: t('chat.filter.briefing'), value: 'briefing' },
+    { label: t('chat.filter.notification'), value: 'notification' },
+    { label: t('chat.filter.workers'), value: WORKERS_TAB_VALUE },
   ];
 
   const isSidebar = variant === 'sidebar';
@@ -993,8 +1176,8 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
   // Stable title resolver used by both the sidebar thread list and the header.
   // [#1123] welcome-lock title override removed — Joyride walkthrough replaced welcome-agent
   const resolveThreadDisplayTitle = (threadId: string | null): string => {
-    if (!threadId) return 'Select a thread';
-    const t = threads.find(thr => thr.id === threadId);
+    if (!threadId) return t('chat.selectThread');
+    const thr = threads.find(th => th.id === threadId);
     // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
     // if (
     //   welcomeLocked &&
@@ -1003,8 +1186,27 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
     // ) {
     //   return 'Onboarding';
     // }
-    return t?.title ?? 'Select a thread';
+    return thr?.title ?? t('chat.selectThread');
   };
+
+  // Resolve the parent of the currently-selected thread, if any. Used to
+  // render the back-to-parent breadcrumb in the chat header so a user who
+  // dropped into a worker thread (via `WorkerThreadRefCard` or the
+  // `Workers` sidebar tab) can return to the conversation that spawned it
+  // — issue #1624 acceptance criterion "Parent ↔ worker navigation is
+  // bidirectional". Returns `null` when the active thread is a top-level
+  // conversation (no parent), so the header stays unchanged in the
+  // non-worker case.
+  const selectedThreadParent = useMemo(() => {
+    if (!selectedThreadId) return null;
+    const current = threads.find(thr => thr.id === selectedThreadId);
+    const parentId = current?.parentThreadId;
+    if (!parentId) return null;
+    const parent = threads.find(thr => thr.id === parentId);
+    return parent
+      ? { id: parent.id, title: parent.title || 'parent thread' }
+      : { id: parentId, title: 'parent thread' };
+  }, [threads, selectedThreadId]);
 
   return (
     <div
@@ -1018,14 +1220,16 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
           During welcome lockdown the sidebar is always open (effectiveShowSidebar
           is clamped to true) so the single onboarding thread is always visible. */}
       {!isSidebar && effectiveShowSidebar && (
-        <div className="w-64 flex-shrink-0 flex flex-col bg-white rounded-2xl shadow-soft border border-stone-200 overflow-hidden">
-          <div className="flex items-center justify-between px-4 py-3 border-b border-stone-100">
-            <h2 className="text-sm font-semibold text-stone-700">Threads</h2>
+        <div className="w-64 flex-shrink-0 flex flex-col bg-white dark:bg-neutral-900 rounded-2xl shadow-soft border border-stone-200 dark:border-neutral-800 overflow-hidden">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-stone-100 dark:border-neutral-800">
+            <h2 className="text-sm font-semibold text-stone-700 dark:text-neutral-200">
+              {t('chat.threads')}
+            </h2>
             {/* [#1123] welcomeLocked guard removed — always show new thread button */}
             <button
               onClick={() => void handleCreateNewThread()}
-              className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-stone-100 text-stone-500 hover:text-stone-700 transition-colors"
-              title="New thread">
+              className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 dark:hover:bg-neutral-800/60 text-stone-500 dark:text-neutral-400 hover:text-stone-700 dark:hover:text-neutral-200 dark:text-neutral-200 dark:hover:text-neutral-200 transition-colors"
+              title={t('chat.newThread')}>
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path
                   strokeLinecap="round"
@@ -1037,7 +1241,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
             </button>
           </div>
           {/* [#1123] welcomeLocked guard removed — always show label filter */}
-          <div className="px-4 py-2 border-b border-stone-50">
+          <div className="px-4 py-2 border-b border-stone-50 dark:border-neutral-800">
             <PillTabBar
               items={labelTabs}
               selected={selectedLabel}
@@ -1047,8 +1251,12 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
           </div>
           <div className="flex-1 overflow-y-auto">
             {sortedThreads.length === 0 ? (
-              <p className="px-4 py-6 text-xs text-stone-400 text-center">
-                {selectedLabel === 'all' ? 'No threads yet' : `No "${selectedLabel}" threads`}
+              <p className="px-4 py-6 text-xs text-stone-400 dark:text-neutral-500 text-center">
+                {selectedLabel === 'all'
+                  ? t('chat.noThreads')
+                  : selectedLabel === WORKERS_TAB_VALUE
+                    ? t('chat.noWorkerThreads')
+                    : t('chat.noLabelThreads').replace('{label}', selectedLabel)}
               </p>
             ) : (
               sortedThreads.map(thread => (
@@ -1068,17 +1276,17 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                       void dispatch(loadThreadMessages(thread.id));
                     }
                   }}
-                  className={`w-full text-left px-4 py-3 border-b border-stone-50 transition-colors group cursor-pointer ${
+                  className={`w-full text-left px-4 py-3 border-b border-stone-50 dark:border-neutral-800 transition-colors group cursor-pointer ${
                     selectedThreadId === thread.id
                       ? 'bg-primary-50 border-l-2 border-l-primary-500'
-                      : 'hover:bg-stone-50'
+                      : 'hover:bg-stone-50 dark:hover:bg-neutral-800/60'
                   }`}>
                   <div className="flex items-center justify-between">
                     <p
                       className={`text-sm truncate flex-1 ${
                         selectedThreadId === thread.id
                           ? 'font-medium text-primary-700'
-                          : 'text-stone-700'
+                          : 'text-stone-700 dark:text-neutral-200'
                       }`}>
                       {resolveThreadDisplayTitle(thread.id)}
                     </p>
@@ -1088,10 +1296,13 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                         e.stopPropagation();
                         setDeleteModal({
                           isOpen: true,
-                          title: 'Delete thread',
-                          message: `Are you sure you want to delete "${thread.title || 'Untitled thread'}"? This cannot be undone.`,
-                          confirmText: 'Delete',
-                          cancelText: 'Cancel',
+                          title: t('chat.deleteThread'),
+                          message: t('chat.deleteThreadConfirm').replace(
+                            '{title}',
+                            thread.title || t('chat.untitledThread')
+                          ),
+                          confirmText: t('common.delete'),
+                          cancelText: t('common.cancel'),
                           destructive: true,
                           onConfirm: () => {
                             void dispatch(deleteThread(thread.id));
@@ -1099,8 +1310,8 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                           onCancel: () => {},
                         });
                       }}
-                      className="ml-2 p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-stone-200 text-stone-400 hover:text-coral-500 transition-all flex-shrink-0"
-                      title="Delete thread">
+                      className="ml-2 p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-stone-200 dark:bg-neutral-800 dark:hover:bg-neutral-800 text-stone-400 dark:text-neutral-500 hover:text-coral-500 transition-all flex-shrink-0"
+                      title={t('chat.deleteThread')}>
                       <svg
                         className="w-3 h-3"
                         fill="none"
@@ -1116,11 +1327,11 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                     </button>
                   </div>
                   {/* <div className="flex items-center gap-2 mt-0.5">
-                    <span className="text-[10px] text-stone-400">
+                    <span className="text-[10px] text-stone-400 dark:text-neutral-500">
                       {formatRelativeTime(thread.lastMessageAt)}
                     </span>
                     {thread.messageCount > 0 && (
-                      <span className="text-[10px] text-stone-400">
+                      <span className="text-[10px] text-stone-400 dark:text-neutral-500">
                         {thread.messageCount} msg{thread.messageCount !== 1 ? 's' : ''}
                       </span>
                     )}
@@ -1136,8 +1347,8 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
       <div
         className={
           isSidebar
-            ? 'flex-1 flex flex-col min-w-0 bg-white border-l border-stone-200 overflow-hidden'
-            : 'flex-1 flex flex-col min-w-0 max-w-2xl bg-white rounded-2xl shadow-soft border border-stone-200 overflow-hidden'
+            ? 'flex-1 flex flex-col min-w-0 bg-white dark:bg-neutral-900 border-l border-stone-200 dark:border-neutral-800 overflow-hidden'
+            : 'flex-1 flex flex-col min-w-0 max-w-2xl bg-white dark:bg-neutral-900 rounded-2xl shadow-soft border border-stone-200 dark:border-neutral-800 overflow-hidden'
         }>
         {/* Chat header — only shown in page mode; the sidebar embed uses the
             parent page's chrome instead. Hidden entirely during welcome
@@ -1145,12 +1356,12 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
             with no chrome around it. */}
         {!isSidebar && (
           <div
-            className="flex items-center gap-2 px-4 py-2.5 border-b border-stone-100"
+            className="flex items-center gap-2 px-4 py-2.5 border-b border-stone-100 dark:border-neutral-800"
             data-walkthrough="chat-agent-panel">
             <button
               onClick={() => setShowSidebar(prev => !prev)}
-              className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-stone-100 text-stone-500 hover:text-stone-700 transition-colors"
-              title={effectiveShowSidebar ? 'Hide sidebar' : 'Show sidebar'}>
+              className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 dark:hover:bg-neutral-800/60 text-stone-500 dark:text-neutral-400 hover:text-stone-700 dark:hover:text-neutral-200 dark:text-neutral-200 dark:hover:text-neutral-200 transition-colors"
+              title={effectiveShowSidebar ? t('chat.hideSidebar') : t('chat.showSidebar')}>
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path
                   strokeLinecap="round"
@@ -1160,28 +1371,127 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                 />
               </svg>
             </button>
-            <h3 className="text-sm font-medium text-stone-700 truncate flex-1">
-              {resolveThreadDisplayTitle(selectedThreadId)}
-            </h3>
+            <div className="flex flex-col min-w-0 flex-1">
+              {selectedThreadParent ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    dispatch(setSelectedThread(selectedThreadParent.id));
+                    void dispatch(loadThreadMessages(selectedThreadParent.id));
+                  }}
+                  className="self-start flex items-center gap-1 text-[11px] font-medium text-primary-600 hover:text-primary-700 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300 rounded -mx-1 px-1"
+                  data-testid="worker-thread-back-to-parent">
+                  <span aria-hidden="true">←</span>
+                  <span className="truncate max-w-[16rem]">
+                    back to {selectedThreadParent.title}
+                  </span>
+                </button>
+              ) : null}
+              <h3 className="text-sm font-medium text-stone-700 dark:text-neutral-200 truncate">
+                {resolveThreadDisplayTitle(selectedThreadId)}
+              </h3>
+            </div>
             {/* [#1123] welcomeLocked guard removed — always show token usage + new thread button */}
             <>
+              <div className="flex items-center gap-1">
+                <select
+                  aria-label="Agent profile"
+                  value={selectedAgentProfileId}
+                  onChange={event => void handleSelectAgentProfile(event.target.value)}
+                  className="h-7 max-w-[120px] rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-2 text-xs text-stone-700 dark:text-neutral-200 outline-none transition-colors focus:border-primary-400">
+                  {agentProfiles.map(profile => (
+                    <option key={profile.id} value={profile.id}>
+                      {profile.name}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => setProfileDraftOpen(prev => !prev)}
+                  className="h-7 w-7 rounded-lg text-xs font-medium text-stone-500 dark:text-neutral-400 transition-colors hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 dark:hover:bg-neutral-800/60 hover:text-stone-700 dark:hover:text-neutral-200 dark:text-neutral-200 dark:hover:text-neutral-200"
+                  title="Create agent profile"
+                  aria-label="Create agent profile">
+                  +
+                </button>
+              </div>
               <TokenUsagePill />
               <button
                 onClick={() => void handleCreateNewThread()}
                 className="px-2.5 py-1 rounded-lg text-xs font-medium text-primary-600 hover:bg-primary-50 transition-colors"
-                title="New thread (/new)">
-                + New
+                title={t('chat.newThreadShortcut')}>
+                {t('chat.new')}
               </button>
             </>
           </div>
         )}
-        <div ref={messagesContainerRef} className="flex-1 overflow-y-auto px-5 py-4 bg-[#f6f6f6]">
+        {!isSidebar && profileDraftOpen && (
+          <div className="border-b border-stone-100 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-4 py-3">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_140px]">
+              <input
+                value={profileDraft.name}
+                onChange={event => setProfileDraft(prev => ({ ...prev, name: event.target.value }))}
+                placeholder="Profile name"
+                className="h-8 rounded-lg border border-stone-200 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-200 px-3 text-xs outline-none focus:border-primary-400"
+              />
+              <select
+                value={profileDraft.agentId}
+                onChange={event =>
+                  setProfileDraft(prev => ({ ...prev, agentId: event.target.value }))
+                }
+                className="h-8 rounded-lg border border-stone-200 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-200 px-2 text-xs outline-none focus:border-primary-400">
+                {agentProfileAgentOptions.map(agent => (
+                  <option key={agent.id} value={agent.id}>
+                    {agent.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <textarea
+              value={profileDraft.systemPromptSuffix}
+              onChange={event =>
+                setProfileDraft(prev => ({ ...prev, systemPromptSuffix: event.target.value }))
+              }
+              placeholder="Prompt style"
+              rows={2}
+              className="mt-2 w-full resize-none rounded-lg border border-stone-200 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-200 px-3 py-2 text-xs outline-none focus:border-primary-400"
+            />
+            <div className="mt-2 flex items-center gap-2">
+              <input
+                value={profileDraft.allowedTools}
+                onChange={event =>
+                  setProfileDraft(prev => ({ ...prev, allowedTools: event.target.value }))
+                }
+                placeholder="Allowed tools"
+                className="h-8 min-w-0 flex-1 rounded-lg border border-stone-200 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-200 px-3 text-xs outline-none focus:border-primary-400"
+              />
+              <button
+                type="button"
+                onClick={() => void handleCreateAgentProfile()}
+                disabled={!profileDraft.name.trim()}
+                className="h-8 rounded-lg bg-primary-500 px-3 text-xs font-medium text-white transition-colors hover:bg-primary-600 disabled:opacity-40">
+                Save
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setProfileDraft(DEFAULT_PROFILE_DRAFT);
+                  setProfileDraftOpen(false);
+                }}
+                className="h-8 rounded-lg border border-stone-200 dark:border-neutral-800 px-3 text-xs font-medium text-stone-600 dark:text-neutral-300 transition-colors hover:bg-stone-50 dark:hover:bg-neutral-800/60">
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+        <div
+          ref={messagesContainerRef}
+          className="flex-1 overflow-y-auto px-5 py-4 bg-[#f6f6f6] dark:bg-neutral-950">
           {isLoadingMessages ? (
             <div className="space-y-4">
               {Array.from({ length: 4 }).map((_, i) => (
                 <div key={i} className={`flex ${i % 2 === 0 ? 'justify-start' : 'justify-end'}`}>
                   <div
-                    className={`h-12 rounded-2xl animate-pulse bg-stone-100 ${
+                    className={`h-12 rounded-2xl animate-pulse bg-stone-100 dark:bg-neutral-800 ${
                       i % 2 === 0 ? 'w-2/3' : 'w-1/2'
                     }`}
                   />
@@ -1202,16 +1512,29 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                   d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
                 />
               </svg>
-              <p className="text-sm text-stone-400 mb-1">Failed to load messages</p>
-              <p className="text-xs text-stone-600 mb-3 text-center">{messagesError}</p>
+              <p className="text-sm text-stone-400 dark:text-neutral-500 mb-1">
+                {t('chat.failedToLoadMessages')}
+              </p>
+              <p className="text-xs text-stone-600 dark:text-neutral-300 mb-3 text-center">
+                {messagesError}
+              </p>
               <button
                 onClick={() => window.location.reload()}
                 className="text-xs text-primary-400 hover:text-primary-300 transition-colors">
-                Reload
+                {t('common.reload')}
               </button>
             </div>
-          ) : hasVisibleMessages ? (
+          ) : hasVisibleMessages || hasTaskBoard ? (
             <div className="space-y-3">
+              {selectedTaskBoard && hasTaskBoard && (
+                <TaskKanbanBoard
+                  board={selectedTaskBoard}
+                  disabled={!selectedThreadId}
+                  onMove={(card, status) => {
+                    void handleMoveTaskCard(card, status);
+                  }}
+                />
+              )}
               {visibleMessages.map(msg => (
                 <div key={msg.id}>
                   {shouldRenderTimelineBeforeLatestAgentMessage &&
@@ -1259,7 +1582,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                             return <CitationChips citations={citations} />;
                           })()}
                           {latestVisibleMessage?.id === msg.id && (
-                            <p className="px-1 text-[10px] text-stone-400">
+                            <p className="px-1 text-[10px] text-stone-400 dark:text-neutral-500">
                               {formatRelativeTime(msg.createdAt)}
                             </p>
                           )}
@@ -1276,8 +1599,8 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                       )}
                       <button
                         onClick={() => handleCopyMessage(msg.id, msg.content)}
-                        className={`absolute -top-1 ${msg.sender === 'user' ? '-left-8' : '-right-8'} p-1 rounded-md opacity-0 group-hover/msg:opacity-100 hover:bg-stone-100 text-stone-400 hover:text-stone-600 transition-all`}
-                        title="Copy message">
+                        className={`absolute -top-1 ${msg.sender === 'user' ? '-left-8' : '-right-8'} p-1 rounded-md opacity-0 group-hover/msg:opacity-100 hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 dark:hover:bg-neutral-800 text-stone-400 dark:text-neutral-500 hover:text-stone-600 dark:hover:text-neutral-300 transition-all`}
+                        title={t('chat.copyResponse')}>
                         {copiedMessageId === msg.id ? (
                           <svg
                             className="w-3.5 h-3.5 text-sage-500"
@@ -1335,7 +1658,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                             ))}
                             {msg.sender === 'agent' &&
                               (reactionPickerMsgId === msg.id ? (
-                                <div className="flex items-center gap-0.5 px-1 py-0.5 rounded-full bg-stone-100">
+                                <div className="flex items-center gap-0.5 px-1 py-0.5 rounded-full bg-stone-100 dark:bg-neutral-800">
                                   {['👍', '❤️', '😂', '🔥', '👀', '🎯'].map(emoji => (
                                     <button
                                       key={emoji}
@@ -1358,14 +1681,14 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                                   ))}
                                   <button
                                     onClick={() => setReactionPickerMsgId(null)}
-                                    className="ml-0.5 text-stone-600 hover:text-stone-400 text-xs px-0.5">
+                                    className="ml-0.5 text-stone-600 dark:text-neutral-300 hover:text-stone-400 dark:hover:text-neutral-500 text-xs px-0.5">
                                     ✕
                                   </button>
                                 </div>
                               ) : (
                                 <button
                                   onClick={() => setReactionPickerMsgId(msg.id)}
-                                  className="opacity-0 group-hover/msg:opacity-100 flex items-center px-1.5 py-0.5 rounded-full bg-stone-50 hover:bg-stone-200 text-stone-500 hover:text-stone-300 text-xs transition-all"
+                                  className="opacity-0 group-hover/msg:opacity-100 flex items-center px-1.5 py-0.5 rounded-full bg-stone-50 dark:bg-neutral-800/60 hover:bg-stone-200 dark:bg-neutral-800 dark:hover:bg-neutral-800 text-stone-500 dark:text-neutral-400 hover:text-stone-300 dark:hover:text-neutral-600 text-xs transition-all"
                                   title="Add reaction">
                                   +
                                 </button>
@@ -1387,11 +1710,11 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                   (selectedStreamingAssistant?.thinking.length ?? 0) > 0
                 ) && (
                   <div className="flex justify-start">
-                    <div className="bg-stone-200/80 rounded-2xl rounded-bl-md px-4 py-3">
+                    <div className="bg-stone-200/80 dark:bg-neutral-800 rounded-2xl rounded-bl-md px-4 py-3">
                       <div className="flex items-center gap-1">
-                        <span className="w-1.5 h-1.5 rounded-full bg-stone-500 animate-bounce [animation-delay:0ms]" />
-                        <span className="w-1.5 h-1.5 rounded-full bg-stone-500 animate-bounce [animation-delay:150ms]" />
-                        <span className="w-1.5 h-1.5 rounded-full bg-stone-500 animate-bounce [animation-delay:300ms]" />
+                        <span className="w-1.5 h-1.5 rounded-full bg-stone-50 dark:bg-neutral-800/600 animate-bounce [animation-delay:0ms]" />
+                        <span className="w-1.5 h-1.5 rounded-full bg-stone-50 dark:bg-neutral-800/600 animate-bounce [animation-delay:150ms]" />
+                        <span className="w-1.5 h-1.5 rounded-full bg-stone-50 dark:bg-neutral-800/600 animate-bounce [animation-delay:300ms]" />
                       </div>
                     </div>
                   </div>
@@ -1406,21 +1729,23 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                   <div className="flex justify-start">
                     <div className="relative w-fit max-w-[75%]">
                       {selectedStreamingAssistant.thinking.length > 0 && (
-                        <details className="mb-1.5 bg-stone-100 rounded-lg px-3 py-1.5 text-xs text-stone-600 open:bg-stone-100">
+                        <details className="mb-1.5 bg-stone-100 dark:bg-neutral-800 rounded-lg px-3 py-1.5 text-xs text-stone-600 dark:text-neutral-300 open:bg-stone-100 dark:bg-neutral-800 dark:open:bg-neutral-800">
                           <summary className="cursor-pointer select-none flex items-center gap-1.5">
                             <span className="inline-block w-1.5 h-1.5 rounded-full bg-primary-400 animate-pulse" />
-                            <span>Thinking…</span>
+                            <span>{t('chat.thinking')}</span>
                           </summary>
-                          <pre className="whitespace-pre-wrap break-words mt-1.5 font-sans text-[11px] text-stone-500">
+                          <pre className="whitespace-pre-wrap break-words mt-1.5 font-sans text-[11px] text-stone-500 dark:text-neutral-400">
                             {selectedStreamingAssistant.thinking.slice(-STREAMING_PREVIEW_CHARS)}
                           </pre>
                         </details>
                       )}
                       {selectedStreamingAssistant.content.length > 0 && (
-                        <div className="rounded-2xl rounded-bl-md px-3 py-1.5 bg-stone-200/80 text-stone-900">
-                          <p className="text-xs text-stone-700 font-mono whitespace-pre-wrap break-words leading-snug">
+                        <div className="rounded-2xl rounded-bl-md px-3 py-1.5 bg-stone-200/80 dark:bg-neutral-800 text-stone-900 dark:text-neutral-100">
+                          <p className="text-xs text-stone-700 dark:text-neutral-200 font-mono whitespace-pre-wrap break-words leading-snug">
                             {selectedStreamingAssistant.content.length >
-                              STREAMING_PREVIEW_CHARS && <span className="text-stone-400">…</span>}
+                              STREAMING_PREVIEW_CHARS && (
+                              <span className="text-stone-400 dark:text-neutral-500">…</span>
+                            )}
                             {selectedStreamingAssistant.content.slice(-STREAMING_PREVIEW_CHARS)}
                             <span className="inline-block w-1 h-3 ml-0.5 align-middle bg-primary-400 animate-pulse" />
                           </p>
@@ -1431,13 +1756,16 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                 )}
               {/* Inference status indicator */}
               {selectedInferenceStatus && (
-                <div className="flex items-center gap-2 px-1 py-1.5 text-xs text-stone-500">
+                <div className="flex items-center gap-2 px-1 py-1.5 text-xs text-stone-500 dark:text-neutral-400">
                   <span className="inline-block w-2 h-2 rounded-full bg-primary-400 animate-pulse" />
                   <span>
                     {selectedInferenceStatus.phase === 'thinking' &&
                       (selectedInferenceStatus.iteration > 0
-                        ? `Thinking (iteration ${selectedInferenceStatus.iteration})...`
-                        : 'Thinking...')}
+                        ? t('chat.thinkingIteration').replace(
+                            '{n}',
+                            String(selectedInferenceStatus.iteration)
+                          )
+                        : t('chat.thinkingDots'))}
                     {selectedInferenceStatus.phase === 'tool_use' &&
                       `${
                         formatTimelineEntry(
@@ -1474,8 +1802,8 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                     onClick={() => {
                       if (selectedThreadId) void chatCancel(selectedThreadId);
                     }}
-                    className="text-xs text-stone-500 hover:text-stone-700 transition-colors">
-                    Cancel
+                    className="text-xs text-stone-500 dark:text-neutral-400 hover:text-stone-700 dark:hover:text-neutral-200 dark:text-neutral-200 dark:hover:text-neutral-200 transition-colors">
+                    {t('common.cancel')}
                   </button>
                 </div>
               )}
@@ -1490,19 +1818,19 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
             //   // `hasVisibleMessages` branch above).
             //   <div className="flex-1 flex flex-col items-center justify-center h-full gap-3">
             //     <div className="flex items-center gap-1">
-            //       <span className="w-2 h-2 rounded-full bg-stone-500 animate-bounce [animation-delay:0ms]" />
-            //       <span className="w-2 h-2 rounded-full bg-stone-500 animate-bounce [animation-delay:150ms]" />
-            //       <span className="w-2 h-2 rounded-full bg-stone-500 animate-bounce [animation-delay:300ms]" />
+            //       <span className="w-2 h-2 rounded-full bg-stone-50 dark:bg-neutral-800/600 animate-bounce [animation-delay:0ms]" />
+            //       <span className="w-2 h-2 rounded-full bg-stone-50 dark:bg-neutral-800/600 animate-bounce [animation-delay:150ms]" />
+            //       <span className="w-2 h-2 rounded-full bg-stone-50 dark:bg-neutral-800/600 animate-bounce [animation-delay:300ms]" />
             //     </div>
             //     <WelcomeThinkingTypewriter />
             //   </div>
             <div className="flex-1 flex items-center justify-center h-full">
-              <p className="text-sm text-stone-600">No messages yet</p>
+              <p className="text-sm text-stone-600 dark:text-neutral-300">{t('chat.noMessages')}</p>
             </div>
           )}
         </div>
 
-        <div className="flex-shrink-0 border-t border-stone-200 px-4 py-3">
+        <div className="flex-shrink-0 border-t border-stone-200 dark:border-neutral-800 px-4 py-3">
           {/* [#1123] welcomeLocked and welcomePending guards removed — Joyride walkthrough replaced welcome-agent */}
           <>
             {isNearLimit &&
@@ -1512,9 +1840,12 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                 <div className="mb-3">
                   <UpsellBanner
                     variant="warning"
-                    title="Approaching usage limit"
-                    message={`You've used ${Math.round(Math.max(usagePct10h, usagePct7d) * 100)}% of your inference budget. Upgrade for higher limits.`}
-                    ctaLabel="Upgrade"
+                    title={t('chat.approachingLimit')}
+                    message={t('chat.approachingLimitMsg').replace(
+                      '{pct}',
+                      String(Math.round(Math.max(usagePct10h, usagePct7d) * 100))
+                    )}
+                    ctaLabel={t('chat.upgrade')}
                     onCtaClick={() => {
                       void openUrl(BILLING_DASHBOARD_URL);
                     }}
@@ -1541,9 +1872,9 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                   <p className="text-xs text-coral-600 truncate">
                     {shouldShowBudgetCompletedMessage
                       ? teamUsage.cycleBudgetUsd > 0
-                        ? `You've hit your weekly limit.${teamUsage.cycleEndsAt ? ` Resets ${formatResetTime(teamUsage.cycleEndsAt)}.` : ''} Top up to continue.`
-                        : 'Your included budget is complete. Add credits or upgrade to continue.'
-                      : `10-hour rate limit reached.${teamUsage.fiveHourResetsAt ? ` Resets ${formatResetTime(teamUsage.fiveHourResetsAt)}.` : ''}`}
+                        ? `${t('chat.weeklyLimitHit')}${teamUsage.cycleEndsAt ? ` ${t('chat.resets')} ${formatResetTime(teamUsage.cycleEndsAt)}.` : ''} ${t('chat.topUpToContinue')}`
+                        : t('chat.budgetComplete')
+                      : `${t('chat.rateLimitReached')}${teamUsage.fiveHourResetsAt ? ` ${t('chat.resets')} ${formatResetTime(teamUsage.fiveHourResetsAt)}.` : ''}`}
                   </p>
                 </div>
                 {shouldShowBudgetCompletedMessage && (
@@ -1552,7 +1883,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                       void openUrl(BILLING_DASHBOARD_URL);
                     }}
                     className="flex-shrink-0 px-3 py-1.5 rounded-lg bg-coral-500 hover:bg-coral-400 text-white text-xs font-medium transition-colors">
-                    Top Up
+                    {t('chat.topUp')}
                   </button>
                 )}
               </div>
@@ -1589,33 +1920,39 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                       />
                     </div>
                   ) : (
-                    <span className="text-[10px] text-stone-400 animate-pulse">loading…</span>
+                    <span className="text-[10px] text-stone-400 dark:text-neutral-500 animate-pulse">
+                      {t('common.loading')}
+                    </span>
                   )}
                   {teamUsage && (
                     <div className="absolute bottom-full right-0 mb-2 hidden group-hover:block z-50">
                       <div className="bg-stone-900 text-white text-[10px] rounded-lg px-3 py-2 shadow-lg whitespace-nowrap space-y-1.5">
                         {!teamUsage.bypassCycleLimit && (
                           <div className="flex items-center justify-between gap-4">
-                            <span className="text-stone-400">5-hour limit</span>
+                            <span className="text-stone-400 dark:text-neutral-500">
+                              {t('chat.fiveHourLimit')}
+                            </span>
                             <span>
                               ${(teamUsage.cycleLimit5hr ?? 0).toFixed(2)} / $
                               {(teamUsage.fiveHourCapUsd ?? 0).toFixed(2)}
                               {teamUsage.fiveHourResetsAt && (
-                                <span className="text-stone-400 ml-1">
-                                  — resets {formatResetTime(teamUsage.fiveHourResetsAt)}
+                                <span className="text-stone-400 dark:text-neutral-500 ml-1">
+                                  — {t('chat.resets')} {formatResetTime(teamUsage.fiveHourResetsAt)}
                                 </span>
                               )}
                             </span>
                           </div>
                         )}
                         <div className="flex items-center justify-between gap-4">
-                          <span className="text-stone-400">Weekly limit</span>
+                          <span className="text-stone-400 dark:text-neutral-500">
+                            {t('chat.weeklyLimit')}
+                          </span>
                           <span>
                             ${(teamUsage.remainingUsd ?? 0).toFixed(2)} / $
-                            {(teamUsage.cycleBudgetUsd ?? 0).toFixed(2)} left
+                            {(teamUsage.cycleBudgetUsd ?? 0).toFixed(2)} {t('chat.left')}
                             {teamUsage.cycleEndsAt && (
-                              <span className="text-stone-400 ml-1">
-                                — resets {formatResetTime(teamUsage.cycleEndsAt)}
+                              <span className="text-stone-400 dark:text-neutral-500 ml-1">
+                                — {t('chat.resets')} {formatResetTime(teamUsage.cycleEndsAt)}
                               </span>
                             )}
                           </span>
@@ -1635,8 +1972,8 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
               </p>
               <button
                 onClick={() => setSendAdvisory(null)}
-                className="text-xs text-stone-500 hover:text-stone-700 transition-colors ml-2">
-                Dismiss
+                className="text-xs text-stone-500 dark:text-neutral-400 hover:text-stone-700 dark:hover:text-neutral-200 dark:text-neutral-200 dark:hover:text-neutral-200 transition-colors ml-2">
+                {t('common.dismiss')}
               </button>
             </div>
           )}
@@ -1660,13 +1997,13 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                       navigate('/settings/voice');
                     }}
                     className="text-xs text-primary-500 hover:text-primary-600 font-medium transition-colors">
-                    Set up
+                    {t('chat.setup')}
                   </button>
                 )}
                 <button
                   onClick={() => setSendError(null)}
-                  className="text-xs text-stone-500 hover:text-stone-700 transition-colors">
-                  Dismiss
+                  className="text-xs text-stone-500 dark:text-neutral-400 hover:text-stone-700 dark:hover:text-neutral-200 dark:text-neutral-200 dark:hover:text-neutral-200 transition-colors">
+                  {t('common.dismiss')}
                 </button>
               </div>
             </div>
@@ -1684,28 +2021,36 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
             />
           ) : inputMode === 'text' ? (
             <div className="flex items-end gap-3">
-              <div className="relative flex flex-1 items-center justify-center rounded-xl border border-stone-200 bg-white transition-all focus-within:border-primary-500/50 focus-within:ring-1 focus-within:ring-primary-500/50">
+              <div className="relative flex flex-1 items-center justify-center rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 transition-all focus-within:border-primary-500/50 focus-within:ring-1 focus-within:ring-primary-500/50">
                 <div
                   aria-hidden
                   className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-4 py-2.5 text-sm leading-normal font-sans">
                   <span className="invisible">{inputValue}</span>
-                  <span className="text-stone-500/50">{inlineCompletionSuffix}</span>
+                  <span className="text-stone-500 dark:text-neutral-400/50">
+                    {inlineCompletionSuffix}
+                  </span>
                 </div>
                 <textarea
                   ref={textInputRef}
                   value={inputValue}
                   onChange={e => setInputValue(e.target.value)}
+                  onCompositionStart={() => {
+                    isComposingTextRef.current = true;
+                  }}
+                  onCompositionEnd={() => {
+                    isComposingTextRef.current = false;
+                  }}
                   onKeyDown={handleInputKeyDown}
-                  placeholder="Type a message..."
+                  placeholder={t('chat.typeMessage')}
                   rows={1}
                   disabled={composerInteractionBlocked}
-                  className="relative z-10 w-full resize-none border-0 bg-transparent pl-4 pr-10 py-2.5 text-sm leading-normal whitespace-pre-wrap break-words font-sans text-stone-900 placeholder:text-stone-400 outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0 max-h-32 disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="relative z-10 w-full resize-none border-0 bg-transparent pl-4 pr-10 py-2.5 text-sm leading-normal whitespace-pre-wrap break-words font-sans text-stone-900 dark:text-neutral-100 placeholder:text-stone-400 dark:placeholder:text-neutral-500 outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0 max-h-32 disabled:opacity-50 disabled:cursor-not-allowed"
                 />
                 {/* Voice input mic hidden per #717 (inputMode='voice' path retained). */}
               </div>
               <button
-                aria-label="Send message"
-                title="Send message"
+                aria-label={t('chat.send')}
+                title={t('chat.send')}
                 onClick={() => {
                   void handleSendMessage();
                 }}
@@ -1745,8 +2090,8 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                 type="button"
                 onClick={() => setInputMode('text')}
                 disabled={isRecording || isTranscribing}
-                className="w-10 h-10 flex items-center justify-center rounded-full border border-stone-200 bg-white text-stone-500 hover:text-stone-700 hover:border-stone-300 transition-colors disabled:opacity-40"
-                title="Switch to text input">
+                className="w-10 h-10 flex items-center justify-center rounded-full border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-stone-500 dark:text-neutral-400 hover:text-stone-700 dark:hover:text-neutral-200 dark:text-neutral-200 dark:hover:text-neutral-200 hover:border-stone-300 dark:hover:border-neutral-700 transition-colors disabled:opacity-40"
+                title={t('chat.switchToText')}>
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path
                     strokeLinecap="round"
@@ -1767,15 +2112,19 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                     ? 'bg-coral-500 hover:bg-coral-400 text-white'
                     : 'bg-primary-600 hover:bg-primary-500 text-white'
                 } disabled:opacity-40 disabled:cursor-not-allowed`}>
-                {isTranscribing ? 'Transcribing…' : isRecording ? 'Stop & Send' : 'Start Talking'}
+                {isTranscribing
+                  ? t('chat.transcribing')
+                  : isRecording
+                    ? t('chat.stopAndSend')
+                    : t('chat.startTalking')}
               </button>
-              <p className="text-xs text-stone-400 truncate">
+              <p className="text-xs text-stone-400 dark:text-neutral-500 truncate">
                 {voiceStatus ??
                   (isPlayingReply && replyMode === 'voice'
-                    ? 'Playing voice reply…'
+                    ? t('chat.playingVoiceReply')
                     : canUseMicrophoneApi
-                      ? 'Click "Start Talking" to speak to the agent.'
-                      : 'Microphone input is not available in this runtime.')}
+                      ? t('chat.voiceHint')
+                      : t('chat.micUnavailable'))}
               </p>
             </div>
           )}

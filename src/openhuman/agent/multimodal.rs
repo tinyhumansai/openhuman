@@ -1,5 +1,5 @@
 use crate::openhuman::config::{build_runtime_proxy_client_with_timeouts, MultimodalConfig};
-use crate::openhuman::providers::ChatMessage;
+use crate::openhuman::inference::provider::ChatMessage;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use reqwest::Client;
 use std::path::Path;

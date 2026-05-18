@@ -47,28 +47,25 @@ pub fn clear() {
 }
 
 #[cfg(test)]
+pub(crate) fn test_lock() -> std::sync::MutexGuard<'static, ()> {
+    static M: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    M.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
-    /// All tests share global state. Run them serially behind a Mutex so
-    /// concurrent set/clear calls in libtest's parallel scheduler don't
-    /// produce flaky assertions. The flag itself is process-local so we
-    /// can't isolate it per-test — best-effort: clear before + after.
-    fn lock() -> std::sync::MutexGuard<'static, ()> {
-        static M: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        M.lock().unwrap_or_else(|e| e.into_inner())
-    }
-
     #[test]
     fn defaults_to_not_denied() {
-        let _g = lock();
+        let _g = test_lock();
         clear();
         assert!(!system_events_denied());
     }
 
     #[test]
     fn mark_then_observe() {
-        let _g = lock();
+        let _g = test_lock();
         clear();
         assert!(!system_events_denied());
         mark_system_events_denied();
@@ -79,7 +76,7 @@ mod tests {
 
     #[test]
     fn idempotent_mark_and_clear() {
-        let _g = lock();
+        let _g = test_lock();
         clear();
         mark_system_events_denied();
         mark_system_events_denied();
@@ -91,7 +88,7 @@ mod tests {
 
     #[test]
     fn concurrent_mark_and_read() {
-        let _g = lock();
+        let _g = test_lock();
         clear();
         let producers: Vec<_> = (0..8)
             .map(|_| std::thread::spawn(mark_system_events_denied))

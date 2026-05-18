@@ -1,0 +1,720 @@
+use serde::de::DeserializeOwned;
+use serde::Deserialize;
+use serde_json::{Map, Value};
+
+use crate::core::all::{ControllerFuture, RegisteredController};
+use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
+use crate::openhuman::config::rpc as config_rpc;
+use crate::rpc::RpcOutcome;
+
+#[derive(Debug, Deserialize)]
+struct InferenceSummarizeParams {
+    text: String,
+    max_tokens: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+struct InferencePromptParams {
+    prompt: String,
+    max_tokens: Option<u32>,
+    no_think: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+struct InferenceVisionPromptParams {
+    prompt: String,
+    image_refs: Vec<String>,
+    max_tokens: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+struct InferenceEmbedParams {
+    inputs: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct InferenceChatMessageParam {
+    role: String,
+    content: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct InferenceChatParams {
+    messages: Vec<InferenceChatMessageParam>,
+    max_tokens: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+struct InferenceShouldReactParams {
+    message: String,
+    channel_type: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct InferenceAnalyzeSentimentParams {
+    message: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct InferenceModelRouteUpdate {
+    hint: String,
+    model: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct InferenceCloudProviderUpdate {
+    id: Option<String>,
+    slug: String,
+    #[serde(default)]
+    label: Option<String>,
+    endpoint: String,
+    #[serde(default)]
+    auth_style: Option<String>,
+    #[serde(rename = "type", default)]
+    legacy_type: Option<String>,
+    #[serde(default)]
+    default_model: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct InferenceUpdateModelSettingsParams {
+    api_url: Option<String>,
+    inference_url: Option<String>,
+    api_key: Option<String>,
+    default_model: Option<String>,
+    default_temperature: Option<f64>,
+    model_routes: Option<Vec<InferenceModelRouteUpdate>>,
+    cloud_providers: Option<Vec<InferenceCloudProviderUpdate>>,
+    primary_cloud: Option<String>,
+    reasoning_provider: Option<String>,
+    agentic_provider: Option<String>,
+    coding_provider: Option<String>,
+    memory_provider: Option<String>,
+    embeddings_provider: Option<String>,
+    heartbeat_provider: Option<String>,
+    learning_provider: Option<String>,
+    subconscious_provider: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct InferenceUpdateLocalSettingsParams {
+    runtime_enabled: Option<bool>,
+    opt_in_confirmed: Option<bool>,
+    provider: Option<String>,
+    base_url: Option<String>,
+    model_id: Option<String>,
+    chat_model_id: Option<String>,
+    usage_embeddings: Option<bool>,
+    usage_heartbeat: Option<bool>,
+    usage_learning_reflection: Option<bool>,
+    usage_subconscious: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+struct InferenceListModelsParams {
+    provider_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct InferenceApplyPresetParams {
+    tier: String,
+}
+
+pub fn all_controller_schemas() -> Vec<ControllerSchema> {
+    vec![
+        schemas("status"),
+        schemas("get_client_config"),
+        schemas("update_model_settings"),
+        schemas("update_local_settings"),
+        schemas("list_models"),
+        schemas("device_profile"),
+        schemas("presets"),
+        schemas("apply_preset"),
+        schemas("diagnostics"),
+        schemas("summarize"),
+        schemas("prompt"),
+        schemas("vision_prompt"),
+        schemas("embed"),
+        schemas("chat"),
+        schemas("should_react"),
+        schemas("analyze_sentiment"),
+    ]
+}
+
+pub fn all_registered_controllers() -> Vec<RegisteredController> {
+    vec![
+        RegisteredController {
+            schema: schemas("status"),
+            handler: handle_inference_status,
+        },
+        RegisteredController {
+            schema: schemas("get_client_config"),
+            handler: handle_inference_get_client_config,
+        },
+        RegisteredController {
+            schema: schemas("update_model_settings"),
+            handler: handle_inference_update_model_settings,
+        },
+        RegisteredController {
+            schema: schemas("update_local_settings"),
+            handler: handle_inference_update_local_settings,
+        },
+        RegisteredController {
+            schema: schemas("list_models"),
+            handler: handle_inference_list_models,
+        },
+        RegisteredController {
+            schema: schemas("device_profile"),
+            handler: handle_inference_device_profile,
+        },
+        RegisteredController {
+            schema: schemas("presets"),
+            handler: handle_inference_presets,
+        },
+        RegisteredController {
+            schema: schemas("apply_preset"),
+            handler: handle_inference_apply_preset,
+        },
+        RegisteredController {
+            schema: schemas("diagnostics"),
+            handler: handle_inference_diagnostics,
+        },
+        RegisteredController {
+            schema: schemas("summarize"),
+            handler: handle_inference_summarize,
+        },
+        RegisteredController {
+            schema: schemas("prompt"),
+            handler: handle_inference_prompt,
+        },
+        RegisteredController {
+            schema: schemas("vision_prompt"),
+            handler: handle_inference_vision_prompt,
+        },
+        RegisteredController {
+            schema: schemas("embed"),
+            handler: handle_inference_embed,
+        },
+        RegisteredController {
+            schema: schemas("chat"),
+            handler: handle_inference_chat,
+        },
+        RegisteredController {
+            schema: schemas("should_react"),
+            handler: handle_inference_should_react,
+        },
+        RegisteredController {
+            schema: schemas("analyze_sentiment"),
+            handler: handle_inference_analyze_sentiment,
+        },
+    ]
+}
+
+pub fn schemas(function: &str) -> ControllerSchema {
+    match function {
+        "status" => ControllerSchema {
+            namespace: "inference",
+            function: "status",
+            description: "Read inference service status.",
+            inputs: vec![],
+            outputs: vec![json_output("status", "Inference status payload.")],
+        },
+        "get_client_config" => ControllerSchema {
+            namespace: "inference",
+            function: "get_client_config",
+            description: "Read the client-facing inference/provider config used by the AI settings UI.",
+            inputs: vec![],
+            outputs: vec![json_output("config", "Client-facing inference config payload.")],
+        },
+        "update_model_settings" => ControllerSchema {
+            namespace: "inference",
+            function: "update_model_settings",
+            description: "Persist cloud-provider routing, custom inference endpoint, and per-workload provider settings.",
+            inputs: vec![
+                optional_string("api_url", "Optional OpenHuman product backend URL."),
+                optional_string("inference_url", "Optional custom inference base URL."),
+                optional_string("api_key", "Optional API key for a custom inference endpoint."),
+                optional_string("default_model", "Optional default model override."),
+                optional_f64("default_temperature", "Optional default temperature override."),
+                optional_json("model_routes", "Optional full replacement for legacy model routes."),
+                optional_json("cloud_providers", "Optional full replacement for configured cloud providers."),
+                optional_string("primary_cloud", "Optional primary cloud provider id."),
+                optional_string("reasoning_provider", "Optional reasoning workload provider string."),
+                optional_string("agentic_provider", "Optional agentic workload provider string."),
+                optional_string("coding_provider", "Optional coding workload provider string."),
+                optional_string("memory_provider", "Optional memory workload provider string."),
+                optional_string("embeddings_provider", "Optional embeddings workload provider string."),
+                optional_string("heartbeat_provider", "Optional heartbeat workload provider string."),
+                optional_string("learning_provider", "Optional learning workload provider string."),
+                optional_string("subconscious_provider", "Optional subconscious workload provider string."),
+            ],
+            outputs: vec![json_output("snapshot", "Updated config snapshot.")],
+        },
+        "update_local_settings" => ControllerSchema {
+            namespace: "inference",
+            function: "update_local_settings",
+            description: "Persist local inference provider selection, endpoint URL, and local-runtime routing flags.",
+            inputs: vec![
+                optional_bool("runtime_enabled", "Enable or disable local inference runtime routing."),
+                optional_bool("opt_in_confirmed", "Persist the local inference opt-in flag."),
+                optional_string("provider", "Optional local provider slug, e.g. ollama or lm_studio."),
+                optional_string("base_url", "Optional local provider base URL."),
+                optional_string("model_id", "Optional generic model id override."),
+                optional_string("chat_model_id", "Optional chat model id override."),
+                optional_bool("usage_embeddings", "Whether embeddings workload may use the local provider."),
+                optional_bool("usage_heartbeat", "Whether heartbeat workload may use the local provider."),
+                optional_bool("usage_learning_reflection", "Whether learning reflection workload may use the local provider."),
+                optional_bool("usage_subconscious", "Whether subconscious workload may use the local provider."),
+            ],
+            outputs: vec![json_output("snapshot", "Updated config snapshot.")],
+        },
+        "list_models" => ControllerSchema {
+            namespace: "inference",
+            function: "list_models",
+            description: "Fetch the available model list from a configured inference provider's /models API.",
+            inputs: vec![required_string("provider_id", "Opaque id of the cloud provider entry to query.")],
+            outputs: vec![json_output("models", "Provider model list payload.")],
+        },
+        "device_profile" => ControllerSchema {
+            namespace: "inference",
+            function: "device_profile",
+            description: "Detect the local hardware profile used for local inference recommendations.",
+            inputs: vec![],
+            outputs: vec![json_output("profile", "Device hardware profile.")],
+        },
+        "presets" => ControllerSchema {
+            namespace: "inference",
+            function: "presets",
+            description: "List local inference model presets with recommendation and current selection.",
+            inputs: vec![],
+            outputs: vec![json_output("presets", "Inference preset payload.")],
+        },
+        "apply_preset" => ControllerSchema {
+            namespace: "inference",
+            function: "apply_preset",
+            description: "Apply a local inference preset to the persisted config.",
+            inputs: vec![required_string("tier", "Tier to apply: ram_2_4gb or disabled.")],
+            outputs: vec![json_output("result", "Applied preset payload.")],
+        },
+        "diagnostics" => ControllerSchema {
+            namespace: "inference",
+            function: "diagnostics",
+            description: "Run diagnostics for the configured local inference provider endpoint and expected models.",
+            inputs: vec![],
+            outputs: vec![json_output("diagnostics", "Inference diagnostics payload.")],
+        },
+        "summarize" => ControllerSchema {
+            namespace: "inference",
+            function: "summarize",
+            description: "Summarize text with the configured inference provider.",
+            inputs: vec![
+                required_string("text", "Input text."),
+                optional_u64("max_tokens", "Optional max output tokens."),
+            ],
+            outputs: vec![json_output("summary", "Summary text.")],
+        },
+        "prompt" => ControllerSchema {
+            namespace: "inference",
+            function: "prompt",
+            description: "Run a direct inference prompt.",
+            inputs: vec![
+                required_string("prompt", "Prompt text."),
+                optional_u64("max_tokens", "Optional max output tokens."),
+                optional_bool("no_think", "Disable thinking mode."),
+            ],
+            outputs: vec![json_output("output", "Prompt output text.")],
+        },
+        "vision_prompt" => ControllerSchema {
+            namespace: "inference",
+            function: "vision_prompt",
+            description: "Run a multimodal inference prompt with image refs.",
+            inputs: vec![
+                required_string("prompt", "Prompt text."),
+                FieldSchema {
+                    name: "image_refs",
+                    ty: TypeSchema::Array(Box::new(TypeSchema::String)),
+                    comment: "Image references to include.",
+                    required: true,
+                },
+                optional_u64("max_tokens", "Optional max output tokens."),
+            ],
+            outputs: vec![json_output("output", "Prompt output text.")],
+        },
+        "embed" => ControllerSchema {
+            namespace: "inference",
+            function: "embed",
+            description: "Generate embeddings for text inputs.",
+            inputs: vec![FieldSchema {
+                name: "inputs",
+                ty: TypeSchema::Array(Box::new(TypeSchema::String)),
+                comment: "Texts to embed.",
+                required: true,
+            }],
+            outputs: vec![json_output("embedding", "Embedding result payload.")],
+        },
+        "chat" => ControllerSchema {
+            namespace: "inference",
+            function: "chat",
+            description: "Multi-turn chat completion via the configured inference provider.",
+            inputs: vec![
+                FieldSchema {
+                    name: "messages",
+                    ty: TypeSchema::Array(Box::new(TypeSchema::Json)),
+                    comment: "Chat message history [{role, content}]. Last entry is the user turn.",
+                    required: true,
+                },
+                optional_u64("max_tokens", "Optional max output tokens."),
+            ],
+            outputs: vec![json_output("reply", "Assistant reply text.")],
+        },
+        "should_react" => ControllerSchema {
+            namespace: "inference",
+            function: "should_react",
+            description: "Ask the inference provider whether the assistant should add an emoji reaction to a user message, based on channel type.",
+            inputs: vec![
+                required_string("message", "User message content to evaluate."),
+                required_string("channel_type", "Channel type: web, telegram, discord, slack, etc."),
+            ],
+            outputs: vec![json_output("decision", "Reaction decision: {should_react, emoji}.")],
+        },
+        "analyze_sentiment" => ControllerSchema {
+            namespace: "inference",
+            function: "analyze_sentiment",
+            description: "Classify the emotion and valence of a user message with the inference provider.",
+            inputs: vec![required_string("message", "User message content to classify.")],
+            outputs: vec![json_output("sentiment", "Sentiment analysis payload.")],
+        },
+        other => panic!("unknown inference schema: {other}"),
+    }
+}
+
+fn required_string(name: &'static str, comment: &'static str) -> FieldSchema {
+    FieldSchema {
+        name,
+        ty: TypeSchema::String,
+        comment,
+        required: true,
+    }
+}
+
+fn optional_bool(name: &'static str, comment: &'static str) -> FieldSchema {
+    FieldSchema {
+        name,
+        ty: TypeSchema::Option(Box::new(TypeSchema::Bool)),
+        comment,
+        required: false,
+    }
+}
+
+fn optional_u64(name: &'static str, comment: &'static str) -> FieldSchema {
+    FieldSchema {
+        name,
+        ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
+        comment,
+        required: false,
+    }
+}
+
+fn optional_f64(name: &'static str, comment: &'static str) -> FieldSchema {
+    FieldSchema {
+        name,
+        ty: TypeSchema::Option(Box::new(TypeSchema::F64)),
+        comment,
+        required: false,
+    }
+}
+
+fn optional_string(name: &'static str, comment: &'static str) -> FieldSchema {
+    FieldSchema {
+        name,
+        ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+        comment,
+        required: false,
+    }
+}
+
+fn optional_json(name: &'static str, comment: &'static str) -> FieldSchema {
+    FieldSchema {
+        name,
+        ty: TypeSchema::Option(Box::new(TypeSchema::Json)),
+        comment,
+        required: false,
+    }
+}
+
+fn json_output(name: &'static str, comment: &'static str) -> FieldSchema {
+    FieldSchema {
+        name,
+        ty: TypeSchema::Json,
+        comment,
+        required: true,
+    }
+}
+
+fn handle_inference_status(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        to_json(crate::openhuman::inference::rpc::inference_status(&config).await?)
+    })
+}
+
+fn handle_inference_get_client_config(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        to_json(crate::openhuman::inference::rpc::inference_get_client_config().await?)
+    })
+}
+
+fn handle_inference_update_model_settings(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let update = deserialize_params::<InferenceUpdateModelSettingsParams>(params)?;
+        let patch = config_rpc::ModelSettingsPatch {
+            api_url: update.api_url,
+            inference_url: update.inference_url,
+            api_key: update.api_key,
+            default_model: update.default_model,
+            default_temperature: update.default_temperature,
+            model_routes: update.model_routes.map(|routes| {
+                routes
+                    .into_iter()
+                    .map(|route| crate::openhuman::config::ModelRouteConfig {
+                        hint: route.hint,
+                        model: route.model,
+                    })
+                    .collect()
+            }),
+            cloud_providers: update
+                .cloud_providers
+                .map(|entries| {
+                    use crate::openhuman::config::schema::cloud_providers::{
+                        generate_provider_id, is_slug_reserved, migrate_legacy_fields, AuthStyle,
+                        CloudProviderCreds,
+                    };
+                    entries
+                        .into_iter()
+                        .map(|entry| {
+                            let slug = entry.slug.trim().to_string();
+                            if slug.is_empty() {
+                                return Err("cloud provider slug must not be empty".to_string());
+                            }
+                            if is_slug_reserved(&slug) {
+                                return Err(format!(
+                                    "slug '{}' is reserved and cannot be used for a custom provider",
+                                    slug
+                                ));
+                            }
+                            let auth_style = match entry
+                                .auth_style
+                                .as_deref()
+                                .unwrap_or("bearer")
+                                .to_ascii_lowercase()
+                                .as_str()
+                            {
+                                "bearer" => AuthStyle::Bearer,
+                                "anthropic" => AuthStyle::Anthropic,
+                                "openhuman_jwt" | "openhumanjwt" => AuthStyle::OpenhumanJwt,
+                                "none" => AuthStyle::None,
+                                other => {
+                                    return Err(format!(
+                                        "unknown auth_style '{}'; valid: bearer, anthropic, openhuman_jwt, none",
+                                        other
+                                    ))
+                                }
+                            };
+                            let id = entry
+                                .id
+                                .filter(|s| !s.trim().is_empty())
+                                .unwrap_or_else(|| generate_provider_id(&slug));
+                            let label = entry
+                                .label
+                                .filter(|s| !s.trim().is_empty())
+                                .unwrap_or_else(|| slug.clone());
+                            let mut provider = CloudProviderCreds {
+                                id,
+                                slug,
+                                label,
+                                endpoint: entry.endpoint,
+                                auth_style,
+                                legacy_type: entry.legacy_type,
+                                default_model: entry.default_model,
+                            };
+                            migrate_legacy_fields(&mut provider);
+                            Ok(provider)
+                        })
+                        .collect::<Result<Vec<_>, String>>()
+                })
+                .transpose()?,
+            primary_cloud: update.primary_cloud,
+            reasoning_provider: update.reasoning_provider,
+            agentic_provider: update.agentic_provider,
+            coding_provider: update.coding_provider,
+            memory_provider: update.memory_provider,
+            embeddings_provider: update.embeddings_provider,
+            heartbeat_provider: update.heartbeat_provider,
+            learning_provider: update.learning_provider,
+            subconscious_provider: update.subconscious_provider,
+        };
+        to_json(crate::openhuman::inference::rpc::inference_update_model_settings(patch).await?)
+    })
+}
+
+fn handle_inference_update_local_settings(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let update = deserialize_params::<InferenceUpdateLocalSettingsParams>(params)?;
+        let patch = config_rpc::LocalAiSettingsPatch {
+            runtime_enabled: update.runtime_enabled,
+            opt_in_confirmed: update.opt_in_confirmed,
+            provider: update.provider,
+            base_url: update.base_url,
+            model_id: update.model_id,
+            chat_model_id: update.chat_model_id,
+            usage_embeddings: update.usage_embeddings,
+            usage_heartbeat: update.usage_heartbeat,
+            usage_learning_reflection: update.usage_learning_reflection,
+            usage_subconscious: update.usage_subconscious,
+        };
+        to_json(crate::openhuman::inference::rpc::inference_update_local_settings(patch).await?)
+    })
+}
+
+fn handle_inference_list_models(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let request = deserialize_params::<InferenceListModelsParams>(params)?;
+        to_json(
+            crate::openhuman::inference::rpc::inference_list_models(&request.provider_id).await?,
+        )
+    })
+}
+
+fn handle_inference_device_profile(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(
+        async move { to_json(crate::openhuman::inference::rpc::inference_device_profile().await?) },
+    )
+}
+
+fn handle_inference_presets(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move { to_json(crate::openhuman::inference::rpc::inference_presets().await?) })
+}
+
+fn handle_inference_apply_preset(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let request = deserialize_params::<InferenceApplyPresetParams>(params)?;
+        to_json(crate::openhuman::inference::rpc::inference_apply_preset(&request.tier).await?)
+    })
+}
+
+fn handle_inference_diagnostics(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        to_json(crate::openhuman::inference::rpc::inference_diagnostics(&config).await?)
+    })
+}
+
+fn handle_inference_summarize(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let p = deserialize_params::<InferenceSummarizeParams>(params)?;
+        let config = config_rpc::load_config_with_timeout().await?;
+        to_json(
+            crate::openhuman::inference::rpc::inference_summarize(&config, &p.text, p.max_tokens)
+                .await?,
+        )
+    })
+}
+
+fn handle_inference_prompt(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let p = deserialize_params::<InferencePromptParams>(params)?;
+        let config = config_rpc::load_config_with_timeout().await?;
+        to_json(
+            crate::openhuman::inference::rpc::inference_prompt(
+                &config,
+                &p.prompt,
+                p.max_tokens,
+                p.no_think,
+            )
+            .await?,
+        )
+    })
+}
+
+fn handle_inference_vision_prompt(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let p = deserialize_params::<InferenceVisionPromptParams>(params)?;
+        let config = config_rpc::load_config_with_timeout().await?;
+        to_json(
+            crate::openhuman::inference::rpc::inference_vision_prompt(
+                &config,
+                &p.prompt,
+                &p.image_refs,
+                p.max_tokens,
+            )
+            .await?,
+        )
+    })
+}
+
+fn handle_inference_embed(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let p = deserialize_params::<InferenceEmbedParams>(params)?;
+        let config = config_rpc::load_config_with_timeout().await?;
+        to_json(crate::openhuman::inference::rpc::inference_embed(&config, &p.inputs).await?)
+    })
+}
+
+fn handle_inference_chat(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let p = deserialize_params::<InferenceChatParams>(params)?;
+        let config = config_rpc::load_config_with_timeout().await?;
+        let messages = p
+            .messages
+            .into_iter()
+            .map(
+                |message| crate::openhuman::inference::local::ops::LocalAiChatMessage {
+                    role: message.role,
+                    content: message.content,
+                },
+            )
+            .collect();
+        to_json(
+            crate::openhuman::inference::rpc::inference_chat(&config, messages, p.max_tokens)
+                .await?,
+        )
+    })
+}
+
+fn handle_inference_should_react(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let p = deserialize_params::<InferenceShouldReactParams>(params)?;
+        let config = config_rpc::load_config_with_timeout().await?;
+        to_json(
+            crate::openhuman::inference::rpc::inference_should_react(
+                &config,
+                &p.message,
+                &p.channel_type,
+            )
+            .await?,
+        )
+    })
+}
+
+fn handle_inference_analyze_sentiment(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let p = deserialize_params::<InferenceAnalyzeSentimentParams>(params)?;
+        let config = config_rpc::load_config_with_timeout().await?;
+        to_json(
+            crate::openhuman::inference::rpc::inference_analyze_sentiment(&config, &p.message)
+                .await?,
+        )
+    })
+}
+
+fn deserialize_params<T: DeserializeOwned>(params: Map<String, Value>) -> Result<T, String> {
+    serde_json::from_value(Value::Object(params)).map_err(|e| format!("invalid params: {e}"))
+}
+
+fn to_json<T: serde::Serialize>(outcome: RpcOutcome<T>) -> Result<Value, String> {
+    outcome.into_cli_compatible_json()
+}
+
+#[cfg(test)]
+#[path = "schemas_tests.rs"]
+mod tests;

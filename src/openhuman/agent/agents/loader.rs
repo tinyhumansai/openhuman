@@ -35,9 +35,10 @@
 //! collision.
 
 use crate::openhuman::agent::harness::definition::{
-    AgentDefinition, DefinitionSource, PromptBuilder, PromptSource,
+    AgentDefinition, AgentTier, DefinitionSource, PromptBuilder, PromptSource, SubagentEntry,
 };
 use anyhow::{Context, Result};
+use std::collections::HashMap;
 
 /// A single built-in agent: its id plus the metadata TOML and a
 /// function-driven prompt builder.
@@ -93,6 +94,11 @@ pub const BUILTINS: &[BuiltinAgent] = &[
         prompt_fn: super::tool_maker::prompt::build,
     },
     BuiltinAgent {
+        id: "skill_creator",
+        toml: include_str!("skill_creator/agent.toml"),
+        prompt_fn: super::skill_creator::prompt::build,
+    },
+    BuiltinAgent {
         id: "researcher",
         toml: include_str!("researcher/agent.toml"),
         prompt_fn: super::researcher::prompt::build,
@@ -145,7 +151,92 @@ pub const BUILTINS: &[BuiltinAgent] = &[
 /// baked into the binary and therefore must always be valid. Unit tests
 /// below keep that invariant honest.
 pub fn load_builtins() -> Result<Vec<AgentDefinition>> {
-    BUILTINS.iter().map(parse_builtin).collect()
+    let defs: Vec<AgentDefinition> = BUILTINS.iter().map(parse_builtin).collect::<Result<_>>()?;
+    validate_tier_hierarchy(&defs)
+        .context("built-in agents violate the spawn-hierarchy contract")?;
+    Ok(defs)
+}
+
+/// Validate the cross-agent spawn-hierarchy contract documented on
+/// [`AgentTier`].
+///
+/// Rules enforced here:
+///
+/// * `Chat` agents MUST NOT list another `Chat` agent in `subagents`.
+/// * `Reasoning` agents MUST NOT list another `Reasoning` agent in
+///   `subagents`.
+/// * `Worker` agents MUST NOT list any [`SubagentEntry::AgentId`]
+///   entries. (Skill wildcards are allowed: they expand to the generic
+///   `integrations_agent`, which is itself a `Worker`, and the call
+///   happens via a single delegation tool rather than recursive spawn.)
+///
+/// Skill-wildcard entries (`{ skills = "*" }`) are intentionally
+/// untouched: they collapse to one `delegate_to_integrations_agent`
+/// tool whose target is a `Worker` and whose use sites are well
+/// understood. Mis-tiering of the `integrations_agent` itself is still
+/// caught because it appears as a normal entry elsewhere.
+///
+/// Called from [`load_builtins`] for the bundled archetype set and from
+/// [`crate::openhuman::agent::harness::definition::AgentDefinitionRegistry::load`]
+/// after workspace-local TOML overrides are merged, so custom user
+/// agents that violate the contract fail the boot rather than crashing
+/// at spawn time.
+pub fn validate_tier_hierarchy(defs: &[AgentDefinition]) -> Result<()> {
+    let tier_by_id: HashMap<&str, AgentTier> =
+        defs.iter().map(|d| (d.id.as_str(), d.agent_tier)).collect();
+
+    for def in defs {
+        for entry in &def.subagents {
+            let child_id = match entry {
+                SubagentEntry::AgentId(id) => id.as_str(),
+                // Skill wildcards always route to `integrations_agent`
+                // (a Worker) via a single collapsed delegation tool —
+                // not subject to the tier-mismatch rule.
+                SubagentEntry::Skills(_) => continue,
+            };
+
+            // Worker leaves: no spawn surface at all.
+            if def.agent_tier == AgentTier::Worker {
+                anyhow::bail!(
+                    "agent `{parent}` is a `worker` tier and must not list `{child}` (or any \
+                     agent) in its subagents — workers are leaf executors. Either remove the \
+                     entry or re-tier `{parent}` as `chat` / `reasoning`.",
+                    parent = def.id,
+                    child = child_id,
+                );
+            }
+
+            let Some(child_tier) = tier_by_id.get(child_id).copied() else {
+                // Unknown id — that's a separate `subagents` integrity
+                // concern (covered by existing tests / runtime spawn
+                // resolution); don't mask it as a tier error.
+                continue;
+            };
+
+            // Same-tier delegation is forbidden for chat and reasoning.
+            // (Chat→Chat would defeat the whole point of the fast tier;
+            // Reasoning→Reasoning produces a depth-blowing recursion of
+            // slow models.)
+            match (def.agent_tier, child_tier) {
+                (AgentTier::Chat, AgentTier::Chat) => anyhow::bail!(
+                    "agent `{parent}` (chat) lists `{child}` (chat) in subagents — the chat tier \
+                     is a leaf in its own dimension. Hand off to a `reasoning` or `worker` agent \
+                     instead.",
+                    parent = def.id,
+                    child = child_id,
+                ),
+                (AgentTier::Reasoning, AgentTier::Reasoning) => anyhow::bail!(
+                    "agent `{parent}` (reasoning) lists `{child}` (reasoning) in subagents — \
+                     reasoning agents compose downward into workers, not into each other.",
+                    parent = def.id,
+                    child = child_id,
+                ),
+                _ => {}
+            }
+        }
+    }
+
+    Ok(())
 }
 
 /// Parse a single [`BuiltinAgent`] triple into a finished [`AgentDefinition`].
@@ -182,7 +273,7 @@ mod tests {
     fn all_builtins_parse() {
         let defs = load_builtins().expect("built-in TOML must parse");
         assert_eq!(defs.len(), BUILTINS.len());
-        assert_eq!(defs.len(), 16, "expected 16 built-in agents");
+        assert_eq!(defs.len(), 17, "expected 17 built-in agents");
     }
 
     #[test]
@@ -342,6 +433,25 @@ mod tests {
         assert_eq!(def.sandbox_mode, SandboxMode::Sandboxed);
         assert_eq!(def.max_iterations, 2);
         assert!(!def.omit_safety_preamble);
+    }
+
+    #[test]
+    fn skill_creator_is_sandboxed_and_has_node_tools() {
+        let def = find("skill_creator");
+        assert_eq!(def.sandbox_mode, SandboxMode::Sandboxed);
+        assert_eq!(def.max_iterations, 10);
+        assert!(!def.omit_safety_preamble);
+        match &def.tools {
+            ToolScope::Named(names) => {
+                for required in ["node_exec", "npm_exec", "apply_patch", "update_memory_md"] {
+                    assert!(
+                        names.iter().any(|name| name == required),
+                        "skill_creator tool list missing `{required}`"
+                    );
+                }
+            }
+            ToolScope::Wildcard => panic!("skill_creator must have named tool allowlist"),
+        }
     }
 
     #[test]
@@ -525,8 +635,10 @@ mod tests {
                 for required in [
                     "wallet_status",
                     "wallet_balances",
+                    "wallet_network_defaults",
                     "wallet_supported_assets",
                     "wallet_chain_status",
+                    "wallet_encode_erc20_transfer",
                 ] {
                     assert!(
                         tools.iter().any(|t| t == required),
@@ -632,6 +744,21 @@ mod tests {
     }
 
     #[test]
+    fn orchestrator_subagents_include_skill_creator() {
+        use crate::openhuman::agent::harness::definition::SubagentEntry;
+        let def = find("orchestrator");
+        let listed = def.subagents.iter().any(|e| match e {
+            SubagentEntry::AgentId(id) => id == "skill_creator",
+            _ => false,
+        });
+        assert!(
+            listed,
+            "orchestrator.subagents must list `skill_creator` so the \
+             routing layer can synthesise `create_skill`"
+        );
+    }
+
+    #[test]
     fn welcome_has_onboarding_and_memory_tools() {
         let def = find("welcome");
         assert_eq!(def.sandbox_mode, SandboxMode::ReadOnly);
@@ -671,5 +798,107 @@ mod tests {
         assert!(!def.omit_memory_context);
         assert!(def.omit_identity);
         assert_eq!(def.max_iterations, 12);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Spawn-hierarchy contract
+    // ─────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn orchestrator_is_chat_tier() {
+        assert_eq!(find("orchestrator").agent_tier, AgentTier::Chat);
+    }
+
+    #[test]
+    fn planner_is_reasoning_tier() {
+        assert_eq!(find("planner").agent_tier, AgentTier::Reasoning);
+    }
+
+    #[test]
+    fn other_builtins_default_to_worker_tier() {
+        for def in load_builtins().unwrap() {
+            if def.id == "orchestrator" || def.id == "planner" {
+                continue;
+            }
+            assert_eq!(
+                def.agent_tier,
+                AgentTier::Worker,
+                "{} should default to worker tier (only orchestrator/planner are non-worker today)",
+                def.id
+            );
+        }
+    }
+
+    #[test]
+    fn builtins_pass_tier_validation() {
+        // load_builtins() already calls validate_tier_hierarchy; this
+        // just makes the contract a named invariant in the test suite.
+        let defs = load_builtins().expect("built-ins must pass tier validation");
+        validate_tier_hierarchy(&defs).expect("explicit re-check must pass");
+    }
+
+    #[test]
+    fn rejects_chat_to_chat_delegation() {
+        let mut defs = load_builtins().unwrap();
+        // Add a synthetic second chat agent and have the orchestrator
+        // try to delegate to it.
+        let mut bad_chat = find("orchestrator");
+        bad_chat.id = "second_orchestrator".to_string();
+        defs.push(bad_chat);
+        let orch = defs.iter_mut().find(|d| d.id == "orchestrator").unwrap();
+        orch.subagents
+            .push(SubagentEntry::AgentId("second_orchestrator".into()));
+
+        let err = validate_tier_hierarchy(&defs).expect_err("chat→chat must be rejected");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("chat") && msg.contains("leaf"),
+            "error should call out chat-tier leaf rule, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn rejects_reasoning_to_reasoning_delegation() {
+        let mut defs = load_builtins().unwrap();
+        let mut bad_reasoning = find("planner");
+        bad_reasoning.id = "second_planner".to_string();
+        defs.push(bad_reasoning);
+        let planner = defs.iter_mut().find(|d| d.id == "planner").unwrap();
+        planner
+            .subagents
+            .push(SubagentEntry::AgentId("second_planner".into()));
+
+        let err = validate_tier_hierarchy(&defs).expect_err("reasoning→reasoning must be rejected");
+        assert!(err.to_string().contains("reasoning"));
+    }
+
+    #[test]
+    fn rejects_worker_with_subagents() {
+        let mut defs = load_builtins().unwrap();
+        let researcher = defs.iter_mut().find(|d| d.id == "researcher").unwrap();
+        researcher
+            .subagents
+            .push(SubagentEntry::AgentId("critic".into()));
+
+        let err = validate_tier_hierarchy(&defs)
+            .expect_err("worker with declared subagents must be rejected");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("worker") && msg.contains("leaf"),
+            "error should call out worker leaf rule, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn allows_skill_wildcards_on_any_non_worker_tier() {
+        // Skills wildcards collapse to delegate_to_integrations_agent
+        // and must not be policed by the tier check (it'd be a false
+        // positive — they fan out to a worker anyway).
+        let mut defs = load_builtins().unwrap();
+        let planner = defs.iter_mut().find(|d| d.id == "planner").unwrap();
+        planner.subagents.push(SubagentEntry::Skills(
+            crate::openhuman::agent::harness::definition::SkillsWildcard { skills: "*".into() },
+        ));
+        validate_tier_hierarchy(&defs).expect("skill wildcards on reasoning tier must validate");
     }
 }

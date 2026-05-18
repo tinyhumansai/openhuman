@@ -18,12 +18,46 @@ use crate::openhuman::agent::memory_loader::{DefaultMemoryLoader, MemoryLoader};
 use crate::openhuman::config::{Config, ContextConfig};
 use crate::openhuman::context::prompt::SystemPromptBuilder;
 use crate::openhuman::context::{ContextManager, ProviderSummarizer};
+use crate::openhuman::inference::provider::{self, Provider};
 use crate::openhuman::memory::{self, Memory};
-use crate::openhuman::providers::{self, Provider};
 use crate::openhuman::security::SecurityPolicy;
 use crate::openhuman::tools::{self, Tool, ToolSpec};
 use anyhow::Result;
 use std::sync::Arc;
+
+/// Drop entries with duplicate `name` fields, first occurrence wins.
+///
+/// Anthropic (and other strict providers) rejects a chat/completions
+/// request that lists two tools with the same name — OpenHuman's own
+/// backend and OpenAI silently accept duplicates, which hid the
+/// underlying collision (researcher sub-agent's `delegate_name =
+/// "research"` shadowing a same-named skill tool) until #1710's
+/// per-role routing started sending the same tool list to Anthropic.
+///
+/// Called from every place that materialises the visible tool spec
+/// list — initial build, post-composio refresh, scope-filter change —
+/// so the request the provider sees is always name-unique regardless
+/// of which path produced it.
+pub(super) fn dedup_visible_tool_specs(specs: Vec<ToolSpec>) -> Vec<ToolSpec> {
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut deduped: Vec<ToolSpec> = Vec::with_capacity(specs.len());
+    let mut dropped: Vec<String> = Vec::new();
+    for spec in specs {
+        if seen.insert(spec.name.clone()) {
+            deduped.push(spec);
+        } else {
+            dropped.push(spec.name);
+        }
+    }
+    if !dropped.is_empty() {
+        log::warn!(
+            "[agent] dropped {} duplicate tool spec(s) before sending to provider: {:?}",
+            dropped.len(),
+            dropped
+        );
+    }
+    deduped
+}
 
 impl AgentBuilder {
     /// Creates a new `AgentBuilder` with default values.
@@ -297,7 +331,7 @@ impl AgentBuilder {
         // (backward compat). When populated, only allowlisted tools
         // appear in the function-calling schema so the LLM literally
         // cannot call skill tools directly — it must use spawn_subagent.
-        let visible_tool_specs: Vec<ToolSpec> = if visible_names.is_empty() {
+        let visible_tool_specs_unfiltered: Vec<ToolSpec> = if visible_names.is_empty() {
             tool_specs.clone()
         } else {
             tool_specs
@@ -306,6 +340,14 @@ impl AgentBuilder {
                 .cloned()
                 .collect()
         };
+
+        // Dedupe by tool name. Anthropic (and other strict providers)
+        // rejects a chat/completions request that lists two tools with
+        // the same name — OpenHuman's own backend and OpenAI silently
+        // accept duplicates, which hid this bug until #1710's per-role
+        // routing started sending the same tool list to Anthropic.
+        let visible_tool_specs: Vec<ToolSpec> =
+            dedup_visible_tool_specs(visible_tool_specs_unfiltered);
 
         log::info!(
             "[agent] tool spec filter: total={} visible={} (filter_active={})",
@@ -413,7 +455,6 @@ impl AgentBuilder {
             context,
             on_progress: None,
             connected_integrations: Vec::new(),
-            composio_client: None,
             // Default to `true` (omit) so legacy / custom agents built
             // without a definition stay lean. Opt-in agents thread their
             // `omit_profile = false` through the builder.
@@ -473,7 +514,7 @@ impl Agent {
     ///   legacy behaviour).
     ///
     /// The welcome agent uses this entry point when routed from the
-    /// Tauri web channel (see `channels::providers::web::build_session_agent`).
+    /// Tauri web channel (see `channels::provider::web::build_session_agent`).
     pub fn from_config_for_agent(config: &Config, agent_id: &str) -> Result<Self> {
         // Look up the target definition up front so we can fail fast
         // with a clear error instead of building half an agent and then
@@ -545,7 +586,7 @@ impl Agent {
                 .unwrap_or(config.default_temperature)
         );
 
-        Self::build_session_agent_inner(config, agent_id, target_def.as_ref(), None)
+        Self::build_session_agent_inner(config, agent_id, target_def.as_ref(), None, None)
     }
 
     /// Same as [`Self::from_config_for_agent`] but also appends a
@@ -553,7 +594,7 @@ impl Agent {
     /// [`SystemPromptBuilder`], seeded with the `source_chunks` snapshot
     /// from the spawning subconscious reflection (#623).
     ///
-    /// Used by `channels::providers::web::build_session_agent` when a
+    /// Used by `channels::provider::web::build_session_agent` when a
     /// chat thread's seed message metadata flags
     /// `origin == "subconscious_reflection"` — the orchestrator then
     /// has the same memory context the reflection-LLM had, so the user's
@@ -576,6 +617,49 @@ impl Agent {
             agent_id,
             target_def.as_ref(),
             Some(reflection_chunks),
+            None,
+        )
+    }
+
+    /// Construct a session agent with optional reflection memory chunks and an
+    /// additional profile prompt section. Used by the web channel when the user
+    /// selects a persistent agent profile for the thread.
+    pub fn from_config_for_agent_with_profile(
+        config: &Config,
+        agent_id: &str,
+        reflection_chunks: Option<Vec<crate::openhuman::subconscious::SourceChunk>>,
+        profile_prompt_suffix: Option<String>,
+    ) -> Result<Self> {
+        let target_def: Option<crate::openhuman::agent::harness::definition::AgentDefinition> =
+            match AgentDefinitionRegistry::global() {
+                Some(reg) => match reg.get(agent_id) {
+                    Some(def) => Some(def.clone()),
+                    None if agent_id == "orchestrator" => None,
+                    None => {
+                        return Err(anyhow::anyhow!(
+                            "agent definition '{}' not found in registry",
+                            agent_id
+                        ));
+                    }
+                },
+                None => {
+                    if agent_id != "orchestrator" {
+                        return Err(anyhow::anyhow!(
+                            "AgentDefinitionRegistry is not initialised — cannot \
+                         resolve agent '{}'. Call AgentDefinitionRegistry::init_global \
+                         at startup.",
+                            agent_id
+                        ));
+                    }
+                    None
+                }
+            };
+        Self::build_session_agent_inner(
+            config,
+            agent_id,
+            target_def.as_ref(),
+            reflection_chunks,
+            profile_prompt_suffix,
         )
     }
 
@@ -595,6 +679,7 @@ impl Agent {
         agent_id: &str,
         target_def: Option<&crate::openhuman::agent::harness::definition::AgentDefinition>,
         reflection_chunks: Option<Vec<crate::openhuman::subconscious::SourceChunk>>,
+        profile_prompt_suffix: Option<String>,
     ) -> Result<Self> {
         let runtime: Arc<dyn host_runtime::RuntimeAdapter> =
             Arc::from(host_runtime::create_runtime(&config.runtime)?);
@@ -603,9 +688,10 @@ impl Agent {
             &config.workspace_dir,
         ));
 
+        let local_embedding = config.workload_local_model("embeddings");
         let memory: Arc<dyn Memory> = Arc::from(memory::create_memory_with_local_ai(
             &config.memory,
-            &config.local_ai,
+            local_embedding.as_deref(),
             &config.embedding_routes,
             Some(&config.storage.provider.config),
             &config.workspace_dir,
@@ -656,26 +742,54 @@ impl Agent {
             }
         }
 
-        let model_name = config
-            .default_model
-            .as_deref()
-            .unwrap_or(crate::openhuman::config::DEFAULT_MODEL)
-            .to_string();
-
-        let provider_runtime_options = providers::ProviderRuntimeOptions {
+        // Route the main agent's chat through the unified per-workload
+        // factory so the user's "Reasoning" routing in the AI settings
+        // panel (e.g. `reasoning_provider = "anthropic:claude-..."`)
+        // actually takes effect. The factory returns a (Provider, model)
+        // tuple — the resolved model wins over the legacy `default_model`
+        // fallback so explicit picks like `anthropic:claude-sonnet-4-5`
+        // actually use claude-sonnet-4-5 end to end (sending the abstract
+        // "reasoning-v1" tier name to Anthropic would 404).
+        //
+        // When `reasoning_provider` is unset or `"cloud"`, the factory
+        // resolves to the primary cloud (OpenHuman by default), so the
+        // baseline behaviour is identical to the legacy
+        // `create_intelligent_routing_provider` path.
+        //
+        // What we deliberately lose for now: the ReliableProvider retry
+        // wrapper, model_routes translation, and intelligent local/cloud
+        // task hinting that the legacy router added on top of the raw
+        // backend. Those are valuable but orthogonal — they can be layered
+        // back on top of the factory's output in a follow-up without
+        // re-introducing the routing bypass.
+        let _ = provider::ProviderRuntimeOptions {
             auth_profile_override: None,
             openhuman_dir: config.config_path.parent().map(std::path::PathBuf::from),
             secrets_encrypt: config.secrets.encrypt,
             reasoning_enabled: config.runtime.reasoning_enabled,
         };
-
-        let provider: Box<dyn Provider> = providers::create_intelligent_routing_provider(
-            config.inference_url.as_deref(),
-            config.api_url.as_deref(),
-            config.api_key.as_deref(),
-            config,
-            &provider_runtime_options,
-        )?;
+        let provider_role = match config.default_model.as_deref().map(str::trim) {
+            Some("hint:agentic") | Some("agentic-v1") => "agentic",
+            Some("hint:coding") | Some("coding-v1") => "coding",
+            Some("hint:summarization") | Some("summarization-v1") => "summarization",
+            _ => "reasoning",
+        };
+        let (provider, mut model_name): (Box<dyn Provider>, String) =
+            crate::openhuman::inference::provider::create_chat_provider(provider_role, config)?;
+        let target_agent_id = target_def
+            .map(|def| def.id.as_str())
+            .unwrap_or("orchestrator");
+        let target_is_lead = target_def
+            .map(|def| !def.subagents.is_empty())
+            .unwrap_or(true);
+        if let Some(pinned_model) = config.configured_agent_model(target_agent_id, target_is_lead) {
+            log::debug!(
+                "[session-builder] agent_id={} using config-level model pin model={}",
+                target_agent_id,
+                pinned_model
+            );
+            model_name = pinned_model.to_string();
+        }
 
         // Dispatcher selection is deferred until after the tool list is
         // finalised (orchestrator tools are appended below). We capture
@@ -725,21 +839,28 @@ impl Agent {
                     def.omit_skills_catalog,
                 ),
                 PromptSource::File { path } => {
-                    let workspace_path = config
-                        .workspace_dir
-                        .join("agent")
-                        .join("prompts")
-                        .join(path);
+                    let prompt_root = config.workspace_dir.join("agent").join("prompts");
+                    let workspace_path = prompt_root.join(path);
                     let body_text = if workspace_path.is_file() {
-                        std::fs::read_to_string(&workspace_path).unwrap_or_else(|e| {
-                            log::warn!(
-                                "[agent::builder] failed to read prompt {}: {e} — using empty body",
-                                workspace_path.display()
-                            );
-                            String::new()
-                        })
+                        match crate::openhuman::security::validate_path_within_root(&workspace_path, &prompt_root) {
+                            Ok(resolved) => {
+                                std::fs::read_to_string(&resolved).unwrap_or_else(|e| {
+                                    log::warn!(
+                                        "[agent::builder] failed to read prompt {}: {e} — using empty body",
+                                        workspace_path.display()
+                                    );
+                                    String::new()
+                                })
+                            }
+                            Err(e) => {
+                                log::warn!(
+                                    "[agent::builder] prompt path rejected: {e} — using empty body"
+                                );
+                                String::new()
+                            }
+                        }
                     } else {
-                        log::warn!(
+                        log::debug!(
                             "[agent::builder] prompt file {} not found — using empty body",
                             path
                         );
@@ -799,6 +920,18 @@ impl Agent {
                 prompt_builder = prompt_builder.with_reflection_context(chunks);
             }
         }
+        if let Some(suffix) = profile_prompt_suffix
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+        {
+            log::debug!(
+                "[agent:builder] profile prompt section injected suffix_chars={}",
+                suffix.chars().count()
+            );
+            prompt_builder = prompt_builder.add_section(Box::new(
+                crate::openhuman::agent::profiles::AgentProfilePromptSection::new(suffix),
+            ));
+        }
 
         // Build post-turn hooks when learning is enabled
         let mut post_turn_hooks: Vec<Arc<dyn crate::openhuman::agent::hooks::PostTurnHook>> =
@@ -812,21 +945,22 @@ impl Agent {
                 let full_config = Arc::new(config.clone());
                 // For cloud reflection, wrap the provider in an Arc.
                 // For local, no provider needed.
-                let reflection_provider: Option<Arc<dyn crate::openhuman::providers::Provider>> =
-                    if config.learning.reflection_source
-                        == crate::openhuman::config::ReflectionSource::Cloud
-                    {
-                        Some(Arc::from(providers::create_routed_provider(
-                            config.inference_url.as_deref(),
-                            config.api_url.as_deref(),
-                            config.api_key.as_deref(),
-                            &config.reliability,
-                            &config.model_routes,
-                            &model_name,
-                        )?))
-                    } else {
-                        None
-                    };
+                let reflection_provider: Option<
+                    Arc<dyn crate::openhuman::inference::provider::Provider>,
+                > = if config.learning.reflection_source
+                    == crate::openhuman::config::ReflectionSource::Cloud
+                {
+                    Some(Arc::from(provider::create_routed_provider(
+                        config.inference_url.as_deref(),
+                        config.api_url.as_deref(),
+                        config.api_key.as_deref(),
+                        &config.reliability,
+                        &config.model_routes,
+                        &model_name,
+                    )?))
+                } else {
+                    None
+                };
                 post_turn_hooks.push(Arc::new(crate::openhuman::learning::ReflectionHook::new(
                     config.learning.clone(),
                     full_config.clone(),
@@ -1247,4 +1381,79 @@ fn prefetch_tool_memory_rules_blocking(
             }
         })
     })
+}
+
+#[cfg(test)]
+mod dedup_tests {
+    use super::dedup_visible_tool_specs;
+    use crate::openhuman::tools::ToolSpec;
+    use serde_json::json;
+
+    fn spec(name: &str) -> ToolSpec {
+        ToolSpec {
+            name: name.to_string(),
+            description: format!("description for {name}"),
+            parameters: json!({}),
+        }
+    }
+
+    #[test]
+    fn drops_duplicates_first_wins() {
+        // Real-world collision: researcher's `delegate_name = "research"`
+        // synthesises a delegate tool that shadows a same-named skill.
+        // Anthropic 400s on duplicate tool names; the dedup helper must
+        // keep the *first* occurrence so registration order semantics
+        // are preserved (the underlying tool dispatch lookup-by-name
+        // still resolves the right tool).
+        let specs = vec![
+            spec("research"), // skill
+            spec("plan"),
+            spec("research"), // delegate, dropped
+            spec("run_code"),
+            spec("plan"), // dropped
+        ];
+
+        let deduped = dedup_visible_tool_specs(specs);
+
+        let names: Vec<&str> = deduped.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, vec!["research", "plan", "run_code"]);
+    }
+
+    #[test]
+    fn passes_through_when_no_duplicates() {
+        let specs = vec![spec("a"), spec("b"), spec("c")];
+        let deduped = dedup_visible_tool_specs(specs);
+        assert_eq!(deduped.len(), 3);
+        assert_eq!(deduped[0].name, "a");
+        assert_eq!(deduped[1].name, "b");
+        assert_eq!(deduped[2].name, "c");
+    }
+
+    #[test]
+    fn handles_empty_input() {
+        let deduped = dedup_visible_tool_specs(Vec::<ToolSpec>::new());
+        assert!(deduped.is_empty());
+    }
+
+    #[test]
+    fn preserves_full_spec_content_for_kept_entries() {
+        // Description + parameters must survive the dedup pass intact —
+        // the LLM uses both for tool-call decisions, and corrupting them
+        // would silently degrade function-calling quality.
+        let mut spec_a = spec("alpha");
+        spec_a.description = "first alpha — should win".to_string();
+        spec_a.parameters = json!({"type": "object", "required": ["x"]});
+
+        let mut spec_a_dup = spec("alpha");
+        spec_a_dup.description = "second alpha — should be dropped".to_string();
+
+        let deduped = dedup_visible_tool_specs(vec![spec_a.clone(), spec_a_dup]);
+
+        assert_eq!(deduped.len(), 1);
+        assert_eq!(deduped[0].description, "first alpha — should win");
+        assert_eq!(
+            deduped[0].parameters,
+            json!({"type": "object", "required": ["x"]})
+        );
+    }
 }

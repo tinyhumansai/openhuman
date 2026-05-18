@@ -5,6 +5,7 @@ import BinanceIcon from '../../../assets/icons/binance.svg';
 import GoogleIcon from '../../../assets/icons/GoogleIcon';
 import MetamaskIcon from '../../../assets/icons/metamask.svg';
 import NotionIcon from '../../../assets/icons/notion.svg';
+import { useT } from '../../../lib/i18n/I18nContext';
 import { fetchWalletStatus, type WalletStatus } from '../../../services/walletApi';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
@@ -19,34 +20,32 @@ interface ConnectOption {
   skillId?: string;
 }
 
-/**
- * Renders a connection option row with its real-time status badge.
- * Uses useSkillConnectionStatus hook for skill-backed connections.
- */
 function ConnectionOptionRow({
   option,
   isFirst,
   isLast,
   onConnect,
+  t,
 }: {
   option: ConnectOption;
   isFirst: boolean;
   isLast: boolean;
   onConnect: (option: ConnectOption) => void;
+  t: (key: string) => string;
 }) {
   const isDisabled = option.comingSoon;
 
   const badge = option.comingSoon ? (
-    <span className="px-2 py-0.5 text-[11px] font-medium rounded-full bg-stone-100 text-stone-500 border border-stone-200">
-      Coming soon
+    <span className="px-2 py-0.5 text-[11px] font-medium rounded-full bg-stone-100 dark:bg-neutral-800 text-stone-500 dark:text-neutral-400 border border-stone-200 dark:border-neutral-800">
+      {t('connections.comingSoon')}
     </span>
   ) : option.statusLabel ? (
-    <span className="px-2 py-0.5 text-[11px] font-medium rounded-full bg-sage-50 text-sage-700 border border-sage-200">
+    <span className="px-2 py-0.5 text-[11px] font-medium rounded-full bg-sage-50 dark:bg-sage-500/10 text-sage-700 dark:text-sage-300 border border-sage-200 dark:border-sage-500/30">
       {option.statusLabel}
     </span>
   ) : (
-    <span className="px-2 py-0.5 text-[11px] font-medium rounded-full bg-primary-50 text-primary-600 border border-primary-100">
-      Set up
+    <span className="px-2 py-0.5 text-[11px] font-medium rounded-full bg-primary-50 dark:bg-primary-500/10 text-primary-600 dark:text-primary-300 border border-primary-100 dark:border-primary-500/30">
+      {t('connections.setUp')}
     </span>
   );
 
@@ -54,20 +53,24 @@ function ConnectionOptionRow({
     <button
       onClick={() => onConnect(option)}
       disabled={isDisabled}
-      className={`group w-full flex items-center justify-between p-4 bg-white text-left transition-colors duration-150 ${
-        isLast ? '' : 'border-b border-stone-200'
+      className={`group w-full flex items-center justify-between p-4 bg-white dark:bg-neutral-900 text-left transition-colors duration-150 ${
+        isLast ? '' : 'border-b border-stone-200 dark:border-neutral-800'
       } ${isFirst ? 'rounded-t-2xl' : ''} ${isLast ? 'rounded-b-2xl' : ''} ${
-        isDisabled ? 'opacity-70 cursor-not-allowed' : 'hover:bg-stone-50 focus-visible:bg-stone-50'
+        isDisabled
+          ? 'opacity-70 cursor-not-allowed'
+          : 'hover:bg-stone-50 dark:hover:bg-neutral-800/60 dark:bg-neutral-800/60 dark:hover:bg-neutral-800/60 focus-visible:bg-stone-50 dark:bg-neutral-800/60 dark:focus-visible:bg-neutral-800/60'
       } focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/40`}>
       <div
-        className={`w-5 h-5 flex-shrink-0 mr-3 text-stone-700 ${
+        className={`w-5 h-5 flex-shrink-0 mr-3 text-stone-700 dark:text-neutral-200 ${
           isDisabled ? 'opacity-50' : 'opacity-80 group-hover:opacity-100'
         } transition-opacity`}>
         {option.icon}
       </div>
       <div className="flex-1 min-w-0">
-        <div className="font-medium text-sm text-stone-900 leading-snug">{option.name}</div>
-        <p className="text-xs text-stone-500 mt-0.5 leading-relaxed truncate">
+        <div className="font-medium text-sm text-stone-900 dark:text-neutral-100 leading-snug">
+          {option.name}
+        </div>
+        <p className="text-xs text-stone-500 dark:text-neutral-400 mt-0.5 leading-relaxed truncate">
           {option.description}
         </p>
       </div>
@@ -76,11 +79,8 @@ function ConnectionOptionRow({
   );
 }
 
-// ---------------------------------------------------------------------------
-// Main panel
-// ---------------------------------------------------------------------------
-
 const ConnectionsPanel = () => {
+  const { t } = useT();
   const { navigateBack, breadcrumbs } = useSettingsNavigation();
   const navigate = useNavigate();
   const [walletStatus, setWalletStatus] = useState<WalletStatus | null>(null);
@@ -129,20 +129,20 @@ const ConnectionsPanel = () => {
       id: 'wallet',
       name: 'Web3 Wallet',
       description: walletConfigured
-        ? 'Local EVM, BTC, Solana, and Tron identities are configured from your recovery phrase.'
+        ? t('connections.walletConfigured')
         : walletReady
-          ? 'Set up local EVM, BTC, Solana, and Tron identities from one recovery phrase.'
+          ? t('connections.walletReady')
           : walletStatusState === 'error'
-            ? 'Could not check wallet status. Tap to retry from the Recovery Phrase panel.'
-            : 'Checking wallet status…',
+            ? t('connections.walletError')
+            : t('connections.walletChecking'),
       icon: <img src={MetamaskIcon} alt="Metamask" className="w-5 h-5" />,
       statusLabel: walletConfigured
-        ? 'Configured'
+        ? t('connections.configured')
         : walletReady
           ? undefined
           : walletStatusState === 'error'
-            ? 'Unavailable'
-            : 'Checking…',
+            ? t('connections.unavailable')
+            : t('connections.checking'),
     },
     {
       id: 'exchange',
@@ -165,7 +165,7 @@ const ConnectionsPanel = () => {
   return (
     <div>
       <SettingsHeader
-        title="Connections"
+        title={t('settings.account.connections')}
         showBackButton={true}
         onBack={navigateBack}
         breadcrumbs={breadcrumbs}
@@ -173,8 +173,7 @@ const ConnectionsPanel = () => {
 
       <div>
         <div className="p-4 space-y-4">
-          {/* Connection Options */}
-          <div className="rounded-2xl border border-stone-200 overflow-hidden bg-white">
+          <div className="rounded-2xl border border-stone-200 dark:border-neutral-800 overflow-hidden bg-white dark:bg-neutral-900">
             {connectOptions.map((option, index) => (
               <ConnectionOptionRow
                 key={option.id}
@@ -182,28 +181,31 @@ const ConnectionsPanel = () => {
                 isFirst={index === 0}
                 isLast={index === connectOptions.length - 1}
                 onConnect={handleConnect}
+                t={t}
               />
             ))}
           </div>
 
           {walletConfigured && walletStatus ? (
-            <div className="rounded-2xl border border-stone-200 bg-white p-4 space-y-3">
+            <div className="rounded-2xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 space-y-3">
               <div>
-                <p className="font-medium text-stone-900 text-sm">Wallet identities</p>
-                <p className="text-xs text-stone-500 mt-1">
-                  Derived locally from your recovery phrase and stored as safe metadata only.
+                <p className="font-medium text-stone-900 dark:text-neutral-100 text-sm">
+                  {t('connections.walletIdentities')}
+                </p>
+                <p className="text-xs text-stone-500 dark:text-neutral-400 mt-1">
+                  {t('connections.walletDerived')}
                 </p>
               </div>
               <div className="grid gap-2">
                 {walletStatus.accounts.map(account => (
                   <div
                     key={account.chain}
-                    className="rounded-xl border border-stone-200 bg-stone-50 px-3 py-2">
+                    className="rounded-xl border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 px-3 py-2">
                     <div className="flex items-center justify-between gap-3">
-                      <span className="text-xs font-semibold uppercase tracking-wide text-stone-500">
+                      <span className="text-xs font-semibold uppercase tracking-wide text-stone-500 dark:text-neutral-400">
                         {account.chain}
                       </span>
-                      <span className="text-xs font-mono text-stone-700 truncate">
+                      <span className="text-xs font-mono text-stone-700 dark:text-neutral-200 truncate">
                         {account.address}
                       </span>
                     </div>
@@ -213,11 +215,10 @@ const ConnectionsPanel = () => {
             </div>
           ) : null}
 
-          {/* Security notice — palette aligned with Privacy & Security panel for cross-surface trust coherence */}
-          <div className="p-4 bg-stone-50 rounded-xl border border-stone-200">
+          <div className="p-4 bg-stone-50 dark:bg-neutral-800/60 rounded-xl border border-stone-200 dark:border-neutral-800">
             <div className="flex items-start space-x-3">
               <svg
-                className="w-5 h-5 text-stone-400 mt-0.5 flex-shrink-0"
+                className="w-5 h-5 text-stone-400 dark:text-neutral-500 mt-0.5 flex-shrink-0"
                 fill="currentColor"
                 viewBox="0 0 20 20">
                 <path
@@ -227,10 +228,11 @@ const ConnectionsPanel = () => {
                 />
               </svg>
               <div>
-                <p className="font-medium text-stone-900 text-sm">Privacy & Security</p>
-                <p className="text-xs text-stone-500 mt-1 leading-relaxed">
-                  All data and credentials are stored locally with zero-data retention policy. Your
-                  information is encrypted and never shared with third parties.
+                <p className="font-medium text-stone-900 dark:text-neutral-100 text-sm">
+                  {t('connections.privacySecurity')}
+                </p>
+                <p className="text-xs text-stone-500 dark:text-neutral-400 mt-1 leading-relaxed">
+                  {t('connections.privacySecurityDesc')}
                 </p>
               </div>
             </div>

@@ -1,5 +1,6 @@
 import { json } from "../http.mjs";
 import { behavior, parseBehaviorJson, setMockBehavior } from "../state.mjs";
+import { listMockLlmModels } from "./llm/shared.mjs";
 
 export function handleIntegrations(ctx) {
   const { method, url, parsedBody, res } = ctx;
@@ -137,13 +138,22 @@ export function handleIntegrations(ctx) {
 
   // ── OpenAI proxy ───────────────────────────────────────────
   if (method === "GET" && /^\/openai\/v1\/models\/?(\?.*)?$/.test(url)) {
-    json(res, 200, { data: [{ id: "e2e-mock-model", object: "model" }] });
+    json(res, 200, { data: listMockLlmModels() });
     return true;
   }
 
   // (chat/completions is handled by routes/llm.mjs ahead of this route)
 
   // ── Composio ───────────────────────────────────────────────
+  if (
+    method === "GET" &&
+    /^\/agent-integrations\/composio\/toolkits\/?(\?.*)?$/.test(url)
+  ) {
+    const toolkits = parseBehaviorJson("composioToolkits", ["gmail"]);
+    json(res, 200, { success: true, data: { toolkits } });
+    return true;
+  }
+
   if (
     method === "GET" &&
     /^\/agent-integrations\/composio\/connections\/?(\?.*)?$/.test(url)
@@ -262,6 +272,35 @@ export function handleIntegrations(ctx) {
     return true;
   }
 
+  if (
+    method === "POST" &&
+    /^\/agent-integrations\/composio\/execute\/?$/.test(url)
+  ) {
+    const action =
+      typeof parsedBody?.action === "string"
+        ? parsedBody.action
+        : typeof parsedBody?.tool === "string"
+          ? parsedBody.tool
+          : "";
+    const data =
+      action === "GMAIL_FETCH_EMAILS"
+        ? {
+            messages: [
+              {
+                id: "e2e-gmail-message-1",
+                snippet:
+                  "Welcome to OpenHuman. No profile link is required for this run.",
+              },
+            ],
+          }
+        : { ok: true };
+    json(res, 200, {
+      success: true,
+      data: { successful: true, data, error: null },
+    });
+    return true;
+  }
+
   // ── Apify ──────────────────────────────────────────────────
   // Gap fill — minimal stubs for run polling.
   const apifyMatch = url.match(
@@ -274,7 +313,11 @@ export function handleIntegrations(ctx) {
     } else {
       json(res, 200, {
         success: true,
-        data: { id: runId, status: "SUCCEEDED", finishedAt: new Date().toISOString() },
+        data: {
+          id: runId,
+          status: "SUCCEEDED",
+          finishedAt: new Date().toISOString(),
+        },
       });
     }
     return true;

@@ -103,6 +103,24 @@ export function useComposioIntegrations(pollIntervalMs = 5_000): UseComposioInte
     return () => window.clearInterval(id);
   }, [refresh, pollIntervalMs]);
 
+  // [composio-cache] Listen for a window-level "config changed" event
+  // emitted by ComposioPanel when the user flips backend ↔ direct or
+  // stores/clears the BYO API key. Without this, the integrations panel
+  // keeps showing the previous tenant's connections for up to one poll
+  // interval (5s) — visible enough to look like a bug (#1710). On the
+  // event we trigger a full refresh which re-fetches toolkits +
+  // connections against the new client. We also rely on the Rust-side
+  // ComposioConfigChanged bus event to invalidate the core-side cache;
+  // the window event is purely an in-renderer signal.
+  useEffect(() => {
+    const onConfigChanged = () => {
+      console.debug('[composio-cache] window:composio:config-changed → refresh()');
+      void refresh();
+    };
+    window.addEventListener('composio:config-changed', onConfigChanged);
+    return () => window.removeEventListener('composio:config-changed', onConfigChanged);
+  }, [refresh]);
+
   const connectionByToolkit = useMemo(() => {
     const map = new Map<string, ComposioConnection>();
     // Preference order: ACTIVE/CONNECTED > PENDING > anything else.

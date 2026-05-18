@@ -215,3 +215,17 @@ bash app/scripts/e2e-agent-review.sh
 ```
 
 Artifacts land in `app/test/e2e/artifacts/<timestamp>-agent-review/`. Full details + helper API: [`AGENT-OBSERVABILITY.md`](AGENT-OBSERVABILITY.md). Any failing test triggers `wdio.conf.ts`'s `afterTest` hook, which writes `failure-*.png` + `failure-*.source.xml` into the same run dir.
+
+---
+
+## Rust inference provider E2E
+
+These tests (`tests/inference_provider_e2e.rs`) use **wiremock** to mock HTTP upstreams and require no live LLM API calls. They cover OpenAI-compat chat, Anthropic auth style, per-model temperature suppression, Ollama local provider, and the `/v1` HTTP endpoint auth layer.
+
+```bash
+# Local:
+bash scripts/test-rust-inference-e2e.sh
+
+# Via Docker (Linux, same image as CI):
+docker compose -f e2e/docker-compose.yml run --rm inference-e2e
+```

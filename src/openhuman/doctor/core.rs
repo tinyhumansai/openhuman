@@ -123,7 +123,7 @@ pub struct ModelProbeReport {
 }
 
 fn doctor_model_targets() -> Vec<String> {
-    crate::openhuman::providers::list_providers()
+    crate::openhuman::inference::provider::list_providers()
         .into_iter()
         .map(|provider| provider.name.to_string())
         .collect()

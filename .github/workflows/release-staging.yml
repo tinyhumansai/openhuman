@@ -1,7 +1,17 @@
 ---
 name: Release Staging
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      skip_e2e:
+        description:
+          Skip the entire pretest phase (unit/rust plus E2E) and continue
+          directly to the desktop/docker staging build. Use only when the
+          required pretest signal is already known and you need to unblock a
+          staging cut.
+        required: false
+        type: boolean
+        default: false
 permissions:
   # `contents: write` is required for the patch bump commit and the
   # `v<version>-staging` tag push performed by `prepare-build` below.
@@ -15,12 +25,22 @@ concurrency:
 #
 #   prepare-build
 #        │
+#        ├── pretest-tests   (reusable test-reusable.yml — unit + rust;
+#        │                    optional when `skip_e2e` is true)
+#        ├── pretest-e2e     (reusable e2e-reusable.yml — all 3 OS, full suite;
+#        │                    optional when `skip_e2e` is true)
+#        │
 #        ├── build-desktop      (delegated to .github/workflows/build-desktop.yml)
 #        ├── build-docker       (build only — no GHCR push on staging)
 #        │
 #   record-sentry-deploy
 #        │
 #   cleanup-failed-staging (on failure)
+#
+# The pretest jobs are a hard gate — `build-desktop` and `build-docker`
+# only start once unit/rust/E2E have all passed across every target. This
+# guarantees we never produce a staging tag whose installers were built
+# against unproven code.
 #
 # The actual desktop build / Sentry / artifact-upload pipeline lives in
 # `.github/workflows/build-desktop.yml` and is shared with
@@ -169,11 +189,42 @@ jobs:
           echo "base_url=https://staging-api.tinyhumans.ai/" >> "$GITHUB_OUTPUT"
 
   # =========================================================================
+  # Phase 1b: Pretest gate — run the full test + E2E suite across every
+  # target OS exactly once on the staging commit before any build job
+  # spins up. A failure here aborts the matrix (and `cleanup-failed-staging`
+  # deletes the tag) without burning four signed Tauri builds first.
+  # =========================================================================
+  pretest-tests:
+    name: Pretest — unit + rust
+    needs: [prepare-build]
+    if: ${{ !inputs.skip_e2e }}
+    uses: ./.github/workflows/test-reusable.yml
+    with:
+      ref: ${{ needs.prepare-build.outputs.build_ref }}
+  pretest-e2e:
+    name: Pretest — E2E (all OS, full suite)
+    needs: [prepare-build]
+    if: ${{ !inputs.skip_e2e }}
+    uses: ./.github/workflows/e2e-reusable.yml
+    with:
+      ref: ${{ needs.prepare-build.outputs.build_ref }}
+      run_linux: true
+      run_macos: true
+      run_windows: true
+      full: true
+
+  # =========================================================================
   # Phase 2: Build desktop artifacts (delegated to reusable workflow)
   # =========================================================================
   build-desktop:
     name: Build desktop matrix
-    needs: [prepare-build]
+    needs: [prepare-build, pretest-tests, pretest-e2e]
+    if: >-
+      always()
+      && (needs.pretest-tests.result == 'success'
+          || (inputs.skip_e2e && needs.pretest-tests.result == 'skipped'))
+      && (needs.pretest-e2e.result == 'success'
+          || (inputs.skip_e2e && needs.pretest-e2e.result == 'skipped'))
     uses: ./.github/workflows/build-desktop.yml
     secrets: inherit
     with:
@@ -203,6 +254,7 @@ jobs:
       # real consumer. Set `build_sidecar: true` to re-enable a per-platform
       # CLI Actions artifact + its Sentry DIF upload for QA spot-checks.
       build_sidecar: false
+      skip_pretests: ${{ inputs.skip_e2e }}
 
   # =========================================================================
   # Phase 2b: Build the openhuman-core Docker image without pushing.
@@ -215,7 +267,13 @@ jobs:
   # =========================================================================
   build-docker:
     name: "Docker: build (no push)"
-    needs: [prepare-build]
+    needs: [prepare-build, pretest-tests, pretest-e2e]
+    if: >-
+      always()
+      && (needs.pretest-tests.result == 'success'
+          || (inputs.skip_e2e && needs.pretest-tests.result == 'skipped'))
+      && (needs.pretest-e2e.result == 'success'
+          || (inputs.skip_e2e && needs.pretest-e2e.result == 'skipped'))
     runs-on: ubuntu-latest
     environment: Production
     steps:
@@ -294,11 +352,13 @@ jobs:
     name: Remove staging tag if build failed
     runs-on: ubuntu-latest
     environment: Production
-    needs: [prepare-build, build-desktop, build-docker]
+    needs: [prepare-build, pretest-tests, pretest-e2e, build-desktop, build-docker]
     if: >-
       always()
       && needs.prepare-build.result == 'success'
-      && (needs.build-desktop.result == 'failure' || needs.build-desktop.result == 'cancelled'
+      && (needs.pretest-tests.result == 'failure' || needs.pretest-tests.result == 'cancelled'
+          || needs.pretest-e2e.result == 'failure' || needs.pretest-e2e.result == 'cancelled'
+          || needs.build-desktop.result == 'failure' || needs.build-desktop.result == 'cancelled'
           || needs.build-docker.result == 'failure' || needs.build-docker.result == 'cancelled')
     steps:
       - name: Delete remote staging tag

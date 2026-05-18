@@ -1,13 +1,13 @@
 import * as path from 'node:path';
 import { promises as fs } from 'node:fs';
 
-import { waitForApp, waitForAppReady } from '../helpers/app-helpers';
+// @ts-nocheck
+import { waitForApp } from '../helpers/app-helpers';
 import { callOpenhumanRpc } from '../helpers/core-rpc';
-import { triggerAuthDeepLinkBypass } from '../helpers/deep-link-helpers';
-import { waitForWebView, waitForWindowVisible } from '../helpers/element-helpers';
-import { supportsExecuteScript } from '../helpers/platform';
-import { completeOnboardingIfVisible } from '../helpers/shared-flows';
+import { resetApp } from '../helpers/reset-app';
 import { startMockServer, stopMockServer } from '../mock-server';
+
+const USER_ID = 'e2e-tool-filesystem';
 
 /**
  * Filesystem tool E2E spec — coverage matrix rows 6.1.1 (read), 6.1.2 (write),
@@ -69,22 +69,10 @@ interface ListResultEnvelope {
 }
 
 describe('System tools — Filesystem (file_read / file_write / path restriction)', () => {
-  before(async function beforeSuite() {
-    if (!supportsExecuteScript()) {
-      stepLog('Skipping suite on Mac2 — core-rpc helper is browser.execute-bound');
-      this.skip();
-    }
-
-    stepLog('starting mock server');
+  before(async () => {
     await startMockServer();
-    stepLog('waiting for app');
     await waitForApp();
-    stepLog('triggering auth bypass deep link');
-    await triggerAuthDeepLinkBypass('e2e-tool-filesystem');
-    await waitForWindowVisible(25_000);
-    await waitForWebView(15_000);
-    await waitForAppReady(15_000);
-    await completeOnboardingIfVisible('[ToolFilesystemE2E]');
+    await resetApp(USER_ID);
 
     // Pre-clean any state from a previous run so 6.1.1 read assertion is
     // unambiguous if the same workspace is reused across restarts.
@@ -99,7 +87,6 @@ describe('System tools — Filesystem (file_read / file_write / path restriction
   });
 
   after(async () => {
-    stepLog('stopping mock server');
     await stopMockServer();
   });
 

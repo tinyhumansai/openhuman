@@ -9,7 +9,7 @@ use rusqlite::Connection;
 use std::sync::Arc;
 
 use crate::openhuman::learning::candidate::FacetClass;
-use crate::openhuman::memory::store::profile::{self, FacetState, ProfileFacet, UserState};
+use crate::openhuman::memory::store::profile::{self, ProfileFacet, UserState};
 
 /// Thin wrapper around the `user_profile` table.
 ///

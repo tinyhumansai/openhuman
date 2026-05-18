@@ -39,8 +39,10 @@ use async_trait::async_trait;
 use parking_lot::Mutex;
 use serde_json::json;
 
-use crate::openhuman::providers::traits::ProviderCapabilities;
-use crate::openhuman::providers::{ChatMessage, ChatRequest, ChatResponse, Provider, ToolCall};
+use crate::openhuman::inference::provider::traits::ProviderCapabilities;
+use crate::openhuman::inference::provider::{
+    ChatMessage, ChatRequest, ChatResponse, Provider, ToolCall,
+};
 
 /// One scripted reaction the [`KeywordScriptedProvider`] can emit when
 /// it sees its keyword in the latest user/tool turn.
@@ -334,6 +336,37 @@ pub struct ComposioFixture {
     pub tools: Vec<serde_json::Value>,
     /// Per-action canned execute responses, keyed by action slug.
     pub execute_responses: std::collections::HashMap<String, serde_json::Value>,
+    /// Ordered request-aware execute overrides. The first matching rule wins.
+    pub execute_rules: Vec<ComposioExecuteRule>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ComposioExecuteRule {
+    pub action: String,
+    pub argument_path: Option<String>,
+    pub argument_contains: Option<String>,
+    pub response: serde_json::Value,
+}
+
+impl ComposioExecuteRule {
+    pub fn new(action: impl Into<String>, response: serde_json::Value) -> Self {
+        Self {
+            action: action.into(),
+            argument_path: None,
+            argument_contains: None,
+            response,
+        }
+    }
+
+    pub fn when_argument_contains(
+        mut self,
+        path: impl Into<String>,
+        needle: impl Into<String>,
+    ) -> Self {
+        self.argument_path = Some(path.into());
+        self.argument_contains = Some(needle.into());
+        self
+    }
 }
 
 impl ComposioFixture {
@@ -448,8 +481,40 @@ impl ComposioFixture {
             ]
             .into_iter()
             .collect(),
+            execute_rules: Vec::new(),
         }
     }
+}
+
+fn json_path<'a>(value: &'a serde_json::Value, path: &str) -> Option<&'a serde_json::Value> {
+    path.split('.')
+        .filter(|segment| !segment.is_empty())
+        .try_fold(value, |current, segment| current.get(segment))
+}
+
+fn match_execute_rule(
+    rules: &[ComposioExecuteRule],
+    action: &str,
+    body: &serde_json::Value,
+) -> Option<serde_json::Value> {
+    rules.iter().find_map(|rule| {
+        if rule.action != action {
+            return None;
+        }
+        if let Some(path) = rule.argument_path.as_deref() {
+            let actual = json_path(body, path)?;
+            if let Some(needle) = rule.argument_contains.as_deref() {
+                if !actual
+                    .to_string()
+                    .to_ascii_lowercase()
+                    .contains(&needle.to_ascii_lowercase())
+                {
+                    return None;
+                }
+            }
+        }
+        Some(rule.response.clone())
+    })
 }
 
 #[derive(Clone)]
@@ -477,6 +542,63 @@ impl FakeComposioBackend {
             "test-token".into(),
         ));
         ComposioClient::new(inner)
+    }
+
+    /// Build an `Arc<Config>` that — when passed through the mode-aware
+    /// factory (`create_composio_client`) — resolves to a backend
+    /// `ComposioClient` pointing at this fake backend, **and persist it**
+    /// to `config_path` on disk, returning the workspace dir to point
+    /// `OPENHUMAN_WORKSPACE` at.
+    ///
+    /// Post-#1710-Wave-4, factory-routed tools
+    /// ([`crate::openhuman::composio::ComposioActionTool`],
+    /// `ComposioExecuteTool`, `ProviderContext`) reload config via
+    /// `config_rpc::load_config_with_timeout()` per call rather than
+    /// using the injected `Arc<Config>` — so the injected config only
+    /// influences routing if it is the live on-disk config the loader
+    /// resolves. Callers must hold `crate::openhuman::config::TEST_ENV_LOCK`
+    /// and `std::env::set_var("OPENHUMAN_WORKSPACE", &workspace_root)`
+    /// (the returned path's parent) so the loader reads this config.
+    ///
+    /// Returns `(Arc<Config>, workspace_root)` where `workspace_root` is
+    /// the tempdir the config + auth-profile live in (the value to set
+    /// `OPENHUMAN_WORKSPACE` to). The tempdir is leaked so it stays
+    /// valid for the test's lifetime.
+    pub async fn config_persisted(
+        &self,
+    ) -> (
+        std::sync::Arc<crate::openhuman::config::Config>,
+        std::path::PathBuf,
+    ) {
+        use crate::openhuman::credentials::{
+            AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME,
+        };
+
+        let tmp = tempfile::tempdir().expect("tempdir for FakeComposioBackend::config_persisted");
+        let workspace_root = tmp.path().to_path_buf();
+        let mut config = crate::openhuman::config::Config::default();
+        config.workspace_dir = workspace_root.join("workspace");
+        config.config_path = workspace_root.join("config.toml");
+        config.api_url = Some(self.base_url.clone());
+        config.composio.mode = crate::openhuman::config::schema::COMPOSIO_MODE_BACKEND.to_string();
+        config.secrets.encrypt = false;
+        let auth = AuthService::from_config(&config);
+        auth.store_provider_token(
+            APP_SESSION_PROVIDER,
+            DEFAULT_AUTH_PROFILE_NAME,
+            "test-token",
+            std::collections::HashMap::new(),
+            true,
+        )
+        .expect("store fake app-session token for FakeComposioBackend::config_persisted");
+        // Persist so `load_config_with_timeout()` (resolving the workspace
+        // from `OPENHUMAN_WORKSPACE`) reads exactly this config.
+        config
+            .save()
+            .await
+            .expect("persist FakeComposioBackend config to disk");
+        std::mem::forget(tmp);
+        (std::sync::Arc::new(config), workspace_root)
     }
 }
 
@@ -578,10 +700,8 @@ pub async fn spawn_fake_composio_backend(fixture: ComposioFixture) -> FakeCompos
                         .unwrap_or("")
                         .to_string();
                     let fx = st.fixture.lock();
-                    let response = fx
-                        .execute_responses
-                        .get(&action)
-                        .cloned()
+                    let response = match_execute_rule(&fx.execute_rules, &action, &body)
+                        .or_else(|| fx.execute_responses.get(&action).cloned())
                         .unwrap_or_else(|| json!({"ok": true, "action": action.clone()}));
                     // Wrap in the BackendResponse envelope expected by
                     // IntegrationClient, with the inner shape matching

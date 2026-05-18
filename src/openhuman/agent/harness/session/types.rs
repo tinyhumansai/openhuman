@@ -12,8 +12,8 @@ use crate::openhuman::agent::memory_loader::MemoryLoader;
 use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::context::prompt::SystemPromptBuilder;
 use crate::openhuman::context::ContextManager;
+use crate::openhuman::inference::provider::{ChatMessage, ConversationMessage, Provider};
 use crate::openhuman::memory::Memory;
-use crate::openhuman::providers::{ChatMessage, ConversationMessage, Provider};
 use crate::openhuman::tools::{Tool, ToolSpec};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -131,14 +131,6 @@ pub struct Agent {
     /// the delegator / skill-executor voices can render their own
     /// integration blocks.
     pub(super) connected_integrations: Vec<crate::openhuman::context::prompt::ConnectedIntegration>,
-    /// Composio client, built alongside `connected_integrations` and
-    /// shared into [`harness::ParentExecutionContext`] at turn start
-    /// so the sub-agent runner can dynamically construct per-action
-    /// [`crate::openhuman::composio::ComposioActionTool`] instances
-    /// when `integrations_agent` is spawned with a `toolkit` argument.
-    /// `None` when the user isn't signed in or the backend is
-    /// unreachable.
-    pub(super) composio_client: Option<crate::openhuman::composio::ComposioClient>,
     /// Mirrors the agent definition's `omit_profile` flag. Threaded into
     /// [`PromptContext::include_profile`] in `turn::build_system_prompt`
     /// so only user-facing agents (welcome, orchestrator, triggers)

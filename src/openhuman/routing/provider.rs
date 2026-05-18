@@ -3,7 +3,7 @@
 //! [`IntelligentRoutingProvider`] implements the [`Provider`] trait. On each call:
 //!
 //! 1. Classifies the `hint:*` model string → [`TaskCategory`].
-//! 2. Checks local Ollama health (cached, non-blocking).
+//! 2. Checks selected local-provider health (cached, non-blocking).
 //! 3. Applies routing policy (task category + [`RoutingHints`]).
 //! 4. Calls the chosen provider; captures latency and token usage.
 //! 5. If local was chosen and:
@@ -20,7 +20,7 @@ use async_trait::async_trait;
 use crate::openhuman::config::{
     MODEL_AGENTIC_V1, MODEL_CODING_V1, MODEL_REASONING_QUICK_V1, MODEL_REASONING_V1,
 };
-use crate::openhuman::providers::traits::{
+use crate::openhuman::inference::provider::traits::{
     ChatMessage, ChatRequest, ChatResponse, Provider, ProviderCapabilities, StreamChunk,
     StreamError, StreamOptions, StreamResult, ToolsPayload,
 };
@@ -58,8 +58,9 @@ fn should_fallback(
     }
 }
 
-/// Provider that routes requests between a local Ollama instance and the remote
-/// OpenHuman backend based on task complexity, local health, and routing hints.
+/// Provider that routes requests between a local provider instance and the
+/// remote OpenHuman backend based on task complexity, local health, and
+/// routing hints.
 pub struct IntelligentRoutingProvider {
     remote: Box<dyn Provider>,
     local: Box<dyn Provider>,

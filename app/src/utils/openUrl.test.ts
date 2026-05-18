@@ -122,4 +122,26 @@ describe('openUrl', () => {
     expect(call?.data?.url).not.toContain('secret-redact-me');
     expect(call?.data?.url).not.toContain('/dashboard');
   });
+
+  it('trims surrounding whitespace before classifying an http URL for fallback', async () => {
+    isTauriMock.mockReturnValue(true);
+    tauriOpenUrlMock.mockRejectedValue(
+      new TypeError("Cannot read properties of undefined (reading 'postMessage')")
+    );
+
+    const { openUrl } = await import('./openUrl');
+    await openUrl('  https://tinyhumans.ai/dashboard?token=secret-redact-me  ');
+
+    expect(tauriOpenUrlMock).toHaveBeenCalledWith(
+      'https://tinyhumans.ai/dashboard?token=secret-redact-me'
+    );
+    expect(windowOpenMock).toHaveBeenCalledWith(
+      'https://tinyhumans.ai/dashboard?token=secret-redact-me',
+      '_blank',
+      'noopener,noreferrer'
+    );
+    expect(addBreadcrumbMock).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ url: 'https://tinyhumans.ai' }) })
+    );
+  });
 });

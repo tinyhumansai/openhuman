@@ -44,6 +44,7 @@ const log = debugFactory('core-state');
 
 const POLL_MS = 2000;
 const MAX_BOOTSTRAP_RETRIES = 5;
+const SUPPRESS_POLL_WARNING_AT = MAX_BOOTSTRAP_RETRIES + 1;
 
 /** Extract only non-sensitive fields from an RPC/fetch error. */
 function sanitizeError(error: unknown): { message?: string; code?: string; status?: number } {
@@ -59,6 +60,44 @@ function sanitizeError(error: unknown): { message?: string; code?: string; statu
     };
   }
   return { message: String(error) };
+}
+
+export function coreStatePollFailureWarningMessage(failureCount: number): string | null {
+  if (failureCount <= 0) {
+    return null;
+  }
+  if (failureCount <= MAX_BOOTSTRAP_RETRIES) {
+    return `[core-state] poll failed (attempt ${failureCount}/${MAX_BOOTSTRAP_RETRIES}):`;
+  }
+  if (failureCount === SUPPRESS_POLL_WARNING_AT) {
+    return '[core-state] poll failed repeatedly; suppressing further warnings until core state recovers:';
+  }
+  return null;
+}
+
+function decodeJwtPayload(token: string): Record<string, unknown> | null {
+  const [, payload] = token.split('.');
+  if (!payload) return null;
+
+  try {
+    const base64 = payload.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '=');
+    const decoded = window.atob(padded);
+    return JSON.parse(decoded) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function isPlausibleSessionToken(token: unknown): token is string {
+  if (typeof token !== 'string') return false;
+  if (token.trim() !== token || token.length === 0) return false;
+  if (token.split('.').length !== 3) return false;
+
+  const payload = decodeJwtPayload(token);
+  if (!payload || typeof payload.exp !== 'number') return false;
+
+  return payload.exp * 1000 > Date.now();
 }
 
 interface CoreStateContextValue extends CoreState {
@@ -176,7 +215,12 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
   const logoutGuardUntilRef = useRef(0);
   const bootstrapFailCountRef = useRef(0);
   const refreshInFlightRef = useRef<Promise<void> | null>(null);
+  const isMountedRef = useRef(true);
   const commitState = useCallback((updater: (previous: CoreState) => CoreState) => {
+    if (!isMountedRef.current) {
+      return;
+    }
+
     setState(previous => {
       const next = updater(previous);
       setCoreStateSnapshot(next);
@@ -184,9 +228,21 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
     });
   }, []);
 
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      snapshotRequestIdRef.current += 1;
+      teamsRequestIdRef.current += 1;
+    };
+  }, []);
+
   const refreshCore = useCallback(async () => {
     const requestId = ++snapshotRequestIdRef.current;
     const snapshot = normalizeSnapshot(await fetchCoreAppSnapshot());
+    if (!isMountedRef.current) {
+      return;
+    }
     if (!snapshot.sessionToken) {
       logoutGuardUntilRef.current = 0;
     }
@@ -375,10 +431,10 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
             MAX_BOOTSTRAP_RETRIES,
             safe
           );
-          console.warn(
-            `[core-state] poll failed (attempt ${bootstrapFailCountRef.current}/${MAX_BOOTSTRAP_RETRIES}):`,
-            safe
-          );
+          const warningMessage = coreStatePollFailureWarningMessage(bootstrapFailCountRef.current);
+          if (warningMessage) {
+            console.warn(warningMessage, safe);
+          }
           if (bootstrapFailCountRef.current >= MAX_BOOTSTRAP_RETRIES) {
             commitState(previous => {
               if (previous.isBootstrapping) {
@@ -427,24 +483,12 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
     const onSessionTokenUpdated = (event: Event) => {
       const customEvent = event as CustomEvent<{ sessionToken?: string | null }>;
       const token = customEvent.detail?.sessionToken;
-      if (!token) {
+      if (!isPlausibleSessionToken(token)) {
         return;
       }
 
       snapshotRequestIdRef.current += 1;
       logoutGuardUntilRef.current = 0;
-
-      memoryTokenRef.current = token;
-      commitState(previous => ({
-        ...previous,
-        isBootstrapping: false,
-        isReady: true,
-        snapshot: {
-          ...previous.snapshot,
-          auth: { ...previous.snapshot.auth, isAuthenticated: true },
-          sessionToken: token,
-        },
-      }));
 
       void refresh().catch(err => {
         log('refresh failed after deep-link session update: %O', sanitizeError(err));

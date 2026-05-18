@@ -119,11 +119,13 @@ interface RecipeEventPayload {
 interface IngestMessage {
   id?: string;
   from?: string | null;
+  sender?: string | null;
   to?: string | null;
   fromMe?: boolean;
   body?: string | null;
   type?: string | null;
   timestamp?: number | null; // seconds since epoch
+  date?: number | null; // seconds since epoch
   unread?: number;
 }
 
@@ -138,6 +140,9 @@ interface IngestPayload {
   chatName?: string | null;
   day?: string; // YYYY-MM-DD UTC
   isSeed?: boolean;
+  channelId?: string;
+  channelName?: string | null;
+  guildId?: string | null;
 }
 
 interface LinkedInConversationPayload {
@@ -146,6 +151,12 @@ interface LinkedInConversationPayload {
   day: string; // YYYY-MM-DD UTC
   messages: IngestMessage[];
   isSeed?: boolean;
+}
+
+interface DiscordMemoryIngestPayload extends IngestPayload {
+  channelId: string;
+  channelName?: string | null;
+  guildId?: string | null;
 }
 
 interface NotificationClickPayload {
@@ -405,7 +416,7 @@ function handleRecipeEvent(evt: RecipeEventPayload) {
     const ingest = evt.payload as IngestPayload;
     const messages: IngestedMessage[] = (ingest.messages ?? []).map((m, idx) => ({
       id: m.id ?? `${accountId}:${idx}`,
-      from: m.from ?? null,
+      from: m.from ?? m.sender ?? null,
       body: m.body ?? null,
       unread: m.unread,
       ts: evt.ts ?? Date.now(),
@@ -413,13 +424,32 @@ function handleRecipeEvent(evt: RecipeEventPayload) {
 
     store.dispatch(appendMessages({ accountId, messages, unread: ingest.unread }));
 
-    // Tauri already forwarded this ingest to core; refresh queue immediately for Agent pane.
-    void store.dispatch(fetchRespondQueue({ silent: true }));
+    if (evt.provider !== 'discord') {
+      // Tauri already forwarded this ingest to core; refresh queue immediately for Agent pane.
+      void store.dispatch(fetchRespondQueue({ silent: true }));
 
-    // Fire-and-forget memory write via the existing core RPC.
-    // Namespace mirrors the skill-sync convention so the recall pipeline
-    // can find these alongside other ingested context.
-    void persistIngestToMemory(accountId, evt.provider, ingest, messages);
+      // Fire-and-forget memory write via the existing core RPC.
+      // Namespace mirrors the skill-sync convention so the recall pipeline
+      // can find these alongside other ingested context.
+      void persistIngestToMemory(accountId, evt.provider, ingest, messages);
+    }
+    return;
+  }
+
+  if (evt.kind === 'discord_memory_ingest') {
+    const ingest = evt.payload as unknown as DiscordMemoryIngestPayload;
+    const messages: IngestedMessage[] = (ingest.messages ?? []).map((m, idx) => ({
+      id: m.id ?? `${accountId}:${idx}`,
+      from: m.from ?? m.sender ?? null,
+      body: m.body ?? null,
+      unread: m.unread,
+      ts:
+        (m.date ?? m.timestamp ?? null)
+          ? (m.date ?? m.timestamp ?? 0) * 1000
+          : (evt.ts ?? Date.now()),
+    }));
+    store.dispatch(appendMessages({ accountId, messages, unread: ingest.unread }));
+    void store.dispatch(fetchRespondQueue({ silent: true }));
     return;
   }
 

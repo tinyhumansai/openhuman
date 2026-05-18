@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+use crate::openhuman::util::floor_char_boundary;
+
 /// How much autonomy the agent has
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
@@ -171,6 +173,57 @@ fn skip_env_assignments(s: &str) -> &str {
             return rest;
         }
     }
+}
+
+fn command_basename(command: &str) -> &str {
+    command
+        .split(|ch| ch == '/' || ch == '\\')
+        .next_back()
+        .unwrap_or(command)
+}
+
+fn normalized_command_name(command: &str) -> String {
+    let command = command_basename(command).to_ascii_lowercase();
+    command
+        .strip_suffix(".exe")
+        .unwrap_or(command.as_str())
+        .to_string()
+}
+
+fn is_python_command(command: &str) -> bool {
+    let command = normalized_command_name(command);
+    command == "python"
+        || command == "pythonw"
+        || command
+            .strip_prefix("pythonw")
+            .and_then(|suffix| suffix.chars().next())
+            .is_some_and(|ch| ch.is_ascii_digit())
+        || command
+            .strip_prefix("python")
+            .and_then(|suffix| suffix.chars().next())
+            .is_some_and(|ch| ch.is_ascii_digit())
+}
+
+fn is_command_executor(command: &str) -> bool {
+    let command = normalized_command_name(command);
+    is_python_command(command.as_str())
+        || matches!(
+            command.as_str(),
+            "xargs"
+                | "awk"
+                | "gawk"
+                | "mawk"
+                | "nawk"
+                | "perl"
+                | "ruby"
+                | "bash"
+                | "sh"
+                | "dash"
+                | "zsh"
+                | "ksh"
+                | "fish"
+                | "env"
+        )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -393,47 +446,45 @@ impl SecurityPolicy {
                 continue;
             };
 
-            let base = base_raw
-                .rsplit('/')
-                .next()
-                .unwrap_or("")
-                .to_ascii_lowercase();
+            let base = normalized_command_name(base_raw);
 
             let args: Vec<String> = words.map(|w| w.to_ascii_lowercase()).collect();
             let joined_segment = cmd_part.to_ascii_lowercase();
 
             // High-risk commands
-            if matches!(
-                base.as_str(),
-                "rm" | "mkfs"
-                    | "dd"
-                    | "shutdown"
-                    | "reboot"
-                    | "halt"
-                    | "poweroff"
-                    | "sudo"
-                    | "su"
-                    | "chown"
-                    | "chmod"
-                    | "useradd"
-                    | "userdel"
-                    | "usermod"
-                    | "passwd"
-                    | "mount"
-                    | "umount"
-                    | "iptables"
-                    | "ufw"
-                    | "firewall-cmd"
-                    | "curl"
-                    | "wget"
-                    | "nc"
-                    | "ncat"
-                    | "netcat"
-                    | "scp"
-                    | "ssh"
-                    | "ftp"
-                    | "telnet"
-            ) {
+            if is_command_executor(base.as_str())
+                || matches!(
+                    base.as_str(),
+                    "rm" | "mkfs"
+                        | "dd"
+                        | "shutdown"
+                        | "reboot"
+                        | "halt"
+                        | "poweroff"
+                        | "sudo"
+                        | "su"
+                        | "chown"
+                        | "chmod"
+                        | "useradd"
+                        | "userdel"
+                        | "usermod"
+                        | "passwd"
+                        | "mount"
+                        | "umount"
+                        | "iptables"
+                        | "ufw"
+                        | "firewall-cmd"
+                        | "curl"
+                        | "wget"
+                        | "nc"
+                        | "ncat"
+                        | "netcat"
+                        | "scp"
+                        | "ssh"
+                        | "ftp"
+                        | "telnet"
+                )
+            {
                 return CommandRiskLevel::High;
             }
 
@@ -496,11 +547,20 @@ impl SecurityPolicy {
         approved: bool,
     ) -> Result<CommandRiskLevel, String> {
         if !self.is_command_allowed(command) {
+            // Truncate the command in BOTH the log and the Err return: the Err
+            // string is bubbled back to the frontend, and a full untruncated
+            // command can leak secrets in args (e.g. `curl -H "Authorization:
+            // Bearer …"`, `psql "postgres://user:pass@…"`). The 80-char cap
+            // matches the log truncation so a long base command with safe args
+            // still shows enough context to diagnose the block.
+            let truncated = &command[..floor_char_boundary(command, 80)];
             log::warn!(
                 "[openhuman:policy] Command blocked by allowlist: {}",
-                &command[..command.len().min(80)]
+                truncated
             );
-            return Err(format!("Command not allowed by security policy: {command}"));
+            return Err(format!(
+                "Command not allowed by security policy: {truncated}"
+            ));
         }
 
         let risk = self.command_risk_level(command);
@@ -509,14 +569,14 @@ impl SecurityPolicy {
             if self.block_high_risk_commands {
                 log::warn!(
                     "[openhuman:policy] High-risk command blocked: {}",
-                    &command[..command.len().min(80)]
+                    &command[..floor_char_boundary(command, 80)]
                 );
                 return Err("Command blocked: high-risk command is disallowed by policy".into());
             }
             if self.autonomy == AutonomyLevel::Supervised && !approved {
                 log::warn!(
                     "[openhuman:policy] High-risk command needs approval: {}",
-                    &command[..command.len().min(80)]
+                    &command[..floor_char_boundary(command, 80)]
                 );
                 return Err(
                     "Command requires explicit approval (approved=true): high-risk operation"
@@ -532,7 +592,7 @@ impl SecurityPolicy {
         {
             log::info!(
                 "[openhuman:policy] Medium-risk command needs approval: {}",
-                &command[..command.len().min(80)]
+                &command[..floor_char_boundary(command, 80)]
             );
             return Err(
                 "Command requires explicit approval (approved=true): medium-risk operation".into(),
@@ -543,7 +603,7 @@ impl SecurityPolicy {
             "[openhuman:policy] Command validated: risk={:?}, approved={}, cmd={}",
             risk,
             approved,
-            &command[..command.len().min(80)]
+            &command[..floor_char_boundary(command, 80)]
         );
         Ok(risk)
     }
@@ -602,7 +662,7 @@ impl SecurityPolicy {
 
             let mut words = cmd_part.split_whitespace();
             let base_raw = words.next().unwrap_or("");
-            let base_cmd = base_raw.rsplit('/').next().unwrap_or("");
+            let base_cmd = command_basename(base_raw);
 
             if base_cmd.is_empty() {
                 continue;
@@ -635,6 +695,10 @@ impl SecurityPolicy {
     /// Check for dangerous arguments that allow sub-command execution.
     fn is_args_safe(&self, base: &str, args: &[String]) -> bool {
         let base = base.to_ascii_lowercase();
+        if is_command_executor(base.as_str()) {
+            return false;
+        }
+
         match base.as_str() {
             "find" => {
                 // find -exec and find -ok allow arbitrary command execution
@@ -809,6 +873,33 @@ impl SecurityPolicy {
             tracker: ActionTracker::new(),
         }
     }
+}
+
+/// Validate that a file path resolves within a given root directory.
+/// Canonicalizes both paths and checks that the resolved candidate
+/// starts with the root. Callers should check `.is_file()` first
+/// to avoid errors on non-existent paths (normal missing-file case).
+///
+/// Used to prevent path traversal in agent definition TOML files and
+/// other user-controllable file references.
+pub fn validate_path_within_root(
+    candidate: &std::path::Path,
+    root: &std::path::Path,
+) -> Result<std::path::PathBuf, String> {
+    let resolved_root = root
+        .canonicalize()
+        .map_err(|e| format!("workspace root: {e}"))?;
+    let resolved = candidate
+        .canonicalize()
+        .map_err(|e| format!("{}: {e}", candidate.display()))?;
+    if !resolved.starts_with(&resolved_root) {
+        return Err(format!(
+            "path escapes root: {} is not under {}",
+            resolved.display(),
+            resolved_root.display()
+        ));
+    }
+    Ok(resolved)
 }
 
 #[cfg(test)]

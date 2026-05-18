@@ -7,8 +7,10 @@ use openhuman_core::openhuman::agent::hooks::{
     fire_hooks, sanitize_tool_output, PostTurnHook, ToolCallRecord, TurnContext,
 };
 use openhuman_core::openhuman::config::AgentConfig;
+use openhuman_core::openhuman::inference::provider::{
+    ChatMessage, ChatRequest, ChatResponse, Provider,
+};
 use openhuman_core::openhuman::memory::{Memory, MemoryCategory, MemoryEntry};
-use openhuman_core::openhuman::providers::{ChatMessage, ChatRequest, ChatResponse, Provider};
 use parking_lot::Mutex;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -134,7 +136,6 @@ fn stub_parent_context() -> ParentExecutionContext {
         session_id: "test-session".into(),
         channel: "test-channel".into(),
         connected_integrations: vec![],
-        composio_client: None,
         tool_call_format: openhuman_core::openhuman::context::prompt::ToolCallFormat::PFormat,
         session_key: "test-session".into(),
         session_parent_prefix: None,

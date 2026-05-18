@@ -1,4 +1,5 @@
 use super::*;
+use crate::openhuman::config::TEST_ENV_LOCK as ENV_LOCK;
 use serde_json::json;
 
 const ALL_FUNCTIONS: &[&str] = &[
@@ -15,6 +16,8 @@ const ALL_FUNCTIONS: &[&str] = &[
     "turn_state_get",
     "turn_state_list",
     "turn_state_clear",
+    "task_board_get",
+    "task_board_put",
 ];
 
 #[test]
@@ -226,4 +229,106 @@ fn parse_empty_request_rejects_any_field() {
     let _: EmptyRequest = parse(obj(json!({}))).unwrap();
     let err = parse::<EmptyRequest>(obj(json!({"x": 1}))).unwrap_err();
     assert!(err.starts_with("invalid params:"), "prefix: {err}");
+}
+
+struct WorkspaceEnvGuard {
+    previous: Option<std::ffi::OsString>,
+}
+
+impl WorkspaceEnvGuard {
+    fn set(path: &std::path::Path) -> Self {
+        let previous = std::env::var_os("OPENHUMAN_WORKSPACE");
+        unsafe {
+            std::env::set_var("OPENHUMAN_WORKSPACE", path);
+        }
+        Self { previous }
+    }
+}
+
+impl Drop for WorkspaceEnvGuard {
+    fn drop(&mut self) {
+        match self.previous.take() {
+            Some(value) => unsafe {
+                std::env::set_var("OPENHUMAN_WORKSPACE", value);
+            },
+            None => unsafe {
+                std::env::remove_var("OPENHUMAN_WORKSPACE");
+            },
+        }
+    }
+}
+
+#[tokio::test]
+async fn task_board_handlers_roundtrip_task_board_payload() {
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let temp = tempfile::tempdir().expect("tempdir");
+    let _env = WorkspaceEnvGuard::set(temp.path());
+
+    let put = handle_task_board_put(obj(json!({
+        "thread_id": " thread-rpc ",
+        "cards": [
+            {
+                "id": " task-a ",
+                "title": " First task ",
+                "status": "todo",
+                "notes": " note ",
+                "order": 99,
+                "updatedAt": ""
+            },
+            {
+                "id": "task-b",
+                "title": "Second task",
+                "status": "blocked",
+                "notes": "waiting",
+                "order": 99,
+                "updatedAt": ""
+            }
+        ]
+    })))
+    .await
+    .expect("task board put");
+
+    assert_eq!(put["taskBoard"]["threadId"], "thread-rpc");
+    assert_eq!(put["taskBoard"]["cards"][0]["id"], "task-a");
+    assert_eq!(put["taskBoard"]["cards"][0]["order"], 0);
+    assert_eq!(put["taskBoard"]["cards"][1]["blocker"], "waiting");
+
+    let get = handle_task_board_get(obj(json!({"thread_id": "thread-rpc"})))
+        .await
+        .expect("task board get");
+    assert_eq!(get["taskBoard"]["cards"].as_array().unwrap().len(), 2);
+    // Assert that normalization is preserved in the persisted get payload.
+    assert_eq!(get["taskBoard"]["threadId"], "thread-rpc");
+    assert_eq!(get["taskBoard"]["cards"][0]["id"], "task-a");
+    assert_eq!(get["taskBoard"]["cards"][0]["title"], "First task");
+    assert_eq!(get["taskBoard"]["cards"][0]["order"], 0);
+    assert_eq!(get["taskBoard"]["cards"][1]["id"], "task-b");
+    assert_eq!(get["taskBoard"]["cards"][1]["blocker"], "waiting");
+}
+
+#[tokio::test]
+async fn task_board_get_rejects_blank_thread_id() {
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let temp = tempfile::tempdir().expect("tempdir");
+    let _env = WorkspaceEnvGuard::set(temp.path());
+
+    let err = handle_task_board_get(obj(json!({"thread_id": "   "})))
+        .await
+        .expect_err("blank id rejected");
+    assert!(err.contains("thread_id"), "err: {err}");
+}
+
+#[tokio::test]
+async fn task_board_put_rejects_blank_thread_id() {
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let temp = tempfile::tempdir().expect("tempdir");
+    let _env = WorkspaceEnvGuard::set(temp.path());
+
+    let err = handle_task_board_put(obj(json!({
+        "thread_id": "   ",
+        "cards": []
+    })))
+    .await
+    .expect_err("blank id rejected");
+    assert!(err.contains("thread_id"), "err: {err}");
 }

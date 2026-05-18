@@ -176,7 +176,7 @@ describe('coreRpcClient', () => {
     ['openhuman.set_browser_allow_all', 'openhuman.config_set_browser_allow_all'],
     ['openhuman.update_browser_settings', 'openhuman.config_update_browser_settings'],
     ['openhuman.update_memory_settings', 'openhuman.config_update_memory_settings'],
-    ['openhuman.update_model_settings', 'openhuman.config_update_model_settings'],
+    ['openhuman.update_model_settings', 'openhuman.inference_update_model_settings'],
     ['openhuman.update_runtime_settings', 'openhuman.config_update_runtime_settings'],
     [
       'openhuman.update_screen_intelligence_settings',

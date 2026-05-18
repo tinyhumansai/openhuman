@@ -2,7 +2,7 @@
 //! toolchain.
 //!
 //! Thin wrapper over `npm <subcommand> <args...>` that piggybacks on
-//! [`crate::openhuman::node_runtime::NodeBootstrap`] for binary resolution.
+//! [`crate::openhuman::javascript::NodeBootstrap`] for binary resolution.
 //! Same security posture as
 //! [`crate::openhuman::tools::impl::system::shell::ShellTool`] and
 //! [`crate::openhuman::tools::impl::system::node_exec::NodeExecTool`]:
@@ -18,7 +18,7 @@
 //! POSIX-safe single-quoting.
 
 use crate::openhuman::agent::host_runtime::RuntimeAdapter;
-use crate::openhuman::node_runtime::NodeBootstrap;
+use crate::openhuman::javascript::NodeBootstrap;
 use crate::openhuman::security::SecurityPolicy;
 use crate::openhuman::tools::traits::{Tool, ToolResult};
 use async_trait::async_trait;

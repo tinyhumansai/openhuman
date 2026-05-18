@@ -1,6 +1,6 @@
 use crate::openhuman::channels::{traits, Channel, SendMessage};
+use crate::openhuman::inference::provider::{ChatMessage, Provider};
 use crate::openhuman::memory::{Memory, MemoryCategory, MemoryEntry};
-use crate::openhuman::providers::{ChatMessage, Provider};
 use crate::openhuman::tools::{Tool, ToolResult};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};

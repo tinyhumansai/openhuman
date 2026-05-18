@@ -111,7 +111,8 @@ pub(crate) async fn build_context(
     // enforced at the SQLite layer (one DB per workspace == one user);
     // the current chat is excluded by passing `session_id` so the block
     // never duplicates the same-chat history.
-    let current_thread_id = crate::openhuman::providers::thread_context::current_thread_id();
+    let current_thread_id =
+        crate::openhuman::inference::provider::thread_context::current_thread_id();
     let cross_session_opts = crate::openhuman::memory::RecallOpts {
         session_id: current_thread_id.as_deref(),
         cross_session: true,

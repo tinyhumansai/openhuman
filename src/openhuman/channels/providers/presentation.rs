@@ -65,6 +65,7 @@ pub async fn deliver_response(
             delta_kind: None,
             tool_call_id: None,
             subagent: None,
+            task_board: None,
             citations: if citations.is_empty() {
                 None
             } else {
@@ -105,6 +106,7 @@ pub async fn deliver_response(
             delta_kind: None,
             tool_call_id: None,
             subagent: None,
+            task_board: None,
             citations: if i == 0 && !citations.is_empty() {
                 Some(serde_json::json!(citations))
             } else {
@@ -135,6 +137,7 @@ pub async fn deliver_response(
         delta_kind: None,
         tool_call_id: None,
         subagent: None,
+        task_board: None,
         citations: if citations.is_empty() {
             None
         } else {
@@ -311,6 +314,7 @@ fn split_sentences(text: &str) -> Vec<String> {
         current.push(chars[i]);
         let ch = chars[i];
 
+        // Latin sentence terminators: split on ". " followed by uppercase.
         if (ch == '.' || ch == '!' || ch == '?')
             && i + 2 < chars.len()
             && chars[i + 1] == ' '
@@ -322,6 +326,17 @@ fn split_sentences(text: &str) -> Vec<String> {
             }
             current.clear();
             i += 2; // skip the space
+            continue;
+        }
+
+        // CJK sentence terminators: split after fullwidth period/exclamation/question.
+        if (ch == '\u{3002}' || ch == '\u{FF01}' || ch == '\u{FF1F}') && i + 1 < chars.len() {
+            let trimmed = current.trim().to_string();
+            if !trimmed.is_empty() {
+                parts.push(trimmed);
+            }
+            current.clear();
+            i += 1;
             continue;
         }
 
@@ -381,7 +396,8 @@ async fn try_reaction(user_message: &str) -> Option<String> {
         return None;
     }
 
-    match crate::openhuman::local_ai::ops::local_ai_should_react(&config, user_message, "web").await
+    match crate::openhuman::inference::ops::inference_should_react(&config, user_message, "web")
+        .await
     {
         Ok(outcome) => {
             let decision = outcome.value;

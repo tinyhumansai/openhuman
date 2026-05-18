@@ -36,7 +36,7 @@
 use super::guard::{ContextCheckResult, ContextGuard};
 use super::microcompact::{microcompact, MicrocompactStats, DEFAULT_KEEP_RECENT_TOOL_RESULTS};
 use super::session_memory::{SessionMemoryConfig, SessionMemoryState};
-use crate::openhuman::providers::{ConversationMessage, UsageInfo};
+use crate::openhuman::inference::provider::{ConversationMessage, UsageInfo};
 use std::sync::{Arc, Mutex};
 
 /// Shared handle to a [`SessionMemoryState`] so both the synchronous
@@ -257,7 +257,7 @@ impl ContextPipeline {
 mod tests {
     use super::super::microcompact::CLEARED_PLACEHOLDER;
     use super::*;
-    use crate::openhuman::providers::{
+    use crate::openhuman::inference::provider::{
         ChatMessage, ConversationMessage, ToolCall, ToolResultMessage, UsageInfo,
     };
 

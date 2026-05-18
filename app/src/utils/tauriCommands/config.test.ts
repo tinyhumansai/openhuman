@@ -35,15 +35,24 @@ describe('tauriCommands/config', () => {
       expect(mockCallCoreRpc).not.toHaveBeenCalled();
     });
 
-    test('forwards the patch to openhuman.config_update_local_ai_settings', async () => {
+    test('forwards the patch to openhuman.inference_update_local_settings', async () => {
       mockCallCoreRpc.mockResolvedValue({
         result: { config: {}, workspace_dir: '/tmp', config_path: '/tmp/cfg.toml' },
         logs: [],
       });
-      const patch = { runtime_enabled: true, usage_embeddings: true, usage_subconscious: false };
+      const patch = {
+        runtime_enabled: true,
+        opt_in_confirmed: true,
+        provider: 'lm_studio',
+        base_url: 'http://localhost:1234/v1',
+        model_id: 'local-model',
+        chat_model_id: 'local-model',
+        usage_embeddings: true,
+        usage_subconscious: false,
+      };
       await openhumanUpdateLocalAiSettings(patch);
       expect(mockCallCoreRpc).toHaveBeenCalledWith({
-        method: 'openhuman.config_update_local_ai_settings',
+        method: 'openhuman.inference_update_local_settings',
         params: patch,
       });
     });
@@ -116,6 +125,21 @@ describe('tauriCommands/config', () => {
         params: patch,
       });
     });
+
+    test('returns no-op on unknown method from stale core (#1597)', async () => {
+      mockCallCoreRpc.mockRejectedValue(
+        new Error('unknown method: openhuman.config_update_composio_trigger_settings')
+      );
+      const out = await openhumanUpdateComposioTriggerSettings({ triage_disabled: true });
+      expect(out).toEqual({ result: { config: {}, workspace_dir: '', config_path: '' }, logs: [] });
+    });
+
+    test('rethrows non-unknown-method errors', async () => {
+      mockCallCoreRpc.mockRejectedValue(new Error('network timeout'));
+      await expect(
+        openhumanUpdateComposioTriggerSettings({ triage_disabled: true })
+      ).rejects.toThrow('network timeout');
+    });
   });
 
   describe('openhumanGetComposioTriggerSettings', () => {
@@ -143,6 +167,20 @@ describe('tauriCommands/config', () => {
       });
       expect(out.result.triage_disabled).toBe(false);
       expect(out.result.triage_disabled_toolkits).toEqual(['slack']);
+    });
+
+    test('returns defaults on unknown method from stale core (#1597)', async () => {
+      mockCallCoreRpc.mockRejectedValue(
+        new Error('unknown method: openhuman.config_get_composio_trigger_settings')
+      );
+      const out = await openhumanGetComposioTriggerSettings();
+      expect(out.result.triage_disabled).toBe(false);
+      expect(out.result.triage_disabled_toolkits).toEqual([]);
+    });
+
+    test('rethrows non-unknown-method errors', async () => {
+      mockCallCoreRpc.mockRejectedValue(new Error('network timeout'));
+      await expect(openhumanGetComposioTriggerSettings()).rejects.toThrow('network timeout');
     });
   });
 });

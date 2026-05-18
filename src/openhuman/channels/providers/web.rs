@@ -2,13 +2,14 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use tokio::sync::{broadcast, Mutex};
 use uuid::Uuid;
 
 use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::socketio::{SubagentProgressDetail, WebChannelEvent};
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
+use crate::openhuman::agent::profiles::{AgentProfile, AgentProfileStore, DEFAULT_PROFILE_ID};
 use crate::openhuman::agent::Agent;
 use crate::openhuman::config::rpc as config_rpc;
 use crate::openhuman::config::Config;
@@ -33,21 +34,46 @@ pub fn publish_web_channel_event(event: WebChannelEvent) {
     let _ = EVENT_BUS.send(event);
 }
 
+/// All inputs that the cached `SessionEntry`'s `Agent` was built from,
+/// captured at build time. The cache-hit predicate is a single
+/// `entry.fingerprint == current_fingerprint` comparison — pulling the
+/// fields into a named struct (instead of inlining four `&&`s) makes
+/// the predicate testable in isolation and makes "what invalidates the
+/// cache?" answerable in one place.
+///
+/// Adding a new dimension that should force a rebuild = add a field
+/// here and populate it both at insert time and at the call-site
+/// fingerprint construction.
+#[derive(PartialEq, Debug, Clone)]
+struct SessionCacheFingerprint {
+    /// Per-message `model_override` (clients can override the model
+    /// for an individual chat call).
+    model_override: Option<String>,
+    /// Per-message `temperature` override (same channel as
+    /// `model_override`).
+    temperature: Option<f64>,
+    /// Which agent definition was used to build `agent`. Without this
+    /// the cache hit short-circuited the welcome→orchestrator routing
+    /// fix — the very first turn picked welcome, welcome called
+    /// `complete_onboarding(complete)`, the flag flipped, but the next
+    /// turn read the cached welcome agent instead of invoking
+    /// `build_session_agent` to re-resolve the target.
+    target_agent_id: String,
+    /// Bound provider string at build time for the selected workload
+    /// role (`reasoning`, `agentic`, `coding`, `summarization`).
+    ///
+    /// Web-chat sessions cache a fully constructed `Agent`, which in
+    /// turn holds a concrete provider instance chosen up front by the
+    /// session builder. If the bound provider string changes in
+    /// Settings, the cache must invalidate so the next turn rebuilds
+    /// against the updated provider rather than silently reusing the
+    /// stale instance.
+    provider_binding: String,
+}
+
 struct SessionEntry {
     agent: Agent,
-    model_override: Option<String>,
-    temperature: Option<f64>,
-    /// Which agent definition was used to build `agent`. Recorded so
-    /// that the cache hit predicate in `run_chat_task` can detect
-    /// when the routing decision (welcome vs orchestrator) flips
-    /// between turns and rebuild instead of reusing a stale agent.
-    /// Without this field the cache hit short-circuited the routing
-    /// fix from Commit 8 — the very first turn picked welcome,
-    /// welcome called `complete_onboarding(complete)`, the flag
-    /// flipped, but the next turn read the cached welcome agent
-    /// instead of invoking `build_session_agent` to re-resolve the
-    /// target.
-    target_agent_id: String,
+    fingerprint: SessionCacheFingerprint,
 }
 
 /// Decide which agent definition this turn should run with.
@@ -61,11 +87,15 @@ struct SessionEntry {
 /// agent calls `complete_onboarding(complete)` and the flag flips
 /// to `true`, the very next chat turn observes the new value here
 /// and the cache miss + rebuild routes to orchestrator.
-fn pick_target_agent_id(config: &Config) -> &'static str {
-    if config.chat_onboarding_completed {
-        "orchestrator"
+fn pick_target_agent_id(config: &Config, profile: &AgentProfile) -> String {
+    if profile.id == DEFAULT_PROFILE_ID {
+        if config.chat_onboarding_completed {
+            "orchestrator".to_string()
+        } else {
+            "welcome".to_string()
+        }
     } else {
-        "welcome"
+        profile.agent_id.clone()
     }
 }
 
@@ -164,7 +194,7 @@ fn extract_provider_error_detail(err: &str) -> Option<String> {
                 if trimmed.is_empty() {
                     return None;
                 }
-                let sanitized = crate::openhuman::providers::sanitize_api_error(trimmed);
+                let sanitized = crate::openhuman::inference::provider::sanitize_api_error(trimmed);
                 return Some(crate::openhuman::util::truncate_with_ellipsis(
                     &sanitized,
                     MAX_DETAIL_CHARS,
@@ -302,6 +332,7 @@ pub async fn start_chat(
     message: &str,
     model_override: Option<String>,
     temperature: Option<f64>,
+    profile_id: Option<String>,
 ) -> Result<String, String> {
     let client_id = client_id.trim().to_string();
     let thread_id = thread_id.trim().to_string();
@@ -379,6 +410,7 @@ pub async fn start_chat(
                 tool_call_id: None,
                 citations: None,
                 subagent: None,
+                task_board: None,
             });
         }
     }
@@ -397,6 +429,7 @@ pub async fn start_chat(
             &user_message,
             model_override,
             temperature,
+            profile_id,
         )
         .await;
 
@@ -492,6 +525,7 @@ pub async fn start_chat(
                     tool_call_id: None,
                     citations: None,
                     subagent: None,
+                    task_board: None,
                 });
             }
         }
@@ -540,6 +574,19 @@ pub async fn invalidate_thread_sessions(thread_id: &str) {
     }
 }
 
+/// Snapshot the IN_FLIGHT map for the test-support introspection RPC.
+///
+/// Returned as `(map_key, request_id)` pairs. Not intended for any
+/// production caller — release builds reach this via the bearer-gated
+/// `/rpc` endpoint only, and the per-launch token file is debug-only.
+pub async fn in_flight_entries_for_test() -> Vec<(String, String)> {
+    let guard = IN_FLIGHT.lock().await;
+    guard
+        .iter()
+        .map(|(k, v)| (k.clone(), v.request_id.clone()))
+        .collect()
+}
+
 pub async fn cancel_chat(client_id: &str, thread_id: &str) -> Result<Option<String>, String> {
     let client_id = client_id.trim();
     let thread_id = thread_id.trim();
@@ -585,6 +632,7 @@ pub async fn cancel_chat(client_id: &str, thread_id: &str) -> Result<Option<Stri
             tool_call_id: None,
             citations: None,
             subagent: None,
+            task_board: None,
         });
     }
 
@@ -598,6 +646,7 @@ async fn run_chat_task(
     message: &str,
     model_override: Option<String>,
     temperature: Option<f64>,
+    profile_id: Option<String>,
 ) -> Result<WebChatTaskResult, String> {
     #[cfg(test)]
     {
@@ -614,16 +663,29 @@ async fn run_chat_task(
     }
 
     let config = config_rpc::load_config_with_timeout().await?;
+    let (_profiles_state, profile) =
+        AgentProfileStore::new(config.workspace_dir.clone()).resolve(profile_id.as_deref())?;
     let map_key = key_for(client_id, thread_id);
-    let model_override = normalize_model_override(model_override);
-
+    let model_override = normalize_model_override(profile.model_override.clone())
+        .or_else(|| normalize_model_override(model_override));
+    let temperature = profile.temperature.or(temperature);
     // Compute the routing decision up front so the cache lookup can
     // detect when it has changed. Without this, a turn that flips
     // `chat_onboarding_completed` (welcome agent calling
     // `complete_onboarding(complete)`) would still serve the next
     // turn from the cached welcome agent — the cache hit predicate
     // didn't know about the routing decision before Commit 13.
-    let target_agent_id = pick_target_agent_id(&config).to_string();
+    let target_agent_id = pick_target_agent_id(&config, &profile);
+    let provider_role = provider_role_for_model_override(model_override.as_deref());
+    let current_fp = SessionCacheFingerprint {
+        model_override: model_override.clone(),
+        temperature,
+        target_agent_id: target_agent_id.clone(),
+        provider_binding: crate::openhuman::inference::provider::provider_for_role(
+            provider_role,
+            &config,
+        ),
+    };
 
     let prior = {
         let mut sessions = THREAD_SESSIONS.lock().await;
@@ -631,11 +693,7 @@ async fn run_chat_task(
     };
 
     let (mut agent, was_built_fresh) = match prior {
-        Some(entry)
-            if entry.model_override == model_override
-                && entry.temperature == temperature
-                && entry.target_agent_id == target_agent_id =>
-        {
+        Some(entry) if entry.fingerprint == current_fp => {
             log::info!(
                 "[web-channel] reusing cached session agent id={} for client={} thread={}",
                 target_agent_id,
@@ -646,9 +704,13 @@ async fn run_chat_task(
         }
         Some(prior_entry) => {
             log::info!(
-                "[web-channel] cache miss — rebuilding session agent (was id={}, now id={}) for client={} thread={}",
-                prior_entry.target_agent_id,
+                "[web-channel] cache miss — rebuilding session agent \
+                 (was id={}, now id={}; prior_provider_binding={}, now={}) \
+                 for client={} thread={}",
+                prior_entry.fingerprint.target_agent_id,
                 target_agent_id,
+                prior_entry.fingerprint.provider_binding,
+                current_fp.provider_binding,
                 client_id,
                 thread_id
             );
@@ -657,6 +719,8 @@ async fn run_chat_task(
                     &config,
                     client_id,
                     thread_id,
+                    &target_agent_id,
+                    &profile,
                     model_override.clone(),
                     temperature,
                 )?,
@@ -668,6 +732,8 @@ async fn run_chat_task(
                 &config,
                 client_id,
                 thread_id,
+                &target_agent_id,
+                &profile,
                 model_override.clone(),
                 temperature,
             )?,
@@ -740,7 +806,7 @@ async fn run_chat_task(
     // `thread_context::current_thread_id()` and forwards it on
     // `/openai/v1/chat/completions` so the backend can group
     // InferenceLog entries and reuse the KV cache for this thread.
-    let result = match crate::openhuman::providers::thread_context::with_thread_id(
+    let result = match crate::openhuman::inference::provider::thread_context::with_thread_id(
         thread_id.to_string(),
         agent.run_single(message),
     )
@@ -781,9 +847,7 @@ async fn run_chat_task(
             map_key,
             SessionEntry {
                 agent,
-                model_override,
-                temperature,
-                target_agent_id,
+                fingerprint: current_fp,
             },
         );
     }
@@ -928,6 +992,7 @@ fn spawn_progress_bridge(
                         tool_call_id: None,
                         citations: None,
                         subagent: None,
+                        task_board: None,
                     });
                 }
                 AgentProgress::IterationStarted {
@@ -957,6 +1022,7 @@ fn spawn_progress_bridge(
                         tool_call_id: None,
                         citations: None,
                         subagent: None,
+                        task_board: None,
                     });
                 }
                 AgentProgress::ToolCallStarted {
@@ -1159,6 +1225,25 @@ fn spawn_progress_bridge(
                         ..Default::default()
                     });
                 }
+                AgentProgress::TaskBoardUpdated { board } => {
+                    log::debug!(
+                        "[web_channel][bridge] task_board_updated client_id={} thread_id={} request_id={} cards={}",
+                        client_id,
+                        thread_id,
+                        request_id,
+                        board.cards.len()
+                    );
+                    publish_web_channel_event(WebChannelEvent {
+                        event: "task_board_updated".to_string(),
+                        client_id: client_id.clone(),
+                        thread_id: thread_id.clone(),
+                        request_id: request_id.clone(),
+                        task_board: Some(serde_json::to_value(board).unwrap_or_else(
+                            |_| serde_json::json!({ "threadId": thread_id, "cards": [] }),
+                        )),
+                        ..Default::default()
+                    });
+                }
                 AgentProgress::TextDelta { delta, iteration } => {
                     publish_web_channel_event(WebChannelEvent {
                         event: "text_delta".to_string(),
@@ -1250,10 +1335,21 @@ fn normalize_model_override(model_override: Option<String>) -> Option<String> {
         .filter(|model| !model.is_empty())
 }
 
+fn provider_role_for_model_override(model_override: Option<&str>) -> &'static str {
+    match model_override.map(str::trim) {
+        Some("hint:agentic") | Some("agentic-v1") => "agentic",
+        Some("hint:coding") | Some("coding-v1") => "coding",
+        Some("hint:summarization") | Some("summarization-v1") => "summarization",
+        _ => "reasoning",
+    }
+}
+
 fn build_session_agent(
     config: &Config,
     client_id: &str,
     thread_id: &str,
+    target_agent_id: &str,
+    profile: &AgentProfile,
     model_override: Option<String>,
     temperature: Option<f64>,
 ) -> Result<Agent, String> {
@@ -1261,6 +1357,7 @@ fn build_session_agent(
     if let Some(model) = model_override {
         effective.default_model = Some(model);
     }
+    let provider_role = provider_role_for_model_override(effective.default_model.as_deref());
     if let Some(temp) = temperature {
         effective.default_temperature = temp;
     }
@@ -1289,15 +1386,11 @@ fn build_session_agent(
     // `run_chat_task` via `config_rpc::load_config_with_timeout`, so
     // both flags reflect the current persisted state — no cache to
     // invalidate.
-    let target_agent_id = if effective.chat_onboarding_completed {
-        "orchestrator"
-    } else {
-        "welcome"
-    };
-
     log::info!(
-        "[web-channel] routing chat turn to '{}' (chat_onboarding_completed={}, ui_onboarding_completed={}, client_id={}, thread_id={})",
+        "[web-channel] routing chat turn to '{}' via profile '{}' provider_role='{}' (chat_onboarding_completed={}, ui_onboarding_completed={}, client_id={}, thread_id={})",
         target_agent_id,
+        profile.id,
+        provider_role,
         effective.chat_onboarding_completed,
         effective.onboarding_completed,
         client_id,
@@ -1311,20 +1404,39 @@ fn build_session_agent(
     // regular threads this is a no-op (chunks=None, normal path).
     let reflection_chunks = load_reflection_chunks_for_thread(&effective.workspace_dir, thread_id);
 
-    let agent_result = match reflection_chunks {
-        Some(chunks) if !chunks.is_empty() => {
-            log::info!(
-                "[web-channel] thread={} spawned from reflection — injecting {} memory chunks into system prompt",
-                thread_id,
-                chunks.len()
-            );
-            Agent::from_config_for_agent_with_reflection_chunks(&effective, target_agent_id, chunks)
-        }
-        _ => Agent::from_config_for_agent(&effective, target_agent_id),
-    };
+    if let Some(chunks) = reflection_chunks
+        .as_ref()
+        .filter(|chunks| !chunks.is_empty())
+    {
+        log::info!(
+            "[web-channel] thread={} spawned from reflection — injecting {} memory chunks into system prompt",
+            thread_id,
+            chunks.len()
+        );
+    }
+
+    let agent_result = Agent::from_config_for_agent_with_profile(
+        &effective,
+        target_agent_id,
+        reflection_chunks,
+        profile.system_prompt_suffix.clone(),
+    );
 
     agent_result
         .map(|mut agent| {
+            if let Some(allowed_tools) = profile
+                .allowed_tools
+                .as_ref()
+                .filter(|tools| !tools.is_empty())
+            {
+                agent.set_visible_tool_names(
+                    allowed_tools
+                        .iter()
+                        .map(|tool| tool.trim().to_string())
+                        .filter(|tool| !tool.is_empty())
+                        .collect::<HashSet<_>>(),
+                );
+            }
             agent.set_event_context(event_session_id_for(client_id, thread_id), "web_channel");
             // Scope session transcripts per thread so each conversation
             // gets its own transcript file instead of sharing one by
@@ -1387,6 +1499,7 @@ struct WebChatParams {
     message: String,
     model_override: Option<String>,
     temperature: Option<f64>,
+    profile_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1401,8 +1514,17 @@ pub async fn channel_web_chat(
     message: &str,
     model_override: Option<String>,
     temperature: Option<f64>,
+    profile_id: Option<String>,
 ) -> Result<RpcOutcome<Value>, String> {
-    let request_id = start_chat(client_id, thread_id, message, model_override, temperature).await?;
+    let request_id = start_chat(
+        client_id,
+        thread_id,
+        message,
+        model_override,
+        temperature,
+        profile_id,
+    )
+    .await?;
 
     Ok(RpcOutcome::single_log(
         json!({
@@ -1461,6 +1583,7 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 required_string("message", "User message."),
                 optional_string("model_override", "Optional model override."),
                 optional_f64("temperature", "Optional temperature override."),
+                optional_string("profile_id", "Optional agent profile id."),
             ],
             outputs: vec![json_output("ack", "Acceptance payload.")],
         },
@@ -1499,6 +1622,7 @@ fn handle_chat(params: Map<String, Value>) -> ControllerFuture {
                 &p.message,
                 p.model_override,
                 p.temperature,
+                p.profile_id,
             )
             .await?,
         )

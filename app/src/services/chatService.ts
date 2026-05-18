@@ -8,6 +8,7 @@
  */
 import debug from 'debug';
 
+import type { TaskBoard } from '../types/turnState';
 import { callCoreRpc } from './coreRpcClient';
 import { socketService } from './socketService';
 
@@ -269,6 +270,12 @@ export interface ChatToolArgsDeltaEvent {
   delta: string;
 }
 
+export interface ChatTaskBoardUpdatedEvent {
+  thread_id: string;
+  request_id?: string;
+  task_board: TaskBoard;
+}
+
 export interface ChatEventListeners {
   onInferenceStart?: (event: ChatInferenceStartEvent) => void;
   onIterationStart?: (event: ChatIterationStartEvent) => void;
@@ -283,6 +290,7 @@ export interface ChatEventListeners {
   onTextDelta?: (event: ChatTextDeltaEvent) => void;
   onThinkingDelta?: (event: ChatThinkingDeltaEvent) => void;
   onToolArgsDelta?: (event: ChatToolArgsDeltaEvent) => void;
+  onTaskBoardUpdated?: (event: ChatTaskBoardUpdatedEvent) => void;
   onProactiveMessage?: (event: ProactiveMessageEvent) => void;
   onDone?: (event: ChatDoneEvent) => void;
   onError?: (event: ChatErrorEvent) => void;
@@ -311,6 +319,7 @@ export function subscribeChatEvents(listeners: ChatEventListeners): () => void {
     textDelta: 'text_delta',
     thinkingDelta: 'thinking_delta',
     toolArgsDelta: 'tool_args_delta',
+    taskBoardUpdated: 'task_board_updated',
     proactiveMessage: 'proactive_message',
     done: 'chat_done',
     error: 'chat_error',
@@ -564,6 +573,22 @@ export function subscribeChatEvents(listeners: ChatEventListeners): () => void {
     handlers.push([EVENTS.proactiveMessage, cb]);
   }
 
+  if (listeners.onTaskBoardUpdated) {
+    const cb = (payload: unknown) => {
+      const e = payload as ChatTaskBoardUpdatedEvent;
+      chatLog(
+        '%s thread_id=%s request_id=%s cards=%d',
+        EVENTS.taskBoardUpdated,
+        e.thread_id,
+        e.request_id,
+        e.task_board?.cards?.length ?? 0
+      );
+      listeners.onTaskBoardUpdated?.(e);
+    };
+    socket.on(EVENTS.taskBoardUpdated, cb);
+    handlers.push([EVENTS.taskBoardUpdated, cb]);
+  }
+
   if (listeners.onDone) {
     const cb = (payload: unknown) => {
       const e = payload as ChatDoneEvent;
@@ -600,7 +625,8 @@ export function subscribeChatEvents(listeners: ChatEventListeners): () => void {
 export interface ChatSendParams {
   threadId: string;
   message: string;
-  model: string;
+  model?: string;
+  profileId?: string | null;
 }
 
 /**
@@ -623,7 +649,8 @@ export async function chatSend(params: ChatSendParams): Promise<void> {
       client_id: clientId,
       thread_id: params.threadId,
       message: params.message,
-      model_override: params.model,
+      model_override: params.model ?? undefined,
+      profile_id: params.profileId ?? undefined,
     },
   });
 }

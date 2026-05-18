@@ -71,6 +71,36 @@ pub struct ComposioToolkitsResponse {
     pub toolkits: Vec<String>,
 }
 
+/// One row in OpenHuman's local Composio capability matrix.
+///
+/// Unlike `ComposioToolkitsResponse`, this is not tied to a signed-in
+/// backend/direct Composio session. It describes what this core build knows
+/// how to do for each toolkit: whether the toolkit has a native provider
+/// implementation, a curated tool catalog, profile/sync hooks, and memory
+/// ingestion support.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ComposioCapability {
+    pub toolkit: String,
+    pub description: String,
+    pub native_provider: bool,
+    pub curated_tools: bool,
+    pub curated_tool_count: usize,
+    pub tool_execution: bool,
+    pub user_profile: bool,
+    pub initial_sync: bool,
+    pub periodic_sync: bool,
+    pub sync_interval_secs: Option<u64>,
+    pub trigger_webhooks: bool,
+    pub memory_ingest: bool,
+}
+
+/// Response body of `composio.list_capabilities`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ComposioCapabilitiesResponse {
+    #[serde(default)]
+    pub capabilities: Vec<ComposioCapability>,
+}
+
 // ── Connections ─────────────────────────────────────────────────────
 
 /// One connected Composio account (OAuth integration instance).

@@ -112,6 +112,28 @@ fn config_openhuman_dir_returns_config_path_parent() {
     assert_eq!(config_openhuman_dir(&cfg), PathBuf::from("/tmp/xyz"));
 }
 
+#[cfg(windows)]
+#[test]
+fn reset_local_data_remove_error_explains_windows_file_locks() {
+    let err = std::io::Error::from_raw_os_error(32);
+    let msg =
+        reset_local_data_remove_error(std::path::Path::new("C:\\Users\\me\\.openhuman"), &err);
+
+    assert!(msg.contains("locked by another OpenHuman window or process"));
+    assert!(msg.contains("Close all OpenHuman windows and try again"));
+}
+
+#[cfg(windows)]
+#[test]
+fn reset_local_data_remove_error_explains_windows_lock_violation() {
+    let err = std::io::Error::from_raw_os_error(33);
+    let msg =
+        reset_local_data_remove_error(std::path::Path::new("C:\\Users\\me\\.openhuman"), &err);
+
+    assert!(msg.contains("locked by another OpenHuman window or process"));
+    assert!(msg.contains("Close all OpenHuman windows and try again"));
+}
+
 // ── get_runtime_flags / set_browser_allow_all ─────────────────
 
 #[test]
@@ -136,6 +158,45 @@ fn set_browser_allow_all_toggles_env_var() {
 
     let _ = set_browser_allow_all(false);
     assert!(!env_flag_enabled("OPENHUMAN_BROWSER_ALLOW_ALL"));
+
+    unsafe {
+        match before {
+            Some(v) => std::env::set_var("OPENHUMAN_BROWSER_ALLOW_ALL", v),
+            None => std::env::remove_var("OPENHUMAN_BROWSER_ALLOW_ALL"),
+        }
+    }
+}
+
+#[test]
+fn set_browser_allow_all_emits_security_audit_log() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let before = std::env::var("OPENHUMAN_BROWSER_ALLOW_ALL").ok();
+
+    let enable_outcome = set_browser_allow_all(true);
+    assert_eq!(enable_outcome.logs.len(), 1);
+    let enable_log = &enable_outcome.logs[0];
+    assert!(
+        enable_log.contains("[SECURITY]"),
+        "enable log should be audit-tagged: {enable_log}"
+    );
+    assert!(
+        enable_log.contains("enabled"),
+        "enable log should mention enabled state: {enable_log}"
+    );
+    assert!(enable_outcome.value.browser_allow_all);
+
+    let disable_outcome = set_browser_allow_all(false);
+    assert_eq!(disable_outcome.logs.len(), 1);
+    let disable_log = &disable_outcome.logs[0];
+    assert!(
+        disable_log.contains("[SECURITY]"),
+        "disable log should be audit-tagged: {disable_log}"
+    );
+    assert!(
+        disable_log.contains("disabled"),
+        "disable log should mention disabled state: {disable_log}"
+    );
+    assert!(!disable_outcome.value.browser_allow_all);
 
     unsafe {
         match before {
@@ -225,6 +286,7 @@ async fn apply_model_settings_updates_fields_and_persists_snapshot() {
         default_model: Some("gpt-4o".into()),
         default_temperature: Some(0.25),
         model_routes: None,
+        ..Default::default()
     };
     let outcome = apply_model_settings(&mut cfg, patch).await.expect("apply");
     assert_eq!(cfg.api_url.as_deref(), Some("https://api.example.test"));
@@ -249,6 +311,7 @@ async fn apply_model_settings_stores_api_key_and_clears_when_empty() {
         default_model: Some("gpt-4o-mini".into()),
         default_temperature: None,
         model_routes: None,
+        ..Default::default()
     };
     let _ = apply_model_settings(&mut cfg, set).await.expect("set");
     assert_eq!(cfg.api_key.as_deref(), Some("sk-test-1234"));
@@ -260,6 +323,7 @@ async fn apply_model_settings_stores_api_key_and_clears_when_empty() {
         default_model: None,
         default_temperature: None,
         model_routes: None,
+        ..Default::default()
     };
     let _ = apply_model_settings(&mut cfg, clear).await.expect("clear");
     assert!(cfg.api_key.is_none());
@@ -292,6 +356,7 @@ async fn apply_model_settings_replaces_model_routes_when_some_and_keeps_when_non
                 model: "gpt-4o".into(),
             },
         ]),
+        ..Default::default()
     };
     let _ = apply_model_settings(&mut cfg, set_routes)
         .await
@@ -307,6 +372,7 @@ async fn apply_model_settings_replaces_model_routes_when_some_and_keeps_when_non
         default_model: None,
         default_temperature: None,
         model_routes: None,
+        ..Default::default()
     };
     let _ = apply_model_settings(&mut cfg, touch_other)
         .await
@@ -322,6 +388,7 @@ async fn apply_model_settings_replaces_model_routes_when_some_and_keeps_when_non
         default_model: None,
         default_temperature: None,
         model_routes: Some(vec![]),
+        ..Default::default()
     };
     let _ = apply_model_settings(&mut cfg, clear_routes)
         .await
@@ -341,6 +408,7 @@ async fn apply_model_settings_empty_strings_clear_optional_fields() {
         default_model: Some("".into()),
         default_temperature: None,
         model_routes: None,
+        ..Default::default()
     };
     let _ = apply_model_settings(&mut cfg, patch).await.expect("apply");
     assert!(cfg.api_url.is_none());
@@ -435,6 +503,62 @@ async fn apply_browser_settings_updates_enabled_flag() {
     .await
     .expect("apply");
     assert!(cfg.browser.enabled);
+}
+
+#[tokio::test]
+async fn apply_local_ai_settings_updates_lm_studio_provider_fields() {
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+    cfg.local_ai.model_id = "old-default".into();
+    cfg.local_ai.chat_model_id = "old-chat".into();
+
+    let patch = LocalAiSettingsPatch {
+        runtime_enabled: Some(true),
+        opt_in_confirmed: Some(true),
+        provider: Some("lm-studio".into()),
+        base_url: Some(" http://localhost:1234/v1/ ".into()),
+        model_id: Some(" local-default ".into()),
+        chat_model_id: Some(" local-chat ".into()),
+        usage_embeddings: Some(true),
+        usage_heartbeat: Some(true),
+        usage_learning_reflection: Some(false),
+        usage_subconscious: Some(true),
+    };
+
+    let outcome = apply_local_ai_settings(&mut cfg, patch)
+        .await
+        .expect("apply local ai");
+
+    assert!(cfg.local_ai.runtime_enabled);
+    assert!(cfg.local_ai.opt_in_confirmed);
+    assert_eq!(cfg.local_ai.provider, "lm_studio");
+    assert_eq!(
+        cfg.local_ai.base_url.as_deref(),
+        Some("http://localhost:1234/v1/")
+    );
+    assert_eq!(cfg.local_ai.model_id, "local-default");
+    assert_eq!(cfg.local_ai.chat_model_id, "local-chat");
+    assert!(cfg.local_ai.usage.embeddings);
+    assert!(cfg.local_ai.usage.heartbeat);
+    assert!(!cfg.local_ai.usage.learning_reflection);
+    assert!(cfg.local_ai.usage.subconscious);
+    assert_eq!(outcome.value["config"]["local_ai"]["provider"], "lm_studio");
+
+    let clear_and_fallback = LocalAiSettingsPatch {
+        provider: Some("unknown-provider".into()),
+        base_url: Some("   ".into()),
+        model_id: Some("   ".into()),
+        chat_model_id: Some("".into()),
+        ..LocalAiSettingsPatch::default()
+    };
+    apply_local_ai_settings(&mut cfg, clear_and_fallback)
+        .await
+        .expect("clear local ai");
+
+    assert_eq!(cfg.local_ai.provider, "ollama");
+    assert!(cfg.local_ai.base_url.is_none());
+    assert_eq!(cfg.local_ai.model_id, "");
+    assert_eq!(cfg.local_ai.chat_model_id, "");
 }
 
 #[tokio::test]
@@ -734,4 +858,92 @@ async fn workspace_onboarding_flag_set_round_trip() {
     unsafe {
         std::env::remove_var("OPENHUMAN_WORKSPACE");
     }
+}
+
+#[tokio::test]
+async fn apply_model_settings_trims_and_clears_optional_provider_fields() {
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+
+    let set = ModelSettingsPatch {
+        inference_url: Some(" https://llm.example.test/v1 ".into()),
+        primary_cloud: Some(" provider-a ".into()),
+        reasoning_provider: Some(" provider-reasoning ".into()),
+        agentic_provider: Some(" provider-agentic ".into()),
+        coding_provider: Some(" provider-coding ".into()),
+        memory_provider: Some(" provider-memory ".into()),
+        embeddings_provider: Some(" provider-embed ".into()),
+        heartbeat_provider: Some(" provider-heartbeat ".into()),
+        learning_provider: Some(" provider-learning ".into()),
+        subconscious_provider: Some(" provider-sub ".into()),
+        ..Default::default()
+    };
+    apply_model_settings(&mut cfg, set)
+        .await
+        .expect("set providers");
+    assert_eq!(
+        cfg.inference_url.as_deref(),
+        Some("https://llm.example.test/v1")
+    );
+    assert_eq!(cfg.primary_cloud.as_deref(), Some("provider-a"));
+    assert_eq!(
+        cfg.reasoning_provider.as_deref(),
+        Some("provider-reasoning")
+    );
+    assert_eq!(cfg.subconscious_provider.as_deref(), Some("provider-sub"));
+
+    let clear = ModelSettingsPatch {
+        inference_url: Some("   ".into()),
+        primary_cloud: Some("".into()),
+        reasoning_provider: Some(" ".into()),
+        agentic_provider: Some(" ".into()),
+        coding_provider: Some(" ".into()),
+        memory_provider: Some(" ".into()),
+        embeddings_provider: Some(" ".into()),
+        heartbeat_provider: Some(" ".into()),
+        learning_provider: Some(" ".into()),
+        subconscious_provider: Some(" ".into()),
+        ..Default::default()
+    };
+    apply_model_settings(&mut cfg, clear)
+        .await
+        .expect("clear providers");
+    assert!(cfg.inference_url.is_none());
+    assert!(cfg.primary_cloud.is_none());
+    assert!(cfg.reasoning_provider.is_none());
+    assert!(cfg.agentic_provider.is_none());
+    assert!(cfg.coding_provider.is_none());
+    assert!(cfg.memory_provider.is_none());
+    assert!(cfg.embeddings_provider.is_none());
+    assert!(cfg.heartbeat_provider.is_none());
+    assert!(cfg.learning_provider.is_none());
+    assert!(cfg.subconscious_provider.is_none());
+}
+
+#[tokio::test]
+async fn apply_screen_intelligence_settings_clamps_baseline_fps() {
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+
+    apply_screen_intelligence_settings(
+        &mut cfg,
+        ScreenIntelligenceSettingsPatch {
+            baseline_fps: Some(99.0),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("high clamp");
+    assert!((cfg.screen_intelligence.baseline_fps - 30.0).abs() < f32::EPSILON);
+
+    apply_screen_intelligence_settings(
+        &mut cfg,
+        ScreenIntelligenceSettingsPatch {
+            baseline_fps: Some(0.01),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("low clamp");
+    assert!((cfg.screen_intelligence.baseline_fps - 0.2).abs() < f32::EPSILON);
 }

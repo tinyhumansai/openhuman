@@ -195,14 +195,24 @@ pub(crate) fn load_prompt_source(
             // Try the workspace's `agent/prompts/` first (so users can
             // override built-in prompts), then fall back to the crate's
             // own bundled prompts via `include_str!`-style lookup.
-            let workspace_path = workspace_dir.join("agent").join("prompts").join(path);
+            let prompt_root = workspace_dir.join("agent").join("prompts");
+            let workspace_path = prompt_root.join(path);
             if workspace_path.is_file() {
-                return std::fs::read_to_string(&workspace_path).map_err(|e| {
-                    SubagentRunError::PromptLoad {
-                        path: workspace_path.display().to_string(),
-                        source: e,
-                    }
-                });
+                if let Ok(resolved) = crate::openhuman::security::validate_path_within_root(
+                    &workspace_path,
+                    &prompt_root,
+                ) {
+                    return std::fs::read_to_string(&resolved).map_err(|e| {
+                        SubagentRunError::PromptLoad {
+                            path: resolved.display().to_string(),
+                            source: e,
+                        }
+                    });
+                }
+                tracing::warn!(
+                    "[subagent_runner] prompt path escapes workspace, skipping: {}",
+                    workspace_path.display()
+                );
             }
             // Built-in prompt fallback. The agent prompts directory is
             // already shipped at `src/openhuman/agent/prompts/` and
@@ -216,12 +226,21 @@ pub(crate) fn load_prompt_source(
             // back to a generic role hint).
             let workspace_root_path = workspace_dir.join(path);
             if workspace_root_path.is_file() {
-                return std::fs::read_to_string(&workspace_root_path).map_err(|e| {
-                    SubagentRunError::PromptLoad {
-                        path: workspace_root_path.display().to_string(),
-                        source: e,
-                    }
-                });
+                if let Ok(resolved) = crate::openhuman::security::validate_path_within_root(
+                    &workspace_root_path,
+                    workspace_dir,
+                ) {
+                    return std::fs::read_to_string(&resolved).map_err(|e| {
+                        SubagentRunError::PromptLoad {
+                            path: resolved.display().to_string(),
+                            source: e,
+                        }
+                    });
+                }
+                tracing::warn!(
+                    "[subagent_runner] fallback prompt path escapes workspace, skipping: {}",
+                    workspace_root_path.display()
+                );
             }
             tracing::warn!(
                 path = %path,

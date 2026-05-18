@@ -73,6 +73,8 @@ if [ "${OPENHUMAN_SERVICE_MOCK:-0}" = "1" ] && [ -z "${OPENHUMAN_SERVICE_MOCK_ST
 fi
 
 cleanup() {
+  local status=$?
+  set +e
   if [ -n "$APPIUM_PID" ]; then
     echo "[runner] Stopping Appium (pid $APPIUM_PID)..."
     kill "$APPIUM_PID" 2>/dev/null || true
@@ -108,21 +110,26 @@ cleanup() {
     fi
   fi
   if [ -n "$CREATED_TEMP_WORKSPACE" ]; then
-    # Tolerate transient races: even after the kill above, a CEF helper
-    # may still be flushing CEF/Default/* on a slow Linux runner. The
-    # workspace is a per-run mktemp under /tmp; anything left behind is
-    # collected by the next CI tmp-cleanup pass. We must not fail the
-    # whole job on cleanup leftovers when the test itself passed.
-    rm -rf "$CREATED_TEMP_WORKSPACE" 2>/dev/null || true
+    for attempt in 1 2 3; do
+      rm -rf "$CREATED_TEMP_WORKSPACE" 2>/dev/null && break
+      echo "[runner] Warning: temporary workspace cleanup failed (attempt $attempt): $CREATED_TEMP_WORKSPACE" >&2
+      sleep "$attempt"
+    done
+    if [ -e "$CREATED_TEMP_WORKSPACE" ]; then
+      echo "[runner] Warning: leaving temporary workspace after cleanup retries: $CREATED_TEMP_WORKSPACE" >&2
+    fi
   fi
   if [ -n "$CREATED_TEMP_CEF_CACHE" ]; then
     rm -rf "$CREATED_TEMP_CEF_CACHE" 2>/dev/null || true
   fi
   if [ -n "$E2E_CONFIG_BACKUP" ] && [ -f "$E2E_CONFIG_BACKUP" ]; then
-    mv "$E2E_CONFIG_BACKUP" "$E2E_CONFIG_FILE"
+    mv "$E2E_CONFIG_BACKUP" "$E2E_CONFIG_FILE" \
+      || echo "[runner] Warning: failed to restore E2E config backup: $E2E_CONFIG_BACKUP" >&2
   elif [ -n "$E2E_CONFIG_FILE" ] && [ -f "$E2E_CONFIG_FILE" ]; then
-    rm -f "$E2E_CONFIG_FILE"
+    rm -f "$E2E_CONFIG_FILE" \
+      || echo "[runner] Warning: failed to remove generated E2E config: $E2E_CONFIG_FILE" >&2
   fi
+  return "$status"
 }
 trap cleanup EXIT
 
@@ -162,8 +169,9 @@ esac
 
 # Mock URL must reach the core sidecar — XCUITest doesn't inherit env,
 # and CEF child processes won't either. Pinning via config.toml works
-# on every platform.
-E2E_CONFIG_DIR="$HOME/.openhuman"
+# on every platform. The runner always sets OPENHUMAN_WORKSPACE above;
+# Config::load_or_init gives that path precedence over $HOME/.openhuman.
+E2E_CONFIG_DIR="${OPENHUMAN_WORKSPACE:-$HOME/.openhuman}"
 E2E_CONFIG_FILE="$E2E_CONFIG_DIR/config.toml"
 mkdir -p "$E2E_CONFIG_DIR"
 if [ -f "$E2E_CONFIG_FILE" ]; then
@@ -319,28 +327,40 @@ APP_LOG="$LOG_DIR/openhuman-e2e-app-${LOG_SUFFIX}.log"
 APP_ARGS=()
 # CEF/Chromium needs extra coaxing in headless / containerized Linux runs:
 #
-#   --no-sandbox            crbug.com/638180 — refuses to start as root
-#                           without this. The openhuman_ci docker image
-#                           runs as uid 0.
+#   --no-sandbox            crbug.com/638180 — needed only when the runner is
+#                           uid 0 or the cached CEF chrome-sandbox helper is
+#                           missing/misconfigured. Non-root Linux runs with a
+#                           valid helper keep Chromium sandboxing.
 #   --disable-dev-shm-usage docker /dev/shm is often 64 MB; Chromium
 #                           assumes ≥2 GB and crashes mid-startup
 #                           ("Failed global descriptor lookup: 7" in the
 #                           zygote helper).
 #   --disable-gpu           no GPU in the CI container.
-#   --no-zygote             skips the zygote launcher that wants dbus.
+#   --no-zygote             skips the zygote launcher that wants dbus; Chromium
+#                           only permits this when sandboxing is also disabled.
 #
 # Apply only on Linux. macOS/Windows runners are unprivileged users with a
 # real display / GPU; leaving the sandbox on there is correct.
 case "$OS" in
   Linux)
-    if [ "$(id -u 2>/dev/null || echo 0)" = "0" ]; then
-      APP_ARGS+=("--no-sandbox")
-    fi
     APP_ARGS+=(
       "--disable-dev-shm-usage"
       "--disable-gpu"
-      "--no-zygote"
     )
+    NO_SANDBOX_REASON=""
+    if [ "$(id -u)" -eq 0 ]; then
+      NO_SANDBOX_REASON="runner is uid 0"
+    elif [ -n "${CEF_DIST_DIR:-}" ]; then
+      SANDBOX_HELPER="$CEF_DIST_DIR/chrome-sandbox"
+      SANDBOX_HELPER_MODE="$(stat -c '%u:%a' "$SANDBOX_HELPER" 2>/dev/null || true)"
+      if [ "$SANDBOX_HELPER_MODE" != "0:4755" ]; then
+        NO_SANDBOX_REASON="chrome-sandbox helper is not root-owned mode 4755"
+      fi
+    fi
+    if [ -n "$NO_SANDBOX_REASON" ]; then
+      APP_ARGS+=("--no-sandbox" "--no-zygote")
+      echo "[runner] Linux CEF sandbox disabled: $NO_SANDBOX_REASON"
+    fi
     echo "[runner] Linux CEF args: ${APP_ARGS[*]}"
     ;;
 esac

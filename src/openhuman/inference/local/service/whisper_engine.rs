@@ -1,0 +1,487 @@
+//! In-process whisper.cpp inference via whisper-rs.
+//!
+//! Loads the GGML model once into a `WhisperContext` and reuses it across
+//! transcription calls, eliminating the cold-start latency of spawning a
+//! subprocess per request.
+
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Instant;
+
+use log::{debug, info, warn};
+use parking_lot::Mutex;
+use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
+
+use crate::openhuman::util::utf8_safe_prefix_at_byte_boundary;
+
+/// Per-segment confidence threshold: reject segments with avg log-probability below this.
+const SEGMENT_LOGPROB_REJECT: f32 = -0.7;
+
+/// Per-segment entropy threshold: reject segments with entropy above this.
+const SEGMENT_ENTROPY_REJECT: f32 = 2.4;
+
+/// Result of a transcription call, including confidence metadata.
+#[derive(Debug, Clone)]
+pub struct TranscriptionResult {
+    /// The transcribed text (may be empty if all segments were rejected).
+    pub text: String,
+    /// Average log-probability across accepted segments (higher = more confident).
+    /// `None` if no segments were accepted.
+    pub avg_logprob: Option<f32>,
+    /// Number of segments accepted / total segments produced by Whisper.
+    pub segments_accepted: usize,
+    pub segments_total: usize,
+}
+
+const LOG_PREFIX: &str = "[whisper_engine]";
+
+/// Wraps a loaded `WhisperContext` for reuse across transcription calls.
+pub struct WhisperEngine {
+    context: WhisperContext,
+    model_path: PathBuf,
+}
+
+/// Thread-safe handle to an optionally-loaded whisper engine.
+pub type WhisperEngineHandle = Arc<Mutex<Option<WhisperEngine>>>;
+
+/// Create a new empty engine handle. The engine is loaded lazily or during
+/// bootstrap via [`load_engine`].
+pub fn new_handle() -> WhisperEngineHandle {
+    Arc::new(Mutex::new(None))
+}
+
+/// Attempt to load a whisper model into the engine, configuring GPU
+/// acceleration based on the detected hardware profile. Returns an error
+/// string if loading fails (e.g. model file missing, unsupported format).
+pub fn load_engine(
+    handle: &WhisperEngineHandle,
+    model_path: &Path,
+    has_gpu: bool,
+    gpu_description: Option<&str>,
+) -> Result<(), String> {
+    info!(
+        "{LOG_PREFIX} loading whisper model: {}",
+        model_path.display()
+    );
+
+    if !model_path.is_file() {
+        return Err(format!("whisper model not found: {}", model_path.display()));
+    }
+
+    let mut params = WhisperContextParameters::default();
+
+    // Explicitly configure GPU acceleration based on device profile.
+    // The default `use_gpu` is `cfg!(feature = "_gpu")` which is only true
+    // when a GPU backend feature (metal, cuda, etc.) is compiled in.
+    params.use_gpu(has_gpu);
+
+    // Enable flash attention when GPU is available — improves throughput
+    // on both Metal and CUDA backends.
+    if has_gpu {
+        params.flash_attn(true);
+    }
+
+    let backend = if has_gpu {
+        gpu_description.unwrap_or("unknown GPU")
+    } else {
+        "CPU (no GPU acceleration)"
+    };
+    info!(
+        "{LOG_PREFIX} whisper acceleration: use_gpu={}, flash_attn={}, backend={}",
+        has_gpu, has_gpu, backend
+    );
+
+    let ctx = WhisperContext::new_with_params(model_path.to_str().unwrap_or(""), params)
+        .map_err(|e| format!("failed to load whisper model: {e}"))?;
+
+    let engine = WhisperEngine {
+        context: ctx,
+        model_path: model_path.to_path_buf(),
+    };
+
+    *handle.lock() = Some(engine);
+    info!("{LOG_PREFIX} whisper model loaded successfully (backend={backend})");
+    Ok(())
+}
+
+/// Unload the whisper model from memory.
+pub fn unload_engine(handle: &WhisperEngineHandle) {
+    let mut guard = handle.lock();
+    if guard.is_some() {
+        *guard = None;
+        info!("{LOG_PREFIX} whisper model unloaded");
+    }
+}
+
+/// Returns true if a model is currently loaded.
+pub fn is_loaded(handle: &WhisperEngineHandle) -> bool {
+    handle.lock().is_some()
+}
+
+/// Returns the path of the currently loaded model, if any.
+pub fn loaded_model_path(handle: &WhisperEngineHandle) -> Option<PathBuf> {
+    handle.lock().as_ref().map(|e| e.model_path.clone())
+}
+
+/// Transcribe raw PCM audio (16 kHz, mono, f32 samples).
+///
+/// Returns a [`TranscriptionResult`] containing the transcript text and
+/// per-segment confidence metadata. Segments with low confidence (high
+/// entropy or low log-probability) are rejected to reduce hallucinations.
+///
+/// `initial_prompt` biases whisper's tokenizer toward the supplied text,
+/// improving recognition of specific vocabulary (names, technical terms)
+/// and providing conversational continuity across consecutive recordings.
+pub fn transcribe_pcm_f32(
+    handle: &WhisperEngineHandle,
+    audio_f32: &[f32],
+    language: Option<&str>,
+    initial_prompt: Option<&str>,
+) -> Result<TranscriptionResult, String> {
+    let mut guard = handle.lock();
+    let engine = guard
+        .as_mut()
+        .ok_or_else(|| "whisper engine not loaded".to_string())?;
+
+    debug!(
+        "{LOG_PREFIX} transcribing {} samples ({:.1}s of audio), initial_prompt={}",
+        audio_f32.len(),
+        audio_f32.len() as f64 / 16000.0,
+        initial_prompt.map_or("none".to_string(), |p| format!("{}chars", p.len()))
+    );
+
+    let mut state = engine
+        .context
+        .create_state()
+        .map_err(|e| format!("failed to create whisper state: {e}"))?;
+
+    let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 5 });
+
+    if let Some(lang) = language {
+        params.set_language(Some(lang));
+    } else {
+        params.set_language(Some("en"));
+    }
+
+    // Pass initial_prompt to bias whisper toward known vocabulary and
+    // provide conversational context (like OpenWhispr's dictionary prompt).
+    if let Some(prompt) = initial_prompt {
+        if !prompt.trim().is_empty() {
+            params.set_initial_prompt(prompt);
+            debug!(
+                "{LOG_PREFIX} set initial_prompt: '{}...'",
+                utf8_safe_prefix_at_byte_boundary(prompt, 80)
+            );
+        }
+    }
+
+    // ── Anti-hallucination settings (matching OpenWhispr / whisper.cpp best practices) ──
+
+    // Suppress non-speech tokens (music notes, timestamps, etc.)
+    params.set_suppress_nst(true);
+
+    // Suppress blank output at the start of segments.
+    params.set_suppress_blank(true);
+
+    // No-speech probability threshold. Segments where the no-speech
+    // probability exceeds this are silently dropped. Default 0.6.
+    params.set_no_speech_thold(0.6);
+
+    // Entropy threshold — segments with avg token entropy above this
+    // are considered too noisy/random (hallucination). Default 2.4.
+    params.set_entropy_thold(2.4);
+
+    // Log-probability threshold — segments with avg log-prob below this
+    // are rejected as low-confidence. Default -1.0.
+    params.set_logprob_thold(-1.0);
+
+    // Temperature 0 = greedy (deterministic, no randomness).
+    params.set_temperature(0.0);
+
+    // Disable temperature fallback — don't retry with higher temperatures
+    // which can produce hallucinated creative output.
+    params.set_temperature_inc(0.0);
+
+    // Use single segment mode for short dictation utterances.
+    // This prevents whisper from splitting short audio into multiple
+    // segments and hallucinating in the gaps.
+    params.set_single_segment(true);
+
+    // Disable printing to stdout — we capture segments programmatically.
+    params.set_print_special(false);
+    params.set_print_progress(false);
+    params.set_print_realtime(false);
+    params.set_print_timestamps(false);
+
+    // Use available CPU threads (capped at 4 to avoid over-subscription).
+    let n_threads = std::thread::available_parallelism()
+        .map(|n| n.get().min(4) as i32)
+        .unwrap_or(2);
+    params.set_n_threads(n_threads);
+
+    let infer_started = Instant::now();
+    state
+        .full(params, audio_f32)
+        .map_err(|e| format!("whisper inference failed: {e}"))?;
+    let infer_elapsed = infer_started.elapsed();
+
+    let n_segments = state.full_n_segments();
+    let mut text = String::new();
+    let mut segments_accepted = 0usize;
+    let mut logprob_sum = 0.0f32;
+
+    for (seg_idx, segment) in state.as_iter().enumerate() {
+        let segment_text = match segment.to_str() {
+            Ok(t) => t,
+            Err(e) => {
+                debug!("{LOG_PREFIX} skipping segment {seg_idx}: {e}");
+                continue;
+            }
+        };
+
+        // ── Per-segment confidence validation ──
+        let n_tokens = segment.n_tokens();
+        if n_tokens > 0 {
+            let mut token_prob_sum = 0.0f32;
+            for t in 0..n_tokens {
+                if let Some(token) = segment.get_token(t) {
+                    token_prob_sum += token.token_probability();
+                }
+            }
+            let avg_prob = token_prob_sum / n_tokens as f32;
+            // Convert average probability to log scale for threshold comparison.
+            let avg_logprob = if avg_prob > 0.0 {
+                avg_prob.ln()
+            } else {
+                f32::NEG_INFINITY
+            };
+
+            if avg_logprob < SEGMENT_LOGPROB_REJECT {
+                warn!(
+                    "{LOG_PREFIX} rejecting segment {seg_idx} (avg_logprob={avg_logprob:.3} < {SEGMENT_LOGPROB_REJECT}): '{}'",
+                    segment_text.trim()
+                );
+                continue;
+            }
+
+            logprob_sum += avg_logprob;
+        }
+
+        text.push_str(segment_text);
+        segments_accepted += 1;
+    }
+
+    let trimmed = text.trim().to_string();
+    let avg_logprob = if segments_accepted > 0 {
+        Some(logprob_sum / segments_accepted as f32)
+    } else {
+        None
+    };
+
+    debug!(
+        "{LOG_PREFIX} transcription complete: {} chars, {}/{} segments accepted, avg_logprob={:.3}, n_threads={}, infer_elapsed_ms={}",
+        trimmed.len(),
+        segments_accepted,
+        n_segments,
+        avg_logprob.unwrap_or(0.0),
+        n_threads,
+        infer_elapsed.as_millis()
+    );
+
+    Ok(TranscriptionResult {
+        text: trimmed,
+        avg_logprob,
+        segments_accepted,
+        segments_total: n_segments as usize,
+    })
+}
+
+/// Transcribe raw PCM audio provided as 16-bit signed integers (16 kHz mono).
+///
+/// Converts to f32 internally before running inference.
+pub fn transcribe_pcm_i16(
+    handle: &WhisperEngineHandle,
+    audio_i16: &[i16],
+    language: Option<&str>,
+    initial_prompt: Option<&str>,
+) -> Result<TranscriptionResult, String> {
+    let mut audio_f32 = vec![0.0f32; audio_i16.len()];
+    whisper_rs::convert_integer_to_float_audio(audio_i16, &mut audio_f32)
+        .map_err(|e| format!("audio conversion failed: {e}"))?;
+    transcribe_pcm_f32(handle, &audio_f32, language, initial_prompt)
+}
+
+/// Read a WAV file and transcribe it. The WAV must be 16 kHz mono PCM
+/// (16-bit or 32-bit float). For other formats, convert to WAV first
+/// (e.g. via ffmpeg).
+pub fn transcribe_wav_file(
+    handle: &WhisperEngineHandle,
+    wav_path: &Path,
+    language: Option<&str>,
+    initial_prompt: Option<&str>,
+) -> Result<TranscriptionResult, String> {
+    debug!("{LOG_PREFIX} reading WAV file: {}", wav_path.display());
+
+    let raw_bytes = std::fs::read(wav_path).map_err(|e| format!("failed to read WAV file: {e}"))?;
+
+    let audio_f32 = decode_wav_to_f32(&raw_bytes)?;
+    transcribe_pcm_f32(handle, &audio_f32, language, initial_prompt)
+}
+
+/// Minimal WAV decoder — extracts PCM samples as f32 from a standard
+/// RIFF/WAVE file. Supports 16-bit integer and 32-bit float formats.
+/// Resampling is NOT performed; the input should already be 16 kHz mono.
+fn decode_wav_to_f32(data: &[u8]) -> Result<Vec<f32>, String> {
+    if data.len() < 44 {
+        return Err("WAV file too small".to_string());
+    }
+    if &data[0..4] != b"RIFF" || &data[8..12] != b"WAVE" {
+        return Err("not a valid WAV file".to_string());
+    }
+
+    let mut pos = 12;
+    let mut fmt_found = false;
+    let mut audio_format: u16 = 0;
+    let mut num_channels: u16 = 0;
+    #[allow(unused_assignments)]
+    let mut sample_rate: u32 = 0;
+    let mut bits_per_sample: u16 = 0;
+
+    while pos + 8 <= data.len() {
+        let chunk_id = &data[pos..pos + 4];
+        let chunk_size =
+            u32::from_le_bytes([data[pos + 4], data[pos + 5], data[pos + 6], data[pos + 7]])
+                as usize;
+
+        if chunk_id == b"fmt " {
+            if chunk_size < 16 || pos + 8 + chunk_size > data.len() {
+                return Err("malformed fmt chunk".to_string());
+            }
+            let fmt = &data[pos + 8..];
+            audio_format = u16::from_le_bytes([fmt[0], fmt[1]]);
+            num_channels = u16::from_le_bytes([fmt[2], fmt[3]]);
+            sample_rate = u32::from_le_bytes([fmt[4], fmt[5], fmt[6], fmt[7]]);
+            bits_per_sample = u16::from_le_bytes([fmt[14], fmt[15]]);
+            fmt_found = true;
+
+            if sample_rate != 16000 {
+                return Err(format!(
+                    "unsupported sample rate {sample_rate} Hz, whisper requires 16000 Hz"
+                ));
+            }
+            if num_channels == 0 || num_channels > 2 {
+                return Err(format!(
+                    "unsupported channel count {num_channels}, expected 1 (mono) or 2 (stereo)"
+                ));
+            }
+        }
+
+        if chunk_id == b"data" && fmt_found {
+            let pcm_data = &data[pos + 8..pos + 8 + chunk_size.min(data.len() - pos - 8)];
+            return convert_pcm_to_f32(pcm_data, audio_format, num_channels, bits_per_sample);
+        }
+
+        pos += 8 + chunk_size;
+        if !chunk_size.is_multiple_of(2) {
+            pos += 1;
+        }
+    }
+
+    Err("WAV file missing data chunk".to_string())
+}
+
+fn convert_pcm_to_f32(
+    pcm: &[u8],
+    audio_format: u16,
+    num_channels: u16,
+    bits_per_sample: u16,
+) -> Result<Vec<f32>, String> {
+    match (audio_format, bits_per_sample) {
+        // PCM 16-bit
+        (1, 16) => {
+            let samples: Vec<i16> = pcm
+                .chunks_exact(2)
+                .map(|c| i16::from_le_bytes([c[0], c[1]]))
+                .collect();
+
+            let mono = if num_channels == 2 {
+                samples
+                    .chunks_exact(2)
+                    .map(|pair| ((pair[0] as i32 + pair[1] as i32) / 2) as i16)
+                    .collect::<Vec<_>>()
+            } else {
+                samples
+            };
+
+            Ok(mono.iter().map(|&s| s as f32 / 32768.0).collect())
+        }
+        // IEEE float 32-bit
+        (3, 32) => {
+            let samples: Vec<f32> = pcm
+                .chunks_exact(4)
+                .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+                .collect();
+
+            if num_channels == 2 {
+                Ok(samples
+                    .chunks_exact(2)
+                    .map(|pair| (pair[0] + pair[1]) / 2.0)
+                    .collect())
+            } else {
+                Ok(samples)
+            }
+        }
+        _ => Err(format!(
+            "unsupported WAV format: audio_format={audio_format}, bits_per_sample={bits_per_sample}"
+        )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_handle_starts_unloaded() {
+        let handle = new_handle();
+        assert!(!is_loaded(&handle));
+        assert!(loaded_model_path(&handle).is_none());
+    }
+
+    #[test]
+    fn load_engine_fails_for_missing_model() {
+        let handle = new_handle();
+        let result = load_engine(&handle, Path::new("/nonexistent/model.bin"), false, None);
+        assert!(result.is_err());
+        assert!(!is_loaded(&handle));
+    }
+
+    #[test]
+    fn transcribe_pcm_fails_when_not_loaded() {
+        let handle = new_handle();
+        let audio = vec![0.0f32; 16000];
+        let result = transcribe_pcm_f32(&handle, &audio, None, None);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("not loaded"));
+    }
+
+    #[test]
+    fn decode_wav_rejects_too_small() {
+        let result = decode_wav_to_f32(&[0u8; 10]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn decode_wav_rejects_non_wav() {
+        let result = decode_wav_to_f32(&[0u8; 44]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn convert_i16_produces_correct_length() {
+        let handle = new_handle();
+        let audio_i16 = vec![0i16; 100];
+        let result = transcribe_pcm_i16(&handle, &audio_i16, None, None);
+        assert!(result.is_err()); // expected: engine not loaded
+    }
+}

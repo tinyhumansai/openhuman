@@ -41,7 +41,9 @@ mod tests {
     fn noop_name_and_dims() {
         let p = NoopEmbedding;
         assert_eq!(p.name(), "none");
+        assert_eq!(p.model_id(), "none");
         assert_eq!(p.dimensions(), 0);
+        assert_eq!(p.signature(), "provider=none;model=none;dims=0");
     }
 
     #[tokio::test]
@@ -72,13 +74,16 @@ mod tests {
     fn factory_ollama() {
         let p = create_embedding_provider("ollama", DEFAULT_OLLAMA_MODEL, 768).unwrap();
         assert_eq!(p.name(), "ollama");
+        assert_eq!(p.model_id(), DEFAULT_OLLAMA_MODEL);
         assert_eq!(p.dimensions(), 768);
+        assert_eq!(p.signature(), "provider=ollama;model=bge-m3;dims=768");
     }
 
     #[test]
     fn factory_openai() {
         let p = create_embedding_provider("openai", "text-embedding-3-small", 1536).unwrap();
         assert_eq!(p.name(), "openai");
+        assert_eq!(p.model_id(), "text-embedding-3-small");
         assert_eq!(p.dimensions(), 1536);
     }
 

@@ -32,6 +32,8 @@ use tokio::time::sleep;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 mod dom_snapshot;
+#[cfg(test)]
+mod dom_snapshot_test;
 mod idb;
 
 const CDP_HOST: &str = "127.0.0.1";
@@ -74,6 +76,11 @@ pub struct ScanSnapshot {
     /// to reverse-look-up `chatId` for DOM rows that lack one (modern
     /// WhatsApp Web doesn't expose chat JID anywhere on the message rows).
     pub active_chat_name: Option<String>,
+    /// Per-stage telemetry from the DOM-capture pass (issue #1376). `None`
+    /// when the DOM call failed entirely (e.g. CDP disconnect mid-scan);
+    /// otherwise carries the same `rows` as `dom_messages` plus counters
+    /// disambiguating "0 rows" from "rows with no body".
+    pub capture_report: Option<dom_snapshot::CaptureReport>,
 }
 
 /// Spawn a per-account CDP poller. Idempotent at call site (caller tracks
@@ -141,12 +148,29 @@ pub fn spawn_scanner<R: Runtime>(
             last_full = Instant::now();
             match scan_once(&app, &account_id, &url_prefix, &fragment).await {
                 Ok(snap) => {
+                    // Per-stage telemetry from the DOM capture (#1376) —
+                    // disambiguates "no rows seen" from "rows seen but body
+                    // extraction returned empty" from "active chat header
+                    // unresolved (downstream filter will drop the rows)".
+                    let (seen, with_body, no_body, chat_resolved) = match &snap.capture_report {
+                        Some(r) => (
+                            r.rows_seen,
+                            r.rows_with_body,
+                            r.rows_dropped_no_body,
+                            r.active_chat_resolved,
+                        ),
+                        None => (0, 0, 0, false),
+                    };
                     log::info!(
-                        "[wa][{}] full scan ok messages={} chats={} dom={}",
+                        "[wa][{}] full scan ok messages={} chats={} dom={} (seen={} with_body={} no_body={} chat_resolved={})",
                         account_id,
                         snap.messages.len(),
                         snap.chats.len(),
                         snap.dom_messages.len(),
+                        seen,
+                        with_body,
+                        no_body,
+                        chat_resolved,
                     );
                     // Preview a few DOM-scraped rows so it's obvious from the
                     // log whether the active chat produced fresh bodies.
@@ -172,6 +196,26 @@ pub fn spawn_scanner<R: Runtime>(
                             author,
                             preview
                         );
+                    }
+                    // TRACE-level structured row dump (first 3 rows, ≤120 char
+                    // snippets) so a developer chasing #1376-style "dom=0 but
+                    // bodies exist" can see exactly what the parser produced
+                    // without re-instrumenting. Truncation lives in
+                    // `dom_snapshot::text_snippet_preview` to honor the
+                    // CLAUDE.md "no PII in trace dumps" rule.
+                    if let Some(report) = snap.capture_report.as_ref() {
+                        for (i, row) in report.rows.iter().take(3).enumerate() {
+                            let pairs = dom_snapshot::text_snippet_preview(row, 120);
+                            for (k, v) in &pairs {
+                                log::trace!(
+                                    "[wa][{}] dom-trace#{} {}={:?}",
+                                    account_id,
+                                    i + 1,
+                                    k,
+                                    v
+                                );
+                            }
+                        }
                     }
                     emit_snapshot(&app, &account_id, &snap);
                 }
@@ -227,6 +271,24 @@ fn chrono_now_millis() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0)
+}
+
+/// Normalize a chat display name for active-chat → JID matching (issue #1376).
+/// Lowercases, strips every non-ASCII-alphanumeric code point (drops emoji,
+/// punctuation, dashes, separators), and collapses internal whitespace runs
+/// to nothing — leaves `[a-z0-9]*`. Lets the matcher find a match when the
+/// DOM-parsed header text drifts slightly from the IDB-stored chat name
+/// (extra spaces, trailing emoji, hyphenation differences).
+pub(crate) fn normalize_chat_name(s: &str) -> String {
+    s.chars()
+        .filter_map(|c| {
+            if c.is_ascii_alphanumeric() {
+                Some(c.to_ascii_lowercase())
+            } else {
+                None
+            }
+        })
+        .collect()
 }
 
 async fn scan_once<R: Runtime>(
@@ -286,10 +348,16 @@ async fn scan_once<R: Runtime>(
             log::warn!("[wa][{}] idb walk failed: {}", account_id, e);
         }
     }
+    let mut capture_report: Option<dom_snapshot::CaptureReport> = None;
     match dom_snapshot::capture_messages(&mut cdp, &page_session).await {
-        Ok((rows, _hash, active_chat_name)) => {
-            snap.dom_messages = rows.iter().map(dom_snapshot::DomMessage::to_json).collect();
-            snap.active_chat_name = active_chat_name;
+        Ok(report) => {
+            snap.dom_messages = report
+                .rows
+                .iter()
+                .map(dom_snapshot::DomMessage::to_json)
+                .collect();
+            snap.active_chat_name = report.active_chat_name.clone();
+            capture_report = Some(report);
         }
         Err(e) => {
             // Fast-tick DOM scans will retry every 2s, so degrade gracefully.
@@ -305,6 +373,7 @@ async fn scan_once<R: Runtime>(
         )
         .await;
     let _ = app;
+    snap.capture_report = capture_report;
     Ok(snap)
 }
 
@@ -357,15 +426,26 @@ async fn scan_dom_once(
             None,
         )
         .await;
-    let (rows, hash, _active_chat_name) = captured?;
-    let dom_messages: Vec<Value> = rows.iter().map(dom_snapshot::DomMessage::to_json).collect();
+    let report = captured?;
+    let dom_messages: Vec<Value> = report
+        .rows
+        .iter()
+        .map(dom_snapshot::DomMessage::to_json)
+        .collect();
     log::debug!(
-        "[wa][{}] fast dom-scan rows={} hash={}",
+        "[wa][{}] fast dom-scan rows={} hash={} (seen={} with_body={} no_body={} chat_resolved={})",
         account_id,
         dom_messages.len(),
-        hash
+        report.hash,
+        report.rows_seen,
+        report.rows_with_body,
+        report.rows_dropped_no_body,
+        report.active_chat_resolved,
     );
-    Ok(DomScanResult { dom_messages, hash })
+    Ok(DomScanResult {
+        dom_messages,
+        hash: report.hash,
+    })
 }
 
 fn parse_targets(v: &Value) -> Vec<CdpTarget> {
@@ -506,8 +586,10 @@ fn emit_snapshot<R: Runtime>(app: &AppHandle<R>, account_id: &str, snap: &ScanSn
     // don't mis-attribute messages.
     let active_chat_jid: Option<String> = snap.active_chat_name.as_deref().and_then(|name| {
         let name_lc = name.to_ascii_lowercase();
+        let name_norm = normalize_chat_name(name);
         let mut exact: Vec<&str> = Vec::new();
         let mut ci: Vec<&str> = Vec::new();
+        let mut normalized: Vec<&str> = Vec::new();
         let mut substring: Vec<&str> = Vec::new();
         for (jid, chat) in snap.chats.iter() {
             let chat_name = chat.get("name").and_then(|v| v.as_str()).unwrap_or("");
@@ -515,29 +597,57 @@ fn emit_snapshot<R: Runtime>(app: &AppHandle<R>, account_id: &str, snap: &ScanSn
                 exact.push(jid);
             } else if !chat_name.is_empty() && chat_name.to_ascii_lowercase() == name_lc {
                 ci.push(jid);
-            } else if !chat_name.is_empty()
-                && (chat_name.to_ascii_lowercase().contains(&name_lc)
-                    || name_lc.contains(&chat_name.to_ascii_lowercase()))
-            {
-                substring.push(jid);
+            } else if !chat_name.is_empty() {
+                // Normalized tier (issue #1376): strip non-alphanumeric +
+                // collapse whitespace + lowercase, then compare equality.
+                // Catches drift introduced by emoji, punctuation, or
+                // double-spaces between the DOM header text and the IDB
+                // chat name (e.g. group titles like "17-18-19 July samagam"
+                // vs "17 18 19 July samagam ✨"). Substring stays as a final
+                // fallback so loose matches are tried last.
+                let chat_norm = normalize_chat_name(chat_name);
+                if !name_norm.is_empty() && chat_norm == name_norm {
+                    normalized.push(jid);
+                } else if chat_name.to_ascii_lowercase().contains(&name_lc)
+                    || name_lc.contains(&chat_name.to_ascii_lowercase())
+                {
+                    substring.push(jid);
+                }
             }
         }
-        // Prefer exact > case-insensitive > substring. Substring only wins
-        // when there's exactly one candidate (avoids cross-attribution when
-        // many chats share a token like a common first name).
-        match (exact.len(), ci.len(), substring.len()) {
-            (1, _, _) => Some(exact[0].to_string()),
-            (0, 1, _) => Some(ci[0].to_string()),
-            (0, 0, 1) => Some(substring[0].to_string()),
-            (e, c, s) => {
-                let count = e + c + s;
-                if count > 1 {
-                    log::warn!(
-                        "[whatsapp_scanner] ambiguous active-chat resolution: {} candidates for '{}' — skipping backfill",
-                        count,
-                        name
-                    );
+        // Prefer exact > case-insensitive > normalized > substring. Each
+        // tier only wins when it has exactly one candidate (avoids
+        // cross-attribution when many chats share a token like a common
+        // first name). Tier counts feed into the warn log so ambiguous
+        // resolutions are visible in the scanner output.
+        match (exact.len(), ci.len(), normalized.len(), substring.len()) {
+            (1, _, _, _) => Some(exact[0].to_string()),
+            (0, 1, _, _) => Some(ci[0].to_string()),
+            (0, 0, 1, _) => Some(normalized[0].to_string()),
+            (0, 0, 0, 1) => Some(substring[0].to_string()),
+            (0, 0, 0, 0) => {
+                // No IDB chat matches the active-chat header — happens for
+                // 1:1 chats where IDB stores the peer JID but the
+                // human-readable contact name lives in the device address
+                // book (never reaches IDB). Synthesize a stable
+                // `dom:<normalized-name>` backfill key so DOM rows still
+                // persist instead of being filtered at the structured-store
+                // empty-`chat_id` guard. Distinct from real WhatsApp JIDs
+                // (which always contain `@`), so downstream consumers can
+                // tell DOM-only chat ids apart.
+                let synth = normalize_chat_name(name);
+                if synth.is_empty() {
+                    None
+                } else {
+                    Some(format!("dom:{synth}"))
                 }
+            }
+            (e, c, n, s) => {
+                log::warn!(
+                    "[whatsapp_scanner] ambiguous active-chat resolution: {} candidates for '{}' — skipping backfill",
+                    e + c + n + s,
+                    name
+                );
                 None
             }
         }
@@ -821,6 +931,20 @@ fn emit_grouped_whatsapp<R: Runtime>(
                     .and_then(|v| v.as_i64())
                     .or_else(|| m.get("preTimestamp").and_then(|v| v.as_i64()))
                     .unwrap_or(0);
+                // Per-row source tag (issue #1376): rows that picked up their
+                // body from the DOM scrape get tagged `cdp-dom` so the
+                // structured store can distinguish DOM-sourced text from
+                // IDB-sourced metadata. `merge_dom_into_snapshot` stamps
+                // `bodySource = "dom"` (IDB row patched with DOM body) and
+                // `"dom-only"` (DOM row with no IDB peer); both cases fall
+                // back to `cdp-dom`. Everything else inherits the caller's
+                // tag (full-scan = `cdp-indexeddb`, fast-tick = `cdp-dom`).
+                let row_source = m
+                    .get("bodySource")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| matches!(*s, "dom" | "dom-only"))
+                    .map(|_| "cdp-dom")
+                    .unwrap_or(source);
                 Some(json!({
                     "message_id": msg_id,
                     "chat_id": chat_id,
@@ -830,7 +954,7 @@ fn emit_grouped_whatsapp<R: Runtime>(
                     "body": body,
                     "timestamp": timestamp,
                     "message_type": m.get("type").cloned().unwrap_or(Value::Null),
-                    "source": source,
+                    "source": row_source,
                 }))
             })
             .collect();
@@ -1357,6 +1481,45 @@ impl ScannerRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── Issue #1376 — chat-name normalization for active-chat → JID lookup ──
+
+    #[test]
+    fn normalize_chat_name_strips_punctuation_and_emoji() {
+        // Group titles routinely pick up emoji + punctuation drift between
+        // the DOM-parsed conversation header and the IDB-stored chat name.
+        // Normalization should collapse both sides to the same key so the
+        // lookup at scan_once succeeds.
+        assert_eq!(
+            normalize_chat_name("17-18-19 July samagam"),
+            "171819julysamagam"
+        );
+        assert_eq!(
+            normalize_chat_name("17 18 19 July  samagam"),
+            "171819julysamagam"
+        );
+        assert_eq!(
+            normalize_chat_name("17-18-19 July samagam ✨"),
+            "171819julysamagam"
+        );
+        assert_eq!(
+            normalize_chat_name("17.18.19 July, samagam!"),
+            "171819julysamagam"
+        );
+        // Identity property — already-normal strings round-trip unchanged.
+        assert_eq!(normalize_chat_name("foo123"), "foo123");
+        // Empty input → empty output (caller guards against this).
+        assert_eq!(normalize_chat_name(""), "");
+        assert_eq!(normalize_chat_name("   "), "");
+        assert_eq!(normalize_chat_name("✨"), "");
+    }
+
+    #[test]
+    fn normalize_chat_name_lowercases() {
+        assert_eq!(normalize_chat_name("Hello World"), "helloworld");
+        assert_eq!(normalize_chat_name("HELLO"), "hello");
+        assert_eq!(normalize_chat_name("hElLo"), "hello");
+    }
 
     fn insert_pending_tasks(
         registry: &ScannerRegistry,

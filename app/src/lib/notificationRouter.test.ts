@@ -41,7 +41,7 @@ describe('resolveIntegrationRoute', () => {
     expect(resolveIntegrationRoute(n)).toBe('/chat?account=abc');
   });
 
-  it.each(['gmail', 'slack', 'whatsapp', 'telegram', 'discord', 'linkedin'])(
+  it.each(['gmail', 'slack', 'whatsapp', 'wechat', 'telegram', 'discord', 'linkedin'])(
     'routes %s provider to /chat',
     provider => {
       expect(resolveIntegrationRoute(makeIntegration({ provider }))).toBe('/chat');

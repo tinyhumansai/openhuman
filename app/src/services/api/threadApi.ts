@@ -10,9 +10,13 @@ import type {
 } from '../../types/thread';
 import type {
   ClearTurnStateResponse,
+  GetTaskBoardResponse,
   GetTurnStateResponse,
   ListTurnStatesResponse,
   PersistedTurnState,
+  PutTaskBoardResponse,
+  TaskBoard,
+  TaskBoardCard,
 } from '../../types/turnState';
 import { callCoreRpc } from '../coreRpcClient';
 
@@ -22,7 +26,11 @@ interface Envelope<T> {
 
 function unwrapEnvelope<T>(response: Envelope<T> | T): T {
   if (response && typeof response === 'object' && 'data' in response) {
-    return (response as Envelope<T>).data as T;
+    const envelope = response as Envelope<T>;
+    if (envelope.data === undefined) {
+      throw new Error('RPC envelope contains undefined data');
+    }
+    return envelope.data;
   }
   return response as T;
 }
@@ -133,6 +141,24 @@ export const threadApi = {
     });
     const data = unwrapEnvelope(response);
     return Boolean(data?.cleared);
+  },
+
+  getTaskBoard: async (threadId: string): Promise<TaskBoard | null> => {
+    const response = await callCoreRpc<{ data?: GetTaskBoardResponse }>({
+      method: 'openhuman.threads_task_board_get',
+      params: { thread_id: threadId },
+    });
+    const data = unwrapEnvelope(response);
+    return data?.taskBoard ?? null;
+  },
+
+  putTaskBoard: async (threadId: string, cards: TaskBoardCard[]): Promise<TaskBoard | null> => {
+    const response = await callCoreRpc<{ data?: PutTaskBoardResponse }>({
+      method: 'openhuman.threads_task_board_put',
+      params: { thread_id: threadId, cards },
+    });
+    const data = unwrapEnvelope(response);
+    return data?.taskBoard ?? null;
   },
 
   updateLabels: async (threadId: string, labels: string[]): Promise<Thread> => {

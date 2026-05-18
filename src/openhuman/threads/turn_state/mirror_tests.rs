@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::openhuman::agent::progress::AgentProgress;
+use crate::openhuman::agent::task_board::{TaskBoard, TaskBoardCard, TaskCardStatus};
 use tempfile::tempdir;
 
 fn fresh(thread_id: &str) -> (tempfile::TempDir, TurnStateMirror) {
@@ -143,6 +144,34 @@ fn text_delta_appends_streaming_text_without_flushing() {
         iteration: 1,
     }));
     assert_eq!(m.snapshot().streaming_text, "hello world");
+}
+
+#[test]
+fn task_board_update_is_stored_and_flushed() {
+    let (dir, mut m) = fresh("t");
+    let board = TaskBoard {
+        thread_id: "t".into(),
+        cards: vec![TaskBoardCard {
+            id: "task-1".into(),
+            title: "Draft".into(),
+            status: TaskCardStatus::Todo,
+            notes: None,
+            blocker: None,
+            order: 0,
+            updated_at: "2026-05-15T00:00:00Z".into(),
+        }],
+        updated_at: "2026-05-15T00:00:00Z".into(),
+    };
+    assert!(m.observe(&AgentProgress::TaskBoardUpdated {
+        board: board.clone()
+    }));
+    assert_eq!(m.snapshot().task_board.as_ref(), Some(&board));
+
+    let loaded = TurnStateStore::new(dir.path().to_path_buf())
+        .get("t")
+        .expect("load flushed snapshot")
+        .expect("snapshot exists");
+    assert_eq!(loaded.task_board, Some(board));
 }
 
 #[test]

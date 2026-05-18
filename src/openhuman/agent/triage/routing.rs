@@ -14,7 +14,9 @@ use std::sync::Arc;
 use anyhow::Context;
 
 use crate::openhuman::config::Config;
-use crate::openhuman::providers::{self, Provider, ProviderRuntimeOptions, INFERENCE_BACKEND_ID};
+use crate::openhuman::inference::provider::{
+    self, Provider, ProviderRuntimeOptions, INFERENCE_BACKEND_ID,
+};
 
 /// The concrete provider + metadata that [`crate::openhuman::agent::triage::evaluator::run_triage`]
 /// should use for this particular triage turn.
@@ -66,7 +68,7 @@ pub async fn resolve_provider_with_config(config: &Config) -> anyhow::Result<Res
 /// `IntelligentRoutingProvider` so the same model that serves
 /// lightweight chat also serves the triage fallback.
 pub fn build_local_provider_with_config(config: &Config) -> Option<ResolvedProvider> {
-    use crate::openhuman::providers::compatible::{AuthStyle, OpenAiCompatibleProvider};
+    use crate::openhuman::inference::provider::compatible::{AuthStyle, OpenAiCompatibleProvider};
 
     let local_cfg = &config.local_ai;
     if !local_cfg.runtime_enabled {
@@ -100,7 +102,7 @@ pub fn build_local_provider_with_config(config: &Config) -> Option<ResolvedProvi
         };
         (label, base)
     } else {
-        let ollama_base = crate::openhuman::local_ai::ollama_base_url();
+        let ollama_base = crate::openhuman::inference::local::ollama_base_url();
         ("ollama", format!("{ollama_base}/v1"))
     };
 
@@ -136,7 +138,7 @@ pub fn build_local_provider_with_config(config: &Config) -> Option<ResolvedProvi
 // ── Provider builder ────────────────────────────────────────────────────
 
 /// Build the default remote routed backend provider. Same wiring as
-/// `local_ai::ops::agent_chat_simple` uses so we stay consistent with
+/// `inference::local::ops::agent_chat_simple` uses so we stay consistent with
 /// the existing direct-chat path.
 fn build_remote_provider(config: &Config) -> anyhow::Result<ResolvedProvider> {
     let default_model = config
@@ -149,7 +151,7 @@ fn build_remote_provider(config: &Config) -> anyhow::Result<ResolvedProvider> {
         secrets_encrypt: config.secrets.encrypt,
         reasoning_enabled: config.runtime.reasoning_enabled,
     };
-    let provider_box = providers::create_routed_provider_with_options(
+    let provider_box = provider::create_routed_provider_with_options(
         config.inference_url.as_deref(),
         config.api_url.as_deref(),
         config.api_key.as_deref(),

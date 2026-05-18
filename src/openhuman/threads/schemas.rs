@@ -5,6 +5,7 @@ use serde_json::{Map, Value};
 
 use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
+use crate::openhuman::agent::task_board::{TaskBoard, TaskBoardCard, TaskBoardStore};
 use crate::openhuman::memory::{
     AppendConversationMessageRequest, ConversationMessagesRequest, CreateConversationThreadRequest,
     DeleteConversationThreadRequest, EmptyRequest, GenerateConversationThreadTitleRequest,
@@ -30,6 +31,8 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("turn_state_get"),
         schemas("turn_state_list"),
         schemas("turn_state_clear"),
+        schemas("task_board_get"),
+        schemas("task_board_put"),
     ]
 }
 
@@ -86,6 +89,14 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("turn_state_clear"),
             handler: handle_turn_state_clear,
+        },
+        RegisteredController {
+            schema: schemas("task_board_get"),
+            handler: handle_task_board_get,
+        },
+        RegisteredController {
+            schema: schemas("task_board_put"),
+            handler: handle_task_board_put,
         },
     ]
 }
@@ -367,6 +378,48 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 required: true,
             }],
         },
+        "task_board_get" => ControllerSchema {
+            namespace: "threads",
+            function: "task_board_get",
+            description: "Fetch the persisted kanban task board for a conversation thread.",
+            inputs: vec![FieldSchema {
+                name: "thread_id",
+                ty: TypeSchema::String,
+                comment: "Thread identifier.",
+                required: true,
+            }],
+            outputs: vec![FieldSchema {
+                name: "taskBoard",
+                ty: TypeSchema::Json,
+                comment: "Task board payload.",
+                required: true,
+            }],
+        },
+        "task_board_put" => ControllerSchema {
+            namespace: "threads",
+            function: "task_board_put",
+            description: "Replace the persisted kanban task board for a conversation thread.",
+            inputs: vec![
+                FieldSchema {
+                    name: "thread_id",
+                    ty: TypeSchema::String,
+                    comment: "Thread identifier.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "cards",
+                    ty: TypeSchema::Json,
+                    comment: "Array of task board cards.",
+                    required: true,
+                },
+            ],
+            outputs: vec![FieldSchema {
+                name: "taskBoard",
+                ty: TypeSchema::Json,
+                comment: "Task board payload.",
+                required: true,
+            }],
+        },
         _other => ControllerSchema {
             namespace: "threads",
             function: "unknown",
@@ -463,6 +516,97 @@ fn handle_turn_state_clear(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let p = parse::<ClearTurnStateRequest>(params)?;
         to_json(ops::turn_state_clear(p).await?)
+    })
+}
+
+#[derive(serde::Deserialize)]
+struct TaskBoardGetParams {
+    thread_id: String,
+}
+
+#[derive(serde::Deserialize)]
+struct TaskBoardPutParams {
+    thread_id: String,
+    cards: Vec<TaskBoardCard>,
+}
+
+fn handle_task_board_get(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let p = parse::<TaskBoardGetParams>(params)?;
+        let thread_id = p.thread_id.trim().to_string();
+        tracing::debug!(thread_id = %thread_id, "[rpc][task_board] get entry");
+        let config = crate::openhuman::config::Config::load_or_init()
+            .await
+            .map_err(|e| {
+                tracing::debug!(
+                    thread_id = %thread_id,
+                    error = %e,
+                    "[rpc][task_board] get load_config_error"
+                );
+                format!("load config: {e}")
+            })?;
+        tracing::trace!(thread_id = %thread_id, "[rpc][task_board] get loading_board");
+        let board = crate::openhuman::agent::task_board::board_for_thread(
+            &config.workspace_dir,
+            &thread_id,
+        )
+        .map_err(|e| {
+            tracing::debug!(
+                thread_id = %thread_id,
+                error = %e,
+                "[rpc][task_board] get board_error"
+            );
+            e
+        })?;
+        tracing::debug!(
+            thread_id = %thread_id,
+            card_count = board.cards.len(),
+            "[rpc][task_board] get exit"
+        );
+        Ok(serde_json::json!({ "taskBoard": board }))
+    })
+}
+
+fn handle_task_board_put(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let p = parse::<TaskBoardPutParams>(params)?;
+        let thread_id = p.thread_id.trim().to_string();
+        tracing::debug!(
+            thread_id = %thread_id,
+            card_count = p.cards.len(),
+            "[rpc][task_board] put entry"
+        );
+        let config = crate::openhuman::config::Config::load_or_init()
+            .await
+            .map_err(|e| {
+                tracing::debug!(
+                    thread_id = %thread_id,
+                    error = %e,
+                    "[rpc][task_board] put load_config_error"
+                );
+                format!("load config: {e}")
+            })?;
+        let board = TaskBoard {
+            thread_id: thread_id.clone(),
+            cards: p.cards,
+            updated_at: chrono::Utc::now().to_rfc3339(),
+        };
+        let saved = TaskBoardStore::new(config.workspace_dir)
+            .put(board)
+            .map_err(|e| {
+                tracing::debug!(
+                    thread_id = %thread_id,
+                    error = %e,
+                    "[rpc][task_board] put store_error"
+                );
+                e
+            })?;
+        tracing::debug!(
+            thread_id = %thread_id,
+            card_count = saved.cards.len(),
+            "[rpc][task_board] put exit"
+        );
+        Ok(serde_json::json!({ "taskBoard": saved }))
     })
 }
 
