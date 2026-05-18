@@ -117,18 +117,31 @@ describe('tauriCommands/core', () => {
     });
 
     test('invokes restart_core_process then clears the RPC token cache (#1922)', async () => {
-      mockInvoke.mockResolvedValueOnce(undefined);
+      // Deferred Promise — proves the cache clear happens AFTER the IPC
+      // resolves, not merely after invoke() was called. A concurrent
+      // getCoreRpcToken() racing across an `await` boundary could
+      // otherwise repopulate from the dead core before the new one mints
+      // a fresh bearer.
+      let resolveInvoke!: () => void;
+      mockInvoke.mockImplementationOnce(
+        () =>
+          new Promise<void>(resolve => {
+            resolveInvoke = resolve;
+          })
+      );
 
-      await restartCoreProcess();
+      const pending = restartCoreProcess();
 
+      // Yield the microtask queue so `await invoke(...)` parks. Cache MUST
+      // still be untouched.
+      await Promise.resolve();
       expect(mockInvoke).toHaveBeenCalledWith('restart_core_process');
+      expect(mockClearCoreRpcTokenCache).not.toHaveBeenCalled();
+
+      resolveInvoke();
+      await pending;
+
       expect(mockClearCoreRpcTokenCache).toHaveBeenCalledTimes(1);
-      // Cache MUST clear after the IPC resolves so a concurrent
-      // getCoreRpcToken() doesn't repopulate from the dead core. Pin the
-      // order via the global invocation counter.
-      const invokeOrder = mockInvoke.mock.invocationCallOrder[0];
-      const clearOrder = mockClearCoreRpcTokenCache.mock.invocationCallOrder[0];
-      expect(clearOrder).toBeGreaterThan(invokeOrder);
     });
   });
 

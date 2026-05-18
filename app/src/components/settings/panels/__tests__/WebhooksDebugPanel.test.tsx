@@ -77,8 +77,16 @@ vi.mock('../../../../utils/tauriCommands', () => ({
 vi.mock('../components/SettingsHeader', () => ({ default: () => null }));
 
 describe('WebhooksDebugPanel — SSE auth wiring (#1922)', () => {
+  // Save the prior global so we restore it instead of unconditionally
+  // deleting in teardown — avoids cross-test side effects if another
+  // suite/setup installs its own EventSource.
+  let originalEventSource: typeof globalThis.EventSource | undefined;
+
   beforeEach(() => {
     MockEventSource.instances.length = 0;
+    originalEventSource = (globalThis as { EventSource?: typeof MockEventSource }).EventSource as
+      | typeof globalThis.EventSource
+      | undefined;
     (globalThis as unknown as { EventSource: typeof MockEventSource }).EventSource =
       MockEventSource;
     mockGetCoreRpcToken.mockReset();
@@ -91,7 +99,12 @@ describe('WebhooksDebugPanel — SSE auth wiring (#1922)', () => {
   });
 
   afterEach(() => {
-    delete (globalThis as unknown as { EventSource?: typeof MockEventSource }).EventSource;
+    if (originalEventSource) {
+      (globalThis as unknown as { EventSource: typeof globalThis.EventSource }).EventSource =
+        originalEventSource;
+    } else {
+      delete (globalThis as unknown as { EventSource?: typeof MockEventSource }).EventSource;
+    }
   });
 
   it('opens EventSource with ?token=<bearer> when token resolves', async () => {
@@ -112,11 +125,15 @@ describe('WebhooksDebugPanel — SSE auth wiring (#1922)', () => {
 
     render(<WebhooksDebugPanel />);
 
-    // Settle async tick — the SSE effect runs Promise.all + buildWebhookEventsUrl
-    // (which returns null) and bails without constructing EventSource.
-    await waitFor(() => expect(mockGetCoreRpcToken).toHaveBeenCalled());
-    await new Promise(resolve => setTimeout(resolve, 10));
-    expect(MockEventSource.instances).toHaveLength(0);
+    // SSE effect runs Promise.all (both resolvers fire) then bails on the
+    // null URL from buildWebhookEventsUrl. Wait on the observable signal —
+    // both resolvers having been called — instead of a real-time sleep so
+    // the test is deterministic on slow CI.
+    await waitFor(() => {
+      expect(mockGetCoreRpcToken).toHaveBeenCalled();
+      expect(mockGetCoreHttpBaseUrl).toHaveBeenCalled();
+      expect(MockEventSource.instances).toHaveLength(0);
+    });
   });
 
   it('reloads logs + registrations when a webhooks_debug event fires', async () => {

@@ -102,10 +102,13 @@ describe('useWebhooks SSE auth', () => {
 
     renderHook(() => useWebhooks());
 
-    await waitFor(() => expect(mockGetCoreRpcToken).toHaveBeenCalled());
-    // Settle async tick — the SSE effect should NOT construct EventSource.
-    await new Promise(resolve => setTimeout(resolve, 10));
-    expect(MockEventSource.instances).toHaveLength(0);
+    // Wait on the observable signal (resolver called + no EventSource ever
+    // constructed) rather than a real-time sleep so the test is
+    // deterministic on slow CI.
+    await waitFor(() => {
+      expect(mockGetCoreRpcToken).toHaveBeenCalled();
+      expect(MockEventSource.instances).toHaveLength(0);
+    });
   });
 
   it('treats a rejected getCoreRpcToken() as no-token (catch path)', async () => {
@@ -116,9 +119,10 @@ describe('useWebhooks SSE auth', () => {
 
     renderHook(() => useWebhooks());
 
-    await waitFor(() => expect(mockGetCoreRpcToken).toHaveBeenCalled());
-    await new Promise(resolve => setTimeout(resolve, 10));
-    expect(MockEventSource.instances).toHaveLength(0);
+    await waitFor(() => {
+      expect(mockGetCoreRpcToken).toHaveBeenCalled();
+      expect(MockEventSource.instances).toHaveLength(0);
+    });
   });
 
   it('constructs EventSource with ?token=<rpc-token> once the token resolves', async () => {
