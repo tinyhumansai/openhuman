@@ -509,13 +509,18 @@ fn handle_polymarket_execute(params: Map<String, Value>) -> ControllerFuture {
             .filter(|s| !s.is_empty())
             .map(str::to_string)
             .ok_or_else(|| "missing or empty `action`".to_string())?;
-        let arguments = params
-            .get("arguments")
-            .cloned()
-            .unwrap_or_else(|| json!({}));
+        let arguments = params.get("arguments").cloned();
 
         let config = config_rpc::load_config_with_timeout().await?;
-        if !config.integrations.polymarket.enabled {
+        let enabled = config.integrations.polymarket.enabled;
+        tracing::debug!(
+            action = %action,
+            enabled,
+            has_arguments = arguments.is_some(),
+            "[tools] polymarket_execute: entry"
+        );
+        if !enabled {
+            tracing::debug!(action = %action, "[tools] polymarket_execute: disabled");
             return Err("Polymarket integration is disabled in config.".to_string());
         }
 
@@ -525,17 +530,37 @@ fn handle_polymarket_execute(params: Map<String, Value>) -> ControllerFuture {
             security,
         );
 
-        let mut args = arguments;
+        let mut args = match arguments {
+            Some(Value::Object(map)) => Value::Object(map),
+            Some(_) => {
+                tracing::debug!(
+                    action = %action,
+                    "[tools] polymarket_execute: invalid arguments shape"
+                );
+                return Err("`arguments` must be a JSON object when provided".to_string());
+            }
+            None => json!({}),
+        };
         if let Value::Object(ref mut map) = args {
             map.insert("action".to_string(), Value::String(action.clone()));
-        } else {
-            args = json!({ "action": action });
         }
+        tracing::trace!(action = %action, args = ?args, "[tools] polymarket_execute: dispatch");
 
-        let result = tool
-            .execute(args)
-            .await
-            .map_err(|e| format!("polymarket execute failed: {e:#}"))?;
+        let result = tool.execute(args).await.map_err(|e| {
+            tracing::error!(
+                action = %action,
+                enabled,
+                error = %e,
+                "[tools] polymarket_execute: execution failed"
+            );
+            format!("polymarket execute failed: {e:#}")
+        })?;
+
+        tracing::debug!(
+            action = %action,
+            is_error = result.is_error,
+            "[tools] polymarket_execute: success"
+        );
 
         let payload = json!({ "data": result.output() });
         let log = vec![format!("tools.polymarket_execute: action={action}")];

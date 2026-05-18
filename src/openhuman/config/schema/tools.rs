@@ -566,6 +566,10 @@ fn default_polymarket_timeout_secs() -> u64 {
     15
 }
 
+fn default_polymarket_enabled() -> bool {
+    false
+}
+
 fn default_polymarket_polygon_rpc_url() -> String {
     "https://polygon-rpc.com".into()
 }
@@ -589,7 +593,7 @@ pub struct PolymarketClobCredentials {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct PolymarketConfig {
-    #[serde(default = "defaults::default_true")]
+    #[serde(default = "default_polymarket_enabled")]
     pub enabled: bool,
     #[serde(default = "default_polymarket_gamma_base_url")]
     pub gamma_base_url: String,
@@ -612,7 +616,7 @@ pub struct PolymarketConfig {
 impl Default for PolymarketConfig {
     fn default() -> Self {
         Self {
-            enabled: defaults::default_true(),
+            enabled: default_polymarket_enabled(),
             gamma_base_url: default_polymarket_gamma_base_url(),
             clob_base_url: default_polymarket_clob_base_url(),
             timeout_secs: default_polymarket_timeout_secs(),

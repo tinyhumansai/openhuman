@@ -88,7 +88,7 @@ Config path: `integrations.polymarket`.
 
 Fields:
 
-- `enabled` (default `true`)
+- `enabled` (default `false`)
 - `gamma_base_url` (default `https://gamma-api.polymarket.com`)
 - `clob_base_url` (default `https://clob.polymarket.com`)
 - `timeout_secs` (default `15`)

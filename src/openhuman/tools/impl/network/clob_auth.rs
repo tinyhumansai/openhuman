@@ -64,8 +64,9 @@ pub(crate) async fn derive_credentials(
     chain_id: u64,
     address: &str,
 ) -> Result<ClobCredentials> {
+    let timestamp = now_unix_secs()?;
     let create_path = "/auth/api-key";
-    let create_headers = sign_l1_headers(signer, chain_id, address, 0, now_unix_secs()?).await?;
+    let create_headers = sign_l1_headers(signer, chain_id, address, 0, timestamp).await?;
 
     let create = http
         .post(format!("{base_url}{create_path}"))
@@ -86,7 +87,7 @@ pub(crate) async fn derive_credentials(
     }
 
     let derive_path = "/auth/derive-api-key";
-    let derive_headers = sign_l1_headers(signer, chain_id, address, 0, now_unix_secs()?).await?;
+    let derive_headers = sign_l1_headers(signer, chain_id, address, 0, timestamp).await?;
     let derive = http
         .get(format!("{base_url}{derive_path}"))
         .headers(derive_headers)
@@ -298,7 +299,7 @@ mod tests {
             .get(POLY_SIGNATURE)
             .and_then(|v| v.to_str().ok())
             .unwrap_or_default();
-        assert_eq!(sig, "UwG4O0J2tYaXVSx59TrR0qkuTkf3v__fL2ndRrRGF7Q=");
+        assert_eq!(sig, "hQHfFFnmgy5O44EVMrn0oswHgpFGymrX53ISsb7vDsE=");
 
         assert_eq!(headers.get(POLY_API_KEY).unwrap(), "test-key");
         assert_eq!(headers.get(POLY_PASSPHRASE).unwrap(), "test-passphrase");

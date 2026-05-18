@@ -444,8 +444,10 @@ impl PolymarketTool {
             } => {
                 require_write_approval(approved)?;
 
-                let (_wallet, user) = self.resolve_signer_and_user(user).await?;
-                let creds = self.cached_or_derive_credentials(&user).await?;
+                let (wallet, user) = self.resolve_signer_and_user(user).await?;
+                let creds = self
+                    .cached_or_derive_credentials_with_signer(&user, Some(&wallet))
+                    .await?;
                 let order_id = non_empty(Some(order_id.as_str()))
                     .ok_or_else(|| anyhow::anyhow!("'order_id' cannot be empty"))?;
                 let path = format!("/order/{order_id}");
@@ -513,8 +515,21 @@ impl PolymarketTool {
     }
 
     async fn cached_or_derive_credentials(&self, user: &str) -> Result<ClobCredentials> {
+        self.cached_or_derive_credentials_with_signer(user, None)
+            .await
+    }
+
+    async fn cached_or_derive_credentials_with_signer(
+        &self,
+        user: &str,
+        signer: Option<&LocalWallet>,
+    ) -> Result<ClobCredentials> {
         if let Some(creds) = self.cached_clob_credentials.lock().await.clone() {
             return Ok(creds);
+        }
+
+        if let Some(wallet) = signer {
+            return self.ensure_clob_credentials(wallet, user).await;
         }
 
         let (wallet, resolved_user) = self.resolve_signer_and_user(Some(user.to_string())).await?;
