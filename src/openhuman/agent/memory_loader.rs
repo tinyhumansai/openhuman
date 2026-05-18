@@ -365,10 +365,7 @@ impl MemoryLoader for DefaultMemoryLoader {
         let mut appended_cross_header = false;
         for (sid, content) in cross_hits {
             let snippet = if content.chars().count() > CROSS_CHAT_SNIPPET_CHARS {
-                crate::openhuman::util::truncate_with_ellipsis(
-                    &content,
-                    CROSS_CHAT_SNIPPET_CHARS,
-                )
+                crate::openhuman::util::truncate_with_ellipsis(&content, CROSS_CHAT_SNIPPET_CHARS)
             } else {
                 content
             };
@@ -736,8 +733,7 @@ mod tests {
         // back to the Memory::recall path we'd render nothing. Forcing
         // a JSONL primary hit proves the workspace_dir branch ran.
         let mem = MockMemory::new(Vec::new());
-        let loader = DefaultMemoryLoader::new(5, 0.4)
-            .with_workspace_dir(temp.path().to_path_buf());
+        let loader = DefaultMemoryLoader::new(5, 0.4).with_workspace_dir(temp.path().to_path_buf());
 
         let out = loader
             .load_context(&mem, "What database does my project Phoenix use")
