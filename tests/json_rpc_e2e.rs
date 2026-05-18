@@ -4969,6 +4969,48 @@ async fn webhook_sse_accepts_valid_query_token() {
     rpc_join.abort();
 }
 
+/// GET /events/webhooks with a percent-encoded query token → 200. Locks the
+/// URL-decoding contract `EventSource` callers depend on (the FE uses
+/// `encodeURIComponent`, which percent-encodes reserved characters even
+/// when the token itself is hex-only).
+#[tokio::test]
+async fn webhook_sse_accepts_percent_encoded_query_token() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    ensure_test_rpc_auth();
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let client = reqwest::Client::new();
+
+    let encoded = urlencoding::encode(TEST_RPC_TOKEN);
+    // Sanity: encoding the canonical hex test token must remain a non-empty
+    // string. The encoder may pass-through (hex is URL-safe) — that's fine;
+    // the test still proves the decode path doesn't double-decode or strip.
+    assert!(!encoded.is_empty());
+
+    let resp = client
+        .get(format!("http://{rpc_addr}/events/webhooks?token={encoded}"))
+        .send()
+        .await
+        .expect("request");
+
+    assert_eq!(
+        resp.status(),
+        200,
+        "url-encoded valid query token must open the SSE stream"
+    );
+    let ct = resp
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert!(
+        ct.starts_with("text/event-stream"),
+        "expected SSE content-type, got {ct}"
+    );
+
+    rpc_join.abort();
+}
+
 /// GET /events/webhooks with `Authorization: Bearer <valid>` → 200.
 /// CLI / non-browser callers should still be able to subscribe the header way.
 #[tokio::test]
