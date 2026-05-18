@@ -173,18 +173,16 @@ interface WebviewAccountBounds {
   height: number;
 }
 
-const IngestMessageSchema = z
-  .object({
-    id: z.string().optional(),
-    from: z.string().nullable().optional(),
-    to: z.string().nullable().optional(),
-    fromMe: z.boolean().optional(),
-    body: z.string().nullable().optional(),
-    type: z.string().nullable().optional(),
-    timestamp: z.number().nullable().optional(),
-    unread: z.number().optional(),
-  })
-  .passthrough();
+const IngestMessageSchema = z.object({
+  id: z.string().optional(),
+  from: z.string().nullable().optional(),
+  to: z.string().nullable().optional(),
+  fromMe: z.boolean().optional(),
+  body: z.string().nullable().optional(),
+  type: z.string().nullable().optional(),
+  timestamp: z.number().nullable().optional(),
+  unread: z.number().optional(),
+});
 
 const IngestPayloadSchema = z
   .object({
