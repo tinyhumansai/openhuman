@@ -108,6 +108,19 @@ describe('useWebhooks SSE auth', () => {
     expect(MockEventSource.instances).toHaveLength(0);
   });
 
+  it('treats a rejected getCoreRpcToken() as no-token (catch path)', async () => {
+    // Token resolver failing must not let the hook open an unauth SSE; it
+    // should fall through to the same "no token" branch as a null resolve.
+    mockGetCoreRpcToken.mockRejectedValue(new Error('IPC bridge unavailable'));
+    const { useWebhooks } = await import('../useWebhooks');
+
+    renderHook(() => useWebhooks());
+
+    await waitFor(() => expect(mockGetCoreRpcToken).toHaveBeenCalled());
+    await new Promise(resolve => setTimeout(resolve, 10));
+    expect(MockEventSource.instances).toHaveLength(0);
+  });
+
   it('constructs EventSource with ?token=<rpc-token> once the token resolves', async () => {
     mockGetCoreRpcToken.mockResolvedValue('rpc-token-1');
     const { useWebhooks } = await import('../useWebhooks');
