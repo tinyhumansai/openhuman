@@ -105,11 +105,7 @@ const BUILTIN_PROVIDER_META: Record<string, { tone: string; label: string }> = {
   },
   astraflow: {
     label: 'Astraflow',
-    tone: 'bg-blue-50 dark:bg-blue-500/10 ring-blue-200 text-blue-900 dark:text-blue-100',
-  },
-  'astraflow-cn': {
-    label: 'Astraflow (China)',
-    tone: 'bg-blue-50 dark:bg-blue-500/10 ring-blue-200 text-blue-900 dark:text-blue-100',
+    tone: 'bg-violet-50 dark:bg-violet-500/10 ring-violet-200 text-violet-900 dark:text-violet-100',
   },
   custom: {
     label: 'Custom',
@@ -207,6 +203,14 @@ function authStyleForSlug(slug: string): AuthStyle {
   if (slug === 'anthropic') return 'anthropic';
   if (slug === 'lmstudio' || slug === 'ollama') return 'none';
   return 'bearer';
+}
+
+function defaultEndpointFor(slug: string): string {
+  if (slug === 'openai') return 'https://api.openai.com/v1';
+  if (slug === 'anthropic') return 'https://api.anthropic.com';
+  if (slug === 'openrouter') return 'https://openrouter.ai/api/v1';
+  if (slug === 'astraflow') return 'https://api.astraflow.ai/v1';
+  return '';
 }
 
 function toPanelProvider(p: CloudProviderView): CloudProvider {
