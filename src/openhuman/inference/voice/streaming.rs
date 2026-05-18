@@ -314,8 +314,15 @@ mod tests {
         let ok = append_stream_samples(&mut audio, &mut full, &[1, 2, 3]);
 
         assert!(!ok, "should return false once cap is reached");
-        assert_eq!(full.len(), MAX_FULL_AUDIO_SAMPLES, "full buf must not grow past cap");
-        assert!(audio.is_empty(), "sliding window must not receive new samples");
+        assert_eq!(
+            full.len(),
+            MAX_FULL_AUDIO_SAMPLES,
+            "full buf must not grow past cap"
+        );
+        assert!(
+            audio.is_empty(),
+            "sliding window must not receive new samples"
+        );
     }
 
     #[test]
@@ -326,8 +333,16 @@ mod tests {
         let ok = append_stream_samples(&mut audio, &mut full, &[1, 2, 3, 4]);
 
         assert!(ok, "partial append is still a success");
-        assert_eq!(full.len(), MAX_FULL_AUDIO_SAMPLES, "only 2 of 4 samples fit");
-        assert_eq!(&full[full.len() - 2..], &[1, 2], "only the first 2 samples appended");
+        assert_eq!(
+            full.len(),
+            MAX_FULL_AUDIO_SAMPLES,
+            "only 2 of 4 samples fit"
+        );
+        assert_eq!(
+            &full[full.len() - 2..],
+            &[1, 2],
+            "only the first 2 samples appended"
+        );
     }
 
     #[test]
