@@ -1304,12 +1304,14 @@ impl Agent {
             .memory(memory)
             .tool_dispatcher(tool_dispatcher)
             .memory_loader(Box::new(
-                DefaultMemoryLoader::new(5, config.memory.min_relevance_score).with_max_chars(
-                    config
-                        .agent
-                        .resolved_memory_limits()
-                        .max_memory_context_chars,
-                ),
+                DefaultMemoryLoader::new(5, config.memory.min_relevance_score)
+                    .with_max_chars(
+                        config
+                            .agent
+                            .resolved_memory_limits()
+                            .max_memory_context_chars,
+                    )
+                    .with_workspace_dir(config.workspace_dir.clone()),
             ))
             .prompt_builder(prompt_builder)
             .config(config.agent.clone())

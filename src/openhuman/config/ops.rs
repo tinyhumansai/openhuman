@@ -29,6 +29,15 @@ const CONFIG_LOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(
 ///
 /// This is used by JSON-RPC and CLI handlers to ensure they don't hang
 /// indefinitely if disk I/O is blocked.
+///
+/// The TOML parse itself runs on the blocking pool via
+/// `parse_config_with_recovery` (see `src/openhuman/config/schema/load.rs`)
+/// so the recursive-descent parser's serde Visitor frames don't compound
+/// with whatever deep async tower called us. That's the stack-overflow
+/// fix from `crahs.log` (2026-05-17); a per-call cache here would shave
+/// the disk read on hot paths but proved racy across the in-process
+/// integration tests (re-used workspace paths, concurrent server tasks
+/// loading mid-mutation), so it isn't worth it.
 pub async fn load_config_with_timeout() -> Result<Config, String> {
     match tokio::time::timeout(CONFIG_LOAD_TIMEOUT, Config::load_or_init()).await {
         Ok(Ok(mut config)) => {

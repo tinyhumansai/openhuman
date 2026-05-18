@@ -960,7 +960,12 @@ async function handoffToOrchestrator(
   try {
     const thread = await threadApi.createNewThread();
     log('meet: created orchestrator thread %s for code=%s', thread.id, session.code);
-    await chatSend({ threadId: thread.id, message: prompt, model: MEET_ORCHESTRATOR_MODEL });
+    await chatSend({
+      threadId: thread.id,
+      message: prompt,
+      model: MEET_ORCHESTRATOR_MODEL,
+      locale: store.getState().locale.current,
+    });
     log('meet: handed off to orchestrator thread=%s code=%s', thread.id, session.code);
     store.dispatch(
       appendLog({
