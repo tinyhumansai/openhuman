@@ -112,7 +112,7 @@ const en: TranslationMap = {
   'migration.applyAction': 'Apply import',
   'migration.applyRunning': 'Importing…',
   'migration.applyDisclaimer':
-    'Apply is unlocked after a successful Preview. Existing memory is backed up before any import.',
+    'Apply is unlocked after a successful Preview of the same source. Existing memory is backed up before any import.',
   'migration.reportTitlePreview': 'Preview — nothing imported yet',
   'migration.reportTitleApplied': 'Import complete',
   'migration.report.source': 'Source workspace',
@@ -127,6 +127,14 @@ const en: TranslationMap = {
     'No data has been imported yet. Click Apply import to copy it over.',
   'migration.report.appliedHint':
     'Imported entries are now in your memory. Re-run Preview if you want to compare again.',
+  'migration.hermesComingSoonPrefix': 'Hermes importer is on the roadmap — see ',
+  'migration.hermesComingSoonSuffix':
+    ' for context. Pick OpenClaw to migrate today; Hermes lands in a follow-up.',
+  'migration.hermesLinkText': '#1440',
+  'migration.confirmImport.singular':
+    'Import {count} entry into the current workspace?\n\nSource: {source}\nTarget: {target}\n\nExisting memory will be backed up before the import runs.',
+  'migration.confirmImport.plural':
+    'Import {count} entries into the current workspace?\n\nSource: {source}\nTarget: {target}\n\nExisting memory will be backed up before the import runs.',
 
   // Settings: Notifications
   'settings.notifications.doNotDisturb': 'Do Not Disturb',

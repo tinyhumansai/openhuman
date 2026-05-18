@@ -359,6 +359,9 @@ const zhCN4: TranslationMap = {
   'settings.billing.subscription.paymentConfirmed': '支付已确认',
   'settings.billing.subscription.perMonth': '每月',
   'settings.billing.subscription.popular': '热门',
+  'pages.settings.account.migration': 'Import from another assistant',
+  'pages.settings.account.migrationDesc':
+    'Migrate memory and notes from OpenClaw (or, soon, Hermes) into this workspace.',
 };
 
 export default zhCN4;

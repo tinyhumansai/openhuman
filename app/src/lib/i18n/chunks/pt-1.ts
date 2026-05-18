@@ -392,6 +392,42 @@ const pt1: TranslationMap = {
     'Navegar pelas notas de versão e compilações anteriores no GitHub.',
   'settings.about.openReleases': 'Abrir versões no GitHub',
   'settings.ai.overview': 'Visão Geral do Sistema de IA',
+  'migration.title': 'Import from another assistant',
+  'migration.description':
+    'Migrate memory and notes from another local assistant into this workspace. Start with a Preview to see exactly what would change, then Apply to copy the data over. Your current memory is backed up first.',
+  'migration.vendorLabel': 'Source vendor',
+  'migration.sourceLabel': 'Source workspace path (optional)',
+  'migration.sourcePlaceholder': 'Leave blank to auto-detect (e.g. ~/.openclaw/workspace)',
+  'migration.sourceHint':
+    "Defaults to the vendor's standard location when blank. Set an explicit path if you've moved the workspace elsewhere.",
+  'migration.previewAction': 'Preview',
+  'migration.previewRunning': 'Previewing…',
+  'migration.applyAction': 'Apply import',
+  'migration.applyRunning': 'Importing…',
+  'migration.applyDisclaimer':
+    'Apply is unlocked after a successful Preview of the same source. Existing memory is backed up before any import.',
+  'migration.reportTitlePreview': 'Preview — nothing imported yet',
+  'migration.reportTitleApplied': 'Import complete',
+  'migration.report.source': 'Source workspace',
+  'migration.report.target': 'Target workspace',
+  'migration.report.fromSqlite': 'From SQLite (brain.db)',
+  'migration.report.fromMarkdown': 'From Markdown',
+  'migration.report.imported': 'Imported',
+  'migration.report.skippedUnchanged': 'Skipped (unchanged)',
+  'migration.report.renamedConflicts': 'Renamed on conflict',
+  'migration.report.warnings': 'Warnings',
+  'migration.report.previewHint':
+    'No data has been imported yet. Click Apply import to copy it over.',
+  'migration.report.appliedHint':
+    'Imported entries are now in your memory. Re-run Preview if you want to compare again.',
+  'migration.hermesComingSoonPrefix': 'Hermes importer is on the roadmap — see ',
+  'migration.hermesComingSoonSuffix':
+    ' for context. Pick OpenClaw to migrate today; Hermes lands in a follow-up.',
+  'migration.hermesLinkText': '#1440',
+  'migration.confirmImport.singular':
+    'Import {count} entry into the current workspace?\\n\\nSource: {source}\\nTarget: {target}\\n\\nExisting memory will be backed up before the import runs.',
+  'migration.confirmImport.plural':
+    'Import {count} entries into the current workspace?\\n\\nSource: {source}\\nTarget: {target}\\n\\nExisting memory will be backed up before the import runs.',
 };
 
 export default pt1;

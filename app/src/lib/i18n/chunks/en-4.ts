@@ -159,6 +159,9 @@ const en4: TranslationMap = {
     'Manage your BIP39 recovery phrase for encryption and wallet access',
   'pages.settings.account.team': 'Team',
   'pages.settings.account.teamDesc': 'Manage your team, members, and invites',
+  'pages.settings.account.migration': 'Import from another assistant',
+  'pages.settings.account.migrationDesc':
+    'Migrate memory and notes from OpenClaw (or, soon, Hermes) into this workspace.',
   'pages.settings.accountSection.description':
     'Recovery phrase, team, connections, and privacy settings.',
   'pages.settings.accountSection.title': 'Account',

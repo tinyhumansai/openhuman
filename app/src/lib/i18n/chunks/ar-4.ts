@@ -361,6 +361,9 @@ const ar4: TranslationMap = {
   'settings.billing.subscription.paymentConfirmed': 'تم تأكيد الدفع',
   'settings.billing.subscription.perMonth': 'في الشهر',
   'settings.billing.subscription.popular': 'شائع',
+  'pages.settings.account.migration': 'Import from another assistant',
+  'pages.settings.account.migrationDesc':
+    'Migrate memory and notes from OpenClaw (or, soon, Hermes) into this workspace.',
 };
 
 export default ar4;
