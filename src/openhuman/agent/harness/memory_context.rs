@@ -127,6 +127,13 @@ pub(crate) async fn build_context(
             .take(CROSS_CHAT_LIMIT)
             .collect();
 
+        tracing::debug!(
+            "[memory-context] cross-chat recall returned {} entries, {} after filtering (exclude={:?})",
+            entries.len(),
+            cross.len(),
+            current_thread_id
+        );
+
         if !cross.is_empty() {
             context.push_str("[Cross-chat context]\n");
             for entry in &cross {
@@ -193,7 +200,21 @@ mod tests {
             opts: crate::openhuman::memory::RecallOpts<'_>,
         ) -> anyhow::Result<Vec<MemoryEntry>> {
             if opts.cross_session {
-                return Ok(self.cross_chat.clone());
+                // Mirror the production exclusion contract: when an
+                // active thread id is threaded through RecallOpts, drop
+                // hits whose `session_id` matches it. Without this, the
+                // privacy/scope guard at `build_context` time can
+                // silently regress and tests still pass.
+                let exclude = opts.session_id;
+                return Ok(self
+                    .cross_chat
+                    .clone()
+                    .into_iter()
+                    .filter(|e| match (exclude, e.session_id.as_deref()) {
+                        (Some(tid), Some(sid)) => sid != tid,
+                        _ => true,
+                    })
+                    .collect());
             }
             if query.starts_with("working.user ") {
                 return Ok(self.working.clone());
