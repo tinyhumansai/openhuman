@@ -97,6 +97,7 @@ pub(crate) async fn build_context(
         if !working.is_empty() {
             context.push_str("[User working memory]\n");
             for entry in &working {
+                seen_keys.insert(entry.key.clone());
                 let _ = writeln!(context, "- {}: {}", entry.key, entry.content);
             }
             context.push('\n');
