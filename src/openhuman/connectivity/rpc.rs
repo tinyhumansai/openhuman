@@ -267,7 +267,15 @@ async fn identify_listener(host: &str, port: u16) -> ListenerFingerprint {
     } else {
         host
     };
-    let url = format!("http://{probe_host}:{port}/");
+    // IPv6 literals must be bracketed in the URL authority per RFC 3986; an
+    // un-bracketed `http://::1:7788/` parses the colons as host:port and
+    // mis-classifies live OpenHuman cores on IPv6 hosts as `Other`.
+    let authority = if probe_host.contains(':') && !probe_host.starts_with('[') {
+        format!("[{probe_host}]")
+    } else {
+        probe_host.to_string()
+    };
+    let url = format!("http://{authority}:{port}/");
     let client = match reqwest::Client::builder()
         .timeout(Duration::from_millis(750))
         .build()
