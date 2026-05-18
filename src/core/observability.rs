@@ -126,6 +126,14 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     if lower.contains("api key not set") || lower.contains("missing api key") {
         return Some(ExpectedErrorKind::ApiKeyMissing);
     }
+    // Check `is_loopback_unavailable` BEFORE `is_network_unreachable_message`:
+    // a loopback `Connection refused` body shape would otherwise demote to the
+    // broader `NetworkUnreachable` bucket and lose the boot-window vs.
+    // user-environment distinction. Mirrors the `ProviderUserState`-before-
+    // `BackendUserError` precedence pattern from #1795 (PR comment).
+    if is_loopback_unavailable(&lower) {
+        return Some(ExpectedErrorKind::LoopbackUnavailable);
+    }
     if is_network_unreachable_message(&lower) {
         return Some(ExpectedErrorKind::NetworkUnreachable);
     }
@@ -199,6 +207,52 @@ pub fn is_session_expired_message(msg: &str) -> bool {
         || msg.contains("SESSION_EXPIRED")
 }
 
+/// Detect the in-process-core boot-window shape: a sibling component
+/// (frontend RPC relay, agent-integrations / composio HTTP clients) tried to
+/// reach the embedded core's `127.0.0.1:<port>` listener before it finished
+/// binding, so the kernel returned `Connection refused`. The condition
+/// self-resolves once startup completes — Sentry has no remediation path.
+///
+/// Conjunctive match — both anchors must hit:
+///
+/// 1. **Loopback host with port**: substring `127.0.0.1:` or `localhost:` so
+///    a doc URL or unrelated mention without a port (`localhost`,
+///    `127.0.0.1\n`) does not match. Pinned to the colon+port pattern
+///    because every observed shape from reqwest / hyper / our own
+///    `IntegrationClient` wraps the host as `<host>:<port>` in the URL the
+///    error chain renders.
+/// 2. **Connection refused with platform errno**: `connection refused (os
+///    error 61)` (macOS / BSD), `connection refused (os error 111)`
+///    (Linux), or `connection refused (os error 10061)` (Windows
+///    `WSAECONNREFUSED`). Pinning to `(os error N)` keeps the matcher from
+///    swallowing higher-level wrappers that merely mention "connection
+///    refused" in prose.
+///
+/// Drops OPENHUMAN-TAURI-R5 (~2.5k events, `integrations.get` emit site)
+/// and OPENHUMAN-TAURI-R6 (~2.5k events, the `rpc.invoke_method` re-wrap of
+/// the same trace). Both share `trace_id=6ebf5b62748d5144e541e2cddeabbbd0`
+/// and the canonical body shape:
+///
+/// ```text
+/// error sending request for url (http://127.0.0.1:18474/agent-integrations/composio/connections)
+///   → client error (Connect) → tcp connect error → Connection refused (os error 61)
+/// ```
+///
+/// Without this matcher the body falls through to
+/// [`is_network_unreachable_message`] and demotes as `NetworkUnreachable`,
+/// which conflates an internal lifecycle race with user-environment problems
+/// (VPN drop, captive portal, ISP block) and makes the "what's spiking?"
+/// question un-answerable. See [`ExpectedErrorKind::LoopbackUnavailable`].
+fn is_loopback_unavailable(lower: &str) -> bool {
+    let has_loopback_host = lower.contains("127.0.0.1:") || lower.contains("localhost:");
+    if !has_loopback_host {
+        return false;
+    }
+    lower.contains("connection refused (os error 61)")
+        || lower.contains("connection refused (os error 111)")
+        || lower.contains("connection refused (os error 10061)")
+}
+
 /// Detect transport-level connection failures that fire before any HTTP status
 /// is observed — DNS resolution failures, TCP connect refused/reset, TLS
 /// handshake failures, or ISP/firewall blocks. The canonical shape is
@@ -212,6 +266,11 @@ pub fn is_session_expired_message(msg: &str) -> bool {
 /// Sentry has no signal to act on (no status, no trace, no payload), so each
 /// occurrence is pure noise. Classify them as expected so the report site
 /// logs a breadcrumb rather than spawning an error event.
+///
+/// Loopback `127.0.0.1:<port>` `Connection refused` shapes are routed
+/// through [`is_loopback_unavailable`] *before* this matcher so the
+/// boot-window race against the embedded core keeps its own bucket — see
+/// the precedence comment in [`expected_error_kind`].
 fn is_network_unreachable_message(lower: &str) -> bool {
     lower.contains("error sending request for url")
         || lower.contains("dns error")
