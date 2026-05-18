@@ -91,6 +91,31 @@ pub enum ExpectedErrorKind {
     LocalAiCapabilityUnavailable,
     BudgetExhausted,
     SessionExpired,
+    /// Boot-window failure where the in-process core HTTP listener
+    /// (`127.0.0.1:<port>`) is not yet accepting connections, so a sibling
+    /// component (frontend RPC relay, agent-integrations client) sees a TCP
+    /// connect refused. The condition self-resolves once the core finishes
+    /// binding — typically within a few seconds of app launch — and no retry
+    /// on the calling side can do better than waiting it out.
+    ///
+    /// Distinct from [`ExpectedErrorKind::NetworkUnreachable`] (which covers
+    /// real user-environment network problems — VPN drop, captive portal,
+    /// ISP block) because:
+    ///
+    /// - The remediation is internal lifecycle (the core's own startup), not
+    ///   user action. Sentry has nothing to act on either way, but conflating
+    ///   the two buckets makes "which class of transport failure is
+    ///   spiking?" un-answerable.
+    /// - Loopback URLs (`127.0.0.1:` / `localhost:`) carry no PII, so the
+    ///   demoted breadcrumb can stay sparse (debug level, metadata-only
+    ///   fields) instead of warn-level with the full body included.
+    ///
+    /// Drops OPENHUMAN-TAURI-R5 (~2.5k events) and OPENHUMAN-TAURI-R6
+    /// (~2.5k events) — both are the same `127.0.0.1:18474` connect-refused
+    /// shape, one at the `integrations.get` emit site and one re-wrapped by
+    /// `rpc.invoke_method`. See [`is_loopback_unavailable`] for the exact
+    /// body shapes matched.
+    LoopbackUnavailable,
 }
 
 pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
@@ -554,6 +579,27 @@ fn report_expected_message(kind: ExpectedErrorKind, message: &str, domain: &str,
                 operation = operation,
                 error = %message,
                 "[observability] {domain}.{operation} skipped expected session-expired error: {message}"
+            );
+        }
+        ExpectedErrorKind::LoopbackUnavailable => {
+            // In-process-core boot-window condition: a sibling component
+            // tried to reach `127.0.0.1:<port>` before the embedded core's
+            // HTTP listener finished binding (OPENHUMAN-TAURI-R5 / -R6).
+            // Self-resolves once startup completes. Demote at `debug!` —
+            // lower than the `warn!` we use for NetworkUnreachable because
+            // this isn't a user-environment problem; it's an internal
+            // lifecycle race that always recovers. We deliberately drop the
+            // raw `message` from the structured fields and format string and
+            // log only `domain` / `operation` / `kind` — the body adds no
+            // remediation signal (the URL is always loopback, the error is
+            // always "Connection refused") and keeping the breadcrumb sparse
+            // mirrors the per-#1719 review feedback (metadata over raw text
+            // for noise demotions).
+            tracing::debug!(
+                domain = domain,
+                operation = operation,
+                kind = "loopback_unavailable",
+                "[observability] {domain}.{operation} skipped expected loopback-unavailable error"
             );
         }
     }
