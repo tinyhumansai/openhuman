@@ -758,6 +758,12 @@ pub(crate) fn schema_apply_count_for_path_for_tests(path: &Path) -> usize {
 ///
 /// Visible to sibling modules (e.g. `score::store`) so Phase 2 can reuse
 /// the same connection setup / schema initialisation without duplication.
+///
+/// `#[doc(hidden)] pub` (not `pub(crate)`) because the
+/// `memory-tree-init-smoke` bin in `src/bin/` is a separate crate target
+/// and must reach this entry point. It is NOT a stable API surface —
+/// downstream crates should treat it as internal.
+#[doc(hidden)]
 pub fn with_connection<T>(config: &Config, f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
     let dir = config.workspace_dir.join(DB_DIR);
     std::fs::create_dir_all(&dir)
