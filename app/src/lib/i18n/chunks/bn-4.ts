@@ -363,9 +363,9 @@ const bn4: TranslationMap = {
   'settings.billing.subscription.paymentConfirmed': 'পেমেন্ট নিশ্চিত',
   'settings.billing.subscription.perMonth': 'প্রতি মাসে',
   'settings.billing.subscription.popular': 'জনপ্রিয়',
-  'pages.settings.account.migration': 'Import from another assistant',
+  'pages.settings.account.migration': 'অন্য সহকারী থেকে আমদানি করুন',
   'pages.settings.account.migrationDesc':
-    'Migrate memory and notes from OpenClaw (or, soon, Hermes) into this workspace.',
+    'OpenClaw (এবং শীঘ্রই Hermes) থেকে মেমরি ও নোট এই ওয়ার্কস্পেসে স্থানান্তর করুন।',
 };
 
 export default bn4;

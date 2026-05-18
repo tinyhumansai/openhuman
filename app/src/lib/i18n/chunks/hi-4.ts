@@ -363,9 +363,9 @@ const hi4: TranslationMap = {
   'settings.billing.subscription.paymentConfirmed': 'पेमेंट कन्फर्म हुई',
   'settings.billing.subscription.perMonth': 'प्रति माह',
   'settings.billing.subscription.popular': 'लोकप्रिय',
-  'pages.settings.account.migration': 'Import from another assistant',
+  'pages.settings.account.migration': 'किसी अन्य असिस्टेंट से इम्पोर्ट करें',
   'pages.settings.account.migrationDesc':
-    'Migrate memory and notes from OpenClaw (or, soon, Hermes) into this workspace.',
+    'OpenClaw (और जल्द ही Hermes) से मेमोरी और नोट्स इस वर्कस्पेस में माइग्रेट करें।',
 };
 
 export default hi4;
