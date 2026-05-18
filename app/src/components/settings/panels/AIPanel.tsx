@@ -103,6 +103,14 @@ const BUILTIN_PROVIDER_META: Record<string, { tone: string; label: string }> = {
     label: 'OpenRouter',
     tone: 'bg-slate-100 dark:bg-slate-500/15 ring-slate-300 text-slate-900 dark:text-slate-100',
   },
+  astraflow: {
+    label: 'Astraflow',
+    tone: 'bg-blue-50 dark:bg-blue-500/10 ring-blue-200 text-blue-900 dark:text-blue-100',
+  },
+  'astraflow-cn': {
+    label: 'Astraflow (China)',
+    tone: 'bg-blue-50 dark:bg-blue-500/10 ring-blue-200 text-blue-900 dark:text-blue-100',
+  },
   custom: {
     label: 'Custom',
     tone: 'bg-stone-100 dark:bg-neutral-800 ring-stone-300 text-stone-900 dark:text-neutral-100',

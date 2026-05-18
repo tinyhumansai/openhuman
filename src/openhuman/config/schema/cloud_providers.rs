@@ -166,6 +166,8 @@ fn legacy_label_for(type_str: &str) -> &'static str {
         "openai" => "OpenAI",
         "anthropic" => "Anthropic",
         "openrouter" => "OpenRouter",
+        "astraflow" => "Astraflow",
+        "astraflow-cn" => "Astraflow (China)",
         "custom" => "Custom",
         _ => "Custom",
     }
@@ -178,6 +180,8 @@ fn legacy_default_endpoint(type_str: &str) -> &'static str {
         "openai" => "https://api.openai.com/v1",
         "anthropic" => "https://api.anthropic.com/v1",
         "openrouter" => "https://openrouter.ai/api/v1",
+        "astraflow" => "https://api-us-ca.umodelverse.ai/v1",
+        "astraflow-cn" => "https://api.modelverse.cn/v1",
         _ => "",
     }
 }
