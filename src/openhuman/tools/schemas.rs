@@ -224,14 +224,14 @@ pub fn tools_schemas(function: &str) -> ControllerSchema {
         "tools_polymarket_execute" => ControllerSchema {
             namespace: "tools",
             function: "polymarket_execute",
-            description: "Execute a Polymarket read-only action (Gamma + CLOB public APIs). \
+            description: "Execute a Polymarket action (Gamma + CLOB APIs, including authenticated reads and trading writes). \
                           Exposed for Tauri-driven smoke + admin flows. Agent-facing path \
                           goes through the normal harness tool registry.",
             inputs: vec![
                 FieldSchema {
                     name: "action",
                     ty: TypeSchema::String,
-                    comment: "Polymarket action: list_markets | get_market | list_events | get_orderbook | get_price.",
+                    comment: "Polymarket action: list_markets | get_market | list_events | get_orderbook | get_price | get_positions | get_balance | get_open_orders | get_usdc_allowance | place_order | cancel_order.",
                     required: true,
                 },
                 FieldSchema {
@@ -509,7 +509,10 @@ fn handle_polymarket_execute(params: Map<String, Value>) -> ControllerFuture {
             .filter(|s| !s.is_empty())
             .map(str::to_string)
             .ok_or_else(|| "missing or empty `action`".to_string())?;
-        let arguments = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
+        let arguments = params
+            .get("arguments")
+            .cloned()
+            .unwrap_or_else(|| json!({}));
 
         let config = config_rpc::load_config_with_timeout().await?;
         if !config.integrations.polymarket.enabled {

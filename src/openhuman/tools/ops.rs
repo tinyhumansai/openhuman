@@ -455,7 +455,7 @@ pub fn all_tools_with_runtime(
             &root_config.integrations.polymarket,
             security.clone(),
         )));
-        tracing::debug!("[integrations] registered polymarket tool (read-only)");
+        tracing::debug!("[integrations] registered polymarket tool (read + trading)");
     } else {
         tracing::debug!("[integrations] polymarket disabled — skipping");
     }
