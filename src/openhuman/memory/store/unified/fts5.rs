@@ -261,9 +261,19 @@ pub fn episodic_cross_session_search(
             .collect::<Result<Vec<_>, _>>()?,
     };
 
+    // Never log the raw query string — may contain secrets / PII. Emit a
+    // stable non-reversible hash + length instead so cross-session
+    // diagnostics stay grep-friendly without leaking user content.
+    let query_hash = {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        trimmed.hash(&mut hasher);
+        hasher.finish()
+    };
     tracing::debug!(
-        "[fts5] cross-session search '{}' (exclude={:?}) returned {} results",
-        trimmed,
+        "[fts5] cross-session search query_hash={:016x} query_len={} (exclude={:?}) returned {} results",
+        query_hash,
+        trimmed.chars().count(),
         exclude_session,
         rows.len()
     );
