@@ -1,3 +1,4 @@
+import { useT } from '../../lib/i18n/I18nContext';
 import type { IntegrationNotification } from '../../types/notifications';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -55,6 +56,7 @@ interface Props {
 }
 
 const NotificationCard = ({ notification: n, onMarkRead, onNavigate, onDismiss }: Props) => {
+  const { t } = useT();
   const isUnread = n.status === 'unread';
 
   const handleBodyClick = () => {
@@ -91,7 +93,10 @@ const NotificationCard = ({ notification: n, onMarkRead, onNavigate, onDismiss }
             {n.importance_score !== undefined && (
               <span
                 className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium border ${scoreBadgeClass(n.importance_score)}`}
-                title={`Importance: ${(n.importance_score * 100).toFixed(0)}%`}>
+                title={t('notifications.card.importanceTitle').replace(
+                  '{pct}',
+                  (n.importance_score * 100).toFixed(0)
+                )}>
                 {(n.importance_score * 100).toFixed(0)}%
               </span>
             )}
@@ -117,7 +122,7 @@ const NotificationCard = ({ notification: n, onMarkRead, onNavigate, onDismiss }
           <button
             onClick={() => onDismiss(n.id)}
             className="mt-0.5 ml-1 flex-shrink-0 p-0.5 rounded hover:bg-stone-200 text-stone-400 hover:text-stone-600 transition-colors"
-            aria-label="Dismiss notification">
+            aria-label={t('notifications.card.dismiss')}>
             <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path
                 strokeLinecap="round"

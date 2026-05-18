@@ -1,3 +1,4 @@
+import { useT } from '../../../../lib/i18n/I18nContext';
 import type { CreditTransaction } from '../../../../services/api/creditsApi';
 
 interface BillingHistoryTabProps {
@@ -11,21 +12,20 @@ export default function BillingHistoryTab({
   onManageSubscription,
   transactionRows,
 }: BillingHistoryTabProps) {
+  const { t } = useT();
   return (
     <section className="space-y-4">
       <div className="flex flex-col gap-2 rounded-2xl bg-white p-4 border border-stone-200">
         <h3 className="font-headline text-2xl font-bold tracking-tight text-stone-950">
-          Transaction History
+          {t('settings.billing.history.title')}
         </h3>
-        <p className="mt-1 text-sm text-stone-500">
-          A quick view of your credit ledger. All credits/debits are shown here.
-        </p>
+        <p className="mt-1 text-sm text-stone-500">{t('settings.billing.history.desc')}</p>
         <div className="flex items-center justify-between gap-3">
           {hasActive && (
             <button
               onClick={onManageSubscription}
               className="text-sm font-semibold text-primary-600 transition-colors hover:text-primary-700">
-              Open billing portal
+              {t('settings.billing.history.openPortal')}
             </button>
           )}
         </div>
@@ -55,7 +55,7 @@ export default function BillingHistoryTab({
                   </div>
                   <div className="sm:text-right">
                     <span className="rounded-full bg-stone-100 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-stone-500">
-                      Posted
+                      {t('settings.billing.history.posted')}
                     </span>
                   </div>
                 </div>
@@ -64,7 +64,7 @@ export default function BillingHistoryTab({
           </div>
         ) : (
           <div className="px-5 py-8 text-sm text-stone-500">
-            No recent billing activity is available yet.
+            {t('settings.billing.history.empty')}
           </div>
         )}
       </div>

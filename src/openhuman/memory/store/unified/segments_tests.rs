@@ -22,6 +22,44 @@ fn create_and_get_segment() {
 }
 
 #[test]
+fn segment_embeddings_are_scoped_by_model_signature() {
+    let conn = setup_db();
+    segment_create(&conn, "seg-embed", "s1", "global", 1, 1000.0, 1000.0).unwrap();
+
+    segment_embedding_upsert(
+        &conn,
+        "seg-embed",
+        "openai/text-embedding-3-small@1536",
+        &[0.1, 0.2],
+        1001.0,
+    )
+    .unwrap();
+    segment_embedding_upsert(
+        &conn,
+        "seg-embed",
+        "local/bge-small@384",
+        &[0.3, 0.4, 0.5],
+        1002.0,
+    )
+    .unwrap();
+
+    assert_eq!(
+        segment_embedding_get(&conn, "seg-embed", "openai/text-embedding-3-small@1536").unwrap(),
+        Some(vec![0.1, 0.2])
+    );
+    assert_eq!(
+        segment_embedding_get(&conn, "seg-embed", "local/bge-small@384").unwrap(),
+        Some(vec![0.3, 0.4, 0.5])
+    );
+    assert!(segment_embedding_get(&conn, "seg-embed", "missing/model@1")
+        .unwrap()
+        .is_none());
+
+    let legacy_segment = segment_get(&conn, "seg-embed").unwrap().unwrap();
+    assert!(legacy_segment.embedding.is_none());
+}
+
+#[test]
 fn append_and_close_segment() {
     let conn = setup_db();
     segment_create(&conn, "seg-2", "s1", "global", 1, 1000.0, 1000.0).unwrap();

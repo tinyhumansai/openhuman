@@ -1,3 +1,4 @@
+import { useT } from '../../../../lib/i18n/I18nContext';
 import type { AutocompleteStatus } from '../../../../utils/tauriCommands';
 
 interface AppFilterSectionProps {
@@ -35,10 +36,13 @@ const AppFilterSection = ({
   onDebugFocus,
   onClearLogs,
 }: AppFilterSectionProps) => {
+  const { t } = useT();
   return (
     <>
       <section className="rounded-2xl border border-stone-200 bg-white p-4 space-y-3">
-        <h3 className="text-sm font-semibold text-stone-900">Runtime</h3>
+        <h3 className="text-sm font-semibold text-stone-900">
+          {t('settings.autocomplete.appFilter.runtime')}
+        </h3>
         <div className="text-sm text-stone-700 space-y-1">
           <div>Platform supported: {status?.platform_supported ? 'yes' : 'no'}</div>
           <div>Enabled: {status?.enabled ? 'yes' : 'no'}</div>
@@ -56,29 +60,35 @@ const AppFilterSection = ({
             onClick={onRefreshStatus}
             disabled={isLoading}
             className="rounded-lg border border-stone-300 bg-stone-100 px-3 py-2 text-sm text-stone-700 disabled:opacity-50">
-            {isLoading ? 'Refreshing…' : 'Refresh Status'}
+            {isLoading
+              ? t('settings.autocomplete.appFilter.refreshing')
+              : t('settings.autocomplete.appFilter.refreshStatus')}
           </button>
           <button
             type="button"
             onClick={onStart}
             disabled={!status?.platform_supported || Boolean(status?.running)}
             className="rounded-lg border border-green-500/60 bg-green-50 px-3 py-2 text-sm text-green-700 disabled:opacity-50">
-            Start
+            {t('autocomplete.start')}
           </button>
           <button
             type="button"
             onClick={onStop}
             disabled={!status?.running}
             className="rounded-lg border border-red-500/60 bg-red-50 px-3 py-2 text-sm text-red-600 disabled:opacity-50">
-            Stop
+            {t('autocomplete.stop')}
           </button>
         </div>
       </section>
 
       <section className="rounded-2xl border border-stone-200 bg-white p-4 space-y-3">
-        <h3 className="text-sm font-semibold text-stone-900">Test</h3>
+        <h3 className="text-sm font-semibold text-stone-900">
+          {t('settings.autocomplete.appFilter.test')}
+        </h3>
         <div className="space-y-1">
-          <div className="text-xs text-stone-600">Context Override (optional)</div>
+          <div className="text-xs text-stone-600">
+            {t('settings.autocomplete.appFilter.contextOverride')}
+          </div>
           <textarea
             value={contextOverride}
             onChange={event => onSetContextOverride(event.target.value)}
@@ -91,19 +101,19 @@ const AppFilterSection = ({
             type="button"
             onClick={onTestCurrent}
             className="rounded-lg border border-primary-500/60 bg-primary-50 px-3 py-2 text-sm text-primary-600">
-            Get Suggestion
+            {t('settings.autocomplete.appFilter.getSuggestion')}
           </button>
           <button
             type="button"
             onClick={onAcceptSuggestion}
             className="rounded-lg border border-emerald-500/60 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-            Accept Suggestion
+            {t('settings.autocomplete.appFilter.acceptSuggestion')}
           </button>
           <button
             type="button"
             onClick={onDebugFocus}
             className="rounded-lg border border-amber-500/60 bg-amber-50 px-3 py-2 text-sm text-amber-700">
-            Debug Focus
+            {t('settings.autocomplete.appFilter.debugFocus')}
           </button>
         </div>
         {focusDebug && (
@@ -115,16 +125,18 @@ const AppFilterSection = ({
 
       <section className="rounded-2xl border border-stone-200 bg-white p-4 space-y-3">
         <div className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-stone-900">Live Logs</h3>
+          <h3 className="text-sm font-semibold text-stone-900">
+            {t('settings.autocomplete.appFilter.liveLogs')}
+          </h3>
           <button
             type="button"
             onClick={onClearLogs}
             className="rounded-lg border border-stone-300 bg-stone-100 px-3 py-1.5 text-xs text-stone-700">
-            Clear
+            {t('common.clear')}
           </button>
         </div>
         <pre className="max-h-56 overflow-auto rounded-xl border border-stone-200 bg-stone-50 p-2 text-xs text-stone-700">
-          {logs.length > 0 ? logs.join('\n') : 'No logs yet.'}
+          {logs.length > 0 ? logs.join('\n') : t('settings.autocomplete.appFilter.noLogs')}
         </pre>
       </section>
 

@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import * as coreStateApi from '../../services/coreStateApi';
 import * as tauriCommands from '../../utils/tauriCommands';
-import { setCoreStateSnapshot } from '../../lib/coreState/store';
+import { getCoreStateSnapshot, setCoreStateSnapshot } from '../../lib/coreState/store';
 import { setActiveUserId } from '../../store/userScopedStorage';
 import CoreStateProvider, {
   coreStatePollFailureWarningMessage,
@@ -228,6 +228,32 @@ describe('CoreStateProvider — identity-change cache clearing', () => {
     await waitFor(() => expect(screen.getByTestId('ready').textContent).toBe('ready'));
   });
 
+  it('does not commit a pending bootstrap refresh after unmount', async () => {
+    let resolveSnapshot!: (snapshot: Snapshot) => void;
+    const pendingSnapshot = new Promise<Snapshot>(resolve => {
+      resolveSnapshot = resolve;
+    });
+    fetchSnapshot.mockReturnValue(pendingSnapshot);
+    listTeams.mockResolvedValue([]);
+
+    const { unmount } = render(
+      <CoreStateProvider>
+        <Consumer />
+      </CoreStateProvider>
+    );
+
+    unmount();
+
+    await act(async () => {
+      resolveSnapshot(makeSnapshot({ userId: null, sessionToken: null }));
+      await pendingSnapshot;
+      await Promise.resolve();
+    });
+
+    expect(getCoreStateSnapshot().isReady).toBe(false);
+    expect(getCoreStateSnapshot().snapshot.auth.userId).toBeNull();
+  });
+
   it('warns when the initial core state poll fails', async () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
@@ -400,6 +426,34 @@ describe('CoreStateProvider — identity-change cache clearing', () => {
     });
 
     expect(vi.mocked(tauriCommands.logout)).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores forged session-token-updated events that do not match the core snapshot (#1937)', async () => {
+    fetchSnapshot.mockResolvedValue(makeSnapshot({ userId: 'u1', sessionToken: 'tok1' }));
+    listTeams.mockResolvedValue([]);
+
+    render(
+      <CoreStateProvider>
+        <Consumer />
+      </CoreStateProvider>
+    );
+
+    await waitFor(() => expect(screen.getByTestId('token').textContent).toBe('tok1'));
+
+    // Keep the follow-up refresh pending so this assertion observes the
+    // event handler itself. A forged event must not be able to replace the
+    // in-memory auth token before refreshCore re-pulls authoritative state.
+    fetchSnapshot.mockImplementation(() => new Promise(() => {}) as never);
+
+    await act(async () => {
+      window.dispatchEvent(
+        new CustomEvent('core-state:session-token-updated', {
+          detail: { sessionToken: 'attacker-controlled-token' },
+        })
+      );
+    });
+
+    expect(screen.getByTestId('token').textContent).toBe('tok1');
   });
 
   it('setMeetAutoOrchestratorHandoff swallows refresh errors after the RPC succeeds (#1299)', async () => {

@@ -40,6 +40,7 @@ import {
 } from '../../utils/tauriCommands';
 import { MemoryGraph } from './MemoryGraph';
 import { MemorySources } from './MemorySources';
+import { VaultPanel } from './VaultPanel';
 import { WhatsAppMemorySection } from './WhatsAppMemorySection';
 
 interface MemoryWorkspaceProps {
@@ -236,6 +237,7 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
   return (
     <div className="space-y-4" data-testid="memory-workspace">
       <MemorySources syncableToolkits={SYNCABLE_TOOLKITS} pollIntervalMs={5000} onToast={onToast} />
+      <VaultPanel onToast={onToast} />
       <WhatsAppMemorySection />
 
       <div

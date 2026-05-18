@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 
+import { useT } from '../../lib/i18n/I18nContext';
 import { type AccountProvider, type ProviderDescriptor, PROVIDERS } from '../../types/accounts';
 import { ProviderIcon } from './providerIcons';
 
@@ -12,6 +13,7 @@ interface AddAccountModalProps {
 }
 
 const AddAccountModal = ({ open, onClose, onPick, connectedProviders }: AddAccountModalProps) => {
+  const { t } = useT();
   const closeBtnRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
@@ -39,12 +41,12 @@ const AddAccountModal = ({ open, onClose, onPick, connectedProviders }: AddAccou
         className="w-[420px] max-w-[90vw] rounded-2xl bg-white p-6 shadow-strong"
         onClick={e => e.stopPropagation()}>
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-stone-900">Add account</h2>
+          <h2 className="text-lg font-semibold text-stone-900">{t('accounts.addModal.title')}</h2>
           <button
             ref={closeBtnRef}
             onClick={onClose}
             className="rounded p-1 text-stone-500 hover:bg-stone-100"
-            aria-label="Close">
+            aria-label={t('common.close')}>
             <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path
                 strokeLinecap="round"
@@ -59,7 +61,7 @@ const AddAccountModal = ({ open, onClose, onPick, connectedProviders }: AddAccou
         <div className="space-y-1">
           {available.length === 0 ? (
             <div className="rounded-lg border border-dashed border-stone-200 p-6 text-center text-sm text-stone-500">
-              You've connected every supported app.
+              {t('accounts.addModal.allConnected')}
             </div>
           ) : (
             available.map(p => (

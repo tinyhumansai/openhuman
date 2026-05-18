@@ -13,6 +13,7 @@ import { LuCheck, LuCircleAlert } from 'react-icons/lu';
 
 import { listConnections as listComposioConnections } from '../../../lib/composio/composioApi';
 import type { ComposioConnection } from '../../../lib/composio/types';
+import { useT } from '../../../lib/i18n/I18nContext';
 import {
   type AISettings as ApiAISettings,
   type ProviderRef as ApiProviderRef,
@@ -419,6 +420,7 @@ const ProviderKeyDialog = ({
   onCancel: () => void;
   onSubmit: (apiKey: string) => Promise<void> | void;
 }) => {
+  const { t } = useT();
   const [apiKey, setApiKey] = useState('');
   const [phase, setPhase] = useState<'idle' | 'saving'>('idle');
   const [error, setError] = useState<string | null>(null);
@@ -436,7 +438,7 @@ const ProviderKeyDialog = ({
   const handleSave = async () => {
     const trimmed = apiKey.trim();
     if (!trimmed) {
-      setError('Please paste your API key to continue.');
+      setError(t('settings.ai.apiKeyRequired'));
       return;
     }
     setError(null);
@@ -458,15 +460,13 @@ const ProviderKeyDialog = ({
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
       <div className="w-full max-w-md rounded-2xl border border-stone-200 bg-white p-6 shadow-soft">
         <div className="mb-4">
-          <h3 className="text-base font-semibold text-stone-900">Connect {label}</h3>
-          <p className="mt-0.5 text-xs text-stone-500">
-            Paste your API key. It's stored encrypted on this device only.
-          </p>
+          <h3 className="text-base font-semibold text-stone-900">{`${t('settings.ai.connectProvider')} ${label}`}</h3>
+          <p className="mt-0.5 text-xs text-stone-500">{t('settings.ai.apiKeyStoredEncrypted')}</p>
         </div>
 
         <div className="flex flex-col gap-1.5">
           <label htmlFor="provider-key-input" className="text-xs font-medium text-stone-700">
-            API key
+            {t('settings.ai.apiKeyFieldLabel')}
           </label>
           <input
             id="provider-key-input"
@@ -496,14 +496,14 @@ const ProviderKeyDialog = ({
             onClick={onCancel}
             disabled={busy}
             className="rounded-lg border border-stone-200 bg-white px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50 disabled:opacity-50">
-            Cancel
+            {t('common.cancel')}
           </button>
           <button
             type="button"
             onClick={() => void handleSave()}
             disabled={busy}
             className="rounded-lg bg-primary-500 px-4 py-2 text-sm font-medium text-white hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-50">
-            {phase === 'saving' ? 'Saving…' : 'Save'}
+            {phase === 'saving' ? t('settings.ai.saving') : t('common.save')}
           </button>
         </div>
       </div>
@@ -1366,6 +1366,7 @@ const WorkloadRow = ({
   onChange,
   onCustomClick,
 }: WorkloadRowProps & { onCustomClick: () => void }) => {
+  const { t } = useT();
   const selectedCloud =
     ref_.kind === 'cloud' ? cloudProviders.find(c => c.slug === ref_.providerSlug) : undefined;
 
@@ -1403,13 +1404,13 @@ const WorkloadRow = ({
           type="button"
           onClick={() => onChange({ kind: 'openhuman' })}
           className={`${segmentBase} ${isDefault ? activeSegment : inactiveSegment}`}>
-          Default
+          {t('settings.ai.routingDefault')}
         </button>
         <button
           type="button"
           onClick={onCustomClick}
           className={`${segmentBase} ${!isDefault ? activeSegment : inactiveSegment}`}>
-          Custom
+          {t('settings.ai.routingCustom')}
         </button>
       </div>
     </div>
@@ -1442,6 +1443,7 @@ const CustomRoutingDialog = ({
   onClose,
   onSubmit,
 }: CustomRoutingDialogProps) => {
+  const { t } = useT();
   // Non-openhuman cloud providers + local-ollama (if available) are the
   // "Custom" options. OpenHuman is excluded — it's the Default path.
   const customCloud = cloudProviders.filter(p => p.slug !== 'openhuman');
@@ -1493,14 +1495,16 @@ const CustomRoutingDialog = ({
       <div className="w-full max-w-md rounded-2xl border border-stone-200 bg-white p-6 shadow-soft">
         <div className="flex items-start justify-between gap-3 mb-4">
           <div>
-            <h3 className="text-base font-semibold text-stone-900">Custom routing</h3>
+            <h3 className="text-base font-semibold text-stone-900">
+              {t('settings.ai.customRouting')}
+            </h3>
             <p className="mt-0.5 text-xs text-stone-500">{workload.label}</p>
           </div>
           <button
             type="button"
             onClick={onClose}
             className="rounded-md p-1 text-stone-400 hover:bg-stone-100 hover:text-stone-700">
-            <span className="sr-only">Close</span>
+            <span className="sr-only">{t('common.close')}</span>
             <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path
                 strokeLinecap="round"
@@ -1514,13 +1518,14 @@ const CustomRoutingDialog = ({
 
         {noProviders ? (
           <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
-            No custom providers are set up yet. Add a cloud provider key above, or enable the local
-            Ollama runtime, then come back to pick one.
+            {t('settings.ai.noCustomProviders')}
           </div>
         ) : (
           <div className="flex flex-col gap-4">
             <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-medium text-stone-700">Provider</label>
+              <label className="text-xs font-medium text-stone-700">
+                {t('settings.ai.providerLabel')}
+              </label>
               <select
                 value={
                   source
@@ -1545,12 +1550,14 @@ const CustomRoutingDialog = ({
                     {p.label}
                   </option>
                 ))}
-                {localAvailable && <option value="local:">Local (Ollama)</option>}
+                {localAvailable && <option value="local:">{t('settings.ai.localOllama')}</option>}
               </select>
             </div>
 
             <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-medium text-stone-700">Model</label>
+              <label className="text-xs font-medium text-stone-700">
+                {t('settings.ai.modelLabel')}
+              </label>
               {source?.kind === 'local' ? (
                 <select
                   value={model}
@@ -1580,14 +1587,14 @@ const CustomRoutingDialog = ({
             type="button"
             onClick={onClose}
             className="rounded-lg border border-stone-200 bg-white px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50">
-            Cancel
+            {t('common.cancel')}
           </button>
           <button
             type="button"
             onClick={handleSave}
             disabled={!canSave}
             className="rounded-lg bg-primary-500 px-4 py-2 text-sm font-medium text-white hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-50">
-            Save
+            {t('common.save')}
           </button>
         </div>
       </div>
@@ -1609,35 +1616,40 @@ const SaveBar = ({
   changeCount: number;
   onSave: () => void;
   onDiscard: () => void;
-}) => (
-  <div className="pointer-events-none sticky bottom-3 z-20 flex justify-center px-4">
-    <div className="pointer-events-auto flex w-full items-center gap-2 rounded-lg border border-stone-200 bg-white/95 px-3 py-2 shadow-float backdrop-blur-md animate-fade-up">
-      <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded bg-amber-50 text-amber-600">
-        <LuCircleAlert className="h-3.5 w-3.5" />
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="text-xs font-medium text-stone-900">
-          {changeCount} unsaved change{changeCount === 1 ? '' : 's'}
+}) => {
+  const { t } = useT();
+  return (
+    <div className="pointer-events-none sticky bottom-3 z-20 flex justify-center px-4">
+      <div className="pointer-events-auto flex w-full items-center gap-2 rounded-lg border border-stone-200 bg-white/95 px-3 py-2 shadow-float backdrop-blur-md animate-fade-up">
+        <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded bg-amber-50 text-amber-600">
+          <LuCircleAlert className="h-3.5 w-3.5" />
         </div>
-        <div className="truncate font-mono text-[10px] text-stone-500">
-          {diffSummary.slice(0, 2).join(' · ')}
-          {diffSummary.length > 2 ? ` · +${diffSummary.length - 2}` : ''}
+        <div className="min-w-0 flex-1">
+          <div className="text-xs font-medium text-stone-900">
+            {changeCount === 1
+              ? t('settings.ai.unsavedChange')
+              : `${String(changeCount)} ${t('settings.ai.unsavedChanges')}`}
+          </div>
+          <div className="truncate font-mono text-[10px] text-stone-500">
+            {diffSummary.slice(0, 2).join(' · ')}
+            {diffSummary.length > 2 ? ` · +${diffSummary.length - 2}` : ''}
+          </div>
         </div>
+        <button
+          onClick={onDiscard}
+          className="rounded-md border border-stone-200 px-2 py-1 text-xs font-medium text-stone-700 hover:bg-stone-50">
+          {t('settings.ai.discard')}
+        </button>
+        <button
+          onClick={onSave}
+          className="inline-flex items-center gap-1 rounded-md bg-primary-500 px-2.5 py-1 text-xs font-medium text-white hover:bg-primary-600">
+          <LuCheck className="h-3 w-3" />
+          {t('common.save')}
+        </button>
       </div>
-      <button
-        onClick={onDiscard}
-        className="rounded-md border border-stone-200 px-2 py-1 text-xs font-medium text-stone-700 hover:bg-stone-50">
-        Discard
-      </button>
-      <button
-        onClick={onSave}
-        className="inline-flex items-center gap-1 rounded-md bg-primary-500 px-2.5 py-1 text-xs font-medium text-white hover:bg-primary-600">
-        <LuCheck className="h-3 w-3" />
-        Save
-      </button>
     </div>
-  </div>
-);
+  );
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Main panel
@@ -1651,6 +1663,7 @@ interface AIPanelProps {
 }
 
 const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
+  const { t } = useT();
   const { navigateBack, breadcrumbs } = useSettingsNavigation();
   const { saved, draft, setDraft, isDirty, save, discard, loading, error, reload } =
     useAISettings();
@@ -1712,16 +1725,15 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
             ═══════════════════════════════════════════════════════════════ */}
         <div className="space-y-4">
           <div className="border-b border-stone-200 pb-2">
-            <h2 className="text-base font-semibold text-stone-900">LLM Providers</h2>
-            <p className="text-xs text-stone-500 mt-0.5">
-              Connect the language-model backends you want OpenHuman to use. Toggle a provider on to
-              add its key; toggle off to disconnect.
-            </p>
+            <h2 className="text-base font-semibold text-stone-900">
+              {t('settings.ai.llmProviders')}
+            </h2>
+            <p className="text-xs text-stone-500 mt-0.5">{t('settings.ai.llmProvidersDesc')}</p>
           </div>
 
           {/* ─── Provider chip-toggle list ────────────────────────────────── */}
           <section className="space-y-3">
-            {loading && <div className="text-xs text-stone-500">Loading…</div>}
+            {loading && <div className="text-xs text-stone-500">{t('common.loading')}</div>}
             {error && (
               <div className="rounded-md border border-coral-200 bg-coral-50 px-3 py-2 text-xs text-coral-700">
                 {error}
@@ -1830,18 +1842,15 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
             ═══════════════════════════════════════════════════════════════ */}
         <div className="space-y-4">
           <div className="border-b border-stone-200 pb-2">
-            <h2 className="text-base font-semibold text-stone-900">Routing</h2>
-            <p className="text-xs text-stone-500 mt-0.5">
-              Pick how each workload is served. Default uses OpenHuman; Custom lets you point a
-              workload at a specific provider and model.
-            </p>
+            <h2 className="text-base font-semibold text-stone-900">{t('settings.ai.routing')}</h2>
+            <p className="text-xs text-stone-500 mt-0.5">{t('settings.ai.routingDesc')}</p>
           </div>
 
           <section className="space-y-3">
             <div className="overflow-hidden rounded-lg border border-stone-200 bg-stone-50 px-3">
               <div className="pt-3">
                 <div className="text-[10px] font-semibold uppercase tracking-wide text-stone-400">
-                  Chat
+                  {t('settings.ai.workloadGroupChat')}
                 </div>
                 <div className="divide-y divide-stone-200">
                   {chatRows.map(w => (
@@ -1860,7 +1869,7 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
               </div>
               <div className="pb-3 pt-3">
                 <div className="text-[10px] font-semibold uppercase tracking-wide text-stone-400">
-                  Background
+                  {t('settings.ai.workloadGroupBackground')}
                 </div>
                 <div className="divide-y divide-stone-200">
                   {bgRows.map(w => (
@@ -1880,7 +1889,8 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
             </div>
 
             <div className="text-[11px] text-stone-500">
-              Default resolves to <span className="font-mono text-stone-700">OpenHuman</span>.
+              {t('settings.ai.defaultResolvesTo')}{' '}
+              <span className="font-mono text-stone-700">OpenHuman</span>.
             </div>
           </section>
         </div>
@@ -2039,6 +2049,7 @@ const CloudProviderEditor = ({
   onSubmit: (next: CloudProvider, apiKey: string) => Promise<void> | void;
   onClearKey: (slug: string) => Promise<void> | void;
 }) => {
+  const { t } = useT();
   const defaultSlug: string =
     initial?.slug ??
     (['openai', 'anthropic', 'openrouter', 'custom'] as const).find(
@@ -2060,10 +2071,13 @@ const CloudProviderEditor = ({
       <div className="w-full max-w-md rounded-lg border border-stone-200 bg-white shadow-float">
         <div className="border-b border-stone-200 px-4 py-3">
           <div className="text-sm font-semibold text-stone-900">
-            {initial ? `Edit ${initial.label}` : 'Add cloud provider'}
+            {initial
+              ? `${t('settings.ai.editProvider')} ${initial.label}`
+              : t('settings.ai.addCloudProvider')}
           </div>
           <div className="mt-0.5 text-xs text-stone-500">
-            API keys are encrypted at rest in <span className="font-mono">auth-profiles.json</span>.
+            {t('settings.ai.apiKeysEncrypted')}{' '}
+            <span className="font-mono">auth-profiles.json</span>.
           </div>
         </div>
         <div className="space-y-3 px-4 py-3">
@@ -2123,7 +2137,7 @@ const CloudProviderEditor = ({
                   <button
                     onClick={() => void onClearKey(slug)}
                     className="text-[10px] font-medium normal-case text-coral-600 hover:text-coral-700">
-                    Clear stored key
+                    {t('settings.ai.clearStoredKey')}
                   </button>
                 )}
               </label>
@@ -2142,7 +2156,7 @@ const CloudProviderEditor = ({
             onClick={onClose}
             disabled={saving}
             className="rounded-lg border border-stone-200 px-3 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-50 disabled:opacity-50">
-            Cancel
+            {t('common.cancel')}
           </button>
           <button
             onClick={async () => {
@@ -2165,7 +2179,11 @@ const CloudProviderEditor = ({
             }}
             disabled={saving || !endpoint.trim()}
             className="rounded-lg bg-primary-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-600 disabled:opacity-50">
-            {saving ? 'Saving…' : initial ? 'Save changes' : 'Add provider'}
+            {saving
+              ? t('settings.ai.saving')
+              : initial
+                ? t('settings.ai.saveChanges')
+                : t('settings.ai.addProvider')}
           </button>
         </div>
       </div>

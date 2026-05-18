@@ -1,6 +1,7 @@
 import debug from 'debug';
 import { useEffect, useRef, useState } from 'react';
 
+import { useT } from '../../lib/i18n/I18nContext';
 import {
   hideWebviewAccount,
   openWebviewAccount,
@@ -51,6 +52,7 @@ const PHASE_HINT_LATE_MS = 10_000;
  * tick rather than diffing `Date.now()`.
  */
 const LoadingPhaseHint = ({ accountId }: { accountId: string }) => {
+  const { t } = useT();
   const [elapsedMs, setElapsedMs] = useState(0);
   useEffect(() => {
     const tickMs = 500;
@@ -61,9 +63,9 @@ const LoadingPhaseHint = ({ accountId }: { accountId: string }) => {
   }, []);
   const text =
     elapsedMs >= PHASE_HINT_LATE_MS
-      ? 'Almost ready...'
+      ? t('accounts.webviewHost.almostReady')
       : elapsedMs >= PHASE_HINT_AT_MS
-        ? 'Restoring session...'
+        ? t('accounts.webviewHost.restoringSession')
         : null;
   if (!text) return null;
   return (
@@ -94,6 +96,7 @@ const LoadingPhaseHint = ({ accountId }: { accountId: string }) => {
  * hint so the user gets feedback that something is still happening.
  */
 const WebviewHost = ({ accountId, provider }: WebviewHostProps) => {
+  const { t } = useT();
   const ref = useRef<HTMLDivElement | null>(null);
   const lastBoundsRef = useRef<{ x: number; y: number; width: number; height: number } | null>(
     null
@@ -210,14 +213,14 @@ const WebviewHost = ({ accountId, provider }: WebviewHostProps) => {
           }`}
           role={isLoading ? 'status' : undefined}
           aria-live={isLoading ? 'polite' : undefined}
-          aria-label={isLoading ? 'Loading account' : undefined}>
+          aria-label={isLoading ? t('accounts.webviewHost.loadingAccount') : undefined}>
           <ProviderIcon
             provider={provider}
             className={`h-12 w-12 ${isLoading ? '' : 'opacity-70'}`}
           />
           <span
             className={`text-xs font-medium tracking-wide ${isLoading ? '' : 'text-stone-500'}`}>
-            {isLoading ? `Loading ${providerName}...` : providerName}
+            {isLoading ? `${t('accounts.webviewHost.loading')} ${providerName}...` : providerName}
           </span>
           {isLoading ? (
             <div
@@ -240,13 +243,10 @@ const WebviewHost = ({ accountId, provider }: WebviewHostProps) => {
           className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-4 bg-stone-50/95 px-6 text-center"
           role="status"
           aria-live="polite"
-          aria-label="Webview load timeout">
+          aria-label={t('accounts.webviewHost.loadTimeout')}>
           <div className="max-w-sm space-y-1">
-            <p className="text-sm font-semibold text-stone-800">{`${providerName} is taking longer than expected.`}</p>
-            <p className="text-xs text-stone-600">
-              The embedded app may still be starting up. Retry to reload it without signing in
-              again.
-            </p>
+            <p className="text-sm font-semibold text-stone-800">{`${providerName} ${t('accounts.webviewHost.takingLonger')}`}</p>
+            <p className="text-xs text-stone-600">{t('accounts.webviewHost.timeoutHint')}</p>
           </div>
           <button
             type="button"
@@ -259,7 +259,7 @@ const WebviewHost = ({ accountId, provider }: WebviewHostProps) => {
               });
             }}
             className="rounded-md bg-primary-600 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-primary-700">
-            Retry loading
+            {t('accounts.webviewHost.retryLoading')}
           </button>
         </div>
       ) : null}

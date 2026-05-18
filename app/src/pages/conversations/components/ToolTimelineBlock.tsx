@@ -1,3 +1,4 @@
+import { useT } from '../../../lib/i18n/I18nContext';
 import type { SubagentActivity, ToolTimelineEntry } from '../../../store/chatRuntimeSlice';
 import { formatTimelineEntry } from '../../../utils/toolTimelineFormatting';
 import { parseWorkerThreadRef } from '../utils/workerThreadRef';
@@ -35,13 +36,20 @@ function workerStatusFromEntry(
  * `subagent_*` socket events from a current core.
  */
 export function SubagentActivityBlock({ subagent }: { subagent: SubagentActivity }) {
+  const { t } = useT();
   const headerBits: string[] = [];
   if (subagent.mode) headerBits.push(subagent.mode);
-  if (subagent.dedicatedThread) headerBits.push('worker thread');
+  if (subagent.dedicatedThread) headerBits.push(t('conversations.toolTimeline.workerThread'));
   if (subagent.childIteration != null && subagent.childMaxIterations != null) {
-    headerBits.push(`turn ${subagent.childIteration}/${subagent.childMaxIterations}`);
+    headerBits.push(
+      `${t('conversations.toolTimeline.turn')} ${subagent.childIteration}/${subagent.childMaxIterations}`
+    );
   } else if (subagent.iterations != null) {
-    headerBits.push(`${subagent.iterations} turn${subagent.iterations === 1 ? '' : 's'}`);
+    headerBits.push(
+      subagent.iterations === 1
+        ? `${subagent.iterations} ${t('chat.turn')}`
+        : `${subagent.iterations} ${t('chat.turns')}`
+    );
   }
   if (subagent.elapsedMs != null) {
     headerBits.push(

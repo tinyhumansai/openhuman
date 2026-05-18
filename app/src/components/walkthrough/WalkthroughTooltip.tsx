@@ -1,5 +1,7 @@
 import type { TooltipRenderProps } from 'react-joyride';
 
+import { useT } from '../../lib/i18n/I18nContext';
+
 /** Emoji accents per step — adds visual personality to each tooltip.
  *  10 entries map to: home-card, home-cta, chat, integrations, channels,
  *  intelligence, settings, quick-access tabs, notifications, final. */
@@ -23,6 +25,7 @@ const WalkthroughTooltip = ({
   size,
   isLastStep,
 }: TooltipRenderProps) => {
+  const { t } = useT();
   const progress = ((index + 1) / size) * 100;
   const icon = STEP_ICONS[index] ?? '✨';
 
@@ -54,7 +57,9 @@ const WalkthroughTooltip = ({
                 </h3>
               )}
               <span className="text-[11px] text-stone-400 tabular-nums">
-                {index + 1} of {size}
+                {t('walkthrough.tooltip.stepCounter')
+                  .replace('{n}', String(index + 1))
+                  .replace('{total}', String(size))}
               </span>
             </div>
           </div>
@@ -69,7 +74,7 @@ const WalkthroughTooltip = ({
               <button
                 {...skipProps}
                 className="text-[11px] text-stone-400 hover:text-stone-600 transition-colors px-2 py-1.5 rounded-lg hover:bg-stone-100">
-                Skip tour
+                {t('walkthrough.tooltip.skip')}
               </button>
             )}
 
@@ -80,7 +85,7 @@ const WalkthroughTooltip = ({
               <button
                 {...backProps}
                 className="text-[12px] text-stone-500 hover:text-stone-800 border border-stone-200 hover:border-stone-300 transition-all px-4 py-2 rounded-xl hover:shadow-sm">
-                Back
+                {t('common.back')}
               </button>
             )}
 
@@ -89,7 +94,7 @@ const WalkthroughTooltip = ({
               <button
                 {...primaryProps}
                 className="text-[12px] text-white bg-[#2F6EF4] hover:bg-[#2563d4] active:scale-[0.97] transition-all px-4 py-2 rounded-xl font-medium shadow-sm hover:shadow-md">
-                {isLastStep ? "Let's go!" : 'Next →'}
+                {isLastStep ? t('walkthrough.tooltip.letsGo') : t('walkthrough.tooltip.next')}
               </button>
             )}
           </div>

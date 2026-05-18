@@ -14,6 +14,7 @@
  */
 import { useEffect, useRef, useState } from 'react';
 
+import { useT } from '../../../lib/i18n/I18nContext';
 import { callCoreRpc } from '../../../services/coreRpcClient';
 import OnboardingNextButton from '../components/OnboardingNextButton';
 
@@ -38,13 +39,13 @@ function unwrapCliEnvelope<T>(value: unknown): T {
 
 interface Stage {
   id: 'gmail-search' | 'linkedin-scrape' | 'build-profile';
-  label: string;
+  labelKey: string;
 }
 
 const STAGES: Stage[] = [
-  { id: 'gmail-search', label: 'Processing your Gmail' },
-  { id: 'linkedin-scrape', label: 'Working on your LinkedIn' },
-  { id: 'build-profile', label: 'Building your Profile' },
+  { id: 'gmail-search', labelKey: 'onboarding.contextGathering.stageGmail' },
+  { id: 'linkedin-scrape', labelKey: 'onboarding.contextGathering.stageLinkedIn' },
+  { id: 'build-profile', labelKey: 'onboarding.contextGathering.stageProfile' },
 ];
 
 type StageStatus = 'pending' | 'active' | 'done' | 'skipped' | 'error';
@@ -149,6 +150,7 @@ const ContextGatheringStep = ({
   onNext,
   onBack: _onBack,
 }: ContextGatheringStepProps) => {
+  const { t } = useT();
   // Stage statuses are tracked in a ref — they drive pipeline branching only,
   // not rendering, so there is no need to trigger re-renders on each update.
   const stageStatusesRef = useRef<Record<string, StageStatus>>(
@@ -286,12 +288,16 @@ const ContextGatheringStep = ({
     return (
       <div className="rounded-2xl border border-stone-200 bg-white p-8 shadow-soft animate-fade-up">
         <div className="flex flex-col items-center justify-center gap-5">
-          <h1 className="text-xl font-bold text-stone-900">Context Gathering</h1>
+          <h1 className="text-xl font-bold text-stone-900">
+            {t('onboarding.contextGathering.title')}
+          </h1>
           <p className="text-sm text-stone-600 text-center max-w-xs leading-relaxed">
-            We couldn&apos;t build your full profile right now, but that&apos;s okay — you can
-            continue and your profile will build over time.
+            {t('onboarding.contextGathering.errorDesc')}
           </p>
-          <OnboardingNextButton label="Continue to chat" onClick={continueToChat} />
+          <OnboardingNextButton
+            label={t('onboarding.contextGathering.continueToChat')}
+            onClick={continueToChat}
+          />
         </div>
       </div>
     );
@@ -304,9 +310,11 @@ const ContextGatheringStep = ({
         <div className="w-20 h-20 rounded-full bg-gradient-to-r from-stone-300 via-stone-100 to-stone-300 bg-[length:200%_100%] animate-shimmer" />
 
         {/* Title */}
-        <h1 className="text-xl font-bold text-stone-900 animate-pulse">Building your profile...</h1>
+        <h1 className="text-xl font-bold text-stone-900 animate-pulse">
+          {t('onboarding.contextGathering.buildingProfile')}
+        </h1>
         <p className="text-sm text-stone-500 leading-relaxed">
-          Connecting your integrations and building your personal context.
+          {t('onboarding.contextGathering.buildingDesc')}
         </p>
 
         {/* Skeleton bars */}
@@ -317,7 +325,10 @@ const ContextGatheringStep = ({
         </div>
 
         {hasGmail && !finished && (
-          <OnboardingNextButton label="Continue to chat" onClick={continueToChat} />
+          <OnboardingNextButton
+            label={t('onboarding.contextGathering.continueToChat')}
+            onClick={continueToChat}
+          />
         )}
       </div>
     </div>

@@ -18,6 +18,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import debug from 'debug';
 
+import { useT } from '../../lib/i18n/I18nContext';
 import type { SkillSummary } from '../../services/api/skillsApi';
 import SkillResourcePreview from './SkillResourcePreview';
 import SkillResourceTree from './SkillResourceTree';
@@ -29,36 +30,22 @@ interface Props {
   onClose: () => void;
 }
 
-function scopePill(scope: SkillSummary['scope'], legacy: boolean): { label: string; cls: string } {
-  if (legacy) {
-    return {
-      label: 'Legacy',
-      cls: 'bg-stone-100 text-stone-700 border-stone-200',
-    };
+function scopePillCls(scope: SkillSummary['scope'], legacy: boolean): string {
+  if (legacy || scope === 'legacy') {
+    return 'bg-stone-100 text-stone-700 border-stone-200';
   }
   switch (scope) {
     case 'user':
-      return {
-        label: 'User',
-        // Sage tones for user-scope per design system.
-        cls: 'bg-sage-50 text-sage-700 border-sage-200',
-      };
+      return 'bg-sage-50 text-sage-700 border-sage-200';
     case 'project':
-      return {
-        label: 'Project',
-        // Amber tones for project-scope (trust-gated surface).
-        cls: 'bg-amber-50 text-amber-700 border-amber-200',
-      };
-    case 'legacy':
+      return 'bg-amber-50 text-amber-700 border-amber-200';
     default:
-      return {
-        label: 'Legacy',
-        cls: 'bg-stone-100 text-stone-700 border-stone-200',
-      };
+      return 'bg-stone-100 text-stone-700 border-stone-200';
   }
 }
 
 export default function SkillDetailDrawer({ skill, onClose }: Props) {
+  const { t } = useT();
   const [selectedResource, setSelectedResource] = useState<string | null>(null);
   const closeBtnRef = useRef<HTMLButtonElement | null>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
@@ -90,7 +77,13 @@ export default function SkillDetailDrawer({ skill, onClose }: Props) {
     return () => document.removeEventListener('keydown', handler);
   }, [onClose, skill.id]);
 
-  const pill = useMemo(() => scopePill(skill.scope, skill.legacy), [skill.scope, skill.legacy]);
+  const pillCls = useMemo(() => scopePillCls(skill.scope, skill.legacy), [skill.scope, skill.legacy]);
+  const pillLabel = useMemo(() => {
+    if (skill.legacy || skill.scope === 'legacy') return t('scope.legacy');
+    if (skill.scope === 'user') return t('scope.user');
+    if (skill.scope === 'project') return t('scope.project');
+    return t('scope.legacy');
+  }, [skill.legacy, skill.scope, t]);
 
   const handleSelect = useCallback(
     (path: string) => {
@@ -135,8 +128,8 @@ export default function SkillDetailDrawer({ skill, onClose }: Props) {
                 {skill.name}
               </h2>
               <span
-                className={`inline-flex flex-shrink-0 items-center rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide ${pill.cls}`}>
-                {pill.label}
+                className={`inline-flex flex-shrink-0 items-center rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide ${pillCls}`}>
+                {pillLabel}
               </span>
             </div>
             {skill.version ? (
@@ -150,7 +143,7 @@ export default function SkillDetailDrawer({ skill, onClose }: Props) {
               log('close-button skillId=%s', skill.id);
               onClose();
             }}
-            aria-label="Close skill details"
+            aria-label={t('skills.detail.closeAriaLabel')}
             className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-stone-400 transition-colors hover:bg-stone-100 hover:text-stone-600 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-1">
             <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path
@@ -177,13 +170,13 @@ export default function SkillDetailDrawer({ skill, onClose }: Props) {
             <dl className="grid grid-cols-[auto,1fr] gap-x-3 gap-y-2 text-xs">
               {skill.author ? (
                 <>
-                  <dt className="font-medium text-stone-500">Author</dt>
+                  <dt className="font-medium text-stone-500">{t('skills.detail.author')}</dt>
                   <dd className="text-stone-800">{skill.author}</dd>
                 </>
               ) : null}
               {skill.tags.length > 0 ? (
                 <>
-                  <dt className="font-medium text-stone-500">Tags</dt>
+                  <dt className="font-medium text-stone-500">{t('skills.detail.tags')}</dt>
                   <dd className="flex flex-wrap gap-1">
                     {skill.tags.map(tag => (
                       <span
@@ -197,7 +190,7 @@ export default function SkillDetailDrawer({ skill, onClose }: Props) {
               ) : null}
               {skill.tools.length > 0 ? (
                 <>
-                  <dt className="font-medium text-stone-500">Allowed tools</dt>
+                  <dt className="font-medium text-stone-500">{t('skills.detail.allowedTools')}</dt>
                   <dd className="flex flex-wrap gap-1">
                     {skill.tools.map(tool => (
                       <span
@@ -211,7 +204,7 @@ export default function SkillDetailDrawer({ skill, onClose }: Props) {
               ) : null}
               {skill.location ? (
                 <>
-                  <dt className="font-medium text-stone-500">Location</dt>
+                  <dt className="font-medium text-stone-500">{t('skills.detail.location')}</dt>
                   <dd className="truncate font-mono text-[11px] text-stone-600" title={skill.location}>
                     {skill.location}
                   </dd>
@@ -223,7 +216,7 @@ export default function SkillDetailDrawer({ skill, onClose }: Props) {
             {skill.warnings.length > 0 ? (
               <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
                 <p className="text-[11px] font-semibold uppercase tracking-wide text-amber-900">
-                  Warnings
+                  {t('skills.detail.warnings')}
                 </p>
                 <ul className="mt-1.5 list-disc space-y-1 pl-4 text-xs text-amber-800">
                   {skill.warnings.map((w, i) => (
@@ -236,10 +229,10 @@ export default function SkillDetailDrawer({ skill, onClose }: Props) {
             {/* Resources */}
             <div>
               <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-stone-500">
-                Bundled resources ({skill.resources.length})
+                {t('skills.detail.bundledResources')} ({skill.resources.length})
               </h3>
               {skill.resources.length === 0 ? (
-                <p className="text-xs text-stone-400 italic">No bundled resources.</p>
+                <p className="text-xs text-stone-400 italic">{t('skills.detail.noBundledResources')}</p>
               ) : (
                 <SkillResourceTree
                   resources={skill.resources}

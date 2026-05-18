@@ -1,6 +1,7 @@
 import debug from 'debug';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { useT } from '../../lib/i18n/I18nContext';
 import { channelConnectionsApi } from '../../services/api/channelConnectionsApi';
 import type { BotPermissionCheck, DiscordGuild, DiscordTextChannel } from '../../types/channels';
 
@@ -29,6 +30,7 @@ const DiscordServerChannelPicker = ({
   onGuildSelected,
   onChannelSelected,
 }: DiscordServerChannelPickerProps) => {
+  const { t } = useT();
   const [state, setState] = useState<PickerState>('idle');
   const [guilds, setGuilds] = useState<DiscordGuild[]>([]);
   const [channels, setChannels] = useState<DiscordTextChannel[]>([]);
@@ -155,7 +157,9 @@ const DiscordServerChannelPicker = ({
 
   return (
     <div className="mt-3 space-y-3">
-      <p className="text-xs font-medium text-stone-600">Server &amp; Channel Selection</p>
+      <p className="text-xs font-medium text-stone-600">
+        {t('channels.discord.picker.serverChannelSelection')}
+      </p>
 
       {/* Error banner */}
       {error && (
@@ -167,7 +171,7 @@ const DiscordServerChannelPicker = ({
       {/* Guild selector */}
       <div>
         <label htmlFor="discord-guild-select" className="block text-xs text-stone-500 mb-1">
-          Server
+          {t('channels.discord.picker.server')}
         </label>
         <select
           id="discord-guild-select"
@@ -177,10 +181,10 @@ const DiscordServerChannelPicker = ({
           className="w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 focus:border-primary-500 focus:outline-none disabled:opacity-50">
           <option value="">
             {state === 'loading_guilds'
-              ? 'Loading servers...'
+              ? t('channels.discord.picker.loadingServers')
               : guilds.length === 0
-                ? 'No servers found'
-                : 'Select a server'}
+                ? t('channels.discord.picker.noServers')
+                : t('channels.discord.picker.selectServer')}
           </option>
           {guilds.map(g => (
             <option key={g.id} value={g.id}>
@@ -190,7 +194,7 @@ const DiscordServerChannelPicker = ({
         </select>
         {guilds.length === 0 && state === 'guilds_loaded' && (
           <p className="mt-1 text-xs text-stone-400">
-            The bot is not in any servers. Invite it using the Discord Developer Portal.
+            {t('channels.discord.picker.botNotInServers')}
           </p>
         )}
       </div>
@@ -199,7 +203,7 @@ const DiscordServerChannelPicker = ({
       {selectedGuildId && (
         <div>
           <label htmlFor="discord-channel-select" className="block text-xs text-stone-500 mb-1">
-            Channel
+            {t('channels.discord.picker.channel')}
           </label>
           <select
             id="discord-channel-select"
@@ -209,10 +213,10 @@ const DiscordServerChannelPicker = ({
             className="w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 focus:border-primary-500 focus:outline-none disabled:opacity-50">
             <option value="">
               {state === 'loading_channels'
-                ? 'Loading channels...'
+                ? t('channels.discord.picker.loadingChannels')
                 : channels.length === 0
-                  ? 'No text channels found'
-                  : 'Select a channel'}
+                  ? t('channels.discord.picker.noChannels')
+                  : t('channels.discord.picker.selectChannel')}
             </option>
             {Object.entries(groupedChannels).map(([categoryId, chs]) => {
               if (categoryId === '__uncategorized') {
@@ -223,7 +227,9 @@ const DiscordServerChannelPicker = ({
                 ));
               }
               return (
-                <optgroup key={categoryId} label={`Category ${categoryId}`}>
+                <optgroup
+                  key={categoryId}
+                  label={`${t('channels.discord.picker.category')} ${categoryId}`}>
                   {chs.map(ch => (
                     <option key={ch.id} value={ch.id}>
                       # {ch.name}
@@ -240,7 +246,7 @@ const DiscordServerChannelPicker = ({
       {state === 'checking_permissions' && (
         <div className="flex items-center gap-2 text-xs text-stone-500">
           <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-stone-300 border-t-primary-500" />
-          Checking permissions...
+          {t('channels.discord.picker.checkingPermissions')}
         </div>
       )}
 
@@ -252,10 +258,12 @@ const DiscordServerChannelPicker = ({
               : 'border-amber-200 bg-amber-50 text-amber-700'
           }`}>
           {permissions.missing_permissions.length === 0 ? (
-            <span>Bot has all required permissions in this channel.</span>
+            <span>{t('channels.discord.picker.allPermissionsOk')}</span>
           ) : (
             <div>
-              <span className="font-medium">Missing permissions: </span>
+              <span className="font-medium">
+                {t('channels.discord.picker.missingPermissions')}:{' '}
+              </span>
               {permissions.missing_permissions.join(', ')}
             </div>
           )}

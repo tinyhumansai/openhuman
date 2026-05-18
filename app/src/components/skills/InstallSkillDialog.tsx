@@ -32,6 +32,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import debug from 'debug';
 
+import { useT } from '../../lib/i18n/I18nContext';
 import {
   skillsApi,
   type InstallSkillFromUrlResult,
@@ -142,6 +143,7 @@ function categorizeInstallError(raw: string): CategorizedError {
 }
 
 export default function InstallSkillDialog({ onClose, onInstalled }: Props) {
+  const { t } = useT();
   const [url, setUrl] = useState('');
   const [timeoutSecs, setTimeoutSecs] = useState<string>('');
   const [submitting, setSubmitting] = useState(false);
@@ -251,7 +253,7 @@ export default function InstallSkillDialog({ onClose, onInstalled }: Props) {
               <h2
                 id="install-skill-title"
                 className="font-sans text-base font-semibold text-stone-900">
-                Install skill from URL
+                {t('skills.install.title')}
               </h2>
               <p className="mt-0.5 text-xs text-stone-500">
                 Fetches a single <code className="font-mono">SKILL.md</code> over HTTPS and installs
@@ -288,7 +290,7 @@ export default function InstallSkillDialog({ onClose, onInstalled }: Props) {
               <label
                 htmlFor="install-skill-url"
                 className="block text-xs font-medium text-stone-600">
-                Skill URL<span className="text-coral-500"> *</span>
+                {t('skills.install.urlLabel')}<span className="text-coral-500"> *</span>
               </label>
               <input
                 id="install-skill-url"
@@ -322,8 +324,8 @@ export default function InstallSkillDialog({ onClose, onInstalled }: Props) {
               <label
                 htmlFor="install-skill-timeout"
                 className="block text-xs font-medium text-stone-600">
-                Timeout
-                <span className="ml-1 font-normal text-stone-400">(seconds, optional)</span>
+                {t('skills.install.timeoutLabel')}
+                <span className="ml-1 font-normal text-stone-400">{t('skills.install.timeoutHint')}</span>
               </label>
               <input
                 id="install-skill-timeout"
@@ -370,7 +372,7 @@ export default function InstallSkillDialog({ onClose, onInstalled }: Props) {
                 aria-live="polite"
                 className="space-y-3 rounded-xl border border-sage-200 bg-sage-50 p-3 text-xs text-sage-900">
                 <div>
-                  <p className="font-semibold">Install complete</p>
+                  <p className="font-semibold">{t('skills.install.installComplete')}</p>
                   <p className="mt-1">
                     {result.newSkills.length > 0
                       ? `Discovered ${result.newSkills.length} new skill${result.newSkills.length === 1 ? '' : 's'}.`
@@ -386,7 +388,7 @@ export default function InstallSkillDialog({ onClose, onInstalled }: Props) {
                 </div>
                 {result.stdout ? (
                   <details>
-                    <summary className="cursor-pointer font-semibold">Fetch log</summary>
+                    <summary className="cursor-pointer font-semibold">{t('skills.install.fetchLog')}</summary>
                     <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap rounded border border-sage-100 bg-white p-2 font-mono text-[11px] text-stone-800">
                       {result.stdout}
                     </pre>
@@ -394,7 +396,7 @@ export default function InstallSkillDialog({ onClose, onInstalled }: Props) {
                 ) : null}
                 {result.stderr ? (
                   <details>
-                    <summary className="cursor-pointer font-semibold">Parse warnings</summary>
+                    <summary className="cursor-pointer font-semibold">{t('skills.install.parseWarnings')}</summary>
                     <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap rounded border border-sage-100 bg-white p-2 font-mono text-[11px] text-stone-800">
                       {result.stderr}
                     </pre>
@@ -415,7 +417,7 @@ export default function InstallSkillDialog({ onClose, onInstalled }: Props) {
                       <p className="font-semibold">{cat.title}</p>
                       <p>{cat.hint}</p>
                       <details>
-                        <summary className="cursor-pointer font-semibold">Raw error</summary>
+                        <summary className="cursor-pointer font-semibold">{t('skills.install.rawError')}</summary>
                         <pre className="mt-1 whitespace-pre-wrap rounded border border-coral-200 bg-white p-2 font-mono text-[11px] text-stone-800">
                           {error}
                         </pre>
@@ -434,14 +436,14 @@ export default function InstallSkillDialog({ onClose, onInstalled }: Props) {
               onClick={onClose}
               disabled={submitting}
               className="rounded-lg px-4 py-2 text-sm font-medium text-stone-600 transition-colors hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-1 disabled:opacity-40">
-              {result ? 'Done' : 'Cancel'}
+              {result ? t('common.finish') : t('common.cancel')}
             </button>
             {result ? null : (
               <button
                 type="submit"
                 disabled={!formValid}
                 className="rounded-lg bg-primary-500 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-primary-600 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50">
-                {submitting ? 'Installing…' : 'Install'}
+                {submitting ? t('skills.install.installing') : t('skills.install.installBtn')}
               </button>
             )}
           </div>

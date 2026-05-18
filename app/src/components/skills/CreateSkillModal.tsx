@@ -33,6 +33,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import debug from 'debug';
 
+import { useT } from '../../lib/i18n/I18nContext';
 import {
   skillsApi,
   type CreateSkillInput,
@@ -83,6 +84,7 @@ function splitCsv(raw: string): string[] {
 }
 
 export default function CreateSkillModal({ onClose, onCreated }: Props) {
+  const { t } = useT();
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [scope, setScope] = useState<SkillScope>(INITIAL_SCOPE);
@@ -193,11 +195,10 @@ export default function CreateSkillModal({ onClose, onCreated }: Props) {
               <h2
                 id="create-skill-title"
                 className="text-base font-semibold text-stone-900 font-sans">
-                New skill
+                {t('skills.create.title')}
               </h2>
               <p className="mt-0.5 text-xs text-stone-500">
-                Scaffolds a <code className="font-mono">SKILL.md</code> with the supplied
-                frontmatter.
+                {t('skills.create.subtitle')}
               </p>
             </div>
             <button
@@ -229,7 +230,7 @@ export default function CreateSkillModal({ onClose, onCreated }: Props) {
               <label
                 htmlFor="create-skill-name"
                 className="block text-xs font-medium text-stone-600">
-                Name<span className="text-coral-500"> *</span>
+                {t('skills.create.name')}<span className="text-coral-500"> *</span>
               </label>
               <input
                 id="create-skill-name"
@@ -240,10 +241,10 @@ export default function CreateSkillModal({ onClose, onCreated }: Props) {
                 required
                 maxLength={128}
                 className="mt-1 w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 shadow-sm transition-colors focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
-                placeholder="e.g. Trade Journal"
+                placeholder={t('skills.create.namePlaceholder')}
               />
               <p className="mt-1 text-[11px] text-stone-500">
-                Slug:{' '}
+                {t('skills.create.slugLabel')}{' '}
                 <code className="rounded bg-stone-100 px-1 py-[1px] font-mono text-stone-700">
                   {slug || '—'}
                 </code>
@@ -255,7 +256,7 @@ export default function CreateSkillModal({ onClose, onCreated }: Props) {
               <label
                 htmlFor="create-skill-description"
                 className="block text-xs font-medium text-stone-600">
-                Description<span className="text-coral-500"> *</span>
+                {t('skills.create.description')}<span className="text-coral-500"> *</span>
               </label>
               <textarea
                 id="create-skill-description"
@@ -265,13 +266,13 @@ export default function CreateSkillModal({ onClose, onCreated }: Props) {
                 rows={3}
                 maxLength={500}
                 className="mt-1 w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 shadow-sm transition-colors focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
-                placeholder="What does this skill do?"
+                placeholder={t('skills.create.descriptionPlaceholder')}
               />
             </div>
 
             {/* Scope */}
             <fieldset>
-              <legend className="block text-xs font-medium text-stone-600">Scope</legend>
+              <legend className="block text-xs font-medium text-stone-600">{t('skills.create.scope')}</legend>
               <div className="mt-1 flex gap-2">
                 {(['user', 'project'] as const).map(s => {
                   const selected = scope === s;
@@ -298,8 +299,8 @@ export default function CreateSkillModal({ onClose, onCreated }: Props) {
               </div>
               <p className="mt-1 text-[11px] text-stone-500">
                 {scope === 'user'
-                  ? 'Written to ~/.openhuman/skills/<slug>/SKILL.md — available across all workspaces.'
-                  : 'Written to <workspace>/.openhuman/skills/<slug>/SKILL.md — requires workspace trust.'}
+                  ? t('skills.create.scopeUserHint')
+                  : t('skills.create.scopeProjectHint')}
               </p>
             </fieldset>
 
@@ -309,7 +310,7 @@ export default function CreateSkillModal({ onClose, onCreated }: Props) {
                 <label
                   htmlFor="create-skill-license"
                   className="block text-xs font-medium text-stone-600">
-                  License
+                  {t('skills.create.license')}
                 </label>
                 <input
                   id="create-skill-license"
@@ -325,7 +326,7 @@ export default function CreateSkillModal({ onClose, onCreated }: Props) {
                 <label
                   htmlFor="create-skill-author"
                   className="block text-xs font-medium text-stone-600">
-                  Author
+                  {t('skills.create.author')}
                 </label>
                 <input
                   id="create-skill-author"
@@ -334,7 +335,7 @@ export default function CreateSkillModal({ onClose, onCreated }: Props) {
                   onChange={e => setAuthor(e.target.value)}
                   maxLength={128}
                   className="mt-1 w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 shadow-sm transition-colors focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
-                  placeholder="Your name"
+                  placeholder={t('skills.create.authorPlaceholder')}
                 />
               </div>
             </div>
@@ -344,8 +345,8 @@ export default function CreateSkillModal({ onClose, onCreated }: Props) {
               <label
                 htmlFor="create-skill-tags"
                 className="block text-xs font-medium text-stone-600">
-                Tags
-                <span className="ml-1 font-normal text-stone-400">(comma-separated)</span>
+                {t('skills.create.tags')}
+                <span className="ml-1 font-normal text-stone-400">{t('skills.create.commaSeparated')}</span>
               </label>
               <input
                 id="create-skill-tags"
@@ -363,8 +364,8 @@ export default function CreateSkillModal({ onClose, onCreated }: Props) {
               <label
                 htmlFor="create-skill-tools"
                 className="block text-xs font-medium text-stone-600">
-                Allowed tools
-                <span className="ml-1 font-normal text-stone-400">(comma-separated)</span>
+                {t('skills.create.allowedTools')}
+                <span className="ml-1 font-normal text-stone-400">{t('skills.create.commaSeparated')}</span>
               </label>
               <input
                 id="create-skill-tools"
@@ -386,7 +387,7 @@ export default function CreateSkillModal({ onClose, onCreated }: Props) {
               <div
                 role="alert"
                 className="rounded-xl border border-coral-200 bg-coral-50 p-3 text-xs text-coral-900">
-                <p className="font-semibold">Could not create skill</p>
+                <p className="font-semibold">{t('skills.create.createError')}</p>
                 <p className="mt-1 whitespace-pre-wrap font-mono">{error}</p>
               </div>
             ) : null}
@@ -399,13 +400,13 @@ export default function CreateSkillModal({ onClose, onCreated }: Props) {
               onClick={onClose}
               disabled={submitting}
               className="rounded-lg px-4 py-2 text-sm font-medium text-stone-600 transition-colors hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-1 disabled:opacity-40">
-              Cancel
+              {t('common.cancel')}
             </button>
             <button
               type="submit"
               disabled={!formValid}
               className="rounded-lg bg-primary-500 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-primary-600 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50">
-              {submitting ? 'Creating…' : 'Create skill'}
+              {submitting ? t('skills.create.creating') : t('skills.create.createBtn')}
             </button>
           </div>
         </form>
