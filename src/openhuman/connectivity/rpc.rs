@@ -656,17 +656,27 @@ mod tests {
         // Use a UUID-ish guard so we don't clobber an env the test runner
         // genuinely needs. SAFETY: env mutation is process-global; we
         // restore at the end. See SAFETY note in `cargo test --doc`.
-        let prev = std::env::var("OPENHUMAN_CORE_PORT").ok();
+        let prev_port = std::env::var("OPENHUMAN_CORE_PORT").ok();
+        // resolve_listen_port() also reads OPENHUMAN_CORE_RPC_URL ahead of
+        // OPENHUMAN_CORE_PORT, so an inherited URL from the runner would
+        // make this assertion nondeterministic. Save + clear both.
+        let prev_url = std::env::var("OPENHUMAN_CORE_RPC_URL").ok();
         // SAFETY: standard Rust test pattern — env access is unsafe in 2024
         // edition because it isn't thread-safe. Tests are single-threaded
         // for this scope and we restore in the same body.
         unsafe {
             std::env::remove_var("OPENHUMAN_CORE_PORT");
+            std::env::remove_var("OPENHUMAN_CORE_RPC_URL");
         }
         assert_eq!(resolve_listen_port(), DEFAULT_CORE_PORT);
-        if let Some(value) = prev {
+        if let Some(value) = prev_port {
             unsafe {
                 std::env::set_var("OPENHUMAN_CORE_PORT", value);
+            }
+        }
+        if let Some(value) = prev_url {
+            unsafe {
+                std::env::set_var("OPENHUMAN_CORE_RPC_URL", value);
             }
         }
     }
@@ -674,28 +684,42 @@ mod tests {
     #[test]
     fn resolve_listen_port_honours_env_override() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-        let prev = std::env::var("OPENHUMAN_CORE_PORT").ok();
+        let prev_port = std::env::var("OPENHUMAN_CORE_PORT").ok();
+        let prev_url = std::env::var("OPENHUMAN_CORE_RPC_URL").ok();
         unsafe {
+            // Clear OPENHUMAN_CORE_RPC_URL so OPENHUMAN_CORE_PORT is the
+            // resolved value (URL has higher priority in resolve_listen_port).
+            std::env::remove_var("OPENHUMAN_CORE_RPC_URL");
             std::env::set_var("OPENHUMAN_CORE_PORT", "65000");
         }
         assert_eq!(resolve_listen_port(), 65000);
-        match prev {
+        match prev_port {
             Some(value) => unsafe { std::env::set_var("OPENHUMAN_CORE_PORT", value) },
             None => unsafe { std::env::remove_var("OPENHUMAN_CORE_PORT") },
+        }
+        match prev_url {
+            Some(value) => unsafe { std::env::set_var("OPENHUMAN_CORE_RPC_URL", value) },
+            None => unsafe { std::env::remove_var("OPENHUMAN_CORE_RPC_URL") },
         }
     }
 
     #[test]
     fn resolve_listen_port_falls_back_on_invalid_env() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-        let prev = std::env::var("OPENHUMAN_CORE_PORT").ok();
+        let prev_port = std::env::var("OPENHUMAN_CORE_PORT").ok();
+        let prev_url = std::env::var("OPENHUMAN_CORE_RPC_URL").ok();
         unsafe {
+            std::env::remove_var("OPENHUMAN_CORE_RPC_URL");
             std::env::set_var("OPENHUMAN_CORE_PORT", "not-a-number");
         }
         assert_eq!(resolve_listen_port(), DEFAULT_CORE_PORT);
-        match prev {
+        match prev_port {
             Some(value) => unsafe { std::env::set_var("OPENHUMAN_CORE_PORT", value) },
             None => unsafe { std::env::remove_var("OPENHUMAN_CORE_PORT") },
+        }
+        match prev_url {
+            Some(value) => unsafe { std::env::set_var("OPENHUMAN_CORE_RPC_URL", value) },
+            None => unsafe { std::env::remove_var("OPENHUMAN_CORE_RPC_URL") },
         }
     }
 
