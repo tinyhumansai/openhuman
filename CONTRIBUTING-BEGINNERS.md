@@ -16,6 +16,7 @@ For the full contributor reference, see [`CONTRIBUTING.md`](CONTRIBUTING.md).
 - [Step 5 — Create your branch](#step-5--create-your-branch)
 - [Step 6 — Make your change and verify it](#step-6--make-your-change-and-verify-it)
 - [Step 7 — Push and open a Pull Request](#step-7--push-and-open-a-pull-request)
+- [Optional — Let an AI coding agent guide you](#optional--let-an-ai-coding-agent-guide-you)
 - [Keeping your fork up to date](#keeping-your-fork-up-to-date)
 - [Troubleshooting common issues](#troubleshooting-common-issues)
 
@@ -291,6 +292,24 @@ git push -u origin your-branch-name
 4. Fill in the PR template completely
 5. Link the issue with `Closes #ISSUE_NUMBER` in the description
 6. Submit
+
+---
+
+## Optional — Let an AI coding agent guide you
+
+If you use Claude Code, Cursor, AmpCode, Codex, or another coding agent, you can paste this prompt after cloning the repo:
+
+```text
+I want to make my first contribution to OpenHuman. First read these upstream docs:
+
+CONTRIBUTING.md: https://raw.githubusercontent.com/tinyhumansai/openhuman/main/CONTRIBUTING.md
+AGENTS.md: https://raw.githubusercontent.com/tinyhumansai/openhuman/main/AGENTS.md
+CLAUDE.md: https://raw.githubusercontent.com/tinyhumansai/openhuman/main/CLAUDE.md
+
+If you can see the cloned repo locally, also read those files directly from the repo. Then guide me step by step: verify my tools, install dependencies, initialize submodules, create a branch, make the smallest safe change for my issue, run the right checks, and prepare a PR. Do not skip failed checks; explain any blocked command with the exact command and error.
+```
+
+The agent should still ask before destructive actions like deleting files, resetting branches, or force-pushing. You are responsible for reviewing the final diff before opening a PR.
 
 ---
 
