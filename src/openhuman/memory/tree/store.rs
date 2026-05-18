@@ -10,7 +10,9 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, TimeZone, Utc};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
-use std::collections::{HashMap, HashSet};
+#[cfg(test)]
+use std::collections::HashMap;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
@@ -720,14 +722,23 @@ fn schema_init_set() -> &'static Mutex<HashSet<PathBuf>> {
 /// path. Lets the concurrent-init regression test assert "exactly once
 /// per path" without false positives from other tests in the same
 /// binary (which share `SCHEMA_INITIALIZED` but use their own tempdirs).
+///
+/// Gated behind `cfg(test)` so the production binary carries no
+/// instrumentation overhead (extra static, mutex acquisition, HashMap
+/// insert) — the call site is a `#[cfg(test)]` block inside
+/// `record_schema_apply`, which compiles to a no-op in release builds.
+#[cfg(test)]
 static SCHEMA_APPLY_COUNTS: OnceLock<Mutex<HashMap<PathBuf, usize>>> = OnceLock::new();
 
-fn record_schema_apply(path: &Path) {
-    let counts = SCHEMA_APPLY_COUNTS.get_or_init(|| Mutex::new(HashMap::new()));
-    let mut guard = counts
-        .lock()
-        .expect("memory_tree schema apply count mutex poisoned");
-    *guard.entry(path.to_path_buf()).or_insert(0) += 1;
+fn record_schema_apply(_path: &Path) {
+    #[cfg(test)]
+    {
+        let counts = SCHEMA_APPLY_COUNTS.get_or_init(|| Mutex::new(HashMap::new()));
+        let mut guard = counts
+            .lock()
+            .expect("memory_tree schema apply count mutex poisoned");
+        *guard.entry(_path.to_path_buf()).or_insert(0) += 1;
+    }
 }
 
 #[cfg(test)]
