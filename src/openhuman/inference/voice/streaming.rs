@@ -30,6 +30,11 @@ const LOG_PREFIX: &str = "[voice-stream]";
 const AUDIO_SAMPLE_RATE: usize = 16_000;
 const MIN_PARTIAL_SAMPLES: usize = AUDIO_SAMPLE_RATE / 2; // 0.5s
 const MAX_STREAM_BUFFER_SAMPLES: usize = AUDIO_SAMPLE_RATE * 15; // 15s sliding window
+/// Hard cap on the full-recording accumulator. A client streaming audio
+/// indefinitely (without sending "stop") would otherwise grow this buffer
+/// without bound, exhausting process memory. 5 minutes × 16kHz × 2 bytes
+/// ≈ 9.6MB — large enough for any realistic dictation session.
+const MAX_FULL_AUDIO_SAMPLES: usize = AUDIO_SAMPLE_RATE * 60 * 5; // 5 minutes
 
 #[derive(Debug, Deserialize)]
 struct ClientCommand {
@@ -49,8 +54,24 @@ fn decode_pcm16le_frame(data: &[u8]) -> Option<Vec<i16>> {
     )
 }
 
-fn append_stream_samples(audio_buf: &mut Vec<i16>, full_audio_buf: &mut Vec<i16>, samples: &[i16]) {
-    full_audio_buf.extend_from_slice(samples);
+/// Returns `false` when `full_audio_buf` has reached `MAX_FULL_AUDIO_SAMPLES`
+/// and the caller should close the connection to prevent unbounded memory growth.
+fn append_stream_samples(
+    audio_buf: &mut Vec<i16>,
+    full_audio_buf: &mut Vec<i16>,
+    samples: &[i16],
+) -> bool {
+    if full_audio_buf.len() >= MAX_FULL_AUDIO_SAMPLES {
+        log::warn!(
+            "{LOG_PREFIX} full audio buffer cap reached ({} samples / {} min), rejecting further audio",
+            full_audio_buf.len(),
+            MAX_FULL_AUDIO_SAMPLES / AUDIO_SAMPLE_RATE / 60,
+        );
+        return false;
+    }
+    let remaining = MAX_FULL_AUDIO_SAMPLES - full_audio_buf.len();
+    full_audio_buf.extend_from_slice(&samples[..samples.len().min(remaining)]);
+
     audio_buf.extend_from_slice(samples);
     if audio_buf.len() > MAX_STREAM_BUFFER_SAMPLES {
         let drop_count = audio_buf.len() - MAX_STREAM_BUFFER_SAMPLES;
@@ -61,6 +82,7 @@ fn append_stream_samples(audio_buf: &mut Vec<i16>, full_audio_buf: &mut Vec<i16>
             audio_buf.len()
         );
     }
+    true
 }
 
 fn is_stop_command(text: &str) -> bool {
@@ -160,7 +182,12 @@ pub async fn handle_dictation_ws(mut socket: WebSocket, config: Arc<Config>) {
 
                         let mut full = full_audio_buf.lock().await;
                         let mut buf = audio_buf.lock().await;
-                        append_stream_samples(&mut buf, &mut full, &samples);
+                        if !append_stream_samples(&mut buf, &mut full, &samples) {
+                            // Full-audio cap reached — close the connection to
+                            // prevent unbounded memory growth (issue #1924).
+                            log::warn!("{LOG_PREFIX} closing connection: full audio cap exceeded");
+                            break;
+                        }
                         audio_revision.fetch_add(1, Ordering::Relaxed);
                         log::trace!(
                             "{LOG_PREFIX} buffered {} new samples, total {}",
@@ -272,11 +299,35 @@ mod tests {
     fn append_stream_samples_keeps_full_audio_and_trims_window() {
         let mut audio = vec![0; MAX_STREAM_BUFFER_SAMPLES - 2];
         let mut full = vec![1, 2];
-        append_stream_samples(&mut audio, &mut full, &[3, 4, 5, 6]);
+        let ok = append_stream_samples(&mut audio, &mut full, &[3, 4, 5, 6]);
 
+        assert!(ok, "should return true when cap not reached");
         assert_eq!(full, vec![1, 2, 3, 4, 5, 6]);
         assert_eq!(audio.len(), MAX_STREAM_BUFFER_SAMPLES);
         assert_eq!(&audio[audio.len() - 4..], &[3, 4, 5, 6]);
+    }
+
+    #[test]
+    fn append_stream_samples_returns_false_when_full_audio_cap_reached() {
+        let mut audio = vec![];
+        let mut full = vec![0i16; MAX_FULL_AUDIO_SAMPLES];
+        let ok = append_stream_samples(&mut audio, &mut full, &[1, 2, 3]);
+
+        assert!(!ok, "should return false once cap is reached");
+        assert_eq!(full.len(), MAX_FULL_AUDIO_SAMPLES, "full buf must not grow past cap");
+        assert!(audio.is_empty(), "sliding window must not receive new samples");
+    }
+
+    #[test]
+    fn append_stream_samples_clamps_at_cap_when_batch_straddles_limit() {
+        let mut audio = vec![];
+        // Pre-fill to 2 samples below cap
+        let mut full = vec![0i16; MAX_FULL_AUDIO_SAMPLES - 2];
+        let ok = append_stream_samples(&mut audio, &mut full, &[1, 2, 3, 4]);
+
+        assert!(ok, "partial append is still a success");
+        assert_eq!(full.len(), MAX_FULL_AUDIO_SAMPLES, "only 2 of 4 samples fit");
+        assert_eq!(&full[full.len() - 2..], &[1, 2], "only the first 2 samples appended");
     }
 
     #[test]
