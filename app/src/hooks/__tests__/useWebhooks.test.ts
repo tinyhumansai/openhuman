@@ -1,10 +1,7 @@
 import { renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import {
-  buildWebhookEventsUrl,
-  clearCoreRpcTokenCache,
-} from '../../services/coreRpcClient';
+import { buildWebhookEventsUrl, clearCoreRpcTokenCache } from '../../services/coreRpcClient';
 
 // `EventSource` is not implemented in jsdom; install a recording stub so we
 // can assert URLs the hook builds + that token rotation actually tears down
@@ -31,10 +28,9 @@ const { mockGetCoreRpcToken, mockGetCoreHttpBaseUrl, sessionTokenRef } = vi.hois
 }));
 
 vi.mock('../../services/coreRpcClient', async () => {
-  const actual =
-    await vi.importActual<typeof import('../../services/coreRpcClient')>(
-      '../../services/coreRpcClient'
-    );
+  const actual = await vi.importActual<typeof import('../../services/coreRpcClient')>(
+    '../../services/coreRpcClient'
+  );
   return {
     ...actual,
     getCoreRpcToken: mockGetCoreRpcToken,
@@ -55,9 +51,7 @@ vi.mock('../../services/api/tunnelsApi', () => ({
 }));
 
 vi.mock('../../utils/tauriCommands', () => ({
-  openhumanWebhooksListLogs: vi
-    .fn()
-    .mockResolvedValue({ result: { result: { logs: [] } } }),
+  openhumanWebhooksListLogs: vi.fn().mockResolvedValue({ result: { result: { logs: [] } } }),
   openhumanWebhooksListRegistrations: vi
     .fn()
     .mockResolvedValue({ result: { result: { registrations: [] } } }),
@@ -126,9 +120,7 @@ describe('useWebhooks SSE auth', () => {
   });
 
   it('closes the old EventSource and opens a new one when the RPC token rotates', async () => {
-    mockGetCoreRpcToken
-      .mockResolvedValueOnce('rpc-token-1')
-      .mockResolvedValueOnce('rpc-token-2');
+    mockGetCoreRpcToken.mockResolvedValueOnce('rpc-token-1').mockResolvedValueOnce('rpc-token-2');
     const { useWebhooks } = await import('../useWebhooks');
 
     const { rerender } = renderHook(() => useWebhooks());
@@ -149,9 +141,7 @@ describe('useWebhooks SSE auth', () => {
   });
 
   it('reconnects when restart_core_process invalidates the token cache', async () => {
-    mockGetCoreRpcToken
-      .mockResolvedValueOnce('rpc-token-1')
-      .mockResolvedValueOnce('rpc-token-2');
+    mockGetCoreRpcToken.mockResolvedValueOnce('rpc-token-1').mockResolvedValueOnce('rpc-token-2');
     const { useWebhooks } = await import('../useWebhooks');
 
     renderHook(() => useWebhooks());
