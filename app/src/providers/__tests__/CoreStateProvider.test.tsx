@@ -328,6 +328,31 @@ describe('CoreStateProvider — identity-change cache clearing', () => {
     expect(fetchSnapshot).toHaveBeenCalledTimes(1);
   });
 
+  it('ignores expired JWT-shaped session-token-updated events (#1937)', async () => {
+    const expiredToken = makeJwt({ exp: Math.floor(Date.now() / 1000) - 60 });
+    fetchSnapshot.mockResolvedValue(makeSnapshot({ userId: null, sessionToken: null }));
+    listTeams.mockResolvedValue([]);
+
+    render(
+      <CoreStateProvider>
+        <Consumer />
+      </CoreStateProvider>
+    );
+
+    await waitFor(() => expect(screen.getByTestId('ready').textContent).toBe('ready'));
+
+    await act(async () => {
+      window.dispatchEvent(
+        new CustomEvent('core-state:session-token-updated', {
+          detail: { sessionToken: expiredToken },
+        })
+      );
+    });
+
+    expect(screen.getByTestId('token').textContent).toBe('none');
+    expect(fetchSnapshot).toHaveBeenCalledTimes(1);
+  });
+
   it('accepts unexpired JWT-shaped session-token-updated events (#1937)', async () => {
     const token = makeJwt({ exp: Math.floor(Date.now() / 1000) + 60 });
     fetchSnapshot
