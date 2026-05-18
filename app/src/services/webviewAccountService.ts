@@ -176,6 +176,7 @@ interface WebviewAccountBounds {
 const IngestMessageSchema = z.object({
   id: z.string().optional(),
   from: z.string().nullable().optional(),
+  sender: z.string().nullable().optional(),
   to: z.string().nullable().optional(),
   fromMe: z.boolean().optional(),
   body: z.string().nullable().optional(),
