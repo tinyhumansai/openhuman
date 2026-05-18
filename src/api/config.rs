@@ -290,7 +290,7 @@ fn warn_backend_url_fallback_once(local_url: &str) {
     });
 }
 
-fn redact_url_for_log(raw: &str) -> String {
+pub(crate) fn redact_url_for_log(raw: &str) -> String {
     let trimmed = raw.trim();
     // Attempt bare-host parsing (e.g. "localhost:1234") before giving up so
     // that non-scheme URLs are still redacted rather than returned verbatim.

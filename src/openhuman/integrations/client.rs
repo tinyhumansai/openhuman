@@ -51,9 +51,13 @@ fn sanitize_backend_url(backend_url: &str) -> String {
     let cleaned = crate::api::config::normalize_backend_api_base_url(backend_url);
     let trimmed = backend_url.trim().trim_end_matches('/');
     if !cleaned.is_empty() && cleaned != trimmed {
+        // Redact userinfo (username/password) before logging — a
+        // misconfigured URL could carry credentials in the authority
+        // segment. The helper preserves host/path for diagnosability
+        // while scrubbing secrets.
         tracing::warn!(
-            input = %trimmed,
-            cleaned = %cleaned,
+            input = %crate::api::config::redact_url_for_log(trimmed),
+            cleaned = %crate::api::config::redact_url_for_log(&cleaned),
             "[integrations] backend_url carried an inference / non-root path; \
              stripping before use (issue #2075)"
         );
