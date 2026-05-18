@@ -47,7 +47,7 @@
 
 Für Installation und Einstieg lade die App von [tinyhumans.ai/openhuman](https://tinyhumans.ai/openhuman?utm_source=github&utm_medium=readme) herunter oder führe im Terminal aus:
 
-```
+```bash
 # DMG/EXE über https://tinyhumans.ai/openhuman herunterladen oder direkt im Terminal:
 
 # macOS oder Linux x64
@@ -88,7 +88,7 @@ Tiefer einsteigen: [Architektur](https://tinyhumans.gitbook.io/openhuman/develop
 OpenHuman ist das erste Agent-Harness, das dich in Minuten kennenlernt. Inspiriert von [Karpathys LLM-Knowledgebase](https://x.com/karpathy/status/2039805659525644595). Die meisten Agenten starten aus dem Kalten. Hermes lernt, indem er dir bei der Arbeit zusieht; OpenClaw wartet darauf, dass Plugins Kontext einspielen. So oder so vergehen Tage oder Wochen, bevor der Agent genug über deinen Stack weiß, um wirklich nützlich zu sein.
 
 <p align="center">
- <img src="./gitbooks/.gitbook/assets/image (1).png" />
+ <img src="./gitbooks/.gitbook/assets/image (1).png" alt="Diagramm zum OpenHuman-Kontextaufbau" />
 </p>
 
 > OpenHuman fasst all deine Dokumente, E-Mails und Chats zusammen, komprimiert sie und legt einen Memory Graph an, mit dem dein Agent sich alles über dich merken kann.
