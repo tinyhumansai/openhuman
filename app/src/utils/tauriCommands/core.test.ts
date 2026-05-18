@@ -2,20 +2,28 @@ import { invoke, isTauri } from '@tauri-apps/api/core';
 import { afterEach, beforeEach, describe, expect, type Mock, test, vi } from 'vitest';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(), isTauri: vi.fn() }));
-vi.mock('../../services/coreRpcClient', () => ({ callCoreRpc: vi.fn() }));
+vi.mock('../../services/coreRpcClient', () => ({
+  callCoreRpc: vi.fn(),
+  clearCoreRpcTokenCache: vi.fn(),
+}));
 
 describe('tauriCommands/core', () => {
   const mockIsTauri = isTauri as Mock;
   const mockInvoke = invoke as Mock;
   let restartApp: typeof import('./core').restartApp;
+  let restartCoreProcess: typeof import('./core').restartCoreProcess;
   let scheduleCefProfilePurge: typeof import('./core').scheduleCefProfilePurge;
+  let mockClearCoreRpcTokenCache: Mock;
 
   beforeEach(async () => {
     vi.clearAllMocks();
     mockIsTauri.mockReturnValue(true);
     const actual = await vi.importActual<typeof import('./core')>('./core');
     restartApp = actual.restartApp;
+    restartCoreProcess = actual.restartCoreProcess;
     scheduleCefProfilePurge = actual.scheduleCefProfilePurge;
+    const { clearCoreRpcTokenCache } = await import('../../services/coreRpcClient');
+    mockClearCoreRpcTokenCache = clearCoreRpcTokenCache as Mock;
   });
 
   describe('restartApp', () => {
@@ -87,6 +95,40 @@ describe('tauriCommands/core', () => {
       expect(reloadSpy).not.toHaveBeenCalled();
 
       vi.doUnmock('../config');
+    });
+  });
+
+  describe('restartCoreProcess', () => {
+    test('no-ops when not in Tauri (#1922 — no cache clear either)', async () => {
+      mockIsTauri.mockReturnValue(false);
+      const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+
+      await restartCoreProcess();
+
+      expect(mockInvoke).not.toHaveBeenCalled();
+      // No invoke → no cache clear. A defensive clear here would mask
+      // genuine "core never rotated" cases when the helper is called
+      // outside Tauri (e.g. test harness).
+      expect(mockClearCoreRpcTokenCache).not.toHaveBeenCalled();
+      expect(debug).toHaveBeenCalledWith(
+        expect.stringContaining('restartCoreProcess: skipped — not running in Tauri')
+      );
+      debug.mockRestore();
+    });
+
+    test('invokes restart_core_process then clears the RPC token cache (#1922)', async () => {
+      mockInvoke.mockResolvedValueOnce(undefined);
+
+      await restartCoreProcess();
+
+      expect(mockInvoke).toHaveBeenCalledWith('restart_core_process');
+      expect(mockClearCoreRpcTokenCache).toHaveBeenCalledTimes(1);
+      // Cache MUST clear after the IPC resolves so a concurrent
+      // getCoreRpcToken() doesn't repopulate from the dead core. Pin the
+      // order via the global invocation counter.
+      const invokeOrder = mockInvoke.mock.invocationCallOrder[0];
+      const clearOrder = mockClearCoreRpcTokenCache.mock.invocationCallOrder[0];
+      expect(clearOrder).toBeGreaterThan(invokeOrder);
     });
   });
 
