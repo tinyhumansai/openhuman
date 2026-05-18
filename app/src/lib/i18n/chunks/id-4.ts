@@ -143,7 +143,7 @@ const id4: TranslationMap = {
   'onboarding.contextGathering.buildingProfile': 'Membangun profil Anda...',
   'onboarding.contextGathering.continueToChat': 'Lanjutkan ke chat',
   'onboarding.contextGathering.errorDesc':
-    "We couldn't build your full profile right now, but that's okay — you can continue and your profile will build over time.",
+    'Kami belum bisa membangun profil lengkap Anda sekarang, tetapi tidak apa-apa — Anda bisa melanjutkan dan profil Anda akan terbangun seiring waktu.',
   'onboarding.contextGathering.title': 'Pengumpulan Konteks',
   'openhuman.team_list_teams': 'Daftar tim',
   'overlay.ariaAttention': 'Pesan perhatian',

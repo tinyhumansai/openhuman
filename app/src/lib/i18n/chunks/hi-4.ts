@@ -143,7 +143,7 @@ const hi4: TranslationMap = {
   'onboarding.contextGathering.buildingProfile': 'आपकी प्रोफ़ाइल बन रही है...',
   'onboarding.contextGathering.continueToChat': 'चैट पर जाएं',
   'onboarding.contextGathering.errorDesc':
-    "We couldn't build your full profile right now, but that's okay — you can continue and your profile will build over time.",
+    'हम अभी आपकी पूरी प्रोफ़ाइल नहीं बना सके, लेकिन कोई बात नहीं — आप जारी रख सकते हैं और आपकी प्रोफ़ाइल समय के साथ बनती जाएगी।',
   'onboarding.contextGathering.title': 'कॉन्टेक्स्ट गैदरिंग',
   'openhuman.team_list_teams': 'Team list teams',
   'overlay.ariaAttention': 'ध्यान संदेश',

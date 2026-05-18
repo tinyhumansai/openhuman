@@ -143,7 +143,7 @@ const fr4: TranslationMap = {
   'onboarding.contextGathering.buildingProfile': 'Construction de ton profil…',
   'onboarding.contextGathering.continueToChat': 'Accéder au chat',
   'onboarding.contextGathering.errorDesc':
-    "We couldn't build your full profile right now, but that's okay — you can continue and your profile will build over time.",
+    "Nous n'avons pas pu construire ton profil complet pour le moment, mais ce n'est pas grave — tu peux continuer et ton profil se construira au fil du temps.",
   'onboarding.contextGathering.title': 'Collecte de contexte',
   'openhuman.team_list_teams': 'Liste des équipes',
   'overlay.ariaAttention': "Message d'attention",
