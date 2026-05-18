@@ -1236,13 +1236,25 @@ pub async fn bootstrap_core_runtime(embedded_core: bool) {
         .map(|v| matches!(v.trim(), "1" | "true" | "TRUE"))
         .unwrap_or(false)
     {
-        let session_id = std::env::var("OPENHUMAN_CORE_TOKEN")
+        let (session_id, ephemeral) = match std::env::var("OPENHUMAN_CORE_TOKEN")
             .ok()
             .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| format!("session-{}", uuid::Uuid::new_v4()));
-        let _ = crate::openhuman::approval::ApprovalGate::init_global(cfg.clone(), session_id);
+        {
+            Some(token) => (token, false),
+            None => (format!("session-{}", uuid::Uuid::new_v4()), true),
+        };
+        if ephemeral {
+            log::debug!(
+                "[runtime] OPENHUMAN_CORE_TOKEN unset; generated ephemeral session_id={session_id} \
+                 for approval gate — `approval_list_pending` is session-agnostic so pending rows \
+                 from prior launches will still be visible, but per-session audit grouping will not \
+                 correlate across restarts"
+            );
+        }
+        let _ =
+            crate::openhuman::approval::ApprovalGate::init_global(cfg.clone(), session_id.clone());
         log::info!(
-            "[runtime] approval gate installed (OPENHUMAN_APPROVAL_GATE=1) — \
+            "[runtime] approval gate installed (OPENHUMAN_APPROVAL_GATE=1, session_id={session_id}) — \
              external-effect tool calls will block until approval_decide"
         );
     } else {
