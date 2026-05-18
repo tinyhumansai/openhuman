@@ -714,6 +714,7 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
       message: 'hello cloud',
       model: 'reasoning-v1',
       profileId: 'default',
+      locale: 'en',
     });
   });
 
@@ -847,6 +848,7 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
         message: 'enter send',
         model: 'reasoning-v1',
         profileId: 'default',
+        locale: 'en',
       });
     });
   });
@@ -921,6 +923,7 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
         message: '안녕',
         model: 'reasoning-v1',
         profileId: 'default',
+        locale: 'en',
       });
     });
   });

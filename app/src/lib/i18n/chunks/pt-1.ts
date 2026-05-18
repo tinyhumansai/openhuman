@@ -145,6 +145,8 @@ const pt1: TranslationMap = {
     'Seu dispositivo está offline agora. Verifique sua rede ou reinicie o app para reconectar.',
   'home.restartCore': 'Reiniciar Core',
   'home.restartingCore': 'Reiniciando o core…',
+  'home.themeToggle.toLight': 'Mudar para modo claro',
+  'home.themeToggle.toDark': 'Mudar para modo escuro',
   'chat.newThread': 'Nova conversa',
   'chat.typeMessage': 'Digite uma mensagem...',
   'chat.send': 'Enviar mensagem',

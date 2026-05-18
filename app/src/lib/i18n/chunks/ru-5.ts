@@ -174,6 +174,26 @@ const ru5: TranslationMap = {
   'settings.mascot.localDefault': 'Локальный OpenHuman (по умолчанию)',
   'settings.mascot.noCharacters': 'Персонажи OpenHuman пока недоступны',
   'settings.mascot.noColorVariants': 'Нет цветовых вариантов',
+  'settings.mascot.voice.current': 'текущий',
+  'settings.mascot.voice.customDesc':
+    'Идентификаторы голосов можно найти на api.elevenlabs.io/v1/voices или в вашей панели ElevenLabs. Сохраняется только идентификатор — ваш API-ключ остаётся на бэкенде.',
+  'settings.mascot.voice.customHeading': 'Пользовательский идентификатор голоса',
+  'settings.mascot.voice.customOption': 'Другое (вставить идентификатор голоса)…',
+  'settings.mascot.voice.desc':
+    'Выберите голос ElevenLabs, который маскот использует для устных ответов. Фильтруйте по полу, выбирайте из подобранного списка, вставьте свой идентификатор или позвольте приложению выбрать голос, соответствующий языку интерфейса.',
+  'settings.mascot.voice.genderFemale': 'Женский',
+  'settings.mascot.voice.genderHeading': 'Пол голоса',
+  'settings.mascot.voice.genderMale': 'Мужской',
+  'settings.mascot.voice.heading': 'Голос',
+  'settings.mascot.voice.preset': 'Предустановка голоса',
+  'settings.mascot.voice.presetHeading': 'Предустановка голоса',
+  'settings.mascot.voice.preview': 'Предпросмотр голоса',
+  'settings.mascot.voice.previewError': 'Не удалось воспроизвести предпросмотр голоса',
+  'settings.mascot.voice.previewing': 'Воспроизведение предпросмотра…',
+  'settings.mascot.voice.reset': 'Сбросить к значениям по умолчанию',
+  'settings.mascot.voice.useLocaleDefault': 'Соответствовать языку приложения',
+  'settings.mascot.voice.useLocaleDefaultDesc':
+    'Автоматически выбрать голос для текущего языка интерфейса.',
   'settings.memoryWindow.balanced.badge': 'Рекомендуется',
   'settings.memoryWindow.balanced.hint':
     'Разумное значение по умолчанию — хорошая непрерывность без лишних трат токенов на каждом запуске.',

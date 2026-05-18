@@ -398,6 +398,7 @@ jobs:
           # here would tag uploads against a different release than events.
           SENTRY_RELEASE: openhuman@${{ inputs.version }}+${{ inputs.short_sha }}
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_URL: ${{ vars.SENTRY_URL }}
           SENTRY_ORG: ${{ vars.SENTRY_ORG }}
           # SENTRY_PROJECT here is consumed by sentry-vite-plugin during the
           # Vite build that runs inside `cargo tauri build` — it uploads
@@ -489,6 +490,7 @@ jobs:
         shell: bash
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_URL: ${{ vars.SENTRY_URL }}
         run: node scripts/release/verify-sentry-sourcemaps.mjs
 
       # ---- Sentry DIF uploads ------------------------------------------------
@@ -504,6 +506,7 @@ jobs:
         shell: bash
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_URL: ${{ vars.SENTRY_URL }}
           SENTRY_ORG: ${{ vars.SENTRY_ORG }}
           SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT_TAURI }}
           SENTRY_RELEASE: openhuman@${{ inputs.version }}+${{ inputs.short_sha }}
@@ -533,6 +536,7 @@ jobs:
         shell: bash
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_URL: ${{ vars.SENTRY_URL }}
           SENTRY_ORG: ${{ vars.SENTRY_ORG }}
           SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT_CORE }}
           SENTRY_RELEASE: openhuman@${{ inputs.version }}+${{ inputs.short_sha }}

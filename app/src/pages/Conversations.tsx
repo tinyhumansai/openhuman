@@ -256,6 +256,11 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
   const socketStatus = useAppSelector(selectSocketStatus);
   const agentProfiles = useAppSelector(selectAgentProfiles);
   const selectedAgentProfileId = useAppSelector(selectActiveAgentProfileId);
+  // Optional chain because narrow test stores (e.g. Conversations.test
+  // bootstraps without the locale slice) shouldn't crash here. `'en'`
+  // matches the no-locale-directive branch in the core, so legacy
+  // behaviour stays intact.
+  const uiLocale = useAppSelector(state => state.locale?.current ?? 'en');
   const toolTimelineByThread = useAppSelector(state => state.chatRuntime.toolTimelineByThread);
   const taskBoardByThread = useAppSelector(state => state.chatRuntime.taskBoardByThread);
   const inferenceStatusByThread = useAppSelector(
@@ -758,6 +763,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
         message: trimmed,
         model: CHAT_MODEL_ID,
         profileId: selectedAgentProfileId,
+        locale: uiLocale,
       });
       trackEvent('chat_message_sent');
 
@@ -1278,14 +1284,14 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                   }}
                   className={`w-full text-left px-4 py-3 border-b border-stone-50 dark:border-neutral-800 transition-colors group cursor-pointer ${
                     selectedThreadId === thread.id
-                      ? 'bg-primary-50 border-l-2 border-l-primary-500'
+                      ? 'bg-primary-50 dark:bg-primary-900/30 border-l-2 border-l-primary-500'
                       : 'hover:bg-stone-50 dark:hover:bg-neutral-800/60'
                   }`}>
                   <div className="flex items-center justify-between">
                     <p
                       className={`text-sm truncate flex-1 ${
                         selectedThreadId === thread.id
-                          ? 'font-medium text-primary-700'
+                          ? 'font-medium text-primary-700 dark:text-primary-200'
                           : 'text-stone-700 dark:text-neutral-200'
                       }`}>
                       {resolveThreadDisplayTitle(thread.id)}

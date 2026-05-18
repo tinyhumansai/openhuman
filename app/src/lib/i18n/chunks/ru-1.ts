@@ -140,6 +140,8 @@ const ru1: TranslationMap = {
     'Нет подключения к интернету. Проверь сеть или перезапусти приложение.',
   'home.restartCore': 'Перезапустить ядро',
   'home.restartingCore': 'Перезапуск ядра…',
+  'home.themeToggle.toLight': 'Переключить на светлую тему',
+  'home.themeToggle.toDark': 'Переключить на тёмную тему',
   'chat.newThread': 'Новый чат',
   'chat.typeMessage': 'Введи сообщение...',
   'chat.send': 'Отправить сообщение',

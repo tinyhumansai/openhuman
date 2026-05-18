@@ -177,6 +177,26 @@ const pt5: TranslationMap = {
   'settings.mascot.localDefault': 'OpenHuman local (padrão)',
   'settings.mascot.noCharacters': 'Nenhum personagem do OpenHuman disponível ainda',
   'settings.mascot.noColorVariants': 'Sem variantes de cor',
+  'settings.mascot.voice.current': 'atual',
+  'settings.mascot.voice.customDesc':
+    'Encontre IDs de voz em api.elevenlabs.io/v1/voices ou no seu painel da ElevenLabs. Apenas o ID é armazenado — sua chave de API permanece no backend.',
+  'settings.mascot.voice.customHeading': 'ID de voz personalizado',
+  'settings.mascot.voice.customOption': 'Outro (colar ID de voz)…',
+  'settings.mascot.voice.desc':
+    'Escolha a voz da ElevenLabs que o mascote usa para respostas faladas. Filtre por gênero, escolha na lista curada, cole um ID personalizado, ou deixe o app escolher uma voz que combine com o idioma da interface.',
+  'settings.mascot.voice.genderFemale': 'Feminino',
+  'settings.mascot.voice.genderHeading': 'Gênero da voz',
+  'settings.mascot.voice.genderMale': 'Masculino',
+  'settings.mascot.voice.heading': 'Voz',
+  'settings.mascot.voice.preset': 'Predefinição de voz',
+  'settings.mascot.voice.presetHeading': 'Predefinição de voz',
+  'settings.mascot.voice.preview': 'Pré-visualização da voz',
+  'settings.mascot.voice.previewError': 'Falha na pré-visualização da voz',
+  'settings.mascot.voice.previewing': 'Pré-visualizando…',
+  'settings.mascot.voice.reset': 'Redefinir para o padrão',
+  'settings.mascot.voice.useLocaleDefault': 'Corresponder ao idioma do app',
+  'settings.mascot.voice.useLocaleDefaultDesc':
+    'Escolher automaticamente uma voz para o idioma atual da interface.',
   'settings.memoryWindow.balanced.badge': 'Recomendado',
   'settings.memoryWindow.balanced.hint':
     'Padrão sensato — boa continuidade sem queimar tokens extras em cada execução.',

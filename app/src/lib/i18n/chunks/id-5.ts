@@ -174,6 +174,26 @@ const id5: TranslationMap = {
   'settings.mascot.localDefault': 'OpenHuman Lokal (default)',
   'settings.mascot.noCharacters': 'Belum ada karakter OpenHuman yang tersedia',
   'settings.mascot.noColorVariants': 'Tidak ada varian warna',
+  'settings.mascot.voice.current': 'saat ini',
+  'settings.mascot.voice.customDesc':
+    'Temukan ID suara di api.elevenlabs.io/v1/voices atau dasbor ElevenLabs Anda. Hanya ID yang disimpan — kunci API Anda tetap di backend.',
+  'settings.mascot.voice.customHeading': 'ID suara kustom',
+  'settings.mascot.voice.customOption': 'Lainnya (tempel ID suara)…',
+  'settings.mascot.voice.desc':
+    'Pilih suara ElevenLabs yang digunakan maskot untuk balasan lisan. Filter berdasarkan jenis kelamin, pilih dari daftar pilihan, tempel ID kustom, atau biarkan aplikasi memilih suara yang sesuai dengan bahasa antarmuka.',
+  'settings.mascot.voice.genderFemale': 'Wanita',
+  'settings.mascot.voice.genderHeading': 'Jenis kelamin suara',
+  'settings.mascot.voice.genderMale': 'Pria',
+  'settings.mascot.voice.heading': 'Suara',
+  'settings.mascot.voice.preset': 'Pratinjau suara',
+  'settings.mascot.voice.presetHeading': 'Pratinjau suara',
+  'settings.mascot.voice.preview': 'Pratinjau suara',
+  'settings.mascot.voice.previewError': 'Pratinjau suara gagal',
+  'settings.mascot.voice.previewing': 'Memuat pratinjau…',
+  'settings.mascot.voice.reset': 'Atur ulang ke default',
+  'settings.mascot.voice.useLocaleDefault': 'Cocokkan bahasa aplikasi',
+  'settings.mascot.voice.useLocaleDefaultDesc':
+    'Pilih otomatis suara untuk bahasa antarmuka saat ini.',
   'settings.memoryWindow.balanced.badge': 'Direkomendasikan',
   'settings.memoryWindow.balanced.hint':
     'Default yang masuk akal — kontinuitas yang baik tanpa membakar token tambahan di setiap run.',

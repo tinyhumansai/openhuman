@@ -146,6 +146,8 @@ const fr1: TranslationMap = {
     "Ton appareil est hors ligne. Vérifie ta connexion ou redémarre l'app.",
   'home.restartCore': 'Redémarrer le core',
   'home.restartingCore': 'Redémarrage du core…',
+  'home.themeToggle.toLight': 'Passer en mode clair',
+  'home.themeToggle.toDark': 'Passer en mode sombre',
   'chat.newThread': 'Nouveau fil',
   'chat.typeMessage': 'Écris un message…',
   'chat.send': 'Envoyer le message',

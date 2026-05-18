@@ -135,6 +135,8 @@ const zhCN1: TranslationMap = {
   'home.statusInternetOffline': '你的设备当前处于离线状态。请检查网络或重启应用以重新连接。',
   'home.restartCore': '重启核心',
   'home.restartingCore': '正在重启核心…',
+  'home.themeToggle.toLight': '切换到浅色模式',
+  'home.themeToggle.toDark': '切换到深色模式',
   'chat.newThread': '新对话',
   'chat.typeMessage': '输入消息...',
   'chat.send': '发送',

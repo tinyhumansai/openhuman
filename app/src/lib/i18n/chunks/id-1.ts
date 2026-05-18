@@ -140,6 +140,8 @@ const id1: TranslationMap = {
     'Perangkat Anda sedang offline. Periksa jaringan atau mulai ulang aplikasi untuk menyambung lagi.',
   'home.restartCore': 'Mulai Ulang Core',
   'home.restartingCore': 'Memulai ulang core...',
+  'home.themeToggle.toLight': 'Beralih ke mode terang',
+  'home.themeToggle.toDark': 'Beralih ke mode gelap',
   'chat.newThread': 'Thread baru',
   'chat.typeMessage': 'Ketik pesan...',
   'chat.send': 'Kirim pesan',

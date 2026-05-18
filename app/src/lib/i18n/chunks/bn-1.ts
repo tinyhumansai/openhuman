@@ -140,6 +140,8 @@ const bn1: TranslationMap = {
     'আপনার ডিভাইস এখন অফলাইনে। নেটওয়ার্ক পরীক্ষা করুন বা অ্যাপ রিস্টার্ট করুন।',
   'home.restartCore': 'কোর রিস্টার্ট',
   'home.restartingCore': 'কোর রিস্টার্ট হচ্ছে…',
+  'home.themeToggle.toLight': 'লাইট মোডে স্যুইচ করুন',
+  'home.themeToggle.toDark': 'ডার্ক মোডে স্যুইচ করুন',
   'chat.newThread': 'নতুন থ্রেড',
   'chat.typeMessage': 'একটি বার্তা টাইপ করুন...',
   'chat.send': 'বার্তা পাঠান',

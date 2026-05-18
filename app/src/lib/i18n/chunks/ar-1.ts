@@ -139,6 +139,8 @@ const ar1: TranslationMap = {
     'جهازك غير متصل بالإنترنت حاليًا. تحقق من شبكتك أو أعد تشغيل التطبيق لإعادة الاتصال.',
   'home.restartCore': 'إعادة تشغيل النواة',
   'home.restartingCore': 'جارٍ إعادة تشغيل النواة…',
+  'home.themeToggle.toLight': 'التبديل إلى الوضع الفاتح',
+  'home.themeToggle.toDark': 'التبديل إلى الوضع الداكن',
   'chat.newThread': 'محادثة جديدة',
   'chat.typeMessage': 'اكتب رسالة...',
   'chat.send': 'إرسال الرسالة',

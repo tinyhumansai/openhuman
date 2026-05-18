@@ -147,6 +147,8 @@ const es1: TranslationMap = {
     'Tu dispositivo está sin conexión. Verifica tu red o reinicia la app para reconectar.',
   'home.restartCore': 'Reiniciar core',
   'home.restartingCore': 'Reiniciando core…',
+  'home.themeToggle.toLight': 'Cambiar a modo claro',
+  'home.themeToggle.toDark': 'Cambiar a modo oscuro',
   'chat.newThread': 'Nuevo hilo',
   'chat.typeMessage': 'Escribe un mensaje...',
   'chat.send': 'Enviar mensaje',

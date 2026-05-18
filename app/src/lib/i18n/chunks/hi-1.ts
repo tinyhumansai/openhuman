@@ -139,6 +139,8 @@ const hi1: TranslationMap = {
     'आपका डिवाइस अभी ऑफलाइन है। अपना नेटवर्क चेक करें या दोबारा कनेक्ट करने के लिए ऐप रीस्टार्ट करें।',
   'home.restartCore': 'कोर रीस्टार्ट करें',
   'home.restartingCore': 'कोर रीस्टार्ट हो रहा है…',
+  'home.themeToggle.toLight': 'लाइट मोड पर स्विच करें',
+  'home.themeToggle.toDark': 'डार्क मोड पर स्विच करें',
   'chat.newThread': 'नई थ्रेड',
   'chat.typeMessage': 'मैसेज टाइप करें...',
   'chat.send': 'मैसेज भेजें',
