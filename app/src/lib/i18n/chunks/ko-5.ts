@@ -12,17 +12,23 @@ const ko5: TranslationMap = {
   'settings.composio.apiKeyStoredPlaceholder': '••••••••••••••••',
   'settings.composio.clearedToBackend': 'Switched to Backend mode',
   'settings.composio.confirmItem1': 'An account at app.composio.dev with an API key',
-  'settings.composio.confirmItem2': 'To re-link each integration through your personal Composio account',
-  'settings.composio.confirmItem3': 'Note: Composio triggers (real-time webhooks) don\'t fire in Direct mode yet — only synchronous tool calls',
-  'settings.composio.confirmNeedItems': 'You\'ll need:',
+  'settings.composio.confirmItem2':
+    'To re-link each integration through your personal Composio account',
+  'settings.composio.confirmItem3':
+    "Note: Composio triggers (real-time webhooks) don't fire in Direct mode yet — only synchronous tool calls",
+  'settings.composio.confirmNeedItems': "You'll need:",
   'settings.composio.confirmSwitch': 'I understand, switch to Direct',
   'settings.composio.confirmTitle': '⚠️ Switching to Direct mode',
-  'settings.composio.confirmWarning': 'Your existing integrations (Gmail, Slack, GitHub, etc. linked through OpenHuman) won\'t be visible — they live in the OpenHuman-managed Composio tenant.',
-  'settings.composio.intro': 'Composio integrates 250+ external apps as tools your agent can call. Choose how those tool calls are routed.',
+  'settings.composio.confirmWarning':
+    "Your existing integrations (Gmail, Slack, GitHub, etc. linked through OpenHuman) won't be visible — they live in the OpenHuman-managed Composio tenant.",
+  'settings.composio.intro':
+    'Composio integrates 250+ external apps as tools your agent can call. Choose how those tool calls are routed.',
   'settings.composio.modeDirect': 'Direct (bring your own API key)',
-  'settings.composio.modeDirectDesc': 'Calls go to backend.composio.dev directly. Sovereign / offline-friendly. Tool execution works synchronously; real-time trigger webhooks are not yet routed in direct mode (follow-up issue).',
+  'settings.composio.modeDirectDesc':
+    'Calls go to backend.composio.dev directly. Sovereign / offline-friendly. Tool execution works synchronously; real-time trigger webhooks are not yet routed in direct mode (follow-up issue).',
   'settings.composio.modeManaged': 'Managed (OpenHuman handles it for you)',
-  'settings.composio.modeManagedDesc': 'OpenHuman proxies tool calls through our backend (recommended). Auth is brokered; you never paste a Composio API key. Webhooks are fully routed.',
+  'settings.composio.modeManagedDesc':
+    'OpenHuman proxies tool calls through our backend (recommended). Auth is brokered; you never paste a Composio API key. Webhooks are fully routed.',
   'settings.composio.routingMode': 'Routing mode',
   'settings.composio.saveErrorNoKey': 'Failed to save. Direct mode requires a non-empty API key.',
   'settings.composio.saving': 'Saving…',
@@ -54,17 +60,21 @@ const ko5: TranslationMap = {
   'settings.localModel.deviceCapability.disabled': 'Disabled',
   'settings.localModel.deviceCapability.disabledDesc': 'Disabled desc',
   'settings.localModel.deviceCapability.downloadingModels': '(downloading models)',
-  'settings.localModel.deviceCapability.downloadingSetupDesc': 'Downloading the OllamaSetup installer (~2 GB) and unpacking it. This can take a minute on first install.',
+  'settings.localModel.deviceCapability.downloadingSetupDesc':
+    'Downloading the OllamaSetup installer (~2 GB) and unpacking it. This can take a minute on first install.',
   'settings.localModel.deviceCapability.failedToApplyPreset': 'Failed to apply preset',
   'settings.localModel.deviceCapability.gpu': 'GPU',
   'settings.localModel.deviceCapability.installFailed': 'Ollama install failed',
-  'settings.localModel.deviceCapability.installFailedDesc': 'The installer exited before Ollama was usable. Click retry to try again, or install manually from ollama.com.',
+  'settings.localModel.deviceCapability.installFailedDesc':
+    'The installer exited before Ollama was usable. Click retry to try again, or install manually from ollama.com.',
   'settings.localModel.deviceCapability.installFirst': 'Run Ollama first.',
-  'settings.localModel.deviceCapability.installFirstDesc': 'Local tiers depend on an externally managed Ollama endpoint. Start it yourself, pull the models you want, and keep using "Disabled (cloud fallback)" until the runtime is reachable.',
+  'settings.localModel.deviceCapability.installFirstDesc':
+    'Local tiers depend on an externally managed Ollama endpoint. Start it yourself, pull the models you want, and keep using "Disabled (cloud fallback)" until the runtime is reachable.',
   'settings.localModel.deviceCapability.installOllamaFirst': 'Run Ollama first to use this tier',
   'settings.localModel.deviceCapability.installingOllama': 'Installing ollama',
   'settings.localModel.deviceCapability.loadingDeviceInfo': 'Loading device info',
-  'settings.localModel.deviceCapability.localAiDisabled': 'Local AI disabled — using cloud fallback.',
+  'settings.localModel.deviceCapability.localAiDisabled':
+    'Local AI disabled — using cloud fallback.',
   'settings.localModel.deviceCapability.modelTier': 'Model Tier',
   'settings.localModel.deviceCapability.needsOllama': 'Needs ollama',
   'settings.localModel.deviceCapability.notDetected': 'Not detected',
@@ -78,7 +88,8 @@ const ko5: TranslationMap = {
   'settings.localModel.download.downloading': 'Downloading...',
   'settings.localModel.download.embeddingPlaceholder': 'One input string per line...',
   'settings.localModel.download.noThinkMode': 'No think mode',
-  'settings.localModel.download.promptPlaceholder': 'Type any prompt and run it against the local model...',
+  'settings.localModel.download.promptPlaceholder':
+    'Type any prompt and run it against the local model...',
   'settings.localModel.download.quantizationPref': 'Quantization pref',
   'settings.localModel.download.runEmbeddingTest': 'Running...',
   'settings.localModel.download.runPromptTest': 'Run Prompt Test',
@@ -88,7 +99,8 @@ const ko5: TranslationMap = {
   'settings.localModel.download.runVisionTest': 'Running...',
   'settings.localModel.download.running': 'Running...',
   'settings.localModel.download.runningPrompt': 'Running prompt',
-  'settings.localModel.download.summarizePlaceholder': 'Paste text to summarize with the local model...',
+  'settings.localModel.download.summarizePlaceholder':
+    'Paste text to summarize with the local model...',
   'settings.localModel.download.testCustomPrompt': 'Test Custom Prompt',
   'settings.localModel.download.testEmbeddings': 'Test Embeddings',
   'settings.localModel.download.testSummarization': 'Test Summarization',
@@ -97,7 +109,8 @@ const ko5: TranslationMap = {
   'settings.localModel.download.testVoiceOutput': 'Test Voice Output (TTS)',
   'settings.localModel.download.ttsOutputPlaceholder': 'Optional output WAV path',
   'settings.localModel.download.ttsPlaceholder': 'Enter text to synthesize...',
-  'settings.localModel.download.visionImagePlaceholder': 'One image reference per line (data URI, URL, or local path marker)',
+  'settings.localModel.download.visionImagePlaceholder':
+    'One image reference per line (data URI, URL, or local path marker)',
   'settings.localModel.download.visionPromptPlaceholder': 'Enter a prompt for the vision model...',
   'settings.localModel.status.allChecksPassed': 'All checks passed',
   'settings.localModel.status.artifact': 'Artifact',
@@ -108,7 +121,8 @@ const ko5: TranslationMap = {
   'settings.localModel.status.checkingOllama': 'Checking ollama',
   'settings.localModel.status.customLocation': 'Custom location',
   'settings.localModel.status.customLocationDesc': 'Custom location desc',
-  'settings.localModel.status.diagnosticsHint': 'Click "Run Diagnostics" to verify Ollama is running and models are installed.',
+  'settings.localModel.status.diagnosticsHint':
+    'Click "Run Diagnostics" to verify Ollama is running and models are installed.',
   'settings.localModel.status.downloadingUnknown': 'Downloading (size unknown)',
   'settings.localModel.status.eta': 'Eta',
   'settings.localModel.status.expectedModels': 'Expected models',
@@ -130,7 +144,8 @@ const ko5: TranslationMap = {
   'settings.localModel.status.ollamaBinaryPath': 'Ollama binary path',
   'settings.localModel.status.ollamaDiagnostics': 'Ollama Diagnostics',
   'settings.localModel.status.ollamaNotInstalled': 'Ollama runtime unavailable',
-  'settings.localModel.status.ollamaNotInstalledDesc': 'OpenHuman now treats Ollama as an external inference runtime. Start your own Ollama server, pull the models you want, and point workload routing at it.',
+  'settings.localModel.status.ollamaNotInstalledDesc':
+    'OpenHuman now treats Ollama as an external inference runtime. Start your own Ollama server, pull the models you want, and point workload routing at it.',
   'settings.localModel.status.progress': 'Progress',
   'settings.localModel.status.provider': 'Provider',
   'settings.localModel.status.retryBootstrap': 'Retry Bootstrap',
@@ -158,10 +173,12 @@ const ko5: TranslationMap = {
   'settings.mascot.noCharacters': 'No OpenHuman characters are available yet',
   'settings.mascot.noColorVariants': 'No color variants',
   'settings.mascot.voice.current': 'current',
-  'settings.mascot.voice.customDesc': 'Find voice ids at api.elevenlabs.io/v1/voices or your ElevenLabs dashboard. Only the id is stored — your API key stays on the backend.',
+  'settings.mascot.voice.customDesc':
+    'Find voice ids at api.elevenlabs.io/v1/voices or your ElevenLabs dashboard. Only the id is stored — your API key stays on the backend.',
   'settings.mascot.voice.customHeading': 'Custom voice id',
   'settings.mascot.voice.customOption': 'Other (paste voice id)…',
-  'settings.mascot.voice.desc': 'Pick the ElevenLabs voice the mascot uses for spoken replies. Filter by gender, pick from the curated list, paste a custom id, or let the app pick a voice that matches your interface language.',
+  'settings.mascot.voice.desc':
+    'Pick the ElevenLabs voice the mascot uses for spoken replies. Filter by gender, pick from the curated list, paste a custom id, or let the app pick a voice that matches your interface language.',
   'settings.mascot.voice.genderFemale': 'Female',
   'settings.mascot.voice.genderHeading': 'Voice gender',
   'settings.mascot.voice.genderMale': 'Male',
@@ -173,19 +190,25 @@ const ko5: TranslationMap = {
   'settings.mascot.voice.previewing': 'Previewing…',
   'settings.mascot.voice.reset': 'Reset to default',
   'settings.mascot.voice.useLocaleDefault': 'Match the app language',
-  'settings.mascot.voice.useLocaleDefaultDesc': 'Auto-pick a voice for the current interface language.',
+  'settings.mascot.voice.useLocaleDefaultDesc':
+    'Auto-pick a voice for the current interface language.',
   'settings.memoryWindow.balanced.badge': 'Recommended',
-  'settings.memoryWindow.balanced.hint': 'Sensible default — good continuity without burning extra tokens on every run.',
+  'settings.memoryWindow.balanced.hint':
+    'Sensible default — good continuity without burning extra tokens on every run.',
   'settings.memoryWindow.balanced.label': 'Balanced',
-  'settings.memoryWindow.description': 'How much remembered context OpenHuman injects into every new agent run. Larger windows feel more aware of past conversations but use more tokens — and cost more — on every run.',
+  'settings.memoryWindow.description':
+    'How much remembered context OpenHuman injects into every new agent run. Larger windows feel more aware of past conversations but use more tokens — and cost more — on every run.',
   'settings.memoryWindow.extended.badge': 'More context',
-  'settings.memoryWindow.extended.hint': 'More long-term memory injected into each run. Higher token cost per turn.',
+  'settings.memoryWindow.extended.hint':
+    'More long-term memory injected into each run. Higher token cost per turn.',
   'settings.memoryWindow.extended.label': 'Extended',
   'settings.memoryWindow.maximum.badge': 'Highest cost',
-  'settings.memoryWindow.maximum.hint': 'The largest safe window. Best continuity, meaningfully higher token bill on every run.',
+  'settings.memoryWindow.maximum.hint':
+    'The largest safe window. Best continuity, meaningfully higher token bill on every run.',
   'settings.memoryWindow.maximum.label': 'Maximum',
   'settings.memoryWindow.minimal.badge': 'Cheapest',
-  'settings.memoryWindow.minimal.hint': 'Smallest memory window. Cheapest, fastest, least continuity between runs.',
+  'settings.memoryWindow.minimal.hint':
+    'Smallest memory window. Cheapest, fastest, least continuity between runs.',
   'settings.memoryWindow.minimal.label': 'Minimal',
   'settings.memoryWindow.title': 'Long-term memory window',
   'settings.screenIntel.permissions.accessibility': 'Accessibility',
@@ -217,7 +240,8 @@ const ko5: TranslationMap = {
   'skills.create.namePlaceholder': 'e.g. Trade Journal',
   'skills.create.scope': 'Scope',
   'skills.create.scopeProjectHint': '/.openhuman/skills/',
-  'skills.create.scopeUserHint': 'Written to ~/.openhuman/skills/<slug>/SKILL.md — available across all workspaces.',
+  'skills.create.scopeUserHint':
+    'Written to ~/.openhuman/skills/<slug>/SKILL.md — available across all workspaces.',
   'skills.create.slugLabel': 'Slug label',
   'skills.create.subtitle': 'SKILL.md',
   'skills.create.tags': 'Tags',
@@ -240,7 +264,8 @@ const ko5: TranslationMap = {
   'skills.install.timeoutLabel': 'Timeout label',
   'skills.install.title': 'Install skill from URL',
   'skills.install.urlLabel': 'Skill URL',
-  'skills.meetingBots.bannerDesc': 'Drop a Google Meet link and OpenHuman joins as a guest, talks, listens, and waves back.',
+  'skills.meetingBots.bannerDesc':
+    'Drop a Google Meet link and OpenHuman joins as a guest, talks, listens, and waves back.',
   'skills.meetingBots.bannerTitle': 'Send OpenHuman to a meeting',
   'skills.meetingBots.busyTitle': 'OpenHuman is busy',
   'skills.meetingBots.comingSoon': 'Coming soon',
@@ -251,7 +276,8 @@ const ko5: TranslationMap = {
   'skills.meetingBots.joiningTitle': 'OpenHuman is joining the meeting',
   'skills.meetingBots.meetingLink': 'Meeting link',
   'skills.meetingBots.modalAriaLabel': 'Send OpenHuman to a meeting',
-  'skills.meetingBots.modalDesc': 'OpenHuman joins as an anonymous guest, streams its video into the call, and replies via the agent.',
+  'skills.meetingBots.modalDesc':
+    'OpenHuman joins as an anonymous guest, streams its video into the call, and replies via the agent.',
   'skills.meetingBots.modalTitle': 'Send OpenHuman to a meeting',
   'skills.meetingBots.newBadge': 'New',
   'skills.meetingBots.sendTo': 'Send to',
@@ -282,7 +308,8 @@ const ko5: TranslationMap = {
   'skills.setup.screenIntel.allGranted': 'All permissions granted',
   'skills.setup.screenIntel.captureMode': 'Capture mode',
   'skills.setup.screenIntel.captureModeValue': 'All windows (configurable later)',
-  'skills.setup.screenIntel.deniedHint': 'After granting permissions in System Settings, click below to restart and pick up the changes.',
+  'skills.setup.screenIntel.deniedHint':
+    'After granting permissions in System Settings, click below to restart and pick up the changes.',
   'skills.setup.screenIntel.enableBtn': 'Enabling...',
   'skills.setup.screenIntel.enableDesc': 's on your screen and feed useful context into your agent',
   'skills.setup.screenIntel.enableError': 'Failed to enable Screen Intelligence',
@@ -319,21 +346,26 @@ const ko5: TranslationMap = {
   'skills.setup.voice.stepSetup': 'Model download required',
   'skills.setup.voice.stepSuccess': 'Ready to go',
   'skills.setup.voice.sttNotReady': 'Speech-to-text model not ready',
-  'skills.setup.voice.sttNotReadyDesc': 'Voice Intelligence requires a local Whisper model for transcription. Download it from the Local Model settings.',
+  'skills.setup.voice.sttNotReadyDesc':
+    'Voice Intelligence requires a local Whisper model for transcription. Download it from the Local Model settings.',
   'skills.setup.voice.sttReady': 'Speech-to-text model ready',
   'skills.setup.voice.sttReturnHint': 'Stt return hint',
   'skills.setup.voice.title': 'Voice Intelligence',
   'skills.uninstall.couldNotUninstall': 'Could not uninstall',
-  'skills.uninstall.description': 'This permanently deletes the skill directory and all its bundled resources. The agent will stop seeing it at the next turn.',
+  'skills.uninstall.description':
+    'This permanently deletes the skill directory and all its bundled resources. The agent will stop seeing it at the next turn.',
   'skills.uninstall.title': 'Uninstall',
   'skills.uninstall.uninstallBtn': 'Uninstall',
   'skills.uninstall.uninstalling': 'Uninstalling…',
   'upsell.global.limitMessage': 'Upgrade your plan or top up credits to continue',
   'upsell.global.limitTitle': 'You',
-  'upsell.global.nearLimitMessage': 'You\'ve used {pct}% of your usage limit. Upgrade for higher limits.',
+  'upsell.global.nearLimitMessage':
+    "You've used {pct}% of your usage limit. Upgrade for higher limits.",
   'upsell.global.nearLimitTitle': 'Approaching usage limit',
-  'upsell.usageLimit.bodyBudget': 'You\'ve hit your weekly limit.{reset} Upgrade your plan or top up credits to avoid limits.',
-  'upsell.usageLimit.bodyRate': 'You\'ve hit your 10-hour inference rate limit.{reset} Upgrade for higher limits.',
+  'upsell.usageLimit.bodyBudget':
+    "You've hit your weekly limit.{reset} Upgrade your plan or top up credits to avoid limits.",
+  'upsell.usageLimit.bodyRate':
+    "You've hit your 10-hour inference rate limit.{reset} Upgrade for higher limits.",
   'upsell.usageLimit.heading': 'Usage Limit Reached',
   'upsell.usageLimit.notNow': 'Not now',
   'upsell.usageLimit.perWindow': '{amount}',
@@ -341,7 +373,7 @@ const ko5: TranslationMap = {
   'upsell.usageLimit.resetsIn': 'It resets {time}.',
   'upsell.usageLimit.upgradePlan': 'Upgrade plan',
   'upsell.usageLimit.weeklyInference': '{amount}',
-  'walkthrough.tooltip.letsGo': 'Let\'s go!',
+  'walkthrough.tooltip.letsGo': "Let's go!",
   'walkthrough.tooltip.next': 'Next →',
   'walkthrough.tooltip.skip': 'Skip tour',
   'walkthrough.tooltip.stepCounter': '{n} of {total}',
@@ -381,9 +413,11 @@ const ko5: TranslationMap = {
   'intelligence.memoryChunk.detail.copiedHint': 'copied',
   'settings.composio.notYetRouted': 'not yet routed',
   'settings.localModel.download.manageExternal': 'Manage this model in your external runtime.',
-  'settings.localModel.status.manageOllamaExternal': 'Manage the Ollama process and model pulls outside OpenHuman, then rerun diagnostics.',
+  'settings.localModel.status.manageOllamaExternal':
+    'Manage the Ollama process and model pulls outside OpenHuman, then rerun diagnostics.',
   'settings.localModel.status.ollamaDocs': 'Ollama docs',
-  'settings.localModel.status.thenRetry': 'for setup instructions, then retry after your runtime is reachable.',
+  'settings.localModel.status.thenRetry':
+    'for setup instructions, then retry after your runtime is reachable.',
   'settings.appearance.title': 'Appearance',
   'settings.appearance.themeHeading': 'Theme',
   'settings.appearance.themeAria': 'Theme',
@@ -393,7 +427,8 @@ const ko5: TranslationMap = {
   'settings.appearance.modeDarkDesc': 'Dim surfaces, easier on the eyes after dusk.',
   'settings.appearance.modeSystem': 'Match system',
   'settings.appearance.modeSystemDesc': 'Follow your OS appearance setting.',
-  'settings.appearance.helperText': 'Dark mode switches the entire app — chat, settings, panels — to a dim palette. "Match system" follows your OS appearance and updates live.',
+  'settings.appearance.helperText':
+    'Dark mode switches the entire app — chat, settings, panels — to a dim palette. "Match system" follows your OS appearance and updates live.',
   'settings.mascot.characterPreview': 'Preview',
   'settings.mascot.characterStates': 'states',
   'settings.mascot.characterVisemes': 'visemes',

@@ -129,10 +129,14 @@ const ko1: TranslationMap = {
   'home.greetingAfternoon': '좋은 오후입니다',
   'home.greetingEvening': '좋은 저녁입니다',
   'home.askAssistant': '도우미에게 무엇이든 물어보세요...',
-  'home.statusOk': '기기가 연결되어 있습니다. 연결을 유지하려면 앱을 계속 실행하세요. 아래 버튼으로 에이전트에게 메시지를 보낼 수 있습니다.',
-  'home.statusBackendOnly': '백엔드에 다시 연결하는 중입니다… 곧 에이전트를 다시 사용할 수 있습니다.',
-  'home.statusCoreUnreachable': 'Local core sidecar isn\'t responding. The OpenHuman background process may have crashed or failed to start.',
-  'home.statusInternetOffline': '현재 기기가 오프라인입니다. 네트워크를 확인하거나 앱을 다시 시작해 재연결하세요.',
+  'home.statusOk':
+    '기기가 연결되어 있습니다. 연결을 유지하려면 앱을 계속 실행하세요. 아래 버튼으로 에이전트에게 메시지를 보낼 수 있습니다.',
+  'home.statusBackendOnly':
+    '백엔드에 다시 연결하는 중입니다… 곧 에이전트를 다시 사용할 수 있습니다.',
+  'home.statusCoreUnreachable':
+    "Local core sidecar isn't responding. The OpenHuman background process may have crashed or failed to start.",
+  'home.statusInternetOffline':
+    '현재 기기가 오프라인입니다. 네트워크를 확인하거나 앱을 다시 시작해 재연결하세요.',
   'home.restartCore': '코어 재시작',
   'home.restartingCore': '코어 재시작 중…',
   'home.themeToggle.toLight': '라이트 모드로 전환',
@@ -183,7 +187,8 @@ const ko1: TranslationMap = {
   'rewards.copyCode': '코드 복사',
   'rewards.share': '공유',
   'onboarding.welcome': '안녕하세요. 저는 OpenHuman입니다.',
-  'onboarding.welcomeDesc': '당신의 컴퓨터에서 실행되는 초지능 AI 도우미입니다. 비공개로, 간단하게, 강력하게.',
+  'onboarding.welcomeDesc':
+    '당신의 컴퓨터에서 실행되는 초지능 AI 도우미입니다. 비공개로, 간단하게, 강력하게.',
   'onboarding.context': '컨텍스트 수집',
   'onboarding.contextDesc': '매일 사용하는 도구와 서비스를 연결하세요.',
   'onboarding.localAI': '로컬 AI',
@@ -197,7 +202,8 @@ const ko1: TranslationMap = {
   'onboarding.skip': '건너뛰기',
   'onboarding.getStarted': '시작하기',
   'onboarding.runtimeChoice.title': 'OpenHuman을 어떻게 실행하시겠어요?',
-  'onboarding.runtimeChoice.subtitle': '당신에게 맞는 구성을 고르세요. 나중에 설정에서 바꿀 수 있습니다.',
+  'onboarding.runtimeChoice.subtitle':
+    '당신에게 맞는 구성을 고르세요. 나중에 설정에서 바꿀 수 있습니다.',
   'onboarding.runtimeChoice.cloud.title': '간편 모드',
   'onboarding.runtimeChoice.cloud.tagline': 'OpenHuman이 모든 것을 관리하도록 맡기세요.',
   'onboarding.runtimeChoice.cloud.f1': '기본 제공 보안',
@@ -206,8 +212,9 @@ const ko1: TranslationMap = {
   'onboarding.runtimeChoice.cloud.f4': '관리할 API 키가 없음',
   'onboarding.runtimeChoice.cloud.f5': '설정이 간단함',
   'onboarding.runtimeChoice.custom.title': '커스텀 실행',
-  'onboarding.runtimeChoice.custom.tagline': '직접 키를 가져와 사용하세요. 무엇을 쓰는지 완전히 제어할 수 있습니다.',
-  'onboarding.runtimeChoice.custom.f1': 'You\'ll need API keys for almost everything',
+  'onboarding.runtimeChoice.custom.tagline':
+    '직접 키를 가져와 사용하세요. 무엇을 쓰는지 완전히 제어할 수 있습니다.',
+  'onboarding.runtimeChoice.custom.f1': "You'll need API keys for almost everything",
   'onboarding.runtimeChoice.custom.f2': 'Reuses services you already pay for',
   'onboarding.runtimeChoice.custom.f3': 'Can be free if you run everything locally',
   'onboarding.runtimeChoice.custom.f4': 'More setup, more knobs',
@@ -216,13 +223,14 @@ const ko1: TranslationMap = {
   'onboarding.runtimeChoice.continueCloud': 'Continue with Simple',
   'onboarding.runtimeChoice.continueCustom': 'Continue with Custom',
   'onboarding.runtimeChoice.recommended': 'Recommended',
-  'onboarding.apiKeys.title': 'Let\'s Add Your API Keys',
-  'onboarding.apiKeys.subtitle': 'You can paste them now or skip and add them later in Settings › AI. Keys are stored on this device, encrypted at rest.',
+  'onboarding.apiKeys.title': "Let's Add Your API Keys",
+  'onboarding.apiKeys.subtitle':
+    'You can paste them now or skip and add them later in Settings › AI. Keys are stored on this device, encrypted at rest.',
   'onboarding.apiKeys.openaiLabel': 'OpenAI API key',
   'onboarding.apiKeys.openaiPlaceholder': 'sk-...',
   'onboarding.apiKeys.anthropicLabel': 'Anthropic API key',
   'onboarding.apiKeys.anthropicPlaceholder': 'sk-ant-...',
-  'onboarding.apiKeys.saveError': 'Couldn\'t save that key. Please double-check it and try again.',
+  'onboarding.apiKeys.saveError': "Couldn't save that key. Please double-check it and try again.",
   'onboarding.apiKeys.skipForNow': 'Skip for now',
   'onboarding.apiKeys.continue': 'Save and continue',
   'onboarding.apiKeys.saving': 'Saving…',
@@ -235,33 +243,47 @@ const ko1: TranslationMap = {
   'onboarding.custom.defaultTitle': 'Default',
   'onboarding.custom.defaultSubtitle': 'Let OpenHuman manage it for you.',
   'onboarding.custom.configureTitle': 'Configure',
-  'onboarding.custom.configureSubtitle': 'I\'ll pick what to use.',
+  'onboarding.custom.configureSubtitle': "I'll pick what to use.",
   'onboarding.custom.progressAriaLabel': 'Onboarding progress',
   'onboarding.custom.continue': 'Continue',
   'onboarding.custom.back': 'Back',
   'onboarding.custom.finish': 'Finish Setup',
-  'onboarding.custom.configureLater': 'You can finish wiring this up after onboarding. We\'ll drop you on the matching Settings page once you\'re done.',
+  'onboarding.custom.configureLater':
+    "You can finish wiring this up after onboarding. We'll drop you on the matching Settings page once you're done.",
   'onboarding.custom.openSettings': 'Open in Settings',
   'onboarding.custom.inference.title': 'Inference (Text)',
-  'onboarding.custom.inference.subtitle': 'Which language model should answer your questions and run your agents?',
-  'onboarding.custom.inference.defaultDesc': 'OpenHuman routes every workload to a sensible default model. No keys, no setup.',
-  'onboarding.custom.inference.configureDesc': 'Bring your own OpenAI or Anthropic key. We use it for every text-based workload.',
+  'onboarding.custom.inference.subtitle':
+    'Which language model should answer your questions and run your agents?',
+  'onboarding.custom.inference.defaultDesc':
+    'OpenHuman routes every workload to a sensible default model. No keys, no setup.',
+  'onboarding.custom.inference.configureDesc':
+    'Bring your own OpenAI or Anthropic key. We use it for every text-based workload.',
   'onboarding.custom.voice.title': 'Voice',
   'onboarding.custom.voice.subtitle': 'Speech-to-text and text-to-speech for voice mode.',
-  'onboarding.custom.voice.defaultDesc': 'OpenHuman ships with managed STT/TTS that just works. Nothing to wire up.',
-  'onboarding.custom.voice.configureDesc': 'Use your own ElevenLabs / OpenAI Whisper / etc. Configure in Settings › Voice.',
+  'onboarding.custom.voice.defaultDesc':
+    'OpenHuman ships with managed STT/TTS that just works. Nothing to wire up.',
+  'onboarding.custom.voice.configureDesc':
+    'Use your own ElevenLabs / OpenAI Whisper / etc. Configure in Settings › Voice.',
   'onboarding.custom.oauth.title': 'Connections (OAuth)',
-  'onboarding.custom.oauth.subtitle': 'Gmail, Slack, Notion, and other connected services that need OAuth.',
-  'onboarding.custom.oauth.defaultDesc': 'OpenHuman runs a managed Composio workspace. One click to connect each service later.',
-  'onboarding.custom.oauth.configureDesc': 'Bring your own Composio account / API key. Configure in Settings › Connections.',
+  'onboarding.custom.oauth.subtitle':
+    'Gmail, Slack, Notion, and other connected services that need OAuth.',
+  'onboarding.custom.oauth.defaultDesc':
+    'OpenHuman runs a managed Composio workspace. One click to connect each service later.',
+  'onboarding.custom.oauth.configureDesc':
+    'Bring your own Composio account / API key. Configure in Settings › Connections.',
   'onboarding.custom.search.title': 'Web Search',
   'onboarding.custom.search.subtitle': 'How OpenHuman searches the web on your behalf.',
-  'onboarding.custom.search.defaultDesc': 'OpenHuman uses a managed search backend. No keys needed.',
-  'onboarding.custom.search.configureDesc': 'Bring your own search provider key (Tavily, Brave, etc.). Configure in Settings › Tools.',
+  'onboarding.custom.search.defaultDesc':
+    'OpenHuman uses a managed search backend. No keys needed.',
+  'onboarding.custom.search.configureDesc':
+    'Bring your own search provider key (Tavily, Brave, etc.). Configure in Settings › Tools.',
   'onboarding.custom.memory.title': 'Memory',
-  'onboarding.custom.memory.subtitle': 'How OpenHuman remembers your context, preferences, and prior conversations.',
-  'onboarding.custom.memory.defaultDesc': 'OpenHuman manages memory storage and retrieval automatically. Nothing to set up.',
-  'onboarding.custom.memory.configureDesc': 'Inspect, export, or wipe memory yourself. Configure in Settings › Memory.',
+  'onboarding.custom.memory.subtitle':
+    'How OpenHuman remembers your context, preferences, and prior conversations.',
+  'onboarding.custom.memory.defaultDesc':
+    'OpenHuman manages memory storage and retrieval automatically. Nothing to set up.',
+  'onboarding.custom.memory.configureDesc':
+    'Inspect, export, or wipe memory yourself. Configure in Settings › Memory.',
   'accounts.addAccount': '계정 추가',
   'accounts.manageAccounts': '계정 관리',
   'accounts.noAccounts': '연결된 계정이 없습니다',
@@ -288,7 +310,7 @@ const ko1: TranslationMap = {
   'webhooks.secret': 'Secret',
   'webhooks.events': 'Events',
   'webhooks.archiveDirectory': 'Archive Directory',
-  'webhooks.todayFile': 'Today\'s File',
+  'webhooks.todayFile': "Today's File",
   'invites.title': 'Invites',
   'invites.create': 'Create Invite',
   'invites.noInvites': 'No pending invites',
@@ -318,7 +340,8 @@ const ko1: TranslationMap = {
   'misc.updateLater': 'Later',
   'misc.downloading': 'Downloading...',
   'misc.installing': 'Installing...',
-  'misc.beta': 'OpenHuman is in early beta. Feel free to share feedback or report any bugs you run into — every report helps us ship faster.',
+  'misc.beta':
+    'OpenHuman is in early beta. Feel free to share feedback or report any bugs you run into — every report helps us ship faster.',
   'misc.betaFeedback': 'Send feedback',
   'mnemonic.title': '복구 구문',
   'mnemonic.warning': '이 단어들을 순서대로 적어 두고 안전한 곳에 보관하세요.',
@@ -338,11 +361,14 @@ const ko1: TranslationMap = {
   'privacy.staysLocal': 'Stays local',
   'privacy.anonymizedAnalytics': 'Anonymized Analytics',
   'privacy.shareAnonymizedData': 'Share Anonymized Usage Data',
-  'privacy.shareAnonymizedDataDesc': 'Help improve OpenHuman by sharing anonymous crash reports and usage analytics. All data is fully anonymized — no personal data, messages, wallet keys, or session information is ever collected.',
+  'privacy.shareAnonymizedDataDesc':
+    'Help improve OpenHuman by sharing anonymous crash reports and usage analytics. All data is fully anonymized — no personal data, messages, wallet keys, or session information is ever collected.',
   'privacy.meetingFollowUps': 'Meeting follow-ups',
   'privacy.autoHandoffMeet': 'Auto-handoff Google Meet transcripts to the orchestrator',
-  'privacy.autoHandoffMeetDesc': 'When a Google Meet call ends, OpenHuman\'s orchestrator can read the transcript and may take actions like drafting messages, scheduling follow-ups, or posting summaries to your connected Slack workspace. Off by default.',
-  'privacy.analyticsDisclaimer': 'All analytics and bug reports are fully anonymized. When enabled, we collect only crash information, device type, and the file location of errors. We never access your messages, session data, wallet keys, API keys, or any personally identifiable information. You can change this setting at any time.',
+  'privacy.autoHandoffMeetDesc':
+    "When a Google Meet call ends, OpenHuman's orchestrator can read the transcript and may take actions like drafting messages, scheduling follow-ups, or posting summaries to your connected Slack workspace. Off by default.",
+  'privacy.analyticsDisclaimer':
+    'All analytics and bug reports are fully anonymized. When enabled, we collect only crash information, device type, and the file location of errors. We never access your messages, session data, wallet keys, API keys, or any personally identifiable information. You can change this setting at any time.',
   'settings.about.version': 'Version',
   'settings.about.updateAvailable': 'is available',
   'settings.about.softwareUpdates': 'Software updates',
