@@ -2061,45 +2061,49 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
 
             <div className="flex flex-wrap gap-2">
               {/* Built-in cloud providers — openai/anthropic/openrouter/orcarouter/custom */}
-              {(['openai', 'anthropic', 'openrouter', 'orcarouter', 'custom'] as const).map(slug => {
-                const meta = BUILTIN_PROVIDER_META[slug];
-                const label = meta?.label ?? slug;
-                const existing = draft.cloudProviders.find(cp => cp.slug === slug);
-                const enabled = !!existing;
-                return (
-                  <ProviderToggleChip
-                    key={slug}
-                    slug={slug}
-                    label={label}
-                    enabled={enabled}
-                    busy={busyAction === `toggle-${slug}`}
-                    onToggle={() => {
-                      if (enabled && existing) {
-                        // Toggle OFF: remove the provider + scrub any
-                        // routing entries that pin to it.
-                        const remaining = draft.cloudProviders.filter(cp => cp.id !== existing.id);
-                        const nextRouting = Object.fromEntries(
-                          Object.entries(draft.routing).map(([wid, ref]) => [
-                            wid,
-                            ref.kind === 'cloud' && ref.providerSlug === existing.slug
-                              ? ({ kind: 'openhuman' } as const)
-                              : ref,
-                          ])
-                        ) as typeof draft.routing;
-                        setDraft({ ...draft, cloudProviders: remaining, routing: nextRouting });
-                      } else if (slug === 'custom') {
-                        // Custom providers need slug + endpoint + label, not
-                        // just an API key — defer to the full editor modal.
-                        setEditing('new');
-                      } else {
-                        // Toggle ON: open the API-key popup. The chip
-                        // only flips after the dialog saves.
-                        setKeyDialogFor(slug);
-                      }
-                    }}
-                  />
-                );
-              })}
+              {(['openai', 'anthropic', 'openrouter', 'orcarouter', 'custom'] as const).map(
+                slug => {
+                  const meta = BUILTIN_PROVIDER_META[slug];
+                  const label = meta?.label ?? slug;
+                  const existing = draft.cloudProviders.find(cp => cp.slug === slug);
+                  const enabled = !!existing;
+                  return (
+                    <ProviderToggleChip
+                      key={slug}
+                      slug={slug}
+                      label={label}
+                      enabled={enabled}
+                      busy={busyAction === `toggle-${slug}`}
+                      onToggle={() => {
+                        if (enabled && existing) {
+                          // Toggle OFF: remove the provider + scrub any
+                          // routing entries that pin to it.
+                          const remaining = draft.cloudProviders.filter(
+                            cp => cp.id !== existing.id
+                          );
+                          const nextRouting = Object.fromEntries(
+                            Object.entries(draft.routing).map(([wid, ref]) => [
+                              wid,
+                              ref.kind === 'cloud' && ref.providerSlug === existing.slug
+                                ? ({ kind: 'openhuman' } as const)
+                                : ref,
+                            ])
+                          ) as typeof draft.routing;
+                          setDraft({ ...draft, cloudProviders: remaining, routing: nextRouting });
+                        } else if (slug === 'custom') {
+                          // Custom providers need slug + endpoint + label, not
+                          // just an API key — defer to the full editor modal.
+                          setEditing('new');
+                        } else {
+                          // Toggle ON: open the API-key popup. The chip
+                          // only flips after the dialog saves.
+                          setKeyDialogFor(slug);
+                        }
+                      }}
+                    />
+                  );
+                }
+              )}
 
               {/* LM Studio + Ollama — local runtimes stored with a slug of
                   "lmstudio" / "ollama" so they're distinct from generic custom. */}
