@@ -908,3 +908,11 @@ async fn invoke_method_core_version_via_tier1_reflects_state() {
         .expect("core.version should succeed");
     assert_eq!(result, json!({ "version": "0.0.1-abc" }));
 }
+
+#[tokio::test]
+async fn test_http_health_handler_returns_200() {
+    use axum::response::IntoResponse;
+    use axum::http::StatusCode;
+    let resp = super::health_handler().await.into_response();
+    assert_eq!(resp.status(), StatusCode::OK);
+}
