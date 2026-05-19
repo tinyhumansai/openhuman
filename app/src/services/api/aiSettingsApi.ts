@@ -196,12 +196,14 @@ export async function loadAISettings(): Promise<AISettings> {
     profilesRes.result.map((p: AuthProfileSummary) => p.provider.toLowerCase())
   );
 
-  const cloudProviders: CloudProviderView[] = config.cloud_providers.map(p => {
-    const newKey = authKeyForSlug(p.slug).toLowerCase();
-    const legacyKey = p.slug.toLowerCase();
-    const has_api_key = profileProviders.has(newKey) || profileProviders.has(legacyKey);
-    return { ...p, has_api_key };
-  });
+  const cloudProviders: CloudProviderView[] = config.cloud_providers
+    .filter(p => !['', 'cloud', 'openhuman', 'ollama', 'pid'].includes(p.slug.trim()))
+    .map(p => {
+      const newKey = authKeyForSlug(p.slug).toLowerCase();
+      const legacyKey = p.slug.toLowerCase();
+      const has_api_key = profileProviders.has(newKey) || profileProviders.has(legacyKey);
+      return { ...p, has_api_key };
+    });
 
   const routing: Record<WorkloadId, ProviderRef> = {
     chat: parseProviderString(config.chat_provider),
@@ -243,9 +245,15 @@ export async function saveAISettings(prev: AISettings, next: AISettings): Promis
       );
     })
   ) {
-    patch.cloud_providers = next.cloudProviders.map(
-      ({ id, slug, label, endpoint, auth_style }) => ({ id, slug, label, endpoint, auth_style })
-    );
+    patch.cloud_providers = next.cloudProviders
+      .filter(p => !['', 'cloud', 'openhuman', 'ollama', 'pid'].includes(p.slug.trim()))
+      .map(({ id, slug, label, endpoint, auth_style }) => ({
+        id,
+        slug,
+        label,
+        endpoint,
+        auth_style,
+      }));
   }
 
   for (const w of ALL_WORKLOADS) {

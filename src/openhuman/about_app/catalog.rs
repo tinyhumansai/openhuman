@@ -56,6 +56,18 @@ const COMPOSIO_DIRECT_CREDENTIALS: Option<CapabilityPrivacy> = Some(CapabilityPr
     destinations: &["Composio (backend.composio.dev)"],
 });
 
+const POLYMARKET_MARKET_DATA: Option<CapabilityPrivacy> = Some(CapabilityPrivacy {
+    leaves_device: true,
+    data_kind: PrivacyDataKind::Metadata,
+    destinations: &["Polymarket Gamma API", "Polymarket CLOB API"],
+});
+
+const POLYMARKET_TRADING_DATA: Option<CapabilityPrivacy> = Some(CapabilityPrivacy {
+    leaves_device: true,
+    data_kind: PrivacyDataKind::Derived,
+    destinations: &["Polymarket CLOB API"],
+});
+
 const CAPABILITIES: &[Capability] = &[
     Capability {
         id: "conversation.create",
@@ -504,6 +516,26 @@ const CAPABILITIES: &[Capability] = &[
         privacy: None,
     },
     Capability {
+        id: "skills.polymarket_readonly",
+        name: "Polymarket Read-Only Browse",
+        domain: "skills",
+        category: CapabilityCategory::Skills,
+        description: "Browse Polymarket markets, events, orderbooks, and prices via Gamma + CLOB APIs.",
+        how_to: "Conversations > ask the assistant to browse Polymarket (tool: polymarket).",
+        status: CapabilityStatus::Beta,
+        privacy: POLYMARKET_MARKET_DATA,
+    },
+    Capability {
+        id: "skills.polymarket_trading",
+        name: "Polymarket Trading",
+        domain: "skills",
+        category: CapabilityCategory::Skills,
+        description: "Place and cancel Polymarket limit orders with EIP-712 signing, authenticated account reads, and explicit approval for writes.",
+        how_to: "Conversations > ask the assistant to trade on Polymarket (tool: polymarket; set `approved=true` for write actions).",
+        status: CapabilityStatus::Beta,
+        privacy: POLYMARKET_TRADING_DATA,
+    },
+    Capability {
         id: "local_ai.download_model",
         name: "Download Local Models",
         domain: "local_ai",
@@ -530,6 +562,16 @@ const CAPABILITIES: &[Capability] = &[
         category: CapabilityCategory::LocalAI,
         description: "Inspect asset status and download specific chat, vision, embedding, STT, or TTS assets.",
         how_to: "Settings > Local AI Model > Advanced > Capability Assets",
+        status: CapabilityStatus::Beta,
+        privacy: None,
+    },
+    Capability {
+        id: "local_ai.model_context_check",
+        name: "Model Context Requirement Check",
+        domain: "local_ai",
+        category: CapabilityCategory::LocalAI,
+        description: "Diagnostics report each installed Ollama model's native context window and reject any model below the minimum the memory layer requires (so short-context models can't silently truncate and corrupt recall).",
+        how_to: "Settings > Local AI Model > Run Diagnostics",
         status: CapabilityStatus::Beta,
         privacy: None,
     },

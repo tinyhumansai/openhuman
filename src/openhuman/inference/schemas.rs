@@ -303,7 +303,15 @@ pub fn schemas(function: &str) -> ControllerSchema {
             function: "diagnostics",
             description: "Run diagnostics for the configured local inference provider endpoint and expected models.",
             inputs: vec![],
-            outputs: vec![json_output("diagnostics", "Inference diagnostics payload.")],
+            outputs: vec![json_output(
+                "diagnostics",
+                "Inference diagnostics payload. `installed_models[]` carries \
+                 `context_length` and an `eligibility` verdict ({status: ok | \
+                 below_minimum | unknown}); `context_requirement.min_context_tokens` \
+                 is the memory-layer floor; `expected.{chat,embedding}_eligibility` \
+                 mirror it for the active models. Models below the floor are rejected \
+                 via `issues`.",
+            )],
         },
         "summarize" => ControllerSchema {
             namespace: "inference",

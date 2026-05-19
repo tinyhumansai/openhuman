@@ -795,40 +795,48 @@ async fn run_server_inner(
     // gets a live handle. Without this, every periodic sync bails with
     // "[composio:gmail] memory client not ready".
     {
-        // Surface a config-load failure explicitly. Falling silently to
-        // `Config::default()` would hide a serious operator-visible
-        // problem (corrupt toml, permissions, missing OPENHUMAN_WORKSPACE
-        // workspace dir) and the memory client would init against the
-        // wrong workspace — leading to chunk loss / cross-workspace
-        // bleed-over. We log loud, then proceed with default so the
-        // server still comes up; the operator sees the error in stderr
-        // and can fix their config.
-        let cfg = match crate::openhuman::config::Config::load_or_init().await {
-            Ok(c) => c,
+        // A `Config::load_or_init` failure here is operator-visible and
+        // serious (corrupt toml, bad permissions, missing/unwritable
+        // OPENHUMAN_WORKSPACE — common on headless/containerised deploys
+        // with no writable $HOME). Previously we fell back to
+        // `Config::default()` and initialised the memory + whatsapp_data
+        // stores against the *wrong* workspace dir, silently causing chunk
+        // loss / cross-workspace bleed-over while the app looked healthy
+        // (Sentry OPENHUMAN-CORE-48). Instead: skip the workspace-bound
+        // init entirely so memory stays explicitly *uninitialised* —
+        // callers then get a clear "memory client not ready" error rather
+        // than reading/writing the wrong workspace. The server still comes
+        // up; the operator sees the loud error and fixes their config or
+        // sets OPENHUMAN_WORKSPACE to a writable path, then restarts.
+        match crate::openhuman::config::Config::load_or_init().await {
+            Ok(cfg) => {
+                match crate::openhuman::memory::global::init(cfg.workspace_dir.clone()) {
+                    Ok(_) => log::info!(
+                        "[boot] memory::global initialized (workspace={})",
+                        cfg.workspace_dir.display()
+                    ),
+                    Err(e) => log::warn!("[boot] memory::global init failed: {e}"),
+                }
+                // Initialize the WhatsApp data store so scanner ingest calls
+                // can write data without requiring a lazy-init fallback.
+                match crate::openhuman::whatsapp_data::global::init(cfg.workspace_dir.clone()) {
+                    Ok(_) => log::info!(
+                        "[boot] whatsapp_data::global initialized (workspace={})",
+                        cfg.workspace_dir.display()
+                    ),
+                    Err(e) => log::warn!("[boot] whatsapp_data::global init failed: {e}"),
+                }
+            }
             Err(e) => {
                 log::error!(
-                    "[boot] memory::global init: Config::load_or_init failed ({e:#}); \
-                     falling back to default workspace dir — fix your config.toml \
-                     or OPENHUMAN_WORKSPACE before relying on memory persistence"
+                    "[boot] memory::global + whatsapp_data init SKIPPED — \
+                     Config::load_or_init failed ({e:#}). Memory persistence is \
+                     DISABLED for this run; no silent fallback to the default \
+                     workspace (which would cause chunk loss / cross-workspace \
+                     bleed-over). Fix config.toml or set OPENHUMAN_WORKSPACE to a \
+                     writable path, then restart."
                 );
-                Default::default()
             }
-        };
-        match crate::openhuman::memory::global::init(cfg.workspace_dir.clone()) {
-            Ok(_) => log::info!(
-                "[boot] memory::global initialized (workspace={})",
-                cfg.workspace_dir.display()
-            ),
-            Err(e) => log::warn!("[boot] memory::global init failed: {e}"),
-        }
-        // Initialize the WhatsApp data store so scanner ingest calls
-        // can write data without requiring a lazy-init fallback.
-        match crate::openhuman::whatsapp_data::global::init(cfg.workspace_dir.clone()) {
-            Ok(_) => log::info!(
-                "[boot] whatsapp_data::global initialized (workspace={})",
-                cfg.workspace_dir.display()
-            ),
-            Err(e) => log::warn!("[boot] whatsapp_data::global init failed: {e}"),
         }
     }
 

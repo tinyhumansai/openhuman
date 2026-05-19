@@ -45,8 +45,10 @@ import {
   openhumanHeartbeatSettingsSet,
   openhumanHeartbeatTickNow,
 } from '../../../utils/tauriCommands/heartbeat';
+import { ConfirmationModal } from '../../intelligence/ConfirmationModal';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
+import { useReembedBackfillModal } from './useReembedBackfillModal';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -335,7 +337,9 @@ function useAISettings() {
     [saved]
   );
 
-  const save = useCallback(async () => {
+  // Returns true only when persistence actually succeeded, so callers
+  // (e.g. the #1574 re-embed-status check) don't act on a failed save.
+  const save = useCallback(async (): Promise<boolean> => {
     try {
       // Defensive verification at global-Save time. Each provider that is new
       // or whose endpoint changed since the last saved snapshot is re-probed
@@ -358,14 +362,16 @@ function useAISettings() {
         } catch (probeErr) {
           const msg = probeErr instanceof Error ? probeErr.message : String(probeErr);
           setError(`Could not reach ${p.label}: ${msg}. Settings were not saved.`);
-          return;
+          return false;
         }
       }
 
       await persist(draft);
+      return true;
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to save AI settings';
       setError(message);
+      return false;
     }
   }, [saved, draft, persist]);
 
@@ -1276,18 +1282,18 @@ const BackgroundLoopControls = ({
               detail={`resets ${formatDateTime(usage?.cycleEndsAt)}`}
             />
             <MetricTile
-              label="Week remaining"
+              label="Cycle remaining"
               value={usage ? formatUsd(usage.remainingUsd) : 'n/a'}
-              detail={usage ? `${formatUsd(usage.cycleLimit7day)} used` : undefined}
+              detail={usage ? `${formatUsd(usage.cycleSpentUsd)} used` : undefined}
             />
             <MetricTile
-              label="5h window"
-              value={
+              label="Cycle total spend"
+              value={usage ? formatUsd(usage.insights.totals.totalUsd) : 'n/a'}
+              detail={
                 usage
-                  ? `${formatUsd(usage.cycleLimit5hr)} / ${formatUsd(usage.fiveHourCapUsd)}`
-                  : 'n/a'
+                  ? `inference ${formatUsd(usage.insights.totals.inferenceUsd)} + integrations ${formatUsd(usage.insights.totals.integrationsUsd)}`
+                  : undefined
               }
-              detail={`resets ${formatDateTime(usage?.fiveHourResetsAt)}`}
             />
             <MetricTile
               label="Avg spend row"
@@ -1974,6 +1980,9 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
   const { navigateBack, breadcrumbs } = useSettingsNavigation();
   const { saved, draft, setDraft, isDirty, save, persist, discard, loading, error, reload } =
     useAISettings();
+  // #1574 §4b: advisory re-embed modal, driven by the backend status RPC.
+  // Logic lives in a unit-testable hook (see useReembedBackfillModal).
+  const { reembed, handleSave, dismissReembed } = useReembedBackfillModal(save);
   const ollama = useOllamaStatus();
   const installed = useInstalledModels(ollama.snapshot);
   const [editing, setEditing] = useState<CloudProvider | 'new' | null>(null);
@@ -2220,10 +2229,26 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
         <SaveBar
           diffSummary={diffSummary}
           changeCount={diffSummary.length}
-          onSave={() => void save()}
+          onSave={() => void handleSave()}
           onDiscard={discard}
         />
       )}
+
+      <ConfirmationModal
+        modal={{
+          isOpen: reembed.open,
+          title: 'Re-indexing memory',
+          message:
+            `Embeddings are being reprocessed. ${reembed.pending} memory item(s) ` +
+            `are being re-embedded under the current model — semantic recall is ` +
+            `reduced until this finishes. Keyword search keeps working, and ` +
+            `re-embedding continues in the background if you close this.`,
+          confirmText: 'OK',
+          onConfirm: dismissReembed,
+          onCancel: dismissReembed,
+        }}
+        onClose={dismissReembed}
+      />
 
       {editing && (
         <CloudProviderEditor

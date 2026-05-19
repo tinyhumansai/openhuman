@@ -24,6 +24,10 @@ pub enum JobKind {
     DigestDaily,
     /// Walk stale buffers and enqueue `Seal` jobs for any over the age cap.
     FlushStale,
+    /// #1574 §6: re-embed a bounded batch of chunks/summaries that lack a
+    /// vector at the active embedding signature (post model-switch, or the
+    /// §7 dim-mismatch slice), then self-continue until none remain.
+    ReembedBackfill,
 }
 
 impl JobKind {
@@ -36,6 +40,7 @@ impl JobKind {
             JobKind::TopicRoute => "topic_route",
             JobKind::DigestDaily => "digest_daily",
             JobKind::FlushStale => "flush_stale",
+            JobKind::ReembedBackfill => "reembed_backfill",
         }
     }
 
@@ -48,6 +53,7 @@ impl JobKind {
             "topic_route" => JobKind::TopicRoute,
             "digest_daily" => JobKind::DigestDaily,
             "flush_stale" => JobKind::FlushStale,
+            "reembed_backfill" => JobKind::ReembedBackfill,
             other => return Err(anyhow!("unknown JobKind '{other}'")),
         })
     }
@@ -60,7 +66,11 @@ impl JobKind {
     pub fn is_llm_bound(&self) -> bool {
         matches!(
             self,
-            JobKind::ExtractChunk | JobKind::Seal | JobKind::DigestDaily | JobKind::TopicRoute
+            JobKind::ExtractChunk
+                | JobKind::Seal
+                | JobKind::DigestDaily
+                | JobKind::TopicRoute
+                | JobKind::ReembedBackfill
         )
     }
 }
@@ -267,6 +277,26 @@ impl FlushStalePayload {
     }
 }
 
+/// #1574 §6 re-embed backfill. One chain per embedding signature: the
+/// `dedupe_key` is the signature, so re-triggering while a chain is
+/// in-flight is correctly suppressed (exactly one backfill per space).
+/// The handler self-continues via `JobOutcome::Defer` (reschedules this
+/// same row) rather than re-enqueuing, so the fixed dedupe key is safe.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ReembedBackfillPayload {
+    /// The embedding signature this chain re-embeds under. If the active
+    /// signature has since changed, the handler treats this job as stale
+    /// and finishes (a fresh chain for the new signature takes over).
+    pub signature: String,
+}
+
+impl ReembedBackfillPayload {
+    /// Stable dedupe key — one in-flight backfill chain per signature.
+    pub fn dedupe_key(&self) -> String {
+        format!("reembed_backfill:{}", self.signature)
+    }
+}
+
 /// One row in `mem_tree_jobs`. `payload_json` is left as a raw string so
 /// callers parse it lazily based on `kind`.
 #[derive(Clone, Debug)]
@@ -365,6 +395,17 @@ impl NewJob {
             max_attempts: None,
         })
     }
+
+    /// Build a [`JobKind::ReembedBackfill`] enqueue request (#1574 §6).
+    pub fn reembed_backfill(p: &ReembedBackfillPayload) -> Result<Self> {
+        Ok(Self {
+            kind: JobKind::ReembedBackfill,
+            payload_json: serde_json::to_string(p)?,
+            dedupe_key: Some(p.dedupe_key()),
+            available_at_ms: None,
+            max_attempts: None,
+        })
+    }
 }
 
 #[cfg(test)]
@@ -380,6 +421,7 @@ mod tests {
             JobKind::TopicRoute,
             JobKind::DigestDaily,
             JobKind::FlushStale,
+            JobKind::ReembedBackfill,
         ] {
             assert_eq!(JobKind::parse(k.as_str()).unwrap(), k);
         }
@@ -454,6 +496,7 @@ mod tests {
         assert!(JobKind::Seal.is_llm_bound());
         assert!(JobKind::DigestDaily.is_llm_bound());
         assert!(JobKind::TopicRoute.is_llm_bound());
+        assert!(JobKind::ReembedBackfill.is_llm_bound());
         assert!(!JobKind::AppendBuffer.is_llm_bound());
         assert!(!JobKind::FlushStale.is_llm_bound());
     }

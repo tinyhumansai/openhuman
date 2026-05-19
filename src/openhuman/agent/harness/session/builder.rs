@@ -17,7 +17,7 @@ use crate::openhuman::agent::host_runtime;
 use crate::openhuman::agent::memory_loader::{DefaultMemoryLoader, MemoryLoader};
 use crate::openhuman::config::{Config, ContextConfig};
 use crate::openhuman::context::prompt::SystemPromptBuilder;
-use crate::openhuman::context::{ContextManager, ProviderSummarizer};
+use crate::openhuman::context::{ContextManager, ProviderSummarizer, SegmentRecapSummarizer};
 use crate::openhuman::inference::provider::{self, Provider};
 use crate::openhuman::memory::{self, Memory};
 use crate::openhuman::security::SecurityPolicy;
@@ -79,6 +79,7 @@ impl AgentBuilder {
             auto_save: None,
             post_turn_hooks: Vec::new(),
             learning_enabled: false,
+            explicit_preferences_enabled: true,
             event_session_id: None,
             event_channel: None,
             agent_definition_name: None,
@@ -86,6 +87,8 @@ impl AgentBuilder {
             omit_profile: None,
             omit_memory_md: None,
             payload_summarizer: None,
+            archivist_hook: None,
+            unified_compaction_enabled: true,
         }
     }
 
@@ -204,6 +207,16 @@ impl AgentBuilder {
         self
     }
 
+    /// Enables or disables explicit-preference injection.
+    ///
+    /// When `true` (the default), preferences stored via `remember_preference`
+    /// are fetched from the `user_profile` namespace and injected into the
+    /// system prompt on every turn, independent of `learning_enabled`.
+    pub fn explicit_preferences_enabled(mut self, enabled: bool) -> Self {
+        self.explicit_preferences_enabled = enabled;
+        self
+    }
+
     /// Sets the event-bus `session_id` and `channel` used to tag
     /// `DomainEvent`s emitted by this agent.
     ///
@@ -313,6 +326,39 @@ impl AgentBuilder {
         self
     }
 
+    /// Attach the production [`ArchivistHook`] instance so the session
+    /// turn loop can call [`ArchivistHook::flush_open_segment`] at
+    /// session-wind-down time, guaranteeing the trailing open segment is
+    /// always finalized with an LLM recap + embedding.
+    ///
+    /// Set from `build_session_agent_inner` when
+    /// `config.learning.episodic_capture_enabled` is `true` and a
+    /// SQLite connection is available. Callers that construct an `Agent`
+    /// directly (tests, CLI) can leave this `None` — flush is a no-op
+    /// when the hook is absent.
+    pub fn archivist_hook(
+        mut self,
+        hook: Option<Arc<crate::openhuman::agent::harness::archivist::ArchivistHook>>,
+    ) -> Self {
+        self.archivist_hook = hook;
+        self
+    }
+
+    /// Phase 1.5 — gate the unified compaction path.
+    ///
+    /// When `true` (the default) and an archivist hook is wired in via
+    /// [`Self::archivist_hook`], the session's `ContextManager` summarizer is
+    /// wrapped with a [`SegmentRecapSummarizer`] that routes autocompaction
+    /// through the archivist's rolling recap (one LLM summarizer, soft-fallback
+    /// to [`ProviderSummarizer`] when the recap is unavailable).
+    ///
+    /// When `false` the `ProviderSummarizer` is used directly and Phase 1.5 is
+    /// completely absent from the hot path — behaviour is identical to today's.
+    pub fn unified_compaction_enabled(mut self, enabled: bool) -> Self {
+        self.unified_compaction_enabled = enabled;
+        self
+    }
+
     /// Validates the configuration and constructs a new `Agent` instance.
     ///
     /// This method is responsible for wiring together the provided components,
@@ -377,7 +423,52 @@ impl AgentBuilder {
         // summarizer — every concern that touches "what's in the
         // model's context window" routes through this single handle.
         let context_config = self.context_config.unwrap_or_default();
-        let summarizer = Arc::new(ProviderSummarizer::new(provider.clone()));
+
+        // Phase 1.5 — unified compaction.
+        //
+        // When `unified_compaction_enabled` is true AND an archivist hook
+        // is wired in, wrap the inner `ProviderSummarizer` with a
+        // `SegmentRecapSummarizer`. The outer type:
+        //   1. Tries the rolling segment recap from the open segment.
+        //   2. Falls back to the inner `ProviderSummarizer` if unavailable.
+        //
+        // With the flag off OR no archivist, the plain `ProviderSummarizer`
+        // is used and Phase 1.5 is completely absent from the hot path
+        // — behaviour is identical to Phase 1.
+        let inner_summarizer: Arc<dyn crate::openhuman::context::Summarizer> =
+            Arc::new(ProviderSummarizer::new(provider.clone()));
+        let session_id_for_recap = self
+            .event_session_id
+            .clone()
+            .unwrap_or_else(|| "standalone".to_string());
+        let summarizer: Arc<dyn crate::openhuman::context::Summarizer> =
+            if self.unified_compaction_enabled {
+                if let Some(ref archivist) = self.archivist_hook {
+                    log::debug!(
+                        "[agent::builder] unified_compaction_enabled=true — \
+                         wrapping summarizer with SegmentRecapSummarizer \
+                         session_id={session_id_for_recap}"
+                    );
+                    Arc::new(SegmentRecapSummarizer::new(
+                        Arc::clone(archivist),
+                        session_id_for_recap,
+                        inner_summarizer,
+                    ))
+                } else {
+                    log::debug!(
+                        "[agent::builder] unified_compaction_enabled=true but \
+                         no archivist hook — using ProviderSummarizer"
+                    );
+                    inner_summarizer
+                }
+            } else {
+                log::debug!(
+                    "[agent::builder] unified_compaction_enabled=false — \
+                     using ProviderSummarizer (Phase 1.5 disabled)"
+                );
+                inner_summarizer
+            };
+
         let context = ContextManager::new(
             &context_config,
             summarizer,
@@ -414,6 +505,7 @@ impl AgentBuilder {
             last_tree_prefetch_at: None,
             post_turn_hooks: self.post_turn_hooks,
             learning_enabled: self.learning_enabled,
+            explicit_preferences_enabled: self.explicit_preferences_enabled,
             event_session_id: self
                 .event_session_id
                 .unwrap_or_else(|| "standalone".to_string()),
@@ -462,6 +554,7 @@ impl AgentBuilder {
             omit_memory_md: self.omit_memory_md.unwrap_or(true),
             payload_summarizer: self.payload_summarizer,
             last_seen_integrations_hash: 0,
+            archivist_hook: self.archivist_hook,
             synthesized_tool_names: std::collections::HashSet::new(),
         })
     }
@@ -921,6 +1014,23 @@ impl Agent {
             );
         }
 
+        // Explicit-preferences injection — independent of the full learning
+        // subsystem.  When `explicit_preferences_enabled` is true (the default)
+        // and the full learning subsystem is NOT already wiring UserProfileSection,
+        // we add it here so pinned preferences written by `remember_preference`
+        // reach every session prompt.  The `fetch_learned_context` gate is
+        // widened by `explicit_preferences_enabled` on the Agent (see
+        // `session/turn.rs`) so the data is actually fetched and populated.
+        if config.learning.explicit_preferences_enabled && !config.learning.enabled {
+            prompt_builder = prompt_builder.add_section(Box::new(
+                crate::openhuman::learning::UserProfileSection::new(memory.clone()),
+            ));
+            log::info!(
+                "[learning] explicit-preference UserProfileSection registered \
+                 (learning.enabled=false, explicit_preferences_enabled=true)"
+            );
+        }
+
         // (#623) Memory context for threads spawned from a subconscious
         // reflection: append the resolved `source_chunks` snapshot from
         // the reflection row as a `ReflectionMemoryContextSection`. The
@@ -1014,6 +1124,46 @@ impl Agent {
                 log::info!("[learning] tool_memory_capture hook registered");
             }
         }
+
+        // ── ArchivistHook — register independently of learning.enabled ──────
+        //
+        // Episodic capture (FTS5 index, segment lifecycle, LLM recap, embedding)
+        // is the system-of-record for chat turns and must stay active even when
+        // the inference stack (`reflection`, `stability_detector`) is disabled.
+        // Gated only on `config.learning.episodic_capture_enabled` (default: true)
+        // and on the memory backend exposing a SQLite connection.
+        let archivist_hook_arc: Option<
+            Arc<crate::openhuman::agent::harness::archivist::ArchivistHook>,
+        > = if config.learning.episodic_capture_enabled {
+            match memory.sqlite_conn() {
+                Some(conn) => {
+                    let hook = Arc::new(
+                        crate::openhuman::agent::harness::archivist::ArchivistHook::new(conn, true)
+                            .with_config(config.clone()),
+                    );
+                    post_turn_hooks
+                        .push(Arc::clone(&hook)
+                            as Arc<dyn crate::openhuman::agent::hooks::PostTurnHook>);
+                    log::info!(
+                        "[archivist] episodic capture hook registered (learning.enabled={})",
+                        config.learning.enabled
+                    );
+                    Some(hook)
+                }
+                None => {
+                    log::warn!(
+                        "[archivist] no SQLite connection available from memory backend — \
+                         episodic capture disabled"
+                    );
+                    None
+                }
+            }
+        } else {
+            log::info!(
+                "[archivist] episodic_capture_enabled=false — archivist hook not registered"
+            );
+            None
+        };
 
         // Resolve the per-agent delegation tool set and visible-tool
         // whitelist from the target definition (when we have one) or
@@ -1341,12 +1491,15 @@ impl Agent {
             .auto_save(config.memory.auto_save)
             .post_turn_hooks(post_turn_hooks)
             .learning_enabled(config.learning.enabled)
+            .explicit_preferences_enabled(config.learning.explicit_preferences_enabled)
             .agent_definition_name(agent_id.to_string())
             .omit_profile(effective_omit_profile)
             .omit_memory_md(effective_omit_memory_md);
         if let Some(ps) = payload_summarizer {
             builder = builder.payload_summarizer(ps);
         }
+        builder = builder.archivist_hook(archivist_hook_arc);
+        builder = builder.unified_compaction_enabled(config.learning.unified_compaction_enabled);
         builder.build()
     }
 }
