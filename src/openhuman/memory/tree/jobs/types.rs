@@ -260,10 +260,17 @@ pub struct FlushStalePayload {
 }
 
 impl FlushStalePayload {
-    /// Stable dedupe key. `date_iso` scopes one flush per UTC day so the
-    /// scheduler can re-enqueue safely without duplicating work.
-    pub fn dedupe_key(&self, date_iso: &str) -> String {
-        format!("flush_stale:{date_iso}")
+    /// Dedupe key scoped to a 3-hour UTC block so flush_stale runs up to
+    /// 8× per day.  Without this, low-volume sources wait a full day
+    /// between seal opportunities.
+    pub fn dedupe_key(&self, _date_iso: &str) -> String {
+        let now = chrono::Utc::now();
+        let hour_block = now.format("%H").to_string().parse::<u32>().unwrap_or(0) / 3;
+        format!(
+            "flush_stale:{}-h{}",
+            now.format("%Y-%m-%d"),
+            hour_block
+        )
     }
 }
 
