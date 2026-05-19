@@ -777,8 +777,20 @@ impl PolymarketTool {
             .map(|secs| secs.to_string())
             .unwrap_or_else(|| "0".to_string());
 
+        // Cryptographically-random salt — non-CSPRNG (rand::random) is
+        // predictable enough to enable order-replay/front-running attacks
+        // against the CLOB. OsRng pulls from the OS entropy source. Same
+        // pattern used by src/openhuman/encryption/core.rs.
+        let salt = {
+            use chacha20poly1305::aead::rand_core::RngCore;
+            use chacha20poly1305::aead::OsRng;
+            let mut buf = [0_u8; 8];
+            OsRng.fill_bytes(&mut buf);
+            u64::from_le_bytes(buf)
+        };
+
         let order = Order {
-            salt: rand::random::<u64>().to_string(),
+            salt: salt.to_string(),
             maker: user.to_string(),
             signer: user.to_string(),
             taker: ZERO_ADDRESS.to_string(),
