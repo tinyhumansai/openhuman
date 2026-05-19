@@ -143,7 +143,7 @@ const ru4: TranslationMap = {
   'onboarding.contextGathering.buildingProfile': 'Составление профиля...',
   'onboarding.contextGathering.continueToChat': 'Перейти в чат',
   'onboarding.contextGathering.errorDesc':
-    'Мы не смогли построить ваш полный профиль прямо сейчас, но это нормально — вы можете продолжить, и профиль будет дополняться со временем.',
+    'Сейчас не удалось построить ваш полный профиль, но это нормально — вы можете продолжить, и ваш профиль будет формироваться со временем.',
   'onboarding.contextGathering.title': 'Сбор контекста',
   'openhuman.team_list_teams': 'Список команд',
   'overlay.ariaAttention': 'Сообщение',
@@ -363,6 +363,9 @@ const ru4: TranslationMap = {
   'settings.billing.subscription.paymentConfirmed': 'Оплата подтверждена',
   'settings.billing.subscription.perMonth': 'В месяц',
   'settings.billing.subscription.popular': 'Популярное',
+  'pages.settings.account.migration': 'Импорт из другого ассистента',
+  'pages.settings.account.migrationDesc':
+    'Перенесите память и заметки из OpenClaw (а вскоре и Hermes) в это рабочее пространство.',
 };
 
 export default ru4;

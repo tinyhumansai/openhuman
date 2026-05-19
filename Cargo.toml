@@ -1,6 +1,6 @@
 [package]
 name = "openhuman"
-version = "0.53.50"
+version = "0.54.2"
 edition = "2021"
 description = "OpenHuman core business logic and RPC server"
 autobins = false
@@ -16,6 +16,10 @@ path = "src/bin/slack_backfill.rs"
 [[bin]]
 name = "gmail-backfill-3d"
 path = "src/bin/gmail_backfill_3d.rs"
+
+[[bin]]
+name = "inference-probe"
+path = "src/bin/inference_probe.rs"
 
 [lib]
 name = "openhuman_core"

@@ -629,7 +629,12 @@ pub(crate) async fn seal_one_level(
             .map(|n| n.max(0) as u32)
             .context("Failed to read current max_level for tree")?;
 
-        store::insert_summary_tx(&tx, &node, Some(&staged))?;
+        store::insert_summary_tx(
+            &tx,
+            &node,
+            Some(&staged),
+            &crate::openhuman::memory::tree::store::tree_active_signature(config),
+        )?;
         // Forward-compat: index any entities the summariser emitted into
         // `mem_tree_entity_index` so Phase 4 retrieval can resolve
         // "summaries mentioning Alice" via the same inverted index as

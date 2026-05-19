@@ -173,6 +173,26 @@ const bn5: TranslationMap = {
   'settings.mascot.localDefault': 'লোকাল OpenHuman (ডিফল্ট)',
   'settings.mascot.noCharacters': 'কোনো OpenHuman ক্যারেক্টার এখনও উপলব্ধ নেই',
   'settings.mascot.noColorVariants': 'কোনো রঙের ভেরিয়েন্ট নেই',
+  'settings.mascot.voice.current': 'বর্তমান',
+  'settings.mascot.voice.customDesc':
+    'ভয়েস আইডি খুঁজুন api.elevenlabs.io/v1/voices বা আপনার ElevenLabs ড্যাশবোর্ডে। শুধু আইডি সংরক্ষিত থাকে — আপনার API কী ব্যাকএন্ডে থাকে।',
+  'settings.mascot.voice.customHeading': 'কাস্টম ভয়েস আইডি',
+  'settings.mascot.voice.customOption': 'অন্যান্য (ভয়েস আইডি পেস্ট করুন)…',
+  'settings.mascot.voice.desc':
+    'স্পোকেন উত্তরের জন্য ম্যাসকট যে ElevenLabs ভয়েস ব্যবহার করে তা বেছে নিন। জেন্ডার অনুযায়ী ফিল্টার করুন, কিউরেটেড তালিকা থেকে বাছাই করুন, কাস্টম আইডি পেস্ট করুন, অথবা ইন্টারফেস ভাষার সাথে মেলে এমন ভয়েস অ্যাপটিকে বেছে নিতে দিন।',
+  'settings.mascot.voice.genderFemale': 'মহিলা',
+  'settings.mascot.voice.genderHeading': 'ভয়েস জেন্ডার',
+  'settings.mascot.voice.genderMale': 'পুরুষ',
+  'settings.mascot.voice.heading': 'ভয়েস',
+  'settings.mascot.voice.preset': 'ভয়েস প্রিসেট',
+  'settings.mascot.voice.presetHeading': 'ভয়েস প্রিসেট',
+  'settings.mascot.voice.preview': 'ভয়েস প্রিভিউ',
+  'settings.mascot.voice.previewError': 'ভয়েস প্রিভিউ ব্যর্থ হয়েছে',
+  'settings.mascot.voice.previewing': 'প্রিভিউ চলছে…',
+  'settings.mascot.voice.reset': 'ডিফল্টে রিসেট করুন',
+  'settings.mascot.voice.useLocaleDefault': 'অ্যাপের ভাষার সাথে মিলান',
+  'settings.mascot.voice.useLocaleDefaultDesc':
+    'বর্তমান ইন্টারফেস ভাষার জন্য স্বয়ংক্রিয়ভাবে একটি ভয়েস বেছে নিন।',
   'settings.memoryWindow.balanced.badge': 'প্রস্তাবিত',
   'settings.memoryWindow.balanced.hint':
     'যৌক্তিক ডিফল্ট — প্রতিটি রানে অতিরিক্ত টোকেন না পুড়িয়ে ভাল ধারাবাহিকতা।',
@@ -397,6 +417,28 @@ const bn5: TranslationMap = {
   'settings.localModel.status.ollamaDocs': 'Ollama ডকস',
   'settings.localModel.status.thenRetry':
     'সেটআপ নির্দেশনার জন্য, তারপর আপনার রানটাইম পৌঁছানো গেলে পুনরায় চেষ্টা করুন।',
+  'settings.appearance.title': 'Appearance',
+  'settings.appearance.themeHeading': 'Theme',
+  'settings.appearance.themeAria': 'Theme',
+  'settings.appearance.modeLight': 'Light',
+  'settings.appearance.modeLightDesc': 'Bright surfaces, dark text.',
+  'settings.appearance.modeDark': 'Dark',
+  'settings.appearance.modeDarkDesc': 'Dim surfaces, easier on the eyes after dusk.',
+  'settings.appearance.modeSystem': 'Match system',
+  'settings.appearance.modeSystemDesc': 'Follow your OS appearance setting.',
+  'settings.appearance.helperText':
+    'Dark mode switches the entire app — chat, settings, panels — to a dim palette. "Match system" follows your OS appearance and updates live.',
+  'settings.mascot.characterPreview': 'Preview',
+  'settings.mascot.characterStates': 'states',
+  'settings.mascot.characterVisemes': 'visemes',
+  'settings.mascot.colorAria': 'OpenHuman color',
+  'settings.mascot.colorBlack': 'Black',
+  'settings.mascot.colorBurgundy': 'Burgundy',
+  'settings.mascot.colorGreen': 'Green',
+  'settings.mascot.colorNavy': 'Navy',
+  'settings.mascot.colorYellow': 'Yellow',
+  'settings.mascot.libraryUnavailable': 'OpenHuman library unavailable',
+  'settings.mascot.title': 'OpenHuman',
 };
 
 export default bn5;

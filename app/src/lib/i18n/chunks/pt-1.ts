@@ -145,6 +145,8 @@ const pt1: TranslationMap = {
     'Seu dispositivo está offline agora. Verifique sua rede ou reinicie o app para reconectar.',
   'home.restartCore': 'Reiniciar Core',
   'home.restartingCore': 'Reiniciando o core…',
+  'home.themeToggle.toLight': 'Mudar para modo claro',
+  'home.themeToggle.toDark': 'Mudar para modo escuro',
   'chat.newThread': 'Nova conversa',
   'chat.typeMessage': 'Digite uma mensagem...',
   'chat.send': 'Enviar mensagem',
@@ -390,6 +392,43 @@ const pt1: TranslationMap = {
     'Navegar pelas notas de versão e compilações anteriores no GitHub.',
   'settings.about.openReleases': 'Abrir versões no GitHub',
   'settings.ai.overview': 'Visão Geral do Sistema de IA',
+  'migration.title': 'Importar de outro assistente',
+  'migration.description':
+    'Migre memória e anotações de outro assistente local para este espaço de trabalho. Comece com uma Pré-visualização para ver exatamente o que mudaria, depois clique em Aplicar para copiar os dados. Sua memória atual é salva primeiro.',
+  'migration.vendorLabel': 'Fornecedor de origem',
+  'migration.sourceLabel': 'Caminho do espaço de trabalho de origem (opcional)',
+  'migration.sourcePlaceholder':
+    'Deixe em branco para detecção automática (ex.: ~/.openclaw/workspace)',
+  'migration.sourceHint':
+    'Em branco usa o local padrão do fornecedor. Informe um caminho explícito se você moveu o espaço de trabalho.',
+  'migration.previewAction': 'Pré-visualizar',
+  'migration.previewRunning': 'Pré-visualizando…',
+  'migration.applyAction': 'Aplicar importação',
+  'migration.applyRunning': 'Importando…',
+  'migration.applyDisclaimer':
+    'Aplicar é desbloqueado após uma Pré-visualização bem-sucedida da mesma origem. A memória existente é salva antes de qualquer importação.',
+  'migration.reportTitlePreview': 'Pré-visualização — nada importado ainda',
+  'migration.reportTitleApplied': 'Importação concluída',
+  'migration.report.source': 'Espaço de trabalho de origem',
+  'migration.report.target': 'Espaço de trabalho de destino',
+  'migration.report.fromSqlite': 'Do SQLite (brain.db)',
+  'migration.report.fromMarkdown': 'Do Markdown',
+  'migration.report.imported': 'Importados',
+  'migration.report.skippedUnchanged': 'Ignorados (sem alteração)',
+  'migration.report.renamedConflicts': 'Renomeados em caso de conflito',
+  'migration.report.warnings': 'Avisos',
+  'migration.report.previewHint':
+    'Nenhum dado foi importado ainda. Clique em Aplicar importação para copiar.',
+  'migration.report.appliedHint':
+    'As entradas importadas já estão na sua memória. Execute Pré-visualizar novamente para comparar.',
+  'migration.hermesComingSoonPrefix': 'O importador Hermes está no roteiro — veja ',
+  'migration.hermesComingSoonSuffix':
+    ' para contexto. Use OpenClaw para migrar hoje; o Hermes chega em uma próxima entrega.',
+  'migration.hermesLinkText': '#1440',
+  'migration.confirmImport.singular':
+    'Importar {count} entrada para o espaço de trabalho atual?\n\nOrigem: {source}\nDestino: {target}\n\nA memória existente será salva antes da importação.',
+  'migration.confirmImport.plural':
+    'Importar {count} entradas para o espaço de trabalho atual?\n\nOrigem: {source}\nDestino: {target}\n\nA memória existente será salva antes da importação.',
 };
 
 export default pt1;

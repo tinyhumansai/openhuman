@@ -174,6 +174,26 @@ const hi5: TranslationMap = {
   'settings.mascot.localDefault': 'लोकल OpenHuman (डिफ़ॉल्ट)',
   'settings.mascot.noCharacters': 'अभी तक कोई OpenHuman कैरेक्टर उपलब्ध नहीं है',
   'settings.mascot.noColorVariants': 'कोई कलर वेरिएंट नहीं',
+  'settings.mascot.voice.current': 'वर्तमान',
+  'settings.mascot.voice.customDesc':
+    'वॉइस आईडी api.elevenlabs.io/v1/voices या अपने ElevenLabs डैशबोर्ड पर खोजें। केवल आईडी संग्रहीत होती है — आपकी API कुंजी बैकएंड पर रहती है।',
+  'settings.mascot.voice.customHeading': 'कस्टम वॉइस आईडी',
+  'settings.mascot.voice.customOption': 'अन्य (वॉइस आईडी पेस्ट करें)…',
+  'settings.mascot.voice.desc':
+    'बोले गए उत्तरों के लिए मैस्कॉट जो ElevenLabs वॉइस उपयोग करता है उसे चुनें। लिंग के अनुसार फ़िल्टर करें, क्यूरेटेड सूची से चुनें, कस्टम आईडी पेस्ट करें, या ऐप को इंटरफ़ेस भाषा से मेल खाने वाली आवाज़ चुनने दें।',
+  'settings.mascot.voice.genderFemale': 'स्त्री',
+  'settings.mascot.voice.genderHeading': 'वॉइस लिंग',
+  'settings.mascot.voice.genderMale': 'पुरुष',
+  'settings.mascot.voice.heading': 'वॉइस',
+  'settings.mascot.voice.preset': 'वॉइस प्रीसेट',
+  'settings.mascot.voice.presetHeading': 'वॉइस प्रीसेट',
+  'settings.mascot.voice.preview': 'वॉइस पूर्वावलोकन',
+  'settings.mascot.voice.previewError': 'वॉइस पूर्वावलोकन विफल हुआ',
+  'settings.mascot.voice.previewing': 'पूर्वावलोकन हो रहा है…',
+  'settings.mascot.voice.reset': 'डिफ़ॉल्ट पर रीसेट करें',
+  'settings.mascot.voice.useLocaleDefault': 'ऐप भाषा से मिलाएँ',
+  'settings.mascot.voice.useLocaleDefaultDesc':
+    'वर्तमान इंटरफ़ेस भाषा के लिए स्वचालित रूप से एक आवाज़ चुनें।',
   'settings.memoryWindow.balanced.badge': 'अनुशंसित',
   'settings.memoryWindow.balanced.hint':
     'समझदारी भरा डिफ़ॉल्ट — हर रन पर अतिरिक्त टोकन खर्च किए बिना अच्छी निरंतरता।',
@@ -400,6 +420,28 @@ const hi5: TranslationMap = {
   'settings.localModel.status.ollamaDocs': 'Ollama दस्तावेज़',
   'settings.localModel.status.thenRetry':
     'सेटअप निर्देशों के लिए, फिर आपका रनटाइम पहुँच योग्य होने के बाद पुनः प्रयास करें।',
+  'settings.appearance.title': 'Appearance',
+  'settings.appearance.themeHeading': 'Theme',
+  'settings.appearance.themeAria': 'Theme',
+  'settings.appearance.modeLight': 'Light',
+  'settings.appearance.modeLightDesc': 'Bright surfaces, dark text.',
+  'settings.appearance.modeDark': 'Dark',
+  'settings.appearance.modeDarkDesc': 'Dim surfaces, easier on the eyes after dusk.',
+  'settings.appearance.modeSystem': 'Match system',
+  'settings.appearance.modeSystemDesc': 'Follow your OS appearance setting.',
+  'settings.appearance.helperText':
+    'Dark mode switches the entire app — chat, settings, panels — to a dim palette. "Match system" follows your OS appearance and updates live.',
+  'settings.mascot.characterPreview': 'Preview',
+  'settings.mascot.characterStates': 'states',
+  'settings.mascot.characterVisemes': 'visemes',
+  'settings.mascot.colorAria': 'OpenHuman color',
+  'settings.mascot.colorBlack': 'Black',
+  'settings.mascot.colorBurgundy': 'Burgundy',
+  'settings.mascot.colorGreen': 'Green',
+  'settings.mascot.colorNavy': 'Navy',
+  'settings.mascot.colorYellow': 'Yellow',
+  'settings.mascot.libraryUnavailable': 'OpenHuman library unavailable',
+  'settings.mascot.title': 'OpenHuman',
 };
 
 export default hi5;

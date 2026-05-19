@@ -174,6 +174,26 @@ const ru5: TranslationMap = {
   'settings.mascot.localDefault': 'Локальный OpenHuman (по умолчанию)',
   'settings.mascot.noCharacters': 'Персонажи OpenHuman пока недоступны',
   'settings.mascot.noColorVariants': 'Нет цветовых вариантов',
+  'settings.mascot.voice.current': 'текущий',
+  'settings.mascot.voice.customDesc':
+    'Идентификаторы голосов можно найти на api.elevenlabs.io/v1/voices или в вашей панели ElevenLabs. Сохраняется только идентификатор — ваш API-ключ остаётся на бэкенде.',
+  'settings.mascot.voice.customHeading': 'Пользовательский идентификатор голоса',
+  'settings.mascot.voice.customOption': 'Другое (вставить идентификатор голоса)…',
+  'settings.mascot.voice.desc':
+    'Выберите голос ElevenLabs, который маскот использует для устных ответов. Фильтруйте по полу, выбирайте из подобранного списка, вставьте свой идентификатор или позвольте приложению выбрать голос, соответствующий языку интерфейса.',
+  'settings.mascot.voice.genderFemale': 'Женский',
+  'settings.mascot.voice.genderHeading': 'Пол голоса',
+  'settings.mascot.voice.genderMale': 'Мужской',
+  'settings.mascot.voice.heading': 'Голос',
+  'settings.mascot.voice.preset': 'Предустановка голоса',
+  'settings.mascot.voice.presetHeading': 'Предустановка голоса',
+  'settings.mascot.voice.preview': 'Предпросмотр голоса',
+  'settings.mascot.voice.previewError': 'Не удалось воспроизвести предпросмотр голоса',
+  'settings.mascot.voice.previewing': 'Воспроизведение предпросмотра…',
+  'settings.mascot.voice.reset': 'Сбросить к значениям по умолчанию',
+  'settings.mascot.voice.useLocaleDefault': 'Соответствовать языку приложения',
+  'settings.mascot.voice.useLocaleDefaultDesc':
+    'Автоматически выбрать голос для текущего языка интерфейса.',
   'settings.memoryWindow.balanced.badge': 'Рекомендуется',
   'settings.memoryWindow.balanced.hint':
     'Разумное значение по умолчанию — хорошая непрерывность без лишних трат токенов на каждом запуске.',
@@ -400,6 +420,28 @@ const ru5: TranslationMap = {
   'settings.localModel.status.ollamaDocs': 'Документация Ollama',
   'settings.localModel.status.thenRetry':
     'для инструкций по настройке, затем повторите, когда среда выполнения станет доступна.',
+  'settings.appearance.title': 'Appearance',
+  'settings.appearance.themeHeading': 'Theme',
+  'settings.appearance.themeAria': 'Theme',
+  'settings.appearance.modeLight': 'Light',
+  'settings.appearance.modeLightDesc': 'Bright surfaces, dark text.',
+  'settings.appearance.modeDark': 'Dark',
+  'settings.appearance.modeDarkDesc': 'Dim surfaces, easier on the eyes after dusk.',
+  'settings.appearance.modeSystem': 'Match system',
+  'settings.appearance.modeSystemDesc': 'Follow your OS appearance setting.',
+  'settings.appearance.helperText':
+    'Dark mode switches the entire app — chat, settings, panels — to a dim palette. "Match system" follows your OS appearance and updates live.',
+  'settings.mascot.characterPreview': 'Preview',
+  'settings.mascot.characterStates': 'states',
+  'settings.mascot.characterVisemes': 'visemes',
+  'settings.mascot.colorAria': 'OpenHuman color',
+  'settings.mascot.colorBlack': 'Black',
+  'settings.mascot.colorBurgundy': 'Burgundy',
+  'settings.mascot.colorGreen': 'Green',
+  'settings.mascot.colorNavy': 'Navy',
+  'settings.mascot.colorYellow': 'Yellow',
+  'settings.mascot.libraryUnavailable': 'OpenHuman library unavailable',
+  'settings.mascot.title': 'OpenHuman',
 };
 
 export default ru5;

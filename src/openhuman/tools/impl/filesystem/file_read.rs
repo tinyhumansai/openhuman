@@ -323,7 +323,16 @@ mod tests {
         let result = tool.execute(json!({"path": "escape.txt"})).await.unwrap();
 
         assert!(result.is_error);
-        assert!(result.output().contains("escapes workspace"));
+        // After the symlink-safe canonical check landed in
+        // SecurityPolicy::is_path_allowed (#1927), the policy layer blocks
+        // the escape before file_read's own resolved-path check runs — the
+        // error becomes "Path not allowed by security policy". Either
+        // message signals defense-in-depth worked.
+        let out = result.output();
+        assert!(
+            out.contains("escapes workspace") || out.contains("not allowed"),
+            "expected escape/not-allowed error, got: {out}"
+        );
 
         let _ = tokio::fs::remove_dir_all(&root).await;
     }

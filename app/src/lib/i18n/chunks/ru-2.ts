@@ -284,10 +284,10 @@ const ru2: TranslationMap = {
   'chat.topUpToContinue': 'Пополни баланс для продолжения.',
   'chat.budgetComplete':
     'Включённый бюджет исчерпан. Добавь кредиты или улучши план для продолжения.',
-  'chat.rateLimitReached': 'Достигнут лимит за 10 часов.',
   'chat.topUp': 'Пополнить',
-  'chat.fiveHourLimit': 'Лимит 5 часов',
-  'chat.weeklyLimit': 'Еженедельный лимит',
+  'chat.cycle': 'Цикл',
+  'chat.cycleSpent': 'Потрачено за цикл',
+  'chat.cycleRemaining': 'Осталось',
   'chat.left': 'осталось',
   'chat.setup': 'Настроить',
   'chat.switchToText': 'Переключиться на текст',

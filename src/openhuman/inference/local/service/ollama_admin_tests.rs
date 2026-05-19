@@ -947,3 +947,72 @@ fn binary_present_uses_ollama_bin_env_var_when_set() {
         "OLLAMA_BIN pointing to a real file must make ollama_binary_present return true"
     );
 }
+
+#[tokio::test]
+async fn diagnostics_gates_models_by_context_window() {
+    let _guard = crate::openhuman::inference::inference_test_guard();
+
+    // /api/tags lists two models; /api/show reports their context windows:
+    // one at the 8192 floor (accepted) and one well below (rejected).
+    let app = Router::new()
+        .route(
+            "/api/tags",
+            get(|| async {
+                Json(json!({
+                    "models": [
+                        {"name": "bge-m3:latest", "modified_at": "", "size": 1u64, "digest": "d"},
+                        {"name": "tiny-embed:latest", "modified_at": "", "size": 2u64, "digest": "d"}
+                    ]
+                }))
+            }),
+        )
+        .route(
+            "/api/show",
+            axum::routing::post(|Json(body): Json<serde_json::Value>| async move {
+                let model = body["model"].as_str().unwrap_or_default().to_string();
+                let ctx = if model.starts_with("bge-m3") { 8192 } else { 2048 };
+                Json(json!({
+                    "model_info": {
+                        "general.architecture": "bert",
+                        "bert.context_length": ctx,
+                    },
+                    "capabilities": ["embedding"],
+                }))
+            }),
+        );
+    let base = spawn_mock(app).await;
+    unsafe {
+        std::env::set_var("OPENHUMAN_OLLAMA_BASE_URL", &base);
+    }
+
+    let config = Config::default();
+    let service = LocalAiService::new(&config);
+    let diag = service.diagnostics(&config).await.expect("diagnostics");
+
+    assert_eq!(diag["ollama_running"], true);
+    assert_eq!(diag["context_requirement"]["min_context_tokens"], 8192);
+
+    let models = diag["installed_models"]
+        .as_array()
+        .expect("installed_models");
+    let by_name = |needle: &str| {
+        models
+            .iter()
+            .find(|m| m["name"].as_str().unwrap_or("").starts_with(needle))
+            .unwrap_or_else(|| panic!("model {needle} missing"))
+            .clone()
+    };
+
+    let accepted = by_name("bge-m3");
+    assert_eq!(accepted["context_length"], 8192);
+    assert_eq!(accepted["eligibility"]["status"], "ok");
+
+    let rejected = by_name("tiny-embed");
+    assert_eq!(rejected["context_length"], 2048);
+    assert_eq!(rejected["eligibility"]["status"], "below_minimum");
+    assert_eq!(rejected["eligibility"]["required"], 8192);
+
+    unsafe {
+        std::env::remove_var("OPENHUMAN_OLLAMA_BASE_URL");
+    }
+}

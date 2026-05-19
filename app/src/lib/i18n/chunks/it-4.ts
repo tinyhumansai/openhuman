@@ -365,6 +365,9 @@ const it4: TranslationMap = {
   'settings.billing.subscription.paymentConfirmed': 'Pagamento confermato',
   'settings.billing.subscription.perMonth': 'Al mese',
   'settings.billing.subscription.popular': 'Popolare',
+  'pages.settings.account.migration': 'Importa da un altro assistente',
+  'pages.settings.account.migrationDesc':
+    'Migra memoria e note da OpenClaw (e presto Hermes) in questo spazio di lavoro.',
 };
 
 export default it4;

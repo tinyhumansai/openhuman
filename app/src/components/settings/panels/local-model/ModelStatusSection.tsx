@@ -4,8 +4,48 @@ import type {
   LocalAiDiagnostics,
   LocalAiDownloadsProgress,
   LocalAiStatus,
+  ModelContextEligibility,
   RepairAction,
 } from '../../../../utils/tauriCommands';
+
+/**
+ * Badge rendering a model's context-window verdict against the memory
+ * layer minimum. `below_minimum` is a hard rejection (the memory pipeline
+ * would silently truncate and corrupt recall); `unknown` is a soft warning.
+ */
+const ContextEligibilityBadge = ({
+  eligibility,
+}: {
+  eligibility: ModelContextEligibility | null | undefined;
+}) => {
+  if (!eligibility) return null;
+  const fmt = (n: number) => n.toLocaleString();
+  if (eligibility.status === 'ok') {
+    return (
+      <span
+        className="shrink-0 rounded-full bg-green-100 dark:bg-green-500/15 px-2 py-0.5 text-[10px] font-medium text-green-700 dark:text-green-300"
+        title={`Context window ${fmt(eligibility.context_length)} tokens — meets the memory-layer minimum`}>
+        {fmt(eligibility.context_length)} ctx ✓
+      </span>
+    );
+  }
+  if (eligibility.status === 'below_minimum') {
+    return (
+      <span
+        className="shrink-0 rounded-full bg-red-100 dark:bg-red-500/15 px-2 py-0.5 text-[10px] font-medium text-red-700 dark:text-red-300"
+        title={`Rejected: context window ${fmt(eligibility.context_length)} tokens is below the ${fmt(eligibility.required)}-token minimum the memory layer requires. Recall would be corrupted by silent truncation.`}>
+        {fmt(eligibility.context_length)} ctx — below {fmt(eligibility.required)} min
+      </span>
+    );
+  }
+  return (
+    <span
+      className="shrink-0 rounded-full bg-stone-200 dark:bg-neutral-700 px-2 py-0.5 text-[10px] font-medium text-stone-600 dark:text-neutral-300"
+      title={`Context window unknown — could not confirm it meets the ${fmt(eligibility.required)}-token memory-layer minimum`}>
+      ctx unknown
+    </span>
+  );
+};
 
 interface ModelStatusSectionProps {
   status: LocalAiStatus | null;
@@ -394,18 +434,34 @@ const ModelStatusSection = ({
                     {diagnostics.installed_models.length})
                   </div>
                   <div className="space-y-1">
-                    {diagnostics.installed_models.map(m => (
-                      <div
-                        key={m.name}
-                        className="flex items-center justify-between rounded border border-stone-200 dark:border-neutral-800 px-2 py-1.5 text-xs">
-                        <span className="text-stone-800 dark:text-neutral-100 font-medium">
-                          {m.name}
-                        </span>
-                        <span className="text-stone-400 dark:text-neutral-500">
-                          {typeof m.size === 'number' ? formatBytes(m.size) : ''}
-                        </span>
-                      </div>
-                    ))}
+                    {diagnostics.installed_models.map(m => {
+                      const rejected = m.eligibility?.status === 'below_minimum';
+                      return (
+                        <div
+                          key={m.name}
+                          className={`flex items-center justify-between gap-2 rounded border px-2 py-1.5 text-xs ${
+                            rejected
+                              ? 'border-red-300 dark:border-red-500/40 bg-red-50 dark:bg-red-500/10'
+                              : 'border-stone-200 dark:border-neutral-800'
+                          }`}>
+                          <span
+                            className={`min-w-0 truncate font-medium ${
+                              rejected
+                                ? 'text-red-700 dark:text-red-300'
+                                : 'text-stone-800 dark:text-neutral-100'
+                            }`}
+                            title={m.name}>
+                            {m.name}
+                          </span>
+                          <span className="flex shrink-0 items-center gap-2">
+                            <ContextEligibilityBadge eligibility={m.eligibility} />
+                            <span className="text-stone-400 dark:text-neutral-500">
+                              {typeof m.size === 'number' ? formatBytes(m.size) : ''}
+                            </span>
+                          </span>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               )}

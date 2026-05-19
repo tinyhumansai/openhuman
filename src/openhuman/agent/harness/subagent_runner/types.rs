@@ -100,6 +100,12 @@ pub enum SubagentRunError {
     #[error("provider call failed: {0}")]
     Provider(#[from] anyhow::Error),
 
+    #[error("sub-agent spawn depth exceeded: attempted depth {attempted_depth}, max {max_depth}")]
+    SpawnDepthExceeded {
+        attempted_depth: usize,
+        max_depth: usize,
+    },
+
     #[error("sub-agent exceeded maximum iterations ({0})")]
     MaxIterationsExceeded(usize),
 }

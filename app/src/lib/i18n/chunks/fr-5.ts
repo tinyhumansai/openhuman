@@ -178,6 +178,26 @@ const fr5: TranslationMap = {
   'settings.mascot.localDefault': 'OpenHuman local (par défaut)',
   'settings.mascot.noCharacters': "Aucun personnage OpenHuman n'est encore disponible",
   'settings.mascot.noColorVariants': 'Aucune variante de couleur',
+  'settings.mascot.voice.current': 'actuel',
+  'settings.mascot.voice.customDesc':
+    "Trouvez les identifiants vocaux sur api.elevenlabs.io/v1/voices ou dans votre tableau de bord ElevenLabs. Seul l'identifiant est stocké — votre clé API reste sur le backend.",
+  'settings.mascot.voice.customHeading': 'Identifiant vocal personnalisé',
+  'settings.mascot.voice.customOption': "Autre (coller l'identifiant vocal)…",
+  'settings.mascot.voice.desc':
+    "Choisissez la voix ElevenLabs utilisée par la mascotte pour les réponses parlées. Filtrez par genre, choisissez dans la liste sélectionnée, collez un identifiant personnalisé, ou laissez l'application choisir une voix qui correspond à la langue de l'interface.",
+  'settings.mascot.voice.genderFemale': 'Féminin',
+  'settings.mascot.voice.genderHeading': 'Genre de la voix',
+  'settings.mascot.voice.genderMale': 'Masculin',
+  'settings.mascot.voice.heading': 'Voix',
+  'settings.mascot.voice.preset': 'Préréglage vocal',
+  'settings.mascot.voice.presetHeading': 'Préréglage vocal',
+  'settings.mascot.voice.preview': 'Aperçu de la voix',
+  'settings.mascot.voice.previewError': "Échec de l'aperçu de la voix",
+  'settings.mascot.voice.previewing': 'Aperçu en cours…',
+  'settings.mascot.voice.reset': 'Réinitialiser à la valeur par défaut',
+  'settings.mascot.voice.useLocaleDefault': "Faire correspondre à la langue de l'application",
+  'settings.mascot.voice.useLocaleDefaultDesc':
+    "Choisir automatiquement une voix pour la langue de l'interface actuelle.",
   'settings.memoryWindow.balanced.badge': 'Recommandé',
   'settings.memoryWindow.balanced.hint':
     'Valeur par défaut raisonnable — bonne continuité sans consommer de jetons supplémentaires à chaque exécution.',
@@ -405,6 +425,28 @@ const fr5: TranslationMap = {
   'settings.localModel.status.ollamaDocs': 'Documentation Ollama',
   'settings.localModel.status.thenRetry':
     'pour les instructions de configuration, puis réessayez une fois votre runtime accessible.',
+  'settings.appearance.title': 'Appearance',
+  'settings.appearance.themeHeading': 'Theme',
+  'settings.appearance.themeAria': 'Theme',
+  'settings.appearance.modeLight': 'Light',
+  'settings.appearance.modeLightDesc': 'Bright surfaces, dark text.',
+  'settings.appearance.modeDark': 'Dark',
+  'settings.appearance.modeDarkDesc': 'Dim surfaces, easier on the eyes after dusk.',
+  'settings.appearance.modeSystem': 'Match system',
+  'settings.appearance.modeSystemDesc': 'Follow your OS appearance setting.',
+  'settings.appearance.helperText':
+    'Dark mode switches the entire app — chat, settings, panels — to a dim palette. "Match system" follows your OS appearance and updates live.',
+  'settings.mascot.characterPreview': 'Preview',
+  'settings.mascot.characterStates': 'states',
+  'settings.mascot.characterVisemes': 'visemes',
+  'settings.mascot.colorAria': 'OpenHuman color',
+  'settings.mascot.colorBlack': 'Black',
+  'settings.mascot.colorBurgundy': 'Burgundy',
+  'settings.mascot.colorGreen': 'Green',
+  'settings.mascot.colorNavy': 'Navy',
+  'settings.mascot.colorYellow': 'Yellow',
+  'settings.mascot.libraryUnavailable': 'OpenHuman library unavailable',
+  'settings.mascot.title': 'OpenHuman',
 };
 
 export default fr5;

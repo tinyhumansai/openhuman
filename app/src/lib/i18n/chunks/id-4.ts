@@ -143,7 +143,7 @@ const id4: TranslationMap = {
   'onboarding.contextGathering.buildingProfile': 'Membangun profil Anda...',
   'onboarding.contextGathering.continueToChat': 'Lanjutkan ke chat',
   'onboarding.contextGathering.errorDesc':
-    'Kami tidak bisa membangun profil lengkap Anda sekarang, tapi tidak apa-apa — Anda bisa lanjut dan profil Anda akan terbentuk seiring waktu.',
+    'Kami belum bisa membangun profil lengkap Anda sekarang, tetapi tidak apa-apa — Anda bisa melanjutkan dan profil Anda akan terbangun seiring waktu.',
   'onboarding.contextGathering.title': 'Pengumpulan Konteks',
   'openhuman.team_list_teams': 'Daftar tim',
   'overlay.ariaAttention': 'Pesan perhatian',
@@ -364,6 +364,9 @@ const id4: TranslationMap = {
   'settings.billing.subscription.paymentConfirmed': 'Pembayaran dikonfirmasi',
   'settings.billing.subscription.perMonth': 'Per bulan',
   'settings.billing.subscription.popular': 'Populer',
+  'pages.settings.account.migration': 'Impor dari asisten lain',
+  'pages.settings.account.migrationDesc':
+    'Migrasikan memori dan catatan dari OpenClaw (dan, segera, Hermes) ke ruang kerja ini.',
 };
 
 export default id4;

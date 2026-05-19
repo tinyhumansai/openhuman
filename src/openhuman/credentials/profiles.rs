@@ -593,7 +593,16 @@ impl AuthProfilesStore {
                         thread::sleep(Duration::from_millis(LOCK_WAIT_MS));
                         waited = waited.saturating_add(LOCK_WAIT_MS);
                     } else {
-                        return Err(e).context("Failed to create auth profile lock");
+                        // Sentry OPENHUMAN-TAURI-H8 collapses every
+                        // non-AlreadyExists, non-transient `create_new`
+                        // failure into a single fingerprint with no
+                        // breadcrumb of which OS code actually fired.
+                        // `annotate_lock_create_failure` embeds the
+                        // underlying `io::ErrorKind` + `raw_os_error()` so
+                        // future events split by root cause and we can
+                        // widen `is_transient_fs_error` (or fix the
+                        // underlying condition) for whichever code is hot.
+                        return Err(annotate_lock_create_failure(e));
                     }
                 }
             }
@@ -664,6 +673,21 @@ impl AuthProfilesStore {
 /// means we keep waiting on a lock that was actually already gone, which
 /// is the safe direction. Backed by sysinfo so we don't grow a new libc /
 /// windows-sys dependency for one syscall.
+/// Wrap a non-`AlreadyExists` `create_new` failure with a context line that
+/// embeds the underlying `io::ErrorKind` and `raw_os_error()`. Pulled out
+/// of [`AuthProfilesStore::acquire_lock`] so unit tests can drive the
+/// formatting directly without depending on filesystem permissions (CI runs
+/// as root and bypasses `chmod 0500`).
+fn annotate_lock_create_failure(err: anyhow::Error) -> anyhow::Error {
+    let io = err.chain().find_map(|c| c.downcast_ref::<std::io::Error>());
+    let kind = io.map(|ioe| ioe.kind());
+    let os_code = io.and_then(|ioe| ioe.raw_os_error());
+    err.context(format!(
+        "Failed to create auth profile lock (kind={:?}, os_code={:?})",
+        kind, os_code
+    ))
+}
+
 fn is_pid_alive(pid: u32) -> bool {
     use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
     let target = Pid::from_u32(pid);

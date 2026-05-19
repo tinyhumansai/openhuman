@@ -140,6 +140,8 @@ const bn1: TranslationMap = {
     'আপনার ডিভাইস এখন অফলাইনে। নেটওয়ার্ক পরীক্ষা করুন বা অ্যাপ রিস্টার্ট করুন।',
   'home.restartCore': 'কোর রিস্টার্ট',
   'home.restartingCore': 'কোর রিস্টার্ট হচ্ছে…',
+  'home.themeToggle.toLight': 'লাইট মোডে স্যুইচ করুন',
+  'home.themeToggle.toDark': 'ডার্ক মোডে স্যুইচ করুন',
   'chat.newThread': 'নতুন থ্রেড',
   'chat.typeMessage': 'একটি বার্তা টাইপ করুন...',
   'chat.send': 'বার্তা পাঠান',
@@ -380,6 +382,41 @@ const bn1: TranslationMap = {
   'settings.about.releasesDesc': 'GitHub-এ রিলিজ নোট ও আগের বিল্ড দেখুন।',
   'settings.about.openReleases': 'GitHub রিলিজ খুলুন',
   'settings.ai.overview': 'AI সিস্টেম ওভারভিউ',
+  'migration.title': 'অন্য সহকারী থেকে আমদানি করুন',
+  'migration.description':
+    'অন্য একটি লোকাল সহকারী থেকে মেমরি ও নোট এই ওয়ার্কস্পেসে স্থানান্তর করুন। প্রথমে Preview চালিয়ে দেখুন ঠিক কী বদলাবে, তারপর Apply চাপলে ডেটা কপি হবে। আপনার বর্তমান মেমরি আগে ব্যাকআপ নেওয়া হবে।',
+  'migration.vendorLabel': 'উৎস',
+  'migration.sourceLabel': 'উৎস ওয়ার্কস্পেসের পাথ (ঐচ্ছিক)',
+  'migration.sourcePlaceholder': 'অটো-ডিটেক্টের জন্য খালি রাখুন (যেমন ~/.openclaw/workspace)',
+  'migration.sourceHint':
+    'খালি রাখলে উৎসের ডিফল্ট লোকেশন ব্যবহার হবে। ওয়ার্কস্পেস সরিয়ে থাকলে স্পষ্ট পাথ দিন।',
+  'migration.previewAction': 'প্রিভিউ',
+  'migration.previewRunning': 'প্রিভিউ চলছে…',
+  'migration.applyAction': 'আমদানি প্রয়োগ করুন',
+  'migration.applyRunning': 'আমদানি হচ্ছে…',
+  'migration.applyDisclaimer':
+    'একই উৎসের সফল Preview হলেই Apply খুলবে। যে কোনো আমদানির আগে বর্তমান মেমরির ব্যাকআপ নেওয়া হয়।',
+  'migration.reportTitlePreview': 'প্রিভিউ — এখনো কিছু আমদানি হয়নি',
+  'migration.reportTitleApplied': 'আমদানি সম্পন্ন',
+  'migration.report.source': 'উৎস ওয়ার্কস্পেস',
+  'migration.report.target': 'লক্ষ্য ওয়ার্কস্পেস',
+  'migration.report.fromSqlite': 'SQLite (brain.db) থেকে',
+  'migration.report.fromMarkdown': 'Markdown থেকে',
+  'migration.report.imported': 'আমদানিকৃত',
+  'migration.report.skippedUnchanged': 'এড়ানো হয়েছে (অপরিবর্তিত)',
+  'migration.report.renamedConflicts': 'দ্বন্দ্বে নাম বদলানো হয়েছে',
+  'migration.report.warnings': 'সতর্কতা',
+  'migration.report.previewHint': 'এখনো কোনো ডেটা আমদানি হয়নি। কপি করতে Apply চাপুন।',
+  'migration.report.appliedHint':
+    'আমদানিকৃত এন্ট্রি এখন আপনার মেমরিতে আছে। তুলনা করতে আবার Preview চালান।',
+  'migration.hermesComingSoonPrefix': 'Hermes ইম্পোর্টার রোডম্যাপে আছে — দেখুন ',
+  'migration.hermesComingSoonSuffix':
+    ' প্রসঙ্গের জন্য। আজ OpenClaw বেছে নিন; Hermes পরবর্তী রিলিজে আসবে।',
+  'migration.hermesLinkText': '#1440',
+  'migration.confirmImport.singular':
+    'বর্তমান ওয়ার্কস্পেসে {count}টি এন্ট্রি আমদানি করবেন?\n\nউৎস: {source}\nলক্ষ্য: {target}\n\nআমদানির আগে বর্তমান মেমরির ব্যাকআপ নেওয়া হবে।',
+  'migration.confirmImport.plural':
+    'বর্তমান ওয়ার্কস্পেসে {count}টি এন্ট্রি আমদানি করবেন?\n\nউৎস: {source}\nলক্ষ্য: {target}\n\nআমদানির আগে বর্তমান মেমরির ব্যাকআপ নেওয়া হবে।',
 };
 
 export default bn1;

@@ -328,4 +328,72 @@ describe('ModelStatusSection diagnostics', () => {
     expect(screen.queryByRole('button', { name: 'Set Path' })).toBeNull();
     expect(screen.getByRole('link', { name: 'Ollama docs' })).toBeTruthy();
   });
+
+  it('accepts a model that meets the context minimum', () => {
+    render(
+      <ModelStatusSection
+        {...defaultProps}
+        diagnostics={makeDiagnostics({
+          installed_models: [
+            {
+              name: 'bge-m3:latest',
+              context_length: 8192,
+              eligibility: { status: 'ok', context_length: 8192 },
+            },
+          ],
+        })}
+      />
+    );
+    expect(screen.getByText('8,192 ctx ✓')).toBeTruthy();
+  });
+
+  it('rejects and visually flags a model below the context minimum', () => {
+    render(
+      <ModelStatusSection
+        {...defaultProps}
+        diagnostics={makeDiagnostics({
+          installed_models: [
+            {
+              name: 'tiny-embed:latest',
+              context_length: 2048,
+              eligibility: { status: 'below_minimum', context_length: 2048, required: 8192 },
+            },
+          ],
+          issues: [
+            'Embedding model `tiny-embed:latest` has a 2048-token context window; the memory layer requires at least 8192.',
+          ],
+          ok: false,
+        })}
+      />
+    );
+    expect(screen.getByText('2,048 ctx — below 8,192 min')).toBeTruthy();
+    // Model name is rendered in the rejection (red) treatment.
+    const name = screen.getByTitle('tiny-embed:latest');
+    expect(name.className).toContain('text-red-700');
+  });
+
+  it('marks an unknown context window without rejecting it', () => {
+    render(
+      <ModelStatusSection
+        {...defaultProps}
+        diagnostics={makeDiagnostics({
+          installed_models: [
+            { name: 'mystery:latest', eligibility: { status: 'unknown', required: 8192 } },
+          ],
+        })}
+      />
+    );
+    expect(screen.getByText('ctx unknown')).toBeTruthy();
+  });
+
+  it('renders models with no eligibility (older core) without a badge', () => {
+    render(
+      <ModelStatusSection
+        {...defaultProps}
+        diagnostics={makeDiagnostics({ installed_models: [{ name: 'legacy:latest', size: 1234 }] })}
+      />
+    );
+    expect(screen.getByText('legacy:latest')).toBeTruthy();
+    expect(screen.queryByText(/ctx/)).toBeNull();
+  });
 });

@@ -603,3 +603,31 @@ export async function memoryTreeGraphExport(
   );
   return out;
 }
+
+/**
+ * #1574 §4b: per-model embedding re-embed backfill status. The AI settings
+ * panel polls this after an embedder change to warn that semantic recall
+ * is reduced until the new embedding space is fully re-embedded, and to
+ * dismiss the warning once the chain drains. Backed by
+ * `openhuman.memory_tree_memory_backfill_status`.
+ */
+export interface BackfillStatus {
+  /** True while a re-embed backfill still has work pending. */
+  in_progress: boolean;
+  /** Count of `reembed_backfill` jobs in ready/running state. */
+  pending_jobs: number;
+}
+
+export async function memoryTreeBackfillStatus(): Promise<BackfillStatus> {
+  console.debug('[memory-tree-rpc] memoryTreeBackfillStatus: entry');
+  const resp = await callCoreRpc<BackfillStatus | ResultEnvelope<BackfillStatus>>({
+    method: 'openhuman.memory_tree_memory_backfill_status',
+  });
+  const out = unwrapResult(resp);
+  console.debug(
+    '[memory-tree-rpc] memoryTreeBackfillStatus: exit in_progress=%s pending=%d',
+    out.in_progress,
+    out.pending_jobs
+  );
+  return out;
+}

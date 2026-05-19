@@ -12,7 +12,7 @@ import { ToastContainer } from '../components/intelligence/Toast';
 import AutocompleteSetupModal from '../components/skills/AutocompleteSetupModal';
 import CreateSkillModal from '../components/skills/CreateSkillModal';
 import InstallSkillDialog from '../components/skills/InstallSkillDialog';
-import MeetingBotsCard from '../components/skills/MeetingBotsCard';
+// import MeetingBotsCard from '../components/skills/MeetingBotsCard';
 import ScreenIntelligenceSetupModal from '../components/skills/ScreenIntelligenceSetupModal';
 import UnifiedSkillCard from '../components/skills/SkillCard';
 import { SKILL_CATEGORY_ORDER, type SkillCategory } from '../components/skills/skillCategories';
@@ -838,7 +838,7 @@ export default function Skills() {
                   </div>
                 )}
 
-                <MeetingBotsCard onToast={addToast} />
+                {/* <MeetingBotsCard onToast={addToast} /> */}
 
                 <div className="rounded-2xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-3 shadow-soft animate-fade-up">
                   <div className="px-1 pb-3 pt-1">

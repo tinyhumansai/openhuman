@@ -398,6 +398,10 @@ impl Memory for UnifiedMemory {
     async fn health_check(&self) -> bool {
         self.workspace_dir.exists() && self.db_path.exists()
     }
+
+    fn sqlite_conn(&self) -> Option<std::sync::Arc<parking_lot::Mutex<rusqlite::Connection>>> {
+        Some(std::sync::Arc::clone(&self.conn))
+    }
 }
 
 #[cfg(test)]

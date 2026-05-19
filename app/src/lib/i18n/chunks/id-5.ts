@@ -174,6 +174,26 @@ const id5: TranslationMap = {
   'settings.mascot.localDefault': 'OpenHuman Lokal (default)',
   'settings.mascot.noCharacters': 'Belum ada karakter OpenHuman yang tersedia',
   'settings.mascot.noColorVariants': 'Tidak ada varian warna',
+  'settings.mascot.voice.current': 'saat ini',
+  'settings.mascot.voice.customDesc':
+    'Temukan ID suara di api.elevenlabs.io/v1/voices atau dasbor ElevenLabs Anda. Hanya ID yang disimpan — kunci API Anda tetap di backend.',
+  'settings.mascot.voice.customHeading': 'ID suara kustom',
+  'settings.mascot.voice.customOption': 'Lainnya (tempel ID suara)…',
+  'settings.mascot.voice.desc':
+    'Pilih suara ElevenLabs yang digunakan maskot untuk balasan lisan. Filter berdasarkan jenis kelamin, pilih dari daftar pilihan, tempel ID kustom, atau biarkan aplikasi memilih suara yang sesuai dengan bahasa antarmuka.',
+  'settings.mascot.voice.genderFemale': 'Wanita',
+  'settings.mascot.voice.genderHeading': 'Jenis kelamin suara',
+  'settings.mascot.voice.genderMale': 'Pria',
+  'settings.mascot.voice.heading': 'Suara',
+  'settings.mascot.voice.preset': 'Pratinjau suara',
+  'settings.mascot.voice.presetHeading': 'Pratinjau suara',
+  'settings.mascot.voice.preview': 'Pratinjau suara',
+  'settings.mascot.voice.previewError': 'Pratinjau suara gagal',
+  'settings.mascot.voice.previewing': 'Memuat pratinjau…',
+  'settings.mascot.voice.reset': 'Atur ulang ke default',
+  'settings.mascot.voice.useLocaleDefault': 'Cocokkan bahasa aplikasi',
+  'settings.mascot.voice.useLocaleDefaultDesc':
+    'Pilih otomatis suara untuk bahasa antarmuka saat ini.',
   'settings.memoryWindow.balanced.badge': 'Direkomendasikan',
   'settings.memoryWindow.balanced.hint':
     'Default yang masuk akal — kontinuitas yang baik tanpa membakar token tambahan di setiap run.',
@@ -400,6 +420,28 @@ const id5: TranslationMap = {
   'settings.localModel.status.ollamaDocs': 'Dokumentasi Ollama',
   'settings.localModel.status.thenRetry':
     'untuk instruksi pengaturan, lalu coba lagi setelah runtime Anda dapat dijangkau.',
+  'settings.appearance.title': 'Appearance',
+  'settings.appearance.themeHeading': 'Theme',
+  'settings.appearance.themeAria': 'Theme',
+  'settings.appearance.modeLight': 'Light',
+  'settings.appearance.modeLightDesc': 'Bright surfaces, dark text.',
+  'settings.appearance.modeDark': 'Dark',
+  'settings.appearance.modeDarkDesc': 'Dim surfaces, easier on the eyes after dusk.',
+  'settings.appearance.modeSystem': 'Match system',
+  'settings.appearance.modeSystemDesc': 'Follow your OS appearance setting.',
+  'settings.appearance.helperText':
+    'Dark mode switches the entire app — chat, settings, panels — to a dim palette. "Match system" follows your OS appearance and updates live.',
+  'settings.mascot.characterPreview': 'Preview',
+  'settings.mascot.characterStates': 'states',
+  'settings.mascot.characterVisemes': 'visemes',
+  'settings.mascot.colorAria': 'OpenHuman color',
+  'settings.mascot.colorBlack': 'Black',
+  'settings.mascot.colorBurgundy': 'Burgundy',
+  'settings.mascot.colorGreen': 'Green',
+  'settings.mascot.colorNavy': 'Navy',
+  'settings.mascot.colorYellow': 'Yellow',
+  'settings.mascot.libraryUnavailable': 'OpenHuman library unavailable',
+  'settings.mascot.title': 'OpenHuman',
 };
 
 export default id5;
