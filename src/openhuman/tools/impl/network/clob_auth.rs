@@ -217,6 +217,12 @@ pub(crate) async fn sign_l1_headers(
     nonce: u64,
     timestamp: u64,
 ) -> Result<HeaderMap> {
+    let signer_address = format!("{:#x}", signer.address());
+    anyhow::ensure!(
+        signer_address.eq_ignore_ascii_case(address.trim()),
+        "Polymarket signer/address mismatch — refusing to sign L1 auth headers for a different EOA"
+    );
+
     let typed_data: TypedData = serde_json::from_value(json!({
         "types": {
             "EIP712Domain": [
@@ -434,5 +440,48 @@ mod tests {
     fn mask_address_redacts_short_input() {
         assert_eq!(mask_address("0xabc"), "<redacted>");
         assert_eq!(mask_address(""), "<redacted>");
+    }
+
+    #[tokio::test]
+    async fn sign_l1_headers_rejects_signer_address_mismatch() {
+        use ethers_signers::{coins_bip39::English, MnemonicBuilder};
+
+        let phrase =
+            "test test test test test test test test test test test junk";
+        let wallet: LocalWallet = MnemonicBuilder::<English>::default()
+            .phrase(phrase)
+            .build()
+            .expect("wallet");
+
+        let err = sign_l1_headers(
+            &wallet,
+            137,
+            "0x0000000000000000000000000000000000000000",
+            0,
+            1_700_000_000,
+        )
+        .await
+        .expect_err("mismatched address must reject");
+        assert!(
+            err.to_string().contains("signer/address mismatch"),
+            "got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn sign_l1_headers_accepts_signer_address_match() {
+        use ethers_signers::{coins_bip39::English, MnemonicBuilder};
+
+        let phrase =
+            "test test test test test test test test test test test junk";
+        let wallet: LocalWallet = MnemonicBuilder::<English>::default()
+            .phrase(phrase)
+            .build()
+            .expect("wallet");
+        let address = format!("{:#x}", wallet.address());
+
+        sign_l1_headers(&wallet, 137, &address, 0, 1_700_000_000)
+            .await
+            .expect("matching address should sign");
     }
 }
