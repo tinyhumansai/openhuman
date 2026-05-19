@@ -160,16 +160,13 @@ impl PolymarketTool {
         let builder =
             crate::openhuman::config::apply_runtime_proxy_to_builder(builder, "tool.polymarket");
 
-        let http = match builder.build() {
-            Ok(client) => client,
-            Err(err) => {
-                tracing::warn!(
-                    reason = %err,
-                    "[polymarket] failed to build configured HTTP client, falling back to Client::new()"
-                );
-                Client::new()
-            }
-        };
+        let http = builder.build().unwrap_or_else(|err| {
+            panic!(
+                "[polymarket] failed to build HTTP client (proxy/timeout configuration): {err}. \
+                 Refusing to fall back to Client::new() — silent fallback hides the misconfiguration \
+                 and produces requests that bypass the configured proxy + timeouts."
+            )
+        });
 
         let cached_credentials = config
             .derived_clob_credentials

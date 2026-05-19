@@ -1030,8 +1030,5 @@ fn ensure_https_rejects_remote_http_url() {
     let err = ensure_https("http://clob.polymarket.com")
         .unwrap_err()
         .to_string();
-    assert!(
-        err.contains("non-HTTPS"),
-        "unexpected error message: {err}"
-    );
+    assert!(err.contains("non-HTTPS"), "unexpected error message: {err}");
 }
