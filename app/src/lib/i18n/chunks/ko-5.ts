@@ -58,7 +58,8 @@ const ko5: TranslationMap = {
   'settings.localModel.deviceCapability.customModelIds': 'Custom model ids',
   'settings.localModel.deviceCapability.detected': 'Detected',
   'settings.localModel.deviceCapability.disabled': 'Disabled',
-  'settings.localModel.deviceCapability.disabledDesc': '로컬 AI가 비활성화되어 있습니다. 클라우드 폴백을 사용합니다.',
+  'settings.localModel.deviceCapability.disabledDesc':
+    '로컬 AI가 비활성화되어 있습니다. 클라우드 폴백을 사용합니다.',
   'settings.localModel.deviceCapability.downloadingModels': '(downloading models)',
   'settings.localModel.deviceCapability.downloadingSetupDesc':
     'Downloading the OllamaSetup installer (~2 GB) and unpacking it. This can take a minute on first install.',

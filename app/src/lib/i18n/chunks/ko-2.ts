@@ -234,7 +234,8 @@ const ko2: TranslationMap = {
   'localModel.modelStatus': '모델 상태',
   'localModel.downloadModels': '모델 다운로드',
   'localModel.usage': '사용량',
-  'localModel.usageDesc': '로컬 모델에서 실행할 서브시스템을 선택하세요. 꺼진 항목은 클라우드를 사용합니다.',
+  'localModel.usageDesc':
+    '로컬 모델에서 실행할 서브시스템을 선택하세요. 꺼진 항목은 클라우드를 사용합니다.',
   'localModel.enableRuntime': '로컬 AI 런타임 활성화',
   'localModel.enableRuntimeDesc':
     '마스터 스위치. 기본값은 꺼짐 — Ollama가 유휴 상태를 유지합니다. 켜면 트리 요약기, 화면 인식, 자동완성이 항상 로컬 모델을 사용합니다.',
@@ -248,7 +249,8 @@ const ko2: TranslationMap = {
   'common.skip': '건너뛰기',
   'common.disable': '비활성화',
   'common.enable': '활성화',
-  'chat.safetyTimeout': '2분 후에도 에이전트가 응답하지 않습니다. 다시 시도하거나 연결을 확인하세요.',
+  'chat.safetyTimeout':
+    '2분 후에도 에이전트가 응답하지 않습니다. 다시 시도하거나 연결을 확인하세요.',
   'chat.filter.all': '전체',
   'chat.filter.work': '업무',
   'chat.filter.briefing': '브리핑',

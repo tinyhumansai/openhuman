@@ -301,7 +301,8 @@ const ko3: TranslationMap = {
   'app.openhumanLink.notifications.blocked': '차단됨',
   'app.openhumanLink.notifications.blockedStep1': '시스템 설정을 여세요',
   'app.openhumanLink.notifications.blockedStep2': '알림 → OpenHuman으로 이동하세요',
-  'app.openhumanLink.notifications.blockedStep3': '알림 허용을 켜고 배너 스타일을 지속으로 설정하세요',
+  'app.openhumanLink.notifications.blockedStep3':
+    '알림 허용을 켜고 배너 스타일을 지속으로 설정하세요',
   'app.openhumanLink.notifications.intro': '중요한 알림을 놓치지 마세요.',
   'app.openhumanLink.notifications.promptHint': '아래 버튼을 탭해 알림을 허용하세요.',
   'app.openhumanLink.notifications.retry': '테스트 알림 다시 보내기',
@@ -316,7 +317,8 @@ const ko3: TranslationMap = {
   'app.openhumanLink.title.discord': '커뮤니티 참가',
   'app.openhumanLink.title.messaging': '채팅 채널 연결',
   'app.openhumanLink.title.notifications': '알림 허용',
-  'app.persistRehydration.body': '앱 상태를 불러오는 중 문제가 발생했습니다. 초기화하면 해결될 수 있습니다.',
+  'app.persistRehydration.body':
+    '앱 상태를 불러오는 중 문제가 발생했습니다. 초기화하면 해결될 수 있습니다.',
   'app.persistRehydration.heading': '앱 상태 오류',
   'app.persistRehydration.resetCta': '초기화 중…',
   'app.persistRehydration.resetting': '초기화 중…',
@@ -343,7 +345,8 @@ const ko3: TranslationMap = {
   'channels.discord.linkTokenInstruction': '{token}',
   'channels.discord.linkTokenLabel': '링크 토큰',
   'channels.discord.linkTokenOnce': '토큰은 한 번만 사용 가능합니다',
-  'channels.discord.picker.allPermissionsOk': '봇이 이 채널에서 필요한 모든 권한을 보유하고 있습니다.',
+  'channels.discord.picker.allPermissionsOk':
+    '봇이 이 채널에서 필요한 모든 권한을 보유하고 있습니다.',
   'channels.discord.picker.botNotInServers': '봇이 서버에 없습니다',
   'channels.discord.picker.category': '카테고리',
   'channels.discord.picker.channel': '채널',

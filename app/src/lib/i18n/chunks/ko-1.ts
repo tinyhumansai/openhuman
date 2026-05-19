@@ -271,7 +271,8 @@ const ko1: TranslationMap = {
     '직접 Composio 계정 / API 키를 가져옵니다. 설정 › 연결에서 구성하세요.',
   'onboarding.custom.search.title': '웹 검색',
   'onboarding.custom.search.subtitle': 'OpenHuman이 대신 웹을 검색하는 방식.',
-  'onboarding.custom.search.defaultDesc': 'OpenHuman이 관리형 검색 백엔드를 사용합니다. 키가 필요 없습니다.',
+  'onboarding.custom.search.defaultDesc':
+    'OpenHuman이 관리형 검색 백엔드를 사용합니다. 키가 필요 없습니다.',
   'onboarding.custom.search.configureDesc':
     '직접 검색 제공자 키(Tavily, Brave 등)를 가져옵니다. 설정 › 도구에서 구성하세요.',
   'onboarding.custom.memory.title': '메모리',
@@ -350,7 +351,8 @@ const ko1: TranslationMap = {
   'privacy.empty': '외부 데이터 전송이 감지되지 않았습니다.',
   'privacy.whatLeavesComputer': '내 컴퓨터 밖으로 나가는 것',
   'privacy.loading': '개인정보 세부 정보를 불러오는 중...',
-  'privacy.loadError': '실시간 개인정보 목록을 불러오지 못했습니다. 아래 분석 설정은 여전히 작동합니다.',
+  'privacy.loadError':
+    '실시간 개인정보 목록을 불러오지 못했습니다. 아래 분석 설정은 여전히 작동합니다.',
   'privacy.noCapabilities': '현재 데이터 이동을 공개하는 기능이 없습니다.',
   'privacy.sentTo': '전송 대상',
   'privacy.leavesDevice': '기기 외부로 전송',

@@ -61,11 +61,13 @@ const ko4: TranslationMap = {
   'conversations.taskKanban.title': 'Tasks',
   'conversations.toolTimeline.turn': 'turn',
   'conversations.toolTimeline.workerThread': 'worker thread',
-  'daemon.serviceBlockingGate.body': 'OpenHuman 코어에 연결하지 못했습니다. 재시도하거나 최신 버전을 다운로드하세요.',
+  'daemon.serviceBlockingGate.body':
+    'OpenHuman 코어에 연결하지 못했습니다. 재시도하거나 최신 버전을 다운로드하세요.',
   'daemon.serviceBlockingGate.downloadHint': '문제가 지속되면 최신 앱 빌드를 다운로드하세요.',
   'daemon.serviceBlockingGate.downloadLatest': '최신 버전 다운로드',
   'daemon.serviceBlockingGate.retryCore': '코어 다시 시도',
-  'daemon.serviceBlockingGate.retryFailed': '재시도에 실패했습니다. 최신 앱 빌드를 다운로드하고 다시 시도하세요.',
+  'daemon.serviceBlockingGate.retryFailed':
+    '재시도에 실패했습니다. 최신 앱 빌드를 다운로드하고 다시 시도하세요.',
   'daemon.serviceBlockingGate.retrying': '재시도 중...',
   'daemon.serviceBlockingGate.title': 'OpenHuman 코어를 사용할 수 없습니다',
   'home.banners.discordSubtitle': '커뮤니티에 참가해 도움을 받고 최신 소식을 확인하세요.',
