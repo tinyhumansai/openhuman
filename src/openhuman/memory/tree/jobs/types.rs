@@ -266,11 +266,7 @@ impl FlushStalePayload {
     pub fn dedupe_key(&self, _date_iso: &str) -> String {
         let now = chrono::Utc::now();
         let hour_block = now.format("%H").to_string().parse::<u32>().unwrap_or(0) / 3;
-        format!(
-            "flush_stale:{}-h{}",
-            now.format("%Y-%m-%d"),
-            hour_block
-        )
+        format!("flush_stale:{}-h{}", now.format("%Y-%m-%d"), hour_block)
     }
 }
 
