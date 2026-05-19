@@ -318,9 +318,15 @@ const ContextGatheringStep = ({
   useEffect(() => {
     if (!stillWorking || finished || hasError) return;
     let cancelled = false;
+    // Single-flight guard so a slow probe never gets shadowed by the next
+    // 5s tick. Without it, an unreachable core (each probe times out after
+    // the global fetch budget) would stack overlapping in-flight promises
+    // and the last-to-resolve would race `aliveState`.
+    let inFlight = false;
 
     const probe = async () => {
-      if (cancelled) return;
+      if (cancelled || inFlight) return;
+      inFlight = true;
       setAliveState(prev => (prev === 'unknown' ? 'probing' : prev));
       try {
         const url = await getCoreRpcUrl();
@@ -330,6 +336,8 @@ const ContextGatheringStep = ({
         }
       } catch {
         if (!cancelled) setAliveState('unreachable');
+      } finally {
+        inFlight = false;
       }
     };
 
@@ -373,10 +381,14 @@ const ContextGatheringStep = ({
     );
   }
 
-  const titleKey = stillWorking
+  // The slow-path UI must vanish as soon as the pipeline resolves, even
+  // during the 800ms auto-advance window — otherwise a slow-success user
+  // sees "still working…" copy after the work has actually finished.
+  const showStillWorking = stillWorking && !finished && !hasError;
+  const titleKey = showStillWorking
     ? 'onboarding.contextGathering.stillWorkingTitle'
     : 'onboarding.contextGathering.buildingProfile';
-  const descKey = stillWorking
+  const descKey = showStillWorking
     ? 'onboarding.contextGathering.stillWorkingDesc'
     : 'onboarding.contextGathering.buildingDesc';
 
@@ -412,9 +424,10 @@ const ContextGatheringStep = ({
           <div className="h-3 w-1/2 rounded-full bg-gradient-to-r from-stone-300 via-stone-100 to-stone-300 bg-[length:200%_100%] animate-shimmer [animation-delay:300ms]" />
         </div>
 
-        {/* Alive indicator — only after we entered still-working state so we
-            don't show a probe state during the normal sub-30s happy path. */}
-        {stillWorking && (
+        {/* Alive indicator — only while still-working state is active AND
+            the pipeline hasn't finished/errored. Avoids flashing the probe
+            during the 800ms auto-advance window after a slow success. */}
+        {showStillWorking && (
           <div
             className="flex items-center gap-2 text-xs text-stone-500 dark:text-neutral-400"
             data-testid="core-alive-indicator"

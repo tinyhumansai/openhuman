@@ -355,12 +355,19 @@ describe('coreRpcClient', () => {
       );
 
       const pending = callCoreRpc({ method: 'openhuman.app_state_snapshot', timeoutMs: 60_000 });
-      pending.catch(() => {});
+      let settled = false;
+      pending.catch(() => {}).finally(() => {
+        settled = true;
+      });
 
       // 30s passes — global default would have aborted by now, but the
-      // per-call 60s override keeps the request alive.
+      // per-call 60s override keeps the request alive. Assert the pending
+      // promise is still in flight so an early-abort regression on the
+      // override path cannot slip through (CodeRabbit #2179 review).
       await vi.advanceTimersByTimeAsync(31_000);
-      // Not yet rejected. Advance to the override boundary.
+      expect(settled).toBe(false);
+
+      // Advance to the override boundary — now the abort fires.
       await vi.advanceTimersByTimeAsync(30_000);
 
       await expect(pending).rejects.toThrow(
@@ -395,10 +402,20 @@ describe('coreRpcClient', () => {
         // 2 hours — far beyond the 10 minute clamp; should be reduced.
         timeoutMs: 2 * 60 * 60 * 1_000,
       });
-      pending.catch(() => {});
+      let settled = false;
+      pending.catch(() => {}).finally(() => {
+        settled = true;
+      });
 
       const MAX_MS = 10 * 60 * 1_000;
-      await vi.advanceTimersByTimeAsync(MAX_MS + 1);
+      // 1ms before the clamp boundary: still pending. Guards against an
+      // off-by-one where the clamp accidentally lowers the budget further
+      // (CodeRabbit #2179 review).
+      await vi.advanceTimersByTimeAsync(MAX_MS - 1);
+      expect(settled).toBe(false);
+
+      // Cross the clamp boundary — abort fires.
+      await vi.advanceTimersByTimeAsync(2);
 
       await expect(pending).rejects.toThrow(
         `Core RPC openhuman.app_state_snapshot timed out after ${MAX_MS}ms`
