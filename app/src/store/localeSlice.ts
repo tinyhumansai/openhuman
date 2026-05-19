@@ -26,7 +26,7 @@ function detectLocale(): Locale {
     const normalized = navigator.language?.toLowerCase();
     if (!normalized) return 'en';
     for (const [prefix, locale] of PREFIX_TO_LOCALE) {
-      if (normalized.startsWith(prefix)) return locale;
+      if (normalized === prefix || normalized.startsWith(prefix + '-')) return locale;
     }
   } catch {
     // browser API unavailable
