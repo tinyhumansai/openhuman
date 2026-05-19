@@ -164,6 +164,44 @@ const bn5: TranslationMap = {
   'settings.localModel.status.triggering': 'ট্রিগার হচ্ছে...',
   'settings.localModel.status.unavailable': 'পাওয়া যাচ্ছে না',
   'settings.localModel.status.working': 'কাজ হচ্ছে...',
+  'settings.developerMenu.ai.title': 'AI Configuration',
+  'settings.developerMenu.ai.desc':
+    'Cloud providers, local Ollama models, and per-workload routing',
+  'settings.developerMenu.screenAwareness.title': 'Screen Awareness',
+  'settings.developerMenu.screenAwareness.desc':
+    'Screen capture permissions, monitoring policy, and session controls',
+  'settings.developerMenu.messagingChannels.title': 'Messaging Channels',
+  'settings.developerMenu.messagingChannels.desc':
+    'Configure Telegram/Discord auth modes and default channel routing',
+  'settings.developerMenu.tools.title': 'Tools',
+  'settings.developerMenu.tools.desc':
+    'Enable or disable capabilities OpenHuman can use on your behalf',
+  'settings.developerMenu.agentChat.title': 'Agent Chat',
+  'settings.developerMenu.agentChat.desc':
+    'Test agent conversation with model and temperature overrides',
+  'settings.developerMenu.cronJobs.title': 'Cron Jobs',
+  'settings.developerMenu.cronJobs.desc': 'View and configure scheduled jobs for runtime skills',
+  'settings.developerMenu.localModelDebug.title': 'Local Model Debug',
+  'settings.developerMenu.localModelDebug.desc':
+    'Ollama config, asset downloads, model tests, and diagnostics',
+  'settings.developerMenu.webhooks.title': 'Webhooks',
+  'settings.developerMenu.webhooks.desc':
+    'Inspect runtime webhook registrations and captured request logs',
+  'settings.developerMenu.intelligence.title': 'Intelligence',
+  'settings.developerMenu.intelligence.desc':
+    'Memory workspace, subconscious engine, dreams, and settings',
+  'settings.developerMenu.notificationRouting.title': 'Notification Routing',
+  'settings.developerMenu.notificationRouting.desc':
+    'AI importance scoring and orchestrator escalation for integration alerts',
+  'settings.developerMenu.composeioTriggers.title': 'ComposeIO Triggers',
+  'settings.developerMenu.composeioTriggers.desc': 'View ComposeIO trigger history and archive',
+  'settings.developerMenu.composioRouting.title': 'Composio Routing (Direct Mode)',
+  'settings.developerMenu.composioRouting.desc':
+    'Bring your own Composio API key and route calls directly to backend.composio.dev',
+  'settings.developerMenu.integrationTriggers.title': 'Integration Triggers',
+  'settings.developerMenu.integrationTriggers.desc':
+    'Configure AI triage settings for Composio integration triggers',
+  'settings.appearance.menuDesc': 'Pick light, dark, or match your system theme',
   'settings.mascot.active': 'সক্রিয়',
   'settings.mascot.characterDesc': 'চরিত্রের বিবরণ',
   'settings.mascot.characterHeading': 'চরিত্রের শিরোনাম',
@@ -171,6 +209,8 @@ const bn5: TranslationMap = {
   'settings.mascot.colorHeading': 'রঙের শিরোনাম',
   'settings.mascot.loadingLibrary': 'OpenHuman লাইব্রেরি লোড হচ্ছে…',
   'settings.mascot.localDefault': 'লোকাল OpenHuman (ডিফল্ট)',
+  'settings.mascot.menuTitle': 'Mascot',
+  'settings.mascot.menuDesc': 'Pick the mascot color used across the app',
   'settings.mascot.noCharacters': 'কোনো OpenHuman ক্যারেক্টার এখনও উপলব্ধ নেই',
   'settings.mascot.noColorVariants': 'কোনো রঙের ভেরিয়েন্ট নেই',
   'settings.mascot.voice.current': 'বর্তমান',

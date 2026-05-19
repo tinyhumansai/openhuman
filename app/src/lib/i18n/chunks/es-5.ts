@@ -167,6 +167,44 @@ const es5: TranslationMap = {
   'settings.localModel.status.triggering': 'Activando...',
   'settings.localModel.status.unavailable': 'No disponible',
   'settings.localModel.status.working': 'Trabajando...',
+  'settings.developerMenu.ai.title': 'AI Configuration',
+  'settings.developerMenu.ai.desc':
+    'Cloud providers, local Ollama models, and per-workload routing',
+  'settings.developerMenu.screenAwareness.title': 'Screen Awareness',
+  'settings.developerMenu.screenAwareness.desc':
+    'Screen capture permissions, monitoring policy, and session controls',
+  'settings.developerMenu.messagingChannels.title': 'Messaging Channels',
+  'settings.developerMenu.messagingChannels.desc':
+    'Configure Telegram/Discord auth modes and default channel routing',
+  'settings.developerMenu.tools.title': 'Tools',
+  'settings.developerMenu.tools.desc':
+    'Enable or disable capabilities OpenHuman can use on your behalf',
+  'settings.developerMenu.agentChat.title': 'Agent Chat',
+  'settings.developerMenu.agentChat.desc':
+    'Test agent conversation with model and temperature overrides',
+  'settings.developerMenu.cronJobs.title': 'Cron Jobs',
+  'settings.developerMenu.cronJobs.desc': 'View and configure scheduled jobs for runtime skills',
+  'settings.developerMenu.localModelDebug.title': 'Local Model Debug',
+  'settings.developerMenu.localModelDebug.desc':
+    'Ollama config, asset downloads, model tests, and diagnostics',
+  'settings.developerMenu.webhooks.title': 'Webhooks',
+  'settings.developerMenu.webhooks.desc':
+    'Inspect runtime webhook registrations and captured request logs',
+  'settings.developerMenu.intelligence.title': 'Intelligence',
+  'settings.developerMenu.intelligence.desc':
+    'Memory workspace, subconscious engine, dreams, and settings',
+  'settings.developerMenu.notificationRouting.title': 'Notification Routing',
+  'settings.developerMenu.notificationRouting.desc':
+    'AI importance scoring and orchestrator escalation for integration alerts',
+  'settings.developerMenu.composeioTriggers.title': 'ComposeIO Triggers',
+  'settings.developerMenu.composeioTriggers.desc': 'View ComposeIO trigger history and archive',
+  'settings.developerMenu.composioRouting.title': 'Composio Routing (Direct Mode)',
+  'settings.developerMenu.composioRouting.desc':
+    'Bring your own Composio API key and route calls directly to backend.composio.dev',
+  'settings.developerMenu.integrationTriggers.title': 'Integration Triggers',
+  'settings.developerMenu.integrationTriggers.desc':
+    'Configure AI triage settings for Composio integration triggers',
+  'settings.appearance.menuDesc': 'Pick light, dark, or match your system theme',
   'settings.mascot.active': 'Activo',
   'settings.mascot.characterDesc': 'Descripción del personaje',
   'settings.mascot.characterHeading': 'Encabezado del personaje',
@@ -174,6 +212,8 @@ const es5: TranslationMap = {
   'settings.mascot.colorHeading': 'Encabezado del color',
   'settings.mascot.loadingLibrary': 'Cargando biblioteca de OpenHuman…',
   'settings.mascot.localDefault': 'OpenHuman local (predeterminado)',
+  'settings.mascot.menuTitle': 'Mascot',
+  'settings.mascot.menuDesc': 'Pick the mascot color used across the app',
   'settings.mascot.noCharacters': 'Aún no hay personajes de OpenHuman disponibles',
   'settings.mascot.noColorVariants': 'Sin variantes de color',
   'settings.mascot.voice.current': 'actual',
