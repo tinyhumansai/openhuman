@@ -5,6 +5,10 @@ on:
     - cron: '*/5 * * * *' # Run every 5 minutes
   workflow_dispatch: # Allow manual trigger
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   check-uptime:
     name: Check Backend Health
@@ -33,7 +37,7 @@ jobs:
                   const response = await fetch(url, { signal: controller.signal });
                   clearTimeout(id);
                   
-                  if (response.ok) return { ok: true, status: response.status };
+                  if (response.status === 200) return { ok: true, status: response.status };
                   if (i === retries) return { ok: false, status: response.status };
                 } catch (error) {
                   if (i === retries) return { ok: false, error: error.message };

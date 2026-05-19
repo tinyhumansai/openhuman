@@ -23,7 +23,7 @@ The following endpoints are monitored for uptime:
    - Monitors from multiple regions (US, EU, Asia).
 
 2. **GitHub Actions (Secondary/Independent)**:
-   - Scheduled workflow (`.github/workflows/uptime-monitor.yml`) runs every 5-10 minutes.
+   - Scheduled workflow (`.github/workflows/uptime-monitor.yml`) runs every 5 minutes.
    - Serves as an independent signal from the deployment pipeline.
 
 ## Alerting and Escalation
