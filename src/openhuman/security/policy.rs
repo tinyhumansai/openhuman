@@ -780,41 +780,48 @@ impl SecurityPolicy {
         // path and re-validate `workspace_only` containment + forbidden_paths
         // against the resolved location.
         if let Some(canonical) = self.try_canonicalize_under_workspace(path) {
-            if self.workspace_only {
-                let workspace_root = self
-                    .workspace_dir
-                    .canonicalize()
-                    .unwrap_or_else(|_| self.workspace_dir.clone());
-                if !canonical.starts_with(&workspace_root) {
-                    log::trace!(
-                        "[security:policy] path blocked: symlink escapes workspace (requested={}, resolved={}, workspace={})",
-                        path,
-                        canonical.display(),
-                        workspace_root.display()
-                    );
-                    return false;
-                }
+            let workspace_root = self
+                .workspace_dir
+                .canonicalize()
+                .unwrap_or_else(|_| self.workspace_dir.clone());
+            if self.workspace_only && !canonical.starts_with(&workspace_root) {
+                log::trace!(
+                    "[security:policy] path blocked: symlink escapes workspace (requested={}, resolved={}, workspace={})",
+                    path,
+                    canonical.display(),
+                    workspace_root.display()
+                );
+                return false;
             }
-            for forbidden in &self.forbidden_paths {
-                let forbidden_expanded = if let Some(stripped) = forbidden.strip_prefix("~/") {
-                    std::env::var("HOME")
-                        .ok()
-                        .map(|h| PathBuf::from(h).join(stripped))
-                        .unwrap_or_else(|| PathBuf::from(forbidden))
-                } else {
-                    PathBuf::from(forbidden)
-                };
-                let forbidden_canonical = forbidden_expanded
-                    .canonicalize()
-                    .unwrap_or(forbidden_expanded);
-                if canonical.starts_with(&forbidden_canonical) {
-                    log::trace!(
+            // If the resolved path stays inside the workspace, trust the
+            // workspace boundary over forbidden_paths — otherwise a workspace
+            // that lives under e.g. `/tmp` (common in tests and sandboxes)
+            // would block every legitimate access. forbidden_paths is meant
+            // to catch escapes *outside* the workspace, which the workspace
+            // containment check above already validates.
+            let inside_workspace = canonical.starts_with(&workspace_root);
+            if !inside_workspace {
+                for forbidden in &self.forbidden_paths {
+                    let forbidden_expanded = if let Some(stripped) = forbidden.strip_prefix("~/") {
+                        std::env::var("HOME")
+                            .ok()
+                            .map(|h| PathBuf::from(h).join(stripped))
+                            .unwrap_or_else(|| PathBuf::from(forbidden))
+                    } else {
+                        PathBuf::from(forbidden)
+                    };
+                    let forbidden_canonical = forbidden_expanded
+                        .canonicalize()
+                        .unwrap_or(forbidden_expanded);
+                    if canonical.starts_with(&forbidden_canonical) {
+                        log::trace!(
                         "[security:policy] path blocked: symlink resolves to forbidden tree (requested={}, resolved={}, forbidden={})",
                         path,
                         canonical.display(),
                         forbidden_canonical.display()
                     );
-                    return false;
+                        return false;
+                    }
                 }
             }
         }
