@@ -1155,6 +1155,30 @@ const CAPABILITIES: &[Capability] = &[
         status: CapabilityStatus::Beta,
         privacy: GITHUB_RELEASES_METADATA,
     },
+    // ── Desktop Companion ────────────────────────────────────────────
+    Capability {
+        id: "companion.session",
+        name: "Desktop Companion Session",
+        domain: "desktop_companion",
+        category: CapabilityCategory::ScreenIntelligence,
+        description: "Start a Clicky-style companion session that ties hotkey activation, \
+                      microphone capture, screen context, LLM reasoning, speech synthesis, \
+                      and visual pointing into a single interaction loop.",
+        how_to: "Settings > Companion, or activate via the configured hotkey.",
+        status: CapabilityStatus::Beta,
+        privacy: DERIVED_TO_BACKEND,
+    },
+    Capability {
+        id: "companion.pointing",
+        name: "Visual Pointing",
+        domain: "desktop_companion",
+        category: CapabilityCategory::ScreenIntelligence,
+        description: "The companion LLM can embed [POINT:x,y:label:screenN] tags to \
+                      visually point at UI elements on screen via the overlay.",
+        how_to: "Automatic during companion sessions when the LLM identifies a UI target.",
+        status: CapabilityStatus::Beta,
+        privacy: None,
+    },
 ];
 
 static VALIDATED: OnceLock<()> = OnceLock::new();

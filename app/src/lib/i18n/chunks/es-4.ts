@@ -143,7 +143,7 @@ const es4: TranslationMap = {
   'onboarding.contextGathering.buildingProfile': 'Construyendo tu perfil...',
   'onboarding.contextGathering.continueToChat': 'Continuar al chat',
   'onboarding.contextGathering.errorDesc':
-    'No pudimos construir tu perfil completo ahora mismo, pero no pasa nada — puedes continuar y tu perfil se construirá con el tiempo.',
+    'No pudimos construir tu perfil completo en este momento, pero no pasa nada: puedes continuar y tu perfil se irá construyendo con el tiempo.',
   'onboarding.contextGathering.title': 'Recopilación de contexto',
   'openhuman.team_list_teams': 'Lista de equipos',
   'overlay.ariaAttention': 'Mensaje de atención',
@@ -365,6 +365,9 @@ const es4: TranslationMap = {
   'settings.billing.subscription.paymentConfirmed': 'Pago confirmado',
   'settings.billing.subscription.perMonth': 'Por mes',
   'settings.billing.subscription.popular': 'Popular',
+  'pages.settings.account.migration': 'Importar desde otro asistente',
+  'pages.settings.account.migrationDesc':
+    'Migra memoria y notas desde OpenClaw (y pronto Hermes) a este espacio de trabajo.',
 };
 
 export default es4;

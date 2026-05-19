@@ -115,6 +115,17 @@ impl OpenAiCompatibleProvider {
         Self::new_with_options(name, base_url, credential, auth_style, false, None, false)
     }
 
+    fn enrich_404_message(&self, base: String, status: reqwest::StatusCode) -> String {
+        if status == reqwest::StatusCode::NOT_FOUND && !self.supports_responses_fallback {
+            format!(
+                "{base}; check that your endpoint URL is correct \
+                 and the model name exists on your provider"
+            )
+        } else {
+            base
+        }
+    }
+
     /// Create a provider with a custom User-Agent header.
     ///
     /// Some providers (for example Kimi Code) require a specific User-Agent
@@ -1272,7 +1283,10 @@ impl Provider for OpenAiCompatibleProvider {
             }
 
             let status_str = status.as_u16().to_string();
-            let message = format!("{} API error ({status}): {sanitized}", self.name);
+            let message = self.enrich_404_message(
+                format!("{} API error ({status}): {sanitized}", self.name),
+                status,
+            );
             if super::is_budget_exhausted_http_400(status, &error) {
                 super::log_budget_exhausted_http_400(
                     "chat_completions",
@@ -1392,7 +1406,9 @@ impl Provider for OpenAiCompatibleProvider {
                     });
             }
 
-            return Err(super::api_error(&self.name, response).await);
+            let err = super::api_error(&self.name, response).await;
+            let enriched = self.enrich_404_message(format!("{err:#}"), status);
+            return Err(anyhow::anyhow!("{enriched}"));
         }
 
         let body = response.text().await?;
@@ -1698,7 +1714,10 @@ impl Provider for OpenAiCompatibleProvider {
             }
 
             let status_str = status.as_u16().to_string();
-            let message = format!("{} API error ({status}): {sanitized}", self.name);
+            let message = self.enrich_404_message(
+                format!("{} API error ({status}): {sanitized}", self.name),
+                status,
+            );
             if super::is_budget_exhausted_http_400(status, &error) {
                 super::log_budget_exhausted_http_400(
                     "native_chat",

@@ -129,7 +129,7 @@ cef = { version = "=146.4.1", default-features = false }
 openhuman_core = { path = "../..", package = "openhuman", default-features = false }
 
 [target.'cfg(unix)'.dependencies]
-nix = { version = "0.29", default-features = false, features = ["signal"] }
+nix = { version = "0.29", default-features = false, features = ["signal", "user"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"

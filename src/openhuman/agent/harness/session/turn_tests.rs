@@ -289,6 +289,34 @@ async fn transcript_roundtrip_work() {
 }
 
 #[tokio::test]
+async fn transcript_resume_is_bounded_by_max_history_messages() {
+    let mut writer = make_agent(None);
+    let mut messages = vec![ChatMessage::system("sys")];
+    for idx in 0..8 {
+        messages.push(ChatMessage::user(format!("u{idx}")));
+        messages.push(ChatMessage::assistant(format!("a{idx}")));
+    }
+    writer.persist_session_transcript(&messages, 0, 0, 0, 0.0, None);
+
+    let mut resumed = make_agent(None);
+    resumed.workspace_dir = writer.workspace_dir.clone();
+    resumed.agent_definition_name = writer.agent_definition_name.clone();
+    resumed.config.max_history_messages = 5;
+    resumed.try_load_session_transcript();
+
+    let cached = resumed
+        .cached_transcript_messages
+        .as_ref()
+        .expect("resume cache should be populated");
+    assert_eq!(cached.len(), 5);
+    assert_eq!(cached[0].role, "system");
+    assert_eq!(cached[1].content, "u6");
+    assert_eq!(cached[2].content, "a6");
+    assert_eq!(cached[3].content, "u7");
+    assert_eq!(cached[4].content, "a7");
+}
+
+#[tokio::test]
 async fn execute_tool_call_blocks_invisible_tool_and_emits_events() {
     let _ = init_global(64);
     let events = Arc::new(AsyncMutex::new(Vec::<DomainEvent>::new()));

@@ -143,7 +143,7 @@ const en4: TranslationMap = {
   'onboarding.contextGathering.buildingProfile': 'Building your profile...',
   'onboarding.contextGathering.continueToChat': 'Continue to chat',
   'onboarding.contextGathering.errorDesc':
-    "We couldn't build your full profile right now, but that's okay — you can continue and your profile will build over time.",
+    "Your chat is ready. We'll keep building your full profile in the background, so you can continue now and refine it over time.",
   'onboarding.contextGathering.title': 'Context Gathering',
   'openhuman.team_list_teams': 'Team list teams',
   'overlay.ariaAttention': 'Attention message',
@@ -159,6 +159,9 @@ const en4: TranslationMap = {
     'Manage your BIP39 recovery phrase for encryption and wallet access',
   'pages.settings.account.team': 'Team',
   'pages.settings.account.teamDesc': 'Manage your team, members, and invites',
+  'pages.settings.account.migration': 'Import from another assistant',
+  'pages.settings.account.migrationDesc':
+    'Migrate memory and notes from OpenClaw (or, soon, Hermes) into this workspace.',
   'pages.settings.accountSection.description':
     'Recovery phrase, team, connections, and privacy settings.',
   'pages.settings.accountSection.title': 'Account',

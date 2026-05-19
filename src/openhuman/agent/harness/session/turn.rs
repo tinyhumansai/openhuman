@@ -1292,6 +1292,37 @@ impl Agent {
         self.history.extend(other_messages);
     }
 
+    /// Bound a resumed transcript prefix to the agent history window.
+    ///
+    /// Resume paths may load a long prior transcript directly into
+    /// `cached_transcript_messages` (provider-ready `ChatMessage`s), which
+    /// bypasses `self.history`-based trimming/reduction. Keep at most
+    /// `max_history_messages` entries while preserving the leading system
+    /// message when present.
+    pub(super) fn bound_cached_transcript_messages(
+        &self,
+        messages: Vec<ChatMessage>,
+    ) -> Vec<ChatMessage> {
+        let max = self.config.max_history_messages.max(1);
+        if messages.len() <= max {
+            return messages;
+        }
+
+        if matches!(messages.first(), Some(msg) if msg.role == "system") {
+            let keep_tail = max.saturating_sub(1);
+            let start = messages.len().saturating_sub(keep_tail);
+            let mut bounded = Vec::with_capacity(max);
+            bounded.push(messages[0].clone());
+            if keep_tail > 0 {
+                bounded.extend(messages[start..].iter().cloned());
+            }
+            bounded
+        } else {
+            let start = messages.len().saturating_sub(max);
+            messages[start..].to_vec()
+        }
+    }
+
     /// Pre-fetches learned context data from memory (observations, patterns, user profile).
     ///
     /// This is an async, non-blocking operation that populates the context
@@ -1731,11 +1762,18 @@ impl Agent {
                             );
                             return;
                         }
-                        log::info!(
-                            "[transcript] loaded {} messages for resume",
-                            session.messages.len()
-                        );
-                        self.cached_transcript_messages = Some(session.messages);
+                        let loaded_count = session.messages.len();
+                        log::info!("[transcript] loaded {} messages for resume", loaded_count);
+                        let bounded = self.bound_cached_transcript_messages(session.messages);
+                        if bounded.len() < loaded_count {
+                            log::warn!(
+                                "[transcript] resume prefix trimmed from {} to {} messages (max_history_messages={})",
+                                loaded_count,
+                                bounded.len(),
+                                self.config.max_history_messages
+                            );
+                        }
+                        self.cached_transcript_messages = Some(bounded);
                     }
                     Err(err) => {
                         log::warn!(

@@ -319,6 +319,47 @@ pub(super) fn log_budget_exhausted_http_400(
     );
 }
 
+/// Whether a provider non-2xx response is a deterministic
+/// **configuration-rejection** user-state error (unknown model id,
+/// abstract tier leaked to a custom provider, model-specific temperature
+/// constraint) that should be demoted from Sentry to an info log.
+///
+/// Provider-aware (inverted polarity vs. the 401/403 backend rule): the
+/// same body from the OpenHuman **backend** stays Sentry-actionable —
+/// that would mean we sent our own backend a bad request (a regression,
+/// e.g. #2079). Only client errors from a *custom / third-party*
+/// provider are user-config state. Restricted to the observed shapes
+/// (400 invalid-param / unknown-model, 404 model-does-not-exist, 422
+/// unprocessable); 408/429 are transient and handled separately.
+pub(super) fn is_provider_config_rejection_http(
+    status: reqwest::StatusCode,
+    provider: &str,
+    body: &str,
+) -> bool {
+    matches!(status.as_u16(), 400 | 404 | 422)
+        && provider != openhuman_backend::PROVIDER_LABEL
+        && super::is_provider_config_rejection_message(body)
+}
+
+pub(super) fn log_provider_config_rejection(
+    operation: &str,
+    provider: &str,
+    model: Option<&str>,
+    status: reqwest::StatusCode,
+) {
+    tracing::info!(
+        domain = "llm_provider",
+        operation = operation,
+        provider = provider,
+        model = model.unwrap_or(""),
+        status = status.as_u16(),
+        failure = "non_2xx",
+        kind = "provider_config_rejection",
+        "[llm_provider] {operation} provider config-rejection ({status}) — \
+         user model/param configuration, not reporting to Sentry"
+    );
+}
+
 /// Build a sanitized provider error from a failed HTTP response.
 ///
 /// Reports the failure to Sentry with `provider` and `status` tags so
@@ -337,6 +378,12 @@ pub(super) fn log_budget_exhausted_http_400(
 ///   override, halting downstream LLM work. 401/403 from **other** providers
 ///   (OpenAI, Anthropic, …) still go to Sentry — those mean a misconfigured
 ///   API key, which is actionable.
+/// - **Provider config-rejection** (4xx unknown-model / abstract-tier /
+///   model-specific temperature) from a **non-backend** provider — the
+///   user pointed a custom provider at a model/param it doesn't accept.
+///   Deterministic user-config state, surfaced in the UI; demoted to an
+///   info log (#2079 / #2076 / #2202). See
+///   [`is_provider_config_rejection_http`].
 pub async fn api_error(provider: &str, response: reqwest::Response) -> anyhow::Error {
     let status = response.status();
     let status_str = status.as_u16().to_string();
@@ -350,6 +397,7 @@ pub async fn api_error(provider: &str, response: reqwest::Response) -> anyhow::E
     let is_auth_failure = matches!(status.as_u16(), 401 | 403);
     let is_backend = provider == openhuman_backend::PROVIDER_LABEL;
     let is_budget_exhausted_user_state = is_budget_exhausted_http_400(status, &body);
+    let is_provider_config_rejection = is_provider_config_rejection_http(status, provider, &body);
 
     if is_auth_failure && is_backend {
         tracing::warn!(
@@ -372,6 +420,8 @@ pub async fn api_error(provider: &str, response: reqwest::Response) -> anyhow::E
         );
     } else if is_budget_exhausted_user_state {
         log_budget_exhausted_http_400("api_error", provider, None, status);
+    } else if is_provider_config_rejection {
+        log_provider_config_rejection("api_error", provider, None, status);
     } else if should_report_provider_http_failure(status) {
         crate::core::observability::report_error(
             message.as_str(),
@@ -413,7 +463,7 @@ pub fn create_backend_inference_provider(
             key.len()
         );
         Ok(Box::new(
-            crate::openhuman::inference::provider::compatible::OpenAiCompatibleProvider::new(
+            crate::openhuman::inference::provider::compatible::OpenAiCompatibleProvider::new_no_responses_fallback(
                 "custom_openai",
                 url,
                 Some(key),
@@ -627,7 +677,12 @@ pub fn create_intelligent_routing_provider(
         ))
     };
 
-    let provider = crate::openhuman::routing::new_provider(remote, &config.local_ai, default_model);
+    let provider = crate::openhuman::routing::new_provider(
+        remote,
+        &config.local_ai,
+        default_model,
+        &config.temperature_unsupported_models,
+    );
     Ok(Box::new(provider))
 }
 
@@ -820,6 +875,94 @@ mod tests {
                 reqwest::StatusCode::BAD_REQUEST,
                 "",
             ));
+        }
+    }
+
+    // Exercises the real `is_provider_config_rejection_http` decision used
+    // by `api_error`, including the inverted provider-aware polarity.
+    mod provider_config_rejection_suppression {
+        use super::*;
+
+        // The exact #2079 Sentry body shape.
+        const TIER_LEAK_BODY: &str =
+            "The supported API model names are deepseek-v4-pro or deepseek-v4-flash, \
+             but you passed reasoning-v1.";
+        // #2076 Moonshot Kimi K2 temperature constraint.
+        const TEMP_BODY: &str = "invalid temperature: only 1 is allowed for this model";
+
+        #[test]
+        fn custom_provider_4xx_config_rejection_is_suppressed() {
+            assert!(is_provider_config_rejection_http(
+                reqwest::StatusCode::BAD_REQUEST,
+                "custom_openai",
+                TIER_LEAK_BODY,
+            ));
+            assert!(is_provider_config_rejection_http(
+                reqwest::StatusCode::BAD_REQUEST,
+                "custom_openai",
+                TEMP_BODY,
+            ));
+            // 404 "model does not exist" is the same user-config class.
+            assert!(is_provider_config_rejection_http(
+                reqwest::StatusCode::NOT_FOUND,
+                "custom_openai",
+                "The model `gpt-5.5` does not exist or you do not have access to it.",
+            ));
+        }
+
+        #[test]
+        fn openhuman_backend_same_body_is_not_suppressed() {
+            // Inverted polarity: a model-rejection from our OWN backend
+            // means we sent it a bad request — a real regression that must
+            // still reach Sentry. (Mirror of the 401/403 backend rule.)
+            assert!(!is_provider_config_rejection_http(
+                reqwest::StatusCode::BAD_REQUEST,
+                openhuman_backend::PROVIDER_LABEL,
+                TIER_LEAK_BODY,
+            ));
+        }
+
+        #[test]
+        fn server_error_is_not_suppressed() {
+            // A 5xx is a server bug, not user-config — keep reporting.
+            assert!(!is_provider_config_rejection_http(
+                reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+                "custom_openai",
+                TIER_LEAK_BODY,
+            ));
+        }
+
+        #[test]
+        fn transient_429_is_not_suppressed_here() {
+            // 429 is transient; handled by should_report_provider_http_failure,
+            // not this classifier (must not be swallowed as user-config).
+            assert!(!is_provider_config_rejection_http(
+                reqwest::StatusCode::TOO_MANY_REQUESTS,
+                "custom_openai",
+                TIER_LEAK_BODY,
+            ));
+        }
+
+        #[test]
+        fn unrelated_4xx_body_is_not_suppressed() {
+            assert!(!is_provider_config_rejection_http(
+                reqwest::StatusCode::BAD_REQUEST,
+                "custom_openai",
+                "Bad request: missing required field 'messages'",
+            ));
+        }
+
+        #[test]
+        fn log_helper_runs_without_panicking() {
+            // Covers the demotion log path taken by `api_error` when a
+            // custom provider rejects the user's model/param config. No
+            // tracing subscriber in unit tests, so this is a pure smoke.
+            log_provider_config_rejection(
+                "api_error",
+                "custom_openai",
+                Some("reasoning-v1"),
+                reqwest::StatusCode::BAD_REQUEST,
+            );
         }
     }
 

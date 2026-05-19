@@ -88,6 +88,22 @@ pub enum ExpectedErrorKind {
     /// 4xx body embedded, which would otherwise escape the
     /// [`is_backend_user_error_message`] 4xx-only matcher.
     ProviderUserState,
+    /// A user-configured custom cloud provider (`custom_openai` → DeepSeek
+    /// / OpenRouter / Moonshot / …) rejected the request because of the
+    /// user's **model / parameter configuration**: an OpenHuman abstract
+    /// tier alias leaked to a provider that only speaks its native ids
+    /// (#2079), an unknown / stale model pin (#2202), or a model-specific
+    /// temperature constraint (#2076 — Moonshot Kimi K2). The provider
+    /// HTTP layer (`providers::ops::api_error`) already demotes its own
+    /// per-attempt event; this catches the *re-report* when the same
+    /// error is raised again by `agent.run_single` /
+    /// `web_channel.run_chat_task` under `domain=agent` / `web_channel`.
+    /// Deterministic user-config state surfaced in the UI — Sentry has no
+    /// remediation path (OPENHUMAN-TAURI-WJ / -QW / -HB / -NH, ~273
+    /// events). See
+    /// [`crate::openhuman::inference::provider::is_provider_config_rejection_message`]
+    /// for the polarity contract and exact body shapes.
+    ProviderConfigRejection,
     LocalAiCapabilityUnavailable,
     BudgetExhausted,
     SessionExpired,
@@ -152,6 +168,15 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     }
     if is_backend_user_error_message(&lower) {
         return Some(ExpectedErrorKind::BackendUserError);
+    }
+    // Provider config-rejection (unknown model / abstract tier leaked to a
+    // custom provider / model-specific temperature). Body-shape based and
+    // intrinsically scoped to third-party providers — the OpenHuman
+    // backend never emits these phrases. See the predicate's polarity
+    // contract. Drops OPENHUMAN-TAURI-WJ / -QW / -HB / -NH re-reports
+    // (#2079 / #2076 / #2202).
+    if crate::openhuman::inference::provider::is_provider_config_rejection_message(message) {
+        return Some(ExpectedErrorKind::ProviderConfigRejection);
     }
     if is_local_ai_capability_unavailable_message(&lower) {
         return Some(ExpectedErrorKind::LocalAiCapabilityUnavailable);
@@ -585,6 +610,26 @@ fn report_expected_message(kind: ExpectedErrorKind, message: &str, domain: &str,
                 kind = "provider_user_state",
                 error = %message,
                 "[observability] {domain}.{operation} skipped expected provider-user-state error: {message}"
+            );
+        }
+        ExpectedErrorKind::ProviderConfigRejection => {
+            // User-config state: a custom cloud provider rejected the
+            // request because of the user's model / parameter setup — an
+            // OpenHuman abstract tier alias leaked to a provider that only
+            // speaks its native ids (#2079), an unknown / stale model pin
+            // (#2202), or a model-specific temperature constraint (#2076,
+            // Moonshot Kimi K2). The provider HTTP layer already demoted
+            // its own per-attempt event; this is the re-report raised
+            // again by agent.run_single / web_channel.run_chat_task. The
+            // UI surfaces an actionable "fix your model/provider settings"
+            // error — Sentry has no remediation path
+            // (OPENHUMAN-TAURI-WJ / -QW / -HB / -NH).
+            tracing::info!(
+                domain = domain,
+                operation = operation,
+                kind = "provider_config_rejection",
+                error = %message,
+                "[observability] {domain}.{operation} skipped expected provider config-rejection error: {message}"
             );
         }
         ExpectedErrorKind::LocalAiCapabilityUnavailable => {
@@ -1603,6 +1648,57 @@ mod tests {
     }
 
     #[test]
+    fn classifies_provider_config_rejection() {
+        // #2079 — an OpenHuman abstract tier alias leaked to a custom
+        // provider; raised again by `agent.run_single` /
+        // `web_channel.run_chat_task` so it escapes the provider-layer
+        // demotion and reaches `report_error_or_expected` here.
+        assert_eq!(
+            expected_error_kind(
+                "agent.run_single failed: custom_openai API error (400 Bad Request): \
+                 The supported API model names are deepseek-v4-pro or deepseek-v4-flash, \
+                 but you passed reasoning-v1."
+            ),
+            Some(ExpectedErrorKind::ProviderConfigRejection)
+        );
+        // #2076 — Moonshot Kimi K2 temperature constraint.
+        assert_eq!(
+            expected_error_kind(
+                "custom_openai API error (400): invalid temperature: only 1 is allowed for this model"
+            ),
+            Some(ExpectedErrorKind::ProviderConfigRejection)
+        );
+        // #2202 — unknown / stale model pin (OpenAI-compatible body).
+        assert_eq!(
+            expected_error_kind(
+                "custom_openai API error (400): Model 'claude-opus-4-7' is not available. \
+                 Use GET /openai/v1/models to list available models."
+            ),
+            Some(ExpectedErrorKind::ProviderConfigRejection)
+        );
+    }
+
+    #[test]
+    fn does_not_classify_unrelated_provider_failures_as_config_rejection() {
+        // Inverted polarity / scope guard: a 5xx or a generic 4xx with no
+        // config-rejection body must still reach Sentry as actionable.
+        // (The OpenHuman backend never emits these phrases, so the
+        // message-level predicate is intrinsically custom-provider scoped;
+        // the HTTP-layer twin enforces the non-backend guard explicitly.)
+        assert_eq!(
+            expected_error_kind("custom_openai API error (500): internal server error"),
+            None
+        );
+        assert_eq!(
+            expected_error_kind(
+                "custom_openai API error (400 Bad Request): missing required field 'messages'"
+            ),
+            None,
+            "generic 4xx without a config-rejection body must NOT demote"
+        );
+    }
+
+    #[test]
     fn unrelated_missing_required_fields_classifies_as_accepted_false_positive() {
         // Documents the breadth of the `"missing required fields"` arm —
         // unlike the trigger/toolkit arms it has no second anchor, so a
@@ -1744,6 +1840,54 @@ mod tests {
                 expected_error_kind(raw),
                 Some(ExpectedErrorKind::SessionExpired),
                 "should classify as session-expired: {raw}"
+            );
+        }
+    }
+
+    /// OPENHUMAN-TAURI-SG (33 events, escalating, release `0.53.43+2b64ea8…`):
+    /// pre-#1763 leak of the `resolve_bearer` sentinel through
+    /// `agent.run_single`. PR #1763 (1fb0bef5) wired the `SessionExpired`
+    /// arm and the existing `classifies_session_expired_messages` test
+    /// covers the same byte string — this test pins the *Sentry-event
+    /// verbatim* shape (taken from the OPENHUMAN-TAURI-SG event payload)
+    /// so a future tweak to `is_session_expired_message` cannot regress
+    /// this exact wire form without a red test.
+    #[test]
+    fn session_expired_sg_wire_shape_matches() {
+        let msg = "SESSION_EXPIRED: backend session not active — sign in to resume LLM work";
+        assert_eq!(
+            expected_error_kind(msg),
+            Some(ExpectedErrorKind::SessionExpired),
+            "OPENHUMAN-TAURI-SG wire shape must classify as SessionExpired — \
+             a regression here re-leaks 33+ events/cycle to Sentry"
+        );
+    }
+
+    /// The two sibling `SESSION_EXPIRED:` bail sites in
+    /// `providers::factory::verify_session_active` emit different message
+    /// suffixes but the same sentinel prefix. They route through the same
+    /// classifier as the run_single bail at
+    /// `providers::openhuman_backend::resolve_bearer`, and any matcher
+    /// tweak that breaks the family (e.g. moving from `contains` to a
+    /// stricter prefix/suffix match) would re-leak ALL of them. Pin every
+    /// variant the codebase actually emits so a future regression on the
+    /// matcher is caught for the whole family, not just the SG instance.
+    #[test]
+    fn session_expired_sibling_family_factory_strings_match() {
+        // src/openhuman/inference/provider/factory.rs:247
+        // (verify_session_active — scheduler_gate signed-out path)
+        let custom_providers_variant =
+            "SESSION_EXPIRED: backend session not active — sign in to use custom providers";
+        // src/openhuman/inference/provider/factory.rs:266
+        // (verify_session_active — empty auth-profile JWT path)
+        let no_backend_session_variant =
+            "SESSION_EXPIRED: no backend session — sign in to use OpenHuman";
+
+        for raw in [custom_providers_variant, no_backend_session_variant] {
+            assert_eq!(
+                expected_error_kind(raw),
+                Some(ExpectedErrorKind::SessionExpired),
+                "factory.rs sibling sentinel must classify as SessionExpired: {raw}"
             );
         }
     }
@@ -2242,6 +2386,23 @@ mod tests {
             "agent",
             "provider_chat",
             &[("provider", "ollama")],
+        );
+        // #2079 / #2076 / #2202 — exercises the expected_error_kind
+        // ProviderConfigRejection branch AND the report_expected_message
+        // skip-log arm (the agent/web-channel re-report demotion path).
+        report_error_or_expected(
+            "agent.run_single failed: custom_openai API error (400 Bad Request): \
+             The supported API model names are deepseek-v4-pro or deepseek-v4-flash, \
+             but you passed reasoning-v1.",
+            "agent",
+            "native_chat",
+            &[("provider", "custom_openai")],
+        );
+        report_error_or_expected(
+            "custom_openai API error (400): invalid temperature: only 1 is allowed for this model",
+            "web_channel",
+            "run_chat_task",
+            &[("provider", "custom_openai")],
         );
     }
 

@@ -354,6 +354,35 @@ rejected by the app picker; use HTTPS for any publicly reachable core.
 
 ---
 
+## Named-volume ownership and the Docker entrypoint
+
+Docker creates named volumes owned `root:root` by default. Because the core
+runs as the non-root `openhuman` user (UID 10001), the first write after the
+banner — `init_rpc_token → write_token_file` into `$OPENHUMAN_WORKSPACE` —
+would raise `Permission denied (os error 13)` if nothing fixes the ownership
+first.
+
+The image ships a dedicated entrypoint at
+`/usr/local/bin/docker-entrypoint-core.sh` that:
+
+1. Starts as `root`.
+2. Runs `mkdir -p` + `chown openhuman:openhuman` on both `$OPENHUMAN_WORKSPACE`
+   and `$HOME/.openhuman` (the directory `core.token` is written to when
+   `OPENHUMAN_CORE_TOKEN` is unset).
+3. Calls `exec gosu openhuman openhuman-core "$@"` to drop privileges and
+   hand off to the binary.
+
+This is **idempotent**: on a freshly-created volume the chown heals the
+root-owned directory; on a volume that was already healed the chown is a
+no-op. No manual `docker volume rm` is required when upgrading from images
+predating this fix.
+
+The entrypoint is named `docker-entrypoint-core.sh` and wired **only** into
+the root `Dockerfile`. The E2E image (`e2e/docker-entrypoint.sh`) is
+unaffected.
+
+---
+
 ## Smoke test
 
 The repo ships [`.github/workflows/deploy-smoke.yml`](../../.github/workflows/deploy-smoke.yml),
@@ -361,14 +390,34 @@ which runs on every PR that touches the deploy artifacts. It builds the
 Docker image, boots it, and polls `/health`, so a regression in the cloud
 deploy path fails CI before it lands on `main`.
 
+The workflow contains two jobs:
+
+- **`docker-image`** — sets `OPENHUMAN_CORE_TOKEN` and mounts no volume.
+  Protects the DigitalOcean App Platform path (`.do/app.yaml`) where the
+  token is always pre-set and no persistent volume is used.
+- **`docker-volume-permissions`** — omits `OPENHUMAN_CORE_TOKEN` and mounts
+  a fresh anonymous volume at `/home/openhuman/.openhuman`. Reproduces the
+  exact failure mode of issue #2065 and asserts that `/health` returns 200
+  and that `Permission denied (os error 13)` is absent from the logs.
+
 To run the same check locally:
 
 ```bash
 docker build -t openhuman-core:smoke .
+
+# Token-set path (App Platform):
 docker run -d --name oh-smoke -p 7788:7788 \
   -e OPENHUMAN_CORE_TOKEN=smoke-test-token \
   openhuman-core:smoke
-# Wait ~15s for the binary to come up, then:
 curl -fsS http://localhost:7788/health
 docker rm -f oh-smoke
+
+# Fresh-volume / no-token path (Docker Compose, VPS):
+docker volume create oh-vol-test
+docker run -d --name oh-vol-smoke -p 7789:7788 \
+  -v oh-vol-test:/home/openhuman/.openhuman \
+  openhuman-core:smoke
+curl -fsS http://localhost:7789/health
+docker rm -f oh-vol-smoke
+docker volume rm oh-vol-test
 ```

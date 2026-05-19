@@ -215,26 +215,68 @@ fn optional_classifier() -> Option<&'static dyn OptionalClassifier> {
     OPTIONAL_CLASSIFIER.as_deref()
 }
 
+/// Returns `true` for zero-width, formatting, and obfuscation characters that
+/// should be stripped during prompt normalization. Shared between the `had_zwsp`
+/// detection flag and the normalization stripping logic to prevent drift.
+fn is_obfuscation_char(ch: char) -> bool {
+    matches!(
+        ch,
+        '\u{200b}'
+            | '\u{200c}'
+            | '\u{200d}'
+            | '\u{2060}'
+            | '\u{feff}'
+            | '\u{00ad}'
+            | '\u{034f}'
+            | '\u{180e}'
+            | '\u{200e}'
+            | '\u{200f}'
+            | '\u{202a}'..='\u{202e}'
+            | '\u{2066}'..='\u{2069}'
+    )
+}
+
 fn normalize_prompt(input: &str) -> NormalizedPrompt {
     let lowered = input.to_lowercase();
-    let had_zwsp = lowered.chars().any(|ch| {
-        matches!(
-            ch,
-            '\u{200b}' | '\u{200c}' | '\u{200d}' | '\u{2060}' | '\u{feff}'
-        )
-    });
+    let had_zwsp = lowered.chars().any(is_obfuscation_char);
     let has_base64_marker = BASE64_RE.is_match(&lowered);
 
     let mut buffer = String::with_capacity(lowered.len());
     for ch in lowered.chars() {
         let mapped = match ch {
+            // Leet-speak normalization
             '0' => 'o',
             '1' => 'i',
             '3' => 'e',
             '4' => 'a',
             '5' => 's',
             '7' => 't',
-            '\u{200b}' | '\u{200c}' | '\u{200d}' | '\u{2060}' | '\u{feff}' => ' ',
+            '8' => 'b',
+            '6' => 'g',
+            '@' => 'a',
+            // Cyrillic homoglyphs (most common confusables from UAX#39)
+            '\u{0430}' => 'a', // а → a
+            '\u{0435}' => 'e', // е → e
+            '\u{043e}' => 'o', // о → o
+            '\u{0440}' => 'p', // р → p
+            '\u{0441}' => 'c', // с → c
+            '\u{0443}' => 'y', // у → y
+            '\u{0445}' => 'x', // х → x
+            '\u{0456}' => 'i', // і → i
+            '\u{0455}' => 's', // ѕ → s
+            '\u{04bb}' => 'h', // һ → h
+            '\u{0501}' => 'd', // ԁ → d
+            // Zero-width and formatting characters → strip
+            ch if is_obfuscation_char(ch) => continue,
+            // Fullwidth ASCII → normal ASCII (U+FF01..U+FF5E → U+0021..U+007E)
+            '\u{ff01}'..='\u{ff5e}' => {
+                let ascii = (ch as u32 - 0xff00 + 0x20) as u8 as char;
+                // Apply lowercase again since fullwidth uppercase letters exist
+                for lower in ascii.to_lowercase() {
+                    buffer.push(lower);
+                }
+                continue;
+            }
             other if other.is_ascii_alphanumeric() || other.is_whitespace() => other,
             _ => ' ',
         };
