@@ -251,6 +251,7 @@ pub fn client_config_json(config: &Config) -> serde_json::Value {
         "model_routes": model_routes,
         "cloud_providers": cloud_providers,
         "primary_cloud": config.primary_cloud,
+        "chat_provider": config.chat_provider,
         "reasoning_provider": config.reasoning_provider,
         "agentic_provider": config.agentic_provider,
         "coding_provider": config.coding_provider,
@@ -297,6 +298,7 @@ pub struct ModelSettingsPatch {
     /// Id of the `cloud_providers` entry used when a workload routes to
     /// `"cloud"`. Empty string clears (factory falls back to OpenHuman).
     pub primary_cloud: Option<String>,
+    pub chat_provider: Option<String>,
     pub reasoning_provider: Option<String>,
     pub agentic_provider: Option<String>,
     pub coding_provider: Option<String>,
@@ -465,6 +467,9 @@ pub async fn apply_model_settings(
             Some(t.to_string())
         }
     };
+    if let Some(s) = update.chat_provider {
+        config.chat_provider = normalise_provider(s);
+    }
     if let Some(s) = update.reasoning_provider {
         config.reasoning_provider = normalise_provider(s);
     }

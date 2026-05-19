@@ -60,7 +60,7 @@ struct SessionCacheFingerprint {
     /// `build_session_agent` to re-resolve the target.
     target_agent_id: String,
     /// Bound provider string at build time for the selected workload
-    /// role (`reasoning`, `agentic`, `coding`, `summarization`).
+    /// role (`chat`, `reasoning`, `agentic`, `coding`, `summarization`).
     ///
     /// Web-chat sessions cache a fully constructed `Agent`, which in
     /// turn holds a concrete provider instance chosen up front by the
@@ -1345,7 +1345,8 @@ fn provider_role_for_model_override(model_override: Option<&str>) -> &'static st
         Some("hint:agentic") | Some("agentic-v1") => "agentic",
         Some("hint:coding") | Some("coding-v1") => "coding",
         Some("hint:summarization") | Some("summarization-v1") => "summarization",
-        _ => "reasoning",
+        Some("hint:reasoning") => "reasoning",
+        _ => "chat",
     }
 }
 

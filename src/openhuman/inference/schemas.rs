@@ -86,6 +86,7 @@ struct InferenceUpdateModelSettingsParams {
     model_routes: Option<Vec<InferenceModelRouteUpdate>>,
     cloud_providers: Option<Vec<InferenceCloudProviderUpdate>>,
     primary_cloud: Option<String>,
+    chat_provider: Option<String>,
     reasoning_provider: Option<String>,
     agentic_provider: Option<String>,
     coding_provider: Option<String>,
@@ -239,6 +240,7 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 optional_json("model_routes", "Optional full replacement for legacy model routes."),
                 optional_json("cloud_providers", "Optional full replacement for configured cloud providers."),
                 optional_string("primary_cloud", "Optional primary cloud provider id."),
+                optional_string("chat_provider", "Optional chat workload provider string."),
                 optional_string("reasoning_provider", "Optional reasoning workload provider string."),
                 optional_string("agentic_provider", "Optional agentic workload provider string."),
                 optional_string("coding_provider", "Optional coding workload provider string."),
@@ -544,6 +546,7 @@ fn handle_inference_update_model_settings(params: Map<String, Value>) -> Control
                 })
                 .transpose()?,
             primary_cloud: update.primary_cloud,
+            chat_provider: update.chat_provider,
             reasoning_provider: update.reasoning_provider,
             agentic_provider: update.agentic_provider,
             coding_provider: update.coding_provider,

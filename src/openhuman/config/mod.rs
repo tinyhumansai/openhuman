@@ -38,7 +38,7 @@ pub use schema::{
     SecurityConfig, SlackConfig, StorageConfig, StorageProviderConfig, StorageProviderSection,
     StreamMode, TeamModelConfig, TelegramConfig, UpdateConfig, UpdateRestartStrategy,
     VoiceActivationMode, VoiceServerConfig, WebSearchConfig, WebhookConfig,
-    DEFAULT_CLOUD_LLM_MODEL, DEFAULT_MODEL, MODEL_AGENTIC_V1, MODEL_CODING_V1,
+    DEFAULT_CLOUD_LLM_MODEL, DEFAULT_MODEL, MODEL_AGENTIC_V1, MODEL_CHAT_V1, MODEL_CODING_V1,
     MODEL_REASONING_QUICK_V1, MODEL_REASONING_V1,
 };
 pub use schema::{

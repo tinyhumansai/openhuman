@@ -367,7 +367,7 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
   });
 
   // Covers lines 1455-1483: quota pill loading state
-  it('renders "loading…" quota pill when isLoadingBudget=true', async () => {
+  it('renders "Loading…" quota pill when isLoadingBudget=true', async () => {
     mockUseUsageState.mockReturnValue({
       teamUsage: null,
       currentPlan: null,
@@ -388,7 +388,7 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
       await renderConversations({ thread: emptyThreadState });
     });
 
-    expect(screen.getByText('loading…')).toBeInTheDocument();
+    expect(screen.getByText('Loading…')).toBeInTheDocument();
   });
 
   // Covers lines 1417-1439: budget banner + lines 1455-1516: LimitPill + tooltip

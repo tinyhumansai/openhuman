@@ -768,11 +768,29 @@ impl Agent {
             secrets_encrypt: config.secrets.encrypt,
             reasoning_enabled: config.runtime.reasoning_enabled,
         };
+        // Explicit `hint:<role>` and known-tier model strings route to the
+        // matching workload (so a subagent declaring `hint:reasoning` still
+        // gets the user's `reasoning_provider`). Everything else — including
+        // the orchestrator/lead, which has no specialised hint — falls
+        // through to the `chat` workload, so `config.chat_provider` (the
+        // "Chat" routing row, "Direct conversational back-and-forth") drives
+        // the user-facing chat turn.
+        // Only the explicit `hint:<role>` form routes to a specialised
+        // workload — legacy tier literals like `reasoning-v1` (which the
+        // bootstrap historically pinned as `default_model` for everyone)
+        // fall through to `chat`. This is what makes
+        // `config.chat_provider` actually drive the orchestrator's chat
+        // turn for the install base; without it, every existing user's
+        // `default_model = "reasoning-v1"` would silently route the main
+        // chat to the `reasoning` workload regardless of their
+        // `chat_provider` selection. Subagents still set their own role
+        // through `ModelSpec::Hint(...)` in the subagent runner.
         let provider_role = match config.default_model.as_deref().map(str::trim) {
-            Some("hint:agentic") | Some("agentic-v1") => "agentic",
-            Some("hint:coding") | Some("coding-v1") => "coding",
-            Some("hint:summarization") | Some("summarization-v1") => "summarization",
-            _ => "reasoning",
+            Some("hint:agentic") => "agentic",
+            Some("hint:coding") => "coding",
+            Some("hint:summarization") => "summarization",
+            Some("hint:reasoning") => "reasoning",
+            _ => "chat",
         };
         let (provider, mut model_name): (Box<dyn Provider>, String) =
             crate::openhuman::inference::provider::create_chat_provider(provider_role, config)?;
