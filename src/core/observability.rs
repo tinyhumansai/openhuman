@@ -1643,6 +1643,25 @@ mod tests {
         }
     }
 
+    /// OPENHUMAN-TAURI-SG (33 events, escalating, release `0.53.43+2b64ea8…`):
+    /// pre-#1763 leak of the `resolve_bearer` sentinel through
+    /// `agent.run_single`. PR #1763 (1fb0bef5) wired the `SessionExpired`
+    /// arm and the existing `classifies_session_expired_messages` test
+    /// covers the same byte string — this test pins the *Sentry-event
+    /// verbatim* shape (taken from the OPENHUMAN-TAURI-SG event payload)
+    /// so a future tweak to `is_session_expired_message` cannot regress
+    /// this exact wire form without a red test.
+    #[test]
+    fn session_expired_sg_wire_shape_matches() {
+        let msg = "SESSION_EXPIRED: backend session not active — sign in to resume LLM work";
+        assert_eq!(
+            expected_error_kind(msg),
+            Some(ExpectedErrorKind::SessionExpired),
+            "OPENHUMAN-TAURI-SG wire shape must classify as SessionExpired — \
+             a regression here re-leaks 33+ events/cycle to Sentry"
+        );
+    }
+
     #[test]
     fn does_not_classify_byo_key_provider_401_as_session_expired() {
         // Critical: a BYO-key 401 from OpenAI / Anthropic etc. is an
