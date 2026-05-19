@@ -2,6 +2,7 @@ use super::clob_auth::{derive_credentials, sign_clob_headers, ClobCredentials};
 use super::polymarket_orders::{sign_order, Order};
 use crate::openhuman::config::rpc as config_rpc;
 use crate::openhuman::config::PolymarketConfig;
+use crate::openhuman::security::policy::ToolOperation;
 use crate::openhuman::security::SecurityPolicy;
 use crate::openhuman::tools::traits::{Tool, ToolCategory, ToolResult};
 use crate::openhuman::wallet::{secret_material, status as wallet_status, WalletChain};
@@ -416,6 +417,9 @@ impl PolymarketTool {
                 approved,
                 user,
             } => {
+                self.security
+                    .enforce_tool_operation(ToolOperation::Act, "polymarket.place_order")
+                    .map_err(anyhow::Error::msg)?;
                 require_write_approval(approved)?;
 
                 let (wallet, user) = self.resolve_signer_and_user(user).await?;
@@ -458,6 +462,9 @@ impl PolymarketTool {
                 approved,
                 user,
             } => {
+                self.security
+                    .enforce_tool_operation(ToolOperation::Act, "polymarket.cancel_order")
+                    .map_err(anyhow::Error::msg)?;
                 require_write_approval(approved)?;
 
                 let (wallet, user) = self.resolve_signer_and_user(user).await?;

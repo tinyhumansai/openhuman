@@ -673,6 +673,49 @@ async fn place_order_requires_approval_and_does_not_issue_http() {
 }
 
 #[tokio::test]
+async fn place_order_blocked_by_readonly_security_policy_before_approval_check() {
+    let (clob_base, calls) = start_mock_server(route(
+        "/order",
+        vec![MockResponse::body(200, r#"{"ok":true}"#)],
+    ))
+    .await;
+
+    let readonly_security = Arc::new(SecurityPolicy {
+        autonomy: AutonomyLevel::ReadOnly,
+        ..SecurityPolicy::default()
+    });
+    let config = PolymarketConfig {
+        enabled: true,
+        gamma_base_url: clob_base.clone(),
+        clob_base_url: clob_base,
+        timeout_secs: 15,
+        ..PolymarketConfig::default()
+    };
+    let tool = PolymarketTool::new(&config, readonly_security);
+
+    let result = tool
+        .execute(json!({
+            "action": "place_order",
+            "approved": true,
+            "user": "0x1111111111111111111111111111111111111111",
+            "side": "BUY",
+            "token_id": "1001",
+            "price": 0.5,
+            "size": 10
+        }))
+        .await
+        .unwrap();
+
+    assert!(result.is_error);
+    assert!(
+        result.output().contains("read-only mode"),
+        "expected security-policy block, got: {}",
+        result.output()
+    );
+    assert_eq!(calls.load(Ordering::Relaxed), 0);
+}
+
+#[tokio::test]
 async fn place_order_happy_path_posts_signed_order() {
     use crate::openhuman::config::TEST_ENV_LOCK;
 
