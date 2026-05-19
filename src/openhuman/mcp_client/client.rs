@@ -853,9 +853,7 @@ mod tests {
         headers
             .get(ACCEPT)
             .and_then(|value| value.to_str().ok())
-            .map(|value| {
-                value.contains("application/json") && value.contains("text/event-stream")
-            })
+            .map(|value| value.contains("application/json") && value.contains("text/event-stream"))
             .unwrap_or(false)
     }
 
@@ -866,7 +864,10 @@ mod tests {
         Json(body): Json<Value>,
     ) -> Response {
         if method == Method::POST && !has_streamable_http_accept(&headers) {
-            return (StatusCode::NOT_ACCEPTABLE, "missing MCP Accept header".to_string())
+            return (
+                StatusCode::NOT_ACCEPTABLE,
+                "missing MCP Accept header".to_string(),
+            )
                 .into_response();
         }
         let rpc_method = body.get("method").and_then(Value::as_str).unwrap_or("");
@@ -969,7 +970,10 @@ mod tests {
             .filter(|value| value.contains("text/event-stream"))
             .is_none()
         {
-            return (StatusCode::NOT_ACCEPTABLE, "missing SSE Accept header".to_string())
+            return (
+                StatusCode::NOT_ACCEPTABLE,
+                "missing SSE Accept header".to_string(),
+            )
                 .into_response();
         }
         if headers.get(HEADER_SESSION_ID).is_none() {
@@ -1008,7 +1012,10 @@ mod tests {
         Json(body): Json<Value>,
     ) -> Response {
         if !has_streamable_http_accept(&headers) {
-            return (StatusCode::NOT_ACCEPTABLE, "missing MCP Accept header".to_string())
+            return (
+                StatusCode::NOT_ACCEPTABLE,
+                "missing MCP Accept header".to_string(),
+            )
                 .into_response();
         }
         let rpc_method = body.get("method").and_then(Value::as_str).unwrap_or("");
