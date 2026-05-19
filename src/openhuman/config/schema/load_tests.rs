@@ -423,8 +423,9 @@ impl EnvLookup for HashMapEnv {
 }
 
 #[test]
-fn env_overlay_model_prefers_openhuman_over_alias() {
-    // Both set → OPENHUMAN_MODEL wins.
+fn env_overlay_model_only_honours_namespaced_var() {
+    // Both set → OPENHUMAN_MODEL wins; bare MODEL is ignored even when
+    // OPENHUMAN_MODEL is absent.
     let env = HashMapEnv::new()
         .with("OPENHUMAN_MODEL", "specific-v2")
         .with("MODEL", "alias-fallback");
@@ -432,11 +433,30 @@ fn env_overlay_model_prefers_openhuman_over_alias() {
     cfg.apply_env_overlay_with(&env);
     assert_eq!(cfg.default_model.as_deref(), Some("specific-v2"));
 
-    // Only alias set → alias wins.
-    let env = HashMapEnv::new().with("MODEL", "alias-only");
+    // Only bare MODEL set → must NOT clobber default_model. Vendor
+    // asset-tag env vars (e.g. Dell OptiPlex `MODEL=7080`) would otherwise
+    // hijack the LLM model name and 400 every backend call
+    // (Sentry OPENHUMAN-TAURI-J8).
+    let env = HashMapEnv::new().with("MODEL", "7080");
     let mut cfg = Config::default();
+    let original = cfg.default_model.clone();
     cfg.apply_env_overlay_with(&env);
-    assert_eq!(cfg.default_model.as_deref(), Some("alias-only"));
+    assert_eq!(
+        cfg.default_model, original,
+        "bare MODEL env var must not override default_model"
+    );
+
+    // Whitespace-only OPENHUMAN_MODEL must not clobber either. Some
+    // shells/CI runners pass an unset-but-declared env var through as
+    // `"   "`, which `is_empty()` alone wouldn't reject.
+    let env = HashMapEnv::new().with("OPENHUMAN_MODEL", "   ");
+    let mut cfg = Config::default();
+    let original = cfg.default_model.clone();
+    cfg.apply_env_overlay_with(&env);
+    assert_eq!(
+        cfg.default_model, original,
+        "whitespace-only OPENHUMAN_MODEL must not clobber default_model"
+    );
 }
 
 #[test]

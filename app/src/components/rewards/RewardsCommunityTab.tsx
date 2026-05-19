@@ -16,18 +16,22 @@ function roleAccentTone(index: number) {
     {
       iconBg: 'bg-amber-50 dark:bg-amber-500/10',
       iconText: 'text-amber-600 dark:text-amber-300',
-      iconBorder: 'border-amber-100',
+      iconBorder: 'border-amber-100 dark:border-amber-500/20',
     },
     {
       iconBg: 'bg-blue-50 dark:bg-blue-500/10',
       iconText: 'text-primary-600 dark:text-primary-300',
-      iconBorder: 'border-blue-100',
+      iconBorder: 'border-blue-100 dark:border-blue-500/20',
     },
-    { iconBg: 'bg-slate-100', iconText: 'text-slate-600', iconBorder: 'border-slate-200' },
+    {
+      iconBg: 'bg-slate-100 dark:bg-slate-500/10',
+      iconText: 'text-slate-600 dark:text-slate-300',
+      iconBorder: 'border-slate-200 dark:border-slate-500/20',
+    },
     {
       iconBg: 'bg-emerald-50 dark:bg-emerald-500/10',
       iconText: 'text-emerald-600 dark:text-emerald-300',
-      iconBorder: 'border-emerald-100',
+      iconBorder: 'border-emerald-100 dark:border-emerald-500/20',
     },
   ] as const;
 
@@ -241,7 +245,9 @@ export default function RewardsCommunityTab({
                 <div
                   key={role.id}
                   className={`rounded-[1.25rem] bg-white dark:bg-neutral-900 p-5 shadow-sm transition-shadow hover:shadow-md ${
-                    role.unlocked ? 'ring-1 ring-primary-100' : 'ring-1 ring-black/[0.04]'
+                    role.unlocked
+                      ? 'ring-1 ring-primary-100 dark:ring-primary-500/20'
+                      : 'ring-1 ring-black/[0.04] dark:ring-white/[0.06]'
                   }`}>
                   <div className="flex items-start justify-between gap-4">
                     <div className="flex gap-4">
@@ -294,7 +300,7 @@ export default function RewardsCommunityTab({
           )}
         </section>
 
-        <section className="rounded-[1.25rem] bg-[#f2f4f6] p-4 text-sm text-stone-600 dark:text-neutral-300">
+        <section className="rounded-[1.25rem] bg-[#f2f4f6] dark:bg-neutral-800/60 p-4 text-sm text-stone-600 dark:text-neutral-300">
           <div className="flex items-center justify-between gap-3">
             <span>{t('rewards.community.discordServer')}</span>
             <span className="font-semibold text-stone-900 dark:text-neutral-100">

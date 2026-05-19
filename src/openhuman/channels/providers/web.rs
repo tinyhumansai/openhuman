@@ -60,7 +60,7 @@ struct SessionCacheFingerprint {
     /// `build_session_agent` to re-resolve the target.
     target_agent_id: String,
     /// Bound provider string at build time for the selected workload
-    /// role (`reasoning`, `agentic`, `coding`, `summarization`).
+    /// role (`chat`, `reasoning`, `agentic`, `coding`, `summarization`).
     ///
     /// Web-chat sessions cache a fully constructed `Agent`, which in
     /// turn holds a concrete provider instance chosen up front by the
@@ -287,6 +287,23 @@ fn classify_inference_error(err: &str) -> (&'static str, String) {
                 err,
             ),
         )
+    } else if crate::openhuman::inference::provider::is_provider_config_rejection_message(err) {
+        // #2079 / #2076 / #2202: an OpenHuman abstract tier alias leaked to
+        // a custom provider, a stale model pin, or a model-specific
+        // temperature constraint. Checked BEFORE the generic
+        // model-unavailable arm so config-rejection bodies that also
+        // contain "model"/"does not exist"/"does not have access" get the
+        // specific "Settings → LLM" remediation instead of the generic
+        // copy. Shared predicate keeps this in lockstep with the
+        // Sentry-demotion classifier.
+        (
+            "model_unavailable",
+            with_provider_detail(
+                "Your AI provider rejected the request's model or temperature setting. \
+                 Check your model and routing in Settings → LLM.",
+                err,
+            ),
+        )
     } else if lower.contains("model")
         && (lower.contains("not found")
             || lower.contains("unavailable")
@@ -333,6 +350,7 @@ pub async fn start_chat(
     model_override: Option<String>,
     temperature: Option<f64>,
     profile_id: Option<String>,
+    locale: Option<String>,
 ) -> Result<String, String> {
     let client_id = client_id.trim().to_string();
     let thread_id = thread_id.trim().to_string();
@@ -430,6 +448,7 @@ pub async fn start_chat(
             model_override,
             temperature,
             profile_id,
+            locale,
         )
         .await;
 
@@ -647,6 +666,7 @@ async fn run_chat_task(
     model_override: Option<String>,
     temperature: Option<f64>,
     profile_id: Option<String>,
+    locale: Option<String>,
 ) -> Result<WebChatTaskResult, String> {
     #[cfg(test)]
     {
@@ -723,6 +743,7 @@ async fn run_chat_task(
                     &profile,
                     model_override.clone(),
                     temperature,
+                    locale.as_deref(),
                 )?,
                 true,
             )
@@ -736,6 +757,7 @@ async fn run_chat_task(
                 &profile,
                 model_override.clone(),
                 temperature,
+                locale.as_deref(),
             )?,
             true,
         ),
@@ -1340,7 +1362,8 @@ fn provider_role_for_model_override(model_override: Option<&str>) -> &'static st
         Some("hint:agentic") | Some("agentic-v1") => "agentic",
         Some("hint:coding") | Some("coding-v1") => "coding",
         Some("hint:summarization") | Some("summarization-v1") => "summarization",
-        _ => "reasoning",
+        Some("hint:reasoning") => "reasoning",
+        _ => "chat",
     }
 }
 
@@ -1352,6 +1375,7 @@ fn build_session_agent(
     profile: &AgentProfile,
     model_override: Option<String>,
     temperature: Option<f64>,
+    locale: Option<&str>,
 ) -> Result<Agent, String> {
     let mut effective = config.clone();
     if let Some(model) = model_override {
@@ -1415,11 +1439,32 @@ fn build_session_agent(
         );
     }
 
+    // Compose the locale-directive (e.g. "Respond in Arabic") with the
+    // profile's own suffix so the agent always reads the user's
+    // preferred reply language alongside any profile-level rules. The
+    // directive is emitted only for non-English locales — English
+    // matches the agent's default, so injecting it would just be noise
+    // for the LLM and a regression risk for cached/seeded transcripts.
+    let locale_directive = locale.and_then(locale_reply_directive);
+    let composed_suffix = compose_system_prompt_suffix(
+        locale_directive.as_deref(),
+        profile.system_prompt_suffix.as_deref(),
+    );
+    if let Some(s) = locale_directive.as_deref() {
+        log::info!(
+            "[web-channel] injecting locale directive client={} thread={} locale={} directive={:?}",
+            client_id,
+            thread_id,
+            locale.unwrap_or(""),
+            s
+        );
+    }
+
     let agent_result = Agent::from_config_for_agent_with_profile(
         &effective,
         target_agent_id,
         reflection_chunks,
-        profile.system_prompt_suffix.clone(),
+        composed_suffix,
     );
 
     agent_result
@@ -1500,6 +1545,12 @@ struct WebChatParams {
     model_override: Option<String>,
     temperature: Option<f64>,
     profile_id: Option<String>,
+    /// BCP-47 locale of the frontend UI (e.g. `ar`, `zh-CN`). When set
+    /// and not English, the system prompt is augmented to ask the
+    /// agent to reply in that language. `None` keeps the agent's
+    /// default language (English) so existing integrations don't
+    /// silently change behaviour.
+    locale: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1515,6 +1566,7 @@ pub async fn channel_web_chat(
     model_override: Option<String>,
     temperature: Option<f64>,
     profile_id: Option<String>,
+    locale: Option<String>,
 ) -> Result<RpcOutcome<Value>, String> {
     let request_id = start_chat(
         client_id,
@@ -1523,6 +1575,7 @@ pub async fn channel_web_chat(
         model_override,
         temperature,
         profile_id,
+        locale,
     )
     .await?;
 
@@ -1584,6 +1637,10 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 optional_string("model_override", "Optional model override."),
                 optional_f64("temperature", "Optional temperature override."),
                 optional_string("profile_id", "Optional agent profile id."),
+                optional_string(
+                    "locale",
+                    "Optional BCP-47 UI locale (e.g. 'ar', 'zh-CN'). Drives the \"reply in this language\" system-prompt directive.",
+                ),
             ],
             outputs: vec![json_output("ack", "Acceptance payload.")],
         },
@@ -1623,10 +1680,58 @@ fn handle_chat(params: Map<String, Value>) -> ControllerFuture {
                 p.model_override,
                 p.temperature,
                 p.profile_id,
+                p.locale,
             )
             .await?,
         )
     })
+}
+
+/// Map a frontend BCP-47 locale tag to a system-prompt directive
+/// instructing the agent to reply in that language. Returns `None`
+/// for English (the agent's default — adding "Respond in English"
+/// is a no-op for the LLM but risks invalidating cached prefixes)
+/// and for unknown tags so the agent falls through to its default
+/// behaviour instead of seeing a half-built directive.
+pub(crate) fn locale_reply_directive(locale: &str) -> Option<String> {
+    let language = match locale.trim() {
+        // Keep this table in lockstep with `Locale` in
+        // `app/src/lib/i18n/types.ts` — every locale the frontend can
+        // ship should resolve to a language name here.
+        "ar" => "Arabic",
+        "bn" => "Bengali",
+        "es" => "Spanish",
+        "fr" => "French",
+        "hi" => "Hindi",
+        "id" => "Indonesian",
+        "it" => "Italian",
+        "pt" => "Portuguese",
+        "ru" => "Russian",
+        "zh-CN" | "zh" => "Simplified Chinese",
+        // English (and any unrecognised tag) → no directive.
+        _ => return None,
+    };
+    Some(format!(
+        "User language: the user's interface is set to {language}. \
+         Respond in {language} unless the user explicitly asks for a different language. \
+         Keep proper nouns, code, and command names untranslated."
+    ))
+}
+
+/// Stitch the locale directive (if any) onto the profile's own
+/// system-prompt suffix. The directive comes first so it shows up
+/// near the top of the appended block — easier for the LLM to honour
+/// than language guidance buried after profile-specific rules.
+pub(crate) fn compose_system_prompt_suffix(
+    locale_directive: Option<&str>,
+    profile_suffix: Option<&str>,
+) -> Option<String> {
+    match (locale_directive, profile_suffix) {
+        (None, None) => None,
+        (Some(d), None) => Some(d.to_string()),
+        (None, Some(p)) => Some(p.to_string()),
+        (Some(d), Some(p)) => Some(format!("{d}\n\n{p}")),
+    }
 }
 
 fn handle_cancel(params: Map<String, Value>) -> ControllerFuture {

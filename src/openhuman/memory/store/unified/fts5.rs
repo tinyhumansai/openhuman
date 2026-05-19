@@ -182,6 +182,126 @@ pub fn episodic_search(
     Ok(rows)
 }
 
+/// FTS5 search across **all** sessions, optionally excluding one session
+/// from the result set. Used by [`crate::openhuman::memory`] to surface
+/// cross-chat conversational context for the same user/workspace (issue
+/// #1505) without leaking the current chat's own history into the
+/// "other chats" block.
+///
+/// `exclude_session` should be the active session_id when the caller is
+/// also pulling same-session entries via [`episodic_session_entries`] —
+/// passing `None` returns hits from every session indexed in this DB.
+///
+/// Workspace/user scope is enforced at the connection level: the SQLite
+/// database lives at `<workspace>/memory/...` so one DB == one workspace.
+/// This helper cannot cross that boundary.
+pub fn episodic_cross_session_search(
+    conn: &Arc<Mutex<Connection>>,
+    query: &str,
+    limit: usize,
+    exclude_session: Option<&str>,
+) -> anyhow::Result<Vec<EpisodicEntry>> {
+    let conn = conn.lock();
+    let trimmed = query.trim();
+    if trimmed.is_empty() {
+        tracing::debug!("[fts5] cross-session search skipped — empty query");
+        return Ok(Vec::new());
+    }
+
+    // FTS5 MATCH expressions are picky about syntax — bare phrases with
+    // punctuation can fail to parse. Wrap the query in double quotes so
+    // it's treated as a phrase (FTS5 will still tokenize it). This mirrors
+    // how the unified store sanitises queries before MATCH.
+    let phrase_query = sanitize_fts_query(trimmed);
+    if phrase_query.is_empty() {
+        tracing::debug!("[fts5] cross-session search skipped — sanitised query is empty");
+        return Ok(Vec::new());
+    }
+
+    let mut stmt = match exclude_session {
+        Some(_) => conn.prepare(
+            "SELECT el.id, el.session_id, el.timestamp, el.role, el.content, el.lesson,
+                    el.tool_calls_json, el.cost_microdollars
+             FROM episodic_fts AS ef
+             JOIN episodic_log AS el ON ef.rowid = el.id
+             WHERE episodic_fts MATCH ?1 AND el.session_id != ?2
+             ORDER BY rank
+             LIMIT ?3",
+        )?,
+        None => conn.prepare(
+            "SELECT el.id, el.session_id, el.timestamp, el.role, el.content, el.lesson,
+                    el.tool_calls_json, el.cost_microdollars
+             FROM episodic_fts AS ef
+             JOIN episodic_log AS el ON ef.rowid = el.id
+             WHERE episodic_fts MATCH ?1
+             ORDER BY rank
+             LIMIT ?2",
+        )?,
+    };
+
+    let map_row = |row: &rusqlite::Row<'_>| -> rusqlite::Result<EpisodicEntry> {
+        Ok(EpisodicEntry {
+            id: row.get(0)?,
+            session_id: row.get(1)?,
+            timestamp: row.get(2)?,
+            role: row.get(3)?,
+            content: row.get(4)?,
+            lesson: row.get(5)?,
+            tool_calls_json: row.get(6)?,
+            cost_microdollars: row.get::<_, i64>(7)? as u64,
+        })
+    };
+
+    let rows: Vec<EpisodicEntry> = match exclude_session {
+        Some(sid) => stmt
+            .query_map(rusqlite::params![phrase_query, sid, limit as i64], map_row)?
+            .collect::<Result<Vec<_>, _>>()?,
+        None => stmt
+            .query_map(rusqlite::params![phrase_query, limit as i64], map_row)?
+            .collect::<Result<Vec<_>, _>>()?,
+    };
+
+    // Never log the raw query string — may contain secrets / PII. Emit a
+    // stable non-reversible hash + length instead so cross-session
+    // diagnostics stay grep-friendly without leaking user content.
+    let query_hash = {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        trimmed.hash(&mut hasher);
+        hasher.finish()
+    };
+    tracing::debug!(
+        "[fts5] cross-session search query_hash={:016x} query_len={} (exclude={:?}) returned {} results",
+        query_hash,
+        trimmed.chars().count(),
+        exclude_session,
+        rows.len()
+    );
+    Ok(rows)
+}
+
+/// Best-effort FTS5 query sanitiser: strip characters that break the
+/// MATCH grammar (quotes, parens, asterisks) and wrap each surviving
+/// whitespace-delimited token in double quotes so the FTS engine treats
+/// it as a literal phrase. Returns an empty string when nothing usable
+/// survives — the caller short-circuits to "no hits".
+fn sanitize_fts_query(query: &str) -> String {
+    let cleaned: String = query
+        .chars()
+        .map(|c| match c {
+            '"' | '(' | ')' | '*' | ':' => ' ',
+            other => other,
+        })
+        .collect();
+    let tokens: Vec<String> = cleaned
+        .split_whitespace()
+        .filter(|tok| !tok.is_empty())
+        .take(8)
+        .map(|tok| format!("\"{tok}\""))
+        .collect();
+    tokens.join(" ")
+}
+
 /// Get all entries for a session (for post-session summary).
 pub fn episodic_session_entries(
     conn: &Arc<Mutex<Connection>>,
@@ -322,5 +442,125 @@ mod tests {
         )
         .expect_err("secret-like session_id should be rejected");
         assert!(err.to_string().contains("cannot contain secrets"));
+    }
+
+    // ── Cross-session search (#1505) ─────────────────────────────────────
+
+    fn insert_turn(conn: &Arc<Mutex<Connection>>, session_id: &str, ts: f64, content: &str) {
+        episodic_insert(
+            conn,
+            &EpisodicEntry {
+                id: None,
+                session_id: session_id.into(),
+                timestamp: ts,
+                role: "user".into(),
+                content: content.into(),
+                lesson: None,
+                tool_calls_json: None,
+                cost_microdollars: 0,
+            },
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn cross_session_search_surfaces_other_sessions_excluding_current() {
+        let conn = setup_db();
+        // Chat A — user shared the durable fact
+        insert_turn(
+            &conn,
+            "session-a",
+            1000.0,
+            "I prefer Postgres for new services",
+        );
+        // Chat B — current chat, where the question is being asked
+        insert_turn(
+            &conn,
+            "session-b",
+            2000.0,
+            "What database should I use today?",
+        );
+        // Chat C — yet another chat with a related fact
+        insert_turn(&conn, "session-c", 1500.0, "Postgres timezone is UTC");
+
+        // Asking from chat B: should see session-a + session-c (not session-b)
+        let hits = episodic_cross_session_search(&conn, "Postgres", 10, Some("session-b")).unwrap();
+        assert!(
+            !hits.is_empty(),
+            "cross-session search must surface hits from other sessions"
+        );
+        for hit in &hits {
+            assert_ne!(
+                hit.session_id, "session-b",
+                "current session must be excluded from cross-session sweep, got {}",
+                hit.session_id
+            );
+        }
+        let session_ids: std::collections::HashSet<&str> =
+            hits.iter().map(|h| h.session_id.as_str()).collect();
+        assert!(session_ids.contains("session-a"));
+        assert!(session_ids.contains("session-c"));
+    }
+
+    #[test]
+    fn cross_session_search_returns_empty_for_unknown_query() {
+        let conn = setup_db();
+        insert_turn(&conn, "session-a", 1000.0, "I prefer Postgres");
+        let hits = episodic_cross_session_search(&conn, "kubernetes", 10, None).unwrap();
+        assert!(
+            hits.is_empty(),
+            "no FTS match should produce zero hits, not all rows"
+        );
+    }
+
+    #[test]
+    fn cross_session_search_handles_empty_query() {
+        let conn = setup_db();
+        insert_turn(&conn, "session-a", 1000.0, "anything");
+        let hits = episodic_cross_session_search(&conn, "   ", 10, None).unwrap();
+        assert!(hits.is_empty(), "empty query short-circuits to zero hits");
+    }
+
+    #[test]
+    fn cross_session_search_sanitises_punctuation_safely() {
+        let conn = setup_db();
+        insert_turn(&conn, "session-a", 1000.0, "Postgres deployment notes");
+        // Query with FTS5-hostile punctuation — should not panic. Tokens
+        // shared with the indexed row should still match (FTS5 phrase
+        // ANDs every quoted token, so we use words that all appear in
+        // the row to avoid AND-mismatch false negatives).
+        let hits =
+            episodic_cross_session_search(&conn, "\"Postgres\" (deployment)?", 10, None).unwrap();
+        assert!(
+            !hits.is_empty(),
+            "punctuated query whose surviving tokens match the indexed row must still surface it"
+        );
+        assert!(hits[0].content.contains("Postgres"));
+    }
+
+    #[test]
+    fn cross_session_search_does_not_panic_on_pure_punctuation() {
+        let conn = setup_db();
+        insert_turn(&conn, "session-a", 1000.0, "Postgres deployment notes");
+        // All-punctuation query should normalise to empty and produce
+        // zero hits without panicking.
+        let hits = episodic_cross_session_search(&conn, "()*\":", 10, None).unwrap();
+        assert!(
+            hits.is_empty(),
+            "punctuation-only query must produce zero hits"
+        );
+    }
+
+    #[test]
+    fn cross_session_search_no_exclusion_includes_all_matches() {
+        let conn = setup_db();
+        insert_turn(&conn, "session-a", 1000.0, "Postgres preference");
+        insert_turn(&conn, "session-b", 2000.0, "Postgres setup");
+
+        let hits = episodic_cross_session_search(&conn, "Postgres", 10, None).unwrap();
+        let session_ids: std::collections::HashSet<&str> =
+            hits.iter().map(|h| h.session_id.as_str()).collect();
+        assert!(session_ids.contains("session-a"));
+        assert!(session_ids.contains("session-b"));
     }
 }

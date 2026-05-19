@@ -37,3 +37,6 @@ Thumbs.db
 # Tests (not needed in build context)
 tests/
 scripts/
+# Re-include the Docker entrypoint for the core image (Dockerfile COPYs it).
+# The negation must come after the broad exclusion above to take effect.
+!scripts/docker-entrypoint-core.sh

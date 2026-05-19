@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 
+import { type AISettings, CHAT_WORKLOADS, loadAISettings } from '../services/api/aiSettingsApi';
 import { billingApi } from '../services/api/billingApi';
 import { creditsApi, type TeamUsage } from '../services/api/creditsApi';
 import { CoreRpcError } from '../services/coreRpcClient';
@@ -11,13 +12,19 @@ export interface UsageState {
   currentPlan: CurrentPlanData | null;
   currentTier: PlanTier;
   isFreeTier: boolean;
-  usagePct10h: number;
-  usagePct7d: number;
+  usagePct: number;
   isNearLimit: boolean;
   isAtLimit: boolean;
-  isRateLimited: boolean;
   isBudgetExhausted: boolean;
   shouldShowBudgetCompletedMessage: boolean;
+  /**
+   * True when every chat workload (reasoning/agentic/coding) is routed to a
+   * non-openhuman provider (a user-configured cloud provider or local Ollama).
+   * Used to suppress the OpenHuman-included-budget banner / modal: when the
+   * user has explicitly bypassed the hosted backend for chat, the included
+   * budget cycle no longer gates them. See #2040 and #2041.
+   */
+  isFullyRoutedAway: boolean;
   isLoading: boolean;
   refresh: () => void;
 }
@@ -25,7 +32,7 @@ export interface UsageState {
 const CACHE_TTL_MS = 60_000;
 
 let _cache: {
-  data: { teamUsage: TeamUsage; currentPlan: CurrentPlanData };
+  data: { teamUsage: TeamUsage; currentPlan: CurrentPlanData; aiSettings: AISettings | null };
   fetchedAt: number;
 } | null = null;
 
@@ -34,6 +41,7 @@ const USAGE_UNAVAILABLE = Symbol('usage-unavailable');
 async function fetchUsageData(): Promise<{
   teamUsage: TeamUsage | null;
   currentPlan: CurrentPlanData | null;
+  aiSettings: AISettings | null;
 } | null> {
   if (_cache && Date.now() - _cache.fetchedAt < CACHE_TTL_MS) {
     return _cache.data;
@@ -42,7 +50,7 @@ async function fetchUsageData(): Promise<{
   // session expiry) cannot reject the Promise.all microtask before the
   // sibling resolves — that race let the unhandled rejection leak to the
   // window's unhandledrejection trap and onward to Sentry (#1472).
-  const [teamUsage, currentPlan] = await Promise.all([
+  const [teamUsage, currentPlan, aiSettings] = await Promise.all([
     creditsApi.getTeamUsage().catch(err => {
       if (err instanceof CoreRpcError && err.kind === 'auth_expired') {
         throw err;
@@ -55,14 +63,32 @@ async function fetchUsageData(): Promise<{
       }
       return USAGE_UNAVAILABLE;
     }),
+    // AI settings drive the "routed away from openhuman" detection used to
+    // suppress the budget banner when the user supplied their own provider
+    // key (#2040 / #2041). Mirror the sibling fetches: re-throw
+    // CoreRpcError(kind='auth_expired') so the documented session-expired
+    // signal still reaches the global re-auth handler (graycyrus review on
+    // #2053). Other failures are treated as "unknown" — the budget gate
+    // stays in its conservative (banner-on) state.
+    loadAISettings().catch(err => {
+      if (err instanceof CoreRpcError && err.kind === 'auth_expired') {
+        throw err;
+      }
+      return USAGE_UNAVAILABLE;
+    }),
   ]);
   const data = {
     teamUsage: teamUsage === USAGE_UNAVAILABLE ? null : (teamUsage as TeamUsage),
     currentPlan: currentPlan === USAGE_UNAVAILABLE ? null : (currentPlan as CurrentPlanData),
+    aiSettings: aiSettings === USAGE_UNAVAILABLE ? null : (aiSettings as AISettings),
   };
   if (data.teamUsage && data.currentPlan) {
     _cache = {
-      data: { teamUsage: data.teamUsage, currentPlan: data.currentPlan },
+      data: {
+        teamUsage: data.teamUsage,
+        currentPlan: data.currentPlan,
+        aiSettings: data.aiSettings,
+      },
       fetchedAt: Date.now(),
     };
   }
@@ -72,6 +98,7 @@ async function fetchUsageData(): Promise<{
 export function useUsageState(): UsageState {
   const [teamUsage, setTeamUsage] = useState<TeamUsage | null>(null);
   const [currentPlan, setCurrentPlan] = useState<CurrentPlanData | null>(null);
+  const [aiSettings, setAiSettings] = useState<AISettings | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [fetchCount, setFetchCount] = useState(0);
 
@@ -90,6 +117,7 @@ export function useUsageState(): UsageState {
         if (cancelled || !data) return;
         setTeamUsage(data.teamUsage);
         setCurrentPlan(data.currentPlan);
+        setAiSettings(data.aiSettings);
       })
       .catch((err: unknown) => {
         // CoreRpcError(kind=auth_expired) is the documented signal that the
@@ -110,49 +138,59 @@ export function useUsageState(): UsageState {
   const currentTier: PlanTier = currentPlan?.plan ?? 'FREE';
   const isFreeTier = currentTier === 'FREE';
 
-  const usagePct10h =
-    teamUsage && teamUsage.fiveHourCapUsd > 0.01
-      ? Math.min(1, teamUsage.cycleLimit5hr / teamUsage.fiveHourCapUsd)
-      : 0;
-
-  const usagePct7d =
+  const usagePct =
     teamUsage && teamUsage.cycleBudgetUsd > 0.01
-      ? Math.min(1, (teamUsage.cycleBudgetUsd - teamUsage.remainingUsd) / teamUsage.cycleBudgetUsd)
+      ? Math.max(
+          0,
+          Math.min(
+            1,
+            (teamUsage.cycleBudgetUsd - teamUsage.remainingUsd) / teamUsage.cycleBudgetUsd
+          )
+        )
       : 0;
 
-  const isBudgetExhausted = teamUsage
+  // When every chat workload routes to a user-supplied provider (cloud or
+  // local Ollama), the OpenHuman included-budget cycle does not gate the
+  // user. Conservative on missing aiSettings (treat as still using
+  // openhuman) so we never silently disable the gate after a transient
+  // fetch failure (#2040, #2041).
+  const isFullyRoutedAway = aiSettings
+    ? CHAT_WORKLOADS.every(w => {
+        const ref = aiSettings.routing[w];
+        return ref !== undefined && ref.kind !== 'openhuman';
+      })
+    : false;
+
+  const rawBudgetExhausted = teamUsage
     ? teamUsage.cycleBudgetUsd > 0.01 && teamUsage.remainingUsd <= 0.01
     : false;
 
   // Some users have no included recurring budget at all. They still need the
   // completed-budget warning in chat even though they are not in an exhausted
-  // paid cycle.
-  const shouldShowBudgetCompletedMessage = teamUsage
-    ? isBudgetExhausted || (teamUsage.cycleBudgetUsd <= 0.01 && teamUsage.remainingUsd <= 0.01)
+  // paid cycle — but only when their chat actually flows through OpenHuman.
+  const rawShouldShowBudgetCompletedMessage = teamUsage
+    ? rawBudgetExhausted || (teamUsage.cycleBudgetUsd <= 0.01 && teamUsage.remainingUsd <= 0.01)
     : false;
 
-  const isRateLimited =
-    teamUsage !== null &&
-    !teamUsage.bypassCycleLimit &&
-    teamUsage.fiveHourCapUsd > 0 &&
-    teamUsage.cycleLimit5hr >= teamUsage.fiveHourCapUsd;
+  const isBudgetExhausted = !isFullyRoutedAway && rawBudgetExhausted;
+  const shouldShowBudgetCompletedMessage =
+    !isFullyRoutedAway && rawShouldShowBudgetCompletedMessage;
 
-  const isAtLimit = isBudgetExhausted || isRateLimited;
+  const isAtLimit = isBudgetExhausted;
 
-  const isNearLimit = !isAtLimit && teamUsage !== null && (usagePct10h >= 0.8 || usagePct7d >= 0.8);
+  const isNearLimit = !isAtLimit && teamUsage !== null && usagePct >= 0.8;
 
   return {
     teamUsage,
     currentPlan,
     currentTier,
     isFreeTier,
-    usagePct10h,
-    usagePct7d,
+    usagePct,
     isNearLimit,
     isAtLimit,
-    isRateLimited,
     isBudgetExhausted,
     shouldShowBudgetCompletedMessage,
+    isFullyRoutedAway,
     isLoading,
     refresh,
   };

@@ -166,7 +166,8 @@ vi.mock('../utils/config', () => ({
   LATEST_APP_DOWNLOAD_URL: 'https://github.com/tinyhumansai/openhuman/releases/latest',
   APP_VERSION: '0.0.0-test',
   DEV_JWT_TOKEN: undefined,
-  MASCOT_VOICE_ID: 'ljX1ZrXuDIIRVcmiVSyR',
+  MASCOT_VOICE_ID: 'JBFqnCBsd6RMkjVDRZzb',
+  MASCOT_VOICE_MODEL_ID: 'eleven_multilingual_v2',
 }));
 
 vi.mock('../services/backendUrl', () => ({
