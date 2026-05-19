@@ -1,35 +1,103 @@
-use anyhow::Result;
+use anyhow::{bail, Result};
+use std::net::SocketAddr;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 
 use crate::core::logging::CliLogDefault;
 
+use super::http::{run_http, HttpServerConfig};
 use super::protocol;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum McpTransport {
+    Stdio,
+    Http,
+}
 
 pub fn run_stdio_from_cli(args: &[String]) -> Result<()> {
     let mut verbose = false;
+    let mut transport = McpTransport::Stdio;
+    let mut bind_host = "127.0.0.1".to_string();
+    let mut port: u16 = 9300;
+    let mut auth_token: Option<String> = None;
 
-    for arg in args {
-        match arg.as_str() {
+    let mut index = 0usize;
+    while index < args.len() {
+        match args[index].as_str() {
             "-v" | "--verbose" => verbose = true,
+            "--transport" => {
+                let value = args
+                    .get(index + 1)
+                    .ok_or_else(|| anyhow::anyhow!("missing value for --transport"))?;
+                transport = match value.as_str() {
+                    "stdio" => McpTransport::Stdio,
+                    "http" => McpTransport::Http,
+                    other => bail!("unknown --transport value `{other}` (expected stdio or http)"),
+                };
+                index += 2;
+            }
+            "--host" => {
+                bind_host = args
+                    .get(index + 1)
+                    .ok_or_else(|| anyhow::anyhow!("missing value for --host"))?
+                    .clone();
+                index += 2;
+            }
+            "--port" => {
+                let raw = args
+                    .get(index + 1)
+                    .ok_or_else(|| anyhow::anyhow!("missing value for --port"))?;
+                port = raw
+                    .parse()
+                    .map_err(|_| anyhow::anyhow!("invalid --port value `{raw}`"))?;
+                index += 2;
+            }
+            "--auth-token" => {
+                let token = args
+                    .get(index + 1)
+                    .ok_or_else(|| anyhow::anyhow!("missing value for --auth-token"))?;
+                if token.trim().is_empty() {
+                    bail!("--auth-token must not be empty");
+                }
+                auth_token = Some(token.trim().to_string());
+                index += 2;
+            }
             "-h" | "--help" => {
                 print_help();
                 return Ok(());
             }
-            other => return Err(anyhow::anyhow!("unknown mcp arg: {other}")),
+            other => bail!("unknown mcp arg: {other}"),
         }
     }
 
     init_mcp_logging(verbose);
 
-    log::debug!("[mcp_server] starting stdio MCP server");
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
-    rt.block_on(async { run_stdio(tokio::io::stdin(), tokio::io::stdout()).await })?;
+
+    match transport {
+        McpTransport::Stdio => {
+            log::debug!("[mcp_server] starting stdio MCP server");
+            rt.block_on(async { run_stdio(tokio::io::stdin(), tokio::io::stdout()).await })?;
+        }
+        McpTransport::Http => {
+            let bind_addr: SocketAddr = format!("{bind_host}:{port}").parse().map_err(|err| {
+                anyhow::anyhow!("invalid bind address `{bind_host}:{port}`: {err}")
+            })?;
+            log::debug!(
+                "[mcp_server] starting HTTP/SSE MCP server bind={bind_addr} auth={}",
+                auth_token.is_some()
+            );
+            rt.block_on(run_http(HttpServerConfig {
+                bind_addr,
+                auth_token,
+            }))?;
+        }
+    }
     Ok(())
 }
 
-/// Initialize logging for the stdio MCP server.
+/// Initialize logging for the MCP server.
 ///
 /// MCP servers run as subprocesses of clients (Claude Desktop, Cursor, …) which
 /// surface the server's stderr to the user when something goes wrong. We
@@ -70,23 +138,28 @@ where
 }
 
 fn print_help() {
-    // Use stderr so the help output never collides with the protocol stream,
-    // matching the banner-suppression contract in `core/cli.rs` for the `mcp`
-    // subcommand: stdout is reserved for JSON-RPC frames.
-    eprintln!("Usage: openhuman-core mcp [-v|--verbose]");
+    eprintln!("Usage: openhuman-core mcp [options]");
     eprintln!();
-    eprintln!("Start an opt-in stdio Model Context Protocol server.");
-    eprintln!("The server exposes first-level core MCP tools:");
-    eprintln!("  core.list_tools");
-    eprintln!("  core.tool_instructions");
-    eprintln!("  agent.list_subagents");
-    eprintln!("  agent.run_subagent");
-    eprintln!("And the read-only memory surface:");
-    eprintln!("  memory.search");
-    eprintln!("  memory.recall");
-    eprintln!("  tree.read_chunk");
+    eprintln!("Start an opt-in Model Context Protocol server.");
     eprintln!();
-    eprintln!("Logging is written to stderr. JSON-RPC protocol messages are written to stdout.");
+    eprintln!("Transports:");
+    eprintln!("  (default)           stdio — newline-delimited JSON-RPC on stdin/stdout");
+    eprintln!("  --transport http    Streamable HTTP + SSE on a local bind address");
+    eprintln!();
+    eprintln!("Options:");
+    eprintln!("  -v, --verbose           Log at debug level on stderr");
+    eprintln!("  --transport <stdio|http>  Transport (default: stdio)");
+    eprintln!("  --host <addr>           Bind host for HTTP transport (default: 127.0.0.1)");
+    eprintln!("  --port <port>           Bind port for HTTP transport (default: 9300)");
+    eprintln!("  --auth-token <token>    Require Authorization: Bearer <token> on HTTP requests");
+    eprintln!();
+    eprintln!("Tools exposed (stdio and HTTP):");
+    eprintln!("  core.list_tools, core.tool_instructions");
+    eprintln!("  agent.list_subagents, agent.run_subagent");
+    eprintln!("  memory.search, memory.recall, tree.read_chunk, tree.browse,");
+    eprintln!("  tree.top_entities, tree.list_sources");
+    eprintln!();
+    eprintln!("Logging is written to stderr. Stdio protocol messages use stdout only.");
 }
 
 #[cfg(test)]
@@ -118,5 +191,10 @@ mod tests {
             serde_json::from_str(output.trim()).expect("json response");
         assert_eq!(response["id"], 1);
         assert!(response["result"].is_object());
+    }
+
+    #[test]
+    fn cli_help_exits_zero() {
+        assert!(run_stdio_from_cli(&["--help".into()]).is_ok());
     }
 }
