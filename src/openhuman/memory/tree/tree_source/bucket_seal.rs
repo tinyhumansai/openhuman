@@ -16,10 +16,10 @@
 //! the next level. The cascade continues upward until a buffer fails its
 //! gate.
 //!
-//! An L0 buffer also seals when its oldest item is older than
-//! `L0_MAX_AGE_HOURS` — this prevents low-volume sources (e.g. a daily
-//! cron producing one small document) from sitting unsealed indefinitely
-//! waiting to hit the token or sibling-count thresholds.
+//! For low-volume sources that never hit the token or sibling-count
+//! thresholds, time-based sealing is handled by
+//! [`flush_stale_buffers`](super::flush::flush_stale_buffers), which
+//! runs on a periodic cadence and force-seals stale L0 buffers.
 //!
 //! Concurrency: Phase 3a assumes a single-process SQLite workspace. All
 //! writes in one seal step run in a single transaction; the async
@@ -301,24 +301,22 @@ pub async fn cascade_all_from(
     Ok(sealed_ids)
 }
 
-/// Maximum age for an L0 buffer before time-based sealing kicks in.
-/// For low-volume sources (e.g. a daily cron ingesting one small
-/// document per run), this ensures summaries are produced within a
-/// reasonable window instead of waiting for the token count (50k) or
-/// sibling count (10) thresholds.
-const L0_MAX_AGE_HOURS: i64 = 1;
-
 /// Level-aware seal gate.
 ///
-/// L0 buffers gate on **any** of:
-/// - `token_sum >= INPUT_TOKEN_BUDGET` (so the summariser's input stays
-///   bounded)
-/// - sibling count `>= SUMMARY_FANOUT` (so leaves form predictably for
-///   sources whose chunks are individually small — without the count
-///   fallback, hundreds of tiny emails can sit unsealed waiting to hit 50k
-///   tokens)
-/// - oldest item older than `L0_MAX_AGE_HOURS` (time-based: prevents
-///   low-volume sources from sitting unsealed indefinitely)
+/// L0 buffers gate on **either** `token_sum >= INPUT_TOKEN_BUDGET`
+/// (so the summariser's input stays bounded) **or** sibling count
+/// `>= SUMMARY_FANOUT` (so leaves form predictably for sources whose
+/// chunks are individually small — without the count fallback,
+/// hundreds of tiny emails can sit unsealed waiting to hit 50k
+/// tokens).
+///
+/// Time-based sealing for low-volume sources is handled separately
+/// by `flush_stale_buffers` (see [`crate::openhuman::memory::tree::
+/// tree_source::flush::flush_stale_buffers`]), which filters buffers
+/// by `oldest_at` before calling the cascade. Keeping the time gate
+/// out of `should_seal` avoids prematurely sealing buffers during
+/// normal `append_leaf` calls when test/restored data carries older
+/// timestamps.
 ///
 /// L≥1 buffers gate on sibling count alone so the tree's
 /// fan-in is independent of per-summary token size — without this,
@@ -330,15 +328,7 @@ pub(crate) fn should_seal(buf: &Buffer) -> bool {
         return false;
     }
     if buf.level == 0 {
-        buf.token_sum >= INPUT_TOKEN_BUDGET as i64
-            || (buf.item_ids.len() as u32) >= SUMMARY_FANOUT
-            || buf
-                .oldest_at
-                .map(|oldest| {
-                    Utc::now().signed_duration_since(oldest)
-                        > chrono::Duration::hours(L0_MAX_AGE_HOURS)
-                })
-                .unwrap_or(false)
+        buf.token_sum >= INPUT_TOKEN_BUDGET as i64 || (buf.item_ids.len() as u32) >= SUMMARY_FANOUT
     } else {
         (buf.item_ids.len() as u32) >= SUMMARY_FANOUT
     }
