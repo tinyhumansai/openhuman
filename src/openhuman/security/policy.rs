@@ -786,6 +786,12 @@ impl SecurityPolicy {
                     .canonicalize()
                     .unwrap_or_else(|_| self.workspace_dir.clone());
                 if !canonical.starts_with(&workspace_root) {
+                    log::trace!(
+                        "[security:policy] path blocked: symlink escapes workspace (requested={}, resolved={}, workspace={})",
+                        path,
+                        canonical.display(),
+                        workspace_root.display()
+                    );
                     return false;
                 }
             }
@@ -802,6 +808,12 @@ impl SecurityPolicy {
                     .canonicalize()
                     .unwrap_or(forbidden_expanded);
                 if canonical.starts_with(&forbidden_canonical) {
+                    log::trace!(
+                        "[security:policy] path blocked: symlink resolves to forbidden tree (requested={}, resolved={}, forbidden={})",
+                        path,
+                        canonical.display(),
+                        forbidden_canonical.display()
+                    );
                     return false;
                 }
             }
