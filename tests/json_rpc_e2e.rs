@@ -4817,7 +4817,10 @@ async fn public_paths_accessible_without_token() {
     let base = format!("http://{rpc_addr}");
 
     // Paths that return 200 without any extra params.
-    for path in ["/", "/health", "/schema", "/events/webhooks"] {
+    // `/events/webhooks` was REMOVED from this list when issue #1922 wired
+    // bearer auth onto it (header or `?token=…`). Coverage for that path
+    // lives in the dedicated `webhook_sse_*` tests below.
+    for path in ["/", "/health", "/schema"] {
         let resp = client
             .get(format!("{base}{path}"))
             .send()
@@ -4846,6 +4849,189 @@ async fn public_paths_accessible_without_token() {
             resp.status()
         );
     }
+
+    rpc_join.abort();
+}
+
+// ---------------------------------------------------------------------------
+// Webhook SSE auth (issue #1922) — /events/webhooks now requires bearer auth
+// via either the Authorization header OR a `?token=…` query param. The
+// query-param fallback exists because browser `EventSource` cannot attach
+// custom headers (whatwg/html §10.7). See `QUERY_TOKEN_PATHS` in
+// src/core/auth.rs.
+// ---------------------------------------------------------------------------
+
+/// GET /events/webhooks with neither header nor query token → 401.
+#[tokio::test]
+async fn webhook_sse_rejects_unauthenticated() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    ensure_test_rpc_auth();
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .get(format!("http://{rpc_addr}/events/webhooks"))
+        .send()
+        .await
+        .expect("request");
+
+    assert_eq!(
+        resp.status(),
+        401,
+        "missing credentials on /events/webhooks must yield 401"
+    );
+    let body: Value = resp.json().await.expect("json body");
+    assert_eq!(body["error"], "unauthorized");
+
+    rpc_join.abort();
+}
+
+/// GET /events/webhooks?token= (empty value) → 401. Defends against
+/// `encodeURIComponent(null)` / `encodeURIComponent("")` mishaps on the FE.
+#[tokio::test]
+async fn webhook_sse_rejects_empty_query_token() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    ensure_test_rpc_auth();
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .get(format!("http://{rpc_addr}/events/webhooks?token="))
+        .send()
+        .await
+        .expect("request");
+
+    assert_eq!(resp.status(), 401, "empty token value must be 401");
+
+    rpc_join.abort();
+}
+
+/// GET /events/webhooks?token=garbage → 401.
+#[tokio::test]
+async fn webhook_sse_rejects_wrong_query_token() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    ensure_test_rpc_auth();
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let client = reqwest::Client::new();
+
+    let bad = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
+    assert_ne!(bad, TEST_RPC_TOKEN);
+
+    let resp = client
+        .get(format!("http://{rpc_addr}/events/webhooks?token={bad}"))
+        .send()
+        .await
+        .expect("request");
+
+    assert_eq!(resp.status(), 401, "wrong query token must be 401");
+    let body: Value = resp.json().await.expect("json body");
+    assert_eq!(body["error"], "unauthorized");
+
+    rpc_join.abort();
+}
+
+/// GET /events/webhooks?token=<valid> → 200 (SSE stream opens).
+#[tokio::test]
+async fn webhook_sse_accepts_valid_query_token() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    ensure_test_rpc_auth();
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .get(format!(
+            "http://{rpc_addr}/events/webhooks?token={TEST_RPC_TOKEN}"
+        ))
+        .send()
+        .await
+        .expect("request");
+
+    assert_eq!(
+        resp.status(),
+        200,
+        "valid query token must open the SSE stream"
+    );
+    let ct = resp
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert!(
+        ct.starts_with("text/event-stream"),
+        "expected SSE content-type, got {ct}"
+    );
+
+    rpc_join.abort();
+}
+
+/// GET /events/webhooks with a percent-encoded query token → 200. Locks the
+/// URL-decoding contract `EventSource` callers depend on (the FE uses
+/// `encodeURIComponent`, which percent-encodes reserved characters even
+/// when the token itself is hex-only).
+#[tokio::test]
+async fn webhook_sse_accepts_percent_encoded_query_token() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    ensure_test_rpc_auth();
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let client = reqwest::Client::new();
+
+    let encoded = urlencoding::encode(TEST_RPC_TOKEN);
+    // Sanity: encoding the canonical hex test token must remain a non-empty
+    // string. The encoder may pass-through (hex is URL-safe) — that's fine;
+    // the test still proves the decode path doesn't double-decode or strip.
+    assert!(!encoded.is_empty());
+
+    let resp = client
+        .get(format!("http://{rpc_addr}/events/webhooks?token={encoded}"))
+        .send()
+        .await
+        .expect("request");
+
+    assert_eq!(
+        resp.status(),
+        200,
+        "url-encoded valid query token must open the SSE stream"
+    );
+    let ct = resp
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert!(
+        ct.starts_with("text/event-stream"),
+        "expected SSE content-type, got {ct}"
+    );
+
+    rpc_join.abort();
+}
+
+/// GET /events/webhooks with `Authorization: Bearer <valid>` → 200.
+/// CLI / non-browser callers should still be able to subscribe the header way.
+#[tokio::test]
+async fn webhook_sse_accepts_valid_bearer_header() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    ensure_test_rpc_auth();
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .get(format!("http://{rpc_addr}/events/webhooks"))
+        .header(AUTHORIZATION, format!("Bearer {TEST_RPC_TOKEN}"))
+        .send()
+        .await
+        .expect("request");
+
+    assert_eq!(
+        resp.status(),
+        200,
+        "valid Bearer header must open the SSE stream"
+    );
 
     rpc_join.abort();
 }

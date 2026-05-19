@@ -13,6 +13,13 @@ fn is_non_retryable(err: &anyhow::Error) -> bool {
     if is_context_window_exceeded(err) {
         return true;
     }
+    let msg = err.to_string();
+    // Session-expired is a user-auth-state boundary condition, not a
+    // transient provider outage. Retrying just burns attempts and delays
+    // the sign-in prompt.
+    if crate::core::observability::is_session_expired_message(&msg) {
+        return true;
+    }
 
     if let Some(reqwest_err) = err.downcast_ref::<reqwest::Error>() {
         if let Some(status) = reqwest_err.status() {
@@ -20,7 +27,6 @@ fn is_non_retryable(err: &anyhow::Error) -> bool {
             return status.is_client_error() && code != 429 && code != 408;
         }
     }
-    let msg = err.to_string();
     for word in msg.split(|c: char| !c.is_ascii_digit()) {
         if let Ok(code) = word.parse::<u16>() {
             if (400..500).contains(&code) {
@@ -72,6 +78,13 @@ fn is_stream_error_non_retryable(err: &StreamError) -> bool {
             false
         }
         StreamError::Provider(msg) => {
+            // Mirror the non-streaming classifier: session-expired is a
+            // user-auth-state boundary, not a transient provider outage —
+            // fail fast so the streaming caller can prompt sign-in instead
+            // of burning the retry budget.
+            if crate::core::observability::is_session_expired_message(msg) {
+                return true;
+            }
             let lower = msg.to_lowercase();
             lower.contains("invalid api key")
                 || lower.contains("unauthorized")

@@ -442,6 +442,59 @@ fn acquire_lock_writes_pid_so_future_callers_can_recover() {
     assert!(!lock_path.exists(), "guard must remove lock on drop");
 }
 
+/// Sentry OPENHUMAN-TAURI-H8: when `OpenOptions::create_new` fails with
+/// anything other than `AlreadyExists`, the error surfaced to Sentry
+/// must embed the underlying `io::ErrorKind` and `raw_os_error()` so we
+/// can tell which OS code is firing. Drive the wrapping helper directly
+/// with a synthetic `io::Error` so the test is platform-independent and
+/// doesn't depend on filesystem permissions (CI runs as root and bypasses
+/// `chmod`).
+#[test]
+fn annotate_lock_create_failure_embeds_io_kind_and_os_code() {
+    // Use each platform's native permission-denied code so the test exercises
+    // the OS error that real production failures would carry. Rust does map
+    // `from_raw_os_error(13)` to `PermissionDenied` on Windows too, but real
+    // Windows `create_new` failures surface code 5 (ERROR_ACCESS_DENIED), and
+    // running against the native code catches regressions in
+    // `annotate_lock_create_failure`'s handling of the platform-specific
+    // value.
+    #[cfg(windows)]
+    let raw_code = 5; // ERROR_ACCESS_DENIED
+    #[cfg(not(windows))]
+    let raw_code = 13; // EACCES
+
+    let io_err = std::io::Error::from_raw_os_error(raw_code);
+    let wrapped = annotate_lock_create_failure(anyhow::Error::new(io_err));
+    let msg = format!("{wrapped:?}");
+
+    assert!(
+        msg.contains("Failed to create auth profile lock"),
+        "stable top-level message missing: {msg}"
+    );
+    assert!(
+        msg.contains("kind=Some(PermissionDenied)"),
+        "context must include io::ErrorKind for Sentry diagnosis: {msg}"
+    );
+    assert!(
+        msg.contains(&format!("os_code=Some({raw_code})")),
+        "context must include raw OS code for Sentry diagnosis: {msg}"
+    );
+}
+
+/// If somehow the chained error is not an `io::Error`, the wrapper must
+/// still emit the stable top-level message with explicit `None` markers so
+/// the Sentry fingerprint still splits cleanly (and we know to look
+/// upstream for an io::Error that got dropped).
+#[test]
+fn annotate_lock_create_failure_handles_missing_io_error() {
+    let wrapped = annotate_lock_create_failure(anyhow::anyhow!("synthetic"));
+    let msg = format!("{wrapped:?}");
+
+    assert!(msg.contains("Failed to create auth profile lock"), "{msg}");
+    assert!(msg.contains("kind=None"), "{msg}");
+    assert!(msg.contains("os_code=None"), "{msg}");
+}
+
 #[test]
 fn auth_profile_kind_serde_roundtrip() {
     let json = serde_json::to_string(&AuthProfileKind::OAuth).unwrap();

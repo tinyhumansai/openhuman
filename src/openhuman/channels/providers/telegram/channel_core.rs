@@ -38,6 +38,7 @@ impl TelegramChannel {
             mention_only,
             bot_username: parking_lot::Mutex::new(None),
             recent_updates: parking_lot::Mutex::new(TelegramUpdateWindow::default()),
+            recent_approval_prompts: parking_lot::Mutex::new(std::collections::HashMap::new()),
         }
     }
 

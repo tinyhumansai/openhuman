@@ -118,7 +118,7 @@ pub async fn migrate_openclaw_memory(
 }
 
 fn target_memory_backend(config: &Config) -> Result<Box<dyn Memory>> {
-    memory::create_memory_for_migration(&config.memory.backend, &config.workspace_dir)
+    memory::create_memory_for_migration(&config.memory, &config.workspace_dir)
 }
 
 fn collect_source_entries(

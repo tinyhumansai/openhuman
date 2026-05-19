@@ -1607,3 +1607,228 @@ async fn test_thinking_placeholder_logic() {
         assert!(!update.contains("thought 2"));
     }
 }
+
+// ── Issue #1948: Duplicate approval prompts regression tests ──────────────────
+//
+// These tests cover the race-guard and de-bounce logic added in fix/1948.
+// They FAIL to compile (method not found) before the fix is applied.
+
+/// Test A (race-guard): channel constructed with allowed_users=["alice"] has pairing=None.
+/// When runtime allowlist is cleared to empty (simulating restart-race), `is_race_condition_instance`
+/// must return `true` so the approval prompt is suppressed.
+#[test]
+fn is_race_condition_instance_true_when_allowlist_was_nonempty_but_runtime_is_empty() {
+    let ch = TelegramChannel::new("t".into(), vec!["alice".into()], false);
+    // Channel constructed with non-empty list → pairing is None
+    assert!(
+        ch.pairing.is_none(),
+        "pre-condition: non-empty allowlist must set pairing=None"
+    );
+
+    // Simulate the race: runtime allowlist cleared by an in-flight config reload
+    {
+        let mut users = ch.allowed_users.write().unwrap();
+        users.clear();
+    }
+
+    assert!(
+        ch.is_race_condition_instance(),
+        "[telegram][approval] race guard must fire: runtime empty AND pairing=None"
+    );
+}
+
+/// Test B (legit pairing preserved): channel constructed with empty allowlist → pairing=Some.
+/// `is_race_condition_instance` must return `false` so the first-run pairing flow is unaffected.
+#[test]
+fn is_race_condition_instance_false_for_legitimate_empty_allowlist() {
+    let ch = TelegramChannel::new("t".into(), vec![], false);
+    // Channel constructed with empty list → pairing is Some (first-run pairing)
+    assert!(
+        ch.pairing.is_some(),
+        "pre-condition: empty allowlist must set pairing=Some"
+    );
+
+    // Runtime list is also empty (genuine first-run state)
+    assert!(
+        !ch.is_race_condition_instance(),
+        "[telegram][approval] race guard must NOT fire for genuine first-run pairing"
+    );
+}
+
+/// Test C (genuine reject preserved): channel with allowed_users=["alice"], "bob" is not allowed.
+/// `is_race_condition_instance` must return `false` when runtime list is non-empty (normal case).
+#[test]
+fn is_race_condition_instance_false_when_runtime_allowlist_populated() {
+    let ch = TelegramChannel::new("t".into(), vec!["alice".into()], false);
+    assert!(
+        ch.pairing.is_none(),
+        "pre-condition: non-empty allowlist must set pairing=None"
+    );
+
+    // Runtime list is populated (normal operational state — NOT a race)
+    let users = ch.allowed_users.read().unwrap();
+    assert!(
+        !users.is_empty(),
+        "pre-condition: runtime list should still contain alice"
+    );
+    drop(users);
+
+    assert!(
+        !ch.is_race_condition_instance(),
+        "[telegram][approval] race guard must NOT fire when runtime allowlist is populated"
+    );
+}
+
+/// Test D (de-bounce — first call): verify that the first approval prompt is NOT suppressed.
+#[test]
+fn approval_debounce_first_call_not_suppressed() {
+    let ch = TelegramChannel::new("t".into(), vec![], false);
+    let suppressed = ch.check_and_update_approval_debounce("12345", "alice");
+    assert!(
+        !suppressed,
+        "[telegram][approval] first approval prompt must not be suppressed"
+    );
+}
+
+/// Test D (de-bounce — rapid second call): a second call within the window must be suppressed.
+#[test]
+fn approval_debounce_rapid_second_call_suppressed() {
+    let ch = TelegramChannel::new("t".into(), vec![], false);
+
+    // First call registers the timestamp
+    let first = ch.check_and_update_approval_debounce("12345", "alice");
+    assert!(!first, "first call must not be suppressed");
+
+    // Immediate second call — still within the 60s window
+    let second = ch.check_and_update_approval_debounce("12345", "alice");
+    assert!(
+        second,
+        "[telegram][approval] rapid second approval prompt to same chat+sender must be suppressed"
+    );
+}
+
+/// Test D (de-bounce — different sender): a different sender in the same chat is NOT suppressed.
+#[test]
+fn approval_debounce_different_sender_not_suppressed() {
+    let ch = TelegramChannel::new("t".into(), vec![], false);
+
+    let _ = ch.check_and_update_approval_debounce("12345", "alice");
+
+    // "bob" sending to the same chat is a different key — must not be suppressed
+    let suppressed = ch.check_and_update_approval_debounce("12345", "bob");
+    assert!(
+        !suppressed,
+        "[telegram][approval] different sender must not be suppressed by alice's de-bounce"
+    );
+}
+
+/// Test D (de-bounce — different chat): the same sender in a different chat is NOT suppressed.
+#[test]
+fn approval_debounce_different_chat_not_suppressed() {
+    let ch = TelegramChannel::new("t".into(), vec![], false);
+
+    let _ = ch.check_and_update_approval_debounce("chat_a", "mallory");
+
+    // Same sender, different chat — different key — must not be suppressed
+    let suppressed = ch.check_and_update_approval_debounce("chat_b", "mallory");
+    assert!(
+        !suppressed,
+        "[telegram][approval] different chat must not be suppressed by chat_a's de-bounce"
+    );
+}
+
+/// Test D (de-bounce — window expiry): after advancing the clock past the de-bounce window,
+/// the same chat+sender is allowed again.
+///
+/// We can't advance a real clock cheaply in a unit test, so we instead verify that the
+/// de-bounce bucket is re-inserted with a fresh timestamp on every non-suppressed call,
+/// by checking that the map entry is updated when the first call fires.
+#[test]
+fn approval_debounce_map_entry_inserted_on_first_call() {
+    let ch = TelegramChannel::new("t".into(), vec![], false);
+
+    {
+        let prompts = ch.recent_approval_prompts.lock();
+        assert!(
+            prompts.is_empty(),
+            "map must be empty before any approval prompt"
+        );
+    }
+
+    let suppressed = ch.check_and_update_approval_debounce("99", "mallory");
+    assert!(!suppressed);
+
+    {
+        let prompts = ch.recent_approval_prompts.lock();
+        let key = TelegramChannel::approval_debounce_key("99", "mallory");
+        assert!(
+            prompts.contains_key(&key),
+            "[telegram][approval] first call must register entry in recent_approval_prompts map"
+        );
+    }
+}
+
+/// Test D (de-bounce — multiple calls, 4 rapid): four rapid calls from the same sender must result
+/// in exactly one entry in the map and only the first call being non-suppressed.
+#[test]
+fn approval_debounce_four_rapid_calls_suppressed_after_first() {
+    let ch = TelegramChannel::new("t".into(), vec![], false);
+
+    let mut not_suppressed_count = 0usize;
+    for _ in 0..4 {
+        if !ch.check_and_update_approval_debounce("777", "spammer") {
+            not_suppressed_count += 1;
+        }
+    }
+
+    assert_eq!(
+        not_suppressed_count, 1,
+        "[telegram][approval] exactly 1 of 4 rapid calls must not be suppressed (de-bounce)"
+    );
+}
+
+/// Review note on #1948 (@graycyrus): the de-bounce map must not grow without
+/// bound. Entries older than the de-bounce window are dead weight — they can
+/// never suppress again — so a non-suppressed call evicts them. Pre-seed one
+/// stale entry and one fresh entry, trigger a new non-suppressed call, and
+/// assert the stale entry is gone while the fresh and new ones remain.
+#[test]
+fn approval_debounce_evicts_entries_past_window() {
+    let ch = TelegramChannel::new("t".into(), vec![], false);
+    let stale = std::time::Instant::now()
+        .checked_sub(Duration::from_secs(3600))
+        .expect("monotonic clock far enough from boot for a 1h offset");
+
+    {
+        let mut prompts = ch.recent_approval_prompts.lock();
+        prompts.insert("stale_chat:stale_sender".to_string(), stale);
+        prompts.insert(
+            "fresh_chat:fresh_sender".to_string(),
+            std::time::Instant::now(),
+        );
+    }
+
+    // Non-suppressed call for a new key triggers the eviction sweep + insert.
+    let suppressed = ch.check_and_update_approval_debounce("new_chat", "new_sender");
+    assert!(
+        !suppressed,
+        "first call for a new key must not be suppressed"
+    );
+
+    let prompts = ch.recent_approval_prompts.lock();
+    assert!(
+        !prompts.contains_key("stale_chat:stale_sender"),
+        "[telegram][approval] stale entry past the de-bounce window must be evicted (no unbounded growth)"
+    );
+    assert!(
+        prompts.contains_key("fresh_chat:fresh_sender"),
+        "[telegram][approval] fresh entry within the window must be retained"
+    );
+    assert!(
+        prompts.contains_key(&TelegramChannel::approval_debounce_key(
+            "new_chat",
+            "new_sender"
+        )),
+        "[telegram][approval] the new entry must be inserted"
+    );
+}

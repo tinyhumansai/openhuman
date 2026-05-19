@@ -463,7 +463,7 @@ pub fn create_backend_inference_provider(
             key.len()
         );
         Ok(Box::new(
-            crate::openhuman::inference::provider::compatible::OpenAiCompatibleProvider::new(
+            crate::openhuman::inference::provider::compatible::OpenAiCompatibleProvider::new_no_responses_fallback(
                 "custom_openai",
                 url,
                 Some(key),

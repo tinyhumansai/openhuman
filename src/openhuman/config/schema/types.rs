@@ -352,13 +352,25 @@ fn default_temperature_value() -> f64 {
 
 /// Returns the default list of model glob patterns that do not support the
 /// `temperature` parameter. These cover OpenAI o-series and GPT-5 reasoning
-/// models that return an error when `temperature` is included in the request.
+/// models that return an error when `temperature` is included in the request,
+/// as well as Moonshot's Kimi K2 family which only accepts `temperature: 1`
+/// (see #2076 — 146 Sentry events from users in China hitting *"invalid
+/// temperature: only 1 is allowed for this model"* on `kimi-k2.6`).
 fn default_temperature_unsupported_models() -> Vec<String> {
     vec![
         "o1*".to_string(),
         "o3*".to_string(),
         "o4*".to_string(),
         "gpt-5*".to_string(),
+        // Moonshot Kimi K2 family — temperature must be omitted (the
+        // upstream defaults to 1.0). Covers `kimi-k2.6`, `kimi-k2-instruct`,
+        // and any future K2 variants. See #2076.
+        "kimi-k2*".to_string(),
+        // OpenRouter / third-party gateways often namespace Kimi as
+        // `moonshot/...` or `moonshotai/...`. Match those routings too so
+        // users hitting Kimi through OpenRouter get the same suppression.
+        "moonshot*".to_string(),
+        "moonshotai/*".to_string(),
     ]
 }
 

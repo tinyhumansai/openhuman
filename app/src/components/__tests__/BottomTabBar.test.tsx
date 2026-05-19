@@ -13,6 +13,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import accountsReducer from '../../store/accountsSlice';
+import companionReducer from '../../store/companionSlice';
 import notificationReducer from '../../store/notificationSlice';
 import BottomTabBar from '../BottomTabBar';
 
@@ -29,13 +30,36 @@ vi.mock('../../utils/accountsFullscreen', () => ({ isAccountsFullscreen: vi.fn((
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-function buildStore() {
-  return configureStore({
-    reducer: { accounts: accountsReducer, notifications: notificationReducer },
-  });
+interface BuildStoreOpts {
+  companionSessionActive?: boolean;
 }
 
-async function renderBottomTabBar(pathname = '/home', hasToken = true) {
+function buildStore(opts: BuildStoreOpts = {}) {
+  const store = configureStore({
+    reducer: {
+      accounts: accountsReducer,
+      notifications: notificationReducer,
+      companion: companionReducer,
+    },
+  });
+  if (opts.companionSessionActive) {
+    store.dispatch({
+      type: 'companion/setSessionActive',
+      payload: { active: true, sessionId: 'sess-test' },
+    });
+  }
+  return store;
+}
+
+interface RenderOpts {
+  hasToken?: boolean;
+  companionSessionActive?: boolean;
+}
+
+async function renderBottomTabBar(pathname = '/home', opts: RenderOpts | boolean = {}) {
+  // Back-compat: previous callsites passed `hasToken` as the 2nd positional arg.
+  const resolved: RenderOpts = typeof opts === 'boolean' ? { hasToken: opts } : opts;
+  const hasToken = resolved.hasToken ?? true;
   const { useCoreState } = await import('../../providers/CoreStateProvider');
   vi.mocked(useCoreState).mockReturnValue({
     snapshot: {
@@ -58,7 +82,7 @@ async function renderBottomTabBar(pathname = '/home', hasToken = true) {
     refreshSnapshot: vi.fn(),
   } as never);
 
-  const store = buildStore();
+  const store = buildStore({ companionSessionActive: resolved.companionSessionActive });
   return render(
     <Provider store={store}>
       <MemoryRouter initialEntries={[pathname]}>
@@ -95,8 +119,19 @@ describe('BottomTabBar', () => {
   });
 
   it('returns null when there is no session token', async () => {
-    const { container } = await renderBottomTabBar('/home', false);
+    const { container } = await renderBottomTabBar('/home', { hasToken: false });
     expect(container.firstChild).toBeNull();
+  });
+
+  it('renders the pulsing companion dot on the Settings tab when a session is active', async () => {
+    const { container } = await renderBottomTabBar('/home', { companionSessionActive: true });
+    const settingsBtn = screen.getByRole('button', { name: 'Settings' });
+    const dot = settingsBtn.querySelector('.animate-pulse.bg-blue-500');
+    expect(dot).not.toBeNull();
+    // And not on a non-Settings tab.
+    const homeBtn = screen.getByRole('button', { name: 'Home' });
+    expect(homeBtn.querySelector('.animate-pulse.bg-blue-500')).toBeNull();
+    void container;
   });
 
   it('returns null on the "/" path even with a session token', async () => {
