@@ -143,7 +143,7 @@ const ru4: TranslationMap = {
   'onboarding.contextGathering.buildingProfile': 'Составление профиля...',
   'onboarding.contextGathering.continueToChat': 'Перейти в чат',
   'onboarding.contextGathering.errorDesc':
-    'Мы не смогли построить ваш полный профиль прямо сейчас, но это нормально — вы можете продолжить, и профиль будет дополняться со временем.',
+    'Сейчас не удалось построить ваш полный профиль, но это нормально — вы можете продолжить, и ваш профиль будет формироваться со временем.',
   'onboarding.contextGathering.title': 'Сбор контекста',
   'openhuman.team_list_teams': 'Список команд',
   'overlay.ariaAttention': 'Сообщение',

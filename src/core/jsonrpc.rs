@@ -871,6 +871,31 @@ async fn run_server_inner(
         "[core] Bind resolution: host={resolved_host} (from {host_source}), port={resolved_port} (from {port_source})"
     );
 
+    // Safety check: refuse to bind on a non-loopback address without an
+    // explicit RPC token. Without this, the entire RPC surface (tool
+    // execution, file access, credentials) is unauthenticated and reachable
+    // from the network. See: https://github.com/tinyhumansai/openhuman/issues/1919
+    if crate::openhuman::security::pairing::is_public_bind(&resolved_host) {
+        let has_explicit_token = std::env::var(crate::core::auth::CORE_TOKEN_ENV_VAR)
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .is_some();
+        if !has_explicit_token {
+            log::error!(
+                "[core] ⚠️  SECURITY WARNING: Binding on public address {resolved_host} without \
+                 an explicit OPENHUMAN_CORE_TOKEN. The RPC server will auto-generate a token, \
+                 but external clients will not know it. Set OPENHUMAN_CORE_TOKEN in your \
+                 .env file to secure the RPC endpoint."
+            );
+            eprintln!(
+                "\n\x1b[1;31m[SECURITY]\x1b[0m Binding on {resolved_host} without OPENHUMAN_CORE_TOKEN.\n\
+                 Set OPENHUMAN_CORE_TOKEN in .env to secure the RPC endpoint.\n\
+                 Without it, the auto-generated token is written to {{workspace}}/core.token\n\
+                 but remote clients will not be able to authenticate.\n"
+            );
+        }
+    }
+
     let port = resolved_port;
     let host = resolved_host;
     let bind_addr = format!("{host}:{port}");

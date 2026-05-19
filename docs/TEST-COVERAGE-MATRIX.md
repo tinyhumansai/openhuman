@@ -441,6 +441,7 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 | ------ | ------------------ | ----- | -------------------------------------------------------------------- | ------ | --------------------- |
 | 13.1.1 | Profile Management | VU    | `app/src/components/settings/panels/__tests__/PrivacyPanel.test.tsx` | 🟡     |                       |
 | 13.1.2 | Linked Accounts    | WD    | `auth-access-control.spec.ts`                                        | 🟡     | UI surface unasserted |
+| 13.1.3 | Meet Handoff Prompt-Injection Guard | VU | `app/src/services/__tests__/webviewAccountService.meetPromptInjection.test.ts` (this PR) | ✅ | Was ❌ — guard blocks handoff on hostile transcripts and wraps non-blocked transcripts in `<meeting_transcript source="untrusted_external_audio">` delimiters (#1920) |
 
 ### 13.2 Automation & Channels
 

@@ -141,7 +141,7 @@ const zhCN4: TranslationMap = {
   'onboarding.contextGathering.buildingProfile': '正在构建你的档案...',
   'onboarding.contextGathering.continueToChat': '前往对话',
   'onboarding.contextGathering.errorDesc':
-    '我们暂时无法构建你的完整资料，但没关系——你可以继续，资料会随时间逐步完善。',
+    '暂时无法完整构建你的档案，但没关系——你可以继续，档案会随时间逐步完善。',
   'onboarding.contextGathering.title': '上下文收集',
   'openhuman.team_list_teams': '团队列表',
   'overlay.ariaAttention': '注意消息',

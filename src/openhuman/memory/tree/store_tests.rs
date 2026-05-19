@@ -1,5 +1,14 @@
 //! Unit tests for [`super`] — chunk upsert / list / lifecycle / embedding /
 //! content-pointer accessors against a tempdir-backed SQLite store.
+//!
+//! ## Test isolation for the connection cache
+//!
+//! Because the connection cache is a process-level singleton, tests that want
+//! to exercise cache behaviour (same Arc, independent workspaces, circuit
+//! breaker, cleanup) must call `clear_connection_cache()` at the start — or
+//! be careful to use unique tempdirs that cannot collide with other tests.
+//! The call is cheap (a mutex lock + HashMap clear) and harmless for tests
+//! that don't need it.
 
 use super::*;
 use crate::openhuman::memory::tree::types::chunk_id;
@@ -296,6 +305,10 @@ fn legacy_embeddings_migrate_to_sidecar_once() {
     })
     .unwrap();
 
+    // Evict the cached connection so the next open sees user_version = 0
+    // and re-runs migrate_legacy_embeddings_to_sidecar.
+    invalidate_connection(&cfg);
+
     // The next store open (this getter's `with_connection`) sees
     // user_version = 0 and runs the migration before returning.
     assert_eq!(
@@ -339,4 +352,106 @@ fn legacy_embeddings_migrate_to_sidecar_once() {
         get_chunk_embedding_for_signature(&cfg, &c_match.id, &sig).unwrap(),
         Some(match_vec)
     );
+}
+
+// ── Connection cache tests (#2206) ───────────────────────────────────────────
+
+/// Two `with_connection` calls for the same workspace must return the same
+/// cached `Arc` (pointer identity proves no re-init happened).
+#[test]
+fn connection_cache_returns_same_arc_for_same_workspace() {
+    clear_connection_cache();
+    let (_tmp, cfg) = test_config();
+
+    let arc1 = get_or_init_connection(&cfg).expect("first get_or_init");
+    let arc2 = get_or_init_connection(&cfg).expect("second get_or_init");
+    assert!(
+        Arc::ptr_eq(&arc1, &arc2),
+        "expected the same Arc from the connection cache on the second call"
+    );
+}
+
+/// Two configs pointing at different tempdirs must produce independent
+/// connections (separate Arc pointers, no cross-contamination).
+#[test]
+fn connection_cache_uses_separate_connections_for_different_workspaces() {
+    clear_connection_cache();
+    let (_tmp1, cfg1) = test_config();
+    let (_tmp2, cfg2) = test_config();
+
+    let arc1 = get_or_init_connection(&cfg1).expect("workspace 1");
+    let arc2 = get_or_init_connection(&cfg2).expect("workspace 2");
+    assert!(
+        !Arc::ptr_eq(&arc1, &arc2),
+        "different workspaces must have independent connections"
+    );
+
+    // Sanity: each DB is usable independently.
+    let c = sample_chunk("s", 0, 1_700_000_000_000);
+    upsert_chunks(&cfg1, &[c.clone()]).unwrap();
+    assert_eq!(count_chunks(&cfg1).unwrap(), 1);
+    assert_eq!(count_chunks(&cfg2).unwrap(), 0);
+}
+
+/// Pointing the DB path at a *file* (not a directory) makes it impossible to
+/// create the DB, so `get_or_init_connection` must fail. After
+/// `CB_THRESHOLD` failures the circuit breaker trips and subsequent calls
+/// return an error immediately without touching the filesystem.
+#[test]
+fn circuit_breaker_trips_after_threshold() {
+    clear_connection_cache();
+    let tmp = TempDir::new().expect("tempdir");
+
+    // Create a regular file where the memory_tree *directory* would be —
+    // this prevents `create_dir_all` from succeeding.
+    let blocker = tmp.path().join(DB_DIR);
+    std::fs::write(&blocker, b"not a dir").expect("write blocker file");
+
+    let mut cfg = Config::default();
+    cfg.workspace_dir = tmp.path().to_path_buf();
+
+    // First CB_THRESHOLD calls should all fail (can't create dir over a file).
+    for i in 0..CB_THRESHOLD {
+        let result = get_or_init_connection(&cfg);
+        assert!(
+            result.is_err(),
+            "call {i}: expected error before breaker trips"
+        );
+    }
+
+    // The CB_THRESHOLD+1'th call should be rejected immediately by the
+    // circuit breaker (error message contains "circuit breaker").
+    let cb_err = get_or_init_connection(&cfg)
+        .expect_err("expected circuit breaker error on call after threshold");
+    let msg = format!("{cb_err:#}").to_ascii_lowercase();
+    assert!(
+        msg.contains("circuit breaker"),
+        "expected circuit breaker message, got: {msg}"
+    );
+}
+
+/// `try_cleanup_stale_files` removes `.db-shm` and `.db-wal` side-files that
+/// exist alongside the main DB file.
+#[test]
+fn stale_shm_cleanup_removes_files() {
+    let tmp = TempDir::new().expect("tempdir");
+    let db_path = tmp.path().join("chunks.db");
+
+    // Create the main DB file and the two stale side-files.
+    std::fs::write(&db_path, b"").expect("create db file");
+    let shm = tmp.path().join("chunks.db-shm");
+    let wal = tmp.path().join("chunks.db-wal");
+    std::fs::write(&shm, b"stale shm").expect("create shm");
+    std::fs::write(&wal, b"stale wal").expect("create wal");
+
+    assert!(shm.exists(), "shm must exist before cleanup");
+    assert!(wal.exists(), "wal must exist before cleanup");
+
+    let cleaned = try_cleanup_stale_files(&db_path);
+    assert!(
+        cleaned,
+        "cleanup should return true when files were removed"
+    );
+    assert!(!shm.exists(), "shm must be removed");
+    assert!(!wal.exists(), "wal must be removed");
 }

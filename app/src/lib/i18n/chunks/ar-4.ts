@@ -142,7 +142,7 @@ const ar4: TranslationMap = {
   'onboarding.contextGathering.buildingProfile': 'جارٍ بناء ملفك الشخصي...',
   'onboarding.contextGathering.continueToChat': 'المتابعة إلى المحادثة',
   'onboarding.contextGathering.errorDesc':
-    'تعذّر إنشاء ملفك الكامل الآن، لكن لا بأس — يمكنك المتابعة وسيُبنى ملفك مع الوقت.',
+    'لم نتمكّن من بناء ملفك الشخصي بالكامل الآن، لكن لا بأس — يمكنك المتابعة وسيكتمل ملفك تدريجيًا مع مرور الوقت.',
   'onboarding.contextGathering.title': 'جمع السياق',
   'openhuman.team_list_teams': 'قائمة الفرق',
   'overlay.ariaAttention': 'رسالة انتباه',

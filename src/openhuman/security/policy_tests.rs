@@ -393,6 +393,91 @@ fn dotfile_in_workspace_allowed() {
     assert!(p.is_path_allowed(".env"));
 }
 
+// -- is_path_allowed — symlink safety (#1927) ---------------------
+
+#[cfg(unix)]
+#[test]
+fn symlink_inside_workspace_escaping_outside_is_blocked() {
+    use std::os::unix::fs::symlink;
+
+    let workspace = tempfile::tempdir().expect("workspace tempdir");
+    let outside = tempfile::tempdir().expect("outside tempdir");
+    let target = outside.path().join("secret.txt");
+    std::fs::write(&target, "secret").expect("write secret");
+
+    let link = workspace.path().join("evil");
+    symlink(&target, &link).expect("create symlink");
+
+    let p = SecurityPolicy {
+        workspace_dir: workspace.path().to_path_buf(),
+        workspace_only: true,
+        forbidden_paths: vec![],
+        ..SecurityPolicy::default()
+    };
+
+    // String-level checks pass: "evil" has no "..", isn't absolute, and is
+    // not in forbidden_paths. The canonicalize step must catch the symlink
+    // pointing outside the workspace root.
+    assert!(
+        !p.is_path_allowed("evil"),
+        "symlink that escapes the workspace must be blocked"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn symlink_to_forbidden_tree_is_blocked() {
+    use std::os::unix::fs::symlink;
+
+    let workspace = tempfile::tempdir().expect("workspace tempdir");
+    let forbidden = tempfile::tempdir().expect("forbidden tempdir");
+    let target = forbidden.path().join("secret");
+    std::fs::write(&target, "x").expect("write secret");
+
+    let link = workspace.path().join("link-to-forbidden");
+    symlink(&target, &link).expect("create symlink");
+
+    let p = SecurityPolicy {
+        workspace_dir: workspace.path().to_path_buf(),
+        // Disable workspace_only so the assertion isolates the forbidden_paths
+        // path (the symlink escapes the workspace, which would also trip
+        // workspace_only — but here we want to prove the forbidden_paths
+        // check itself canonicalizes).
+        workspace_only: false,
+        forbidden_paths: vec![forbidden.path().to_string_lossy().to_string()],
+        ..SecurityPolicy::default()
+    };
+
+    // The string "link-to-forbidden" does not start with the forbidden
+    // tempdir path, so the string-level check passes. Canonical resolution
+    // must catch that it resolves into the forbidden tree.
+    assert!(
+        !p.is_path_allowed("link-to-forbidden"),
+        "symlink that resolves into a forbidden tree must be blocked"
+    );
+}
+
+#[test]
+fn write_to_not_yet_existing_path_in_workspace_still_allowed() {
+    // After adding the symlink-safe canonicalize step, writing to a
+    // not-yet-existing path inside the workspace must still pass — the
+    // parent-dir fallback canonicalizes the parent and confirms it is
+    // inside the workspace root.
+    let workspace = tempfile::tempdir().expect("workspace tempdir");
+    let p = SecurityPolicy {
+        workspace_dir: workspace.path().to_path_buf(),
+        workspace_only: true,
+        forbidden_paths: vec![],
+        ..SecurityPolicy::default()
+    };
+
+    assert!(p.is_path_allowed("new-file.txt"));
+    // Whole parent chain missing too — helper returns None, and we fall
+    // back to the string-level checks (which would pass for a
+    // workspace-relative non-traversal path).
+    assert!(p.is_path_allowed("not-yet-existing/subdir/file.txt"));
+}
+
 // -- from_config --------------------------------------------------
 
 #[test]
