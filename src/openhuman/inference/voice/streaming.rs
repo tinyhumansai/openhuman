@@ -44,6 +44,7 @@ const LOG_PREFIX: &str = "[voice-stream]";
 const AUDIO_SAMPLE_RATE: usize = 16_000;
 const MIN_PARTIAL_SAMPLES: usize = AUDIO_SAMPLE_RATE / 2; // 0.5s
 const MAX_STREAM_BUFFER_SAMPLES: usize = AUDIO_SAMPLE_RATE * 15; // 15s sliding window
+
 /// Hard cap on the full-audio accumulation buffer.
 ///
 /// Derived from `AUDIO_SAMPLE_RATE` (16 kHz mono PCM16) × 60 s × 5 min = 4 800 000 samples
