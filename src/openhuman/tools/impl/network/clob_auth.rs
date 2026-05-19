@@ -132,6 +132,11 @@ pub(crate) async fn derive_credentials(
         );
     }
 
+    // Re-derive the timestamp here so a slow first `POST /auth/api-key`
+    // doesn't push the fallback request past the server's anti-replay
+    // window. The L1 signature is bound to this fresh timestamp via
+    // sign_l1_headers below.
+    let timestamp = now_unix_secs()?;
     let derive_path = "/auth/derive-api-key";
     let derive_headers = sign_l1_headers(signer, chain_id, address, 0, timestamp).await?;
     tracing::trace!(
