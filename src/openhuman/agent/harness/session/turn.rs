@@ -1055,7 +1055,7 @@ impl Agent {
             if let ToolPolicyDecision::Deny { reason } =
                 self.tool_policy.check(&policy_request).await
             {
-                tracing::warn!(
+                tracing::debug!(
                     tool = call.name.as_str(),
                     policy = self.tool_policy.name(),
                     reason = %reason,
