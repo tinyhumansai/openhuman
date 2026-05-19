@@ -122,6 +122,30 @@ fn ollama_prefix() {
     assert_eq!(model, "llama3.1:8b");
 }
 
+#[test]
+fn temperature_suffix_is_stripped_from_model_id() {
+    // The `@<temp>` suffix is informational for the factory — the model id sent
+    // upstream must not include it, or providers will 404 on an unknown model.
+    let config = Config::default();
+    let (_, model) =
+        create_chat_provider_from_string("heartbeat", "ollama:llama3.1:8b@0.2", &config)
+            .expect("ollama:<model>@<temp> must build");
+    assert_eq!(
+        model, "llama3.1:8b",
+        "temperature suffix must not leak into the dispatched model id"
+    );
+}
+
+#[test]
+fn malformed_temperature_suffix_kept_as_part_of_model_id() {
+    // If the tail after `@` isn't a number, treat the whole string as the model
+    // id rather than silently dropping a chunk of it.
+    let config = Config::default();
+    let (_, model) = create_chat_provider_from_string("heartbeat", "ollama:llama3@beta", &config)
+        .expect("ollama:<model>@<garbage> must still build");
+    assert_eq!(model, "llama3@beta");
+}
+
 #[tokio::test]
 async fn ollama_provider_does_not_require_api_key() {
     let mut config = Config::default();
@@ -145,6 +169,7 @@ async fn ollama_provider_does_not_require_api_key() {
 fn all_workloads_default_to_openhuman() {
     let config = Config::default();
     for role in &[
+        "chat",
         "reasoning",
         "agentic",
         "coding",
@@ -160,6 +185,18 @@ fn all_workloads_default_to_openhuman() {
             "role={role} must default to openhuman"
         );
     }
+}
+
+// Regression: the `chat` workload was added to the UI + config schema (#2152)
+// but `provider_for_role` was not extended, so every chat message silently
+// routed to the OpenHuman backend regardless of the user's `chat_provider`
+// configuration. Keep this test alongside the other override checks so the
+// arm can't drop out again.
+#[test]
+fn chat_workload_override_respected() {
+    let mut config = Config::default();
+    config.chat_provider = Some("openai:gpt-4".to_string());
+    assert_eq!(provider_for_role("chat", &config), "openai:gpt-4");
 }
 
 #[test]

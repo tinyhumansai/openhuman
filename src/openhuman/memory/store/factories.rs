@@ -14,8 +14,8 @@ use std::sync::Arc;
 
 use crate::openhuman::config::{EmbeddingRouteConfig, MemoryConfig, StorageProviderConfig};
 use crate::openhuman::embeddings::{
-    self, EmbeddingProvider, DEFAULT_CLOUD_EMBEDDING_DIMENSIONS, DEFAULT_CLOUD_EMBEDDING_MODEL,
-    DEFAULT_OLLAMA_DIMENSIONS, DEFAULT_OLLAMA_MODEL,
+    self, format_embedding_signature, EmbeddingProvider, DEFAULT_CLOUD_EMBEDDING_DIMENSIONS,
+    DEFAULT_CLOUD_EMBEDDING_MODEL, DEFAULT_OLLAMA_DIMENSIONS, DEFAULT_OLLAMA_MODEL,
 };
 use crate::openhuman::memory::store::agentmemory::AgentMemoryBackend;
 use crate::openhuman::memory::store::unified::UnifiedMemory;
@@ -200,6 +200,25 @@ pub fn effective_embedding_settings(
         memory.embedding_model.clone(),
         memory.embedding_dimensions,
     )
+}
+
+/// The **active embedding signature** — the canonical key every per-model
+/// sidecar read/write is scoped by (#1574).
+///
+/// Derived from [`effective_embedding_settings`] (the *intended*, non-probed
+/// selection) — deliberately **not** [`effective_embedding_settings_probed`].
+/// A transient Ollama-down fallback to cloud must never silently redefine the
+/// signature: that would re-key every read at a different space and trigger a
+/// spurious full re-embed on the next cold-Ollama launch (spec §3 oscillation
+/// guard). The string is produced by [`format_embedding_signature`], the same
+/// formatter [`EmbeddingProvider::signature`] uses, so a config-derived
+/// signature is byte-identical to a live provider's.
+pub fn active_embedding_signature(
+    memory: &MemoryConfig,
+    local_embedding_model: Option<&str>,
+) -> String {
+    let (provider, model, dims) = effective_embedding_settings(memory, local_embedding_model);
+    format_embedding_signature(&provider, &model, dims)
 }
 
 /// Async, health-checked variant of [`effective_embedding_settings`].
@@ -438,12 +457,22 @@ fn create_memory_full(
 
 /// Create a memory instance specifically for migration purposes.
 ///
-/// NOTE: This is currently disabled for the unified namespace memory core.
+/// The unified namespace memory core has a single workspace-scoped
+/// store, so migration writes into the same `UnifiedMemory` instance the
+/// rest of the app reads from — there is no separate "migration
+/// backend". This helper delegates to [`create_memory`] so the
+/// migration importer (`migrate_openclaw_memory`) gets a real, writable
+/// memory handle and the Apply path can actually run end-to-end.
+///
+/// Prior to #1440 this function unconditionally bailed with "memory
+/// migration is disabled for the unified namespace memory core", which
+/// left the OpenClaw importer broken even though the rest of the
+/// pipeline (source discovery, dry-run report, backup) worked.
 pub fn create_memory_for_migration(
-    _backend: &str,
-    _workspace_dir: &Path,
+    config: &MemoryConfig,
+    workspace_dir: &Path,
 ) -> anyhow::Result<Box<dyn Memory>> {
-    anyhow::bail!("memory migration is disabled for the unified namespace memory core")
+    create_memory(config, workspace_dir)
 }
 
 #[cfg(test)]
@@ -555,6 +584,43 @@ mod tests {
         );
     }
 
+    /// #1574 invariant: a config-derived `active_embedding_signature` MUST be
+    /// byte-identical to the live provider's `.signature()` for the same
+    /// (provider, model, dims). Drift here silently splits one embedding space
+    /// into two — copied/queried vectors would never match.
+    #[test]
+    fn active_signature_matches_live_provider_signature() {
+        for local in [None, Some("nomic-embed-text:latest"), Some("bge-m3")] {
+            let mem = MemoryConfig::default();
+            let (provider, model, dims) = effective_embedding_settings(&mem, local);
+            let live = embeddings::create_embedding_provider(&provider, &model, dims)
+                .expect("provider builds for test triple");
+            assert_eq!(
+                active_embedding_signature(&mem, local),
+                live.signature(),
+                "config-derived signature must equal live provider signature (local={local:?})"
+            );
+        }
+    }
+
+    #[test]
+    fn active_signature_ignores_probe_fallback() {
+        // active_embedding_signature keys off the *intended* selection
+        // (effective_embedding_settings), NOT the health-checked variant — so
+        // a transient Ollama-down fallback can't flip it to cloud. The dim is
+        // base/config-dependent (not what this test pins); the provider+model
+        // staying the intended ollama/bge-m3 is the probe-stability property.
+        let mem = MemoryConfig::default();
+        let sig = active_embedding_signature(&mem, Some("bge-m3"));
+        assert!(
+            sig.starts_with("provider=ollama;model=bge-m3;dims="),
+            "intended local selection must survive (no cloud fallback); got {sig}"
+        );
+        // And it must equal the non-probed settings, formatted identically.
+        let (p, m, d) = effective_embedding_settings(&mem, Some("bge-m3"));
+        assert_eq!(sig, format_embedding_signature(&p, &m, d));
+    }
+
     #[test]
     fn effective_memory_backend_name_always_returns_namespace() {
         assert_eq!(effective_memory_backend_name("sqlite", None), "namespace");
@@ -563,16 +629,19 @@ mod tests {
     }
 
     #[test]
-    fn create_memory_for_migration_always_errors() {
+    fn create_memory_for_migration_returns_writable_memory_on_unified_core() {
+        // Regression for #1440: prior to that PR this factory unconditionally
+        // bailed with "memory migration is disabled for the unified namespace
+        // memory core", which broke the OpenClaw importer's Apply path even
+        // though the dry-run / preview path worked. Now it delegates to
+        // `create_memory` so the migration importer gets a real workspace-
+        // scoped memory handle. Box<dyn Memory> doesn't impl Debug, so we
+        // match instead of unwrap.
         let tmp = tempfile::tempdir().unwrap();
-        // Box<dyn Memory> doesn't impl Debug, so we can't use .unwrap_err().
-        // Use match instead.
-        match create_memory_for_migration("any", tmp.path()) {
-            Ok(_) => panic!("expected error"),
-            Err(e) => assert!(
-                e.to_string().contains("migration is disabled"),
-                "unexpected error: {e}"
-            ),
+        let cfg = MemoryConfig::default();
+        match create_memory_for_migration(&cfg, tmp.path()) {
+            Ok(_) => {}
+            Err(e) => panic!("expected Ok for unified namespace core, got: {e}"),
         }
     }
 

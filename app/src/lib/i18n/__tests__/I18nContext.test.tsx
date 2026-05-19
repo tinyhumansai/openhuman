@@ -28,6 +28,7 @@ function Probe() {
       <span>{t('settings.language')}</span>
       <span>{t('clearData.title')}</span>
       <span>{t('bootCheck.quit')}</span>
+      <span data-testid="missing-key">{t('this.key.does.not.exist')}</span>
     </>
   );
 }
@@ -46,13 +47,15 @@ function renderWithLocale(locale: Locale) {
 }
 
 describe('I18nProvider', () => {
-  it('serves Indonesian translations with English fallback for missing keys', () => {
+  it('serves Indonesian translations and falls back to the raw key for unknown keys', () => {
     renderWithLocale('id');
 
     expect(screen.getByTestId('locale')).toHaveTextContent('id');
     expect(screen.getByText('Bahasa')).toBeInTheDocument();
     expect(screen.getByText('Bersihkan Data Aplikasi')).toBeInTheDocument();
-    expect(screen.getByText('Quit')).toBeInTheDocument();
+    expect(screen.getByText('Keluar')).toBeInTheDocument();
+    // Unknown keys fall through locale → English → raw key.
+    expect(screen.getByTestId('missing-key')).toHaveTextContent('this.key.does.not.exist');
   });
 
   it('keeps the Simplified Chinese locale complete against English keys', () => {

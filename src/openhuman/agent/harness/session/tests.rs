@@ -731,3 +731,50 @@ fn seed_resume_from_messages_preserves_unmatched_trailing_user() {
     assert_eq!(cached[3].role, "user");
     assert_eq!(cached[3].content, "stranded follow-up");
 }
+
+#[test]
+fn seed_resume_from_messages_respects_history_window_bound() {
+    let mut agent = build_minimal_agent_with_definition_name(Some("orchestrator"));
+    agent.config.max_history_messages = 4;
+    let prior = vec![
+        ("user".to_string(), "u1".to_string()),
+        ("agent".to_string(), "a1".to_string()),
+        ("user".to_string(), "u2".to_string()),
+        ("agent".to_string(), "a2".to_string()),
+        ("user".to_string(), "u3".to_string()),
+        ("agent".to_string(), "a3".to_string()),
+    ];
+    agent
+        .seed_resume_from_messages(prior, "new turn")
+        .expect("seed");
+
+    let cached = agent
+        .cached_transcript_messages
+        .as_ref()
+        .expect("cache populated");
+    // max_history_messages=4 keeps [system + last 3 messages].
+    assert_eq!(cached.len(), 4);
+    assert_eq!(cached[0].role, "system");
+    assert_eq!(cached[1].content, "a2");
+    assert_eq!(cached[2].content, "u3");
+    assert_eq!(cached[3].content, "a3");
+}
+
+#[test]
+fn bound_cached_transcript_messages_without_system_prefix_keeps_tail() {
+    let mut agent = build_minimal_agent_with_definition_name(Some("orchestrator"));
+    agent.config.max_history_messages = 3;
+
+    let messages = vec![
+        crate::openhuman::inference::provider::ChatMessage::user("u1"),
+        crate::openhuman::inference::provider::ChatMessage::assistant("a1"),
+        crate::openhuman::inference::provider::ChatMessage::user("u2"),
+        crate::openhuman::inference::provider::ChatMessage::assistant("a2"),
+        crate::openhuman::inference::provider::ChatMessage::user("u3"),
+    ];
+    let bounded = agent.bound_cached_transcript_messages(messages);
+    assert_eq!(bounded.len(), 3);
+    assert_eq!(bounded[0].content, "u2");
+    assert_eq!(bounded[1].content, "a2");
+    assert_eq!(bounded[2].content, "u3");
+}

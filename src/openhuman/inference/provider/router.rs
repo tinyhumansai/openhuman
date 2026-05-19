@@ -125,11 +125,25 @@ impl RouterProvider {
                 );
                 return (*idx, resolved_model.clone());
             }
+            // Tier name matched but the user hasn't configured a route for
+            // this hint. Passing the literal alias (`reasoning-v1`,
+            // `agentic-v1`, etc.) verbatim to an upstream API will 400 —
+            // these are OpenHuman-internal aliases that only the hosted
+            // backend resolves. Fall back to the default provider's
+            // default_model so the request at least has a chance of
+            // succeeding against a custom_openai / OpenRouter / DeepSeek
+            // endpoint. See #2079 (39 events in Sentry from a user routed
+            // to DeepSeek who saw "The supported API model names are
+            // deepseek-v4-pro or deepseek-v4-flash, but you passed
+            // reasoning-v1").
             log::warn!(
-                "[router] tier {} matched hint={} but no route configured — passing through unchanged",
+                "[router] tier {} matched hint={} but no route configured — falling back to default_model={} on default provider (idx={})",
                 model,
-                hint
+                hint,
+                self.default_model,
+                self.default_index
             );
+            return (self.default_index, self.default_model.clone());
         }
 
         // Not a hint or hint not found — use default provider with the model as-is

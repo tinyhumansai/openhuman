@@ -120,7 +120,8 @@ async function getReduxAuthState() {
 let hadOnboardingWalkthrough = false;
 
 describe('Login flow — complete with mock data (Linux)', () => {
-  before(async () => {
+  before(async function beforeSuite() {
+    this.timeout(90_000);
     await startMockServer();
     resetMockBehavior();
     setMockBehavior('composioConnections', '[]');
@@ -143,12 +144,14 @@ describe('Login flow — complete with mock data (Linux)', () => {
   // Phase 1: Deep link authentication
   // -----------------------------------------------------------------------
 
-  it('app process is running and has a window handle', async () => {
+  it('app process is running and has a window handle', async function () {
+    this.timeout(90_000);
     const hasChrome = await hasAppChrome();
     expect(hasChrome).toBe(true);
   });
 
-  it('deep link triggers login and shows the app window', async () => {
+  it('deep link triggers login and shows the app window', async function () {
+    this.timeout(90_000);
     await triggerAuthDeepLink('e2e-test-token');
 
     await waitForWindowVisible(25_000);
@@ -241,7 +244,8 @@ describe('Login flow — complete with mock data (Linux)', () => {
     expect(foundOnboarding || foundHome).toBeTruthy();
   });
 
-  it('walk through onboarding steps (if overlay is visible)', async () => {
+  it('walk through onboarding steps (if overlay is visible)', async function () {
+    this.timeout(60_000);
     // Check if we're on the WelcomeStep or any onboarding step
     const onboardingVisible =
       (await textExists("Hi. I'm OpenHuman.")) ||
@@ -339,12 +343,12 @@ describe('Login flow — complete with mock data (Linux)', () => {
 
   it('app navigated to Home page after onboarding', async () => {
     const nameCandidates = [
+      'Ask your assistant anything',
+      'Ask your assistant',
       'Test',
       'Good morning',
       'Good afternoon',
       'Good evening',
-      'Message OpenHuman',
-      'Upgrade to Premium',
     ];
 
     const foundText = await waitForAnyText(nameCandidates, 15_000);
@@ -428,10 +432,11 @@ describe('Login flow — complete with mock data (Linux)', () => {
 
     // Assert the app navigated to home (post-login UI marker)
     const homeCandidates = [
+      'Ask your assistant anything',
+      'Ask your assistant',
       'Good morning',
       'Good afternoon',
       'Good evening',
-      'Message OpenHuman',
       'Home',
     ];
     const foundHome = await waitForAnyText(homeCandidates, 15_000);

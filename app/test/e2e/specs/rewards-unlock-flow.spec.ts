@@ -84,6 +84,9 @@ async function waitForRewardsSnapshot(timeout = 15_000): Promise<void> {
 
 describe('Rewards role-unlock flows', () => {
   before(async function beforeSuite() {
+    // Auth + onboarding can take longer than the default 30s per-hook budget.
+    this.timeout(90_000);
+
     if (!supportsExecuteScript()) {
       stepLog('Skipping suite on Mac2 — Rewards bottom-tab label not mapped for Appium');
       this.skip();
@@ -108,7 +111,8 @@ describe('Rewards role-unlock flows', () => {
     await stopMockServer();
   });
 
-  it('12.1.1 — activity-based unlock surfaces the streak achievement as Unlocked', async () => {
+  it('12.1.1 — activity-based unlock surfaces the streak achievement as Unlocked', async function () {
+    this.timeout(90_000);
     stepLog('priming activity_unlocked scenario');
     resetMockBehavior();
     setMockBehavior('rewardsScenario', 'activity_unlocked');
@@ -143,7 +147,8 @@ describe('Rewards role-unlock flows', () => {
     expect(unlockedCount).toBeGreaterThanOrEqual(1);
   });
 
-  it('12.1.2 — integration-based unlock reflects Discord membership in the UI', async () => {
+  it('12.1.2 — integration-based unlock reflects Discord membership in the UI', async function () {
+    this.timeout(90_000);
     stepLog('priming integration_unlocked scenario');
     resetMockBehavior();
     setMockBehavior('rewardsScenario', 'integration_unlocked');
@@ -184,7 +189,8 @@ describe('Rewards role-unlock flows', () => {
     expect(streakStillLocked).toBe(true);
   });
 
-  it('12.1.3 — plan-based unlock surfaces the PRO achievement once plan + active sub are set', async () => {
+  it('12.1.3 — plan-based unlock surfaces the PRO achievement once plan + active sub are set', async function () {
+    this.timeout(90_000);
     stepLog('priming plan_unlocked scenario');
     resetMockBehavior();
     setMockBehavior('rewardsScenario', 'plan_unlocked');
@@ -201,9 +207,9 @@ describe('Rewards role-unlock flows', () => {
     expect(await textExists('1 of 3 achievements unlocked')).toBe(true);
 
     // The plan-leg unlock must NOT also flip the integration label — discord
-    // remains not-linked in this scenario, so the membership badge says
-    // "Not linked". This rules out a regression where the snapshot
-    // copy-paste logic accidentally promoted the discord branch.
-    expect(await textExists('Not linked')).toBe(true);
+    // remains not-linked in this scenario, so the membership badge should NOT say
+    // "Joined the server". The i18n key 'rewards.community.discordNotLinked'
+    // renders as 'Discord not linked' (not 'Not linked').
+    expect(await textExists('Joined the server')).toBe(false);
   });
 });

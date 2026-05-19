@@ -136,6 +136,15 @@ pub fn all_tools_with_runtime(
         Box::new(MemoryRecallTool::new(memory.clone())),
         Box::new(MemoryForgetTool::new(memory.clone(), security.clone())),
         Box::new(MemoryTreeTool),
+        // Explicit user-preference pinning — always registered so the model
+        // can save user-stated preferences regardless of whether the full
+        // inference-based learning subsystem is enabled.  The preference
+        // injection into the system prompt is controlled independently by
+        // `config.learning.explicit_preferences_enabled`.
+        Box::new(RememberPreferenceTool::new(
+            memory.clone(),
+            security.clone(),
+        )),
         // WhatsApp data store — read-only agent surface (issue #1341).
         // The matching `whatsapp_data_ingest` write-path stays internal-only
         // (registered in `src/core/all.rs::build_internal_only_controllers`)
@@ -227,6 +236,22 @@ pub fn all_tools_with_runtime(
         root_config.curl.max_download_bytes,
         root_config.curl.timeout_secs,
     )));
+
+    // Phase 3 STM recall — on-demand cross-thread episodic search tool.
+    // Feature-gated on `learning.stm_recall_enabled` (default true) so the
+    // tool surface and the preemptive prompt injection are enabled/disabled
+    // together. `session_id` is not known at tool-build time; exclude-own-
+    // session is enforced by the preemptive first-turn injection in turn.rs
+    // (the on-demand tool intentionally uses an empty exclude_session).
+    if root_config.learning.stm_recall_enabled {
+        tools.push(Box::new(
+            crate::openhuman::memory::stm_recall::tool::StmRecallTool::new(
+                memory.clone(),
+                String::new(),
+                None,
+            ),
+        ));
+    }
 
     // gitbooks — answers questions about OpenHuman by calling the
     // GitBook MCP server. Two tools mirroring the upstream MCP tools.
@@ -448,6 +473,16 @@ pub fn all_tools_with_runtime(
         tracing::debug!(
             "[integrations] build_client returned None — integration tools not registered"
         );
+    }
+
+    if root_config.integrations.polymarket.enabled {
+        tools.push(Box::new(PolymarketTool::new(
+            &root_config.integrations.polymarket,
+            security.clone(),
+        )));
+        tracing::debug!("[integrations] registered polymarket tool (read + trading)");
+    } else {
+        tracing::debug!("[integrations] polymarket disabled — skipping");
     }
 
     // Coding-harness `lsp` tool (issue #1205) — capability-gated by the

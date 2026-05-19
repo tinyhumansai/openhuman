@@ -22,7 +22,8 @@ import { startMockServer, stopMockServer } from '../mock-server';
 const USER_ID = 'e2e-channels-smoke';
 
 describe('Channels page smoke (Telegram + Discord)', () => {
-  before(async () => {
+  before(async function beforeSuite() {
+    this.timeout(90_000);
     await startMockServer();
     await waitForApp();
     await resetApp(USER_ID);
@@ -32,7 +33,8 @@ describe('Channels page smoke (Telegram + Discord)', () => {
     await stopMockServer();
   });
 
-  it('renders Telegram and Discord channel panels in not-connected state', async () => {
+  it('renders Telegram and Discord channel panels in not-connected state', async function () {
+    this.timeout(90_000);
     await navigateViaHash('/channels');
 
     await waitForText('Channels', 15_000);

@@ -11,6 +11,44 @@ describe('channelConnectionsSlice', () => {
     const state = reducer(undefined, completeBreakingMigration());
     expect(state.migrationCompleted).toBe(true);
     expect(state.defaultMessagingChannel).toBe('telegram');
+    // Migration must reset every channel in ChannelType so subsequent
+    // upsert/setStatus/disconnect actions never crash on `state.connections
+    // [channel]` being undefined for users rehydrating persisted state
+    // from before #2048 added lark + dingtalk. See CoderRabbit review on
+    // PR #2083.
+    expect(state.connections.telegram).toBeDefined();
+    expect(state.connections.discord).toBeDefined();
+    expect(state.connections.web).toBeDefined();
+    expect(state.connections.lark).toBeDefined();
+    expect(state.connections.dingtalk).toBeDefined();
+  });
+
+  it('upsert on a newly-introduced channel does not crash after migration (#2083)', () => {
+    // Regression for the persisted-state crash CoderRabbit flagged:
+    // before this fix, an old user who had `migrationCompleted: true` in
+    // redux-persist but no `connections.lark` key would crash on the
+    // first call to upsertChannelConnection for lark.
+    const migrated = reducer(undefined, completeBreakingMigration());
+    const next = reducer(
+      migrated,
+      upsertChannelConnection({
+        channel: 'lark',
+        authMode: 'api_key',
+        patch: { status: 'connected', capabilities: ['send_text'] },
+      })
+    );
+    expect(next.connections.lark.api_key?.status).toBe('connected');
+    expect(next.connections.lark.api_key?.capabilities).toEqual(['send_text']);
+
+    const next2 = reducer(
+      migrated,
+      upsertChannelConnection({
+        channel: 'dingtalk',
+        authMode: 'api_key',
+        patch: { status: 'connected', capabilities: ['send_text'] },
+      })
+    );
+    expect(next2.connections.dingtalk.api_key?.status).toBe('connected');
   });
 
   it('sets default messaging channel', () => {

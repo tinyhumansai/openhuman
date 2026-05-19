@@ -247,7 +247,12 @@ pub async fn end_of_day_digest(
     let tree_id_clone = global.id.clone();
     with_connection(config, move |conn| {
         let tx = conn.unchecked_transaction()?;
-        store::insert_summary_tx(&tx, &daily_clone, Some(&staged_daily))?;
+        store::insert_summary_tx(
+            &tx,
+            &daily_clone,
+            Some(&staged_daily),
+            &crate::openhuman::memory::tree::store::tree_active_signature(config),
+        )?;
         // Index any entities the summariser emitted (no-op under inert).
         crate::openhuman::memory::tree::score::store::index_summary_entity_ids_tx(
             &tx,

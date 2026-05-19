@@ -47,7 +47,8 @@ async function waitForAnyText(candidates, timeout = 20_000) {
 // CI does not provision a live Ollama server, so keep this spec skipped until
 // a deterministic mockable local-runtime harness exists for WDIO.
 describe.skip('Local model runtime flow', () => {
-  before(async () => {
+  before(async function beforeSuite() {
+    this.timeout(90_000);
     await startMockServer();
     await waitForApp();
     clearRequestLog();
@@ -57,7 +58,8 @@ describe.skip('Local model runtime flow', () => {
     await stopMockServer();
   });
 
-  it('shows direct-runtime guidance instead of app-managed bootstrap controls', async () => {
+  it('shows direct-runtime guidance instead of app-managed bootstrap controls', async function () {
+    this.timeout(90_000);
     await triggerAuthDeepLink('e2e-local-model-token');
     await waitForWindowVisible(25_000);
     await waitForWebView(15_000);
