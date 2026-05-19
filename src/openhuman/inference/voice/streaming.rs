@@ -415,6 +415,24 @@ mod tests {
     }
 
     #[test]
+    fn append_stream_samples_returns_false_when_full_audio_cap_reached() {
+        let mut audio = vec![];
+        let mut full = vec![0i16; MAX_FULL_AUDIO_SAMPLES];
+        let ok = append_stream_samples(&mut audio, &mut full, &[1, 2, 3]);
+
+        assert!(!ok, "should return false once cap is reached");
+        assert_eq!(
+            full.len(),
+            MAX_FULL_AUDIO_SAMPLES,
+            "full buf must not grow past cap"
+        );
+        assert!(
+            audio.is_empty(),
+            "sliding window must not receive new samples"
+        );
+    }
+
+    #[test]
     fn is_stop_command_only_accepts_stop_type() {
         assert!(is_stop_command(r#"{"type":"stop"}"#));
         assert!(!is_stop_command(r#"{"type":"continue"}"#));

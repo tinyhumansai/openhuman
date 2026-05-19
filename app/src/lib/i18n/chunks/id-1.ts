@@ -419,6 +419,11 @@ const id1: TranslationMap = {
     'Impor {count} entri ke ruang kerja saat ini?\n\nSumber: {source}\nTujuan: {target}\n\nMemori yang ada akan dicadangkan sebelum impor dimulai.',
   'migration.confirmImport.plural':
     'Impor {count} entri ke ruang kerja saat ini?\n\nSumber: {source}\nTujuan: {target}\n\nMemori yang ada akan dicadangkan sebelum impor dimulai.',
+  // Settings menu: Appearance + Mascot (#2225) — English stubs; native translations welcome
+  'settings.appearance': 'Appearance',
+  'settings.appearanceDesc': 'Pick light, dark, or match your system theme',
+  'settings.mascot': 'Mascot',
+  'settings.mascotDesc': 'Pick the mascot color used across the app',
 };
 
 export default id1;

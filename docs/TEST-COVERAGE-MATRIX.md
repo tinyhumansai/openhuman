@@ -198,7 +198,7 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 
 | ID    | Feature            | Layer | Test path(s)                                                             | Status | Notes |
 | ----- | ------------------ | ----- | ------------------------------------------------------------------------ | ------ | ----- |
-| 5.1.1 | Screen Capture     | WD+RI | `screen-intelligence.spec.ts`, `tests/screen_intelligence_vision_e2e.rs` | ✅     |       |
+| 5.1.1 | Screen Capture     | RI    | `tests/screen_intelligence_vision_e2e.rs`                                | ✅     |       |
 | 5.1.2 | Context Extraction | RI    | `tests/screen_intelligence_vision_e2e.rs`                                | ✅     |       |
 | 5.1.3 | Memory Injection   | RI    | `tests/memory_graph_sync_e2e.rs`                                         | ✅     |       |
 
@@ -378,7 +378,7 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 
 | ID     | Feature                | Layer | Test path(s)                                | Status | Notes                            |
 | ------ | ---------------------- | ----- | ------------------------------------------- | ------ | -------------------------------- |
-| 10.7.1 | Integration Disconnect | WD    | `gmail-flow.spec.ts`, `notion-flow.spec.ts` | ✅     |                                  |
+| 10.7.1 | Integration Disconnect | WD    | `gmail-flow.spec.ts`                        | ✅     |                                  |
 | 10.7.2 | Token Revocation       | RU    | `src/openhuman/credentials/`                | ✅     |                                  |
 | 10.7.3 | Re-Authorization Flow  | WD    | `skill-oauth.spec.ts`                       | 🟡     | Re-auth post-revoke not asserted |
 | 10.7.4 | Permission Re-Sync     | WD    | _missing_ — tracked #968                    | ❌     |                                  |

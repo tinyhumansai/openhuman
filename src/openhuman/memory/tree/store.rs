@@ -26,8 +26,10 @@ use chrono::{DateTime, TimeZone, Utc};
 use parking_lot::Mutex as PMutex;
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+#[cfg(test)]
+use std::sync::Mutex;
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -62,14 +64,19 @@ pub const CHUNK_STATUS_SEALED: &str = "sealed";
 /// Chunk lifecycle: rejected by the admission gate (too low signal).
 pub const CHUNK_STATUS_DROPPED: &str = "dropped";
 
+// `PRAGMA foreign_keys = ON` is intentionally NOT in SCHEMA — it is
+// a connection-local pragma that resets to off on every new
+// `Connection::open`. SCHEMA only runs once per DB path (first-init);
+// applying foreign_keys here would leak FK-off into every later
+// `with_connection()` call that hits the fast path. The pragma is
+// set per-connection in `open_connection()` instead.
+
 /// `PRAGMA user_version` value once the one-shot legacy→sidecar embedding
 /// migration (#1574 §7) has run. `0` (fresh/legacy DB) triggers the copy on
 /// next open; `>= 1` skips it. Bump only for a new one-shot data migration.
 const TREE_EMBEDDING_MIGRATION_VERSION: i64 = 1;
 
 const SCHEMA: &str = "
-PRAGMA foreign_keys = ON;
-
 CREATE TABLE IF NOT EXISTS mem_tree_chunks (
     id                     TEXT PRIMARY KEY,
     source_kind            TEXT NOT NULL,
@@ -713,6 +720,76 @@ fn ms_to_utc(ms: i64) -> rusqlite::Result<DateTime<Utc>> {
     })
 }
 
+// ── Schema-apply instrumentation (test-only) ─────────────────────────────────
+//
+// Per-path counter of how many times `apply_schema` ran for each DB path,
+// gated behind `cfg(test)` so the production binary carries no overhead.
+// Used by the concurrent-init regression test to assert "exactly once per
+// path" across racing workers; it survives even when the connection cache
+// is cleared between tests because tests use distinct tempdirs.
+#[cfg(test)]
+static SCHEMA_APPLY_COUNTS: OnceLock<Mutex<HashMap<PathBuf, usize>>> = OnceLock::new();
+
+fn record_schema_apply(_path: &Path) {
+    #[cfg(test)]
+    {
+        let counts = SCHEMA_APPLY_COUNTS.get_or_init(|| Mutex::new(HashMap::new()));
+        let mut guard = counts
+            .lock()
+            .expect("memory_tree schema apply count mutex poisoned");
+        *guard.entry(_path.to_path_buf()).or_insert(0) += 1;
+    }
+}
+
+#[cfg(test)]
+#[doc(hidden)]
+pub(crate) fn schema_apply_count_for_path_for_tests(path: &Path) -> usize {
+    SCHEMA_APPLY_COUNTS
+        .get()
+        .and_then(|m| {
+            m.lock()
+                .ok()
+                .map(|guard| guard.get(path).copied().unwrap_or(0))
+        })
+        .unwrap_or(0)
+}
+
+/// SQLite extended result code `CANTOPEN` — surfaces when a cold-start
+/// caller races the lockfile/WAL creation done by another connection.
+const SQLITE_CANTOPEN: i32 = 14;
+/// SQLite extended result code `IOERR_TRUNCATE` — fires when the WAL is
+/// being truncated by another connection during bootstrap.
+const SQLITE_IOERR_TRUNCATE: i32 = 1546;
+/// SQLite extended result code `IOERR_SHMMAP` — fires when the shared
+/// memory file is resized by another connection during bootstrap.
+const SQLITE_IOERR_SHMMAP: i32 = 4874;
+
+/// True if `err` (or anything in its cause chain) is one of the three
+/// SQLite codes that fire during cold-start WAL/SHM bootstrap races:
+/// `CANTOPEN`, `IOERR_TRUNCATE`, `IOERR_SHMMAP`.
+pub(crate) fn is_transient_cold_start(err: &anyhow::Error) -> bool {
+    fn is_transient_sqlite(e: &(dyn std::error::Error + 'static)) -> bool {
+        if let Some(rusqlite::Error::SqliteFailure(ffi, _)) = e.downcast_ref::<rusqlite::Error>() {
+            return matches!(
+                ffi.extended_code,
+                SQLITE_CANTOPEN | SQLITE_IOERR_TRUNCATE | SQLITE_IOERR_SHMMAP
+            );
+        }
+        false
+    }
+    if is_transient_sqlite(err.root_cause()) {
+        return true;
+    }
+    let mut src: Option<&(dyn std::error::Error + 'static)> = Some(err.as_ref());
+    while let Some(cur) = src {
+        if is_transient_sqlite(cur) {
+            return true;
+        }
+        src = cur.source();
+    }
+    false
+}
+
 // ── Connection cache (#2206) ─────────────────────────────────────────────────
 
 /// How many consecutive init failures before the circuit breaker trips.
@@ -786,6 +863,13 @@ impl CircuitBreaker {
 struct ConnectionCache {
     connections: PMutex<HashMap<PathBuf, Arc<PMutex<Connection>>>>,
     breakers: PMutex<HashMap<PathBuf, Arc<CircuitBreaker>>>,
+    /// Per-path mutex held across the slow-path init so concurrent
+    /// workers racing into `with_connection` on a cold DB serialise on
+    /// the WAL+SHM bootstrap. Without this, N threads see "no cached
+    /// connection" simultaneously and all run `apply_schema`, which is
+    /// idempotent but reopens the cold-start race window
+    /// (OPENHUMAN-TAURI-HH / -ZM / -MB).
+    init_locks: PMutex<HashMap<PathBuf, Arc<PMutex<()>>>>,
 }
 
 static CONN_CACHE: OnceLock<ConnectionCache> = OnceLock::new();
@@ -794,6 +878,7 @@ fn conn_cache() -> &'static ConnectionCache {
     CONN_CACHE.get_or_init(|| ConnectionCache {
         connections: PMutex::new(HashMap::new()),
         breakers: PMutex::new(HashMap::new()),
+        init_locks: PMutex::new(HashMap::new()),
     })
 }
 
@@ -845,6 +930,22 @@ pub(crate) fn try_cleanup_stale_files(db_path: &std::path::Path) -> bool {
 fn init_db(conn: &Connection, config: &Config) -> Result<()> {
     conn.busy_timeout(SQLITE_BUSY_TIMEOUT)
         .context("Failed to configure memory_tree busy timeout")?;
+    // SQLite resets `foreign_keys` to off on every new connection. The
+    // ConnectionCache holds one cached `Connection` per DB path, so
+    // setting it here (alongside the rest of init) is the per-connection
+    // surface — fast-path callers reuse the cached conn with FKs already
+    // on.
+    conn.execute_batch("PRAGMA foreign_keys = ON;")
+        .context("Failed to enable memory_tree foreign_keys pragma")?;
+    apply_schema(conn)?;
+    // #1574 §7: one-shot, version-gated legacy→sidecar embedding migration.
+    migrate_legacy_embeddings_to_sidecar(conn, config)?;
+    Ok(())
+}
+
+fn apply_schema(conn: &Connection) -> Result<()> {
+    // Note: `init_db` runs the `#1574 §7` legacy→sidecar embedding migration
+    // after this returns, so the dim-equal copy step is not duplicated here.
     if let Err(wal_err) = conn.execute_batch("PRAGMA journal_mode=WAL;") {
         log::warn!(
             "[memory_tree] Failed to enable WAL mode (filesystem may not support it): {wal_err}"
@@ -891,8 +992,6 @@ fn init_db(conn: &Connection, config: &Config) -> Result<()> {
         "is_user",
         "INTEGER NOT NULL DEFAULT 0",
     )?;
-    // #1574 §7: one-shot, version-gated legacy→sidecar embedding migration.
-    migrate_legacy_embeddings_to_sidecar(conn, config)?;
     Ok(())
 }
 
@@ -936,7 +1035,26 @@ fn get_or_init_connection(config: &Config) -> Result<Arc<PMutex<Connection>>> {
         }
     }
 
-    // ── Slow path: initialise DB, then insert into cache ─────────────────
+    // ── Slow path: serialise init per-path so concurrent workers don't
+    //    all race into `open_and_init` on a cold DB.
+    let init_lock = {
+        let mut guard = conn_cache().init_locks.lock();
+        guard
+            .entry(db_path.clone())
+            .or_insert_with(|| Arc::new(PMutex::new(())))
+            .clone()
+    };
+    let _init_guard = init_lock.lock();
+
+    // Re-check the cache once we hold the init lock — another thread
+    // may have completed init while we were queued.
+    {
+        let guard = conn_cache().connections.lock();
+        if let Some(conn) = guard.get(&db_path) {
+            return Ok(Arc::clone(conn));
+        }
+    }
+
     log::debug!(
         "[memory_tree] opening and initialising DB at {}",
         db_path.display()
@@ -1017,6 +1135,7 @@ fn open_and_init(db_path: &std::path::Path, config: &Config) -> Result<Connectio
         .with_context(|| format!("Failed to open memory_tree DB: {}", db_path.display()))?;
     init_db(&conn, config)
         .with_context(|| format!("Failed to init memory_tree schema: {}", db_path.display()))?;
+    record_schema_apply(db_path);
     Ok(conn)
 }
 
@@ -1039,6 +1158,7 @@ pub(crate) fn invalidate_connection(config: &Config) {
 pub(crate) fn clear_connection_cache() {
     conn_cache().connections.lock().clear();
     conn_cache().breakers.lock().clear();
+    conn_cache().init_locks.lock().clear();
 }
 
 /// Open the memory_tree SQLite DB and run a closure against it.
@@ -1052,10 +1172,13 @@ pub(crate) fn clear_connection_cache() {
 /// reused from a process-level cache. Schema migrations run exactly once on
 /// the first call for a given `config.workspace_dir`. Subsequent calls pay
 /// only the cost of a `parking_lot::Mutex` lock and the closure itself.
-pub(crate) fn with_connection<T>(
-    config: &Config,
-    f: impl FnOnce(&Connection) -> Result<T>,
-) -> Result<T> {
+///
+/// `#[doc(hidden)] pub` (not `pub(crate)`) because the
+/// `memory-tree-init-smoke` bin in `src/bin/` is a separate crate target
+/// and must reach this entry point. It is NOT a stable API surface —
+/// downstream crates should treat it as internal.
+#[doc(hidden)]
+pub fn with_connection<T>(config: &Config, f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
     let conn_arc = get_or_init_connection(config)?;
     let guard = conn_arc.lock();
     f(&guard)

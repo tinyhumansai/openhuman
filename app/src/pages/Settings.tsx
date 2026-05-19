@@ -8,6 +8,7 @@ import AppearancePanel from '../components/settings/panels/AppearancePanel';
 import AutocompleteDebugPanel from '../components/settings/panels/AutocompleteDebugPanel';
 import AutocompletePanel from '../components/settings/panels/AutocompletePanel';
 import BillingPanel from '../components/settings/panels/BillingPanel';
+import CompanionPanel from '../components/settings/panels/CompanionPanel';
 import ComposioPanel from '../components/settings/panels/ComposioPanel';
 import ComposioTriagePanel from '../components/settings/panels/ComposioTriagePanel';
 import ConnectionsPanel from '../components/settings/panels/ConnectionsPanel';
@@ -147,6 +148,16 @@ const LlmIcon = (
     />
   </svg>
 );
+const CompanionIcon = (
+  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth={2}
+      d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"
+    />
+  </svg>
+);
 const VoiceIcon = (
   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
     <path
@@ -250,6 +261,13 @@ const Settings = () => {
       route: 'tools',
       icon: ToolsIcon,
     },
+    {
+      id: 'companion',
+      title: t('pages.settings.features.desktopCompanion'),
+      description: t('pages.settings.features.desktopCompanionDesc'),
+      route: 'companion',
+      icon: CompanionIcon,
+    },
   ];
 
   const aiSettingsItems = [
@@ -331,6 +349,7 @@ const Settings = () => {
         <Route path="mascot" element={wrapSettingsPage(<MascotPanel />)} />
         <Route path="appearance" element={wrapSettingsPage(<AppearancePanel />)} />
         <Route path="tools" element={wrapSettingsPage(<ToolsPanel />)} />
+        <Route path="companion" element={wrapSettingsPage(<CompanionPanel />)} />
         {/* Developer Options */}
         <Route path="developer-options" element={wrapSettingsPage(<DeveloperOptionsPanel />)} />
         <Route

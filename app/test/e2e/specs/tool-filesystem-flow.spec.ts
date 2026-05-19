@@ -69,7 +69,8 @@ interface ListResultEnvelope {
 }
 
 describe('System tools — Filesystem (file_read / file_write / path restriction)', () => {
-  before(async () => {
+  before(async function beforeSuite() {
+    this.timeout(90_000);
     await startMockServer();
     await waitForApp();
     await resetApp(USER_ID);

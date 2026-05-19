@@ -431,6 +431,11 @@ const fr1: TranslationMap = {
     "Importer {count} entrée dans l'espace de travail actuel ?\n\nSource : {source}\nCible : {target}\n\nLa mémoire existante sera sauvegardée avant l'import.",
   'migration.confirmImport.plural':
     "Importer {count} entrées dans l'espace de travail actuel ?\n\nSource : {source}\nCible : {target}\n\nLa mémoire existante sera sauvegardée avant l'import.",
+  // Settings menu: Appearance + Mascot (#2225) — English stubs; native translations welcome
+  'settings.appearance': 'Appearance',
+  'settings.appearanceDesc': 'Pick light, dark, or match your system theme',
+  'settings.mascot': 'Mascot',
+  'settings.mascotDesc': 'Pick the mascot color used across the app',
 };
 
 export default fr1;

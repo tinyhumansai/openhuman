@@ -128,8 +128,8 @@ const SettingsHome = () => {
         },
         {
           id: 'appearance',
-          title: 'Appearance',
-          description: 'Pick light, dark, or match your system theme',
+          title: t('settings.appearance'),
+          description: t('settings.appearanceDesc'),
           icon: (
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path
@@ -144,8 +144,8 @@ const SettingsHome = () => {
         },
         {
           id: 'mascot',
-          title: 'Mascot',
-          description: 'Pick the mascot color used across the app',
+          title: t('settings.mascot'),
+          description: t('settings.mascotDesc'),
           icon: (
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path

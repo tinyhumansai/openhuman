@@ -408,6 +408,11 @@ const ar1: TranslationMap = {
     'استيراد {count} عنصر إلى مساحة العمل الحالية؟\n\nالمصدر: {source}\nالهدف: {target}\n\nسيتم نسخ الذاكرة الحالية احتياطيًا قبل بدء الاستيراد.',
   'migration.confirmImport.plural':
     'استيراد {count} عنصر إلى مساحة العمل الحالية؟\n\nالمصدر: {source}\nالهدف: {target}\n\nسيتم نسخ الذاكرة الحالية احتياطيًا قبل بدء الاستيراد.',
+  // Settings menu: Appearance + Mascot (#2225) — English stubs; native translations welcome
+  'settings.appearance': 'Appearance',
+  'settings.appearanceDesc': 'Pick light, dark, or match your system theme',
+  'settings.mascot': 'Mascot',
+  'settings.mascotDesc': 'Pick the mascot color used across the app',
 };
 
 export default ar1;

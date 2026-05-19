@@ -265,6 +265,136 @@ fn schema_has_content_path_and_content_sha256_columns() {
     .unwrap();
 }
 
+/// Regression: OPENHUMAN-TAURI-HH / -ZM / -MB.
+///
+/// Before this fix, N `tree_jobs_worker` tasks racing into
+/// `with_connection` on a cold workspace would trigger one of three
+/// SQLite cold-start codes — 14 (CANTOPEN), 1546 (IOERR_TRUNCATE),
+/// or 4874 (IOERR_SHMMAP) — surfaced as
+/// `Failed to initialize memory_tree schema`. The mutex-gated init set
+/// in `store::open_and_init_with_retry` serialises the WAL+SHM
+/// bootstrap so only one thread runs `apply_schema` per DB path.
+///
+/// Asserts:
+/// 1. All N concurrent callers return `Ok` (no races, no surfaced errors).
+/// 2. `apply_schema` runs exactly once for the shared path even though
+///    8 threads hit a cold DB simultaneously.
+#[test]
+fn with_connection_serialises_concurrent_schema_init() {
+    use std::sync::atomic::Ordering;
+
+    let (_tmp, cfg) = test_config();
+    let db_path = cfg.workspace_dir.join("memory_tree").join("chunks.db");
+    let errors = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+
+    let threads: Vec<_> = (0..8)
+        .map(|_| {
+            let cfg = cfg.clone();
+            let errors = errors.clone();
+            std::thread::spawn(move || {
+                if with_connection(&cfg, |_| Ok(())).is_err() {
+                    errors.fetch_add(1, Ordering::Relaxed);
+                }
+            })
+        })
+        .collect();
+    for t in threads {
+        t.join().expect("worker thread panicked");
+    }
+
+    assert_eq!(
+        errors.load(Ordering::Relaxed),
+        0,
+        "concurrent with_connection callers must all succeed"
+    );
+    let applied = super::schema_apply_count_for_path_for_tests(&db_path);
+    assert_eq!(
+        applied, 1,
+        "apply_schema must run exactly once per DB path under concurrent init; ran {applied} times"
+    );
+}
+
+/// Directly pins the `is_transient_cold_start` classifier — the
+/// gatekeeper for the retry loop in `open_and_init_with_retry`. The
+/// concurrent-init test above only exercises it indirectly (and only
+/// if a transient happens to fire on the dev box). A targeted test
+/// catches regressions if the match arms are edited.
+#[test]
+fn is_transient_cold_start_classifies_known_extended_codes() {
+    use rusqlite::ffi;
+    use rusqlite::ErrorCode;
+
+    // The three SHMmap/WAL bootstrap codes that fire under cold-start
+    // contention. All must classify as transient → retried.
+    for extended in [
+        14,   // CANTOPEN
+        1546, // IOERR_TRUNCATE
+        4874, // IOERR_SHMMAP
+    ] {
+        let err = anyhow::Error::from(rusqlite::Error::SqliteFailure(
+            ffi::Error {
+                code: ErrorCode::SystemIoFailure,
+                extended_code: extended,
+            },
+            None,
+        ));
+        assert!(
+            super::is_transient_cold_start(&err),
+            "extended_code {extended} must classify as transient cold-start"
+        );
+    }
+
+    // SQLITE_BUSY (extended code 5) is a real lock-contention signal,
+    // NOT a cold-start race — the caller handles it via `busy_timeout`
+    // not via this retry loop. Must NOT classify.
+    let busy = anyhow::Error::from(rusqlite::Error::SqliteFailure(
+        ffi::Error {
+            code: ErrorCode::DatabaseBusy,
+            extended_code: 5,
+        },
+        None,
+    ));
+    assert!(
+        !super::is_transient_cold_start(&busy),
+        "DatabaseBusy must not be classified as cold-start transient"
+    );
+
+    // Non-SQLite error in the chain — must not classify.
+    let other: anyhow::Error = anyhow::anyhow!("not a sqlite error");
+    assert!(
+        !super::is_transient_cold_start(&other),
+        "non-SQLite errors must not classify as transient cold-start"
+    );
+}
+
+/// Regression: `PRAGMA foreign_keys` is connection-local in SQLite and
+/// must be re-set on every `Connection::open`. After the schema-init
+/// refactor, the pragma moved out of `SCHEMA` (which only runs on
+/// first init per path) into `open_connection`. Verify both the
+/// cold-init path and the fast path return a connection with FK on.
+#[test]
+fn with_connection_keeps_foreign_keys_on_for_every_call() {
+    let (_tmp, cfg) = test_config();
+    // First call — exercises apply_schema + open_connection.
+    let fk_on_first: i64 = with_connection(&cfg, |conn| {
+        Ok(conn.query_row("PRAGMA foreign_keys;", params![], |r| r.get::<_, i64>(0))?)
+    })
+    .unwrap();
+    assert_eq!(
+        fk_on_first, 1,
+        "foreign_keys must be ON on first connection"
+    );
+    // Second call — fast path (schema init skipped); pragma must still be set.
+    let fk_on_second: i64 = with_connection(&cfg, |conn| {
+        Ok(conn.query_row("PRAGMA foreign_keys;", params![], |r| r.get::<_, i64>(0))?)
+    })
+    .unwrap();
+    assert_eq!(
+        fk_on_second, 1,
+        "foreign_keys must be ON on fast-path (post-init) connection"
+    );
+}
+
 /// #1574 §7: the one-shot, version-gated legacy→sidecar migration copies a
 /// legacy `embedding` blob whose dimensionality matches the active embedder
 /// into the per-model sidecar at the active signature, skips dim-mismatched

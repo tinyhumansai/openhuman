@@ -396,6 +396,11 @@ const zhCN1: TranslationMap = {
     '将 {count} 条数据导入当前工作区？\n\n来源：{source}\n目标：{target}\n\n导入前会先备份现有记忆。',
   'migration.confirmImport.plural':
     '将 {count} 条数据导入当前工作区？\n\n来源：{source}\n目标：{target}\n\n导入前会先备份现有记忆。',
+  // Settings menu: Appearance + Mascot (#2225)
+  'settings.appearance': '外观',
+  'settings.appearanceDesc': '选择浅色、深色或跟随系统主题',
+  'settings.mascot': '吉祥物',
+  'settings.mascotDesc': '选择应用中使用的吉祥物颜色',
 };
 
 export default zhCN1;

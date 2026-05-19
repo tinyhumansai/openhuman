@@ -112,7 +112,8 @@ async function openCronJobsPanel(): Promise<void> {
 }
 
 describe('Cron jobs settings panel (real UI flow)', () => {
-  before(async () => {
+  before(async function beforeSuite() {
+    this.timeout(90_000);
     await startMockServer();
     await waitForApp();
     await resetApp(USER_ID);
@@ -123,8 +124,11 @@ describe('Cron jobs settings panel (real UI flow)', () => {
   });
 
   it('completing onboarding lands the user on the home screen', async () => {
+    // The home page renders the CTA button with t('home.askAssistant').
+    // Legacy text like 'Message OpenHuman', 'Good morning', 'Good afternoon',
+    // 'Good evening', and 'Upgrade to Premium' no longer appear on the home page.
     const home = await waitForAnyText(
-      ['Message OpenHuman', 'Good morning', 'Good afternoon', 'Good evening', 'Upgrade to Premium'],
+      ['Ask your assistant anything', 'Ask your assistant'],
       15_000
     );
     expect(home).toBeTruthy();

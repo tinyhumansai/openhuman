@@ -414,6 +414,11 @@ const hi1: TranslationMap = {
     '{count} एंट्री को मौजूदा वर्कस्पेस में इम्पोर्ट करें?\n\nसोर्स: {source}\nटार्गेट: {target}\n\nइम्पोर्ट से पहले मौजूदा मेमोरी का बैकअप लिया जाएगा।',
   'migration.confirmImport.plural':
     '{count} एंट्रीज़ को मौजूदा वर्कस्पेस में इम्पोर्ट करें?\n\nसोर्स: {source}\nटार्गेट: {target}\n\nइम्पोर्ट से पहले मौजूदा मेमोरी का बैकअप लिया जाएगा।',
+  // Settings menu: Appearance + Mascot (#2225) — English stubs; native translations welcome
+  'settings.appearance': 'Appearance',
+  'settings.appearanceDesc': 'Pick light, dark, or match your system theme',
+  'settings.mascot': 'Mascot',
+  'settings.mascotDesc': 'Pick the mascot color used across the app',
 };
 
 export default hi1;

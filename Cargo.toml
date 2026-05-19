@@ -18,6 +18,10 @@ name = "gmail-backfill-3d"
 path = "src/bin/gmail_backfill_3d.rs"
 
 [[bin]]
+name = "memory-tree-init-smoke"
+path = "src/bin/memory_tree_init_smoke.rs"
+
+[[bin]]
 name = "inference-probe"
 path = "src/bin/inference_probe.rs"
 

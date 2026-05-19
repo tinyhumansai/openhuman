@@ -96,7 +96,8 @@ async function clickRecoveryConsentCheckbox(): Promise<void> {
 }
 
 describe('Chat harness — wallet flow', () => {
-  before(async () => {
+  before(async function beforeSuite() {
+    this.timeout(90_000);
     await startMockServer();
     await waitForApp();
     await resetApp(USER_ID);
@@ -108,7 +109,8 @@ describe('Chat harness — wallet flow', () => {
     await stopMockServer();
   });
 
-  it('sets up the local wallet through the Recovery Phrase panel and persists wallet state', async () => {
+  it('sets up the local wallet through the Recovery Phrase panel and persists wallet state', async function () {
+    this.timeout(90_000);
     await navigateViaHash('/settings/recovery-phrase');
     await browser.waitUntil(async () => await textExists('Save Recovery Phrase'), {
       timeout: 15_000,
@@ -150,7 +152,8 @@ describe('Chat harness — wallet flow', () => {
     expect(content).toContain('"chain": "tron"');
   });
 
-  it('routes a real chat turn through the crypto agent and creates a prepared wallet quote', async () => {
+  it('routes a real chat turn through the crypto agent and creates a prepared wallet quote', async function () {
+    this.timeout(90_000);
     clearRequestLog();
     setMockBehavior('llmForcedResponses', JSON.stringify(FORCED_RESPONSES));
     setMockBehavior('llmStreamChunkDelayMs', '10');

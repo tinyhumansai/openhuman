@@ -417,6 +417,11 @@ const bn1: TranslationMap = {
     'বর্তমান ওয়ার্কস্পেসে {count}টি এন্ট্রি আমদানি করবেন?\n\nউৎস: {source}\nলক্ষ্য: {target}\n\nআমদানির আগে বর্তমান মেমরির ব্যাকআপ নেওয়া হবে।',
   'migration.confirmImport.plural':
     'বর্তমান ওয়ার্কস্পেসে {count}টি এন্ট্রি আমদানি করবেন?\n\nউৎস: {source}\nলক্ষ্য: {target}\n\nআমদানির আগে বর্তমান মেমরির ব্যাকআপ নেওয়া হবে।',
+  // Settings menu: Appearance + Mascot (#2225) — English stubs; native translations welcome
+  'settings.appearance': 'Appearance',
+  'settings.appearanceDesc': 'Pick light, dark, or match your system theme',
+  'settings.mascot': 'Mascot',
+  'settings.mascotDesc': 'Pick the mascot color used across the app',
 };
 
 export default bn1;

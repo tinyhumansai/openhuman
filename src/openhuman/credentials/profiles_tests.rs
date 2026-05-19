@@ -442,6 +442,59 @@ fn acquire_lock_writes_pid_so_future_callers_can_recover() {
     assert!(!lock_path.exists(), "guard must remove lock on drop");
 }
 
+/// Sentry "Timed out waiting for auth profile lock" recovery: a lock
+/// file that has been around for longer than `STALE_LOCK_AGE_MS` is
+/// treated as leaked even if its recorded pid is still alive. This
+/// covers the Windows AV / indexer case where `Drop::drop` on the
+/// previous guard could not unlink the file and orphaned it with the
+/// still-alive owner pid inside.
+#[test]
+fn clear_lock_if_stale_reclaims_lock_older_than_threshold_even_with_live_pid() {
+    let tmp = TempDir::new().unwrap();
+    let store = AuthProfilesStore::new(tmp.path(), false);
+
+    let lock_path = tmp.path().join(LOCK_FILENAME);
+    std::fs::write(&lock_path, format!("pid={}\n", std::process::id())).unwrap();
+    // Backdate the lock-file mtime well past STALE_LOCK_AGE_MS.
+    let aged =
+        std::time::SystemTime::now() - std::time::Duration::from_millis(STALE_LOCK_AGE_MS + 5_000);
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&lock_path)
+        .expect("reopen lock for set_modified")
+        .set_modified(aged)
+        .expect("backdate lock mtime");
+
+    assert!(
+        store.clear_lock_if_stale(),
+        "an aged lock with a live pid must be reclaimed (leaked-by-failed-unlink case)"
+    );
+    assert!(!lock_path.exists(), "stale lock should have been removed");
+}
+
+#[test]
+fn clear_lock_if_stale_reclaims_aged_malformed_lock() {
+    let tmp = TempDir::new().unwrap();
+    let store = AuthProfilesStore::new(tmp.path(), false);
+
+    let lock_path = tmp.path().join(LOCK_FILENAME);
+    std::fs::write(&lock_path, "garbage without a pid line\n").unwrap();
+    let aged =
+        std::time::SystemTime::now() - std::time::Duration::from_millis(STALE_LOCK_AGE_MS + 5_000);
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&lock_path)
+        .expect("reopen lock for set_modified")
+        .set_modified(aged)
+        .expect("backdate lock mtime");
+
+    assert!(
+        store.clear_lock_if_stale(),
+        "an aged malformed lock should be reclaimed"
+    );
+    assert!(!lock_path.exists());
+}
+
 /// Sentry OPENHUMAN-TAURI-H8: when `OpenOptions::create_new` fails with
 /// anything other than `AlreadyExists`, the error surfaced to Sentry
 /// must embed the underlying `io::ErrorKind` and `raw_os_error()` so we

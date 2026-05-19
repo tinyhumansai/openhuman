@@ -7,13 +7,22 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const CURRENT_SCHEMA_VERSION: u32 = 1;
 const PROFILES_FILENAME: &str = "auth-profiles.json";
 const LOCK_FILENAME: &str = "auth-profiles.lock";
 const LOCK_WAIT_MS: u64 = 50;
 const LOCK_TIMEOUT_MS: u64 = 10_000;
+/// A lock file that has existed for longer than this is treated as leaked
+/// (its owner crashed without unlinking it, or `fs::remove_file` in the
+/// guard's `Drop` was rejected by Windows AV/indexer and the file got
+/// orphaned with the still-alive owner's pid in it). No legitimate
+/// auth-profile operation holds the lock for anywhere near this long —
+/// load+save is a tiny JSON read followed by an atomic rename. The
+/// threshold is intentionally well above any realistic operation time
+/// so we never reclaim under a slow-but-legitimate holder.
+const STALE_LOCK_AGE_MS: u64 = 30_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -529,8 +538,21 @@ impl AuthProfilesStore {
                 .with_context(|| "Failed to create auth profile lock directory".to_string())?;
         }
 
-        let mut waited = 0_u64;
+        // Drive timeout + stale-recheck off wall-clock elapsed time, not the
+        // sum of explicit `thread::sleep(LOCK_WAIT_MS)` calls. The earlier
+        // counter-based approach excluded time spent inside
+        // `retry_with_backoff` (which can sleep up to ~30s on its own
+        // schedule before returning AlreadyExists) and the lock-file I/O
+        // syscalls. Under Windows AV contention that drift could push
+        // both `LOCK_TIMEOUT_MS` and `next_stale_recheck_ms` significantly
+        // later than intended.
+        let started_at = Instant::now();
         let mut cleared_stale = false;
+        // Periodically re-probe for stale locks during the busy-wait. A
+        // lock that started fresh (live pid, recent mtime) can age past
+        // STALE_LOCK_AGE_MS while we wait, and we want to recover from
+        // that without bailing at the LOCK_TIMEOUT_MS boundary.
+        let mut next_stale_recheck_ms: u64 = 1_000;
         loop {
             let open_result = crate::openhuman::util::retry_with_backoff(
                 "create auth profile lock",
@@ -586,12 +608,25 @@ impl AuthProfilesStore {
                             if self.clear_lock_if_stale() {
                                 continue;
                             }
+                        } else {
+                            let elapsed_ms = started_at.elapsed().as_millis() as u64;
+                            if elapsed_ms >= next_stale_recheck_ms {
+                                // The age-based reclaim check is cheap (one
+                                // `fs::metadata` call in the common case) and
+                                // safely no-ops on fresh, legitimate locks.
+                                // Re-probing periodically lets us recover from
+                                // a leaked-mid-wait lock without bailing at
+                                // the 10s timeout.
+                                next_stale_recheck_ms = next_stale_recheck_ms.saturating_add(1_000);
+                                if self.clear_lock_if_stale() {
+                                    continue;
+                                }
+                            }
                         }
-                        if waited >= LOCK_TIMEOUT_MS {
+                        if started_at.elapsed().as_millis() as u64 >= LOCK_TIMEOUT_MS {
                             anyhow::bail!("Timed out waiting for auth profile lock");
                         }
                         thread::sleep(Duration::from_millis(LOCK_WAIT_MS));
-                        waited = waited.saturating_add(LOCK_WAIT_MS);
                     } else {
                         // Sentry OPENHUMAN-TAURI-H8 collapses every
                         // non-AlreadyExists, non-transient `create_new`
@@ -609,12 +644,46 @@ impl AuthProfilesStore {
         }
     }
 
-    /// Returns `true` if an existing lock file was detected as stale (its
-    /// recorded PID is no longer running) and successfully removed.
-    /// Malformed locks (no `pid=` line) and locks whose PID is still alive
-    /// are left in place so the caller falls back to the normal busy-wait
-    /// and timeout path.
+    /// Returns `true` if an existing lock file was detected as stale and
+    /// successfully removed. Two cases reclaim:
+    ///
+    /// 1. The recorded `pid=` line points at a process that is no longer
+    ///    running — classic crashed-owner recovery (Issue #1612).
+    /// 2. The lock file's mtime is older than [`STALE_LOCK_AGE_MS`]. This
+    ///    catches the Windows case where the previous owner's
+    ///    `AuthProfileLockGuard::drop` could not unlink the file (AV /
+    ///    indexer briefly held a handle) and orphaned the lock with its
+    ///    still-alive pid inside — every subsequent acquirer would
+    ///    otherwise spin the full 10s `LOCK_TIMEOUT_MS` and bail. No
+    ///    legitimate auth-profile op holds the lock long enough to be
+    ///    affected, so a too-old lock is unambiguously a leak.
+    ///
+    /// Malformed locks (no `pid=` line) are reclaimed only when they are
+    /// also too old, since a fresh malformed lock might still indicate an
+    /// in-flight writer that crashed between `create_new` and the `pid=`
+    /// write.
     fn clear_lock_if_stale(&self) -> bool {
+        let metadata = match fs::metadata(&self.lock_path) {
+            Ok(m) => m,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return false,
+            Err(e) => {
+                tracing::warn!(
+                    target: "auth-profiles",
+                    "[credentials] failed to stat lock file at {} for stale check: {e}",
+                    self.lock_path.display()
+                );
+                return false;
+            }
+        };
+
+        let too_old = match metadata.modified() {
+            Ok(mtime) => std::time::SystemTime::now()
+                .duration_since(mtime)
+                .map(|age| age >= Duration::from_millis(STALE_LOCK_AGE_MS))
+                .unwrap_or(false),
+            Err(_) => false,
+        };
+
         let content = match fs::read_to_string(&self.lock_path) {
             Ok(s) => s,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return false,
@@ -632,24 +701,34 @@ impl AuthProfilesStore {
             .lines()
             .find_map(|line| line.trim().strip_prefix("pid=")?.trim().parse::<u32>().ok());
 
-        let Some(pid) = pid else {
-            tracing::warn!(
-                target: "auth-profiles",
-                "[credentials] lock at {} has no parseable pid line; leaving in place",
-                self.lock_path.display()
-            );
-            return false;
+        let reclaim_reason: Option<String> = match pid {
+            Some(pid) if !is_pid_alive(pid) => Some(format!("pid {pid} not alive")),
+            Some(pid) if too_old => Some(format!(
+                "lock file older than {STALE_LOCK_AGE_MS}ms (recorded pid {pid}, presumed leaked)"
+            )),
+            None if too_old => Some(format!(
+                "lock file older than {STALE_LOCK_AGE_MS}ms with no parseable pid"
+            )),
+            Some(_) => return false,
+            None => {
+                tracing::warn!(
+                    target: "auth-profiles",
+                    "[credentials] lock at {} has no parseable pid line; leaving in place",
+                    self.lock_path.display()
+                );
+                return false;
+            }
         };
 
-        if is_pid_alive(pid) {
+        let Some(reason) = reclaim_reason else {
             return false;
-        }
+        };
 
         match fs::remove_file(&self.lock_path) {
             Ok(()) => {
                 tracing::info!(
                     target: "auth-profiles",
-                    "[credentials] removed stale auth profile lock at {} (pid {pid} not alive)",
+                    "[credentials] removed stale auth profile lock at {} ({reason})",
                     self.lock_path.display()
                 );
                 true
@@ -658,7 +737,7 @@ impl AuthProfilesStore {
             Err(e) => {
                 tracing::warn!(
                     target: "auth-profiles",
-                    "[credentials] failed to remove stale lock at {}: {e}",
+                    "[credentials] failed to remove stale lock at {} ({reason}): {e}",
                     self.lock_path.display()
                 );
                 false
@@ -706,7 +785,35 @@ struct AuthProfileLockGuard {
 
 impl Drop for AuthProfileLockGuard {
     fn drop(&mut self) {
-        let _ = fs::remove_file(&self.lock_path);
+        // Best-effort unlink with retries. On Windows, antivirus and the
+        // search indexer routinely hold a transient handle on a file just
+        // after it is written, which makes `fs::remove_file` fail with
+        // `PermissionDenied`. A failed unlink here leaks the lock file
+        // with the still-alive owner pid inside, which would cause every
+        // subsequent acquirer to spin the full `LOCK_TIMEOUT_MS` and bail
+        // with "Timed out waiting for auth profile lock". The age-based
+        // reclaim in `clear_lock_if_stale` is the safety net; this retry
+        // loop is the first line of defence so we don't rely on it.
+        for attempt in 0..5u32 {
+            match fs::remove_file(&self.lock_path) {
+                Ok(()) => return,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
+                Err(e) => {
+                    if attempt + 1 == 5 {
+                        tracing::warn!(
+                            target: "auth-profiles",
+                            "[credentials] failed to remove auth profile lock at {} after {} attempts: {e}. \
+                             The age-based stale-lock reclaim will recover within {}ms.",
+                            self.lock_path.display(),
+                            attempt + 1,
+                            STALE_LOCK_AGE_MS,
+                        );
+                        return;
+                    }
+                    thread::sleep(Duration::from_millis(50u64.saturating_mul(1u64 << attempt)));
+                }
+            }
+        }
     }
 }
 
