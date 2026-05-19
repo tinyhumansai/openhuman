@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 
 import { useT } from '../../lib/i18n/I18nContext';
 import Conversations from '../../pages/Conversations';
+import type { ToolTimelineEntry } from '../../store/chatRuntimeSlice';
 import { useAppSelector } from '../../store/hooks';
 import { selectMascotColor } from '../../store/mascotSlice';
 import { YellowMascot } from './Mascot';
@@ -9,6 +10,10 @@ import { SubMascotLayer } from './SubMascotLayer';
 import { useHumanMascot } from './useHumanMascot';
 
 const SPEAK_REPLIES_KEY = 'human.speakReplies';
+
+// Stable empty reference so useAppSelector's === equality doesn't force a re-render
+// of SubMascotLayer on every store update when no subagent timeline is active.
+const EMPTY_TIMELINE: ToolTimelineEntry[] = [];
 
 const HumanPage = () => {
   const { t } = useT();
@@ -26,7 +31,9 @@ const HumanPage = () => {
   const mascotColor = useAppSelector(selectMascotColor);
   const subMascotTimeline = useAppSelector(state => {
     const threadId = state.thread.selectedThreadId ?? state.thread.activeThreadId;
-    return threadId ? (state.chatRuntime.toolTimelineByThread[threadId] ?? []) : [];
+    return threadId
+      ? (state.chatRuntime.toolTimelineByThread[threadId] ?? EMPTY_TIMELINE)
+      : EMPTY_TIMELINE;
   });
 
   // Sidebar reserves ~436px (420px panel + 16px gutter) on the right; the
