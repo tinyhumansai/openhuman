@@ -1213,8 +1213,17 @@ impl Tool for PolymarketTool {
         ToolCategory::Skill
     }
 
-    fn is_concurrency_safe(&self, _args: &Value) -> bool {
-        true
+    fn is_concurrency_safe(&self, args: &Value) -> bool {
+        // Write actions are NOT concurrency-safe — two concurrent place_order
+        // calls would each call /nonce?user=<eoa> independently and receive
+        // the same nonce, causing one of the signed orders to be silently
+        // rejected by the CLOB. Credential derivation is similarly
+        // single-flight (see ensure_clob_credentials OnceCell). Reads remain
+        // concurrency-safe.
+        match args.get("action").and_then(Value::as_str) {
+            Some("place_order") | Some("cancel_order") => false,
+            _ => true,
+        }
     }
 
     async fn execute(&self, args: Value) -> Result<ToolResult> {
