@@ -3714,4 +3714,34 @@ mod tests {
             None => std::env::remove_var("PATH"),
         }
     }
+
+    /// Regression guard for issue #2228: `tauri-plugin-single-instance` must
+    /// enable the `deep-link` feature so that second-launch deep-link payloads
+    /// (e.g. `openhuman://oauth/...` callbacks from Windows/Linux system
+    /// browsers) are forwarded into the primary instance. Without it, hot OAuth
+    /// callbacks silently no-op while only focusing the existing window.
+    #[test]
+    fn single_instance_dep_enables_deep_link_feature() {
+        let manifest_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
+        let manifest =
+            std::fs::read_to_string(&manifest_path).expect("read app/src-tauri/Cargo.toml");
+        let parsed: toml::Value = manifest.parse().expect("parse Cargo.toml");
+
+        let dep = parsed
+            .get("dependencies")
+            .and_then(|d| d.get("tauri-plugin-single-instance"))
+            .expect("tauri-plugin-single-instance dependency must exist");
+
+        let features = dep.get("features").and_then(|f| f.as_array()).expect(
+            "tauri-plugin-single-instance must be a table with a `features` array \
+                 — issue #2228 requires the `deep-link` feature to forward hot-instance \
+                 OAuth callbacks on Windows/Linux",
+        );
+
+        assert!(
+            features.iter().any(|v| v.as_str() == Some("deep-link")),
+            "tauri-plugin-single-instance must enable the `deep-link` feature \
+             (issue #2228 — hot-instance OAuth callback forwarding)"
+        );
+    }
 }
