@@ -582,11 +582,27 @@ fn default_polymarket_clob_exchange_contract() -> String {
     "0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E".into()
 }
 
-#[derive(Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+/// Polymarket CLOB L2 credentials (api_key + HMAC secret + passphrase).
+///
+/// Single source of truth for both the config TOML surface AND the
+/// in-process HTTP signing path — `polymarket.rs` / `clob_auth.rs` use
+/// this type directly so there is no parallel internal struct + From-impl
+/// glue to keep in sync.
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct PolymarketClobCredentials {
     pub api_key: String,
     pub secret: String,
     pub passphrase: String,
+}
+
+impl PolymarketClobCredentials {
+    /// Returns true iff all three credential fields are non-empty after
+    /// trimming whitespace.
+    pub fn is_complete(&self) -> bool {
+        !(self.api_key.trim().is_empty()
+            || self.secret.trim().is_empty()
+            || self.passphrase.trim().is_empty())
+    }
 }
 
 impl std::fmt::Debug for PolymarketClobCredentials {

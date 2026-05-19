@@ -1,7 +1,7 @@
-use super::clob_auth::{derive_credentials, sign_clob_headers, ClobCredentials};
+use super::clob_auth::{derive_credentials, sign_clob_headers};
 use super::polymarket_orders::{sign_order, Order};
 use crate::openhuman::config::rpc as config_rpc;
-use crate::openhuman::config::PolymarketConfig;
+use crate::openhuman::config::{PolymarketClobCredentials, PolymarketConfig};
 use crate::openhuman::security::policy::ToolOperation;
 use crate::openhuman::security::SecurityPolicy;
 use crate::openhuman::tools::traits::{Tool, ToolCategory, ToolResult};
@@ -55,7 +55,7 @@ pub struct PolymarketTool {
     http: Client,
     security: Arc<SecurityPolicy>,
     timeout: Duration,
-    cached_clob_credentials: Mutex<Option<ClobCredentials>>,
+    cached_clob_credentials: Mutex<Option<PolymarketClobCredentials>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -171,8 +171,8 @@ impl PolymarketTool {
         let cached_credentials = config
             .derived_clob_credentials
             .clone()
-            .map(ClobCredentials::from)
-            .filter(ClobCredentials::is_complete);
+            .map(PolymarketClobCredentials::from)
+            .filter(PolymarketClobCredentials::is_complete);
 
         Self {
             gamma_base_url: normalize_base_url(
@@ -499,7 +499,7 @@ impl PolymarketTool {
         path: &str,
         query: &[(String, String)],
         user: &str,
-        creds: &ClobCredentials,
+        creds: &PolymarketClobCredentials,
     ) -> Result<Value> {
         ensure_https(&self.clob_base_url)?;
         let signed_path = signed_request_path(path, query);
@@ -513,7 +513,7 @@ impl PolymarketTool {
         path: &str,
         body: Value,
         user: &str,
-        creds: &ClobCredentials,
+        creds: &PolymarketClobCredentials,
     ) -> Result<Value> {
         ensure_https(&self.clob_base_url)?;
         let body_raw =
@@ -529,7 +529,7 @@ impl PolymarketTool {
         &self,
         path: &str,
         user: &str,
-        creds: &ClobCredentials,
+        creds: &PolymarketClobCredentials,
     ) -> Result<Value> {
         ensure_https(&self.clob_base_url)?;
         let headers = sign_clob_headers(creds, user, "DELETE", path, None)?;
@@ -537,7 +537,7 @@ impl PolymarketTool {
             .await
     }
 
-    async fn cached_or_derive_credentials(&self, user: &str) -> Result<ClobCredentials> {
+    async fn cached_or_derive_credentials(&self, user: &str) -> Result<PolymarketClobCredentials> {
         self.cached_or_derive_credentials_with_signer(user, None)
             .await
     }
@@ -546,7 +546,7 @@ impl PolymarketTool {
         &self,
         user: &str,
         signer: Option<&LocalWallet>,
-    ) -> Result<ClobCredentials> {
+    ) -> Result<PolymarketClobCredentials> {
         if let Some(creds) = self.cached_clob_credentials.lock().await.clone() {
             return Ok(creds);
         }
@@ -563,9 +563,16 @@ impl PolymarketTool {
         &self,
         wallet: &LocalWallet,
         user: &str,
-    ) -> Result<ClobCredentials> {
-        if let Some(creds) = self.cached_clob_credentials.lock().await.clone() {
-            return Ok(creds);
+    ) -> Result<PolymarketClobCredentials> {
+        // Hold the cache lock across the derive call so two concurrent
+        // callers cannot both observe an empty cache and each fire their
+        // own POST /auth/api-key — the CLOB would silently retain only
+        // one set of credentials and reject signatures generated with
+        // the other. tokio::sync::Mutex is intentional here (not std)
+        // because the critical section spans .await points.
+        let mut guard = self.cached_clob_credentials.lock().await;
+        if let Some(creds) = guard.as_ref() {
+            return Ok(creds.clone());
         }
 
         ensure_https(&self.clob_base_url)?;
@@ -574,10 +581,11 @@ impl PolymarketTool {
                 .await
                 .context("Failed to derive Polymarket CLOB API credentials")?;
 
-        {
-            let mut guard = self.cached_clob_credentials.lock().await;
-            *guard = Some(creds.clone());
-        }
+        *guard = Some(creds.clone());
+        // Drop the cache lock before the (slow + best-effort) config
+        // persist so other tool calls can proceed against the freshly
+        // populated cache.
+        drop(guard);
 
         if let Err(err) = self.persist_clob_credentials(&creds).await {
             tracing::warn!(reason = %err, "[polymarket] failed to persist derived CLOB credentials");
@@ -599,7 +607,7 @@ impl PolymarketTool {
     /// because the whole config is loaded-then-saved. Acceptable for the
     /// current single-process model; will move to the `SecretStore`
     /// transactional surface once #1900 lands.
-    async fn persist_clob_credentials(&self, creds: &ClobCredentials) -> Result<()> {
+    async fn persist_clob_credentials(&self, creds: &PolymarketClobCredentials) -> Result<()> {
         let mut config = config_rpc::load_config_with_timeout()
             .await
             .map_err(anyhow::Error::msg)
@@ -749,7 +757,11 @@ impl PolymarketTool {
         Ok(allowance.to_string())
     }
 
-    async fn fetch_order_nonce(&self, user: &str, creds: &ClobCredentials) -> Result<u64> {
+    async fn fetch_order_nonce(
+        &self,
+        user: &str,
+        creds: &PolymarketClobCredentials,
+    ) -> Result<u64> {
         let query = vec![("user".to_string(), user.to_string())];
         let payload = self
             .get_signed_clob_json_with_creds("/nonce", &query, user, creds)

@@ -6,7 +6,7 @@ use ethers_signers::{LocalWallet, Signer};
 use hmac::{Hmac, Mac};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use reqwest::Client;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::json;
 use sha2::Sha256;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -22,58 +22,13 @@ const CLOB_AUTH_MESSAGE: &str = "This message attests that I control the given w
 
 type HmacSha256 = Hmac<Sha256>;
 
-#[derive(Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
-pub(crate) struct ClobCredentials {
-    pub api_key: String,
-    pub secret: String,
-    pub passphrase: String,
-}
-
-impl ClobCredentials {
-    pub(crate) fn is_complete(&self) -> bool {
-        !(self.api_key.trim().is_empty()
-            || self.secret.trim().is_empty()
-            || self.passphrase.trim().is_empty())
-    }
-}
-
-impl std::fmt::Debug for ClobCredentials {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ClobCredentials")
-            .field("api_key", &"<redacted>")
-            .field("secret", &"<redacted>")
-            .field("passphrase", &"<redacted>")
-            .finish()
-    }
-}
-
-impl From<PolymarketClobCredentials> for ClobCredentials {
-    fn from(value: PolymarketClobCredentials) -> Self {
-        Self {
-            api_key: value.api_key,
-            secret: value.secret,
-            passphrase: value.passphrase,
-        }
-    }
-}
-
-impl From<ClobCredentials> for PolymarketClobCredentials {
-    fn from(value: ClobCredentials) -> Self {
-        Self {
-            api_key: value.api_key,
-            secret: value.secret,
-            passphrase: value.passphrase,
-        }
-    }
-}
-
 pub(crate) async fn derive_credentials(
     http: &Client,
     signer: &LocalWallet,
     base_url: &str,
     chain_id: u64,
     address: &str,
-) -> Result<ClobCredentials> {
+) -> Result<PolymarketClobCredentials> {
     tracing::debug!(
         base_url = %base_url,
         chain_id,
@@ -280,7 +235,7 @@ pub(crate) async fn sign_l1_headers(
 }
 
 pub(crate) fn sign_clob_headers(
-    creds: &ClobCredentials,
+    creds: &PolymarketClobCredentials,
     address: &str,
     method: &str,
     request_path: &str,
@@ -290,7 +245,7 @@ pub(crate) fn sign_clob_headers(
 }
 
 pub(crate) fn sign_clob_headers_with_timestamp(
-    creds: &ClobCredentials,
+    creds: &PolymarketClobCredentials,
     address: &str,
     method: &str,
     request_path: &str,
@@ -373,8 +328,8 @@ impl std::fmt::Debug for ClobAuthResponse {
 }
 
 impl ClobAuthResponse {
-    fn into_credentials(self) -> ClobCredentials {
-        ClobCredentials {
+    fn into_credentials(self) -> PolymarketClobCredentials {
+        PolymarketClobCredentials {
             api_key: self.api_key,
             secret: self.secret,
             passphrase: self.passphrase,
@@ -386,8 +341,8 @@ impl ClobAuthResponse {
 mod tests {
     use super::*;
 
-    fn fixture_creds() -> ClobCredentials {
-        ClobCredentials {
+    fn fixture_creds() -> PolymarketClobCredentials {
+        PolymarketClobCredentials {
             api_key: "test-key".to_string(),
             secret: "dGVzdC1zZWNyZXQ=".to_string(),
             passphrase: "test-passphrase".to_string(),
@@ -420,7 +375,7 @@ mod tests {
     #[test]
     fn sign_clob_headers_requires_complete_creds() {
         let err = sign_clob_headers_with_timestamp(
-            &ClobCredentials::default(),
+            &PolymarketClobCredentials::default(),
             "0x1111111111111111111111111111111111111111",
             "GET",
             "/data/orders",
@@ -432,13 +387,12 @@ mod tests {
     }
 
     #[test]
-    fn credentials_roundtrip_config_type() {
-        let creds = fixture_creds();
-        let config_creds: PolymarketClobCredentials = creds.clone().into();
-        assert_eq!(config_creds.api_key, creds.api_key);
-
-        let restored = ClobCredentials::from(config_creds);
-        assert_eq!(restored, creds);
+    fn credentials_default_is_incomplete() {
+        // Sanity-check that Default::default produces empty fields that the
+        // is_complete() guard rejects — this is what the cached_credentials
+        // cache filter relies on to drop empty persisted creds.
+        let creds = PolymarketClobCredentials::default();
+        assert!(!creds.is_complete());
     }
 
     #[test]
