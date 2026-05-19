@@ -221,6 +221,30 @@ describe('<VaultPanel />', () => {
     );
   });
 
+  it('emits error toast when sync status returns failed', async () => {
+    mockList
+      .mockResolvedValueOnce({ result: [vault()], logs: [] })
+      .mockResolvedValueOnce({ result: [vault()], logs: [] });
+    mockSync.mockResolvedValueOnce({ result: { status: 'started', vault_id: 'v-1' }, logs: [] });
+    mockSyncStatus.mockResolvedValueOnce(
+      syncState({ status: 'failed', failed: 0, errors: ['disk full'] })
+    );
+    const onToast = vi.fn();
+    render(<VaultPanel onToast={onToast} />);
+    await waitFor(() => screen.getByTestId('vault-list'));
+
+    fireEvent.click(screen.getByText('Sync'));
+    await waitFor(() =>
+      expect(onToast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'error',
+          title: expect.stringContaining('Sync failed'),
+          message: expect.stringContaining('disk full'),
+        })
+      )
+    );
+  });
+
   it('removes a vault with purge=true when both confirms accepted', async () => {
     mockList
       .mockResolvedValueOnce({ result: [vault()], logs: [] })

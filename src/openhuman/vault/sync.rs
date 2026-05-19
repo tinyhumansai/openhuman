@@ -123,7 +123,7 @@ enum IngestFileResult {
 ///
 /// This runs inside `buffer_unordered` so multiple files are in flight at once.
 async fn process_file(file: FileToProcess) -> IngestFileResult {
-    let content = match std::fs::read_to_string(&file.path) {
+    let content = match tokio::fs::read_to_string(&file.path).await {
         Ok(c) => c,
         Err(err) => {
             return IngestFileResult::Failed {

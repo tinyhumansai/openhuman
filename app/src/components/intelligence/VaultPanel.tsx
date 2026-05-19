@@ -167,15 +167,30 @@ export function VaultPanel({ onToast }: VaultPanelProps) {
           setBusy(b => ({ ...b, [vaultId]: undefined }));
           setSyncProgress(p => ({ ...p, [vaultId]: undefined }));
 
-          onToast?.({
-            type: st.failed > 0 ? 'info' : 'success',
-            title: `Synced "${vaultName}"`,
-            message:
-              `Ingested ${st.ingested}, unchanged ${st.unchanged}, removed ${st.removed}` +
-              (st.failed > 0 ? `, failed ${st.failed}` : '') +
-              (st.skipped_unsupported > 0 ? `, skipped ${st.skipped_unsupported}` : '') +
-              (st.duration_ms > 0 ? ` · ${(st.duration_ms / 1000).toFixed(1)}s` : ''),
-          });
+          if (st.status === 'failed') {
+            onToast?.({
+              type: 'error',
+              title: `Sync failed for "${vaultName}"`,
+              message:
+                st.errors.length > 0
+                  ? st.errors.slice(0, 3).join('; ')
+                  : `Failed ${st.failed} file(s)`,
+            });
+          } else {
+            onToast?.({
+              type: st.failed > 0 ? 'info' : 'success',
+              title: `Synced "${vaultName}"`,
+              message:
+                `Ingested ${st.ingested}, unchanged ${st.unchanged}, removed ${st.removed}` +
+                (st.failed > 0 ? `, failed ${st.failed}` : '') +
+                (st.skipped_unsupported > 0
+                  ? `, skipped ${st.skipped_unsupported}`
+                  : '') +
+                (st.duration_ms > 0
+                  ? ` · ${(st.duration_ms / 1000).toFixed(1)}s`
+                  : ''),
+            });
+          }
           await reload();
           return;
         }

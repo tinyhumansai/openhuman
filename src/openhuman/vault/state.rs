@@ -35,9 +35,14 @@ pub fn start(vault_id: &str, started_at_ms: i64) -> Result<(), String> {
     let mut map = SYNC_STATE.write();
     if let Some(s) = map.get(vault_id) {
         if s.status == VaultSyncStatus::Running {
+            log::debug!(
+                "[vault][state] start rejected: vault_id={vault_id} already running since={}",
+                s.started_at_ms
+            );
             return Err(format!("vault {vault_id} is already syncing"));
         }
     }
+    log::debug!("[vault][state] start: vault_id={vault_id} started_at_ms={started_at_ms}");
     map.insert(
         vault_id.to_string(),
         VaultSyncState {
@@ -64,7 +69,12 @@ pub fn start(vault_id: &str, started_at_ms: i64) -> Result<(), String> {
 /// No-ops silently if no entry exists (e.g. if the registry was cleared or
 /// the vault_id is wrong — neither should happen in normal operation).
 pub fn update_progress(vault_id: &str, f: impl FnOnce(&mut VaultSyncState)) {
-    if let Some(s) = SYNC_STATE.write().get_mut(vault_id) {
+    let mut map = SYNC_STATE.write();
+    if let Some(s) = map.get_mut(vault_id) {
         f(s);
+    } else {
+        log::debug!(
+            "[vault][state] update_progress no-op: vault_id={vault_id} not found in state map"
+        );
     }
 }
