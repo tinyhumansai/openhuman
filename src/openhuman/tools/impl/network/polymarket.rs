@@ -738,11 +738,13 @@ impl PolymarketTool {
             ]
         });
 
+        let mut rpc_headers = HeaderMap::new();
+        rpc_headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
         let response = self
             .post_json_raw(
                 &self.polygon_rpc_url,
                 "",
-                Some(HeaderMap::new()),
+                Some(rpc_headers),
                 serde_json::to_string(&payload)
                     .context("Failed to serialize Polygon RPC payload")?,
             )

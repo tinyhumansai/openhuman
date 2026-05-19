@@ -678,6 +678,14 @@ async fn get_usdc_allowance_happy_path_uses_polygon_eth_call() {
     assert_eq!(request.target, "/");
     assert!(request.body.contains("\"method\":\"eth_call\""));
     assert!(request.body.contains("dd62ed3e"));
+    // Strict JSON-RPC providers (Alchemy/Infura) reject calls without an
+    // explicit Content-Type header — this is the regression guard for
+    // graycyrus comment 3265708296.
+    assert_eq!(
+        header(request, "content-type"),
+        Some("application/json"),
+        "Polygon RPC eth_call must declare application/json Content-Type"
+    );
 }
 
 #[tokio::test]
