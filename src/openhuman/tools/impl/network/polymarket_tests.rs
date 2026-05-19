@@ -137,16 +137,26 @@ async fn start_mock_server_with_capture(
             let captured = Arc::clone(&shared_captured);
 
             tokio::spawn(async move {
-                let mut buf = vec![0_u8; 32 * 1024];
-                let n = match socket.read(&mut buf).await {
-                    Ok(read) => read,
-                    Err(_) => return,
-                };
-                if n == 0 {
+                let mut buf = Vec::with_capacity(32 * 1024);
+                let mut chunk = [0_u8; 4096];
+                loop {
+                    let n = match socket.read(&mut chunk).await {
+                        Ok(read) => read,
+                        Err(_) => return,
+                    };
+                    if n == 0 {
+                        break;
+                    }
+                    buf.extend_from_slice(&chunk[..n]);
+                    if request_is_complete(&buf) {
+                        break;
+                    }
+                }
+                if buf.is_empty() {
                     return;
                 }
 
-                let request_raw = String::from_utf8_lossy(&buf[..n]).to_string();
+                let request_raw = String::from_utf8_lossy(&buf).to_string();
                 let observed = parse_request(&request_raw);
                 let target = observed.target.clone();
 
@@ -182,6 +192,27 @@ async fn start_mock_server_with_capture(
     });
 
     (format!("http://127.0.0.1:{}", addr.port()), calls, captured)
+}
+
+fn request_is_complete(buf: &[u8]) -> bool {
+    let raw = String::from_utf8_lossy(buf);
+    let Some((head, body)) = raw.split_once("\r\n\r\n") else {
+        return false;
+    };
+
+    let content_length = head
+        .lines()
+        .find_map(|line| {
+            let (k, v) = line.split_once(':')?;
+            if k.trim().eq_ignore_ascii_case("content-length") {
+                v.trim().parse::<usize>().ok()
+            } else {
+                None
+            }
+        })
+        .unwrap_or(0);
+
+    body.as_bytes().len() >= content_length
 }
 
 fn parse_request(raw: &str) -> ObservedRequest {
