@@ -168,6 +168,16 @@ const accountsSlice = createSlice({
           acct.lastError = undefined;
         }
       }
+      // Issue #2044 — even though `activeAccountId` is no longer in the
+      // persist whitelist, redux-persist blobs written by older builds
+      // can still carry it. Force-clear on rehydrate so a dev hot reload
+      // / app restart never auto-surfaces a provider webview without an
+      // explicit user click. `lastActiveAccountId` is preserved — it
+      // only drives the off-screen MRU prewarm.
+      if (state.activeAccountId !== null) {
+        log('clearing persisted activeAccountId=%s on rehydrate', state.activeAccountId);
+        state.activeAccountId = null;
+      }
       if (reset.length > 0) {
         log('reset %d transient account status(es) on rehydrate: %o', reset.length, reset);
       }

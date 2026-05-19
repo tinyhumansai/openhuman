@@ -1,6 +1,6 @@
 import type { TranslationMap } from '../types';
 
-// Bahasa Indonesia chunk 3/5. Translated from chunks/en-3.ts.
+// Indonesian (Bahasa Indonesia) chunk 3/5. Translated from chunks/en-3.ts.
 const id3: TranslationMap = {
   'insights.other': 'Lainnya',
   'insights.title': 'Wawasan',
@@ -157,7 +157,7 @@ const id3: TranslationMap = {
   'bootCheck.cannotReachDesc':
     'Kami tidak dapat terhubung ke runtime Anda. Ingin mencoba yang berbeda?',
   'bootCheck.switchMode': 'Pilih Runtime Berbeda',
-  'bootCheck.quit': 'Quit',
+  'bootCheck.quit': 'Keluar',
   'bootCheck.legacyDetected': 'Runtime Latar Belakang Lama Terdeteksi',
   'bootCheck.legacyDescription':
     'Daemon OpenHuman yang diinstal terpisah sudah berjalan di perangkat ini. Kami perlu membersihkannya sebelum runtime bawaan dapat mengambil alih.',
@@ -251,9 +251,11 @@ const id3: TranslationMap = {
   'accounts.addModal.allConnected': 'Semua terhubung',
   'accounts.addModal.title': 'Tambah akun',
   'accounts.respondQueue.empty': 'Kosong',
+  'accounts.respondQueue.hide': 'Sembunyikan antrean balasan',
   'accounts.respondQueue.loadFailed': 'Gagal memuat antrean respons',
   'accounts.respondQueue.loading': 'Memuat antrean...',
   'accounts.respondQueue.pending': 'Tertunda',
+  'accounts.respondQueue.show': 'Tampilkan antrean balasan',
   'accounts.respondQueue.title': 'Antrean respons',
   'accounts.webviewHost.almostReady': 'Hampir siap...',
   'accounts.webviewHost.loadTimeout': 'Waktu muat webview habis',
@@ -271,7 +273,7 @@ const id3: TranslationMap = {
   'app.connectionIndicator.coreOffline': 'Core offline',
   'app.connectionIndicator.disconnected': 'Terputus',
   'app.connectionIndicator.offline': 'Offline',
-  'app.connectionIndicator.reconnecting': 'Reconnecting…',
+  'app.connectionIndicator.reconnecting': 'Menyambung ulang…',
   'app.errorFallback.componentStack': 'Stack komponen',
   'app.errorFallback.downloadLatest': 'Unduh terbaru',
   'app.errorFallback.heading': 'Judul',
@@ -281,7 +283,7 @@ const id3: TranslationMap = {
   'app.errorFallback.tryRecover': 'Coba pulihkan',
   'app.localAiDownload.installing': 'Menginstal...',
   'app.localAiDownload.preparing': 'Mempersiapkan...',
-  'app.openhumanLink.accounts.continueWith': 'Continue with {label} sign-in',
+  'app.openhumanLink.accounts.continueWith': 'Lanjutkan dengan masuk {label}',
   'app.openhumanLink.accounts.done': 'Selesai',
   'app.openhumanLink.accounts.intro': 'Intro',
   'app.openhumanLink.accounts.webviewNote': 'Catatan webview',
@@ -309,9 +311,9 @@ const id3: TranslationMap = {
   'app.openhumanLink.notifications.promptHint': 'Petunjuk prompt',
   'app.openhumanLink.notifications.retry': 'Coba ulang notifikasi tes',
   'app.openhumanLink.notifications.send': 'Kirim notifikasi tes',
-  'app.openhumanLink.notifications.sendFailed': "Couldn't send: {error}",
+  'app.openhumanLink.notifications.sendFailed': 'Tidak bisa mengirim: {error}',
   'app.openhumanLink.notifications.sent':
-    'Test notification sent. If you didn’t receive it, go to System Settings → Notifications → OpenHuman, turn on Allow Notifications, and set Banner Style to Persistent.',
+    'Notifikasi uji telah dikirim. Jika Anda tidak menerimanya, buka System Settings → Notifications → OpenHuman, aktifkan Allow Notifications, dan atur Banner Style ke Persistent.',
   'app.openhumanLink.skipForNow': 'Lewati untuk sekarang',
   'app.openhumanLink.telegramUnavailable': 'Telegram tidak tersedia',
   'app.openhumanLink.title.accounts': 'Hubungkan aplikasi Anda',
@@ -323,7 +325,7 @@ const id3: TranslationMap = {
   'app.persistRehydration.heading': 'Judul',
   'app.persistRehydration.resetCta': 'Mereset...',
   'app.persistRehydration.resetting': 'Mereset...',
-  'app.routeLoading.initializing': 'Initializing OpenHuman...',
+  'app.routeLoading.initializing': 'Menginisialisasi OpenHuman...',
   'app.update.currentlyOn': '{version}',
   'app.update.errorFallback': 'Terjadi kesalahan saat memperbarui.',
   'app.update.header.default': 'Perbarui',
@@ -333,7 +335,7 @@ const id3: TranslationMap = {
   'app.update.header.restarting': 'Memulai ulang...',
   'app.update.later': 'Nanti',
   'app.update.newVersionReady': 'Versi baru siap diinstal.',
-  'app.update.progress.downloaded': '{amount} downloaded',
+  'app.update.progress.downloaded': '{amount} diunduh',
   'app.update.progress.installing': 'Menginstal versi baru...',
   'app.update.progress.restarting': 'Meluncurkan ulang aplikasi...',
   'app.update.progress.working': '{percent}%',
@@ -349,7 +351,7 @@ const id3: TranslationMap = {
   'channels.discord.picker.allPermissionsOk':
     'Bot memiliki semua izin yang diperlukan di kanal ini.',
   'channels.discord.picker.botNotInServers': 'Bot tidak ada di server',
-  'channels.discord.picker.category': 'Category',
+  'channels.discord.picker.category': 'Kategori',
   'channels.discord.picker.channel': 'Kanal',
   'channels.discord.picker.checkingPermissions': 'Memeriksa izin',
   'channels.discord.picker.loadingChannels': 'Memuat kanal...',
@@ -360,7 +362,7 @@ const id3: TranslationMap = {
   'channels.discord.picker.selectChannel': 'Pilih kanal',
   'channels.discord.picker.selectServer': 'Pilih server',
   'channels.discord.picker.server': 'Server',
-  'channels.discord.picker.serverChannelSelection': 'Server & Channel Selection',
+  'channels.discord.picker.serverChannelSelection': 'Pemilihan Server & Channel',
   'channels.discord.savedRestartRequired':
     'Kanal tersimpan. Mulai ulang aplikasi untuk mengaktifkannya.',
   'channels.telegram.connect': 'Hubungkan',

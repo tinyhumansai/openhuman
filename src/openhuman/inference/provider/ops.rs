@@ -42,9 +42,9 @@ pub async fn list_configured_models(
     let entry = config
         .cloud_providers
         .iter()
-        .find(|e| e.id == provider_id)
+        .find(|e| e.id == provider_id || e.slug == provider_id)
         .cloned()
-        .ok_or_else(|| format!("no cloud provider with id '{}' found", provider_id))?;
+        .ok_or_else(|| format!("no cloud provider with id or slug '{}' found", provider_id))?;
 
     let base = entry.endpoint.trim_end_matches('/');
     let models_url = format!("{}/models", base);
@@ -115,11 +115,40 @@ pub async fn list_configured_models(
         .await
         .map_err(|e| format!("[providers][list_models] failed to parse JSON: {}", e))?;
 
-    let data = body
-        .get("data")
-        .and_then(|d| d.as_array())
-        .cloned()
-        .unwrap_or_default();
+    // OpenAI-compatible servers occasionally return HTTP 200 with an error
+    // payload instead of a 4xx (LM Studio does this for unknown paths like
+    // `/v11/models` — body `{"error":"Unexpected endpoint or method..."}`).
+    // Treat any top-level `error` field as a failure so the AI-panel probe
+    // doesn't silently accept a typo'd endpoint.
+    if let Some(err_field) = body.get("error") {
+        let msg = err_field
+            .as_str()
+            .map(|s| s.to_string())
+            .or_else(|| {
+                err_field
+                    .get("message")
+                    .and_then(|m| m.as_str())
+                    .map(|s| s.to_string())
+            })
+            .unwrap_or_else(|| err_field.to_string());
+        let sanitized = sanitize_api_error(&msg);
+        return Err(format!("provider returned error payload: {}", sanitized));
+    }
+
+    // A valid `/models` response has a top-level `data` array (per the
+    // OpenAI API contract). Missing it means the endpoint isn't
+    // `/models`-compatible — the user almost certainly typed the wrong
+    // path. Fail loudly so the AI-panel probe surfaces the mistake.
+    let Some(data) = body.get("data").and_then(|d| d.as_array()).cloned() else {
+        let keys = body
+            .as_object()
+            .map(|o| o.keys().cloned().collect::<Vec<_>>().join(", "))
+            .unwrap_or_else(|| "<non-object>".to_string());
+        return Err(format!(
+            "provider response missing `data` array — endpoint is not OpenAI-compatible (got keys: {})",
+            keys
+        ));
+    };
 
     let models: Vec<ModelInfo> = data
         .iter()
@@ -598,7 +627,12 @@ pub fn create_intelligent_routing_provider(
         ))
     };
 
-    let provider = crate::openhuman::routing::new_provider(remote, &config.local_ai, default_model);
+    let provider = crate::openhuman::routing::new_provider(
+        remote,
+        &config.local_ai,
+        default_model,
+        &config.temperature_unsupported_models,
+    );
     Ok(Box::new(provider))
 }
 
@@ -650,6 +684,45 @@ pub fn canonical_china_provider_name(_name: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn list_configured_models_accepts_slug() {
+        // list_configured_models should find a provider by slug when the caller
+        // passes a slug instead of the opaque random id. This lets the frontend
+        // call the RPC before the provider config has been persisted (where only
+        // the slug is stable).
+        use crate::openhuman::config::schema::cloud_providers::{AuthStyle, CloudProviderCreds};
+        use crate::openhuman::config::Config;
+
+        let mut config = Config::default();
+        config.cloud_providers.push(CloudProviderCreds {
+            id: "p_openai_xyz99".to_string(),
+            slug: "openai".to_string(),
+            label: "OpenAI".to_string(),
+            endpoint: "https://api.openai.com/v1".to_string(),
+            auth_style: AuthStyle::Bearer,
+            legacy_type: None,
+            default_model: None,
+        });
+
+        // The find predicate must match on slug.
+        let found_by_slug = config
+            .cloud_providers
+            .iter()
+            .find(|e| e.id == "openai" || e.slug == "openai");
+        assert!(
+            found_by_slug.is_some(),
+            "slug lookup must find the provider"
+        );
+        assert_eq!(found_by_slug.unwrap().id, "p_openai_xyz99");
+
+        // The find predicate must still match on id.
+        let found_by_id = config
+            .cloud_providers
+            .iter()
+            .find(|e| e.id == "p_openai_xyz99" || e.slug == "p_openai_xyz99");
+        assert!(found_by_id.is_some(), "id lookup must still work");
+    }
 
     #[test]
     fn factory_backend() {

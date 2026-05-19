@@ -47,9 +47,9 @@ function freshnessBadgeClass(label: FreshnessLabel): string {
     case 'active':
       return 'bg-ocean-100 text-ocean-700';
     case 'recent':
-      return 'bg-sage-100 text-sage-700';
+      return 'bg-sage-100 dark:bg-sage-500/20 text-sage-700 dark:text-sage-300';
     case 'idle':
-      return 'bg-stone-100 text-stone-700';
+      return 'bg-stone-100 dark:bg-neutral-800 text-stone-700 dark:text-neutral-200';
   }
 }
 
@@ -89,19 +89,19 @@ function SourceCard({ status }: SourceCardProps) {
 
   return (
     <div
-      className="rounded-lg border border-stone-200 bg-white p-4 shadow-sm"
+      className="rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 shadow-sm"
       data-testid={`memory-sync-card-${status.provider}`}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <span className="font-medium text-stone-900">{label}</span>
+            <span className="font-medium text-stone-900 dark:text-neutral-100">{label}</span>
             <span
               className={`rounded-md px-2 py-0.5 text-xs font-medium ${freshnessBadgeClass(status.freshness)}`}
               data-testid={`memory-sync-freshness-${status.provider}`}>
               {useFreshnessLabel()[status.freshness]}
             </span>
           </div>
-          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-stone-500">
+          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-stone-500 dark:text-neutral-400">
             <span data-testid={`memory-sync-chunks-${status.provider}`}>
               {lifetime.toLocaleString()} {t('sync.chunks')}
             </span>
@@ -116,7 +116,7 @@ function SourceCard({ status }: SourceCardProps) {
 
       {showProgress && (
         <div className="mt-3" data-testid={`memory-sync-progress-${status.provider}`}>
-          <div className="h-1.5 w-full overflow-hidden rounded-full bg-stone-100">
+          <div className="h-1.5 w-full overflow-hidden rounded-full bg-stone-100 dark:bg-neutral-800">
             <div
               className="h-full bg-ocean-400 transition-all"
               style={{ width: `${pct}%` }}
@@ -126,13 +126,13 @@ function SourceCard({ status }: SourceCardProps) {
               aria-valuemax={batchTotal}
             />
           </div>
-          <div className="mt-1 text-xs text-stone-500">
+          <div className="mt-1 text-xs text-stone-500 dark:text-neutral-400">
             <span data-testid={`memory-sync-pending-${status.provider}`}>
               {batchProcessed.toLocaleString()} / {batchTotal.toLocaleString()}{' '}
               {t('sync.processed')}
             </span>
             {pending > 0 && (
-              <span className="text-stone-400">
+              <span className="text-stone-400 dark:text-neutral-500">
                 {' '}
                 · {pending.toLocaleString()} {t('sync.pending')}
               </span>
@@ -187,8 +187,10 @@ export function MemorySyncConnections({ pollIntervalMs }: MemorySyncConnectionsP
   if (loading) {
     return (
       <section className="memory-sync-connections" data-testid="memory-sync-connections">
-        <h3 className="text-sm font-semibold text-stone-700">{t('sync.memorySources')}</h3>
-        <p className="mt-2 text-xs text-stone-500">{t('common.loading')}</p>
+        <h3 className="text-sm font-semibold text-stone-700 dark:text-neutral-200">
+          {t('sync.memorySources')}
+        </h3>
+        <p className="mt-2 text-xs text-stone-500 dark:text-neutral-400">{t('common.loading')}</p>
       </section>
     );
   }
@@ -196,8 +198,10 @@ export function MemorySyncConnections({ pollIntervalMs }: MemorySyncConnectionsP
   if (loadError) {
     return (
       <section className="memory-sync-connections" data-testid="memory-sync-connections">
-        <h3 className="text-sm font-semibold text-stone-700">{t('sync.memorySources')}</h3>
-        <p className="mt-2 rounded-md bg-coral-50 p-2 text-xs text-coral-800 break-words">
+        <h3 className="text-sm font-semibold text-stone-700 dark:text-neutral-200">
+          {t('sync.memorySources')}
+        </h3>
+        <p className="mt-2 rounded-md bg-coral-50 dark:bg-coral-500/10 p-2 text-xs text-coral-800 break-words">
           {t('sync.failedToLoad')}: {loadError}
         </p>
       </section>
@@ -207,15 +211,19 @@ export function MemorySyncConnections({ pollIntervalMs }: MemorySyncConnectionsP
   if (statuses.length === 0) {
     return (
       <section className="memory-sync-connections" data-testid="memory-sync-connections">
-        <h3 className="text-sm font-semibold text-stone-700">{t('sync.memorySources')}</h3>
-        <p className="mt-2 text-xs text-stone-500">{t('sync.noContent')}</p>
+        <h3 className="text-sm font-semibold text-stone-700 dark:text-neutral-200">
+          {t('sync.memorySources')}
+        </h3>
+        <p className="mt-2 text-xs text-stone-500 dark:text-neutral-400">{t('sync.noContent')}</p>
       </section>
     );
   }
 
   return (
     <section className="memory-sync-connections" data-testid="memory-sync-connections">
-      <h3 className="text-sm font-semibold text-stone-700">{t('sync.memorySources')}</h3>
+      <h3 className="text-sm font-semibold text-stone-700 dark:text-neutral-200">
+        {t('sync.memorySources')}
+      </h3>
       <div className="mt-2 space-y-2">
         {statuses.map(s => (
           <SourceCard key={s.provider} status={s} />

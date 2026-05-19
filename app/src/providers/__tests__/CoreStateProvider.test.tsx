@@ -7,6 +7,7 @@ import * as tauriCommands from '../../utils/tauriCommands';
 import { getCoreStateSnapshot, setCoreStateSnapshot } from '../../lib/coreState/store';
 import { setActiveUserId } from '../../store/userScopedStorage';
 import CoreStateProvider, {
+  coreStatePollFailureDebugMessage,
   coreStatePollFailureWarningMessage,
   useCoreState,
 } from '../CoreStateProvider';
@@ -53,6 +54,13 @@ function deferred<T>() {
     reject = rej;
   });
   return { promise, resolve, reject };
+}
+
+function makeJwt(payload: Record<string, unknown>): string {
+  const encode = (value: Record<string, unknown>) =>
+    window.btoa(JSON.stringify(value)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+  return `${encode({ alg: 'none', typ: 'JWT' })}.${encode(payload)}.signature`;
 }
 
 type CoreStateContextValue = ReturnType<typeof useCoreState>;
@@ -270,11 +278,97 @@ describe('CoreStateProvider — identity-change cache clearing', () => {
       );
 
       await waitFor(() =>
-        expect(warnSpy).toHaveBeenCalledWith('[core-state] poll failed (attempt 1/5):', {
+        expect(warnSpy).toHaveBeenCalledWith('[core-state] bootstrap poll failed (attempt 1/5):', {
           message: 'core offline',
         })
       );
     } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('backs off poll interval after bootstrap budget is exhausted', async () => {
+    vi.useFakeTimers();
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    try {
+      fetchSnapshot.mockRejectedValue(new Error('core unavailable'));
+      listTeams.mockResolvedValue([]);
+
+      render(
+        <CoreStateProvider>
+          <Consumer />
+        </CoreStateProvider>
+      );
+
+      // Initial load fires immediately
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+
+      // Advance through MAX_BOOTSTRAP_RETRIES (5) polls at 2s intervals
+      for (let i = 0; i < 5; i++) {
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(2000);
+        });
+      }
+
+      // After budget exhaustion, next poll fires at 10s — not at 2s
+      const callsBefore = fetchSnapshot.mock.calls.length;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+      expect(fetchSnapshot.mock.calls.length).toBe(callsBefore);
+
+      // Advance remaining 8s (total 10s) — poll fires now
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(8000);
+      });
+      expect(fetchSnapshot.mock.calls.length).toBe(callsBefore + 1);
+    } finally {
+      vi.useRealTimers();
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('reverts to normal poll interval after recovery from backoff', async () => {
+    vi.useFakeTimers();
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    try {
+      fetchSnapshot.mockRejectedValue(new Error('core unavailable'));
+      listTeams.mockResolvedValue([]);
+
+      render(
+        <CoreStateProvider>
+          <Consumer />
+        </CoreStateProvider>
+      );
+
+      // Exhaust bootstrap budget: initial load + 5 scheduled polls
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      for (let i = 0; i < 5; i++) {
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(2000);
+        });
+      }
+
+      // Make the next (backoff) poll succeed — resets counter to 0
+      fetchSnapshot.mockResolvedValue(makeSnapshot({ userId: null, sessionToken: null }));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10000);
+      });
+
+      // After recovery, the next poll should fire at the normal 2s interval
+      const callsBefore = fetchSnapshot.mock.calls.length;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+      expect(fetchSnapshot.mock.calls.length).toBe(callsBefore + 1);
+    } finally {
+      vi.useRealTimers();
       warnSpy.mockRestore();
     }
   });
@@ -305,6 +399,81 @@ describe('CoreStateProvider — identity-change cache clearing', () => {
     await waitFor(() =>
       expect(ctx?.snapshot.currentUser).toEqual({ first_name: 'Ada', username: 'ada' })
     );
+  });
+
+  it('ignores malformed session-token-updated events (#1937)', async () => {
+    fetchSnapshot.mockResolvedValue(makeSnapshot({ userId: null, sessionToken: null }));
+    listTeams.mockResolvedValue([]);
+
+    render(
+      <CoreStateProvider>
+        <Consumer />
+      </CoreStateProvider>
+    );
+
+    await waitFor(() => expect(screen.getByTestId('ready').textContent).toBe('ready'));
+
+    await act(async () => {
+      window.dispatchEvent(
+        new CustomEvent('core-state:session-token-updated', {
+          detail: { sessionToken: 'not-a-jwt' },
+        })
+      );
+    });
+
+    expect(screen.getByTestId('token').textContent).toBe('none');
+    expect(fetchSnapshot).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores expired JWT-shaped session-token-updated events (#1937)', async () => {
+    const expiredToken = makeJwt({ exp: Math.floor(Date.now() / 1000) - 60 });
+    fetchSnapshot.mockResolvedValue(makeSnapshot({ userId: null, sessionToken: null }));
+    listTeams.mockResolvedValue([]);
+
+    render(
+      <CoreStateProvider>
+        <Consumer />
+      </CoreStateProvider>
+    );
+
+    await waitFor(() => expect(screen.getByTestId('ready').textContent).toBe('ready'));
+
+    await act(async () => {
+      window.dispatchEvent(
+        new CustomEvent('core-state:session-token-updated', {
+          detail: { sessionToken: expiredToken },
+        })
+      );
+    });
+
+    expect(screen.getByTestId('token').textContent).toBe('none');
+    expect(fetchSnapshot).toHaveBeenCalledTimes(1);
+  });
+
+  it('accepts unexpired JWT-shaped session-token-updated events (#1937)', async () => {
+    const token = makeJwt({ exp: Math.floor(Date.now() / 1000) + 60 });
+    fetchSnapshot
+      .mockResolvedValueOnce(makeSnapshot({ userId: null, sessionToken: null }))
+      .mockResolvedValueOnce(
+        makeSnapshot({ userId: null, sessionToken: token, isAuthenticated: true })
+      );
+    listTeams.mockResolvedValue([]);
+
+    render(
+      <CoreStateProvider>
+        <Consumer />
+      </CoreStateProvider>
+    );
+
+    await waitFor(() => expect(screen.getByTestId('ready').textContent).toBe('ready'));
+
+    await act(async () => {
+      window.dispatchEvent(
+        new CustomEvent('core-state:session-token-updated', { detail: { sessionToken: token } })
+      );
+    });
+
+    expect(screen.getByTestId('token').textContent).toBe(token);
   });
 
   it('setMeetAutoOrchestratorHandoff(true) calls update RPC + flips snapshot optimistically (#1299)', async () => {
@@ -445,11 +614,45 @@ describe('CoreStateProvider — identity-change cache clearing', () => {
 describe('coreStatePollFailureWarningMessage', () => {
   it('logs bounded bootstrap failures and one suppression notice', () => {
     expect(coreStatePollFailureWarningMessage(0)).toBeNull();
-    expect(coreStatePollFailureWarningMessage(1)).toBe('[core-state] poll failed (attempt 1/5):');
-    expect(coreStatePollFailureWarningMessage(5)).toBe('[core-state] poll failed (attempt 5/5):');
+    expect(coreStatePollFailureWarningMessage(1)).toBe(
+      '[core-state] bootstrap poll failed (attempt 1/5):'
+    );
+    expect(coreStatePollFailureWarningMessage(5)).toBe(
+      '[core-state] bootstrap poll failed (attempt 5/5):'
+    );
     expect(coreStatePollFailureWarningMessage(6)).toBe(
-      '[core-state] poll failed repeatedly; suppressing further warnings until core state recovers:'
+      '[core-state] bootstrap budget exhausted; continuing with backoff. Suppressing further warnings until recovery:'
     );
     expect(coreStatePollFailureWarningMessage(7)).toBeNull();
+  });
+
+  it('never produces an attempt count exceeding the max in the warning', () => {
+    for (let i = 1; i <= 50; i++) {
+      const msg = coreStatePollFailureWarningMessage(i);
+      if (msg && msg.includes('attempt')) {
+        const match = msg.match(/attempt (\d+)\/(\d+)/);
+        expect(match).not.toBeNull();
+        const [, attempt, max] = match!;
+        expect(Number(attempt)).toBeLessThanOrEqual(Number(max));
+      }
+    }
+  });
+});
+
+describe('coreStatePollFailureDebugMessage', () => {
+  it('describes post-bootstrap poll failures without impossible retry counters', () => {
+    expect(coreStatePollFailureDebugMessage(0)).toBeNull();
+    expect(coreStatePollFailureDebugMessage(1)).toBe(
+      'refresh failed during bootstrap retry 1/5; nextAction=retrying'
+    );
+    expect(coreStatePollFailureDebugMessage(5)).toBe(
+      'refresh failed during bootstrap retry 5/5; nextAction=marking-ready-with-fallback'
+    );
+
+    const postBootstrapMessage = coreStatePollFailureDebugMessage(11);
+    expect(postBootstrapMessage).toBe(
+      'refresh failed after 11 consecutive poll failures; bootstrapRetryLimit=5; nextAction=continuing-background-polling-with-warnings-suppressed'
+    );
+    expect(postBootstrapMessage).not.toContain('11/5');
   });
 });

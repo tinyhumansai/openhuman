@@ -185,7 +185,10 @@ const TeamInvitesPanel = () => {
           {/* Invites list */}
           {isLoadingInvites && invites.length === 0 ? (
             <div className="flex items-center justify-center py-8">
-              <svg className="w-5 h-5 text-stone-500 animate-spin" fill="none" viewBox="0 0 24 24">
+              <svg
+                className="w-5 h-5 text-stone-500 dark:text-neutral-400 animate-spin"
+                fill="none"
+                viewBox="0 0 24 24">
                 <circle
                   className="opacity-25"
                   cx="12"
@@ -200,7 +203,9 @@ const TeamInvitesPanel = () => {
                   d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
                 />
               </svg>
-              <span className="ml-3 text-sm text-stone-500">Loading invites...</span>
+              <span className="ml-3 text-sm text-stone-500 dark:text-neutral-400">
+                Loading invites...
+              </span>
             </div>
           ) : invites.length > 0 ? (
             <div className="space-y-2">
@@ -213,8 +218,8 @@ const TeamInvitesPanel = () => {
                     key={invite._id}
                     className={`rounded-xl border p-3 ${
                       isInactive
-                        ? 'border-stone-200 bg-stone-50 opacity-60'
-                        : 'border-stone-200 bg-white'
+                        ? 'border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 opacity-60'
+                        : 'border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900'
                     }`}>
                     <div className="flex items-center justify-between mb-2">
                       {/* Code with status label */}
@@ -222,8 +227,8 @@ const TeamInvitesPanel = () => {
                         <code
                           className={`text-sm font-mono px-2 py-1 rounded-lg ${
                             isInactive
-                              ? 'text-stone-500 bg-stone-100'
-                              : 'text-stone-900 bg-stone-200'
+                              ? 'text-stone-500 dark:text-neutral-400 bg-stone-100 dark:bg-neutral-800'
+                              : 'text-stone-900 dark:text-neutral-100 bg-stone-200 dark:bg-neutral-800'
                           }`}>
                           {invite.code}
                         </code>
@@ -245,8 +250,8 @@ const TeamInvitesPanel = () => {
                           disabled={status !== 'active'}
                           className={`p-1.5 rounded-lg transition-colors ${
                             status === 'active'
-                              ? 'text-stone-500 hover:text-stone-900 hover:bg-stone-100'
-                              : 'text-stone-600 cursor-not-allowed'
+                              ? 'text-stone-500 dark:text-neutral-400 hover:text-stone-900 dark:hover:text-neutral-100 hover:bg-stone-100 dark:hover:bg-neutral-800'
+                              : 'text-stone-600 dark:text-neutral-300 cursor-not-allowed'
                           }`}
                           aria-label="Copy invite code">
                           {copiedId === invite._id ? (
@@ -282,7 +287,7 @@ const TeamInvitesPanel = () => {
                           <button
                             onClick={() => handleRevoke(invite._id, invite.code)}
                             disabled={revokingId === invite._id}
-                            className="p-1.5 rounded-lg text-stone-500 hover:text-coral-400 hover:bg-coral-500/10 transition-colors disabled:opacity-50"
+                            className="p-1.5 rounded-lg text-stone-500 dark:text-neutral-400 hover:text-coral-400 hover:bg-coral-500/10 transition-colors disabled:opacity-50"
                             aria-label="Revoke invite">
                             <svg
                               className="w-4 h-4"
@@ -300,7 +305,7 @@ const TeamInvitesPanel = () => {
                         )}
                       </div>
                     </div>
-                    <div className="flex items-center gap-3 text-xs text-stone-500">
+                    <div className="flex items-center gap-3 text-xs text-stone-500 dark:text-neutral-400">
                       <span>
                         Uses: {invite.currentUses}
                         {invite.maxUses > 0 ? `/${invite.maxUses}` : ''}
@@ -318,7 +323,7 @@ const TeamInvitesPanel = () => {
           ) : (
             <div className="text-center py-8">
               <svg
-                className="w-10 h-10 mx-auto text-stone-600 mb-3"
+                className="w-10 h-10 mx-auto text-stone-600 dark:text-neutral-300 mb-3"
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24">
@@ -329,8 +334,8 @@ const TeamInvitesPanel = () => {
                   d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
                 />
               </svg>
-              <p className="text-sm text-stone-500">No invites yet</p>
-              <p className="text-xs text-stone-600 mt-1">
+              <p className="text-sm text-stone-500 dark:text-neutral-400">No invites yet</p>
+              <p className="text-xs text-stone-600 dark:text-neutral-300 mt-1">
                 Generate an invite code to share with others
               </p>
             </div>
@@ -339,8 +344,10 @@ const TeamInvitesPanel = () => {
           {/* Revoke Invite Confirmation Modal */}
           {inviteToRevoke && (
             <div className="fixed inset-0 bg-stone-900/50 flex items-center justify-center z-50 p-4">
-              <div className="bg-white rounded-2xl p-6 w-full max-w-md border border-stone-200">
-                <h3 className="text-sm font-semibold text-stone-900 mb-4">Revoke Invite Code</h3>
+              <div className="bg-white dark:bg-neutral-900 rounded-2xl p-6 w-full max-w-md border border-stone-200 dark:border-neutral-800">
+                <h3 className="text-sm font-semibold text-stone-900 dark:text-neutral-100 mb-4">
+                  Revoke Invite Code
+                </h3>
 
                 {error && (
                   <div className="rounded-xl bg-coral-500/10 border border-coral-500/20 p-3 mb-4">
@@ -349,10 +356,10 @@ const TeamInvitesPanel = () => {
                 )}
 
                 <div className="space-y-4">
-                  <div className="text-sm text-stone-400">
+                  <div className="text-sm text-stone-400 dark:text-neutral-500">
                     <p>
                       Are you sure you want to revoke the invite code{' '}
-                      <code className="text-stone-900 bg-stone-100 px-1.5 py-0.5 rounded font-mono text-xs">
+                      <code className="text-stone-900 dark:text-neutral-100 bg-stone-100 dark:bg-neutral-800 px-1.5 py-0.5 rounded font-mono text-xs">
                         {inviteToRevoke.code}
                       </code>
                       ?
@@ -366,7 +373,7 @@ const TeamInvitesPanel = () => {
                     <button
                       onClick={() => setInviteToRevoke(null)}
                       disabled={revokingId === inviteToRevoke.id}
-                      className="flex-1 px-4 py-2 text-sm font-medium rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-700 transition-colors disabled:opacity-50">
+                      className="flex-1 px-4 py-2 text-sm font-medium rounded-xl bg-stone-100 dark:bg-neutral-800 hover:bg-stone-200 dark:hover:bg-neutral-700 text-stone-700 dark:text-neutral-200 transition-colors disabled:opacity-50">
                       Cancel
                     </button>
                     <button

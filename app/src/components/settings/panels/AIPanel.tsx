@@ -19,9 +19,12 @@ import {
   type ProviderRef as ApiProviderRef,
   clearCloudProviderKey,
   type CloudProviderView,
+  flushCloudProviders,
+  listProviderModels,
   loadAISettings,
   loadLocalProviderSnapshot,
   type LocalProviderSnapshot,
+  type ModelInfo,
   saveAISettings,
   setCloudProviderKey,
 } from '../../../services/api/aiSettingsApi';
@@ -30,7 +33,10 @@ import {
   type CreditTransaction,
   type TeamUsage,
 } from '../../../services/api/creditsApi';
-import type { AuthStyle } from '../../../utils/tauriCommands/config';
+import {
+  type AuthStyle,
+  openhumanUpdateLocalAiSettings,
+} from '../../../utils/tauriCommands/config';
 import {
   type HeartbeatPlannerSummary,
   type HeartbeatSettings,
@@ -39,8 +45,10 @@ import {
   openhumanHeartbeatSettingsSet,
   openhumanHeartbeatTickNow,
 } from '../../../utils/tauriCommands/heartbeat';
+import { ConfirmationModal } from '../../intelligence/ConfirmationModal';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
+import { useReembedBackfillModal } from './useReembedBackfillModal';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -60,6 +68,7 @@ type OllamaState = 'disabled' | 'missing' | 'stopped' | 'starting' | 'running' |
 type OllamaModel = { id: string; sizeBytes: number; family: string };
 
 type WorkloadId =
+  | 'chat'
   | 'reasoning'
   | 'agentic'
   | 'coding'
@@ -73,8 +82,8 @@ type WorkloadGroup = 'chat' | 'background';
 
 type ProviderRef =
   | { kind: 'openhuman' }
-  | { kind: 'cloud'; providerSlug: string; model: string }
-  | { kind: 'local'; model: string };
+  | { kind: 'cloud'; providerSlug: string; model: string; temperature?: number | null }
+  | { kind: 'local'; model: string; temperature?: number | null };
 
 type Workload = { id: WorkloadId; group: WorkloadGroup; label: string; description: string };
 
@@ -87,14 +96,30 @@ type RoutingMap = Record<WorkloadId, ProviderRef>;
 // Slug-keyed display metadata for built-in provider slugs. Used only for
 // chip rendering (label, tone). Custom providers use `provider.label` directly.
 const BUILTIN_PROVIDER_META: Record<string, { tone: string; label: string }> = {
-  openhuman: { label: 'OpenHuman', tone: 'bg-primary-50 ring-primary-200 text-primary-900' },
-  openai: { label: 'OpenAI', tone: 'bg-emerald-50 ring-emerald-200 text-emerald-900' },
-  anthropic: { label: 'Anthropic', tone: 'bg-orange-50 ring-orange-200 text-orange-900' },
-  openrouter: { label: 'OpenRouter', tone: 'bg-slate-100 ring-slate-300 text-slate-900' },
-  custom: { label: 'Custom', tone: 'bg-stone-100 ring-stone-300 text-stone-900' },
+  openhuman: {
+    label: 'OpenHuman',
+    tone: 'bg-primary-50 dark:bg-primary-500/10 ring-primary-200 text-primary-900 dark:text-primary-100',
+  },
+  openai: {
+    label: 'OpenAI',
+    tone: 'bg-emerald-50 dark:bg-emerald-500/10 ring-emerald-200 text-emerald-900 dark:text-emerald-100',
+  },
+  anthropic: {
+    label: 'Anthropic',
+    tone: 'bg-orange-50 dark:bg-orange-500/10 ring-orange-200 text-orange-900 dark:text-orange-100',
+  },
+  openrouter: {
+    label: 'OpenRouter',
+    tone: 'bg-slate-100 dark:bg-slate-500/15 ring-slate-300 text-slate-900 dark:text-slate-100',
+  },
+  custom: {
+    label: 'Custom',
+    tone: 'bg-stone-100 dark:bg-neutral-800 ring-stone-300 text-stone-900 dark:text-neutral-100',
+  },
 };
 
 const WORKLOADS: Workload[] = [
+  { id: 'chat', group: 'chat', label: 'Chat', description: 'Direct conversational back-and-forth' },
   {
     id: 'reasoning',
     group: 'chat',
@@ -158,6 +183,7 @@ const WORKLOADS: Workload[] = [
 type AISettings = { cloudProviders: CloudProvider[]; routing: RoutingMap };
 
 const EMPTY_ROUTING: RoutingMap = {
+  chat: { kind: 'openhuman' },
   reasoning: { kind: 'openhuman' },
   agentic: { kind: 'openhuman' },
   coding: { kind: 'openhuman' },
@@ -202,6 +228,7 @@ function toPanelRoutingFromApi(api: ApiAISettings): { panel: AISettings } {
   // ApiProviderRef and ProviderRef share the same shape — pass through directly.
   const liftRef = (r: ApiProviderRef): ProviderRef => r;
   const routing: RoutingMap = {
+    chat: liftRef(api.routing.chat),
     reasoning: liftRef(api.routing.reasoning),
     agentic: liftRef(api.routing.agentic),
     coding: liftRef(api.routing.coding),
@@ -225,6 +252,7 @@ function toApiSettings(panel: AISettings): ApiAISettings {
       has_api_key: p.maskedKey.startsWith('••••'),
     })),
     routing: {
+      chat: panel.routing.chat,
       reasoning: panel.routing.reasoning,
       agentic: panel.routing.agentic,
       coding: panel.routing.coding,
@@ -260,26 +288,96 @@ function useAISettings() {
   }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void reload();
   }, [reload]);
 
+  // Eagerly persist user-configured cloud providers whenever they diverge from
+  // the saved snapshot so listProviderModels can resolve by slug immediately
+  // after a provider is added, before the global Save.
+  //
+  // Reserved slugs ("openhuman", "cloud", "pid") are built-ins that Rust
+  // rejects as custom providers — filter them out before flushing. `ollama`
+  // and `lmstudio` are NOT filtered: the AI panel needs an `ollama` entry on
+  // disk for the model dropdown probe (`list_configured_models` looks up by
+  // slug). Chat routing is unaffected because the factory's `ollama:<model>`
+  // prefix branch fires before the `<slug>:<model>` cloud-provider lookup.
+  useEffect(() => {
+    if (loading) return;
+    const userProviders = draft.cloudProviders.filter(
+      p => !['', 'cloud', 'openhuman', 'pid'].includes(p.slug)
+    );
+    const savedUserProviders = saved.cloudProviders.filter(
+      p => !['', 'cloud', 'openhuman', 'pid'].includes(p.slug)
+    );
+    if (JSON.stringify(userProviders) === JSON.stringify(savedUserProviders)) return;
+    const wire = userProviders.map(p => ({
+      id: p.id,
+      slug: p.slug,
+      label: p.label,
+      endpoint: p.endpoint,
+      auth_style: p.authStyle,
+    }));
+    flushCloudProviders(wire).catch(err =>
+      console.warn('[ai-settings] eager cloud_providers flush failed:', err)
+    );
+  }, [draft.cloudProviders, loading, saved.cloudProviders]);
+
   const isDirty = JSON.stringify(saved) !== JSON.stringify(draft);
 
-  const save = useCallback(async () => {
-    try {
+  const persist = useCallback(
+    async (nextDraft: AISettings) => {
       const prevApi = toApiSettings(saved);
-      const nextApi = toApiSettings(draft);
+      const nextApi = toApiSettings(nextDraft);
       await saveAISettings(prevApi, nextApi);
-      setSaved(draft);
+      setSaved(nextDraft);
+      setDraft(nextDraft);
+      setError('');
+    },
+    [saved]
+  );
+
+  // Returns true only when persistence actually succeeded, so callers
+  // (e.g. the #1574 re-embed-status check) don't act on a failed save.
+  const save = useCallback(async (): Promise<boolean> => {
+    try {
+      // Defensive verification at global-Save time. Each provider that is new
+      // or whose endpoint changed since the last saved snapshot is re-probed
+      // through `openhuman.inference_list_models`. The chip / editor dialogs
+      // already probe at add-time; this is a belt-and-suspenders check that
+      // catches stale entries (endpoint flipped externally, daemon went
+      // unreachable between add-time and save-time, etc.) before they reach
+      // the saved config and start routing chat traffic to a dead host.
+      //
+      // OpenHuman is exempt (session JWT, no /models endpoint to hit).
+      const savedById = new Map(saved.cloudProviders.map(p => [p.id, p]));
+      const toProbe = draft.cloudProviders.filter(p => {
+        if (p.slug === 'openhuman') return false;
+        const prior = savedById.get(p.id);
+        return !prior || prior.endpoint !== p.endpoint;
+      });
+      for (const p of toProbe) {
+        try {
+          await listProviderModels(p.slug);
+        } catch (probeErr) {
+          const msg = probeErr instanceof Error ? probeErr.message : String(probeErr);
+          setError(`Could not reach ${p.label}: ${msg}. Settings were not saved.`);
+          return false;
+        }
+      }
+
+      await persist(draft);
+      return true;
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to save AI settings';
       setError(message);
+      return false;
     }
-  }, [saved, draft]);
+  }, [saved, draft, persist]);
 
   const discard = useCallback(() => setDraft(saved), [saved]);
 
-  return { saved, draft, setDraft, isDirty, save, discard, loading, error, reload };
+  return { saved, draft, setDraft, isDirty, save, persist, discard, loading, error, reload };
 }
 
 function useOllamaStatus() {
@@ -300,6 +398,7 @@ function useOllamaStatus() {
   }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void refresh();
     const id = window.setInterval(() => void refresh(), 5000);
     return () => window.clearInterval(id);
@@ -361,14 +460,17 @@ type LocalChipSlug = 'lmstudio' | 'ollama';
 
 // Tints per local-runtime chip slug.
 const LOCAL_CHIP_TONE: Record<LocalChipSlug, string> = {
-  lmstudio: 'bg-cyan-50 ring-cyan-200 text-cyan-900',
-  ollama: 'bg-violet-50 ring-violet-200 text-violet-900',
+  lmstudio: 'bg-cyan-50 dark:bg-cyan-500/10 ring-cyan-200 text-cyan-900 dark:text-cyan-100',
+  ollama: 'bg-violet-50 dark:bg-violet-500/10 ring-violet-200 text-violet-900 dark:text-violet-100',
 };
 
 const LOCAL_CHIP_LABEL: Record<LocalChipSlug, string> = { lmstudio: 'LM Studio', ollama: 'Ollama' };
 
 function slugTone(slug: string): string {
-  return BUILTIN_PROVIDER_META[slug]?.tone ?? 'bg-stone-100 ring-stone-300 text-stone-900';
+  return (
+    BUILTIN_PROVIDER_META[slug]?.tone ??
+    'bg-stone-100 dark:bg-neutral-800 ring-stone-300 text-stone-900 dark:text-neutral-100'
+  );
 }
 
 const ProviderToggleChip = ({
@@ -387,7 +489,7 @@ const ProviderToggleChip = ({
   const tone = slugTone(slug);
   return (
     <div
-      className={`inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-xs font-medium ring-1 transition-colors ${tone}`}>
+      className={`inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-xs font-medium ring-1 transition-colors dark:ring-neutral-700 ${tone}`}>
       <span>{label}</span>
       <button
         type="button"
@@ -396,38 +498,51 @@ const ProviderToggleChip = ({
         aria-label={`${enabled ? 'Disconnect' : 'Connect'} ${label}`}
         disabled={busy}
         onClick={onToggle}
-        className={`relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors disabled:cursor-wait disabled:opacity-60 ${enabled ? 'bg-primary-500' : 'bg-stone-300'}`}>
+        className={`relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors disabled:cursor-wait disabled:opacity-60 ${enabled ? 'bg-primary-500' : 'bg-stone-300 dark:bg-neutral-700'}`}>
         <span
           aria-hidden
-          className={`inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform ${enabled ? 'translate-x-3.5' : 'translate-x-0.5'}`}
+          className={`inline-block h-3 w-3 transform rounded-full bg-white dark:bg-neutral-900 shadow transition-transform ${enabled ? 'translate-x-3.5' : 'translate-x-0.5'}`}
         />
       </button>
     </div>
   );
 };
 
-// Minimal API-key dialog — shown when the user flips a provider toggle ON.
-// No endpoint / model fields; default endpoint is derived from the slug and
-// the model is left empty (the routing dialog picks the model per workload).
+// Connect-provider dialog — shown when the user flips a provider toggle ON.
+//
+// Two modes:
+//   - apiKey: cloud providers (OpenAI, Anthropic, …). Collects a secret.
+//   - endpoint: local runtimes (Ollama, LM Studio). Collects an HTTP URL
+//     (and optionally an API key for OpenAI-compatible self-hosted setups).
+//
+// The parent decides how to persist: cloud → auth-profiles, local → both
+// the cloud_providers entry's `endpoint` (so /models discovery works) and
+// `local_ai.base_url` (so the Rust factory's Ollama branch routes to it).
 const ProviderKeyDialog = ({
   slug,
   label,
+  isLocalRuntime,
   onCancel,
   onSubmit,
 }: {
   slug: string;
   label: string;
+  /** When true, render an "Endpoint URL" field instead of API key. */
+  isLocalRuntime: boolean;
   onCancel: () => void;
-  onSubmit: (apiKey: string) => Promise<void> | void;
+  /** Returns the entered value. For local runtimes this is the endpoint URL;
+   *  for cloud providers it's the API key. */
+  onSubmit: (value: string) => Promise<void> | void;
 }) => {
   const { t } = useT();
-  const [apiKey, setApiKey] = useState('');
+  const [value, setValue] = useState<string>(isLocalRuntime ? defaultEndpointFor(slug) : '');
   const [phase, setPhase] = useState<'idle' | 'saving'>('idle');
   const [error, setError] = useState<string | null>(null);
   const busy = phase !== 'idle';
 
-  const placeholder =
-    slug === 'openai'
+  const placeholder = isLocalRuntime
+    ? defaultEndpointFor(slug) || 'http://localhost:11434/v1'
+    : slug === 'openai'
       ? 'sk-...'
       : slug === 'anthropic'
         ? 'sk-ant-...'
@@ -435,10 +550,19 @@ const ProviderKeyDialog = ({
           ? 'sk-or-...'
           : 'your-api-key';
 
+  const fieldLabel = isLocalRuntime ? 'Endpoint URL' : t('settings.ai.apiKeyFieldLabel');
+  const helper = isLocalRuntime
+    ? `Where ${label} is reachable. Default is localhost; point this at a remote host (e.g. http://10.0.0.4:11434/v1) to use a shared instance.`
+    : t('settings.ai.apiKeyStoredEncrypted');
+
   const handleSave = async () => {
-    const trimmed = apiKey.trim();
+    const trimmed = value.trim();
     if (!trimmed) {
-      setError(t('settings.ai.apiKeyRequired'));
+      setError(isLocalRuntime ? 'Endpoint URL is required' : t('settings.ai.apiKeyRequired'));
+      return;
+    }
+    if (isLocalRuntime && !/^https?:\/\//i.test(trimmed)) {
+      setError('Endpoint must start with http:// or https://');
       return;
     }
     setError(null);
@@ -458,19 +582,21 @@ const ProviderKeyDialog = ({
       aria-modal="true"
       aria-label={`Connect ${label}`}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
-      <div className="w-full max-w-md rounded-2xl border border-stone-200 bg-white p-6 shadow-soft">
+      <div className="w-full max-w-md rounded-2xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-6 shadow-soft">
         <div className="mb-4">
-          <h3 className="text-base font-semibold text-stone-900">{`${t('settings.ai.connectProvider')} ${label}`}</h3>
-          <p className="mt-0.5 text-xs text-stone-500">{t('settings.ai.apiKeyStoredEncrypted')}</p>
+          <h3 className="text-base font-semibold text-stone-900 dark:text-neutral-100">{`${t('settings.ai.connectProvider')} ${label}`}</h3>
+          <p className="mt-0.5 text-xs text-stone-500 dark:text-neutral-400">{helper}</p>
         </div>
 
         <div className="flex flex-col gap-1.5">
-          <label htmlFor="provider-key-input" className="text-xs font-medium text-stone-700">
-            {t('settings.ai.apiKeyFieldLabel')}
+          <label
+            htmlFor="provider-key-input"
+            className="text-xs font-medium text-stone-700 dark:text-neutral-200">
+            {fieldLabel}
           </label>
           <input
             id="provider-key-input"
-            type="text"
+            type={isLocalRuntime ? 'url' : 'text'}
             autoComplete="off"
             autoCorrect="off"
             autoCapitalize="off"
@@ -478,16 +604,18 @@ const ProviderKeyDialog = ({
             data-form-type="other"
             data-lpignore="true"
             data-1p-ignore="true"
-            value={apiKey}
+            value={value}
             placeholder={placeholder}
             disabled={busy}
             onChange={e => {
-              setApiKey(e.target.value);
+              setValue(e.target.value);
               setError(null);
             }}
-            className="rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm text-stone-900 placeholder-stone-400 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 disabled:opacity-60"
+            className={`rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 placeholder-stone-400 dark:placeholder-neutral-500 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 disabled:opacity-60 ${isLocalRuntime ? 'font-mono' : ''}`}
           />
-          {error ? <p className="text-xs font-medium text-red-600">{error}</p> : null}
+          {error ? (
+            <p className="text-xs font-medium text-red-600 dark:text-red-300">{error}</p>
+          ) : null}
         </div>
 
         <div className="mt-6 flex justify-end gap-2">
@@ -495,7 +623,7 @@ const ProviderKeyDialog = ({
             type="button"
             onClick={onCancel}
             disabled={busy}
-            className="rounded-lg border border-stone-200 bg-white px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50 disabled:opacity-50">
+            className="rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-4 py-2 text-sm font-medium text-stone-700 dark:text-neutral-200 hover:bg-stone-50 dark:hover:bg-neutral-800/60 dark:bg-neutral-800/60 dark:hover:bg-neutral-800/60 disabled:opacity-50">
             {t('common.cancel')}
           </button>
           <button
@@ -635,10 +763,10 @@ const LoopToggle = ({
   busy: boolean;
   onToggle: () => void;
 }) => (
-  <div className="flex items-center justify-between gap-3 rounded-lg border border-stone-200 bg-white px-3 py-2">
+  <div className="flex items-center justify-between gap-3 rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2">
     <div className="min-w-0">
-      <div className="text-sm font-medium text-stone-900">{label}</div>
-      <div className="text-xs text-stone-500">{description}</div>
+      <div className="text-sm font-medium text-stone-900 dark:text-neutral-100">{label}</div>
+      <div className="text-xs text-stone-500 dark:text-neutral-400">{description}</div>
     </div>
     <button
       type="button"
@@ -647,10 +775,10 @@ const LoopToggle = ({
       aria-checked={checked}
       disabled={busy}
       onClick={onToggle}
-      className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors disabled:cursor-wait disabled:opacity-60 ${checked ? 'bg-primary-500' : 'bg-stone-300'}`}>
+      className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors disabled:cursor-wait disabled:opacity-60 ${checked ? 'bg-primary-500' : 'bg-stone-300 dark:bg-neutral-700'}`}>
       <span
         aria-hidden
-        className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${checked ? 'translate-x-4' : 'translate-x-0.5'}`}
+        className={`inline-block h-4 w-4 transform rounded-full bg-white dark:bg-neutral-900 shadow transition-transform ${checked ? 'translate-x-4' : 'translate-x-0.5'}`}
       />
     </button>
   </div>
@@ -665,20 +793,24 @@ const MetricTile = ({
   value: string;
   detail?: string;
 }) => (
-  <div className="rounded-md bg-stone-50 px-3 py-2">
-    <div className="text-[10px] font-semibold uppercase tracking-wide text-stone-400">{label}</div>
-    <div className="mt-1 text-sm font-semibold text-stone-900">{value}</div>
-    {detail ? <div className="mt-0.5 text-[11px] text-stone-500">{detail}</div> : null}
+  <div className="rounded-md bg-stone-50 dark:bg-neutral-800/60 px-3 py-2">
+    <div className="text-[10px] font-semibold uppercase tracking-wide text-stone-400 dark:text-neutral-500">
+      {label}
+    </div>
+    <div className="mt-1 text-sm font-semibold text-stone-900 dark:text-neutral-100">{value}</div>
+    {detail ? (
+      <div className="mt-0.5 text-[11px] text-stone-500 dark:text-neutral-400">{detail}</div>
+    ) : null}
   </div>
 );
 
 const FormulaRow = ({ label, value, detail }: { label: string; value: string; detail: string }) => (
-  <div className="rounded-md border border-stone-200 bg-white px-3 py-2">
+  <div className="rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2">
     <div className="flex items-center justify-between gap-3">
-      <span className="text-xs font-medium text-stone-800">{label}</span>
-      <span className="font-mono text-xs text-stone-600">{value}</span>
+      <span className="text-xs font-medium text-stone-800 dark:text-neutral-100">{label}</span>
+      <span className="font-mono text-xs text-stone-600 dark:text-neutral-300">{value}</span>
     </div>
-    <div className="mt-1 text-[11px] text-stone-500">{detail}</div>
+    <div className="mt-1 text-[11px] text-stone-500 dark:text-neutral-400">{detail}</div>
   </div>
 );
 
@@ -740,6 +872,7 @@ const BackgroundLoopControls = ({
   }, [commitSettings]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void refresh();
   }, [refresh]);
 
@@ -898,27 +1031,31 @@ const BackgroundLoopControls = ({
 
   return (
     <div className="space-y-4">
-      <div className="border-b border-stone-200 pb-2">
-        <h2 className="text-base font-semibold text-stone-900">Background loops</h2>
-        <p className="mt-0.5 text-xs text-stone-500">
+      <div className="border-b border-stone-200 dark:border-neutral-800 pb-2">
+        <h2 className="text-base font-semibold text-stone-900 dark:text-neutral-100">
+          Background loops
+        </h2>
+        <p className="mt-0.5 text-xs text-stone-500 dark:text-neutral-400">
           See what runs without a chat message, pause heartbeat work, and inspect recent credit
           ledger rows.
         </p>
       </div>
 
       {error && (
-        <div className="rounded-md border border-coral-200 bg-coral-50 px-3 py-2 text-xs text-coral-700">
+        <div className="rounded-md border border-coral-200 dark:border-coral-500/30 bg-coral-50 dark:bg-coral-500/10 px-3 py-2 text-xs text-coral-700 dark:text-coral-300">
           {error}
         </div>
       )}
 
       <section className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(300px,0.8fr)]">
         <div className="space-y-3">
-          <div className="rounded-lg border border-stone-200 bg-stone-50 p-3">
+          <div className="rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 p-3">
             <div className="mb-3 flex items-center justify-between gap-3">
               <div>
-                <div className="text-sm font-semibold text-stone-900">Heartbeat controls</div>
-                <div className="text-xs text-stone-500">
+                <div className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
+                  Heartbeat controls
+                </div>
+                <div className="text-xs text-stone-500 dark:text-neutral-400">
                   Defaults off. Enabling starts the loop; disabling aborts the running task.
                 </div>
               </div>
@@ -926,7 +1063,7 @@ const BackgroundLoopControls = ({
                 type="button"
                 onClick={() => void refresh()}
                 disabled={loading}
-                className="rounded-md border border-stone-200 bg-white px-2 py-1 text-xs font-medium text-stone-700 hover:bg-stone-50 disabled:opacity-50">
+                className="rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-2 py-1 text-xs font-medium text-stone-700 dark:text-neutral-200 hover:bg-stone-50 dark:hover:bg-neutral-800/60 dark:bg-neutral-800/60 dark:hover:bg-neutral-800/60 disabled:opacity-50">
                 Refresh
               </button>
             </div>
@@ -958,8 +1095,8 @@ const BackgroundLoopControls = ({
                     void applyHeartbeatPatch({ notify_meetings: !settings.notify_meetings })
                   }
                 />
-                <div className="grid gap-2 rounded-lg border border-stone-200 bg-white px-3 py-2 md:grid-cols-3">
-                  <label className="space-y-1 text-xs font-medium text-stone-700">
+                <div className="grid gap-2 rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 md:grid-cols-3">
+                  <label className="space-y-1 text-xs font-medium text-stone-700 dark:text-neutral-200">
                     <span>Calendar cap</span>
                     <select
                       value={maxCalendarConnectionsPerTick}
@@ -969,7 +1106,7 @@ const BackgroundLoopControls = ({
                           max_calendar_connections_per_tick: Number(e.target.value),
                         })
                       }
-                      className="w-full rounded-md border border-stone-200 bg-white px-2 py-1 text-xs text-stone-900 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500">
+                      className="w-full rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-2 py-1 text-xs text-stone-900 dark:text-neutral-100 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500">
                       {[1, 2, 3, 5, 10].map(count => (
                         <option key={count} value={count}>
                           {count} conn/tick
@@ -977,7 +1114,7 @@ const BackgroundLoopControls = ({
                       ))}
                     </select>
                   </label>
-                  <label className="space-y-1 text-xs font-medium text-stone-700">
+                  <label className="space-y-1 text-xs font-medium text-stone-700 dark:text-neutral-200">
                     <span>Meeting lookahead</span>
                     <select
                       value={settings.meeting_lookahead_minutes}
@@ -987,7 +1124,7 @@ const BackgroundLoopControls = ({
                           meeting_lookahead_minutes: Number(e.target.value),
                         })
                       }
-                      className="w-full rounded-md border border-stone-200 bg-white px-2 py-1 text-xs text-stone-900 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500">
+                      className="w-full rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-2 py-1 text-xs text-stone-900 dark:text-neutral-100 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500">
                       {[15, 30, 60, 120, 240].map(minutes => (
                         <option key={minutes} value={minutes}>
                           {minutes} min
@@ -995,7 +1132,7 @@ const BackgroundLoopControls = ({
                       ))}
                     </select>
                   </label>
-                  <label className="space-y-1 text-xs font-medium text-stone-700">
+                  <label className="space-y-1 text-xs font-medium text-stone-700 dark:text-neutral-200">
                     <span>Reminder lookahead</span>
                     <select
                       value={settings.reminder_lookahead_minutes}
@@ -1005,7 +1142,7 @@ const BackgroundLoopControls = ({
                           reminder_lookahead_minutes: Number(e.target.value),
                         })
                       }
-                      className="w-full rounded-md border border-stone-200 bg-white px-2 py-1 text-xs text-stone-900 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500">
+                      className="w-full rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-2 py-1 text-xs text-stone-900 dark:text-neutral-100 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500">
                       {[5, 15, 30, 60, 120].map(minutes => (
                         <option key={minutes} value={minutes}>
                           {minutes} min
@@ -1046,9 +1183,9 @@ const BackgroundLoopControls = ({
                   }
                 />
 
-                <div className="flex flex-wrap items-center gap-2 rounded-lg border border-stone-200 bg-white px-3 py-2">
+                <div className="flex flex-wrap items-center gap-2 rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2">
                   <label
-                    className="text-xs font-medium text-stone-700"
+                    className="text-xs font-medium text-stone-700 dark:text-neutral-200"
                     htmlFor="heartbeat-interval">
                     Interval
                   </label>
@@ -1059,7 +1196,7 @@ const BackgroundLoopControls = ({
                     onChange={e =>
                       void applyHeartbeatPatch({ interval_minutes: Number(e.target.value) })
                     }
-                    className="rounded-md border border-stone-200 bg-white px-2 py-1 text-xs text-stone-900 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500">
+                    className="rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-2 py-1 text-xs text-stone-900 dark:text-neutral-100 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500">
                     {[5, 10, 15, 30, 60].map(minutes => (
                       <option key={minutes} value={minutes}>
                         {minutes} min
@@ -1070,13 +1207,13 @@ const BackgroundLoopControls = ({
                     type="button"
                     onClick={() => void runPlannerNow()}
                     disabled={runningTick}
-                    className="ml-auto rounded-md border border-stone-200 bg-white px-2 py-1 text-xs font-medium text-stone-700 hover:bg-stone-50 disabled:opacity-50">
+                    className="ml-auto rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-2 py-1 text-xs font-medium text-stone-700 dark:text-neutral-200 hover:bg-stone-50 dark:hover:bg-neutral-800/60 dark:bg-neutral-800/60 dark:hover:bg-neutral-800/60 disabled:opacity-50">
                     {runningTick ? 'Running...' : 'Planner tick now'}
                   </button>
                 </div>
 
                 {plannerSummary && (
-                  <div className="rounded-md border border-primary-100 bg-primary-50 px-3 py-2 text-xs text-primary-900">
+                  <div className="rounded-md border border-primary-100 bg-primary-50 dark:bg-primary-500/10 px-3 py-2 text-xs text-primary-900">
                     Planner: {plannerSummary.source_events} source events,{' '}
                     {plannerSummary.deliveries_sent} sent, {plannerSummary.deliveries_skipped_dedup}{' '}
                     deduped.
@@ -1084,32 +1221,34 @@ const BackgroundLoopControls = ({
                 )}
               </div>
             ) : (
-              <div className="text-xs text-stone-500">
+              <div className="text-xs text-stone-500 dark:text-neutral-400">
                 {loading ? 'Loading heartbeat controls...' : 'Heartbeat controls unavailable.'}
               </div>
             )}
           </div>
 
-          <div className="overflow-hidden rounded-lg border border-stone-200 bg-stone-50">
-            <div className="border-b border-stone-200 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-stone-400">
+          <div className="overflow-hidden rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60">
+            <div className="border-b border-stone-200 dark:border-neutral-800 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-stone-400 dark:text-neutral-500">
               Loop map
             </div>
-            <div className="divide-y divide-stone-200">
+            <div className="divide-y divide-stone-200 dark:divide-neutral-800">
               {loops.map(loop => (
                 <div key={loop.name} className="grid gap-2 px-3 py-3 md:grid-cols-[150px_1fr]">
                   <div>
-                    <div className="text-sm font-medium text-stone-900">{loop.name}</div>
-                    <div className="mt-0.5 flex flex-wrap gap-1 text-[11px] text-stone-500">
+                    <div className="text-sm font-medium text-stone-900 dark:text-neutral-100">
+                      {loop.name}
+                    </div>
+                    <div className="mt-0.5 flex flex-wrap gap-1 text-[11px] text-stone-500 dark:text-neutral-400">
                       <span>{loop.enabled ? 'on' : 'off'}</span>
                       <span>{loop.cadence}</span>
                     </div>
                   </div>
-                  <div className="text-xs text-stone-600">
+                  <div className="text-xs text-stone-600 dark:text-neutral-300">
                     <div>{loop.work}</div>
-                    <div className="mt-1 font-mono text-[11px] text-stone-500">
+                    <div className="mt-1 font-mono text-[11px] text-stone-500 dark:text-neutral-400">
                       route: {loop.route}
                     </div>
-                    <div className="mt-1 text-stone-500">{loop.risk}</div>
+                    <div className="mt-1 text-stone-500 dark:text-neutral-400">{loop.risk}</div>
                   </div>
                 </div>
               ))}
@@ -1117,11 +1256,13 @@ const BackgroundLoopControls = ({
           </div>
         </div>
 
-        <div className="rounded-lg border border-stone-200 bg-white p-3">
+        <div className="rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-3">
           <div className="flex items-center justify-between gap-3">
             <div>
-              <div className="text-sm font-semibold text-stone-900">Recent usage ledger</div>
-              <div className="text-xs text-stone-500">
+              <div className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
+                Recent usage ledger
+              </div>
+              <div className="text-xs text-stone-500 dark:text-neutral-400">
                 Backend rows expose action/time today; source tags need backend support.
               </div>
             </div>
@@ -1129,7 +1270,7 @@ const BackgroundLoopControls = ({
               type="button"
               onClick={() => void refresh()}
               disabled={loading}
-              className="rounded-md border border-stone-200 px-2 py-1 text-xs font-medium text-stone-700 hover:bg-stone-50 disabled:opacity-50">
+              className="rounded-md border border-stone-200 dark:border-neutral-800 px-2 py-1 text-xs font-medium text-stone-700 dark:text-neutral-200 hover:bg-stone-50 dark:hover:bg-neutral-800/60 dark:bg-neutral-800/60 dark:hover:bg-neutral-800/60 disabled:opacity-50">
               Reload
             </button>
           </div>
@@ -1141,18 +1282,18 @@ const BackgroundLoopControls = ({
               detail={`resets ${formatDateTime(usage?.cycleEndsAt)}`}
             />
             <MetricTile
-              label="Week remaining"
+              label="Cycle remaining"
               value={usage ? formatUsd(usage.remainingUsd) : 'n/a'}
-              detail={usage ? `${formatUsd(usage.cycleLimit7day)} used` : undefined}
+              detail={usage ? `${formatUsd(usage.cycleSpentUsd)} used` : undefined}
             />
             <MetricTile
-              label="5h window"
-              value={
+              label="Cycle total spend"
+              value={usage ? formatUsd(usage.insights.totals.totalUsd) : 'n/a'}
+              detail={
                 usage
-                  ? `${formatUsd(usage.cycleLimit5hr)} / ${formatUsd(usage.fiveHourCapUsd)}`
-                  : 'n/a'
+                  ? `inference ${formatUsd(usage.insights.totals.inferenceUsd)} + integrations ${formatUsd(usage.insights.totals.integrationsUsd)}`
+                  : undefined
               }
-              detail={`resets ${formatDateTime(usage?.fiveHourResetsAt)}`}
             />
             <MetricTile
               label="Avg spend row"
@@ -1171,8 +1312,8 @@ const BackgroundLoopControls = ({
             />
           </div>
 
-          <div className="mt-3 rounded-lg border border-stone-200 bg-stone-50 p-3">
-            <div className="text-[10px] font-semibold uppercase tracking-wide text-stone-400">
+          <div className="mt-3 rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 p-3">
+            <div className="text-[10px] font-semibold uppercase tracking-wide text-stone-400 dark:text-neutral-500">
               Budget math
             </div>
             <div className="mt-2 grid gap-2">
@@ -1232,8 +1373,8 @@ const BackgroundLoopControls = ({
             </div>
           </div>
 
-          <div className="mt-3 rounded-lg border border-stone-200 bg-stone-50 p-3">
-            <div className="text-[10px] font-semibold uppercase tracking-wide text-stone-400">
+          <div className="mt-3 rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 p-3">
+            <div className="text-[10px] font-semibold uppercase tracking-wide text-stone-400 dark:text-neutral-500">
               Loop call budget
             </div>
             <div className="mt-2 grid gap-2">
@@ -1284,7 +1425,7 @@ const BackgroundLoopControls = ({
           </div>
 
           {latestSpend && (
-            <div className="mt-3 rounded-md border border-stone-200 bg-stone-50 px-3 py-2 text-xs text-stone-600">
+            <div className="mt-3 rounded-md border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 px-3 py-2 text-xs text-stone-600 dark:text-neutral-300">
               Latest spend: {formatUsd(spendAmount(latestSpend))} at{' '}
               {new Date(latestSpend.createdAt).toLocaleString()} ({latestSpend.action})
             </div>
@@ -1292,7 +1433,7 @@ const BackgroundLoopControls = ({
 
           <div className="mt-3 space-y-3">
             <div>
-              <div className="text-[10px] font-semibold uppercase tracking-wide text-stone-400">
+              <div className="text-[10px] font-semibold uppercase tracking-wide text-stone-400 dark:text-neutral-500">
                 Top actions
               </div>
               <div className="mt-1 space-y-1">
@@ -1300,21 +1441,23 @@ const BackgroundLoopControls = ({
                   actionSummary.map(([action, count, total]) => (
                     <div
                       key={action}
-                      className="flex items-center justify-between gap-2 text-xs text-stone-600">
+                      className="flex items-center justify-between gap-2 text-xs text-stone-600 dark:text-neutral-300">
                       <span className="truncate font-mono">{action}</span>
-                      <span className="shrink-0 text-stone-500">
+                      <span className="shrink-0 text-stone-500 dark:text-neutral-400">
                         {count} / {formatUsd(total)}
                       </span>
                     </div>
                   ))
                 ) : (
-                  <div className="text-xs text-stone-500">No spend rows loaded.</div>
+                  <div className="text-xs text-stone-500 dark:text-neutral-400">
+                    No spend rows loaded.
+                  </div>
                 )}
               </div>
             </div>
 
             <div>
-              <div className="text-[10px] font-semibold uppercase tracking-wide text-stone-400">
+              <div className="text-[10px] font-semibold uppercase tracking-wide text-stone-400 dark:text-neutral-500">
                 Top hours
               </div>
               <div className="mt-1 space-y-1">
@@ -1322,13 +1465,17 @@ const BackgroundLoopControls = ({
                   hourSummary.map(([hour, total]) => (
                     <div
                       key={hour}
-                      className="flex items-center justify-between gap-2 text-xs text-stone-600">
+                      className="flex items-center justify-between gap-2 text-xs text-stone-600 dark:text-neutral-300">
                       <span>{hour}</span>
-                      <span className="font-mono text-stone-500">{formatUsd(total)}</span>
+                      <span className="font-mono text-stone-500 dark:text-neutral-400">
+                        {formatUsd(total)}
+                      </span>
                     </div>
                   ))
                 ) : (
-                  <div className="text-xs text-stone-500">No hourly spend yet.</div>
+                  <div className="text-xs text-stone-500 dark:text-neutral-400">
+                    No hourly spend yet.
+                  </div>
                 )}
               </div>
             </div>
@@ -1389,17 +1536,25 @@ const WorkloadRow = ({
 
   const segmentBase =
     'flex-1 px-3 py-1.5 text-xs font-medium rounded-md transition-colors cursor-pointer';
-  const activeSegment = 'bg-white text-stone-900 shadow-subtle ring-1 ring-stone-200';
-  const inactiveSegment = 'text-stone-500 hover:text-stone-800';
+  const activeSegment =
+    'bg-white dark:bg-neutral-900 text-stone-900 dark:text-neutral-100 shadow-subtle ring-1 ring-stone-200 dark:ring-neutral-600';
+  const inactiveSegment =
+    'text-stone-500 dark:text-neutral-400 hover:text-stone-800 dark:text-neutral-100 dark:hover:text-neutral-200';
 
   return (
     <div className="flex items-center justify-between gap-3 py-3">
       <div className="min-w-0 flex-1">
-        <div className="text-sm font-medium text-stone-900">{workload.label}</div>
-        <div className="truncate text-xs text-stone-500">{workload.description}</div>
-        <div className="mt-0.5 font-mono text-[11px] text-stone-400 truncate">↳ {resolved}</div>
+        <div className="text-sm font-medium text-stone-900 dark:text-neutral-100">
+          {workload.label}
+        </div>
+        <div className="truncate text-xs text-stone-500 dark:text-neutral-400">
+          {workload.description}
+        </div>
+        <div className="mt-0.5 font-mono text-[11px] text-stone-400 dark:text-neutral-500 truncate">
+          ↳ {resolved}
+        </div>
       </div>
-      <div className="inline-flex shrink-0 items-center rounded-lg bg-stone-100 p-0.5">
+      <div className="inline-flex shrink-0 items-center rounded-lg bg-stone-100 dark:bg-neutral-800 p-0.5">
         <button
           type="button"
           onClick={() => onChange({ kind: 'openhuman' })}
@@ -1433,6 +1588,10 @@ interface CustomRoutingDialogProps {
 }
 
 type CustomDialogSource = { kind: 'cloud'; providerSlug: string } | { kind: 'local' };
+
+function humanizeModelId(id: string): string {
+  return id.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
 
 const CustomRoutingDialog = ({
   workload,
@@ -1469,18 +1628,75 @@ const CustomRoutingDialog = ({
     }
     return localModels[0]?.id ?? '';
   });
+  const [cloudModels, setCloudModels] = useState<ModelInfo[]>([]);
+  const [cloudModelsLoading, setCloudModelsLoading] = useState(false);
+  const [cloudModelsError, setCloudModelsError] = useState<string | null>(null);
+  const [modelsKey, setModelsKey] = useState(0);
+  // Optional temperature override for this workload. `null` = use provider/global default;
+  // a finite number means "send `temperature: X` upstream for this workload only".
+  const [temperature, setTemperature] = useState<number | null>(
+    initial.kind === 'cloud' || initial.kind === 'local' ? (initial.temperature ?? null) : null
+  );
 
   const selectedCloud =
     source?.kind === 'cloud' ? customCloud.find(c => c.slug === source.providerSlug) : undefined;
+
+  // Fetch available models whenever the selected cloud provider changes.
+  const selectedSlug = source?.kind === 'cloud' ? source.providerSlug : null;
+  useEffect(() => {
+    if (!selectedSlug) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setCloudModels([]);
+      setCloudModelsError(null);
+      return;
+    }
+    const provider = customCloud.find(c => c.slug === selectedSlug);
+    if (!provider) {
+      setCloudModels([]);
+      setCloudModelsError(null);
+      return;
+    }
+    let active = true;
+    setCloudModelsLoading(true);
+    setCloudModels([]);
+    setCloudModelsError(null);
+    console.debug('[ai-settings] fetching models for provider', provider.slug);
+    listProviderModels(provider.slug)
+      .then(ms => {
+        if (!active) return;
+        console.debug('[ai-settings] fetched', ms.length, 'models for', provider.slug);
+        setCloudModels(ms);
+        setCloudModelsLoading(false);
+      })
+      .catch((err: unknown) => {
+        if (!active) return;
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error('[ai-settings] listProviderModels failed for', provider.slug, ':', msg);
+        setCloudModelsError(msg);
+        setCloudModelsLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+    // customCloud is stable for the dialog's lifetime (prop doesn't change mid-open)
+    // modelsKey is the manual retry trigger
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedSlug, modelsKey]);
 
   const canSave = source !== null && model.trim().length > 0;
 
   const handleSave = () => {
     if (!source || !canSave) return;
+    const temp = temperature == null || !Number.isFinite(temperature) ? null : temperature;
     if (source.kind === 'cloud') {
-      onSubmit({ kind: 'cloud', providerSlug: source.providerSlug, model: model.trim() });
+      onSubmit({
+        kind: 'cloud',
+        providerSlug: source.providerSlug,
+        model: model.trim(),
+        temperature: temp,
+      });
     } else {
-      onSubmit({ kind: 'local', model: model.trim() });
+      onSubmit({ kind: 'local', model: model.trim(), temperature: temp });
     }
   };
 
@@ -1492,18 +1708,18 @@ const CustomRoutingDialog = ({
       aria-modal="true"
       aria-label={`Custom routing for ${workload.label}`}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
-      <div className="w-full max-w-md rounded-2xl border border-stone-200 bg-white p-6 shadow-soft">
+      <div className="w-full max-w-md rounded-2xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-6 shadow-soft">
         <div className="flex items-start justify-between gap-3 mb-4">
           <div>
-            <h3 className="text-base font-semibold text-stone-900">
+            <h3 className="text-base font-semibold text-stone-900 dark:text-neutral-100">
               {t('settings.ai.customRouting')}
             </h3>
-            <p className="mt-0.5 text-xs text-stone-500">{workload.label}</p>
+            <p className="mt-0.5 text-xs text-stone-500 dark:text-neutral-400">{workload.label}</p>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="rounded-md p-1 text-stone-400 hover:bg-stone-100 hover:text-stone-700">
+            className="rounded-md p-1 text-stone-400 dark:text-neutral-500 hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 dark:hover:bg-neutral-800/60 hover:text-stone-700 dark:hover:text-neutral-200 dark:text-neutral-200 dark:hover:text-neutral-200">
             <span className="sr-only">{t('common.close')}</span>
             <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path
@@ -1517,13 +1733,13 @@ const CustomRoutingDialog = ({
         </div>
 
         {noProviders ? (
-          <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+          <div className="rounded-lg border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 p-3 text-xs text-amber-800 dark:text-amber-200">
             {t('settings.ai.noCustomProviders')}
           </div>
         ) : (
           <div className="flex flex-col gap-4">
             <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-medium text-stone-700">
+              <label className="text-xs font-medium text-stone-700 dark:text-neutral-200">
                 {t('settings.ai.providerLabel')}
               </label>
               <select
@@ -1544,7 +1760,7 @@ const CustomRoutingDialog = ({
                     setModel('');
                   }
                 }}
-                className="rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm text-stone-900 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500">
+                className="rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500">
                 {customCloud.map(p => (
                   <option key={p.slug} value={`cloud:${p.slug}`}>
                     {p.label}
@@ -1555,17 +1771,63 @@ const CustomRoutingDialog = ({
             </div>
 
             <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-medium text-stone-700">
+              <label className="text-xs font-medium text-stone-700 dark:text-neutral-200">
                 {t('settings.ai.modelLabel')}
               </label>
               {source?.kind === 'local' ? (
                 <select
                   value={model}
                   onChange={e => setModel(e.target.value)}
-                  className="rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm text-stone-900 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500">
+                  className="rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500">
                   {localModels.map(m => (
                     <option key={m.id} value={m.id}>
                       {m.id}
+                    </option>
+                  ))}
+                </select>
+              ) : cloudModelsLoading ? (
+                <select
+                  disabled
+                  className="rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-400 dark:text-neutral-500 opacity-60 cursor-wait">
+                  <option>Loading models…</option>
+                </select>
+              ) : cloudModelsError ? (
+                <div className="space-y-1.5">
+                  <div className="rounded-lg border border-red-200 dark:border-red-500/30 bg-red-50 dark:bg-red-500/10 px-3 py-2 text-xs text-red-700 dark:text-red-300 font-mono break-all">
+                    {cloudModelsError}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setModelsKey(k => k + 1)}
+                      className="text-xs text-primary-600 dark:text-primary-400 hover:underline">
+                      Retry
+                    </button>
+                    <span className="text-xs text-stone-400 dark:text-neutral-500">
+                      or enter model id manually:
+                    </span>
+                  </div>
+                  <input
+                    type="text"
+                    value={model}
+                    onChange={e => setModel(e.target.value)}
+                    placeholder={selectedCloud ? `${selectedCloud.slug} model id` : 'model-id'}
+                    className="w-full rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm font-mono text-stone-900 dark:text-neutral-100 placeholder-stone-400 dark:placeholder-neutral-500 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+                  />
+                </div>
+              ) : cloudModels.length > 0 ? (
+                <select
+                  value={model}
+                  onChange={e => setModel(e.target.value)}
+                  className="rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500">
+                  {!model && <option value="">Select a model…</option>}
+                  {/* Keep existing value selectable even if the provider no longer lists it */}
+                  {model && !cloudModels.some(m => m.id === model) && (
+                    <option value={model}>{model}</option>
+                  )}
+                  {cloudModels.map(m => (
+                    <option key={m.id} value={m.id}>
+                      {humanizeModelId(m.id)} — {m.id}
                     </option>
                   ))}
                 </select>
@@ -1575,9 +1837,60 @@ const CustomRoutingDialog = ({
                   value={model}
                   onChange={e => setModel(e.target.value)}
                   placeholder={selectedCloud ? `${selectedCloud.slug} model id` : 'model-id'}
-                  className="rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-mono text-stone-900 placeholder-stone-400 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+                  className="rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm font-mono text-stone-900 dark:text-neutral-100 placeholder-stone-400 dark:placeholder-neutral-500 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
                 />
               )}
+            </div>
+
+            {/* Temperature override (optional). When unchecked, the workload
+                inherits the provider/global default temperature. */}
+            <div className="flex flex-col gap-1.5">
+              <label className="flex items-center justify-between gap-2 text-xs font-medium text-stone-700 dark:text-neutral-200">
+                <span className="inline-flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={temperature != null}
+                    onChange={e => setTemperature(e.target.checked ? 0.7 : null)}
+                    className="h-3.5 w-3.5 rounded border-stone-300 dark:border-neutral-700 text-primary-500 focus:ring-primary-500"
+                  />
+                  Temperature override
+                </span>
+                {temperature != null && (
+                  <span className="font-mono text-[11px] text-stone-500 dark:text-neutral-400">
+                    {temperature.toFixed(2)}
+                  </span>
+                )}
+              </label>
+              {temperature != null && (
+                <div className="flex items-center gap-2">
+                  <input
+                    type="range"
+                    aria-label="Temperature override (slider)"
+                    min={0}
+                    max={2}
+                    step={0.05}
+                    value={temperature}
+                    onChange={e => setTemperature(Number(e.target.value))}
+                    className="flex-1 accent-primary-500"
+                  />
+                  <input
+                    type="number"
+                    aria-label="Temperature override (value)"
+                    min={0}
+                    max={2}
+                    step={0.05}
+                    value={temperature}
+                    onChange={e => {
+                      const v = Number(e.target.value);
+                      if (Number.isFinite(v)) setTemperature(Math.max(0, Math.min(2, v)));
+                    }}
+                    className="w-16 rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 py-1 text-xs font-mono text-stone-900 dark:text-neutral-100 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+                  />
+                </div>
+              )}
+              <p className="text-[11px] text-stone-400 dark:text-neutral-500">
+                Lower = more deterministic. Leave unchecked to use the provider default.
+              </p>
             </div>
           </div>
         )}
@@ -1586,7 +1899,7 @@ const CustomRoutingDialog = ({
           <button
             type="button"
             onClick={onClose}
-            className="rounded-lg border border-stone-200 bg-white px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50">
+            className="rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-4 py-2 text-sm font-medium text-stone-700 dark:text-neutral-200 hover:bg-stone-50 dark:hover:bg-neutral-800/60 dark:bg-neutral-800/60 dark:hover:bg-neutral-800/60">
             {t('common.cancel')}
           </button>
           <button
@@ -1620,24 +1933,24 @@ const SaveBar = ({
   const { t } = useT();
   return (
     <div className="pointer-events-none sticky bottom-3 z-20 flex justify-center px-4">
-      <div className="pointer-events-auto flex w-full items-center gap-2 rounded-lg border border-stone-200 bg-white/95 px-3 py-2 shadow-float backdrop-blur-md animate-fade-up">
-        <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded bg-amber-50 text-amber-600">
+      <div className="pointer-events-auto flex w-full items-center gap-2 rounded-lg border border-stone-200 dark:border-neutral-800 bg-white/95 dark:bg-neutral-900/95 px-3 py-2 shadow-float backdrop-blur-md animate-fade-up">
+        <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded bg-amber-50 dark:bg-amber-500/10 text-amber-600 dark:text-amber-300">
           <LuCircleAlert className="h-3.5 w-3.5" />
         </div>
         <div className="min-w-0 flex-1">
-          <div className="text-xs font-medium text-stone-900">
+          <div className="text-xs font-medium text-stone-900 dark:text-neutral-100">
             {changeCount === 1
               ? t('settings.ai.unsavedChange')
               : `${String(changeCount)} ${t('settings.ai.unsavedChanges')}`}
           </div>
-          <div className="truncate font-mono text-[10px] text-stone-500">
+          <div className="truncate font-mono text-[10px] text-stone-500 dark:text-neutral-400">
             {diffSummary.slice(0, 2).join(' · ')}
             {diffSummary.length > 2 ? ` · +${diffSummary.length - 2}` : ''}
           </div>
         </div>
         <button
           onClick={onDiscard}
-          className="rounded-md border border-stone-200 px-2 py-1 text-xs font-medium text-stone-700 hover:bg-stone-50">
+          className="rounded-md border border-stone-200 dark:border-neutral-800 px-2 py-1 text-xs font-medium text-stone-700 dark:text-neutral-200 hover:bg-stone-50 dark:hover:bg-neutral-800/60 dark:bg-neutral-800/60 dark:hover:bg-neutral-800/60">
           {t('settings.ai.discard')}
         </button>
         <button
@@ -1665,8 +1978,11 @@ interface AIPanelProps {
 const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
   const { t } = useT();
   const { navigateBack, breadcrumbs } = useSettingsNavigation();
-  const { saved, draft, setDraft, isDirty, save, discard, loading, error, reload } =
+  const { saved, draft, setDraft, isDirty, save, persist, discard, loading, error, reload } =
     useAISettings();
+  // #1574 §4b: advisory re-embed modal, driven by the backend status RPC.
+  // Logic lives in a unit-testable hook (see useReembedBackfillModal).
+  const { reembed, handleSave, dismissReembed } = useReembedBackfillModal(save);
   const ollama = useOllamaStatus();
   const installed = useInstalledModels(ollama.snapshot);
   const [editing, setEditing] = useState<CloudProvider | 'new' | null>(null);
@@ -1692,12 +2008,12 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
       const a = saved.routing[w.id];
       const b = draft.routing[w.id];
       if (JSON.stringify(a) !== JSON.stringify(b)) {
-        const describe = (r: ProviderRef) =>
-          r.kind === 'openhuman'
-            ? 'openhuman'
-            : r.kind === 'cloud'
-              ? `${r.providerSlug}:${r.model}`
-              : `local:${r.model}`;
+        const describe = (r: ProviderRef) => {
+          if (r.kind === 'openhuman') return 'openhuman';
+          const tempSuffix = r.temperature != null ? `@${r.temperature.toFixed(2)}` : '';
+          if (r.kind === 'cloud') return `${r.providerSlug}:${r.model}${tempSuffix}`;
+          return `local:${r.model}${tempSuffix}`;
+        };
         out.push(`${w.label} → ${describe(b)}`);
       }
     }
@@ -1724,18 +2040,24 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
             setup). Everything the user needs to wire a model up.
             ═══════════════════════════════════════════════════════════════ */}
         <div className="space-y-4">
-          <div className="border-b border-stone-200 pb-2">
-            <h2 className="text-base font-semibold text-stone-900">
+          <div className="border-b border-stone-200 dark:border-neutral-800 pb-2">
+            <h2 className="text-base font-semibold text-stone-900 dark:text-neutral-100">
               {t('settings.ai.llmProviders')}
             </h2>
-            <p className="text-xs text-stone-500 mt-0.5">{t('settings.ai.llmProvidersDesc')}</p>
+            <p className="text-xs text-stone-500 dark:text-neutral-400 mt-0.5">
+              {t('settings.ai.llmProvidersDesc')}
+            </p>
           </div>
 
           {/* ─── Provider chip-toggle list ────────────────────────────────── */}
           <section className="space-y-3">
-            {loading && <div className="text-xs text-stone-500">{t('common.loading')}</div>}
+            {loading && (
+              <div className="text-xs text-stone-500 dark:text-neutral-400">
+                {t('common.loading')}
+              </div>
+            )}
             {error && (
-              <div className="rounded-md border border-coral-200 bg-coral-50 px-3 py-2 text-xs text-coral-700">
+              <div className="rounded-md border border-coral-200 dark:border-coral-500/30 bg-coral-50 dark:bg-coral-500/10 px-3 py-2 text-xs text-coral-700 dark:text-coral-300">
                 {error}
               </div>
             )}
@@ -1821,10 +2143,10 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
                           setPendingLocalLabel(label);
                         }
                       }}
-                      className={`relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors disabled:cursor-wait disabled:opacity-60 ${enabled ? 'bg-primary-500' : 'bg-stone-300'}`}>
+                      className={`relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors disabled:cursor-wait disabled:opacity-60 ${enabled ? 'bg-primary-500' : 'bg-stone-300 dark:bg-neutral-700'}`}>
                       <span
                         aria-hidden
-                        className={`inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform ${enabled ? 'translate-x-3.5' : 'translate-x-0.5'}`}
+                        className={`inline-block h-3 w-3 transform rounded-full bg-white dark:bg-neutral-900 shadow transition-transform ${enabled ? 'translate-x-3.5' : 'translate-x-0.5'}`}
                       />
                     </button>
                   </div>
@@ -1841,18 +2163,22 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
             a popup to choose provider + model).
             ═══════════════════════════════════════════════════════════════ */}
         <div className="space-y-4">
-          <div className="border-b border-stone-200 pb-2">
-            <h2 className="text-base font-semibold text-stone-900">{t('settings.ai.routing')}</h2>
-            <p className="text-xs text-stone-500 mt-0.5">{t('settings.ai.routingDesc')}</p>
+          <div className="border-b border-stone-200 dark:border-neutral-800 pb-2">
+            <h2 className="text-base font-semibold text-stone-900 dark:text-neutral-100">
+              {t('settings.ai.routing')}
+            </h2>
+            <p className="text-xs text-stone-500 dark:text-neutral-400 mt-0.5">
+              {t('settings.ai.routingDesc')}
+            </p>
           </div>
 
           <section className="space-y-3">
-            <div className="overflow-hidden rounded-lg border border-stone-200 bg-stone-50 px-3">
+            <div className="overflow-hidden rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 px-3">
               <div className="pt-3">
-                <div className="text-[10px] font-semibold uppercase tracking-wide text-stone-400">
+                <div className="text-[10px] font-semibold uppercase tracking-wide text-stone-400 dark:text-neutral-500">
                   {t('settings.ai.workloadGroupChat')}
                 </div>
-                <div className="divide-y divide-stone-200">
+                <div className="divide-y divide-stone-200 dark:divide-neutral-800">
                   {chatRows.map(w => (
                     <WorkloadRow
                       key={w.id}
@@ -1868,10 +2194,10 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
                 </div>
               </div>
               <div className="pb-3 pt-3">
-                <div className="text-[10px] font-semibold uppercase tracking-wide text-stone-400">
+                <div className="text-[10px] font-semibold uppercase tracking-wide text-stone-400 dark:text-neutral-500">
                   {t('settings.ai.workloadGroupBackground')}
                 </div>
-                <div className="divide-y divide-stone-200">
+                <div className="divide-y divide-stone-200 dark:divide-neutral-800">
                   {bgRows.map(w => (
                     <WorkloadRow
                       key={w.id}
@@ -1888,9 +2214,9 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
               </div>
             </div>
 
-            <div className="text-[11px] text-stone-500">
+            <div className="text-[11px] text-stone-500 dark:text-neutral-400">
               {t('settings.ai.defaultResolvesTo')}{' '}
-              <span className="font-mono text-stone-700">OpenHuman</span>.
+              <span className="font-mono text-stone-700 dark:text-neutral-200">OpenHuman</span>.
             </div>
           </section>
         </div>
@@ -1903,10 +2229,26 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
         <SaveBar
           diffSummary={diffSummary}
           changeCount={diffSummary.length}
-          onSave={() => void save()}
+          onSave={() => void handleSave()}
           onDiscard={discard}
         />
       )}
+
+      <ConfirmationModal
+        modal={{
+          isOpen: reembed.open,
+          title: 'Re-indexing memory',
+          message:
+            `Embeddings are being reprocessed. ${reembed.pending} memory item(s) ` +
+            `are being re-embedded under the current model — semantic recall is ` +
+            `reduced until this finishes. Keyword search keeps working, and ` +
+            `re-embedding continues in the background if you close this.`,
+          confirmText: 'OK',
+          onConfirm: dismissReembed,
+          onCancel: dismissReembed,
+        }}
+        onClose={dismissReembed}
+      />
 
       {editing && (
         <CloudProviderEditor
@@ -1927,18 +2269,54 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
                 id,
                 maskedKey: maskKeyLabel(apiKey ? true : next.maskedKey.startsWith('••••')),
               };
-              // Persist the credential BEFORE mutating draft, so a key-write
-              // failure doesn't leave the config referencing a provider with
-              // no stored key.
+
+              // Snapshot the prior persisted cloud_providers list so we can
+              // restore it if the live probe fails.
+              const priorWireProviders = saved.cloudProviders.map(p => ({
+                id: p.id,
+                slug: p.slug,
+                label: p.label,
+                endpoint: p.endpoint,
+                auth_style: p.authStyle,
+              }));
+
+              // Persist the credential BEFORE the probe so the factory has it
+              // available. Let setCloudProviderKey throw — the editor's
+              // button-click handler catches and surfaces the error inline.
               if (apiKey && upserted.slug !== 'openhuman') {
+                await setCloudProviderKey(upserted.slug, apiKey);
+              }
+
+              // Live verification — flush the new cloud_providers list and
+              // call `/models` through the Rust controller. Skip for the
+              // OpenHuman backend (session JWT, no probe-able endpoint).
+              if (upserted.slug !== 'openhuman') {
+                const list =
+                  editing === 'new'
+                    ? [...draft.cloudProviders, upserted]
+                    : draft.cloudProviders.map(p => (p.id === editing.id ? upserted : p));
+                const nextWireProviders = list
+                  .filter(p => !['', 'cloud', 'openhuman', 'pid'].includes(p.slug))
+                  .map(p => ({
+                    id: p.id,
+                    slug: p.slug,
+                    label: p.label,
+                    endpoint: p.endpoint,
+                    auth_style: p.authStyle,
+                  }));
+                await flushCloudProviders(nextWireProviders);
                 try {
-                  await setCloudProviderKey(upserted.slug, apiKey);
-                } catch (err) {
-                  const msg = err instanceof Error ? err.message : String(err);
-                  console.warn('[ai-settings] setCloudProviderKey failed', msg);
-                  return;
+                  await listProviderModels(upserted.slug);
+                } catch (probeErr) {
+                  await flushCloudProviders(priorWireProviders).catch(() => {});
+                  if (apiKey) {
+                    await clearCloudProviderKey(upserted.slug).catch(() => {});
+                  }
+                  const msg = probeErr instanceof Error ? probeErr.message : String(probeErr);
+                  throw new Error(`Could not reach ${upserted.label}: ${msg}`);
                 }
               }
+
               const list =
                 editing === 'new'
                   ? [...draft.cloudProviders, upserted]
@@ -1973,8 +2351,12 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
               localModels={installed}
               ollamaRunning={ollama.state === 'running'}
               onClose={() => setCustomDialogFor(null)}
-              onSubmit={next => {
-                updateRouting(customDialogFor, next);
+              onSubmit={async next => {
+                const nextDraft = {
+                  ...draft,
+                  routing: { ...draft.routing, [customDialogFor]: next },
+                };
+                await persist(nextDraft);
                 setCustomDialogFor(null);
               }}
             />
@@ -1985,40 +2367,114 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
         <ProviderKeyDialog
           slug={keyDialogFor}
           label={pendingLocalLabel ?? BUILTIN_PROVIDER_META[keyDialogFor]?.label ?? keyDialogFor}
+          isLocalRuntime={Boolean(pendingLocalLabel)}
           onCancel={() => {
             setKeyDialogFor(null);
             setPendingLocalLabel(null);
           }}
-          onSubmit={async apiKey => {
+          onSubmit={async value => {
             const slug = keyDialogFor;
             const localLabel = pendingLocalLabel;
+            const isLocalRuntime = Boolean(localLabel);
             setBusyAction(
               `toggle-${localLabel ? localLabel.toLowerCase().replace(/\s/g, '') : slug}`
             );
             try {
-              // For LM Studio / Ollama the dialog's "API key" field is
-              // actually the local endpoint URL, so persist it as endpoint
-              // and skip the credential save (no remote key to store).
-              const isLocalRuntime = Boolean(localLabel);
+              const trimmed = value.trim();
+              // Normalize local-runtime endpoints so the cloud_providers entry
+              // always carries the OpenAI-compatible `/v1` path that the
+              // `list_configured_models` probe expects. Without this,
+              // `http://host:11434` would pass validation, be stored verbatim,
+              // and silently fail model discovery until the user manually
+              // appended `/v1` — confusing because the UI would still mark the
+              // provider connected (caught in review).
+              const endpoint = isLocalRuntime
+                ? (() => {
+                    const url = new URL(trimmed); // throws on malformed → caught above
+                    if (!/^https?:$/.test(url.protocol)) {
+                      throw new Error('Endpoint must start with http:// or https://');
+                    }
+                    if (url.pathname === '' || url.pathname === '/') {
+                      url.pathname = '/v1';
+                    }
+                    return url.toString().replace(/\/$/, '');
+                  })()
+                : defaultEndpointFor(slug);
               const upserted: CloudProvider = {
                 id: `p_${slug}_${Math.random().toString(36).slice(2, 7)}`,
                 slug,
                 label: localLabel ?? BUILTIN_PROVIDER_META[slug]?.label ?? slug,
-                endpoint: isLocalRuntime ? apiKey.trim() : defaultEndpointFor(slug),
+                endpoint,
                 authStyle: authStyleForSlug(slug),
                 maskedKey: maskKeyLabel(true),
               };
-              // Persist the credential BEFORE mutating draft, so a key-write
-              // failure can't leave config + secrets out of sync.
+
+              // Snapshot the prior persisted cloud_providers list so we can
+              // roll back to it if the live probe fails. `saved` reflects what
+              // is currently on disk (the eager-flush effect keeps it in sync
+              // with `draft`), so this is the right baseline to restore to.
+              const priorWireProviders = saved.cloudProviders.map(p => ({
+                id: p.id,
+                slug: p.slug,
+                label: p.label,
+                endpoint: p.endpoint,
+                auth_style: p.authStyle,
+              }));
+
+              // Persist the credential / endpoint BEFORE the probe, so the
+              // factory has everything it needs to actually answer it. Each
+              // step short-circuits and surfaces its own error via throw —
+              // ProviderKeyDialog.handleSave catches and keeps the dialog open
+              // so the user can fix the value and retry.
               if (!isLocalRuntime && slug !== 'openhuman') {
+                await setCloudProviderKey(slug, trimmed);
+              } else if (isLocalRuntime && slug === 'ollama') {
+                // The Rust Ollama branch reads `config.local_ai.base_url`
+                // (not `cloud_providers[].endpoint`) when building the chat
+                // provider — persist it eagerly so chat routing actually hits
+                // the user-chosen host. Strip a trailing `/v1` since
+                // `make_ollama_provider` appends `/v1` itself.
+                const baseUrl = endpoint.replace(/\/v1\/?$/, '');
+                await openhumanUpdateLocalAiSettings({
+                  base_url: baseUrl,
+                  provider: 'ollama',
+                  runtime_enabled: true,
+                  opt_in_confirmed: true,
+                });
+              }
+
+              // Live verification: flush the new cloud_providers list to disk
+              // and call `/models` through the Rust controller. A reachable
+              // endpoint + valid auth header is the strongest check we can
+              // make without burning tokens. Skip the probe for the
+              // OpenHuman backend (session JWT, no /models endpoint to hit).
+              if (slug !== 'openhuman') {
+                const nextWireProviders = [
+                  ...priorWireProviders.filter(p => p.slug !== slug),
+                  {
+                    id: upserted.id,
+                    slug: upserted.slug,
+                    label: upserted.label,
+                    endpoint: upserted.endpoint,
+                    auth_style: upserted.authStyle,
+                  },
+                ];
+                await flushCloudProviders(nextWireProviders);
                 try {
-                  await setCloudProviderKey(slug, apiKey);
-                } catch (err) {
-                  const msg = err instanceof Error ? err.message : String(err);
-                  console.warn('[ai-settings] setCloudProviderKey failed', msg);
-                  return;
+                  await listProviderModels(slug);
+                } catch (probeErr) {
+                  // Roll back so the UI / on-disk state never reflects a
+                  // provider we couldn't actually reach. The user sees the
+                  // error in the dialog and the chip stays in the OFF state.
+                  await flushCloudProviders(priorWireProviders).catch(() => {});
+                  if (!isLocalRuntime && slug !== 'openhuman') {
+                    await clearCloudProviderKey(slug).catch(() => {});
+                  }
+                  const msg = probeErr instanceof Error ? probeErr.message : String(probeErr);
+                  throw new Error(`Could not reach ${upserted.label}: ${msg}`);
                 }
               }
+
               setDraft({ ...draft, cloudProviders: [...draft.cloudProviders, upserted] });
               setKeyDialogFor(null);
               setPendingLocalLabel(null);
@@ -2063,26 +2519,27 @@ const CloudProviderEditor = ({
   const [endpoint, setEndpoint] = useState(initial?.endpoint ?? defaultEndpointFor(defaultSlug));
   const [apiKey, setApiKey] = useState('');
   const [saving, setSaving] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const isOpenHuman = slug === 'openhuman';
   const hasExistingKey = (initial?.maskedKey ?? '').startsWith('••••');
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-900/30 p-4">
-      <div className="w-full max-w-md rounded-lg border border-stone-200 bg-white shadow-float">
-        <div className="border-b border-stone-200 px-4 py-3">
-          <div className="text-sm font-semibold text-stone-900">
+      <div className="w-full max-w-md rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 shadow-float">
+        <div className="border-b border-stone-200 dark:border-neutral-800 px-4 py-3">
+          <div className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
             {initial
               ? `${t('settings.ai.editProvider')} ${initial.label}`
               : t('settings.ai.addCloudProvider')}
           </div>
-          <div className="mt-0.5 text-xs text-stone-500">
+          <div className="mt-0.5 text-xs text-stone-500 dark:text-neutral-400">
             {t('settings.ai.apiKeysEncrypted')}{' '}
             <span className="font-mono">auth-profiles.json</span>.
           </div>
         </div>
         <div className="space-y-3 px-4 py-3">
           <div>
-            <label className="text-[10px] font-semibold uppercase tracking-wide text-stone-500">
+            <label className="text-[10px] font-semibold uppercase tracking-wide text-stone-500 dark:text-neutral-400">
               Provider slug
             </label>
             <select
@@ -2096,7 +2553,7 @@ const CloudProviderEditor = ({
                 }
               }}
               disabled={!!initial}
-              className="mt-1 w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 disabled:opacity-60 focus:border-primary-400 focus:outline-none focus:ring-1 focus:ring-primary-200">
+              className="mt-1 w-full rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 disabled:opacity-60 focus:border-primary-400 focus:outline-none focus:ring-1 focus:ring-primary-200">
               {(['openai', 'anthropic', 'openrouter', 'custom'] as const)
                 .filter(s => s === slug || !existingSlugs.includes(s))
                 .map(s => (
@@ -2107,36 +2564,36 @@ const CloudProviderEditor = ({
             </select>
           </div>
           <div>
-            <label className="text-[10px] font-semibold uppercase tracking-wide text-stone-500">
+            <label className="text-[10px] font-semibold uppercase tracking-wide text-stone-500 dark:text-neutral-400">
               Display label
             </label>
             <input
               value={label}
               onChange={e => setLabel(e.target.value)}
-              className="mt-1 w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 focus:border-primary-400 focus:outline-none focus:ring-1 focus:ring-primary-200"
+              className="mt-1 w-full rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 placeholder:text-stone-400 dark:placeholder:text-neutral-500 dark:text-neutral-500 dark:placeholder:text-neutral-500 focus:border-primary-400 focus:outline-none focus:ring-1 focus:ring-primary-200"
               placeholder="My Provider"
             />
           </div>
           <div>
-            <label className="text-[10px] font-semibold uppercase tracking-wide text-stone-500">
+            <label className="text-[10px] font-semibold uppercase tracking-wide text-stone-500 dark:text-neutral-400">
               Endpoint
             </label>
             <input
               value={endpoint}
               onChange={e => setEndpoint(e.target.value)}
               disabled={isOpenHuman}
-              className="mt-1 w-full rounded-lg border border-stone-200 bg-white px-3 py-2 font-mono text-xs text-stone-900 placeholder:text-stone-400 disabled:opacity-60 focus:border-primary-400 focus:outline-none focus:ring-1 focus:ring-primary-200"
+              className="mt-1 w-full rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 font-mono text-xs text-stone-900 dark:text-neutral-100 placeholder:text-stone-400 dark:placeholder:text-neutral-500 dark:text-neutral-500 dark:placeholder:text-neutral-500 disabled:opacity-60 focus:border-primary-400 focus:outline-none focus:ring-1 focus:ring-primary-200"
               placeholder="https://api.example.com/v1"
             />
           </div>
           {!isOpenHuman && (
             <div>
-              <label className="flex items-center justify-between text-[10px] font-semibold uppercase tracking-wide text-stone-500">
+              <label className="flex items-center justify-between text-[10px] font-semibold uppercase tracking-wide text-stone-500 dark:text-neutral-400">
                 <span>API key</span>
                 {hasExistingKey && (
                   <button
                     onClick={() => void onClearKey(slug)}
-                    className="text-[10px] font-medium normal-case text-coral-600 hover:text-coral-700">
+                    className="text-[10px] font-medium normal-case text-coral-600 dark:text-coral-300 hover:text-coral-700 dark:text-coral-300">
                     {t('settings.ai.clearStoredKey')}
                   </button>
                 )}
@@ -2145,22 +2602,28 @@ const CloudProviderEditor = ({
                 type="password"
                 value={apiKey}
                 onChange={e => setApiKey(e.target.value)}
-                className="mt-1 w-full rounded-lg border border-stone-200 bg-white px-3 py-2 font-mono text-xs text-stone-900 placeholder:text-stone-400 focus:border-primary-400 focus:outline-none focus:ring-1 focus:ring-primary-200"
+                className="mt-1 w-full rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 font-mono text-xs text-stone-900 dark:text-neutral-100 placeholder:text-stone-400 dark:placeholder:text-neutral-500 dark:text-neutral-500 dark:placeholder:text-neutral-500 focus:border-primary-400 focus:outline-none focus:ring-1 focus:ring-primary-200"
                 placeholder={hasExistingKey ? 'Leave blank to keep existing key' : 'sk-...'}
               />
             </div>
           )}
+          {submitError && (
+            <div className="rounded-md border border-red-200 dark:border-red-500/30 bg-red-50 dark:bg-red-500/10 px-3 py-2 text-xs text-red-700 dark:text-red-300 break-words">
+              {submitError}
+            </div>
+          )}
         </div>
-        <div className="flex items-center justify-end gap-2 border-t border-stone-200 px-4 py-3">
+        <div className="flex items-center justify-end gap-2 border-t border-stone-200 dark:border-neutral-800 px-4 py-3">
           <button
             onClick={onClose}
             disabled={saving}
-            className="rounded-lg border border-stone-200 px-3 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-50 disabled:opacity-50">
+            className="rounded-lg border border-stone-200 dark:border-neutral-800 px-3 py-1.5 text-xs font-medium text-stone-700 dark:text-neutral-200 hover:bg-stone-50 dark:hover:bg-neutral-800/60 dark:bg-neutral-800/60 dark:hover:bg-neutral-800/60 disabled:opacity-50">
             {t('common.cancel')}
           </button>
           <button
             onClick={async () => {
               setSaving(true);
+              setSubmitError(null);
               try {
                 await onSubmit(
                   {
@@ -2173,6 +2636,11 @@ const CloudProviderEditor = ({
                   },
                   apiKey.trim()
                 );
+              } catch (err) {
+                // Caller throws when the live /models probe rejects — surface
+                // the failure inline and keep the dialog open so the user can
+                // fix the key/URL and retry.
+                setSubmitError(err instanceof Error ? err.message : String(err));
               } finally {
                 setSaving(false);
               }
@@ -2201,6 +2669,13 @@ function defaultEndpointFor(slug: string): string {
       return 'https://api.anthropic.com/v1';
     case 'openrouter':
       return 'https://openrouter.ai/api/v1';
+    case 'ollama':
+      // Ollama exposes an OpenAI-compatible endpoint at /v1; the bare host is
+      // also accepted by the Rust factory (it appends /v1 internally for chat).
+      // For the /models probe we want the OpenAI-compat path.
+      return 'http://localhost:11434/v1';
+    case 'lmstudio':
+      return 'http://localhost:1234/v1';
     default:
       return '';
   }

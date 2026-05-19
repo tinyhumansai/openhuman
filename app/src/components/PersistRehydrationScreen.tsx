@@ -54,10 +54,14 @@ function PersistRehydrationScreen() {
   };
 
   return (
-    <div className="fixed inset-0 flex items-center justify-center bg-canvas-50 p-6">
-      <div className="max-w-sm w-full space-y-4 rounded-xl border border-stone-200 bg-white p-6 shadow-soft text-center">
-        <p className="text-sm font-medium text-stone-900">{t('app.persistRehydration.heading')}</p>
-        <p className="text-xs text-stone-500 leading-relaxed">{t('app.persistRehydration.body')}</p>
+    <div className="fixed inset-0 flex items-center justify-center bg-canvas-50 dark:bg-neutral-950 p-6">
+      <div className="max-w-sm w-full space-y-4 rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-6 shadow-soft text-center">
+        <p className="text-sm font-medium text-stone-900 dark:text-neutral-100">
+          {t('app.persistRehydration.heading')}
+        </p>
+        <p className="text-xs text-stone-500 dark:text-neutral-400 leading-relaxed">
+          {t('app.persistRehydration.body')}
+        </p>
         <button
           type="button"
           onClick={handleReset}

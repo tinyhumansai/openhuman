@@ -506,7 +506,7 @@ export default function ComposioConnectModal({
       aria-labelledby="composio-setup-title">
       <div
         ref={modalRef}
-        className="bg-white border border-stone-200 rounded-3xl shadow-large w-full max-w-[460px] overflow-hidden animate-fade-up focus:outline-none focus:ring-0"
+        className="bg-white dark:bg-neutral-900 border border-stone-200 dark:border-neutral-800 rounded-3xl shadow-large w-full max-w-[460px] overflow-hidden animate-fade-up focus:outline-none focus:ring-0"
         style={{
           animationDuration: '200ms',
           animationTimingFunction: 'cubic-bezier(0.25, 0.46, 0.45, 0.94)',
@@ -515,21 +515,25 @@ export default function ComposioConnectModal({
         tabIndex={-1}
         onClick={e => e.stopPropagation()}>
         {/* Header */}
-        <div className="p-4 border-b border-stone-200">
+        <div className="p-4 border-b border-stone-200 dark:border-neutral-800">
           <div className="flex items-start justify-between">
             <div className="flex-1 min-w-0 pr-2">
               <div className="flex items-center gap-2">
                 {toolkit.icon}
-                <h2 id="composio-setup-title" className="text-base font-semibold text-stone-900">
+                <h2
+                  id="composio-setup-title"
+                  className="text-base font-semibold text-stone-900 dark:text-neutral-100">
                   {headerTitle}
                 </h2>
               </div>
-              <p className="text-xs text-stone-400 mt-1.5 line-clamp-2">{toolkit.description}</p>
+              <p className="text-xs text-stone-400 dark:text-neutral-500 mt-1.5 line-clamp-2">
+                {toolkit.description}
+              </p>
             </div>
             <button
               type="button"
               onClick={onClose}
-              className="p-1 text-stone-400 hover:text-stone-900 transition-colors rounded-lg hover:bg-stone-100 flex-shrink-0"
+              className="p-1 text-stone-400 dark:text-neutral-500 hover:text-stone-900 dark:hover:text-neutral-100 dark:text-neutral-100 dark:hover:text-neutral-100 transition-colors rounded-lg hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 dark:hover:bg-neutral-800/60 flex-shrink-0"
               aria-label={t('common.close')}>
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path
@@ -547,11 +551,11 @@ export default function ComposioConnectModal({
         <div className="p-4 space-y-3">
           {phase === 'idle' && (
             <>
-              <p className="text-sm text-stone-600">
+              <p className="text-sm text-stone-600 dark:text-neutral-300">
                 {`${t('composio.connect.idleDescription')} ${toolkit.name} ${t('composio.connect.idleDescriptionSuffix')}`}
               </p>
-              <div className="rounded-xl border border-stone-200 bg-stone-50 p-3">
-                <p className="mt-1 text-xs leading-relaxed text-stone-600">
+              <div className="rounded-xl border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 p-3">
+                <p className="mt-1 text-xs leading-relaxed text-stone-600 dark:text-neutral-300">
                   {toolkit.name} {t('composio.connect.permissionsNote')}{' '}
                   <span className="font-medium">{toolkit.permissionLabel}</span>.{' '}
                   {t('composio.connect.permissionsNoteSuffix')}
@@ -561,7 +565,7 @@ export default function ComposioConnectModal({
                 <div className="space-y-1.5">
                   <label
                     htmlFor="waba-id-input"
-                    className="block text-xs font-medium text-stone-700">
+                    className="block text-xs font-medium text-stone-700 dark:text-neutral-200">
                     {t('composio.connect.wabaIdLabel')}
                     <span className="ml-1 text-coral-500">*</span>
                   </label>
@@ -574,9 +578,9 @@ export default function ComposioConnectModal({
                       if (error) setError(null);
                     }}
                     placeholder="e.g. 123456789012345"
-                    className="w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-100"
+                    className="w-full rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 placeholder:text-stone-400 dark:placeholder:text-neutral-500 focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-100"
                   />
-                  <p className="text-[11px] leading-relaxed text-stone-400">
+                  <p className="text-[11px] leading-relaxed text-stone-400 dark:text-neutral-500">
                     Find it via <span className="font-mono">GET /me/businesses</span> then{' '}
                     <span className="font-mono">
                       GET /&#123;business_id&#125;/owned_whatsapp_business_accounts
@@ -607,7 +611,7 @@ export default function ComposioConnectModal({
 
           {phase === 'needs-subdomain' && (
             <>
-              <p className="text-sm text-stone-600">
+              <p className="text-sm text-stone-600 dark:text-neutral-300">
                 {`${t('composio.connect.needsSubdomain')} ${toolkit.name}, ${t('composio.connect.needsSubdomainSuffix')}`}
               </p>
               <AtlassianSubdomainInput
@@ -632,19 +636,21 @@ export default function ComposioConnectModal({
                   setSubdomainError(null);
                   setError(null);
                 }}
-                className="w-full rounded-xl border border-stone-200 bg-white text-stone-600 text-xs font-medium py-2 hover:bg-stone-50 transition-colors">
+                className="w-full rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-stone-600 dark:text-neutral-300 text-xs font-medium py-2 hover:bg-stone-50 dark:hover:bg-neutral-800/60 transition-colors">
                 {t('common.cancel')}
               </button>
             </>
           )}
 
           {phase === 'authorizing' && (
-            <p className="text-sm text-stone-500">{t('composio.connect.requestingUrl')}</p>
+            <p className="text-sm text-stone-500 dark:text-neutral-400">
+              {t('composio.connect.requestingUrl')}
+            </p>
           )}
 
           {phase === 'waiting' && (
             <>
-              <div className="flex items-center gap-2 text-sm text-stone-700">
+              <div className="flex items-center gap-2 text-sm text-stone-700 dark:text-neutral-200">
                 <div className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
                 {`${t('composio.connect.waitingFor')} ${toolkit.name} ${t('composio.connect.oauthComplete')}`}
               </div>
@@ -652,11 +658,13 @@ export default function ComposioConnectModal({
                 <button
                   type="button"
                   onClick={() => void openUrl(connectUrl)}
-                  className="w-full rounded-xl border border-stone-200 bg-stone-50 text-stone-700 text-xs font-medium py-2 hover:bg-stone-100 transition-colors">
+                  className="w-full rounded-xl border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 text-stone-700 dark:text-neutral-200 text-xs font-medium py-2 hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 transition-colors">
                   {t('composio.connect.reopenBrowser')}
                 </button>
               )}
-              <p className="text-xs text-stone-400">{t('composio.connect.waitingHint')}</p>
+              <p className="text-xs text-stone-400 dark:text-neutral-500">
+                {t('composio.connect.waitingHint')}
+              </p>
             </>
           )}
 
@@ -688,7 +696,7 @@ export default function ComposioConnectModal({
                 <div>
                   {`${toolkit.name} ${t('composio.connect.isConnected')}`} &nbsp;
                   {activeConnection && deriveConnectionLabel(activeConnection) && (
-                    <span className="text-[11px] text-stone-400 font-mono">
+                    <span className="text-[11px] text-stone-400 dark:text-neutral-500 font-mono">
                       ({deriveConnectionLabel(activeConnection)})
                     </span>
                   )}
@@ -725,7 +733,9 @@ export default function ComposioConnectModal({
           )}
 
           {phase === 'disconnecting' && (
-            <p className="text-sm text-stone-500">{t('composio.connect.disconnecting')}</p>
+            <p className="text-sm text-stone-500 dark:text-neutral-400">
+              {t('composio.connect.disconnecting')}
+            </p>
           )}
 
           {phase === 'error' && (
@@ -741,7 +751,7 @@ export default function ComposioConnectModal({
                   );
                   setError(null);
                 }}
-                className="w-full rounded-xl border border-stone-200 bg-white text-stone-700 text-sm font-medium py-2 hover:bg-stone-50 transition-colors">
+                className="w-full rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-stone-700 dark:text-neutral-200 text-sm font-medium py-2 hover:bg-stone-50 dark:hover:bg-neutral-800/60 transition-colors">
                 {t('common.dismiss')}
               </button>
             </>
@@ -790,12 +800,14 @@ function ScopeToggles({ scopes, savingScope, onToggle, error }: ScopeTogglesProp
   const loading = scopes === null;
 
   return (
-    <div className="border-t border-stone-100 pt-3 mt-1 space-y-2">
+    <div className="border-t border-stone-100 dark:border-neutral-800 pt-3 mt-1 space-y-2">
       <div className="flex items-baseline justify-between">
-        <h3 className="text-xs font-semibold text-stone-700 uppercase tracking-wide">
+        <h3 className="text-xs font-semibold text-stone-700 dark:text-neutral-200 uppercase tracking-wide">
           {t('composio.connect.permissions')}
         </h3>
-        <p className="text-[10px] text-stone-400">{t('composio.connect.permissionsDefault')}</p>
+        <p className="text-[10px] text-stone-400 dark:text-neutral-500">
+          {t('composio.connect.permissionsDefault')}
+        </p>
       </div>
       <ul className="space-y-1.5">
         {SCOPE_ROWS.map(row => {
@@ -806,10 +818,14 @@ function ScopeToggles({ scopes, savingScope, onToggle, error }: ScopeTogglesProp
           return (
             <li
               key={row.key}
-              className="flex items-start justify-between gap-3 rounded-lg px-2 py-1.5 hover:bg-stone-50">
+              className="flex items-start justify-between gap-3 rounded-lg px-2 py-1.5 hover:bg-stone-50 dark:hover:bg-neutral-800/60">
               <div className="min-w-0 flex-1">
-                <span className="text-sm font-medium text-stone-900">{rowLabel}</span>
-                <p className="text-[11px] text-stone-400 leading-snug">{rowHint}</p>
+                <span className="text-sm font-medium text-stone-900 dark:text-neutral-100">
+                  {rowLabel}
+                </span>
+                <p className="text-[11px] text-stone-400 dark:text-neutral-500 leading-snug">
+                  {rowHint}
+                </p>
               </div>
               <button
                 type="button"
@@ -822,7 +838,7 @@ function ScopeToggles({ scopes, savingScope, onToggle, error }: ScopeTogglesProp
                   enabled ? 'bg-primary-500' : 'bg-stone-300'
                 }`}>
                 <span
-                  className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${
+                  className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white dark:bg-neutral-900 shadow transition-transform ${
                     enabled ? 'translate-x-5' : 'translate-x-0.5'
                   } ${isSaving ? 'animate-pulse' : ''}`}
                 />
@@ -863,11 +879,11 @@ function AtlassianSubdomainInput({
     <div className="space-y-1.5">
       <label
         htmlFor="atlassian-subdomain-input"
-        className="block text-xs font-medium text-stone-700">
+        className="block text-xs font-medium text-stone-700 dark:text-neutral-200">
         {t('composio.connect.atlassianSubdomainLabel')}
         <span className="ml-1 text-coral-500">*</span>
       </label>
-      <div className="flex items-center rounded-xl border border-stone-200 bg-white focus-within:border-primary-400 focus-within:ring-2 focus-within:ring-primary-100 overflow-hidden">
+      <div className="flex items-center rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 focus-within:border-primary-400 focus-within:ring-2 focus-within:ring-primary-100 overflow-hidden">
         <input
           id="atlassian-subdomain-input"
           type="text"
@@ -877,9 +893,9 @@ function AtlassianSubdomainInput({
           placeholder="your-subdomain"
           aria-describedby="atlassian-subdomain-hint"
           aria-invalid={!!error}
-          className="flex-1 min-w-0 px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 bg-transparent focus:outline-none"
+          className="flex-1 min-w-0 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 placeholder:text-stone-400 dark:placeholder:text-neutral-500 bg-transparent focus:outline-none"
         />
-        <span className="pr-3 text-xs text-stone-400 select-none whitespace-nowrap">
+        <span className="pr-3 text-xs text-stone-400 dark:text-neutral-500 select-none whitespace-nowrap">
           .atlassian.net
         </span>
       </div>
@@ -891,7 +907,9 @@ function AtlassianSubdomainInput({
           {error}
         </p>
       ) : (
-        <p id="atlassian-subdomain-hint" className="text-[11px] leading-relaxed text-stone-400">
+        <p
+          id="atlassian-subdomain-hint"
+          className="text-[11px] leading-relaxed text-stone-400 dark:text-neutral-500">
           {t('composio.connect.atlassianSubdomainHint')}
         </p>
       )}

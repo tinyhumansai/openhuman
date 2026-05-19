@@ -47,13 +47,15 @@ export function WhatsAppMemorySection({ pollIntervalMs = 30000 }: WhatsAppMemory
 
   return (
     <div
-      className="rounded-xl border border-stone-100 bg-white px-4 py-3 shadow-sm"
+      className="rounded-xl border border-stone-100 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-4 py-3 shadow-sm"
       data-testid="whatsapp-memory-section">
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2 min-w-0">
           <WhatsAppIcon />
-          <span className="text-sm font-semibold text-stone-800">WhatsApp</span>
-          <span className="text-xs text-stone-500">
+          <span className="text-sm font-semibold text-stone-800 dark:text-neutral-100">
+            WhatsApp
+          </span>
+          <span className="text-xs text-stone-500 dark:text-neutral-400">
             {chatCount.toLocaleString()}{' '}
             {chatCount !== 1 ? t('whatsapp.chatsSynced') : t('whatsapp.chatSynced')}
             {lastSyncTs !== null && <> · {relativeTime(lastSyncTs, t)}</>}
@@ -63,9 +65,9 @@ export function WhatsAppMemorySection({ pollIntervalMs = 30000 }: WhatsAppMemory
           type="button"
           onClick={() => void handleSync()}
           disabled={syncing}
-          className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-stone-200
-                     bg-white px-3 py-1.5 text-xs font-semibold text-stone-700 shadow-sm
-                     transition-colors hover:bg-stone-50
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-stone-200 dark:border-neutral-800
+                     bg-white dark:bg-neutral-900 px-3 py-1.5 text-xs font-semibold text-stone-700 dark:text-neutral-200 shadow-sm
+                     transition-colors hover:bg-stone-50 dark:hover:bg-neutral-800/60
                      disabled:cursor-not-allowed disabled:opacity-50
                      focus:outline-none focus:ring-2 focus:ring-primary-200">
           <RefreshIcon spinning={syncing} />

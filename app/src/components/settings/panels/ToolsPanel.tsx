@@ -98,7 +98,9 @@ const ToolsPanel = ({ embedded = false }: ToolsPanelProps = {}) => {
       )}
 
       <div className={embedded ? 'space-y-4' : 'p-4 space-y-4'}>
-        <p className="text-stone-500 text-sm">{t('settings.tools.chooseCapabilities')}</p>
+        <p className="text-stone-500 dark:text-neutral-400 text-sm">
+          {t('settings.tools.chooseCapabilities')}
+        </p>
 
         <div className="max-h-[420px] overflow-y-auto pr-1 space-y-4">
           {TOOL_CATEGORIES.map(category => {
@@ -107,10 +109,12 @@ const ToolsPanel = ({ embedded = false }: ToolsPanelProps = {}) => {
             return (
               <div key={category}>
                 <div className="mb-2">
-                  <h2 className="text-xs font-semibold uppercase tracking-wide text-stone-500">
+                  <h2 className="text-xs font-semibold uppercase tracking-wide text-stone-500 dark:text-neutral-400">
                     {category}
                   </h2>
-                  <p className="text-xs text-stone-400">{CATEGORY_DESCRIPTIONS[category]}</p>
+                  <p className="text-xs text-stone-400 dark:text-neutral-500">
+                    {CATEGORY_DESCRIPTIONS[category]}
+                  </p>
                 </div>
                 <div className="space-y-1">
                   {tools.map(tool => (
@@ -118,19 +122,21 @@ const ToolsPanel = ({ embedded = false }: ToolsPanelProps = {}) => {
                       key={tool.id}
                       type="button"
                       onClick={() => toggle(tool.id)}
-                      className="w-full flex items-center justify-between p-2.5 rounded-xl border border-stone-200 bg-white hover:border-stone-300 transition-colors text-left">
+                      className="w-full flex items-center justify-between p-2.5 rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 hover:border-stone-300 dark:border-neutral-700 dark:hover:border-neutral-700 transition-colors text-left">
                       <div className="min-w-0 flex-1">
-                        <span className="text-sm font-medium text-stone-900">
+                        <span className="text-sm font-medium text-stone-900 dark:text-neutral-100">
                           {tool.displayName}
                         </span>
-                        <p className="text-xs text-stone-500 mt-0.5">{tool.description}</p>
+                        <p className="text-xs text-stone-500 dark:text-neutral-400 mt-0.5">
+                          {tool.description}
+                        </p>
                       </div>
                       <div
                         className={`ml-3 flex-shrink-0 w-9 h-5 rounded-full transition-colors relative ${
-                          enabled[tool.id] ? 'bg-sage-500' : 'bg-stone-200'
+                          enabled[tool.id] ? 'bg-sage-500' : 'bg-stone-200 dark:bg-neutral-800'
                         }`}>
                         <div
-                          className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${
+                          className={`absolute top-0.5 w-4 h-4 rounded-full bg-white dark:bg-neutral-900 shadow transition-transform ${
                             enabled[tool.id] ? 'translate-x-4' : 'translate-x-0.5'
                           }`}
                         />
@@ -153,7 +159,7 @@ const ToolsPanel = ({ embedded = false }: ToolsPanelProps = {}) => {
           </button>
         )}
         {saveStatus === 'saved' && (
-          <p className="text-xs text-center text-green-600 mt-1">
+          <p className="text-xs text-center text-green-600 dark:text-green-300 mt-1">
             {t('settings.tools.preferencesSaved')}
           </p>
         )}

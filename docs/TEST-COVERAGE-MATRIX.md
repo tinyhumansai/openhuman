@@ -124,6 +124,7 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 | 3.1.2 | Model Download & Installation | WD    | `local-model-runtime.spec.ts`                            | ✅     |       |
 | 3.1.3 | Model Version Handling        | RU    | `src/openhuman/local_ai/model_ids.rs`                    | ✅     |       |
 | 3.1.4 | LM Studio Model Discovery     | RU+RI | `src/openhuman/local_ai/service/ollama_admin_tests.rs`, `tests/json_rpc_e2e.rs` | ✅ | Uses LM Studio's OpenAI-compatible `/v1/models` surface |
+| 3.1.5 | Model Context-Window Requirement Gate | RU+VU | `src/openhuman/inference/local/model_requirements.rs`, `src/openhuman/inference/local/ollama.rs`, `src/openhuman/inference/local/service/ollama_admin_tests.rs`, `app/src/components/settings/panels/local-model/ModelStatusSection.test.tsx` | ✅ | Rejects Ollama models whose native context window is below the memory-layer minimum (`local_ai.model_context_check`) |
 
 ### 3.2 Runtime Execution
 

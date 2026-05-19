@@ -88,7 +88,8 @@ describe('accountsSlice REHYDRATE — issue #1379', () => {
 
     const after = rehydrate(before);
     expect(after.order).toEqual(['acct-slack', 'acct-discord']);
-    expect(after.activeAccountId).toBe('acct-slack');
+    // Issue #2044 — activeAccountId is cleared on rehydrate (see below).
+    expect(after.activeAccountId).toBeNull();
     expect(after.lastActiveAccountId).toBe('acct-discord');
     expect(after.accounts['acct-slack']?.label).toBe('Work Slack');
     expect(after.accounts['acct-slack']?.provider).toBe('slack');
@@ -106,5 +107,37 @@ describe('accountsSlice REHYDRATE — issue #1379', () => {
     const after = rehydrate(before);
     expect(after.accounts).toEqual({});
     expect(after.order).toEqual([]);
+  });
+});
+
+describe('accountsSlice REHYDRATE — issue #2044 (activeAccountId not persisted)', () => {
+  it('clears a non-null activeAccountId on rehydrate so no webview auto-surfaces', () => {
+    const before = seedState([
+      makeAccount({ id: 'acct-slack', provider: 'slack', status: 'closed' }),
+    ]);
+    before.activeAccountId = 'acct-slack';
+    before.lastActiveAccountId = 'acct-slack';
+
+    const after = rehydrate(before);
+    expect(after.activeAccountId).toBeNull();
+    // MRU pointer is intentionally preserved so the off-screen prewarm
+    // can still warm the same account in the background.
+    expect(after.lastActiveAccountId).toBe('acct-slack');
+  });
+
+  it('leaves activeAccountId null when nothing was persisted', () => {
+    const before = seedState([]);
+    before.activeAccountId = null;
+    const after = rehydrate(before);
+    expect(after.activeAccountId).toBeNull();
+  });
+
+  it('does not touch activeAccountId for REHYDRATE actions on other persist keys', () => {
+    const before = seedState([
+      makeAccount({ id: 'acct-slack', provider: 'slack', status: 'closed' }),
+    ]);
+    before.activeAccountId = 'acct-slack';
+    const after = rehydrate(before, 'notifications');
+    expect(after.activeAccountId).toBe('acct-slack');
   });
 });

@@ -82,7 +82,7 @@ export default function SkillResourceTree({ resources, selectedPath, onSelect }:
   const groups = useMemo(() => groupResources(resources), [resources]);
 
   if (groups.length === 0) {
-    return <p className="text-xs text-stone-400 italic">{t('skills.resource.tree.empty')}</p>;
+    return <p className="text-xs text-stone-400 dark:text-neutral-500 italic">{t('skills.resource.tree.empty')}</p>;
   }
 
   return (
@@ -90,14 +90,14 @@ export default function SkillResourceTree({ resources, selectedPath, onSelect }:
       {groups.map(group => (
         <div
           key={group.key}
-          className="rounded-xl border border-stone-200 bg-stone-50/50 overflow-hidden">
-          <div className="flex items-center justify-between border-b border-stone-200 bg-stone-50 px-3 py-1.5">
-            <h4 className="text-[11px] font-semibold uppercase tracking-wide text-stone-600">
+          className="rounded-xl border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 overflow-hidden">
+          <div className="flex items-center justify-between border-b border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 px-3 py-1.5">
+            <h4 className="text-[11px] font-semibold uppercase tracking-wide text-stone-600 dark:text-neutral-300">
               {t(GROUP_LABEL_KEYS[group.key] ?? group.key)}
             </h4>
-            <span className="text-[10px] text-stone-400 font-mono">{group.items.length}</span>
+            <span className="text-[10px] text-stone-400 dark:text-neutral-500 font-mono">{group.items.length}</span>
           </div>
-          <ul className="divide-y divide-stone-100">
+          <ul className="divide-y divide-stone-100 dark:divide-neutral-800">
             {group.items.map(path => {
               const isSelected = selectedPath === path;
               return (
@@ -110,8 +110,8 @@ export default function SkillResourceTree({ resources, selectedPath, onSelect }:
                     }}
                     className={`w-full truncate px-3 py-2 text-left text-[11px] font-mono transition-colors focus:outline-none focus:ring-1 focus:ring-inset focus:ring-primary-500 ${
                       isSelected
-                        ? 'bg-primary-50 text-primary-700'
-                        : 'text-stone-700 hover:bg-white'
+                        ? 'bg-primary-50 dark:bg-primary-500/15 text-primary-700 dark:text-primary-300'
+                        : 'text-stone-700 dark:text-neutral-200 hover:bg-white dark:hover:bg-neutral-800/60'
                     }`}
                     title={path}>
                     {path}

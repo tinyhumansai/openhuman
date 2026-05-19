@@ -35,9 +35,9 @@ const WalkthroughTooltip = ({
       className="w-80 font-sans animate-in fade-in slide-in-from-bottom-2 duration-300"
       style={{ animation: 'tooltipEnter 0.3s ease-out' }}>
       {/* Frosted card */}
-      <div className="bg-white/95 backdrop-blur-md rounded-2xl shadow-xl border border-stone-200/60 overflow-hidden">
+      <div className="bg-white/95 dark:bg-neutral-900/95 backdrop-blur-md rounded-2xl shadow-xl border border-stone-200/60 dark:border-neutral-800 overflow-hidden">
         {/* Progress bar — thin, smooth fill */}
-        <div className="h-1 bg-stone-100">
+        <div className="h-1 bg-stone-100 dark:bg-neutral-800">
           <div
             className="h-full bg-gradient-to-r from-[#2F6EF4] to-[#5B9BF3] transition-all duration-500 ease-out rounded-r-full"
             style={{ width: `${progress}%` }}
@@ -52,11 +52,11 @@ const WalkthroughTooltip = ({
             </span>
             <div className="flex-1 min-w-0">
               {step.title && (
-                <h3 className="text-[15px] font-semibold text-stone-900 leading-snug">
+                <h3 className="text-[15px] font-semibold text-stone-900 dark:text-neutral-100 leading-snug">
                   {step.title}
                 </h3>
               )}
-              <span className="text-[11px] text-stone-400 tabular-nums">
+              <span className="text-[11px] text-stone-400 dark:text-neutral-500 tabular-nums">
                 {t('walkthrough.tooltip.stepCounter')
                   .replace('{n}', String(index + 1))
                   .replace('{total}', String(size))}
@@ -65,7 +65,9 @@ const WalkthroughTooltip = ({
           </div>
 
           {/* Body */}
-          <div className="text-[13px] text-stone-600 leading-relaxed mb-5">{step.content}</div>
+          <div className="text-[13px] text-stone-600 dark:text-neutral-300 leading-relaxed mb-5">
+            {step.content}
+          </div>
 
           {/* Actions */}
           <div className="flex items-center gap-2">
@@ -73,7 +75,7 @@ const WalkthroughTooltip = ({
             {!isLastStep && (
               <button
                 {...skipProps}
-                className="text-[11px] text-stone-400 hover:text-stone-600 transition-colors px-2 py-1.5 rounded-lg hover:bg-stone-100">
+                className="text-[11px] text-stone-400 dark:text-neutral-500 hover:text-stone-600 dark:hover:text-neutral-300 transition-colors px-2 py-1.5 rounded-lg hover:bg-stone-100 dark:hover:bg-neutral-800/60">
                 {t('walkthrough.tooltip.skip')}
               </button>
             )}
@@ -84,7 +86,7 @@ const WalkthroughTooltip = ({
             {index > 0 && (
               <button
                 {...backProps}
-                className="text-[12px] text-stone-500 hover:text-stone-800 border border-stone-200 hover:border-stone-300 transition-all px-4 py-2 rounded-xl hover:shadow-sm">
+                className="text-[12px] text-stone-500 dark:text-neutral-400 hover:text-stone-800 dark:hover:text-neutral-100 border border-stone-200 dark:border-neutral-800 hover:border-stone-300 dark:hover:border-neutral-700 transition-all px-4 py-2 rounded-xl hover:shadow-sm">
                 {t('common.back')}
               </button>
             )}

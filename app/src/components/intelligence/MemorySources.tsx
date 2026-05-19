@@ -67,11 +67,11 @@ function useFreshnessLabel() {
 function freshnessBadge(label: FreshnessLabel): string {
   switch (label) {
     case 'active':
-      return 'bg-primary-100 text-primary-700';
+      return 'bg-primary-100 dark:bg-primary-500/20 text-primary-700 dark:text-primary-300';
     case 'recent':
-      return 'bg-sage-100 text-sage-700';
+      return 'bg-sage-100 dark:bg-sage-500/20 text-sage-700 dark:text-sage-300';
     case 'idle':
-      return 'bg-stone-100 text-stone-700';
+      return 'bg-stone-100 dark:bg-neutral-800 text-stone-700 dark:text-neutral-200';
   }
 }
 
@@ -223,10 +223,12 @@ export function MemorySources({
   if (loading) {
     return (
       <section
-        className="rounded-lg border border-stone-200 bg-white p-4"
+        className="rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4"
         data-testid="memory-sources">
-        <h3 className="text-sm font-semibold text-stone-700">{t('sync.memorySources')}</h3>
-        <p className="mt-2 text-xs text-stone-500">{t('common.loading')}</p>
+        <h3 className="text-sm font-semibold text-stone-700 dark:text-neutral-200">
+          {t('sync.memorySources')}
+        </h3>
+        <p className="mt-2 text-xs text-stone-500 dark:text-neutral-400">{t('common.loading')}</p>
       </section>
     );
   }
@@ -234,10 +236,12 @@ export function MemorySources({
   if (loadError) {
     return (
       <section
-        className="rounded-lg border border-stone-200 bg-white p-4"
+        className="rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4"
         data-testid="memory-sources">
-        <h3 className="text-sm font-semibold text-stone-700">{t('sync.memorySources')}</h3>
-        <p className="mt-2 break-words rounded-md bg-coral-50 p-2 text-xs text-coral-800">
+        <h3 className="text-sm font-semibold text-stone-700 dark:text-neutral-200">
+          {t('sync.memorySources')}
+        </h3>
+        <p className="mt-2 break-words rounded-md bg-coral-50 dark:bg-coral-500/10 p-2 text-xs text-coral-800">
           {loadError}
         </p>
       </section>
@@ -247,25 +251,31 @@ export function MemorySources({
   if (rows.length === 0) {
     return (
       <section
-        className="rounded-lg border border-stone-200 bg-white p-4"
+        className="rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4"
         data-testid="memory-sources">
-        <h3 className="text-sm font-semibold text-stone-700">{t('sync.memorySources')}</h3>
-        <p className="mt-2 text-xs text-stone-500">{t('sync.noConnectedSources')}</p>
+        <h3 className="text-sm font-semibold text-stone-700 dark:text-neutral-200">
+          {t('sync.memorySources')}
+        </h3>
+        <p className="mt-2 text-xs text-stone-500 dark:text-neutral-400">
+          {t('sync.noConnectedSources')}
+        </p>
       </section>
     );
   }
 
   return (
     <section
-      className="rounded-lg border border-stone-200 bg-white p-4"
+      className="rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4"
       data-testid="memory-sources">
       <header className="mb-3 flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-stone-700">{t('sync.memorySources')}</h3>
-        <span className="text-xs text-stone-400">
+        <h3 className="text-sm font-semibold text-stone-700 dark:text-neutral-200">
+          {t('sync.memorySources')}
+        </h3>
+        <span className="text-xs text-stone-400 dark:text-neutral-500">
           {rows.length} identit{rows.length === 1 ? 'y' : 'ies'}
         </span>
       </header>
-      <ul className="divide-y divide-stone-100">
+      <ul className="divide-y divide-stone-100 dark:divide-neutral-800">
         {rows.map(row => (
           <SourceRowCard
             key={row.key}
@@ -309,7 +319,9 @@ function SourceRowCard({ row, isSyncing, onSync }: SourceRowCardProps) {
       data-testid={`memory-source-row-${toolkit}`}>
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="truncate text-sm font-medium text-stone-900">{title}</span>
+          <span className="truncate text-sm font-medium text-stone-900 dark:text-neutral-100">
+            {title}
+          </span>
           {status && (
             <span
               className={`rounded-md px-2 py-0.5 text-xs font-medium ${freshnessBadge(status.freshness)}`}
@@ -318,12 +330,12 @@ function SourceRowCard({ row, isSyncing, onSync }: SourceRowCardProps) {
             </span>
           )}
           {!isActive && (
-            <span className="rounded-md bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
+            <span className="rounded-md bg-amber-100 dark:bg-amber-500/20 px-2 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-300">
               {connection.status}
             </span>
           )}
         </div>
-        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-stone-500">
+        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-stone-500 dark:text-neutral-400">
           <span data-testid={`memory-source-chunks-${toolkit}`}>
             {lifetime.toLocaleString()} {t('sync.chunks')}
           </span>
@@ -340,7 +352,7 @@ function SourceRowCard({ row, isSyncing, onSync }: SourceRowCardProps) {
         </div>
         {showProgress && (
           <div className="mt-2 max-w-md" data-testid={`memory-source-progress-${toolkit}`}>
-            <div className="h-1.5 w-full overflow-hidden rounded-full bg-stone-100">
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-stone-100 dark:bg-neutral-800">
               <div
                 className="h-full bg-primary-500 transition-all"
                 style={{ width: `${pct}%` }}
@@ -350,7 +362,7 @@ function SourceRowCard({ row, isSyncing, onSync }: SourceRowCardProps) {
                 aria-valuemax={batchTotal}
               />
             </div>
-            <div className="mt-1 text-xs text-stone-500">
+            <div className="mt-1 text-xs text-stone-500 dark:text-neutral-400">
               {batchProcessed.toLocaleString()} / {batchTotal.toLocaleString()}{' '}
               {t('sync.processed')}
             </div>

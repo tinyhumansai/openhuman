@@ -24,18 +24,26 @@ const CoreJobList = ({
 }: CoreJobListProps) => {
   const { t } = useT();
   return (
-    <section className="rounded-xl border border-stone-200 bg-white">
-      <div className="p-4 border-b border-stone-200">
-        <h3 className="text-sm font-semibold text-stone-900">{t('settings.cron.jobs.title')}</h3>
-        <p className="text-xs text-stone-500 mt-1">{t('settings.cron.jobs.desc')}</p>
+    <section className="rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900">
+      <div className="p-4 border-b border-stone-200 dark:border-neutral-800">
+        <h3 className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
+          {t('settings.cron.jobs.title')}
+        </h3>
+        <p className="text-xs text-stone-500 dark:text-neutral-400 mt-1">
+          {t('settings.cron.jobs.desc')}
+        </p>
       </div>
 
       {loading && (
-        <div className="p-4 text-sm text-stone-400">{t('settings.cron.jobs.loading')}</div>
+        <div className="p-4 text-sm text-stone-400 dark:text-neutral-500">
+          {t('settings.cron.jobs.loading')}
+        </div>
       )}
 
       {!loading && coreJobs.length === 0 && (
-        <div className="p-4 text-sm text-stone-400">{t('settings.cron.jobs.empty')}</div>
+        <div className="p-4 text-sm text-stone-400 dark:text-neutral-500">
+          {t('settings.cron.jobs.empty')}
+        </div>
       )}
 
       {!loading &&
@@ -44,26 +52,28 @@ const CoreJobList = ({
           return (
             <div
               key={job.id}
-              className={`p-4 ${index === 0 ? '' : 'border-t border-stone-200'} space-y-3`}>
+              className={`p-4 ${index === 0 ? '' : 'border-t border-stone-200 dark:border-neutral-800'} space-y-3`}>
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <div className="text-sm font-semibold text-stone-900">{job.name || job.id}</div>
-                  <div className="text-[11px] text-stone-400">{job.id}</div>
+                  <div className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
+                    {job.name || job.id}
+                  </div>
+                  <div className="text-[11px] text-stone-400 dark:text-neutral-500">{job.id}</div>
                 </div>
                 <span
                   className={`px-2 py-1 text-[11px] font-semibold uppercase border rounded-full ${
                     job.enabled
-                      ? 'bg-sage-50 text-sage-700 border-sage-200'
-                      : 'bg-stone-100 text-stone-600 border-stone-200'
+                      ? 'bg-sage-50 dark:bg-sage-500/10 text-sage-700 dark:text-sage-300 border-sage-200 dark:border-sage-500/30'
+                      : 'bg-stone-100 dark:bg-neutral-800 text-stone-600 dark:text-neutral-300 border-stone-200 dark:border-neutral-800'
                   }`}>
                   {job.enabled ? t('common.enabled') : t('settings.cron.jobs.paused')}
                 </span>
               </div>
 
-              <div className="text-xs text-stone-600 space-y-1">
+              <div className="text-xs text-stone-600 dark:text-neutral-300 space-y-1">
                 <div>
                   {t('settings.cron.jobs.schedule')}{' '}
-                  <span className="font-medium text-stone-700">
+                  <span className="font-medium text-stone-700 dark:text-neutral-200">
                     {job.schedule.kind === 'cron'
                       ? job.schedule.expr
                       : job.schedule.kind === 'every'
@@ -73,14 +83,16 @@ const CoreJobList = ({
                 </div>
                 <div>
                   {t('settings.cron.jobs.nextRun')}{' '}
-                  <span className="font-medium text-stone-700">
+                  <span className="font-medium text-stone-700 dark:text-neutral-200">
                     {new Date(job.next_run).toLocaleString()}
                   </span>
                 </div>
                 {job.last_status && (
                   <div>
                     {t('settings.cron.jobs.lastStatus')}{' '}
-                    <span className="font-medium text-stone-700">{job.last_status}</span>
+                    <span className="font-medium text-stone-700 dark:text-neutral-200">
+                      {job.last_status}
+                    </span>
                   </div>
                 )}
               </div>
@@ -127,14 +139,16 @@ const CoreJobList = ({
               </div>
 
               {runs.length > 0 && (
-                <div className="rounded-lg border border-stone-200 bg-stone-50 p-3 space-y-1">
-                  <div className="text-[11px] uppercase tracking-wide text-stone-400">
+                <div className="rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 p-3 space-y-1">
+                  <div className="text-[11px] uppercase tracking-wide text-stone-400 dark:text-neutral-500">
                     {t('settings.cron.jobs.recentRuns')}
                   </div>
                   {runs.map(run => (
-                    <div key={run.id} className="text-xs text-stone-600">
-                      <span className="font-medium text-stone-700">{run.status}</span> at{' '}
-                      {new Date(run.finished_at).toLocaleString()}
+                    <div key={run.id} className="text-xs text-stone-600 dark:text-neutral-300">
+                      <span className="font-medium text-stone-700 dark:text-neutral-200">
+                        {run.status}
+                      </span>{' '}
+                      at {new Date(run.finished_at).toLocaleString()}
                     </div>
                   ))}
                 </div>

@@ -70,7 +70,9 @@ const RailButton = ({
     // too, where ring-2 + bg-primary-50 don't transform but the lifted
     // z still helps tooltips render cleanly above neighbours.
     className={`group relative flex h-11 w-11 items-center justify-center rounded-xl transition-all hover:z-50 ${
-      active ? 'bg-primary-50 ring-2 ring-primary-500' : 'hover:bg-stone-100 hover:scale-105'
+      active
+        ? 'bg-primary-50 ring-2 ring-primary-500'
+        : 'hover:bg-stone-100 dark:hover:bg-neutral-800/60 hover:scale-105'
     }`}
     aria-label={tooltip}>
     {children}
@@ -117,6 +119,10 @@ const Accounts = () => {
 
   const [addOpen, setAddOpen] = useState(false);
   const [ctxMenu, setCtxMenu] = useState<ContextMenuState | null>(null);
+  // Respond Queue is a power-user surface (pending replies from connected
+  // accounts). Hidden by default so the agent chat gets full width; users
+  // can toggle it open from the header. (#XXXX)
+  const [respondQueueOpen, setRespondQueueOpen] = useState(false);
 
   useEffect(() => {
     startWebviewAccountService();
@@ -242,7 +248,7 @@ const Accounts = () => {
     <div className="relative flex h-full gap-3 overflow-hidden">
       {/* Narrow icon rail — always rendered. */}
       {/* [#1123] welcomeLocked guard removed — welcome-agent onboarding replaced by Joyride walkthrough */}
-      <aside className="z-30 flex w-16 flex-none flex-col items-center gap-2 bg-white/60 py-3 backdrop-blur-md my-3 ml-3 rounded-2xl border border-stone-200/70 shadow-soft">
+      <aside className="z-30 flex w-16 flex-none flex-col items-center gap-2 bg-white/60 dark:bg-neutral-900/60 py-3 backdrop-blur-md my-3 ml-3 rounded-2xl border border-stone-200/70 dark:border-neutral-800/70 shadow-soft">
         <RailButton active={isAgentSelected} onClick={selectAgent} tooltip={t('accounts.agent')}>
           <AgentIcon className="h-9 w-9 rounded-lg" />
         </RailButton>
@@ -261,7 +267,7 @@ const Accounts = () => {
 
         <button
           onClick={() => setAddOpen(true)}
-          className="group relative mt-2 flex h-11 w-11 items-center justify-center rounded-xl border border-dashed border-stone-300 text-stone-400 hover:z-50 hover:bg-stone-50 hover:text-stone-600"
+          className="group relative mt-2 flex h-11 w-11 items-center justify-center rounded-xl border border-dashed border-stone-300 dark:border-neutral-700 text-stone-400 dark:text-neutral-500 hover:z-50 hover:bg-stone-50 dark:hover:bg-neutral-800/60 hover:text-stone-600 dark:hover:text-neutral-300"
           aria-label={t('accounts.addAccount')}>
           <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
@@ -278,26 +284,53 @@ const Accounts = () => {
       <main className="flex min-w-0 flex-1 flex-col">
         {isAgentSelected ? (
           <div className="flex h-full min-w-0">
-            <div className="min-w-0 flex-1">
+            <div className="relative min-w-0 flex-1">
               <AgentChatPanel />
+              {/* Floating toggle to reveal the Respond Queue side panel.
+                  Pinned top-right inside the chat pane so it doesn't shift
+                  layout when the panel opens/closes. */}
+              <button
+                type="button"
+                onClick={() => setRespondQueueOpen(prev => !prev)}
+                className="absolute right-4 top-4 z-10 inline-flex items-center gap-1 rounded-full border border-stone-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-1 text-[11px] font-medium text-stone-600 dark:text-neutral-300 shadow-soft hover:bg-stone-50 dark:hover:bg-neutral-800/60"
+                title={
+                  respondQueueOpen
+                    ? t('accounts.respondQueue.hide')
+                    : t('accounts.respondQueue.show')
+                }>
+                <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"
+                  />
+                </svg>
+                <span>
+                  {t('accounts.respondQueue.title')}
+                  {respondQueueCount > 0 && ` (${respondQueueCount})`}
+                </span>
+              </button>
             </div>
-            {/* Respond queue side panel restored */}
-            <RespondQueuePanel
-              items={respondQueue}
-              count={respondQueueCount}
-              status={respondQueueStatus}
-              error={respondQueueError}
-              onRefresh={() => {
-                void dispatch(fetchRespondQueue());
-              }}
-            />
+            {/* Respond queue side panel — hidden by default; reveals via toggle */}
+            {respondQueueOpen && (
+              <RespondQueuePanel
+                items={respondQueue}
+                count={respondQueueCount}
+                status={respondQueueStatus}
+                error={respondQueueError}
+                onRefresh={() => {
+                  void dispatch(fetchRespondQueue());
+                }}
+              />
+            )}
           </div>
         ) : active ? (
           <div className="flex-1 py-3 pr-3">
             <WebviewHost accountId={active.id} provider={active.provider} />
           </div>
         ) : (
-          <div className="flex flex-1 items-center justify-center text-sm text-stone-400">
+          <div className="flex flex-1 items-center justify-center text-sm text-stone-400 dark:text-neutral-500">
             {t('accounts.noAccounts')}
           </div>
         )}
@@ -312,12 +345,12 @@ const Accounts = () => {
 
       {ctxMenu && (
         <div
-          className="fixed z-50 min-w-[140px] rounded-lg border border-stone-200 bg-white py-1 shadow-strong"
+          className="fixed z-50 min-w-[140px] rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 py-1 shadow-strong"
           style={{ left: ctxMenu.x, top: ctxMenu.y }}
           onMouseDown={e => e.stopPropagation()}>
           <button
             onClick={() => void handleLogout(ctxMenu.accountId)}
-            className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-coral-600 hover:bg-stone-100">
+            className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-coral-600 hover:bg-stone-100 dark:hover:bg-neutral-800/60">
             <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path
                 strokeLinecap="round"

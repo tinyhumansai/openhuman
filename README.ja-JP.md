@@ -29,7 +29,7 @@
 </p>
 
 <p align="center">
-  🇺🇸 <a href="./README.md">English</a> | 🇨🇳 <a href="./README.zh-CN.md">简体中文</a> | 🇯🇵 <a href="./README.ja-JP.md">日本語</a>
+  🇺🇸 <a href="./README.md">English</a> | 🇨🇳 <a href="./README.zh-CN.md">简体中文</a> | 🇯🇵 <a href="./README.ja-JP.md">日本語</a> | 🇰🇷 <a href="./README.ko.md">한국어</a>
 </p>
 
 
@@ -38,7 +38,9 @@
  <a href="https://github.com/tinyhumansai/openhuman/releases/latest"><img src="https://img.shields.io/github/v/release/tinyhumansai/openhuman?label=latest" alt="最新リリース" /></a>
  <a href="https://github.com/tinyhumansai/openhuman/stargazers"><img src="https://img.shields.io/github/stars/tinyhumansai/openhuman?style=flat" alt="GitHub Stars" /></a>
  <a href="./LICENSE"><img src="https://img.shields.io/github/license/tinyhumansai/openhuman" alt="ライセンス" /></a>
- <a href="./README.ja-JP.md"><img src="https://img.shields.io/badge/lang-日本語-blue" alt="日本語" /></a>
+ <a href="./README.md"><img src="https://img.shields.io/badge/lang-English-blue" alt="English" /></a>
+ <a href="./README.zh-CN.md"><img src="https://img.shields.io/badge/lang-简体中文-blue" alt="简体中文" /></a>
+ <a href="./README.ko.md"><img src="https://img.shields.io/badge/lang-한국어-blue" alt="한국어" /></a>
 </p>
 
 > **早期ベータ版**: 現在も活発に開発中です。荒削りな部分があることをご了承ください。
@@ -67,7 +69,7 @@ OpenHuman は、あなたの日常生活に統合されるよう設計された�
 
 - **電池同梱(Batteries included)**: ウェブ検索、ウェブフェッチ用[スクレイパー](https://tinyhumans.gitbook.io/openhuman/features/native-tools)、フルコーダーツールセット(ファイルシステム、git、lint、test、grep)、そして[ネイティブ音声](https://tinyhumans.gitbook.io/openhuman/features/voice)(STT 入力、ElevenLabs TTS 出力、マスコットのリップシンク、ライブ Google Meet エージェント)がデフォルトで組み込まれています。[モデルルーティング](https://tinyhumans.gitbook.io/openhuman/features/model-routing)が各タスクを適切な LLM(reasoning、fast、または vision)に振り分け、一つのサブスクリプションで提供します。「ファイル読み込みのためにプラグインをインストール」という煩わしさはありません。デバイス上のワークロード向けに [Ollama によるオプショナルなローカル AI](https://tinyhumans.gitbook.io/openhuman/features/model-routing/local-ai) も利用できます。
 
-- **[スマートトークン圧縮 (TokenJuice)](https://tinyhumans.gitbook.io/openhuman/features/token-compression)**: すべてのツール呼び出し、スクレイプ結果、メール本文、検索ペイロードは、LLM モデルに渡される前にトークン圧縮レイヤーを通過します。HTML は Markdown に変換され、長い URL は短縮され、非 ASCII 文字は除去されるなど…。同じ情報をわずかなトークン数で得られます。コストとレイテンシを最大 80% 削減します。
+- **[スマートトークン圧縮 (TokenJuice)](https://tinyhumans.gitbook.io/openhuman/features/token-compression)**: すべてのツール呼び出し、スクレイプ結果、メール本文、検索ペイロードは、LLM モデルに渡される前にトークン圧縮レイヤーを通過します。HTML は Markdown に変換され、長い URL は短縮され、冗長なツール出力は設定可能なルールレイヤーで重複排除と要約が行われるなど…。CJK、絵文字などのマルチバイト文字は書記素(grapheme)単位で完全に保持され、除去されることはありません。同じ情報をわずかなトークン数で得られます。コストとレイテンシを最大 80% 削減します。
 
 - **[メッセージングチャネル](https://tinyhumans.gitbook.io/openhuman/features/integrations#messaging-channels)** と **[プライバシー & セキュリティ](https://tinyhumans.gitbook.io/openhuman/features/privacy-and-security)**: あなたが既に使っているチャネル全体での送受信が可能で、ワークフローデータはデバイス上に留まり、ローカルで暗号化され、あなた自身のものとして扱われます。
 

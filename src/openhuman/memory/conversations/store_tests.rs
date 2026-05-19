@@ -562,6 +562,153 @@ fn delete_thread_clears_stats_from_index() {
 }
 
 #[test]
+fn search_cross_thread_messages_finds_hits_outside_excluded_thread() {
+    let (_temp, store) = make_store();
+
+    // Chat A — durable fact lives here.
+    store
+        .ensure_thread(CreateConversationThread {
+            parent_thread_id: None,
+            id: "thread-a".to_string(),
+            title: "Chat A".to_string(),
+            created_at: "2026-04-10T12:00:00Z".to_string(),
+            labels: None,
+        })
+        .unwrap();
+    store
+        .append_message(
+            "thread-a",
+            ConversationMessage {
+                id: "m-a-1".to_string(),
+                content: "Remember: my project is called Phoenix and uses Go and PostgreSQL."
+                    .to_string(),
+                message_type: "text".to_string(),
+                extra_metadata: json!({}),
+                sender: "user".to_string(),
+                created_at: "2026-04-10T12:01:00Z".to_string(),
+            },
+        )
+        .unwrap();
+
+    // Chat B — active chat, asking dependent question. Should be excluded
+    // so its own text doesn't echo back into [Cross-chat context].
+    store
+        .ensure_thread(CreateConversationThread {
+            parent_thread_id: None,
+            id: "thread-b".to_string(),
+            title: "Chat B".to_string(),
+            created_at: "2026-04-10T13:00:00Z".to_string(),
+            labels: None,
+        })
+        .unwrap();
+    store
+        .append_message(
+            "thread-b",
+            ConversationMessage {
+                id: "m-b-1".to_string(),
+                content: "What database does my project use?".to_string(),
+                message_type: "text".to_string(),
+                extra_metadata: json!({}),
+                sender: "user".to_string(),
+                created_at: "2026-04-10T13:01:00Z".to_string(),
+            },
+        )
+        .unwrap();
+
+    let hits = store
+        .search_cross_thread_messages("What database does my project use", 10, Some("thread-b"))
+        .expect("cross-thread search");
+
+    assert_eq!(hits.len(), 1, "exactly one cross-thread hit");
+    let hit = &hits[0];
+    assert_eq!(hit.thread_id, "thread-a");
+    assert!(hit.content.contains("PostgreSQL"));
+    assert!(hit.score > 0.0);
+}
+
+#[test]
+fn search_cross_thread_messages_excludes_active_thread() {
+    let (_temp, store) = make_store();
+
+    // Single thread — the only matching message lives in the thread we're
+    // about to exclude. Expect zero hits (don't echo same-chat history).
+    store
+        .ensure_thread(CreateConversationThread {
+            parent_thread_id: None,
+            id: "thread-only".to_string(),
+            title: "Only".to_string(),
+            created_at: "2026-04-10T12:00:00Z".to_string(),
+            labels: None,
+        })
+        .unwrap();
+    store
+        .append_message(
+            "thread-only",
+            ConversationMessage {
+                id: "m-1".to_string(),
+                content: "PostgreSQL deployment running on staging".to_string(),
+                message_type: "text".to_string(),
+                extra_metadata: json!({}),
+                sender: "user".to_string(),
+                created_at: "2026-04-10T12:01:00Z".to_string(),
+            },
+        )
+        .unwrap();
+
+    let hits = store
+        .search_cross_thread_messages("PostgreSQL deployment staging", 10, Some("thread-only"))
+        .expect("cross-thread search");
+    assert!(
+        hits.is_empty(),
+        "active thread must not echo into cross-chat"
+    );
+
+    // Sanity: without exclude, the hit is returned.
+    let hits_no_exclude = store
+        .search_cross_thread_messages("PostgreSQL deployment staging", 10, None)
+        .expect("cross-thread search");
+    assert_eq!(hits_no_exclude.len(), 1);
+}
+
+#[test]
+fn search_cross_thread_messages_skips_short_terms_and_empty_queries() {
+    let (_temp, store) = make_store();
+    store
+        .ensure_thread(CreateConversationThread {
+            parent_thread_id: None,
+            id: "t".to_string(),
+            title: "T".to_string(),
+            created_at: "2026-04-10T12:00:00Z".to_string(),
+            labels: None,
+        })
+        .unwrap();
+    store
+        .append_message(
+            "t",
+            ConversationMessage {
+                id: "m".to_string(),
+                content: "Postgres".to_string(),
+                message_type: "text".to_string(),
+                extra_metadata: json!({}),
+                sender: "user".to_string(),
+                created_at: "2026-04-10T12:01:00Z".to_string(),
+            },
+        )
+        .unwrap();
+
+    // All terms < 3 chars → empty
+    assert!(store
+        .search_cross_thread_messages("a is on", 10, None)
+        .unwrap()
+        .is_empty());
+    // Empty query → empty
+    assert!(store
+        .search_cross_thread_messages("", 10, None)
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
 fn update_thread_labels_missing_thread_returns_error() {
     let (_temp, store) = make_store();
     let err = store

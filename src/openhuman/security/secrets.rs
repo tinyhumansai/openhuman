@@ -188,7 +188,32 @@ impl SecretStore {
         }
 
         if self.key_path.exists() {
-            let hex_key = read_key_file_with_retry(&self.key_path).with_context(|| {
+            let read_result = read_key_file_with_retry(&self.key_path);
+
+            // On Windows a previous bad icacls invocation may have stripped the
+            // inherited ACEs from %APPDATA% without granting the current user
+            // explicit access, leaving the file permanently unreadable. Attempt
+            // a one-shot ACL repair via `icacls /reset` before giving up.
+            #[cfg(windows)]
+            let read_result = if let Err(ref e) = read_result {
+                if is_permission_error(e) {
+                    log::warn!(
+                        "[security] PermissionDenied reading key file '{}'; \
+                         attempting icacls /reset self-repair",
+                        self.key_path.display()
+                    );
+                    repair_windows_acl(&self.key_path);
+                    // Single retry regardless of whether repair reported success —
+                    // icacls /reset may partially restore access even on a non-zero exit.
+                    read_key_file_with_retry(&self.key_path)
+                } else {
+                    read_result
+                }
+            } else {
+                read_result
+            };
+
+            let hex_key = read_result.with_context(|| {
                 let mut msg = format!(
                     "Failed to read secret key file at {}",
                     self.key_path.display()
@@ -229,35 +254,60 @@ impl SecretStore {
             }
             #[cfg(windows)]
             {
-                // On Windows, use icacls to restrict permissions to current user only
+                // On Windows, use icacls to restrict permissions to current user only.
+                // We use USERDOMAIN\USERNAME so the account is resolved correctly on
+                // domain-joined and AAD-joined machines (bare USERNAME is ambiguous and
+                // may refer to a local account that doesn't match the signed-in user).
                 let username = std::env::var("USERNAME").unwrap_or_default();
-                let Some(grant_arg) = build_windows_icacls_grant_arg(&username) else {
+                let userdomain = std::env::var("USERDOMAIN").unwrap_or_default();
+                let computername = std::env::var("COMPUTERNAME").unwrap_or_default();
+                let qualified_username =
+                    qualify_windows_username(&username, &userdomain, &computername);
+                let Some(grant_arg) = build_windows_icacls_grant_arg(&qualified_username) else {
                     log::warn!(
-                        "USERNAME environment variable is empty; \
+                        "[security] USERNAME/USERDOMAIN environment variables are empty; \
                          cannot restrict key file permissions via icacls"
                     );
                     cache_key(&cache_key_path, &key);
                     return Ok(key);
                 };
 
-                match std::process::Command::new("icacls")
+                let icacls_ok = match std::process::Command::new("icacls")
                     .arg(&self.key_path)
                     .args(["/inheritance:r", "/grant:r"])
-                    .arg(grant_arg)
+                    .arg(&grant_arg)
                     .output()
                 {
-                    Ok(o) if !o.status.success() => {
+                    Ok(o) if o.status.success() => {
+                        log::debug!("[security] key file permissions restricted via icacls");
+                        true
+                    }
+                    Ok(o) => {
                         log::warn!(
-                            "Failed to set key file permissions via icacls (exit code {:?})",
-                            o.status.code()
+                            "[security] icacls exited {:?} for account '{}'; \
+                             restoring inherited ACLs so the file remains readable",
+                            o.status.code(),
+                            grant_arg,
                         );
+                        false
                     }
                     Err(e) => {
-                        log::warn!("Could not set key file permissions: {e}");
+                        log::warn!(
+                            "[security] could not run icacls: {e}; \
+                                    restoring inherited ACLs"
+                        );
+                        false
                     }
-                    _ => {
-                        log::debug!("Key file permissions restricted via icacls");
-                    }
+                };
+                // If the icacls grant command failed, the `/inheritance:r` flag may have
+                // already stripped the inherited ACEs that let the current user read the
+                // file. Explicitly reset to restore inheritance so the file is always
+                // readable — a slightly weaker ACL is preferable to a locked-out user.
+                if !icacls_ok {
+                    let _ = std::process::Command::new("icacls")
+                        .arg(&self.key_path)
+                        .args(["/reset"])
+                        .output();
                 }
             }
 
@@ -342,6 +392,97 @@ fn read_key_file_with_retry(path: &Path) -> std::io::Result<String> {
     Err(last_err.unwrap_or_else(|| std::io::Error::other("read_to_string failed")))
 }
 
+/// Returns `true` when an `std::io::Error` is a permanent permission/access
+/// denial rather than a transient sharing violation.
+#[cfg(windows)]
+fn is_permission_error(e: &std::io::Error) -> bool {
+    matches!(e.kind(), std::io::ErrorKind::PermissionDenied) || e.raw_os_error() == Some(5)
+    // ERROR_ACCESS_DENIED
+}
+
+/// Attempt to repair a locked key file by running `icacls /reset` on it.
+///
+/// Attempt to repair a locked key file.
+///
+/// Two-step process:
+///   1. `icacls /reset` — removes all explicit ACEs and re-enables ACL
+///      inheritance from the parent directory.
+///   2. `icacls /grant:r <DOMAIN\USER>:F` — explicit grant for the current
+///      user as a belt-and-suspenders fallback for environments (e.g. CI
+///      temp dirs) where the parent's inheritance chain may not include the
+///      runner account.
+///
+/// Returns `true` if the file is actually readable after the repair attempt,
+/// regardless of which step(s) succeeded.
+#[cfg(windows)]
+pub(super) fn repair_windows_acl(path: &Path) -> bool {
+    // Step 1: restore inheritance.
+    match std::process::Command::new("icacls")
+        .arg(path)
+        .args(["/reset"])
+        .output()
+    {
+        Ok(o) if o.status.success() => {
+            log::info!(
+                "[security] icacls /reset succeeded for '{}'; ACL inheritance restored",
+                path.display()
+            );
+        }
+        Ok(o) => {
+            log::warn!(
+                "[security] icacls /reset exited {:?} for '{}'",
+                o.status.code(),
+                path.display()
+            );
+        }
+        Err(e) => {
+            log::warn!(
+                "[security] could not run icacls /reset for '{}': {e}",
+                path.display()
+            );
+        }
+    }
+
+    // Step 2: explicit grant for current user — handles CI environments
+    // where the temp/app dir's inheritable ACEs don't include the runner.
+    let username = std::env::var("USERNAME").unwrap_or_default();
+    let userdomain = std::env::var("USERDOMAIN").unwrap_or_default();
+    let computername = std::env::var("COMPUTERNAME").unwrap_or_default();
+    let qualified = qualify_windows_username(&username, &userdomain, &computername);
+    if let Some(grant_arg) = build_windows_icacls_grant_arg(&qualified) {
+        match std::process::Command::new("icacls")
+            .arg(path)
+            .args(["/grant:r"])
+            .arg(&grant_arg)
+            .output()
+        {
+            Ok(o) if o.status.success() => {
+                log::debug!(
+                    "[security] explicit grant '{grant_arg}' succeeded during repair of '{}'",
+                    path.display()
+                );
+            }
+            Ok(o) => {
+                log::warn!(
+                    "[security] explicit grant '{grant_arg}' exited {:?} during repair of '{}'",
+                    o.status.code(),
+                    path.display()
+                );
+            }
+            Err(e) => {
+                log::warn!(
+                    "[security] could not run icacls /grant during repair of '{}': {e}",
+                    path.display()
+                );
+            }
+        }
+    }
+
+    // Return whether the file is actually readable now — callers use this
+    // for logging/metrics; the retry in load_or_create_key is unconditional.
+    std::fs::read(path).is_ok()
+}
+
 /// XOR cipher with repeating key. Same function for encrypt and decrypt.
 fn xor_cipher(data: &[u8], key: &[u8]) -> Vec<u8> {
     if key.is_empty() {
@@ -379,6 +520,37 @@ fn build_windows_icacls_grant_arg(username: &str) -> Option<String> {
         return None;
     }
     Some(format!("{normalized}:F"))
+}
+
+/// Produce a domain-qualified Windows account name suitable for `icacls`.
+///
+/// On domain-joined machines `USERDOMAIN` is the domain name and differs from
+/// `COMPUTERNAME`.  On standalone machines they are equal, so we use the bare
+/// `username` in that case to avoid a redundant `DESKTOP-XYZ\alice` prefix.
+///
+/// Returns an empty string when both inputs are empty (caller must treat this
+/// as "cannot determine account name").
+#[cfg(windows)]
+fn qualify_windows_username(username: &str, userdomain: &str, computername: &str) -> String {
+    let username = username.trim();
+    let userdomain = userdomain.trim();
+    let computername = computername.trim();
+
+    if username.is_empty() {
+        return String::new();
+    }
+
+    // If USERDOMAIN is set and differs from COMPUTERNAME the machine is
+    // domain/AAD-joined; use the fully-qualified form so icacls resolves the
+    // account unambiguously.
+    if !userdomain.is_empty()
+        && !computername.is_empty()
+        && !userdomain.eq_ignore_ascii_case(computername)
+    {
+        format!("{userdomain}\\{username}")
+    } else {
+        username.to_string()
+    }
 }
 
 /// Hex-decode a hex string to bytes.

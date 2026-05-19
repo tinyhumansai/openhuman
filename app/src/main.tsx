@@ -12,6 +12,7 @@ import './polyfills';
 import { initGA, initSentry, trackEvent } from './services/analytics';
 import { setStoreForApiClient } from './services/apiClient';
 import { primeActiveUserId } from './store/userScopedStorage';
+import './styles/theme.css';
 import { APP_VERSION } from './utils/config';
 import { setupDesktopDeepLinkListener } from './utils/desktopDeepLinkListener';
 import { getActiveUserIdFromCore } from './utils/tauriCommands';

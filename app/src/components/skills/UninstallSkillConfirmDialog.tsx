@@ -104,15 +104,15 @@ export default function UninstallSkillConfirmDialog({ skill, onClose, onUninstal
       onMouseDown={e => {
         if (e.target === e.currentTarget && !submitting) onClose();
       }}>
-      <div className="w-[420px] max-w-[90vw] rounded-2xl bg-white p-5 shadow-2xl">
-        <h2 id="uninstall-skill-title" className="text-base font-semibold text-stone-900">
+      <div className="w-[420px] max-w-[90vw] rounded-2xl bg-white dark:bg-neutral-900 p-5 shadow-2xl">
+        <h2 id="uninstall-skill-title" className="text-base font-semibold text-stone-900 dark:text-neutral-100">
           {t('skills.uninstall.title')} {skill.name}?
         </h2>
-        <p className="mt-2 text-sm text-stone-600">
+        <p className="mt-2 text-sm text-stone-600 dark:text-neutral-300">
           {t('skills.uninstall.description')}
         </p>
         {skill.location && (
-          <p className="mt-3 break-all rounded-lg bg-stone-50 px-3 py-2 font-mono text-[11px] text-stone-600">
+          <p className="mt-3 break-all rounded-lg bg-stone-50 dark:bg-neutral-800/60 px-3 py-2 font-mono text-[11px] text-stone-600 dark:text-neutral-300">
             {skill.location.replace(/\/SKILL\.md$/i, '')}
           </p>
         )}
@@ -128,7 +128,7 @@ export default function UninstallSkillConfirmDialog({ skill, onClose, onUninstal
             type="button"
             disabled={submitting}
             onClick={onClose}
-            className="rounded-lg border border-stone-200 bg-white px-3 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50">
+            className="rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-1.5 text-xs font-medium text-stone-700 dark:text-neutral-200 hover:bg-stone-50 dark:hover:bg-neutral-800/60 disabled:cursor-not-allowed disabled:opacity-50">
             {t('common.cancel')}
           </button>
           <button

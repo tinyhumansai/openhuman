@@ -2,6 +2,7 @@ import * as Sentry from '@sentry/react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import debug from 'debug';
+import { z } from 'zod';
 
 import { store } from '../store';
 import {
@@ -183,13 +184,85 @@ interface WebviewAccountBounds {
   height: number;
 }
 
-interface RecipeNotifyPayload {
-  title?: string;
-  body?: string;
-  icon?: string | null;
-  tag?: string | null;
-  silent?: boolean;
-  [key: string]: unknown;
+const IngestMessageSchema = z.object({
+  id: z.string().optional(),
+  from: z.string().nullable().optional(),
+  sender: z.string().nullable().optional(),
+  to: z.string().nullable().optional(),
+  fromMe: z.boolean().optional(),
+  body: z.string().nullable().optional(),
+  type: z.string().nullable().optional(),
+  timestamp: z.number().nullable().optional(),
+  unread: z.number().optional(),
+});
+
+const IngestPayloadSchema = z
+  .object({
+    messages: z.array(IngestMessageSchema).optional(),
+    unread: z.number().optional(),
+    snapshotKey: z.string().optional(),
+    provider: z.string().optional(),
+    chatId: z.string().optional(),
+    chatName: z.string().nullable().optional(),
+    day: z.string().optional(),
+    isSeed: z.boolean().optional(),
+  })
+  .passthrough();
+
+const LinkedInConversationPayloadSchema = z
+  .object({
+    chatId: z.string(),
+    chatName: z.string().nullable().optional(),
+    day: z.string(),
+    messages: z.array(IngestMessageSchema),
+    isSeed: z.boolean().optional(),
+  })
+  .passthrough();
+
+const LinkedInRequestsPayloadSchema = z
+  .object({
+    requests: z.array(
+      z.object({ name: z.string(), subtitle: z.string().nullable() }).passthrough()
+    ),
+  })
+  .passthrough();
+
+const MeetCaptionRowSchema = z.object({ speaker: z.string(), text: z.string() }).passthrough();
+
+const MeetCallStartedPayloadSchema = z
+  .object({ code: z.string(), url: z.string().optional(), startedAt: z.number() })
+  .passthrough();
+
+const MeetCaptionsPayloadSchema = z
+  .object({ code: z.string(), captions: z.array(MeetCaptionRowSchema), ts: z.number() })
+  .passthrough();
+
+const MeetCallEndedPayloadSchema = z
+  .object({ code: z.string(), endedAt: z.number(), reason: z.string().optional() })
+  .passthrough();
+
+const RecipeNotifyPayloadSchema = z
+  .object({
+    title: z.string().optional(),
+    body: z.string().optional(),
+    icon: z.string().nullable().optional(),
+    tag: z.string().nullable().optional(),
+    silent: z.boolean().optional(),
+  })
+  .passthrough();
+
+function parseRecipePayload<T>(
+  kind: string,
+  accountId: string,
+  payload: unknown,
+  schema: z.ZodType<T>
+): T | null {
+  const parsed = schema.safeParse(payload);
+  if (!parsed.success) {
+    errLog('invalid webview:event payload kind=%s account=%s: %o', kind, accountId, parsed.error);
+    return null;
+  }
+  return parsed.data;
 }
 
 let unlisten: UnlistenFn | null = null;
@@ -400,20 +473,37 @@ function handleRecipeEvent(evt: RecipeEventPayload) {
   // drive the live-captions → transcript pipeline. Everything is
   // accumulated in-memory here; persistence fires once on meet_call_ended.
   if (evt.kind === 'meet_call_started') {
-    handleMeetCallStarted(accountId, evt.payload as unknown as MeetCallStartedPayload);
+    const payload = parseRecipePayload(
+      evt.kind,
+      accountId,
+      evt.payload,
+      MeetCallStartedPayloadSchema
+    );
+    if (!payload) return;
+    handleMeetCallStarted(accountId, payload);
     return;
   }
   if (evt.kind === 'meet_captions') {
-    handleMeetCaptions(accountId, evt.payload as unknown as MeetCaptionsPayload);
+    const payload = parseRecipePayload(evt.kind, accountId, evt.payload, MeetCaptionsPayloadSchema);
+    if (!payload) return;
+    handleMeetCaptions(accountId, payload);
     return;
   }
   if (evt.kind === 'meet_call_ended') {
-    void handleMeetCallEnded(accountId, evt.payload as unknown as MeetCallEndedPayload);
+    const payload = parseRecipePayload(
+      evt.kind,
+      accountId,
+      evt.payload,
+      MeetCallEndedPayloadSchema
+    );
+    if (!payload) return;
+    void handleMeetCallEnded(accountId, payload);
     return;
   }
 
   if (evt.kind === 'ingest') {
-    const ingest = evt.payload as IngestPayload;
+    const ingest = parseRecipePayload(evt.kind, accountId, evt.payload, IngestPayloadSchema);
+    if (!ingest) return;
     const messages: IngestedMessage[] = (ingest.messages ?? []).map((m, idx) => ({
       id: m.id ?? `${accountId}:${idx}`,
       from: m.from ?? m.sender ?? null,
@@ -454,16 +544,26 @@ function handleRecipeEvent(evt: RecipeEventPayload) {
   }
 
   if (evt.kind === 'linkedin_conversation') {
-    void persistLinkedInConversation(
+    const payload = parseRecipePayload(
+      evt.kind,
       accountId,
-      evt.payload as unknown as LinkedInConversationPayload
+      evt.payload,
+      LinkedInConversationPayloadSchema
     );
+    if (!payload) return;
+    void persistLinkedInConversation(accountId, payload);
     return;
   }
 
   if (evt.kind === 'linkedin_requests') {
-    const requests = (evt.payload as { requests: Array<{ name: string; subtitle: string | null }> })
-      .requests;
+    const payload = parseRecipePayload(
+      evt.kind,
+      accountId,
+      evt.payload,
+      LinkedInRequestsPayloadSchema
+    );
+    if (!payload) return;
+    const requests = payload.requests;
     if (requests && requests.length > 0) {
       log('linkedin: %d pending connection request(s) for account=%s', requests.length, accountId);
     }
@@ -471,7 +571,8 @@ function handleRecipeEvent(evt: RecipeEventPayload) {
   }
 
   if (evt.kind === 'notify') {
-    const payload = evt.payload as RecipeNotifyPayload;
+    const payload = parseRecipePayload(evt.kind, accountId, evt.payload, RecipeNotifyPayloadSchema);
+    if (!payload) return;
     const title = String(payload.title ?? '').trim();
     const body = String(payload.body ?? '').trim();
     if (!title && !body) return;
@@ -960,7 +1061,12 @@ async function handoffToOrchestrator(
   try {
     const thread = await threadApi.createNewThread();
     log('meet: created orchestrator thread %s for code=%s', thread.id, session.code);
-    await chatSend({ threadId: thread.id, message: prompt, model: MEET_ORCHESTRATOR_MODEL });
+    await chatSend({
+      threadId: thread.id,
+      message: prompt,
+      model: MEET_ORCHESTRATOR_MODEL,
+      locale: store.getState().locale.current,
+    });
     log('meet: handed off to orchestrator thread=%s code=%s', thread.id, session.code);
     store.dispatch(
       appendLog({

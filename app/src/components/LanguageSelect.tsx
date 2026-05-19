@@ -16,6 +16,7 @@ const LOCALE_OPTIONS: Array<{ value: Locale; flag: string; label: string }> = [
   { value: 'pt', flag: '🇵🇹', label: 'Português' },
   { value: 'ru', flag: '🇷🇺', label: 'Русский' },
   { value: 'id', flag: '🇮🇩', label: 'Bahasa Indonesia' },
+  { value: 'it', flag: '🇮🇹', label: 'Italiano' },
 ];
 
 interface LanguageSelectProps {
@@ -28,7 +29,7 @@ interface LanguageSelectProps {
 }
 
 const DEFAULT_CLASS =
-  "appearance-none rounded-lg border border-stone-200 bg-white bg-[url('data:image/svg+xml;utf8,<svg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2020%2020%22%20fill=%22%2378716c%22><path%20d=%22M5.293%207.293a1%201%200%20011.414%200L10%2010.586l3.293-3.293a1%201%200%20111.414%201.414l-4%204a1%201%200%2001-1.414%200l-4-4a1%201%200%20010-1.414z%22/></svg>')] bg-no-repeat bg-[right_0.5rem_center] bg-[length:1rem_1rem] py-2 pl-3 pr-8 text-xs font-medium text-stone-700 hover:border-stone-300 hover:bg-stone-50 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 cursor-pointer";
+  "appearance-none rounded-lg border border-stone-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 bg-[url('data:image/svg+xml;utf8,<svg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2020%2020%22%20fill=%22%2378716c%22><path%20d=%22M5.293%207.293a1%201%200%20011.414%200L10%2010.586l3.293-3.293a1%201%200%20111.414%201.414l-4%204a1%201%200%2001-1.414%200l-4-4a1%201%200%20010-1.414z%22/></svg>')] bg-no-repeat bg-[right_0.5rem_center] bg-[length:1rem_1rem] py-2 pl-3 pr-8 text-xs font-medium text-stone-700 dark:text-neutral-200 hover:border-stone-300 dark:hover:border-neutral-600 hover:bg-stone-50 dark:hover:bg-neutral-800 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 cursor-pointer";
 
 /**
  * Shared language picker used by the boot-check gate and the Settings home

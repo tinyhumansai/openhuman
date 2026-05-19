@@ -11,11 +11,9 @@ export interface UsageState {
   currentPlan: CurrentPlanData | null;
   currentTier: PlanTier;
   isFreeTier: boolean;
-  usagePct10h: number;
-  usagePct7d: number;
+  usagePct: number;
   isNearLimit: boolean;
   isAtLimit: boolean;
-  isRateLimited: boolean;
   isBudgetExhausted: boolean;
   shouldShowBudgetCompletedMessage: boolean;
   isLoading: boolean;
@@ -110,14 +108,15 @@ export function useUsageState(): UsageState {
   const currentTier: PlanTier = currentPlan?.plan ?? 'FREE';
   const isFreeTier = currentTier === 'FREE';
 
-  const usagePct10h =
-    teamUsage && teamUsage.fiveHourCapUsd > 0.01
-      ? Math.min(1, teamUsage.cycleLimit5hr / teamUsage.fiveHourCapUsd)
-      : 0;
-
-  const usagePct7d =
+  const usagePct =
     teamUsage && teamUsage.cycleBudgetUsd > 0.01
-      ? Math.min(1, (teamUsage.cycleBudgetUsd - teamUsage.remainingUsd) / teamUsage.cycleBudgetUsd)
+      ? Math.max(
+          0,
+          Math.min(
+            1,
+            (teamUsage.cycleBudgetUsd - teamUsage.remainingUsd) / teamUsage.cycleBudgetUsd
+          )
+        )
       : 0;
 
   const isBudgetExhausted = teamUsage
@@ -131,26 +130,18 @@ export function useUsageState(): UsageState {
     ? isBudgetExhausted || (teamUsage.cycleBudgetUsd <= 0.01 && teamUsage.remainingUsd <= 0.01)
     : false;
 
-  const isRateLimited =
-    teamUsage !== null &&
-    !teamUsage.bypassCycleLimit &&
-    teamUsage.fiveHourCapUsd > 0 &&
-    teamUsage.cycleLimit5hr >= teamUsage.fiveHourCapUsd;
+  const isAtLimit = isBudgetExhausted;
 
-  const isAtLimit = isBudgetExhausted || isRateLimited;
-
-  const isNearLimit = !isAtLimit && teamUsage !== null && (usagePct10h >= 0.8 || usagePct7d >= 0.8);
+  const isNearLimit = !isAtLimit && teamUsage !== null && usagePct >= 0.8;
 
   return {
     teamUsage,
     currentPlan,
     currentTier,
     isFreeTier,
-    usagePct10h,
-    usagePct7d,
+    usagePct,
     isNearLimit,
     isAtLimit,
-    isRateLimited,
     isBudgetExhausted,
     shouldShowBudgetCompletedMessage,
     isLoading,

@@ -276,7 +276,7 @@ const DiscordConfig = ({ definition }: DiscordConfigProps) => {
   return (
     <div className="space-y-3">
       {error && (
-        <div className="rounded-lg border border-coral-200 bg-coral-50 px-4 py-3 text-sm text-coral-700">
+        <div className="rounded-lg border border-coral-200 dark:border-coral-500/30 bg-coral-50 dark:bg-coral-500/10 px-4 py-3 text-sm text-coral-700 dark:text-coral-300">
           {error}
         </div>
       )}
@@ -288,13 +288,17 @@ const DiscordConfig = ({ definition }: DiscordConfigProps) => {
         const busy = busyKeys[compositeKey] ?? false;
 
         return (
-          <div key={spec.mode} className="rounded-lg border border-stone-200 bg-stone-50 p-3">
+          <div
+            key={spec.mode}
+            className="rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 p-3">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <p className="text-sm font-medium text-stone-900">
+                <p className="text-sm font-medium text-stone-900 dark:text-neutral-100">
                   {AUTH_MODE_LABELS[spec.mode] ?? spec.mode}
                 </p>
-                <p className="text-xs text-stone-500 mt-1">{spec.description}</p>
+                <p className="text-xs text-stone-500 dark:text-neutral-400 mt-1">
+                  {spec.description}
+                </p>
                 {connection?.lastError && (
                   <p className="text-xs text-coral-600 mt-1">{connection.lastError}</p>
                 )}
@@ -319,22 +323,22 @@ const DiscordConfig = ({ definition }: DiscordConfigProps) => {
 
             {/* Token card — managed_dm connecting state */}
             {spec.mode === 'managed_dm' && linkToken && status === 'connecting' && (
-              <div className="mt-3 rounded-lg border border-primary-200 bg-primary-50/60 p-3 space-y-2">
-                <p className="text-xs font-medium text-primary-700">
+              <div className="mt-3 rounded-lg border border-primary-200 dark:border-primary-500/30 bg-primary-50/60 dark:bg-primary-500/15 p-3 space-y-2">
+                <p className="text-xs font-medium text-primary-700 dark:text-primary-300">
                   {t('channels.discord.linkTokenLabel')}
                 </p>
                 <div className="flex items-center gap-2">
-                  <code className="flex-1 rounded bg-white border border-primary-200 px-2 py-1 text-xs font-mono text-stone-800 select-all break-all">
+                  <code className="flex-1 rounded bg-white dark:bg-neutral-900 border border-primary-200 dark:border-primary-500/30 px-2 py-1 text-xs font-mono text-stone-800 dark:text-neutral-100 select-all break-all">
                     {linkToken}
                   </code>
                   <button
                     type="button"
                     onClick={copyToken}
-                    className="shrink-0 rounded-lg border border-primary-300 px-2 py-1 text-xs font-medium text-primary-700 hover:bg-primary-100">
+                    className="shrink-0 rounded-lg border border-primary-300 dark:border-primary-500/40 px-2 py-1 text-xs font-medium text-primary-700 dark:text-primary-300 hover:bg-primary-100 dark:hover:bg-primary-500/20">
                     {copied ? t('common.copied') : t('common.copy')}
                   </button>
                 </div>
-                <p className="text-xs text-stone-500">
+                <p className="text-xs text-stone-500 dark:text-neutral-400">
                   {t('channels.discord.linkTokenInstruction').replace('{token}', linkToken)}
                 </p>
                 <p className="text-xs text-amber-600 font-medium">
@@ -346,14 +350,14 @@ const DiscordConfig = ({ definition }: DiscordConfigProps) => {
             {/* Connected state for managed_dm — show only Disconnect */}
             {spec.mode === 'managed_dm' && status === 'connected' ? (
               <div className="mt-3 flex items-center justify-between">
-                <p className="text-xs text-sage-700 font-medium">
+                <p className="text-xs text-sage-700 dark:text-sage-300 font-medium">
                   {t('channels.discord.accountLinked')}
                 </p>
                 <button
                   type="button"
                   disabled={busy}
                   onClick={() => handleDisconnect(spec.mode)}
-                  className="rounded-lg border border-stone-200 px-3 py-1.5 text-xs font-medium text-stone-600 hover:border-stone-300 disabled:opacity-50">
+                  className="rounded-lg border border-stone-200 dark:border-neutral-800 px-3 py-1.5 text-xs font-medium text-stone-600 dark:text-neutral-300 hover:border-stone-300 dark:hover:border-neutral-700 disabled:opacity-50">
                   {t('accounts.disconnect')}
                 </button>
               </div>
@@ -373,7 +377,7 @@ const DiscordConfig = ({ definition }: DiscordConfigProps) => {
                   type="button"
                   disabled={busy || status === 'disconnected'}
                   onClick={() => handleDisconnect(spec.mode)}
-                  className="rounded-lg border border-stone-200 px-3 py-1.5 text-xs font-medium text-stone-600 hover:border-stone-300 disabled:opacity-50">
+                  className="rounded-lg border border-stone-200 dark:border-neutral-800 px-3 py-1.5 text-xs font-medium text-stone-600 dark:text-neutral-300 hover:border-stone-300 dark:hover:border-neutral-700 disabled:opacity-50">
                   {t('accounts.disconnect')}
                 </button>
               </div>

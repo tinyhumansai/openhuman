@@ -45,21 +45,25 @@ export function TaskKanbanBoard({ board, disabled = false, onMove }: TaskKanbanB
   };
 
   return (
-    <div className="rounded-xl border border-stone-200 bg-white px-3 py-3 shadow-sm">
+    <div className="rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-3 shadow-sm">
       <div className="mb-2 flex items-center justify-between gap-3">
-        <h4 className="text-xs font-semibold uppercase tracking-wide text-stone-500">
+        <h4 className="text-xs font-semibold uppercase tracking-wide text-stone-500 dark:text-neutral-400">
           {t('conversations.taskKanban.title')}
         </h4>
-        <span className="text-[10px] text-stone-400">{board.cards.length}</span>
+        <span className="text-[10px] text-stone-400 dark:text-neutral-500">
+          {board.cards.length}
+        </span>
       </div>
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
         {COLUMN_DEFS.map(column => (
-          <section key={column.status} className="min-w-0 rounded-lg bg-stone-50 p-2">
+          <section
+            key={column.status}
+            className="min-w-0 rounded-lg bg-stone-50 dark:bg-neutral-800/60 p-2">
             <div className="mb-2 flex items-center justify-between gap-2">
-              <h5 className="truncate text-[11px] font-medium text-stone-600">
+              <h5 className="truncate text-[11px] font-medium text-stone-600 dark:text-neutral-300">
                 {t(column.labelKey)}
               </h5>
-              <span className="text-[10px] text-stone-400">
+              <span className="text-[10px] text-stone-400 dark:text-neutral-500">
                 {cardsByStatus[column.status].length}
               </span>
             </div>
@@ -67,9 +71,9 @@ export function TaskKanbanBoard({ board, disabled = false, onMove }: TaskKanbanB
               {cardsByStatus[column.status].map(card => (
                 <article
                   key={card.id}
-                  className="rounded-lg border border-stone-200 bg-white px-2.5 py-2 shadow-sm">
+                  className="rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-2.5 py-2 shadow-sm">
                   <div className="flex items-start gap-2">
-                    <p className="min-w-0 flex-1 break-words text-xs font-medium leading-snug text-stone-800">
+                    <p className="min-w-0 flex-1 break-words text-xs font-medium leading-snug text-stone-800 dark:text-neutral-100">
                       {card.title}
                     </p>
                     {onMove && (
@@ -80,7 +84,7 @@ export function TaskKanbanBoard({ board, disabled = false, onMove }: TaskKanbanB
                           aria-label={t('conversations.taskKanban.moveLeft')}
                           disabled={disabled || column.status === 'todo'}
                           onClick={() => moveCard(card, -1)}
-                          className="flex h-5 w-5 items-center justify-center rounded-md text-stone-400 transition-colors hover:bg-stone-100 hover:text-stone-700 disabled:opacity-25">
+                          className="flex h-5 w-5 items-center justify-center rounded-md text-stone-400 dark:text-neutral-500 transition-colors hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 hover:text-stone-700 dark:hover:text-neutral-200 dark:text-neutral-200 disabled:opacity-25">
                           <LuArrowLeft className="h-3 w-3" />
                         </button>
                         <button
@@ -89,14 +93,14 @@ export function TaskKanbanBoard({ board, disabled = false, onMove }: TaskKanbanB
                           aria-label={t('conversations.taskKanban.moveRight')}
                           disabled={disabled || column.status === 'done'}
                           onClick={() => moveCard(card, 1)}
-                          className="flex h-5 w-5 items-center justify-center rounded-md text-stone-400 transition-colors hover:bg-stone-100 hover:text-stone-700 disabled:opacity-25">
+                          className="flex h-5 w-5 items-center justify-center rounded-md text-stone-400 dark:text-neutral-500 transition-colors hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 hover:text-stone-700 dark:hover:text-neutral-200 dark:text-neutral-200 disabled:opacity-25">
                           <LuArrowRight className="h-3 w-3" />
                         </button>
                       </div>
                     )}
                   </div>
                   {card.notes && (
-                    <p className="mt-1 break-words text-[11px] leading-snug text-stone-500">
+                    <p className="mt-1 break-words text-[11px] leading-snug text-stone-500 dark:text-neutral-400">
                       {card.notes}
                     </p>
                   )}

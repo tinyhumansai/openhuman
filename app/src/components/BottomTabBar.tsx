@@ -197,7 +197,7 @@ const BottomTabBar = () => {
         onBlur={e => {
           if (!e.currentTarget.contains(e.relatedTarget as Node)) setRevealed(false);
         }}>
-        <nav className="pointer-events-auto inline-flex items-center gap-1 rounded-sm border border-stone-300 bg-stone-200 shadow-soft px-1 py-1">
+        <nav className="pointer-events-auto inline-flex items-center gap-1 rounded-sm border border-stone-300 dark:border-neutral-700 bg-stone-200 dark:bg-neutral-900 shadow-soft px-1 py-1">
           {tabs.map(tab => {
             const active = isActive(tab.path);
             const showBadge = tab.id === 'notifications' && unreadCount > 0;
@@ -216,8 +216,8 @@ const BottomTabBar = () => {
                 onClick={() => navigate(tab.path)}
                 className={`group relative flex items-center px-2 py-2 rounded-sm text-sm transition-colors duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] cursor-pointer ${
                   active
-                    ? 'bg-white text-stone-900 font-semibold shadow-sm'
-                    : 'bg-transparent text-stone-500 hover:bg-stone-300/50 hover:text-stone-700'
+                    ? 'bg-white dark:bg-neutral-800 text-stone-900 dark:text-neutral-100 font-semibold shadow-sm'
+                    : 'bg-transparent text-stone-500 dark:text-neutral-400 hover:bg-stone-300/50 dark:hover:bg-neutral-800/60 hover:text-stone-700 dark:hover:text-neutral-200'
                 }`}
                 aria-label={
                   tab.id === 'notifications' && unreadCount > 0

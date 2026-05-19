@@ -30,15 +30,15 @@ const WizardStepper = ({ labels, activeIndex }: WizardStepperProps) => {
           ? 'bg-sage-500 border-sage-500 text-white'
           : active
             ? 'bg-primary-500 border-primary-500 text-white'
-            : 'bg-white border-stone-300 text-stone-400';
+            : 'bg-white dark:bg-neutral-900 border-stone-300 dark:border-neutral-700 text-stone-400 dark:text-neutral-500';
 
         const labelClasses = completed
-          ? 'text-sage-700'
+          ? 'text-sage-700 dark:text-sage-300'
           : active
-            ? 'text-stone-900 font-semibold'
-            : 'text-stone-400';
+            ? 'text-stone-900 dark:text-neutral-100 font-semibold'
+            : 'text-stone-400 dark:text-neutral-500';
 
-        const connectorClasses = completed ? 'bg-sage-500' : 'bg-stone-200';
+        const connectorClasses = completed ? 'bg-sage-500' : 'bg-stone-200 dark:bg-neutral-800';
 
         return (
           <li
