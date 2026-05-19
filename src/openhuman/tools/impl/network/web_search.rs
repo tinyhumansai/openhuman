@@ -2,7 +2,7 @@ use crate::openhuman::integrations::parallel::{SearchResponse, SearchResultItem}
 use crate::openhuman::integrations::{IntegrationClient, SeltzSearchTool};
 use crate::openhuman::tools::traits::{Tool, ToolCallOptions, ToolResult};
 use async_trait::async_trait;
-use serde_json::json;
+use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 
@@ -161,7 +161,13 @@ impl Tool for WebSearchTool {
                 timeout_secs = self.timeout_secs,
                 "[web_search] direct Seltz search"
             );
-            return direct_search.execute_with_options(args, options).await;
+            let mut normalized_args = args;
+            if let Some(obj) = normalized_args.as_object_mut() {
+                obj.insert("query".to_string(), Value::String(query.clone()));
+            }
+            return direct_search
+                .execute_with_options(normalized_args, options)
+                .await;
         }
 
         let client = self.client.as_ref().ok_or_else(|| {

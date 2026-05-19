@@ -291,13 +291,17 @@ pub fn all_tools_with_runtime(
     // knobs still come from `config.web_search`, but there is no
     // enable flag: every session needs research as a baseline
     // capability.
-    let direct_seltz_for_web_search = if root_config.seltz.enabled
-        && root_config
-            .seltz
-            .api_key
-            .as_deref()
-            .is_some_and(|key| !key.trim().is_empty())
-    {
+    let seltz_has_api_key = root_config
+        .seltz
+        .api_key
+        .as_deref()
+        .is_some_and(|key| !key.trim().is_empty());
+    let direct_seltz_for_web_search = if root_config.seltz.enabled && seltz_has_api_key {
+        tracing::debug!(
+            max_results = root_config.seltz.max_results,
+            timeout_secs = root_config.seltz.timeout_secs,
+            "[web_search] direct Seltz routing enabled"
+        );
         Some(crate::openhuman::integrations::SeltzSearchTool::new(
             root_config.seltz.api_key.clone(),
             root_config.seltz.api_url.clone(),
@@ -305,6 +309,11 @@ pub fn all_tools_with_runtime(
             root_config.seltz.timeout_secs,
         ))
     } else {
+        tracing::debug!(
+            seltz_enabled = root_config.seltz.enabled,
+            has_api_key = seltz_has_api_key,
+            "[web_search] direct Seltz routing disabled; backend proxy path remains"
+        );
         None
     };
     tools.push(Box::new(
