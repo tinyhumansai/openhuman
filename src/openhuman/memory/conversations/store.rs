@@ -18,6 +18,7 @@ use tempfile::NamedTempFile;
 
 use super::types::{
     ConversationMessage, ConversationMessagePatch, ConversationThread, CreateConversationThread,
+    CrossThreadHit,
 };
 
 const LOG_PREFIX: &str = "[memory:conversations]";
@@ -130,6 +131,77 @@ impl ConversationStore {
             return Ok(Vec::new());
         }
         read_jsonl::<ConversationMessage>(&self.thread_messages_path(thread_id))
+    }
+
+    /// Substring-match messages across **every** thread in the workspace,
+    /// optionally excluding one thread (the active chat). Returns up to
+    /// `limit` of the most-recent matching messages, newest first.
+    ///
+    /// Workspace scope is enforced by the store's `workspace_dir` — one
+    /// workspace dir per user — so this helper cannot cross that
+    /// boundary. Issue #1505: the conversational durable-fact pipeline
+    /// (`learning::transcript_ingest`) is async and batched, so cross-
+    /// chat continuity needs a direct cross-thread reader to surface
+    /// context the user shared in chat A when they ask a dependent
+    /// question in chat B.
+    pub fn search_cross_thread_messages(
+        &self,
+        query: &str,
+        limit: usize,
+        exclude_thread_id: Option<&str>,
+    ) -> Result<Vec<CrossThreadHit>, String> {
+        let _guard = CONVERSATION_STORE_LOCK.lock();
+        let query_lower = query.to_lowercase();
+        let terms: Vec<&str> = query_lower
+            .split_whitespace()
+            .filter(|t| t.len() >= 3)
+            .collect();
+        if terms.is_empty() {
+            return Ok(Vec::new());
+        }
+        let threads = self.list_threads_unlocked()?;
+        let mut hits: Vec<CrossThreadHit> = Vec::new();
+        for thread in threads {
+            if exclude_thread_id == Some(thread.id.as_str()) {
+                continue;
+            }
+            let path = self.thread_messages_path(&thread.id);
+            let messages = match read_jsonl::<ConversationMessage>(&path) {
+                Ok(m) => m,
+                Err(err) => {
+                    tracing::warn!(
+                        "[conversations] cross-thread scan skipped unreadable file path={} error={}",
+                        path.display(),
+                        err
+                    );
+                    continue;
+                }
+            };
+            for msg in messages {
+                let content_lower = msg.content.to_lowercase();
+                let matched = terms.iter().filter(|t| content_lower.contains(*t)).count();
+                if matched == 0 {
+                    continue;
+                }
+                let score = matched as f64 / terms.len() as f64;
+                hits.push(CrossThreadHit {
+                    thread_id: thread.id.clone(),
+                    message_id: msg.id,
+                    role: msg.sender,
+                    content: msg.content,
+                    created_at: msg.created_at,
+                    score,
+                });
+            }
+        }
+        hits.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| b.created_at.cmp(&a.created_at))
+        });
+        hits.truncate(limit);
+        Ok(hits)
     }
 
     /// Append a message to the thread's JSONL file. Errors if the thread is missing.

@@ -485,11 +485,20 @@ impl WebhookRouter {
         WEBHOOK_DEBUG_EVENTS.subscribe()
     }
 
-    /// Persist current routes to disk.
+    /// Persist current routes to disk (best-effort).
     ///
     /// When called from an async context, file I/O is offloaded to a blocking
     /// thread via [`tokio::task::spawn_blocking`] so the tokio worker is never
     /// stalled. Falls back to inline I/O when no runtime is available (e.g. tests).
+    ///
+    /// A monotonically-increasing generation counter is bumped on every call;
+    /// previously queued writes with a stale generation skip the disk write to
+    /// avoid wasted I/O under rapid registration churn.
+    ///
+    /// **Note:** Because the write is fire-and-forget, it may not complete
+    /// before process exit. Routes are re-registered on next startup from
+    /// the persisted file, so a lost write only means the most recent
+    /// registration change is replayed.
     fn persist(&self) {
         let Some(ref path) = self.persist_path else {
             return;
@@ -515,6 +524,7 @@ impl WebhookRouter {
         let do_write = move || {
             // Drop stale writes: a newer persist() was already queued.
             if gen_ref.load(Ordering::SeqCst) != gen {
+                debug!("[webhooks] persist: skipping stale write (gen {})", gen);
                 return;
             }
             if let Some(parent) = path.parent() {
@@ -535,8 +545,16 @@ impl WebhookRouter {
         // Offload to a blocking thread when inside a tokio runtime;
         // otherwise execute inline (sync tests, CLI one-shots).
         if tokio::runtime::Handle::try_current().is_ok() {
+            debug!(
+                "[webhooks] persist: offloading write to blocking thread pool (gen {})",
+                gen
+            );
             tokio::task::spawn_blocking(do_write);
         } else {
+            debug!(
+                "[webhooks] persist: no tokio runtime, writing synchronously (gen {})",
+                gen
+            );
             do_write();
         }
     }

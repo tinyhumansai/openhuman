@@ -71,6 +71,12 @@ pub struct OpenAiCompatibleProvider {
     /// `temperature::glob_match`. Defaults to empty (all models support
     /// temperature); populated by the factory when the config has entries.
     pub(crate) temperature_unsupported_models: Vec<String>,
+    /// Per-workload temperature override. When `Some`, replaces the
+    /// caller-supplied `temperature` for every chat call on this provider
+    /// instance — set by the factory when the workload's provider string
+    /// carries an `@<temp>` suffix (e.g. `"openai:gpt-4o@0.2"`). The
+    /// `temperature_unsupported_models` glob filter still applies after.
+    pub(crate) temperature_override: Option<f64>,
 }
 
 /// How the provider expects the API key to be sent.
@@ -107,6 +113,17 @@ impl OpenAiCompatibleProvider {
         auth_style: AuthStyle,
     ) -> Self {
         Self::new_with_options(name, base_url, credential, auth_style, false, None, false)
+    }
+
+    fn enrich_404_message(&self, base: String, status: reqwest::StatusCode) -> String {
+        if status == reqwest::StatusCode::NOT_FOUND && !self.supports_responses_fallback {
+            format!(
+                "{base}; check that your endpoint URL is correct \
+                 and the model name exists on your provider"
+            )
+        } else {
+            base
+        }
     }
 
     /// Create a provider with a custom User-Agent header.
@@ -171,6 +188,7 @@ impl OpenAiCompatibleProvider {
             merge_system_into_user,
             emit_openhuman_thread_id: false,
             temperature_unsupported_models: Vec::new(),
+            temperature_override: None,
         }
     }
 
@@ -182,9 +200,17 @@ impl OpenAiCompatibleProvider {
         self
     }
 
+    /// Pin a per-workload temperature, overriding whatever the caller passes.
+    /// Set by the factory when the provider string carries an `@<temp>` suffix.
+    pub fn with_temperature_override(mut self, temperature: Option<f64>) -> Self {
+        self.temperature_override = temperature;
+        self
+    }
+
     /// Resolve the effective temperature for `model`. Returns `None` when the
     /// model matches a pattern in `temperature_unsupported_models` (causing the
-    /// field to be omitted from the serialised request).
+    /// field to be omitted from the serialised request). Otherwise yields the
+    /// per-workload override if one was configured, else the caller's value.
     fn effective_temperature(&self, model: &str, temperature: f64) -> Option<f64> {
         if self
             .temperature_unsupported_models
@@ -198,7 +224,7 @@ impl OpenAiCompatibleProvider {
             );
             None
         } else {
-            Some(temperature)
+            Some(self.temperature_override.unwrap_or(temperature))
         }
     }
 
@@ -735,6 +761,10 @@ impl OpenAiCompatibleProvider {
         .any(|hint| lower.contains(hint))
     }
 
+    fn err_supports_no_tools_retry(error: &str) -> bool {
+        Self::is_native_tool_schema_unsupported(reqwest::StatusCode::BAD_REQUEST, error)
+    }
+
     /// Streaming variant of the native-tools chat path.
     ///
     /// Sends the request with `stream: true`, consumes the upstream SSE
@@ -753,7 +783,7 @@ impl OpenAiCompatibleProvider {
         use futures_util::StreamExt;
 
         let url = self.chat_completions_url();
-        log::debug!(
+        log::info!(
             "[stream] {} POST {} (stream=true, tools={})",
             self.name,
             url,
@@ -819,8 +849,9 @@ impl OpenAiCompatibleProvider {
             .map(|ct| ct.to_ascii_lowercase().contains("text/event-stream"))
             .unwrap_or(false);
         if !is_sse {
-            log::debug!(
-                "[stream] {} upstream replied with non-SSE content-type; falling back to JSON parse",
+            log::warn!(
+                "[stream] {} upstream replied with non-SSE content-type; falling back to JSON parse \
+                 (no token deltas reach the UI)",
                 self.name,
             );
             let response_bytes = response.bytes().await?;
@@ -1034,6 +1065,15 @@ impl OpenAiCompatibleProvider {
             }
         }
 
+        let tool_call_count = tool_accum.len();
+        log::info!(
+            "[stream] {} aggregated text_chars={} thinking_chars={} tool_calls={}",
+            self.name,
+            text_accum.chars().count(),
+            thinking_accum.chars().count(),
+            tool_call_count,
+        );
+
         // Aggregate the collected tool calls into the unified response
         // shape. We reuse `parse_native_response` by building an
         // `ApiChatResponse` from the accumulators so downstream code
@@ -1243,7 +1283,10 @@ impl Provider for OpenAiCompatibleProvider {
             }
 
             let status_str = status.as_u16().to_string();
-            let message = format!("{} API error ({status}): {sanitized}", self.name);
+            let message = self.enrich_404_message(
+                format!("{} API error ({status}): {sanitized}", self.name),
+                status,
+            );
             if super::is_budget_exhausted_http_400(status, &error) {
                 super::log_budget_exhausted_http_400(
                     "chat_completions",
@@ -1363,7 +1406,9 @@ impl Provider for OpenAiCompatibleProvider {
                     });
             }
 
-            return Err(super::api_error(&self.name, response).await);
+            let err = super::api_error(&self.name, response).await;
+            let enriched = self.enrich_404_message(format!("{err:#}"), status);
+            return Err(anyhow::anyhow!("{enriched}"));
         }
 
         let body = response.text().await?;
@@ -1533,11 +1578,46 @@ impl Provider for OpenAiCompatibleProvider {
             {
                 Ok(resp) => return Ok(resp),
                 Err(err) => {
-                    log::warn!(
-                        "[stream] {} streaming chat failed, falling back to non-streaming: {}",
-                        self.name,
-                        err
-                    );
+                    let err_str = err.to_string();
+                    // Some local-runtime models (e.g. Ollama serving
+                    // gemma3, llama3.2:1b, …) reject the request with
+                    // "<model> does not support tools" when the
+                    // ChatRequest carries a `tools` array. Retry the
+                    // streaming call once with tools stripped so the
+                    // user still gets a live token stream — without
+                    // this we'd silently fall through to the buffered
+                    // non-streaming path and the UI would render the
+                    // reply all at once.
+                    if tools.is_some() && Self::err_supports_no_tools_retry(&err_str) {
+                        log::info!(
+                            "[stream] {} model does not support tools — retrying streaming without tools",
+                            self.name,
+                        );
+                        let retry_request = NativeChatRequest {
+                            tools: None,
+                            tool_choice: None,
+                            ..native_request.clone()
+                        };
+                        match self
+                            .stream_native_chat(credential, &retry_request, tx, stream_dump_seq)
+                            .await
+                        {
+                            Ok(resp) => return Ok(resp),
+                            Err(retry_err) => {
+                                log::warn!(
+                                    "[stream] {} retry without tools also failed, falling back to non-streaming: {}",
+                                    self.name,
+                                    retry_err
+                                );
+                            }
+                        }
+                    } else {
+                        log::warn!(
+                            "[stream] {} streaming chat failed, falling back to non-streaming: {}",
+                            self.name,
+                            err
+                        );
+                    }
                     // Fall through to the non-streaming path below.
                 }
             }
@@ -1634,7 +1714,10 @@ impl Provider for OpenAiCompatibleProvider {
             }
 
             let status_str = status.as_u16().to_string();
-            let message = format!("{} API error ({status}): {sanitized}", self.name);
+            let message = self.enrich_404_message(
+                format!("{} API error ({status}): {sanitized}", self.name),
+                status,
+            );
             if super::is_budget_exhausted_http_400(status, &error) {
                 super::log_budget_exhausted_http_400(
                     "native_chat",

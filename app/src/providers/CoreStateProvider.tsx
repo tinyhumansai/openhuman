@@ -45,6 +45,7 @@ const log = debugFactory('core-state');
 const POLL_MS = 2000;
 const MAX_BOOTSTRAP_RETRIES = 5;
 const SUPPRESS_POLL_WARNING_AT = MAX_BOOTSTRAP_RETRIES + 1;
+const BACKOFF_POLL_MS = 10_000;
 
 /** Extract only non-sensitive fields from an RPC/fetch error. */
 function sanitizeError(error: unknown): { message?: string; code?: string; status?: number } {
@@ -67,12 +68,25 @@ export function coreStatePollFailureWarningMessage(failureCount: number): string
     return null;
   }
   if (failureCount <= MAX_BOOTSTRAP_RETRIES) {
-    return `[core-state] poll failed (attempt ${failureCount}/${MAX_BOOTSTRAP_RETRIES}):`;
+    return `[core-state] bootstrap poll failed (attempt ${failureCount}/${MAX_BOOTSTRAP_RETRIES}):`;
   }
   if (failureCount === SUPPRESS_POLL_WARNING_AT) {
-    return '[core-state] poll failed repeatedly; suppressing further warnings until core state recovers:';
+    return '[core-state] bootstrap budget exhausted; continuing with backoff. Suppressing further warnings until recovery:';
   }
   return null;
+}
+
+export function coreStatePollFailureDebugMessage(failureCount: number): string | null {
+  if (failureCount <= 0) {
+    return null;
+  }
+  if (failureCount < MAX_BOOTSTRAP_RETRIES) {
+    return `refresh failed during bootstrap retry ${failureCount}/${MAX_BOOTSTRAP_RETRIES}; nextAction=retrying`;
+  }
+  if (failureCount === MAX_BOOTSTRAP_RETRIES) {
+    return `refresh failed during bootstrap retry ${failureCount}/${MAX_BOOTSTRAP_RETRIES}; nextAction=marking-ready-with-fallback`;
+  }
+  return `refresh failed after ${failureCount} consecutive poll failures; bootstrapRetryLimit=${MAX_BOOTSTRAP_RETRIES}; nextAction=continuing-background-polling-with-warnings-suppressed`;
 }
 
 function decodeJwtPayload(token: string): Record<string, unknown> | null {
@@ -425,12 +439,10 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
         if (!cancelled) {
           bootstrapFailCountRef.current += 1;
           const safe = sanitizeError(error);
-          log(
-            'refresh failed attempt=%d/%d error=%O',
-            bootstrapFailCountRef.current,
-            MAX_BOOTSTRAP_RETRIES,
-            safe
-          );
+          const debugMessage = coreStatePollFailureDebugMessage(bootstrapFailCountRef.current);
+          if (debugMessage) {
+            log('%s error=%O', debugMessage, safe);
+          }
           const warningMessage = coreStatePollFailureWarningMessage(bootstrapFailCountRef.current);
           if (warningMessage) {
             console.warn(warningMessage, safe);
@@ -462,12 +474,14 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
     void load();
     let timeoutId: number | null = null;
     const scheduleNext = () => {
+      const delay =
+        bootstrapFailCountRef.current >= MAX_BOOTSTRAP_RETRIES ? BACKOFF_POLL_MS : POLL_MS;
       timeoutId = window.setTimeout(async () => {
         await doRefresh();
         if (!cancelled) {
           scheduleNext();
         }
-      }, POLL_MS);
+      }, delay);
     };
     scheduleNext();
 

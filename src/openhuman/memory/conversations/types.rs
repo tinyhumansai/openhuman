@@ -56,3 +56,17 @@ pub struct ConversationMessagePatch {
     #[serde(default)]
     pub extra_metadata: Option<Value>,
 }
+
+/// A single match returned by
+/// [`super::store::ConversationStore::search_cross_thread_messages`]. Carries
+/// the source `thread_id` so the caller can render provenance into the
+/// `[Cross-chat context]` block (issue #1505).
+#[derive(Debug, Clone, PartialEq)]
+pub struct CrossThreadHit {
+    pub thread_id: String,
+    pub message_id: String,
+    pub role: String,
+    pub content: String,
+    pub created_at: String,
+    pub score: f64,
+}

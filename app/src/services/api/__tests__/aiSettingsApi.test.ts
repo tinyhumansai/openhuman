@@ -11,6 +11,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   type AISettings,
   clearCloudProviderKey,
+  flushCloudProviders,
   listProviderModels,
   loadAISettings,
   loadLocalProviderSnapshot,
@@ -141,6 +142,45 @@ describe('parseProviderString', () => {
   it('falls back to openhuman for unrecognised bare strings', () => {
     expect(parseProviderString('unknown-provider')).toEqual({ kind: 'openhuman' });
   });
+
+  // The `@<temp>` suffix is the per-workload temperature override added with
+  // the LLM-routing UI redesign. It must round-trip through parse/serialize
+  // and degrade gracefully when the tail isn't a finite number.
+  describe('temperature suffix grammar', () => {
+    it('parses @temp suffix on cloud strings', () => {
+      expect(parseProviderString('openai:gpt-4o@0.7')).toEqual({
+        kind: 'cloud',
+        providerSlug: 'openai',
+        model: 'gpt-4o',
+        temperature: 0.7,
+      });
+    });
+
+    it('parses @temp suffix on ollama strings (including model ids with colons)', () => {
+      expect(parseProviderString('ollama:llama3.1:8b@0.2')).toEqual({
+        kind: 'local',
+        model: 'llama3.1:8b',
+        temperature: 0.2,
+      });
+    });
+
+    it('treats a non-numeric @tail as part of the model id', () => {
+      // Guards against silently dropping a chunk of the model id when the
+      // user happens to pick a tag like `:beta` after an `@`.
+      expect(parseProviderString('openai:gpt@beta')).toEqual({
+        kind: 'cloud',
+        providerSlug: 'openai',
+        model: 'gpt@beta',
+      });
+    });
+
+    it('drops the temperature key when not configured (toEqual contract)', () => {
+      // Existing call sites compare with toEqual — emitting an extra
+      // `temperature: null` would break unrelated snapshots.
+      const ref = parseProviderString('openai:gpt-4o');
+      expect(ref).toEqual({ kind: 'cloud', providerSlug: 'openai', model: 'gpt-4o' });
+    });
+  });
 });
 
 // ─── serializeProviderRef ─────────────────────────────────────────────────────
@@ -170,6 +210,52 @@ describe('serializeProviderRef', () => {
     for (const ref of cases) {
       expect(parseProviderString(serializeProviderRef(ref))).toEqual(ref);
     }
+  });
+
+  it('appends @temp suffix when temperature is set, omits when not', () => {
+    expect(serializeProviderRef({ kind: 'cloud', providerSlug: 'openai', model: 'gpt-4o' })).toBe(
+      'openai:gpt-4o'
+    );
+    expect(
+      serializeProviderRef({
+        kind: 'cloud',
+        providerSlug: 'openai',
+        model: 'gpt-4o',
+        temperature: 0.7,
+      })
+    ).toBe('openai:gpt-4o@0.7');
+    expect(serializeProviderRef({ kind: 'local', model: 'llama3', temperature: 1.25 })).toBe(
+      'ollama:llama3@1.25'
+    );
+  });
+
+  it('rounds temperature to 2 decimal places on the wire', () => {
+    // Stops floating-point drift (0.7 + 0.0000001) from leaking into the
+    // persisted provider string and confusing the Rust factory.
+    expect(
+      serializeProviderRef({
+        kind: 'cloud',
+        providerSlug: 'openai',
+        model: 'gpt-4o',
+        temperature: 0.7000001,
+      })
+    ).toBe('openai:gpt-4o@0.7');
+  });
+
+  it('treats non-finite temperatures as unset', () => {
+    expect(serializeProviderRef({ kind: 'local', model: 'llama3', temperature: Number.NaN })).toBe(
+      'ollama:llama3'
+    );
+  });
+
+  it('round-trips temperature through parse + serialize', () => {
+    const ref: ProviderRef = {
+      kind: 'cloud',
+      providerSlug: 'openai',
+      model: 'gpt-4o',
+      temperature: 0.2,
+    };
+    expect(parseProviderString(serializeProviderRef(ref))).toEqual(ref);
   });
 });
 
@@ -456,6 +542,7 @@ describe('saveAISettings', () => {
         },
       ],
       routing: {
+        chat: { kind: 'openhuman' },
         reasoning: { kind: 'cloud', providerSlug: 'openai', model: 'gpt-4o' },
         agentic: { kind: 'openhuman' },
         coding: { kind: 'openhuman' },
@@ -515,6 +602,7 @@ describe('saveAISettings', () => {
     const prev: AISettings = {
       cloudProviders: [],
       routing: {
+        chat: { kind: 'openhuman' },
         reasoning: { kind: 'openhuman' },
         agentic: { kind: 'openhuman' },
         coding: { kind: 'openhuman' },
@@ -612,7 +700,7 @@ describe('listProviderModels', () => {
     mockIsTauri.mockReturnValue(true);
   });
 
-  it('dispatches openhuman.inference_list_models with provider_id and returns models', async () => {
+  it('dispatches openhuman.inference_list_models with provider slug and returns models', async () => {
     mockCallCoreRpc.mockResolvedValue({
       result: {
         models: [
@@ -622,11 +710,11 @@ describe('listProviderModels', () => {
       },
     });
 
-    const models = await listProviderModels('p_openai_1');
+    const models = await listProviderModels('openai');
 
     expect(mockCallCoreRpc).toHaveBeenCalledWith({
       method: 'openhuman.inference_list_models',
-      params: { provider_id: 'p_openai_1' },
+      params: { provider_id: 'openai' },
     });
     expect(models).toHaveLength(2);
     expect(models[0].id).toBe('gpt-4o');
@@ -636,25 +724,53 @@ describe('listProviderModels', () => {
   it('returns empty array when not running in Tauri', async () => {
     mockIsTauri.mockReturnValue(false);
 
-    const models = await listProviderModels('p_openai_1');
+    const models = await listProviderModels('openai');
 
     expect(models).toEqual([]);
     expect(mockCallCoreRpc).not.toHaveBeenCalled();
   });
 
-  it('returns empty array on RPC error (graceful degradation)', async () => {
+  it('throws on RPC error so callers can surface retry UI', async () => {
     mockCallCoreRpc.mockRejectedValue(new Error('network error'));
 
-    const models = await listProviderModels('p_openai_1');
-
-    expect(models).toEqual([]);
+    await expect(listProviderModels('openai')).rejects.toThrow('network error');
   });
 
   it('returns empty array when result has no models field', async () => {
     mockCallCoreRpc.mockResolvedValue({ result: {} });
 
-    const models = await listProviderModels('p_openai_1');
+    const models = await listProviderModels('openai');
 
     expect(models).toEqual([]);
+  });
+});
+
+// ─── flushCloudProviders ──────────────────────────────────────────────────────
+
+describe('flushCloudProviders', () => {
+  beforeEach(() => {
+    mockOpenhumanUpdateModelSettings.mockReset();
+    mockIsTauri.mockReturnValue(true);
+  });
+
+  it('calls update_model_settings with the cloud_providers array', async () => {
+    mockOpenhumanUpdateModelSettings.mockResolvedValue({});
+    const providers = [
+      {
+        id: 'p_openai_1',
+        slug: 'openai',
+        label: 'OpenAI',
+        endpoint: 'https://api.openai.com/v1',
+        auth_style: 'bearer' as const,
+      },
+    ];
+    await flushCloudProviders(providers);
+    expect(mockOpenhumanUpdateModelSettings).toHaveBeenCalledWith({ cloud_providers: providers });
+  });
+
+  it('no-ops when not running in Tauri', async () => {
+    mockIsTauri.mockReturnValue(false);
+    await flushCloudProviders([]);
+    expect(mockOpenhumanUpdateModelSettings).not.toHaveBeenCalled();
   });
 });

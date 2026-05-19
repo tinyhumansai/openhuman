@@ -225,6 +225,32 @@ async fn embed_server_error() {
 }
 
 #[tokio::test]
+async fn embed_budget_exhausted_400_still_errors() {
+    // OPENHUMAN-TAURI-JM: the backend returns HTTP 400 with a budget-exhausted
+    // body when the user is out of credits. The provider must still surface
+    // an `Err` to the caller (so the calling pipeline can short-circuit), but
+    // the diagnostic emit site must route through `report_error_or_expected`
+    // so the message is classified as `BudgetExhausted` and demoted rather
+    // than spawning a Sentry error event for every embed call.
+    let app = Router::new().route(
+        "/v1/embeddings",
+        post(|| async {
+            (
+                StatusCode::BAD_REQUEST,
+                r#"{"success":false,"error":"Budget exceeded — add credits to continue"}"#,
+            )
+        }),
+    );
+    let url = start_mock(app).await;
+    let p = OpenAiEmbedding::new(&url, "k", "m", 1);
+
+    let err = p.embed(&["hi"]).await.unwrap_err();
+    let msg = err.to_string();
+    assert!(msg.contains("400"), "status: {msg}");
+    assert!(msg.contains("Budget exceeded"), "body: {msg}");
+}
+
+#[tokio::test]
 async fn embed_missing_data_field() {
     let app = Router::new().route(
         "/v1/embeddings",

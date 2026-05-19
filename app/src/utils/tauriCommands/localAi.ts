@@ -180,17 +180,42 @@ export type RepairAction =
   | { action: 'start_server'; binary_path: string | null }
   | { action: 'pull_model'; model: string };
 
+/**
+ * Verdict for a model's native context window against the memory-layer
+ * minimum. Mirrors the Rust `ContextEligibility` enum (serde tagged by
+ * `status`). `below_minimum` means the model is rejected for memory-layer
+ * use; `unknown` means the context window could not be determined (not a
+ * hard rejection).
+ */
+export type ModelContextEligibility =
+  | { status: 'ok'; context_length: number }
+  | { status: 'below_minimum'; context_length: number; required: number }
+  | { status: 'unknown'; required: number };
+
+export interface InstalledModelInfo {
+  name: string;
+  size?: number | null;
+  modified_at?: string | null;
+  /** Native context window in tokens, or null when `/api/show` didn't report it. */
+  context_length?: number | null;
+  eligibility?: ModelContextEligibility | null;
+}
+
 export interface LocalAiDiagnostics {
   ollama_running: boolean;
   ollama_base_url: string;
   ollama_binary_path: string | null;
   vision_mode?: string;
-  installed_models: Array<{ name: string; size?: number | null; modified_at?: string | null }>;
+  installed_models: InstalledModelInfo[];
+  /** Memory-layer minimum a model's context window must meet to be accepted. */
+  context_requirement?: { min_context_tokens: number };
   expected: {
     chat_model: string;
     chat_found: boolean;
+    chat_eligibility?: ModelContextEligibility | null;
     embedding_model: string;
     embedding_found: boolean;
+    embedding_eligibility?: ModelContextEligibility | null;
     vision_model: string;
     vision_found: boolean;
   };
