@@ -58,9 +58,7 @@ describe('validateRequiredFieldValues', () => {
   it('flags a full URL with the subdomain-invalid i18n key (custom validator)', () => {
     expect(
       validateRequiredFieldValues(dynamicsFields, { org_name: 'https://acme.crm.dynamics.com' })
-    ).toEqual({
-      org_name: 'composio.connect.subdomainInvalid',
-    });
+    ).toEqual({ org_name: 'composio.connect.subdomainInvalid' });
   });
 
   it('flags leading/trailing hyphens for subdomain fields', () => {

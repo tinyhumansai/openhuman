@@ -519,9 +519,7 @@ describe('<ComposioConnectModal> — Dynamics 365 org_name collection (#2127)', 
 
     render(<ComposioConnectModal toolkit={dynamicsToolkit} onClose={() => {}} />);
 
-    fireEvent.change(screen.getByPlaceholderText('myorg'), {
-      target: { value: '  myorg  ' },
-    });
+    fireEvent.change(screen.getByPlaceholderText('myorg'), { target: { value: '  myorg  ' } });
     fireEvent.click(screen.getByRole('button', { name: /Connect Dynamics 365/i }));
 
     await waitFor(() => {

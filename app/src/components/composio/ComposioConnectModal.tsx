@@ -192,10 +192,7 @@ export default function ComposioConnectModal({
   // registry rather than per-toolkit booleans (#2127). New providers
   // (Dynamics 365 `org_name`, future toolkits, …) only need a registry
   // entry — no per-toolkit branches inside this component.
-  const requiredFields = useMemo(
-    () => getRequiredFieldsForToolkit(toolkit.slug),
-    [toolkit.slug]
-  );
+  const requiredFields = useMemo(() => getRequiredFieldsForToolkit(toolkit.slug), [toolkit.slug]);
   const [fieldValues, setFieldValues] = useState<Record<string, string>>({});
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
