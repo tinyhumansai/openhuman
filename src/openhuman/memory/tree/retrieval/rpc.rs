@@ -410,7 +410,9 @@ mod tests {
     #[tokio::test]
     async fn query_global_rpc_returns_response_for_valid_window() {
         let (_tmp, cfg) = test_config();
-        let req = QueryGlobalRequest { time_window_days: 7 };
+        let req = QueryGlobalRequest {
+            time_window_days: 7,
+        };
         let outcome = query_global_rpc(&cfg, req).await.unwrap();
         assert!(outcome.value.hits.is_empty());
         assert_eq!(outcome.logs.len(), 1);
