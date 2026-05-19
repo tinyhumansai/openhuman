@@ -16,6 +16,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { agentProfilesApi } from '../../services/api/agentProfilesApi';
 import { threadApi } from '../../services/api/threadApi';
 import { chatSend } from '../../services/chatService';
+import { CoreRpcError } from '../../services/coreRpcClient';
 import agentProfileReducer from '../../store/agentProfileSlice';
 import chatRuntimeReducer from '../../store/chatRuntimeSlice';
 import socketReducer from '../../store/socketSlice';
@@ -684,6 +685,96 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     });
     expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
     resolveSend?.();
+  });
+
+  it('releases the pending-send lock when appendMessage rejects with a generic error', async () => {
+    vi.mocked(threadApi.appendMessage).mockRejectedValueOnce(new Error('disk full'));
+    const { textarea } = await renderSelectedConversation();
+
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: 'will fail locally' } });
+    });
+    const sendButton = screen.getByRole('button', { name: 'Send message' });
+    await act(async () => {
+      fireEvent.click(sendButton);
+    });
+
+    // chatSend never runs because the local append failed first.
+    await waitFor(() => {
+      expect(threadApi.appendMessage).toHaveBeenCalledTimes(1);
+    });
+    expect(chatSend).not.toHaveBeenCalled();
+
+    // Pending guard released: the user can re-enter text and the send button
+    // enables again.
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: 'retry' } });
+    });
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Send message' })).not.toBeDisabled();
+    });
+  });
+
+  it('releases the pending-send lock when appendMessage hits a stale-thread error', async () => {
+    vi.mocked(threadApi.appendMessage).mockRejectedValueOnce(
+      new CoreRpcError('thread missing', 'thread_not_found')
+    );
+    const { textarea } = await renderSelectedConversation();
+
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: 'stale thread send' } });
+    });
+    const sendButton = screen.getByRole('button', { name: 'Send message' });
+    await act(async () => {
+      fireEvent.click(sendButton);
+    });
+
+    await waitFor(() => {
+      expect(threadApi.appendMessage).toHaveBeenCalledTimes(1);
+    });
+    expect(chatSend).not.toHaveBeenCalled();
+
+    // Stale-thread branch silently clears the guard; typing must re-enable Send.
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: 'retry' } });
+    });
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Send message' })).not.toBeDisabled();
+    });
+  });
+
+  it('clears the pending guard when the 120s silence timer fires', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { textarea } = await renderSelectedConversation();
+
+      await act(async () => {
+        fireEvent.change(textarea, { target: { value: 'hang the backend' } });
+      });
+      const sendButton = screen.getByRole('button', { name: 'Send message' });
+      await act(async () => {
+        fireEvent.click(sendButton);
+      });
+      await waitFor(() => {
+        expect(chatSend).toHaveBeenCalledTimes(1);
+      });
+
+      // Fast-forward past the 120s silence window with no inference signals.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(120_000);
+      });
+
+      // After the safety timeout, typing should re-enable Send — proves the
+      // pending guard was reset inside the timeout callback.
+      await act(async () => {
+        fireEvent.change(textarea, { target: { value: 'retry after timeout' } });
+      });
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: 'Send message' })).not.toBeDisabled();
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('releases the pending-send lock when chatSend rejects', async () => {
