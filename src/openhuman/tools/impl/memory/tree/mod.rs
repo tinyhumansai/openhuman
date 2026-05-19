@@ -9,6 +9,7 @@
 
 mod drill_down;
 mod fetch_leaves;
+mod ingest_document;
 mod query_global;
 mod query_source;
 mod query_topic;
@@ -18,6 +19,7 @@ mod search_entities;
 // (e.g. tool registration in ops.rs).
 pub use drill_down::MemoryTreeDrillDownTool;
 pub use fetch_leaves::MemoryTreeFetchLeavesTool;
+pub use ingest_document::MemoryTreeIngestDocumentTool;
 pub use query_global::MemoryTreeQueryGlobalTool;
 pub use query_source::MemoryTreeQuerySourceTool;
 pub use query_topic::MemoryTreeQueryTopicTool;
@@ -46,7 +48,7 @@ impl Tool for MemoryTreeTool {
          `query_source` (filter by source type + time window), \
          `query_global` (cross-source daily digest), \
          `drill_down` (expand a coarse summary one level), \
-         `fetch_leaves` (pull raw chunks for citation)."
+         `fetch_leaves` (pull raw chunks for citation), `ingest_document` (write a document into the tree for future retrieval)."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -56,7 +58,7 @@ impl Tool for MemoryTreeTool {
                 "mode": {
                     "type": "string",
                     "enum": ["search_entities", "query_topic", "query_source",
-                             "query_global", "drill_down", "fetch_leaves"],
+                             "query_global", "drill_down", "fetch_leaves", "ingest_document"],
                     "description": "Which retrieval operation to run."
                 },
                 // search_entities params
@@ -93,6 +95,27 @@ impl Tool for MemoryTreeTool {
                     "description": "drill_down: how many levels to expand (default 1, max 3)."
                 },
                 // fetch_leaves params
+                // ingest_document params
+                "title": {
+                    "type": "string",
+                    "description": "ingest_document: document title."
+                },
+                "body": {
+                    "type": "string",
+                    "description": "ingest_document: document body (markdown or plain text)."
+                },
+                "source_id": {
+                    "type": "string",
+                    "description": "ingest_document / query_source: stable source identifier. For ingest, re-ingesting same id replaces old chunks."
+                },
+                "provider": {
+                    "type": "string",
+                    "description": "ingest_document: source provider (e.g. github, web, root_docs). Defaults to agent."
+                },
+                "source_ref": {
+                    "type": "string",
+                    "description": "ingest_document: optional URL back to original source."
+                },
                 "chunk_ids": {
                     "type": "array",
                     "items": {"type": "string"},
@@ -121,8 +144,9 @@ impl Tool for MemoryTreeTool {
             "query_global" => MemoryTreeQueryGlobalTool.execute(args).await,
             "drill_down" => MemoryTreeDrillDownTool.execute(args).await,
             "fetch_leaves" => MemoryTreeFetchLeavesTool.execute(args).await,
+            "ingest_document" => MemoryTreeIngestDocumentTool.execute(args).await,
             other => Err(anyhow::anyhow!(
-                "memory_tree: unknown mode `{other}`. Valid: search_entities, query_topic, query_source, query_global, drill_down, fetch_leaves"
+                "memory_tree: unknown mode `{other}`. Valid: search_entities, query_topic, query_source, query_global, drill_down, fetch_leaves, ingest_document"
             )),
         }
     }
