@@ -419,6 +419,11 @@ const ru1: TranslationMap = {
     'Импортировать {count} запись в текущее рабочее пространство?\n\nИсточник: {source}\nЦель: {target}\n\nПеред импортом будет сохранена резервная копия памяти.',
   'migration.confirmImport.plural':
     'Импортировать {count} записей в текущее рабочее пространство?\n\nИсточник: {source}\nЦель: {target}\n\nПеред импортом будет сохранена резервная копия памяти.',
+  // Settings menu: Appearance + Mascot (#2225) — English stubs; native translations welcome
+  'settings.appearance': 'Appearance',
+  'settings.appearanceDesc': 'Pick light, dark, or match your system theme',
+  'settings.mascot': 'Mascot',
+  'settings.mascotDesc': 'Pick the mascot color used across the app',
 };
 
 export default ru1;

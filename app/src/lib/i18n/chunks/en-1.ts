@@ -418,6 +418,11 @@ const en1: TranslationMap = {
   'settings.about.releasesDesc': 'Browse release notes and earlier builds on GitHub.',
   'settings.about.openReleases': 'Open GitHub releases',
   'settings.ai.overview': 'AI System Overview',
+  // Settings menu: Appearance + Mascot (#2225)
+  'settings.appearance': 'Appearance',
+  'settings.appearanceDesc': 'Pick light, dark, or match your system theme',
+  'settings.mascot': 'Mascot',
+  'settings.mascotDesc': 'Pick the mascot color used across the app',
 };
 
 export default en1;
