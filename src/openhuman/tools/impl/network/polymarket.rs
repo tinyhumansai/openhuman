@@ -845,87 +845,8 @@ impl PolymarketTool {
         query: &[(String, String)],
         headers: Option<HeaderMap>,
     ) -> Result<Value> {
-        let url = format!("{base_url}{path}");
-
-        for attempt in 1..=MAX_RETRY_ATTEMPTS {
-            let mut request = self.http.get(&url);
-            if !query.is_empty() {
-                request = request.query(query);
-            }
-            if let Some(h) = headers.as_ref() {
-                request = request.headers(h.clone());
-            }
-
-            let response = match request.send().await {
-                Ok(resp) => resp,
-                Err(err) => {
-                    if err.is_timeout() {
-                        anyhow::bail!(
-                            "Polymarket request timed out after {}s: GET {path}",
-                            self.timeout.as_secs()
-                        );
-                    }
-
-                    if attempt < MAX_RETRY_ATTEMPTS {
-                        sleep(Duration::from_millis(RETRY_BACKOFF_MS)).await;
-                        continue;
-                    }
-
-                    anyhow::bail!(
-                        "Polymarket transient transport error for GET {path}: {err} (url: {url})"
-                    );
-                }
-            };
-
-            let status = response.status();
-
-            if status.is_success() {
-                return response
-                    .json::<Value>()
-                    .await
-                    .with_context(|| format!("Failed to deserialize Polymarket response: {path}"));
-            }
-
-            let body = response
-                .text()
-                .await
-                .unwrap_or_else(|_| String::from("<failed to read response body>"));
-            let detail = summarize_error_body(&body);
-
-            if status.is_client_error() && status != StatusCode::TOO_MANY_REQUESTS {
-                anyhow::bail!(
-                    "Polymarket client error {} for GET {path}: {detail}",
-                    status.as_u16()
-                );
-            }
-
-            let transient = status == StatusCode::TOO_MANY_REQUESTS || status.is_server_error();
-            if transient && attempt < MAX_RETRY_ATTEMPTS {
-                sleep(Duration::from_millis(RETRY_BACKOFF_MS)).await;
-                continue;
-            }
-
-            if status == StatusCode::TOO_MANY_REQUESTS {
-                anyhow::bail!(
-                    "Polymarket transient rate-limit error {} for GET {path} after {attempt} attempts: {detail}",
-                    status.as_u16()
-                );
-            }
-
-            if status.is_server_error() {
-                anyhow::bail!(
-                    "Polymarket transient server error {} for GET {path} after {attempt} attempts: {detail}",
-                    status.as_u16()
-                );
-            }
-
-            anyhow::bail!(
-                "Polymarket HTTP error {} for GET {path}: {detail}",
-                status.as_u16()
-            );
-        }
-
-        anyhow::bail!("Polymarket request failed: retry budget exhausted")
+        self.send_with_retry(reqwest::Method::GET, base_url, path, query, headers, None)
+            .await
     }
 
     async fn post_json_raw(
@@ -935,88 +856,15 @@ impl PolymarketTool {
         headers: Option<HeaderMap>,
         body_raw: String,
     ) -> Result<Value> {
-        let url = format!("{base_url}{path}");
-
-        for attempt in 1..=MAX_RETRY_ATTEMPTS {
-            let mut request = self.http.post(&url).body(body_raw.clone());
-            if let Some(h) = headers.as_ref() {
-                request = request.headers(h.clone());
-            }
-
-            let response = match request.send().await {
-                Ok(resp) => resp,
-                Err(err) => {
-                    if err.is_timeout() {
-                        anyhow::bail!(
-                            "Polymarket request timed out after {}s: POST {path}",
-                            self.timeout.as_secs()
-                        );
-                    }
-
-                    if attempt < MAX_RETRY_ATTEMPTS {
-                        sleep(Duration::from_millis(RETRY_BACKOFF_MS)).await;
-                        continue;
-                    }
-
-                    anyhow::bail!(
-                        "Polymarket transient transport error for POST {path}: {err} (url: {url})"
-                    );
-                }
-            };
-
-            let status = response.status();
-            if status.is_success() {
-                let text = response
-                    .text()
-                    .await
-                    .unwrap_or_else(|_| String::from("null"));
-                if text.trim().is_empty() {
-                    return Ok(Value::Null);
-                }
-                return serde_json::from_str(&text)
-                    .with_context(|| format!("Failed to deserialize Polymarket response: {path}"));
-            }
-
-            let body = response
-                .text()
-                .await
-                .unwrap_or_else(|_| String::from("<failed to read response body>"));
-            let detail = summarize_error_body(&body);
-
-            if status.is_client_error() && status != StatusCode::TOO_MANY_REQUESTS {
-                anyhow::bail!(
-                    "Polymarket client error {} for POST {path}: {detail}",
-                    status.as_u16()
-                );
-            }
-
-            let transient = status == StatusCode::TOO_MANY_REQUESTS || status.is_server_error();
-            if transient && attempt < MAX_RETRY_ATTEMPTS {
-                sleep(Duration::from_millis(RETRY_BACKOFF_MS)).await;
-                continue;
-            }
-
-            if status == StatusCode::TOO_MANY_REQUESTS {
-                anyhow::bail!(
-                    "Polymarket transient rate-limit error {} for POST {path} after {attempt} attempts: {detail}",
-                    status.as_u16()
-                );
-            }
-
-            if status.is_server_error() {
-                anyhow::bail!(
-                    "Polymarket transient server error {} for POST {path} after {attempt} attempts: {detail}",
-                    status.as_u16()
-                );
-            }
-
-            anyhow::bail!(
-                "Polymarket HTTP error {} for POST {path}: {detail}",
-                status.as_u16()
-            );
-        }
-
-        anyhow::bail!("Polymarket request failed: retry budget exhausted")
+        self.send_with_retry(
+            reqwest::Method::POST,
+            base_url,
+            path,
+            &[],
+            headers,
+            Some(body_raw),
+        )
+        .await
     }
 
     async fn delete_json(
@@ -1025,12 +873,35 @@ impl PolymarketTool {
         path: &str,
         headers: Option<HeaderMap>,
     ) -> Result<Value> {
+        self.send_with_retry(reqwest::Method::DELETE, base_url, path, &[], headers, None)
+            .await
+    }
+
+    /// Shared HTTP send + retry-on-transient + status-class classification
+    /// loop. All Polymarket HTTP exits funnel through here so the retry
+    /// policy, timeout handling, and error-message shape stay consistent.
+    async fn send_with_retry(
+        &self,
+        method: reqwest::Method,
+        base_url: &str,
+        path: &str,
+        query: &[(String, String)],
+        headers: Option<HeaderMap>,
+        body: Option<String>,
+    ) -> Result<Value> {
         let url = format!("{base_url}{path}");
+        let method_label = method.as_str().to_string();
 
         for attempt in 1..=MAX_RETRY_ATTEMPTS {
-            let mut request = self.http.delete(&url);
+            let mut request = self.http.request(method.clone(), &url);
+            if !query.is_empty() {
+                request = request.query(query);
+            }
             if let Some(h) = headers.as_ref() {
                 request = request.headers(h.clone());
+            }
+            if let Some(b) = body.as_ref() {
+                request = request.body(b.clone());
             }
 
             let response = match request.send().await {
@@ -1038,7 +909,7 @@ impl PolymarketTool {
                 Err(err) => {
                     if err.is_timeout() {
                         anyhow::bail!(
-                            "Polymarket request timed out after {}s: DELETE {path}",
+                            "Polymarket request timed out after {}s: {method_label} {path}",
                             self.timeout.as_secs()
                         );
                     }
@@ -1049,12 +920,13 @@ impl PolymarketTool {
                     }
 
                     anyhow::bail!(
-                        "Polymarket transient transport error for DELETE {path}: {err} (url: {url})"
+                        "Polymarket transient transport error for {method_label} {path}: {err} (url: {url})"
                     );
                 }
             };
 
             let status = response.status();
+
             if status.is_success() {
                 let text = response
                     .text()
@@ -1075,7 +947,7 @@ impl PolymarketTool {
 
             if status.is_client_error() && status != StatusCode::TOO_MANY_REQUESTS {
                 anyhow::bail!(
-                    "Polymarket client error {} for DELETE {path}: {detail}",
+                    "Polymarket client error {} for {method_label} {path}: {detail}",
                     status.as_u16()
                 );
             }
@@ -1088,20 +960,20 @@ impl PolymarketTool {
 
             if status == StatusCode::TOO_MANY_REQUESTS {
                 anyhow::bail!(
-                    "Polymarket transient rate-limit error {} for DELETE {path} after {attempt} attempts: {detail}",
+                    "Polymarket transient rate-limit error {} for {method_label} {path} after {attempt} attempts: {detail}",
                     status.as_u16()
                 );
             }
 
             if status.is_server_error() {
                 anyhow::bail!(
-                    "Polymarket transient server error {} for DELETE {path} after {attempt} attempts: {detail}",
+                    "Polymarket transient server error {} for {method_label} {path} after {attempt} attempts: {detail}",
                     status.as_u16()
                 );
             }
 
             anyhow::bail!(
-                "Polymarket HTTP error {} for DELETE {path}: {detail}",
+                "Polymarket HTTP error {} for {method_label} {path}: {detail}",
                 status.as_u16()
             );
         }
