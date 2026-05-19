@@ -235,4 +235,27 @@ describe('webviewAccountService — LinkedIn recipe events', () => {
       fireRecipeEvent({ kind: 'linkedin_requests', payload: { requests: [] } })
     ).resolves.not.toThrow();
   });
+
+  it('drops malformed linkedin_conversation payloads before memory ingest', async () => {
+    await expect(
+      fireRecipeEvent({
+        kind: 'linkedin_conversation',
+        payload: { chatId: 123, day: '2025-05-08', messages: [{ from: 'Alice', body: 'Hi' }] },
+      })
+    ).resolves.not.toThrow();
+
+    expect(callCoreRpc).not.toHaveBeenCalled();
+  });
+
+  it('drops malformed ingest payload messages before memory ingest', async () => {
+    await expect(
+      fireRecipeEvent({
+        kind: 'ingest',
+        provider: 'whatsapp',
+        payload: { messages: [{ from: 'Alice', body: 42, timestamp: 'now' }] },
+      })
+    ).resolves.not.toThrow();
+
+    expect(callCoreRpc).not.toHaveBeenCalled();
+  });
 });

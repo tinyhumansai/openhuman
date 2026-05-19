@@ -544,3 +544,175 @@ async fn execute_tool_call_applies_inline_result_budget() {
     assert!(result.output.contains("truncated by tool_result_budget"));
     assert!(record.output_summary.starts_with("long: ok ("));
 }
+
+// ── Explicit-preferences narrow path ──────────────────────────────────────────
+//
+// These tests verify that `fetch_learned_context` correctly handles the three
+// flag combinations:
+//  1. both flags off   → empty context
+//  2. explicit_preferences_enabled=true, learning_enabled=false
+//     → only pinned user_profile entries returned, no inference data
+//  3. learning_enabled=true  → full path (existing tests cover this; we only
+//     verify that explicit entries are included as well)
+//
+// We use the real `UnifiedMemory` backend (sqlite) so the list/store round-trip
+// is exercised end-to-end without mocking the memory layer.
+
+fn make_agent_with_memory(
+    memory: Arc<dyn Memory>,
+    workspace_dir: std::path::PathBuf,
+    learning_enabled: bool,
+    explicit_preferences_enabled: bool,
+) -> Agent {
+    Agent::builder()
+        .provider(Box::new(DummyProvider))
+        .tools(vec![])
+        .memory(memory)
+        .tool_dispatcher(Box::new(XmlToolDispatcher))
+        .workspace_dir(workspace_dir)
+        .event_context("pref-test-session", "pref-test-channel")
+        .learning_enabled(learning_enabled)
+        .explicit_preferences_enabled(explicit_preferences_enabled)
+        .build()
+        .unwrap()
+}
+
+fn make_real_memory(workspace: &std::path::Path) -> Arc<dyn Memory> {
+    use crate::openhuman::embeddings::NoopEmbedding;
+    use crate::openhuman::memory::UnifiedMemory;
+    Arc::new(UnifiedMemory::new(workspace, Arc::new(NoopEmbedding), None).unwrap())
+}
+
+#[tokio::test]
+async fn fetch_learned_context_returns_empty_when_both_flags_off() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let mem = make_real_memory(tmp.path());
+
+    // Store a pinned preference so we can verify it is NOT returned.
+    mem.store(
+        "user_profile",
+        "pinned/tooling/package_manager",
+        "[pinned] (class=tooling) package_manager: pnpm",
+        crate::openhuman::memory::MemoryCategory::Core,
+        None,
+    )
+    .await
+    .unwrap();
+
+    let agent = make_agent_with_memory(
+        mem,
+        tmp.path().to_path_buf(),
+        false, // learning_enabled
+        false, // explicit_preferences_enabled
+    );
+
+    let learned = agent.fetch_learned_context().await;
+
+    assert!(
+        learned.user_profile.is_empty(),
+        "both flags off: user_profile must be empty, got {:?}",
+        learned.user_profile
+    );
+    assert!(learned.observations.is_empty());
+    assert!(learned.patterns.is_empty());
+    assert!(learned.reflections.is_empty());
+}
+
+#[tokio::test]
+async fn fetch_learned_context_returns_pinned_prefs_when_explicit_flag_on_learning_off() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let mem = make_real_memory(tmp.path());
+
+    // Store two pinned preferences via the same key format RememberPreferenceTool uses.
+    mem.store(
+        "user_profile",
+        "pinned/tooling/package_manager",
+        "[pinned] (class=tooling) package_manager: pnpm",
+        crate::openhuman::memory::MemoryCategory::Core,
+        None,
+    )
+    .await
+    .unwrap();
+    mem.store(
+        "user_profile",
+        "pinned/style/verbosity",
+        "[pinned] (class=style) verbosity: terse",
+        crate::openhuman::memory::MemoryCategory::Core,
+        None,
+    )
+    .await
+    .unwrap();
+
+    let agent = make_agent_with_memory(
+        mem,
+        tmp.path().to_path_buf(),
+        false, // learning_enabled — full inference stack OFF
+        true,  // explicit_preferences_enabled — narrow path ON
+    );
+
+    let learned = agent.fetch_learned_context().await;
+
+    assert_eq!(
+        learned.user_profile.len(),
+        2,
+        "explicit flag on, learning off: expected 2 pinned preferences, got: {:?}",
+        learned.user_profile
+    );
+    assert!(
+        learned
+            .user_profile
+            .iter()
+            .any(|s| s.contains("package_manager")),
+        "package_manager preference must appear in user_profile: {:?}",
+        learned.user_profile
+    );
+    assert!(
+        learned.user_profile.iter().any(|s| s.contains("verbosity")),
+        "verbosity preference must appear in user_profile: {:?}",
+        learned.user_profile
+    );
+    // Inference-derived data must remain empty — the stack was NOT engaged.
+    assert!(
+        learned.observations.is_empty(),
+        "observations must be empty when learning_enabled=false"
+    );
+    assert!(
+        learned.patterns.is_empty(),
+        "patterns must be empty when learning_enabled=false"
+    );
+    assert!(
+        learned.reflections.is_empty(),
+        "reflections must be empty when learning_enabled=false"
+    );
+}
+
+#[tokio::test]
+async fn fetch_learned_context_explicit_flag_off_learning_off_returns_empty_even_with_stored_prefs()
+{
+    let tmp = tempfile::TempDir::new().unwrap();
+    let mem = make_real_memory(tmp.path());
+
+    mem.store(
+        "user_profile",
+        "pinned/style/tone",
+        "[pinned] (class=style) tone: formal",
+        crate::openhuman::memory::MemoryCategory::Core,
+        None,
+    )
+    .await
+    .unwrap();
+
+    let agent = make_agent_with_memory(
+        mem,
+        tmp.path().to_path_buf(),
+        false, // learning_enabled
+        false, // explicit_preferences_enabled — both off
+    );
+
+    let learned = agent.fetch_learned_context().await;
+    assert!(
+        learned.user_profile.is_empty(),
+        "both flags off: user_profile must be empty even when prefs exist, got: {:?}",
+        learned.user_profile
+    );
+}

@@ -627,6 +627,13 @@ export interface ChatSendParams {
   message: string;
   model?: string;
   profileId?: string | null;
+  /**
+   * BCP-47 UI locale (e.g. `'ar'`, `'zh-CN'`) — drives the core's
+   * "reply in this language" system-prompt directive. Optional so
+   * callers that don't have a locale handy (legacy paths, tests) keep
+   * working unchanged.
+   */
+  locale?: string | null;
 }
 
 /**
@@ -651,6 +658,7 @@ export async function chatSend(params: ChatSendParams): Promise<void> {
       message: params.message,
       model_override: params.model ?? undefined,
       profile_id: params.profileId ?? undefined,
+      locale: params.locale ?? undefined,
     },
   });
 }

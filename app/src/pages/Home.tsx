@@ -14,7 +14,8 @@ import { useUser } from '../hooks/useUser';
 import { useT } from '../lib/i18n/I18nContext';
 import { restartCoreProcess } from '../services/coreProcessControl';
 import { selectBlockingState } from '../store/connectivitySelectors';
-import { useAppSelector } from '../store/hooks';
+import { useAppDispatch, useAppSelector } from '../store/hooks';
+import { resolveTheme, setThemeMode, type ThemeMode } from '../store/themeSlice';
 import { APP_VERSION } from '../utils/config';
 
 export function resolveHomeUserName(user: unknown): string {
@@ -44,7 +45,7 @@ const Home = () => {
   const { t } = useT();
   const { user } = useUser();
   const navigate = useNavigate();
-  const { isRateLimited, shouldShowBudgetCompletedMessage } = useUsageState();
+  const { shouldShowBudgetCompletedMessage } = useUsageState();
   const _userName = resolveHomeUserName(user);
   const userName = _userName.split(' ')[0]; // Get first name only
   const promoCredits = user?.usage?.promotionBalanceUsd ?? 0;
@@ -75,6 +76,14 @@ const Home = () => {
   const blocking = useAppSelector(selectBlockingState);
   const [isRestartingCore, setIsRestartingCore] = useState(false);
   const [restartError, setRestartError] = useState<string | null>(null);
+
+  const dispatch = useAppDispatch();
+  const themeMode = useAppSelector(state => state.theme.mode) as ThemeMode;
+  const resolvedTheme = resolveTheme(themeMode);
+  const isDark = resolvedTheme === 'dark';
+  const toggleTheme = () => {
+    dispatch(setThemeMode(isDark ? 'light' : 'dark'));
+  };
 
   const handleRestartCore = async () => {
     setIsRestartingCore(true);
@@ -139,17 +148,7 @@ const Home = () => {
   return (
     <div className="min-h-full flex flex-col items-center justify-center p-4">
       <div className="max-w-md w-full">
-        {isRateLimited && (
-          <UsageLimitBanner
-            tone="warning"
-            icon="⏳"
-            title="You’ve Hit Your Limits"
-            message="You’ve reached your short-term usage cap. Buy top-up credits to keep going right away."
-            ctaLabel="Buy top-up credits"
-          />
-        )}
-
-        {!isRateLimited && shouldShowBudgetCompletedMessage && (
+        {shouldShowBudgetCompletedMessage && (
           <UsageLimitBanner
             tone="danger"
             icon="⚠️"
@@ -160,6 +159,46 @@ const Home = () => {
         )}
 
         {showPromoBanner && <PromotionalCreditsBanner promoCredits={promoCredits} />}
+
+        {/* Theme toggle — sun/moon icon above the main card */}
+        <div className="flex justify-end mb-2">
+          <button
+            type="button"
+            onClick={toggleTheme}
+            aria-label={isDark ? t('home.themeToggle.toLight') : t('home.themeToggle.toDark')}
+            title={isDark ? t('home.themeToggle.toLight') : t('home.themeToggle.toDark')}
+            className="p-2 rounded-full text-stone-500 dark:text-neutral-400 hover:text-stone-700 dark:hover:text-neutral-200 hover:bg-stone-100 dark:hover:bg-neutral-800/60 transition-colors">
+            {isDark ? (
+              <svg
+                className="w-5 h-5"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={2}
+                viewBox="0 0 24 24"
+                aria-hidden="true">
+                <circle cx="12" cy="12" r="4" />
+                <path
+                  strokeLinecap="round"
+                  d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"
+                />
+              </svg>
+            ) : (
+              <svg
+                className="w-5 h-5"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={2}
+                viewBox="0 0 24 24"
+                aria-hidden="true">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z"
+                />
+              </svg>
+            )}
+          </button>
+        </div>
 
         {/* Main card — data-walkthrough target for step 1 */}
         <div

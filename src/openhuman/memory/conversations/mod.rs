@@ -16,4 +16,5 @@ pub use store::{
 };
 pub use types::{
     ConversationMessage, ConversationMessagePatch, ConversationThread, CreateConversationThread,
+    CrossThreadHit,
 };

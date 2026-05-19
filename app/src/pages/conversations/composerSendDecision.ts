@@ -24,7 +24,6 @@ export interface ComposerSendDecision {
 }
 
 export interface ComposerBlockedSendFeedback {
-  showLimitModal: boolean;
   error: { code: 'usage_limit_reached' | 'socket_disconnected'; message: string };
 }
 
@@ -94,17 +93,15 @@ export const getComposerBlockedSendFeedback = (
 ): ComposerBlockedSendFeedback | null => {
   if (blockReason === 'usage_limit_reached') {
     return {
-      showLimitModal: true,
       error: {
         code: 'usage_limit_reached',
-        message: 'Usage limit reached. Upgrade or wait for reset.',
+        message: 'Included budget exhausted. Top up credits or upgrade to continue.',
       },
     };
   }
 
   if (blockReason === 'socket_disconnected') {
     return {
-      showLimitModal: false,
       error: {
         code: 'socket_disconnected',
         message:

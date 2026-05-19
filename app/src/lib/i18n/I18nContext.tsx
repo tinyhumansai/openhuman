@@ -8,6 +8,7 @@ import es from './es';
 import fr from './fr';
 import hi from './hi';
 import id from './id';
+import it from './it';
 import pt from './pt';
 import ru from './ru';
 import type { Locale } from './types';
@@ -29,6 +30,7 @@ const translations: Record<Locale, Record<string, string>> = {
   pt,
   ru,
   id,
+  it,
 };
 
 // Locales rendered right-to-left.
