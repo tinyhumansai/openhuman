@@ -356,9 +356,11 @@ describe('coreRpcClient', () => {
 
       const pending = callCoreRpc({ method: 'openhuman.app_state_snapshot', timeoutMs: 60_000 });
       let settled = false;
-      pending.catch(() => {}).finally(() => {
-        settled = true;
-      });
+      pending
+        .catch(() => {})
+        .finally(() => {
+          settled = true;
+        });
 
       // 30s passes — global default would have aborted by now, but the
       // per-call 60s override keeps the request alive. Assert the pending
@@ -403,9 +405,11 @@ describe('coreRpcClient', () => {
         timeoutMs: 2 * 60 * 60 * 1_000,
       });
       let settled = false;
-      pending.catch(() => {}).finally(() => {
-        settled = true;
-      });
+      pending
+        .catch(() => {})
+        .finally(() => {
+          settled = true;
+        });
 
       const MAX_MS = 10 * 60 * 1_000;
       // 1ms before the clamp boundary: still pending. Guards against an
