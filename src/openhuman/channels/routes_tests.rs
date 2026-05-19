@@ -358,3 +358,27 @@ async fn handle_runtime_command_set_model_clears_sender_history_and_persists_rou
     assert_eq!(sent.len(), 1);
     assert!(sent[0].content.contains("Model switched to `gpt-5-mini`"));
 }
+
+#[tokio::test]
+async fn handle_runtime_command_telegram_status_replies_without_agent() {
+    let ctx = runtime_context(PathBuf::from("/tmp"));
+    let channel_impl = Arc::new(RecordingChannel::default());
+    let channel: Arc<dyn Channel> = channel_impl.clone();
+    let msg = ChannelMessage {
+        id: "1".into(),
+        sender: "alice".into(),
+        reply_target: "chat-remote".into(),
+        content: "/status".into(),
+        channel: "telegram".into(),
+        timestamp: 0,
+        thread_ts: Some("42".into()),
+    };
+
+    let handled = handle_runtime_command_if_needed(&ctx, &msg, Some(&channel)).await;
+    assert!(handled);
+
+    let sent = channel_impl.sent.lock().unwrap();
+    assert_eq!(sent.len(), 1);
+    assert!(sent[0].content.contains("**Status**"));
+    assert!(sent[0].content.contains("Provider:"));
+}
