@@ -110,6 +110,10 @@ const BUILTIN_PROVIDER_META: Record<string, { tone: string; label: string }> = {
     label: 'OpenRouter',
     tone: 'bg-slate-100 dark:bg-slate-500/15 ring-slate-300 text-slate-900 dark:text-slate-100',
   },
+  orcarouter: {
+    label: 'OrcaRouter',
+    tone: 'bg-sky-50 dark:bg-sky-500/10 ring-sky-200 text-sky-900 dark:text-sky-100',
+  },
   custom: {
     label: 'Custom',
     tone: 'bg-stone-100 dark:bg-neutral-800 ring-stone-300 text-stone-900 dark:text-neutral-100',
@@ -542,7 +546,9 @@ const ProviderKeyDialog = ({
         ? 'sk-ant-...'
         : slug === 'openrouter'
           ? 'sk-or-...'
-          : 'your-api-key';
+          : slug === 'orcarouter'
+            ? 'sk-or...'
+            : 'your-api-key';
 
   const fieldLabel = isLocalRuntime ? 'Endpoint URL' : t('settings.ai.apiKeyFieldLabel');
   const helper = isLocalRuntime
@@ -2054,8 +2060,8 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
             )}
 
             <div className="flex flex-wrap gap-2">
-              {/* Built-in cloud providers — openai/anthropic/openrouter/custom */}
-              {(['openai', 'anthropic', 'openrouter', 'custom'] as const).map(slug => {
+              {/* Built-in cloud providers — openai/anthropic/openrouter/orcarouter/custom */}
+              {(['openai', 'anthropic', 'openrouter', 'orcarouter', 'custom'] as const).map(slug => {
                 const meta = BUILTIN_PROVIDER_META[slug];
                 const label = meta?.label ?? slug;
                 const existing = draft.cloudProviders.find(cp => cp.slug === slug);
@@ -2483,7 +2489,7 @@ const CloudProviderEditor = ({
   const { t } = useT();
   const defaultSlug: string =
     initial?.slug ??
-    (['openai', 'anthropic', 'openrouter', 'custom'] as const).find(
+    (['openai', 'anthropic', 'openrouter', 'orcarouter', 'custom'] as const).find(
       s => !existingSlugs.includes(s)
     ) ??
     'custom';
@@ -2529,7 +2535,7 @@ const CloudProviderEditor = ({
               }}
               disabled={!!initial}
               className="mt-1 w-full rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 disabled:opacity-60 focus:border-primary-400 focus:outline-none focus:ring-1 focus:ring-primary-200">
-              {(['openai', 'anthropic', 'openrouter', 'custom'] as const)
+              {(['openai', 'anthropic', 'openrouter', 'orcarouter', 'custom'] as const)
                 .filter(s => s === slug || !existingSlugs.includes(s))
                 .map(s => (
                   <option key={s} value={s}>
@@ -2644,6 +2650,8 @@ function defaultEndpointFor(slug: string): string {
       return 'https://api.anthropic.com/v1';
     case 'openrouter':
       return 'https://openrouter.ai/api/v1';
+    case 'orcarouter':
+      return 'https://api.orcarouter.ai/v1';
     case 'ollama':
       // Ollama exposes an OpenAI-compatible endpoint at /v1; the bare host is
       // also accepted by the Rust factory (it appends /v1 internally for chat).

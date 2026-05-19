@@ -115,6 +115,39 @@ fn openrouter_slug_model() {
 }
 
 #[test]
+fn orcarouter_slug_model() {
+    let mut config = Config::default();
+    config.cloud_providers.push(CloudProviderCreds {
+        id: "p_oc".to_string(),
+        slug: "orcarouter".to_string(),
+        label: "OrcaRouter".to_string(),
+        endpoint: "https://api.orcarouter.ai/v1".to_string(),
+        auth_style: AuthStyle::Bearer,
+        default_model: Some("orcarouter/auto".to_string()),
+        ..Default::default()
+    });
+    let (_, model) =
+        create_chat_provider_from_string("agentic", "orcarouter:orcarouter/auto", &config)
+            .expect("orcarouter:<model> must build");
+    assert_eq!(model, "orcarouter/auto");
+}
+
+#[test]
+fn orcarouter_legacy_type_seeds_defaults() {
+    use crate::openhuman::config::schema::cloud_providers::migrate_legacy_fields;
+    let mut entry = CloudProviderCreds {
+        id: "p_oc_legacy".to_string(),
+        legacy_type: Some("orcarouter".to_string()),
+        ..Default::default()
+    };
+    migrate_legacy_fields(&mut entry);
+    assert_eq!(entry.slug, "orcarouter");
+    assert_eq!(entry.label, "OrcaRouter");
+    assert_eq!(entry.endpoint, "https://api.orcarouter.ai/v1");
+    assert_eq!(entry.auth_style, AuthStyle::Bearer);
+}
+
+#[test]
 fn ollama_prefix() {
     let config = Config::default();
     let (_, model) = create_chat_provider_from_string("heartbeat", "ollama:llama3.1:8b", &config)
