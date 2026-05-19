@@ -183,12 +183,8 @@ export function VaultPanel({ onToast }: VaultPanelProps) {
               message:
                 `Ingested ${st.ingested}, unchanged ${st.unchanged}, removed ${st.removed}` +
                 (st.failed > 0 ? `, failed ${st.failed}` : '') +
-                (st.skipped_unsupported > 0
-                  ? `, skipped ${st.skipped_unsupported}`
-                  : '') +
-                (st.duration_ms > 0
-                  ? ` · ${(st.duration_ms / 1000).toFixed(1)}s`
-                  : ''),
+                (st.skipped_unsupported > 0 ? `, skipped ${st.skipped_unsupported}` : '') +
+                (st.duration_ms > 0 ? ` · ${(st.duration_ms / 1000).toFixed(1)}s` : ''),
             });
           }
           await reload();
