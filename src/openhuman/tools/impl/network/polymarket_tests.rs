@@ -969,3 +969,26 @@ fn parse_order_nonce_accepts_number_and_string_payloads() {
         9
     );
 }
+
+#[test]
+fn ensure_https_accepts_https_url() {
+    assert!(ensure_https("https://clob.polymarket.com").is_ok());
+}
+
+#[test]
+fn ensure_https_accepts_loopback_http_for_mock() {
+    assert!(ensure_https("http://127.0.0.1:8901").is_ok());
+    assert!(ensure_https("http://localhost:8901/order").is_ok());
+    assert!(ensure_https("http://[::1]:8901").is_ok());
+}
+
+#[test]
+fn ensure_https_rejects_remote_http_url() {
+    let err = ensure_https("http://clob.polymarket.com")
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains("non-HTTPS"),
+        "unexpected error message: {err}"
+    );
+}

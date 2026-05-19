@@ -27,6 +27,22 @@ const POLY_CHAIN_ID: u64 = 137;
 const POLY_COLLATERAL_DECIMALS: u32 = 6;
 const ZERO_ADDRESS: &str = "0x0000000000000000000000000000000000000000";
 
+fn ensure_https(url: &str) -> Result<()> {
+    if url.starts_with("https://") {
+        return Ok(());
+    }
+    if url.starts_with("http://127.0.0.1")
+        || url.starts_with("http://[::1]")
+        || url.starts_with("http://localhost")
+    {
+        return Ok(());
+    }
+    anyhow::bail!(
+        "Refusing to transmit Polymarket CLOB credentials over non-HTTPS URL: \
+         URL scheme must be https (loopback http allowed for local mock)"
+    )
+}
+
 /// Polymarket market + trading tool (Gamma + CLOB APIs).
 pub struct PolymarketTool {
     gamma_base_url: String,
@@ -481,6 +497,7 @@ impl PolymarketTool {
         user: &str,
         creds: &ClobCredentials,
     ) -> Result<Value> {
+        ensure_https(&self.clob_base_url)?;
         let signed_path = signed_request_path(path, query);
         let headers = sign_clob_headers(creds, user, "GET", &signed_path, None)?;
         self.get_json(&self.clob_base_url, path, query, Some(headers))
@@ -494,6 +511,7 @@ impl PolymarketTool {
         user: &str,
         creds: &ClobCredentials,
     ) -> Result<Value> {
+        ensure_https(&self.clob_base_url)?;
         let body_raw =
             serde_json::to_string(&body).context("Failed to serialize CLOB POST body")?;
         let mut headers = sign_clob_headers(creds, user, "POST", path, Some(&body_raw))?;
@@ -509,6 +527,7 @@ impl PolymarketTool {
         user: &str,
         creds: &ClobCredentials,
     ) -> Result<Value> {
+        ensure_https(&self.clob_base_url)?;
         let headers = sign_clob_headers(creds, user, "DELETE", path, None)?;
         self.delete_json(&self.clob_base_url, path, Some(headers))
             .await
@@ -545,6 +564,7 @@ impl PolymarketTool {
             return Ok(creds);
         }
 
+        ensure_https(&self.clob_base_url)?;
         let creds =
             derive_credentials(&self.http, wallet, &self.clob_base_url, POLY_CHAIN_ID, user)
                 .await
