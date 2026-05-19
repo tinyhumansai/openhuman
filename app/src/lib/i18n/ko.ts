@@ -2,14 +2,14 @@ import type { TranslationMap } from './types';
 
 const ko: TranslationMap = {
   // Navigation
-'nav.home': '홈',
-'nav.human': '휴먼',
-'nav.chat': '채팅',
-'nav.connections': '연결',
-'nav.memory': '인텔리전스',
-'nav.alerts': '알림',
-'nav.rewards': '보상',
-'nav.settings': '설정',
+  'nav.home': '홈',
+  'nav.human': '휴먼',
+  'nav.chat': '채팅',
+  'nav.connections': '연결',
+  'nav.memory': '인텔리전스',
+  'nav.alerts': '알림',
+  'nav.rewards': '보상',
+  'nav.settings': '설정',
 
   // Common
   // Common
@@ -55,7 +55,7 @@ const ko: TranslationMap = {
   'common.continue': '계속',
 
   // Settings Home
-   // Settings Home
+  // Settings Home
   'settings.general': '일반',
   'settings.featuresAndAI': '기능 및 AI',
   'settings.billingAndRewards': '결제 및 보상',
@@ -81,8 +81,7 @@ const ko: TranslationMap = {
   'settings.about': '정보',
   'settings.aboutDesc': '앱 버전 및 소프트웨어 업데이트',
   'settings.developerOptions': '고급',
-  'settings.developerOptionsDesc':
-    'AI 구성, 메시징 채널, 도구, 진단 및 디버그 패널',
+  'settings.developerOptionsDesc': 'AI 구성, 메시징 채널, 도구, 진단 및 디버그 패널',
   'settings.clearAppData': '앱 데이터 삭제',
   'settings.clearAppDataDesc': '로그아웃하고 모든 로컬 앱 데이터를 영구적으로 삭제',
   'settings.logOut': '로그아웃',
@@ -103,11 +102,10 @@ const ko: TranslationMap = {
   'settings.account.privacyDesc': '컴퓨터 밖으로 나가는 데이터를 제어합니다',
 
   // Settings: Notifications
-    'settings.notifications.doNotDisturb': '방해 금지',
+  'settings.notifications.doNotDisturb': '방해 금지',
   'settings.notifications.doNotDisturbDesc': '정해진 시간 동안 모든 알림을 일시 중지합니다',
   'settings.notifications.channelControls': '채널별 설정',
-  'settings.notifications.channelControlsDesc':
-    '각 채널의 알림 기본 설정을 구성합니다',
+  'settings.notifications.channelControlsDesc': '각 채널의 알림 기본 설정을 구성합니다',
 
   // Settings: Features
   'settings.features.screenAwareness': '화면 인식',
@@ -138,8 +136,7 @@ const ko: TranslationMap = {
 
   // Welcome page
   'welcome.title': 'OpenHuman에 오신 것을 환영합니다',
-  'welcome.subtitle':
-    '개인용 AI 슈퍼 인텔리전스입니다. 비공개이며, 간단하고, 매우 강력합니다.',
+  'welcome.subtitle': '개인용 AI 슈퍼 인텔리전스입니다. 비공개이며, 간단하고, 매우 강력합니다.',
   'welcome.connectPrompt': 'RPC URL 구성(고급)',
   'welcome.selectRuntime': '런타임 선택',
   'welcome.urlPlaceholder': 'http://localhost:8089',
@@ -147,14 +144,15 @@ const ko: TranslationMap = {
   'welcome.connecting': '테스트 중',
   'welcome.connect': '테스트',
 
-   // Home page
+  // Home page
   'home.greeting': '좋은 아침입니다',
   'home.greetingAfternoon': '좋은 오후입니다',
   'home.greetingEvening': '좋은 저녁입니다',
   'home.askAssistant': '어시스턴트에게 무엇이든 물어보세요...',
   'home.statusOk':
     '기기가 연결되었습니다. 연결을 유지하려면 앱을 계속 실행해 주세요. 아래 버튼으로 에이전트에게 메시지를 보내세요.',
-  'home.statusBackendOnly': '백엔드에 다시 연결하는 중입니다… 곧 에이전트를 다시 사용할 수 있습니다.',
+  'home.statusBackendOnly':
+    '백엔드에 다시 연결하는 중입니다… 곧 에이전트를 다시 사용할 수 있습니다.',
   'home.statusCoreUnreachable':
     'OpenHuman 코어가 응답하지 않습니다. 백그라운드 프로세스가 중단되었거나 시작하지 못했을 수 있습니다.',
   'home.statusInternetOffline':
@@ -175,7 +173,6 @@ const ko: TranslationMap = {
   'chat.copyResponse': '응답 복사',
   'chat.citations': '인용',
   'chat.toolUsed': '사용된 도구',
-
 
   // Skills / Connections
   'scope.legacy': '레거시',
@@ -211,7 +208,7 @@ const ko: TranslationMap = {
   'alerts.markAllRead': '모두 읽음으로 표시',
   'alerts.unread': '읽지 않음',
 
-   // Rewards
+  // Rewards
   'rewards.title': '보상',
   'rewards.referrals': '추천',
   'rewards.coupons': '교환',
@@ -219,7 +216,6 @@ const ko: TranslationMap = {
   'rewards.referralCode': '내 추천 코드',
   'rewards.copyCode': '코드 복사',
   'rewards.share': '공유',
-
 
   // Onboarding
   'onboarding.welcome': '안녕하세요. 저는 OpenHuman입니다.',
@@ -250,8 +246,7 @@ const ko: TranslationMap = {
   'onboarding.runtimeChoice.cloud.f4': '관리할 API 키 없음',
   'onboarding.runtimeChoice.cloud.f5': '간단한 설정',
   'onboarding.runtimeChoice.custom.title': '사용자 지정 실행',
-  'onboarding.runtimeChoice.custom.tagline':
-    '직접 키를 가져와 사용 중인 항목을 완전히 제어합니다.',
+  'onboarding.runtimeChoice.custom.tagline': '직접 키를 가져와 사용 중인 항목을 완전히 제어합니다.',
   'onboarding.runtimeChoice.custom.f1': '거의 모든 기능에 API 키가 필요합니다',
   'onboarding.runtimeChoice.custom.f2': '이미 결제 중인 서비스를 다시 사용합니다',
   'onboarding.runtimeChoice.custom.f3': '모든 것을 로컬에서 실행하면 무료일 수 있습니다',
@@ -270,7 +265,8 @@ const ko: TranslationMap = {
   'onboarding.apiKeys.openaiPlaceholder': 'sk-...',
   'onboarding.apiKeys.anthropicLabel': 'Anthropic API 키',
   'onboarding.apiKeys.anthropicPlaceholder': 'sk-ant-...',
-  'onboarding.apiKeys.saveError': '해당 키를 저장할 수 없습니다. 다시 확인한 후 다시 시도해 주세요.',
+  'onboarding.apiKeys.saveError':
+    '해당 키를 저장할 수 없습니다. 다시 확인한 후 다시 시도해 주세요.',
   'onboarding.apiKeys.skipForNow': '지금은 건너뛰기',
   'onboarding.apiKeys.continue': '저장하고 계속',
   'onboarding.apiKeys.saving': '저장 중…',
@@ -304,13 +300,14 @@ const ko: TranslationMap = {
     '직접 OpenAI 또는 Anthropic 키를 가져오세요. 모든 텍스트 기반 작업에 이 키를 사용합니다.',
   // Onboarding: Custom > Voice
   'onboarding.custom.voice.title': '음성',
-  'onboarding.custom.voice.subtitle': '음성 모드를 위한 음성-텍스트 변환 및 텍스트-음성 변환입니다.',
+  'onboarding.custom.voice.subtitle':
+    '음성 모드를 위한 음성-텍스트 변환 및 텍스트-음성 변환입니다.',
   'onboarding.custom.voice.defaultDesc':
     'OpenHuman에는 바로 사용할 수 있는 관리형 STT/TTS가 포함되어 있습니다. 별도로 연결할 필요가 없습니다.',
   'onboarding.custom.voice.configureDesc':
     '직접 ElevenLabs / OpenAI Whisper 등을 사용하세요. 설정 › 음성에서 구성할 수 있습니다.',
 
-    // Onboarding: Custom > OAuth (Composio)
+  // Onboarding: Custom > OAuth (Composio)
   'onboarding.custom.oauth.title': '연결(OAuth)',
   'onboarding.custom.oauth.subtitle':
     'OAuth가 필요한 Gmail, Slack, Notion 및 기타 연결 서비스입니다.',
@@ -319,7 +316,7 @@ const ko: TranslationMap = {
   'onboarding.custom.oauth.configureDesc':
     '직접 Composio 계정 또는 API 키를 가져오세요. 설정 › 연결에서 구성할 수 있습니다.',
 
- // Onboarding: Custom > Search
+  // Onboarding: Custom > Search
   'onboarding.custom.search.title': '웹 검색',
   'onboarding.custom.search.subtitle': 'OpenHuman이 사용자를 대신해 웹을 검색하는 방식입니다.',
   'onboarding.custom.search.defaultDesc':
@@ -424,7 +421,8 @@ const ko: TranslationMap = {
   'privacy.empty': '감지된 외부 데이터 전송이 없습니다.',
   'privacy.whatLeavesComputer': '내 컴퓨터를 떠나는 데이터',
   'privacy.loading': '개인정보 세부 정보를 불러오는 중...',
-  'privacy.loadError': '실시간 개인정보 목록을 불러올 수 없습니다. 아래의 분석 제어 기능은 계속 작동합니다.',
+  'privacy.loadError':
+    '실시간 개인정보 목록을 불러올 수 없습니다. 아래의 분석 제어 기능은 계속 작동합니다.',
   'privacy.noCapabilities': '현재 데이터 이동을 공개하는 기능이 없습니다.',
   'privacy.sentTo': '전송 대상',
   'privacy.leavesDevice': '기기를 떠남',
@@ -440,8 +438,7 @@ const ko: TranslationMap = {
   'privacy.analyticsDisclaimer':
     '모든 분석 및 버그 보고서는 완전히 익명화됩니다. 활성화하면 충돌 정보, 기기 유형, 오류 파일 위치만 수집합니다. 메시지, 세션 데이터, 지갑 키, API 키 또는 개인 식별 정보에는 절대 접근하지 않습니다. 이 설정은 언제든지 변경할 수 있습니다.',
 
-
- // Settings: About
+  // Settings: About
   'settings.about.version': '버전',
   'settings.about.updateAvailable': '사용 가능',
   'settings.about.softwareUpdates': '소프트웨어 업데이트',
@@ -501,8 +498,7 @@ const ko: TranslationMap = {
   'settings.billing.backToSettings': '설정으로 돌아가기',
   'settings.billing.openingBrowser': '브라우저를 여는 중...',
   'settings.billing.browserNotOpen': '브라우저가 열리지 않았다면 위 버튼을 사용하세요.',
-  'settings.billing.browserOpenFailed':
-    '브라우저를 자동으로 열 수 없습니다. 위 버튼을 사용하세요.',
+  'settings.billing.browserOpenFailed': '브라우저를 자동으로 열 수 없습니다. 위 버튼을 사용하세요.',
 
   // Settings: Tools
   'settings.tools.chooseCapabilities':
@@ -536,14 +532,11 @@ const ko: TranslationMap = {
   'connections.checking': '확인 중…',
   'connections.walletConfigured':
     '로컬 EVM, BTC, Solana 및 Tron ID가 복구 문구에서 구성되었습니다.',
-  'connections.walletReady':
-    '하나의 복구 문구에서 로컬 EVM, BTC, Solana 및 Tron ID를 설정합니다.',
-  'connections.walletError':
-    '지갑 상태를 확인할 수 없습니다. 복구 문구 패널에서 다시 시도하세요.',
+  'connections.walletReady': '하나의 복구 문구에서 로컬 EVM, BTC, Solana 및 Tron ID를 설정합니다.',
+  'connections.walletError': '지갑 상태를 확인할 수 없습니다. 복구 문구 패널에서 다시 시도하세요.',
   'connections.walletChecking': '지갑 상태 확인 중...',
   'connections.walletIdentities': '지갑 ID',
-  'connections.walletDerived':
-    '복구 문구에서 로컬로 파생되며 안전한 메타데이터로만 저장됩니다.',
+  'connections.walletDerived': '복구 문구에서 로컬로 파생되며 안전한 메타데이터로만 저장됩니다.',
   'connections.privacySecurity': '개인정보 및 보안',
   'connections.privacySecurityDesc':
     '모든 데이터와 자격 증명은 무데이터 보존 정책으로 로컬에 저장됩니다. 사용자의 정보는 암호화되며 제3자와 절대 공유되지 않습니다.',
@@ -600,7 +593,8 @@ const ko: TranslationMap = {
   'mnemonic.generateNewPhrase': '대신 새 복구 문구 생성',
   'mnemonic.securingData': '데이터 보호 중...',
   'mnemonic.saveRecoveryPhrase': '복구 문구 저장',
-  'mnemonic.userNotLoaded': '사용자가 로드되지 않았습니다. 다시 로그인하거나 페이지를 새로고침하세요.',
+  'mnemonic.userNotLoaded':
+    '사용자가 로드되지 않았습니다. 다시 로그인하거나 페이지를 새로고침하세요.',
   'mnemonic.invalidPhrase': '유효하지 않은 복구 문구입니다. 단어를 확인하고 다시 시도하세요.',
   'mnemonic.somethingWentWrong': '문제가 발생했습니다. 다시 시도해 주세요.',
 
@@ -649,11 +643,9 @@ const ko: TranslationMap = {
   'voice.naturalCleanup': '자연스럽게 정리',
   'voice.autoStart': '코어와 함께 음성 서버 자동 시작',
   'voice.customDictionary': '사용자 지정 사전',
-  'voice.customDictionaryDesc':
-    '이름, 기술 용어, 도메인 단어를 추가하여 인식 정확도를 향상합니다.',
+  'voice.customDictionaryDesc': '이름, 기술 용어, 도메인 단어를 추가하여 인식 정확도를 향상합니다.',
   'voice.addWord': '단어 추가...',
-  'voice.sttDisabled':
-    '로컬 STT 모델이 다운로드되고 준비될 때까지 음성 받아쓰기가 비활성화됩니다.',
+  'voice.sttDisabled': '로컬 STT 모델이 다운로드되고 준비될 때까지 음성 받아쓰기가 비활성화됩니다.',
   'voice.openLocalAiModel': '로컬 AI 모델 열기',
   'voice.serverRestarted': '새 설정으로 음성 서버가 다시 시작되었습니다.',
   'voice.settingsSaved': '음성 설정이 저장되었습니다.',
@@ -747,8 +739,7 @@ const ko: TranslationMap = {
   'common.enable': '활성화',
 
   // Chat (additional)
-  'chat.safetyTimeout':
-    '2분 후에도 에이전트의 응답이 없습니다. 다시 시도하거나 연결을 확인하세요.',
+  'chat.safetyTimeout': '2분 후에도 에이전트의 응답이 없습니다. 다시 시도하거나 연결을 확인하세요.',
   'chat.filter.all': '전체',
   'chat.filter.work': '업무',
   'chat.filter.briefing': '브리핑',
@@ -775,7 +766,8 @@ const ko: TranslationMap = {
   'chat.weeklyLimitHit': '포함된 주기 예산을 모두 사용했습니다.',
   'chat.resets': '초기화',
   'chat.topUpToContinue': '계속하려면 충전하세요.',
-  'chat.budgetComplete': '포함된 예산을 모두 사용했습니다. 계속하려면 크레딧을 추가하거나 업그레이드하세요.',
+  'chat.budgetComplete':
+    '포함된 예산을 모두 사용했습니다. 계속하려면 크레딧을 추가하거나 업그레이드하세요.',
   'chat.topUp': '충전',
   'chat.cycle': '주기',
   'chat.cycleSpent': '이번 주기 사용량',
@@ -868,8 +860,7 @@ const ko: TranslationMap = {
   'navigator.topics': '주제',
 
   // Dreams
-  'dreams.description':
-    '꿈은 메모리의 패턴을 종합하는 AI 생성 반영입니다.',
+  'dreams.description': '꿈은 메모리의 패턴을 종합하는 AI 생성 반영입니다.',
   'dreams.comingSoon': '곧 제공 예정',
 
   // Assignment
@@ -893,7 +884,7 @@ const ko: TranslationMap = {
   'insights.items': '항목',
   'insights.more': '더 보기',
 
- // Calls
+  // Calls
   'calls.joiningCall': '통화에 참여하는 중',
   'calls.meetWindowOpening': 'Meet 창이 열리는 중...',
   'calls.failedToStart': 'Meet 통화를 시작하지 못했습니다',
@@ -1033,12 +1024,12 @@ const ko: TranslationMap = {
   // Boot Check Gate
   'bootCheck.invalidUrl': '런타임 URL을 입력해 주세요.',
   'bootCheck.urlMustStartWith': 'URL은 http:// 또는 https://로 시작해야 합니다',
-  'bootCheck.validUrlRequired':
-    '유효한 URL처럼 보이지 않습니다(예: https://core.example.com/rpc)',
+  'bootCheck.validUrlRequired': '유효한 URL처럼 보이지 않습니다(예: https://core.example.com/rpc)',
   'bootCheck.tokenRequired': '연결하려면 인증 토큰이 필요합니다.',
   'bootCheck.chooseCoreMode': '런타임 선택',
   'bootCheck.connectToCore': '런타임에 연결',
-  'bootCheck.desktopDescription': 'OpenHuman은 생각하기 위한 런타임이 필요합니다. 어디에서 실행할지 선택하세요.',
+  'bootCheck.desktopDescription':
+    'OpenHuman은 생각하기 위한 런타임이 필요합니다. 어디에서 실행할지 선택하세요.',
   'bootCheck.webDescription':
     '웹에서 OpenHuman은 사용자가 제어하는 런타임에 연결됩니다. 아래에 URL과 인증 토큰을 입력하거나, 데스크톱 앱을 받아 이 컴퓨터에서 바로 실행하세요.',
   'bootCheck.preferDesktop': '모든 것을 자신의 기기에 보관하고 싶으신가요?',
@@ -1214,8 +1205,7 @@ const ko: TranslationMap = {
   'app.errorFallback.componentStack': '컴포넌트 스택',
   'app.errorFallback.downloadLatest': '최신 버전 다운로드',
   'app.errorFallback.heading': '문제가 발생했습니다',
-  'app.errorFallback.hint':
-    '앱을 다시 불러와 보세요. 문제가 계속되면 최신 버전을 다운로드하세요.',
+  'app.errorFallback.hint': '앱을 다시 불러와 보세요. 문제가 계속되면 최신 버전을 다운로드하세요.',
   'app.errorFallback.reloadApp': '앱 다시 불러오기',
   'app.errorFallback.subheading': '예상치 못한 오류가 발생했습니다',
   'app.errorFallback.tryRecover': '복구 시도',
@@ -1223,8 +1213,7 @@ const ko: TranslationMap = {
   'app.localAiDownload.preparing': '준비 중...',
   'app.openhumanLink.accounts.continueWith': '{label} 로그인으로 계속',
   'app.openhumanLink.accounts.done': '완료',
-  'app.openhumanLink.accounts.intro':
-    'OpenHuman이 계정에 접근할 수 있도록 앱을 연결하세요.',
+  'app.openhumanLink.accounts.intro': 'OpenHuman이 계정에 접근할 수 있도록 앱을 연결하세요.',
   'app.openhumanLink.accounts.webviewNote':
     '자격 증명은 이 기기에 보관되며 절대 공유되지 않습니다.',
   'app.openhumanLink.billing.openDashboard': '대시보드 열기',
@@ -1288,7 +1277,8 @@ const ko: TranslationMap = {
   'channels.discord.linkTokenInstruction': '{token}',
   'channels.discord.linkTokenLabel': '링크 토큰',
   'channels.discord.linkTokenOnce': '이 토큰은 한 번만 사용할 수 있습니다.',
-  'channels.discord.picker.allPermissionsOk': '봇이 이 채널에서 필요한 모든 권한을 가지고 있습니다.',
+  'channels.discord.picker.allPermissionsOk':
+    '봇이 이 채널에서 필요한 모든 권한을 가지고 있습니다.',
   'channels.discord.picker.botNotInServers': '봇이 서버에 없습니다',
   'channels.discord.picker.category': '카테고리',
   'channels.discord.picker.channel': '채널',
@@ -1302,12 +1292,14 @@ const ko: TranslationMap = {
   'channels.discord.picker.selectServer': '서버 선택',
   'channels.discord.picker.server': '서버',
   'channels.discord.picker.serverChannelSelection': '서버 및 채널 선택',
-  'channels.discord.savedRestartRequired': '채널이 저장되었습니다. 활성화하려면 앱을 다시 시작하세요.',
+  'channels.discord.savedRestartRequired':
+    '채널이 저장되었습니다. 활성화하려면 앱을 다시 시작하세요.',
   'channels.telegram.connect': '연결',
   'channels.telegram.managedDmConnecting': 'Telegram 계정 연결 중…',
   'channels.telegram.managedDmTimeout': '연결 시간이 초과되었습니다. 다시 시도하세요.',
   'channels.telegram.reconnect': '다시 연결',
-  'channels.telegram.savedRestartRequired': '채널이 저장되었습니다. 활성화하려면 앱을 다시 시작하세요.',
+  'channels.telegram.savedRestartRequired':
+    '채널이 저장되었습니다. 활성화하려면 앱을 다시 시작하세요.',
   'channels.web.alwaysAvailable': '항상 사용 가능',
   'chat.unsubscribeApproval.approve': '승인 및 구독 취소',
   'chat.unsubscribeApproval.approved': '✓ 구독 취소가 완료되었습니다.',
@@ -1370,8 +1362,7 @@ const ko: TranslationMap = {
   'conversations.toolTimeline.workerThread': '워커 스레드',
   'daemon.serviceBlockingGate.body':
     '백그라운드에서 다시 시도 중입니다. 보통 몇 초 안에 해결됩니다.',
-  'daemon.serviceBlockingGate.downloadHint':
-    '이 문제가 계속 발생하면 최신 버전을 다운로드하세요.',
+  'daemon.serviceBlockingGate.downloadHint': '이 문제가 계속 발생하면 최신 버전을 다운로드하세요.',
   'daemon.serviceBlockingGate.downloadLatest': '최신 버전 다운로드',
   'daemon.serviceBlockingGate.retryCore': '코어 다시 시도',
   'daemon.serviceBlockingGate.retryFailed':
@@ -1468,15 +1459,13 @@ const ko: TranslationMap = {
   'pages.settings.account.recoveryPhraseDesc': '계정 복구 문구를 확인하고 백업합니다',
   'pages.settings.account.team': '팀',
   'pages.settings.account.teamDesc': '팀 구성원과 권한을 관리합니다',
-  'pages.settings.accountSection.description':
-    '복구 문구, 팀, 연결 및 개인정보 설정.',
+  'pages.settings.accountSection.description': '복구 문구, 팀, 연결 및 개인정보 설정.',
   'pages.settings.accountSection.title': '계정',
   'pages.settings.ai.llm': 'LLM',
   'pages.settings.ai.llmDesc': '언어 모델 제공업체 및 라우팅',
   'pages.settings.ai.voice': '음성',
   'pages.settings.ai.voiceDesc': '음성-텍스트 및 텍스트-음성 설정',
-  'pages.settings.aiSection.description':
-    '언어 모델 제공업체, 로컬 Ollama 및 음성(STT / TTS).',
+  'pages.settings.aiSection.description': '언어 모델 제공업체, 로컬 Ollama 및 음성(STT / TTS).',
   'pages.settings.aiSection.title': 'AI',
   'pages.settings.features.messagingChannels': '메시징 채널',
   'pages.settings.features.messagingChannelsDesc': '메시징 채널 설명',
@@ -1493,7 +1482,7 @@ const ko: TranslationMap = {
   'privacy.dataKind.diagnostics': '진단',
   'privacy.dataKind.metadata': '메타데이터',
   'privacy.dataKind.raw': '원본',
- 'privacy.whatLeaves.link.label': '내 컴퓨터를 떠나는 데이터는 무엇인가요?',
+  'privacy.whatLeaves.link.label': '내 컴퓨터를 떠나는 데이터는 무엇인가요?',
   'rewards.community.achievementsUnlocked': '{total}개 중 {unlocked}개 업적 잠금 해제됨',
   'rewards.community.connectDiscord': 'Discord 연결',
   'rewards.community.cumulativeTokens': '누적 토큰',
@@ -1532,7 +1521,8 @@ const ko: TranslationMap = {
   'rewards.coupon.redeemAccepted':
     '{code}이(가) 승인되었습니다. 필요한 작업이 완료되면 {amount}이(가) 잠금 해제됩니다.',
   'rewards.coupon.redeemButton': '코드 교환',
-  'rewards.coupon.redeemSuccess': '{code}이(가) 교환되었습니다. {amount}이(가) 크레딧에 추가되었습니다.',
+  'rewards.coupon.redeemSuccess':
+    '{code}이(가) 교환되었습니다. {amount}이(가) 크레딧에 추가되었습니다.',
   'rewards.coupon.redeemedCodes': '교환된 코드',
   'rewards.coupon.redeeming': '교환 중...',
   'rewards.coupon.statusApplied': '적용됨',
@@ -1562,8 +1552,7 @@ const ko: TranslationMap = {
   'rewards.referralSection.statusCompleted': '완료됨',
   'rewards.referralSection.statusExpired': '만료됨',
   'rewards.referralSection.statusJoined': '참여함',
-  'rewards.referralSection.subtitle':
-    '코드를 공유하고 참여하는 친구마다 크레딧을 받으세요.',
+  'rewards.referralSection.subtitle': '코드를 공유하고 참여하는 친구마다 크레딧을 받으세요.',
   'rewards.referralSection.title': '친구를 초대하고 크레딧 받기',
   'rewards.referralSection.totalEarned': '총 적립',
   'rewards.referralSection.yourCode': '내 코드',
@@ -1633,8 +1622,7 @@ const ko: TranslationMap = {
   'settings.billing.autoRecharge.saveSettings': '설정 저장',
   'settings.billing.autoRecharge.saving': '저장 중…',
   'settings.billing.autoRecharge.setDefault': '기본값으로 설정',
-  'settings.billing.autoRecharge.subtitle':
-    '잔액이 부족해지면 크레딧을 자동으로 충전합니다.',
+  'settings.billing.autoRecharge.subtitle': '잔액이 부족해지면 크레딧을 자동으로 충전합니다.',
   'settings.billing.autoRecharge.title': '자동 충전 활성화',
   'settings.billing.autoRecharge.toggleAriaLabel': '자동 충전 전환',
   'settings.billing.autoRecharge.weeklyLimit': '주간 지출 한도',
@@ -1646,8 +1634,7 @@ const ko: TranslationMap = {
   'settings.billing.inferenceBudget.cycleEnds': '주기 종료',
   'settings.billing.inferenceBudget.exhausted': '소진됨',
   'settings.billing.inferenceBudget.loadError': '예산 정보를 불러오지 못했습니다.',
-  'settings.billing.inferenceBudget.noBudgetDesc':
-    '이 기간에 구성된 반복 예산이 없습니다.',
+  'settings.billing.inferenceBudget.noBudgetDesc': '이 기간에 구성된 반복 예산이 없습니다.',
   'settings.billing.inferenceBudget.noRecurringBudget': '반복 예산 없음',
   'settings.billing.inferenceBudget.remaining': '남음',
   'settings.billing.inferenceBudget.tenHourCap': '10시간 한도',
@@ -1667,7 +1654,8 @@ const ko: TranslationMap = {
   'settings.billing.payAsYouGo.unableToLoad': '잔액을 불러올 수 없습니다.',
   'settings.billing.subscription.annual': '연간',
   'settings.billing.subscription.billedAnnually': '연간 청구',
-  'settings.billing.subscription.chooseSubtitle': '더 많은 사용량과 기능을 잠금 해제하려면 업그레이드하세요.',
+  'settings.billing.subscription.chooseSubtitle':
+    '더 많은 사용량과 기능을 잠금 해제하려면 업그레이드하세요.',
   'settings.billing.subscription.chooseTitle': '플랜 선택',
   'settings.billing.subscription.cryptoDesc': '결제 게이트웨이를 통해 암호화폐로 결제하세요.',
   'settings.billing.subscription.cryptoQuestion': '암호화폐로 결제하시겠습니까?',
@@ -1687,8 +1675,7 @@ const ko: TranslationMap = {
   'settings.composio.apiKeyStoredPlaceholder': '••••••••••••••••',
   'settings.composio.clearedToBackend': '백엔드 모드로 전환됨',
   'settings.composio.confirmItem1': 'API 키가 있는 app.composio.dev 계정',
-  'settings.composio.confirmItem2':
-    '개인 Composio 계정을 통해 각 통합을 다시 연결해야 합니다',
+  'settings.composio.confirmItem2': '개인 Composio 계정을 통해 각 통합을 다시 연결해야 합니다',
   'settings.composio.confirmItem3':
     '참고: Composio 트리거(실시간 웹훅)는 아직 Direct 모드에서 실행되지 않습니다 — 동기식 도구 호출만 지원됩니다',
   'settings.composio.confirmNeedItems': '필요한 항목:',
@@ -1696,7 +1683,7 @@ const ko: TranslationMap = {
   'settings.composio.confirmTitle': '⚠️ Direct 모드로 전환',
   'settings.composio.confirmWarning':
     '기존 통합(Gmail, Slack, GitHub 등 OpenHuman을 통해 연결된 통합)은 표시되지 않습니다 — OpenHuman 관리형 Composio 테넌트에 있습니다.',
- 'settings.composio.intro':
+  'settings.composio.intro':
     'Composio는 에이전트가 호출할 수 있는 도구로 250개 이상의 외부 앱을 통합합니다. 이러한 도구 호출이 라우팅되는 방식을 선택하세요.',
   'settings.composio.modeDirect': 'Direct(직접 API 키 사용)',
   'settings.composio.modeDirectDesc':
@@ -1705,7 +1692,8 @@ const ko: TranslationMap = {
   'settings.composio.modeManagedDesc':
     'OpenHuman이 백엔드를 통해 도구 호출을 프록시합니다(권장). 인증은 중개되며, Composio API 키를 붙여넣을 필요가 없습니다. 웹훅은 완전히 라우팅됩니다.',
   'settings.composio.routingMode': '라우팅 모드',
-  'settings.composio.saveErrorNoKey': '저장에 실패했습니다. Direct 모드에는 비어 있지 않은 API 키가 필요합니다.',
+  'settings.composio.saveErrorNoKey':
+    '저장에 실패했습니다. Direct 모드에는 비어 있지 않은 API 키가 필요합니다.',
   'settings.composio.saving': '저장 중…',
   'settings.composio.switching': '전환 중…',
   'settings.cron.jobs.desc': '코어에서 실행 중인 예약 작업을 보고 관리합니다.',
@@ -1746,7 +1734,8 @@ const ko: TranslationMap = {
   'settings.localModel.deviceCapability.installFirst': '먼저 Ollama를 실행하세요.',
   'settings.localModel.deviceCapability.installFirstDesc':
     '로컬 티어는 외부에서 관리되는 Ollama 엔드포인트에 의존합니다. 직접 시작하고 원하는 모델을 가져온 뒤, 런타임에 연결할 수 있을 때까지 "비활성화됨(클라우드 대체)"을 계속 사용하세요.',
-  'settings.localModel.deviceCapability.installOllamaFirst': '이 티어를 사용하려면 먼저 Ollama를 실행하세요',
+  'settings.localModel.deviceCapability.installOllamaFirst':
+    '이 티어를 사용하려면 먼저 Ollama를 실행하세요',
   'settings.localModel.deviceCapability.installingOllama': 'Ollama 설치 중',
   'settings.localModel.deviceCapability.loadingDeviceInfo': '기기 정보 불러오는 중',
   'settings.localModel.deviceCapability.localAiDisabled':
@@ -2002,8 +1991,7 @@ const ko: TranslationMap = {
   'skills.setup.autocomplete.stylePreset': '스타일 프리셋',
   'skills.setup.autocomplete.stylePresetValue': '균형(나중에 구성 가능)',
   'skills.setup.autocomplete.title': '텍스트 자동 완성',
-  'skills.setup.screenIntel.activeDesc':
-    '화면 인텔리전스가 실행 중이며 활성 창을 읽고 있습니다.',
+  'skills.setup.screenIntel.activeDesc': '화면 인텔리전스가 실행 중이며 활성 창을 읽고 있습니다.',
   'skills.setup.screenIntel.activeTitle': '화면 인텔리전스가 활성화됨',
   'skills.setup.screenIntel.advancedSettings': '고급 설정',
   'skills.setup.screenIntel.allGranted': '모든 권한 허용됨',
@@ -2099,7 +2087,8 @@ const ko: TranslationMap = {
   'webhooks.tunnels.removeEcho': 'Echo 제거',
   'webhooks.tunnels.title': '웹훅 터널',
   'webhooks.tunnels.toggleFailed': 'Echo 전환 실패',
-  'composio.directModeRequiresKey': '저장에 실패했습니다. Direct 모드에는 비어 있지 않은 API 키가 필요합니다.',
+  'composio.directModeRequiresKey':
+    '저장에 실패했습니다. Direct 모드에는 비어 있지 않은 API 키가 필요합니다.',
   'composio.notYetRouted': '아직 라우팅되지 않음',
   'composio.triggers.loading': '불러오는 중…',
   'conversations.taskKanban.todo': '할 일',

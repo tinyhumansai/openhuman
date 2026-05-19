@@ -159,15 +159,13 @@ const ko4: TranslationMap = {
     '암호화 및 지갑 접근을 위한 BIP39 복구 문구를 관리합니다',
   'pages.settings.account.team': '팀',
   'pages.settings.account.teamDesc': '팀, 멤버 및 초대를 관리합니다',
-  'pages.settings.accountSection.description':
-    '복구 문구, 팀, 연결 및 개인정보 설정.',
+  'pages.settings.accountSection.description': '복구 문구, 팀, 연결 및 개인정보 설정.',
   'pages.settings.accountSection.title': '계정',
   'pages.settings.ai.llm': 'LLM',
   'pages.settings.ai.llmDesc': 'LLM 설명',
   'pages.settings.ai.voice': '음성',
   'pages.settings.ai.voiceDesc': '음성 설명',
-  'pages.settings.aiSection.description':
-    '언어 모델 제공업체, 로컬 Ollama 및 음성(STT / TTS).',
+  'pages.settings.aiSection.description': '언어 모델 제공업체, 로컬 Ollama 및 음성(STT / TTS).',
   'pages.settings.aiSection.title': 'AI',
   'pages.settings.features.messagingChannels': '메시징 채널',
   'pages.settings.features.messagingChannelsDesc': '메시징 채널 설명',
@@ -224,7 +222,8 @@ const ko4: TranslationMap = {
   'rewards.coupon.redeemAccepted':
     '{code}이(가) 승인되었습니다. 필요한 작업이 완료되면 {amount}이(가) 잠금 해제됩니다.',
   'rewards.coupon.redeemButton': '코드 교환',
-  'rewards.coupon.redeemSuccess': '{code}이(가) 교환되었습니다. {amount}이(가) 크레딧에 추가되었습니다.',
+  'rewards.coupon.redeemSuccess':
+    '{code}이(가) 교환되었습니다. {amount}이(가) 크레딧에 추가되었습니다.',
   'rewards.coupon.redeemedCodes': '교환된 코드',
   'rewards.coupon.redeeming': '교환 중...',
   'rewards.coupon.statusApplied': '적용됨',

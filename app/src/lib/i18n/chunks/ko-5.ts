@@ -12,8 +12,7 @@ const ko5: TranslationMap = {
   'settings.composio.apiKeyStoredPlaceholder': '••••••••••••••••',
   'settings.composio.clearedToBackend': '백엔드 모드로 전환됨',
   'settings.composio.confirmItem1': 'API 키가 있는 app.composio.dev 계정',
-  'settings.composio.confirmItem2':
-    '개인 Composio 계정을 통해 각 통합을 다시 연결해야 합니다',
+  'settings.composio.confirmItem2': '개인 Composio 계정을 통해 각 통합을 다시 연결해야 합니다',
   'settings.composio.confirmItem3':
     '참고: Composio 트리거(실시간 웹훅)는 아직 Direct 모드에서 실행되지 않습니다 — 동기식 도구 호출만 지원됩니다',
   'settings.composio.confirmNeedItems': '필요한 항목:',
@@ -30,7 +29,8 @@ const ko5: TranslationMap = {
   'settings.composio.modeManagedDesc':
     'OpenHuman이 백엔드를 통해 도구 호출을 프록시합니다(권장). 인증은 중개되며, Composio API 키를 붙여넣을 필요가 없습니다. 웹훅은 완전히 라우팅됩니다.',
   'settings.composio.routingMode': '라우팅 모드',
-  'settings.composio.saveErrorNoKey': '저장에 실패했습니다. Direct 모드에는 비어 있지 않은 API 키가 필요합니다.',
+  'settings.composio.saveErrorNoKey':
+    '저장에 실패했습니다. Direct 모드에는 비어 있지 않은 API 키가 필요합니다.',
   'settings.composio.saving': '저장 중…',
   'settings.composio.switching': '전환 중…',
   'settings.cron.jobs.desc': '설명',
@@ -70,7 +70,8 @@ const ko5: TranslationMap = {
   'settings.localModel.deviceCapability.installFirst': '먼저 Ollama를 실행하세요.',
   'settings.localModel.deviceCapability.installFirstDesc':
     '로컬 티어는 외부에서 관리되는 Ollama 엔드포인트에 의존합니다. 직접 시작하고 원하는 모델을 가져온 뒤, 런타임에 연결할 수 있을 때까지 "비활성화됨(클라우드 대체)"을 계속 사용하세요.',
-  'settings.localModel.deviceCapability.installOllamaFirst': '이 티어를 사용하려면 먼저 Ollama를 실행하세요',
+  'settings.localModel.deviceCapability.installOllamaFirst':
+    '이 티어를 사용하려면 먼저 Ollama를 실행하세요',
   'settings.localModel.deviceCapability.installingOllama': 'Ollama 설치 중',
   'settings.localModel.deviceCapability.loadingDeviceInfo': '기기 정보 불러오는 중',
   'settings.localModel.deviceCapability.localAiDisabled':
@@ -311,7 +312,8 @@ const ko5: TranslationMap = {
   'skills.setup.screenIntel.deniedHint':
     '시스템 설정에서 권한을 허용한 후 아래를 클릭하여 다시 시작하고 변경 사항을 적용하세요.',
   'skills.setup.screenIntel.enableBtn': '활성화 중...',
-  'skills.setup.screenIntel.enableDesc': '화면의 내용을 읽고 유용한 컨텍스트를 에이전트에 제공합니다',
+  'skills.setup.screenIntel.enableDesc':
+    '화면의 내용을 읽고 유용한 컨텍스트를 에이전트에 제공합니다',
   'skills.setup.screenIntel.enableError': '화면 인텔리전스를 활성화하지 못했습니다',
   'skills.setup.screenIntel.enabling': '활성화 중...',
   'skills.setup.screenIntel.grant': '여는 중...',
@@ -400,7 +402,8 @@ const ko5: TranslationMap = {
   'webhooks.tunnels.toggleFailed': 'Echo 전환 실패',
   'composio.authExpired': '인증이 만료됨',
   'composio.reconnect': '다시 연결',
-  'composio.directModeRequiresKey': '저장에 실패했습니다. Direct 모드에는 비어 있지 않은 API 키가 필요합니다.',
+  'composio.directModeRequiresKey':
+    '저장에 실패했습니다. Direct 모드에는 비어 있지 않은 API 키가 필요합니다.',
   'composio.notYetRouted': '아직 라우팅되지 않음',
   'composio.triggers.loading': '불러오는 중…',
   'conversations.taskKanban.todo': '할 일',

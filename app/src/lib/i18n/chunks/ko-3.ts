@@ -125,12 +125,12 @@ const ko3: TranslationMap = {
   'stats.tokens': '토큰',
   'bootCheck.invalidUrl': '런타임 URL을 입력해 주세요.',
   'bootCheck.urlMustStartWith': 'URL은 http:// 또는 https://로 시작해야 합니다',
-  'bootCheck.validUrlRequired':
-    '유효한 URL처럼 보이지 않습니다(예: https://core.example.com/rpc)',
+  'bootCheck.validUrlRequired': '유효한 URL처럼 보이지 않습니다(예: https://core.example.com/rpc)',
   'bootCheck.tokenRequired': '연결하려면 인증 토큰이 필요합니다.',
   'bootCheck.chooseCoreMode': '런타임 선택',
   'bootCheck.connectToCore': '런타임에 연결',
-  'bootCheck.desktopDescription': 'OpenHuman은 생각하기 위한 런타임이 필요합니다. 어디에서 실행할지 선택하세요.',
+  'bootCheck.desktopDescription':
+    'OpenHuman은 생각하기 위한 런타임이 필요합니다. 어디에서 실행할지 선택하세요.',
   'bootCheck.webDescription':
     '웹에서 OpenHuman은 사용자가 제어하는 런타임에 연결됩니다. 아래에 URL과 인증 토큰을 입력하거나, 데스크톱 앱을 받아 이 컴퓨터에서 바로 실행하세요.',
   'bootCheck.preferDesktop': '모든 것을 자신의 기기에 보관하고 싶으신가요?',
@@ -345,7 +345,8 @@ const ko3: TranslationMap = {
   'channels.discord.linkTokenInstruction': '{token}',
   'channels.discord.linkTokenLabel': '링크 토큰 라벨',
   'channels.discord.linkTokenOnce': '링크 토큰 1회 사용',
-  'channels.discord.picker.allPermissionsOk': '봇이 이 채널에서 필요한 모든 권한을 가지고 있습니다.',
+  'channels.discord.picker.allPermissionsOk':
+    '봇이 이 채널에서 필요한 모든 권한을 가지고 있습니다.',
   'channels.discord.picker.botNotInServers': '봇이 서버에 없습니다',
   'channels.discord.picker.category': '카테고리',
   'channels.discord.picker.channel': '채널',
@@ -359,12 +360,14 @@ const ko3: TranslationMap = {
   'channels.discord.picker.selectServer': '서버 선택',
   'channels.discord.picker.server': '서버',
   'channels.discord.picker.serverChannelSelection': '서버 및 채널 선택',
-  'channels.discord.savedRestartRequired': '채널이 저장되었습니다. 활성화하려면 앱을 다시 시작하세요.',
+  'channels.discord.savedRestartRequired':
+    '채널이 저장되었습니다. 활성화하려면 앱을 다시 시작하세요.',
   'channels.telegram.connect': '연결',
   'channels.telegram.managedDmConnecting': '관리형 DM 연결 중',
   'channels.telegram.managedDmTimeout': '관리형 DM 시간이 초과됨',
   'channels.telegram.reconnect': '다시 연결',
-  'channels.telegram.savedRestartRequired': '채널이 저장되었습니다. 활성화하려면 앱을 다시 시작하세요.',
+  'channels.telegram.savedRestartRequired':
+    '채널이 저장되었습니다. 활성화하려면 앱을 다시 시작하세요.',
   'channels.web.alwaysAvailable': '항상 사용 가능',
 };
 export default ko3;

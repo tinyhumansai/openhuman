@@ -45,8 +45,7 @@ const ko2: TranslationMap = {
   'settings.billing.backToSettings': '설정으로 돌아가기',
   'settings.billing.openingBrowser': '브라우저를 여는 중...',
   'settings.billing.browserNotOpen': '브라우저가 열리지 않았다면 위 버튼을 사용하세요.',
-  'settings.billing.browserOpenFailed':
-    '브라우저를 자동으로 열 수 없습니다. 위 버튼을 사용하세요.',
+  'settings.billing.browserOpenFailed': '브라우저를 자동으로 열 수 없습니다. 위 버튼을 사용하세요.',
   'settings.tools.chooseCapabilities':
     'OpenHuman이 사용자를 대신해 사용할 수 있는 기능을 선택하세요.',
   'settings.tools.saveChanges': '변경 사항 저장',
@@ -74,14 +73,11 @@ const ko2: TranslationMap = {
   'connections.checking': '확인 중…',
   'connections.walletConfigured':
     '로컬 EVM, BTC, Solana 및 Tron ID가 복구 문구에서 구성되었습니다.',
-  'connections.walletReady':
-    '하나의 복구 문구에서 로컬 EVM, BTC, Solana 및 Tron ID를 설정합니다.',
-  'connections.walletError':
-    '지갑 상태를 확인할 수 없습니다. 복구 문구 패널에서 다시 시도하세요.',
+  'connections.walletReady': '하나의 복구 문구에서 로컬 EVM, BTC, Solana 및 Tron ID를 설정합니다.',
+  'connections.walletError': '지갑 상태를 확인할 수 없습니다. 복구 문구 패널에서 다시 시도하세요.',
   'connections.walletChecking': '지갑 상태 확인 중...',
   'connections.walletIdentities': '지갑 ID',
-  'connections.walletDerived':
-    '복구 문구에서 로컬로 파생되며 안전한 메타데이터로만 저장됩니다.',
+  'connections.walletDerived': '복구 문구에서 로컬로 파생되며 안전한 메타데이터로만 저장됩니다.',
   'connections.privacySecurity': '개인정보 및 보안',
   'connections.privacySecurityDesc':
     '모든 데이터와 자격 증명은 무데이터 보존 정책으로 로컬에 저장됩니다. 사용자의 정보는 암호화되며 제3자와 절대 공유되지 않습니다.',
@@ -132,7 +128,8 @@ const ko2: TranslationMap = {
   'mnemonic.generateNewPhrase': '대신 새 복구 문구 생성',
   'mnemonic.securingData': '데이터 보호 중...',
   'mnemonic.saveRecoveryPhrase': '복구 문구 저장',
-  'mnemonic.userNotLoaded': '사용자가 로드되지 않았습니다. 다시 로그인하거나 페이지를 새로고침하세요.',
+  'mnemonic.userNotLoaded':
+    '사용자가 로드되지 않았습니다. 다시 로그인하거나 페이지를 새로고침하세요.',
   'mnemonic.invalidPhrase': '유효하지 않은 복구 문구입니다. 단어를 확인하고 다시 시도하세요.',
   'mnemonic.somethingWentWrong': '문제가 발생했습니다. 다시 시도해 주세요.',
   'team.failedToCreate': '팀 생성에 실패했습니다',
@@ -177,11 +174,9 @@ const ko2: TranslationMap = {
   'voice.naturalCleanup': '자연스럽게 정리',
   'voice.autoStart': '코어와 함께 음성 서버 자동 시작',
   'voice.customDictionary': '사용자 지정 사전',
-  'voice.customDictionaryDesc':
-    '이름, 기술 용어, 도메인 단어를 추가하여 인식 정확도를 향상합니다.',
+  'voice.customDictionaryDesc': '이름, 기술 용어, 도메인 단어를 추가하여 인식 정확도를 향상합니다.',
   'voice.addWord': '단어 추가...',
-  'voice.sttDisabled':
-    '로컬 STT 모델이 다운로드되고 준비될 때까지 음성 받아쓰기가 비활성화됩니다.',
+  'voice.sttDisabled': '로컬 STT 모델이 다운로드되고 준비될 때까지 음성 받아쓰기가 비활성화됩니다.',
   'voice.openLocalAiModel': '로컬 AI 모델 열기',
   'voice.serverRestarted': '새 설정으로 음성 서버가 다시 시작되었습니다.',
   'voice.settingsSaved': '음성 설정이 저장되었습니다.',
@@ -253,8 +248,7 @@ const ko2: TranslationMap = {
   'common.skip': '건너뛰기',
   'common.disable': '비활성화',
   'common.enable': '활성화',
-  'chat.safetyTimeout':
-    '2분 후에도 에이전트의 응답이 없습니다. 다시 시도하거나 연결을 확인하세요.',
+  'chat.safetyTimeout': '2분 후에도 에이전트의 응답이 없습니다. 다시 시도하거나 연결을 확인하세요.',
   'chat.filter.all': '전체',
   'chat.filter.work': '업무',
   'chat.filter.briefing': '브리핑',
@@ -281,7 +275,8 @@ const ko2: TranslationMap = {
   'chat.weeklyLimitHit': '포함된 주기 예산을 모두 사용했습니다.',
   'chat.resets': '초기화',
   'chat.topUpToContinue': '계속하려면 충전하세요.',
-  'chat.budgetComplete': '포함된 예산을 모두 사용했습니다. 계속하려면 크레딧을 추가하거나 업그레이드하세요.',
+  'chat.budgetComplete':
+    '포함된 예산을 모두 사용했습니다. 계속하려면 크레딧을 추가하거나 업그레이드하세요.',
   'chat.topUp': '충전',
   'chat.cycle': '주기',
   'chat.cycleSpent': '이번 주기 사용량',
@@ -362,8 +357,7 @@ const ko2: TranslationMap = {
   'navigator.documents': '문서',
   'navigator.people': '사람',
   'navigator.topics': '주제',
-  'dreams.description':
-    '꿈은 메모리의 패턴을 종합하는 AI 생성 반영입니다.',
+  'dreams.description': '꿈은 메모리의 패턴을 종합하는 AI 생성 반영입니다.',
   'dreams.comingSoon': '곧 제공 예정',
   'assignment.memoryLlm': '메모리 LLM',
   'assignment.memoryLlmAria': '메모리 LLM 선택',

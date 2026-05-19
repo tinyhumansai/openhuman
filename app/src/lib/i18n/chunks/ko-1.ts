@@ -75,8 +75,7 @@ const ko1: TranslationMap = {
   'settings.about': '정보',
   'settings.aboutDesc': '앱 버전 및 소프트웨어 업데이트',
   'settings.developerOptions': '고급',
-  'settings.developerOptionsDesc':
-    'AI 구성, 메시징 채널, 도구, 진단 및 디버그 패널',
+  'settings.developerOptionsDesc': 'AI 구성, 메시징 채널, 도구, 진단 및 디버그 패널',
   'settings.clearAppData': '앱 데이터 삭제',
   'settings.clearAppDataDesc': '로그아웃하고 모든 로컬 앱 데이터를 영구적으로 삭제',
   'settings.logOut': '로그아웃',
@@ -96,8 +95,7 @@ const ko1: TranslationMap = {
   'settings.notifications.doNotDisturb': '방해 금지',
   'settings.notifications.doNotDisturbDesc': '정해진 시간 동안 모든 알림을 일시 중지합니다',
   'settings.notifications.channelControls': '채널별 설정',
-  'settings.notifications.channelControlsDesc':
-    '각 채널의 알림 기본 설정을 구성합니다',
+  'settings.notifications.channelControlsDesc': '각 채널의 알림 기본 설정을 구성합니다',
   'settings.features.screenAwareness': '화면 인식',
   'settings.features.screenAwarenessDesc': '어시스턴트가 현재 활성 창을 볼 수 있게 합니다',
   'settings.features.messaging': '메시징',
@@ -120,8 +118,7 @@ const ko1: TranslationMap = {
   'clearData.failedLogout': '로그아웃에 실패했습니다. 다시 시도해 주세요.',
   'clearData.failedPersist': '저장된 앱 상태를 삭제하지 못했습니다. 다시 시도해 주세요.',
   'welcome.title': 'OpenHuman에 오신 것을 환영합니다',
-  'welcome.subtitle':
-    '개인용 AI 슈퍼 인텔리전스입니다. 비공개이며, 간단하고, 매우 강력합니다.',
+  'welcome.subtitle': '개인용 AI 슈퍼 인텔리전스입니다. 비공개이며, 간단하고, 매우 강력합니다.',
   'welcome.connectPrompt': 'RPC URL 구성(고급)',
   'welcome.selectRuntime': '런타임 선택',
   'welcome.urlPlaceholder': 'http://localhost:8089',
@@ -134,7 +131,8 @@ const ko1: TranslationMap = {
   'home.askAssistant': '어시스턴트에게 무엇이든 물어보세요...',
   'home.statusOk':
     '기기가 연결되었습니다. 연결을 유지하려면 앱을 계속 실행해 주세요. 아래 버튼으로 에이전트에게 메시지를 보내세요.',
-  'home.statusBackendOnly': '백엔드에 다시 연결하는 중입니다… 곧 에이전트를 다시 사용할 수 있습니다.',
+  'home.statusBackendOnly':
+    '백엔드에 다시 연결하는 중입니다… 곧 에이전트를 다시 사용할 수 있습니다.',
   'home.statusCoreUnreachable':
     '로컬 코어 사이드카가 응답하지 않습니다. OpenHuman 백그라운드 프로세스가 중단되었거나 시작하지 못했을 수 있습니다.',
   'home.statusInternetOffline':
@@ -214,8 +212,7 @@ const ko1: TranslationMap = {
   'onboarding.runtimeChoice.cloud.f4': '관리할 API 키 없음',
   'onboarding.runtimeChoice.cloud.f5': '간단한 설정',
   'onboarding.runtimeChoice.custom.title': '사용자 지정 실행',
-  'onboarding.runtimeChoice.custom.tagline':
-    '직접 키를 가져와 사용 중인 항목을 완전히 제어합니다.',
+  'onboarding.runtimeChoice.custom.tagline': '직접 키를 가져와 사용 중인 항목을 완전히 제어합니다.',
   'onboarding.runtimeChoice.custom.f1': '거의 모든 기능에 API 키가 필요합니다',
   'onboarding.runtimeChoice.custom.f2': '이미 결제 중인 서비스를 다시 사용합니다',
   'onboarding.runtimeChoice.custom.f3': '모든 것을 로컬에서 실행하면 무료일 수 있습니다',
@@ -232,7 +229,8 @@ const ko1: TranslationMap = {
   'onboarding.apiKeys.openaiPlaceholder': 'sk-...',
   'onboarding.apiKeys.anthropicLabel': 'Anthropic API 키',
   'onboarding.apiKeys.anthropicPlaceholder': 'sk-ant-...',
-  'onboarding.apiKeys.saveError': '해당 키를 저장할 수 없습니다. 다시 확인한 후 다시 시도해 주세요.',
+  'onboarding.apiKeys.saveError':
+    '해당 키를 저장할 수 없습니다. 다시 확인한 후 다시 시도해 주세요.',
   'onboarding.apiKeys.skipForNow': '지금은 건너뛰기',
   'onboarding.apiKeys.continue': '저장하고 계속',
   'onboarding.apiKeys.saving': '저장 중…',
@@ -261,7 +259,8 @@ const ko1: TranslationMap = {
   'onboarding.custom.inference.configureDesc':
     '직접 OpenAI 또는 Anthropic 키를 가져오세요. 모든 텍스트 기반 작업에 이 키를 사용합니다.',
   'onboarding.custom.voice.title': '음성',
-  'onboarding.custom.voice.subtitle': '음성 모드를 위한 음성-텍스트 변환 및 텍스트-음성 변환입니다.',
+  'onboarding.custom.voice.subtitle':
+    '음성 모드를 위한 음성-텍스트 변환 및 텍스트-음성 변환입니다.',
   'onboarding.custom.voice.defaultDesc':
     'OpenHuman에는 바로 사용할 수 있는 관리형 STT/TTS가 포함되어 있습니다. 별도로 연결할 필요가 없습니다.',
   'onboarding.custom.voice.configureDesc':
@@ -357,7 +356,8 @@ const ko1: TranslationMap = {
   'privacy.empty': '감지된 외부 데이터 전송이 없습니다.',
   'privacy.whatLeavesComputer': '내 컴퓨터를 떠나는 데이터',
   'privacy.loading': '개인정보 세부 정보를 불러오는 중...',
-  'privacy.loadError': '실시간 개인정보 목록을 불러올 수 없습니다. 아래의 분석 제어 기능은 계속 작동합니다.',
+  'privacy.loadError':
+    '실시간 개인정보 목록을 불러올 수 없습니다. 아래의 분석 제어 기능은 계속 작동합니다.',
   'privacy.noCapabilities': '현재 데이터 이동을 공개하는 기능이 없습니다.',
   'privacy.sentTo': '전송 대상',
   'privacy.leavesDevice': '기기를 떠남',
