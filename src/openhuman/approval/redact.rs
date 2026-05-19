@@ -13,8 +13,6 @@
 //! through unchanged so the UI can still show useful context
 //! (action slug, tool name, integration id).
 
-use std::path::MAIN_SEPARATOR;
-
 use serde_json::{Map, Value};
 
 /// Field names whose values are assumed to contain raw user content
@@ -109,31 +107,63 @@ fn redact_value(value: &Value) -> Value {
 
 /// Strip absolute home paths so the action summary cannot leak the
 /// user's username on multi-tenant log shipping.
+///
+/// Handles both Unix (`/Users/<name>/…`, `/home/<name>/…`) and
+/// Windows (`C:\Users\<name>\…`) shapes — `MAIN_SEPARATOR` alone
+/// would miss the Windows case in a Unix-built artifact looking at
+/// log payloads that originated on Windows, or vice versa.
 fn scrub_paths(input: &str) -> String {
-    let needle = format!("{sep}Users{sep}", sep = MAIN_SEPARATOR);
-    if !input.contains(&needle) {
+    if !input.contains("Users") && !input.contains("home") {
         return input.to_string();
     }
     let mut out = String::with_capacity(input.len());
-    let mut rest = input;
-    while let Some(idx) = rest.find(&needle) {
-        out.push_str(&rest[..idx]);
-        out.push_str("<HOME>");
-        // Skip "/Users/<name>" — advance past the next separator after
-        // the username so the rest of the path survives.
-        let after = &rest[idx + needle.len()..];
-        match after.find(MAIN_SEPARATOR) {
-            Some(end) => {
-                rest = &after[end..];
+    let mut i = 0;
+    while i < input.len() {
+        if let Some(prefix_len) = match_home_prefix(&input[i..]) {
+            out.push_str("<HOME>");
+            i += prefix_len;
+            // Skip past the username segment up to the next path
+            // separator (or end of input).
+            let rest = &input[i..];
+            match rest.find(|c: char| c == '/' || c == '\\') {
+                Some(end) => i += end,
+                None => i = input.len(),
             }
-            None => {
-                rest = "";
-                break;
-            }
+        } else {
+            // Push one char and advance — char-safe so we don't
+            // split a multi-byte UTF-8 codepoint.
+            let ch = input[i..].chars().next().unwrap();
+            out.push(ch);
+            i += ch.len_utf8();
         }
     }
-    out.push_str(rest);
     out
+}
+
+/// Detects the start of an absolute home path at the front of `s`.
+/// Returns the byte length of the marker (so `s[len..]` is the
+/// username's first character) when matched, `None` otherwise.
+fn match_home_prefix(s: &str) -> Option<usize> {
+    let bytes = s.as_bytes();
+    let starts_with_ci = |needle: &str| -> bool {
+        bytes.len() >= needle.len() && bytes[..needle.len()].eq_ignore_ascii_case(needle.as_bytes())
+    };
+    if starts_with_ci("/Users/") {
+        return Some(7);
+    }
+    if starts_with_ci("/home/") {
+        return Some(6);
+    }
+    // Windows — accept any drive letter + `:\Users\`
+    if bytes.len() >= 9
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && bytes[2] == b'\\'
+        && bytes[3..9].eq_ignore_ascii_case(b"Users\\")
+    {
+        return Some(9);
+    }
+    None
 }
 
 /// Build a short human-readable summary of an approval-bound tool
@@ -236,6 +266,40 @@ mod tests {
         let cwd = red["cwd"].as_str().unwrap();
         assert!(!cwd.contains("oxoxdev"), "got {cwd}");
         assert!(cwd.contains("<HOME>"));
+        assert!(cwd.ends_with("/work/openhuman"));
+    }
+
+    #[test]
+    fn windows_home_path_is_scrubbed() {
+        let args = json!({ "action": "list", "cwd": "C:\\Users\\oxoxdev\\work\\openhuman" });
+        let red = redact_args(&args);
+        let cwd = red["cwd"].as_str().unwrap();
+        assert!(!cwd.contains("oxoxdev"), "got {cwd}");
+        assert!(cwd.contains("<HOME>"));
+        assert!(cwd.ends_with("\\work\\openhuman"));
+    }
+
+    #[test]
+    fn linux_home_path_is_scrubbed() {
+        let args = json!({ "action": "list", "cwd": "/home/jane/project" });
+        let red = redact_args(&args);
+        let cwd = red["cwd"].as_str().unwrap();
+        assert!(!cwd.contains("jane"), "got {cwd}");
+        assert!(cwd.contains("<HOME>"));
+        assert!(cwd.ends_with("/project"));
+    }
+
+    #[test]
+    fn multiple_home_paths_in_same_string_all_scrubbed() {
+        let args = json!({
+            "action": "list",
+            "summary": "from /Users/alice/a.txt to /Users/bob/b.txt",
+        });
+        let red = redact_args(&args);
+        let summary = red["summary"].as_str().unwrap();
+        assert!(!summary.contains("alice"));
+        assert!(!summary.contains("bob"));
+        assert_eq!(summary.matches("<HOME>").count(), 2);
     }
 
     #[test]
