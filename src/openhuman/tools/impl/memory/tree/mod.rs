@@ -176,7 +176,10 @@ mod memory_tree_dispatcher_tests {
     #[test]
     fn memory_tree_schema_exposes_global_window_days() {
         let schema = MemoryTreeTool.parameters_schema();
-        let properties = schema.get("properties").and_then(|p| p.as_object()).unwrap();
+        let properties = schema
+            .get("properties")
+            .and_then(|p| p.as_object())
+            .unwrap();
         assert!(properties.contains_key("window_days"));
         assert!(properties.contains_key("time_window_days"));
     }
