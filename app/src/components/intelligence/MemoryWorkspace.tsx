@@ -251,8 +251,8 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
             disabled={wiping || building}
             data-testid="memory-wipe-all"
             className="inline-flex items-center gap-2 rounded-lg
-                       border border-coral-200 bg-white px-4 py-2 text-sm font-semibold
-                       text-coral-700 shadow-sm transition-colors hover:bg-coral-50
+                       border border-coral-200 dark:border-coral-500/30 bg-white dark:bg-neutral-900 px-4 py-2 text-sm font-semibold
+                       text-coral-700 dark:text-coral-300 shadow-sm transition-colors hover:bg-coral-50 dark:hover:bg-coral-500/10
                        disabled:cursor-not-allowed disabled:opacity-50
                        focus:outline-none focus:ring-2 focus:ring-coral-200"
             title={t('workspace.wipeTitle')}>
@@ -272,8 +272,8 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
             disabled={resetting || wiping || building}
             data-testid="memory-reset-tree"
             className="inline-flex items-center gap-2 rounded-lg
-                       border border-amber-300 bg-white px-4 py-2 text-sm font-semibold
-                       text-amber-800 shadow-sm transition-colors hover:bg-amber-50
+                       border border-amber-300 dark:border-amber-500/30 bg-white dark:bg-neutral-900 px-4 py-2 text-sm font-semibold
+                       text-amber-800 dark:text-amber-300 shadow-sm transition-colors hover:bg-amber-50 dark:hover:bg-amber-500/10
                        disabled:cursor-not-allowed disabled:opacity-50
                        focus:outline-none focus:ring-2 focus:ring-amber-200"
             title={t('workspace.resetTreeTitle')}>
@@ -325,11 +325,11 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
       </div>
 
       {error ? (
-        <div className="rounded-lg border border-coral-200 bg-coral-50 px-4 py-3 text-sm text-coral-800">
+        <div className="rounded-lg border border-coral-200 dark:border-coral-500/30 bg-coral-50 dark:bg-coral-500/10 px-4 py-3 text-sm text-coral-800">
           {t('workspace.graphLoadFailed')}: {error}
         </div>
       ) : !graph ? (
-        <div className="flex h-[640px] items-center justify-center rounded-lg border border-stone-100 bg-stone-50/40 text-sm text-stone-500">
+        <div className="flex h-[640px] items-center justify-center rounded-lg border border-stone-100 dark:border-neutral-800 bg-stone-50/40 text-sm text-stone-500 dark:text-neutral-400">
           {t('workspace.loadingGraph')}
         </div>
       ) : (
@@ -354,10 +354,11 @@ function ModeToggle({ mode, onChange }: ModeToggleProps) {
   const baseBtn =
     'px-3 py-1.5 text-xs font-medium rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-primary-200';
   const active = 'bg-primary-500 text-white shadow-sm';
-  const idle = 'bg-white text-stone-600 hover:bg-stone-50';
+  const idle =
+    'bg-white dark:bg-neutral-900 text-stone-600 dark:text-neutral-300 hover:bg-stone-50 dark:hover:bg-neutral-800/60';
   return (
     <div
-      className="inline-flex items-center gap-1 rounded-lg border border-stone-200 bg-stone-50 p-1"
+      className="inline-flex items-center gap-1 rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 p-1"
       role="tablist"
       aria-label={t('workspace.graphViewMode')}
       data-testid="memory-graph-mode-toggle">

@@ -18,6 +18,9 @@ importers:
       husky:
         specifier: ^9.1.7
         version: 9.1.7
+      tsx:
+        specifier: ^4.20.3
+        version: 4.21.0
       ws:
         specifier: ^8.20.0
         version: 8.20.0

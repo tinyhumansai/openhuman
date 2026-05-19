@@ -101,7 +101,26 @@ fn chunk_embeddings_are_scoped_by_model_signature() {
             .unwrap()
             .is_none()
     );
+
+    // #1574 cutover: the public `get_chunk_embedding` now reads the sidecar at
+    // the *active* signature (not the legacy column). Nothing was written
+    // there yet, so it is absent — graceful, never a cross-space read of the
+    // openai/local rows above.
     assert!(get_chunk_embedding(&cfg, &c.id).unwrap().is_none());
+
+    // The public setter targets the active signature and round-trips through
+    // the public getter — proves the cutover wiring end to end.
+    set_chunk_embedding(&cfg, &c.id, &[0.7, 0.8]).unwrap();
+    assert_eq!(
+        get_chunk_embedding(&cfg, &c.id).unwrap(),
+        Some(vec![0.7, 0.8])
+    );
+
+    // ...and the earlier per-signature rows remain independently scoped.
+    assert_eq!(
+        get_chunk_embedding_for_signature(&cfg, &c.id, "local/bge-small@384").unwrap(),
+        Some(vec![0.3, 0.4, 0.5])
+    );
 }
 
 #[test]
@@ -235,4 +254,89 @@ fn schema_has_content_path_and_content_sha256_columns() {
         Ok(())
     })
     .unwrap();
+}
+
+/// #1574 §7: the one-shot, version-gated legacy→sidecar migration copies a
+/// legacy `embedding` blob whose dimensionality matches the active embedder
+/// into the per-model sidecar at the active signature, skips dim-mismatched
+/// rows (left for the §6 re-embed), keeps the legacy column, and runs exactly
+/// once (PRAGMA user_version gate).
+#[test]
+fn legacy_embeddings_migrate_to_sidecar_once() {
+    let (_tmp, cfg) = test_config();
+    let c_match = sample_chunk("slack:#eng", 0, 1_700_000_000_000);
+    let c_mismatch = sample_chunk("slack:#eng", 1, 1_700_000_000_001);
+    // First open runs the (no-op) migration and sets user_version = 1.
+    upsert_chunks(&cfg, &[c_match.clone(), c_mismatch.clone()]).unwrap();
+
+    // Resolve the active signature/dims exactly as the migration does —
+    // base-independent, never hard-coded (see the brittle-literal lesson).
+    let (p, m, dims) = crate::openhuman::memory::store::effective_embedding_settings(
+        &cfg.memory,
+        cfg.workload_local_model("embeddings").as_deref(),
+    );
+    let sig = crate::openhuman::embeddings::format_embedding_signature(&p, &m, dims);
+    let match_vec = vec![0.25f32; dims];
+    let mismatch_vec = vec![0.5f32; dims + 1];
+
+    // Simulate a pre-#1574 DB: legacy columns populated, migration not yet
+    // run. On entry user_version is 1 (from upsert above) so the migration
+    // is skipped here; the closure then resets the gate to 0.
+    with_connection(&cfg, |conn| {
+        conn.execute(
+            "UPDATE mem_tree_chunks SET embedding = ?1 WHERE id = ?2",
+            params![embedding_to_blob(&match_vec), c_match.id],
+        )?;
+        conn.execute(
+            "UPDATE mem_tree_chunks SET embedding = ?1 WHERE id = ?2",
+            params![embedding_to_blob(&mismatch_vec), c_mismatch.id],
+        )?;
+        conn.pragma_update(None, "user_version", 0i64)?;
+        Ok(())
+    })
+    .unwrap();
+
+    // The next store open (this getter's `with_connection`) sees
+    // user_version = 0 and runs the migration before returning.
+    assert_eq!(
+        get_chunk_embedding_for_signature(&cfg, &c_match.id, &sig).unwrap(),
+        Some(match_vec.clone()),
+        "matching-dim legacy row must be copied to the sidecar at the active sig"
+    );
+    assert!(
+        get_chunk_embedding_for_signature(&cfg, &c_mismatch.id, &sig)
+            .unwrap()
+            .is_none(),
+        "dim-mismatched legacy row must be skipped (left for §6 re-embed)"
+    );
+
+    with_connection(&cfg, |conn| {
+        let legacy: Option<Vec<u8>> = conn
+            .query_row(
+                "SELECT embedding FROM mem_tree_chunks WHERE id = ?1",
+                params![c_match.id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(
+            legacy.is_some(),
+            "legacy column must be KEPT post-migration (vN+1 drops it later)"
+        );
+        let v: i64 = conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(
+            v, TREE_EMBEDDING_MIGRATION_VERSION,
+            "version gate must be set"
+        );
+        Ok(())
+    })
+    .unwrap();
+
+    // Idempotent: subsequent opens are no-ops (gate set); sidecar unchanged.
+    with_connection(&cfg, |_| Ok(())).unwrap();
+    assert_eq!(
+        get_chunk_embedding_for_signature(&cfg, &c_match.id, &sig).unwrap(),
+        Some(match_vec)
+    );
 }

@@ -84,22 +84,24 @@ const AgentChatPanel = () => {
 
       <div className="p-4 space-y-4">
         <section className="space-y-3">
-          <h3 className="text-sm font-semibold text-stone-900">{t('chat.overrides')}</h3>
-          <p className="text-sm text-stone-400">{t('chat.agentChatDesc')}</p>
+          <h3 className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
+            {t('chat.overrides')}
+          </h3>
+          <p className="text-sm text-stone-400 dark:text-neutral-500">{t('chat.agentChatDesc')}</p>
           <div className="grid gap-3 md:grid-cols-2">
-            <label className="space-y-2 text-sm text-stone-600">
+            <label className="space-y-2 text-sm text-stone-600 dark:text-neutral-300">
               {t('chat.model')}
               <input
-                className="input input-bordered w-full text-slate-900 bg-white"
+                className="input input-bordered w-full text-slate-900 bg-white dark:bg-neutral-900"
                 placeholder="gpt-4o"
                 value={modelOverride}
                 onChange={event => setModelOverride(event.target.value)}
               />
             </label>
-            <label className="space-y-2 text-sm text-stone-600">
+            <label className="space-y-2 text-sm text-stone-600 dark:text-neutral-300">
               {t('chat.temperature')}
               <input
-                className="input input-bordered w-full text-slate-900 bg-white"
+                className="input input-bordered w-full text-slate-900 bg-white dark:bg-neutral-900"
                 placeholder="0.7"
                 value={temperature}
                 onChange={event => setTemperature(event.target.value)}
@@ -109,24 +111,30 @@ const AgentChatPanel = () => {
         </section>
 
         <section className="space-y-3">
-          <h3 className="text-sm font-semibold text-stone-900">{t('chat.conversation')}</h3>
+          <h3 className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
+            {t('chat.conversation')}
+          </h3>
           {error && (
-            <div className="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700">
+            <div className="rounded-lg border border-red-300 dark:border-red-500/40 bg-red-50 dark:bg-red-500/10 px-4 py-3 text-sm text-red-700 dark:text-red-300">
               {error}
             </div>
           )}
-          <div className="rounded-xl border border-stone-200 bg-stone-50 p-4 space-y-3">
+          <div className="rounded-xl border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 p-4 space-y-3">
             {messages.length === 0 && (
-              <div className="text-sm text-stone-400">{t('chat.startAgentConversation')}</div>
+              <div className="text-sm text-stone-400 dark:text-neutral-500">
+                {t('chat.startAgentConversation')}
+              </div>
             )}
             {messages.map((message, index) => (
               <div key={`${message.role}-${index}`} className="space-y-1">
-                <div className="text-[11px] uppercase tracking-wide text-stone-500">
+                <div className="text-[11px] uppercase tracking-wide text-stone-500 dark:text-neutral-400">
                   {message.role === 'user' ? t('chat.you') : t('chat.agent')}
                 </div>
                 <div
                   className={`text-sm whitespace-pre-wrap ${
-                    message.role === 'user' ? 'text-stone-900' : 'text-emerald-700'
+                    message.role === 'user'
+                      ? 'text-stone-900 dark:text-neutral-100'
+                      : 'text-emerald-700 dark:text-emerald-300'
                   }`}>
                   {message.text}
                 </div>
@@ -135,7 +143,7 @@ const AgentChatPanel = () => {
           </div>
           <div className="space-y-2">
             <textarea
-              className="textarea textarea-bordered w-full min-h-[140px] text-slate-900 bg-white"
+              className="textarea textarea-bordered w-full min-h-[140px] text-slate-900 bg-white dark:bg-neutral-900"
               placeholder={t('chat.askAgent')}
               value={input}
               onChange={event => setInput(event.target.value)}

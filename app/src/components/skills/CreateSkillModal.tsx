@@ -187,17 +187,17 @@ export default function CreateSkillModal({ onClose, onCreated }: Props) {
         role="dialog"
         aria-modal="true"
         aria-labelledby="create-skill-title"
-        className="relative w-full max-w-[520px] rounded-2xl bg-white shadow-2xl animate-fade-in">
+        className="relative w-full max-w-[520px] rounded-2xl bg-white dark:bg-neutral-900 shadow-2xl animate-fade-in">
         <form onSubmit={handleSubmit}>
           {/* Header */}
-          <div className="flex items-start justify-between gap-3 border-b border-stone-100 px-5 py-4">
+          <div className="flex items-start justify-between gap-3 border-b border-stone-100 dark:border-neutral-800 px-5 py-4">
             <div className="min-w-0 flex-1">
               <h2
                 id="create-skill-title"
-                className="text-base font-semibold text-stone-900 font-sans">
+                className="text-base font-semibold text-stone-900 dark:text-neutral-100 font-sans">
                 {t('skills.create.title')}
               </h2>
-              <p className="mt-0.5 text-xs text-stone-500">
+              <p className="mt-0.5 text-xs text-stone-500 dark:text-neutral-400">
                 {t('skills.create.subtitle')}
               </p>
             </div>
@@ -211,7 +211,7 @@ export default function CreateSkillModal({ onClose, onCreated }: Props) {
               }}
               disabled={submitting}
               aria-label="Close"
-              className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-stone-400 transition-colors hover:bg-stone-100 hover:text-stone-600 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-1 disabled:opacity-40">
+              className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-stone-400 dark:text-neutral-500 transition-colors hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 hover:text-stone-600 dark:hover:text-neutral-300 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-1 disabled:opacity-40">
               <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path
                   strokeLinecap="round"
@@ -229,7 +229,7 @@ export default function CreateSkillModal({ onClose, onCreated }: Props) {
             <div>
               <label
                 htmlFor="create-skill-name"
-                className="block text-xs font-medium text-stone-600">
+                className="block text-xs font-medium text-stone-600 dark:text-neutral-300">
                 {t('skills.create.name')}<span className="text-coral-500"> *</span>
               </label>
               <input
@@ -240,12 +240,12 @@ export default function CreateSkillModal({ onClose, onCreated }: Props) {
                 onChange={e => setName(e.target.value)}
                 required
                 maxLength={128}
-                className="mt-1 w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 shadow-sm transition-colors focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
+                className="mt-1 w-full rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 shadow-sm transition-colors focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
                 placeholder={t('skills.create.namePlaceholder')}
               />
-              <p className="mt-1 text-[11px] text-stone-500">
+              <p className="mt-1 text-[11px] text-stone-500 dark:text-neutral-400">
                 {t('skills.create.slugLabel')}{' '}
-                <code className="rounded bg-stone-100 px-1 py-[1px] font-mono text-stone-700">
+                <code className="rounded bg-stone-100 dark:bg-neutral-800 px-1 py-[1px] font-mono text-stone-700 dark:text-neutral-200">
                   {slug || '—'}
                 </code>
               </p>
@@ -255,7 +255,7 @@ export default function CreateSkillModal({ onClose, onCreated }: Props) {
             <div>
               <label
                 htmlFor="create-skill-description"
-                className="block text-xs font-medium text-stone-600">
+                className="block text-xs font-medium text-stone-600 dark:text-neutral-300">
                 {t('skills.create.description')}<span className="text-coral-500"> *</span>
               </label>
               <textarea
@@ -265,14 +265,14 @@ export default function CreateSkillModal({ onClose, onCreated }: Props) {
                 required
                 rows={3}
                 maxLength={500}
-                className="mt-1 w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 shadow-sm transition-colors focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
+                className="mt-1 w-full rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 shadow-sm transition-colors focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
                 placeholder={t('skills.create.descriptionPlaceholder')}
               />
             </div>
 
             {/* Scope */}
             <fieldset>
-              <legend className="block text-xs font-medium text-stone-600">{t('skills.create.scope')}</legend>
+              <legend className="block text-xs font-medium text-stone-600 dark:text-neutral-300">{t('skills.create.scope')}</legend>
               <div className="mt-1 flex gap-2">
                 {(['user', 'project'] as const).map(s => {
                   const selected = scope === s;
@@ -282,7 +282,7 @@ export default function CreateSkillModal({ onClose, onCreated }: Props) {
                       className={`flex flex-1 cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm transition-colors ${
                         selected
                           ? 'border-primary-500 bg-primary-50 text-primary-900'
-                          : 'border-stone-200 bg-white text-stone-700 hover:border-stone-300'
+                          : 'border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-stone-700 dark:text-neutral-200 hover:border-stone-300 dark:border-neutral-700'
                       }`}>
                       <input
                         type="radio"
@@ -297,7 +297,7 @@ export default function CreateSkillModal({ onClose, onCreated }: Props) {
                   );
                 })}
               </div>
-              <p className="mt-1 text-[11px] text-stone-500">
+              <p className="mt-1 text-[11px] text-stone-500 dark:text-neutral-400">
                 {scope === 'user'
                   ? t('skills.create.scopeUserHint')
                   : t('skills.create.scopeProjectHint')}
@@ -309,7 +309,7 @@ export default function CreateSkillModal({ onClose, onCreated }: Props) {
               <div>
                 <label
                   htmlFor="create-skill-license"
-                  className="block text-xs font-medium text-stone-600">
+                  className="block text-xs font-medium text-stone-600 dark:text-neutral-300">
                   {t('skills.create.license')}
                 </label>
                 <input
@@ -318,14 +318,14 @@ export default function CreateSkillModal({ onClose, onCreated }: Props) {
                   value={license}
                   onChange={e => setLicense(e.target.value)}
                   maxLength={64}
-                  className="mt-1 w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 shadow-sm transition-colors focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
+                  className="mt-1 w-full rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 shadow-sm transition-colors focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
                   placeholder="MIT"
                 />
               </div>
               <div>
                 <label
                   htmlFor="create-skill-author"
-                  className="block text-xs font-medium text-stone-600">
+                  className="block text-xs font-medium text-stone-600 dark:text-neutral-300">
                   {t('skills.create.author')}
                 </label>
                 <input
@@ -334,7 +334,7 @@ export default function CreateSkillModal({ onClose, onCreated }: Props) {
                   value={author}
                   onChange={e => setAuthor(e.target.value)}
                   maxLength={128}
-                  className="mt-1 w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 shadow-sm transition-colors focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
+                  className="mt-1 w-full rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 shadow-sm transition-colors focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
                   placeholder={t('skills.create.authorPlaceholder')}
                 />
               </div>
@@ -344,9 +344,9 @@ export default function CreateSkillModal({ onClose, onCreated }: Props) {
             <div>
               <label
                 htmlFor="create-skill-tags"
-                className="block text-xs font-medium text-stone-600">
+                className="block text-xs font-medium text-stone-600 dark:text-neutral-300">
                 {t('skills.create.tags')}
-                <span className="ml-1 font-normal text-stone-400">{t('skills.create.commaSeparated')}</span>
+                <span className="ml-1 font-normal text-stone-400 dark:text-neutral-500">{t('skills.create.commaSeparated')}</span>
               </label>
               <input
                 id="create-skill-tags"
@@ -354,7 +354,7 @@ export default function CreateSkillModal({ onClose, onCreated }: Props) {
                 value={tagsCsv}
                 onChange={e => setTagsCsv(e.target.value)}
                 maxLength={256}
-                className="mt-1 w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 shadow-sm transition-colors focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
+                className="mt-1 w-full rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 shadow-sm transition-colors focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
                 placeholder="trading, research"
               />
             </div>
@@ -363,9 +363,9 @@ export default function CreateSkillModal({ onClose, onCreated }: Props) {
             <div>
               <label
                 htmlFor="create-skill-tools"
-                className="block text-xs font-medium text-stone-600">
+                className="block text-xs font-medium text-stone-600 dark:text-neutral-300">
                 {t('skills.create.allowedTools')}
-                <span className="ml-1 font-normal text-stone-400">{t('skills.create.commaSeparated')}</span>
+                <span className="ml-1 font-normal text-stone-400 dark:text-neutral-500">{t('skills.create.commaSeparated')}</span>
               </label>
               <input
                 id="create-skill-tools"
@@ -373,10 +373,10 @@ export default function CreateSkillModal({ onClose, onCreated }: Props) {
                 value={allowedToolsCsv}
                 onChange={e => setAllowedToolsCsv(e.target.value)}
                 maxLength={512}
-                className="mt-1 w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm font-mono text-stone-900 shadow-sm transition-colors focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
+                className="mt-1 w-full rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 text-sm font-mono text-stone-900 dark:text-neutral-100 shadow-sm transition-colors focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
                 placeholder="node_exec, fetch"
               />
-              <p className="mt-1 text-[11px] text-stone-500">
+              <p className="mt-1 text-[11px] text-stone-500 dark:text-neutral-400">
                 Rendered into the SKILL.md frontmatter as{' '}
                 <code className="font-mono">allowed-tools:</code>.
               </p>
@@ -394,12 +394,12 @@ export default function CreateSkillModal({ onClose, onCreated }: Props) {
           </div>
 
           {/* Footer */}
-          <div className="flex items-center justify-end gap-2 border-t border-stone-100 px-5 py-3">
+          <div className="flex items-center justify-end gap-2 border-t border-stone-100 dark:border-neutral-800 px-5 py-3">
             <button
               type="button"
               onClick={onClose}
               disabled={submitting}
-              className="rounded-lg px-4 py-2 text-sm font-medium text-stone-600 transition-colors hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-1 disabled:opacity-40">
+              className="rounded-lg px-4 py-2 text-sm font-medium text-stone-600 dark:text-neutral-300 transition-colors hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-1 disabled:opacity-40">
               {t('common.cancel')}
             </button>
             <button

@@ -4,6 +4,7 @@ import { Navigate, Route, Routes } from 'react-router-dom';
 import AboutPanel from '../components/settings/panels/AboutPanel';
 import AgentChatPanel from '../components/settings/panels/AgentChatPanel';
 import AIPanel from '../components/settings/panels/AIPanel';
+import AppearancePanel from '../components/settings/panels/AppearancePanel';
 import AutocompleteDebugPanel from '../components/settings/panels/AutocompleteDebugPanel';
 import AutocompletePanel from '../components/settings/panels/AutocompletePanel';
 import BillingPanel from '../components/settings/panels/BillingPanel';
@@ -149,7 +150,7 @@ const VoiceIcon = (
 const WrappedSettingsPage = ({ children }: { children: ReactNode }) => {
   return (
     <div className="p-4 pt-6">
-      <div className="max-w-lg mx-auto bg-white rounded-2xl shadow-soft border border-stone-200 overflow-hidden">
+      <div className="max-w-lg mx-auto bg-white dark:bg-neutral-900 rounded-2xl shadow-soft border border-stone-200 dark:border-neutral-800 overflow-hidden">
         {children}
       </div>
     </div>
@@ -160,7 +161,7 @@ function wrapSettingsPage(element: ReactNode) {
   return (
     <WrappedSettingsPage>
       {element}
-      <div className="border-t border-stone-100 px-4 py-3 text-center text-[11px] text-stone-400">
+      <div className="border-t border-stone-100 dark:border-neutral-800 px-4 py-3 text-center text-[11px] text-stone-400 dark:text-neutral-500">
         Beta build - v{APP_VERSION}
       </div>
     </WrappedSettingsPage>
@@ -309,6 +310,7 @@ const Settings = () => {
         <Route path="messaging" element={wrapSettingsPage(<MessagingPanel />)} />
         <Route path="notifications" element={wrapSettingsPage(<NotificationsPanel />)} />
         <Route path="mascot" element={wrapSettingsPage(<MascotPanel />)} />
+        <Route path="appearance" element={wrapSettingsPage(<AppearancePanel />)} />
         <Route path="tools" element={wrapSettingsPage(<ToolsPanel />)} />
         {/* Developer Options */}
         <Route path="developer-options" element={wrapSettingsPage(<DeveloperOptionsPanel />)} />

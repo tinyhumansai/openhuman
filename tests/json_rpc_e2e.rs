@@ -2045,8 +2045,7 @@ async fn json_rpc_web_chat_routing_cases_use_expected_backend_models() {
 }
 
 #[tokio::test]
-async fn json_rpc_web_chat_custom_reasoning_provider_uses_stored_key_and_rebuilds_on_route_change()
-{
+async fn json_rpc_web_chat_custom_chat_provider_uses_stored_key_and_rebuilds_on_route_change() {
     let _env_lock = json_rpc_e2e_env_lock();
     let tmp = tempdir().expect("tempdir");
     let home = tmp.path();
@@ -2092,7 +2091,7 @@ async fn json_rpc_web_chat_custom_reasoning_provider_uses_stored_key_and_rebuild
                 "endpoint": mock_origin,
                 "auth_style": "bearer"
             }],
-            "reasoning_provider": "openai:gpt-4.1-mini"
+            "chat_provider": "openai:gpt-4.1-mini"
         }),
     )
     .await;
@@ -2170,7 +2169,7 @@ async fn json_rpc_web_chat_custom_reasoning_provider_uses_stored_key_and_rebuild
         6005,
         "openhuman.update_model_settings",
         json!({
-            "reasoning_provider": "openai:gpt-4.1-nano"
+            "chat_provider": "openai:gpt-4.1-nano"
         }),
     )
     .await;
@@ -2213,7 +2212,7 @@ async fn json_rpc_web_chat_custom_reasoning_provider_uses_stored_key_and_rebuild
     assert_eq!(
         requests[1].get("model").and_then(Value::as_str),
         Some("gpt-4.1-nano"),
-        "cached web-chat session should rebuild when reasoning_provider changes"
+        "cached web-chat session should rebuild when chat_provider changes"
     );
     assert_eq!(
         requests[1].get("authorization").and_then(Value::as_str),
@@ -2271,7 +2270,7 @@ async fn json_rpc_web_chat_custom_reasoning_provider_uses_stored_key_and_rebuild
 }
 
 #[tokio::test]
-async fn json_rpc_web_chat_custom_reasoning_provider_with_auth_none_omits_auth_header() {
+async fn json_rpc_web_chat_custom_chat_provider_with_auth_none_omits_auth_header() {
     let _env_lock = json_rpc_e2e_env_lock();
     let tmp = tempdir().expect("tempdir");
     let home = tmp.path();
@@ -2317,7 +2316,7 @@ async fn json_rpc_web_chat_custom_reasoning_provider_with_auth_none_omits_auth_h
                 "endpoint": mock_origin,
                 "auth_style": "none"
             }],
-            "reasoning_provider": "proxy:gpt-oss"
+            "chat_provider": "proxy:gpt-oss"
         }),
     )
     .await;
@@ -2327,7 +2326,7 @@ async fn json_rpc_web_chat_custom_reasoning_provider_with_auth_none_omits_auth_h
     let cfg_payload = cfg_outer.get("result").unwrap_or(&cfg_outer);
     let config = cfg_payload.get("config").unwrap_or(cfg_payload);
     assert_eq!(
-        config.get("reasoning_provider").and_then(Value::as_str),
+        config.get("chat_provider").and_then(Value::as_str),
         Some("proxy:gpt-oss")
     );
     assert_eq!(
@@ -2341,7 +2340,7 @@ async fn json_rpc_web_chat_custom_reasoning_provider_with_auth_none_omits_auth_h
         .await
         .expect("load_config after auth-none update");
     let (provider, model) = openhuman_core::openhuman::inference::provider::create_chat_provider(
-        "reasoning",
+        "chat",
         &loaded_config,
     )
     .expect("custom auth-none provider should build");
@@ -5981,4 +5980,141 @@ async fn whatsapp_data_agent_tools_e2e_1341() {
     assert!(WhatsAppDataSearchMessagesTool
         .description()
         .contains("WhatsApp"));
+}
+
+// ---------------------------------------------------------------------------
+// Desktop companion session lifecycle (RPC round-trip)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn companion_session_lifecycle_over_rpc() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+
+    let (mock_addr, mock_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let mock_origin = format!("http://{}", mock_addr);
+    write_min_config(&openhuman_home, &mock_origin);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{}", rpc_addr);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // Reset any lingering session from other tests.
+    let _ = post_json_rpc(
+        &rpc_base,
+        100,
+        "openhuman.companion_stop_session",
+        json!({ "reason": "test_reset" }),
+    )
+    .await;
+
+    // ── 1. Status before any session ──
+    let status = post_json_rpc(&rpc_base, 101, "openhuman.companion_status", json!({})).await;
+    let status_r = assert_no_jsonrpc_error(&status, "companion_status (initial)");
+    let result_body = status_r.get("result").unwrap_or(status_r);
+    assert_eq!(
+        result_body.get("active"),
+        Some(&json!(false)),
+        "no session should be active initially: {result_body}"
+    );
+
+    // ── 2. Start without consent → error ──
+    let no_consent = post_json_rpc(
+        &rpc_base,
+        102,
+        "openhuman.companion_start_session",
+        json!({ "consent": false }),
+    )
+    .await;
+    assert_jsonrpc_error(&no_consent, "companion_start_session (no consent)");
+
+    // ── 3. Start with consent → success ──
+    let start = post_json_rpc(
+        &rpc_base,
+        103,
+        "openhuman.companion_start_session",
+        json!({ "consent": true, "ttl_secs": 3600 }),
+    )
+    .await;
+    let start_r = assert_no_jsonrpc_error(&start, "companion_start_session");
+    let start_body = start_r.get("result").unwrap_or(start_r);
+    assert!(
+        start_body.get("session_id").is_some(),
+        "start should return session_id: {start_body}"
+    );
+
+    // ── 4. Status reflects active session ──
+    let status2 = post_json_rpc(&rpc_base, 104, "openhuman.companion_status", json!({})).await;
+    let status2_r = assert_no_jsonrpc_error(&status2, "companion_status (active)");
+    let result2_body = status2_r.get("result").unwrap_or(status2_r);
+    assert_eq!(
+        result2_body.get("active"),
+        Some(&json!(true)),
+        "session should be active: {result2_body}"
+    );
+
+    // ── 5. Duplicate start → error ──
+    let dup = post_json_rpc(
+        &rpc_base,
+        105,
+        "openhuman.companion_start_session",
+        json!({ "consent": true }),
+    )
+    .await;
+    assert_jsonrpc_error(&dup, "companion_start_session (duplicate)");
+
+    // ── 6. Config get ──
+    let config = post_json_rpc(&rpc_base, 106, "openhuman.companion_config_get", json!({})).await;
+    let config_r = assert_no_jsonrpc_error(&config, "companion_config_get");
+    let config_body = config_r.get("result").unwrap_or(config_r);
+    assert!(
+        config_body.get("hotkey").is_some(),
+        "config should have hotkey: {config_body}"
+    );
+
+    // ── 6b. Config set → error (not yet persisted) ──
+    let config_set = post_json_rpc(
+        &rpc_base,
+        116,
+        "openhuman.companion_config_set",
+        json!({ "hotkey": "CmdOrCtrl+Shift+H" }),
+    )
+    .await;
+    assert_jsonrpc_error(&config_set, "companion_config_set (not persisted)");
+
+    // ── 7. Stop session ──
+    let stop = post_json_rpc(
+        &rpc_base,
+        107,
+        "openhuman.companion_stop_session",
+        json!({ "reason": "test_done" }),
+    )
+    .await;
+    let stop_r = assert_no_jsonrpc_error(&stop, "companion_stop_session");
+    let stop_body = stop_r.get("result").unwrap_or(stop_r);
+    assert_eq!(
+        stop_body.get("stopped"),
+        Some(&json!(true)),
+        "session should be stopped: {stop_body}"
+    );
+
+    // ── 8. Status after stop ──
+    let status3 = post_json_rpc(&rpc_base, 108, "openhuman.companion_status", json!({})).await;
+    let status3_r = assert_no_jsonrpc_error(&status3, "companion_status (after stop)");
+    let result3_body = status3_r.get("result").unwrap_or(status3_r);
+    assert_eq!(
+        result3_body.get("active"),
+        Some(&json!(false)),
+        "session should be inactive after stop: {result3_body}"
+    );
+
+    mock_join.abort();
+    rpc_join.abort();
 }

@@ -32,6 +32,7 @@ export type SettingsRoute =
   | 'notifications'
   | 'notification-routing'
   | 'mascot'
+  | 'appearance'
   | 'intelligence'
   | 'webhooks-triggers'
   | 'composio-triggers'
@@ -111,6 +112,7 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
     if (path.includes('/settings/notification-routing')) return 'notification-routing';
     if (path.includes('/settings/notifications')) return 'notifications';
     if (path.includes('/settings/mascot')) return 'mascot';
+    if (path.includes('/settings/appearance')) return 'appearance';
     return 'home';
   };
 
@@ -229,6 +231,10 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
 
       // Mascot appearance panel sits at the top level of Settings.
       case 'mascot':
+        return [settingsCrumb];
+
+      // Appearance (theme) panel sits at the top level of Settings.
+      case 'appearance':
         return [settingsCrumb];
 
       case 'home':

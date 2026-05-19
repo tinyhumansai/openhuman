@@ -35,10 +35,10 @@ interface WorkerThreadStatusBadgeProps {
 function WorkerThreadStatusBadge({ status }: WorkerThreadStatusBadgeProps) {
   const tone =
     status === 'running'
-      ? 'bg-amber-100 text-amber-700'
+      ? 'bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-300'
       : status === 'completed'
-        ? 'bg-sage-100 text-sage-700'
-        : 'bg-coral-100 text-coral-700';
+        ? 'bg-sage-100 dark:bg-sage-500/20 text-sage-700 dark:text-sage-300'
+        : 'bg-coral-100 dark:bg-coral-500/20 text-coral-700 dark:text-coral-300';
   const label = status === 'running' ? 'running' : status === 'completed' ? 'done' : 'failed';
   return (
     <span
@@ -91,23 +91,25 @@ export function WorkerThreadRefCard({
     <button
       type="button"
       onClick={() => dispatch(setActiveThread(ref.threadId))}
-      className="mt-1 flex w-full items-center justify-between gap-3 rounded-xl border border-primary-200 bg-primary-50 px-3 py-2 text-left transition-colors hover:bg-primary-100">
+      className="mt-1 flex w-full items-center justify-between gap-3 rounded-xl border border-primary-200 dark:border-primary-500/30 bg-primary-50 dark:bg-primary-500/15 px-3 py-2 text-left transition-colors hover:bg-primary-100 dark:hover:bg-primary-500/25">
       <div className="min-w-0">
         <div className="flex items-center gap-2">
-          <span className="rounded-full bg-primary-200 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary-800">
+          <span className="rounded-full bg-primary-200 dark:bg-primary-500/30 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary-800 dark:text-primary-200">
             {ref.label}
           </span>
-          <span className="truncate text-xs font-medium text-primary-900">
+          <span className="truncate text-xs font-medium text-primary-900 dark:text-primary-100">
             {t('chat.openWorkerThread')}
           </span>
           {status ? <WorkerThreadStatusBadge status={status} /> : null}
         </div>
         {meta.length > 0 ? (
-          <div className="mt-0.5 text-[10px] text-primary-700/80">{meta.join(' · ')}</div>
+          <div className="mt-0.5 text-[10px] text-primary-700/80 dark:text-primary-300/80">
+            {meta.join(' · ')}
+          </div>
         ) : null}
       </div>
       <svg
-        className="h-3 w-3 shrink-0 text-primary-700"
+        className="h-3 w-3 shrink-0 text-primary-700 dark:text-primary-300"
         viewBox="0 0 24 24"
         fill="none"
         stroke="currentColor">

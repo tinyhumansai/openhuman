@@ -27,7 +27,7 @@ const HumanPage = () => {
   // Sidebar reserves ~436px (420px panel + 16px gutter) on the right; the
   // mascot stage takes the remaining width so the two never overlap.
   return (
-    <div className="absolute inset-0 bg-stone-100 overflow-hidden">
+    <div className="absolute inset-0 bg-stone-100 dark:bg-neutral-950 overflow-hidden">
       <div
         className="pointer-events-none absolute inset-0"
         style={{
@@ -42,7 +42,7 @@ const HumanPage = () => {
         </div>
       </div>
 
-      <label className="absolute top-4 left-4 z-10 inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/80 backdrop-blur-sm border border-stone-300 text-xs text-stone-700 shadow-soft cursor-pointer select-none">
+      <label className="absolute top-4 left-4 z-10 inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/80 dark:bg-neutral-900/80 backdrop-blur-sm border border-stone-300 dark:border-neutral-700 text-xs text-stone-700 dark:text-neutral-200 shadow-soft cursor-pointer select-none">
         <input
           type="checkbox"
           checked={speakReplies}
@@ -54,7 +54,7 @@ const HumanPage = () => {
 
       {/* Chat sidebar — vertically centered above the BottomTabBar (~80px). */}
       <div className="absolute right-4 top-0 bottom-20 z-10 flex items-center">
-        <aside className="w-[420px] h-[min(720px,calc(100vh-160px))] rounded-2xl border border-stone-300 bg-white shadow-soft flex flex-col overflow-hidden">
+        <aside className="w-[420px] h-[min(720px,calc(100vh-160px))] rounded-2xl border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 shadow-soft flex flex-col overflow-hidden">
           <Conversations variant="sidebar" composer="mic-cloud" />
         </aside>
       </div>

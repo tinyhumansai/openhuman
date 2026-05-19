@@ -297,7 +297,7 @@ const TelegramConfig = ({ definition }: TelegramConfigProps) => {
   return (
     <div className="space-y-3">
       {error && (
-        <div className="rounded-lg border border-coral-200 bg-coral-50 px-4 py-3 text-sm text-coral-700">
+        <div className="rounded-lg border border-coral-200 dark:border-coral-500/30 bg-coral-50 dark:bg-coral-500/10 px-4 py-3 text-sm text-coral-700 dark:text-coral-300">
           {error}
         </div>
       )}
@@ -308,13 +308,17 @@ const TelegramConfig = ({ definition }: TelegramConfigProps) => {
         const status: ChannelConnectionStatus = connection?.status ?? 'disconnected';
 
         return (
-          <div key={spec.mode} className="rounded-lg border border-stone-200 bg-stone-50 p-3">
+          <div
+            key={spec.mode}
+            className="rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 p-3">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <p className="text-sm font-medium text-stone-900">
+                <p className="text-sm font-medium text-stone-900 dark:text-neutral-100">
                   {AUTH_MODE_LABELS[spec.mode] ?? spec.mode}
                 </p>
-                <p className="text-xs text-stone-500 mt-1">{spec.description}</p>
+                <p className="text-xs text-stone-500 dark:text-neutral-400 mt-1">
+                  {spec.description}
+                </p>
                 {connection?.lastError && (
                   <p className="text-xs text-coral-600 mt-1">{connection.lastError}</p>
                 )}
@@ -350,7 +354,7 @@ const TelegramConfig = ({ definition }: TelegramConfigProps) => {
                 type="button"
                 disabled={busyKeys[compositeKey] || status === 'disconnected'}
                 onClick={() => handleDisconnect(spec.mode)}
-                className="rounded-lg border border-stone-200 px-3 py-1.5 text-xs font-medium text-stone-600 hover:border-stone-300 disabled:opacity-50">
+                className="rounded-lg border border-stone-200 dark:border-neutral-800 px-3 py-1.5 text-xs font-medium text-stone-600 dark:text-neutral-300 hover:border-stone-300 dark:hover:border-neutral-700 disabled:opacity-50">
                 {t('accounts.disconnect')}
               </button>
             </div>

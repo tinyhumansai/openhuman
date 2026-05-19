@@ -111,7 +111,8 @@ const TeamMembersPanel = () => {
   const roleBadgeColor: Record<string, string> = {
     ADMIN: 'bg-primary-500/20 text-primary-400 border-primary-500/30',
     BILLING_MANAGER: 'bg-amber-500/20 text-amber-400 border-amber-500/30',
-    MEMBER: 'bg-stone-500/20 text-stone-400 border-stone-500/30',
+    MEMBER:
+      'bg-stone-50 dark:bg-neutral-800/60 text-stone-400 dark:text-neutral-500 border-stone-500/30',
   };
 
   return (
@@ -154,14 +155,17 @@ const TeamMembersPanel = () => {
           )}
 
           {/* Member count */}
-          <p className="text-xs text-stone-500 px-1">
+          <p className="text-xs text-stone-500 dark:text-neutral-400 px-1">
             {members.length} member{members.length !== 1 ? 's' : ''}
           </p>
 
           {/* Full loading state - only when loading and no existing data */}
           {isLoadingMembers && members.length === 0 ? (
             <div className="flex items-center justify-center py-8">
-              <svg className="w-5 h-5 text-stone-500 animate-spin" fill="none" viewBox="0 0 24 24">
+              <svg
+                className="w-5 h-5 text-stone-500 dark:text-neutral-400 animate-spin"
+                fill="none"
+                viewBox="0 0 24 24">
                 <circle
                   className="opacity-25"
                   cx="12"
@@ -176,14 +180,16 @@ const TeamMembersPanel = () => {
                   d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
                 />
               </svg>
-              <span className="ml-3 text-sm text-stone-500">Loading members...</span>
+              <span className="ml-3 text-sm text-stone-500 dark:text-neutral-400">
+                Loading members...
+              </span>
             </div>
           ) : (
             <div className="space-y-2">
               {members.map(member => (
                 <div
                   key={member._id}
-                  className="flex items-center justify-between p-3 rounded-xl border border-stone-200 bg-white">
+                  className="flex items-center justify-between p-3 rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900">
                   <div className="flex items-center gap-3 min-w-0">
                     {/* Avatar */}
                     <div className="w-8 h-8 rounded-full bg-stone-700/60 flex items-center justify-center flex-shrink-0">
@@ -193,15 +199,19 @@ const TeamMembersPanel = () => {
                     </div>
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium text-stone-900 truncate">
+                        <span className="text-sm font-medium text-stone-900 dark:text-neutral-100 truncate">
                           {displayName(member)}
                         </span>
                         {isCurrentUser(member) && (
-                          <span className="text-[10px] text-stone-500">(You)</span>
+                          <span className="text-[10px] text-stone-500 dark:text-neutral-400">
+                            (You)
+                          </span>
                         )}
                       </div>
                       {member.user.username && (
-                        <p className="text-xs text-stone-500 truncate">@{member.user.username}</p>
+                        <p className="text-xs text-stone-500 dark:text-neutral-400 truncate">
+                          @{member.user.username}
+                        </p>
                       )}
                     </div>
                   </div>
@@ -213,7 +223,7 @@ const TeamMembersPanel = () => {
                         value={member.role.toUpperCase()}
                         onChange={e => handleChangeRole(member, e.target.value as TeamRole)}
                         disabled={changingRoleId === member._id}
-                        className="px-2 py-1 text-[10px] font-medium rounded-full border bg-white text-stone-700 border-stone-300 focus:outline-none focus:border-primary-500/50 disabled:opacity-50">
+                        className="px-2 py-1 text-[10px] font-medium rounded-full border bg-white dark:bg-neutral-900 text-stone-700 dark:text-neutral-200 border-stone-300 dark:border-neutral-700 focus:outline-none focus:border-primary-500/50 disabled:opacity-50">
                         {ROLES.map(r => (
                           <option key={r} value={r}>
                             {r}
@@ -232,7 +242,7 @@ const TeamMembersPanel = () => {
                       <button
                         onClick={() => handleRemoveMember(member)}
                         disabled={removingId === member._id}
-                        className="p-1 rounded-lg text-stone-500 hover:text-coral-400 hover:bg-coral-500/10 transition-colors disabled:opacity-50"
+                        className="p-1 rounded-lg text-stone-500 dark:text-neutral-400 hover:text-coral-400 hover:bg-coral-500/10 transition-colors disabled:opacity-50"
                         aria-label={`Remove ${displayName(member)}`}>
                         <svg
                           className="w-4 h-4"
@@ -254,7 +264,7 @@ const TeamMembersPanel = () => {
 
               {members.length === 0 && !isLoadingMembers && (
                 <div className="text-center py-8">
-                  <p className="text-sm text-stone-500">No members found</p>
+                  <p className="text-sm text-stone-500 dark:text-neutral-400">No members found</p>
                 </div>
               )}
             </div>
@@ -263,8 +273,10 @@ const TeamMembersPanel = () => {
           {/* Remove Member Confirmation Modal */}
           {memberToRemove && (
             <div className="fixed inset-0 bg-stone-900/50 flex items-center justify-center z-50 p-4">
-              <div className="bg-white rounded-2xl p-6 w-full max-w-md border border-stone-200">
-                <h3 className="text-sm font-semibold text-stone-900 mb-4">Remove Team Member</h3>
+              <div className="bg-white dark:bg-neutral-900 rounded-2xl p-6 w-full max-w-md border border-stone-200 dark:border-neutral-800">
+                <h3 className="text-sm font-semibold text-stone-900 dark:text-neutral-100 mb-4">
+                  Remove Team Member
+                </h3>
 
                 {error && (
                   <div className="rounded-xl bg-coral-500/10 border border-coral-500/20 p-3 mb-4">
@@ -273,11 +285,13 @@ const TeamMembersPanel = () => {
                 )}
 
                 <div className="space-y-4">
-                  <div className="text-sm text-stone-400">
+                  <div className="text-sm text-stone-400 dark:text-neutral-500">
                     <p>
                       Are you sure you want to remove{' '}
-                      <strong className="text-stone-900">{displayName(memberToRemove)}</strong> from
-                      the team?
+                      <strong className="text-stone-900 dark:text-neutral-100">
+                        {displayName(memberToRemove)}
+                      </strong>{' '}
+                      from the team?
                     </p>
                     <p className="mt-2 text-coral-400">
                       They will lose access to the team and all team resources.
@@ -288,7 +302,7 @@ const TeamMembersPanel = () => {
                     <button
                       onClick={() => setMemberToRemove(null)}
                       disabled={removingId === memberToRemove._id}
-                      className="flex-1 px-4 py-2 text-sm font-medium rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-700 transition-colors disabled:opacity-50">
+                      className="flex-1 px-4 py-2 text-sm font-medium rounded-xl bg-stone-100 dark:bg-neutral-800 hover:bg-stone-200 dark:bg-neutral-800 text-stone-700 dark:text-neutral-200 transition-colors disabled:opacity-50">
                       Cancel
                     </button>
                     <button
@@ -306,8 +320,10 @@ const TeamMembersPanel = () => {
           {/* Change Role Confirmation Modal */}
           {roleChangeConfirmation && (
             <div className="fixed inset-0 bg-stone-900/50 flex items-center justify-center z-50 p-4">
-              <div className="bg-white rounded-2xl p-6 w-full max-w-md border border-stone-200">
-                <h3 className="text-sm font-semibold text-stone-900 mb-4">Change Member Role</h3>
+              <div className="bg-white dark:bg-neutral-900 rounded-2xl p-6 w-full max-w-md border border-stone-200 dark:border-neutral-800">
+                <h3 className="text-sm font-semibold text-stone-900 dark:text-neutral-100 mb-4">
+                  Change Member Role
+                </h3>
 
                 {error && (
                   <div className="rounded-xl bg-coral-500/10 border border-coral-500/20 p-3 mb-4">
@@ -316,10 +332,10 @@ const TeamMembersPanel = () => {
                 )}
 
                 <div className="space-y-4">
-                  <div className="text-sm text-stone-400">
+                  <div className="text-sm text-stone-400 dark:text-neutral-500">
                     <p>
                       Change{' '}
-                      <strong className="text-stone-900 font-semibold">
+                      <strong className="text-stone-900 dark:text-neutral-100 font-semibold">
                         {displayName(roleChangeConfirmation.member)}
                       </strong>
                       's role from{' '}
@@ -350,7 +366,7 @@ const TeamMembersPanel = () => {
                     <button
                       onClick={() => setRoleChangeConfirmation(null)}
                       disabled={changingRoleId === roleChangeConfirmation.member._id}
-                      className="flex-1 px-4 py-2 text-sm font-medium rounded-xl bg-stone-700/50 hover:bg-stone-700 text-stone-300 transition-colors disabled:opacity-50">
+                      className="flex-1 px-4 py-2 text-sm font-medium rounded-xl bg-stone-700/50 hover:bg-stone-700 text-stone-300 dark:text-neutral-600 transition-colors disabled:opacity-50">
                       Cancel
                     </button>
                     <button

@@ -71,15 +71,19 @@ const ReferralApplyStep = ({ onNext, onApplied }: ReferralApplyStepProps) => {
   };
 
   return (
-    <div className="rounded-2xl border border-stone-200 bg-white p-8 shadow-soft animate-fade-up">
+    <div className="rounded-2xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-8 shadow-soft animate-fade-up">
       <div className="text-center mb-6">
-        <h1 className="text-xl font-bold mb-2 text-stone-900">{t('onboarding.referral')}</h1>
-        <p className="text-stone-600 text-sm">{t('onboarding.referralDesc')}</p>
+        <h1 className="text-xl font-bold mb-2 text-stone-900 dark:text-neutral-100">
+          {t('onboarding.referral')}
+        </h1>
+        <p className="text-stone-600 dark:text-neutral-300 text-sm">
+          {t('onboarding.referralDesc')}
+        </p>
       </div>
 
       {success ? (
         <div className="text-center py-4">
-          <div className="w-12 h-12 bg-sage-50 rounded-full flex items-center justify-center mx-auto mb-3">
+          <div className="w-12 h-12 bg-sage-50 dark:bg-sage-500/10 rounded-full flex items-center justify-center mx-auto mb-3">
             <svg
               className="w-6 h-6 text-sage-500"
               fill="none"
@@ -93,7 +97,9 @@ const ReferralApplyStep = ({ onNext, onApplied }: ReferralApplyStepProps) => {
               />
             </svg>
           </div>
-          <p className="text-sage-600 font-medium text-sm">{t('common.success')}</p>
+          <p className="text-sage-600 dark:text-sage-300 font-medium text-sm">
+            {t('common.success')}
+          </p>
         </div>
       ) : (
         <>
@@ -104,7 +110,7 @@ const ReferralApplyStep = ({ onNext, onApplied }: ReferralApplyStepProps) => {
               onChange={e => setCode(e.target.value.toUpperCase())}
               onKeyDown={e => e.key === 'Enter' && void handleApply()}
               placeholder={t('rewards.referralCode')}
-              className="w-full px-4 py-3 bg-stone-50 border border-stone-200 rounded-xl text-center font-mono text-lg tracking-widest text-stone-900 placeholder:text-stone-400 placeholder:tracking-normal placeholder:font-sans placeholder:text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500/50 transition-all"
+              className="w-full px-4 py-3 bg-stone-50 dark:bg-neutral-800/60 border border-stone-200 dark:border-neutral-800 rounded-xl text-center font-mono text-lg tracking-widest text-stone-900 dark:text-neutral-100 placeholder:text-stone-400 dark:placeholder:text-neutral-500 dark:text-neutral-500 placeholder:tracking-normal placeholder:font-sans placeholder:text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500/50 transition-all"
               disabled={isLoading}
             />
             {error ? <p className="text-coral-500 text-xs mt-2 text-center">{error}</p> : null}
@@ -115,7 +121,7 @@ const ReferralApplyStep = ({ onNext, onApplied }: ReferralApplyStepProps) => {
               type="button"
               onClick={onNext}
               disabled={isLoading}
-              className="flex-1 py-2.5 text-sm font-medium rounded-xl border border-stone-200 text-stone-500 hover:text-stone-700 hover:border-stone-300 transition-colors">
+              className="flex-1 py-2.5 text-sm font-medium rounded-xl border border-stone-200 dark:border-neutral-800 text-stone-500 dark:text-neutral-400 hover:text-stone-700 dark:hover:text-neutral-200 dark:text-neutral-200 hover:border-stone-300 dark:border-neutral-700 transition-colors">
               {t('onboarding.skip')}
             </button>
             <button

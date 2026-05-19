@@ -1623,6 +1623,42 @@ fn append_platform_cef_gpu_workarounds(args: &mut Vec<CefCommandLineArg>, os: &s
 }
 
 pub fn run() {
+    // ── Install a custom tokio runtime for tauri::async_runtime ─────────
+    //
+    // Tauri's default async runtime uses tokio multi-thread workers with
+    // a ~2 MB stack. The in-process core (spawned by
+    // `core_process::CoreProcessHandle::ensure_running` via
+    // `tokio::spawn(run_server_embedded(..))`) runs *on* that runtime, so
+    // every JSON-RPC handler — including the deep tower
+    // `web channel chat → orchestrator turn → delegate_to_integrations_agent
+    // → sub-agent → composio_list_tools → load_config_with_timeout` —
+    // burns through the same 2 MB. In `crahs.log` (2026-05-17, build
+    // 0.53.49) that tower plus the serde-monomorphised `Config` Visitor
+    // frames pushed past the guard page and aborted with
+    // `SIGBUS / KERN_PROTECTION_FAILURE`. The structural fix
+    // (`spawn_blocking` for the TOML parse + cache in
+    // `src/openhuman/config/{schema/load.rs, ops.rs}`) moves the
+    // largest contributor off the worker; bumping the worker stack
+    // itself gives the rest of the tower comfortable headroom so future
+    // additions don't immediately re-tip the same scale. 8 MiB matches
+    // the OS-default pthread main-thread stack on macOS, so we can
+    // assume "as much room as the main thread" everywhere.
+    //
+    // Must happen before any `tauri::async_runtime::*` call, otherwise
+    // `set(...)` panics with "runtime already initialized".
+    {
+        let custom_runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .thread_stack_size(8 * 1024 * 1024)
+            .build()
+            .expect("build custom tokio runtime for tauri async surface");
+        let handle = custom_runtime.handle().clone();
+        // Tauri docs: "you cannot drop the underlying TokioRuntime."
+        // Leak it so its lifetime matches the process.
+        std::mem::forget(custom_runtime);
+        tauri::async_runtime::set(handle);
+    }
+
     // Initialize Sentry for the Tauri shell (desktop host) process before any
     // other startup work. Reads `OPENHUMAN_TAURI_SENTRY_DSN` at runtime first,
     // then falls back to the value baked in at compile time via the release
@@ -2761,15 +2797,23 @@ pub fn run() {
             // window from tray click: main window not found`
             // (OPENHUMAN-TAURI-2X — 21 events, Windows only).
             //
-            // macOS uses `window.hide()` because the vendored CEF runtime
-            // routes that through `set_application_visibility(false)` at the
-            // NSApplication level (`tauri-runtime-cef/src/lib.rs:588`), which
-            // hides the CEF browser surface together with the host window.
-            // Windows is handled in the separate arm below — see issue #1607.
+            // macOS: hide the whole application on close instead of
+            // destroying the window. `AppHandle::hide()` calls
+            // `[NSApp hide:]` via `set_application_visibility(false)`,
+            // the standard macOS mechanism that reliably hides all
+            // windows. The vendored CEF runtime's per-window
+            // `WebviewWindow::hide()` sends `WindowMessage::Hide` →
+            // `cef::Window::hide()`, which does NOT propagate to the
+            // visible NSWindow frame and leaves the window on screen
+            // (issue #2049). Dock-click fires `RunEvent::Reopen` which
+            // calls `show_main_window()` to restore.
             //
-            // Linux is left out: `setup_tray` early-returns on Linux because
-            // tray creation panics inside GTK during packaged runs, so the
-            // hide-on-close behavior would strand the user with no way back.
+            // Windows is handled in the separate arm below — see #1607.
+            //
+            // Linux is left out: `setup_tray` early-returns on Linux
+            // because tray creation panics inside GTK during packaged
+            // runs, so hide-on-close would strand the user with no way
+            // back.
             #[cfg(target_os = "macos")]
             RunEvent::WindowEvent {
                 label,
@@ -2777,11 +2821,13 @@ pub fn run() {
                 ..
             } if label == "main" => {
                 log::info!(
-                    "[window] close requested on main window — hiding instead of destroying"
+                    "[window] close requested on main window — hiding app"
                 );
                 api.prevent_close();
-                if let Some(window) = app_handle.get_webview_window("main") {
-                    let _ = window.hide();
+                if let Err(err) = app_handle.hide() {
+                    log::warn!(
+                        "[window] app_handle.hide() failed on close request: {err}"
+                    );
                 }
             }
             // Windows: full hide-to-tray.

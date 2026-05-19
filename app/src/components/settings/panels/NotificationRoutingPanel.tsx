@@ -113,19 +113,23 @@ const NotificationRoutingPanel = () => {
 
       <div className="p-4 space-y-4">
         {stats && (
-          <div className="bg-white border border-stone-200 rounded-xl overflow-hidden">
-            <div className="px-4 py-3 border-b border-stone-100">
-              <p className="text-sm font-medium text-stone-900">Pipeline stats</p>
+          <div className="bg-white dark:bg-neutral-900 border border-stone-200 dark:border-neutral-800 rounded-xl overflow-hidden">
+            <div className="px-4 py-3 border-b border-stone-100 dark:border-neutral-800">
+              <p className="text-sm font-medium text-stone-900 dark:text-neutral-100">
+                Pipeline stats
+              </p>
             </div>
-            <div className="grid grid-cols-3 divide-x divide-stone-100">
+            <div className="grid grid-cols-3 divide-x divide-stone-100 dark:divide-neutral-800">
               {[
                 { label: 'Total', value: stats.total },
                 { label: 'Unread', value: stats.unread },
                 { label: 'Unscored', value: stats.unscored },
               ].map(({ label, value }) => (
                 <div key={label} className="px-4 py-3 text-center">
-                  <p className="text-lg font-semibold text-stone-900">{value}</p>
-                  <p className="text-xs text-stone-500">{label}</p>
+                  <p className="text-lg font-semibold text-stone-900 dark:text-neutral-100">
+                    {value}
+                  </p>
+                  <p className="text-xs text-stone-500 dark:text-neutral-400">{label}</p>
                 </div>
               ))}
             </div>
@@ -133,10 +137,10 @@ const NotificationRoutingPanel = () => {
         )}
 
         {/* Info card */}
-        <div className="p-4 bg-blue-50 border border-blue-200 rounded-xl">
+        <div className="p-4 bg-blue-50 dark:bg-blue-500/10 border border-blue-200 dark:border-blue-500/30 rounded-xl">
           <div className="flex items-start space-x-3">
             <svg
-              className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5"
+              className="w-5 h-5 text-blue-600 dark:text-blue-300 flex-shrink-0 mt-0.5"
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24">
@@ -148,8 +152,10 @@ const NotificationRoutingPanel = () => {
               />
             </svg>
             <div>
-              <p className="font-medium text-blue-800 text-sm">Notification Intelligence</p>
-              <p className="text-blue-700 text-xs mt-1 leading-relaxed">
+              <p className="font-medium text-blue-800 dark:text-blue-200 text-sm">
+                Notification Intelligence
+              </p>
+              <p className="text-blue-700 dark:text-blue-300 text-xs mt-1 leading-relaxed">
                 Every notification from your connected accounts is scored by a local AI model.
                 High-importance notifications are automatically routed to your orchestrator agent so
                 nothing critical slips through.
@@ -159,31 +165,31 @@ const NotificationRoutingPanel = () => {
         </div>
 
         {/* How it works */}
-        <div className="bg-white border border-stone-200 rounded-xl overflow-hidden">
-          <div className="px-4 py-3 border-b border-stone-100">
-            <p className="text-sm font-medium text-stone-900">How it works</p>
+        <div className="bg-white dark:bg-neutral-900 border border-stone-200 dark:border-neutral-800 rounded-xl overflow-hidden">
+          <div className="px-4 py-3 border-b border-stone-100 dark:border-neutral-800">
+            <p className="text-sm font-medium text-stone-900 dark:text-neutral-100">How it works</p>
           </div>
-          <div className="divide-y divide-stone-100">
+          <div className="divide-y divide-stone-100 dark:divide-neutral-800">
             {[
               {
                 label: 'Drop',
                 desc: 'Noise / spam — stored but not surfaced',
-                color: 'bg-stone-100 text-stone-600',
+                color: 'bg-stone-100 dark:bg-neutral-800 text-stone-600 dark:text-neutral-300',
               },
               {
                 label: 'Acknowledge',
                 desc: 'Low-priority — shown in notification center',
-                color: 'bg-blue-100 text-blue-700',
+                color: 'bg-blue-100 dark:bg-blue-500/20 text-blue-700 dark:text-blue-300',
               },
               {
                 label: 'React',
                 desc: 'Medium-priority — triggers a focused agent response',
-                color: 'bg-amber-100 text-amber-700',
+                color: 'bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-300',
               },
               {
                 label: 'Escalate',
                 desc: 'High-priority — forwarded to orchestrator agent',
-                color: 'bg-red-100 text-red-700',
+                color: 'bg-red-100 dark:bg-red-500/20 text-red-700 dark:text-red-300',
               },
             ].map(row => (
               <div key={row.label} className="flex items-center gap-3 px-4 py-3">
@@ -191,17 +197,19 @@ const NotificationRoutingPanel = () => {
                   className={`flex-shrink-0 px-2 py-0.5 rounded text-[11px] font-semibold ${row.color}`}>
                   {row.label}
                 </span>
-                <span className="text-xs text-stone-600">{row.desc}</span>
+                <span className="text-xs text-stone-600 dark:text-neutral-300">{row.desc}</span>
               </div>
             ))}
           </div>
         </div>
 
-        <div className="bg-white border border-stone-200 rounded-xl overflow-hidden">
-          <div className="px-4 py-3 border-b border-stone-100">
-            <p className="text-sm font-medium text-stone-900">Per-provider routing</p>
+        <div className="bg-white dark:bg-neutral-900 border border-stone-200 dark:border-neutral-800 rounded-xl overflow-hidden">
+          <div className="px-4 py-3 border-b border-stone-100 dark:border-neutral-800">
+            <p className="text-sm font-medium text-stone-900 dark:text-neutral-100">
+              Per-provider routing
+            </p>
           </div>
-          <div className="divide-y divide-stone-100">
+          <div className="divide-y divide-stone-100 dark:divide-neutral-800">
             {providers.map(provider => {
               const hasLoadError = Boolean(loadErrors[provider]);
               const isLoaded = Boolean(loadedProviders[provider]);
@@ -214,8 +222,10 @@ const NotificationRoutingPanel = () => {
               return (
                 <div key={provider} className="px-4 py-3 space-y-2">
                   <div className="flex items-center justify-between">
-                    <p className="text-sm font-medium text-stone-800 capitalize">{provider}</p>
-                    <label className="text-xs text-stone-600 flex items-center gap-2">
+                    <p className="text-sm font-medium text-stone-800 dark:text-neutral-100 capitalize">
+                      {provider}
+                    </p>
+                    <label className="text-xs text-stone-600 dark:text-neutral-300 flex items-center gap-2">
                       Enabled
                       <input
                         type="checkbox"
@@ -227,7 +237,7 @@ const NotificationRoutingPanel = () => {
                       />
                     </label>
                   </div>
-                  <label className="flex items-center gap-2 text-xs text-stone-600">
+                  <label className="flex items-center gap-2 text-xs text-stone-600 dark:text-neutral-300">
                     Threshold
                     <input
                       className="flex-1"
@@ -245,7 +255,7 @@ const NotificationRoutingPanel = () => {
                     />
                     <span>{s.importance_threshold.toFixed(2)}</span>
                   </label>
-                  <label className="text-xs text-stone-600 flex items-center gap-2">
+                  <label className="text-xs text-stone-600 dark:text-neutral-300 flex items-center gap-2">
                     Route to orchestrator
                     <input
                       type="checkbox"
@@ -257,7 +267,7 @@ const NotificationRoutingPanel = () => {
                     />
                   </label>
                   {hasLoadError ? (
-                    <p className="text-xs text-red-600">
+                    <p className="text-xs text-red-600 dark:text-red-300">
                       Failed to load settings. Reopen this panel to retry.
                     </p>
                   ) : null}

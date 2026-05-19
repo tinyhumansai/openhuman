@@ -22,16 +22,18 @@ export function UsageLimitBanner({
   const styles =
     tone === 'danger'
       ? {
-          card: 'border-coral-200 bg-gradient-to-r from-coral-50 via-rose-50 to-orange-50',
-          title: 'text-coral-700',
-          body: 'text-coral-500',
-          button: 'border-coral-700 text-coral-700 hover:text-coral-800',
+          card: 'border-coral-200 bg-gradient-to-r from-coral-50 via-rose-50 to-orange-50 dark:border-coral-500/30 dark:from-coral-900/30 dark:via-coral-900/20 dark:to-coral-900/10',
+          title: 'text-coral-700 dark:text-coral-300',
+          body: 'text-coral-500 dark:text-coral-300/80',
+          button:
+            'border-coral-700 text-coral-700 hover:text-coral-800 dark:border-coral-300 dark:text-coral-300 dark:hover:text-coral-200',
         }
       : {
-          card: 'border-amber-200 bg-gradient-to-r from-amber-50 via-orange-50 to-rose-50',
-          title: 'text-amber-700',
-          body: 'text-amber-600',
-          button: 'border-amber-700 text-amber-700 hover:text-amber-800',
+          card: 'border-amber-200 bg-gradient-to-r from-amber-50 via-orange-50 to-rose-50 dark:border-amber-500/30 dark:from-amber-900/30 dark:via-amber-900/20 dark:to-amber-900/10',
+          title: 'text-amber-700 dark:text-amber-300',
+          body: 'text-amber-600 dark:text-amber-300/80',
+          button:
+            'border-amber-700 text-amber-700 hover:text-amber-800 dark:border-amber-300 dark:text-amber-300 dark:hover:text-amber-200',
         };
 
   return (
@@ -62,23 +64,23 @@ export function UsageLimitBanner({
 export function PromotionalCreditsBanner({ promoCredits }: { promoCredits: number }) {
   const { t } = useT();
   return (
-    <div className="mb-3 rounded-2xl border border-amber-200 bg-gradient-to-r from-amber-50 via-orange-50 to-rose-50 px-4 py-4 text-left shadow-soft">
+    <div className="mb-3 rounded-2xl border border-amber-200 bg-gradient-to-r from-amber-50 via-orange-50 to-rose-50 px-4 py-4 text-left shadow-soft dark:border-amber-500/30 dark:from-amber-900/30 dark:via-amber-900/20 dark:to-amber-900/10">
       <div className="flex items-start gap-3">
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-amber-100 text-lg">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-amber-100 dark:bg-amber-500/20 text-lg">
           🎉
         </div>
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold text-amber-700">
+          <p className="text-sm font-semibold text-amber-700 dark:text-amber-300">
             {t('home.banners.promoCreditsTitle').replace('{amount}', formatUsd(promoCredits))}
           </p>
-          <p className="mt-1 text-sm leading-relaxed text-amber-600">
+          <p className="mt-1 text-sm leading-relaxed text-amber-600 dark:text-amber-300/80">
             {t('home.banners.promoCreditsBody')}{' '}
             <button
               type="button"
               onClick={() => {
                 void openUrl(BILLING_DASHBOARD_URL);
               }}
-              className="cursor-pointer border-b border-amber-700 border-dashed font-bold text-amber-700 hover:text-amber-800">
+              className="cursor-pointer border-b border-amber-700 border-dashed font-bold text-amber-700 hover:text-amber-800 dark:border-amber-300 dark:text-amber-300 dark:hover:text-amber-200">
               {t('home.banners.getSubscription')}
             </button>{' '}
             {t('home.banners.promoCreditsUsage')}
@@ -92,27 +94,27 @@ export function PromotionalCreditsBanner({ promoCredits }: { promoCredits: numbe
 export function EarlyBirdyBanner({ onDismiss }: { onDismiss?: () => void }) {
   const { t } = useT();
   return (
-    <div className="relative mb-3 mt-3 rounded-2xl border border-orange-200 bg-gradient-to-r from-orange-50 via-amber-50 to-orange-50 px-4 py-4 text-left shadow-soft">
+    <div className="relative mb-3 mt-3 rounded-2xl border border-orange-200 bg-gradient-to-r from-orange-50 via-amber-50 to-orange-50 px-4 py-4 text-left shadow-soft dark:border-orange-500/30 dark:from-orange-900/30 dark:via-amber-900/20 dark:to-orange-900/10">
       {onDismiss && (
         <button
           type="button"
           onClick={onDismiss}
           aria-label={t('home.banners.earlyBirdDismiss')}
-          className="absolute right-3 top-3 rounded-md p-1 text-orange-500 hover:bg-orange-100 hover:text-orange-700">
+          className="absolute right-3 top-3 rounded-md p-1 text-orange-500 hover:bg-orange-100 hover:text-orange-700 dark:text-orange-300 dark:hover:bg-orange-500/10 dark:hover:text-orange-200">
           ✕
         </button>
       )}
       <div className="flex items-start gap-3">
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-orange-100 text-lg">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-orange-100 dark:bg-orange-500/20 text-lg">
           🐦
         </div>
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold text-orange-700">
+          <p className="text-sm font-semibold text-orange-700 dark:text-orange-300">
             {t('home.banners.earlyBirdTitle')}
           </p>
-          <p className="mt-1 text-sm leading-relaxed text-orange-600">
+          <p className="mt-1 text-sm leading-relaxed text-orange-600 dark:text-orange-300/80">
             {t('home.banners.earlyBirdUseCode')}{' '}
-            <span className="rounded-md border border-orange-300 bg-white px-1.5 py-0.5 font-mono text-[12px] font-bold text-orange-700">
+            <span className="rounded-md border border-orange-300 bg-white px-1.5 py-0.5 font-mono text-[12px] font-bold text-orange-700 dark:border-orange-500/40 dark:bg-neutral-900 dark:text-orange-300">
               EARLYBIRDY
             </span>{' '}
             {t('home.banners.earlyBirdOn')}{' '}
@@ -121,7 +123,7 @@ export function EarlyBirdyBanner({ onDismiss }: { onDismiss?: () => void }) {
               onClick={() => {
                 void openUrl(BILLING_DASHBOARD_URL);
               }}
-              className="cursor-pointer border-b border-amber-700 border-dashed font-bold text-amber-700 hover:text-amber-800">
+              className="cursor-pointer border-b border-amber-700 border-dashed font-bold text-amber-700 hover:text-amber-800 dark:border-amber-300 dark:text-amber-300 dark:hover:text-amber-200">
               {t('home.banners.earlyBirdFirstSub')}
             </button>{' '}
           </p>
@@ -139,7 +141,7 @@ export function DiscordBanner() {
       onClick={() => {
         void openUrl(DISCORD_INVITE_URL);
       }}
-      className="mb-3 text-left mt-3 block rounded-2xl border border-[#CDD2FF] bg-gradient-to-r from-[#F6F7FF] via-[#F1F3FF] to-[#ECEFFF] px-4 py-4 text-[#414AAE] shadow-soft transition-transform transition-colors hover:-translate-y-0.5 hover:border-[#BCC3FF] hover:from-[#EEF0FF] hover:to-[#E5E9FF]">
+      className="mb-3 text-left mt-3 block w-full rounded-2xl border border-[#CDD2FF] bg-gradient-to-r from-[#F6F7FF] via-[#F1F3FF] to-[#ECEFFF] px-4 py-4 text-[#414AAE] shadow-soft transition-transform transition-colors hover:-translate-y-0.5 hover:border-[#BCC3FF] hover:from-[#EEF0FF] hover:to-[#E5E9FF] dark:border-[#5865F2]/30 dark:from-[#5865F2]/10 dark:via-[#5865F2]/15 dark:to-[#5865F2]/10 dark:text-[#A5B0FF] dark:hover:border-[#5865F2]/50 dark:hover:from-[#5865F2]/15 dark:hover:to-[#5865F2]/20">
       <div className="flex items-center gap-3">
         <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#5865F2]/12 text-[#5865F2]">
           <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
@@ -148,7 +150,9 @@ export function DiscordBanner() {
         </div>
         <div className="min-w-0 flex-1">
           <div className="text-sm font-semibold">{t('home.banners.discordTitle')}</div>
-          <div className="mt-0.5 text-sm text-[#5E66BC]">{t('home.banners.discordSubtitle')}</div>
+          <div className="mt-0.5 text-sm text-[#5E66BC] dark:text-[#8B95DD]">
+            {t('home.banners.discordSubtitle')}
+          </div>
         </div>
       </div>
     </button>

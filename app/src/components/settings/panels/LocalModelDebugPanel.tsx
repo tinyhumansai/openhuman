@@ -35,17 +35,17 @@ import ModelStatusSection from './local-model/ModelStatusSection';
 const statusTone = (state: string): string => {
   switch (state) {
     case 'ready':
-      return 'text-green-600';
+      return 'text-green-600 dark:text-green-300';
     case 'downloading':
     case 'installing':
     case 'loading':
-      return 'text-primary-600';
+      return 'text-primary-600 dark:text-primary-300';
     case 'degraded':
-      return 'text-amber-700';
+      return 'text-amber-700 dark:text-amber-300';
     case 'disabled':
-      return 'text-stone-500';
+      return 'text-stone-500 dark:text-neutral-400';
     default:
-      return 'text-stone-700';
+      return 'text-stone-700 dark:text-neutral-200';
   }
 };
 

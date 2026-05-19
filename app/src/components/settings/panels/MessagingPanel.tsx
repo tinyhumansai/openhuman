@@ -26,7 +26,7 @@ function statusDot(status: ChannelConnectionStatus): string {
     case 'error':
       return 'bg-coral-500';
     default:
-      return 'bg-stone-300';
+      return 'bg-stone-300 dark:bg-neutral-700';
   }
 }
 
@@ -46,13 +46,13 @@ function statusLabel(status: ChannelConnectionStatus, t: (key: string) => string
 function statusColor(status: ChannelConnectionStatus): string {
   switch (status) {
     case 'connected':
-      return 'text-sage-600';
+      return 'text-sage-600 dark:text-sage-300';
     case 'connecting':
-      return 'text-amber-600';
+      return 'text-amber-600 dark:text-amber-300';
     case 'error':
-      return 'text-coral-600';
+      return 'text-coral-600 dark:text-coral-300';
     default:
-      return 'text-stone-400';
+      return 'text-stone-400 dark:text-neutral-500';
   }
 }
 
@@ -115,8 +115,10 @@ const MessagingPanel = () => {
 
       <div className="p-4 space-y-4">
         {/* Default channel selector */}
-        <section className="rounded-xl border border-stone-200 bg-white p-4 space-y-3">
-          <h3 className="text-sm font-semibold text-stone-900">{t('channels.defaultMessaging')}</h3>
+        <section className="rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 space-y-3">
+          <h3 className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
+            {t('channels.defaultMessaging')}
+          </h3>
           <div className="grid grid-cols-2 gap-2">
             {definitions.map(def => {
               const channelId = def.id as ChannelType;
@@ -130,17 +132,17 @@ const MessagingPanel = () => {
                   disabled={busy[busyKey]}
                   className={`rounded-lg border px-3 py-2 text-sm transition-colors ${
                     selected
-                      ? 'border-primary-500/60 bg-primary-50 text-primary-600'
-                      : 'border-stone-200 bg-stone-50 text-stone-600 hover:border-stone-300'
+                      ? 'border-primary-500/60 bg-primary-50 dark:bg-primary-500/10 text-primary-600 dark:text-primary-300'
+                      : 'border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 text-stone-600 dark:text-neutral-300 hover:border-stone-300 dark:border-neutral-700 dark:hover:border-neutral-700'
                   }`}>
                   {def.display_name}
                 </button>
               );
             })}
           </div>
-          <p className="text-xs text-stone-400">
+          <p className="text-xs text-stone-400 dark:text-neutral-500">
             {t('channels.activeRoute')}:{' '}
-            <span className="text-primary-600">{recommendedRoute}</span>
+            <span className="text-primary-600 dark:text-primary-300">{recommendedRoute}</span>
           </p>
         </section>
 
@@ -151,18 +153,20 @@ const MessagingPanel = () => {
         )}
 
         {loading && (
-          <div className="rounded-xl border border-stone-200 bg-white p-4 text-sm text-stone-400">
+          <div className="rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 text-sm text-stone-400 dark:text-neutral-500">
             {t('channels.loadingDefinitions')}
           </div>
         )}
 
         {/* Channel cards — click to open the shared ChannelSetupModal */}
         {!loading && (
-          <section className="rounded-xl border border-stone-200 bg-white p-4 space-y-3">
-            <h3 className="text-sm font-semibold text-stone-900">
+          <section className="rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 space-y-3">
+            <h3 className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
               {t('channels.channelConnections')}
             </h3>
-            <p className="text-xs text-stone-400">{t('channels.configureAuthModes')}</p>
+            <p className="text-xs text-stone-400 dark:text-neutral-500">
+              {t('channels.configureAuthModes')}
+            </p>
             <div className="space-y-2">
               {configurableChannels.map(def => {
                 const channelId = def.id as ChannelType;
@@ -174,12 +178,12 @@ const MessagingPanel = () => {
                     key={channelId}
                     type="button"
                     onClick={() => setChannelModalDef(def)}
-                    className="w-full rounded-lg border border-stone-200 bg-stone-50 p-3 text-left transition-colors hover:bg-white hover:border-stone-300">
+                    className="w-full rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 p-3 text-left transition-colors hover:bg-white dark:bg-neutral-900 dark:hover:bg-neutral-800 hover:border-stone-300 dark:border-neutral-700 dark:hover:border-neutral-700">
                     <div className="flex items-center gap-3">
                       <span className="text-lg flex-shrink-0">{icon}</span>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
-                          <span className="text-sm font-medium text-stone-900">
+                          <span className="text-sm font-medium text-stone-900 dark:text-neutral-100">
                             {def.display_name}
                           </span>
                           <div
@@ -189,10 +193,12 @@ const MessagingPanel = () => {
                             {statusLabel(status, t)}
                           </span>
                         </div>
-                        <p className="text-xs text-stone-500 mt-0.5">{def.description}</p>
+                        <p className="text-xs text-stone-500 dark:text-neutral-400 mt-0.5">
+                          {def.description}
+                        </p>
                       </div>
                       <svg
-                        className="w-4 h-4 text-stone-400 flex-shrink-0"
+                        className="w-4 h-4 text-stone-400 dark:text-neutral-500 flex-shrink-0"
                         fill="none"
                         stroke="currentColor"
                         viewBox="0 0 24 24">

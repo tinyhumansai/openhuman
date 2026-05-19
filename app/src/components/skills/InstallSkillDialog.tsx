@@ -245,17 +245,17 @@ export default function InstallSkillDialog({ onClose, onInstalled }: Props) {
         role="dialog"
         aria-modal="true"
         aria-labelledby="install-skill-title"
-        className="relative w-full max-w-[560px] animate-fade-in rounded-2xl bg-white shadow-2xl">
+        className="relative w-full max-w-[560px] animate-fade-in rounded-2xl bg-white dark:bg-neutral-900 shadow-2xl">
         <form onSubmit={handleSubmit}>
           {/* Header */}
-          <div className="flex items-start justify-between gap-3 border-b border-stone-100 px-5 py-4">
+          <div className="flex items-start justify-between gap-3 border-b border-stone-100 dark:border-neutral-800 px-5 py-4">
             <div className="min-w-0 flex-1">
               <h2
                 id="install-skill-title"
-                className="font-sans text-base font-semibold text-stone-900">
+                className="font-sans text-base font-semibold text-stone-900 dark:text-neutral-100">
                 {t('skills.install.title')}
               </h2>
-              <p className="mt-0.5 text-xs text-stone-500">
+              <p className="mt-0.5 text-xs text-stone-500 dark:text-neutral-400">
                 Fetches a single <code className="font-mono">SKILL.md</code> over HTTPS and installs
                 it under <code className="font-mono">.openhuman/skills/</code>. HTTPS only; private
                 and loopback hosts are blocked.
@@ -271,7 +271,7 @@ export default function InstallSkillDialog({ onClose, onInstalled }: Props) {
               }}
               disabled={submitting}
               aria-label="Close"
-              className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-stone-400 transition-colors hover:bg-stone-100 hover:text-stone-600 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-1 disabled:opacity-40">
+              className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-stone-400 dark:text-neutral-500 transition-colors hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 hover:text-stone-600 dark:hover:text-neutral-300 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-1 disabled:opacity-40">
               <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path
                   strokeLinecap="round"
@@ -289,7 +289,7 @@ export default function InstallSkillDialog({ onClose, onInstalled }: Props) {
             <div>
               <label
                 htmlFor="install-skill-url"
-                className="block text-xs font-medium text-stone-600">
+                className="block text-xs font-medium text-stone-600 dark:text-neutral-300">
                 {t('skills.install.urlLabel')}<span className="text-coral-500"> *</span>
               </label>
               <input
@@ -303,7 +303,7 @@ export default function InstallSkillDialog({ onClose, onInstalled }: Props) {
                 disabled={submitting || result !== null}
                 required
                 maxLength={2048}
-                className="mt-1 w-full rounded-lg border border-stone-200 bg-white px-3 py-2 font-mono text-sm text-stone-900 shadow-sm transition-colors focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/30 disabled:bg-stone-50 disabled:text-stone-500"
+                className="mt-1 w-full rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 font-mono text-sm text-stone-900 dark:text-neutral-100 shadow-sm transition-colors focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/30 disabled:bg-stone-50 dark:disabled:bg-neutral-800/60 disabled:text-stone-500 dark:text-neutral-400"
                 placeholder="https://raw.githubusercontent.com/owner/repo/main/SKILL.md"
               />
               {url.trim() && !urlValid ? (
@@ -311,7 +311,7 @@ export default function InstallSkillDialog({ onClose, onInstalled }: Props) {
                   URL must be a well-formed <code className="font-mono">https://</code> link.
                 </p>
               ) : (
-                <p className="mt-1 text-[11px] text-stone-500">
+                <p className="mt-1 text-[11px] text-stone-500 dark:text-neutral-400">
                   Direct link to a <code className="font-mono">.md</code> file.{' '}
                   <code className="font-mono">github.com/…/blob/…</code> URLs auto-rewrite to
                   <code className="font-mono"> raw.githubusercontent.com</code>.
@@ -323,9 +323,9 @@ export default function InstallSkillDialog({ onClose, onInstalled }: Props) {
             <div>
               <label
                 htmlFor="install-skill-timeout"
-                className="block text-xs font-medium text-stone-600">
+                className="block text-xs font-medium text-stone-600 dark:text-neutral-300">
                 {t('skills.install.timeoutLabel')}
-                <span className="ml-1 font-normal text-stone-400">{t('skills.install.timeoutHint')}</span>
+                <span className="ml-1 font-normal text-stone-400 dark:text-neutral-500">{t('skills.install.timeoutHint')}</span>
               </label>
               <input
                 id="install-skill-timeout"
@@ -336,13 +336,13 @@ export default function InstallSkillDialog({ onClose, onInstalled }: Props) {
                 value={timeoutSecs}
                 onChange={e => setTimeoutSecs(e.target.value)}
                 disabled={submitting || result !== null}
-                className="mt-1 w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 shadow-sm transition-colors focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/30 disabled:bg-stone-50 disabled:text-stone-500"
+                className="mt-1 w-full rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 shadow-sm transition-colors focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/30 disabled:bg-stone-50 dark:disabled:bg-neutral-800/60 disabled:text-stone-500 dark:text-neutral-400"
                 placeholder="60"
               />
               {!timeoutValid ? (
                 <p className="mt-1 text-[11px] text-coral-600">Must be an integer between 1 and 600.</p>
               ) : (
-                <p className="mt-1 text-[11px] text-stone-500">
+                <p className="mt-1 text-[11px] text-stone-500 dark:text-neutral-400">
                   Defaults to 60 seconds. Values outside 1–600 are clamped server-side.
                 </p>
               )}
@@ -389,7 +389,7 @@ export default function InstallSkillDialog({ onClose, onInstalled }: Props) {
                 {result.stdout ? (
                   <details>
                     <summary className="cursor-pointer font-semibold">{t('skills.install.fetchLog')}</summary>
-                    <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap rounded border border-sage-100 bg-white p-2 font-mono text-[11px] text-stone-800">
+                    <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap rounded border border-sage-100 bg-white dark:bg-neutral-900 p-2 font-mono text-[11px] text-stone-800 dark:text-neutral-100">
                       {result.stdout}
                     </pre>
                   </details>
@@ -397,7 +397,7 @@ export default function InstallSkillDialog({ onClose, onInstalled }: Props) {
                 {result.stderr ? (
                   <details>
                     <summary className="cursor-pointer font-semibold">{t('skills.install.parseWarnings')}</summary>
-                    <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap rounded border border-sage-100 bg-white p-2 font-mono text-[11px] text-stone-800">
+                    <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap rounded border border-sage-100 bg-white dark:bg-neutral-900 p-2 font-mono text-[11px] text-stone-800 dark:text-neutral-100">
                       {result.stderr}
                     </pre>
                   </details>
@@ -418,7 +418,7 @@ export default function InstallSkillDialog({ onClose, onInstalled }: Props) {
                       <p>{cat.hint}</p>
                       <details>
                         <summary className="cursor-pointer font-semibold">{t('skills.install.rawError')}</summary>
-                        <pre className="mt-1 whitespace-pre-wrap rounded border border-coral-200 bg-white p-2 font-mono text-[11px] text-stone-800">
+                        <pre className="mt-1 whitespace-pre-wrap rounded border border-coral-200 bg-white dark:bg-neutral-900 p-2 font-mono text-[11px] text-stone-800 dark:text-neutral-100">
                           {error}
                         </pre>
                       </details>
@@ -430,12 +430,12 @@ export default function InstallSkillDialog({ onClose, onInstalled }: Props) {
           </div>
 
           {/* Footer */}
-          <div className="flex items-center justify-end gap-2 border-t border-stone-100 px-5 py-3">
+          <div className="flex items-center justify-end gap-2 border-t border-stone-100 dark:border-neutral-800 px-5 py-3">
             <button
               type="button"
               onClick={onClose}
               disabled={submitting}
-              className="rounded-lg px-4 py-2 text-sm font-medium text-stone-600 transition-colors hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-1 disabled:opacity-40">
+              className="rounded-lg px-4 py-2 text-sm font-medium text-stone-600 dark:text-neutral-300 transition-colors hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-1 disabled:opacity-40">
               {result ? t('common.finish') : t('common.cancel')}
             </button>
             {result ? null : (

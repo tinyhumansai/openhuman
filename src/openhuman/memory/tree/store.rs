@@ -43,6 +43,11 @@ pub const CHUNK_STATUS_SEALED: &str = "sealed";
 /// Chunk lifecycle: rejected by the admission gate (too low signal).
 pub const CHUNK_STATUS_DROPPED: &str = "dropped";
 
+/// `PRAGMA user_version` value once the one-shot legacy→sidecar embedding
+/// migration (#1574 §7) has run. `0` (fresh/legacy DB) triggers the copy on
+/// next open; `>= 1` skips it. Bump only for a new one-shot data migration.
+const TREE_EMBEDDING_MIGRATION_VERSION: i64 = 1;
+
 const SCHEMA: &str = "
 PRAGMA foreign_keys = ON;
 
@@ -776,7 +781,123 @@ pub(crate) fn with_connection<T>(
         "is_user",
         "INTEGER NOT NULL DEFAULT 0",
     )?;
+    // #1574 §7: one-shot, version-gated copy of legacy embedding columns
+    // into the per-model sidecar at the active signature. Runs once
+    // (PRAGMA user_version gate); cheap no-op on every subsequent open.
+    migrate_legacy_embeddings_to_sidecar(&conn, config)?;
     f(&conn)
+}
+
+/// One-shot migration (#1574 §7, vN): copy legacy `mem_tree_chunks.embedding`
+/// / `mem_tree_summaries.embedding` blobs into the per-model sidecar tables
+/// under the **active** signature, when (and only when) the legacy vector's
+/// dimensionality matches the active embedder's.
+///
+/// Version-gated via `PRAGMA user_version`: returns immediately once
+/// `>= TREE_EMBEDDING_MIGRATION_VERSION`, so the per-open cost is a single
+/// pragma read. Dim-mismatched rows are left for the §6 re-embed backfill —
+/// the blob's signature is unrecoverable (see spec §7b), so a same-length
+/// copy under the active signature is the only provably-safe move and
+/// anything else must be re-embedded. The legacy columns are **kept** (read
+/// here, dropped only in a later release — spec §7c). Idempotent: re-running
+/// before the version bumps re-copies the same rows harmlessly (sidecar
+/// upsert is ON CONFLICT); after the bump it is skipped entirely.
+fn migrate_legacy_embeddings_to_sidecar(conn: &Connection, config: &Config) -> Result<()> {
+    let version: i64 = conn
+        .query_row("PRAGMA user_version", [], |r| r.get(0))
+        .context("read PRAGMA user_version for #1574 migration")?;
+    if version >= TREE_EMBEDDING_MIGRATION_VERSION {
+        return Ok(());
+    }
+
+    let (provider, model, dims) = crate::openhuman::memory::store::effective_embedding_settings(
+        &config.memory,
+        config.workload_local_model("embeddings").as_deref(),
+    );
+    let sig = crate::openhuman::embeddings::format_embedding_signature(&provider, &model, dims);
+    log::info!(
+        "[memory_tree::migrate] #1574 §7: copying legacy embeddings → sidecar at sig={sig} (dims={dims})"
+    );
+
+    let tx = conn.unchecked_transaction()?;
+    let mut copied_chunks = 0usize;
+    let mut copied_summaries = 0usize;
+    let mut skipped_dim_mismatch = 0usize;
+
+    for (table, is_chunk) in [("mem_tree_chunks", true), ("mem_tree_summaries", false)] {
+        let mut stmt = tx.prepare(&format!(
+            "SELECT id, embedding FROM {table} WHERE embedding IS NOT NULL"
+        ))?;
+        let rows = stmt.query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, Vec<u8>>(1)?))
+        })?;
+        for row in rows {
+            let (id, blob) = row?;
+            if !blob.len().is_multiple_of(4) {
+                log::warn!(
+                    "[memory_tree::migrate] {table} id={id}: legacy blob len {} not /4, skipping",
+                    blob.len()
+                );
+                continue;
+            }
+            if blob.len() / 4 != dims {
+                // Different embedding space — unrecoverable from the blob.
+                // Leave for the §6 re-embed backfill.
+                skipped_dim_mismatch += 1;
+                continue;
+            }
+            let vec: Vec<f32> = blob
+                .chunks_exact(4)
+                .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+                .collect();
+            if is_chunk {
+                set_chunk_embedding_for_signature_tx(&tx, &id, &sig, &vec)?;
+                copied_chunks += 1;
+            } else {
+                crate::openhuman::memory::tree::tree_source::store::set_summary_embedding_for_signature_tx(
+                    &tx, &id, &sig, &vec,
+                )?;
+                copied_summaries += 1;
+            }
+        }
+    }
+
+    // #1574 §6: enqueue the re-embed backfill ONLY if there is genuinely
+    // uncovered work at the active signature (the dim-mismatch slice, or
+    // content-bearing rows with no vector). Gating this avoids queuing a
+    // no-op job on every DB open — which would otherwise pollute the jobs
+    // table for unrelated callers/tests. Enqueued atomically with the
+    // migration; dedupe key = signature, so exactly one chain per space.
+    let has_uncovered: bool = tx.query_row(
+        "SELECT EXISTS(
+             SELECT 1 FROM mem_tree_chunks c
+              WHERE NOT EXISTS (SELECT 1 FROM mem_tree_chunk_embeddings e
+                                 WHERE e.chunk_id = c.id AND e.model_signature = ?1))
+           OR EXISTS(
+             SELECT 1 FROM mem_tree_summaries s
+              WHERE s.deleted = 0 AND NOT EXISTS (SELECT 1 FROM mem_tree_summary_embeddings e
+                                 WHERE e.summary_id = s.id AND e.model_signature = ?1))",
+        rusqlite::params![sig],
+        |r| r.get(0),
+    )?;
+    if has_uncovered {
+        let backfill_job = crate::openhuman::memory::tree::jobs::types::NewJob::reembed_backfill(
+            &crate::openhuman::memory::tree::jobs::types::ReembedBackfillPayload {
+                signature: sig.clone(),
+            },
+        )?;
+        crate::openhuman::memory::tree::jobs::enqueue_tx(&tx, &backfill_job)?;
+        crate::openhuman::memory::tree::jobs::set_backfill_in_progress(true);
+    }
+
+    tx.commit()?;
+    conn.pragma_update(None, "user_version", TREE_EMBEDDING_MIGRATION_VERSION)
+        .context("set PRAGMA user_version after #1574 migration")?;
+    log::info!(
+        "[memory_tree::migrate] #1574 §7 done: copied chunks={copied_chunks} summaries={copied_summaries} \
+         skipped_dim_mismatch={skipped_dim_mismatch} (left for §6 re-embed); user_version={TREE_EMBEDDING_MIGRATION_VERSION}"
+    );
+    Ok(())
 }
 
 /// One pointer into the raw archive. A chunk's body is reconstructed by
@@ -945,31 +1066,45 @@ fn add_column_if_missing(conn: &Connection, table: &str, name: &str, sql_type: &
 
 // ── Phase 2: embedding column accessors ─────────────────────────────────
 
-/// Store a chunk's embedding as a packed little-endian `f32` blob.
-///
-/// Length is `embedding.len() * 4` bytes. The caller is responsible for
-/// ensuring all embeddings in a given deployment share the same dimension.
-pub fn set_chunk_embedding(config: &Config, chunk_id: &str, embedding: &[f32]) -> Result<()> {
-    let bytes: Vec<u8> = embedding.iter().flat_map(|f| f.to_le_bytes()).collect();
-    with_connection(config, |conn| {
-        let changed = conn.execute(
-            "UPDATE mem_tree_chunks SET embedding = ?1 WHERE id = ?2",
-            rusqlite::params![bytes, chunk_id],
-        )?;
-        if changed == 0 {
-            log::warn!("[memory_tree::store] set_chunk_embedding: no row for chunk_id={chunk_id}");
-        }
-        Ok(())
-    })
+/// Resolve the active embedding signature for the memory tree from the global
+/// [`Config`] — the canonical key every per-model sidecar read/write is scoped
+/// by (#1574). Reuses the established local-AI workload derivation
+/// ([`Config::workload_local_model`]) and the probe-stable
+/// `active_embedding_signature`; introduces no parallel resolution path.
+/// `pub(crate)` so the sibling `tree_source` summary store shares the exact
+/// same resolution.
+pub(crate) fn tree_active_signature(config: &Config) -> String {
+    let local_model = config.workload_local_model("embeddings");
+    crate::openhuman::memory::store::active_embedding_signature(
+        &config.memory,
+        local_model.as_deref(),
+    )
 }
 
-/// Store a chunk embedding for a specific provider/model/dimension signature.
+/// Store a chunk's embedding under the active model signature.
 ///
-/// This is the Stage-1 per-model table write path for #1574. The legacy
-/// `mem_tree_chunks.embedding` column is intentionally left untouched by this
-/// helper so callers can dual-write while query paths migrate.
-pub fn set_chunk_embedding_for_signature(
-    config: &Config,
+/// #1574 cutover: this now writes the per-model `mem_tree_chunk_embeddings`
+/// sidecar (via [`set_chunk_embedding_for_signature`]) instead of the legacy
+/// `mem_tree_chunks.embedding` column. Call sites are unchanged — the signature
+/// is resolved internally from `config`. The legacy column is left intact for
+/// the §7 one-shot migration to read; it is dropped only in a later release.
+pub fn set_chunk_embedding(config: &Config, chunk_id: &str, embedding: &[f32]) -> Result<()> {
+    let signature = tree_active_signature(config);
+    log::debug!(
+        "[memory_tree::store] set_chunk_embedding: chunk_id={chunk_id} sig={signature} dims={}",
+        embedding.len()
+    );
+    set_chunk_embedding_for_signature(config, chunk_id, &signature, embedding)
+}
+
+/// Core upsert into `mem_tree_chunk_embeddings` over an arbitrary
+/// `&Connection`. Shared by the standalone ([`set_chunk_embedding_for_signature`])
+/// and in-transaction ([`set_chunk_embedding_for_signature_tx`]) write paths so
+/// the SQL exists exactly once. `rusqlite::Transaction` derefs to `Connection`,
+/// so an in-tx caller passes `&tx` and the sidecar row commits atomically with
+/// the surrounding work (#1574 write-side cutover).
+fn upsert_chunk_embedding_conn(
+    conn: &rusqlite::Connection,
     chunk_id: &str,
     model_signature: &str,
     embedding: &[f32],
@@ -977,19 +1112,48 @@ pub fn set_chunk_embedding_for_signature(
     let bytes = embedding_to_blob(embedding);
     let dim = i64::try_from(embedding.len()).context("embedding dimension does not fit i64")?;
     let created_at = Utc::now().timestamp_millis() as f64 / 1000.0;
-    with_connection(config, |conn| {
-        conn.execute(
-            "INSERT INTO mem_tree_chunk_embeddings
+    conn.execute(
+        "INSERT INTO mem_tree_chunk_embeddings
              (chunk_id, model_signature, vector, dim, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5)
              ON CONFLICT(chunk_id, model_signature) DO UPDATE SET
                 vector = excluded.vector,
                 dim = excluded.dim,
                 created_at = excluded.created_at",
-            rusqlite::params![chunk_id, model_signature, bytes, dim, created_at],
-        )?;
-        Ok(())
+        rusqlite::params![chunk_id, model_signature, bytes, dim, created_at],
+    )?;
+    Ok(())
+}
+
+/// Store a chunk embedding for a specific provider/model/dimension signature.
+///
+/// Per-model table write path for #1574. The legacy
+/// `mem_tree_chunks.embedding` column is intentionally left untouched by this
+/// helper (read by the §7 migration; dropped only in a later release).
+pub fn set_chunk_embedding_for_signature(
+    config: &Config,
+    chunk_id: &str,
+    model_signature: &str,
+    embedding: &[f32],
+) -> Result<()> {
+    with_connection(config, |conn| {
+        upsert_chunk_embedding_conn(conn, chunk_id, model_signature, embedding)
     })
+}
+
+/// Transaction-scoped variant of [`set_chunk_embedding_for_signature`].
+///
+/// For callers that already hold a `Transaction` (e.g. the chunk-admission
+/// handler, which commits the sidecar row in the SAME tx as the lifecycle
+/// + score + job-enqueue writes — #1574 write-side cutover). Opening a fresh
+/// connection there would break atomicity / deadlock on the busy DB.
+pub(crate) fn set_chunk_embedding_for_signature_tx(
+    tx: &rusqlite::Transaction<'_>,
+    chunk_id: &str,
+    model_signature: &str,
+    embedding: &[f32],
+) -> Result<()> {
+    upsert_chunk_embedding_conn(tx, chunk_id, model_signature, embedding)
 }
 
 /// Fetch a chunk embedding for exactly one provider/model/dimension signature.
@@ -1015,32 +1179,17 @@ pub fn get_chunk_embedding_for_signature(
     })
 }
 
-/// Fetch a chunk's embedding, decoding the stored little-endian `f32` blob.
+/// Fetch a chunk's embedding for the active model signature.
 ///
-/// Returns `Ok(None)` if the chunk doesn't exist or has no embedding stored.
+/// #1574 cutover: reads the per-model `mem_tree_chunk_embeddings` sidecar at
+/// the active signature (via [`get_chunk_embedding_for_signature`]) instead of
+/// the legacy `mem_tree_chunks.embedding` column. Returns `Ok(None)` if the
+/// chunk has no vector under the active signature — e.g. during the §7
+/// backfill window, where this degrades retrieval gracefully (the row is
+/// simply absent from vector results, never cross-space compared).
 pub fn get_chunk_embedding(config: &Config, chunk_id: &str) -> Result<Option<Vec<f32>>> {
-    with_connection(config, |conn| {
-        let blob: Option<Option<Vec<u8>>> = conn
-            .query_row(
-                "SELECT embedding FROM mem_tree_chunks WHERE id = ?1",
-                rusqlite::params![chunk_id],
-                |r| r.get::<_, Option<Vec<u8>>>(0),
-            )
-            .optional()?;
-        match blob.flatten() {
-            None => Ok(None),
-            Some(bytes) => {
-                if !bytes.len().is_multiple_of(4) {
-                    anyhow::bail!("embedding blob length {} not a multiple of 4", bytes.len());
-                }
-                let floats: Vec<f32> = bytes
-                    .chunks_exact(4)
-                    .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-                    .collect();
-                Ok(Some(floats))
-            }
-        }
-    })
+    let signature = tree_active_signature(config);
+    get_chunk_embedding_for_signature(config, chunk_id, &signature)
 }
 
 fn embedding_to_blob(embedding: &[f32]) -> Vec<u8> {

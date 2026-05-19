@@ -150,21 +150,23 @@ export function VaultPanel({ onToast }: VaultPanelProps) {
 
   return (
     <div
-      className="rounded-lg border border-stone-200 bg-white p-4 shadow-sm"
+      className="rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 shadow-sm"
       data-testid="vault-panel">
       <div className="mb-3 flex items-center justify-between gap-3">
         <div>
-          <h3 className="text-sm font-semibold text-stone-800">Knowledge vaults</h3>
-          <p className="text-xs text-stone-500">
+          <h3 className="text-sm font-semibold text-stone-800 dark:text-neutral-100">
+            Knowledge vaults
+          </h3>
+          <p className="text-xs text-stone-500 dark:text-neutral-400">
             Point at a local folder; files are chunked and mirrored into memory.
           </p>
         </div>
         <button
           type="button"
           onClick={() => setShowForm(v => !v)}
-          className="inline-flex items-center gap-1 rounded-md border border-primary-300 bg-white
-                     px-3 py-1.5 text-xs font-semibold text-primary-700 shadow-sm
-                     transition-colors hover:bg-primary-50
+          className="inline-flex items-center gap-1 rounded-md border border-primary-300 bg-white dark:bg-neutral-900
+                     px-3 py-1.5 text-xs font-semibold text-primary-700 dark:text-primary-300 shadow-sm
+                     transition-colors hover:bg-primary-50 dark:hover:bg-primary-500/15
                      focus:outline-none focus:ring-2 focus:ring-primary-200"
           data-testid="vault-add-toggle">
           {showForm ? 'Cancel' : '+ Add vault'}
@@ -174,34 +176,36 @@ export function VaultPanel({ onToast }: VaultPanelProps) {
       {showForm ? (
         <form
           onSubmit={handleCreate}
-          className="mb-3 space-y-2 rounded-md border border-stone-100 bg-stone-50 p-3"
+          className="mb-3 space-y-2 rounded-md border border-stone-100 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 p-3"
           data-testid="vault-add-form">
           <label className="block">
-            <span className="text-xs font-medium text-stone-600">Name</span>
+            <span className="text-xs font-medium text-stone-600 dark:text-neutral-300">Name</span>
             <input
               type="text"
               value={newName}
               onChange={e => setNewName(e.target.value)}
               required
               placeholder="My research notes"
-              className="mt-1 w-full rounded border border-stone-200 bg-white px-2 py-1.5 text-sm
+              className="mt-1 w-full rounded border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-2 py-1.5 text-sm
                          focus:border-primary-400 focus:outline-none focus:ring-1 focus:ring-primary-200"
             />
           </label>
           <label className="block">
-            <span className="text-xs font-medium text-stone-600">Folder path (absolute)</span>
+            <span className="text-xs font-medium text-stone-600 dark:text-neutral-300">
+              Folder path (absolute)
+            </span>
             <input
               type="text"
               value={newPath}
               onChange={e => setNewPath(e.target.value)}
               required
               placeholder="/Users/you/Documents/notes"
-              className="mt-1 w-full rounded border border-stone-200 bg-white px-2 py-1.5 font-mono text-xs
+              className="mt-1 w-full rounded border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-2 py-1.5 font-mono text-xs
                          focus:border-primary-400 focus:outline-none focus:ring-1 focus:ring-primary-200"
             />
           </label>
           <label className="block">
-            <span className="text-xs font-medium text-stone-600">
+            <span className="text-xs font-medium text-stone-600 dark:text-neutral-300">
               Excludes (comma-separated substrings, optional)
             </span>
             <input
@@ -209,7 +213,7 @@ export function VaultPanel({ onToast }: VaultPanelProps) {
               value={newExcludes}
               onChange={e => setNewExcludes(e.target.value)}
               placeholder="drafts/, .secret"
-              className="mt-1 w-full rounded border border-stone-200 bg-white px-2 py-1.5 text-xs
+              className="mt-1 w-full rounded border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-2 py-1.5 text-xs
                          focus:border-primary-400 focus:outline-none focus:ring-1 focus:ring-primary-200"
             />
           </label>
@@ -227,29 +231,33 @@ export function VaultPanel({ onToast }: VaultPanelProps) {
       ) : null}
 
       {loading ? (
-        <div className="py-4 text-center text-xs text-stone-400">Loading vaults…</div>
+        <div className="py-4 text-center text-xs text-stone-400 dark:text-neutral-500">
+          Loading vaults…
+        </div>
       ) : loadError ? (
-        <div className="rounded border border-coral-200 bg-coral-50 px-3 py-2 text-xs text-coral-800">
+        <div className="rounded border border-coral-200 dark:border-coral-500/30 bg-coral-50 dark:bg-coral-500/10 px-3 py-2 text-xs text-coral-800">
           Failed to load vaults: {loadError}
         </div>
       ) : vaults.length === 0 ? (
-        <div className="py-4 text-center text-xs text-stone-400">
+        <div className="py-4 text-center text-xs text-stone-400 dark:text-neutral-500">
           No vaults yet. Add one above to start ingesting a folder.
         </div>
       ) : (
-        <ul className="divide-y divide-stone-100" data-testid="vault-list">
+        <ul className="divide-y divide-stone-100 dark:divide-neutral-800" data-testid="vault-list">
           {vaults.map(v => {
             const state = busy[v.id];
             return (
               <li key={v.id} className="flex items-center justify-between gap-3 py-2">
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-medium text-stone-800">{v.name}</div>
+                  <div className="truncate text-sm font-medium text-stone-800 dark:text-neutral-100">
+                    {v.name}
+                  </div>
                   <div
-                    className="truncate font-mono text-[11px] text-stone-500"
+                    className="truncate font-mono text-[11px] text-stone-500 dark:text-neutral-400"
                     title={v.root_path}>
                     {v.root_path}
                   </div>
-                  <div className="mt-0.5 text-[11px] text-stone-400">
+                  <div className="mt-0.5 text-[11px] text-stone-400 dark:text-neutral-500">
                     {v.file_count.toLocaleString()} file(s) ·{' '}
                     {v.last_synced_at
                       ? `synced ${formatRelative(v.last_synced_at)}`
@@ -261,18 +269,18 @@ export function VaultPanel({ onToast }: VaultPanelProps) {
                     type="button"
                     onClick={() => void handleSync(v)}
                     disabled={state === 'sync' || state === 'remove'}
-                    className="rounded-md border border-primary-300 bg-white px-3 py-1.5 text-xs
-                               font-semibold text-primary-700 shadow-sm transition-colors
-                               hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-50">
+                    className="rounded-md border border-primary-300 bg-white dark:bg-neutral-900 px-3 py-1.5 text-xs
+                               font-semibold text-primary-700 dark:text-primary-300 shadow-sm transition-colors
+                               hover:bg-primary-50 dark:hover:bg-primary-500/15 disabled:cursor-not-allowed disabled:opacity-50">
                     {state === 'sync' ? 'Syncing…' : 'Sync'}
                   </button>
                   <button
                     type="button"
                     onClick={() => void handleRemove(v)}
                     disabled={state === 'sync' || state === 'remove'}
-                    className="rounded-md border border-coral-200 bg-white px-3 py-1.5 text-xs
-                               font-semibold text-coral-700 shadow-sm transition-colors
-                               hover:bg-coral-50 disabled:cursor-not-allowed disabled:opacity-50">
+                    className="rounded-md border border-coral-200 dark:border-coral-500/30 bg-white dark:bg-neutral-900 px-3 py-1.5 text-xs
+                               font-semibold text-coral-700 dark:text-coral-300 shadow-sm transition-colors
+                               hover:bg-coral-50 dark:hover:bg-coral-500/10 disabled:cursor-not-allowed disabled:opacity-50">
                     {state === 'remove' ? 'Removing…' : 'Remove'}
                   </button>
                 </div>

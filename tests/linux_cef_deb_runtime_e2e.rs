@@ -12,24 +12,47 @@
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
+use std::sync::{Mutex, MutexGuard};
 
-/// Guard to temporarily set/unset environment variables.
+/// Serializes every env-mutating test in this file. `std::env` is
+/// process-global; cargo runs these tests in parallel within one binary,
+/// and several mutate the SAME vars (e.g. `OPENHUMAN_CORE_BIN`), so without
+/// this an interleaving made one test read back another's value and the
+/// `assert_eq!` flaked. `EnvGuard` holds this lock for its whole lifetime,
+/// so at most one env-mutating test runs at a time. Poison-safe (a
+/// panicking test must not cascade-fail every later one).
+static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+/// Guard to temporarily set/unset environment variables. Acquires
+/// [`ENV_LOCK`] for its lifetime so concurrent tests can't observe each
+/// other's mutations.
 struct EnvGuard {
     key: &'static str,
     old: Option<String>,
+    _lock: MutexGuard<'static, ()>,
 }
 
 impl EnvGuard {
     fn set(key: &'static str, value: &str) -> Self {
+        let lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let old = std::env::var(key).ok();
         std::env::set_var(key, value);
-        Self { key, old }
+        Self {
+            key,
+            old,
+            _lock: lock,
+        }
     }
 
     fn unset(key: &'static str) -> Self {
+        let lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let old = std::env::var(key).ok();
         std::env::remove_var(key);
-        Self { key, old }
+        Self {
+            key,
+            old,
+            _lock: lock,
+        }
     }
 }
 
