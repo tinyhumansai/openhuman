@@ -24,4 +24,11 @@ describe('localeSlice', () => {
 
     expect(reducer(undefined, { type: '@@INIT' }).current).toBe('id');
   });
+
+  it('detects Korean browser locales', async () => {
+    vi.stubGlobal('navigator', { language: 'ko-KR' });
+    const reducer = await loadReducer();
+
+    expect(reducer(undefined, { type: '@@INIT' }).current).toBe('ko');
+  });
 });

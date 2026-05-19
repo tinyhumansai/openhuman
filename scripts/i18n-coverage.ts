@@ -45,6 +45,7 @@ const ALL_LOCALES = [
   "ru",
   "id",
   "it",
+  "ko",
 ] as const;
 type Locale = (typeof ALL_LOCALES)[number];
 

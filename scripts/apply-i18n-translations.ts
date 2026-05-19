@@ -38,6 +38,7 @@ const LOCALE_HEADERS: Record<string, string> = {
   ru: "Russian (Русский)",
   id: "Indonesian (Bahasa Indonesia)",
   it: "Italian (Italiano)",
+  ko: "Korean (한국어)",
 };
 
 interface InputFile {

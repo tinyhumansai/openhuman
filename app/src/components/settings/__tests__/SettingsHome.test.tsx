@@ -114,6 +114,12 @@ describe('SettingsHome', () => {
 
       expect(screen.getByRole('option', { name: /Bahasa Indonesia/ })).toHaveValue('id');
     });
+
+    it('offers Korean as a display language', () => {
+      renderSettingsHome();
+
+      expect(screen.getByRole('option', { name: /한국어/ })).toHaveValue('ko');
+    });
   });
 
   describe('existing navigation items', () => {
