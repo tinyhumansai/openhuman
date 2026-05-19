@@ -592,7 +592,7 @@ pub struct PolymarketClobCredentials {
 impl std::fmt::Debug for PolymarketClobCredentials {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PolymarketClobCredentials")
-            .field("api_key", &self.api_key)
+            .field("api_key", &"<redacted>")
             .field("secret", &"<redacted>")
             .field("passphrase", &"<redacted>")
             .finish()
