@@ -1662,6 +1662,35 @@ mod tests {
         );
     }
 
+    /// The two sibling `SESSION_EXPIRED:` bail sites in
+    /// `providers::factory::verify_session_active` emit different message
+    /// suffixes but the same sentinel prefix. They route through the same
+    /// classifier as the run_single bail at
+    /// `providers::openhuman_backend::resolve_bearer`, and any matcher
+    /// tweak that breaks the family (e.g. moving from `contains` to a
+    /// stricter prefix/suffix match) would re-leak ALL of them. Pin every
+    /// variant the codebase actually emits so a future regression on the
+    /// matcher is caught for the whole family, not just the SG instance.
+    #[test]
+    fn session_expired_sibling_family_factory_strings_match() {
+        // src/openhuman/inference/provider/factory.rs:247
+        // (verify_session_active — scheduler_gate signed-out path)
+        let custom_providers_variant =
+            "SESSION_EXPIRED: backend session not active — sign in to use custom providers";
+        // src/openhuman/inference/provider/factory.rs:266
+        // (verify_session_active — empty auth-profile JWT path)
+        let no_backend_session_variant =
+            "SESSION_EXPIRED: no backend session — sign in to use OpenHuman";
+
+        for raw in [custom_providers_variant, no_backend_session_variant] {
+            assert_eq!(
+                expected_error_kind(raw),
+                Some(ExpectedErrorKind::SessionExpired),
+                "factory.rs sibling sentinel must classify as SessionExpired: {raw}"
+            );
+        }
+    }
+
     #[test]
     fn does_not_classify_byo_key_provider_401_as_session_expired() {
         // Critical: a BYO-key 401 from OpenAI / Anthropic etc. is an
