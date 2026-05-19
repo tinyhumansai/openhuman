@@ -103,8 +103,9 @@ impl Tool for MemoryTreeIngestDocumentTool {
             source_id: source_id.trim().to_string(),
             owner: String::new(),
             tags: vec!["agent_ingested".to_string()],
-            payload: serde_json::to_value(&doc)
-                .map_err(|e| anyhow::anyhow!("ingest_document: failed to serialize payload: {e}"))?,
+            payload: serde_json::to_value(&doc).map_err(|e| {
+                anyhow::anyhow!("ingest_document: failed to serialize payload: {e}")
+            })?,
         };
 
         let outcome = rpc::ingest_rpc(&cfg, req)
