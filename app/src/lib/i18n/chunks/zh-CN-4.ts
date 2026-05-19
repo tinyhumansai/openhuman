@@ -145,7 +145,8 @@ const zhCN4: TranslationMap = {
   'onboarding.contextGathering.coreAlive': '核心可访问 — 首次启动可能需要一分钟。',
   'onboarding.contextGathering.coreAliveProbing': '正在检查核心连接…',
   'onboarding.contextGathering.coreUnreachable': '核心未响应。你可以继续，稍后再试。',
-  'onboarding.contextGathering.stillWorkingDesc': '我们正在预热本地模型与工具，首次启动可能需要 30–60 秒。你可以随时进入对话 — 档案构建会在后台继续进行。',
+  'onboarding.contextGathering.stillWorkingDesc':
+    '我们正在预热本地模型与工具，首次启动可能需要 30–60 秒。你可以随时进入对话 — 档案构建会在后台继续进行。',
   'onboarding.contextGathering.stillWorkingTitle': '仍在生成你的档案…',
   'onboarding.contextGathering.title': '上下文收集',
   'openhuman.team_list_teams': '团队列表',

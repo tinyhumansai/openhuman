@@ -354,10 +354,7 @@ describe('coreRpcClient', () => {
           })
       );
 
-      const pending = callCoreRpc({
-        method: 'openhuman.app_state_snapshot',
-        timeoutMs: 60_000,
-      });
+      const pending = callCoreRpc({ method: 'openhuman.app_state_snapshot', timeoutMs: 60_000 });
       pending.catch(() => {});
 
       // 30s passes — global default would have aborted by now, but the

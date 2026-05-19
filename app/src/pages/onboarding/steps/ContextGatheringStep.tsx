@@ -15,11 +15,7 @@
 import { useEffect, useRef, useState } from 'react';
 
 import { useT } from '../../../lib/i18n/I18nContext';
-import {
-  callCoreRpc,
-  getCoreRpcUrl,
-  testCoreRpcConnection,
-} from '../../../services/coreRpcClient';
+import { callCoreRpc, getCoreRpcUrl, testCoreRpcConnection } from '../../../services/coreRpcClient';
 import OnboardingNextButton from '../components/OnboardingNextButton';
 
 /**

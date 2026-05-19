@@ -144,10 +144,13 @@ const id4: TranslationMap = {
   'onboarding.contextGathering.continueToChat': 'Lanjutkan ke chat',
   'onboarding.contextGathering.errorDesc':
     'Kami tidak bisa membangun profil lengkap Anda sekarang, tapi tidak apa-apa — Anda bisa lanjut dan profil Anda akan terbentuk seiring waktu.',
-  'onboarding.contextGathering.coreAlive': 'Core dapat diakses — peluncuran pertama bisa memakan waktu satu menit.',
+  'onboarding.contextGathering.coreAlive':
+    'Core dapat diakses — peluncuran pertama bisa memakan waktu satu menit.',
   'onboarding.contextGathering.coreAliveProbing': 'Memeriksa koneksi core…',
-  'onboarding.contextGathering.coreUnreachable': 'Core tidak merespons. Anda bisa melanjutkan dan coba lagi nanti.',
-  'onboarding.contextGathering.stillWorkingDesc': 'Peluncuran pertama bisa memakan waktu 30–60 detik sementara kami menyiapkan model dan alat lokal Anda. Anda bisa melanjutkan ke chat kapan saja — pembuatan profil tetap berjalan di latar belakang.',
+  'onboarding.contextGathering.coreUnreachable':
+    'Core tidak merespons. Anda bisa melanjutkan dan coba lagi nanti.',
+  'onboarding.contextGathering.stillWorkingDesc':
+    'Peluncuran pertama bisa memakan waktu 30–60 detik sementara kami menyiapkan model dan alat lokal Anda. Anda bisa melanjutkan ke chat kapan saja — pembuatan profil tetap berjalan di latar belakang.',
   'onboarding.contextGathering.stillWorkingTitle': 'Masih membangun profil Anda…',
   'onboarding.contextGathering.title': 'Pengumpulan Konteks',
   'openhuman.team_list_teams': 'Daftar tim',

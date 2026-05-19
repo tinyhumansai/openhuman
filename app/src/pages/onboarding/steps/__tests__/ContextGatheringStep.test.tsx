@@ -355,9 +355,7 @@ describe('ContextGatheringStep', () => {
         await vi.advanceTimersByTimeAsync(30_500);
       });
 
-      expect(screen.getByTestId('context-gathering-title').textContent).toMatch(
-        /still working/i
-      );
+      expect(screen.getByTestId('context-gathering-title').textContent).toMatch(/still working/i);
       // Indicator appears so users see whether core is alive or unreachable.
       expect(screen.getByTestId('core-alive-indicator')).toBeInTheDocument();
 
