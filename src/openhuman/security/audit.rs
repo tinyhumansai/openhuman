@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::PathBuf;
+use std::sync::Arc;
 use uuid::Uuid;
 
 /// Audit event types
@@ -163,6 +164,22 @@ pub struct CommandExecutionLog<'a> {
 }
 
 impl AuditLogger {
+    /// Build a disabled `Arc<AuditLogger>` for tests and contexts that need a
+    /// handle but should not write to disk. The `enabled = false` flag
+    /// short-circuits `log()` before any filesystem I/O, so the sentinel
+    /// `log_path` is never touched.
+    pub fn disabled() -> Arc<Self> {
+        Arc::new(Self {
+            log_path: PathBuf::new(),
+            config: AuditConfig {
+                enabled: false,
+                log_path: String::new(),
+                max_size_mb: 0,
+            },
+            buffer: Mutex::new(Vec::new()),
+        })
+    }
+
     /// Create a new audit logger
     pub fn new(config: AuditConfig, openhuman_dir: PathBuf) -> Result<Self> {
         let log_path = openhuman_dir.join(&config.log_path);
@@ -329,6 +346,15 @@ mod tests {
         assert!(parsed.actor.is_some());
         assert!(parsed.action.is_some());
         assert!(parsed.result.is_some());
+    }
+
+    #[test]
+    fn audit_logger_disabled_helper_is_noop() -> Result<()> {
+        let logger = AuditLogger::disabled();
+        let event = AuditEvent::new(AuditEventType::CommandExecution);
+        logger.log(&event)?;
+        assert!(!logger.config.enabled);
+        Ok(())
     }
 
     #[test]

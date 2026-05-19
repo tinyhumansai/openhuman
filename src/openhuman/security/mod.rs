@@ -14,7 +14,7 @@ pub mod secrets;
 pub mod traits;
 
 #[allow(unused_imports)]
-pub use audit::{AuditEvent, AuditEventType, AuditLogger};
+pub use audit::{AuditEvent, AuditEventType, AuditLogger, CommandExecutionLog};
 pub use core::*;
 #[allow(unused_imports)]
 pub use detect::create_sandbox;
