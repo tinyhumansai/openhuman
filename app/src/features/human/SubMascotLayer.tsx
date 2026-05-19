@@ -52,7 +52,7 @@ function hashString(value: string): number {
 function truncateActivity(value: string): string {
   const trimmed = value.trim().replace(/\s+/g, ' ');
   if (trimmed.length <= ACTIVITY_LIMIT) return trimmed;
-  return `${trimmed.slice(0, ACTIVITY_LIMIT - 1).trimEnd()}...`;
+  return `${trimmed.slice(0, ACTIVITY_LIMIT - 3).trimEnd()}...`;
 }
 
 function humanizeIdentifier(value: string): string {
