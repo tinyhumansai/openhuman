@@ -7,6 +7,7 @@ import * as tauriCommands from '../../utils/tauriCommands';
 import { getCoreStateSnapshot, setCoreStateSnapshot } from '../../lib/coreState/store';
 import { setActiveUserId } from '../../store/userScopedStorage';
 import CoreStateProvider, {
+  coreStatePollFailureDebugMessage,
   coreStatePollFailureWarningMessage,
   useCoreState,
 } from '../CoreStateProvider';
@@ -523,5 +524,21 @@ describe('coreStatePollFailureWarningMessage', () => {
       '[core-state] poll failed repeatedly; suppressing further warnings until core state recovers:'
     );
     expect(coreStatePollFailureWarningMessage(7)).toBeNull();
+  });
+
+  it('describes post-bootstrap poll failures without impossible retry counters', () => {
+    expect(coreStatePollFailureDebugMessage(0)).toBeNull();
+    expect(coreStatePollFailureDebugMessage(1)).toBe(
+      'refresh failed during bootstrap retry 1/5; nextAction=retrying'
+    );
+    expect(coreStatePollFailureDebugMessage(5)).toBe(
+      'refresh failed during bootstrap retry 5/5; nextAction=marking-ready-with-fallback'
+    );
+
+    const postBootstrapMessage = coreStatePollFailureDebugMessage(11);
+    expect(postBootstrapMessage).toBe(
+      'refresh failed after 11 consecutive poll failures; bootstrapRetryLimit=5; nextAction=continuing-background-polling-with-warnings-suppressed'
+    );
+    expect(postBootstrapMessage).not.toContain('11/5');
   });
 });
