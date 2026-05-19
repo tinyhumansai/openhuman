@@ -418,6 +418,28 @@ const en5: TranslationMap = {
   'settings.localModel.status.ollamaDocs': 'Ollama docs',
   'settings.localModel.status.thenRetry':
     'for setup instructions, then retry after your runtime is reachable.',
+  'settings.appearance.title': 'Appearance',
+  'settings.appearance.themeHeading': 'Theme',
+  'settings.appearance.themeAria': 'Theme',
+  'settings.appearance.modeLight': 'Light',
+  'settings.appearance.modeLightDesc': 'Bright surfaces, dark text.',
+  'settings.appearance.modeDark': 'Dark',
+  'settings.appearance.modeDarkDesc': 'Dim surfaces, easier on the eyes after dusk.',
+  'settings.appearance.modeSystem': 'Match system',
+  'settings.appearance.modeSystemDesc': 'Follow your OS appearance setting.',
+  'settings.appearance.helperText':
+    'Dark mode switches the entire app — chat, settings, panels — to a dim palette. "Match system" follows your OS appearance and updates live.',
+  'settings.mascot.characterPreview': 'Preview',
+  'settings.mascot.characterStates': 'states',
+  'settings.mascot.characterVisemes': 'visemes',
+  'settings.mascot.colorAria': 'OpenHuman color',
+  'settings.mascot.colorBlack': 'Black',
+  'settings.mascot.colorBurgundy': 'Burgundy',
+  'settings.mascot.colorGreen': 'Green',
+  'settings.mascot.colorNavy': 'Navy',
+  'settings.mascot.colorYellow': 'Yellow',
+  'settings.mascot.libraryUnavailable': 'OpenHuman library unavailable',
+  'settings.mascot.title': 'OpenHuman',
 };
 
 export default en5;

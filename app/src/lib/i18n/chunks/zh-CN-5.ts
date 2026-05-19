@@ -403,6 +403,28 @@ const zhCN5: TranslationMap = {
     '请在 OpenHuman 之外管理 Ollama 进程和模型拉取，然后重新运行诊断。',
   'settings.localModel.status.ollamaDocs': 'Ollama 文档',
   'settings.localModel.status.thenRetry': '获取设置说明，待你的运行时可达后再重试。',
+  'settings.appearance.title': 'Appearance',
+  'settings.appearance.themeHeading': 'Theme',
+  'settings.appearance.themeAria': 'Theme',
+  'settings.appearance.modeLight': 'Light',
+  'settings.appearance.modeLightDesc': 'Bright surfaces, dark text.',
+  'settings.appearance.modeDark': 'Dark',
+  'settings.appearance.modeDarkDesc': 'Dim surfaces, easier on the eyes after dusk.',
+  'settings.appearance.modeSystem': 'Match system',
+  'settings.appearance.modeSystemDesc': 'Follow your OS appearance setting.',
+  'settings.appearance.helperText':
+    'Dark mode switches the entire app — chat, settings, panels — to a dim palette. "Match system" follows your OS appearance and updates live.',
+  'settings.mascot.characterPreview': 'Preview',
+  'settings.mascot.characterStates': 'states',
+  'settings.mascot.characterVisemes': 'visemes',
+  'settings.mascot.colorAria': 'OpenHuman color',
+  'settings.mascot.colorBlack': 'Black',
+  'settings.mascot.colorBurgundy': 'Burgundy',
+  'settings.mascot.colorGreen': 'Green',
+  'settings.mascot.colorNavy': 'Navy',
+  'settings.mascot.colorYellow': 'Yellow',
+  'settings.mascot.libraryUnavailable': 'OpenHuman library unavailable',
+  'settings.mascot.title': 'OpenHuman',
 };
 
 export default zhCN5;

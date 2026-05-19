@@ -142,7 +142,7 @@ const ar4: TranslationMap = {
   'onboarding.contextGathering.buildingProfile': 'جارٍ بناء ملفك الشخصي...',
   'onboarding.contextGathering.continueToChat': 'المتابعة إلى المحادثة',
   'onboarding.contextGathering.errorDesc':
-    'تعذّر إنشاء ملفك الكامل الآن، لكن لا بأس — يمكنك المتابعة وسيُبنى ملفك مع الوقت.',
+    'لم نتمكّن من بناء ملفك الشخصي بالكامل الآن، لكن لا بأس — يمكنك المتابعة وسيكتمل ملفك تدريجيًا مع مرور الوقت.',
   'onboarding.contextGathering.title': 'جمع السياق',
   'openhuman.team_list_teams': 'قائمة الفرق',
   'overlay.ariaAttention': 'رسالة انتباه',
@@ -361,6 +361,9 @@ const ar4: TranslationMap = {
   'settings.billing.subscription.paymentConfirmed': 'تم تأكيد الدفع',
   'settings.billing.subscription.perMonth': 'في الشهر',
   'settings.billing.subscription.popular': 'شائع',
+  'pages.settings.account.migration': 'استيراد من مساعد آخر',
+  'pages.settings.account.migrationDesc':
+    'انقل الذاكرة والملاحظات من OpenClaw (وقريبًا Hermes) إلى مساحة العمل هذه.',
 };
 
 export default ar4;

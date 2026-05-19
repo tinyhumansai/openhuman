@@ -289,10 +289,10 @@ const pt2: TranslationMap = {
   'chat.topUpToContinue': 'Adicione créditos para continuar.',
   'chat.budgetComplete':
     'Seu orçamento incluído foi esgotado. Adicione créditos ou faça upgrade para continuar.',
-  'chat.rateLimitReached': 'Limite de taxa de 10 horas atingido.',
   'chat.topUp': 'Adicionar Créditos',
-  'chat.fiveHourLimit': 'Limite de 5 horas',
-  'chat.weeklyLimit': 'Limite semanal',
+  'chat.cycle': 'Ciclo',
+  'chat.cycleSpent': 'Gasto neste ciclo',
+  'chat.cycleRemaining': 'Restante',
   'chat.left': 'restante',
   'chat.setup': 'Configurar',
   'chat.switchToText': 'Mudar para texto',

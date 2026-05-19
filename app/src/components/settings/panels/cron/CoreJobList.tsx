@@ -52,6 +52,7 @@ const CoreJobList = ({
           return (
             <div
               key={job.id}
+              data-testid={`cron-job-row-${job.id}`}
               className={`p-4 ${index === 0 ? '' : 'border-t border-stone-200 dark:border-neutral-800'} space-y-3`}>
               <div className="flex items-start justify-between gap-3">
                 <div>
@@ -100,6 +101,7 @@ const CoreJobList = ({
               <div className="flex flex-wrap gap-2">
                 <button
                   type="button"
+                  data-testid={`cron-job-toggle-${job.id}`}
                   className="btn btn-sm btn-outline"
                   disabled={coreBusyKey === `core-toggle:${job.id}`}
                   onClick={() => onToggleCoreJob(job)}>
@@ -111,6 +113,7 @@ const CoreJobList = ({
                 </button>
                 <button
                   type="button"
+                  data-testid={`cron-job-run-${job.id}`}
                   className="btn btn-sm btn-outline"
                   disabled={coreBusyKey === `core-run:${job.id}`}
                   onClick={() => onRunCoreJob(job.id)}>
@@ -120,6 +123,7 @@ const CoreJobList = ({
                 </button>
                 <button
                   type="button"
+                  data-testid={`cron-job-view-runs-${job.id}`}
                   className="btn btn-sm btn-outline"
                   disabled={coreBusyKey === `core-runs:${job.id}`}
                   onClick={() => onLoadCoreRuns(job.id)}>
@@ -129,6 +133,7 @@ const CoreJobList = ({
                 </button>
                 <button
                   type="button"
+                  data-testid={`cron-job-remove-${job.id}`}
                   className="btn btn-sm btn-error"
                   disabled={coreBusyKey === `core-remove:${job.id}`}
                   onClick={() => onRemoveCoreJob(job.id)}>
@@ -139,7 +144,9 @@ const CoreJobList = ({
               </div>
 
               {runs.length > 0 && (
-                <div className="rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 p-3 space-y-1">
+                <div
+                  data-testid={`cron-job-runs-${job.id}`}
+                  className="rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 p-3 space-y-1">
                   <div className="text-[11px] uppercase tracking-wide text-stone-400 dark:text-neutral-500">
                     {t('settings.cron.jobs.recentRuns')}
                   </div>

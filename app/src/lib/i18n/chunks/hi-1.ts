@@ -379,6 +379,41 @@ const hi1: TranslationMap = {
   'settings.about.releasesDesc': 'GitHub पर रिलीज़ नोट्स और पुराने बिल्ड देखें।',
   'settings.about.openReleases': 'GitHub रिलीज़ खोलें',
   'settings.ai.overview': 'AI सिस्टम ओवरव्यू',
+  'migration.title': 'किसी अन्य असिस्टेंट से इम्पोर्ट करें',
+  'migration.description':
+    'किसी अन्य लोकल असिस्टेंट से मेमोरी और नोट्स को इस वर्कस्पेस में माइग्रेट करें। पहले Preview से देखें कि क्या बदलेगा, फिर Apply से डेटा कॉपी करें। आपकी मौजूदा मेमोरी पहले बैकअप कर ली जाती है।',
+  'migration.vendorLabel': 'सोर्स वेंडर',
+  'migration.sourceLabel': 'सोर्स वर्कस्पेस पाथ (वैकल्पिक)',
+  'migration.sourcePlaceholder': 'ऑटो-डिटेक्ट के लिए खाली छोड़ें (जैसे ~/.openclaw/workspace)',
+  'migration.sourceHint':
+    'खाली होने पर वेंडर के डिफ़ॉल्ट लोकेशन का उपयोग होता है। अगर आपने वर्कस्पेस हटाया है तो स्पष्ट पाथ दें।',
+  'migration.previewAction': 'प्रीव्यू',
+  'migration.previewRunning': 'प्रीव्यू हो रहा है…',
+  'migration.applyAction': 'इम्पोर्ट लागू करें',
+  'migration.applyRunning': 'इम्पोर्ट हो रहा है…',
+  'migration.applyDisclaimer':
+    'उसी सोर्स के सफल Preview के बाद ही Apply अनलॉक होता है। किसी भी इम्पोर्ट से पहले मौजूदा मेमोरी का बैकअप लिया जाता है।',
+  'migration.reportTitlePreview': 'प्रीव्यू — अभी कुछ इम्पोर्ट नहीं हुआ',
+  'migration.reportTitleApplied': 'इम्पोर्ट पूरा',
+  'migration.report.source': 'सोर्स वर्कस्पेस',
+  'migration.report.target': 'टार्गेट वर्कस्पेस',
+  'migration.report.fromSqlite': 'SQLite (brain.db) से',
+  'migration.report.fromMarkdown': 'Markdown से',
+  'migration.report.imported': 'इम्पोर्ट हुए',
+  'migration.report.skippedUnchanged': 'छोड़े गए (अपरिवर्तित)',
+  'migration.report.renamedConflicts': 'टकराव पर नाम बदला',
+  'migration.report.warnings': 'चेतावनी',
+  'migration.report.previewHint':
+    'अभी तक कोई डेटा इम्पोर्ट नहीं हुआ है। कॉपी करने के लिए Apply पर क्लिक करें।',
+  'migration.report.appliedHint':
+    'इम्पोर्ट की गई एंट्रीज़ अब आपकी मेमोरी में हैं। दोबारा तुलना के लिए Preview फिर से चलाएँ।',
+  'migration.hermesComingSoonPrefix': 'Hermes इम्पोर्टर रोडमैप पर है — देखें ',
+  'migration.hermesComingSoonSuffix': '। आज OpenClaw चुनें; Hermes अगले अपडेट में आएगा।',
+  'migration.hermesLinkText': '#1440',
+  'migration.confirmImport.singular':
+    '{count} एंट्री को मौजूदा वर्कस्पेस में इम्पोर्ट करें?\n\nसोर्स: {source}\nटार्गेट: {target}\n\nइम्पोर्ट से पहले मौजूदा मेमोरी का बैकअप लिया जाएगा।',
+  'migration.confirmImport.plural':
+    '{count} एंट्रीज़ को मौजूदा वर्कस्पेस में इम्पोर्ट करें?\n\nसोर्स: {source}\nटार्गेट: {target}\n\nइम्पोर्ट से पहले मौजूदा मेमोरी का बैकअप लिया जाएगा।',
 };
 
 export default hi1;
