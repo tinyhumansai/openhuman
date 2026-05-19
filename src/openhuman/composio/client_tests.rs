@@ -213,25 +213,66 @@ async fn list_connections_parses_connection_array() {
 
 #[tokio::test]
 async fn authorize_posts_toolkit_and_returns_connect_url() {
+    let app =
+        Router::new().route(
+            "/agent-integrations/composio/authorize",
+            post(|Json(body): Json<Value>| async move {
+                // Echo toolkit back so we know our POST body made it.
+                let tk = body["toolkit"].as_str().unwrap_or("").to_string();
+                let scopes = body["oauth_scopes"]
+                    .as_array()
+                    .expect("gmail authorize should include oauth_scopes");
+                assert!(scopes.iter().any(|scope| scope.as_str()
+                    == Some("https://www.googleapis.com/auth/gmail.readonly")));
+                Json(json!({
+                    "success": true,
+                    "data": {
+                        "connectUrl": format!("https://composio.example/{tk}/consent"),
+                        "connectionId": "conn-abc"
+                    }
+                }))
+            }),
+        );
+    let base = start_mock_backend(app).await;
+    let client = build_client_for(base);
+    let resp = client.authorize("gmail", None).await.unwrap();
+    assert!(resp.connect_url.contains("gmail"));
+    assert_eq!(resp.connection_id, "conn-abc");
+}
+
+#[tokio::test]
+async fn authorize_merges_gmail_required_oauth_scopes_with_extra_params() {
     let app = Router::new().route(
         "/agent-integrations/composio/authorize",
         post(|Json(body): Json<Value>| async move {
-            // Echo toolkit back so we know our POST body made it.
-            let tk = body["toolkit"].as_str().unwrap_or("").to_string();
+            assert_eq!(body["toolkit"].as_str(), Some("gmail"));
+            assert_eq!(body["prompt"].as_str(), Some("consent"));
+            let scopes: Vec<&str> = body["oauth_scopes"]
+                .as_array()
+                .expect("oauth_scopes should be an array")
+                .iter()
+                .map(|item| item.as_str().expect("scope should be a string"))
+                .collect();
+            assert!(scopes.contains(&"openid"));
+            assert!(scopes.contains(&"https://www.googleapis.com/auth/gmail.readonly"));
             Json(json!({
                 "success": true,
                 "data": {
-                    "connectUrl": format!("https://composio.example/{tk}/consent"),
-                    "connectionId": "conn-abc"
+                    "connectUrl": "https://composio.example/gmail/consent",
+                    "connectionId": "conn-gmail"
                 }
             }))
         }),
     );
     let base = start_mock_backend(app).await;
     let client = build_client_for(base);
-    let resp = client.authorize("gmail", None).await.unwrap();
+    let extra = serde_json::json!({
+        "prompt": "consent",
+        "oauth_scopes": ["openid"]
+    });
+    let resp = client.authorize("gmail", Some(extra)).await.unwrap();
     assert!(resp.connect_url.contains("gmail"));
-    assert_eq!(resp.connection_id, "conn-abc");
+    assert_eq!(resp.connection_id, "conn-gmail");
 }
 
 #[tokio::test]
@@ -242,6 +283,7 @@ async fn authorize_forwards_extra_params_and_returns_connect_url() {
             // Assert extra_params are forwarded alongside toolkit.
             assert_eq!(body["toolkit"].as_str(), Some("whatsapp"));
             assert_eq!(body["waba_id"].as_str(), Some("waba-123"));
+            assert!(body.get("oauth_scopes").is_none());
             Json(json!({
                 "success": true,
                 "data": {
