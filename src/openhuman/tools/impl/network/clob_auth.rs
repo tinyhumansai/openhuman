@@ -201,10 +201,13 @@ pub(crate) async fn derive_credentials(
 
 fn mask_address(address: &str) -> String {
     let trimmed = address.trim();
-    if trimmed.len() <= 10 {
+    let chars: Vec<char> = trimmed.chars().collect();
+    if chars.len() <= 10 {
         return "<redacted>".to_string();
     }
-    format!("{}...{}", &trimmed[..6], &trimmed[trimmed.len() - 4..])
+    let head: String = chars[..6].iter().collect();
+    let tail: String = chars[chars.len() - 4..].iter().collect();
+    format!("{head}...{tail}")
 }
 
 pub(crate) async fn sign_l1_headers(
@@ -415,5 +418,21 @@ mod tests {
 
         let restored = ClobCredentials::from(config_creds);
         assert_eq!(restored, creds);
+    }
+
+    #[test]
+    fn mask_address_handles_non_ascii_without_panic() {
+        // Garbage non-EOA inputs with multi-byte glyphs must not panic the
+        // diagnostic helper. Byte-slicing the original ASCII path panicked
+        // mid-codepoint on any non-ASCII input >10 bytes.
+        let masked = mask_address("café-mañana-bürger-naïve-12345");
+        assert!(masked.starts_with("café-m"), "got: {masked}");
+        assert!(masked.ends_with("2345"), "got: {masked}");
+    }
+
+    #[test]
+    fn mask_address_redacts_short_input() {
+        assert_eq!(mask_address("0xabc"), "<redacted>");
+        assert_eq!(mask_address(""), "<redacted>");
     }
 }
