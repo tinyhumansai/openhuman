@@ -383,7 +383,8 @@ const zhCN2: TranslationMap = {
   'devOptions.menuComposeIOTriggers': 'ComposeIO 触发器',
   'devOptions.menuComposeIOTriggersDesc': '查看 ComposeIO 触发器历史与归档',
   'devOptions.menuComposioRouting': 'Composio 路由 (直连模式)',
-  'devOptions.menuComposioRoutingDesc': '使用你自己的 Composio API 密钥，将调用直接路由到 backend.composio.dev',
+  'devOptions.menuComposioRoutingDesc':
+    '使用你自己的 Composio API 密钥，将调用直接路由到 backend.composio.dev',
   'devOptions.menuComposioTriggers': '集成触发器',
   'devOptions.menuComposioTriggersDesc': '为 Composio 集成触发器配置 AI 分级设置',
 };

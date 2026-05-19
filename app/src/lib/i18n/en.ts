@@ -2156,9 +2156,11 @@ const en: TranslationMap = {
   'devOptions.menuAi': 'AI Configuration',
   'devOptions.menuAiDesc': 'Cloud providers, local Ollama models, and per-workload routing',
   'devOptions.menuScreenAware': 'Screen Awareness',
-  'devOptions.menuScreenAwareDesc': 'Screen capture permissions, monitoring policy, and session controls',
+  'devOptions.menuScreenAwareDesc':
+    'Screen capture permissions, monitoring policy, and session controls',
   'devOptions.menuMessaging': 'Messaging Channels',
-  'devOptions.menuMessagingDesc': 'Configure Telegram/Discord auth modes and default channel routing',
+  'devOptions.menuMessagingDesc':
+    'Configure Telegram/Discord auth modes and default channel routing',
   'devOptions.menuTools': 'Tools',
   'devOptions.menuToolsDesc': 'Enable or disable capabilities OpenHuman can use on your behalf',
   'devOptions.menuAgentChat': 'Agent Chat',
@@ -2166,19 +2168,24 @@ const en: TranslationMap = {
   'devOptions.menuCronJobs': 'Cron Jobs',
   'devOptions.menuCronJobsDesc': 'View and configure scheduled jobs for runtime skills',
   'devOptions.menuLocalModelDebug': 'Local Model Debug',
-  'devOptions.menuLocalModelDebugDesc': 'Ollama config, asset downloads, model tests, and diagnostics',
+  'devOptions.menuLocalModelDebugDesc':
+    'Ollama config, asset downloads, model tests, and diagnostics',
   'devOptions.menuWebhooksDebug': 'Webhooks',
-  'devOptions.menuWebhooksDebugDesc': 'Inspect runtime webhook registrations and captured request logs',
+  'devOptions.menuWebhooksDebugDesc':
+    'Inspect runtime webhook registrations and captured request logs',
   'devOptions.menuIntelligence': 'Intelligence',
   'devOptions.menuIntelligenceDesc': 'Memory workspace, subconscious engine, dreams, and settings',
   'devOptions.menuNotificationRouting': 'Notification Routing',
-  'devOptions.menuNotificationRoutingDesc': 'AI importance scoring and orchestrator escalation for integration alerts',
+  'devOptions.menuNotificationRoutingDesc':
+    'AI importance scoring and orchestrator escalation for integration alerts',
   'devOptions.menuComposeIOTriggers': 'ComposeIO Triggers',
   'devOptions.menuComposeIOTriggersDesc': 'View ComposeIO trigger history and archive',
   'devOptions.menuComposioRouting': 'Composio Routing (Direct Mode)',
-  'devOptions.menuComposioRoutingDesc': 'Bring your own Composio API key and route calls directly to backend.composio.dev',
+  'devOptions.menuComposioRoutingDesc':
+    'Bring your own Composio API key and route calls directly to backend.composio.dev',
   'devOptions.menuComposioTriggers': 'Integration Triggers',
-  'devOptions.menuComposioTriggersDesc': 'Configure AI triage settings for Composio integration triggers',
+  'devOptions.menuComposioTriggersDesc':
+    'Configure AI triage settings for Composio integration triggers',
   // Settings menu: Appearance + Mascot (#2225)
   'settings.appearance': 'Appearance',
   'settings.appearanceDesc': 'Pick light, dark, or match your system theme',
