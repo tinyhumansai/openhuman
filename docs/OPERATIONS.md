@@ -12,8 +12,8 @@ The following endpoints are monitored for uptime:
 
 | Environment | Endpoint | Purpose | Threshold |
 |-------------|----------|---------|-----------|
-| **Production** | `https://api.tinyhumans.ai/health` | Public API liveness | < 5s response, 200 OK |
-| **Staging** | `https://staging-api.tinyhumans.ai/health` | Staging API liveness | < 10s response, 200 OK |
+| **Production** | `https://api.tinyhumans.ai/health` | Public API liveness | < 5s response; 200 = healthy, 503 = alert |
+| **Staging** | `https://staging-api.tinyhumans.ai/health` | Staging API liveness | < 10s response; 200 = healthy, 503 = alert |
 
 ### Monitoring Providers
 
