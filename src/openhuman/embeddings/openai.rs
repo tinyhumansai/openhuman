@@ -129,8 +129,8 @@ impl EmbeddingProvider for OpenAiEmbedding {
                 "[openai] embed error: status={status}, body={text}"
             );
             let message = format!("Embedding API error {status}: {text}");
-            crate::core::observability::report_error(
-                message.as_str(),
+            crate::core::observability::report_error_or_expected(
+                &message,
                 "embeddings",
                 "openai_embed",
                 &[
