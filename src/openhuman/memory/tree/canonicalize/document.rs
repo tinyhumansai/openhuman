@@ -1,4 +1,4 @@
-﻿//! Standalone documents 鈫?canonical Markdown.
+﻿//! Standalone documents -> canonical Markdown.
 //!
 //! Document sources are single-record (no grouping): one Notion page, one
 //! Drive doc, one meeting-note file. The canonicaliser trims and passes through the body as canonical Markdown. If the body is already markdown it is kept verbatim, and provider/title metadata stays in front-matter rather than a generated heading.
@@ -72,7 +72,7 @@ pub fn canonicalise(
     }
 
     let mut md = String::new();
-    // No leading `# provider 鈥?title` header. Provider / title info
+    // No leading `# provider - title` header. Provider / title info
     // belongs in the MD front-matter (Phase MD-content).
     md.push_str(doc.body.trim());
     md.push('\n');
@@ -128,7 +128,7 @@ mod tests {
         )
         .unwrap()
         .unwrap();
-        // No leading `# notion 鈥?Launch plan` header 鈥?that info belongs in front-matter.
+        // No leading `# notion - Launch plan` header - that info belongs in front-matter.
         assert!(
             !out.markdown.starts_with("# "),
             "canonical document MD must NOT start with a `# ` header"
@@ -233,5 +233,7 @@ mod tests {
     }
 
 }
+
+
 
 
