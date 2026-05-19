@@ -294,21 +294,24 @@ fn header<'a>(request: &'a ObservedRequest, key: &str) -> Option<&'a str> {
 
 struct EnvVarGuard {
     key: &'static str,
+    prev: Option<std::ffi::OsString>,
 }
 
 impl EnvVarGuard {
     fn set_to_path(key: &'static str, path: &std::path::Path) -> Self {
+        let prev = std::env::var_os(key);
         unsafe {
             std::env::set_var(key, path);
         }
-        Self { key }
+        Self { key, prev }
     }
 }
 
 impl Drop for EnvVarGuard {
     fn drop(&mut self) {
-        unsafe {
-            std::env::remove_var(self.key);
+        match self.prev.take() {
+            Some(value) => unsafe { std::env::set_var(self.key, value) },
+            None => unsafe { std::env::remove_var(self.key) },
         }
     }
 }
