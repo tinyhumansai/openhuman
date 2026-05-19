@@ -675,6 +675,12 @@ impl PolymarketTool {
     }
 
     async fn get_usdc_allowance_for_user(&self, user: &str) -> Result<String> {
+        // Polygon RPC payload carries the EOA address. Even though no CLOB
+        // credentials are sent here, leaking the address over plaintext HTTP
+        // still narrows the user's identity to anyone on-path. Same loopback
+        // carve-out as the CLOB guard so the mock harness keeps working.
+        ensure_https(&self.polygon_rpc_url)?;
+
         let owner = Address::from_str(user)
             .with_context(|| format!("Invalid owner EVM address '{user}'"))?;
         let spender = Address::from_str(&self.clob_exchange_contract).with_context(|| {
