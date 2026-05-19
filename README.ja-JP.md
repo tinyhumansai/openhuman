@@ -47,7 +47,7 @@
 
 インストールや利用開始は、ウェブサイト [tinyhumans.ai/openhuman](https://tinyhumans.ai/openhuman?utm_source=github&utm_medium=readme) からダウンロードするか、以下のコマンドを実行してください。
 
-```
+```bash
 # DMG や EXE は https://tinyhumans.ai/openhuman からダウンロードするか、ターミナルから実行してください
 
 # macOS または Linux x64 の場合
@@ -88,7 +88,7 @@ OpenHuman は、あなたの日常生活に統合されるよう設計された�
 OpenHuman は、数分であなたのことを理解する初めてのエージェントハーネスです。[Karpathy 氏の LLM ナレッジベース](https://x.com/karpathy/status/2039805659525644595)にインスパイアされました。ほとんどのエージェントは冷えた状態から始まります。Hermes はあなたの作業を見て学習し、OpenClaw はプラグインがコンテキストを運び込むのを待ちます。いずれにせよ、エージェントがあなたのスタックを十分理解して本当に役立つようになるまで、数日から数週間を費やすことになります。
 
 <p align="center">
- <img src="./gitbooks/.gitbook/assets/image (1).png" />
+ <img src="./gitbooks/.gitbook/assets/image (1).png" alt="OpenHuman context diagram" /> />
 </p>
 
 > OpenHuman はあなたのすべてのドキュメント、メール、チャットを要約・圧縮し、エージェントがあなたについてすべてを覚えていられるメモリーグラフを作成します。
