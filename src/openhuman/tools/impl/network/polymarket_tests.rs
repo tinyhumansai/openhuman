@@ -1047,6 +1047,31 @@ fn parse_order_nonce_accepts_number_and_string_payloads() {
     );
 }
 
+#[tokio::test]
+async fn get_market_without_market_id_or_slug_errors() {
+    let (gamma_base, calls) = start_mock_server(route(
+        "/markets",
+        vec![MockResponse::body(200, r#"[]"#)],
+    ))
+    .await;
+
+    let tool = test_tool(gamma_base.clone(), gamma_base, 15);
+    let result = tool
+        .execute(json!({ "action": "get_market" }))
+        .await
+        .unwrap();
+
+    assert!(result.is_error);
+    assert!(
+        result
+            .output()
+            .contains("requires either 'market_id' or 'slug'"),
+        "got: {}",
+        result.output()
+    );
+    assert_eq!(calls.load(Ordering::Relaxed), 0);
+}
+
 #[test]
 fn ensure_https_accepts_https_url() {
     assert!(ensure_https("https://clob.polymarket.com").is_ok());
