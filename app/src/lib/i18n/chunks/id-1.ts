@@ -382,6 +382,43 @@ const id1: TranslationMap = {
   'settings.about.releasesDesc': 'Telusuri catatan rilis dan build sebelumnya di GitHub.',
   'settings.about.openReleases': 'Buka rilis GitHub',
   'settings.ai.overview': 'Ringkasan Sistem AI',
+  'migration.title': 'Impor dari asisten lain',
+  'migration.description':
+    'Migrasikan memori dan catatan dari asisten lokal lain ke ruang kerja ini. Mulai dengan Pratinjau untuk melihat persis apa yang akan berubah, lalu klik Terapkan untuk menyalin datanya. Memori Anda saat ini dicadangkan terlebih dahulu.',
+  'migration.vendorLabel': 'Sumber',
+  'migration.sourceLabel': 'Path ruang kerja sumber (opsional)',
+  'migration.sourcePlaceholder':
+    'Biarkan kosong untuk deteksi otomatis (misalnya ~/.openclaw/workspace)',
+  'migration.sourceHint':
+    'Kosong berarti memakai lokasi default sumber. Isi path eksplisit jika ruang kerja sudah dipindahkan.',
+  'migration.previewAction': 'Pratinjau',
+  'migration.previewRunning': 'Memuat pratinjau…',
+  'migration.applyAction': 'Terapkan impor',
+  'migration.applyRunning': 'Mengimpor…',
+  'migration.applyDisclaimer':
+    'Terapkan terbuka setelah Pratinjau berhasil untuk sumber yang sama. Memori yang ada dicadangkan sebelum impor apa pun.',
+  'migration.reportTitlePreview': 'Pratinjau — belum ada yang diimpor',
+  'migration.reportTitleApplied': 'Impor selesai',
+  'migration.report.source': 'Ruang kerja sumber',
+  'migration.report.target': 'Ruang kerja tujuan',
+  'migration.report.fromSqlite': 'Dari SQLite (brain.db)',
+  'migration.report.fromMarkdown': 'Dari Markdown',
+  'migration.report.imported': 'Diimpor',
+  'migration.report.skippedUnchanged': 'Dilewati (tidak berubah)',
+  'migration.report.renamedConflicts': 'Diganti nama saat konflik',
+  'migration.report.warnings': 'Peringatan',
+  'migration.report.previewHint':
+    'Belum ada data yang diimpor. Klik Terapkan impor untuk menyalinnya.',
+  'migration.report.appliedHint':
+    'Entri yang diimpor kini ada di memori Anda. Jalankan Pratinjau lagi untuk membandingkan.',
+  'migration.hermesComingSoonPrefix': 'Pengimpor Hermes ada di peta jalan — lihat ',
+  'migration.hermesComingSoonSuffix':
+    ' untuk konteks. Pilih OpenClaw untuk migrasi hari ini; Hermes menyusul.',
+  'migration.hermesLinkText': '#1440',
+  'migration.confirmImport.singular':
+    'Impor {count} entri ke ruang kerja saat ini?\n\nSumber: {source}\nTujuan: {target}\n\nMemori yang ada akan dicadangkan sebelum impor dimulai.',
+  'migration.confirmImport.plural':
+    'Impor {count} entri ke ruang kerja saat ini?\n\nSumber: {source}\nTujuan: {target}\n\nMemori yang ada akan dicadangkan sebelum impor dimulai.',
 };
 
 export default id1;

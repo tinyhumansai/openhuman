@@ -15,7 +15,8 @@ import { startMockServer, stopMockServer } from '../mock-server';
 const USER_ID = 'e2e-skill-socket-reconnect';
 
 describe('Socket reconnect skill sync smoke', () => {
-  before(async () => {
+  before(async function beforeSuite() {
+    this.timeout(90_000);
     await startMockServer();
     await waitForApp();
     await resetApp(USER_ID);
@@ -33,7 +34,9 @@ describe('Socket reconnect skill sync smoke', () => {
     }
 
     const ok =
-      home || (await textExists('Message OpenHuman')) || (await textExists('Upgrade to Premium'));
+      home ||
+      (await textExists('Ask your assistant anything')) ||
+      (await textExists('Ask your assistant'));
     expect(ok).toBeTruthy();
   });
 });

@@ -286,10 +286,10 @@ const it2: TranslationMap = {
   'chat.topUpToContinue': 'Ricarica per continuare.',
   'chat.budgetComplete':
     'Il tuo budget incluso è esaurito. Aggiungi crediti o passa a un piano superiore per continuare.',
-  'chat.rateLimitReached': 'Limite di velocità di 10 ore raggiunto.',
   'chat.topUp': 'Ricarica',
-  'chat.fiveHourLimit': 'Limite di 5 ore',
-  'chat.weeklyLimit': 'Limite settimanale',
+  'chat.cycle': 'Ciclo',
+  'chat.cycleSpent': 'Speso in questo ciclo',
+  'chat.cycleRemaining': 'Rimanente',
   'chat.left': 'rimasti',
   'chat.setup': 'Configura',
   'chat.switchToText': 'Passa al testo',

@@ -16,9 +16,10 @@ vi.mock('../../utils/config', async importOriginal => {
 
 vi.mock('react-router-dom', () => ({ useNavigate: () => vi.fn() }));
 
-vi.mock('../../hooks/useUsageState', () => ({
-  useUsageState: () => ({ isRateLimited: false, shouldShowBudgetCompletedMessage: false }),
-}));
+const mockUseUsageState = vi.hoisted(() =>
+  vi.fn(() => ({ shouldShowBudgetCompletedMessage: false }))
+);
+vi.mock('../../hooks/useUsageState', () => ({ useUsageState: mockUseUsageState }));
 
 // Default: return 'ok' so most tests see the normal state. The
 // blocking-state selector is the only thing this mock is asked to
@@ -240,5 +241,19 @@ describe('Home page — theme toggle', () => {
       expect.objectContaining({ type: 'theme/setThemeMode', payload: 'light' })
     );
     themeModeProbe.current = 'system';
+  });
+});
+
+describe('Home page — budget completed banner', () => {
+  // Covers line 151: UsageLimitBanner render when shouldShowBudgetCompletedMessage=true
+  it('renders UsageLimitBanner when shouldShowBudgetCompletedMessage=true', async () => {
+    mockUseUsageState.mockReturnValueOnce({ shouldShowBudgetCompletedMessage: true });
+    mockShouldShowBanner.mockReturnValue(false);
+
+    const { default: Home } = await import('../Home');
+    render(<Home />);
+
+    expect(screen.getByText(/Exhausted Your Usage/i)).toBeInTheDocument();
+    expect(screen.getByText(/out of included usage/i)).toBeInTheDocument();
   });
 });

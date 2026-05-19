@@ -96,8 +96,21 @@ pub fn start(config: Config) {
                             if is_sqlite_busy(&err) {
                                 log::warn!(
                                     "[memory_tree::jobs] worker {idx} hit SQLite busy/locked, \
-                                     backing off: {err:#}"
+                                     backing off 1s: {err:#}"
                                 );
+                                tokio::time::sleep(Duration::from_secs(1)).await;
+                            } else if is_sqlite_io_transient(&err) {
+                                // I/O errors (IOERR_TRUNCATE 1546, IOERR_SHMMAP 4874,
+                                // CANTOPEN 14) or circuit breaker open — transient
+                                // filesystem / WAL condition. Back off 30 s and let the
+                                // connection cache try a fresh open on next poll. These
+                                // are NOT reported to Sentry (they are transient and were
+                                // flooding ~19K events/4 days, see #2206).
+                                log::warn!(
+                                    "[memory_tree::jobs] worker {idx} hit transient I/O error, \
+                                     backing off 30s: {err:#}"
+                                );
+                                tokio::time::sleep(Duration::from_secs(30)).await;
                             } else {
                                 crate::core::observability::report_error(
                                     &err,
@@ -105,8 +118,8 @@ pub fn start(config: Config) {
                                     "tree_jobs_worker",
                                     &[("worker_idx", &idx.to_string())],
                                 );
+                                tokio::time::sleep(Duration::from_secs(1)).await;
                             }
-                            tokio::time::sleep(Duration::from_secs(1)).await;
                         }
                     }
                 }
@@ -226,6 +239,37 @@ pub async fn run_once(config: &Config) -> Result<bool> {
     Ok(true)
 }
 
+/// Classify whether an error is a transient I/O failure that should be
+/// silently backed off without a Sentry report (#2206).
+///
+/// Covers:
+/// - `SQLITE_IOERR_TRUNCATE` (extended code 1546): WAL truncation failed —
+///   usually a transient filesystem hiccup.
+/// - `SQLITE_IOERR_SHMMAP` (extended code 4874): shared-memory mapping
+///   failed — WAL side-file temporarily unavailable.
+/// - `SQLITE_CANTOPEN` / `CannotOpen` (extended code 14): DB file temporarily
+///   inaccessible.
+/// - Text fallback: circuit breaker message, or rusqlite phrases that don't
+///   downcast cleanly after multiple `.context()` layers.
+fn is_sqlite_io_transient(err: &anyhow::Error) -> bool {
+    if let Some(rusqlite::Error::SqliteFailure(f, _)) = err.downcast_ref::<rusqlite::Error>() {
+        if matches!(f.extended_code, 1546 | 4874 | 14) {
+            return true;
+        }
+        if f.code == rusqlite::ErrorCode::CannotOpen {
+            return true;
+        }
+    }
+    // Text fallback for errors wrapped under `.context()` layers or
+    // emitted as plain `anyhow!` strings (e.g. circuit breaker message).
+    let msg = format!("{err:#}").to_ascii_lowercase();
+    msg.contains("circuit breaker open")
+        || msg.contains("disk i/o error")
+        || msg.contains("unable to open database file")
+        || msg.contains("xshmmap")
+        || msg.contains("truncate file")
+}
+
 /// Classify whether an error from `run_once` is a transient SQLite
 /// write-lock contention (`SQLITE_BUSY` or `SQLITE_LOCKED`).
 ///
@@ -334,5 +378,71 @@ mod tests {
     fn is_sqlite_busy_does_not_match_unrelated_errors() {
         let err = anyhow::anyhow!("upstream returned 500: internal server error");
         assert!(!is_sqlite_busy(&err));
+    }
+
+    // ── is_sqlite_io_transient tests (#2206) ─────────────────────────────
+
+    /// SQLITE_IOERR_TRUNCATE (extended code 1546) must be classified as
+    /// transient so the worker backs off without hitting Sentry.
+    #[test]
+    fn is_sqlite_io_transient_matches_ioerr_truncate() {
+        let raw = rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error {
+                code: rusqlite::ErrorCode::SystemIoFailure,
+                extended_code: 1546, // SQLITE_IOERR_TRUNCATE
+            },
+            Some("disk I/O error".into()),
+        );
+        assert!(is_sqlite_io_transient(&anyhow::Error::from(raw)));
+    }
+
+    /// SQLITE_IOERR_SHMMAP (extended code 4874) must be classified as
+    /// transient — WAL shared-memory mapping is a filesystem hiccup.
+    #[test]
+    fn is_sqlite_io_transient_matches_ioerr_shmmap() {
+        let raw = rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error {
+                code: rusqlite::ErrorCode::SystemIoFailure,
+                extended_code: 4874, // SQLITE_IOERR_SHMMAP
+            },
+            Some("xshmmap failed".into()),
+        );
+        assert!(is_sqlite_io_transient(&anyhow::Error::from(raw)));
+    }
+
+    /// SQLITE_CANTOPEN (code CannotOpen, extended code 14) must be
+    /// classified as transient — temporary inability to open the file.
+    #[test]
+    fn is_sqlite_io_transient_matches_cantopen() {
+        let raw = rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error {
+                code: rusqlite::ErrorCode::CannotOpen,
+                extended_code: 14, // SQLITE_CANTOPEN
+            },
+            Some("unable to open database file".into()),
+        );
+        assert!(is_sqlite_io_transient(&anyhow::Error::from(raw)));
+    }
+
+    /// The circuit breaker error message produced by `get_or_init_connection`
+    /// must be classified as transient via the text fallback.
+    #[test]
+    fn is_sqlite_io_transient_text_fallback() {
+        let err = anyhow::anyhow!("memory_tree_db circuit breaker open: too many init failures");
+        assert!(is_sqlite_io_transient(&err));
+    }
+
+    /// UNIQUE constraint violation must NOT be reclassified as a transient
+    /// I/O error — those are genuine bugs.
+    #[test]
+    fn is_sqlite_io_transient_negative_constraint_violation() {
+        let raw = rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error {
+                code: rusqlite::ErrorCode::ConstraintViolation,
+                extended_code: 19,
+            },
+            Some("UNIQUE constraint failed: mem_tree_jobs.dedupe_key".into()),
+        );
+        assert!(!is_sqlite_io_transient(&anyhow::Error::from(raw)));
     }
 }

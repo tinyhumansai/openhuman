@@ -158,6 +158,8 @@ pub fn all_channel_definitions() -> Vec<ChannelDefinition> {
         discord_definition(),
         web_definition(),
         imessage_definition(),
+        lark_definition(),
+        dingtalk_definition(),
     ]
 }
 
@@ -305,6 +307,137 @@ fn imessage_definition() -> ChannelDefinition {
                 required: false,
                 placeholder: "Comma-separated phone numbers or emails; * to allow any",
             }],
+            auth_action: None,
+        }],
+        capabilities: vec![ChannelCapability::SendText, ChannelCapability::ReceiveText],
+    }
+}
+
+/// Lark (国际版) / Feishu (国内版) — Stream WebSocket channel. Wire-protocol
+/// already implemented in `src/openhuman/channels/providers/lark.rs`; this
+/// definition exposes the existing config surface to the Settings UI so
+/// users no longer need to hand-edit `config.toml` to enable it.
+///
+/// Field names match `config::schema::channels::LarkConfig` exactly so the
+/// frontend can persist credentials through the same RPC the other channels
+/// use. See #2048.
+fn lark_definition() -> ChannelDefinition {
+    ChannelDefinition {
+        id: "lark",
+        display_name: "Lark / Feishu",
+        description: "Send and receive via Lark (international) or Feishu (中国版).",
+        icon: "lark",
+        auth_modes: vec![AuthModeSpec {
+            mode: ChannelAuthMode::ApiKey,
+            description: "Provide your Lark/Feishu app credentials from the Open Platform.",
+            fields: vec![
+                FieldRequirement {
+                    key: "app_id",
+                    label: "App ID",
+                    field_type: "string",
+                    required: true,
+                    placeholder: "cli_xxxxxxxxxxxx",
+                },
+                FieldRequirement {
+                    key: "app_secret",
+                    label: "App Secret",
+                    field_type: "secret",
+                    required: true,
+                    placeholder: "Your Lark app secret",
+                },
+                FieldRequirement {
+                    key: "encrypt_key",
+                    label: "Encrypt Key",
+                    field_type: "secret",
+                    required: false,
+                    placeholder: "Optional — required only if you enabled message encryption",
+                },
+                FieldRequirement {
+                    key: "verification_token",
+                    label: "Verification Token",
+                    field_type: "secret",
+                    required: false,
+                    placeholder: "Optional — used for HTTP webhook verification",
+                },
+                FieldRequirement {
+                    key: "use_feishu",
+                    label: "Use Feishu (中国版)",
+                    field_type: "boolean",
+                    required: false,
+                    placeholder: "On = open.feishu.cn (China); off = open.larksuite.com",
+                },
+                FieldRequirement {
+                    key: "receive_mode",
+                    label: "Receive Mode",
+                    field_type: "string",
+                    required: false,
+                    placeholder: "websocket (default) or webhook",
+                },
+                FieldRequirement {
+                    key: "port",
+                    label: "Webhook Port",
+                    // FieldRequirement.field_type currently accepts
+                    // "string" / "secret" / "boolean" only (see the doc
+                    // comment on FieldRequirement). Numeric port values
+                    // are typed in as plain strings; the LarkConfig
+                    // deserialiser parses them back to u16.
+                    field_type: "string",
+                    required: false,
+                    placeholder:
+                        "Optional — local HTTP port when receive_mode = webhook (e.g. 8080)",
+                },
+                FieldRequirement {
+                    key: "allowed_users",
+                    label: "Allowed Users",
+                    field_type: "string",
+                    required: false,
+                    placeholder: "Comma-separated open_id / union_id; leave empty to allow any",
+                },
+            ],
+            auth_action: None,
+        }],
+        capabilities: vec![
+            ChannelCapability::SendText,
+            ChannelCapability::ReceiveText,
+            ChannelCapability::ThreadedReplies,
+        ],
+    }
+}
+
+/// DingTalk (钉钉) Stream Mode WebSocket channel. Wire-protocol already
+/// implemented in `src/openhuman/channels/providers/dingtalk.rs`. See #2048.
+fn dingtalk_definition() -> ChannelDefinition {
+    ChannelDefinition {
+        id: "dingtalk",
+        display_name: "DingTalk (钉钉)",
+        description: "Send and receive via DingTalk Stream Mode (钉钉).",
+        icon: "dingtalk",
+        auth_modes: vec![AuthModeSpec {
+            mode: ChannelAuthMode::ApiKey,
+            description: "Provide your DingTalk app credentials from the developer console.",
+            fields: vec![
+                FieldRequirement {
+                    key: "client_id",
+                    label: "Client ID (AppKey)",
+                    field_type: "string",
+                    required: true,
+                    placeholder: "ding_xxxxxxxxxxxx",
+                },
+                FieldRequirement {
+                    key: "client_secret",
+                    label: "Client Secret (AppSecret)",
+                    field_type: "secret",
+                    required: true,
+                    placeholder: "Your DingTalk app secret",
+                },
+                FieldRequirement {
+                    key: "allowed_users",
+                    label: "Allowed Users",
+                    field_type: "string",
+                    required: false,
+                    placeholder: "Comma-separated DingTalk userIds; leave empty to allow any",
+                },
+            ],
             auth_action: None,
         }],
         capabilities: vec![ChannelCapability::SendText, ChannelCapability::ReceiveText],

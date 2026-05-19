@@ -141,7 +141,7 @@ const zhCN4: TranslationMap = {
   'onboarding.contextGathering.buildingProfile': '正在构建你的档案...',
   'onboarding.contextGathering.continueToChat': '前往对话',
   'onboarding.contextGathering.errorDesc':
-    '我们暂时无法构建你的完整资料，但没关系——你可以继续，资料会随时间逐步完善。',
+    '暂时无法完整构建你的档案，但没关系——你可以继续，档案会随时间逐步完善。',
   'onboarding.contextGathering.title': '上下文收集',
   'openhuman.team_list_teams': '团队列表',
   'overlay.ariaAttention': '注意消息',
@@ -359,6 +359,9 @@ const zhCN4: TranslationMap = {
   'settings.billing.subscription.paymentConfirmed': '支付已确认',
   'settings.billing.subscription.perMonth': '每月',
   'settings.billing.subscription.popular': '热门',
+  'pages.settings.account.migration': '从其他助手导入',
+  'pages.settings.account.migrationDesc':
+    '将 OpenClaw（即将支持 Hermes）的记忆和笔记迁移到此工作区。',
 };
 
 export default zhCN4;

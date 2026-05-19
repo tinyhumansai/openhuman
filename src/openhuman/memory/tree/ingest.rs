@@ -166,7 +166,21 @@ async fn persist(
     // worth scanning, so they get body_preview = None.
     let body_preview: Option<String> = match source_kind_for_store {
         SourceKind::Email | SourceKind::Document => {
-            Some(markdown_body_preview(&canonical.markdown))
+            // Guard the preview computation so a single malformed document
+            // never kills the ingest worker. `markdown_body_preview` contains
+            // defensive checks, but wrap at the call-site too for belt-and-braces
+            // protection against any future panic regression in its dependency chain.
+            let md_for_preview = canonical.markdown.clone();
+            match std::panic::catch_unwind(move || markdown_body_preview(&md_for_preview)) {
+                Ok(preview) => Some(preview),
+                Err(_) => {
+                    log::error!(
+                        "[memory_tree::ingest] markdown_body_preview panicked for source_id_hash={}; falling back to no preview",
+                        crate::openhuman::memory::tree::util::redact::redact(source_id)
+                    );
+                    None
+                }
+            }
         }
         _ => None,
     };
@@ -369,7 +383,20 @@ fn markdown_body_preview(md: &str) -> String {
         md.to_string()
     } else {
         let start = crate::openhuman::util::ceil_char_boundary(md, len - BODY_PREVIEW_MAX_BYTES);
-        md[start..].to_string()
+        debug_assert!(
+            md.is_char_boundary(start),
+            "ceil_char_boundary returned non-boundary {start} for len={len}"
+        );
+        // ceil_char_boundary can return `len` when every remaining byte is a
+        // continuation byte; fall back to the full string rather than panicking.
+        if start > len || !md.is_char_boundary(start) {
+            log::error!(
+                "[memory_tree::ingest] ceil_char_boundary returned invalid boundary start={start} len={len}; returning full markdown"
+            );
+            md.to_string()
+        } else {
+            md[start..].to_string()
+        }
     }
 }
 
@@ -587,5 +614,94 @@ mod tests {
         drain_until_idle(&cfg).await.unwrap();
         assert_eq!(count_chunks(&cfg).unwrap(), 1);
         assert_eq!(count_scores(&cfg).unwrap(), 1);
+    }
+
+    // ── multi-byte boundary tests (issue #2073) ──────────────────────────────
+
+    #[test]
+    fn markdown_body_preview_zwnj_at_exact_boundary() {
+        // U+200C ZERO WIDTH NON-JOINER is 3 bytes (0xE2 0x80 0x8C).
+        // Place it at offsets 0, 1, 2 relative to the preview boundary so
+        // that each byte of the codepoint lands exactly on the nominal cut.
+        let zwnj = '\u{200c}';
+        let zwnj_bytes = zwnj.len_utf8(); // 3
+        assert_eq!(zwnj_bytes, 3);
+
+        for offset in 0..zwnj_bytes {
+            // ascii_prefix || zwnj || ascii_suffix
+            // The nominal cut point is `ascii_prefix.len() + offset` bytes
+            // from the start, which lands `offset` bytes into the zwnj.
+            let prefix_len = BODY_PREVIEW_MAX_BYTES - offset;
+            let ascii_prefix = "a".repeat(prefix_len + (zwnj_bytes - offset));
+            // Build: enough leading bytes so (total - BODY_PREVIEW_MAX_BYTES) falls
+            // inside the zwnj.
+            let padding = "x".repeat(50);
+            let md = format!(
+                "{}{}{}{}",
+                padding,
+                "a".repeat(prefix_len - 50),
+                zwnj,
+                "b".repeat(offset + 100)
+            );
+
+            let preview = markdown_body_preview(&md);
+
+            // Must not panic, result must be valid UTF-8, and byte length <= cap.
+            assert!(std::str::from_utf8(preview.as_bytes()).is_ok());
+            assert!(
+                preview.len() <= BODY_PREVIEW_MAX_BYTES,
+                "offset={offset}: preview len {} exceeds cap {}",
+                preview.len(),
+                BODY_PREVIEW_MAX_BYTES
+            );
+            let _ = ascii_prefix; // suppress unused warning
+        }
+    }
+
+    #[test]
+    fn markdown_body_preview_figure_space_at_exact_boundary() {
+        // U+2007 FIGURE SPACE is 3 bytes (0xE2 0x80 0x87).
+        let fig_space = '\u{2007}';
+        let fig_bytes = fig_space.len_utf8();
+        assert_eq!(fig_bytes, 3);
+
+        for offset in 0..fig_bytes {
+            let padding = "x".repeat(50);
+            let prefix_len = if BODY_PREVIEW_MAX_BYTES > offset + 50 {
+                BODY_PREVIEW_MAX_BYTES - offset - 50
+            } else {
+                0
+            };
+            let md = format!(
+                "{}{}{}{}",
+                padding,
+                "a".repeat(prefix_len),
+                fig_space,
+                "b".repeat(offset + 100)
+            );
+
+            let preview = markdown_body_preview(&md);
+
+            assert!(std::str::from_utf8(preview.as_bytes()).is_ok());
+            assert!(
+                preview.len() <= BODY_PREVIEW_MAX_BYTES,
+                "offset={offset}: preview len {} exceeds cap {}",
+                preview.len(),
+                BODY_PREVIEW_MAX_BYTES
+            );
+        }
+    }
+
+    #[test]
+    fn markdown_body_preview_persian_text() {
+        // Persian word "سلام‌ها" (hello + plural marker) with embedded U+200C.
+        let persian_word = "\u{0633}\u{0644}\u{0627}\u{0645}\u{200c}\u{0647}\u{0627}";
+        let md = persian_word.repeat(200);
+
+        // Must not panic regardless of where the cut falls.
+        let preview = markdown_body_preview(&md);
+
+        assert!(std::str::from_utf8(preview.as_bytes()).is_ok());
+        assert!(preview.len() <= BODY_PREVIEW_MAX_BYTES);
     }
 }

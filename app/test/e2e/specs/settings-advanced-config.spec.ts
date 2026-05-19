@@ -24,7 +24,8 @@ async function readLocalStorageJson<T = unknown>(key: string): Promise<T | null>
 }
 
 describe('Settings - Advanced Config', () => {
-  before(async () => {
+  before(async function beforeSuite() {
+    this.timeout(90_000);
     await startMockServer();
     await waitForApp();
     await resetApp(USER_ID);
@@ -34,7 +35,8 @@ describe('Settings - Advanced Config', () => {
     await stopMockServer();
   });
 
-  it('renders the developer options route and its advanced entries', async () => {
+  it('renders the developer options route and its advanced entries', async function () {
+    this.timeout(90_000);
     await navigateViaHash('/settings/developer-options');
 
     await waitForText('Advanced', 15_000);
@@ -44,7 +46,8 @@ describe('Settings - Advanced Config', () => {
     await waitForText('About', 15_000);
   });
 
-  it('persists notification routing settings through core RPC', async () => {
+  it('persists notification routing settings through core RPC', async function () {
+    this.timeout(60_000);
     const before = await callOpenhumanRpc('openhuman.notification_settings_get', {
       provider: 'gmail',
     });
@@ -66,7 +69,8 @@ describe('Settings - Advanced Config', () => {
     );
   });
 
-  it('persists composio trigger triage settings', async () => {
+  it('persists composio trigger triage settings', async function () {
+    this.timeout(60_000);
     const before = await callOpenhumanRpc('openhuman.config_get_composio_trigger_settings', {});
     expect(before.ok).toBe(true);
 
@@ -94,7 +98,8 @@ describe('Settings - Advanced Config', () => {
     );
   });
 
-  it('switches composio routing mode to direct and can return to backend mode', async () => {
+  it('switches composio routing mode to direct and can return to backend mode', async function () {
+    this.timeout(60_000);
     await navigateViaHash('/settings/composio-routing');
     await waitForText('Routing mode', 15_000);
 
@@ -127,7 +132,8 @@ describe('Settings - Advanced Config', () => {
     expect(backend.result?.result?.api_key_set).toBe(false);
   });
 
-  it('persists agent chat draft state to localStorage', async () => {
+  it('persists agent chat draft state to localStorage', async function () {
+    this.timeout(90_000);
     await navigateViaHash('/settings/agent-chat');
 
     await waitForText('Overrides', 15_000);
@@ -155,7 +161,8 @@ describe('Settings - Advanced Config', () => {
     );
   });
 
-  it('mounts the remaining advanced settings routes', async () => {
+  it('mounts the remaining advanced settings routes', async function () {
+    this.timeout(90_000);
     await navigateViaHash('/settings/local-model-debug');
     await waitForText('Local Model Debug', 15_000);
 

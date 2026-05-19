@@ -17,7 +17,8 @@ import { startMockServer, stopMockServer } from '../mock-server';
 const USER_ID = 'e2e-skill-multi-round';
 
 describe('Multi-round tool conversation smoke', () => {
-  before(async () => {
+  before(async function beforeSuite() {
+    this.timeout(90_000);
     await startMockServer();
     await waitForApp();
     await resetApp(USER_ID);
@@ -35,8 +36,8 @@ describe('Multi-round tool conversation smoke', () => {
     expect(String(hash)).toContain('/chat');
 
     const ok =
-      (await textExists('Message OpenHuman')) ||
-      (await textExists('Type a message')) ||
+      (await textExists('Type a message...')) ||
+      (await textExists('Ask the agent anything...')) ||
       (await textExists('Conversation'));
     expect(ok).toBe(true);
   });

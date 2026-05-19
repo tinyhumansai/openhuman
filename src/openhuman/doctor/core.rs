@@ -72,6 +72,7 @@ pub fn run(config: &Config) -> Result<DoctorReport> {
     check_workspace(config, &mut items);
     check_daemon_state(config, &mut items);
     check_environment(&mut items);
+    check_memory_tree_db(config, &mut items);
 
     let errors = items
         .iter()
@@ -766,6 +767,70 @@ fn check_command_available(
             items.push(DiagnosticItem::warn(
                 cat,
                 format!("{cmd} not available ({err})"),
+            ));
+        }
+    }
+}
+
+// ── Memory-tree DB health ────────────────────────────────────────
+
+/// Probe the memory-tree SQLite database and push a [`DiagnosticItem`].
+///
+/// - If the DB directory / file does not exist yet: `Warn` (not yet created).
+/// - If a stale `.db-shm` file is present alongside the DB: `Warn`.
+/// - If we can open the DB and run a basic probe query: `Ok`.
+/// - If the probe fails: `Error`.
+fn check_memory_tree_db(config: &Config, items: &mut Vec<DiagnosticItem>) {
+    let cat = "memory_tree_db";
+    let db_path = config.workspace_dir.join("memory_tree").join("chunks.db");
+
+    // ── Stale side-files (checked even when chunks.db is absent) ────
+    let base_name = db_path
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
+    let shm = db_path.with_file_name(format!("{base_name}-shm"));
+    let wal = db_path.with_file_name(format!("{base_name}-wal"));
+    for sidecar in [&shm, &wal] {
+        if sidecar.exists() {
+            items.push(DiagnosticItem::warn(
+                cat,
+                format!(
+                    "stale SQLite side-file present (may indicate unclean shutdown): {}",
+                    sidecar.display()
+                ),
+            ));
+        }
+    }
+
+    // ── File existence ──────────────────────────────────────────────
+    if !db_path.exists() {
+        items.push(DiagnosticItem::warn(
+            cat,
+            format!(
+                "DB not yet created (first ingest will initialise it): {}",
+                db_path.display()
+            ),
+        ));
+        return;
+    }
+
+    // ── Probe connection ─────────────────────────────────────────────
+    match crate::openhuman::memory::tree::store::with_connection(config, |conn| {
+        let n: i64 = conn.query_row("SELECT COUNT(*) FROM mem_tree_chunks", [], |r| r.get(0))?;
+        Ok(n)
+    }) {
+        Ok(count) => {
+            items.push(DiagnosticItem::ok(
+                cat,
+                format!("DB accessible at {} ({count} chunks)", db_path.display()),
+            ));
+        }
+        Err(err) => {
+            items.push(DiagnosticItem::error(
+                cat,
+                format!("DB probe failed at {}: {err:#}", db_path.display()),
             ));
         }
     }

@@ -286,10 +286,10 @@ const bn2: TranslationMap = {
   'chat.topUpToContinue': 'চালিয়ে যেতে টপ আপ করুন।',
   'chat.budgetComplete':
     'আপনার অন্তর্ভুক্ত বাজেট শেষ হয়েছে। চালিয়ে যেতে ক্রেডিট যোগ করুন বা আপগ্রেড করুন।',
-  'chat.rateLimitReached': '১০ ঘণ্টার রেট লিমিট পৌঁছেছে।',
   'chat.topUp': 'টপ আপ',
-  'chat.fiveHourLimit': '৫ ঘণ্টার সীমা',
-  'chat.weeklyLimit': 'সাপ্তাহিক সীমা',
+  'chat.cycle': 'চক্র',
+  'chat.cycleSpent': 'এই চক্রে ব্যয়',
+  'chat.cycleRemaining': 'অবশিষ্ট',
   'chat.left': 'বাকি',
   'chat.setup': 'সেটআপ করুন',
   'chat.switchToText': 'টেক্সটে পরিবর্তন করুন',

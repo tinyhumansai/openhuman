@@ -207,6 +207,88 @@ fn resolve_translates_openhuman_tier_aliases_via_route_table() {
     assert_eq!(summary_model, "gpt-4.1-nano");
 }
 
+// -- #2079: tier alias must not leak to upstream when no route configured ---
+
+#[test]
+fn tier_alias_falls_back_to_default_model_when_no_route_is_configured() {
+    // Regression for #2079. A user with a custom_openai provider pointed at
+    // DeepSeek (default_model = "deepseek-v4-pro") and no explicit route
+    // for the `reasoning` hint used to see the literal alias
+    // "reasoning-v1" forwarded to the upstream API, which DeepSeek rejects
+    // with: "The supported API model names are deepseek-v4-pro or
+    // deepseek-v4-flash, but you passed reasoning-v1."
+    //
+    // After the fix, the router falls back to the default provider's
+    // default_model so the request has a chance of succeeding.
+    let mocks: Vec<Arc<MockProvider>> = (0..1).map(|_| Arc::new(MockProvider::new("ok"))).collect();
+    let provider_list: Vec<(String, Box<dyn Provider>)> = vec![(
+        "deepseek".to_string(),
+        Box::new(Arc::clone(&mocks[0])) as Box<dyn Provider>,
+    )];
+    let router = RouterProvider::new(provider_list, vec![], "deepseek-v4-pro".to_string());
+
+    let (idx, model) = router.resolve("reasoning-v1");
+    assert_eq!(idx, 0, "fall back to default provider index");
+    assert_eq!(
+        model, "deepseek-v4-pro",
+        "fall back to default_model, NOT the literal tier alias"
+    );
+}
+
+#[test]
+fn every_tier_alias_falls_back_to_default_model_when_unrouted() {
+    // Exhaustive check across the alias set in openhuman_tier_to_hint —
+    // confirms no tier name slips through and gets forwarded verbatim.
+    let mocks: Vec<Arc<MockProvider>> = (0..1).map(|_| Arc::new(MockProvider::new("ok"))).collect();
+    let provider_list: Vec<(String, Box<dyn Provider>)> = vec![(
+        "custom".to_string(),
+        Box::new(Arc::clone(&mocks[0])) as Box<dyn Provider>,
+    )];
+    let router = RouterProvider::new(provider_list, vec![], "user-configured-model".to_string());
+
+    for alias in [
+        "reasoning-v1",
+        "reasoning-quick-v1",
+        "agentic-v1",
+        "coding-v1",
+        "summarization-v1",
+    ] {
+        let (idx, model) = router.resolve(alias);
+        assert_eq!(idx, 0, "alias {} → default provider index", alias);
+        assert_eq!(
+            model, "user-configured-model",
+            "alias {} must NOT leak verbatim to the upstream API; expected default_model fallback",
+            alias
+        );
+    }
+}
+
+#[test]
+fn passthrough_for_unknown_model_name_still_sends_string_verbatim() {
+    // Regression guard for the existing pass-through branch. A model name
+    // the router doesn't recognise (e.g. an upstream-native model id like
+    // "deepseek-v4-flash" or "claude-opus-4.5") must still be forwarded
+    // verbatim — the fallback we added in the previous test must only fire
+    // for the listed tier aliases, never as a generic catch-all.
+    let mocks: Vec<Arc<MockProvider>> = (0..1).map(|_| Arc::new(MockProvider::new("ok"))).collect();
+    let provider_list: Vec<(String, Box<dyn Provider>)> = vec![(
+        "custom".to_string(),
+        Box::new(Arc::clone(&mocks[0])) as Box<dyn Provider>,
+    )];
+    let router = RouterProvider::new(provider_list, vec![], "default-model".to_string());
+
+    let (idx, model) = router.resolve("deepseek-v4-flash");
+    assert_eq!(idx, 0);
+    assert_eq!(
+        model, "deepseek-v4-flash",
+        "non-alias model names must continue to pass through unchanged"
+    );
+
+    let (idx2, model2) = router.resolve("anthropic/claude-opus-4.5");
+    assert_eq!(idx2, 0);
+    assert_eq!(model2, "anthropic/claude-opus-4.5");
+}
+
 #[test]
 fn skips_routes_with_unknown_provider() {
     let (router, _) = make_router(

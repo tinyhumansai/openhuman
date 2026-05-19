@@ -143,7 +143,7 @@ const bn4: TranslationMap = {
   'onboarding.contextGathering.buildingProfile': 'আপনার প্রোফাইল তৈরি হচ্ছে...',
   'onboarding.contextGathering.continueToChat': 'চ্যাটে চালিয়ে যান',
   'onboarding.contextGathering.errorDesc':
-    'আমরা এখনই আপনার পূর্ণ প্রোফাইল তৈরি করতে পারিনি, কিন্তু সমস্যা নেই — আপনি চালিয়ে যেতে পারেন এবং আপনার প্রোফাইল সময়ের সাথে তৈরি হবে।',
+    'আমরা এই মুহূর্তে আপনার সম্পূর্ণ প্রোফাইল তৈরি করতে পারিনি, কিন্তু সমস্যা নেই — আপনি চালিয়ে যেতে পারেন, আপনার প্রোফাইল সময়ের সাথে তৈরি হতে থাকবে।',
   'onboarding.contextGathering.title': 'কন্টেক্সট সংগ্রহ',
   'openhuman.team_list_teams': 'টিম তালিকা',
   'overlay.ariaAttention': 'মনোযোগের বার্তা',
@@ -363,6 +363,9 @@ const bn4: TranslationMap = {
   'settings.billing.subscription.paymentConfirmed': 'পেমেন্ট নিশ্চিত',
   'settings.billing.subscription.perMonth': 'প্রতি মাসে',
   'settings.billing.subscription.popular': 'জনপ্রিয়',
+  'pages.settings.account.migration': 'অন্য সহকারী থেকে আমদানি করুন',
+  'pages.settings.account.migrationDesc':
+    'OpenClaw (এবং শীঘ্রই Hermes) থেকে মেমরি ও নোট এই ওয়ার্কস্পেসে স্থানান্তর করুন।',
 };
 
 export default bn4;

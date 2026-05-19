@@ -2,7 +2,7 @@
 compile_error!("src-tauri host is desktop-only. Non-desktop targets are not supported.");
 
 mod cdp;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 mod cef_preflight;
 mod cef_profile;
 mod core_process;
@@ -1593,7 +1593,56 @@ fn warn_if_wsl_x11_desktop_launch() {
 #[cfg(not(target_os = "linux"))]
 fn warn_if_wsl_x11_desktop_launch() {}
 
+/// Returns `true` if a display server is available on Linux.
+/// Testable pure function: takes the env-presence booleans directly.
+#[cfg(any(target_os = "linux", test))]
+fn linux_display_server_present(display: bool, wayland_display: bool) -> bool {
+    display || wayland_display
+}
+
+/// Pre-CEF display-server check for Linux (Sentry OPENHUMAN-TAURI-K1).
+///
+/// CEF/Chromium requires X11 (`DISPLAY`) or Wayland (`WAYLAND_DISPLAY`) to
+/// initialise. Without either, `cef_initialize` returns 0 and the vendored
+/// `tauri-runtime-cef` asserts `result == 1` → panic `left: 0, right: 1`.
+/// This is fatal and silent on WSL2 without WSLg and on any headless Linux box.
+/// Detect it here and exit with a clear message before `CefRuntime::init` runs.
+#[cfg(target_os = "linux")]
+fn check_linux_display_server() {
+    if linux_display_server_present(
+        has_non_empty_env("DISPLAY"),
+        has_non_empty_env("WAYLAND_DISPLAY"),
+    ) {
+        log::debug!(
+            "[cef-preflight] Linux display server present: DISPLAY={:?} WAYLAND_DISPLAY={:?}",
+            std::env::var("DISPLAY").ok(),
+            std::env::var("WAYLAND_DISPLAY").ok()
+        );
+        return;
+    }
+    let msg = "[openhuman] no display server found (DISPLAY and WAYLAND_DISPLAY are both unset).\n\
+               OpenHuman requires an X11 or Wayland display to run.\n\
+               On WSL2: install WSLg or configure X11 forwarding from Windows.\n\
+               Set DISPLAY (e.g. export DISPLAY=:0) or WAYLAND_DISPLAY before launching.";
+    log::error!(
+        "[cef-preflight] Linux display server missing — CEF cannot initialize \
+         (OPENHUMAN-TAURI-K1): DISPLAY and WAYLAND_DISPLAY both unset"
+    );
+    eprintln!("\n{msg}\n");
+    std::process::exit(1);
+}
+
+#[cfg(not(target_os = "linux"))]
+fn check_linux_display_server() {}
+
 type CefCommandLineArg = (&'static str, Option<&'static str>);
+
+/// Returns `true` when the process is running as root (UID 0) on Linux.
+/// Testable pure function; takes the uid directly.
+#[cfg(any(target_os = "linux", test))]
+fn linux_is_root_uid(uid: u32) -> bool {
+    uid == 0
+}
 
 fn append_platform_cef_gpu_workarounds(args: &mut Vec<CefCommandLineArg>, os: &str, arch: &str) {
     // Issue #1697: on Arch/Manjaro-family Linux systems, the AppImage can
@@ -1619,6 +1668,28 @@ fn append_platform_cef_gpu_workarounds(args: &mut Vec<CefCommandLineArg>, os: &s
         log::info!(
             "[cef-startup] Intel macOS detected: adding --disable-gpu-compositing (issue #1012)"
         );
+    }
+
+    // Sentry OPENHUMAN-TAURI-K1: `cef::initialize` returns 0 when running as
+    // root (uid 0) on Linux unless `--no-sandbox` is passed as a command-line
+    // argument. The `no_sandbox: 1` field in `cef::Settings` disables the
+    // sub-process sandbox but does NOT satisfy Chromium's separate root-user
+    // check in the browser process — that check requires the CLI flag.
+    //
+    // This hits CI / coder-bot / Docker environments (e.g.
+    // `/root/.hermes/profiles/coder-bot/home`) that run as root inside a
+    // container. Without the flag, `cef_initialize` returns 0 and the vendored
+    // runtime assertion fires (`left: 0, right: 1`).
+    #[cfg(target_os = "linux")]
+    {
+        let uid = nix::unistd::getuid().as_raw();
+        if os == "linux" && linux_is_root_uid(uid) {
+            args.push(("--no-sandbox", None));
+            log::info!(
+                "[cef-startup] running as root (uid=0) on Linux: adding --no-sandbox \
+                 (OPENHUMAN-TAURI-K1)"
+            );
+        }
     }
 }
 
@@ -1812,6 +1883,9 @@ pub fn run() {
     }
 
     warn_if_wsl_x11_desktop_launch();
+    // Exit before CEF if no display server is available — prevents the
+    // `assert_eq!(cef_initialize(…), 1)` panic (OPENHUMAN-TAURI-K1).
+    check_linux_display_server();
 
     // The vendored tauri-cef dev-server proxy builds a reqwest 0.13 client
     // (see vendor/tauri-cef/crates/tauri/src/protocol/tauri.rs) which calls
@@ -1899,7 +1973,12 @@ pub fn run() {
     #[cfg(target_os = "macos")]
     process_recovery::reap_stale_openhuman_processes();
 
-    #[cfg(target_os = "macos")]
+    // CEF cache-lock preflight: if another OpenHuman instance holds the CEF
+    // user-data-dir SingletonLock, `cef_initialize` returns 0 and the vendored
+    // runtime panics (`left: 0, right: 1`). Catch the collision here and exit
+    // cleanly. Stale locks (PID dead) are removed so crashed processes don't
+    // block subsequent launches. macOS: issue #864. Linux: OPENHUMAN-TAURI-K1.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     if let Err(e) = cef_preflight::check_default_cache() {
         eprintln!("\n[openhuman] {e}\n");
         std::process::exit(1);
@@ -2797,15 +2876,23 @@ pub fn run() {
             // window from tray click: main window not found`
             // (OPENHUMAN-TAURI-2X — 21 events, Windows only).
             //
-            // macOS uses `window.hide()` because the vendored CEF runtime
-            // routes that through `set_application_visibility(false)` at the
-            // NSApplication level (`tauri-runtime-cef/src/lib.rs:588`), which
-            // hides the CEF browser surface together with the host window.
-            // Windows is handled in the separate arm below — see issue #1607.
+            // macOS: hide the whole application on close instead of
+            // destroying the window. `AppHandle::hide()` calls
+            // `[NSApp hide:]` via `set_application_visibility(false)`,
+            // the standard macOS mechanism that reliably hides all
+            // windows. The vendored CEF runtime's per-window
+            // `WebviewWindow::hide()` sends `WindowMessage::Hide` →
+            // `cef::Window::hide()`, which does NOT propagate to the
+            // visible NSWindow frame and leaves the window on screen
+            // (issue #2049). Dock-click fires `RunEvent::Reopen` which
+            // calls `show_main_window()` to restore.
             //
-            // Linux is left out: `setup_tray` early-returns on Linux because
-            // tray creation panics inside GTK during packaged runs, so the
-            // hide-on-close behavior would strand the user with no way back.
+            // Windows is handled in the separate arm below — see #1607.
+            //
+            // Linux is left out: `setup_tray` early-returns on Linux
+            // because tray creation panics inside GTK during packaged
+            // runs, so hide-on-close would strand the user with no way
+            // back.
             #[cfg(target_os = "macos")]
             RunEvent::WindowEvent {
                 label,
@@ -2813,11 +2900,13 @@ pub fn run() {
                 ..
             } if label == "main" => {
                 log::info!(
-                    "[window] close requested on main window — hiding instead of destroying"
+                    "[window] close requested on main window — hiding app"
                 );
                 api.prevent_close();
-                if let Some(window) = app_handle.get_webview_window("main") {
-                    let _ = window.hide();
+                if let Err(err) = app_handle.hide() {
+                    log::warn!(
+                        "[window] app_handle.hide() failed on close request: {err}"
+                    );
                 }
             }
             // Windows: full hide-to-tray.
@@ -3205,6 +3294,41 @@ mod tests {
     }
 
     // -------------------------------------------------------------------------
+    // Linux display-server pre-flight (Sentry OPENHUMAN-TAURI-K1)
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn linux_display_present_with_x11() {
+        assert!(linux_display_server_present(true, false));
+    }
+
+    #[test]
+    fn linux_display_present_with_wayland() {
+        assert!(linux_display_server_present(false, true));
+    }
+
+    #[test]
+    fn linux_display_present_with_both() {
+        assert!(linux_display_server_present(true, true));
+    }
+
+    #[test]
+    fn linux_display_absent_without_either() {
+        assert!(!linux_display_server_present(false, false));
+    }
+
+    #[test]
+    fn linux_root_uid_detected() {
+        assert!(linux_is_root_uid(0));
+    }
+
+    #[test]
+    fn linux_non_root_uid_not_detected() {
+        assert!(!linux_is_root_uid(1000));
+        assert!(!linux_is_root_uid(1));
+    }
+
+    // -------------------------------------------------------------------------
     // Platform constants (issue #1012 Sentry tagging)
     // -------------------------------------------------------------------------
 
@@ -3589,5 +3713,35 @@ mod tests {
             Some(v) => std::env::set_var("PATH", v),
             None => std::env::remove_var("PATH"),
         }
+    }
+
+    /// Regression guard for issue #2228: `tauri-plugin-single-instance` must
+    /// enable the `deep-link` feature so that second-launch deep-link payloads
+    /// (e.g. `openhuman://oauth/...` callbacks from Windows/Linux system
+    /// browsers) are forwarded into the primary instance. Without it, hot OAuth
+    /// callbacks silently no-op while only focusing the existing window.
+    #[test]
+    fn single_instance_dep_enables_deep_link_feature() {
+        let manifest_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
+        let manifest =
+            std::fs::read_to_string(&manifest_path).expect("read app/src-tauri/Cargo.toml");
+        let parsed: toml::Value = manifest.parse().expect("parse Cargo.toml");
+
+        let dep = parsed
+            .get("dependencies")
+            .and_then(|d| d.get("tauri-plugin-single-instance"))
+            .expect("tauri-plugin-single-instance dependency must exist");
+
+        let features = dep.get("features").and_then(|f| f.as_array()).expect(
+            "tauri-plugin-single-instance must be a table with a `features` array \
+                 — issue #2228 requires the `deep-link` feature to forward hot-instance \
+                 OAuth callbacks on Windows/Linux",
+        );
+
+        assert!(
+            features.iter().any(|v| v.as_str() == Some("deep-link")),
+            "tauri-plugin-single-instance must enable the `deep-link` feature \
+             (issue #2228 — hot-instance OAuth callback forwarding)"
+        );
     }
 }

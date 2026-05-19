@@ -256,6 +256,61 @@ pub async fn trigger_digest_rpc(
     ))
 }
 
+/// Response from the `memory_backfill_status` RPC (#1574 §4b). The frontend
+/// polls this while the re-embed modal is open to surface progress and to
+/// dismiss the modal once the new embedding space is fully covered.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct BackfillStatusResponse {
+    /// True while a re-embed backfill chain still has work pending — the
+    /// #1365 flag OR a queued/running `reembed_backfill` job.
+    pub in_progress: bool,
+    /// Count of `reembed_backfill` jobs in `ready` or `running` state. `0`
+    /// with `in_progress=false` means the active embedding space is fully
+    /// covered (modal can close).
+    pub pending_jobs: u64,
+}
+
+/// `memory_backfill_status` RPC handler (#1574 §4b). No inputs — reports
+/// whether a per-model re-embed backfill is in flight so the UI can warn
+/// the user that semantic recall is reduced until it drains.
+pub async fn backfill_status_rpc(
+    config: &Config,
+) -> Result<RpcOutcome<BackfillStatusResponse>, String> {
+    log::debug!("[memory_tree::rpc] backfill_status: entry");
+    // SQLite I/O off the async runtime thread, matching the sibling
+    // DB-backed handlers in this module (`get_chunk_rpc`, etc.).
+    let pending_jobs: u64 = tokio::task::spawn_blocking({
+        let config = config.clone();
+        move || {
+            store::with_connection(&config, |conn| {
+                let n: i64 = conn.query_row(
+                    "SELECT COUNT(*) FROM mem_tree_jobs
+                      WHERE kind = 'reembed_backfill' AND status IN ('ready', 'running')",
+                    [],
+                    |r| r.get(0),
+                )?;
+                Ok(n.max(0) as u64)
+            })
+        }
+    })
+    .await
+    .map_err(|e| format!("memory_backfill_status join error: {e}"))?
+    .map_err(|e| {
+        let msg = format!("memory_backfill_status: {e}");
+        log::debug!("[memory_tree::rpc] backfill_status: error: {msg}");
+        msg
+    })?;
+    let in_progress =
+        crate::openhuman::memory::tree::jobs::backfill_in_progress() || pending_jobs > 0;
+    Ok(RpcOutcome::single_log(
+        BackfillStatusResponse {
+            in_progress,
+            pending_jobs,
+        },
+        format!("memory_tree: backfill_status in_progress={in_progress} pending={pending_jobs}"),
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -326,5 +381,31 @@ mod tests {
         assert!(!second.enqueued, "duplicate must be dedupe-suppressed");
         assert!(second.job_id.is_none());
         assert_eq!(count_total(&cfg).unwrap(), 1);
+    }
+
+    /// #1574 §4b: `backfill_status_rpc` reports 0 pending on an idle space
+    /// and reflects a queued `reembed_backfill` job (forcing `in_progress`).
+    /// `in_progress` for the empty case is intentionally not asserted — the
+    /// underlying flag is a process-global shared across parallel tests.
+    #[tokio::test]
+    async fn backfill_status_reports_pending_jobs() {
+        use crate::openhuman::memory::tree::jobs;
+        let (_tmp, cfg) = test_config();
+
+        let s0 = backfill_status_rpc(&cfg).await.unwrap().value;
+        assert_eq!(s0.pending_jobs, 0, "idle space has no pending backfill");
+
+        let job = jobs::types::NewJob::reembed_backfill(&jobs::types::ReembedBackfillPayload {
+            signature: "provider=test;model=x;dims=1".into(),
+        })
+        .unwrap();
+        jobs::enqueue(&cfg, &job).unwrap();
+
+        let s1 = backfill_status_rpc(&cfg).await.unwrap().value;
+        assert_eq!(
+            s1.pending_jobs, 1,
+            "a ready reembed_backfill job must count"
+        );
+        assert!(s1.in_progress, "pending>0 forces in_progress=true");
     }
 }
