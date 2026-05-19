@@ -586,6 +586,19 @@ impl PolymarketTool {
         Ok(creds)
     }
 
+    /// Persists derived CLOB credentials to the config TOML.
+    ///
+    /// **Best-effort only.** The in-memory `cached_clob_credentials` Mutex
+    /// is the authoritative source within the lifetime of this
+    /// PolymarketTool instance — `persist_clob_credentials` exists so that
+    /// a future process restart can reuse the L2 key/secret without
+    /// re-running the L1 EIP-712 handshake. The caller already logs a
+    /// warn on failure and continues; the live request path is unaffected.
+    ///
+    /// Concurrent persists from multiple tools could clobber each other
+    /// because the whole config is loaded-then-saved. Acceptable for the
+    /// current single-process model; will move to the `SecretStore`
+    /// transactional surface once #1900 lands.
     async fn persist_clob_credentials(&self, creds: &ClobCredentials) -> Result<()> {
         let mut config = config_rpc::load_config_with_timeout()
             .await
@@ -692,6 +705,13 @@ impl PolymarketTool {
         let token_contract = Address::from_str(&self.usdc_contract)
             .with_context(|| format!("Invalid usdc_contract address '{}'", self.usdc_contract))?;
 
+        // Hand-rolled ABI encoding for ERC-20 `allowance(address,address)`:
+        //   * selector `0xdd62ed3e` = first 4 bytes of keccak256("allowance(address,address)")
+        //   * each Address is 20 bytes = 40 hex chars; `:0>64` left-pads to
+        //     the 32-byte ABI word (12 bytes of leading zeros)
+        // Hand-rolled because pulling alloy-sol-types or ethabi for a single
+        // view call would balloon the dependency tree; the encoding is
+        // small and frozen.
         let data = format!(
             "0xdd62ed3e{:0>64}{:0>64}",
             hex::encode(owner.as_bytes()),
@@ -1238,6 +1258,18 @@ fn first_item_from_collection(data: Value, slug: &str) -> Result<Value> {
     }
 }
 
+/// Approval-flag stopgap for Polymarket writes.
+///
+/// **Security note:** this is a client-enforced string check on the
+/// arguments JSON. If the agent harness ever invokes `execute()` without
+/// the normal approval channel — or if an LLM hallucinates
+/// `"approved": true` into the arguments — this gate alone stands between
+/// the model and a live, EIP-712-signed order on Polymarket. The
+/// `SecurityPolicy::enforce_tool_operation(ToolOperation::Act, ...)` call
+/// upstream is the framework-level autonomy gate that protects against
+/// hallucinated approvals in autonomy-restricted modes; this function
+/// covers the friendly-flow approval. **Both must remain in place until
+/// #1339 replaces this with a real out-of-band approval channel.**
 fn require_write_approval(approved: Option<bool>) -> Result<()> {
     if approved.unwrap_or(false) {
         return Ok(());
@@ -1260,11 +1292,23 @@ fn same_evm_address(left: &str, right: &str) -> bool {
     left.trim().eq_ignore_ascii_case(right.trim())
 }
 
+/// Floor-rounds size to the CLOB's required precision.
+///
+/// Order **sizes** must round DOWN (floor): rounding up would cause the
+/// signed order to commit the EOA to more collateral than the user
+/// intended, which can fail the on-chain transfer or — worse — succeed
+/// and over-sell. Floor is the safe direction.
 fn round_down(value: f64, decimals: u32) -> f64 {
     let factor = 10_f64.powi(decimals as i32);
     (value * factor).floor() / factor
 }
 
+/// Half-up rounds price to the CLOB's required tick.
+///
+/// Order **prices** use bankers-default (half-up) rounding: rounding
+/// down would systematically under-quote the user's bid/ask and skew
+/// their fills below market. Asymmetric vs `round_down` for size is
+/// intentional — different invariants for the two scalars.
 fn round_normal(value: f64, decimals: u32) -> f64 {
     let factor = 10_f64.powi(decimals as i32);
     (value * factor).round() / factor

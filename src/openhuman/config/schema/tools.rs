@@ -619,6 +619,20 @@ pub struct PolymarketConfig {
     pub usdc_contract: String,
     #[serde(default = "default_polymarket_clob_exchange_contract")]
     pub clob_exchange_contract: String,
+    /// Persisted L2 CLOB credentials (api_key, secret, passphrase) derived
+    /// from the user's EOA via the L1 EIP-712 handshake against
+    /// `/auth/api-key`.
+    ///
+    /// **Threat model — temporary plaintext.** Stored in the TOML config
+    /// file in plaintext until #1900 lands the `SecretStore` encryption
+    /// surface. Anything that reads the config (other tools, agents,
+    /// disk-snapshot exfil) can exfiltrate the HMAC secret. Acceptable
+    /// trade-off for a Beta feature that is off by default
+    /// (`integrations.polymarket.enabled = false`) and explicitly
+    /// opt-in. Migrate to SecretStore the moment #1900 merges — the in-
+    /// memory cache (`PolymarketTool::cached_clob_credentials`) remains
+    /// authoritative within a single process so the wire-level behaviour
+    /// is unchanged on the migration.
     #[serde(default)]
     pub derived_clob_credentials: Option<PolymarketClobCredentials>,
 }
