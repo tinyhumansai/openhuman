@@ -347,7 +347,7 @@ fn decode_base64_secret(secret: &str) -> Result<Vec<u8>> {
     Ok(general_purpose::STANDARD.decode(padded)?)
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct ClobAuthResponse {
     #[serde(default, alias = "apiKey", alias = "key")]
     api_key: String,
@@ -355,6 +355,16 @@ struct ClobAuthResponse {
     secret: String,
     #[serde(default)]
     passphrase: String,
+}
+
+impl std::fmt::Debug for ClobAuthResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ClobAuthResponse")
+            .field("api_key", &"<redacted>")
+            .field("secret", &"<redacted>")
+            .field("passphrase", &"<redacted>")
+            .finish()
+    }
 }
 
 impl ClobAuthResponse {
