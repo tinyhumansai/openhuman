@@ -15,7 +15,24 @@ import ChannelSetupModal from '../../channels/ChannelSetupModal';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
-const CHANNEL_ICONS: Record<string, string> = { telegram: '✈️', discord: '🎮', web: '🌐' };
+/**
+ * Mapping from `ChannelDefinition.icon` slugs to the emoji rendered next to
+ * each channel in the Messaging settings panel. Exported so unit tests can
+ * assert against it without rendering the full panel (the panel pulls in
+ * Redux, i18n, routing, and `useChannelDefinitions`, all of which make a
+ * focused render test more expensive than a direct mapping assertion).
+ * Keep in sync with the icon slugs returned by the backend
+ * `channels::controllers::definitions::all_channel_definitions`.
+ */
+export const CHANNEL_ICONS: Record<string, string> = {
+  telegram: '✈️',
+  discord: '🎮',
+  web: '🌐',
+  // Lark (国际版) / Feishu (中国版) — same backend, single icon. See #2048.
+  lark: '🪶',
+  // DingTalk (钉钉). See #2048.
+  dingtalk: '🔔',
+};
 
 function statusDot(status: ChannelConnectionStatus): string {
   switch (status) {

@@ -73,6 +73,7 @@ export interface ModelSettingsUpdate {
   /** @deprecated No longer used — slug-based routing replaces primary_cloud. */
   primary_cloud?: string | null;
   /** Per-workload provider strings — see Rust `providers::factory` grammar. */
+  chat_provider?: string | null;
   reasoning_provider?: string | null;
   agentic_provider?: string | null;
   coding_provider?: string | null;
@@ -210,6 +211,7 @@ export interface ClientConfig {
   /** Id of the `cloud_providers` entry resolved by the `"cloud"` sentinel. */
   primary_cloud: string | null;
   /** Per-workload provider strings (e.g. `"cloud"`, `"ollama:llama3.1:8b"`, `"openai:gpt-4o"`). */
+  chat_provider: string | null;
   reasoning_provider: string | null;
   agentic_provider: string | null;
   coding_provider: string | null;

@@ -30,6 +30,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("list_chunks"),
         schemas("get_chunk"),
         schemas("trigger_digest"),
+        schemas("memory_backfill_status"),
         schemas("list_sources"),
         schemas("search"),
         schemas("recall"),
@@ -66,6 +67,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("trigger_digest"),
             handler: handle_trigger_digest,
+        },
+        RegisteredController {
+            schema: schemas("memory_backfill_status"),
+            handler: handle_memory_backfill_status,
         },
         RegisteredController {
             schema: schemas("list_sources"),
@@ -712,6 +717,32 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 },
             ],
         },
+        "memory_backfill_status" => ControllerSchema {
+            namespace: NAMESPACE,
+            function: "memory_backfill_status",
+            description: "Report whether a per-model embedding re-embed \
+                backfill (#1574) is in flight. The UI polls this while the \
+                re-embed modal is open: semantic recall over not-yet-\
+                re-embedded memory is reduced until the chain drains.",
+            inputs: vec![],
+            outputs: vec![
+                FieldSchema {
+                    name: "in_progress",
+                    ty: TypeSchema::Bool,
+                    comment: "True while a re-embed backfill still has work \
+                        pending (flag set or a ready/running job).",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "pending_jobs",
+                    ty: TypeSchema::U64,
+                    comment: "Count of reembed_backfill jobs in ready or \
+                        running state; 0 with in_progress=false means the \
+                        active embedding space is fully covered.",
+                    required: true,
+                },
+            ],
+        },
         _ => ControllerSchema {
             namespace: NAMESPACE,
             function: "unknown",
@@ -753,6 +784,13 @@ fn handle_trigger_digest(params: Map<String, Value>) -> ControllerFuture {
         let config = config_rpc::load_config_with_timeout().await?;
         let req = parse_value::<tree_rpc::TriggerDigestRequest>(Value::Object(params))?;
         to_json(tree_rpc::trigger_digest_rpc(&config, req).await?)
+    })
+}
+
+fn handle_memory_backfill_status(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        to_json(tree_rpc::backfill_status_rpc(&config).await?)
     })
 }
 

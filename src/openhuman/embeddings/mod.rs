@@ -28,7 +28,7 @@ pub use factory::{
 pub use noop::NoopEmbedding;
 pub use ollama::{OllamaEmbedding, DEFAULT_OLLAMA_DIMENSIONS, DEFAULT_OLLAMA_MODEL};
 pub use openai::OpenAiEmbedding;
-pub use provider_trait::EmbeddingProvider;
+pub use provider_trait::{format_embedding_signature, EmbeddingProvider};
 pub use store::{bytes_to_vec, cosine_similarity, vec_to_bytes, SearchResult, VectorStore};
 
 #[cfg(test)]

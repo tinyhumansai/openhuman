@@ -228,7 +228,13 @@ pub fn effective_backend_api_url(api_url: &Option<String>) -> String {
         }
     }
     if let Some(env_url) = api_base_from_env() {
-        return env_url;
+        // Strip any inference-style path that slipped through the env /
+        // compile-time bake (`BACKEND_URL=https://api.tinyhumans.ai/openai/v1/chat/completions`
+        // produces a backend base that 404s every domain path — see Sentry
+        // `OPENHUMAN-TAURI-H6 / -HN`, issue #2075). The override branch
+        // above already normalizes; without normalizing here the env path
+        // silently bypassed it.
+        return normalize_backend_api_base_url(&env_url);
     }
     default_api_base_url_for_env(app_env_from_env().as_deref()).to_string()
 }
@@ -239,9 +245,21 @@ pub fn effective_backend_api_url(api_url: &Option<String>) -> String {
 /// as `https://api.tinyhumans.ai/openai/v1/chat/completions`. Backend
 /// callers append domain-specific paths, so the LLM-specific path must not
 /// survive into the backend base.
-fn normalize_backend_api_base_url(url: &str) -> String {
+pub(crate) fn normalize_backend_api_base_url(url: &str) -> String {
     let normalized = normalize_api_base_url(url);
-    let Ok(mut parsed) = url::Url::parse(&normalized) else {
+    if normalized.is_empty() {
+        return normalized;
+    }
+    // Try parsing as-is first; if it fails (no scheme — e.g. a misbaked
+    // `BACKEND_URL=api.tinyhumans.ai/openai/v1/chat/completions`),
+    // retry with an `https://` prefix so we can still strip the path
+    // before the value is used as a base. Without this fallback, a
+    // scheme-less override carrying an inference path fell straight
+    // through to `api_url()` + `fallback_concat()`, reproducing the
+    // exact 404 URLs in Sentry `OPENHUMAN-TAURI-H6 / -HN` (issue #2075).
+    let parsed =
+        url::Url::parse(&normalized).or_else(|_| url::Url::parse(&format!("https://{normalized}")));
+    let Ok(mut parsed) = parsed else {
         return normalized;
     };
 
@@ -272,7 +290,7 @@ fn warn_backend_url_fallback_once(local_url: &str) {
     });
 }
 
-fn redact_url_for_log(raw: &str) -> String {
+pub(crate) fn redact_url_for_log(raw: &str) -> String {
     let trimmed = raw.trim();
     // Attempt bare-host parsing (e.g. "localhost:1234") before giving up so
     // that non-scheme URLs are still redacted rather than returned verbatim.
@@ -945,5 +963,45 @@ mod tests {
         let api = effective_api_url(&None);
 
         assert_eq!(integrations, api);
+    }
+
+    #[test]
+    fn effective_backend_api_url_strips_inference_path_from_env() {
+        // Regression for issue #2075 / Sentry OPENHUMAN-TAURI-H6, -HN: a
+        // misconfigured `BACKEND_URL` baked an inference path into the
+        // env-fallback branch, which silently fell through to integration
+        // callers as e.g.
+        //   …/openai/v1/chat/completions/agent-integrations/composio/connections
+        let _guard = env_lock();
+        let _env = EnvSnapshot::clear_backend_env();
+        std::env::set_var(
+            "BACKEND_URL",
+            "https://api.tinyhumans.ai/openai/v1/chat/completions",
+        );
+
+        let result = effective_backend_api_url(&None);
+
+        assert_eq!(result, "https://api.tinyhumans.ai");
+    }
+
+    #[test]
+    fn normalize_backend_api_base_url_handles_schemeless_input() {
+        // Defensive: env files / compile-time bakes sometimes drop the
+        // scheme. Without the `https://` fallback we used to return the
+        // raw string unchanged, leaving the inference path attached.
+        let cleaned =
+            normalize_backend_api_base_url("api.tinyhumans.ai/openai/v1/chat/completions");
+        assert_eq!(cleaned, "https://api.tinyhumans.ai");
+    }
+
+    #[test]
+    fn normalize_backend_api_base_url_passes_through_clean_root() {
+        let cleaned = normalize_backend_api_base_url("https://api.tinyhumans.ai/");
+        assert_eq!(cleaned, "https://api.tinyhumans.ai");
+    }
+
+    #[test]
+    fn normalize_backend_api_base_url_empty_string_is_idempotent() {
+        assert_eq!(normalize_backend_api_base_url(""), "");
     }
 }

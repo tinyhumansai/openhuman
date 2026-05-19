@@ -6,11 +6,30 @@
 //!
 //! Upsert semantics: writes are idempotent on `chunk.id` so re-ingesting the
 //! same raw source yields no duplicates.
+//!
+//! ## Connection cache (#2206)
+//!
+//! `with_connection()` previously opened a new SQLite connection and re-ran
+//! the full schema init (8 tables, 15+ indexes, 8+ migrations) on **every**
+//! call. With 4 workers polling every 5 s this amounted to ~69K connection
+//! opens/day, and three I/O error codes (1546 IOERR_TRUNCATE, 4874
+//! IOERR_SHMMAP, 14 CANTOPEN) flooded Sentry with ~19K events in 4 days.
+//!
+//! Fix: a process-level `ConnectionCache` keyed by DB path. Each entry holds
+//! one `parking_lot::Mutex<Connection>` that is initialised once (schema +
+//! migrations + legacy-embedding migration) and then reused for all subsequent
+//! calls. A per-entry `CircuitBreaker` stops retrying after 3 consecutive
+//! init failures for 30 s so a broken install does not busy-loop.
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, TimeZone, Utc};
+use parking_lot::Mutex as PMutex;
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
-use std::time::Duration;
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::{Arc, OnceLock};
+use std::time::{Duration, Instant};
 
 use crate::openhuman::config::Config;
 use crate::openhuman::memory::tree::content_store::StagedChunk;
@@ -42,6 +61,11 @@ pub const CHUNK_STATUS_BUFFERED: &str = "buffered";
 pub const CHUNK_STATUS_SEALED: &str = "sealed";
 /// Chunk lifecycle: rejected by the admission gate (too low signal).
 pub const CHUNK_STATUS_DROPPED: &str = "dropped";
+
+/// `PRAGMA user_version` value once the one-shot legacy→sidecar embedding
+/// migration (#1574 §7) has run. `0` (fresh/legacy DB) triggers the copy on
+/// next open; `>= 1` skips it. Bump only for a new one-shot data migration.
+const TREE_EMBEDDING_MIGRATION_VERSION: i64 = 1;
 
 const SCHEMA: &str = "
 PRAGMA foreign_keys = ON;
@@ -689,20 +713,136 @@ fn ms_to_utc(ms: i64) -> rusqlite::Result<DateTime<Utc>> {
     })
 }
 
-/// Open the memory_tree SQLite DB and run a closure against it.
+// ── Connection cache (#2206) ─────────────────────────────────────────────────
+
+/// How many consecutive init failures before the circuit breaker trips.
+const CB_THRESHOLD: u32 = 3;
+/// How long the circuit breaker holds the DB closed after tripping.
+const CB_COOLDOWN: Duration = Duration::from_secs(30);
+
+/// Per-path circuit breaker: after [`CB_THRESHOLD`] consecutive init failures
+/// the breaker trips and `get_or_init_connection` returns an error immediately
+/// until [`CB_COOLDOWN`] elapses. On the first success it resets to zero.
+struct CircuitBreaker {
+    consecutive_failures: AtomicU32,
+    tripped: AtomicBool,
+    last_trip: PMutex<Option<Instant>>,
+}
+
+impl CircuitBreaker {
+    fn new() -> Self {
+        Self {
+            consecutive_failures: AtomicU32::new(0),
+            tripped: AtomicBool::new(false),
+            last_trip: PMutex::new(None),
+        }
+    }
+
+    fn record_success(&self) {
+        self.consecutive_failures.store(0, Ordering::Relaxed);
+        self.tripped.store(false, Ordering::Relaxed);
+        *self.last_trip.lock() = None;
+    }
+
+    /// Records one more failure. Returns `true` if this call just tripped the
+    /// breaker (i.e. the threshold was crossed right now).
+    fn record_failure(&self) -> bool {
+        let prev = self.consecutive_failures.fetch_add(1, Ordering::Relaxed);
+        let count = prev + 1;
+        if count >= CB_THRESHOLD && !self.tripped.swap(true, Ordering::Relaxed) {
+            *self.last_trip.lock() = Some(Instant::now());
+            return true;
+        }
+        // Re-arm the cooldown on each subsequent failure while already tripped
+        // so that a failed post-cooldown retry restarts the 30 s window instead
+        // of leaving the stale timestamp in place (which would let `is_open`
+        // return false immediately and allow unlimited retries).
+        if self.tripped.load(Ordering::Relaxed) {
+            *self.last_trip.lock() = Some(Instant::now());
+        }
+        false
+    }
+
+    /// Returns `true` when the breaker is open AND the cooldown has not yet
+    /// elapsed. Returns `false` (allowing a retry) once the cooldown passes.
+    fn is_open(&self) -> bool {
+        if !self.tripped.load(Ordering::Relaxed) {
+            return false;
+        }
+        let guard = self.last_trip.lock();
+        match *guard {
+            Some(t) if t.elapsed() < CB_COOLDOWN => true,
+            _ => false,
+        }
+    }
+}
+
+/// Process-level cache — two separate maps so that a failing init cannot
+/// accidentally serve a dummy connection on the fast path.
 ///
-/// Visible to sibling modules (e.g. `score::store`) so Phase 2 can reuse
-/// the same connection setup / schema initialisation without duplication.
-pub(crate) fn with_connection<T>(
-    config: &Config,
-    f: impl FnOnce(&Connection) -> Result<T>,
-) -> Result<T> {
-    let dir = config.workspace_dir.join(DB_DIR);
-    std::fs::create_dir_all(&dir)
-        .with_context(|| format!("Failed to create memory_tree dir: {}", dir.display()))?;
-    let db_path = dir.join(DB_FILE);
-    let conn = Connection::open(&db_path)
-        .with_context(|| format!("Failed to open memory_tree DB: {}", db_path.display()))?;
+/// `connections`: only fully-initialised (schema + migrations run) entries.
+/// `breakers`:    persists across failed init attempts so the circuit breaker
+///                survives even when `connections` has no entry for that path.
+struct ConnectionCache {
+    connections: PMutex<HashMap<PathBuf, Arc<PMutex<Connection>>>>,
+    breakers: PMutex<HashMap<PathBuf, Arc<CircuitBreaker>>>,
+}
+
+static CONN_CACHE: OnceLock<ConnectionCache> = OnceLock::new();
+
+fn conn_cache() -> &'static ConnectionCache {
+    CONN_CACHE.get_or_init(|| ConnectionCache {
+        connections: PMutex::new(HashMap::new()),
+        breakers: PMutex::new(HashMap::new()),
+    })
+}
+
+/// Compute the canonical DB path from `config`.
+fn db_path_for(config: &Config) -> PathBuf {
+    config.workspace_dir.join(DB_DIR).join(DB_FILE)
+}
+
+/// Delete stale WAL/SHM side-files (`<db>-shm`, `<db>-wal`) that can block a
+/// clean DB open after a crash. Logs what was deleted and returns `true` if
+/// anything was removed.
+///
+/// SQLite names these files `<db_path>-shm` and `<db_path>-wal`.
+/// For `chunks.db` that is `chunks.db-shm` / `chunks.db-wal`.
+pub(crate) fn try_cleanup_stale_files(db_path: &std::path::Path) -> bool {
+    let mut cleaned = false;
+    for suffix in &["-shm", "-wal"] {
+        // Build the side-file path: append suffix to the full db filename.
+        let side = {
+            let mut p = db_path.to_path_buf();
+            let name = p
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned();
+            p.set_file_name(format!("{name}{suffix}"));
+            p
+        };
+        if side.exists() {
+            match std::fs::remove_file(&side) {
+                Ok(()) => {
+                    log::warn!("[memory_tree] removed stale side-file: {}", side.display());
+                    cleaned = true;
+                }
+                Err(e) => {
+                    log::warn!(
+                        "[memory_tree] failed to remove stale side-file {}: {e}",
+                        side.display()
+                    );
+                }
+            }
+        }
+    }
+    cleaned
+}
+
+/// Run the full one-time DB initialisation (WAL, schema, migrations) against
+/// an already-open `Connection`. Used by `get_or_init_connection`.
+fn init_db(conn: &Connection, config: &Config) -> Result<()> {
     conn.busy_timeout(SQLITE_BUSY_TIMEOUT)
         .context("Failed to configure memory_tree busy timeout")?;
     if let Err(wal_err) = conn.execute_batch("PRAGMA journal_mode=WAL;") {
@@ -713,28 +853,20 @@ pub(crate) fn with_connection<T>(
     conn.execute_batch(SCHEMA)
         .context("Failed to initialize memory_tree schema")?;
     // Phase 2 migrations — additive, idempotent.
-    add_column_if_missing(&conn, "mem_tree_chunks", "embedding", "BLOB")?;
+    add_column_if_missing(conn, "mem_tree_chunks", "embedding", "BLOB")?;
     // Phase 2 LLM-NER follow-up: per-chunk LLM importance signal +
     // human-readable reason. Both nullable; absence is treated as
     // "no LLM signal available" by readers.
-    add_column_if_missing(&conn, "mem_tree_score", "llm_importance", "REAL")?;
-    add_column_if_missing(&conn, "mem_tree_score", "llm_importance_reason", "TEXT")?;
-    // Phase 3a (#709): parent-summary backlink on leaves. Populated when
-    // the L0 buffer seals into an L1 summary so traversal can walk
-    // leaf → parent without scanning `mem_tree_summaries.child_ids_json`.
-    add_column_if_missing(&conn, "mem_tree_chunks", "parent_summary_id", "TEXT")?;
+    add_column_if_missing(conn, "mem_tree_score", "llm_importance", "REAL")?;
+    add_column_if_missing(conn, "mem_tree_score", "llm_importance_reason", "TEXT")?;
+    // Phase 3a (#709): parent-summary backlink on leaves.
+    add_column_if_missing(conn, "mem_tree_chunks", "parent_summary_id", "TEXT")?;
     // Phase 4 (#710): sealed-summary embeddings for semantic rerank.
-    // Blob layout matches `mem_tree_chunks.embedding` — see
-    // `score::embed::{pack_embedding, unpack_embedding}`. Nullable so
-    // legacy summaries from Phases 1-3 read back as None; retrieval
-    // tolerates NULL by dropping the row to the bottom of a rerank.
-    add_column_if_missing(&conn, "mem_tree_summaries", "embedding", "BLOB")?;
+    add_column_if_missing(conn, "mem_tree_summaries", "embedding", "BLOB")?;
     // Async-pipeline lifecycle flag. Default 'admitted' so chunks ingested
-    // before the queue migration stay queryable. New writes start at
-    // 'pending_extraction'; the extract handler advances them to 'admitted'
-    // (then 'buffered' / 'sealed') or 'dropped'.
+    // before the queue migration stay queryable.
     add_column_if_missing(
-        &conn,
+        conn,
         "mem_tree_chunks",
         "lifecycle_status",
         "TEXT NOT NULL DEFAULT 'admitted'",
@@ -744,39 +876,301 @@ pub(crate) fn with_connection<T>(
          ON mem_tree_chunks(lifecycle_status);",
     )
     .context("Failed to create mem_tree_chunks lifecycle index")?;
-    // Phase MD-content (#TBD): pointer + integrity hash. Body lives at
-    // <content_root>/<content_path> as a .md file. Both nullable so chunks
-    // ingested before this migration read back with NULL (body still in
-    // `content`). New writes populate both columns. The `content` column
-    // stores a 500-char plain-text preview instead of the full body.
-    add_column_if_missing(&conn, "mem_tree_chunks", "content_path", "TEXT")?;
-    add_column_if_missing(&conn, "mem_tree_chunks", "content_sha256", "TEXT")?;
-    // Phase MD-content (summaries): same pointer pattern for summary nodes.
-    // `content_path` is the relative path to the .md file under
-    // `<content_root>/summaries/...`. `content_sha256` is the SHA-256 hex
-    // of the body bytes only (front-matter excluded). Both nullable so
-    // legacy rows (from before this migration) read back with NULL — callers
-    // fall back to the `content` column for those rows.
-    add_column_if_missing(&conn, "mem_tree_summaries", "content_path", "TEXT")?;
-    add_column_if_missing(&conn, "mem_tree_summaries", "content_sha256", "TEXT")?;
-    // Raw-archive pointer column. JSON array of {path, start, end} —
-    // used by chunks whose body comes from one or more files under
-    // `<content_root>/raw/...` (today: email). When set, `read_chunk_body`
-    // reads + concatenates those byte ranges instead of fetching from
-    // disk via `content_path` or falling back to the SQL `content`
-    // preview. Nullable so legacy chunks keep working unchanged.
-    add_column_if_missing(&conn, "mem_tree_chunks", "raw_refs_json", "TEXT")?;
-    // #1365: is_user flag on indexed entity rows. Set at write time by
-    // running the canonical id through the Composio identity registry
-    // (`is_self_identity_any_toolkit`). Default 0 so legacy rows read
-    // back as "not user" until the backfill job re-tags them.
+    // Phase MD-content (#TBD): pointer + integrity hash.
+    add_column_if_missing(conn, "mem_tree_chunks", "content_path", "TEXT")?;
+    add_column_if_missing(conn, "mem_tree_chunks", "content_sha256", "TEXT")?;
+    // Phase MD-content (summaries).
+    add_column_if_missing(conn, "mem_tree_summaries", "content_path", "TEXT")?;
+    add_column_if_missing(conn, "mem_tree_summaries", "content_sha256", "TEXT")?;
+    // Raw-archive pointer column.
+    add_column_if_missing(conn, "mem_tree_chunks", "raw_refs_json", "TEXT")?;
+    // #1365: is_user flag on indexed entity rows.
     add_column_if_missing(
-        &conn,
+        conn,
         "mem_tree_entity_index",
         "is_user",
         "INTEGER NOT NULL DEFAULT 0",
     )?;
-    f(&conn)
+    // #1574 §7: one-shot, version-gated legacy→sidecar embedding migration.
+    migrate_legacy_embeddings_to_sidecar(conn, config)?;
+    Ok(())
+}
+
+/// Whether `err` looks like one of the I/O error codes that warrant a
+/// stale-file cleanup + single retry before giving up.
+fn is_io_open_error(err: &anyhow::Error) -> bool {
+    if let Some(rusqlite::Error::SqliteFailure(f, _)) = err.downcast_ref::<rusqlite::Error>() {
+        // 1546 = SQLITE_IOERR_TRUNCATE, 4874 = SQLITE_IOERR_SHMMAP, 14 = SQLITE_CANTOPEN
+        return matches!(f.extended_code, 1546 | 4874 | 14)
+            || f.code == rusqlite::ErrorCode::CannotOpen;
+    }
+    let msg = format!("{err:#}").to_ascii_lowercase();
+    msg.contains("disk i/o error")
+        || msg.contains("unable to open database file")
+        || msg.contains("xshmmap")
+        || msg.contains("truncate file")
+}
+
+/// Obtain (or lazily create) a cached connection for the workspace described
+/// by `config`. Returns `Err` immediately when the circuit breaker is open.
+fn get_or_init_connection(config: &Config) -> Result<Arc<PMutex<Connection>>> {
+    let db_path = db_path_for(config);
+
+    // ── Fast path: reject immediately if the breaker is open ─────────────
+    {
+        let breakers = conn_cache().breakers.lock();
+        if let Some(breaker) = breakers.get(&db_path) {
+            if breaker.is_open() {
+                anyhow::bail!(
+                    "[memory_tree] circuit breaker open for {}: too many consecutive init failures",
+                    db_path.display()
+                );
+            }
+        }
+    }
+    // ── Fast path: return cached connection if already initialised ────────
+    {
+        let guard = conn_cache().connections.lock();
+        if let Some(conn) = guard.get(&db_path) {
+            return Ok(Arc::clone(conn));
+        }
+    }
+
+    // ── Slow path: initialise DB, then insert into cache ─────────────────
+    log::debug!(
+        "[memory_tree] opening and initialising DB at {}",
+        db_path.display()
+    );
+
+    // Attempt to open + init the connection (dir creation is inside
+    // `open_and_init` so every failure — including EEXIST on the dir —
+    // reaches the circuit-breaker recording logic below). On certain I/O
+    // errors (#2206) we clean up stale WAL/SHM side-files and retry once.
+    let conn = open_and_init(&db_path, config).or_else(|first_err| {
+        if is_io_open_error(&first_err) {
+            log::warn!(
+                "[memory_tree] I/O error on first open attempt ({}), cleaning stale files and retrying",
+                first_err
+            );
+            try_cleanup_stale_files(&db_path);
+            open_and_init(&db_path, config)
+        } else {
+            Err(first_err)
+        }
+    });
+
+    match conn {
+        Ok(conn) => {
+            let arc_conn = Arc::new(PMutex::new(conn));
+            conn_cache()
+                .connections
+                .lock()
+                .insert(db_path.clone(), Arc::clone(&arc_conn));
+            // Reset any prior failure counter now that init succeeded.
+            if let Some(breaker) = conn_cache().breakers.lock().get(&db_path) {
+                breaker.record_success();
+            }
+            log::debug!("[memory_tree] DB connection cached and ready");
+            Ok(arc_conn)
+        }
+        Err(err) => {
+            // Persist the breaker so the failure count accumulates across
+            // calls even though no connection entry exists yet.
+            let breaker = {
+                let mut guard = conn_cache().breakers.lock();
+                guard
+                    .entry(db_path.clone())
+                    .or_insert_with(|| Arc::new(CircuitBreaker::new()))
+                    .clone()
+            };
+            let just_tripped = breaker.record_failure();
+            if just_tripped {
+                log::error!(
+                    "[memory_tree] circuit breaker tripped for {}: {} consecutive init failures",
+                    db_path.display(),
+                    CB_THRESHOLD
+                );
+                let _ = crate::core::event_bus::publish_global(
+                    crate::core::event_bus::DomainEvent::HealthChanged {
+                        component: "memory_tree_db".to_string(),
+                        healthy: false,
+                        message: Some(format!(
+                            "Schema init failed {CB_THRESHOLD} consecutive times"
+                        )),
+                    },
+                );
+            }
+            Err(err)
+        }
+    }
+}
+
+/// Ensure the DB directory exists, open the SQLite file, and run the full
+/// schema init sequence. All errors (dir creation, file open, schema init)
+/// are returned as `Err` so callers can funnel them through the circuit
+/// breaker logic in a single place.
+fn open_and_init(db_path: &std::path::Path, config: &Config) -> Result<Connection> {
+    let dir = db_path.parent().expect("db_path always has a parent");
+    std::fs::create_dir_all(dir)
+        .with_context(|| format!("Failed to create memory_tree dir: {}", dir.display()))?;
+    let conn = Connection::open(db_path)
+        .with_context(|| format!("Failed to open memory_tree DB: {}", db_path.display()))?;
+    init_db(&conn, config)
+        .with_context(|| format!("Failed to init memory_tree schema: {}", db_path.display()))?;
+    Ok(conn)
+}
+
+/// Remove the cached connection for `config`'s workspace (forces a fresh open
+/// on the next `with_connection` call). Also clears the breaker so the next
+/// open attempt is not immediately rejected. Does nothing if no entry exists.
+#[allow(dead_code)]
+pub(crate) fn invalidate_connection(config: &Config) {
+    let db_path = db_path_for(config);
+    conn_cache().connections.lock().remove(&db_path);
+    conn_cache().breakers.lock().remove(&db_path);
+    log::debug!(
+        "[memory_tree] connection invalidated for {}",
+        db_path.display()
+    );
+}
+
+/// Clear the entire connection cache. For test isolation only.
+#[cfg(test)]
+pub(crate) fn clear_connection_cache() {
+    conn_cache().connections.lock().clear();
+    conn_cache().breakers.lock().clear();
+}
+
+/// Open the memory_tree SQLite DB and run a closure against it.
+///
+/// Visible to sibling modules (e.g. `score::store`) so Phase 2 can reuse
+/// the same connection setup / schema initialisation without duplication.
+///
+/// # Connection caching (#2206)
+///
+/// The underlying connection is initialised once per workspace path and then
+/// reused from a process-level cache. Schema migrations run exactly once on
+/// the first call for a given `config.workspace_dir`. Subsequent calls pay
+/// only the cost of a `parking_lot::Mutex` lock and the closure itself.
+pub(crate) fn with_connection<T>(
+    config: &Config,
+    f: impl FnOnce(&Connection) -> Result<T>,
+) -> Result<T> {
+    let conn_arc = get_or_init_connection(config)?;
+    let guard = conn_arc.lock();
+    f(&guard)
+}
+
+/// One-shot migration (#1574 §7, vN): copy legacy `mem_tree_chunks.embedding`
+/// / `mem_tree_summaries.embedding` blobs into the per-model sidecar tables
+/// under the **active** signature, when (and only when) the legacy vector's
+/// dimensionality matches the active embedder's.
+///
+/// Version-gated via `PRAGMA user_version`: returns immediately once
+/// `>= TREE_EMBEDDING_MIGRATION_VERSION`, so the per-open cost is a single
+/// pragma read. Dim-mismatched rows are left for the §6 re-embed backfill —
+/// the blob's signature is unrecoverable (see spec §7b), so a same-length
+/// copy under the active signature is the only provably-safe move and
+/// anything else must be re-embedded. The legacy columns are **kept** (read
+/// here, dropped only in a later release — spec §7c). Idempotent: re-running
+/// before the version bumps re-copies the same rows harmlessly (sidecar
+/// upsert is ON CONFLICT); after the bump it is skipped entirely.
+fn migrate_legacy_embeddings_to_sidecar(conn: &Connection, config: &Config) -> Result<()> {
+    let version: i64 = conn
+        .query_row("PRAGMA user_version", [], |r| r.get(0))
+        .context("read PRAGMA user_version for #1574 migration")?;
+    if version >= TREE_EMBEDDING_MIGRATION_VERSION {
+        return Ok(());
+    }
+
+    let (provider, model, dims) = crate::openhuman::memory::store::effective_embedding_settings(
+        &config.memory,
+        config.workload_local_model("embeddings").as_deref(),
+    );
+    let sig = crate::openhuman::embeddings::format_embedding_signature(&provider, &model, dims);
+    log::info!(
+        "[memory_tree::migrate] #1574 §7: copying legacy embeddings → sidecar at sig={sig} (dims={dims})"
+    );
+
+    let tx = conn.unchecked_transaction()?;
+    let mut copied_chunks = 0usize;
+    let mut copied_summaries = 0usize;
+    let mut skipped_dim_mismatch = 0usize;
+
+    for (table, is_chunk) in [("mem_tree_chunks", true), ("mem_tree_summaries", false)] {
+        let mut stmt = tx.prepare(&format!(
+            "SELECT id, embedding FROM {table} WHERE embedding IS NOT NULL"
+        ))?;
+        let rows = stmt.query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, Vec<u8>>(1)?))
+        })?;
+        for row in rows {
+            let (id, blob) = row?;
+            if !blob.len().is_multiple_of(4) {
+                log::warn!(
+                    "[memory_tree::migrate] {table} id={id}: legacy blob len {} not /4, skipping",
+                    blob.len()
+                );
+                continue;
+            }
+            if blob.len() / 4 != dims {
+                // Different embedding space — unrecoverable from the blob.
+                // Leave for the §6 re-embed backfill.
+                skipped_dim_mismatch += 1;
+                continue;
+            }
+            let vec: Vec<f32> = blob
+                .chunks_exact(4)
+                .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+                .collect();
+            if is_chunk {
+                set_chunk_embedding_for_signature_tx(&tx, &id, &sig, &vec)?;
+                copied_chunks += 1;
+            } else {
+                crate::openhuman::memory::tree::tree_source::store::set_summary_embedding_for_signature_tx(
+                    &tx, &id, &sig, &vec,
+                )?;
+                copied_summaries += 1;
+            }
+        }
+    }
+
+    // #1574 §6: enqueue the re-embed backfill ONLY if there is genuinely
+    // uncovered work at the active signature (the dim-mismatch slice, or
+    // content-bearing rows with no vector). Gating this avoids queuing a
+    // no-op job on every DB open — which would otherwise pollute the jobs
+    // table for unrelated callers/tests. Enqueued atomically with the
+    // migration; dedupe key = signature, so exactly one chain per space.
+    let has_uncovered: bool = tx.query_row(
+        "SELECT EXISTS(
+             SELECT 1 FROM mem_tree_chunks c
+              WHERE NOT EXISTS (SELECT 1 FROM mem_tree_chunk_embeddings e
+                                 WHERE e.chunk_id = c.id AND e.model_signature = ?1))
+           OR EXISTS(
+             SELECT 1 FROM mem_tree_summaries s
+              WHERE s.deleted = 0 AND NOT EXISTS (SELECT 1 FROM mem_tree_summary_embeddings e
+                                 WHERE e.summary_id = s.id AND e.model_signature = ?1))",
+        rusqlite::params![sig],
+        |r| r.get(0),
+    )?;
+    if has_uncovered {
+        let backfill_job = crate::openhuman::memory::tree::jobs::types::NewJob::reembed_backfill(
+            &crate::openhuman::memory::tree::jobs::types::ReembedBackfillPayload {
+                signature: sig.clone(),
+            },
+        )?;
+        crate::openhuman::memory::tree::jobs::enqueue_tx(&tx, &backfill_job)?;
+        crate::openhuman::memory::tree::jobs::set_backfill_in_progress(true);
+    }
+
+    tx.commit()?;
+    conn.pragma_update(None, "user_version", TREE_EMBEDDING_MIGRATION_VERSION)
+        .context("set PRAGMA user_version after #1574 migration")?;
+    log::info!(
+        "[memory_tree::migrate] #1574 §7 done: copied chunks={copied_chunks} summaries={copied_summaries} \
+         skipped_dim_mismatch={skipped_dim_mismatch} (left for §6 re-embed); user_version={TREE_EMBEDDING_MIGRATION_VERSION}"
+    );
+    Ok(())
 }
 
 /// One pointer into the raw archive. A chunk's body is reconstructed by
@@ -945,31 +1339,45 @@ fn add_column_if_missing(conn: &Connection, table: &str, name: &str, sql_type: &
 
 // ── Phase 2: embedding column accessors ─────────────────────────────────
 
-/// Store a chunk's embedding as a packed little-endian `f32` blob.
-///
-/// Length is `embedding.len() * 4` bytes. The caller is responsible for
-/// ensuring all embeddings in a given deployment share the same dimension.
-pub fn set_chunk_embedding(config: &Config, chunk_id: &str, embedding: &[f32]) -> Result<()> {
-    let bytes: Vec<u8> = embedding.iter().flat_map(|f| f.to_le_bytes()).collect();
-    with_connection(config, |conn| {
-        let changed = conn.execute(
-            "UPDATE mem_tree_chunks SET embedding = ?1 WHERE id = ?2",
-            rusqlite::params![bytes, chunk_id],
-        )?;
-        if changed == 0 {
-            log::warn!("[memory_tree::store] set_chunk_embedding: no row for chunk_id={chunk_id}");
-        }
-        Ok(())
-    })
+/// Resolve the active embedding signature for the memory tree from the global
+/// [`Config`] — the canonical key every per-model sidecar read/write is scoped
+/// by (#1574). Reuses the established local-AI workload derivation
+/// ([`Config::workload_local_model`]) and the probe-stable
+/// `active_embedding_signature`; introduces no parallel resolution path.
+/// `pub(crate)` so the sibling `tree_source` summary store shares the exact
+/// same resolution.
+pub(crate) fn tree_active_signature(config: &Config) -> String {
+    let local_model = config.workload_local_model("embeddings");
+    crate::openhuman::memory::store::active_embedding_signature(
+        &config.memory,
+        local_model.as_deref(),
+    )
 }
 
-/// Store a chunk embedding for a specific provider/model/dimension signature.
+/// Store a chunk's embedding under the active model signature.
 ///
-/// This is the Stage-1 per-model table write path for #1574. The legacy
-/// `mem_tree_chunks.embedding` column is intentionally left untouched by this
-/// helper so callers can dual-write while query paths migrate.
-pub fn set_chunk_embedding_for_signature(
-    config: &Config,
+/// #1574 cutover: this now writes the per-model `mem_tree_chunk_embeddings`
+/// sidecar (via [`set_chunk_embedding_for_signature`]) instead of the legacy
+/// `mem_tree_chunks.embedding` column. Call sites are unchanged — the signature
+/// is resolved internally from `config`. The legacy column is left intact for
+/// the §7 one-shot migration to read; it is dropped only in a later release.
+pub fn set_chunk_embedding(config: &Config, chunk_id: &str, embedding: &[f32]) -> Result<()> {
+    let signature = tree_active_signature(config);
+    log::debug!(
+        "[memory_tree::store] set_chunk_embedding: chunk_id={chunk_id} sig={signature} dims={}",
+        embedding.len()
+    );
+    set_chunk_embedding_for_signature(config, chunk_id, &signature, embedding)
+}
+
+/// Core upsert into `mem_tree_chunk_embeddings` over an arbitrary
+/// `&Connection`. Shared by the standalone ([`set_chunk_embedding_for_signature`])
+/// and in-transaction ([`set_chunk_embedding_for_signature_tx`]) write paths so
+/// the SQL exists exactly once. `rusqlite::Transaction` derefs to `Connection`,
+/// so an in-tx caller passes `&tx` and the sidecar row commits atomically with
+/// the surrounding work (#1574 write-side cutover).
+fn upsert_chunk_embedding_conn(
+    conn: &rusqlite::Connection,
     chunk_id: &str,
     model_signature: &str,
     embedding: &[f32],
@@ -977,19 +1385,48 @@ pub fn set_chunk_embedding_for_signature(
     let bytes = embedding_to_blob(embedding);
     let dim = i64::try_from(embedding.len()).context("embedding dimension does not fit i64")?;
     let created_at = Utc::now().timestamp_millis() as f64 / 1000.0;
-    with_connection(config, |conn| {
-        conn.execute(
-            "INSERT INTO mem_tree_chunk_embeddings
+    conn.execute(
+        "INSERT INTO mem_tree_chunk_embeddings
              (chunk_id, model_signature, vector, dim, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5)
              ON CONFLICT(chunk_id, model_signature) DO UPDATE SET
                 vector = excluded.vector,
                 dim = excluded.dim,
                 created_at = excluded.created_at",
-            rusqlite::params![chunk_id, model_signature, bytes, dim, created_at],
-        )?;
-        Ok(())
+        rusqlite::params![chunk_id, model_signature, bytes, dim, created_at],
+    )?;
+    Ok(())
+}
+
+/// Store a chunk embedding for a specific provider/model/dimension signature.
+///
+/// Per-model table write path for #1574. The legacy
+/// `mem_tree_chunks.embedding` column is intentionally left untouched by this
+/// helper (read by the §7 migration; dropped only in a later release).
+pub fn set_chunk_embedding_for_signature(
+    config: &Config,
+    chunk_id: &str,
+    model_signature: &str,
+    embedding: &[f32],
+) -> Result<()> {
+    with_connection(config, |conn| {
+        upsert_chunk_embedding_conn(conn, chunk_id, model_signature, embedding)
     })
+}
+
+/// Transaction-scoped variant of [`set_chunk_embedding_for_signature`].
+///
+/// For callers that already hold a `Transaction` (e.g. the chunk-admission
+/// handler, which commits the sidecar row in the SAME tx as the lifecycle
+/// + score + job-enqueue writes — #1574 write-side cutover). Opening a fresh
+/// connection there would break atomicity / deadlock on the busy DB.
+pub(crate) fn set_chunk_embedding_for_signature_tx(
+    tx: &rusqlite::Transaction<'_>,
+    chunk_id: &str,
+    model_signature: &str,
+    embedding: &[f32],
+) -> Result<()> {
+    upsert_chunk_embedding_conn(tx, chunk_id, model_signature, embedding)
 }
 
 /// Fetch a chunk embedding for exactly one provider/model/dimension signature.
@@ -1015,32 +1452,17 @@ pub fn get_chunk_embedding_for_signature(
     })
 }
 
-/// Fetch a chunk's embedding, decoding the stored little-endian `f32` blob.
+/// Fetch a chunk's embedding for the active model signature.
 ///
-/// Returns `Ok(None)` if the chunk doesn't exist or has no embedding stored.
+/// #1574 cutover: reads the per-model `mem_tree_chunk_embeddings` sidecar at
+/// the active signature (via [`get_chunk_embedding_for_signature`]) instead of
+/// the legacy `mem_tree_chunks.embedding` column. Returns `Ok(None)` if the
+/// chunk has no vector under the active signature — e.g. during the §7
+/// backfill window, where this degrades retrieval gracefully (the row is
+/// simply absent from vector results, never cross-space compared).
 pub fn get_chunk_embedding(config: &Config, chunk_id: &str) -> Result<Option<Vec<f32>>> {
-    with_connection(config, |conn| {
-        let blob: Option<Option<Vec<u8>>> = conn
-            .query_row(
-                "SELECT embedding FROM mem_tree_chunks WHERE id = ?1",
-                rusqlite::params![chunk_id],
-                |r| r.get::<_, Option<Vec<u8>>>(0),
-            )
-            .optional()?;
-        match blob.flatten() {
-            None => Ok(None),
-            Some(bytes) => {
-                if !bytes.len().is_multiple_of(4) {
-                    anyhow::bail!("embedding blob length {} not a multiple of 4", bytes.len());
-                }
-                let floats: Vec<f32> = bytes
-                    .chunks_exact(4)
-                    .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-                    .collect();
-                Ok(Some(floats))
-            }
-        }
-    })
+    let signature = tree_active_signature(config);
+    get_chunk_embedding_for_signature(config, chunk_id, &signature)
 }
 
 fn embedding_to_blob(embedding: &[f32]) -> Vec<u8> {
