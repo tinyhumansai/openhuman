@@ -162,18 +162,11 @@ describe('tauriCommands/vault', () => {
       await expect(openhumanVaultSync('v-1')).rejects.toThrow('Not running in Tauri');
     });
 
-    test('dispatches openhuman.vault_sync with vault_id and returns report', async () => {
+    test('dispatches openhuman.vault_sync with vault_id and returns started status', async () => {
       mockCallCoreRpc.mockResolvedValue({
         result: {
+          status: 'started',
           vault_id: 'v-1',
-          scanned: 3,
-          ingested: 2,
-          unchanged: 1,
-          removed: 0,
-          failed: 0,
-          skipped_unsupported: 0,
-          duration_ms: 12,
-          errors: [],
         },
         logs: [],
       });
@@ -182,7 +175,8 @@ describe('tauriCommands/vault', () => {
         method: 'openhuman.vault_sync',
         params: { vault_id: 'v-1' },
       });
-      expect(resp.result.ingested).toBe(2);
+      expect(resp.result.status).toBe('started');
+      expect(resp.result.vault_id).toBe('v-1');
     });
   });
 });

@@ -11,12 +11,14 @@ import { VaultPanel } from './VaultPanel';
 const mockList = vi.fn();
 const mockCreate = vi.fn();
 const mockSync = vi.fn();
+const mockSyncStatus = vi.fn();
 const mockRemove = vi.fn();
 
 vi.mock('../../utils/tauriCommands/vault', () => ({
   openhumanVaultList: (...args: unknown[]) => mockList(...args),
   openhumanVaultCreate: (...args: unknown[]) => mockCreate(...args),
   openhumanVaultSync: (...args: unknown[]) => mockSync(...args),
+  openhumanVaultSyncStatus: (...args: unknown[]) => mockSyncStatus(...args),
   openhumanVaultRemove: (...args: unknown[]) => mockRemove(...args),
 }));
 
@@ -35,11 +37,35 @@ function vault(overrides: Record<string, unknown> = {}) {
   };
 }
 
+/** Build a completed `CoreVaultSyncState` payload for mockSyncStatus. */
+function syncState(overrides: Record<string, unknown> = {}) {
+  return {
+    result: {
+      vault_id: 'v-1',
+      status: 'completed',
+      scanned: 4,
+      ingested: 3,
+      unchanged: 1,
+      removed: 0,
+      failed: 0,
+      skipped_unsupported: 0,
+      total: 4,
+      started_at_ms: 1_000,
+      finished_at_ms: 2_200,
+      duration_ms: 1_200,
+      errors: [],
+      ...overrides,
+    },
+    logs: [],
+  };
+}
+
 describe('<VaultPanel />', () => {
   beforeEach(() => {
     mockList.mockReset();
     mockCreate.mockReset();
     mockSync.mockReset();
+    mockSyncStatus.mockReset();
     mockRemove.mockReset();
   });
 
@@ -133,20 +159,10 @@ describe('<VaultPanel />', () => {
     mockList
       .mockResolvedValueOnce({ result: [vault()], logs: [] })
       .mockResolvedValueOnce({ result: [vault()], logs: [] });
-    mockSync.mockResolvedValueOnce({
-      result: {
-        vault_id: 'v-1',
-        scanned: 4,
-        ingested: 3,
-        unchanged: 1,
-        removed: 0,
-        failed: 0,
-        skipped_unsupported: 0,
-        duration_ms: 1200,
-        errors: [],
-      },
-      logs: [],
-    });
+    // vault_sync returns immediately with "started"
+    mockSync.mockResolvedValueOnce({ result: { status: 'started', vault_id: 'v-1' }, logs: [] });
+    // vault_sync_status returns "completed" on first poll
+    mockSyncStatus.mockResolvedValueOnce(syncState());
     const onToast = vi.fn();
     render(<VaultPanel onToast={onToast} />);
     await waitFor(() => screen.getByTestId('vault-list'));
@@ -168,20 +184,10 @@ describe('<VaultPanel />', () => {
     mockList
       .mockResolvedValueOnce({ result: [vault()], logs: [] })
       .mockResolvedValueOnce({ result: [vault()], logs: [] });
-    mockSync.mockResolvedValueOnce({
-      result: {
-        vault_id: 'v-1',
-        scanned: 2,
-        ingested: 1,
-        unchanged: 0,
-        removed: 0,
-        failed: 1,
-        skipped_unsupported: 0,
-        duration_ms: 50,
-        errors: ['x.md: read failed'],
-      },
-      logs: [],
-    });
+    mockSync.mockResolvedValueOnce({ result: { status: 'started', vault_id: 'v-1' }, logs: [] });
+    mockSyncStatus.mockResolvedValueOnce(
+      syncState({ ingested: 1, unchanged: 0, failed: 1, duration_ms: 50, errors: ['x.md: read failed'] })
+    );
     const onToast = vi.fn();
     render(<VaultPanel onToast={onToast} />);
     await waitFor(() => screen.getByTestId('vault-list'));
