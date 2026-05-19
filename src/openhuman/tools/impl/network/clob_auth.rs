@@ -456,8 +456,7 @@ mod tests {
     async fn sign_l1_headers_rejects_signer_address_mismatch() {
         use ethers_signers::{coins_bip39::English, MnemonicBuilder};
 
-        let phrase =
-            "test test test test test test test test test test test junk";
+        let phrase = "test test test test test test test test test test test junk";
         let wallet: LocalWallet = MnemonicBuilder::<English>::default()
             .phrase(phrase)
             .build()
@@ -482,8 +481,7 @@ mod tests {
     async fn sign_l1_headers_accepts_signer_address_match() {
         use ethers_signers::{coins_bip39::English, MnemonicBuilder};
 
-        let phrase =
-            "test test test test test test test test test test test junk";
+        let phrase = "test test test test test test test test test test test junk";
         let wallet: LocalWallet = MnemonicBuilder::<English>::default()
             .phrase(phrase)
             .build()
