@@ -4,6 +4,7 @@ import { useAppSelector } from '../../store/hooks';
 import ar from './ar';
 import bn from './bn';
 import en from './en';
+import ko from './ko';
 import es from './es';
 import fr from './fr';
 import hi from './hi';
@@ -21,6 +22,7 @@ interface I18nContextValue {
 
 const translations: Record<Locale, Record<string, string>> = {
   en,
+  ko,
   'zh-CN': zhCN,
   hi,
   es,
