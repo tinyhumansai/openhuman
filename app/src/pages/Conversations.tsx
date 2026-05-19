@@ -547,6 +547,8 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
       dispatch(setActiveThread(null));
       sendingTimeoutRef.current = null;
       sendingThreadIdRef.current = null;
+      pendingSendRef.current = null;
+      setPendingSendingThreadId(null);
     }, 120_000);
   };
 
@@ -767,6 +769,11 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
         locale: uiLocale,
       });
       trackEvent('chat_message_sent');
+      // Backend accepted the send; lifecycle ('started' → 'streaming') now
+      // owns the `isSending` UI lock. Release the pending guard so the next
+      // user turn isn't blocked by a stale ref/state.
+      pendingSendRef.current = null;
+      setPendingSendingThreadId(null);
 
       // Active-thread reset happens in the global ChatRuntimeProvider events.
     } catch (err) {
@@ -1089,14 +1096,6 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
     });
     return () => window.cancelAnimationFrame(id);
   }, [selectedThreadId, composerInteractionBlocked, inputMode]);
-  useEffect(() => {
-    if (!pendingSendingThreadId) return;
-    const lifecycle = inferenceTurnLifecycleByThread[pendingSendingThreadId];
-    if (lifecycle === 'started' || lifecycle === 'streaming') {
-      pendingSendRef.current = null;
-      setPendingSendingThreadId(null);
-    }
-  }, [inferenceTurnLifecycleByThread, pendingSendingThreadId]);
   const isSending = Boolean(
     selectedThreadId &&
     (pendingSendingThreadId === selectedThreadId ||

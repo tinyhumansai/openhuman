@@ -680,9 +680,40 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
       message: 'slow backend',
       model: 'reasoning-v1',
       profileId: 'default',
+      locale: 'en',
     });
     expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
     resolveSend?.();
+  });
+
+  it('releases the pending-send lock when chatSend rejects', async () => {
+    vi.mocked(chatSend).mockRejectedValueOnce(new Error('emit failed'));
+    const { textarea } = await renderSelectedConversation();
+
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: 'doomed send' } });
+    });
+    await waitFor(() => {
+      expect(textarea).toHaveValue('doomed send');
+    });
+
+    const sendButton = screen.getByRole('button', { name: 'Send message' });
+    await act(async () => {
+      fireEvent.click(sendButton);
+    });
+
+    await waitFor(() => {
+      expect(chatSend).toHaveBeenCalledTimes(1);
+    });
+
+    // After the failed send, typing again should leave the composer enabled so
+    // the user can retry — proves the pending guard was released.
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: 'retry send' } });
+    });
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Send message' })).not.toBeDisabled();
+    });
   });
 
   it('creates a custom agent profile from the header draft form', async () => {
