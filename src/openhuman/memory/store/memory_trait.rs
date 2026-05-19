@@ -171,7 +171,79 @@ impl Memory for UnifiedMemory {
                     score: Some(match_score),
                 });
             }
+        }
 
+        // ── Cross-session episodic recall (#1505) ────────────────────────
+        //
+        // When the caller asks for cross-session memory, pull FTS5-ranked
+        // hits from every other session in the same workspace. Workspace
+        // isolation is enforced by the SQLite DB path itself (one DB per
+        // workspace == one DB per user) so this can never leak across
+        // users. The current `session_id` (if any) is excluded so the
+        // caller doesn't double-count its own chat history — those rows
+        // already came in via the same-session path above.
+        if opts.cross_session {
+            let exclude = opts.session_id;
+            let cross_entries = match fts5::episodic_cross_session_search(
+                &self.conn, query, limit, exclude,
+            ) {
+                Ok(entries) => {
+                    tracing::debug!(
+                            "[memory-trait] cross-session episodic recall returned {} entries (exclude={:?})",
+                            entries.len(),
+                            exclude
+                        );
+                    entries
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "[memory-trait] cross-session episodic recall failed (non-fatal): {e}"
+                    );
+                    Vec::new()
+                }
+            };
+
+            // Normalise FTS5 rank into a [0..1] keyword-style score by
+            // reusing the same matched-terms heuristic as the same-session
+            // branch. This keeps the score scale consistent across hits so
+            // the downstream sort doesn't preferentially up-rank one branch
+            // over the other.
+            let query_lower = query.to_lowercase();
+            let query_terms: Vec<&str> = query_lower.split_whitespace().collect();
+            for entry in cross_entries {
+                let content_lower = entry.content.to_lowercase();
+                let matched_count = query_terms
+                    .iter()
+                    .filter(|term| content_lower.contains(*term))
+                    .count();
+                if matched_count == 0 {
+                    // FTS5 surfaced a porter-stemmed match with zero
+                    // literal query-term overlap. Drop it — the previous
+                    // `0.1_f64.max(min_score)` floor defeated the
+                    // downstream `score >= min_relevance_score` gate
+                    // (when min_score==0.4 the floor also became 0.4),
+                    // so those rows always survived. Skip outright.
+                    continue;
+                }
+                let match_score = matched_count as f64 / query_terms.len().max(1) as f64;
+                if match_score < min_score {
+                    continue;
+                }
+                let ts_rfc3339 = timestamp_to_rfc3339(entry.timestamp);
+                out.push(MemoryEntry {
+                    id: format!("episodic-cross:{}", entry.id.unwrap_or(0)),
+                    key: format!("{}:{}", entry.session_id, entry.role),
+                    content: entry.content,
+                    namespace: Some(namespace.to_string()),
+                    category: MemoryCategory::Conversation,
+                    timestamp: ts_rfc3339,
+                    session_id: Some(entry.session_id),
+                    score: Some(match_score),
+                });
+            }
+        }
+
+        if opts.session_id.is_some() || opts.cross_session {
             out.sort_by(|a, b| {
                 b.score
                     .unwrap_or(0.0)
@@ -440,5 +512,126 @@ mod tests {
         let still = mem.get("ns_x", "real_key").await.unwrap();
         assert!(still.is_some());
         assert_eq!(mem.count().await.unwrap(), 1);
+    }
+
+    // ── Cross-session recall (#1505) ─────────────────────────────────────
+
+    fn seed_episodic(mem: &UnifiedMemory, session_id: &str, ts: f64, content: &str) {
+        fts5::episodic_insert(
+            &mem.conn,
+            &fts5::EpisodicEntry {
+                id: None,
+                session_id: session_id.into(),
+                timestamp: ts,
+                role: "user".into(),
+                content: content.into(),
+                lesson: None,
+                tool_calls_json: None,
+                cost_microdollars: 0,
+            },
+        )
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn recall_cross_session_surfaces_other_chat_facts() {
+        let (_tmp, mem) = fresh_mem();
+        // Chat A — durable user fact dropped here
+        seed_episodic(&mem, "chat-a", 1000.0, "I prefer Postgres for new services");
+        // Chat B — current chat (no relevant content yet)
+        seed_episodic(&mem, "chat-b", 2000.0, "Hello there");
+
+        // Recall from chat B with cross_session=true should surface chat A's fact
+        let opts = RecallOpts {
+            session_id: Some("chat-b"),
+            cross_session: true,
+            min_score: Some(0.0),
+            ..Default::default()
+        };
+        let hits = mem.recall("Postgres", 10, opts).await.unwrap();
+
+        assert!(
+            hits.iter()
+                .any(|h| h.content.to_lowercase().contains("postgres")
+                    && h.session_id.as_deref() == Some("chat-a")),
+            "cross-session recall must surface chat-a's Postgres fact, got hits={hits:#?}"
+        );
+        assert!(
+            hits.iter()
+                .all(|h| h.session_id.as_deref() != Some("chat-b")
+                    || !h.id.starts_with("episodic-cross:")),
+            "current chat-b session must be excluded from the cross-session sweep"
+        );
+    }
+
+    #[tokio::test]
+    async fn recall_cross_session_disabled_by_default_no_other_chat_leak() {
+        let (_tmp, mem) = fresh_mem();
+        seed_episodic(&mem, "chat-a", 1000.0, "I prefer Postgres for new services");
+        seed_episodic(&mem, "chat-b", 2000.0, "Hello there");
+
+        // Default RecallOpts (cross_session=false) — no episodic content
+        // because no session_id is set either, so this exercises the
+        // pre-#1505 baseline behaviour: documents only.
+        let hits = mem
+            .recall("Postgres", 10, RecallOpts::default())
+            .await
+            .unwrap();
+
+        assert!(
+            !hits.iter().any(|h| h.id.starts_with("episodic-cross:")),
+            "cross_session=false must never surface episodic-cross hits, got {hits:#?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn recall_cross_session_preserves_provenance_via_session_id() {
+        let (_tmp, mem) = fresh_mem();
+        seed_episodic(&mem, "chat-source-1", 1000.0, "Use Postgres in prod");
+        seed_episodic(&mem, "chat-source-2", 1100.0, "Postgres timezone is UTC");
+
+        let opts = RecallOpts {
+            cross_session: true,
+            min_score: Some(0.0),
+            ..Default::default()
+        };
+        let hits = mem.recall("Postgres", 10, opts).await.unwrap();
+
+        // Each cross-session entry must carry its source session_id so
+        // downstream layers (memory_loader, UI) can render provenance.
+        for hit in hits.iter().filter(|h| h.id.starts_with("episodic-cross:")) {
+            assert!(
+                hit.session_id.as_ref().is_some_and(|s| !s.is_empty()),
+                "every cross-session hit must carry a non-empty session_id, got {hit:?}"
+            );
+        }
+        let session_ids: std::collections::HashSet<&str> = hits
+            .iter()
+            .filter(|h| h.id.starts_with("episodic-cross:"))
+            .filter_map(|h| h.session_id.as_deref())
+            .collect();
+        assert!(session_ids.contains("chat-source-1"));
+        assert!(session_ids.contains("chat-source-2"));
+    }
+
+    #[tokio::test]
+    async fn recall_cross_session_no_match_returns_no_episodic_cross_rows() {
+        let (_tmp, mem) = fresh_mem();
+        seed_episodic(&mem, "chat-a", 1000.0, "I prefer Postgres");
+
+        let opts = RecallOpts {
+            cross_session: true,
+            min_score: Some(0.0),
+            ..Default::default()
+        };
+        let hits = mem
+            .recall("kubernetes orchestration", 10, opts)
+            .await
+            .unwrap();
+
+        assert!(
+            !hits.iter().any(|h| h.id.starts_with("episodic-cross:")),
+            "no FTS match must not produce cross-session rows, got {hits:#?}"
+        );
     }
 }

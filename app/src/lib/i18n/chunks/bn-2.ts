@@ -232,7 +232,7 @@ const bn2: TranslationMap = {
   'composio.triggersStillRecorded': 'ট্রিগারগুলো ইতিহাসে রেকর্ড থাকবে — কোনো LLM টার্ন চলবে না।',
   'composio.disableSpecificIntegrations':
     'নির্দিষ্ট ইন্টিগ্রেশনের জন্য AI ট্রিয়াজ নিষ্ক্রিয় করুন',
-  'composio.settingsSaved': 'Settings saved',
+  'composio.settingsSaved': 'সেটিংস সংরক্ষিত হয়েছে',
   'composio.saveFailed': 'সংরক্ষণ ব্যর্থ। আবার চেষ্টা করুন।',
   'cron.title': 'ক্রন জবস',
   'cron.scheduledJobs': 'নির্ধারিত জবস',

@@ -215,7 +215,7 @@ const zhCN2: TranslationMap = {
   'composio.disableAllTriage': '禁用所有触发器的 AI 分类',
   'composio.triggersStillRecorded': '触发器仍记录到历史记录中——不运行 LLM 轮次。',
   'composio.disableSpecificIntegrations': '禁用特定集成的 AI 分类',
-  'composio.settingsSaved': 'Settings saved',
+  'composio.settingsSaved': '设置已保存',
   'composio.saveFailed': '保存失败。请重试。',
   'cron.title': '定时任务',
   'cron.scheduledJobs': '计划任务',

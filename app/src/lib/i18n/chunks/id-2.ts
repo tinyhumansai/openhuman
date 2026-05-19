@@ -1,6 +1,6 @@
 import type { TranslationMap } from '../types';
 
-// Bahasa Indonesia chunk 2/5. Translated from chunks/en-2.ts.
+// Indonesian (Bahasa Indonesia) chunk 2/5. Translated from chunks/en-2.ts.
 const id2: TranslationMap = {
   'settings.ai.configStatus': 'Status Konfigurasi',
   'settings.ai.fallbackMode': 'Mode Fallback',
@@ -171,7 +171,7 @@ const id2: TranslationMap = {
   'voice.title': 'Dikte Suara',
   'voice.settings': 'Pengaturan Suara',
   'voice.settingsDesc': 'Tahan hotkey untuk mendiktekan dan memasukkan teks ke kolom aktif.',
-  'voice.hotkey': 'Hotkey',
+  'voice.hotkey': 'Pintasan',
   'voice.activationMode': 'Mode Aktivasi',
   'voice.tapToToggle': 'Ketuk untuk mengalihkan',
   'voice.writingStyle': 'Gaya Penulisan',
@@ -231,7 +231,7 @@ const id2: TranslationMap = {
   'composio.triggersStillRecorded':
     'Pemicu tetap dicatat ke riwayat — tidak ada giliran LLM yang dijalankan.',
   'composio.disableSpecificIntegrations': 'Nonaktifkan triase AI untuk integrasi tertentu',
-  'composio.settingsSaved': 'Settings saved',
+  'composio.settingsSaved': 'Pengaturan disimpan',
   'composio.saveFailed': 'Gagal menyimpan. Coba lagi.',
   'cron.title': 'Cron Job',
   'cron.scheduledJobs': 'Job Terjadwal',
@@ -278,7 +278,7 @@ const id2: TranslationMap = {
   'chat.thinkingDots': 'Berpikir...',
   'chat.approachingLimit': 'Mendekati batas pemakaian',
   'chat.approachingLimitMsg': 'Anda telah memakai {pct}% dari kuota yang tersedia.',
-  'chat.upgrade': 'Upgrade',
+  'chat.upgrade': 'Tingkatkan',
   'chat.weeklyLimitHit': 'Anda telah mencapai batas mingguan.',
   'chat.resets': 'Reset',
   'chat.topUpToContinue': 'Isi ulang untuk melanjutkan.',

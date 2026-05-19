@@ -230,7 +230,7 @@ const ru2: TranslationMap = {
   'composio.triggersStillRecorded':
     'Триггеры по-прежнему записываются в историю — LLM-запросы не выполняются.',
   'composio.disableSpecificIntegrations': 'Отключить AI-сортировку для конкретных интеграций',
-  'composio.settingsSaved': 'Settings saved',
+  'composio.settingsSaved': 'Настройки сохранены',
   'composio.saveFailed': 'Не удалось сохранить. Попробуй ещё раз.',
   'cron.title': 'Задания по расписанию',
   'cron.scheduledJobs': 'Запланированные задания',
@@ -367,9 +367,9 @@ const ru2: TranslationMap = {
   'dreams.description':
     'Сны — это AI-отражения, которые синтезируют закономерности из твоих воспоминаний.',
   'dreams.comingSoon': 'Скоро',
-  'assignment.memoryLlm': 'Memory LLM',
+  'assignment.memoryLlm': 'LLM памяти',
   'assignment.memoryLlmAria': 'Выбор Memory LLM',
-  'assignment.embedder': 'Embedder',
+  'assignment.embedder': 'Эмбеддер',
   'assignment.loaded': 'Загружено',
   'assignment.notDownloaded': 'Не загружено',
   'assignment.usedForExtractSummarise': 'Используется для извлечения и суммаризации',

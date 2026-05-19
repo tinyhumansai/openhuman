@@ -1,6 +1,6 @@
 import type { TranslationMap } from '../types';
 
-// Bahasa Indonesia chunk 1/5. Translated from chunks/en-1.ts.
+// Indonesian (Bahasa Indonesia) chunk 1/5. Translated from chunks/en-1.ts.
 const id1: TranslationMap = {
   'nav.home': 'Beranda',
   'nav.human': 'Human',
@@ -17,7 +17,7 @@ const id1: TranslationMap = {
   'common.edit': 'Edit',
   'common.create': 'Buat',
   'common.search': 'Cari',
-  'common.loading': 'loading…',
+  'common.loading': 'memuat…',
   'common.error': 'Error',
   'common.success': 'Berhasil',
   'common.back': 'Kembali',
@@ -31,9 +31,9 @@ const id1: TranslationMap = {
   'common.yes': 'Ya',
   'common.no': 'Tidak',
   'common.ok': 'Mengerti',
-  'common.retry': 'Try again',
+  'common.retry': 'Coba lagi',
   'common.copy': 'Salin',
-  'common.copied': 'Copied',
+  'common.copied': 'Disalin',
   'common.learnMore': 'Pelajari lagi',
   'common.seeAll': 'Lihat',
   'common.dismiss': 'Abaikan',
@@ -140,6 +140,8 @@ const id1: TranslationMap = {
     'Perangkat Anda sedang offline. Periksa jaringan atau mulai ulang aplikasi untuk menyambung lagi.',
   'home.restartCore': 'Mulai Ulang Core',
   'home.restartingCore': 'Memulai ulang core...',
+  'home.themeToggle.toLight': 'Beralih ke mode terang',
+  'home.themeToggle.toDark': 'Beralih ke mode gelap',
   'chat.newThread': 'Thread baru',
   'chat.typeMessage': 'Ketik pesan...',
   'chat.send': 'Kirim pesan',

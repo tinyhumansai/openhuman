@@ -64,6 +64,7 @@ struct ModelSettingsUpdate {
     /// `cloud_provider_set_key` — they are NOT carried here.
     cloud_providers: Option<Vec<CloudProviderUpdate>>,
     primary_cloud: Option<String>,
+    chat_provider: Option<String>,
     reasoning_provider: Option<String>,
     agentic_provider: Option<String>,
     coding_provider: Option<String>,
@@ -422,6 +423,7 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     required: false,
                 },
                 optional_string("primary_cloud", "id of the cloud_providers entry used when a workload routes to 'cloud'. Empty string clears."),
+                optional_string("chat_provider", "Provider string for direct conversational chat workloads."),
                 optional_string("reasoning_provider", "Provider string for the main reasoning workload (e.g. 'cloud', 'ollama:llama3.1:8b', 'openai:gpt-4o')."),
                 optional_string("agentic_provider", "Provider string for sub-agent / tool-loop workloads."),
                 optional_string("coding_provider", "Provider string for code-generation workloads."),
@@ -966,6 +968,7 @@ fn handle_update_model_settings(params: Map<String, Value>) -> ControllerFuture 
                 })
                 .transpose()?,
             primary_cloud: update.primary_cloud,
+            chat_provider: update.chat_provider,
             reasoning_provider: update.reasoning_provider,
             agentic_provider: update.agentic_provider,
             coding_provider: update.coding_provider,

@@ -223,7 +223,7 @@ const ar2: TranslationMap = {
   'composio.disableAllTriage': 'تعطيل فرز الذكاء الاصطناعي لجميع المشغّلات',
   'composio.triggersStillRecorded': 'تُسجَّل المشغّلات في السجل — لا تُشغَّل دورة LLM.',
   'composio.disableSpecificIntegrations': 'تعطيل فرز الذكاء الاصطناعي لتكاملات محددة',
-  'composio.settingsSaved': 'Settings saved',
+  'composio.settingsSaved': 'تم حفظ الإعدادات',
   'composio.saveFailed': 'فشل الحفظ. حاول مرة أخرى.',
   'cron.title': 'مهام Cron',
   'cron.scheduledJobs': 'المهام المجدولة',

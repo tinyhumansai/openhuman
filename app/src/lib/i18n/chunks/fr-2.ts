@@ -105,7 +105,7 @@ const fr2: TranslationMap = {
     "Lancé en processus interne par le shell Tauri au démarrage de l'app.",
   'devOptions.cloud': 'Cloud',
   'devOptions.remoteCoreRpc': 'RPC core distant',
-  'devOptions.token': 'Token',
+  'devOptions.token': 'Jeton',
   'devOptions.tokenNotSet': 'non défini — le RPC renverra 401',
   'devOptions.triggerSentryTest': 'Déclencher un test Sentry (staging)',
   'devOptions.triggerSentryTestDesc':
@@ -148,7 +148,7 @@ const fr2: TranslationMap = {
   'team.role.admin': 'Admin',
   'team.role.billingManager': 'Gestionnaire de facturation',
   'team.role.member': 'Membre',
-  'team.active': 'Active',
+  'team.active': 'Actif',
   'team.personalTeam': 'Équipe personnelle',
   'team.manageTeam': "Gérer l'équipe",
   'team.switching': 'Changement…',
@@ -237,7 +237,7 @@ const fr2: TranslationMap = {
     "Les déclencheurs sont toujours enregistrés dans l'historique — aucun tour LLM n'est exécuté.",
   'composio.disableSpecificIntegrations':
     'Désactiver le triage IA pour des intégrations spécifiques',
-  'composio.settingsSaved': 'Settings saved',
+  'composio.settingsSaved': 'Paramètres enregistrés',
   'composio.saveFailed': "Échec de l'enregistrement. Réessaie.",
   'cron.title': 'Tâches cron',
   'cron.scheduledJobs': 'Tâches planifiées',

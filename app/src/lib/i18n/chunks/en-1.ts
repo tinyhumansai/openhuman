@@ -141,6 +141,8 @@ const en1: TranslationMap = {
     'Your device is offline right now. Check your network or restart the app to reconnect.',
   'home.restartCore': 'Restart Core',
   'home.restartingCore': 'Restarting core…',
+  'home.themeToggle.toLight': 'Switch to light mode',
+  'home.themeToggle.toDark': 'Switch to dark mode',
   'chat.newThread': 'New thread',
   'chat.typeMessage': 'Type a message...',
   'chat.send': 'Send message',

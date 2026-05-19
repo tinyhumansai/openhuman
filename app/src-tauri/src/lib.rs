@@ -1623,6 +1623,42 @@ fn append_platform_cef_gpu_workarounds(args: &mut Vec<CefCommandLineArg>, os: &s
 }
 
 pub fn run() {
+    // ── Install a custom tokio runtime for tauri::async_runtime ─────────
+    //
+    // Tauri's default async runtime uses tokio multi-thread workers with
+    // a ~2 MB stack. The in-process core (spawned by
+    // `core_process::CoreProcessHandle::ensure_running` via
+    // `tokio::spawn(run_server_embedded(..))`) runs *on* that runtime, so
+    // every JSON-RPC handler — including the deep tower
+    // `web channel chat → orchestrator turn → delegate_to_integrations_agent
+    // → sub-agent → composio_list_tools → load_config_with_timeout` —
+    // burns through the same 2 MB. In `crahs.log` (2026-05-17, build
+    // 0.53.49) that tower plus the serde-monomorphised `Config` Visitor
+    // frames pushed past the guard page and aborted with
+    // `SIGBUS / KERN_PROTECTION_FAILURE`. The structural fix
+    // (`spawn_blocking` for the TOML parse + cache in
+    // `src/openhuman/config/{schema/load.rs, ops.rs}`) moves the
+    // largest contributor off the worker; bumping the worker stack
+    // itself gives the rest of the tower comfortable headroom so future
+    // additions don't immediately re-tip the same scale. 8 MiB matches
+    // the OS-default pthread main-thread stack on macOS, so we can
+    // assume "as much room as the main thread" everywhere.
+    //
+    // Must happen before any `tauri::async_runtime::*` call, otherwise
+    // `set(...)` panics with "runtime already initialized".
+    {
+        let custom_runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .thread_stack_size(8 * 1024 * 1024)
+            .build()
+            .expect("build custom tokio runtime for tauri async surface");
+        let handle = custom_runtime.handle().clone();
+        // Tauri docs: "you cannot drop the underlying TokioRuntime."
+        // Leak it so its lifetime matches the process.
+        std::mem::forget(custom_runtime);
+        tauri::async_runtime::set(handle);
+    }
+
     // Initialize Sentry for the Tauri shell (desktop host) process before any
     // other startup work. Reads `OPENHUMAN_TAURI_SENTRY_DSN` at runtime first,
     // then falls back to the value baked in at compile time via the release

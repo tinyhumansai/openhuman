@@ -456,8 +456,28 @@ pub fn pre_login_user_dir(default_openhuman_dir: &Path) -> PathBuf {
 ///
 /// This is a standalone async function (not a method on Config) so it can be
 /// called from both `load_or_init` and `load_from_default_paths`.
+///
+/// **Why the parse runs via `spawn_blocking`:** `toml::from_str::<Config>`
+/// is a recursive-descent parser whose serde-monomorphised `Visitor`
+/// frames for our deeply-nested `Config` cost several KB each. When this
+/// function is called from the bottom of a deep async tower — e.g.
+/// `composio_list_tools` reloading the config per call (#1710 Wave 4),
+/// reached via `chat → orchestrator → delegate_to_integrations_agent →
+/// sub-agent → composio_*` — running the parse inline on the tokio
+/// worker thread blows the ~2 MB worker stack and aborts the in-process
+/// core with `SIGBUS / KERN_PROTECTION_FAILURE` (see `crahs.log`,
+/// 2026-05-17, and `tests/composio_list_tools_stack_overflow_regression.rs`).
+/// Moving the parse onto the blocking-pool gives it a *fresh* thread
+/// stack with no async tower above it, so the same parser frames easily
+/// fit. (An earlier draft of this fix also fronted
+/// `config::ops::load_config_with_timeout` with a per-process cache to
+/// skip the parse on repeat calls, but it was reverted — the in-process
+/// integration tests in `tests/json_rpc_e2e.rs` reuse workspace paths
+/// and load config mid-mutation, racing the cache. The spawn_blocking
+/// move is sufficient on its own once paired with the Tauri worker
+/// stack bump in `app/src-tauri/src/lib.rs`.)
 async fn parse_config_with_recovery(config_path: &Path, contents: &str) -> (Config, bool) {
-    let parse_err = match toml::from_str::<Config>(contents) {
+    let parse_err = match parse_toml_off_worker(contents.to_string()).await {
         Ok(config) => {
             tracing::debug!(
                 path = %config_path.display(),
@@ -477,7 +497,7 @@ async fn parse_config_with_recovery(config_path: &Path, contents: &str) -> (Conf
             "[config] Config file is corrupted — attempting recovery from backup"
         );
         match fs::read_to_string(&backup_path).await {
-            Ok(bak_contents) => match toml::from_str::<Config>(&bak_contents) {
+            Ok(bak_contents) => match parse_toml_off_worker(bak_contents).await {
                 Ok(bak_config) => {
                     tracing::info!(
                         path = %config_path.display(),
@@ -513,6 +533,22 @@ async fn parse_config_with_recovery(config_path: &Path, contents: &str) -> (Conf
     }
 
     (Config::default(), true)
+}
+
+/// Run `toml::from_str::<Config>` on a blocking-pool thread so the
+/// parser's stack consumption is independent of how deep the calling
+/// async tower is. See [`parse_config_with_recovery`] for the rationale.
+///
+/// Returns the parse error stringified (rather than `toml::de::Error`)
+/// because the rare blocking-pool join failure has no corresponding
+/// typed variant and is only ever surfaced as a log line / corruption
+/// fallback. Callers only need the message.
+async fn parse_toml_off_worker(contents: String) -> Result<Config, String> {
+    match tokio::task::spawn_blocking(move || toml::from_str::<Config>(&contents)).await {
+        Ok(Ok(config)) => Ok(config),
+        Ok(Err(parse_err)) => Err(parse_err.to_string()),
+        Err(join_err) => Err(format!("blocking-pool parse join failed: {join_err}")),
+    }
 }
 
 /// Older builds (#1342) wrote the user's custom OpenAI-compatible URL into

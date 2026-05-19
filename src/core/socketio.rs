@@ -157,6 +157,8 @@ struct ChatStartPayload {
     temperature: Option<f64>,
     #[serde(default)]
     profile_id: Option<String>,
+    #[serde(default)]
+    locale: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -256,6 +258,7 @@ pub fn attach_socketio() -> (socketioxide::layer::SocketIoLayer, SocketIo) {
                     model_override,
                     payload.temperature,
                     payload.profile_id,
+                    payload.locale,
                 )
                 .await
                 {

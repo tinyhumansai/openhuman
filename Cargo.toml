@@ -1,6 +1,6 @@
 [package]
 name = "openhuman"
-version = "0.53.49"
+version = "0.54.0"
 edition = "2021"
 description = "OpenHuman core business logic and RPC server"
 autobins = false
@@ -20,6 +20,10 @@ path = "src/bin/gmail_backfill_3d.rs"
 [[bin]]
 name = "memory-tree-init-smoke"
 path = "src/bin/memory_tree_init_smoke.rs"
+
+[[bin]]
+name = "inference-probe"
+path = "src/bin/inference_probe.rs"
 
 [lib]
 name = "openhuman_core"
