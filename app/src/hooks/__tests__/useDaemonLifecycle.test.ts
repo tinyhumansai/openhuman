@@ -135,7 +135,84 @@ describe('useDaemonLifecycle', () => {
     });
   });
 
+  describe('retry scheduling', () => {
+    it('runs a scheduled retry using the latest daemon action', async () => {
+      const { useDaemonLifecycle } = await import('../useDaemonLifecycle');
+      const uid = freshUser('retry');
+      resetUser(uid);
+      setAutoStartEnabled(uid, true);
+      setDaemonStatus(uid, 'error');
+      incrementConnectionAttempts(uid);
+      mockStartDaemon.mockResolvedValue({ result: { state: 'Running' }, logs: [] });
+
+      const { result } = renderHook(() => useDaemonLifecycle(uid));
+
+      expect(result.current.connectionAttempts).toBe(1);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+
+      expect(mockStartDaemon).toHaveBeenCalledTimes(1);
+      expect(result.current.connectionAttempts).toBe(0);
+    });
+  });
+
   describe('background / foreground pause-resume', () => {
+    it('keeps lifecycle setup stable across daemon state updates', async () => {
+      const { useDaemonLifecycle } = await import('../useDaemonLifecycle');
+      const uid = freshUser('stable-effect');
+      resetUser(uid);
+      setAutoStartEnabled(uid, true);
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      const addEventListenerSpy = vi.spyOn(document, 'addEventListener');
+      const removeEventListenerSpy = vi.spyOn(document, 'removeEventListener');
+
+      try {
+        const { unmount } = renderHook(() => useDaemonLifecycle(uid));
+
+        const lifecycleLogCount = (message: string) =>
+          logSpy.mock.calls.filter(([logged]) => logged === message).length;
+        const visibilityAddCount = () =>
+          addEventListenerSpy.mock.calls.filter(([event]) => event === 'visibilitychange').length;
+        const visibilityRemoveCount = () =>
+          removeEventListenerSpy.mock.calls.filter(([event]) => event === 'visibilitychange')
+            .length;
+
+        expect(lifecycleLogCount('[DaemonLifecycle] Setting up daemon lifecycle management')).toBe(
+          1
+        );
+        expect(visibilityAddCount()).toBe(1);
+
+        act(() => {
+          setDaemonStatus(uid, 'starting');
+          setIsRecovering(uid, true);
+          incrementConnectionAttempts(uid);
+          setDaemonStatus(uid, 'running');
+          setIsRecovering(uid, false);
+        });
+
+        expect(lifecycleLogCount('[DaemonLifecycle] Setting up daemon lifecycle management')).toBe(
+          1
+        );
+        expect(lifecycleLogCount('[DaemonLifecycle] Cleaning up daemon lifecycle management')).toBe(
+          0
+        );
+        expect(visibilityAddCount()).toBe(1);
+        expect(visibilityRemoveCount()).toBe(0);
+
+        unmount();
+
+        expect(lifecycleLogCount('[DaemonLifecycle] Cleaning up daemon lifecycle management')).toBe(
+          1
+        );
+        expect(visibilityRemoveCount()).toBe(1);
+      } finally {
+        logSpy.mockRestore();
+        addEventListenerSpy.mockRestore();
+        removeEventListenerSpy.mockRestore();
+      }
+    });
+
     it('does not invoke startDaemon while hidden, resumes auto-start on visible', async () => {
       const { useDaemonLifecycle } = await import('../useDaemonLifecycle');
       const uid = freshUser('vis');
