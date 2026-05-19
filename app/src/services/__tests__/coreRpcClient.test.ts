@@ -335,6 +335,113 @@ describe('coreRpcClient', () => {
     }
   });
 
+  test('honors per-call timeoutMs override instead of the global default (#2156)', async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchMock = vi.mocked(fetch);
+      fetchMock.mockImplementationOnce(
+        (_url, init) =>
+          new Promise<Response>((_resolve, reject) => {
+            const signal = (init as RequestInit).signal as AbortSignal | undefined;
+            if (!signal) return;
+            const onAbort = () => {
+              const err = new Error('The operation was aborted');
+              err.name = 'AbortError';
+              reject(err);
+            };
+            if (signal.aborted) onAbort();
+            else signal.addEventListener('abort', onAbort, { once: true });
+          })
+      );
+
+      const pending = callCoreRpc({
+        method: 'openhuman.app_state_snapshot',
+        timeoutMs: 60_000,
+      });
+      pending.catch(() => {});
+
+      // 30s passes — global default would have aborted by now, but the
+      // per-call 60s override keeps the request alive.
+      await vi.advanceTimersByTimeAsync(31_000);
+      // Not yet rejected. Advance to the override boundary.
+      await vi.advanceTimersByTimeAsync(30_000);
+
+      await expect(pending).rejects.toThrow(
+        'Core RPC openhuman.app_state_snapshot timed out after 60000ms'
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('clamps an oversize timeoutMs to the MAX bound (10 minutes)', async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchMock = vi.mocked(fetch);
+      fetchMock.mockImplementationOnce(
+        (_url, init) =>
+          new Promise<Response>((_resolve, reject) => {
+            const signal = (init as RequestInit).signal as AbortSignal | undefined;
+            if (!signal) return;
+            const onAbort = () => {
+              const err = new Error('The operation was aborted');
+              err.name = 'AbortError';
+              reject(err);
+            };
+            if (signal.aborted) onAbort();
+            else signal.addEventListener('abort', onAbort, { once: true });
+          })
+      );
+
+      const pending = callCoreRpc({
+        method: 'openhuman.app_state_snapshot',
+        // 2 hours — far beyond the 10 minute clamp; should be reduced.
+        timeoutMs: 2 * 60 * 60 * 1_000,
+      });
+      pending.catch(() => {});
+
+      const MAX_MS = 10 * 60 * 1_000;
+      await vi.advanceTimersByTimeAsync(MAX_MS + 1);
+
+      await expect(pending).rejects.toThrow(
+        `Core RPC openhuman.app_state_snapshot timed out after ${MAX_MS}ms`
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('falls back to the global default when timeoutMs is undefined', async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchMock = vi.mocked(fetch);
+      fetchMock.mockImplementationOnce(
+        (_url, init) =>
+          new Promise<Response>((_resolve, reject) => {
+            const signal = (init as RequestInit).signal as AbortSignal | undefined;
+            if (!signal) return;
+            const onAbort = () => {
+              const err = new Error('The operation was aborted');
+              err.name = 'AbortError';
+              reject(err);
+            };
+            if (signal.aborted) onAbort();
+            else signal.addEventListener('abort', onAbort, { once: true });
+          })
+      );
+
+      const pending = callCoreRpc({ method: 'openhuman.threads_list' });
+      pending.catch(() => {});
+
+      await vi.advanceTimersByTimeAsync(CORE_RPC_TIMEOUT_MS + 1);
+      await expect(pending).rejects.toThrow(
+        `Core RPC openhuman.threads_list timed out after ${CORE_RPC_TIMEOUT_MS}ms`
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test('does not trigger the timeout path when fetch resolves promptly', async () => {
     const fetchMock = vi.mocked(fetch);
     fetchMock.mockResolvedValueOnce({
