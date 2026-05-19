@@ -136,7 +136,9 @@ async fn process_file(file: FileToProcess) -> IngestFileResult {
 
     // Secondary dedup: content didn't change even if mtime did (e.g. `touch`).
     if file.prev_hash.as_deref() == Some(hash.as_str()) {
-        return IngestFileResult::Unchanged { rel_path: file.rel_path };
+        return IngestFileResult::Unchanged {
+            rel_path: file.rel_path,
+        };
     }
 
     let ingest_params = IngestDocParams {
@@ -273,8 +275,7 @@ pub async fn sync_vault(config: &Config, vault: &Vault) -> VaultSyncReport {
         if path_is_inside_excluded_dir(path, &root) {
             continue;
         }
-        if !user_includes.is_empty() && !user_includes.iter().any(|pat| rel_path_lc.contains(pat))
-        {
+        if !user_includes.is_empty() && !user_includes.iter().any(|pat| rel_path_lc.contains(pat)) {
             continue;
         }
         if user_excludes.iter().any(|pat| rel_path_lc.contains(pat)) {
@@ -397,9 +398,7 @@ pub async fn sync_vault(config: &Config, vault: &Vault) -> VaultSyncReport {
                     status: VaultFileStatus::Ok,
                 };
                 if let Err(err) = store::upsert_file(config, &file) {
-                    log::debug!(
-                        "[vault] sync: ledger write failed path={rel_path} err={err}"
-                    );
+                    log::debug!("[vault] sync: ledger write failed path={rel_path} err={err}");
                     report
                         .errors
                         .push(format!("{rel_path}: ledger write failed: {err}"));
@@ -496,4 +495,3 @@ fn sha256_hex(content: &str) -> String {
     }
     out
 }
-

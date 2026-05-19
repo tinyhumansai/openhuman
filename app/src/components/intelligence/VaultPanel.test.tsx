@@ -186,7 +186,13 @@ describe('<VaultPanel />', () => {
       .mockResolvedValueOnce({ result: [vault()], logs: [] });
     mockSync.mockResolvedValueOnce({ result: { status: 'started', vault_id: 'v-1' }, logs: [] });
     mockSyncStatus.mockResolvedValueOnce(
-      syncState({ ingested: 1, unchanged: 0, failed: 1, duration_ms: 50, errors: ['x.md: read failed'] })
+      syncState({
+        ingested: 1,
+        unchanged: 0,
+        failed: 1,
+        duration_ms: 50,
+        errors: ['x.md: read failed'],
+      })
     );
     const onToast = vi.fn();
     render(<VaultPanel onToast={onToast} />);

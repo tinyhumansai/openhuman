@@ -164,10 +164,7 @@ describe('tauriCommands/vault', () => {
 
     test('dispatches openhuman.vault_sync with vault_id and returns started status', async () => {
       mockCallCoreRpc.mockResolvedValue({
-        result: {
-          status: 'started',
-          vault_id: 'v-1',
-        },
+        result: { status: 'started', vault_id: 'v-1' },
         logs: [],
       });
       const resp = await openhumanVaultSync('v-1');

@@ -124,7 +124,9 @@ export function VaultPanel({ onToast }: VaultPanelProps) {
         return;
       }
 
-      console.debug('[ui-flow][vault-panel] sync started, polling for status', { vaultId: vault.id });
+      console.debug('[ui-flow][vault-panel] sync started, polling for status', {
+        vaultId: vault.id,
+      });
 
       // Poll until the background task finishes.
       const vaultId = vault.id;
@@ -149,10 +151,7 @@ export function VaultPanel({ onToast }: VaultPanelProps) {
 
         // Update progress indicator while running.
         if (st.total > 0) {
-          setSyncProgress(p => ({
-            ...p,
-            [vaultId]: { ingested: st.ingested, total: st.total },
-          }));
+          setSyncProgress(p => ({ ...p, [vaultId]: { ingested: st.ingested, total: st.total } }));
         }
 
         console.debug('[ui-flow][vault-panel] sync poll', {
