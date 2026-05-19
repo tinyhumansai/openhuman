@@ -538,18 +538,69 @@ pub struct ComputerControlConfig {
 
 // ── Agent integration tools (backend-proxied) ───────────────────────
 
-/// Per-integration on/off toggle.
+/// Routing mode for an integration that supports a backend-managed
+/// default and an optional BYO ("bring your own API key") override.
+pub const INTEGRATION_MODE_MANAGED: &str = "managed";
+pub const INTEGRATION_MODE_BYO: &str = "byo";
+
+fn default_integration_mode() -> String {
+    INTEGRATION_MODE_MANAGED.into()
+}
+
+/// Per-integration toggle.
+///
+/// Defaults to **OpenHuman-managed** routing: the OpenHuman backend
+/// owns the upstream API key, billing, and rate limits — the user only
+/// has to flip `enabled` to make the tools available.
+///
+/// Users who hold their own provider account can switch `mode` to
+/// `"byo"` and supply `api_key`. In that case tools register **iff**
+/// the integration is `enabled = true` **and** `api_key` is a non-empty
+/// trimmed string — see [`IntegrationToggle::is_active`]. This mirrors
+/// the rule the Settings UI surfaces to the user ("loaded iff API key
+/// is provided and enabled").
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct IntegrationToggle {
     #[serde(default = "defaults::default_true")]
     pub enabled: bool,
+    /// Routing mode. One of [`INTEGRATION_MODE_MANAGED`] (default — the
+    /// OpenHuman backend proxies the call) or [`INTEGRATION_MODE_BYO`]
+    /// (the user's own API key is required and tools refuse to
+    /// register without it).
+    #[serde(default = "default_integration_mode")]
+    pub mode: String,
+    /// API key for [`INTEGRATION_MODE_BYO`]. Ignored in managed mode.
+    /// Trimmed empty / `None` ⇒ no BYO key configured.
+    #[serde(default)]
+    pub api_key: Option<String>,
+}
+
+impl IntegrationToggle {
+    /// Returns true when the integration should be wired up at tool-
+    /// registration time. Managed mode requires only `enabled`; BYO
+    /// mode requires both `enabled` and a non-empty `api_key`.
+    pub fn is_active(&self) -> bool {
+        if !self.enabled {
+            return false;
+        }
+        match self.mode.as_str() {
+            INTEGRATION_MODE_BYO => self
+                .api_key
+                .as_deref()
+                .map(|s| !s.trim().is_empty())
+                .unwrap_or(false),
+            _ => true,
+        }
+    }
 }
 
 impl Default for IntegrationToggle {
     fn default() -> Self {
         Self {
             enabled: defaults::default_true(),
+            mode: default_integration_mode(),
+            api_key: None,
         }
     }
 }
@@ -712,4 +763,63 @@ pub struct IntegrationsConfig {
     /// Polymarket browse + trading APIs (Gamma + CLOB).
     #[serde(default)]
     pub polymarket: PolymarketConfig,
+}
+
+#[cfg(test)]
+mod integration_toggle_tests {
+    use super::*;
+
+    #[test]
+    fn managed_mode_active_when_enabled_without_key() {
+        let toggle = IntegrationToggle {
+            enabled: true,
+            mode: INTEGRATION_MODE_MANAGED.into(),
+            api_key: None,
+        };
+        assert!(toggle.is_active());
+    }
+
+    #[test]
+    fn managed_mode_inactive_when_disabled() {
+        let toggle = IntegrationToggle {
+            enabled: false,
+            mode: INTEGRATION_MODE_MANAGED.into(),
+            api_key: Some("ignored".into()),
+        };
+        assert!(!toggle.is_active());
+    }
+
+    #[test]
+    fn byo_mode_requires_non_empty_key() {
+        let mut toggle = IntegrationToggle {
+            enabled: true,
+            mode: INTEGRATION_MODE_BYO.into(),
+            api_key: None,
+        };
+        assert!(!toggle.is_active(), "missing key");
+
+        toggle.api_key = Some("   ".into());
+        assert!(!toggle.is_active(), "whitespace key");
+
+        toggle.api_key = Some("real-key".into());
+        assert!(toggle.is_active());
+    }
+
+    #[test]
+    fn byo_mode_inactive_when_disabled_even_with_key() {
+        let toggle = IntegrationToggle {
+            enabled: false,
+            mode: INTEGRATION_MODE_BYO.into(),
+            api_key: Some("real-key".into()),
+        };
+        assert!(!toggle.is_active());
+    }
+
+    #[test]
+    fn default_is_managed_and_active() {
+        let toggle = IntegrationToggle::default();
+        assert_eq!(toggle.mode, INTEGRATION_MODE_MANAGED);
+        assert!(toggle.api_key.is_none());
+        assert!(toggle.is_active());
+    }
 }
