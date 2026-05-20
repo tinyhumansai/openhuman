@@ -11,7 +11,7 @@ import { resetForUser, setSocketIdForUser, setStatusForUser } from '../store/soc
 import type { ChannelAuthMode, ChannelConnectionStatus, ChannelType } from '../types/channels';
 import { IS_DEV } from '../utils/config';
 import { createSafeLogData, sanitizeError } from '../utils/sanitize';
-import { getCoreRpcUrl } from './coreRpcClient';
+import { getCoreRpcToken, getCoreRpcUrl } from './coreRpcClient';
 
 // Socket service logger using debug package
 // Enable logging by setting DEBUG=socket* in environment or localStorage
@@ -182,8 +182,14 @@ class SocketService {
       return;
     }
 
+    // The local core's Socket.IO handshake validates the per-process bearer
+    // exposed via `core_rpc_token` (Tauri IPC) / the cloud-mode picker. The
+    // session JWT is kept on the `auth` payload alongside so future handlers
+    // can attribute connections, but it is not what gates the connection.
+    const coreToken = await getCoreRpcToken();
+
     const socketOptions = {
-      auth: { token },
+      auth: { token: coreToken ?? '', session: token },
       path: '/socket.io/',
       transports: ['websocket', 'polling'] as ('websocket' | 'polling')[],
       reconnection: true,

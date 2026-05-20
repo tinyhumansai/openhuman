@@ -21,7 +21,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { io, Socket } from 'socket.io-client';
 
-import { callCoreRpc, getCoreHttpBaseUrl } from '../services/coreRpcClient';
+import { callCoreRpc, getCoreHttpBaseUrl, getCoreRpcToken } from '../services/coreRpcClient';
 
 /** Resolve the core process base URL (without /rpc suffix) for Socket.IO.
  *
@@ -121,9 +121,12 @@ export function useDictationHotkey(): DictationHotkeyState {
       try {
         const baseUrl = await resolveCoreSocketUrl();
         if (disposed) return;
+        const coreToken = await getCoreRpcToken();
+        if (disposed) return;
 
         socket = io(baseUrl, {
           path: '/socket.io/',
+          auth: { token: coreToken ?? '' },
           transports: ['websocket', 'polling'],
           reconnection: true,
           reconnectionDelay: 2000,

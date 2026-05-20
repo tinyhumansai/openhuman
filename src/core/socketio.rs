@@ -1,8 +1,74 @@
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::json;
-use socketioxide::extract::{Data, SocketRef};
+use socketioxide::extract::{Data, SocketRef, TryData};
 use socketioxide::SocketIo;
+
+/// Marker stored in [`SocketRef::extensions`] once a connection has presented a
+/// bearer token that matches the active per-process RPC token.
+///
+/// Event handlers consult this before forwarding attacker-controllable input
+/// into the JSON-RPC dispatcher or the web-chat orchestrator: an unauthenticated
+/// socket that never picked up the marker is allowed to receive broadcast-style
+/// events (read-only) but cannot trigger executable work.
+#[derive(Clone, Copy, Debug)]
+struct AuthedConnection;
+
+/// Connection-time payload the client passes via Socket.IO's `auth` field.
+///
+/// Browsers do not let `EventSource` / `WebSocket` clients attach custom
+/// headers, so the handshake `auth` map is the only header-equivalent slot
+/// available for our per-process bearer. The socket-IO Node/JS clients all
+/// surface `io(url, { auth: { token: "<hex>" } })` for this.
+#[derive(Debug, Default, Deserialize)]
+struct HandshakeAuth {
+    #[serde(default)]
+    token: Option<String>,
+}
+
+/// Origins the local core trusts at the Socket.IO handshake.
+///
+/// `tauri://localhost` is the production app webview; `http://localhost:*`
+/// and `http://127.0.0.1:*` cover the Vite dev server (`pnpm dev:app`)
+/// and standalone CLI tooling that opens browser pages against the local
+/// listener. A missing `Origin` header is treated as a native (non-browser)
+/// client and accepted — only the cross-origin browser-page case is the
+/// targeted bad actor here.
+fn origin_is_allowed(origin: Option<&str>) -> bool {
+    let Some(origin) = origin else {
+        return true; // native clients (CLI, Tauri shell) — no Origin header
+    };
+    let origin = origin.trim();
+    if origin.is_empty() || origin == "null" {
+        return false;
+    }
+    if origin == "tauri://localhost" || origin == "https://tauri.localhost" {
+        return true;
+    }
+    // Strip scheme so we can prefix-match the host:port portion.
+    let host = origin
+        .strip_prefix("http://")
+        .or_else(|| origin.strip_prefix("https://"))
+        .unwrap_or(origin);
+    host.starts_with("localhost") || host.starts_with("127.0.0.1") || host.starts_with("[::1]")
+}
+
+/// True when `socket` finished the handshake with a valid bearer token.
+fn socket_is_authed(socket: &SocketRef) -> bool {
+    socket.extensions.get::<AuthedConnection>().is_some()
+}
+
+/// Best-effort disconnect. Called when we discover an unauthenticated socket
+/// inside an event handler — the connect path already disconnects the bad
+/// origins / wrong tokens, so this is purely a defense-in-depth path.
+fn drop_unauthed(socket: &SocketRef, reason: &'static str) {
+    log::warn!(
+        "[socketio] dropping unauthenticated socket id={} reason={}",
+        socket.id,
+        reason
+    );
+    let _ = socket.clone().disconnect();
+}
 
 /// Standard event payload for the web channel transport.
 ///
@@ -181,9 +247,47 @@ pub fn attach_socketio() -> (socketioxide::layer::SocketIoLayer, SocketIo) {
         io.config().engine_config.req_path
     );
 
-    io.ns("/", |socket: SocketRef| {
+    io.ns("/", |socket: SocketRef, TryData(handshake): TryData<HandshakeAuth>| {
         let client_id = socket.id.to_string();
-        log::info!("[socketio] client connected id={client_id}");
+
+        // Reject cross-origin browser pages before the handshake completes.
+        // Native clients (Tauri shell, CLI) do not set an `Origin` header and
+        // are accepted; only browser pages from origins outside the local
+        // app surface are dropped here. See `origin_is_allowed`.
+        let origin = socket
+            .req_parts()
+            .headers
+            .get(axum::http::header::ORIGIN)
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string());
+        if !origin_is_allowed(origin.as_deref()) {
+            log::warn!(
+                "[socketio] rejecting connect: bad origin {:?} client={}",
+                origin,
+                client_id
+            );
+            let _ = socket.clone().disconnect();
+            return;
+        }
+
+        // Verify the handshake bearer matches the per-process RPC token.
+        // `TryData` lets us treat a missing/malformed `auth` payload as a
+        // soft failure (no panic) and reject the connect cleanly.
+        let supplied = handshake
+            .ok()
+            .and_then(|h| h.token)
+            .unwrap_or_default();
+        if !crate::core::auth::verify_bearer_token(&supplied) {
+            log::warn!(
+                "[socketio] rejecting connect: missing or invalid bearer client={}",
+                client_id
+            );
+            let _ = socket.clone().disconnect();
+            return;
+        }
+        socket.extensions.insert(AuthedConnection);
+
+        log::info!("[socketio] client connected id={client_id} (authenticated)");
         // Join a room named after the client ID for targeted event delivery.
         join_room_logged(&socket, &client_id, &client_id);
         // Also auto-join the "system" room so every connected client
@@ -203,6 +307,10 @@ pub fn attach_socketio() -> (socketioxide::layer::SocketIoLayer, SocketIo) {
         socket.on(
             "rpc:request",
             |socket: SocketRef, Data(payload): Data<SocketRpcRequest>| async move {
+                if !socket_is_authed(&socket) {
+                    drop_unauthed(&socket, "rpc:request from unauthenticated socket");
+                    return;
+                }
                 let client_id = socket.id.to_string();
                 log::info!(
                     "[socketio] rpc:request method={} id={} client={}",
@@ -240,6 +348,10 @@ pub fn attach_socketio() -> (socketioxide::layer::SocketIoLayer, SocketIo) {
         socket.on(
             "chat:start",
             |socket: SocketRef, Data(payload): Data<ChatStartPayload>| async move {
+                if !socket_is_authed(&socket) {
+                    drop_unauthed(&socket, "chat:start from unauthenticated socket");
+                    return;
+                }
                 let client_id = socket.id.to_string();
                 let thread_id = payload.thread_id.clone();
                 let model_override = payload.model_override.or(payload.model);
@@ -290,6 +402,10 @@ pub fn attach_socketio() -> (socketioxide::layer::SocketIoLayer, SocketIo) {
         socket.on(
             "chat:cancel",
             |socket: SocketRef, Data(payload): Data<ChatCancelPayload>| async move {
+                if !socket_is_authed(&socket) {
+                    drop_unauthed(&socket, "chat:cancel from unauthenticated socket");
+                    return;
+                }
                 let client_id = socket.id.to_string();
                 log::debug!(
                     "[socketio] recv event=chat:cancel client_id={} thread_id={}",
@@ -615,12 +731,38 @@ fn emit_room_with_aliases(io: &SocketIo, room: &str, name: &str, payload: &serde
 
 #[cfg(test)]
 mod tests {
-    use super::event_alias;
+    use super::{event_alias, origin_is_allowed};
 
     #[test]
     fn event_alias_translates_between_delimiters() {
         assert_eq!(event_alias("chat_done").as_deref(), Some("chat:done"));
         assert_eq!(event_alias("chat:error").as_deref(), Some("chat_error"));
         assert_eq!(event_alias("ready"), None);
+    }
+
+    #[test]
+    fn origin_allowlist_accepts_native_clients() {
+        assert!(origin_is_allowed(None));
+    }
+
+    #[test]
+    fn origin_allowlist_accepts_tauri_localhost() {
+        assert!(origin_is_allowed(Some("tauri://localhost")));
+        assert!(origin_is_allowed(Some("https://tauri.localhost")));
+    }
+
+    #[test]
+    fn origin_allowlist_accepts_local_dev_server() {
+        assert!(origin_is_allowed(Some("http://localhost:1420")));
+        assert!(origin_is_allowed(Some("http://127.0.0.1:1420")));
+        assert!(origin_is_allowed(Some("http://[::1]:1420")));
+    }
+
+    #[test]
+    fn origin_allowlist_rejects_cross_origin_browser_pages() {
+        assert!(!origin_is_allowed(Some("https://attacker.example")));
+        assert!(!origin_is_allowed(Some("http://evil.local")));
+        assert!(!origin_is_allowed(Some("null")));
+        assert!(!origin_is_allowed(Some("")));
     }
 }

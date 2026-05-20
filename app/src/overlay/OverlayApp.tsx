@@ -35,7 +35,7 @@ import { io, Socket } from 'socket.io-client';
 
 import RotatingTetrahedronCanvas from '../components/RotatingTetrahedronCanvas';
 import { useT } from '../lib/i18n/I18nContext';
-import { callCoreRpc, getCoreHttpBaseUrl } from '../services/coreRpcClient';
+import { callCoreRpc, getCoreHttpBaseUrl, getCoreRpcToken } from '../services/coreRpcClient';
 
 const OVERLAY_IDLE_WIDTH = 50;
 const OVERLAY_IDLE_HEIGHT = 50;
@@ -352,10 +352,13 @@ export default function OverlayApp() {
       try {
         const baseUrl = await resolveCoreSocketUrl();
         if (disposed) return;
+        const coreToken = await getCoreRpcToken();
+        if (disposed) return;
 
         console.debug(`[overlay] connecting to core socket at ${baseUrl}`);
         socket = io(baseUrl, {
           path: '/socket.io/',
+          auth: { token: coreToken ?? '' },
           transports: ['websocket', 'polling'],
           reconnection: true,
           reconnectionDelay: 2000,
