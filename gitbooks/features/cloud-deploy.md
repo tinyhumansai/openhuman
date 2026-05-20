@@ -504,10 +504,37 @@ fields with a **Test connection** button) to configure without editing files.
 
 ### Continuous deployment
 
-The repo ships a [`.github/workflows/fly-deploy.yml`](../../.github/workflows/fly-deploy.yml)
-that redeploys on every push to `main`. To use it, add your Fly.io API token
-as a repository secret named `FLY_API_TOKEN` (generate one with
-`fly tokens create deploy`).
+To redeploy automatically on every push to `main`, add a workflow file at
+`.github/workflows/fly-deploy.yml`:
+
+```yaml
+name: Fly Deploy
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'Dockerfile'
+      - 'fly.toml'
+      - 'scripts/docker-entrypoint-core.sh'
+jobs:
+  deploy:
+    name: Deploy openhuman-core
+    runs-on: ubuntu-latest
+    concurrency: deploy-group
+    steps:
+      - uses: actions/checkout@v4
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - run: flyctl deploy --remote-only
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+```
+
+Generate a deploy token with `fly tokens create deploy` and add it as a
+repository secret named `FLY_API_TOKEN`.
 
 ### Updating
 
