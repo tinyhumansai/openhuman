@@ -206,6 +206,10 @@ const id5: TranslationMap = {
   'settings.mascot.active': 'Aktif',
   'settings.mascot.characterDesc': 'Deskripsi karakter',
   'settings.mascot.characterHeading': 'Judul karakter',
+  'settings.mascot.customGifError':
+    'Enter an HTTPS .gif URL, file:// .gif URL, or local .gif path.',
+  'settings.mascot.customGifHeading': 'Custom GIF avatar',
+  'settings.mascot.customGifLabel': 'Custom GIF avatar URL',
   'settings.mascot.colorDesc': 'Deskripsi warna',
   'settings.mascot.colorHeading': 'Judul warna',
   'settings.mascot.loadingLibrary': 'Memuat perpustakaan OpenHuman...',

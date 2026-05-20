@@ -206,6 +206,10 @@ const bn5: TranslationMap = {
   'settings.mascot.active': 'সক্রিয়',
   'settings.mascot.characterDesc': 'চরিত্রের বিবরণ',
   'settings.mascot.characterHeading': 'চরিত্রের শিরোনাম',
+  'settings.mascot.customGifError':
+    'Enter an HTTPS .gif URL, file:// .gif URL, or local .gif path.',
+  'settings.mascot.customGifHeading': 'Custom GIF avatar',
+  'settings.mascot.customGifLabel': 'Custom GIF avatar URL',
   'settings.mascot.colorDesc': 'রঙের বিবরণ',
   'settings.mascot.colorHeading': 'রঙের শিরোনাম',
   'settings.mascot.loadingLibrary': 'OpenHuman লাইব্রেরি লোড হচ্ছে…',

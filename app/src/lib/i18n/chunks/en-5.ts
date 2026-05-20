@@ -204,6 +204,10 @@ const en5: TranslationMap = {
   'settings.mascot.active': 'Active',
   'settings.mascot.characterDesc': 'Character desc',
   'settings.mascot.characterHeading': 'Character heading',
+  'settings.mascot.customGifError':
+    'Enter an HTTPS .gif URL, file:// .gif URL, or local .gif path.',
+  'settings.mascot.customGifHeading': 'Custom GIF avatar',
+  'settings.mascot.customGifLabel': 'Custom GIF avatar URL',
   'settings.mascot.colorDesc': 'Color desc',
   'settings.mascot.colorHeading': 'Color heading',
   'settings.mascot.loadingLibrary': 'Loading OpenHuman library…',

@@ -167,6 +167,10 @@ const ko5: TranslationMap = {
   'settings.mascot.active': '활성',
   'settings.mascot.characterDesc': '캐릭터 설명',
   'settings.mascot.characterHeading': '캐릭터 제목',
+  'settings.mascot.customGifError':
+    'Enter an HTTPS .gif URL, file:// .gif URL, or local .gif path.',
+  'settings.mascot.customGifHeading': 'Custom GIF avatar',
+  'settings.mascot.customGifLabel': 'Custom GIF avatar URL',
   'settings.mascot.colorDesc': '색상 설명',
   'settings.mascot.colorHeading': '색상 제목',
   'settings.mascot.loadingLibrary': 'OpenHuman 라이브러리 불러오는 중…',

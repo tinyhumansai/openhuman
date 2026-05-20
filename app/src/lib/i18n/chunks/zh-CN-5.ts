@@ -190,6 +190,10 @@ const zhCN5: TranslationMap = {
   'settings.mascot.active': '活跃',
   'settings.mascot.characterDesc': '选择你的 OpenHuman 角色',
   'settings.mascot.characterHeading': '角色',
+  'settings.mascot.customGifError':
+    'Enter an HTTPS .gif URL, file:// .gif URL, or local .gif path.',
+  'settings.mascot.customGifHeading': 'Custom GIF avatar',
+  'settings.mascot.customGifLabel': 'Custom GIF avatar URL',
   'settings.mascot.colorDesc': '选择颜色方案',
   'settings.mascot.colorHeading': '颜色',
   'settings.mascot.loadingLibrary': '正在加载 OpenHuman 库…',

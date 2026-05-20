@@ -163,7 +163,7 @@ const MascotPanel = () => {
       return;
     }
     if (!isCustomMascotGifUrl(trimmed)) {
-      setCustomGifError('Enter an HTTPS .gif URL, file:// .gif URL, or local .gif path.');
+      setCustomGifError(t('settings.mascot.customGifError'));
       return;
     }
     setCustomGifError(null);
@@ -494,11 +494,11 @@ const MascotPanel = () => {
           <div className="mb-3 bg-white dark:bg-neutral-900 rounded-xl border border-stone-200 dark:border-neutral-800 p-4 space-y-3">
             <label className="block space-y-1">
               <span className="text-xs font-medium text-stone-600 dark:text-neutral-300">
-                Custom GIF avatar
+                {t('settings.mascot.customGifHeading')}
               </span>
               <div className="flex gap-2">
                 <input
-                  aria-label="Custom GIF avatar URL"
+                  aria-label={t('settings.mascot.customGifLabel')}
                   data-testid="mascot-custom-gif-input"
                   value={customGifDraft}
                   placeholder="https://example.com/avatar.gif"

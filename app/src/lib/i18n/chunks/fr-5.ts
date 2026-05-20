@@ -212,6 +212,10 @@ const fr5: TranslationMap = {
   'settings.mascot.active': 'Actif',
   'settings.mascot.characterDesc': 'Description du personnage',
   'settings.mascot.characterHeading': 'Titre du personnage',
+  'settings.mascot.customGifError':
+    'Enter an HTTPS .gif URL, file:// .gif URL, or local .gif path.',
+  'settings.mascot.customGifHeading': 'Custom GIF avatar',
+  'settings.mascot.customGifLabel': 'Custom GIF avatar URL',
   'settings.mascot.colorDesc': 'Description de la couleur',
   'settings.mascot.colorHeading': 'Titre de la couleur',
   'settings.mascot.loadingLibrary': 'Chargement de la bibliothèque OpenHuman…',
