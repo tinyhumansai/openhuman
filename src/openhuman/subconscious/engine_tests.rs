@@ -105,6 +105,21 @@ fn local_subconscious_provider_with_endpoint_is_available() {
 }
 
 #[test]
+fn local_subconscious_route_preserves_ollama_model() {
+    let mut config = Config::default();
+    config.subconscious_provider = Some("ollama:qwen2.5:0.5b".into());
+    config.memory_tree.llm_summariser_endpoint = Some("http://localhost:11434".into());
+
+    assert_eq!(
+        resolve_subconscious_route(&config),
+        SubconsciousProviderRoute::LocalOllama {
+            endpoint_set: true,
+            model: "qwen2.5:0.5b".into(),
+        }
+    );
+}
+
+#[test]
 fn local_subconscious_provider_without_endpoint_is_unavailable() {
     let mut config = Config::default();
     config.subconscious_provider = Some("ollama:qwen2.5:0.5b".into());

@@ -790,16 +790,19 @@ impl SubconsciousEngine {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum SubconsciousProviderRoute {
-    LocalOllama { endpoint_set: bool },
+    LocalOllama { endpoint_set: bool, model: String },
     OpenHumanCloud,
     Other(String),
 }
 
 pub(crate) fn subconscious_provider_unavailable_reason(config: &Config) -> Option<String> {
     match resolve_subconscious_route(config) {
-        SubconsciousProviderRoute::LocalOllama { endpoint_set: true } => None,
+        SubconsciousProviderRoute::LocalOllama {
+            endpoint_set: true, ..
+        } => None,
         SubconsciousProviderRoute::LocalOllama {
             endpoint_set: false,
+            ..
         } => Some(
             "Configure the Ollama summarizer endpoint for Subconscious in Settings > AI."
                 .to_string(),
@@ -831,14 +834,17 @@ pub(crate) fn subconscious_provider_unavailable_reason(config: &Config) -> Optio
 }
 
 fn resolve_subconscious_route(config: &Config) -> SubconsciousProviderRoute {
-    if config.workload_local_model("subconscious").is_some() {
+    if let Some(model) = config.workload_local_model("subconscious") {
         let endpoint_set = config
             .memory_tree
             .llm_summariser_endpoint
             .as_deref()
             .map(str::trim)
             .is_some_and(|s| !s.is_empty());
-        return SubconsciousProviderRoute::LocalOllama { endpoint_set };
+        return SubconsciousProviderRoute::LocalOllama {
+            endpoint_set,
+            model,
+        };
     }
 
     let raw = config
@@ -860,7 +866,7 @@ fn resolve_subconscious_route(config: &Config) -> SubconsciousProviderRoute {
 fn build_subconscious_chat_provider(config: &Config) -> Result<Arc<dyn ChatProvider>> {
     let mut routed = config.clone();
     routed.memory_provider = match resolve_subconscious_route(config) {
-        SubconsciousProviderRoute::LocalOllama { .. } => config.subconscious_provider.clone(),
+        SubconsciousProviderRoute::LocalOllama { model, .. } => Some(format!("ollama:{model}")),
         SubconsciousProviderRoute::OpenHumanCloud => Some("cloud".to_string()),
         SubconsciousProviderRoute::Other(provider) => Some(provider),
     };
