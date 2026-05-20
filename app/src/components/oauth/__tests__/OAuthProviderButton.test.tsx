@@ -2,7 +2,12 @@ import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { checkBackendHealthy } from '../../../services/backendHealth';
-import { getDeepLinkAuthState } from '../../../store/deepLinkAuthState';
+import {
+  beginDeepLinkAuthProcessing,
+  completeDeepLinkAuthProcessing,
+  getDeepLinkAuthState,
+} from '../../../store/deepLinkAuthState';
+import { prepareOAuthLoginLaunch } from '../../../utils/oauthAppVersionGate';
 import { openUrl } from '../../../utils/openUrl';
 import { isTauri } from '../../../utils/tauriCommands';
 import OAuthProviderButton from '../OAuthProviderButton';
@@ -11,9 +16,17 @@ vi.mock('../../../services/backendHealth', () => ({ checkBackendHealthy: vi.fn()
 
 vi.mock('../../../utils/openUrl', () => ({ openUrl: vi.fn() }));
 
+vi.mock('../../../utils/oauthAppVersionGate', () => ({
+  prepareOAuthLoginLaunch: vi.fn().mockResolvedValue(undefined),
+}));
+
 vi.mock('../../../utils/tauriCommands', () => ({ isTauri: vi.fn() }));
 
-vi.mock('../../../store/deepLinkAuthState', () => ({ getDeepLinkAuthState: vi.fn() }));
+vi.mock('../../../store/deepLinkAuthState', () => ({
+  beginDeepLinkAuthProcessing: vi.fn(),
+  completeDeepLinkAuthProcessing: vi.fn(),
+  getDeepLinkAuthState: vi.fn(),
+}));
 
 const stubProvider = {
   id: 'google' as const,
@@ -67,6 +80,10 @@ describe('OAuthProviderButton', () => {
       for (let i = 0; i < 6; i++) await Promise.resolve();
     });
 
+    expect(beginDeepLinkAuthProcessing).toHaveBeenCalledTimes(1);
+    expect(completeDeepLinkAuthProcessing).toHaveBeenCalledTimes(1);
+    expect(prepareOAuthLoginLaunch).toHaveBeenCalledTimes(1);
+    expect(checkBackendHealthy).toHaveBeenCalledTimes(1);
     expect(openUrl).toHaveBeenCalledWith(
       expect.stringMatching(/^https:\/\/backend\.test\/auth\/google\/login(\?.*)?$/)
     );
@@ -212,15 +229,26 @@ describe('OAuthProviderButton', () => {
       'Twitter/X sign-in could not start. Check that the Twitter OAuth app callback URL, client ID/secret, and requested scopes match the OpenHuman backend, then try again.'
     );
     expect(screen.getByRole('button', { name: 'Twitter' })).toBeEnabled();
-    expect(console.error).toHaveBeenCalledWith(
-      '[oauth-button][twitter] OAuth startup failed',
-      expect.objectContaining({
-        provider: 'twitter',
-        providerName: 'Twitter',
-        guidance: expect.stringContaining('Twitter/X sign-in could not start'),
-        reason: expect.not.stringContaining('token=secret'),
-      })
-    );
+    expect(completeDeepLinkAuthProcessing).toHaveBeenCalledTimes(1);
+  });
+
+  it('surfaces safe readiness messages when the pre-launch readiness check fails', async () => {
+    const readinessMessage =
+      'OpenHuman could not reach its local runtime. Quit and reopen the app, then try signing in again.';
+    vi.mocked(prepareOAuthLoginLaunch).mockRejectedValueOnce(new Error(readinessMessage));
+
+    render(<OAuthProviderButton provider={stubProvider} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Google' }));
+
+    await act(async () => {
+      for (let i = 0; i < 6; i++) await Promise.resolve();
+    });
+
+    expect(openUrl).not.toHaveBeenCalled();
+    expect(screen.getByRole('alert')).toHaveTextContent(readinessMessage);
+    expect(screen.getByRole('button', { name: 'Google' })).toBeEnabled();
+    expect(completeDeepLinkAuthProcessing).toHaveBeenCalledTimes(1);
   });
 
   // --- Pre-flight + post-failure backend health probe (issue #1985) ---

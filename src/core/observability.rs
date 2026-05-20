@@ -193,13 +193,10 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
 /// Detect **app-session-expired** boundary errors that bubble up from any
 /// backend-touching call site (agent, web channel, cron, integrations).
 ///
-/// Deliberately stricter than the dispatch-site classifier in
-/// [`crate::core::jsonrpc`]: the dispatch-site predicate matches a generic
-/// "401 + unauthorized" pair to trigger token cleanup on *any* 401 (even an
-/// OpenAI / Anthropic BYO-key 401 that means a misconfigured key — see
-/// `providers::ops::api_error`). Replicating that loose match here would
-/// silence BYO-key configuration errors at the agent layer, where they
-/// *are* actionable and should reach Sentry as errors.
+/// This is also the JSON-RPC dispatch-site classifier. Keep it stricter than
+/// a bare "401 + unauthorized" pair: OpenAI / Anthropic BYO-key failures,
+/// Composio scope failures, and channel-provider 401s are actionable scoped
+/// errors, not proof that the user's OpenHuman app session expired.
 ///
 /// The canonical OpenHuman session-expired wire shapes:
 ///
@@ -217,13 +214,9 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
 ///   stored profile is empty (`#1465`-ish onboarding spam) or has been
 ///   cleared by a previous 401 cycle. Both shapes are OpenHuman-specific.
 ///
-/// At the JSON-RPC dispatch boundary the looser classifier in
-/// `crate::core::jsonrpc::is_session_expired_error` keeps its existing
-/// generic "401 + unauthorized" match so token cleanup + `DomainEvent::SessionExpired`
-/// publish still fires for every 401. Adding the demote here therefore does
-/// **not** silence the auto-cleanup teardown — it only stops the duplicate
-/// per-attempt error event that escaped via `report_error_or_expected` from
-/// the agent / web-channel layers (OPENHUMAN-TAURI-26).
+/// At the JSON-RPC dispatch boundary the same strict match controls
+/// `DomainEvent::SessionExpired` publication, so downstream/provider 401s stay
+/// recoverable and do not clear the stored app session.
 pub fn is_session_expired_message(msg: &str) -> bool {
     let lower = msg.to_ascii_lowercase();
     lower.contains("session expired")
@@ -2037,10 +2030,9 @@ mod tests {
         // to fix in settings. It must reach Sentry as an error and must
         // NOT be classified as session-expired at the agent layer — the
         // strict classifier requires the OpenHuman backend's
-        // "session expired" body to anchor the match. The dispatch-site
-        // classifier (`crate::core::jsonrpc::is_session_expired_error`)
-        // still matches these for the `DomainEvent::SessionExpired`
-        // auto-cleanup path, which clears stale local state defensively.
+        // "session expired" body to anchor the match. The JSON-RPC
+        // dispatch-site classifier uses the same strict rule so these
+        // scoped provider failures never clear the app session either.
         for raw in [
             "OpenAI API error (401 Unauthorized): invalid_api_key",
             "Anthropic API error (401 Unauthorized): authentication_error",

@@ -276,12 +276,14 @@ impl CoreProcessHandle {
                 }
             }
 
-            // 4s (40 × 100ms) was too tight for cold-start in slow CI Docker
-            // where embedded core spawn includes runtime + axum bind + ready
-            // signal — bumped to 30s so the timeout actually means "stuck",
-            // not "we built on hot hardware and you didn't." The loop exits
-            // immediately on ready, so this only affects the failure timeout.
-            for _ in 0..300 {
+            // Readiness budget: 100 iterations × 100ms = 10s. The embedded
+            // core's JSON-RPC controller registry has grown over time and
+            // the previous 4s budget started flaking under CI worker load
+            // (issue: core_process tests intermittently failing with
+            // "core process did not become ready"). 10s is still well
+            // under any user-visible startup expectation and matches the
+            // upper end of observed cold-start times.
+            for _ in 0..100 {
                 if !received_ready {
                     match ready_rx.try_recv() {
                         Ok(ready_signal) => {

@@ -1982,7 +1982,20 @@ pub fn run() {
             }
             // Strip server_name (hostname) to avoid leaking machine identity.
             event.server_name = None;
-            event.user = None;
+            // Attach the cached account uid so Sentry can count unique users
+            // affected by an issue. We only carry `id` — never email, name,
+            // or IP — so this stays consistent with `send_default_pii: false`.
+            // Since #1061 the core runs in-process inside this shell, so this
+            // is the surface that tags ~all desktop events. Mirrors the
+            // standalone `openhuman-core` binary's filter in `src/main.rs`.
+            // Empty/missing on early-startup events (cache populates after
+            // the first `auth_get_me` RPC); that's expected.
+            event.user = openhuman_core::openhuman::app_state::peek_cached_current_user_identity()
+                .and_then(|identity| identity.id)
+                .map(|id| sentry::User {
+                    id: Some(id),
+                    ..Default::default()
+                });
             Some(event)
         })),
         sample_rate: 1.0,

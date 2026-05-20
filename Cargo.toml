@@ -114,7 +114,7 @@ webpki-roots = "1.0.6"
 sysinfo = { version = "0.33", default-features = false, features = ["system"] }
 clap = { version = "4.5", features = ["derive"] }
 clap_complete = "4.5"
-lettre = { version = "0.11.19", default-features = false, features = ["builder", "smtp-transport", "rustls-tls"] }
+lettre = { version = "0.11.22", default-features = false, features = ["builder", "smtp-transport", "rustls-tls"] }
 mail-parser = "0.11.2"
 async-imap = { version = "0.11", features = ["runtime-tokio"], default-features = false }
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio", "query", "ws", "macros"] }
