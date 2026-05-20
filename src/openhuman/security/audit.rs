@@ -175,9 +175,30 @@ pub fn get_or_create_workspace_audit_logger(
 ) -> Result<Arc<AuditLogger>> {
     // Normalize the key: `PathBuf` equality is lexical, so `/ws` vs `/ws/` vs a
     // symlinked spelling would otherwise cache distinct loggers for one physical
-    // workspace and reopen the rotate/append race this registry prevents. Fall
-    // back to the raw path if the workspace dir does not exist yet.
-    let openhuman_dir = std::fs::canonicalize(&openhuman_dir).unwrap_or(openhuman_dir);
+    // workspace and reopen the rotate/append race this registry prevents.
+    //
+    // A canonicalize failure falls back to the raw path rather than propagating:
+    // audit-logger creation must never block agent startup. `NotFound` (the
+    // workspace dir not created yet) is expected and logged at debug; other
+    // errors (permission, I/O) are unexpected and logged at warn so real
+    // filesystem problems stay observable.
+    let openhuman_dir = match std::fs::canonicalize(&openhuman_dir) {
+        Ok(path) => path,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            log::debug!(
+                "[openhuman:audit] workspace path not yet created; keying registry on raw path: {}",
+                openhuman_dir.display()
+            );
+            openhuman_dir
+        }
+        Err(err) => {
+            log::warn!(
+                "[openhuman:audit] failed to canonicalize workspace path {} ({err}); keying registry on raw path",
+                openhuman_dir.display()
+            );
+            openhuman_dir
+        }
+    };
     let registry = WORKSPACE_AUDIT_LOGGERS.get_or_init(|| Mutex::new(HashMap::new()));
     let mut map = registry.lock();
     if let Some(existing) = map.get(&openhuman_dir) {
