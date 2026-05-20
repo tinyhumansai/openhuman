@@ -276,7 +276,12 @@ impl CoreProcessHandle {
                 }
             }
 
-            for _ in 0..40 {
+            // 4s (40 × 100ms) was too tight for cold-start in slow CI Docker
+            // where embedded core spawn includes runtime + axum bind + ready
+            // signal — bumped to 30s so the timeout actually means "stuck",
+            // not "we built on hot hardware and you didn't." The loop exits
+            // immediately on ready, so this only affects the failure timeout.
+            for _ in 0..300 {
                 if !received_ready {
                     match ready_rx.try_recv() {
                         Ok(ready_signal) => {
