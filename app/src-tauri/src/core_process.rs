@@ -32,6 +32,8 @@ use tokio_util::sync::CancellationToken;
 
 use crate::process_kill::{kill_pid_force, kill_pid_term};
 
+const EMBEDDED_CORE_READY_WAIT_ATTEMPTS: u16 = 120;
+
 /// Generate a 256-bit cryptographically-random bearer token as a hex string.
 ///
 /// Uses the same encoding as `openhuman_core::core::auth::generate_token`
@@ -276,7 +278,10 @@ impl CoreProcessHandle {
                 }
             }
 
-            for _ in 0..40 {
+            // CI coverage/test containers can take longer than a normal GUI boot
+            // to bring the embedded core listener up, especially after a fallback
+            // bind. Keep polling while still surfacing early task failures above.
+            for _ in 0..EMBEDDED_CORE_READY_WAIT_ATTEMPTS {
                 if !received_ready {
                     match ready_rx.try_recv() {
                         Ok(ready_signal) => {
