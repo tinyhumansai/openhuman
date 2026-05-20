@@ -165,12 +165,10 @@ export function useUsageState(): UsageState {
     ? teamUsage.cycleBudgetUsd > 0.01 && teamUsage.remainingUsd <= 0.01
     : false;
 
-  // Some users have no included recurring budget at all. They still need the
-  // completed-budget warning in chat even though they are not in an exhausted
-  // paid cycle — but only when their chat actually flows through OpenHuman.
-  const rawShouldShowBudgetCompletedMessage = teamUsage
-    ? rawBudgetExhausted || (teamUsage.cycleBudgetUsd <= 0.01 && teamUsage.remainingUsd <= 0.01)
-    : false;
+  // Only show the completed-budget warning for an actually exhausted
+  // recurring budget. Free plans with no recurring budget should not look like
+  // they have exhausted a paid/included cycle (#2129).
+  const rawShouldShowBudgetCompletedMessage = rawBudgetExhausted;
 
   const isBudgetExhausted = !isFullyRoutedAway && rawBudgetExhausted;
   const shouldShowBudgetCompletedMessage =
