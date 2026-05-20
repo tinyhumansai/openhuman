@@ -915,6 +915,9 @@ async fn test_http_health_handler_returns_correct_status() {
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
 
+    // Call the handler once and derive both the status and expected status from
+    // the same response — avoids a TOCTOU race where a separate snapshot()
+    // call before/after the handler could observe different component state.
     let resp = super::health_handler().await.into_response();
     let status = resp.status();
 
@@ -927,12 +930,15 @@ async fn test_http_health_handler_returns_correct_status() {
     let components = snapshot["components"]
         .as_object()
         .expect("components should be an object");
-    let is_ok = components.values().all(|c| {
+
+    // Derive the expected HTTP status solely from the response body so the
+    // test asserts internal consistency of the handler rather than racing on
+    // live component state.
+    let body_says_ok = components.values().all(|c| {
         let s = c["status"].as_str().unwrap_or("");
         s == "ok" || s == "starting"
     });
-
-    let expected_status = if is_ok {
+    let expected_status = if body_says_ok {
         StatusCode::OK
     } else {
         StatusCode::SERVICE_UNAVAILABLE
