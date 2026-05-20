@@ -145,6 +145,11 @@ impl ToolPolicy for DenyCountingPolicy {
         assert_eq!(request.session_id, "turn-test-session");
         assert_eq!(request.channel, "turn-test-channel");
         assert_eq!(request.agent_definition_id, "main");
+        assert_eq!(request.context.session_id, "turn-test-session");
+        assert_eq!(request.context.channel, "turn-test-channel");
+        assert_eq!(request.context.agent_definition_id, "main");
+        assert_eq!(request.context.call_id, "policy-1");
+        assert_eq!(request.context.iteration, 1);
         ToolPolicyDecision::deny("locked by test policy")
     }
 }
