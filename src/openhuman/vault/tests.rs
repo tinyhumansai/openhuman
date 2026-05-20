@@ -233,7 +233,9 @@ fn state_update_progress_noop_on_missing() {
 
 #[tokio::test]
 async fn vault_sync_status_returns_idle_for_unknown_vault() {
-    let outcome = ops::vault_sync_status("__ops_status_unknown__").await.unwrap();
+    let outcome = ops::vault_sync_status("__ops_status_unknown__")
+        .await
+        .unwrap();
     assert_eq!(outcome.value.status, VaultSyncStatus::Idle);
     assert_eq!(outcome.value.vault_id, "__ops_status_unknown__");
     assert_eq!(outcome.value.ingested, 0);

@@ -245,6 +245,94 @@ describe('<VaultPanel />', () => {
     );
   });
 
+  it('emits error toast when status poll RPC throws', async () => {
+    mockList.mockResolvedValueOnce({ result: [vault()], logs: [] });
+    mockSync.mockResolvedValueOnce({ result: { status: 'started', vault_id: 'v-1' }, logs: [] });
+    mockSyncStatus.mockRejectedValueOnce(new Error('poll error'));
+    const onToast = vi.fn();
+    render(<VaultPanel onToast={onToast} />);
+    await waitFor(() => screen.getByTestId('vault-list'));
+
+    fireEvent.click(screen.getByText('Sync'));
+    await waitFor(() =>
+      expect(onToast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'error',
+          title: 'Sync failed',
+          message: 'poll error',
+        })
+      )
+    );
+  });
+
+  it('uses fallback failed-file count message when errors array is empty', async () => {
+    mockList
+      .mockResolvedValueOnce({ result: [vault()], logs: [] })
+      .mockResolvedValueOnce({ result: [vault()], logs: [] });
+    mockSync.mockResolvedValueOnce({ result: { status: 'started', vault_id: 'v-1' }, logs: [] });
+    mockSyncStatus.mockResolvedValueOnce(
+      syncState({ status: 'failed', failed: 3, errors: [] })
+    );
+    const onToast = vi.fn();
+    render(<VaultPanel onToast={onToast} />);
+    await waitFor(() => screen.getByTestId('vault-list'));
+
+    fireEvent.click(screen.getByText('Sync'));
+    await waitFor(() =>
+      expect(onToast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'error',
+          message: expect.stringContaining('Failed 3 file(s)'),
+        })
+      )
+    );
+  });
+
+  it('includes skipped_unsupported count in completed toast message', async () => {
+    mockList
+      .mockResolvedValueOnce({ result: [vault()], logs: [] })
+      .mockResolvedValueOnce({ result: [vault()], logs: [] });
+    mockSync.mockResolvedValueOnce({ result: { status: 'started', vault_id: 'v-1' }, logs: [] });
+    mockSyncStatus.mockResolvedValueOnce(
+      syncState({ ingested: 2, skipped_unsupported: 5, duration_ms: 0 })
+    );
+    const onToast = vi.fn();
+    render(<VaultPanel onToast={onToast} />);
+    await waitFor(() => screen.getByTestId('vault-list'));
+
+    fireEvent.click(screen.getByText('Sync'));
+    await waitFor(() =>
+      expect(onToast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: expect.stringContaining('skipped 5'),
+        })
+      )
+    );
+  });
+
+  it('cancels pending poll timer on unmount', async () => {
+    mockList.mockResolvedValueOnce({ result: [vault()], logs: [] });
+    mockSync.mockResolvedValueOnce({ result: { status: 'started', vault_id: 'v-1' }, logs: [] });
+    // Always running — the 1 500 ms re-poll timer stays live after poll #1.
+    mockSyncStatus.mockResolvedValue(syncState({ status: 'running', ingested: 1, total: 4 }));
+
+    const { unmount } = render(<VaultPanel />);
+    await waitFor(() => screen.getByTestId('vault-list'));
+
+    fireEvent.click(screen.getByText('Sync'));
+
+    // Wait until the first poll fires (0 ms timer) so the 1 500 ms next-poll
+    // timer is scheduled in pollTimers.current.
+    await waitFor(() => expect(mockSyncStatus).toHaveBeenCalledTimes(1));
+
+    const clearSpy = vi.spyOn(globalThis, 'clearTimeout');
+    unmount();
+
+    // useEffect cleanup must have called clearTimeout for the pending timer.
+    expect(clearSpy).toHaveBeenCalled();
+    clearSpy.mockRestore();
+  });
+
   it('removes a vault with purge=true when both confirms accepted', async () => {
     mockList
       .mockResolvedValueOnce({ result: [vault()], logs: [] })

@@ -23,6 +23,7 @@ describe('tauriCommands/vault', () => {
   let openhumanVaultFiles: typeof import('./vault').openhumanVaultFiles;
   let openhumanVaultRemove: typeof import('./vault').openhumanVaultRemove;
   let openhumanVaultSync: typeof import('./vault').openhumanVaultSync;
+  let openhumanVaultSyncStatus: typeof import('./vault').openhumanVaultSyncStatus;
 
   beforeEach(async () => {
     vi.clearAllMocks();
@@ -34,6 +35,7 @@ describe('tauriCommands/vault', () => {
     openhumanVaultFiles = actual.openhumanVaultFiles;
     openhumanVaultRemove = actual.openhumanVaultRemove;
     openhumanVaultSync = actual.openhumanVaultSync;
+    openhumanVaultSyncStatus = actual.openhumanVaultSyncStatus;
   });
 
   afterEach(() => {
@@ -173,6 +175,42 @@ describe('tauriCommands/vault', () => {
         params: { vault_id: 'v-1' },
       });
       expect(resp.result.status).toBe('started');
+      expect(resp.result.vault_id).toBe('v-1');
+    });
+  });
+
+  describe('openhumanVaultSyncStatus', () => {
+    test('throws when not running in Tauri', async () => {
+      mockIsTauri.mockReturnValue(false);
+      await expect(openhumanVaultSyncStatus('v-1')).rejects.toThrow('Not running in Tauri');
+      expect(mockCallCoreRpc).not.toHaveBeenCalled();
+    });
+
+    test('dispatches openhuman.vault_sync_status with vault_id', async () => {
+      mockCallCoreRpc.mockResolvedValue({
+        result: {
+          vault_id: 'v-1',
+          status: 'completed',
+          scanned: 4,
+          ingested: 4,
+          unchanged: 0,
+          removed: 0,
+          failed: 0,
+          skipped_unsupported: 0,
+          total: 4,
+          started_at_ms: 1000,
+          finished_at_ms: 2000,
+          duration_ms: 1000,
+          errors: [],
+        },
+        logs: [],
+      });
+      const resp = await openhumanVaultSyncStatus('v-1');
+      expect(mockCallCoreRpc).toHaveBeenCalledWith({
+        method: 'openhuman.vault_sync_status',
+        params: { vault_id: 'v-1' },
+      });
+      expect(resp.result.status).toBe('completed');
       expect(resp.result.vault_id).toBe('v-1');
     });
   });
