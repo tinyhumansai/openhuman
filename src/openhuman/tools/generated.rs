@@ -62,8 +62,20 @@ impl GeneratedTool {
         definition: GeneratedToolDefinition,
         adapter: Arc<dyn GeneratedToolAdapter>,
     ) -> anyhow::Result<Self> {
-        validate_definition(&definition)?;
+        if let Err(err) = validate_definition(&definition) {
+            log::debug!(
+                "[generated_tools] definition validation failed tool_name={} error={err}",
+                definition.name
+            );
+            return Err(err);
+        }
         if adapter.id() != definition.adapter_id {
+            log::debug!(
+                "[generated_tools] adapter mismatch tool_name={} required_adapter={} actual_adapter={}",
+                definition.name,
+                definition.adapter_id,
+                adapter.id()
+            );
             anyhow::bail!(
                 "generated tool `{}` requires adapter `{}` but got `{}`",
                 definition.name,
@@ -133,6 +145,9 @@ fn validate_definition(definition: &GeneratedToolDefinition) -> anyhow::Result<(
     }
     if definition.description.trim().is_empty() {
         anyhow::bail!("generated tool `{name}` description must be non-empty");
+    }
+    if definition.adapter_id.trim().is_empty() {
+        anyhow::bail!("generated tool `{name}` adapter_id must be non-empty");
     }
     crate::openhuman::tools::schema::SchemaCleanr::validate(&definition.parameters_schema)
         .map_err(|err| anyhow::anyhow!("generated tool `{name}` has invalid schema: {err}"))?;
@@ -220,6 +235,17 @@ mod tests {
         match GeneratedTool::new(definition, Arc::new(EchoAdapter)) {
             Ok(_) => panic!("adapter mismatch should fail"),
             Err(err) => assert!(err.to_string().contains("requires adapter")),
+        }
+    }
+
+    #[test]
+    fn generated_tool_rejects_blank_adapter_id() {
+        let mut definition = sample_definition();
+        definition.adapter_id = "  ".into();
+
+        match GeneratedTool::new(definition, Arc::new(EchoAdapter)) {
+            Ok(_) => panic!("blank adapter_id should fail"),
+            Err(err) => assert!(err.to_string().contains("adapter_id must be non-empty")),
         }
     }
 }
