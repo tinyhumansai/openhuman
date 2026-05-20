@@ -107,7 +107,12 @@ where
 {
     let lock = STORE.get_or_init(|| std::sync::Mutex::new(None));
     let mut guard = lock.lock().expect("telegram session store mutex poisoned");
-    if guard.is_none() {
+    let expected_path = workspace_dir.join(STORE_FILE);
+    let needs_load = guard
+        .as_ref()
+        .map(|store| store.path != expected_path)
+        .unwrap_or(true);
+    if needs_load {
         *guard = Some(TelegramSessionStore::load(workspace_dir)?);
     }
     let store = guard.as_mut().expect("store initialized");
@@ -133,5 +138,60 @@ mod tests {
         let binding = reloaded.binding("12345").expect("binding");
         assert_eq!(binding.thread_id, "thread-abc");
         assert!(reloaded.is_busy("12345"));
+    }
+
+    #[test]
+    fn corrupt_store_resets_and_clearing_busy_removes_flag() {
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join(STORE_FILE);
+        std::fs::create_dir_all(path.parent().expect("state dir")).expect("state dir");
+        std::fs::write(&path, "{ not valid json").expect("write corrupt store");
+
+        let mut store = TelegramSessionStore::load(dir.path()).expect("load corrupt store");
+        assert!(store.binding("12345").is_none());
+
+        store.set_busy("12345", true);
+        assert!(store.is_busy("12345"));
+        store.set_busy("12345", false);
+        assert!(!store.is_busy("12345"));
+        store.save().expect("save reset store");
+
+        let raw = std::fs::read_to_string(path).expect("read saved store");
+        assert!(raw.contains("\"bindings\""));
+        assert!(!raw.contains("12345"));
+    }
+
+    #[test]
+    fn with_store_reloads_when_workspace_changes() {
+        let first = tempdir().expect("first tempdir");
+        let second = tempdir().expect("second tempdir");
+
+        with_store(first.path(), |store| {
+            store.set_binding("chat-a", "thread-a".into(), "telegram_a".into());
+            Ok(())
+        })
+        .expect("write first workspace");
+
+        with_store(second.path(), |store| {
+            assert!(store.binding("chat-a").is_none());
+            store.set_binding("chat-b", "thread-b".into(), "telegram_b".into());
+            Ok(())
+        })
+        .expect("write second workspace");
+
+        let first_store = TelegramSessionStore::load(first.path()).expect("reload first");
+        let second_store = TelegramSessionStore::load(second.path()).expect("reload second");
+        assert_eq!(
+            first_store
+                .binding("chat-a")
+                .map(|binding| binding.thread_id.as_str()),
+            Some("thread-a")
+        );
+        assert_eq!(
+            second_store
+                .binding("chat-b")
+                .map(|binding| binding.thread_id.as_str()),
+            Some("thread-b")
+        );
     }
 }

@@ -22,6 +22,11 @@ fn parse_remote_commands() {
         parse_telegram_remote_command("/help"),
         Some(TelegramRemoteCommand::Help)
     );
+    assert_eq!(
+        parse_telegram_remote_command(" /STATUS@OpenHumanBot now "),
+        Some(TelegramRemoteCommand::Status)
+    );
     assert!(parse_telegram_remote_command("hello").is_none());
     assert!(parse_telegram_remote_command("/model").is_none());
+    assert!(parse_telegram_remote_command("/unknown@OpenHumanBot").is_none());
 }
