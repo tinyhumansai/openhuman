@@ -360,8 +360,9 @@ fn km_wire_shape_current_state_unclassified() {
 fn gp_wire_shape_classifies() {
     let msg =
         "Vision is disabled for this RAM tier. Switch to the 4-8 GB tier or above to enable it.";
-    assert!(
-        crate::core::observability::expected_error_kind(msg).is_some(),
+    assert_eq!(
+        crate::core::observability::expected_error_kind(msg),
+        Some(crate::core::observability::ExpectedErrorKind::LocalAiCapabilityUnavailable),
         "GP — LocalAiCapabilityUnavailable matcher must catch this; closed by this PR"
     );
 }
