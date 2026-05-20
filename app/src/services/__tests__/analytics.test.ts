@@ -79,6 +79,11 @@ vi.mock('../../utils/config', () => ({
   SENTRY_DSN: 'https://abc@example.ingest.sentry.io/1',
   SENTRY_RELEASE: 'openhuman@test+abc',
   SENTRY_SMOKE_TEST: false,
+  // analytics.ts now imports CoreRpcError from coreRpcClient, whose
+  // dependency chain reads CORE_RPC_URL and CORE_RPC_TIMEOUT_MS. Provide
+  // stub values so the module graph loads under this mock.
+  CORE_RPC_URL: 'http://127.0.0.1:7788/rpc',
+  CORE_RPC_TIMEOUT_MS: 30000,
 }));
 
 describe('triggerSentryTestEvent', () => {
@@ -155,14 +160,20 @@ describe('triggerSentryTestEvent', () => {
 describe('initSentry beforeSend manual-staging bypass', () => {
   /** Capture the `beforeSend` callback that `initSentry` registers. */
   async function captureBeforeSend(): Promise<
-    (event: Record<string, unknown>) => Record<string, unknown> | null
+    (
+      event: Record<string, unknown>,
+      hint?: { originalException?: unknown }
+    ) => Record<string, unknown> | null
   > {
     hoisted.init.mockReset();
     const { initSentry } = await import('../analytics');
     initSentry();
     expect(hoisted.init).toHaveBeenCalledTimes(1);
     const opts = hoisted.init.mock.calls[0][0] as {
-      beforeSend: (event: Record<string, unknown>) => Record<string, unknown> | null;
+      beforeSend: (
+        event: Record<string, unknown>,
+        hint?: { originalException?: unknown }
+      ) => Record<string, unknown> | null;
     };
     return opts.beforeSend.bind(opts);
   }
@@ -220,6 +231,60 @@ describe('initSentry beforeSend manual-staging bypass', () => {
   test('still lets the smoke-test message through (existing behaviour)', async () => {
     const beforeSend = await captureBeforeSend();
     const result = beforeSend({ message: 'react-sentry-smoke-test', tags: {}, contexts: {} });
+    expect(result).not.toBeNull();
+  });
+
+  test('drops CoreRpcError with kind=timeout via the originalException hint', async () => {
+    // Regression for OPENHUMAN-REACT-15/11/10/12/Z/Y: a missed `.catch()` at
+    // any `await callCoreRpc(...)` chain in the team panels surfaced as an
+    // unhandled rejection captured by `auto.browser.global_handlers`. Even
+    // with .catch() landed, future call sites must not regress the family
+    // — this filter is the last line of defense.
+    hoisted.analyticsEnabled = true; // consent on so non-test events normally pass.
+    const beforeSend = await captureBeforeSend();
+    const { CoreRpcError } = await import('../coreRpcClient');
+    const timeoutErr = new CoreRpcError(
+      'Core RPC openhuman.team_list_teams timed out after 30000ms',
+      'timeout'
+    );
+
+    const result = beforeSend(
+      { message: 'CoreRpcError', tags: {}, contexts: {} },
+      { originalException: timeoutErr }
+    );
+    expect(result).toBeNull();
+  });
+
+  test('drops cross-realm CoreRpcError-shaped timeouts (name + kind match)', async () => {
+    // Test harnesses and dynamic imports can construct CoreRpcError in a
+    // separate module scope where `instanceof` fails. The filter must still
+    // demote them.
+    hoisted.analyticsEnabled = true;
+    const beforeSend = await captureBeforeSend();
+    const fakeErr = Object.assign(new Error('Core RPC X timed out after 30000ms'), {
+      name: 'CoreRpcError',
+      kind: 'timeout',
+    });
+
+    const result = beforeSend(
+      { message: 'CoreRpcError', tags: {}, contexts: {} },
+      { originalException: fakeErr }
+    );
+    expect(result).toBeNull();
+  });
+
+  test('lets non-timeout CoreRpcError shapes through (transport, auth_expired, …)', async () => {
+    hoisted.analyticsEnabled = true;
+    const beforeSend = await captureBeforeSend();
+    const { CoreRpcError } = await import('../coreRpcClient');
+    const transportErr = new CoreRpcError('error sending request', 'transport');
+
+    const result = beforeSend(
+      { message: 'CoreRpcError', tags: {}, contexts: {} },
+      { originalException: transportErr }
+    );
+    // Transport errors are still worth seeing — only the local 30s
+    // AbortController shape gets demoted at the source.
     expect(result).not.toBeNull();
   });
 

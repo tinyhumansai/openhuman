@@ -352,6 +352,16 @@ async fn embed_connection_refused() {
     assert!(err.is::<reqwest::Error>());
 }
 
+#[test]
+fn openai_embedding_api_error_stays_unexpected() {
+    let msg = "Embedding API error 401 Unauthorized: invalid_api_key";
+    assert_eq!(
+        crate::core::observability::expected_error_kind(msg),
+        None,
+        "OpenAI API key errors should continue to reach Sentry"
+    );
+}
+
 // ── embed_one (trait default) ───────────────────────────
 
 #[tokio::test]

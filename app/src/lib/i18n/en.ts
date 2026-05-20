@@ -1359,6 +1359,9 @@ const en: TranslationMap = {
   'composio.connect.atlassianSubdomainHint': 'acme',
   'composio.connect.atlassianSubdomainLabel': 'Atlassian subdomain',
   'composio.connect.connect': 'Connect',
+  'composio.connect.dynamicsOrgNameHint':
+    'For example, "myorg" for myorg.crm.dynamics.com. Enter the short org name only, not the full URL.',
+  'composio.connect.dynamicsOrgNameLabel': 'Dynamics 365 Organization Name',
   'composio.connect.connectionFailed': 'Connection failed (status: ${hit.status}).',
   'composio.connect.disconnectFailed': 'Disconnect failed: {msg}',
   'composio.connect.disconnecting': 'Disconnecting…',
@@ -1367,6 +1370,9 @@ const en: TranslationMap = {
     "account. We'll open a browser window, you approve access there, and this app will detect the connection automatically.",
   'composio.connect.isConnected': 'is connected.',
   'composio.connect.manage': 'Manage',
+  'composio.connect.needsFieldsPrefix': 'To connect',
+  'composio.connect.needsFieldsSuffix':
+    'we need a bit more information. Fill in the missing fields below and try again.',
   'composio.connect.needsSubdomain': 'To connect',
   'composio.connect.needsSubdomainSuffix':
     'enter your Atlassian subdomain (e.g. acme for acme.atlassian.net) and try again.',
@@ -1379,12 +1385,15 @@ const en: TranslationMap = {
     "OpenHuman's own agent permissions are controlled below as read, write, and admin toggles.",
   'composio.connect.reopenBrowser': 'Reopen browser',
   'composio.connect.requestingUrl': 'Requesting connect URL…',
+  'composio.connect.requiredFieldEmpty': 'This field is required.',
   'composio.connect.retryConnection': 'Retry connection',
   'composio.connect.scopeLoadError': "Couldn't load scope preferences: {msg}",
   'composio.connect.scopeSaveError': "Couldn't save {key} scope: {msg}",
   'composio.connect.subdomainInvalid':
     'Enter the short subdomain only (e.g. "acme"), not the full URL. It should contain only letters, numbers, and hyphens.',
   'composio.connect.subdomainRequired': 'Please enter your Atlassian subdomain to continue.',
+  'composio.connect.wabaIdHint':
+    'Find it via GET /me/businesses then GET /{business_id}/owned_whatsapp_business_accounts using your Meta access token.',
   'composio.connect.wabaIdLabel': 'WhatsApp Business Account ID (WABA ID)',
   'composio.connect.wabaIdRequired':
     'Please enter your WhatsApp Business Account ID (WABA ID) to continue.',

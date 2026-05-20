@@ -174,6 +174,7 @@ fn legacy_label_for(type_str: &str) -> &'static str {
         "openai" => "OpenAI",
         "anthropic" => "Anthropic",
         "openrouter" => "OpenRouter",
+        "orcarouter" => "OrcaRouter",
         "custom" => "Custom",
         _ => "Custom",
     }
@@ -186,6 +187,7 @@ fn legacy_default_endpoint(type_str: &str) -> &'static str {
         "openai" => "https://api.openai.com/v1",
         "anthropic" => "https://api.anthropic.com/v1",
         "openrouter" => "https://openrouter.ai/api/v1",
+        "orcarouter" => "https://api.orcarouter.ai/v1",
         _ => "",
     }
 }
@@ -243,6 +245,7 @@ pub enum CloudProviderType {
     Openai,
     Anthropic,
     Openrouter,
+    Orcarouter,
     Custom,
 }
 
@@ -254,6 +257,7 @@ impl CloudProviderType {
             Self::Openai => "https://api.openai.com/v1",
             Self::Anthropic => "https://api.anthropic.com/v1",
             Self::Openrouter => "https://openrouter.ai/api/v1",
+            Self::Orcarouter => "https://api.orcarouter.ai/v1",
             Self::Custom => "",
         }
     }
@@ -265,6 +269,7 @@ impl CloudProviderType {
             Self::Openai => "OpenAI",
             Self::Anthropic => "Anthropic",
             Self::Openrouter => "OpenRouter",
+            Self::Orcarouter => "OrcaRouter",
             Self::Custom => "Custom",
         }
     }
@@ -276,6 +281,7 @@ impl CloudProviderType {
             Self::Openai => "openai",
             Self::Anthropic => "anthropic",
             Self::Openrouter => "openrouter",
+            Self::Orcarouter => "orcarouter",
             Self::Custom => "custom",
         }
     }

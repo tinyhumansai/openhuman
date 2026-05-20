@@ -46,6 +46,15 @@ const id4: TranslationMap = {
   'composio.connect.subdomainInvalid':
     'Masukkan hanya subdomain pendek (mis. "acme"), bukan URL lengkap. Hanya boleh berisi huruf, angka, dan tanda hubung.',
   'composio.connect.subdomainRequired': 'Masukkan subdomain Atlassian Anda untuk melanjutkan.',
+  'composio.connect.dynamicsOrgNameLabel': 'Nama Organisasi Dynamics 365',
+  'composio.connect.dynamicsOrgNameHint':
+    'Misalnya, "myorg" untuk myorg.crm.dynamics.com. Masukkan nama organisasi pendek saja, bukan URL lengkap.',
+  'composio.connect.needsFieldsPrefix': 'Untuk menghubungkan',
+  'composio.connect.needsFieldsSuffix':
+    'kami memerlukan informasi tambahan. Isi bidang yang hilang di bawah dan coba lagi.',
+  'composio.connect.requiredFieldEmpty': 'Bidang ini wajib diisi.',
+  'composio.connect.wabaIdHint':
+    'Temukan melalui GET /me/businesses lalu GET /{business_id}/owned_whatsapp_business_accounts menggunakan token akses Meta Anda.',
   'composio.connect.wabaIdLabel': 'Label ID WABA',
   'composio.connect.wabaIdRequired':
     'Masukkan ID Akun Bisnis WhatsApp (WABA ID) Anda untuk melanjutkan.',

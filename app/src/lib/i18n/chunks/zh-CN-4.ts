@@ -46,6 +46,14 @@ const zhCN4: TranslationMap = {
   'composio.connect.subdomainInvalid':
     '仅输入短子域名（例如 "acme"），而非完整 URL。只能包含字母、数字和连字符。',
   'composio.connect.subdomainRequired': '请输入你的 Atlassian 子域名以继续。',
+  'composio.connect.dynamicsOrgNameLabel': 'Dynamics 365 组织名称',
+  'composio.connect.dynamicsOrgNameHint':
+    '例如，myorg.crm.dynamics.com 的组织名称为 "myorg"。仅输入简短的组织名称，而不是完整 URL。',
+  'composio.connect.needsFieldsPrefix': '若要连接',
+  'composio.connect.needsFieldsSuffix': '我们需要一些额外信息。请填写下面缺失的字段并重试。',
+  'composio.connect.requiredFieldEmpty': '此字段为必填项。',
+  'composio.connect.wabaIdHint':
+    '通过 Meta 访问令牌调用 GET /me/businesses，然后 GET /{business_id}/owned_whatsapp_business_accounts 获取。',
   'composio.connect.wabaIdLabel': 'WhatsApp 企业账户 ID',
   'composio.connect.wabaIdRequired': '请输入你的 WhatsApp 企业账户 ID（WABA ID）以继续。',
   'composio.connect.waitingFor': '等待中',

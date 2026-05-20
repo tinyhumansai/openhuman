@@ -46,6 +46,15 @@ const hi4: TranslationMap = {
   'composio.connect.subdomainInvalid':
     'केवल छोटा सबडोमेन दर्ज करें (जैसे "acme"), पूर्ण URL नहीं। इसमें केवल अक्षर, संख्याएँ और हाइफ़न होने चाहिए।',
   'composio.connect.subdomainRequired': 'जारी रखने के लिए अपना Atlassian subdomain डालें।',
+  'composio.connect.dynamicsOrgNameLabel': 'Dynamics 365 संगठन का नाम',
+  'composio.connect.dynamicsOrgNameHint':
+    'उदाहरण के लिए, myorg.crm.dynamics.com के लिए "myorg"। केवल छोटा संगठन नाम दर्ज करें, पूरा URL नहीं।',
+  'composio.connect.needsFieldsPrefix': 'कनेक्ट करने के लिए',
+  'composio.connect.needsFieldsSuffix':
+    'हमें कुछ अतिरिक्त जानकारी चाहिए। नीचे लापता फ़ील्ड भरें और फिर से प्रयास करें।',
+  'composio.connect.requiredFieldEmpty': 'यह फ़ील्ड आवश्यक है।',
+  'composio.connect.wabaIdHint':
+    'अपने Meta एक्सेस टोकन का उपयोग करके GET /me/businesses फिर GET /{business_id}/owned_whatsapp_business_accounts के माध्यम से इसे प्राप्त करें।',
   'composio.connect.wabaIdLabel': 'Waba आईडी लेबल',
   'composio.connect.wabaIdRequired':
     'जारी रखने के लिए अपना WhatsApp Business Account ID (WABA ID) डालें।',

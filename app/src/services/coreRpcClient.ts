@@ -72,6 +72,7 @@ let resolvingCoreRpcToken: Promise<string | null> | null = null;
 export type CoreRpcErrorKind =
   | 'auth_expired'
   | 'transport'
+  | 'timeout'
   | 'rate_limited'
   | 'budget_exceeded'
   | 'thread_not_found'
@@ -115,6 +116,10 @@ export function classifyRpcError(
   if (/no backend session token/i.test(message)) return 'auth_expired';
   if (/429.*rate.?limit/i.test(message)) return 'rate_limited';
   if (/Budget exceeded|Insufficient budget/i.test(message)) return 'budget_exceeded';
+  // Local AbortController hit `CORE_RPC_TIMEOUT_MS` — distinct from backend
+  // `client error (Connect): operation timed out`. Must run BEFORE the
+  // `transport` arm so the more specific kind wins.
+  if (/timed out after \d+ms/i.test(message)) return 'timeout';
   if (/error sending request|client error \(Connect\)|timed out|ECONNREFUSED/i.test(message)) {
     return 'transport';
   }
@@ -457,7 +462,15 @@ export async function callCoreRpc<T>({
       });
     } catch (fetchErr) {
       if (controller.signal.aborted) {
-        throw new Error(`Core RPC ${payload.method} timed out after ${effectiveTimeoutMs}ms`);
+        // Throw a fully-classified `CoreRpcError` here so the outer catch
+        // doesn't re-wrap a bare `Error` and so callers can branch on
+        // `err.kind === 'timeout'` (Sentry filter, soft toast skip). Use
+        // the per-call `effectiveTimeoutMs` so the message reflects the
+        // actual budget (#2156 raised the snapshot path to 90s).
+        throw new CoreRpcError(
+          `Core RPC ${payload.method} timed out after ${effectiveTimeoutMs}ms`,
+          'timeout'
+        );
       }
       throw fetchErr;
     } finally {

@@ -25,8 +25,18 @@ import {
   waitForWebView,
   waitForWindowVisible,
 } from '../helpers/element-helpers';
-import { completeOnboardingIfVisible, navigateToSkills } from '../helpers/shared-flows';
-import { clearRequestLog, setMockBehavior, startMockServer, stopMockServer } from '../mock-server';
+import {
+  completeOnboardingIfVisible,
+  navigateToSkills,
+  waitForRequest,
+} from '../helpers/shared-flows';
+import {
+  clearRequestLog,
+  getRequestLog,
+  setMockBehavior,
+  startMockServer,
+  stopMockServer,
+} from '../mock-server';
 
 const LOG = '[ComposioTriggersE2E]';
 
@@ -80,6 +90,30 @@ describe('Composio trigger toggles (UI + core RPC)', () => {
     const slugs = (triggers as { slug?: string }[]).map(t => t.slug);
     expect(slugs).toContain('GMAIL_NEW_GMAIL_MESSAGE');
     expect(slugs).toContain('SLACK_NEW_MESSAGE');
+  });
+
+  it('authorize sends Gmail read scope before Gmail trigger setup', async () => {
+    clearRequestLog();
+
+    const out = await callOpenhumanRpc('openhuman.composio_authorize', { toolkit: 'gmail' });
+    expect(out.ok).toBe(true);
+
+    const authorizeReq = await waitForRequest(
+      getRequestLog,
+      'POST',
+      '/agent-integrations/composio/authorize',
+      10_000
+    );
+    if (!authorizeReq) {
+      throw new Error(
+        `Missing /agent-integrations/composio/authorize request.\n` +
+          `Request log:\n${JSON.stringify(getRequestLog(), null, 2)}`
+      );
+    }
+
+    const body = JSON.parse(authorizeReq?.body || '{}');
+    expect(body.toolkit).toBe('gmail');
+    expect(body.oauth_scopes).toContain('https://www.googleapis.com/auth/gmail.readonly');
   });
 
   it('list_triggers starts empty for the seeded user', async () => {
