@@ -12,6 +12,27 @@ interface CoreRpcRelayRequest {
   method: string;
   params?: unknown;
   serviceManaged?: boolean;
+  /**
+   * Per-call timeout override in milliseconds. When omitted, defaults to the
+   * global `CORE_RPC_TIMEOUT_MS` (30s). Use for slow-but-alive RPCs such as
+   * first-launch `openhuman.app_state_snapshot` (#2156). Clamped to the same
+   * [MIN, MAX] window as the global default.
+   */
+  timeoutMs?: number;
+}
+
+/** Mirror of `parseCoreRpcTimeoutMs` bounds in `utils/config.ts`. */
+const PER_CALL_TIMEOUT_MIN_MS = 1_000;
+const PER_CALL_TIMEOUT_MAX_MS = 10 * 60 * 1_000;
+
+function resolvePerCallTimeoutMs(override: number | undefined): number {
+  if (override === undefined) return CORE_RPC_TIMEOUT_MS;
+  if (!Number.isFinite(override)) return CORE_RPC_TIMEOUT_MS;
+  const clamped = Math.min(
+    Math.max(Math.round(override), PER_CALL_TIMEOUT_MIN_MS),
+    PER_CALL_TIMEOUT_MAX_MS
+  );
+  return clamped;
 }
 
 interface JsonRpcRequestBody {
@@ -51,6 +72,7 @@ let resolvingCoreRpcToken: Promise<string | null> | null = null;
 export type CoreRpcErrorKind =
   | 'auth_expired'
   | 'transport'
+  | 'timeout'
   | 'rate_limited'
   | 'budget_exceeded'
   | 'thread_not_found'
@@ -94,6 +116,10 @@ export function classifyRpcError(
   if (/no backend session token/i.test(message)) return 'auth_expired';
   if (/429.*rate.?limit/i.test(message)) return 'rate_limited';
   if (/Budget exceeded|Insufficient budget/i.test(message)) return 'budget_exceeded';
+  // Local AbortController hit `CORE_RPC_TIMEOUT_MS` — distinct from backend
+  // `client error (Connect): operation timed out`. Must run BEFORE the
+  // `transport` arm so the more specific kind wins.
+  if (/timed out after \d+ms/i.test(message)) return 'timeout';
   if (/error sending request|client error \(Connect\)|timed out|ECONNREFUSED/i.test(message)) {
     return 'transport';
   }
@@ -149,15 +175,45 @@ export function clearCoreRpcUrlCache(): void {
 }
 
 /**
+ * Pub/sub for "the core RPC bearer just became stale — drop any cached value
+ * and re-resolve". Long-lived consumers (e.g. SSE subscriptions that embed
+ * the bearer in the URL) need this so they can tear down the old connection
+ * and open a new one when the in-process core is restarted with a fresh
+ * `OPENHUMAN_CORE_TOKEN`.
+ *
+ * Implemented over `EventTarget` (no third-party dep, no React coupling) so
+ * services + hooks can both attach without a provider boundary.
+ */
+const coreRpcTokenInvalidationBus = new EventTarget();
+const CORE_RPC_TOKEN_INVALIDATED_EVENT = 'invalidated';
+
+/**
+ * Subscribe to core RPC bearer invalidations. Returns an unsubscribe handle.
+ * The listener fires AFTER the cache has been cleared, so a subsequent
+ * `getCoreRpcToken()` will re-resolve.
+ */
+export function subscribeCoreRpcTokenInvalidated(listener: () => void): () => void {
+  const wrapped = () => listener();
+  coreRpcTokenInvalidationBus.addEventListener(CORE_RPC_TOKEN_INVALIDATED_EVENT, wrapped);
+  return () => {
+    coreRpcTokenInvalidationBus.removeEventListener(CORE_RPC_TOKEN_INVALIDATED_EVENT, wrapped);
+  };
+}
+
+/**
  * Invalidate the cached core RPC bearer token so the next call to
  * `getCoreRpcToken()` re-resolves from `getStoredCoreToken()` or the Tauri
  * sidecar. Call after the user saves a new cloud-mode token (or switches
  * mode) so in-flight changes take effect without a full reload.
+ *
+ * Also dispatches on the invalidation bus so token-bearing long-lived
+ * connections (webhook SSE per #1922) can reconnect with the fresh value.
  */
 export function clearCoreRpcTokenCache(): void {
   resolvedCoreRpcToken = null;
   didResolveCoreRpcToken = false;
   resolvingCoreRpcToken = null;
+  coreRpcTokenInvalidationBus.dispatchEvent(new Event(CORE_RPC_TOKEN_INVALIDATED_EVENT));
 }
 const coreRpcLog = debug('core-rpc');
 const coreRpcError = debug('core-rpc:error');
@@ -259,7 +315,7 @@ export async function getCoreRpcUrl(): Promise<string> {
  *   3. `null` in non-Tauri environments (e.g. Vitest, web preview) when no
  *      stored token is set so existing tests remain unaffected.
  */
-async function getCoreRpcToken(): Promise<string | null> {
+export async function getCoreRpcToken(): Promise<string | null> {
   if (didResolveCoreRpcToken) return resolvedCoreRpcToken;
 
   const storedToken = getStoredCoreToken();
@@ -309,7 +365,8 @@ async function getCoreRpcToken(): Promise<string | null> {
  */
 export async function testCoreRpcConnection(
   url: string,
-  tokenOverride?: string
+  tokenOverride?: string,
+  init?: { signal?: AbortSignal }
 ): Promise<Response> {
   const token = tokenOverride?.trim() || (await getCoreRpcToken());
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -320,6 +377,7 @@ export async function testCoreRpcConnection(
     method: 'POST',
     headers,
     body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'core.ping', params: {} }),
+    signal: init?.signal,
   });
 }
 
@@ -332,10 +390,33 @@ export async function getCoreHttpBaseUrl(): Promise<string> {
   return url.toString().replace(/\/$/, '');
 }
 
+/**
+ * Build the URL the FE uses to subscribe to `/events/webhooks` via SSE.
+ *
+ * Native `EventSource` cannot attach an `Authorization` header (whatwg/html
+ * §10.7), so the core RPC bearer is forwarded as a `?token=…` query param.
+ * The Rust middleware validates it against the same in-process token used
+ * for `POST /rpc` (single source of truth — see `src/core/auth.rs`
+ * `QUERY_TOKEN_PATHS`).
+ *
+ * Returns the URL on success, or `null` when no token is available — the
+ * caller should then **skip** creating the EventSource rather than ship an
+ * unauthenticated request that the server will reject with 401 and have the
+ * browser auto-reconnect against forever.
+ *
+ * The same helper is consumed by the WebhooksDebugPanel settings screen and
+ * is the seam #1339 will reuse when the approvals SSE stream lands.
+ */
+export function buildWebhookEventsUrl(baseUrl: string, coreRpcToken: string | null): string | null {
+  if (!coreRpcToken) return null;
+  return `${baseUrl}/events/webhooks?token=${encodeURIComponent(coreRpcToken)}`;
+}
+
 export async function callCoreRpc<T>({
   method,
   params,
   serviceManaged = false, // kept for compatibility; direct frontend RPC does not use relay-level routing.
+  timeoutMs,
 }: CoreRpcRelayRequest): Promise<T> {
   void serviceManaged;
 
@@ -344,6 +425,7 @@ export async function callCoreRpc<T>({
   }
 
   const normalizedMethod = normalizeRpcMethod(method);
+  const effectiveTimeoutMs = resolvePerCallTimeoutMs(timeoutMs);
   const payload: JsonRpcRequestBody = {
     jsonrpc: '2.0',
     id: nextJsonRpcId++,
@@ -362,12 +444,14 @@ export async function callCoreRpc<T>({
     if (token) {
       headers['Authorization'] = `Bearer ${token}`;
     }
-    // Bound the fetch to CORE_RPC_TIMEOUT_MS. Without this a hung core
-    // sidecar will block every caller (and the UI) forever. We use a
-    // manual AbortController + setTimeout rather than AbortSignal.timeout()
-    // so test fake timers can drive the abort deterministically.
+    // Bound the fetch. Without this a hung core sidecar would block every
+    // caller (and the UI) forever. We use a manual AbortController +
+    // setTimeout rather than AbortSignal.timeout() so test fake timers can
+    // drive the abort deterministically. Per-call `timeoutMs` (clamped) lets
+    // legitimately-slow RPCs such as first-launch `app_state_snapshot`
+    // (#2156) opt into a longer-but-still-bounded budget.
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), CORE_RPC_TIMEOUT_MS);
+    const timeoutId = setTimeout(() => controller.abort(), effectiveTimeoutMs);
     let response: Response;
     try {
       response = await fetch(rpcUrl, {
@@ -378,7 +462,15 @@ export async function callCoreRpc<T>({
       });
     } catch (fetchErr) {
       if (controller.signal.aborted) {
-        throw new Error(`Core RPC ${payload.method} timed out after ${CORE_RPC_TIMEOUT_MS}ms`);
+        // Throw a fully-classified `CoreRpcError` here so the outer catch
+        // doesn't re-wrap a bare `Error` and so callers can branch on
+        // `err.kind === 'timeout'` (Sentry filter, soft toast skip). Use
+        // the per-call `effectiveTimeoutMs` so the message reflects the
+        // actual budget (#2156 raised the snapshot path to 90s).
+        throw new CoreRpcError(
+          `Core RPC ${payload.method} timed out after ${effectiveTimeoutMs}ms`,
+          'timeout'
+        );
       }
       throw fetchErr;
     } finally {

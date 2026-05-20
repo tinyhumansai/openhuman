@@ -22,10 +22,32 @@ pub struct McpServerDefinition {
     pub endpoint: String,
     pub command: Option<String>,
     pub description: Option<String>,
+    pub allowed_tools: Vec<String>,
+    pub disallowed_tools: Vec<String>,
     pub timeout_secs: u64,
     pub auth: McpAuthConfig,
     pub source: McpRegistrySource,
     client: Arc<McpTransportClient>,
+}
+
+impl McpServerDefinition {
+    pub fn is_tool_allowed(&self, tool: &str) -> bool {
+        let tool = tool.trim();
+        if tool.is_empty() {
+            return false;
+        }
+        if self.disallowed_tools.iter().any(|name| name == tool) {
+            return false;
+        }
+        self.allowed_tools.is_empty() || self.allowed_tools.iter().any(|name| name == tool)
+    }
+
+    pub fn filter_allowed_tools(&self, tools: Vec<McpRemoteTool>) -> Vec<McpRemoteTool> {
+        tools
+            .into_iter()
+            .filter(|tool| self.is_tool_allowed(&tool.name))
+            .collect()
+    }
 }
 
 #[derive(Debug)]
@@ -61,6 +83,8 @@ impl McpServerRegistry {
                 endpoint: config.gitbooks.endpoint.clone(),
                 command: None,
                 description: Some("OpenHuman GitBook documentation MCP server.".into()),
+                allowed_tools: Vec::new(),
+                disallowed_tools: Vec::new(),
                 timeout_secs: config.gitbooks.timeout_secs,
                 auth: McpAuthConfig::None,
                 source: McpRegistrySource::LegacyGitbooks,
@@ -95,7 +119,8 @@ impl McpServerRegistry {
         let server = self
             .get(server)
             .ok_or_else(|| anyhow::anyhow!("unknown MCP server `{server}`"))?;
-        server.client.list_tools().await
+        let tools = server.client.list_tools().await?;
+        Ok(server.filter_allowed_tools(tools))
     }
 
     pub async fn call_tool(
@@ -107,6 +132,13 @@ impl McpServerRegistry {
         let server = self
             .get(server)
             .ok_or_else(|| anyhow::anyhow!("unknown MCP server `{server}`"))?;
+        let tool = tool.trim();
+        if !server.is_tool_allowed(tool) {
+            anyhow::bail!(
+                "MCP tool `{tool}` is not allowed for server `{}`",
+                server.name
+            );
+        }
         server.client.call_tool(tool, arguments).await
     }
 
@@ -153,6 +185,8 @@ impl McpServerRegistry {
             endpoint: endpoint.to_string(),
             command: transport_command(server),
             description: server.description.clone(),
+            allowed_tools: normalize_tool_names(&server.allowed_tools),
+            disallowed_tools: normalize_tool_names(&server.disallowed_tools),
             timeout_secs: server.timeout_secs,
             auth: server.auth.clone(),
             source,
@@ -238,6 +272,17 @@ fn transport_command(server: &McpServerConfig) -> Option<String> {
     }
 }
 
+fn normalize_tool_names(tools: &[String]) -> Vec<String> {
+    let mut normalized = Vec::new();
+    for tool in tools {
+        let tool = tool.trim();
+        if !tool.is_empty() && !normalized.iter().any(|existing| existing == tool) {
+            normalized.push(tool.to_string());
+        }
+    }
+    normalized
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -262,6 +307,8 @@ mod tests {
             cwd: None,
             description: Some("Custom docs".into()),
             enabled: true,
+            allowed_tools: Vec::new(),
+            disallowed_tools: Vec::new(),
             timeout_secs: 9,
             auth: crate::openhuman::config::McpAuthConfig::None,
         });
@@ -277,5 +324,83 @@ mod tests {
         config.mcp_client.enabled = false;
         let registry = McpServerRegistry::from_config(&config);
         assert!(registry.is_empty());
+    }
+
+    #[test]
+    fn server_definition_filters_allowed_tools() {
+        let mut config = Config::default();
+        config.gitbooks.enabled = false;
+        config.mcp_client.servers.push(McpServerConfig {
+            name: "docs".into(),
+            endpoint: "https://example.com/mcp".into(),
+            command: String::new(),
+            args: Vec::new(),
+            env: HashMap::new(),
+            cwd: None,
+            description: None,
+            enabled: true,
+            allowed_tools: vec![" search ".into(), "read".into(), "search".into()],
+            disallowed_tools: vec!["read".into()],
+            timeout_secs: 30,
+            auth: crate::openhuman::config::McpAuthConfig::None,
+        });
+        let registry = McpServerRegistry::from_config(&config);
+        let docs = registry.get("docs").expect("docs");
+
+        let filtered = docs.filter_allowed_tools(vec![
+            remote_tool("search"),
+            remote_tool("read"),
+            remote_tool("write"),
+        ]);
+
+        assert_eq!(
+            docs.allowed_tools,
+            vec!["search".to_string(), "read".to_string()]
+        );
+        assert_eq!(docs.disallowed_tools, vec!["read".to_string()]);
+        assert_eq!(
+            filtered
+                .iter()
+                .map(|tool| tool.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["search"]
+        );
+    }
+
+    #[tokio::test]
+    async fn call_tool_blocks_disallowed_tool_before_transport() {
+        let mut config = Config::default();
+        config.gitbooks.enabled = false;
+        config.mcp_client.servers.push(McpServerConfig {
+            name: "docs".into(),
+            endpoint: "http://127.0.0.1:9/mcp".into(),
+            command: String::new(),
+            args: Vec::new(),
+            env: HashMap::new(),
+            cwd: None,
+            description: None,
+            enabled: true,
+            allowed_tools: vec!["search".into()],
+            disallowed_tools: Vec::new(),
+            timeout_secs: 30,
+            auth: crate::openhuman::config::McpAuthConfig::None,
+        });
+        let registry = McpServerRegistry::from_config(&config);
+
+        let err = registry
+            .call_tool("docs", "write", serde_json::json!({}))
+            .await
+            .expect_err("blocked before transport");
+
+        assert!(err.to_string().contains("not allowed for server `docs`"));
+    }
+
+    fn remote_tool(name: &str) -> McpRemoteTool {
+        McpRemoteTool {
+            name: name.into(),
+            title: None,
+            description: None,
+            input_schema: serde_json::json!({"type":"object"}),
+        }
     }
 }

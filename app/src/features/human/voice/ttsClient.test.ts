@@ -27,13 +27,13 @@ describe('synthesizeSpeech (core RPC)', () => {
     expect(r.visemes).toHaveLength(1);
   });
 
-  it('falls back to the configured mascot voice when no voiceId is given', async () => {
+  it('falls back to the configured mascot voice + multilingual model when no overrides are given', async () => {
     const mock = callCoreRpc as ReturnType<typeof vi.fn>;
     mock.mockResolvedValueOnce({ audio_base64: 'BBB=', audio_mime: 'audio/mpeg', visemes: [] });
     await synthesizeSpeech('hi');
     expect(mock).toHaveBeenCalledWith({
       method: 'openhuman.voice_reply_synthesize',
-      params: { text: 'hi.', voice_id: 'ljX1ZrXuDIIRVcmiVSyR' },
+      params: { text: 'hi.', voice_id: 'JBFqnCBsd6RMkjVDRZzb', model_id: 'eleven_multilingual_v2' },
     });
   });
 

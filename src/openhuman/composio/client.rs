@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
-use serde_json::json;
+use serde_json::{json, Value};
 
 use crate::openhuman::integrations::IntegrationClient;
 
@@ -30,6 +30,8 @@ const POST_OAUTH_ACTION_RETRY_DELAY: Duration = Duration::from_secs(10);
 /// trailing punctuation or wrapper text from the gateway does not silently
 /// disable the retry.
 const POST_OAUTH_AUTH_ERROR_STRINGS: &[&str] = &["connection error, try to authenticate"];
+const AUTHORIZE_OAUTH_SCOPES_FIELD: &str = "oauth_scopes";
+const GMAIL_REQUIRED_OAUTH_SCOPES: &[&str] = &["https://www.googleapis.com/auth/gmail.readonly"];
 
 /// High-level client for all backend-proxied Composio operations.
 #[derive(Clone)]
@@ -106,6 +108,7 @@ impl ComposioClient {
                 obj.insert(k.clone(), v.clone());
             }
         }
+        merge_required_oauth_scopes(&mut body, toolkit)?;
         self.inner
             .post::<ComposioAuthorizeResponse>("/agent-integrations/composio/authorize", &body)
             .await
@@ -540,6 +543,75 @@ fn is_post_oauth_auth_readiness_error(resp: &ComposioExecuteResponse) -> bool {
     POST_OAUTH_AUTH_ERROR_STRINGS
         .iter()
         .any(|needle| normalized.contains(needle))
+}
+
+fn required_oauth_scopes_for_toolkit(toolkit: &str) -> &'static [&'static str] {
+    match toolkit.trim().to_ascii_lowercase().as_str() {
+        // GMAIL_NEW_GMAIL_MESSAGE and the native Gmail sync path need read access
+        // to messages. Without this hint fresh OAuth handoffs can complete with a
+        // profile-only Google token and trigger enable fails with 403 insufficient
+        // authentication scopes (#2186).
+        "gmail" => GMAIL_REQUIRED_OAUTH_SCOPES,
+        _ => &[],
+    }
+}
+
+fn merge_required_oauth_scopes(body: &mut Value, toolkit: &str) -> anyhow::Result<()> {
+    let required = required_oauth_scopes_for_toolkit(toolkit);
+    if required.is_empty() {
+        return Ok(());
+    }
+
+    let obj = body
+        .as_object_mut()
+        .ok_or_else(|| anyhow::anyhow!("composio.authorize: internal payload must be an object"))?;
+    match obj.get_mut(AUTHORIZE_OAUTH_SCOPES_FIELD) {
+        Some(existing) => append_missing_oauth_scopes(existing, required)?,
+        None => {
+            obj.insert(AUTHORIZE_OAUTH_SCOPES_FIELD.to_string(), json!(required));
+        }
+    }
+    Ok(())
+}
+
+fn append_missing_oauth_scopes(value: &mut Value, required: &[&str]) -> anyhow::Result<()> {
+    let mut scopes = match value {
+        Value::Null => Vec::new(),
+        Value::String(raw) => raw
+            .split(|ch: char| ch == ',' || ch.is_whitespace())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToString::to_string)
+            .collect(),
+        Value::Array(items) => {
+            let mut out = Vec::with_capacity(items.len() + required.len());
+            for item in items {
+                let Some(scope) = item.as_str() else {
+                    anyhow::bail!(
+                        "composio.authorize: {AUTHORIZE_OAUTH_SCOPES_FIELD} entries must be strings"
+                    );
+                };
+                let scope = scope.trim();
+                if !scope.is_empty() {
+                    out.push(scope.to_string());
+                }
+            }
+            out
+        }
+        _ => {
+            anyhow::bail!(
+                "composio.authorize: {AUTHORIZE_OAUTH_SCOPES_FIELD} must be a string or array"
+            );
+        }
+    };
+
+    for scope in required {
+        if !scopes.iter().any(|existing| existing == scope) {
+            scopes.push((*scope).to_string());
+        }
+    }
+    *value = json!(scopes);
+    Ok(())
 }
 
 /// Backend-mode [`ComposioClient`] constructor. **Internal to the

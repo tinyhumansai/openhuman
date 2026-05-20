@@ -5,11 +5,13 @@ use crate::openhuman::agent::harness::AgentDefinitionRegistry;
 use crate::openhuman::agent::Agent;
 use crate::openhuman::config::rpc as config_rpc;
 use crate::openhuman::inference::provider::traits::build_tool_instructions_text;
+use crate::openhuman::integrations::searxng::MAX_RESULTS as SEARXNG_MAX_RESULTS;
 use crate::openhuman::security::{SecurityPolicy, ToolOperation};
 
 const DEFAULT_LIMIT: u64 = 10;
 const MAX_LIMIT: u64 = 50;
 const QUERY_ARGUMENTS: &[&str] = &["query", "k"];
+const SEARXNG_SEARCH_ARGUMENTS: &[&str] = &["query", "categories", "language", "max_results"];
 const TREE_READ_CHUNK_ARGUMENTS: &[&str] = &["chunk_id"];
 const SUBAGENT_RUN_ARGUMENTS: &[&str] = &["agent_id", "prompt"];
 const TREE_BROWSE_ARGUMENTS: &[&str] = &[
@@ -72,6 +74,12 @@ impl ToolCallError {
 }
 
 pub fn tool_specs() -> Vec<McpToolSpec> {
+    let mut specs = base_tool_specs();
+    specs.push(searxng_tool_spec());
+    specs
+}
+
+fn base_tool_specs() -> Vec<McpToolSpec> {
     vec![
         McpToolSpec {
             name: "core.list_tools",
@@ -182,6 +190,16 @@ pub fn tool_specs() -> Vec<McpToolSpec> {
     ]
 }
 
+fn searxng_tool_spec() -> McpToolSpec {
+    McpToolSpec {
+        name: "searxng_search",
+        title: "SearXNG Search",
+        description: "Search the configured self-hosted SearXNG instance and return normalized title, URL, snippet, and source results. Requires searxng.enabled=true in OpenHuman config.",
+        rpc_method: Some("openhuman.tools_searxng_search"),
+        input_schema: searxng_search_schema(),
+    }
+}
+
 fn tree_browse_schema() -> Value {
     json!({
         "type": "object",
@@ -269,8 +287,62 @@ fn tree_list_sources_schema() -> Value {
     })
 }
 
-pub fn list_tools_result() -> Value {
-    let tools = tool_specs()
+fn searxng_search_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Search query string."
+            },
+            "categories": {
+                "type": "array",
+                "items": {
+                    "type": "string",
+                    "enum": ["web", "general", "news", "images"]
+                },
+                "description": "Optional SearXNG categories. `web` maps to SearXNG `general`."
+            },
+            "language": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Optional language code, e.g. `en`, `zh-CN`, or `fr`."
+            },
+            "max_results": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": SEARXNG_MAX_RESULTS,
+                "description": format!("Maximum results to return. Defaults to searxng.max_results; capped at {SEARXNG_MAX_RESULTS}.")
+            }
+        },
+        "required": ["query"],
+        "additionalProperties": false
+    })
+}
+
+pub async fn list_tools_result() -> Value {
+    match config_rpc::load_config_with_timeout().await {
+        Ok(config) => list_tools_result_for_config(&config),
+        Err(err) => {
+            log::warn!(
+                "[mcp_server] tools/list config load failed; omitting config-gated tools: {err}"
+            );
+            list_tools_result_from_specs(base_tool_specs())
+        }
+    }
+}
+
+fn list_tools_result_for_config(config: &crate::openhuman::config::Config) -> Value {
+    let mut specs = base_tool_specs();
+    if config.searxng.enabled {
+        specs.push(searxng_tool_spec());
+    }
+    list_tools_result_from_specs(specs)
+}
+
+fn list_tools_result_from_specs(specs: Vec<McpToolSpec>) -> Value {
+    let tools = specs
         .into_iter()
         .map(|tool| {
             json!({
@@ -414,6 +486,24 @@ fn build_rpc_params(
                 ("query".to_string(), Value::String(query)),
                 ("k".to_string(), Value::from(limit)),
             ]))
+        }
+        "searxng_search" => {
+            reject_unexpected_arguments(&args, SEARXNG_SEARCH_ARGUMENTS)?;
+            let query = required_non_empty_string(&args, "query")?;
+            let mut params = Map::new();
+            params.insert("query".to_string(), Value::String(query));
+            if let Some(categories) = optional_string_array(&args, "categories")? {
+                crate::openhuman::integrations::searxng::normalize_categories(categories.clone())
+                    .map_err(|err| ToolCallError::InvalidParams(err.to_string()))?;
+                params.insert("categories".to_string(), Value::from(categories));
+            }
+            if let Some(language) = optional_non_empty_string(&args, "language")? {
+                params.insert("language".to_string(), Value::String(language));
+            }
+            if let Some(max_results) = optional_max_results(&args, "max_results")? {
+                params.insert("max_results".to_string(), Value::from(max_results));
+            }
+            Ok(params)
         }
         "tree.read_chunk" => {
             reject_unexpected_arguments(&args, TREE_READ_CHUNK_ARGUMENTS)?;
@@ -646,6 +736,34 @@ fn optional_limit(args: &Map<String, Value>) -> Result<u64, ToolCallError> {
         )));
     }
     Ok(limit)
+}
+
+fn optional_max_results(
+    args: &Map<String, Value>,
+    key: &str,
+) -> Result<Option<u64>, ToolCallError> {
+    let Some(value) = args.get(key) else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    let Some(limit) = value.as_u64() else {
+        return Err(ToolCallError::InvalidParams(format!(
+            "argument `{key}` must be a positive integer"
+        )));
+    };
+    if limit == 0 {
+        return Err(ToolCallError::InvalidParams(format!(
+            "argument `{key}` must be greater than zero"
+        )));
+    }
+    if limit > SEARXNG_MAX_RESULTS as u64 {
+        return Err(ToolCallError::InvalidParams(format!(
+            "argument `{key}` must not exceed {SEARXNG_MAX_RESULTS} (got {limit})"
+        )));
+    }
+    Ok(Some(limit))
 }
 
 fn validate_controller_params(
@@ -885,8 +1003,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn list_tools_exposes_first_level_mcp_surface() {
-        let result = list_tools_result();
+    fn list_tools_exposes_base_mcp_surface_when_searxng_disabled() {
+        let config = crate::openhuman::config::Config::default();
+        let result = list_tools_result_for_config(&config);
         let names = result["tools"]
             .as_array()
             .expect("tools array")
@@ -909,6 +1028,21 @@ mod tests {
                 "tree.list_sources",
             ]
         );
+    }
+
+    #[test]
+    fn list_tools_includes_searxng_when_enabled() {
+        let mut config = crate::openhuman::config::Config::default();
+        config.searxng.enabled = true;
+        let result = list_tools_result_for_config(&config);
+        let names = result["tools"]
+            .as_array()
+            .expect("tools array")
+            .iter()
+            .map(|tool| tool["name"].as_str().expect("tool name"))
+            .collect::<Vec<_>>();
+
+        assert!(names.contains(&"searxng_search"));
     }
 
     #[test]
@@ -975,6 +1109,53 @@ mod tests {
 
         assert_eq!(params["query"], "phoenix migration");
         assert_eq!(params["k"], DEFAULT_LIMIT);
+    }
+
+    #[test]
+    fn searxng_search_params_accept_optional_fields() {
+        let params = build_rpc_params(
+            "searxng_search",
+            json!({
+                "query": " rust async ",
+                "categories": ["web", "news"],
+                "language": " en ",
+                "max_results": 12
+            }),
+        )
+        .expect("params");
+
+        assert_eq!(params["query"], "rust async");
+        assert_eq!(params["categories"], json!(["web", "news"]));
+        assert_eq!(params["language"], "en");
+        assert_eq!(params["max_results"], 12);
+    }
+
+    #[test]
+    fn searxng_search_rejects_unknown_category() {
+        let err = build_rpc_params(
+            "searxng_search",
+            json!({
+                "query": "rust",
+                "categories": ["videos"]
+            }),
+        )
+        .expect_err("must reject");
+
+        assert!(err.message().contains("unsupported SearXNG category"));
+    }
+
+    #[test]
+    fn searxng_search_rejects_max_results_above_max() {
+        let err = build_rpc_params(
+            "searxng_search",
+            json!({
+                "query": "rust",
+                "max_results": SEARXNG_MAX_RESULTS + 1
+            }),
+        )
+        .expect_err("must reject");
+
+        assert!(err.message().contains("must not exceed"));
     }
 
     #[test]

@@ -115,7 +115,14 @@ impl OllamaEmbedder {
 /// silent prompt truncation; on models that natively support less,
 /// Ollama clamps `num_ctx` to the model's actual maximum, so this is
 /// safe to over-request.
-const EMBED_NUM_CTX: u32 = 8192;
+///
+/// This is also the **single source of truth for the memory layer's
+/// minimum model context window**: a local model whose native context is
+/// below this floor silently truncates chunks/summaries and corrupts
+/// recall. `inference::local::model_requirements::MIN_CONTEXT_TOKENS`
+/// re-exports this value so the model-acceptance gate can never drift
+/// from what the embedder actually requests.
+pub(crate) const EMBED_NUM_CTX: u32 = 8192;
 
 #[derive(Serialize)]
 struct EmbedRequest<'a> {

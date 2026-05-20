@@ -251,6 +251,7 @@ pub fn client_config_json(config: &Config) -> serde_json::Value {
         "model_routes": model_routes,
         "cloud_providers": cloud_providers,
         "primary_cloud": config.primary_cloud,
+        "chat_provider": config.chat_provider,
         "reasoning_provider": config.reasoning_provider,
         "agentic_provider": config.agentic_provider,
         "coding_provider": config.coding_provider,
@@ -297,6 +298,7 @@ pub struct ModelSettingsPatch {
     /// Id of the `cloud_providers` entry used when a workload routes to
     /// `"cloud"`. Empty string clears (factory falls back to OpenHuman).
     pub primary_cloud: Option<String>,
+    pub chat_provider: Option<String>,
     pub reasoning_provider: Option<String>,
     pub agentic_provider: Option<String>,
     pub coding_provider: Option<String>,
@@ -465,6 +467,9 @@ pub async fn apply_model_settings(
             Some(t.to_string())
         }
     };
+    if let Some(s) = update.chat_provider {
+        config.chat_provider = normalise_provider(s);
+    }
     if let Some(s) = update.reasoning_provider {
         config.reasoning_provider = normalise_provider(s);
     }
@@ -491,6 +496,13 @@ pub async fn apply_model_settings(
     }
 
     config.save().await.map_err(|e| e.to_string())?;
+    // #1574 §4: the AIPanel workload matrix changes the embedder via THIS
+    // (model-settings) path — `embeddings_provider` above — not the
+    // memory-settings path. Trigger the same idempotent re-embed backfill
+    // so a UI embedder switch recovers prior memory under the new
+    // signature. Coverage-gated + non-fatal: if the active signature did
+    // not actually change, this enqueues nothing.
+    crate::openhuman::memory::tree::jobs::ensure_reembed_backfill(config);
     let snapshot = snapshot_config_json(config)?;
     Ok(RpcOutcome::new(
         snapshot,
@@ -534,6 +546,13 @@ pub async fn apply_memory_settings(
         }
     }
     config.save().await.map_err(|e| e.to_string())?;
+    // #1574 §4: the embedder may have just changed (provider/model/dims).
+    // Ensure a re-embed backfill chain exists for the new active signature
+    // so prior memory becomes retrievable again instead of silently going
+    // dark. Idempotent + non-fatal (covered space enqueues nothing; errors
+    // are logged, never fail the settings save). §7's migration is
+    // one-shot so it does not cover a later switch — this does.
+    crate::openhuman::memory::tree::jobs::ensure_reembed_backfill(config);
     let snapshot = snapshot_config_json(config)?;
     Ok(RpcOutcome::new(
         snapshot,

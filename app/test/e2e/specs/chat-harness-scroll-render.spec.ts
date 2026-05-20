@@ -89,7 +89,8 @@ async function scrollMessageColumn(top: number): Promise<void> {
 }
 
 describe('Chat harness — scroll + markdown render', () => {
-  before(async () => {
+  before(async function beforeSuite() {
+    this.timeout(90_000);
     await startMockServer();
     await waitForApp();
     await resetApp(USER_ID);
@@ -110,7 +111,8 @@ describe('Chat harness — scroll + markdown render', () => {
   // case rely on state produced by the previous one — a fragile shape
   // CodeRabbit flagged. Keeping the asserts together also keeps the
   // failure-mode obvious: if streaming dies, no later check executes.
-  it('streams long markdown, renders it, auto-anchors to bottom, releases on scroll-up', async () => {
+  it('streams long markdown, renders it, auto-anchors to bottom, releases on scroll-up', async function () {
+    this.timeout(90_000);
     await navigateViaHash('/chat');
     await browser.waitUntil(async () => await textExists('Threads'), {
       timeout: 15_000,

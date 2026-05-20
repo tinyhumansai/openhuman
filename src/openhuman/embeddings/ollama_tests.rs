@@ -327,6 +327,66 @@ async fn embed_connection_refused() {
     );
 }
 
+// OPENHUMAN-TAURI-{GP,MA,KM,GX} wire shapes — currently routed through
+// `report_error_or_expected` (Sentry classifier ladder) by this PR. The ladder
+// matches GP (LocalAiCapabilityUnavailable) today; MA/KM/GX still fall through
+// to capture because `observability::expected_error_kind` has no matcher arm
+// for "ollama model not found" / "ollama daemon unreachable". Those matcher
+// arms are blocked behind PR #2063 + #2188 merging (both touch
+// `src/core/observability.rs`) and will land in the follow-up classifier
+// batch. Tests below lock the CURRENT state so the follow-up flips them.
+
+#[test]
+fn ma_wire_shape_current_state_unclassified() {
+    let msg = r#"ollama embed failed with status 404 Not Found: {"error":"model \"bge-m3\" not found, try pulling it first"}"#;
+    assert_eq!(
+        crate::core::observability::expected_error_kind(msg),
+        None,
+        "MA — matcher arm pending follow-up classifier batch (post #2063 + #2188 merge)"
+    );
+}
+
+#[test]
+fn km_wire_shape_current_state_unclassified() {
+    let msg = r#"ollama embed failed with status 404 Not Found: {"error":"model \"nomic-embed-text:latest\" not found, try pulling it first"}"#;
+    assert_eq!(
+        crate::core::observability::expected_error_kind(msg),
+        None,
+        "KM — matcher arm pending follow-up classifier batch"
+    );
+}
+
+#[test]
+fn gp_wire_shape_classifies() {
+    let msg =
+        "Vision is disabled for this RAM tier. Switch to the 4-8 GB tier or above to enable it.";
+    assert_eq!(
+        crate::core::observability::expected_error_kind(msg),
+        Some(crate::core::observability::ExpectedErrorKind::LocalAiCapabilityUnavailable),
+        "GP — LocalAiCapabilityUnavailable matcher must catch this; closed by this PR"
+    );
+}
+
+#[test]
+fn gx_wire_shape_current_state_unclassified() {
+    let msg = "ollama embeddings opted-in but daemon unreachable at http://localhost:11434; falling back to cloud embeddings for this session";
+    assert_eq!(
+        crate::core::observability::expected_error_kind(msg),
+        None,
+        "GX — matcher arm pending follow-up classifier batch"
+    );
+}
+
+#[test]
+fn ollama_parse_error_wire_shape_stays_unexpected() {
+    let msg = "ollama embed response parse failed: invalid type: expected sequence";
+    assert_eq!(
+        crate::core::observability::expected_error_kind(msg),
+        None,
+        "real parse bugs must still reach Sentry"
+    );
+}
+
 // ── embed_one (trait default) ───────────────────────────
 
 #[tokio::test]

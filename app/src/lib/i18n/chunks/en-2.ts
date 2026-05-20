@@ -278,14 +278,14 @@ const en2: TranslationMap = {
   'chat.approachingLimit': 'Approaching usage limit',
   'chat.approachingLimitMsg': 'You have used {pct}% of your available quota.',
   'chat.upgrade': 'Upgrade',
-  'chat.weeklyLimitHit': "You've hit your weekly limit.",
+  'chat.weeklyLimitHit': "You've used your included cycle budget.",
   'chat.resets': 'Resets',
   'chat.topUpToContinue': 'Top up to continue.',
   'chat.budgetComplete': 'Your included budget is complete. Add credits or upgrade to continue.',
-  'chat.rateLimitReached': '10-hour rate limit reached.',
   'chat.topUp': 'Top Up',
-  'chat.fiveHourLimit': '5-hour limit',
-  'chat.weeklyLimit': 'Weekly limit',
+  'chat.cycle': 'Cycle',
+  'chat.cycleSpent': 'Spent this cycle',
+  'chat.cycleRemaining': 'Remaining',
   'chat.left': 'left',
   'chat.setup': 'Set up',
   'chat.switchToText': 'Switch to text',
@@ -376,6 +376,40 @@ const en2: TranslationMap = {
   'insights.relationships': 'Relationships',
   'insights.skills': 'Skills',
   'insights.opinions': 'Opinions',
+  // Developer options menu items (#2225)
+  'devOptions.menuAi': 'AI Configuration',
+  'devOptions.menuAiDesc': 'Cloud providers, local Ollama models, and per-workload routing',
+  'devOptions.menuScreenAware': 'Screen Awareness',
+  'devOptions.menuScreenAwareDesc':
+    'Screen capture permissions, monitoring policy, and session controls',
+  'devOptions.menuMessaging': 'Messaging Channels',
+  'devOptions.menuMessagingDesc':
+    'Configure Telegram/Discord auth modes and default channel routing',
+  'devOptions.menuTools': 'Tools',
+  'devOptions.menuToolsDesc': 'Enable or disable capabilities OpenHuman can use on your behalf',
+  'devOptions.menuAgentChat': 'Agent Chat',
+  'devOptions.menuAgentChatDesc': 'Test agent conversation with model and temperature overrides',
+  'devOptions.menuCronJobs': 'Cron Jobs',
+  'devOptions.menuCronJobsDesc': 'View and configure scheduled jobs for runtime skills',
+  'devOptions.menuLocalModelDebug': 'Local Model Debug',
+  'devOptions.menuLocalModelDebugDesc':
+    'Ollama config, asset downloads, model tests, and diagnostics',
+  'devOptions.menuWebhooksDebug': 'Webhooks',
+  'devOptions.menuWebhooksDebugDesc':
+    'Inspect runtime webhook registrations and captured request logs',
+  'devOptions.menuIntelligence': 'Intelligence',
+  'devOptions.menuIntelligenceDesc': 'Memory workspace, subconscious engine, dreams, and settings',
+  'devOptions.menuNotificationRouting': 'Notification Routing',
+  'devOptions.menuNotificationRoutingDesc':
+    'AI importance scoring and orchestrator escalation for integration alerts',
+  'devOptions.menuComposeIOTriggers': 'ComposeIO Triggers',
+  'devOptions.menuComposeIOTriggersDesc': 'View ComposeIO trigger history and archive',
+  'devOptions.menuComposioRouting': 'Composio Routing (Direct Mode)',
+  'devOptions.menuComposioRoutingDesc':
+    'Bring your own Composio API key and route calls directly to backend.composio.dev',
+  'devOptions.menuComposioTriggers': 'Integration Triggers',
+  'devOptions.menuComposioTriggersDesc':
+    'Configure AI triage settings for Composio integration triggers',
 };
 
 export default en2;

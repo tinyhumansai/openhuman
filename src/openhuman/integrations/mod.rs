@@ -1,15 +1,19 @@
-//! Agent integration tools that proxy through the backend API.
+//! Agent integration tools.
 //!
-//! Each tool calls a backend endpoint (authenticated via JWT Bearer token) which
-//! handles external API calls, billing, rate limiting, and markup. The client
-//! never talks to external services directly.
+//! Most integrations proxy through backend endpoints authenticated with the
+//! user's session token, so billing, rate limiting, and provider markup stay
+//! server-side. Some integrations, such as SearXNG, call user-configured
+//! endpoints directly when enabled; those callers must keep configured base URLs
+//! trusted because requests leave the local core process.
 
 pub mod apify;
 pub mod client;
 pub mod google_places;
 pub mod parallel;
+pub mod searxng;
 pub mod seltz;
 pub mod stock_prices;
+pub mod tinyfish;
 pub mod twilio;
 pub mod types;
 
@@ -20,11 +24,13 @@ pub use parallel::{
     ParallelChatTool, ParallelDatasetTool, ParallelEnrichTool, ParallelExtractTool,
     ParallelResearchTool, ParallelSearchTool,
 };
+pub use searxng::{SearxngSearchArgs, SearxngSearchResponse, SearxngSearchTool};
 pub use seltz::SeltzSearchTool;
 pub use stock_prices::{
     StockCommodityTool, StockCryptoSeriesTool, StockExchangeRateTool, StockOptionsTool,
     StockQuoteTool,
 };
+pub use tinyfish::{TinyFishAgentRunTool, TinyFishFetchTool, TinyFishSearchTool};
 pub use twilio::TwilioCallTool;
 pub use types::{
     BackendResponse, IntegrationPricing, IntegrationPricingEntry, PricingIntegrations, ToolScope,
@@ -65,6 +71,7 @@ mod tests {
         assert!(pricing.integrations.twilio.is_none());
         assert!(pricing.integrations.google_places.is_none());
         assert!(pricing.integrations.parallel.is_none());
+        assert!(pricing.integrations.tinyfish.is_none());
     }
 
     #[test]

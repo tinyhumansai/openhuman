@@ -7,9 +7,12 @@ use crate::openhuman::inference::local::install::{
     find_system_ollama_binary, run_ollama_install_script,
 };
 use crate::openhuman::inference::local::lm_studio::lm_studio_base_url;
+use crate::openhuman::inference::local::model_requirements::{
+    evaluate_context, ContextEligibility, MIN_CONTEXT_TOKENS,
+};
 use crate::openhuman::inference::local::ollama::{
     ollama_base_url, OllamaModelTag, OllamaPullEvent, OllamaPullProgress, OllamaPullRequest,
-    OllamaTagsResponse,
+    OllamaShowRequest, OllamaShowResponse, OllamaTagsResponse,
 };
 use crate::openhuman::inference::local::process_util::apply_no_window;
 use crate::openhuman::inference::local::provider::{provider_from_config, LocalAiProvider};
@@ -859,6 +862,56 @@ impl LocalAiService {
         let embedding_found = has(&expected_embedding);
         let vision_found = has(&expected_vision);
 
+        // Per-model native context window vs the memory-layer minimum.
+        // `/api/show` is one bounded round-trip per installed model,
+        // fetched concurrently and only on this diagnostics path.
+        let model_eligibilities: Vec<ContextEligibility> = if healthy {
+            futures_util::future::join_all(models.iter().map(|m| self.fetch_model_context(&m.name)))
+                .await
+                .into_iter()
+                .map(evaluate_context)
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        let installed_models: Vec<serde_json::Value> = models
+            .iter()
+            .enumerate()
+            .map(|(i, m)| {
+                let eligibility = model_eligibilities.get(i).cloned();
+                let context_length = match eligibility.as_ref() {
+                    Some(ContextEligibility::Ok { context_length })
+                    | Some(ContextEligibility::BelowMinimum { context_length, .. }) => {
+                        Some(*context_length)
+                    }
+                    _ => None,
+                };
+                serde_json::json!({
+                    "name": m.name,
+                    "size": m.size,
+                    "modified_at": m.modified_at,
+                    "context_length": context_length,
+                    "eligibility": eligibility,
+                })
+            })
+            .collect();
+
+        // Resolve the eligibility of an expected (active) model by tag prefix.
+        let eligibility_for = |target: &str| -> Option<ContextEligibility> {
+            let t = target.to_ascii_lowercase();
+            models
+                .iter()
+                .zip(model_eligibilities.iter())
+                .find(|(m, _)| {
+                    let n = m.name.to_ascii_lowercase();
+                    n == t || n.starts_with(&(t.clone() + ":"))
+                })
+                .map(|(_, e)| e.clone())
+        };
+        let chat_eligibility = eligibility_for(&expected_chat);
+        let embedding_eligibility = eligibility_for(&expected_embedding);
+
         let binary_path = self.resolve_binary_path(config);
 
         let mut issues: Vec<String> = Vec::new();
@@ -894,6 +947,32 @@ impl LocalAiService {
         if let Some(ref e) = tags_error {
             issues.push(format!("Failed to list models: {e}"));
         }
+        // Reject installed-but-too-small active models: a context window
+        // below the memory-layer minimum silently truncates chunks /
+        // summaries and corrupts recall.
+        if let Some(ContextEligibility::BelowMinimum {
+            context_length,
+            required,
+        }) = embedding_eligibility.as_ref()
+        {
+            issues.push(format!(
+                "Embedding model `{}` has a {}-token context window; the memory layer \
+                 requires at least {}. Choose an embedding model with a larger context \
+                 (e.g. bge-m3).",
+                expected_embedding, context_length, required
+            ));
+        }
+        if let Some(ContextEligibility::BelowMinimum {
+            context_length,
+            required,
+        }) = chat_eligibility.as_ref()
+        {
+            issues.push(format!(
+                "Chat model `{}` has a {}-token context window; the memory layer \
+                 requires at least {}.",
+                expected_chat, context_length, required
+            ));
+        }
 
         log::debug!(
             "[local_ai] diagnostics: healthy={} models={} issues={} repair_actions={}",
@@ -907,13 +986,18 @@ impl LocalAiService {
             "ollama_running": healthy,
             "ollama_base_url": base_url,
             "ollama_binary_path": binary_path,
-            "installed_models": models,
+            "installed_models": installed_models,
+            "context_requirement": {
+                "min_context_tokens": MIN_CONTEXT_TOKENS,
+            },
             "vision_mode": presets::vision_mode_for_config(&config.local_ai),
             "expected": {
                 "chat_model": expected_chat,
                 "chat_found": chat_found,
+                "chat_eligibility": chat_eligibility,
                 "embedding_model": expected_embedding,
                 "embedding_found": embedding_found,
+                "embedding_eligibility": embedding_eligibility,
                 "vision_model": expected_vision,
                 "vision_found": vision_found,
             },
@@ -1003,6 +1087,60 @@ impl LocalAiService {
         );
 
         Ok(payload.models)
+    }
+
+    /// Fetch a model's native context window via Ollama `POST /api/show`.
+    ///
+    /// Returns `None` on any failure (unreachable, non-2xx, parse error, or
+    /// the metadata key is absent) — the caller maps that to an `Unknown`
+    /// eligibility verdict rather than a hard rejection. One bounded HTTP
+    /// round-trip per model; only ever invoked from the diagnostics path.
+    async fn fetch_model_context(&self, model: &str) -> Option<u64> {
+        let url = format!("{}/api/show", ollama_base_url());
+        let resp = self
+            .http
+            .post(&url)
+            .json(&OllamaShowRequest {
+                model: model.to_string(),
+            })
+            .timeout(std::time::Duration::from_secs(5))
+            .send()
+            .await
+            .inspect_err(|e| {
+                tracing::debug!(
+                    target: "local_ai::ollama_admin",
+                    %url, model, error = %e,
+                    "[local_ai:ollama_admin] fetch_model_context: request failed"
+                );
+            })
+            .ok()?;
+        let status = resp.status();
+        if !status.is_success() {
+            tracing::debug!(
+                target: "local_ai::ollama_admin",
+                %url, model, %status,
+                "[local_ai:ollama_admin] fetch_model_context: non-success response"
+            );
+            return None;
+        }
+        let parsed: OllamaShowResponse = resp
+            .json()
+            .await
+            .inspect_err(|e| {
+                tracing::debug!(
+                    target: "local_ai::ollama_admin",
+                    %url, model, error = %e,
+                    "[local_ai:ollama_admin] fetch_model_context: JSON parse failed"
+                );
+            })
+            .ok()?;
+        let ctx = parsed.context_length();
+        tracing::debug!(
+            target: "local_ai::ollama_admin",
+            model, context_length = ?ctx,
+            "[local_ai:ollama_admin] fetch_model_context: resolved"
+        );
+        ctx
     }
 
     async fn lm_studio_diagnostics(&self, config: &Config) -> Result<serde_json::Value, String> {

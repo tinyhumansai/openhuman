@@ -16,15 +16,39 @@ vi.mock('../../utils/config', async importOriginal => {
 
 vi.mock('react-router-dom', () => ({ useNavigate: () => vi.fn() }));
 
-vi.mock('../../hooks/useUsageState', () => ({
-  useUsageState: () => ({ isRateLimited: false, shouldShowBudgetCompletedMessage: false }),
-}));
+const mockUseUsageState = vi.hoisted(() =>
+  vi.fn(() => ({ shouldShowBudgetCompletedMessage: false }))
+);
+vi.mock('../../hooks/useUsageState', () => ({ useUsageState: mockUseUsageState }));
 
-// Default: return 'ok' so most tests see the normal state.
+// Default: return 'ok' so most tests see the normal state. The
+// blocking-state selector is the only thing this mock is asked to
+// resolve from the live code; Home.tsx also reads `theme.mode`, which
+// must come back as a ThemeMode string (not 'ok'), so the mock
+// inspects the selector callback to pick the right value.
 const useAppSelectorMock = vi.fn(() => 'ok' as string);
+const useAppDispatchMock = vi.fn(() => vi.fn());
+const themeModeProbe = { current: 'system' as 'system' | 'light' | 'dark' };
+/* eslint-disable react-hooks/rules-of-hooks -- mock factories, not real hooks */
 vi.mock('../../store/hooks', () => ({
-  useAppSelector: (_selector: unknown) => useAppSelectorMock(),
+  useAppSelector: (selector: unknown) => {
+    if (typeof selector === 'function') {
+      try {
+        const probed = (selector as (s: unknown) => unknown)({
+          theme: { mode: themeModeProbe.current },
+        });
+        if (probed === 'system' || probed === 'light' || probed === 'dark') {
+          return probed;
+        }
+      } catch {
+        // Selector didn't tolerate the probe — fall through to default.
+      }
+    }
+    return useAppSelectorMock();
+  },
+  useAppDispatch: () => useAppDispatchMock(),
 }));
+/* eslint-enable react-hooks/rules-of-hooks */
 
 vi.mock('../../store/socketSelectors', () => ({ selectSocketStatus: vi.fn() }));
 vi.mock('../../store/connectivitySelectors', () => ({ selectBlockingState: vi.fn() }));
@@ -178,5 +202,58 @@ describe('Home page — EarlyBirdy banner integration', () => {
 
     expect(mockDismissBanner).toHaveBeenCalledWith('home-earlybirdy');
     expect(screen.queryByText('The first 1,000 users get 60% off.')).not.toBeInTheDocument();
+  });
+});
+
+describe('Home page — theme toggle', () => {
+  it('renders "Switch to dark mode" in light mode and dispatches setThemeMode("dark") on click', async () => {
+    themeModeProbe.current = 'light';
+    const dispatch = vi.fn();
+    useAppDispatchMock.mockReturnValue(dispatch);
+    mockShouldShowBanner.mockReturnValue(false);
+
+    const { default: Home } = await import('../Home');
+    render(<Home />);
+
+    const toggle = screen.getByRole('button', { name: /switch to dark mode/i });
+    expect(toggle).toBeInTheDocument();
+
+    fireEvent.click(toggle);
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'theme/setThemeMode', payload: 'dark' })
+    );
+  });
+
+  it('renders "Switch to light mode" in dark mode and dispatches setThemeMode("light") on click', async () => {
+    themeModeProbe.current = 'dark';
+    const dispatch = vi.fn();
+    useAppDispatchMock.mockReturnValue(dispatch);
+    mockShouldShowBanner.mockReturnValue(false);
+
+    const { default: Home } = await import('../Home');
+    render(<Home />);
+
+    const toggle = screen.getByRole('button', { name: /switch to light mode/i });
+    expect(toggle).toBeInTheDocument();
+
+    fireEvent.click(toggle);
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'theme/setThemeMode', payload: 'light' })
+    );
+    themeModeProbe.current = 'system';
+  });
+});
+
+describe('Home page — budget completed banner', () => {
+  // Covers line 151: UsageLimitBanner render when shouldShowBudgetCompletedMessage=true
+  it('renders UsageLimitBanner when shouldShowBudgetCompletedMessage=true', async () => {
+    mockUseUsageState.mockReturnValueOnce({ shouldShowBudgetCompletedMessage: true });
+    mockShouldShowBanner.mockReturnValue(false);
+
+    const { default: Home } = await import('../Home');
+    render(<Home />);
+
+    expect(screen.getByText(/Exhausted Your Usage/i)).toBeInTheDocument();
+    expect(screen.getByText(/out of included usage/i)).toBeInTheDocument();
   });
 });

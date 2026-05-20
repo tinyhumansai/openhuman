@@ -103,7 +103,8 @@ async function snapshotRuntime(threadId: string): Promise<RuntimeSnapshot> {
 }
 
 describe('Chat harness — orchestrator → subagent flow', () => {
-  before(async () => {
+  before(async function beforeSuite() {
+    this.timeout(90_000);
     await startMockServer();
     await waitForApp();
     await resetApp(USER_ID);
@@ -120,7 +121,8 @@ describe('Chat harness — orchestrator → subagent flow', () => {
     await stopMockServer();
   });
 
-  it('orchestrator delegates to researcher and produces the final canary', async () => {
+  it('orchestrator delegates to researcher and produces the final canary', async function () {
+    this.timeout(90_000);
     await navigateViaHash('/chat');
     await browser.waitUntil(async () => await textExists('Threads'), {
       timeout: 15_000,
