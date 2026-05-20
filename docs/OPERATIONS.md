@@ -17,12 +17,12 @@ The following endpoints are monitored for uptime:
 
 ### Monitoring Providers
 
-1. **Pingdom (Primary)**:
-   - Configured to hit the `/health` endpoints every 1 minute.
-   - Alerts are triggered after 2 consecutive failures.
-   - Monitors from multiple regions (US, EU, Asia).
+1. **Pingdom (Planned — not yet configured)**:
+   - Planned to hit the `/health` endpoints every 1 minute from multiple regions (US, EU, Asia).
+   - Alerts to be triggered after 2 consecutive failures.
+   - No Pingdom configuration currently exists in this repository; no alerts will be sent until it is set up.
 
-2. **GitHub Actions (Secondary/Independent)**:
+2. **GitHub Actions (Active)**:
    - Scheduled workflow (`.github/workflows/uptime-monitor.yml`) runs every 5 minutes.
    - Serves as an independent signal from the deployment pipeline.
    - On outage detection, automatically creates a labeled GitHub Issue (`bug`, `critical`, `ops`) titled **"CRITICAL: Backend Outage Detected"** and closes it when services recover, providing a durable incident log in the repository.
@@ -31,8 +31,8 @@ The following endpoints are monitored for uptime:
 
 ### Alert Destinations
 
-- **Slack/Discord**: Alerts are routed to the `#ops-alerts` channel.
-- **Email**: Critical alerts are sent to `ops@tinyhumans.ai`.
+- **Slack/Discord**: Alerts are sent to the configured webhook (e.g. `#ops-alerts`) when the `ALERT_WEBHOOK_URL` GitHub secret is set. Set this secret in the repository settings pointing to your Slack incoming webhook or Discord server webhook URL. Alerts are skipped silently if the secret is not configured.
+- **Email** *(planned)*: Email alerting to `ops@tinyhumans.ai` is not yet wired into the automated workflow. Until an email integration is added, the `ALERT_WEBHOOK_URL` webhook is the only active notification channel.
 
 ### Escalation Path
 
