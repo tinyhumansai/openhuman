@@ -31,11 +31,12 @@ import {
   LogicalSize,
 } from '@tauri-apps/api/window';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { io, Socket } from 'socket.io-client';
+import { type Socket } from 'socket.io-client';
 
 import RotatingTetrahedronCanvas from '../components/RotatingTetrahedronCanvas';
 import { useT } from '../lib/i18n/I18nContext';
 import { callCoreRpc, getCoreHttpBaseUrl, getCoreRpcToken } from '../services/coreRpcClient';
+import { createCoreSocket } from '../services/coreSocket';
 
 const OVERLAY_IDLE_WIDTH = 50;
 const OVERLAY_IDLE_HEIGHT = 50;
@@ -356,15 +357,7 @@ export default function OverlayApp() {
         if (disposed) return;
 
         console.debug(`[overlay] connecting to core socket at ${baseUrl}`);
-        socket = io(baseUrl, {
-          path: '/socket.io/',
-          auth: { token: coreToken ?? '' },
-          transports: ['websocket', 'polling'],
-          reconnection: true,
-          reconnectionDelay: 2000,
-          reconnectionAttempts: Infinity,
-          forceNew: true,
-        });
+        socket = createCoreSocket(baseUrl, { coreToken });
 
         socket.on('connect', () => {
           console.debug('[overlay] socket connected', socket?.id);

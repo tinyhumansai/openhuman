@@ -1,5 +1,5 @@
 import debug from 'debug';
-import { io, Socket } from 'socket.io-client';
+import { type Socket } from 'socket.io-client';
 
 import { getCoreStateSnapshot } from '../lib/coreState/store';
 import { SocketIOMCPTransportImpl } from '../lib/mcp';
@@ -12,6 +12,7 @@ import type { ChannelAuthMode, ChannelConnectionStatus, ChannelType } from '../t
 import { IS_DEV } from '../utils/config';
 import { createSafeLogData, sanitizeError } from '../utils/sanitize';
 import { getCoreRpcToken, getCoreRpcUrl } from './coreRpcClient';
+import { createCoreSocket } from './coreSocket';
 
 // Socket service logger using debug package
 // Enable logging by setting DEBUG=socket* in environment or localStorage
@@ -184,24 +185,21 @@ class SocketService {
 
     // The local core's Socket.IO handshake validates the per-process bearer
     // exposed via `core_rpc_token` (Tauri IPC) / the cloud-mode picker. The
-    // session JWT is kept on the `auth` payload alongside so future handlers
-    // can attribute connections, but it is not what gates the connection.
+    // session JWT rides alongside on the `auth` payload as `session` so a
+    // future handler can correlate the connection with the logged-in user.
     const coreToken = await getCoreRpcToken();
 
-    const socketOptions = {
-      auth: { token: coreToken ?? '', session: token },
-      path: '/socket.io/',
-      transports: ['websocket', 'polling'] as ('websocket' | 'polling')[],
-      reconnection: true,
-      reconnectionDelay: 1000,
-      reconnectionAttempts: 5,
-      forceNew: true,
-      timeout: 2000,
-      upgrade: true,
-      query: {},
-    };
-
-    this.socket = io(backendUrl, socketOptions);
+    this.socket = createCoreSocket(backendUrl, {
+      coreToken,
+      authExtras: { session: token },
+      overrides: {
+        reconnectionDelay: 1000,
+        reconnectionAttempts: 5,
+        timeout: 2000,
+        upgrade: true,
+        query: {},
+      },
+    });
 
     // Flush any listeners that were registered before the socket existed.
     if (this.pendingListeners.length > 0) {
