@@ -637,10 +637,10 @@ impl Tool for KalshiTool {
     }
 
     fn is_concurrency_safe(&self, _args: &Value) -> bool {
-        match _args.get("action").and_then(Value::as_str) {
-            Some("place_order") | Some("cancel_order") => false,
-            _ => true,
-        }
+        !matches!(
+            _args.get("action").and_then(Value::as_str),
+            Some("place_order") | Some("cancel_order")
+        )
     }
 
     async fn execute(&self, args: Value) -> Result<ToolResult> {
