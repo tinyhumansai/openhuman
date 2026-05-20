@@ -1,0 +1,6 @@
+{
+  "canceled": {
+    "order_id": "ord-1",
+    "status": "canceled"
+  }
+}

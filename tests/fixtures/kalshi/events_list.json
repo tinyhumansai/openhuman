@@ -1,0 +1,15 @@
+{
+  "events": [
+    {
+      "event_ticker": "INXD-23DEC29",
+      "title": "S&P 500 close levels",
+      "status": "open"
+    },
+    {
+      "event_ticker": "INXD-24JAN31",
+      "title": "S&P 500 close levels (Jan)",
+      "status": "open"
+    }
+  ],
+  "cursor": "evt-next"
+}

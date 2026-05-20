@@ -73,9 +73,9 @@ pub use storage_memory::{
 };
 pub use tools::{
     BrowserComputerUseConfig, BrowserConfig, ComposioConfig, ComputerControlConfig, CurlConfig,
-    GitbooksConfig, HttpRequestConfig, IntegrationToggle, IntegrationsConfig, McpAuthConfig,
-    McpClientConfig, McpClientIdentityConfig, McpServerConfig, MultimodalConfig, KalshiConfig,
-    KalshiCredentials, PolymarketClobCredentials, PolymarketConfig, SearxngConfig, SecretsConfig,
+    GitbooksConfig, HttpRequestConfig, IntegrationToggle, IntegrationsConfig, KalshiConfig,
+    KalshiCredentials, McpAuthConfig, McpClientConfig, McpClientIdentityConfig, McpServerConfig,
+    MultimodalConfig, PolymarketClobCredentials, PolymarketConfig, SearxngConfig, SecretsConfig,
     SeltzConfig, WebSearchConfig, COMPOSIO_MODE_BACKEND, COMPOSIO_MODE_DIRECT,
 };
 pub use update::{UpdateConfig, UpdateRestartStrategy};

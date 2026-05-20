@@ -1,0 +1,16 @@
+{
+  "orderbook": {
+    "yes": [
+      {
+        "price": 52,
+        "count": 100
+      }
+    ],
+    "no": [
+      {
+        "price": 48,
+        "count": 120
+      }
+    ]
+  }
+}

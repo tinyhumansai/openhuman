@@ -123,7 +123,10 @@ impl KalshiTool {
         });
 
         Self {
-            base_url: normalize_base_url(&config.base_url, "https://api.elections.kalshi.com/trade-api/v2"),
+            base_url: normalize_base_url(
+                &config.base_url,
+                "https://api.elections.kalshi.com/trade-api/v2",
+            ),
             signing_path_prefix: signing_path_prefix(&config.base_url),
             http,
             security,
@@ -233,9 +236,7 @@ impl KalshiTool {
                 }))
             }
             KalshiRequest::GetPositions => {
-                let data = self
-                    .get_signed_json("/portfolio/positions", &[])
-                    .await?;
+                let data = self.get_signed_json("/portfolio/positions", &[]).await?;
                 Ok(json!({
                     "action": "get_positions",
                     "source": "kalshi",
@@ -254,9 +255,7 @@ impl KalshiTool {
                 let mut query = vec![("status".to_string(), "resting".to_string())];
                 push_optional_u64(&mut query, "limit", limit);
                 push_optional_string(&mut query, "cursor", non_empty(cursor.as_deref()));
-                let data = self
-                    .get_signed_json("/portfolio/orders", &query)
-                    .await?;
+                let data = self.get_signed_json("/portfolio/orders", &query).await?;
                 Ok(json!({
                     "action": "get_open_orders",
                     "source": "kalshi",
@@ -676,7 +675,10 @@ fn normalize_base_url(raw: &str, fallback: &str) -> String {
 }
 
 fn signing_path_prefix(raw_base_url: &str) -> String {
-    let normalized = normalize_base_url(raw_base_url, "https://api.elections.kalshi.com/trade-api/v2");
+    let normalized = normalize_base_url(
+        raw_base_url,
+        "https://api.elections.kalshi.com/trade-api/v2",
+    );
     let Ok(parsed) = url::Url::parse(&normalized) else {
         return String::new();
     };
@@ -771,3 +773,7 @@ fn require_write_approval(approved: Option<bool>) -> Result<()> {
         "Kalshi write requires explicit user approval. Re-invoke with arguments.approved = true after confirming with the user."
     )
 }
+
+#[cfg(test)]
+#[path = "kalshi_tests.rs"]
+mod tests;

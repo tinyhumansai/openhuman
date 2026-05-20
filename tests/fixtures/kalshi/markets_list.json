@@ -1,0 +1,15 @@
+{
+  "markets": [
+    {
+      "ticker": "INXD-23DEC29-T4500",
+      "title": "Will S&P 500 close above 4500 on Dec 29, 2023?",
+      "status": "open"
+    },
+    {
+      "ticker": "INXD-23DEC29-T4600",
+      "title": "Will S&P 500 close above 4600 on Dec 29, 2023?",
+      "status": "open"
+    }
+  ],
+  "cursor": "next-cursor"
+}
