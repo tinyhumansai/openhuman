@@ -4,6 +4,7 @@ import { ConfirmationModal } from '../components/intelligence/ConfirmationModal'
 import IntelligenceCallsTab from '../components/intelligence/IntelligenceCallsTab';
 import IntelligenceDreamsTab from '../components/intelligence/IntelligenceDreamsTab';
 import IntelligenceSubconsciousTab from '../components/intelligence/IntelligenceSubconsciousTab';
+import IntelligenceTasksTab from '../components/intelligence/IntelligenceTasksTab';
 import { MemoryWorkspace } from '../components/intelligence/MemoryWorkspace';
 import { ToastContainer } from '../components/intelligence/Toast';
 import PillTabBar from '../components/PillTabBar';
@@ -15,14 +16,16 @@ import {
 import { useIntelligenceStats } from '../hooks/useIntelligenceStats';
 import { useMemoryIngestionStatus } from '../hooks/useMemoryIngestionStatus';
 import { useSubconscious } from '../hooks/useSubconscious';
+import { useT } from '../lib/i18n/I18nContext';
 import type {
   ConfirmationModal as ConfirmationModalType,
   ToastNotification,
 } from '../types/intelligence';
 
-type IntelligenceTab = 'memory' | 'subconscious' | 'calls' | 'dreams';
+type IntelligenceTab = 'memory' | 'subconscious' | 'calls' | 'dreams' | 'tasks';
 
 export default function Intelligence() {
+  const { t } = useT();
   const { aiStatus } = useIntelligenceStats();
   const { status: ingestionStatus } = useMemoryIngestionStatus();
 
@@ -103,18 +106,18 @@ export default function Intelligence() {
         : aiStatus;
 
   const systemStatusLabel = isRunning
-    ? 'Analyzing…'
+    ? t('common.loading')
     : systemStatus === 'ready'
-      ? 'System Ready'
+      ? t('common.success')
       : systemStatus === 'loading'
-        ? 'Loading…'
+        ? t('common.loading')
         : systemStatus === 'disconnected'
-          ? 'Connecting…'
+          ? t('welcome.connecting')
           : systemStatus === 'initializing'
-            ? 'Initializing…'
+            ? t('welcome.connecting')
             : systemStatus === 'error'
-              ? 'System Error'
-              : 'System Idle';
+              ? t('common.error')
+              : t('misc.rehydrating');
 
   const systemStatusDot =
     isRunning || systemStatus === 'loading'
@@ -128,10 +131,11 @@ export default function Intelligence() {
             : 'bg-stone-600';
 
   const tabs: { id: IntelligenceTab; label: string; comingSoon?: boolean }[] = [
-    { id: 'memory', label: 'Memory' },
-    { id: 'subconscious', label: 'Subconscious' },
-    { id: 'calls', label: 'Calls' },
-    { id: 'dreams', label: 'Dreams', comingSoon: true },
+    { id: 'memory', label: t('memory.tab.memory') },
+    { id: 'subconscious', label: t('memory.tab.subconscious') },
+    { id: 'tasks', label: 'Tasks' },
+    { id: 'calls', label: t('memory.tab.calls') },
+    { id: 'dreams', label: t('memory.tab.dreams') },
   ];
 
   return (
@@ -152,9 +156,9 @@ export default function Intelligence() {
                     className={`rounded-full border px-1.5 py-0.5 text-[10px] ${
                       active
                         ? 'border-white/30 bg-white/15 text-white'
-                        : 'border-stone-200 bg-stone-50 text-stone-500'
+                        : 'border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 text-stone-500 dark:text-neutral-400'
                     }`}>
-                    Soon
+                    {t('misc.beta')}
                   </span>
                 )}
               </span>
@@ -162,15 +166,15 @@ export default function Intelligence() {
           }}
         />
 
-        <div className="bg-white rounded-2xl shadow-soft border border-stone-200 p-6">
+        <div className="bg-white dark:bg-neutral-900 rounded-2xl shadow-soft border border-stone-200 dark:border-neutral-800 p-6">
           <div>
             {/* Header */}
             <div className="flex items-center justify-between mb-6">
               <div className="flex items-center gap-3">
                 <h1
-                  className="text-xl font-bold text-stone-900"
+                  className="text-xl font-bold text-stone-900 dark:text-neutral-100"
                   data-walkthrough="intelligence-header">
-                  Intelligence
+                  {t('memory.title')}
                 </h1>
                 {/* Header count badge was sourced from `stats.total` which
                     in turn came from the legacy actionable-items pipeline
@@ -185,23 +189,30 @@ export default function Intelligence() {
                 {activeTab === 'memory' && (
                   <div className="flex items-center gap-2">
                     <div className={`w-2 h-2 rounded-full ${systemStatusDot}`} />
-                    <span className="text-xs text-stone-400">{systemStatusLabel}</span>
+                    <span className="text-xs text-stone-400 dark:text-neutral-500">
+                      {systemStatusLabel}
+                    </span>
                   </div>
                 )}
                 {activeTab === 'memory' &&
                   (ingestionStatus.running || ingestionStatus.queueDepth > 0) && (
                     <div
-                      className="flex items-center gap-1.5 px-2 py-0.5 rounded-full border border-amber-200 bg-amber-50 text-amber-700"
+                      className="flex items-center gap-1.5 px-2 py-0.5 rounded-full border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-300"
                       title={
                         ingestionStatus.running
                           ? ingestionStatus.currentTitle
-                            ? `Ingesting: ${ingestionStatus.currentTitle}`
-                            : 'Memory ingestion running'
-                          : 'Memory ingestion queued'
+                            ? t('memory.ingestingTitle').replace(
+                                '{title}',
+                                ingestionStatus.currentTitle
+                              )
+                            : t('memory.ingesting')
+                          : t('memory.ingestionQueued')
                       }>
                       <div className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
                       <span className="text-[11px] font-medium">
-                        {ingestionStatus.running ? 'Ingesting' : 'Queued'}
+                        {ingestionStatus.running
+                          ? t('memory.ingesting')
+                          : t('memory.ingestionQueued')}
                         {ingestionStatus.queueDepth > 0 && ` · ${ingestionStatus.queueDepth}`}
                       </span>
                     </div>
@@ -238,6 +249,8 @@ export default function Intelligence() {
                 triggering={subconsciousTriggering}
               />
             )}
+
+            {activeTab === 'tasks' && <IntelligenceTasksTab />}
 
             {activeTab === 'calls' && <IntelligenceCallsTab onToast={addToast} />}
 

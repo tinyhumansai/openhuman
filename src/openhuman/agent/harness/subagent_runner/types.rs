@@ -29,6 +29,11 @@ pub struct SubagentRunOptions {
     /// task prompt. Rendered as a `[Context]\n…\n` prefix.
     pub context: Option<String>,
 
+    /// Optional exact model id for this single spawn. When present it
+    /// wins over the agent definition's model spec but keeps the
+    /// parent's provider/routing unchanged.
+    pub model_override: Option<String>,
+
     /// Stable id for tracing / DomainEvents (defaults to a UUID).
     pub task_id: Option<String>,
 
@@ -94,6 +99,12 @@ pub enum SubagentRunError {
 
     #[error("provider call failed: {0}")]
     Provider(#[from] anyhow::Error),
+
+    #[error("sub-agent spawn depth exceeded: attempted depth {attempted_depth}, max {max_depth}")]
+    SpawnDepthExceeded {
+        attempted_depth: usize,
+        max_depth: usize,
+    },
 
     #[error("sub-agent exceeded maximum iterations ({0})")]
     MaxIterationsExceeded(usize),

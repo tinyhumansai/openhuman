@@ -9,7 +9,7 @@
 //!
 //! The JWT and API URL are resolved per call so a session refresh between
 //! embed batches is picked up transparently — matching
-//! [`crate::openhuman::providers::openhuman_backend::OpenHumanBackendProvider`].
+//! [`crate::openhuman::inference::provider::openhuman_backend::OpenHumanBackendProvider`].
 
 use std::path::PathBuf;
 
@@ -92,6 +92,10 @@ impl EmbeddingProvider for OpenHumanCloudEmbedding {
         "cloud"
     }
 
+    fn model_id(&self) -> &str {
+        &self.model
+    }
+
     fn dimensions(&self) -> usize {
         self.dims
     }
@@ -120,7 +124,9 @@ mod tests {
             DEFAULT_CLOUD_EMBEDDING_DIMENSIONS,
         );
         assert_eq!(p.name(), "cloud");
+        assert_eq!(p.model_id(), DEFAULT_CLOUD_EMBEDDING_MODEL);
         assert_eq!(p.dimensions(), DEFAULT_CLOUD_EMBEDDING_DIMENSIONS);
+        assert_eq!(p.signature(), "provider=cloud;model=embedding-v1;dims=1024");
     }
 
     #[test]

@@ -5,6 +5,8 @@ import { getCoreStateSnapshot } from '../lib/coreState/store';
 import { SocketIOMCPTransportImpl } from '../lib/mcp';
 import { store } from '../store';
 import { upsertChannelConnection } from '../store/channelConnectionsSlice';
+import { type CompanionStateChangedEvent, setCompanionState } from '../store/companionSlice';
+import { setBackend } from '../store/connectivitySlice';
 import { resetForUser, setSocketIdForUser, setStatusForUser } from '../store/socketSlice';
 import type { ChannelAuthMode, ChannelConnectionStatus, ChannelType } from '../types/channels';
 import { IS_DEV } from '../utils/config';
@@ -38,18 +40,18 @@ async function resolveCoreSocketBaseUrl(): Promise<string> {
   return coreSocketBaseFromRpcUrl(rpcUrl);
 }
 
-interface JwtPayload {
-  tgUserId?: string;
-  userId?: string;
-  sub?: string;
-}
-
 interface ChannelConnectionUpdatedEvent {
   channel: ChannelType;
   authMode: ChannelAuthMode;
   status: ChannelConnectionStatus;
   lastError?: string;
   capabilities?: string[];
+}
+
+interface PendingSocketListener {
+  event: string;
+  callback: (...args: unknown[]) => void;
+  once: boolean;
 }
 
 function normalizeChannelConnectionUpdatePayload(
@@ -91,30 +93,44 @@ function normalizeChannelConnectionUpdatePayload(
   };
 }
 
+const COMPANION_STATES: ReadonlySet<string> = new Set([
+  'idle',
+  'listening',
+  'thinking',
+  'speaking',
+  'pointing',
+  'error',
+]);
+
+export function parseCompanionStateChangedEvent(value: unknown): CompanionStateChangedEvent | null {
+  if (!value || typeof value !== 'object') return null;
+  const obj = value as Record<string, unknown>;
+  if (typeof obj.session_id !== 'string') return null;
+  if (typeof obj.state !== 'string' || !COMPANION_STATES.has(obj.state)) return null;
+
+  const previous =
+    typeof obj.previous_state === 'string' && COMPANION_STATES.has(obj.previous_state)
+      ? (obj.previous_state as CompanionStateChangedEvent['previous_state'])
+      : 'idle';
+  const message = typeof obj.message === 'string' ? obj.message : undefined;
+
+  return {
+    session_id: obj.session_id,
+    state: obj.state as CompanionStateChangedEvent['state'],
+    previous_state: previous,
+    message,
+  };
+}
+
 function getSocketUserId(): string {
-  const token = getCoreStateSnapshot().snapshot.sessionToken;
-  if (!token) return '__pending__';
-
-  try {
-    const parts = token.split('.');
-    if (parts.length !== 3) return '__pending__';
-
-    const payloadBase64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
-    const payloadJson = atob(payloadBase64);
-    const payload = JSON.parse(payloadJson) as JwtPayload;
-
-    const id = payload.tgUserId || payload.userId || payload.sub;
-    return id || '__pending__';
-  } catch {
-    return '__pending__';
-  }
+  return getCoreStateSnapshot().snapshot?.auth?.userId ?? '__pending__';
 }
 
 class SocketService {
   private socket: Socket | null = null;
   private token: string | null = null;
   private mcpTransport: SocketIOMCPTransportImpl | null = null;
-  private pendingListeners: Array<{ event: string; callback: (...args: unknown[]) => void }> = [];
+  private pendingListeners: PendingSocketListener[] = [];
   // Maps original caller callbacks → wrapped callbacks so off() can locate the
   // exact function references that were registered with socket.io, scoped by event.
   private listenerMap = new Map<
@@ -150,12 +166,19 @@ class SocketService {
     this.token = token;
     const uid = getSocketUserId();
     store.dispatch(setStatusForUser({ userId: uid, status: 'connecting' }));
+    // Mirror backend Socket.IO state into the connectivity channel (#1527).
+    store.dispatch(setBackend({ value: 'connecting' }));
 
     const backendUrl = await resolveCoreSocketBaseUrl();
     socketLog('Connecting to core socket', { userId: uid, backendUrl });
 
-    // Ensure we're not connecting to the wrong URL
+    // Ensure we're not connecting to the wrong URL (Vite dev HMR port guard).
+    // Reset the backend channel before returning so it doesn't stay stuck at
+    // 'connecting'. (addresses @coderabbitai on socketService.ts:154-163)
     if (backendUrl.includes('localhost:1420') || backendUrl.includes(':1420')) {
+      store.dispatch(
+        setBackend({ value: 'disconnected', error: 'dev-server URL guard — not a real backend' })
+      );
       return;
     }
 
@@ -177,8 +200,12 @@ class SocketService {
     // Flush any listeners that were registered before the socket existed.
     if (this.pendingListeners.length > 0) {
       socketLog('Flushing pending listeners', { count: this.pendingListeners.length });
-      for (const { event, callback } of this.pendingListeners) {
-        this.socket.on(event, callback);
+      for (const { event, callback, once } of this.pendingListeners) {
+        if (once) {
+          this.socket.once(event, callback);
+        } else {
+          this.socket.on(event, callback);
+        }
       }
       this.pendingListeners = [];
     }
@@ -201,6 +228,7 @@ class SocketService {
       socketLog('Connected', { socketId, userId: uid });
       store.dispatch(setStatusForUser({ userId: uid, status: 'connected' }));
       store.dispatch(setSocketIdForUser({ userId: uid, socketId }));
+      store.dispatch(setBackend({ value: 'connected' }));
     });
 
     this.socket.on('ready', () => {
@@ -218,12 +246,19 @@ class SocketService {
       socketLog('Disconnected', { userId: uid, reason });
       store.dispatch(setStatusForUser({ userId: uid, status: 'disconnected' }));
       store.dispatch(setSocketIdForUser({ userId: uid, socketId: null }));
+      store.dispatch(setBackend({ value: 'disconnected', error: reason }));
     });
 
     this.socket.on('connect_error', (error: Error) => {
       const uid = getSocketUserId();
       socketError('Connection error', { userId: uid, error: sanitizeError(error) });
       store.dispatch(setStatusForUser({ userId: uid, status: 'disconnected' }));
+      store.dispatch(
+        setBackend({
+          value: 'disconnected',
+          error: error instanceof Error ? error.message : String(error),
+        })
+      );
     });
 
     const handleChannelConnectionUpdated = (data: unknown) => {
@@ -282,6 +317,18 @@ class SocketService {
           patch: { status: 'connected', lastError: undefined, capabilities: ['dm'] },
         })
       );
+    });
+
+    // Companion state change events — dispatch into the companion Redux slice
+    // so settings panel and other UI can react to session lifecycle.
+    this.socket.on('companion:state_changed', (data: unknown) => {
+      const event = parseCompanionStateChangedEvent(data);
+      if (!event) {
+        socketWarn('companion:state_changed dropped — invalid payload shape');
+        return;
+      }
+      socketLog('companion:state_changed → %s', event.state);
+      store.dispatch(setCompanionState(event));
     });
 
     this.socket.connect();
@@ -356,7 +403,7 @@ class SocketService {
       this.socket.on(event, wrappedCallback);
     } else {
       socketLog('Socket not ready, queuing listener', { event });
-      this.pendingListeners.push({ event, callback: wrappedCallback });
+      this.pendingListeners.push({ event, callback: wrappedCallback, once: false });
     }
   }
 
@@ -425,7 +472,7 @@ class SocketService {
       this.socket.once(event, wrappedCallback);
     } else {
       socketLog('Socket not ready, queuing once listener', { event });
-      this.pendingListeners.push({ event, callback: wrappedCallback });
+      this.pendingListeners.push({ event, callback: wrappedCallback, once: true });
     }
   }
 }

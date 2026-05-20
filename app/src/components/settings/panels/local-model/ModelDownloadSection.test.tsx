@@ -64,4 +64,39 @@ describe('ModelDownloadSection runtime gate', () => {
     expect(props.onRunSummaryTest).not.toHaveBeenCalled();
     expect(props.onRunPromptTest).not.toHaveBeenCalled();
   });
+
+  it('shows external-runtime guidance for ollama-backed assets', () => {
+    render(
+      <ModelDownloadSection
+        {...makeProps()}
+        runtimeEnabled={true}
+        assets={{
+          quantization: 'q4',
+          chat: {
+            id: 'gemma3:1b-it-qat',
+            provider: 'ollama',
+            state: 'missing',
+            path: 'ollama://gemma3:1b-it-qat',
+            warning: null,
+          },
+          vision: { id: '', provider: 'ollama', state: 'disabled', path: null, warning: null },
+          embedding: {
+            id: 'bge-m3',
+            provider: 'ollama',
+            state: 'missing',
+            path: 'ollama://bge-m3',
+            warning: null,
+          },
+          stt: { id: 'whisper', provider: 'whisper', state: 'ondemand', path: null, warning: null },
+          tts: { id: 'piper', provider: 'piper', state: 'ondemand', path: null, warning: null },
+          ollama_available: true,
+        }}
+      />
+    );
+
+    expect(
+      screen.getAllByText('Manage this model in your external runtime.').length
+    ).toBeGreaterThan(0);
+    expect(screen.getAllByRole('button', { name: 'Download' }).length).toBeGreaterThan(0);
+  });
 });

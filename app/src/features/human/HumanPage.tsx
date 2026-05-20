@@ -1,14 +1,22 @@
 import { useEffect, useState } from 'react';
 
+import { useT } from '../../lib/i18n/I18nContext';
 import Conversations from '../../pages/Conversations';
+import type { ToolTimelineEntry } from '../../store/chatRuntimeSlice';
 import { useAppSelector } from '../../store/hooks';
 import { selectMascotColor } from '../../store/mascotSlice';
 import { YellowMascot } from './Mascot';
+import { SubMascotLayer } from './SubMascotLayer';
 import { useHumanMascot } from './useHumanMascot';
 
 const SPEAK_REPLIES_KEY = 'human.speakReplies';
 
+// Stable empty reference so useAppSelector's === equality doesn't force a re-render
+// of SubMascotLayer on every store update when no subagent timeline is active.
+const EMPTY_TIMELINE: ToolTimelineEntry[] = [];
+
 const HumanPage = () => {
+  const { t } = useT();
   const [speakReplies, setSpeakReplies] = useState<boolean>(() => {
     const raw = window.localStorage.getItem(SPEAK_REPLIES_KEY);
     return raw === null ? true : raw === '1';
@@ -21,11 +29,17 @@ const HumanPage = () => {
   // Visemes are intentionally unused — the YellowMascot has its own talking lipsync.
   const { face } = useHumanMascot({ speakReplies });
   const mascotColor = useAppSelector(selectMascotColor);
+  const subMascotTimeline = useAppSelector(state => {
+    const threadId = state.thread.selectedThreadId ?? state.thread.activeThreadId;
+    return threadId
+      ? (state.chatRuntime.toolTimelineByThread[threadId] ?? EMPTY_TIMELINE)
+      : EMPTY_TIMELINE;
+  });
 
   // Sidebar reserves ~436px (420px panel + 16px gutter) on the right; the
   // mascot stage takes the remaining width so the two never overlap.
   return (
-    <div className="absolute inset-0 bg-stone-100 overflow-hidden">
+    <div className="absolute inset-0 bg-stone-100 dark:bg-neutral-950 overflow-hidden">
       <div
         className="pointer-events-none absolute inset-0"
         style={{
@@ -37,22 +51,23 @@ const HumanPage = () => {
       <div className="absolute inset-y-0 left-0 right-[436px] flex items-center justify-center">
         <div className="relative w-[min(80vh,90%)] aspect-square">
           <YellowMascot face={face} mascotColor={mascotColor} />
+          <SubMascotLayer entries={subMascotTimeline} />
         </div>
       </div>
 
-      <label className="absolute top-4 left-4 z-10 inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/80 backdrop-blur-sm border border-stone-300 text-xs text-stone-700 shadow-soft cursor-pointer select-none">
+      <label className="absolute top-4 left-4 z-10 inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/80 dark:bg-neutral-900/80 backdrop-blur-sm border border-stone-300 dark:border-neutral-700 text-xs text-stone-700 dark:text-neutral-200 shadow-soft cursor-pointer select-none">
         <input
           type="checkbox"
           checked={speakReplies}
           onChange={e => setSpeakReplies(e.target.checked)}
           className="cursor-pointer"
         />
-        Speak replies
+        {t('voice.pushToTalk')}
       </label>
 
       {/* Chat sidebar — vertically centered above the BottomTabBar (~80px). */}
       <div className="absolute right-4 top-0 bottom-20 z-10 flex items-center">
-        <aside className="w-[420px] h-[min(720px,calc(100vh-160px))] rounded-2xl border border-stone-300 bg-white shadow-soft flex flex-col overflow-hidden">
+        <aside className="w-[420px] h-[min(720px,calc(100vh-160px))] rounded-2xl border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 shadow-soft flex flex-col overflow-hidden">
           <Conversations variant="sidebar" composer="mic-cloud" />
         </aside>
       </div>

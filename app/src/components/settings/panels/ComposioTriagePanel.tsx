@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 
+import { useT } from '../../../lib/i18n/I18nContext';
 import {
   openhumanGetComposioTriggerSettings,
   openhumanUpdateComposioTriggerSettings,
@@ -8,6 +9,7 @@ import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
 const ComposioTriagePanel = () => {
+  const { t } = useT();
   const { navigateBack, breadcrumbs } = useSettingsNavigation();
 
   const [triageDisabled, setTriageDisabled] = useState(false);
@@ -48,7 +50,7 @@ const ComposioTriagePanel = () => {
     try {
       const toolkitList = disabledToolkits
         .split(',')
-        .map(t => t.trim().toLowerCase())
+        .map(e => e.trim().toLowerCase())
         .filter(Boolean);
       await openhumanUpdateComposioTriggerSettings({
         triage_disabled: triageDisabled,
@@ -75,13 +77,13 @@ const ComposioTriagePanel = () => {
     return (
       <div>
         <SettingsHeader
-          title="Integration Triggers"
+          title={t('composio.triageTitle')}
           showBackButton
           onBack={navigateBack}
           breadcrumbs={breadcrumbs}
         />
         <div className="p-4">
-          <p className="text-sm text-stone-500">Loading…</p>
+          <p className="text-sm text-stone-500 dark:text-neutral-400">Loading…</p>
         </div>
       </div>
     );
@@ -90,23 +92,20 @@ const ComposioTriagePanel = () => {
   return (
     <div>
       <SettingsHeader
-        title="Integration Triggers"
+        title={t('composio.triageTitle')}
         showBackButton
         onBack={navigateBack}
         breadcrumbs={breadcrumbs}
       />
 
       <div className="p-4 space-y-5">
-        <p className="text-sm text-stone-500">
-          When active, each incoming Composio trigger runs through an AI triage step that classifies
-          the event and may kick off automated actions — one local LLM turn per trigger. Disable
-          globally or per integration if you prefer manual review. If the environment variable{' '}
-          <span className="font-mono">OPENHUMAN_TRIGGER_TRIAGE_DISABLED</span> is set, it overrides
-          these settings and disables triage for all triggers.
+        <p className="text-sm text-stone-500 dark:text-neutral-400">
+          {t('composio.triageDesc')}{' '}
+          <span className="font-mono">OPENHUMAN_TRIGGER_TRIAGE_DISABLED</span>{' '}
+          {t('composio.envVarOverrides')}
         </p>
 
-        {/* Global toggle */}
-        <div className="rounded-2xl border border-stone-200 bg-stone-50/60 p-4 space-y-1">
+        <div className="rounded-2xl border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 p-4 space-y-1">
           <button
             type="button"
             role="switch"
@@ -115,19 +114,19 @@ const ComposioTriagePanel = () => {
             onClick={() => setTriageDisabled(v => !v)}
             className="w-full flex items-center justify-between">
             <div className="text-left">
-              <span className="text-sm font-medium text-stone-900">
-                Disable AI triage for all triggers
+              <span className="text-sm font-medium text-stone-900 dark:text-neutral-100">
+                {t('composio.disableAllTriage')}
               </span>
-              <p className="text-xs text-stone-500 mt-0.5">
-                Triggers are still recorded to history — no LLM turn is run.
+              <p className="text-xs text-stone-500 dark:text-neutral-400 mt-0.5">
+                {t('composio.triggersStillRecorded')}
               </p>
             </div>
             <div
               className={`ml-3 flex-shrink-0 w-9 h-5 rounded-full transition-colors relative ${
-                triageDisabled ? 'bg-coral-400' : 'bg-stone-200'
+                triageDisabled ? 'bg-coral-400' : 'bg-stone-200 dark:bg-neutral-800'
               }`}>
               <div
-                className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${
+                className={`absolute top-0.5 w-4 h-4 rounded-full bg-white dark:bg-neutral-900 shadow transition-transform ${
                   triageDisabled ? 'translate-x-4' : 'translate-x-0.5'
                 }`}
               />
@@ -135,12 +134,13 @@ const ComposioTriagePanel = () => {
           </button>
         </div>
 
-        {/* Per-toolkit list */}
         <div className={`space-y-2 ${triageDisabled ? 'opacity-40 pointer-events-none' : ''}`}>
-          <label className="block text-sm font-medium text-stone-800" htmlFor="disabled-toolkits">
-            Disable AI triage for specific integrations
+          <label
+            className="block text-sm font-medium text-stone-800 dark:text-neutral-100"
+            htmlFor="disabled-toolkits">
+            {t('composio.disableSpecificIntegrations')}
           </label>
-          <p className="text-xs text-stone-500">
+          <p className="text-xs text-stone-500 dark:text-neutral-400">
             Comma-separated integration slugs, e.g. <span className="font-mono">gmail, slack</span>.
             Case-insensitive.
           </p>
@@ -151,7 +151,7 @@ const ComposioTriagePanel = () => {
             onChange={e => setDisabledToolkits(e.target.value)}
             placeholder="gmail, slack, ..."
             disabled={triageDisabled}
-            className="w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 placeholder-stone-400 focus:border-primary-400 focus:outline-none focus:ring-1 focus:ring-primary-400 disabled:cursor-not-allowed"
+            className="w-full rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 placeholder-stone-400 dark:placeholder-neutral-500 focus:border-primary-400 focus:outline-none focus:ring-1 focus:ring-primary-400 disabled:cursor-not-allowed"
           />
         </div>
 
@@ -160,14 +160,16 @@ const ComposioTriagePanel = () => {
           onClick={handleSave}
           disabled={saving}
           className="w-full py-2 rounded-xl bg-primary-600 text-white text-sm font-medium hover:bg-primary-500 transition-colors disabled:opacity-50">
-          {saving ? 'Saving…' : 'Save'}
+          {saving ? t('common.loading') : t('common.save')}
         </button>
 
         {saveStatus === 'saved' && (
-          <p className="text-xs text-center text-green-600">Settings saved</p>
+          <p className="text-xs text-center text-green-600 dark:text-green-300">
+            {t('composio.settingsSaved')}
+          </p>
         )}
         {saveStatus === 'error' && (
-          <p className="text-xs text-center text-red-500">Failed to save. Try again.</p>
+          <p className="text-xs text-center text-red-500">{t('composio.saveFailed')}</p>
         )}
       </div>
     </div>

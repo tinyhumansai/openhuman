@@ -14,6 +14,7 @@ pub mod morning_briefing;
 pub mod orchestrator;
 pub mod planner;
 pub mod researcher;
+pub mod skill_creator;
 pub mod summarizer;
 pub mod tool_maker;
 pub mod tools_agent;
@@ -21,4 +22,4 @@ pub mod trigger_reactor;
 pub mod trigger_triage;
 pub mod welcome;
 
-pub use loader::{load_builtins, BuiltinAgent, BUILTINS};
+pub use loader::{load_builtins, validate_tier_hierarchy, BuiltinAgent, BUILTINS};

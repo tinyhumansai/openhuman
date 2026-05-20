@@ -1,4 +1,4 @@
-//! Wall-clock timeouts for tool execution (skills runtime + agent loop).
+//! Wall-clock timeouts for tool execution (node/tool runtime + agent loop).
 //!
 //! Override with the `OPENHUMAN_TOOL_TIMEOUT_SECS` environment variable (1–3600; default 120).
 

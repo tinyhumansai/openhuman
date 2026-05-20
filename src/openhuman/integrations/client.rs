@@ -37,6 +37,38 @@ pub(crate) fn extract_error_detail(body: &str, max_bytes: usize) -> String {
     crate::openhuman::util::truncate_at_byte_boundary(body, max_bytes)
 }
 
+/// Strip any inference-style path that snuck into a backend URL before
+/// it becomes the [`IntegrationClient::backend_url`] field. Idempotent —
+/// returns the input unchanged when already clean.
+///
+/// See issue #2075 / Sentry `OPENHUMAN-TAURI-H6`, `-HN`: a misconfigured
+/// `BACKEND_URL` env (e.g. `https://api.tinyhumans.ai/openai/v1/chat/completions`)
+/// baked into a build silently produced 404 URLs like
+/// `…/openai/v1/chat/completions/agent-integrations/composio/connections`
+/// because every `IntegrationClient` method joins paths onto this field
+/// via [`crate::api::config::api_url`].
+fn sanitize_backend_url(backend_url: &str) -> String {
+    let cleaned = crate::api::config::normalize_backend_api_base_url(backend_url);
+    let trimmed = backend_url.trim().trim_end_matches('/');
+    if !cleaned.is_empty() && cleaned != trimmed {
+        // Redact userinfo (username/password) before logging — a
+        // misconfigured URL could carry credentials in the authority
+        // segment. The helper preserves host/path for diagnosability
+        // while scrubbing secrets.
+        tracing::warn!(
+            input = %crate::api::config::redact_url_for_log(trimmed),
+            cleaned = %crate::api::config::redact_url_for_log(&cleaned),
+            "[integrations] backend_url carried an inference / non-root path; \
+             stripping before use (issue #2075)"
+        );
+    }
+    if cleaned.is_empty() {
+        backend_url.to_string()
+    } else {
+        cleaned
+    }
+}
+
 /// Shared client for all integration tools. Holds backend URL, auth token,
 /// a reusable `reqwest::Client`, and a lazily-fetched pricing cache.
 pub struct IntegrationClient {
@@ -48,6 +80,18 @@ pub struct IntegrationClient {
 
 impl IntegrationClient {
     pub fn new(backend_url: String, auth_token: String) -> Self {
+        // Defense-in-depth (issue #2075 / Sentry OPENHUMAN-TAURI-H6, -HN):
+        // every prod call site routes `backend_url` through
+        // `effective_backend_api_url` which strips inference-style paths,
+        // but any future caller that forgets that step would silently
+        // produce 404 URLs like
+        //   https://api.tinyhumans.ai/openai/v1/chat/completions/agent-integrations/composio/connections
+        // (the inference path concatenated with every domain path). We
+        // re-strip here so the field invariant — "backend_url has no
+        // inference path" — holds locally, and `warn!` once when we have
+        // to fix up the input so the regression is observable in logs.
+        let backend_url = sanitize_backend_url(&backend_url);
+
         // Match the TLS config used by `BackendOAuthClient` in
         // `src/api/rest.rs`: force rustls + HTTP/1.1 so we get the same
         // consistent cross-platform behaviour every other backend-proxied
@@ -262,6 +306,40 @@ impl IntegrationClient {
             })
             .await
     }
+}
+
+/// Fetch pricing for the integrations module, honouring the
+/// Composio routing mode.
+///
+/// When `config.composio.mode == "direct"`, the user is running with
+/// their own Composio API key and there is **no backend session** that
+/// could serve `/agent-integrations/pricing` — the backend route is
+/// what mediates the margin between Composio's raw price and what the
+/// hosted product charges. In direct mode, margins do not apply
+/// (the user pays Composio directly) and the backend may not even be
+/// reachable (sovereign / offline-friendly deployments). We
+/// short-circuit to the default empty pricing struct and emit a
+/// `[composio-direct]` log line so this branch is easy to grep.
+///
+/// In backend mode we fall through to the live cache on
+/// [`IntegrationClient::pricing`], preserving the existing behavior
+/// for every caller. The empty default struct is identical to what
+/// [`IntegrationClient::pricing`] returns on a network error, so
+/// downstream consumers don't need a separate code path.
+pub async fn pricing_for_config(
+    client: &IntegrationClient,
+    config: &crate::openhuman::config::Config,
+) -> IntegrationPricing {
+    use crate::openhuman::config::schema::COMPOSIO_MODE_DIRECT;
+
+    if config.composio.mode.trim() == COMPOSIO_MODE_DIRECT {
+        tracing::debug!(
+            "[composio-direct] pricing short-circuit: backend `/agent-integrations/pricing` \
+             is unreachable in direct mode — returning default (empty) pricing"
+        );
+        return IntegrationPricing::default();
+    }
+    client.pricing().await.clone()
 }
 
 /// Helper: build an `Arc<IntegrationClient>` from the root config, or

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
+import { useT } from '../lib/i18n/I18nContext';
 import {
   formatBytes,
   formatEta,
@@ -24,6 +25,7 @@ const POLL_INTERVAL = 2000;
  * Dismiss hides the UI but does NOT cancel the download.
  */
 const LocalAIDownloadSnackbar = () => {
+  const { t } = useT();
   const [status, setStatus] = useState<LocalAiStatus | null>(null);
   const [downloads, setDownloads] = useState<LocalAiDownloadsProgress | null>(null);
   const [dismissed, setDismissed] = useState(false);
@@ -193,12 +195,12 @@ const LocalAIDownloadSnackbar = () => {
         <div className="flex items-center justify-between px-4 pb-3 text-xs text-stone-400">
           <span>
             {isInstallingPhase
-              ? 'Installing...'
+              ? t('app.localAiDownload.installing')
               : downloaded != null && total != null
                 ? `${formatBytes(downloaded)} / ${formatBytes(total)}`
                 : percent != null
                   ? `${percent}%`
-                  : 'Preparing...'}
+                  : t('app.localAiDownload.preparing')}
           </span>
           <span>
             {speed != null && speed > 0 ? `${formatBytes(speed)}/s` : ''}

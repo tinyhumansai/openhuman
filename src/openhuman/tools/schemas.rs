@@ -11,6 +11,7 @@ use serde_json::{json, Map, Value};
 use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 use crate::openhuman::config::rpc as config_rpc;
+use crate::openhuman::integrations::searxng::MAX_RESULTS as SEARXNG_MAX_RESULTS;
 use crate::openhuman::tools::traits::Tool;
 use crate::rpc::RpcOutcome;
 
@@ -19,7 +20,9 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         tools_schemas("tools_composio_execute"),
         tools_schemas("tools_web_search"),
         tools_schemas("tools_seltz_search"),
+        tools_schemas("tools_searxng_search"),
         tools_schemas("tools_apify_linkedin_scrape"),
+        tools_schemas("tools_polymarket_execute"),
     ]
 }
 
@@ -38,8 +41,16 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
             handler: handle_seltz_search,
         },
         RegisteredController {
+            schema: tools_schemas("tools_searxng_search"),
+            handler: handle_searxng_search,
+        },
+        RegisteredController {
             schema: tools_schemas("tools_apify_linkedin_scrape"),
             handler: handle_apify_linkedin_scrape,
+        },
+        RegisteredController {
+            schema: tools_schemas("tools_polymarket_execute"),
+            handler: handle_polymarket_execute,
         },
     ]
 }
@@ -49,9 +60,11 @@ pub fn tools_schemas(function: &str) -> ControllerSchema {
         "tools_composio_execute" => ControllerSchema {
             namespace: "tools",
             function: "composio_execute",
-            description: "Execute a Composio action via the backend proxy. Thin wrapper \
-                          around `ComposioClient::execute_tool` exposed for Tauri-driven \
-                          flows (e.g. onboarding) that orchestrate tool calls themselves.",
+            description: "Execute a Composio action. Routes through the mode-aware \
+                          factory: backend mode proxies via the OpenHuman backend; \
+                          direct mode calls backend.composio.dev with the user's own \
+                          API key. Exposed for Tauri-driven flows (e.g. onboarding) \
+                          that orchestrate tool calls themselves.",
             inputs: vec![
                 FieldSchema {
                     name: "action",
@@ -187,6 +200,50 @@ pub fn tools_schemas(function: &str) -> ControllerSchema {
                 required: true,
             }],
         },
+        "tools_searxng_search" => ControllerSchema {
+            namespace: "tools",
+            function: "searxng_search",
+            description:
+                "Web search via a user-configured SearXNG instance. Returns normalized \
+                          results with title, URL, snippet, and source. Intended for private, \
+                          self-hosted search without routing queries through the OpenHuman backend.",
+            inputs: vec![
+                FieldSchema {
+                    name: "query",
+                    ty: TypeSchema::String,
+                    comment: "Search query string.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "categories",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Array(Box::new(
+                        TypeSchema::Enum {
+                            variants: vec!["web", "general", "news", "images"],
+                        },
+                    )))),
+                    comment: "Optional SearXNG categories. `web` maps to SearXNG `general`.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "language",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "Optional language code, e.g. `en`, `zh-CN`, or `fr`.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "max_results",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
+                    comment: "Max results (1-50, default from searxng.max_results).",
+                    required: false,
+                },
+            ],
+            outputs: vec![FieldSchema {
+                name: "results",
+                ty: TypeSchema::Array(Box::new(TypeSchema::Json)),
+                comment: "Each item: {title, url, snippet, source}.",
+                required: true,
+            }],
+        },
         "tools_apify_linkedin_scrape" => ControllerSchema {
             namespace: "tools",
             function: "apify_linkedin_scrape",
@@ -214,6 +271,33 @@ pub fn tools_schemas(function: &str) -> ControllerSchema {
                 },
             ],
         },
+        "tools_polymarket_execute" => ControllerSchema {
+            namespace: "tools",
+            function: "polymarket_execute",
+            description: "Execute a Polymarket action (Gamma + CLOB APIs, including authenticated reads and trading writes). \
+                          Exposed for Tauri-driven smoke + admin flows. Agent-facing path \
+                          goes through the normal harness tool registry.",
+            inputs: vec![
+                FieldSchema {
+                    name: "action",
+                    ty: TypeSchema::String,
+                    comment: "Polymarket action: list_markets | get_market | list_events | get_orderbook | get_price | get_positions | get_balance | get_open_orders | get_usdc_allowance | place_order | cancel_order.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "arguments",
+                    ty: TypeSchema::Json,
+                    comment: "Per-action argument object (market_id, slug, token_id, side, limit, ...).",
+                    required: false,
+                },
+            ],
+            outputs: vec![FieldSchema {
+                name: "data",
+                ty: TypeSchema::Json,
+                comment: "Tool result payload (provider response wrapped with action/source).",
+                required: true,
+            }],
+        },
         _ => ControllerSchema {
             namespace: "tools",
             function: "unknown",
@@ -239,15 +323,43 @@ fn handle_composio_execute(params: Map<String, Value>) -> ControllerFuture {
         let action_args = params.get("params").cloned();
 
         let config = config_rpc::load_config_with_timeout().await?;
-        let client = crate::openhuman::composio::client::build_composio_client(&config)
-            .ok_or_else(|| {
-                "composio client unavailable — user not signed in to backend".to_string()
-            })?;
-
-        let resp = client
-            .execute_tool(&action, action_args)
-            .await
-            .map_err(|e| format!("composio execute_tool failed: {e:#}"))?;
+        // Route through the mode-aware factory so direct-mode users
+        // hit their personal Composio tenant when the Tauri shell
+        // calls `tools.composio_execute` (e.g. onboarding-driven
+        // flows). Pre-fix, the controller hard-bound to the
+        // backend-only `build_composio_client` and silently 4xx'd for
+        // direct-mode users (#1710). Mirrors
+        // `composio::ops::composio_execute`.
+        use crate::openhuman::composio::client::{
+            create_composio_client, direct_execute, ComposioClientKind,
+        };
+        let kind =
+            create_composio_client(&config).map_err(|e| format!("tools.composio_execute: {e}"))?;
+        tracing::debug!(
+            action = %action,
+            mode = %config.composio.mode,
+            "[tools][composio_execute] executing action"
+        );
+        let resp = match kind {
+            ComposioClientKind::Backend(client) => {
+                tracing::debug!(action = %action, "[tools][composio_execute] branch=backend");
+                client
+                    .execute_tool(&action, action_args)
+                    .await
+                    .map_err(|e| format!("composio execute_tool (backend) failed: {e:#}"))?
+            }
+            ComposioClientKind::Direct(direct) => {
+                tracing::debug!(action = %action, "[tools][composio_execute] branch=direct");
+                direct_execute(&direct, &action, action_args, &config.composio.entity_id)
+                    .await
+                    .map_err(|e| format!("composio execute_tool (direct) failed: {e:#}"))?
+            }
+        };
+        tracing::debug!(
+            action = %action,
+            successful = resp.successful,
+            "[tools][composio_execute] complete"
+        );
 
         let payload = json!({
             "successful": resp.successful,
@@ -402,6 +514,74 @@ fn handle_seltz_search(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
+fn handle_searxng_search(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let query = params
+            .get("query")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .ok_or_else(|| "missing or empty `query`".to_string())?;
+        let max_results = params
+            .get("max_results")
+            .and_then(Value::as_u64)
+            .map(|n| n.clamp(1, SEARXNG_MAX_RESULTS as u64) as usize);
+        let categories = optional_string_array(&params, "categories")?;
+        let language = params
+            .get("language")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
+
+        let config = config_rpc::load_config_with_timeout().await?;
+        if !config.searxng.enabled {
+            tracing::debug!("[rpc][tools.searxng_search] searxng disabled — rejecting");
+            return Err(
+                "SearXNG search is not enabled. Set searxng.enabled=true or OPENHUMAN_SEARXNG_ENABLED=true."
+                    .to_string(),
+            );
+        }
+
+        tracing::debug!(
+            query_len = query.chars().count(),
+            max_results = max_results.unwrap_or(config.searxng.max_results),
+            category_count = categories.len(),
+            has_language = language.is_some(),
+            base_url = %config.searxng.base_url,
+            "[rpc][tools.searxng_search] start"
+        );
+
+        let tool = crate::openhuman::integrations::SearxngSearchTool::new(
+            config.searxng.base_url.clone(),
+            config.searxng.max_results,
+            config.searxng.default_language.clone(),
+            config.searxng.timeout_secs,
+        );
+
+        let response = tool
+            .search(crate::openhuman::integrations::SearxngSearchArgs {
+                query,
+                categories,
+                language,
+                max_results,
+            })
+            .await
+            .map_err(|e| format!("searxng search failed: {e:#}"))?;
+
+        let result_count = response.results.len();
+        let payload = json!({
+            "query": response.query,
+            "results": response.results,
+        });
+        let log = vec![format!(
+            "[rpc][tools.searxng_search] success results={result_count}"
+        )];
+        RpcOutcome::new(payload, log).into_cli_compatible_json()
+    })
+}
+
 fn handle_apify_linkedin_scrape(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let profile_url = params
@@ -438,18 +618,108 @@ fn handle_apify_linkedin_scrape(params: Map<String, Value>) -> ControllerFuture 
     })
 }
 
+fn optional_string_array(params: &Map<String, Value>, key: &str) -> Result<Vec<String>, String> {
+    let Some(value) = params.get(key) else {
+        return Ok(Vec::new());
+    };
+    if value.is_null() {
+        return Ok(Vec::new());
+    }
+    let items = value
+        .as_array()
+        .ok_or_else(|| format!("`{key}` must be an array of strings"))?;
+    items
+        .iter()
+        .filter_map(|item| match item.as_str() {
+            Some(value) => {
+                let trimmed = value.trim();
+                (!trimmed.is_empty()).then(|| Ok(trimmed.to_string()))
+            }
+            None => Some(Err(format!("`{key}` must contain only strings"))),
+        })
+        .collect()
+}
+
+fn handle_polymarket_execute(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let action = params
+            .get("action")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .ok_or_else(|| "missing or empty `action`".to_string())?;
+        let arguments = params.get("arguments").cloned();
+
+        let config = config_rpc::load_config_with_timeout().await?;
+        let enabled = config.integrations.polymarket.enabled;
+        tracing::debug!(
+            action = %action,
+            enabled,
+            has_arguments = arguments.is_some(),
+            "[tools] polymarket_execute: entry"
+        );
+        if !enabled {
+            tracing::debug!(action = %action, "[tools] polymarket_execute: disabled");
+            return Err("Polymarket integration is disabled in config.".to_string());
+        }
+
+        let security = std::sync::Arc::new(crate::openhuman::security::SecurityPolicy::default());
+        let tool = crate::openhuman::tools::implementations::network::PolymarketTool::new(
+            &config.integrations.polymarket,
+            security,
+        );
+
+        let mut args = match arguments {
+            Some(Value::Object(map)) => Value::Object(map),
+            Some(_) => {
+                tracing::debug!(
+                    action = %action,
+                    "[tools] polymarket_execute: invalid arguments shape"
+                );
+                return Err("`arguments` must be a JSON object when provided".to_string());
+            }
+            None => json!({}),
+        };
+        if let Value::Object(ref mut map) = args {
+            map.insert("action".to_string(), Value::String(action.clone()));
+        }
+        tracing::trace!(action = %action, args = ?args, "[tools] polymarket_execute: dispatch");
+
+        let result = tool.execute(args).await.map_err(|e| {
+            tracing::error!(
+                action = %action,
+                enabled,
+                error = %e,
+                "[tools] polymarket_execute: execution failed"
+            );
+            format!("polymarket execute failed: {e:#}")
+        })?;
+
+        tracing::debug!(
+            action = %action,
+            is_error = result.is_error,
+            "[tools] polymarket_execute: success"
+        );
+
+        let payload = json!({ "data": result.output() });
+        let log = vec![format!("tools.polymarket_execute: action={action}")];
+        RpcOutcome::new(payload, log).into_cli_compatible_json()
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn all_schemas_returns_four() {
-        assert_eq!(all_controller_schemas().len(), 4);
+    fn all_schemas_returns_six() {
+        assert_eq!(all_controller_schemas().len(), 6);
     }
 
     #[test]
-    fn all_controllers_returns_four() {
-        assert_eq!(all_registered_controllers().len(), 4);
+    fn all_controllers_returns_six() {
+        assert_eq!(all_registered_controllers().len(), 6);
     }
 
     #[test]
@@ -479,6 +749,26 @@ mod tests {
         assert!(s.inputs.iter().any(|f| f.name == "query" && f.required));
         assert!(s.inputs.iter().any(|f| f.name == "include_domains"));
         assert!(s.inputs.iter().any(|f| f.name == "scope"));
+    }
+
+    #[test]
+    fn searxng_search_schema_shape() {
+        let s = tools_schemas("tools_searxng_search");
+        assert_eq!(s.namespace, "tools");
+        assert_eq!(s.function, "searxng_search");
+        assert!(s.inputs.iter().any(|f| f.name == "query" && f.required));
+        assert!(s.inputs.iter().any(|f| f.name == "categories"));
+        assert!(s.inputs.iter().any(|f| f.name == "language"));
+    }
+
+    #[test]
+    fn optional_string_array_trims_and_drops_blank_entries() {
+        let params =
+            Map::from_iter([("categories".to_string(), json!([" web ", "", "  ", "news"]))]);
+
+        let values = optional_string_array(&params, "categories").expect("string array");
+
+        assert_eq!(values, vec!["web", "news"]);
     }
 
     #[test]

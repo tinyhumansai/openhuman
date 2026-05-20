@@ -8,6 +8,7 @@
 export {
   DEFAULT_PORT,
   clearRequestLog,
+  emitMockAgentAudioStream,
   getMockBehavior,
   getMockServerPort,
   getRequestLog,

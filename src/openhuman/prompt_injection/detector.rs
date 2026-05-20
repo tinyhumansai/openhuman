@@ -153,14 +153,35 @@ static DETECTION_RULES: Lazy<Vec<DetectionRule>> = Lazy::new(|| {
             )
             .expect("exfiltrate.system_prompt regex"),
         },
+        // Weak signal: a credential noun appearing anywhere. Common in
+        // benign questions like "how do I rotate my api key" or "what does
+        // JWT stand for", so the weight stays well below the Review
+        // threshold on its own. The companion rule `exfiltrate.credentials_with_intent`
+        // adds the extra score when an extraction verb actually targets the noun.
         DetectionRule {
             code: "exfiltrate.secrets",
-            message: "Attempts to exfiltrate secrets, credentials, or private data.",
-            score: 0.42,
+            message: "Mentions secret-bearing nouns (potentially benign on its own).",
+            score: 0.18,
             regex: Regex::new(
                 r"(api\s*key|secret|token|password|private\s+key|credentials?|session\s+cookie|jwt|bearer)",
             )
             .expect("exfiltrate.secrets regex"),
+        },
+        // Strong signal: extraction verb directly targeting a credential noun.
+        // The window between verb and noun is bounded so that a long phrase
+        // separating them (e.g. "reveal how to configure my api key") does NOT
+        // match. Up to 2 filler words are allowed between verb and determiner
+        // ("show me the X", "give me your X") so common phrasings still trip.
+        // The determiner is required, which is what excludes the benign
+        // "reveal how to set ..." case from issue #1940.
+        DetectionRule {
+            code: "exfiltrate.credentials_with_intent",
+            message: "Attempts to extract credentials, secrets, or tokens (verb + target).",
+            score: 0.46,
+            regex: Regex::new(
+                r"(reveal|show|print|dump|leak|display|share|expose|give|tell|fetch|return|output)\s+(\S+\s+){0,2}(the|your|my|all|stored|active|internal|hidden|configured|saved|env|environment)\s+(\S+\s+){0,3}(api\s*key|secret|token|password|private\s+key|credentials?|session\s+cookie|jwt|bearer)",
+            )
+            .expect("exfiltrate.credentials_with_intent regex"),
         },
         DetectionRule {
             code: "tool.abuse",
@@ -174,36 +195,88 @@ static DETECTION_RULES: Lazy<Vec<DetectionRule>> = Lazy::new(|| {
     ]
 });
 
-fn optional_classifier() -> Option<Box<dyn OptionalClassifier>> {
+static OPTIONAL_CLASSIFIER: Lazy<Option<Box<dyn OptionalClassifier>>> = Lazy::new(|| {
     let choice = env::var("OPENHUMAN_PROMPT_INJECTION_CLASSIFIER")
         .unwrap_or_else(|_| "off".to_string())
         .to_ascii_lowercase();
-    match choice.as_str() {
+    let classifier: Option<Box<dyn OptionalClassifier>> = match choice.as_str() {
         "heuristic" => Some(Box::new(HeuristicClassifier)),
         _ => None,
-    }
+    };
+    tracing::debug!(
+        "[prompt_injection] optional classifier resolved choice={:?} active={}",
+        choice,
+        classifier.is_some()
+    );
+    classifier
+});
+
+fn optional_classifier() -> Option<&'static dyn OptionalClassifier> {
+    OPTIONAL_CLASSIFIER.as_deref()
+}
+
+/// Returns `true` for zero-width, formatting, and obfuscation characters that
+/// should be stripped during prompt normalization. Shared between the `had_zwsp`
+/// detection flag and the normalization stripping logic to prevent drift.
+fn is_obfuscation_char(ch: char) -> bool {
+    matches!(
+        ch,
+        '\u{200b}'
+            | '\u{200c}'
+            | '\u{200d}'
+            | '\u{2060}'
+            | '\u{feff}'
+            | '\u{00ad}'
+            | '\u{034f}'
+            | '\u{180e}'
+            | '\u{200e}'
+            | '\u{200f}'
+            | '\u{202a}'..='\u{202e}'
+            | '\u{2066}'..='\u{2069}'
+    )
 }
 
 fn normalize_prompt(input: &str) -> NormalizedPrompt {
     let lowered = input.to_lowercase();
-    let had_zwsp = lowered.chars().any(|ch| {
-        matches!(
-            ch,
-            '\u{200b}' | '\u{200c}' | '\u{200d}' | '\u{2060}' | '\u{feff}'
-        )
-    });
+    let had_zwsp = lowered.chars().any(is_obfuscation_char);
     let has_base64_marker = BASE64_RE.is_match(&lowered);
 
     let mut buffer = String::with_capacity(lowered.len());
     for ch in lowered.chars() {
         let mapped = match ch {
+            // Leet-speak normalization
             '0' => 'o',
             '1' => 'i',
             '3' => 'e',
             '4' => 'a',
             '5' => 's',
             '7' => 't',
-            '\u{200b}' | '\u{200c}' | '\u{200d}' | '\u{2060}' | '\u{feff}' => ' ',
+            '8' => 'b',
+            '6' => 'g',
+            '@' => 'a',
+            // Cyrillic homoglyphs (most common confusables from UAX#39)
+            '\u{0430}' => 'a', // а → a
+            '\u{0435}' => 'e', // е → e
+            '\u{043e}' => 'o', // о → o
+            '\u{0440}' => 'p', // р → p
+            '\u{0441}' => 'c', // с → c
+            '\u{0443}' => 'y', // у → y
+            '\u{0445}' => 'x', // х → x
+            '\u{0456}' => 'i', // і → i
+            '\u{0455}' => 's', // ѕ → s
+            '\u{04bb}' => 'h', // һ → h
+            '\u{0501}' => 'd', // ԁ → d
+            // Zero-width and formatting characters → strip
+            ch if is_obfuscation_char(ch) => continue,
+            // Fullwidth ASCII → normal ASCII (U+FF01..U+FF5E → U+0021..U+007E)
+            '\u{ff01}'..='\u{ff5e}' => {
+                let ascii = (ch as u32 - 0xff00 + 0x20) as u8 as char;
+                // Apply lowercase again since fullwidth uppercase letters exist
+                for lower in ascii.to_lowercase() {
+                    buffer.push(lower);
+                }
+                continue;
+            }
             other if other.is_ascii_alphanumeric() || other.is_whitespace() => other,
             _ => ' ',
         };
@@ -216,10 +289,29 @@ fn normalize_prompt(input: &str) -> NormalizedPrompt {
         || collapsed.contains("ignore all previous instructions")
         || compact.contains("ignoreallpreviousinstructions")
         || compact.contains("ignorepreviousinstructions");
+    // Exfiltration-intent signal. Phrases that strongly imply the user is
+    // targeting internal/hidden state fire on their own; the bare word
+    // "reveal" used to fire here too, but that caused false positives on
+    // benign queries like "Can you reveal how to set my api key?" (issue #1940).
+    // Now "reveal" only counts when it co-occurs with a target-state hint.
+    let reveal_target_hints = [
+        "system",
+        "hidden",
+        "developer",
+        "internal",
+        "prompt",
+        "instruction",
+        "rule",
+        "secret",
+    ];
     let has_exfiltration_intent = collapsed.contains("system prompt")
         || collapsed.contains("developer instructions")
         || collapsed.contains("hidden prompt")
-        || collapsed.contains("reveal");
+        || collapsed.contains("internal instructions")
+        || (collapsed.contains("reveal")
+            && reveal_target_hints
+                .iter()
+                .any(|hint| collapsed.contains(hint)));
 
     NormalizedPrompt {
         lowered,

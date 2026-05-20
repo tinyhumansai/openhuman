@@ -4,6 +4,13 @@ when_to_use = "Staff Engineer — routes, judges quality, synthesises. Never wri
 temperature = 0.4
 max_iterations = 15
 sandbox_mode = "none"
+
+# Spawn hierarchy: this is the user-facing fast tier (chat model hint).
+# Loader enforces: a `chat` agent must NOT list any other `chat` agent
+# in `subagents` below — handoff goes to `reasoning` (e.g. planner) for
+# long-running deep work, or directly to `worker` specialists for the
+# fast path. See `AgentTier` in `src/openhuman/agent/harness/definition.rs`.
+agent_tier = "chat"
 omit_identity = true
 omit_memory_context = true
 omit_safety_preamble = true
@@ -42,6 +49,7 @@ subagents = [
     "planner",
     "code_executor",
     "tools_agent",
+    "skill_creator",
     "critic",
     "archivist",
     # Crypto wallet & market specialist (#1397). Synthesised into a
@@ -100,6 +108,7 @@ named = [
     "read_workspace_state",
     "ask_user_clarification",
     "spawn_worker_thread",
+    "spawn_parallel_agents",
     "composio_list_connections",
     # Time + scheduling — lets the orchestrator answer "what time is it",
     # "remind me in 10 minutes", "every morning at 8" directly rather than

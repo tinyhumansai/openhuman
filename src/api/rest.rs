@@ -533,7 +533,7 @@ impl BackendOAuthClient {
             let is_transient_infra =
                 crate::core::observability::is_transient_http_status_code(status_code);
             let is_budget_exhausted = status_code == 400
-                && crate::openhuman::providers::is_budget_exhausted_message(&text);
+                && crate::openhuman::inference::provider::is_budget_exhausted_message(&text);
             if is_budget_exhausted {
                 tracing::info!(
                     method = method.as_str(),
@@ -815,28 +815,6 @@ impl BackendOAuthClient {
             Method::POST,
             &format!("channels/{encoded}/reactions"),
             Some(reaction_body),
-        )
-        .await
-    }
-
-    /// Searches for GIFs using the Tenor integration.
-    pub async fn search_tenor_gifs(
-        &self,
-        bearer_jwt: &str,
-        query: &str,
-        limit: Option<u32>,
-    ) -> Result<Value> {
-        anyhow::ensure!(!query.trim().is_empty(), "query is required");
-        let body = serde_json::json!({
-            "query": query.trim(),
-            "limit": limit.unwrap_or(5),
-            "contentFilter": "medium",
-        });
-        self.authed_json(
-            bearer_jwt,
-            Method::POST,
-            "agent-integrations/tenor/search",
-            Some(body),
         )
         .await
     }

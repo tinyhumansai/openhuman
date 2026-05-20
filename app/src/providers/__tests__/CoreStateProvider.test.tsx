@@ -4,9 +4,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import * as coreStateApi from '../../services/coreStateApi';
 import * as tauriCommands from '../../utils/tauriCommands';
-import { setCoreStateSnapshot } from '../../lib/coreState/store';
+import { getCoreStateSnapshot, setCoreStateSnapshot } from '../../lib/coreState/store';
 import { setActiveUserId } from '../../store/userScopedStorage';
 import CoreStateProvider, {
+  coreStatePollFailureDebugMessage,
   coreStatePollFailureWarningMessage,
   useCoreState,
 } from '../CoreStateProvider';
@@ -43,6 +44,23 @@ function makeSnapshot(overrides: {
       service: null as never,
     },
   };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+function makeJwt(payload: Record<string, unknown>): string {
+  const encode = (value: Record<string, unknown>) =>
+    window.btoa(JSON.stringify(value)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+  return `${encode({ alg: 'none', typ: 'JWT' })}.${encode(payload)}.signature`;
 }
 
 type CoreStateContextValue = ReturnType<typeof useCoreState>;
@@ -221,6 +239,32 @@ describe('CoreStateProvider — identity-change cache clearing', () => {
     await waitFor(() => expect(screen.getByTestId('ready').textContent).toBe('ready'));
   });
 
+  it('does not commit a poll snapshot after the provider unmounts (#1934)', async () => {
+    const pendingSnapshot = deferred<Snapshot>();
+    fetchSnapshot.mockReturnValue(pendingSnapshot.promise);
+    listTeams.mockResolvedValue([]);
+
+    const { unmount } = render(
+      <CoreStateProvider>
+        <Consumer />
+      </CoreStateProvider>
+    );
+
+    expect(screen.getByTestId('ready').textContent).toBe('boot');
+
+    unmount();
+
+    await act(async () => {
+      pendingSnapshot.resolve(makeSnapshot({ userId: 'late-user', sessionToken: 'late-token' }));
+      await pendingSnapshot.promise;
+    });
+
+    const snapshot = getCoreStateSnapshot();
+    expect(snapshot.isReady).toBe(false);
+    expect(snapshot.snapshot.auth.userId).toBeNull();
+    expect(snapshot.snapshot.sessionToken).toBeNull();
+  });
+
   it('warns when the initial core state poll fails', async () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
@@ -234,11 +278,97 @@ describe('CoreStateProvider — identity-change cache clearing', () => {
       );
 
       await waitFor(() =>
-        expect(warnSpy).toHaveBeenCalledWith('[core-state] poll failed (attempt 1/5):', {
+        expect(warnSpy).toHaveBeenCalledWith('[core-state] bootstrap poll failed (attempt 1/5):', {
           message: 'core offline',
         })
       );
     } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('backs off poll interval after bootstrap budget is exhausted', async () => {
+    vi.useFakeTimers();
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    try {
+      fetchSnapshot.mockRejectedValue(new Error('core unavailable'));
+      listTeams.mockResolvedValue([]);
+
+      render(
+        <CoreStateProvider>
+          <Consumer />
+        </CoreStateProvider>
+      );
+
+      // Initial load fires immediately
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+
+      // Advance through MAX_BOOTSTRAP_RETRIES (5) polls at 2s intervals
+      for (let i = 0; i < 5; i++) {
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(2000);
+        });
+      }
+
+      // After budget exhaustion, next poll fires at 10s — not at 2s
+      const callsBefore = fetchSnapshot.mock.calls.length;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+      expect(fetchSnapshot.mock.calls.length).toBe(callsBefore);
+
+      // Advance remaining 8s (total 10s) — poll fires now
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(8000);
+      });
+      expect(fetchSnapshot.mock.calls.length).toBe(callsBefore + 1);
+    } finally {
+      vi.useRealTimers();
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('reverts to normal poll interval after recovery from backoff', async () => {
+    vi.useFakeTimers();
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    try {
+      fetchSnapshot.mockRejectedValue(new Error('core unavailable'));
+      listTeams.mockResolvedValue([]);
+
+      render(
+        <CoreStateProvider>
+          <Consumer />
+        </CoreStateProvider>
+      );
+
+      // Exhaust bootstrap budget: initial load + 5 scheduled polls
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      for (let i = 0; i < 5; i++) {
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(2000);
+        });
+      }
+
+      // Make the next (backoff) poll succeed — resets counter to 0
+      fetchSnapshot.mockResolvedValue(makeSnapshot({ userId: null, sessionToken: null }));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10000);
+      });
+
+      // After recovery, the next poll should fire at the normal 2s interval
+      const callsBefore = fetchSnapshot.mock.calls.length;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+      expect(fetchSnapshot.mock.calls.length).toBe(callsBefore + 1);
+    } finally {
+      vi.useRealTimers();
       warnSpy.mockRestore();
     }
   });
@@ -269,6 +399,81 @@ describe('CoreStateProvider — identity-change cache clearing', () => {
     await waitFor(() =>
       expect(ctx?.snapshot.currentUser).toEqual({ first_name: 'Ada', username: 'ada' })
     );
+  });
+
+  it('ignores malformed session-token-updated events (#1937)', async () => {
+    fetchSnapshot.mockResolvedValue(makeSnapshot({ userId: null, sessionToken: null }));
+    listTeams.mockResolvedValue([]);
+
+    render(
+      <CoreStateProvider>
+        <Consumer />
+      </CoreStateProvider>
+    );
+
+    await waitFor(() => expect(screen.getByTestId('ready').textContent).toBe('ready'));
+
+    await act(async () => {
+      window.dispatchEvent(
+        new CustomEvent('core-state:session-token-updated', {
+          detail: { sessionToken: 'not-a-jwt' },
+        })
+      );
+    });
+
+    expect(screen.getByTestId('token').textContent).toBe('none');
+    expect(fetchSnapshot).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores expired JWT-shaped session-token-updated events (#1937)', async () => {
+    const expiredToken = makeJwt({ exp: Math.floor(Date.now() / 1000) - 60 });
+    fetchSnapshot.mockResolvedValue(makeSnapshot({ userId: null, sessionToken: null }));
+    listTeams.mockResolvedValue([]);
+
+    render(
+      <CoreStateProvider>
+        <Consumer />
+      </CoreStateProvider>
+    );
+
+    await waitFor(() => expect(screen.getByTestId('ready').textContent).toBe('ready'));
+
+    await act(async () => {
+      window.dispatchEvent(
+        new CustomEvent('core-state:session-token-updated', {
+          detail: { sessionToken: expiredToken },
+        })
+      );
+    });
+
+    expect(screen.getByTestId('token').textContent).toBe('none');
+    expect(fetchSnapshot).toHaveBeenCalledTimes(1);
+  });
+
+  it('accepts unexpired JWT-shaped session-token-updated events (#1937)', async () => {
+    const token = makeJwt({ exp: Math.floor(Date.now() / 1000) + 60 });
+    fetchSnapshot
+      .mockResolvedValueOnce(makeSnapshot({ userId: null, sessionToken: null }))
+      .mockResolvedValueOnce(
+        makeSnapshot({ userId: null, sessionToken: token, isAuthenticated: true })
+      );
+    listTeams.mockResolvedValue([]);
+
+    render(
+      <CoreStateProvider>
+        <Consumer />
+      </CoreStateProvider>
+    );
+
+    await waitFor(() => expect(screen.getByTestId('ready').textContent).toBe('ready'));
+
+    await act(async () => {
+      window.dispatchEvent(
+        new CustomEvent('core-state:session-token-updated', { detail: { sessionToken: token } })
+      );
+    });
+
+    expect(screen.getByTestId('token').textContent).toBe(token);
   });
 
   it('setMeetAutoOrchestratorHandoff(true) calls update RPC + flips snapshot optimistically (#1299)', async () => {
@@ -345,6 +550,107 @@ describe('CoreStateProvider — identity-change cache clearing', () => {
     expect(vi.mocked(tauriCommands.logout)).toHaveBeenCalledTimes(1);
   });
 
+  it('ignores forged session-token-updated events that do not match the core snapshot (#1937)', async () => {
+    fetchSnapshot.mockResolvedValue(makeSnapshot({ userId: 'u1', sessionToken: 'tok1' }));
+    listTeams.mockResolvedValue([]);
+
+    render(
+      <CoreStateProvider>
+        <Consumer />
+      </CoreStateProvider>
+    );
+
+    await waitFor(() => expect(screen.getByTestId('token').textContent).toBe('tok1'));
+
+    // Keep the follow-up refresh pending so this assertion observes the
+    // event handler itself. A forged event must not be able to replace the
+    // in-memory auth token before refreshCore re-pulls authoritative state.
+    fetchSnapshot.mockImplementation(() => new Promise(() => {}) as never);
+
+    await act(async () => {
+      window.dispatchEvent(
+        new CustomEvent('core-state:session-token-updated', {
+          detail: { sessionToken: 'attacker-controlled-token' },
+        })
+      );
+    });
+
+    expect(screen.getByTestId('token').textContent).toBe('tok1');
+  });
+
+  it('setEncryptionKey (updateLocalState) swallows refresh errors after the local-state write lands (#REACT-Z #REACT-Y)', async () => {
+    // Regression for OPENHUMAN-REACT-Z/Y: a missing `.catch()` on the
+    // follow-up `refresh()` inside `updateLocalState` let an
+    // `app_state_snapshot` timeout bubble out as an unhandled rejection.
+    fetchSnapshot.mockResolvedValueOnce(makeSnapshot({ userId: 'u1', sessionToken: 'tok1' }));
+    listTeams.mockResolvedValue([]);
+    vi.mocked(coreStateApi.updateCoreLocalState).mockReset();
+    vi.mocked(coreStateApi.updateCoreLocalState).mockResolvedValue(undefined as never);
+
+    let ctx: CoreStateContextValue | undefined;
+    render(
+      <CoreStateProvider>
+        <Consumer
+          captureCtx={next => {
+            ctx = next;
+          }}
+        />
+      </CoreStateProvider>
+    );
+
+    await waitFor(() => expect(screen.getByTestId('ready').textContent).toBe('ready'));
+    fetchSnapshot.mockRejectedValueOnce(
+      new Error('Core RPC openhuman.app_state_snapshot timed out after 30000ms')
+    );
+
+    await act(async () => {
+      // setEncryptionKey is a thin sync wrapper around updateLocalState
+      // (provider line 694) — exercising it covers the new .catch() arm
+      // on line 579-580.
+      await expect(ctx!.setEncryptionKey('new-key')).resolves.toBeUndefined();
+    });
+
+    expect(vi.mocked(coreStateApi.updateCoreLocalState)).toHaveBeenCalledWith({
+      encryptionKey: 'new-key',
+    });
+  });
+
+  it('storeSessionToken swallows refresh errors after the session write lands (#REACT-Z #REACT-Y)', async () => {
+    // Regression for OPENHUMAN-REACT-Z/Y: a missing `.catch()` on the
+    // post-login `refresh()` inside `storeSessionToken` let an
+    // `app_state_snapshot` timeout bubble out as an unhandled rejection
+    // immediately after sign-in.
+    fetchSnapshot.mockResolvedValueOnce(makeSnapshot({ userId: 'u1', sessionToken: 'tok1' }));
+    listTeams.mockResolvedValue([]);
+    vi.mocked(tauriCommands.storeSession).mockReset();
+    vi.mocked(tauriCommands.storeSession).mockResolvedValue(undefined as never);
+    vi.mocked(tauriCommands.syncMemoryClientToken).mockReset();
+    vi.mocked(tauriCommands.syncMemoryClientToken).mockResolvedValue(undefined as never);
+
+    let ctx: CoreStateContextValue | undefined;
+    render(
+      <CoreStateProvider>
+        <Consumer
+          captureCtx={next => {
+            ctx = next;
+          }}
+        />
+      </CoreStateProvider>
+    );
+
+    await waitFor(() => expect(screen.getByTestId('ready').textContent).toBe('ready'));
+    fetchSnapshot.mockRejectedValueOnce(
+      new Error('Core RPC openhuman.app_state_snapshot timed out after 30000ms')
+    );
+
+    await act(async () => {
+      const token = makeJwt({ sub: 'u1', exp: Math.floor(Date.now() / 1000) + 3600 });
+      await expect(ctx!.storeSessionToken(token, {})).resolves.toBeUndefined();
+    });
+
+    expect(vi.mocked(tauriCommands.storeSession)).toHaveBeenCalled();
+  });
+
   it('setMeetAutoOrchestratorHandoff swallows refresh errors after the RPC succeeds (#1299)', async () => {
     fetchSnapshot.mockResolvedValueOnce(makeSnapshot({ userId: 'u1', sessionToken: 'tok1' }));
     listTeams.mockResolvedValue([]);
@@ -381,11 +687,45 @@ describe('CoreStateProvider — identity-change cache clearing', () => {
 describe('coreStatePollFailureWarningMessage', () => {
   it('logs bounded bootstrap failures and one suppression notice', () => {
     expect(coreStatePollFailureWarningMessage(0)).toBeNull();
-    expect(coreStatePollFailureWarningMessage(1)).toBe('[core-state] poll failed (attempt 1/5):');
-    expect(coreStatePollFailureWarningMessage(5)).toBe('[core-state] poll failed (attempt 5/5):');
+    expect(coreStatePollFailureWarningMessage(1)).toBe(
+      '[core-state] bootstrap poll failed (attempt 1/5):'
+    );
+    expect(coreStatePollFailureWarningMessage(5)).toBe(
+      '[core-state] bootstrap poll failed (attempt 5/5):'
+    );
     expect(coreStatePollFailureWarningMessage(6)).toBe(
-      '[core-state] poll failed repeatedly; suppressing further warnings until core state recovers:'
+      '[core-state] bootstrap budget exhausted; continuing with backoff. Suppressing further warnings until recovery:'
     );
     expect(coreStatePollFailureWarningMessage(7)).toBeNull();
+  });
+
+  it('never produces an attempt count exceeding the max in the warning', () => {
+    for (let i = 1; i <= 50; i++) {
+      const msg = coreStatePollFailureWarningMessage(i);
+      if (msg && msg.includes('attempt')) {
+        const match = msg.match(/attempt (\d+)\/(\d+)/);
+        expect(match).not.toBeNull();
+        const [, attempt, max] = match!;
+        expect(Number(attempt)).toBeLessThanOrEqual(Number(max));
+      }
+    }
+  });
+});
+
+describe('coreStatePollFailureDebugMessage', () => {
+  it('describes post-bootstrap poll failures without impossible retry counters', () => {
+    expect(coreStatePollFailureDebugMessage(0)).toBeNull();
+    expect(coreStatePollFailureDebugMessage(1)).toBe(
+      'refresh failed during bootstrap retry 1/5; nextAction=retrying'
+    );
+    expect(coreStatePollFailureDebugMessage(5)).toBe(
+      'refresh failed during bootstrap retry 5/5; nextAction=marking-ready-with-fallback'
+    );
+
+    const postBootstrapMessage = coreStatePollFailureDebugMessage(11);
+    expect(postBootstrapMessage).toBe(
+      'refresh failed after 11 consecutive poll failures; bootstrapRetryLimit=5; nextAction=continuing-background-polling-with-warnings-suppressed'
+    );
+    expect(postBootstrapMessage).not.toContain('11/5');
   });
 });

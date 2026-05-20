@@ -2,6 +2,7 @@
  * "Why kept" score bars — SVG-rendered (not CSS divs) for crisp pixel
  * alignment regardless of zoom or DPR.
  */
+import { useT } from '../../lib/i18n/I18nContext';
 import type { ScoreBreakdown } from '../../utils/tauriCommands';
 
 interface MemoryChunkScoreBarsProps {
@@ -17,9 +18,10 @@ function clamp01(v: number): number {
 }
 
 export function MemoryChunkScoreBars({ breakdown }: MemoryChunkScoreBarsProps) {
+  const { t } = useT();
   return (
     <section data-testid="memory-chunk-scorebars">
-      <h3 className="mw-whykept-heading">w h y &nbsp; k e p t</h3>
+      <h3 className="mw-whykept-heading">{t('intelligence.memoryChunk.scoreBars.heading')}</h3>
       <div>
         {breakdown.signals.map(sig => {
           const pct = clamp01(sig.value);
@@ -31,7 +33,9 @@ export function MemoryChunkScoreBars({ breakdown }: MemoryChunkScoreBarsProps) {
                 viewBox={`0 0 ${TRACK_WIDTH} ${TRACK_HEIGHT}`}
                 preserveAspectRatio="none"
                 role="img"
-                aria-label={`${sig.name} score ${(pct * 100).toFixed(0)} percent`}>
+                aria-label={t('intelligence.memoryChunk.scoreBars.ariaScore')
+                  .replace('{name}', sig.name)
+                  .replace('{pct}', (pct * 100).toFixed(0))}>
                 <rect
                   x={0}
                   y={0}
@@ -55,7 +59,15 @@ export function MemoryChunkScoreBars({ breakdown }: MemoryChunkScoreBarsProps) {
         })}
       </div>
       <div className="mw-scorebar-threshold">
-        ─── {breakdown.kept ? 'kept' : 'dropped'} at {breakdown.threshold.toFixed(2)} ───
+        ───{' '}
+        {breakdown.kept
+          ? t('intelligence.memoryChunk.scoreBars.kept')
+          : t('intelligence.memoryChunk.scoreBars.dropped')}{' '}
+        {t('intelligence.memoryChunk.scoreBars.atThreshold').replace(
+          '{threshold}',
+          breakdown.threshold.toFixed(2)
+        )}{' '}
+        ───
       </div>
     </section>
   );

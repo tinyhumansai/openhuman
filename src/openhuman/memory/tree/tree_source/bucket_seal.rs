@@ -16,6 +16,11 @@
 //! the next level. The cascade continues upward until a buffer fails its
 //! gate.
 //!
+//! For low-volume sources that never hit the token or sibling-count
+//! thresholds, time-based sealing is handled by
+//! [`flush_stale_buffers`](super::flush::flush_stale_buffers), which
+//! runs on a periodic cadence and force-seals stale L0 buffers.
+//!
 //! Concurrency: Phase 3a assumes a single-process SQLite workspace. All
 //! writes in one seal step run in a single transaction; the async
 //! summariser call happens outside any open transaction so a slow LLM
@@ -303,7 +308,17 @@ pub async fn cascade_all_from(
 /// `>= SUMMARY_FANOUT` (so leaves form predictably for sources whose
 /// chunks are individually small — without the count fallback,
 /// hundreds of tiny emails can sit unsealed waiting to hit 50k
-/// tokens). L≥1 buffers gate on sibling count alone so the tree's
+/// tokens).
+///
+/// Time-based sealing for low-volume sources is handled separately
+/// by `flush_stale_buffers` (see [`crate::openhuman::memory::tree::
+/// tree_source::flush::flush_stale_buffers`]), which filters buffers
+/// by `oldest_at` before calling the cascade. Keeping the time gate
+/// out of `should_seal` avoids prematurely sealing buffers during
+/// normal `append_leaf` calls when test/restored data carries older
+/// timestamps.
+///
+/// L≥1 buffers gate on sibling count alone so the tree's
 /// fan-in is independent of per-summary token size — without this,
 /// summarisers that emit at the full token budget (e.g. the inert
 /// fallback) collapse the cascade into a 1:1:1 chain instead of a
@@ -629,7 +644,12 @@ pub(crate) async fn seal_one_level(
             .map(|n| n.max(0) as u32)
             .context("Failed to read current max_level for tree")?;
 
-        store::insert_summary_tx(&tx, &node, Some(&staged))?;
+        store::insert_summary_tx(
+            &tx,
+            &node,
+            Some(&staged),
+            &crate::openhuman::memory::tree::store::tree_active_signature(config),
+        )?;
         // Forward-compat: index any entities the summariser emitted into
         // `mem_tree_entity_index` so Phase 4 retrieval can resolve
         // "summaries mentioning Alice" via the same inverted index as

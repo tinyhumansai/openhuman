@@ -2,11 +2,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::openhuman::config::LocalAiConfig;
-use crate::openhuman::local_ai::lm_studio_api::lm_studio_base_url_from_local_ai;
-use crate::openhuman::local_ai::ollama_base_url;
-use crate::openhuman::local_ai::provider::normalize_provider;
-use crate::openhuman::providers::compatible::{AuthStyle, OpenAiCompatibleProvider};
-use crate::openhuman::providers::Provider;
+use crate::openhuman::inference::local::lm_studio::lm_studio_base_url_from_local_ai;
+use crate::openhuman::inference::local::ollama_base_url;
+use crate::openhuman::inference::local::provider::normalize_provider;
+use crate::openhuman::inference::provider::compatible::{AuthStyle, OpenAiCompatibleProvider};
+use crate::openhuman::inference::provider::Provider;
 
 use super::health::LocalHealthChecker;
 use super::provider::IntelligentRoutingProvider;
@@ -28,6 +28,7 @@ pub fn new_provider(
     remote: Box<dyn Provider>,
     local_ai_config: &LocalAiConfig,
     remote_fallback_model: &str,
+    temperature_unsupported_models: &[String],
 ) -> IntelligentRoutingProvider {
     // Allow operators to point the local routing tier at an OpenAI-compatible
     // server other than Ollama (e.g. llama-server for Gemma 4 E2B, which
@@ -114,12 +115,10 @@ pub fn new_provider(
     } else {
         AuthStyle::None
     };
-    let local: Box<dyn Provider> = Box::new(OpenAiCompatibleProvider::new(
-        provider_label,
-        &local_base,
-        local_api_key,
-        local_auth_style,
-    ));
+    let local: Box<dyn Provider> = Box::new(
+        OpenAiCompatibleProvider::new(provider_label, &local_base, local_api_key, local_auth_style)
+            .with_temperature_unsupported_models(temperature_unsupported_models.to_vec()),
+    );
 
     IntelligentRoutingProvider::new(
         remote,
@@ -135,7 +134,7 @@ pub fn new_provider(
 mod tests {
     use super::*;
     use crate::openhuman::config::LocalAiConfig;
-    use crate::openhuman::providers::traits::{ProviderCapabilities, ToolsPayload};
+    use crate::openhuman::inference::provider::traits::{ProviderCapabilities, ToolsPayload};
     use crate::openhuman::tools::ToolSpec;
     use async_trait::async_trait;
 
@@ -166,7 +165,7 @@ mod tests {
     }
 
     fn make_provider(config: &LocalAiConfig) -> IntelligentRoutingProvider {
-        new_provider(Box::new(StubProvider), config, "remote-fallback")
+        new_provider(Box::new(StubProvider), config, "remote-fallback", &[])
     }
 
     /// Test that construction does not panic and the provider is usable.
@@ -242,7 +241,7 @@ mod tests {
         // OPENHUMAN_LOCAL_INFERENCE_URL env var must override config.base_url.
         // This is tested by ensuring construction succeeds when the env var
         // is set — a real URL check would require a running server.
-        let _guard = crate::openhuman::local_ai::local_ai_test_guard();
+        let _guard = crate::openhuman::inference::local::inference_test_guard();
         unsafe {
             std::env::set_var("OPENHUMAN_LOCAL_INFERENCE_URL", "http://127.0.0.1:9999/v1");
         }

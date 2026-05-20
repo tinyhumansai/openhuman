@@ -2,6 +2,7 @@ import { IS_DEV } from '../utils/config';
 
 export type AccountProvider =
   | 'whatsapp'
+  | 'wechat'
   | 'telegram'
   | 'linkedin'
   | 'slack'
@@ -75,6 +76,12 @@ const BASE_PROVIDERS: ProviderDescriptor[] = [
     serviceUrl: 'https://web.whatsapp.com/',
   },
   {
+    id: 'wechat',
+    label: 'WeChat Web',
+    description: 'Open WeChat in-app for QR sign-in and desktop chat access.',
+    serviceUrl: 'https://web.wechat.com/',
+  },
+  {
     id: 'telegram',
     label: 'Telegram Web',
     description: 'Your Telegram chats, embedded and observed.',
@@ -98,18 +105,10 @@ const BASE_PROVIDERS: ProviderDescriptor[] = [
     description: 'Discord servers and DMs — channel list and unread counts.',
     serviceUrl: 'https://discord.com/channels/@me',
   },
-  {
-    id: 'google-meet',
-    label: 'Google Meet',
-    description: 'Join Google Meet calls and capture live captions.',
-    serviceUrl: 'https://meet.google.com/',
-  },
-  {
-    id: 'zoom',
-    label: 'Zoom',
-    description: 'Zoom web client — log in and join meetings from inside the app.',
-    serviceUrl: 'https://zoom.us/',
-  },
+  // Google Meet + Zoom are hidden from the picker for now — usage is low
+  // and the integrations need more polish before re-surfacing them. Their
+  // AccountProvider ids stay in the type union so existing accounts keep
+  // rendering correctly.
 ];
 
 const DEV_PROVIDERS: ProviderDescriptor[] = [

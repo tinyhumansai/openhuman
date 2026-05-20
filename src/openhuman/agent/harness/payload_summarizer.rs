@@ -365,6 +365,7 @@ mod tests {
             background: false,
             subagents: vec![],
             delegate_name: None,
+            agent_tier: crate::openhuman::agent::harness::definition::AgentTier::Worker,
             source: DefinitionSource::Builtin,
         }
     }

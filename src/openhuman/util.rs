@@ -2,6 +2,25 @@
 //!
 //! This module contains reusable helper functions used across the codebase.
 
+/// Render a short, non-leaky provenance tag for a session/thread id.
+///
+/// The channel-side `session_id` is typically a JSON blob
+/// (`{"client_id": "...", "thread_id": "..."}`); rendering it verbatim
+/// in a model prompt or log line would leak the raw `client_id` /
+/// socket UUID. Hash the input with `DefaultHasher` and emit only the
+/// low 32 bits as `chat:xxxxxxxx` — short, stable per id, and not
+/// reversible to the original blob.
+///
+/// Used by the cross-chat context block (issue #1505) so the prompt
+/// can attribute hits without surfacing raw identifiers.
+pub fn provenance_tag(session_id: &str) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    session_id.hash(&mut hasher);
+    let h = hasher.finish();
+    format!("chat:{:08x}", (h & 0xFFFF_FFFF) as u32)
+}
+
 /// Truncate a string to at most `max_chars` characters, appending "..." if truncated.
 ///
 /// This function safely handles multi-byte UTF-8 characters (emoji, CJK, accented characters)
@@ -77,6 +96,13 @@ pub fn floor_char_boundary(s: &str, index: usize) -> usize {
         end -= 1;
     }
     end
+}
+
+/// Return a prefix of `s` whose byte length is at most `max_bytes`, backing up
+/// to the nearest UTF-8 character boundary when `max_bytes` falls in the middle
+/// of a multi-byte character.
+pub fn utf8_safe_prefix_at_byte_boundary(s: &str, max_bytes: usize) -> &str {
+    &s[..floor_char_boundary(s, max_bytes)]
 }
 
 /// Round a byte index UP to the nearest UTF-8 character boundary.
@@ -225,6 +251,25 @@ mod tests {
         assert_eq!(floor_char_boundary(s, 5), 5); // After '🦀'
         assert_eq!(floor_char_boundary(s, 6), 6); // After 'C'
         assert_eq!(floor_char_boundary(s, 100), 6);
+    }
+
+    #[test]
+    fn test_utf8_safe_prefix_at_byte_boundary() {
+        let s = format!("{}{}tail", "a".repeat(79), "魔");
+        assert_eq!(utf8_safe_prefix_at_byte_boundary(&s, 80), "a".repeat(79));
+        assert_eq!(utf8_safe_prefix_at_byte_boundary(&s, s.len()), s);
+        assert_eq!(
+            utf8_safe_prefix_at_byte_boundary("ascii preview", 5),
+            "ascii"
+        );
+        assert_eq!(utf8_safe_prefix_at_byte_boundary("short", 80), "short");
+
+        for cap in [30, 40, 80, 200, 500] {
+            let preview = format!("{}{}tail", "a".repeat(cap - 1), "界");
+            let truncated = utf8_safe_prefix_at_byte_boundary(&preview, cap);
+            assert_eq!(truncated, "a".repeat(cap - 1));
+            assert!(preview.is_char_boundary(truncated.len()));
+        }
     }
 
     #[test]
@@ -392,6 +437,17 @@ mod tests {
         assert!(
             !is_transient_fs_error(&err),
             "plain anyhow error without IO chain must not be transient"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn is_transient_fs_error_classifies_windows_delete_pending() {
+        let io_err = std::io::Error::from_raw_os_error(303);
+        let err = anyhow::Error::new(io_err);
+        assert!(
+            is_transient_fs_error(&err),
+            "ERROR_DELETE_PENDING (303) must be transient on Windows"
         );
     }
 
@@ -572,8 +628,18 @@ pub fn is_transient_fs_error(err: &anyhow::Error) -> bool {
                 // 5: ERROR_ACCESS_DENIED
                 // 32: ERROR_SHARING_VIOLATION
                 // 33: ERROR_LOCK_VIOLATION
+                // 303: ERROR_DELETE_PENDING — the previous owner's
+                //      `Drop::drop` issued `fs::remove_file` and Windows
+                //      acknowledged it, but the file is still in the
+                //      "delete pending" limbo because AV/indexer holds a
+                //      handle. A retry-with-backoff resolves it as soon as
+                //      the holder closes its handle. Sentry OPENHUMAN-TAURI-H8
+                //      bails at `elapsed_ms ≈ 2` against
+                //      `openhuman.team_get_usage` because this code was not
+                //      previously classified as transient and `create_new`
+                //      returned a `kind = Other` io::Error on the first try.
                 // 1224: ERROR_USER_MAPPED_FILE
-                return code == 5 || code == 32 || code == 33 || code == 1224;
+                return code == 5 || code == 32 || code == 33 || code == 303 || code == 1224;
             }
         }
         #[cfg(not(windows))]

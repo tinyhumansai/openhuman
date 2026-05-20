@@ -1,0 +1,191 @@
+---
+# Reusable test workflow — frontend unit tests, Rust core tests, Rust Tauri
+# shell tests. Same job graph used by both PR/push (`test.yml`) and the
+# release pretest gate (`release-staging.yml`, `release-production.yml`).
+#
+# Caching: pnpm store, Swatinem rust-cache, CEF runtime, and sccache backed
+# by the GitHub Actions cache. Cache keys mirror what the release build
+# matrix uses so warm caches survive across workflows on the same SHA.
+name: Test (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Git ref (tag or SHA) to test. Release workflows pass the
+          freshly-pushed staging/production tag here so pretest validates
+          the exact commit the build matrix will check out, not main HEAD
+          at workflow_dispatch time. Defaults to empty (checkout uses its
+          own default, i.e. the workflow's triggering ref).
+        type: string
+        default: ""
+      run_unit:
+        description: Run frontend Vitest suite.
+        type: boolean
+        default: true
+      run_rust_core:
+        description: Run `cargo test -p openhuman` (core crate).
+        type: boolean
+        default: true
+      run_rust_tauri:
+        description: Run `cargo test --manifest-path app/src-tauri/Cargo.toml`.
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  i18n-coverage:
+    if: inputs.run_unit
+    name: i18n Coverage
+    runs-on: ubuntu-22.04
+    container:
+      image: ghcr.io/tinyhumansai/openhuman_ci:rust-1.93.0
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 1
+      - name: Cache pnpm store
+        uses: actions/cache@v5
+        with:
+          path: ~/.local/share/pnpm/store
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-store-${{ runner.os }}-
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Verify i18n coverage (missing / extra / drifted / en.ts ↔ chunks)
+        run: pnpm i18n:check
+
+  unit-tests:
+    if: inputs.run_unit
+    name: Frontend Unit Tests
+    runs-on: ubuntu-22.04
+    container:
+      image: ghcr.io/tinyhumansai/openhuman_ci:rust-1.93.0
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 1
+      - name: Cache pnpm store
+        uses: actions/cache@v5
+        with:
+          path: ~/.local/share/pnpm/store
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-store-${{ runner.os }}-
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Run tests with coverage
+        run: pnpm test:coverage
+        env:
+          NODE_ENV: test
+      - name: Upload coverage reports
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: coverage-report
+          path: coverage
+          retention-days: 7
+
+  rust-core-tests:
+    if: inputs.run_rust_core
+    name: Rust Core Tests + Quality
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    container:
+      image: ghcr.io/tinyhumansai/openhuman_ci:rust-1.93.0
+    env:
+      CARGO_INCREMENTAL: "0"
+      RUSTC_WRAPPER: sccache
+      SCCACHE_GHA_ENABLED: "true"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 1
+          submodules: recursive
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+          cache-on-failure: true
+          key: core
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+      - name: Test core crate (openhuman)
+        run: cargo test -p openhuman
+
+  rust-core-tests-windows:
+    if: inputs.run_rust_core
+    name: Rust Core Tests (Windows — secrets ACL)
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      CARGO_INCREMENTAL: '0'
+      SCCACHE_GHA_ENABLED: 'true'
+      RUSTC_WRAPPER: sccache
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 1
+          submodules: recursive
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+          cache-on-failure: true
+          key: core-windows
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+      - name: Run Windows-specific secrets tests
+        # Runs the full security::secrets suite including all #[cfg(windows)]
+        # tests: self-repair ACL path (OPENHUMAN-TAURI-GN), domain-qualified
+        # icacls username, is_permission_error, repair_windows_acl.
+        run: cargo test -p openhuman -- security::secrets --nocapture
+
+  rust-tauri-tests:
+    if: inputs.run_rust_tauri
+    name: Rust Tauri Shell Tests
+    runs-on: ubuntu-22.04
+    container:
+      image: ghcr.io/tinyhumansai/openhuman_ci:rust-1.93.0
+    env:
+      CARGO_INCREMENTAL: "0"
+      RUSTC_WRAPPER: sccache
+      SCCACHE_GHA_ENABLED: "true"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 1
+          # Required for app/src-tauri/vendor/tauri-cef.
+          submodules: recursive
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            app/src-tauri -> target
+          cache-on-failure: true
+          key: tauri
+      - name: Cache CEF binary distribution
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/tauri-cef
+          key: cef-ubuntu-22.04-${{ hashFiles('app/src-tauri/Cargo.toml') }}
+          restore-keys: |
+            cef-ubuntu-22.04-
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+      - name: Test Tauri shell (OpenHuman)
+        run: cargo test --manifest-path app/src-tauri/Cargo.toml

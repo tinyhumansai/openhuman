@@ -42,13 +42,13 @@ if [[ ! -e "$BIN" ]]; then
   echo "[bootstrap] building + staging core sidecar from this worktree..."
   mkdir -p "$(dirname "$BIN")"
   (cd "$WORKTREE_ROOT" && cargo build --bin openhuman-core)
-  (cd "$WORKTREE_ROOT/app" && yarn core:stage)
+  (cd "$WORKTREE_ROOT/app" && pnpm core:stage)
 fi
 
 echo "[bootstrap] installing node_modules (needed for husky hooks + prettier)..."
-(cd "$WORKTREE_ROOT" && yarn install)
+(cd "$WORKTREE_ROOT" && pnpm install)
 
 echo "[bootstrap] ensuring vendored tauri-cli installed..."
-(cd "$WORKTREE_ROOT/app" && yarn tauri:ensure)
+(cd "$WORKTREE_ROOT/app" && pnpm tauri:ensure)
 
-echo "[bootstrap] done. launch with:  cd app && yarn dev:app"
+echo "[bootstrap] done. launch with:  cd app && pnpm dev:app"

@@ -24,6 +24,7 @@ const MESSAGE_PROVIDERS = new Set([
   'gmail',
   'slack',
   'whatsapp',
+  'wechat',
   'telegram',
   'discord',
   'linkedin',

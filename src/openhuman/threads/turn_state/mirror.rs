@@ -265,6 +265,11 @@ impl TurnStateMirror {
                 }
                 false
             }
+            AgentProgress::TaskBoardUpdated { board } => {
+                self.state.task_board = Some(board.clone());
+                self.flush();
+                true
+            }
             AgentProgress::TextDelta { delta, .. } => {
                 self.state.streaming_text.push_str(delta);
                 false

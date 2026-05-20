@@ -8,12 +8,12 @@ use log::{debug, warn};
 use std::time::Instant;
 
 use crate::openhuman::config::Config;
-use crate::openhuman::local_ai;
-use crate::openhuman::local_ai::model_ids;
-use crate::openhuman::local_ai::paths::{
+use crate::openhuman::inference::local as local_ai;
+use crate::openhuman::inference::local::model_ids;
+use crate::openhuman::inference::local::paths::{
     resolve_piper_binary, resolve_stt_model_path, resolve_tts_voice_path, resolve_whisper_binary,
 };
-use crate::openhuman::local_ai::whisper_engine;
+use crate::openhuman::inference::local::whisper_engine;
 use crate::rpc::RpcOutcome;
 
 use super::hallucination::{is_hallucinated_output, HallucinationMode};

@@ -592,6 +592,7 @@ pub fn split_front_matter(content: &str) -> Option<(&str, &str)> {
         rest.strip_suffix("\n---").map(|r| r.len())
     })?;
     let fm_end = 4 + close_idx + 5; // include `\n---\n`
+    debug_assert!(content.is_char_boundary(fm_end));
     Some((&content[..fm_end], &content[fm_end..]))
 }
 

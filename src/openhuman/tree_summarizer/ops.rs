@@ -146,7 +146,7 @@ pub async fn tree_summarizer_rebuild(
 
 fn create_provider(
     config: &Config,
-) -> Result<Box<dyn crate::openhuman::providers::traits::Provider>, String> {
+) -> Result<Box<dyn crate::openhuman::inference::provider::traits::Provider>, String> {
     // Tree summarization runs exclusively on local AI to keep memory
     // processing private and offline — no backend calls.
     if !config.local_ai.runtime_enabled {
@@ -159,10 +159,10 @@ fn create_provider(
 /// wrapped in `ReliableProvider` for retry/backoff on transient failures.
 fn create_local_ai_provider(
     config: &Config,
-) -> Result<Box<dyn crate::openhuman::providers::traits::Provider>, String> {
-    use crate::openhuman::local_ai::OLLAMA_BASE_URL;
-    use crate::openhuman::providers::compatible::{AuthStyle, OpenAiCompatibleProvider};
-    use crate::openhuman::providers::reliable::ReliableProvider;
+) -> Result<Box<dyn crate::openhuman::inference::provider::traits::Provider>, String> {
+    use crate::openhuman::inference::local::OLLAMA_BASE_URL;
+    use crate::openhuman::inference::provider::compatible::{AuthStyle, OpenAiCompatibleProvider};
+    use crate::openhuman::inference::provider::reliable::ReliableProvider;
 
     let base_url = format!("{}/v1", OLLAMA_BASE_URL);
     let inner = OpenAiCompatibleProvider::new_no_responses_fallback(
@@ -174,7 +174,7 @@ fn create_local_ai_provider(
 
     let providers: Vec<(
         String,
-        Box<dyn crate::openhuman::providers::traits::Provider>,
+        Box<dyn crate::openhuman::inference::provider::traits::Provider>,
     )> = vec![("ollama-local".to_string(), Box::new(inner))];
     let reliable = ReliableProvider::new(
         providers,

@@ -1,5 +1,5 @@
 use super::*;
-use crate::openhuman::providers::traits::ProviderCapabilities;
+use crate::openhuman::inference::provider::traits::ProviderCapabilities;
 use crate::openhuman::routing::health::LocalHealthChecker;
 use crate::openhuman::routing::policy::RoutingHints;
 use std::sync::{
@@ -463,7 +463,7 @@ async fn capabilities_delegate_to_remote() {
 
 #[tokio::test]
 async fn history_lightweight_uses_local_when_healthy() {
-    use crate::openhuman::providers::traits::ChatMessage;
+    use crate::openhuman::inference::provider::traits::ChatMessage;
     let local = MockProvider::new("local", "local history answer");
     let remote = MockProvider::new("remote", "remote answer");
     let health = LocalHealthChecker::seeded(true);
@@ -487,7 +487,7 @@ async fn history_lightweight_uses_local_when_healthy() {
 
 #[tokio::test]
 async fn history_local_error_falls_back_to_remote() {
-    use crate::openhuman::providers::traits::ChatMessage;
+    use crate::openhuman::inference::provider::traits::ChatMessage;
     let local = MockProvider::new("local", "never");
     local.set_fail(true);
     let remote = MockProvider::new("remote", "remote recovery");
@@ -512,7 +512,7 @@ async fn history_local_error_falls_back_to_remote() {
 
 #[tokio::test]
 async fn history_low_quality_local_falls_back_to_remote() {
-    use crate::openhuman::providers::traits::ChatMessage;
+    use crate::openhuman::inference::provider::traits::ChatMessage;
     // "I cannot help with that." is a known low-quality refusal phrase.
     let local = MockProvider::new("local", "I cannot help with that.");
     let remote = MockProvider::new("remote", "proper answer from remote");
@@ -537,7 +537,7 @@ async fn history_low_quality_local_falls_back_to_remote() {
 
 #[tokio::test]
 async fn history_privacy_required_suppresses_fallback_even_on_error() {
-    use crate::openhuman::providers::traits::ChatMessage;
+    use crate::openhuman::inference::provider::traits::ChatMessage;
     let local = MockProvider::new("local", "blocked");
     local.set_fail(true);
     let remote = MockProvider::new("remote", "should not be called");
@@ -567,7 +567,7 @@ async fn history_privacy_required_suppresses_fallback_even_on_error() {
 
 #[tokio::test]
 async fn tools_present_forces_remote_even_when_local_healthy_and_lightweight() {
-    use crate::openhuman::providers::traits::{ChatMessage, ChatRequest};
+    use crate::openhuman::inference::provider::traits::{ChatMessage, ChatRequest};
     use crate::openhuman::tools::ToolSpec;
 
     let local = MockProvider::new("local", "local answer");

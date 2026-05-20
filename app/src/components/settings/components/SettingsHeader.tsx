@@ -1,3 +1,5 @@
+import { useT } from '../../../lib/i18n/I18nContext';
+
 interface BreadcrumbItem {
   label: string;
   onClick?: () => void;
@@ -13,11 +15,13 @@ interface SettingsHeaderProps {
 
 const SettingsHeader = ({
   className = '',
-  title = 'Settings',
+  title,
   showBackButton = false,
   onBack,
   breadcrumbs,
 }: SettingsHeaderProps) => {
+  const { t } = useT();
+
   return (
     <div className={`px-5 pt-5 pb-3 ${className}`}>
       <div className="flex items-center">
@@ -25,10 +29,10 @@ const SettingsHeader = ({
         {showBackButton && onBack && (
           <button
             onClick={onBack}
-            className="w-6 h-6 flex items-center justify-center rounded-full hover:bg-stone-100 transition-colors mr-2"
-            aria-label="Go back">
+            className="w-6 h-6 flex items-center justify-center rounded-full hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 dark:hover:bg-neutral-800 transition-colors mr-2"
+            aria-label={t('common.back')}>
             <svg
-              className="w-4 h-4 text-stone-500"
+              className="w-4 h-4 text-stone-500 dark:text-neutral-400"
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24">
@@ -51,15 +55,17 @@ const SettingsHeader = ({
                   {crumb.onClick ? (
                     <button
                       onClick={crumb.onClick}
-                      className="text-xs text-stone-400 hover:text-stone-600 transition-colors">
+                      className="text-xs text-stone-400 dark:text-neutral-500 hover:text-stone-600 dark:text-neutral-300 dark:hover:text-neutral-300 transition-colors">
                       {crumb.label}
                     </button>
                   ) : (
-                    <span className="text-xs text-stone-400">{crumb.label}</span>
+                    <span className="text-xs text-stone-400 dark:text-neutral-500">
+                      {crumb.label}
+                    </span>
                   )}
                   <svg
                     aria-hidden="true"
-                    className="w-3 h-3 text-stone-300"
+                    className="w-3 h-3 text-stone-300 dark:text-neutral-600"
                     fill="none"
                     stroke="currentColor"
                     viewBox="0 0 24 24">
@@ -77,7 +83,9 @@ const SettingsHeader = ({
         )}
 
         {/* Title */}
-        <h2 className="text-sm font-semibold text-stone-900">{title}</h2>
+        <h2 className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
+          {title ?? t('nav.settings')}
+        </h2>
       </div>
     </div>
   );

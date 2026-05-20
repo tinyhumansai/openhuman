@@ -6,7 +6,9 @@
 use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock};
+#[cfg(windows)]
+use std::sync::Mutex;
+use std::sync::{Arc, OnceLock};
 
 use chrono::Utc;
 use fs2::FileExt;

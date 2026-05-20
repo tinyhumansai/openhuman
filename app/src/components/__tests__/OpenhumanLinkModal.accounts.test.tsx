@@ -66,6 +66,7 @@ describe('OpenhumanLinkModal accounts setup', () => {
     openAccountsModal();
 
     expect(screen.getByLabelText('Connect WhatsApp Web')).toBeInTheDocument();
+    expect(screen.getByLabelText('Connect WeChat Web')).toBeInTheDocument();
     expect(screen.getByLabelText('Connect Telegram Web')).toBeInTheDocument();
     expect(screen.getByLabelText('Connect Slack')).toBeInTheDocument();
     expect(screen.getByLabelText('Connect Discord')).toBeInTheDocument();

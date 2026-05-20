@@ -333,6 +333,70 @@ export async function clickToggle(_timeout: number = 15_000): Promise<void> {
 }
 
 /**
+ * Click an element matched by a selector.
+ *
+ * - tauri-driver: CSS or XPath selector
+ * - Mac2: XPath selector only
+ */
+export async function clickSelector(
+  selector: string,
+  timeout: number = 15_000
+): Promise<ChainablePromiseElement> {
+  const isXPath = selector.startsWith('//');
+  if (!isXPath && !isTauriDriver()) {
+    throw new Error(`CSS selector clicks are not supported on this backend: ${selector}`);
+  }
+
+  const el = await browser.$(selector);
+  await el.waitForExist({
+    timeout,
+    timeoutMsg: `Selector "${selector}" not found within ${timeout}ms`,
+  });
+  await clickAtElement(el);
+  return el;
+}
+
+/**
+ * Click a label whose visible text contains `text`.
+ *
+ * - tauri-driver: XPath against the DOM
+ * - Mac2: XPath against accessibility labels/titles
+ */
+export async function clickLabelContaining(
+  text: string,
+  timeout: number = 15_000
+): Promise<ChainablePromiseElement> {
+  const literal = xpathStringLiteral(text);
+  const selector = isTauriDriver()
+    ? `//label[contains(normalize-space(.), ${literal})]`
+    : `//XCUIElementTypeStaticText[contains(@label, ${literal}) or contains(@value, ${literal}) or contains(@title, ${literal})]`;
+  return clickSelector(selector, timeout);
+}
+
+/**
+ * Set a select element's value by `data-testid` and dispatch a change event.
+ *
+ * This is currently only supported on tauri-driver because the Linux harness
+ * exposes the DOM directly.
+ */
+export async function setSelectValueByTestId(testId: string, value: string): Promise<boolean> {
+  if (!isTauriDriver()) {
+    throw new Error(`setSelectValueByTestId is only supported on tauri-driver: ${testId}`);
+  }
+
+  return await browser.execute(
+    ({ id, next }) => {
+      const el = document.querySelector<HTMLSelectElement>(`[data-testid="${id}"]`);
+      if (!el) return false;
+      el.value = next;
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    },
+    { id: testId, next: value }
+  );
+}
+
+/**
  * Check if the app's chrome (menu bar on macOS, window on Linux) is visible.
  *
  * - Mac2: Check for XCUIElementTypeMenuBar

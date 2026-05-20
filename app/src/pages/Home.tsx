@@ -11,8 +11,11 @@ import {
 import { dismissBanner, shouldShowBanner } from '../components/upsell/upsellDismissState';
 import { useUsageState } from '../hooks/useUsageState';
 import { useUser } from '../hooks/useUser';
-import { useAppSelector } from '../store/hooks';
-import { selectSocketStatus } from '../store/socketSelectors';
+import { useT } from '../lib/i18n/I18nContext';
+import { restartCoreProcess } from '../services/coreProcessControl';
+import { selectBlockingState } from '../store/connectivitySelectors';
+import { useAppDispatch, useAppSelector } from '../store/hooks';
+import { resolveTheme, setThemeMode, type ThemeMode } from '../store/themeSlice';
 import { APP_VERSION } from '../utils/config';
 
 export function resolveHomeUserName(user: unknown): string {
@@ -39,9 +42,10 @@ export function resolveHomeUserName(user: unknown): string {
 }
 
 const Home = () => {
+  const { t } = useT();
   const { user } = useUser();
   const navigate = useNavigate();
-  const { isRateLimited, shouldShowBudgetCompletedMessage } = useUsageState();
+  const { shouldShowBudgetCompletedMessage } = useUsageState();
   const _userName = resolveHomeUserName(user);
   const userName = _userName.split(' ')[0]; // Get first name only
   const promoCredits = user?.usage?.promotionBalanceUsd ?? 0;
@@ -66,18 +70,39 @@ const Home = () => {
   const [welcomeVariantIndex, setWelcomeVariantIndex] = useState(0);
   const [typedWelcome, setTypedWelcome] = useState('');
   const [isDeletingWelcome, setIsDeletingWelcome] = useState(false);
-  // Mirror the same socket status the `ConnectionIndicator` pill consumes
-  // so the description copy below the pill never contradicts it (the old
-  // hard-coded "connected" message lied while the pill said "Connecting"
-  // / "Disconnected").
-  const socketStatus = useAppSelector(selectSocketStatus);
+  // 3-way blocking state (#1527) — internet > core > backend > ok. Each
+  // failure mode now has its own copy so the user knows *which* link is
+  // broken instead of seeing a single conflated "device offline" line.
+  const blocking = useAppSelector(selectBlockingState);
+  const [isRestartingCore, setIsRestartingCore] = useState(false);
+  const [restartError, setRestartError] = useState<string | null>(null);
+
+  const dispatch = useAppDispatch();
+  const themeMode = useAppSelector(state => state.theme.mode) as ThemeMode;
+  const resolvedTheme = resolveTheme(themeMode);
+  const isDark = resolvedTheme === 'dark';
+  const toggleTheme = () => {
+    dispatch(setThemeMode(isDark ? 'light' : 'dark'));
+  };
+
+  const handleRestartCore = async () => {
+    setIsRestartingCore(true);
+    setRestartError(null);
+    try {
+      await restartCoreProcess();
+    } catch (err) {
+      setRestartError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIsRestartingCore(false);
+    }
+  };
+
   const statusCopy = {
-    connected:
-      'Your device is connected. Keep the app running to keep the connection alive. Message your agent with the button below.',
-    connecting: 'Connecting. Hang tight, this usually takes a second.',
-    disconnected:
-      'Your device is offline right now. Check your network or restart the app to reconnect.',
-  }[socketStatus];
+    ok: t('home.statusOk'),
+    'backend-only': t('home.statusBackendOnly'),
+    'core-unreachable': t('home.statusCoreUnreachable'),
+    'internet-offline': t('home.statusInternetOffline'),
+  }[blocking];
 
   // Open in-app chat.
   const handleStartCooking = async () => {
@@ -123,17 +148,7 @@ const Home = () => {
   return (
     <div className="min-h-full flex flex-col items-center justify-center p-4">
       <div className="max-w-md w-full">
-        {isRateLimited && (
-          <UsageLimitBanner
-            tone="warning"
-            icon="⏳"
-            title="You’ve Hit Your Limits"
-            message="You’ve reached your short-term usage cap. Buy top-up credits to keep going right away."
-            ctaLabel="Buy top-up credits"
-          />
-        )}
-
-        {!isRateLimited && shouldShowBudgetCompletedMessage && (
+        {shouldShowBudgetCompletedMessage && (
           <UsageLimitBanner
             tone="danger"
             icon="⚠️"
@@ -145,17 +160,59 @@ const Home = () => {
 
         {showPromoBanner && <PromotionalCreditsBanner promoCredits={promoCredits} />}
 
+        {/* Theme toggle — sun/moon icon above the main card */}
+        <div className="flex justify-end mb-2">
+          <button
+            type="button"
+            onClick={toggleTheme}
+            aria-label={isDark ? t('home.themeToggle.toLight') : t('home.themeToggle.toDark')}
+            title={isDark ? t('home.themeToggle.toLight') : t('home.themeToggle.toDark')}
+            className="p-2 rounded-full text-stone-500 dark:text-neutral-400 hover:text-stone-700 dark:hover:text-neutral-200 hover:bg-stone-100 dark:hover:bg-neutral-800/60 transition-colors">
+            {isDark ? (
+              <svg
+                className="w-5 h-5"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={2}
+                viewBox="0 0 24 24"
+                aria-hidden="true">
+                <circle cx="12" cy="12" r="4" />
+                <path
+                  strokeLinecap="round"
+                  d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"
+                />
+              </svg>
+            ) : (
+              <svg
+                className="w-5 h-5"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={2}
+                viewBox="0 0 24 24"
+                aria-hidden="true">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z"
+                />
+              </svg>
+            )}
+          </button>
+        </div>
+
         {/* Main card — data-walkthrough target for step 1 */}
         <div
           data-walkthrough="home-card"
-          className="bg-white rounded-2xl shadow-soft border border-stone-200 p-6 animate-fade-up">
+          className="bg-white dark:bg-neutral-900 rounded-2xl shadow-soft border border-stone-200 dark:border-neutral-800 p-6 animate-fade-up">
           {/* Header row: logo + version + settings */}
           <div className="flex items-center justify-center mb-4">
-            <span className="text-xs text-center text-stone-400">v{APP_VERSION}</span>
+            <span className="text-xs text-center text-stone-400 dark:text-neutral-500">
+              v{APP_VERSION}
+            </span>
           </div>
 
           {/* Welcome title */}
-          <h1 className="min-h-[3.5rem] text-32l font-bold text-stone-900 text-center">
+          <h1 className="min-h-[3.5rem] text-32l font-bold text-stone-900 dark:text-neutral-100 text-center">
             {typedWelcome}
             <span aria-hidden="true" className="ml-0.5 inline-block text-primary-500 animate-pulse">
               |
@@ -167,17 +224,37 @@ const Home = () => {
             <ConnectionIndicator />
           </div>
 
-          {/* Description — mirrors the pill's socket status to avoid
-              telling the user they're connected while the pill shows
-              "Connecting" / "Disconnected". */}
-          <p className="text-sm text-stone-500 text-center mb-6 leading-relaxed">{statusCopy}</p>
+          {/* Description — copy mirrors the active blocking state so the
+              user never sees a "connected" message while the pill shows a
+              failure. (#1527) */}
+          <p className="text-sm text-stone-500 dark:text-neutral-400 text-center mb-6 leading-relaxed">
+            {statusCopy}
+          </p>
+
+          {/* Recovery action: only shown when the local core sidecar is
+              the broken link — internet/backend outages are not actionable
+              from here. */}
+          {blocking === 'core-unreachable' && (
+            <div className="mb-4">
+              <button
+                onClick={handleRestartCore}
+                disabled={isRestartingCore}
+                className="w-full py-3 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white font-medium rounded-xl transition-colors duration-200">
+                {isRestartingCore ? t('home.restartingCore') : t('home.restartCore')}
+              </button>
+              {restartError && (
+                <p className="mt-2 text-xs text-coral-500 text-center">{restartError}</p>
+              )}
+            </div>
+          )}
 
           {/* CTA button — data-walkthrough target for step 2 */}
           <button
             data-walkthrough="home-cta"
             onClick={handleStartCooking}
-            className="w-full py-3 bg-primary-500 hover:bg-primary-600 text-white font-medium rounded-xl transition-colors duration-200">
-            Message OpenHuman
+            disabled={blocking === 'core-unreachable' || blocking === 'internet-offline'}
+            className="w-full py-3 bg-primary-500 hover:bg-primary-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium rounded-xl transition-colors duration-200">
+            {t('home.askAssistant')}
           </button>
         </div>
 

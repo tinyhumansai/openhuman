@@ -27,6 +27,12 @@ A trigger is an external event published by an integration you've connected. Com
 
 The full set comes from the [Composio](https://composio.dev) connector layer that powers [third-party integrations](README.md). When a connection is active, the relevant trigger subscriptions are wired up automatically.
 
+### Gmail OAuth scopes
+
+Gmail trigger subscriptions require message-read access on the connected Google account. Fresh OpenHuman Gmail authorizations request `https://www.googleapis.com/auth/gmail.readonly` so `GMAIL_NEW_GMAIL_MESSAGE` can be enabled and the native Gmail sync path can read the new message metadata.
+
+If an older Gmail connection was created before this scope was requested, reconnect Gmail from Settings before enabling Gmail triggers.
+
 ## Where triggers come from, end to end
 
 ```

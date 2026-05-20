@@ -30,6 +30,7 @@ import {
   SENTRY_RELEASE,
   SENTRY_SMOKE_TEST,
 } from '../utils/config';
+import { CoreRpcError } from './coreRpcClient';
 
 // ---------------------------------------------------------------------------
 // GA4 — module-level state
@@ -70,6 +71,20 @@ export function isAnalyticsEnabled(): boolean {
   return getCoreStateSnapshot().snapshot.analyticsEnabled;
 }
 
+/**
+ * Cross-realm-safe check for a `CoreRpcError` with `kind === 'timeout'`.
+ * `instanceof` can fail across module scopes (test harness, dynamic import,
+ * Vitest module isolation), so also accept a duck-typed match on `name`
+ * and `kind`. Used by the Sentry `beforeSend` filter to drop the
+ * OPENHUMAN-REACT-15/11/10/12/Z/Y family at the source.
+ */
+function isCoreRpcTimeoutError(err: unknown): boolean {
+  if (err instanceof CoreRpcError) return err.kind === 'timeout';
+  if (typeof err !== 'object' || err === null) return false;
+  const candidate = err as { name?: unknown; kind?: unknown };
+  return candidate.name === 'CoreRpcError' && candidate.kind === 'timeout';
+}
+
 export function initSentry(): void {
   if (!SENTRY_DSN) return;
 
@@ -105,7 +120,19 @@ export function initSentry(): void {
     ],
     sendDefaultPii: false,
 
-    beforeSend(event) {
+    beforeSend(event, hint) {
+      // Drop noisy local-AbortController RPC timeouts at the source so a
+      // missed `.catch()` at a future call site cannot regress the
+      // OPENHUMAN-REACT-15/11/10/12/Z/Y family. Sister to the Rust-side
+      // `is_session_expired_event` filter / loopback classifier in PR #2063.
+      // Cross-realm-safe: also accept a non-instanceof match on the
+      // class name + kind (test harness can construct CoreRpcError in a
+      // different module scope).
+      const original = hint?.originalException as unknown;
+      if (isCoreRpcTimeoutError(original)) {
+        return null;
+      }
+
       // Always allow the smoke-test event through so pipeline validation works
       // even when the user hasn't opted into analytics yet on first boot.
       const isSmokeTest = event.message === 'react-sentry-smoke-test';

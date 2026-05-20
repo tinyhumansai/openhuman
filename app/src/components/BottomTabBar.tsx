@@ -1,17 +1,19 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
+import { useT } from '../lib/i18n/I18nContext';
 // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
 // import { isWelcomeLocked } from '../lib/coreState/store';
 import { useCoreState } from '../providers/CoreStateProvider';
+import { selectCompanionSessionActive } from '../store/companionSlice';
 import { useAppSelector } from '../store/hooks';
 import { selectUnreadCount } from '../store/notificationSlice';
 import { isAccountsFullscreen } from '../utils/accountsFullscreen';
 
-const tabs = [
+const makeTabs = (t: (key: string) => string) => [
   {
     id: 'home',
-    label: 'Home',
+    label: t('nav.home'),
     path: '/home',
     icon: (
       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -26,7 +28,7 @@ const tabs = [
   },
   {
     id: 'human',
-    label: 'Human',
+    label: t('nav.human'),
     path: '/human',
     icon: (
       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -41,7 +43,7 @@ const tabs = [
   },
   {
     id: 'chat',
-    label: 'Chat',
+    label: t('nav.chat'),
     path: '/chat',
     icon: (
       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -56,7 +58,7 @@ const tabs = [
   },
   {
     id: 'skills',
-    label: 'Connections',
+    label: t('nav.connections'),
     path: '/skills',
     icon: (
       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -71,7 +73,7 @@ const tabs = [
   },
   {
     id: 'intelligence',
-    label: 'Memory',
+    label: t('nav.memory'),
     path: '/intelligence',
     icon: (
       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -84,24 +86,12 @@ const tabs = [
       </svg>
     ),
   },
-  {
-    id: 'notifications',
-    label: 'Alerts',
-    path: '/notifications',
-    icon: (
-      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth={1.8}
-          d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"
-        />
-      </svg>
-    ),
-  },
+  // Alerts/Notifications used to be its own bottom tab; moved into
+  // Settings › Notifications since it's a low-traffic destination.
+  // The /notifications route still exists for deep links.
   {
     id: 'rewards',
-    label: 'Rewards',
+    label: t('nav.rewards'),
     path: '/rewards',
     icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -116,7 +106,7 @@ const tabs = [
   },
   {
     id: 'settings',
-    label: 'Settings',
+    label: t('nav.settings'),
     path: '/settings',
     icon: (
       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -138,6 +128,8 @@ const tabs = [
 ];
 
 const BottomTabBar = () => {
+  const { t } = useT();
+  const tabs = useMemo(() => makeTabs(t), [t]);
   const location = useLocation();
   const navigate = useNavigate();
   const { snapshot } = useCoreState();
@@ -146,6 +138,7 @@ const BottomTabBar = () => {
 
   const activeAccountId = useAppSelector(state => state.accounts.activeAccountId);
   const unreadCount = useAppSelector(state => selectUnreadCount(state.notifications.items));
+  const companionActive = useAppSelector(selectCompanionSessionActive);
 
   const hiddenPaths = ['/', '/login'];
   if (
@@ -187,7 +180,10 @@ const BottomTabBar = () => {
   };
 
   return (
-    <div className="absolute inset-x-0 bottom-0 z-50">
+    // pointer-events-none on the full-width shell so transparent areas (e.g.
+    // beside the centered nav pill) do not steal clicks from sticky footers
+    // such as Settings SaveBar. Only the <nav> pill re-enables hits.
+    <div className="pointer-events-none absolute inset-x-0 bottom-0 z-50">
       {/* Hover strip — only matters when collapsed; provides a 12px bottom
           edge the user can mouse into to reveal the bar again. */}
       {collapsed && (
@@ -206,10 +202,11 @@ const BottomTabBar = () => {
         onBlur={e => {
           if (!e.currentTarget.contains(e.relatedTarget as Node)) setRevealed(false);
         }}>
-        <nav className="pointer-events-auto inline-flex items-center gap-1 rounded-sm border border-stone-300 bg-stone-200 shadow-soft px-1 py-1">
+        <nav className="pointer-events-auto inline-flex items-center gap-1 rounded-sm border border-stone-300 dark:border-neutral-700 bg-stone-200 dark:bg-neutral-900 shadow-soft px-1 py-1">
           {tabs.map(tab => {
             const active = isActive(tab.path);
             const showBadge = tab.id === 'notifications' && unreadCount > 0;
+            const showCompanionDot = tab.id === 'settings' && companionActive;
             // data-walkthrough attributes for the Joyride walkthrough steps.
             // Maps tab ids to their walkthrough target names.
             const walkthroughAttr: Record<string, string> = {
@@ -225,12 +222,12 @@ const BottomTabBar = () => {
                 onClick={() => navigate(tab.path)}
                 className={`group relative flex items-center px-2 py-2 rounded-sm text-sm transition-colors duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] cursor-pointer ${
                   active
-                    ? 'bg-white text-stone-900 font-semibold shadow-sm'
-                    : 'bg-transparent text-stone-500 hover:bg-stone-300/50 hover:text-stone-700'
+                    ? 'bg-white dark:bg-neutral-800 text-stone-900 dark:text-neutral-100 font-semibold shadow-sm'
+                    : 'bg-transparent text-stone-500 dark:text-neutral-400 hover:bg-stone-300/50 dark:hover:bg-neutral-800/60 hover:text-stone-700 dark:hover:text-neutral-200'
                 }`}
                 aria-label={
                   tab.id === 'notifications' && unreadCount > 0
-                    ? `${tab.label} (${unreadCount} unread)`
+                    ? `${tab.label} (${unreadCount} ${t('alerts.unread')})`
                     : tab.label
                 }>
                 <span className="relative inline-flex flex-shrink-0">
@@ -239,6 +236,9 @@ const BottomTabBar = () => {
                     <span className="absolute -top-1 -right-1 min-w-[14px] h-[14px] px-1 rounded-full bg-coral-500 text-[9px] font-bold text-white flex items-center justify-center leading-none">
                       {unreadCount > 9 ? '9+' : unreadCount}
                     </span>
+                  )}
+                  {showCompanionDot && (
+                    <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-blue-500 animate-pulse" />
                   )}
                 </span>
                 <span

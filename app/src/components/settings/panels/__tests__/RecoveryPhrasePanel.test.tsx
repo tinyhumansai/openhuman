@@ -4,8 +4,6 @@ import { describe, expect, it, vi } from 'vitest';
 import { renderWithProviders } from '../../../../test/test-utils';
 import RecoveryPhrasePanel from '../RecoveryPhrasePanel';
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
-
 vi.mock('../../../../providers/CoreStateProvider', () => ({
   useCoreState: () => ({
     snapshot: { currentUser: null },
@@ -18,6 +16,7 @@ vi.mock('../../../../services/walletApi', () => ({
     configured: true,
     onboardingCompleted: true,
     consentGranted: true,
+    secretStored: true,
     source: 'generated',
     mnemonicWordCount: 12,
     accounts: [],

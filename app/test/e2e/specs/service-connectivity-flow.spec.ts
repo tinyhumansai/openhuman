@@ -70,6 +70,7 @@ async function waitForServiceStateText(stateText: string, timeoutMs = 15_000): P
 // causing cascading failures in stop/restart/uninstall tests. Skip on Linux.
 describe('Service connectivity flow (UI ↔ Rust service)', () => {
   before(async function beforeSuite() {
+    this.timeout(90_000);
     if (process.env.OPENHUMAN_SERVICE_MOCK !== '1' || process.platform === 'linux') {
       this.skip();
     }
@@ -180,7 +181,8 @@ describe('Service connectivity flow (UI ↔ Rust service)', () => {
     expect(latest.running).toBe(false);
   });
 
-  it('unblocks once service is running and agent is reported healthy', async () => {
+  it('unblocks once service is running and agent is reported healthy', async function () {
+    this.timeout(60_000);
     const state = await readMockState();
     await writeMockState({
       ...state,
@@ -200,7 +202,8 @@ describe('Service connectivity flow (UI ↔ Rust service)', () => {
     stepLog('Gate cleared as expected');
   });
 
-  it('shows blocking gate again when connection suddenly breaks', async () => {
+  it('shows blocking gate again when connection suddenly breaks', async function () {
+    this.timeout(60_000);
     const state = await readMockState();
     await writeMockState({
       ...state,

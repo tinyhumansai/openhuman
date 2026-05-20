@@ -1,12 +1,19 @@
+import debug from 'debug';
 import { useCallback, useEffect, useState } from 'react';
 
+import { useT } from '../../../lib/i18n/I18nContext';
 import { useCoreState } from '../../../providers/CoreStateProvider';
 import { teamApi } from '../../../services/api/teamApi';
+import { CoreRpcError } from '../../../services/coreRpcClient';
 import type { TeamWithRole } from '../../../types/team';
+import { sanitizeError } from '../../../utils/sanitize';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
+const log = debug('core-rpc:error');
+
 const TeamPanel = () => {
+  const { t } = useT();
   const { navigateBack, navigateToTeamManagement, breadcrumbs } = useSettingsNavigation();
   const { snapshot, teams, refresh, refreshTeams } = useCoreState();
   const user = snapshot.currentUser;
@@ -20,7 +27,6 @@ const TeamPanel = () => {
   const [isLeaving, setIsLeaving] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // Confirmation modal state for leaving team
   const [teamToLeave, setTeamToLeave] = useState<TeamWithRole | null>(null);
 
   const activeTeamId = user?.activeTeamId;
@@ -29,13 +35,26 @@ const TeamPanel = () => {
     setIsLoading(true);
     try {
       await refreshTeams();
+    } catch (err) {
+      // Bootstrap-time `team_list_teams` failures (cold core boot, backend
+      // 504, local AbortController hit `CORE_RPC_TIMEOUT_MS`) used to leak
+      // as unhandled promise rejections via the `void` in the useEffect
+      // below, polluting Sentry as OPENHUMAN-REACT-15/11. The next visible
+      // user action retries, so swallow silently for transient kinds.
+      const kind = err instanceof CoreRpcError ? err.kind : 'unknown';
+      log('refreshTeams failed in TeamPanel (kind=%s): %O', kind, sanitizeError(err));
     } finally {
       setIsLoading(false);
     }
   }, [refreshTeams]);
 
   useEffect(() => {
-    void refreshTeamsWithLoading();
+    // `refreshTeamsWithLoading` already absorbs rejections internally, but
+    // keep the `.catch()` as a belt-and-suspenders guard so a future refactor
+    // that re-throws cannot regress the unhandled-rejection family.
+    refreshTeamsWithLoading().catch(err => {
+      log('refreshTeamsWithLoading rethrew unexpectedly: %O', sanitizeError(err));
+    });
   }, [refreshTeamsWithLoading]);
 
   const handleCreateTeam = async () => {
@@ -51,7 +70,7 @@ const TeamPanel = () => {
       setError(
         err && typeof err === 'object' && 'error' in err
           ? String(err.error)
-          : 'Failed to create team'
+          : t('team.failedToCreate')
       );
     } finally {
       setIsCreating(false);
@@ -71,7 +90,7 @@ const TeamPanel = () => {
       setError(
         err && typeof err === 'object' && 'error' in err
           ? String(err.error)
-          : 'Invalid or expired invite code'
+          : t('team.invalidInviteCode')
       );
     } finally {
       setIsJoining(false);
@@ -89,7 +108,7 @@ const TeamPanel = () => {
       setError(
         err && typeof err === 'object' && 'error' in err
           ? String(err.error)
-          : 'Failed to switch team'
+          : t('team.failedToSwitch')
       );
     } finally {
       setIsSwitching(null);
@@ -97,7 +116,6 @@ const TeamPanel = () => {
   };
 
   const handleLeaveTeam = (teamEntry: TeamWithRole) => {
-    // Show confirmation modal for leaving teams
     setTeamToLeave(teamEntry);
   };
 
@@ -115,7 +133,7 @@ const TeamPanel = () => {
       setError(
         err && typeof err === 'object' && 'error' in err
           ? String(err.error)
-          : 'Failed to leave team'
+          : t('team.failedToLeave')
       );
     } finally {
       setIsLeaving(null);
@@ -123,24 +141,22 @@ const TeamPanel = () => {
   };
 
   const roleBadge = (role: string, teamCreatedBy?: string) => {
-    // Normalize role to uppercase for consistent comparison
     const normalizedRole = role.toUpperCase();
-
-    // Show "Owner" if this is the team creator and admin
     const isOwner = normalizedRole === 'ADMIN' && teamCreatedBy === user?._id;
 
     const roleLabel = isOwner
-      ? 'Owner'
+      ? t('team.role.owner')
       : normalizedRole === 'ADMIN'
-        ? 'Admin'
+        ? t('team.role.admin')
         : normalizedRole === 'BILLING_MANAGER'
-          ? 'Billing Manager'
-          : 'Member';
+          ? t('team.role.billingManager')
+          : t('team.role.member');
 
     const colors: Record<string, string> = {
       ADMIN: 'bg-primary-500/20 text-primary-400 border-primary-500/30',
       BILLING_MANAGER: 'bg-amber-500/20 text-amber-400 border-amber-500/30',
-      MEMBER: 'bg-stone-500/20 text-stone-400 border-stone-500/30',
+      MEMBER:
+        'bg-stone-50 dark:bg-neutral-800/60 text-stone-400 dark:text-neutral-500 border-stone-500/30',
     };
 
     return (
@@ -155,7 +171,7 @@ const TeamPanel = () => {
     const colors: Record<string, string> = {
       PRO: 'bg-lavender-500/20 text-lavender-400 border-lavender-500/30',
       BASIC: 'bg-primary-500/20 text-primary-400 border-primary-500/30',
-      FREE: 'bg-stone-500/20 text-stone-400 border-stone-500/30',
+      FREE: 'bg-stone-50 dark:bg-neutral-800/60 text-stone-400 dark:text-neutral-500 border-stone-500/30',
     };
     return (
       <span
@@ -176,28 +192,33 @@ const TeamPanel = () => {
       <div
         className={`flex items-center justify-between p-3 rounded-xl border transition-all ${
           isActive
-            ? 'border-primary-200 bg-primary-50'
-            : 'border-stone-200 bg-white hover:bg-stone-50'
+            ? 'border-primary-200 dark:border-primary-500/30 bg-primary-50 dark:bg-primary-500/10'
+            : 'border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 hover:bg-stone-50 dark:hover:bg-neutral-800/60 dark:bg-neutral-800/60 dark:hover:bg-neutral-800/60'
         }`}>
         <div className="flex items-center gap-3 min-w-0 flex-1">
-          {/* Team avatar */}
-          <div className="w-9 h-9 rounded-lg bg-stone-100 flex items-center justify-center flex-shrink-0">
-            <span className="text-sm font-semibold text-stone-600">
+          <div className="w-9 h-9 rounded-lg bg-stone-100 dark:bg-neutral-800 flex items-center justify-center flex-shrink-0">
+            <span className="text-sm font-semibold text-stone-600 dark:text-neutral-300">
               {team.name.charAt(0).toUpperCase()}
             </span>
           </div>
           <div className="min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-sm font-medium text-stone-900 truncate">{team.name}</span>
+              <span className="text-sm font-medium text-stone-900 dark:text-neutral-100 truncate">
+                {team.name}
+              </span>
               {roleBadge(role, team.createdBy)}
               {planBadge(team.subscription.plan)}
               {isActive && (
                 <span className="px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-sage-500/20 text-sage-400 border border-sage-500/30">
-                  Active
+                  {t('team.active')}
                 </span>
               )}
             </div>
-            {team.isPersonal && <p className="text-xs text-stone-400 mt-0.5">Personal team</p>}
+            {team.isPersonal && (
+              <p className="text-xs text-stone-400 dark:text-neutral-500 mt-0.5">
+                {t('team.personalTeam')}
+              </p>
+            )}
           </div>
         </div>
 
@@ -205,24 +226,24 @@ const TeamPanel = () => {
           {canManage && (
             <button
               onClick={() => navigateToTeamManagement(team._id)}
-              className="px-2.5 py-1 text-xs font-medium rounded-lg bg-primary-50 hover:bg-primary-100 text-primary-600 transition-colors">
-              Manage Team
+              className="px-2.5 py-1 text-xs font-medium rounded-lg bg-primary-50 dark:bg-primary-500/10 hover:bg-primary-100 dark:bg-primary-500/20 text-primary-600 dark:text-primary-300 transition-colors">
+              {t('team.manageTeam')}
             </button>
           )}
           {!isActive && (
             <button
               onClick={() => handleSwitchTeam(team._id)}
               disabled={isSwitching === team._id}
-              className="px-2.5 py-1 text-xs font-medium rounded-lg bg-stone-100 hover:bg-stone-200 text-stone-600 transition-colors disabled:opacity-50">
-              {isSwitching === team._id ? 'Switching...' : 'Switch'}
+              className="px-2.5 py-1 text-xs font-medium rounded-lg bg-stone-100 dark:bg-neutral-800 hover:bg-stone-200 dark:bg-neutral-800 text-stone-600 dark:text-neutral-300 transition-colors disabled:opacity-50">
+              {isSwitching === team._id ? t('team.switching') : t('team.switch')}
             </button>
           )}
           {canLeave && (
             <button
               onClick={() => handleLeaveTeam(entry)}
               disabled={isLeaving === team._id}
-              className="px-2.5 py-1 text-xs font-medium rounded-lg text-amber-700 hover:bg-amber-50 transition-colors disabled:opacity-50">
-              {isLeaving === team._id ? 'Leaving...' : 'Leave'}
+              className="px-2.5 py-1 text-xs font-medium rounded-lg text-amber-700 dark:text-amber-300 hover:bg-amber-50 dark:bg-amber-500/10 transition-colors disabled:opacity-50">
+              {isLeaving === team._id ? t('team.leaving') : t('team.leave')}
             </button>
           )}
         </div>
@@ -233,7 +254,7 @@ const TeamPanel = () => {
   return (
     <div>
       <SettingsHeader
-        title="Team"
+        title={t('settings.account.team')}
         showBackButton={true}
         onBack={navigateBack}
         breadcrumbs={breadcrumbs}
@@ -241,17 +262,18 @@ const TeamPanel = () => {
 
       <div>
         <div className="p-4 space-y-4">
-          {/* Error banner */}
           {error && (
             <div className="rounded-xl bg-coral-500/10 border border-coral-500/20 p-3">
               <p className="text-xs text-coral-400">{error}</p>
             </div>
           )}
 
-          {/* Loading */}
           {isLoading && teams.length === 0 && (
             <div className="flex items-center justify-center py-8">
-              <svg className="w-5 h-5 text-stone-500 animate-spin" fill="none" viewBox="0 0 24 24">
+              <svg
+                className="w-5 h-5 text-stone-500 dark:text-neutral-400 animate-spin"
+                fill="none"
+                viewBox="0 0 24 24">
                 <circle
                   className="opacity-25"
                   cx="12"
@@ -269,11 +291,10 @@ const TeamPanel = () => {
             </div>
           )}
 
-          {/* Teams List - Primary Content */}
           {teams.length > 0 && (
             <div className="space-y-3">
-              <h3 className="text-xs font-medium text-stone-500 uppercase tracking-wider px-1">
-                Your Teams ({teams.length})
+              <h3 className="text-xs font-medium text-stone-500 dark:text-neutral-400 uppercase tracking-wider px-1">
+                {t('team.yourTeams')} ({teams.length})
               </h3>
               <div className="space-y-2">
                 {teams.map(entry => (
@@ -283,12 +304,10 @@ const TeamPanel = () => {
             </div>
           )}
 
-          {/* Team Actions - Secondary Content */}
-          <div className="space-y-4 border-t border-stone-200 pt-4">
-            {/* Create team */}
+          <div className="space-y-4 border-t border-stone-200 dark:border-neutral-800 pt-4">
             <div className="space-y-2">
-              <h3 className="text-xs font-medium text-stone-500 uppercase tracking-wider px-1">
-                Create New Team
+              <h3 className="text-xs font-medium text-stone-500 dark:text-neutral-400 uppercase tracking-wider px-1">
+                {t('team.createNewTeam')}
               </h3>
               <div className="flex gap-2">
                 <input
@@ -296,22 +315,21 @@ const TeamPanel = () => {
                   value={newTeamName}
                   onChange={e => setNewTeamName(e.target.value)}
                   onKeyDown={e => e.key === 'Enter' && handleCreateTeam()}
-                  placeholder="Team name"
-                  className="flex-1 px-3 py-2 text-sm bg-white border border-stone-200 rounded-xl text-stone-900 placeholder-stone-400 focus:outline-none focus:border-primary-500/50"
+                  placeholder={t('team.teamName')}
+                  className="flex-1 px-3 py-2 text-sm bg-white dark:bg-neutral-900 border border-stone-200 dark:border-neutral-800 rounded-xl text-stone-900 dark:text-neutral-100 placeholder-stone-400 dark:placeholder-neutral-500 focus:outline-none focus:border-primary-500/50"
                 />
                 <button
                   onClick={handleCreateTeam}
                   disabled={isCreating || !newTeamName.trim()}
                   className="px-4 py-2 text-xs font-medium rounded-xl bg-primary-500 hover:bg-primary-600 text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-                  {isCreating ? 'Creating...' : 'Create'}
+                  {isCreating ? t('team.creating') : t('common.create')}
                 </button>
               </div>
             </div>
 
-            {/* Join team */}
             <div className="space-y-2">
-              <h3 className="text-xs font-medium text-stone-500 uppercase tracking-wider px-1">
-                Join Existing Team
+              <h3 className="text-xs font-medium text-stone-500 dark:text-neutral-400 uppercase tracking-wider px-1">
+                {t('team.joinExistingTeam')}
               </h3>
               <div className="flex gap-2">
                 <input
@@ -319,24 +337,25 @@ const TeamPanel = () => {
                   value={joinCode}
                   onChange={e => setJoinCode(e.target.value)}
                   onKeyDown={e => e.key === 'Enter' && handleJoinTeam()}
-                  placeholder="Invite code"
-                  className="flex-1 px-3 py-2 text-sm bg-white border border-stone-200 rounded-xl text-stone-900 placeholder-stone-400 focus:outline-none focus:border-primary-500/50 font-mono"
+                  placeholder={t('team.inviteCode')}
+                  className="flex-1 px-3 py-2 text-sm bg-white dark:bg-neutral-900 border border-stone-200 dark:border-neutral-800 rounded-xl text-stone-900 dark:text-neutral-100 placeholder-stone-400 dark:placeholder-neutral-500 focus:outline-none focus:border-primary-500/50 font-mono"
                 />
                 <button
                   onClick={handleJoinTeam}
                   disabled={isJoining || !joinCode.trim()}
-                  className="px-4 py-2 text-xs font-medium rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-                  {isJoining ? 'Joining...' : 'Join'}
+                  className="px-4 py-2 text-xs font-medium rounded-xl bg-stone-100 dark:bg-neutral-800 hover:bg-stone-200 dark:bg-neutral-800 text-stone-600 dark:text-neutral-300 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                  {isJoining ? t('team.joining') : t('team.join')}
                 </button>
               </div>
             </div>
           </div>
 
-          {/* Leave Team Confirmation Modal */}
           {teamToLeave && (
             <div className="fixed inset-0 bg-stone-900/50 flex items-center justify-center z-50 p-4">
-              <div className="bg-white rounded-2xl p-6 w-full max-w-md border border-stone-200">
-                <h3 className="text-sm font-semibold text-stone-900 mb-4">Leave Team</h3>
+              <div className="bg-white dark:bg-neutral-900 rounded-2xl p-6 w-full max-w-md border border-stone-200 dark:border-neutral-800">
+                <h3 className="text-sm font-semibold text-stone-900 dark:text-neutral-100 mb-4">
+                  {t('team.leaveTeam')}
+                </h3>
 
                 {error && (
                   <div className="rounded-xl bg-coral-500/10 border border-coral-500/20 p-3 mb-4">
@@ -345,29 +364,29 @@ const TeamPanel = () => {
                 )}
 
                 <div className="space-y-4">
-                  <div className="text-sm text-stone-500">
+                  <div className="text-sm text-stone-500 dark:text-neutral-400">
                     <p>
-                      Are you sure you want to leave{' '}
-                      <strong className="text-stone-900">{teamToLeave.team.name}</strong>?
+                      {t('team.confirmLeave')}{' '}
+                      <strong className="text-stone-900 dark:text-neutral-100">
+                        {teamToLeave.team.name}
+                      </strong>
+                      ?
                     </p>
-                    <p className="mt-2 text-amber-400">
-                      You will lose access to the team and all team resources. You'll need a new
-                      invite to rejoin.
-                    </p>
+                    <p className="mt-2 text-amber-400">{t('team.leaveWarning')}</p>
                   </div>
 
                   <div className="flex gap-2 pt-2">
                     <button
                       onClick={() => setTeamToLeave(null)}
                       disabled={isLeaving === teamToLeave.team._id}
-                      className="flex-1 px-4 py-2 text-sm font-medium rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-600 transition-colors disabled:opacity-50">
-                      Cancel
+                      className="flex-1 px-4 py-2 text-sm font-medium rounded-xl bg-stone-100 dark:bg-neutral-800 hover:bg-stone-200 dark:bg-neutral-800 text-stone-600 dark:text-neutral-300 transition-colors disabled:opacity-50">
+                      {t('common.cancel')}
                     </button>
                     <button
                       onClick={confirmLeaveTeam}
                       disabled={isLeaving === teamToLeave.team._id}
                       className="flex-1 px-4 py-2 text-sm font-medium rounded-xl bg-amber-500 hover:bg-amber-600 text-white transition-colors disabled:opacity-50">
-                      {isLeaving === teamToLeave.team._id ? 'Leaving...' : 'Leave Team'}
+                      {isLeaving === teamToLeave.team._id ? t('team.leaving') : t('team.leaveTeam')}
                     </button>
                   </div>
                 </div>

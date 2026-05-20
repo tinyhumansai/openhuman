@@ -5,15 +5,14 @@
  * forward is connecting an integration in Settings, so we point there in
  * prose without an explicit link to keep the surface meditative.
  */
+import { useT } from '../../lib/i18n/I18nContext';
+
 export function MemoryEmptyPlaceholder() {
+  const { t } = useT();
   return (
     <div className="mw-detail-empty" data-testid="memory-empty-placeholder">
-      <h2 className="mw-empty-title">Nothing yet.</h2>
-      <p className="mw-empty-body">
-        Connect an integration in Settings to start
-        <br />
-        building your memory tree.
-      </p>
+      <h2 className="mw-empty-title">{t('memory.empty')}</h2>
+      <p className="mw-empty-body">{t('memory.emptyHint')}</p>
     </div>
   );
 }

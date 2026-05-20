@@ -6,7 +6,7 @@ use super::super::context::{
     CHANNEL_MESSAGE_TIMEOUT_SECS, MIN_CHANNEL_MESSAGE_TIMEOUT_SECS,
 };
 use super::super::traits;
-use crate::openhuman::providers::ChatMessage;
+use crate::openhuman::inference::provider::ChatMessage;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -81,7 +81,7 @@ fn compact_sender_history_keeps_recent_truncated_messages() {
         inference_url: None,
         reliability: Arc::new(crate::openhuman::config::ReliabilityConfig::default()),
         multimodal: crate::openhuman::config::MultimodalConfig::default(),
-        provider_runtime_options: crate::openhuman::providers::ProviderRuntimeOptions::default(),
+        provider_runtime_options: crate::openhuman::inference::provider::ProviderRuntimeOptions::default(),
         workspace_dir: Arc::new(std::env::temp_dir()),
         message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
     };

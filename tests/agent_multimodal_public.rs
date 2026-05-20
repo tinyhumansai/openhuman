@@ -4,7 +4,7 @@ use openhuman_core::openhuman::agent::multimodal::{
     prepare_messages_for_provider,
 };
 use openhuman_core::openhuman::config::MultimodalConfig;
-use openhuman_core::openhuman::providers::ChatMessage;
+use openhuman_core::openhuman::inference::provider::ChatMessage;
 
 #[test]
 fn marker_helpers_cover_mixed_content_and_payload_extraction() {

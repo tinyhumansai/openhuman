@@ -1,6 +1,7 @@
 import createDebug from 'debug';
 import { useCallback, useEffect, useState } from 'react';
 
+import { useT } from '../../../lib/i18n/I18nContext';
 import {
   type CoreCronJob,
   type CoreCronRun,
@@ -17,6 +18,7 @@ import CoreJobList from './cron/CoreJobList';
 const loadCronJobsLog = createDebug('app:settings:CronJobsPanel:loadCronSkills');
 
 const CronJobsPanel = () => {
+  const { t } = useT();
   const { navigateBack, breadcrumbs } = useSettingsNavigation();
 
   const [loading, setLoading] = useState(true);
@@ -131,7 +133,7 @@ const CronJobsPanel = () => {
   return (
     <div>
       <SettingsHeader
-        title="Cron Jobs"
+        title={t('cron.title')}
         showBackButton={true}
         onBack={navigateBack}
         breadcrumbs={breadcrumbs}
@@ -139,12 +141,14 @@ const CronJobsPanel = () => {
 
       <div className="p-4 space-y-4">
         <section className="space-y-1">
-          <h3 className="text-sm font-semibold text-stone-900">Scheduled Jobs</h3>
-          <p className="text-xs text-stone-400">Manage cron jobs from the core scheduler.</p>
+          <h3 className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
+            {t('cron.scheduledJobs')}
+          </h3>
+          <p className="text-xs text-stone-400 dark:text-neutral-500">{t('cron.manageCronJobs')}</p>
         </section>
 
         {coreError && (
-          <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+          <div className="rounded-lg border border-amber-300 dark:border-amber-500/40 bg-amber-50 dark:bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-300">
             {coreError}
           </div>
         )}
@@ -164,7 +168,7 @@ const CronJobsPanel = () => {
             type="button"
             className="btn btn-outline btn-sm"
             onClick={() => void loadCoreCronJobsOnly()}>
-            Refresh Cron Jobs
+            {t('cron.refreshCronJobs')}
           </button>
         </div>
       </div>

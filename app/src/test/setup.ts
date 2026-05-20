@@ -154,7 +154,10 @@ vi.mock('../utils/config', () => ({
   CORE_RPC_URL: 'http://127.0.0.1:7788/rpc',
   CORE_RPC_TIMEOUT_MS: 30_000,
   IS_DEV: true,
+  IS_DEV_LIKE: true,
   IS_PROD: false,
+  E2E_DEFAULT_CORE_MODE: '',
+  E2E_RESTART_APP_AS_RELOAD: false,
   DEV_FORCE_ONBOARDING: false,
   SKILLS_GITHUB_REPO: 'test/skills',
   SENTRY_DSN: undefined,
@@ -163,7 +166,8 @@ vi.mock('../utils/config', () => ({
   LATEST_APP_DOWNLOAD_URL: 'https://github.com/tinyhumansai/openhuman/releases/latest',
   APP_VERSION: '0.0.0-test',
   DEV_JWT_TOKEN: undefined,
-  MASCOT_VOICE_ID: 'ljX1ZrXuDIIRVcmiVSyR',
+  MASCOT_VOICE_ID: 'JBFqnCBsd6RMkjVDRZzb',
+  MASCOT_VOICE_MODEL_ID: 'eleven_multilingual_v2',
 }));
 
 vi.mock('../services/backendUrl', () => ({

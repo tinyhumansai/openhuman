@@ -341,6 +341,7 @@ fn reshape_message(raw: Value) -> Value {
         .get("labelIds")
         .cloned()
         .unwrap_or_else(|| Value::Array(Vec::new()));
+    let list_unsubscribe = pick_header(&obj, "List-Unsubscribe").unwrap_or(Value::Null);
 
     let markdown = extract_markdown_body(&obj);
     let attachments = extract_attachments(&obj);
@@ -353,6 +354,9 @@ fn reshape_message(raw: Value) -> Value {
     out.insert("to".into(), to);
     out.insert("date".into(), date);
     out.insert("labels".into(), labels);
+    if !list_unsubscribe.is_null() {
+        out.insert("list_unsubscribe".into(), list_unsubscribe);
+    }
     out.insert("markdown".into(), Value::String(markdown));
     if !attachments.is_empty() {
         out.insert("attachments".into(), Value::Array(attachments));

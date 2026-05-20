@@ -2,6 +2,7 @@
 
 use crate::openhuman::channels::providers::web as web_channel;
 use crate::openhuman::config::Config;
+use crate::openhuman::inference::provider::{self, ProviderRuntimeOptions};
 use crate::openhuman::memory::conversations::{
     self, ConversationMessage, ConversationMessagePatch, ConversationThread,
     CreateConversationThread,
@@ -15,7 +16,6 @@ use crate::openhuman::memory::{
     UpdateConversationMessageRequest, UpdateConversationThreadLabelsRequest,
     UpsertConversationThreadRequest,
 };
-use crate::openhuman::providers::{self, ProviderRuntimeOptions};
 use crate::openhuman::threads::title::{
     build_title_prompt, is_auto_generated_thread_title, sanitize_generated_title,
     title_from_user_message, title_log_fingerprint, THREAD_TITLE_LOG_PREFIX,
@@ -322,7 +322,7 @@ pub async fn thread_generate_title(
         reasoning_enabled: config.runtime.reasoning_enabled,
     };
 
-    let provider = match providers::create_intelligent_routing_provider(
+    let provider = match provider::create_intelligent_routing_provider(
         config.inference_url.as_deref(),
         config.api_url.as_deref(),
         config.api_key.as_deref(),

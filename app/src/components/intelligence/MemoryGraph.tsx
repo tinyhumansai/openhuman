@@ -20,6 +20,7 @@
  */
 import { useMemo, useRef, useState } from 'react';
 
+import { useT } from '../../lib/i18n/I18nContext';
 import { openUrl } from '../../utils/openUrl';
 import { type GraphEdge, type GraphMode, type GraphNode } from '../../utils/tauriCommands';
 
@@ -193,6 +194,7 @@ function joinPath(root: string, rel: string): string {
 }
 
 export function MemoryGraph({ nodes, edges, mode, contentRootAbs, emptyHint }: MemoryGraphProps) {
+  const { t } = useT();
   const [hovered, setHovered] = useState<GraphNode | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
 
@@ -238,12 +240,9 @@ export function MemoryGraph({ nodes, edges, mode, contentRootAbs, emptyHint }: M
   if (nodes.length === 0) {
     return (
       <div
-        className="flex h-[640px] items-center justify-center rounded-lg border border-stone-100 bg-stone-50/40 text-sm text-stone-500"
+        className="flex h-[640px] items-center justify-center rounded-lg border border-stone-100 dark:border-neutral-800 bg-stone-50/40 text-sm text-stone-500 dark:text-neutral-400"
         data-testid="memory-graph-empty">
-        {emptyHint ??
-          (mode === 'contacts'
-            ? 'No contact mentions yet — sync a source and rebuild trees first.'
-            : 'No memory yet — connect a source above to start ingesting.')}
+        {emptyHint ?? (mode === 'contacts' ? t('graph.noContactMentions') : t('graph.noMemory'))}
       </div>
     );
   }
@@ -256,28 +255,38 @@ export function MemoryGraph({ nodes, edges, mode, contentRootAbs, emptyHint }: M
       ? Array.from(new Set(nodes.map(n => n.tree_kind ?? '')))
           .filter(Boolean)
           .map(kind => ({
-            label: kind === 'source' ? 'Source' : kind === 'topic' ? 'Topic' : 'Global',
+            label:
+              kind === 'source'
+                ? t('graph.source')
+                : kind === 'topic'
+                  ? t('graph.topic')
+                  : t('graph.global'),
             color: SUMMARY_TREE_COLOR[kind] ?? '#94a3b8',
           }))
       : [
-          { label: 'Document', color: NODE_COLOR.chunk },
-          { label: 'Contact', color: NODE_COLOR.contact },
+          { label: t('graph.document'), color: NODE_COLOR.chunk },
+          { label: t('graph.contact'), color: NODE_COLOR.contact },
         ];
 
   return (
-    <div className="memory-graph rounded-lg border border-stone-100 bg-white">
-      <div className="flex items-center justify-between gap-4 border-b border-stone-100 px-4 py-2">
-        <div className="flex items-center gap-3 text-xs text-stone-500">
-          <span>{nodes.length} nodes</span>
-          <span className="text-stone-300">·</span>
+    <div className="memory-graph rounded-lg border border-stone-100 dark:border-neutral-800 bg-white dark:bg-neutral-900">
+      <div className="flex items-center justify-between gap-4 border-b border-stone-100 dark:border-neutral-800 px-4 py-2">
+        <div className="flex items-center gap-3 text-xs text-stone-500 dark:text-neutral-400">
           <span>
-            {sim.edges.length} {mode === 'tree' ? 'parent → child' : 'document ↔ contact'} link
-            {sim.edges.length === 1 ? '' : 's'}
+            {nodes.length} {t('graph.nodes')}
+          </span>
+          <span className="text-stone-300 dark:text-neutral-600">·</span>
+          <span>
+            {sim.edges.length}{' '}
+            {mode === 'tree' ? t('graph.parentChild') : t('graph.documentContact')}{' '}
+            {sim.edges.length === 1 ? t('graph.link') : t('graph.links')}
           </span>
         </div>
         <div className="flex items-center gap-3">
           {legend.map(item => (
-            <span key={item.label} className="flex items-center gap-1.5 text-xs text-stone-600">
+            <span
+              key={item.label}
+              className="flex items-center gap-1.5 text-xs text-stone-600 dark:text-neutral-300">
               <span
                 className="inline-block h-2.5 w-2.5 rounded-full"
                 style={{ backgroundColor: item.color }}
@@ -321,7 +330,7 @@ export function MemoryGraph({ nodes, edges, mode, contentRootAbs, emptyHint }: M
                   if (n.kind === 'summary') void openSummaryInObsidian(n, contentRootAbs);
                 }}
                 data-testid={`memory-graph-node-${n.id}`}>
-                <title>{tooltipFor(n)}</title>
+                <title>{tooltipFor(n, t)}</title>
               </circle>
             );
           })}
@@ -329,30 +338,38 @@ export function MemoryGraph({ nodes, edges, mode, contentRootAbs, emptyHint }: M
       </svg>
       {hovered && (
         <div
-          className="border-t border-stone-100 bg-stone-50/70 px-4 py-2 text-xs text-stone-700"
+          className="border-t border-stone-100 dark:border-neutral-800 bg-stone-50/70 px-4 py-2 text-xs text-stone-700 dark:text-neutral-200"
           data-testid="memory-graph-tooltip">
           {hovered.kind === 'summary' ? (
             <>
               <span className="font-mono">L{hovered.level ?? '?'}</span>
-              <span className="text-stone-400"> · </span>
+              <span className="text-stone-400 dark:text-neutral-500"> · </span>
               <span className="capitalize">{hovered.tree_kind}</span>
-              <span className="text-stone-400"> · </span>
+              <span className="text-stone-400 dark:text-neutral-500"> · </span>
               <span>{hovered.tree_scope}</span>
-              <span className="text-stone-400"> · </span>
-              <span>{hovered.child_count ?? 0} children</span>
-              <span className="ml-3 text-stone-400">click to open in Obsidian</span>
+              <span className="text-stone-400 dark:text-neutral-500"> · </span>
+              <span>
+                {hovered.child_count ?? 0} {t('graph.children')}
+              </span>
+              <span className="ml-3 text-stone-400 dark:text-neutral-500">
+                {t('graph.clickToOpenObsidian')}
+              </span>
             </>
           ) : hovered.kind === 'contact' ? (
             <>
-              <span className="font-medium text-violet-700">{hovered.label}</span>
-              <span className="ml-3 text-stone-400">
-                person · canonical id {hovered.id.slice(0, 12)}…
+              <span className="font-medium text-violet-700 dark:text-violet-300">
+                {hovered.label}
+              </span>
+              <span className="ml-3 text-stone-400 dark:text-neutral-500">
+                {t('graph.person')} · canonical id {hovered.id.slice(0, 12)}…
               </span>
             </>
           ) : (
             <>
               <span className="font-medium">{hovered.label || 'chunk'}</span>
-              <span className="ml-3 text-stone-400">document</span>
+              <span className="ml-3 text-stone-400 dark:text-neutral-500">
+                {t('graph.document')}
+              </span>
             </>
           )}
         </div>
@@ -361,10 +378,18 @@ export function MemoryGraph({ nodes, edges, mode, contentRootAbs, emptyHint }: M
   );
 }
 
-function tooltipFor(n: GraphNode): string {
+function tooltipFor(
+  n: GraphNode,
+  t: (key: string, params?: Record<string, string>) => string
+): string {
   if (n.kind === 'summary') {
-    return `L${n.level ?? 0} · ${n.tree_kind} · ${n.tree_scope ?? ''} · ${n.child_count ?? 0} children`;
+    return t('graph.tooltip.summary', {
+      level: String(n.level ?? 0),
+      kind: n.tree_kind ?? '',
+      scope: n.tree_scope ?? '',
+      children: String(n.child_count ?? 0),
+    });
   }
-  if (n.kind === 'contact') return `${n.label} (person)`;
-  return n.label || 'document';
+  if (n.kind === 'contact') return t('graph.tooltip.contact', { label: n.label });
+  return n.label || t('graph.document');
 }

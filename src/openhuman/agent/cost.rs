@@ -23,7 +23,7 @@
 //! cents-per-Mtok at the tier level is good enough for client-side
 //! telemetry and budget gating. PRs adding new tiers should add a row.
 
-use crate::openhuman::providers::UsageInfo;
+use crate::openhuman::inference::provider::UsageInfo;
 
 /// Per-million-token rates for a single model tier.
 ///

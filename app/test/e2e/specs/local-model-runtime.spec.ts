@@ -24,9 +24,11 @@ async function waitForRequest(method, urlFragment, timeout = 15_000) {
 }
 
 async function waitForHome(timeout = 20_000) {
+  // Home.tsx renders t('home.askAssistant') = 'Ask your assistant anything...' as stable CTA.
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
-    if (await textExists('Message OpenHuman')) return true;
+    if (await textExists('Ask your assistant anything')) return true;
+    if (await textExists('Your device is connected')) return true;
     await browser.pause(700);
   }
   return false;
@@ -43,11 +45,12 @@ async function waitForAnyText(candidates, timeout = 20_000) {
   return null;
 }
 
-// Local model runtime requires Ollama binary which is not available in the
-// Linux CI Docker container. The "Local model runtime" card and "Manage"
-// button only appear on the home page when Ollama is detected. Skip on Linux.
+// Local model runtime now talks to an external Ollama endpoint through core.
+// CI does not provision a live Ollama server, so keep this spec skipped until
+// a deterministic mockable local-runtime harness exists for WDIO.
 describe.skip('Local model runtime flow', () => {
-  before(async () => {
+  before(async function beforeSuite() {
+    this.timeout(90_000);
     await startMockServer();
     await waitForApp();
     clearRequestLog();
@@ -57,7 +60,8 @@ describe.skip('Local model runtime flow', () => {
     await stopMockServer();
   });
 
-  it('can trigger local model bootstrap from UI and enter active runtime state', async () => {
+  it('shows direct-runtime guidance instead of app-managed bootstrap controls', async function () {
+    this.timeout(90_000);
     await triggerAuthDeepLink('e2e-local-model-token');
     await waitForWindowVisible(25_000);
     await waitForWebView(15_000);
@@ -84,14 +88,18 @@ describe.skip('Local model runtime flow', () => {
       'Local model runtime is unavailable in this core build. Restart app after updating to the latest build.';
     expect(await textExists(incompatibleError)).toBe(false);
 
-    await clickText('Bootstrap / Resume', 12_000);
-    await waitForAnyText(['Triggering...'], 8_000);
-
-    const activeState = await waitForAnyText(['Downloading', 'Loading', 'Ready'], 25_000);
-    if (!activeState) {
+    const guidance = await waitForAnyText(
+      [
+        'Ollama runtime unavailable',
+        'Manage the Ollama process and model pulls outside OpenHuman.',
+        'Ollama docs',
+      ],
+      25_000
+    );
+    if (!guidance) {
       const tree = await dumpAccessibilityTree();
-      console.log('[LocalModelE2E] No active runtime state seen. Tree:\n', tree.slice(0, 5000));
+      console.log('[LocalModelE2E] No direct-runtime guidance seen. Tree:\n', tree.slice(0, 5000));
     }
-    expect(activeState).not.toBeNull();
+    expect(guidance).not.toBeNull();
   });
 });

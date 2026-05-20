@@ -1,6 +1,6 @@
 {
   "name": "openhuman-app",
-  "version": "0.53.47",
+  "version": "0.54.3",
   "type": "module",
   "engines": {
     "node": ">=24.0.0"
@@ -16,6 +16,7 @@
     "tauri:ensure": "bash ../scripts/ensure-tauri-cli.sh",
     "build": "tsc && vite build",
     "build:app": "tsc && vite build",
+    "build:app:e2e": "tsc && vite build --mode development",
     "build:web": "cross-env VITE_OPENHUMAN_TARGET=web tsc && cross-env VITE_OPENHUMAN_TARGET=web vite build",
     "compile": "tsc --noEmit",
     "preview": "vite preview",
@@ -40,7 +41,6 @@
     "test:e2e:auth": "bash ./scripts/e2e-auth.sh",
     "test:e2e:service-connectivity": "OPENHUMAN_SERVICE_MOCK=1 bash ./scripts/e2e-run-spec.sh test/e2e/specs/service-connectivity-flow.spec.ts service-connectivity",
     "test:e2e:skills-registry": "bash ./scripts/e2e-run-spec.sh test/e2e/specs/skills-registry.spec.ts skills-registry",
-    "test:e2e:skill-execution": "bash ./scripts/e2e-run-spec.sh test/e2e/specs/skill-execution-flow.spec.ts skill-execution",
     "test:e2e:cron-jobs": "bash ./scripts/e2e-run-spec.sh test/e2e/specs/cron-jobs-flow.spec.ts cron-jobs",
     "test:e2e": "pnpm test:e2e:build && pnpm test:e2e:login && pnpm test:e2e:auth",
     "test:e2e:all:flows": "bash ./scripts/e2e-run-all-flows.sh",
@@ -56,7 +56,7 @@
     "format:check": "prettier --check . && pnpm rust:format:check",
     "lint": "eslint . --ext .ts,.tsx --cache",
     "lint:fix": "eslint . --ext .ts,.tsx --fix --cache",
-    "lint:commands-tokens": "bash -c '! rg -nU \"(bg|text|border|ring|shadow)-(neutral|primary|sage|amber|canvas|stone|slate)\" src/components/commands/'",
+    "lint:commands-tokens": "bash -c 'command -v rg >/dev/null 2>&1 || { echo \"lint:commands-tokens requires ripgrep. Install: brew install ripgrep (macOS) / apt install ripgrep (Debian/Ubuntu) / see https://github.com/BurntSushi/ripgrep#installation\" >&2; exit 1; }; ! rg -nU \"(bg|text|border|ring|shadow)-(neutral|primary|sage|amber|canvas|stone|slate)\" src/components/commands/'",
     "knip": "knip --config knip.json",
     "knip:production": "knip --config knip.json --production"
   },

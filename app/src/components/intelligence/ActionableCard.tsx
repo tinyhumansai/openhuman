@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
+import { useT } from '../../lib/i18n/I18nContext';
 import type { ActionableItem, SnoozeOption } from '../../types/intelligence';
 
 interface ActionableCardProps {
@@ -87,13 +88,13 @@ function SnoozeDropdownPortal({ isOpen, buttonRef, onClose, onSnooze }: SnoozeDr
     <div
       ref={dropdownRef}
       data-snooze-dropdown
-      className="fixed py-1 bg-white border border-stone-200 rounded-lg shadow-xl min-w-[120px] z-[9999] animate-fade-in"
+      className="fixed py-1 bg-white dark:bg-neutral-900 border border-stone-200 dark:border-neutral-800 rounded-lg shadow-xl min-w-[120px] z-[9999] animate-fade-in"
       style={{ top: position.top, left: position.left }}>
       {SNOOZE_OPTIONS.map(option => (
         <button
           key={option.label}
           onClick={() => onSnooze(option.duration)}
-          className="w-full text-left px-3 py-1.5 text-xs text-stone-900 hover:bg-stone-100 transition-colors cursor-pointer">
+          className="w-full text-left px-3 py-1.5 text-xs text-stone-900 dark:text-neutral-100 hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 transition-colors cursor-pointer">
           {option.label}
         </button>
       ))}
@@ -207,6 +208,7 @@ export function ActionableCard({
   onSnooze,
   className = '',
 }: ActionableCardProps) {
+  const { t } = useT();
   const [showSnoozeMenu, setShowSnoozeMenu] = useState(false);
   const [isAnimatingOut, setIsAnimatingOut] = useState(false);
   const snoozeButtonRef = useRef<HTMLButtonElement>(null);
@@ -235,7 +237,7 @@ export function ActionableCard({
   const priorityClasses = {
     critical: 'border-coral-500/30 bg-coral-500/5',
     important: 'border-amber-500/30 bg-amber-500/5',
-    normal: 'border-stone-200 bg-stone-50',
+    normal: 'border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60',
   };
 
   const priorityDotClasses = {
@@ -258,13 +260,13 @@ export function ActionableCard({
       <div
         className={`
           relative p-4 rounded-xl border backdrop-blur-sm transition-all duration-200
-          hover:bg-stone-50 hover:border-stone-200
+          hover:bg-stone-50 dark:hover:bg-neutral-800/60 hover:border-stone-200 dark:border-neutral-800
           ${priorityClasses[item.priority]}
         `}>
         {/* Main content row */}
         <div className="flex items-start gap-3">
           {/* Icon */}
-          <div className="w-8 h-8 flex items-center justify-center text-stone-600 flex-shrink-0 mt-0.5">
+          <div className="w-8 h-8 flex items-center justify-center text-stone-600 dark:text-neutral-300 flex-shrink-0 mt-0.5">
             {sourceIcon}
           </div>
 
@@ -272,9 +274,13 @@ export function ActionableCard({
           <div className="flex-1 min-w-0">
             <div className="flex items-start justify-between gap-3">
               <div className="flex-1 min-w-0">
-                <h3 className="text-sm font-medium text-stone-900 leading-snug">{item.title}</h3>
+                <h3 className="text-sm font-medium text-stone-900 dark:text-neutral-100 leading-snug">
+                  {item.title}
+                </h3>
                 {item.description && (
-                  <p className="text-xs text-stone-400 mt-1 leading-relaxed">{item.description}</p>
+                  <p className="text-xs text-stone-400 dark:text-neutral-500 mt-1 leading-relaxed">
+                    {item.description}
+                  </p>
                 )}
               </div>
 
@@ -283,8 +289,8 @@ export function ActionableCard({
                 {/* Complete button */}
                 <button
                   onClick={handleComplete}
-                  className="w-6 h-6 flex items-center justify-center rounded-md text-stone-400 hover:text-sage-400 hover:bg-sage-400/10 transition-all duration-150"
-                  title="Complete">
+                  className="w-6 h-6 flex items-center justify-center rounded-md text-stone-400 dark:text-neutral-500 hover:text-sage-400 hover:bg-sage-400/10 transition-all duration-150"
+                  title={t('actionable.complete')}>
                   <svg
                     className="w-3.5 h-3.5"
                     fill="none"
@@ -302,8 +308,8 @@ export function ActionableCard({
                 {/* Dismiss button */}
                 <button
                   onClick={handleDismiss}
-                  className="w-6 h-6 flex items-center justify-center rounded-md text-stone-400 hover:text-coral-400 hover:bg-coral-400/10 transition-all duration-150"
-                  title="Dismiss">
+                  className="w-6 h-6 flex items-center justify-center rounded-md text-stone-400 dark:text-neutral-500 hover:text-coral-400 hover:bg-coral-400/10 transition-all duration-150"
+                  title={t('actionable.dismiss')}>
                   <svg
                     className="w-3.5 h-3.5"
                     fill="none"
@@ -323,8 +329,8 @@ export function ActionableCard({
                   <button
                     ref={snoozeButtonRef}
                     onClick={() => setShowSnoozeMenu(!showSnoozeMenu)}
-                    className="w-6 h-6 flex items-center justify-center rounded-md text-stone-400 hover:text-amber-400 hover:bg-amber-400/10 transition-all duration-150"
-                    title="Snooze">
+                    className="w-6 h-6 flex items-center justify-center rounded-md text-stone-400 dark:text-neutral-500 hover:text-amber-400 hover:bg-amber-400/10 transition-all duration-150"
+                    title={t('actionable.snooze')}>
                     <svg
                       className="w-3.5 h-3.5"
                       fill="none"
@@ -346,15 +352,17 @@ export function ActionableCard({
             <div className="flex items-center gap-2 mt-2">
               <div className="flex items-center gap-1.5">
                 <div className={`w-1.5 h-1.5 rounded-full ${priorityDotClasses[item.priority]}`} />
-                <span className="text-xs text-stone-500">{item.sourceLabel || item.source}</span>
+                <span className="text-xs text-stone-500 dark:text-neutral-400">
+                  {item.sourceLabel || item.source}
+                </span>
               </div>
-              <span className="text-xs text-stone-600">•</span>
-              <span className="text-xs text-stone-500">{timeAgo}</span>
+              <span className="text-xs text-stone-600 dark:text-neutral-300">•</span>
+              <span className="text-xs text-stone-500 dark:text-neutral-400">{timeAgo}</span>
               {isNew && (
                 <>
-                  <span className="text-xs text-stone-600">•</span>
+                  <span className="text-xs text-stone-600 dark:text-neutral-300">•</span>
                   <span className="text-xs bg-sage-500 text-white px-1.5 py-0.5 rounded-sm font-medium">
-                    New
+                    {t('actionable.new')}
                   </span>
                 </>
               )}

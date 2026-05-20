@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 
+import { useT } from '../../../lib/i18n/I18nContext';
 import {
   type AutocompleteConfig,
   type AutocompleteStatus,
@@ -57,6 +58,7 @@ const parseAutocompleteConfig = (raw: unknown): AutocompleteConfig => {
 };
 
 const AutocompletePanel = () => {
+  const { t } = useT();
   const { navigateBack, navigateToSettings, breadcrumbs } = useSettingsNavigation();
   const [status, setStatus] = useState<AutocompleteStatus | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -70,8 +72,6 @@ const AutocompletePanel = () => {
   );
   const [acceptWithTab, setAcceptWithTab] = useState<boolean>(DEFAULT_CONFIG.accept_with_tab);
 
-  // Hold full config so we can pass through unchanged advanced values on save.
-  // configLoaded tracks whether we've received real config from the backend.
   const fullConfigRef = useRef<AutocompleteConfig>(DEFAULT_CONFIG);
   const [configLoaded, setConfigLoaded] = useState(false);
 
@@ -147,7 +147,7 @@ const AutocompletePanel = () => {
       setStylePreset(response.result.config.style_preset);
       setDisabledAppsText(response.result.config.disabled_apps.join('\n'));
       setAcceptWithTab(response.result.config.accept_with_tab);
-      setMessage('Autocomplete settings saved.');
+      setMessage(t('autocomplete.settingsSaved'));
       await refreshStatus();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save autocomplete settings');
@@ -166,9 +166,9 @@ const AutocompletePanel = () => {
       });
       await refreshStatus();
       if (response.result.started) {
-        setMessage('Autocomplete started.');
+        setMessage(t('autocomplete.started'));
       } else {
-        setMessage('Autocomplete did not start. Check if it is enabled.');
+        setMessage(t('autocomplete.didNotStart'));
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to start autocomplete');
@@ -182,7 +182,7 @@ const AutocompletePanel = () => {
     try {
       await openhumanAutocompleteStop({ reason: 'manual_stop_from_settings' });
       await refreshStatus();
-      setMessage('Autocomplete stopped.');
+      setMessage(t('autocomplete.stopped'));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to stop autocomplete');
     }
@@ -191,18 +191,22 @@ const AutocompletePanel = () => {
   return (
     <div className="z-10 relative">
       <SettingsHeader
-        title="Autocomplete"
+        title={t('autocomplete.title')}
         showBackButton={true}
         onBack={navigateBack}
         breadcrumbs={breadcrumbs}
       />
 
       <div className="max-w-2xl mx-auto w-full p-4 space-y-4">
-        <section className="rounded-2xl border border-stone-200 bg-white p-4 space-y-3">
-          <h3 className="text-sm font-semibold text-stone-900">Settings</h3>
+        <section className="rounded-2xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 space-y-3">
+          <h3 className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
+            {t('autocomplete.settings')}
+          </h3>
 
-          <label className="flex items-center justify-between rounded-xl border border-stone-200 bg-stone-50 px-3 py-2">
-            <span className="text-sm text-stone-700">Enabled</span>
+          <label className="flex items-center justify-between rounded-xl border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 px-3 py-2">
+            <span className="text-sm text-stone-700 dark:text-neutral-200">
+              {t('common.enabled')}
+            </span>
             <input
               type="checkbox"
               checked={enabled}
@@ -210,8 +214,10 @@ const AutocompletePanel = () => {
             />
           </label>
 
-          <label className="flex items-center justify-between rounded-xl border border-stone-200 bg-stone-50 px-3 py-2">
-            <span className="text-sm text-stone-700">Accept With Tab</span>
+          <label className="flex items-center justify-between rounded-xl border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 px-3 py-2">
+            <span className="text-sm text-stone-700 dark:text-neutral-200">
+              {t('autocomplete.acceptWithTab')}
+            </span>
             <input
               type="checkbox"
               checked={acceptWithTab}
@@ -219,29 +225,31 @@ const AutocompletePanel = () => {
             />
           </label>
 
-          <label className="flex items-center justify-between rounded-xl border border-stone-200 bg-stone-50 px-3 py-2">
-            <span className="text-sm text-stone-700">Style Preset</span>
+          <label className="flex items-center justify-between rounded-xl border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 px-3 py-2">
+            <span className="text-sm text-stone-700 dark:text-neutral-200">
+              {t('autocomplete.stylePreset')}
+            </span>
             <select
               value={stylePreset}
               onChange={event => setStylePreset(event.target.value)}
-              className="rounded border border-stone-300 bg-white px-2 py-1 text-xs text-stone-700">
-              <option value="balanced">Balanced</option>
-              <option value="concise">Concise</option>
-              <option value="formal">Formal</option>
-              <option value="casual">Casual</option>
-              <option value="custom">Custom</option>
+              className="rounded border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 py-1 text-xs text-stone-700 dark:text-neutral-200">
+              <option value="balanced">{t('autocomplete.style.balanced')}</option>
+              <option value="concise">{t('autocomplete.style.concise')}</option>
+              <option value="formal">{t('autocomplete.style.formal')}</option>
+              <option value="casual">{t('autocomplete.style.casual')}</option>
+              <option value="custom">{t('autocomplete.style.custom')}</option>
             </select>
           </label>
 
           <div className="space-y-1">
-            <div className="text-xs text-stone-600">
-              Disabled Apps (one bundle/app token per line)
+            <div className="text-xs text-stone-600 dark:text-neutral-300">
+              {t('autocomplete.disabledApps')}
             </div>
             <textarea
               value={disabledAppsText}
               onChange={event => setDisabledAppsText(event.target.value)}
               rows={3}
-              className="w-full rounded border border-stone-200 bg-stone-50 p-2 text-xs text-stone-700"
+              className="w-full rounded border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 p-2 text-xs text-stone-700 dark:text-neutral-200"
             />
           </div>
 
@@ -249,43 +257,49 @@ const AutocompletePanel = () => {
             type="button"
             onClick={() => void saveConfig()}
             disabled={isSaving || !configLoaded}
-            className="rounded-lg border border-primary-500/60 bg-primary-50 px-3 py-2 text-sm text-primary-600 disabled:opacity-50">
-            {isSaving ? 'Saving…' : 'Save Settings'}
+            className="rounded-lg border border-primary-500/60 bg-primary-50 dark:bg-primary-500/10 px-3 py-2 text-sm text-primary-600 dark:text-primary-300 disabled:opacity-50">
+            {isSaving ? t('autocomplete.saving') : t('autocomplete.saveSettings')}
           </button>
         </section>
 
-        <section className="rounded-2xl border border-stone-200 bg-white p-4 space-y-3">
-          <h3 className="text-sm font-semibold text-stone-900">Runtime</h3>
-          <div className="text-sm text-stone-600 space-y-1">
-            <div>Running: {status?.running ? 'yes' : 'no'}</div>
-            <div>Enabled: {status?.enabled ? 'yes' : 'no'}</div>
+        <section className="rounded-2xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 space-y-3">
+          <h3 className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
+            {t('autocomplete.runtime')}
+          </h3>
+          <div className="text-sm text-stone-600 dark:text-neutral-300 space-y-1">
+            <div>
+              {t('autocomplete.running')}: {status?.running ? t('common.yes') : t('common.no')}
+            </div>
+            <div>
+              {t('common.enabled')}: {status?.enabled ? t('common.yes') : t('common.no')}
+            </div>
           </div>
           <div className="flex gap-2">
             <button
               type="button"
               onClick={() => void start()}
               disabled={!configLoaded || !status?.platform_supported || Boolean(status?.running)}
-              className="rounded-lg border border-green-500/60 bg-green-50 px-3 py-2 text-sm text-green-700 disabled:opacity-50">
-              Start
+              className="rounded-lg border border-green-500/60 bg-green-50 dark:bg-green-500/10 px-3 py-2 text-sm text-green-700 dark:text-green-300 disabled:opacity-50">
+              {t('autocomplete.start')}
             </button>
             <button
               type="button"
               onClick={() => void stop()}
               disabled={!status?.running}
-              className="rounded-lg border border-red-500/60 bg-red-50 px-3 py-2 text-sm text-red-600 disabled:opacity-50">
-              Stop
+              className="rounded-lg border border-red-500/60 bg-red-50 dark:bg-red-500/10 px-3 py-2 text-sm text-red-600 dark:text-red-300 disabled:opacity-50">
+              {t('autocomplete.stop')}
             </button>
           </div>
         </section>
 
-        {message && <div className="text-xs text-green-700">{message}</div>}
-        {error && <div className="text-xs text-red-600">{error}</div>}
+        {message && <div className="text-xs text-green-700 dark:text-green-300">{message}</div>}
+        {error && <div className="text-xs text-red-600 dark:text-red-300">{error}</div>}
 
         <button
           type="button"
           onClick={() => navigateToSettings('autocomplete-debug')}
-          className="flex items-center gap-1.5 text-xs text-stone-400 hover:text-stone-600 transition-colors">
-          Advanced settings
+          className="flex items-center gap-1.5 text-xs text-stone-400 dark:text-neutral-500 hover:text-stone-600 dark:text-neutral-300 dark:hover:text-neutral-300 transition-colors">
+          {t('autocomplete.advancedSettings')}
           <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
           </svg>

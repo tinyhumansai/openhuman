@@ -113,3 +113,59 @@ describe('ToolTimelineBlock — subagent rendering', () => {
     expect(screen.queryByTestId('subagent-activity')).toBeNull();
   });
 });
+
+// Issue #1624: when a parent timeline entry contains a worker_thread_ref
+// envelope, ToolTimelineBlock must propagate the entry's status to the
+// rendered WorkerThreadRefCard so the card's badge stays in lockstep
+// with the surrounding `<details>` status pill — both are mutated by
+// the same subagent_spawned / subagent_completed / subagent_failed
+// socket events.
+describe('ToolTimelineBlock — worker thread ref status propagation', () => {
+  const WORKER_REF_DETAIL = `summary text\n[worker_thread_ref]\n${JSON.stringify({
+    thread_id: 't-worker-1',
+    label: 'researcher',
+    agent_id: 'researcher',
+    task_id: 'task-42',
+  })}\n[/worker_thread_ref]`;
+
+  function entryWithStatus(status: ToolTimelineEntry['status']): ToolTimelineEntry {
+    return {
+      id: `tid:subagent:task-42:researcher:${status}`,
+      name: 'subagent:researcher',
+      round: 1,
+      status,
+      detail: WORKER_REF_DETAIL,
+    };
+  }
+
+  it('passes `running` to the card when the parent entry is in flight', () => {
+    renderInStore(<ToolTimelineBlock entries={[entryWithStatus('running')]} />);
+    const badge = screen.getByTestId('worker-thread-status-badge');
+    expect(badge.getAttribute('data-status')).toBe('running');
+  });
+
+  it('passes `completed` to the card when the parent entry succeeds', () => {
+    renderInStore(<ToolTimelineBlock entries={[entryWithStatus('success')]} />);
+    const badge = screen.getByTestId('worker-thread-status-badge');
+    expect(badge.getAttribute('data-status')).toBe('completed');
+  });
+
+  it('passes `failed` to the card when the parent entry errors', () => {
+    renderInStore(<ToolTimelineBlock entries={[entryWithStatus('error')]} />);
+    const badge = screen.getByTestId('worker-thread-status-badge');
+    expect(badge.getAttribute('data-status')).toBe('failed');
+  });
+
+  // Defensive fallback: if the entry arrives with an unrecognised status
+  // (e.g. the union grows in the future, or a malformed payload slips
+  // through), the card is rendered as label-only so it can never display a
+  // misleading lifecycle state. The status badge must be absent in that case.
+  it('omits the status badge when the parent entry has an unknown status', () => {
+    const malformed = {
+      ...entryWithStatus('success'),
+      status: 'queued' as unknown as ToolTimelineEntry['status'],
+    };
+    renderInStore(<ToolTimelineBlock entries={[malformed]} />);
+    expect(screen.queryByTestId('worker-thread-status-badge')).toBeNull();
+  });
+});

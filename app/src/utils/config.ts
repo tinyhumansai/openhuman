@@ -61,6 +61,21 @@ export const CORE_RPC_TIMEOUT_MS = parseCoreRpcTimeoutMs();
 
 export const IS_DEV = import.meta.env.DEV;
 export const IS_PROD = import.meta.env.PROD;
+export const E2E_RESTART_APP_AS_RELOAD =
+  import.meta.env.VITE_OPENHUMAN_E2E_RESTART_APP_AS_RELOAD === 'true';
+export const E2E_DEFAULT_CORE_MODE =
+  (import.meta.env.VITE_OPENHUMAN_E2E_DEFAULT_CORE_MODE as string | undefined) || '';
+
+/**
+ * True when the build behaves like a dev build for runtime purposes — either
+ * a real `vite dev` (DEV=true) or a `vite build --mode development` (the E2E
+ * harness — DEV=false but MODE='development'). `IS_DEV` alone is insufficient
+ * for the E2E case because `vite build` always sets PROD=true / DEV=false
+ * regardless of `--mode`. Consumers gating behavior that should NOT happen in
+ * shipped binaries (e.g. the `restartApp` reload-instead-of-restart path)
+ * should read this flag rather than touch `import.meta.env` directly.
+ */
+export const IS_DEV_LIKE = IS_DEV || import.meta.env.MODE === 'development';
 
 /** Dev only: skip `.skip_onboarding` workspace check and ignore onboarded state so `/onboarding` always shows. Set `VITE_DEV_FORCE_ONBOARDING=true` in `.env.local`. */
 export const DEV_FORCE_ONBOARDING =
@@ -166,9 +181,22 @@ export const LATEST_APP_DOWNLOAD_URL =
 export const SENTRY_SMOKE_TEST = import.meta.env.VITE_SENTRY_SMOKE_TEST === 'true';
 
 /**
- * ElevenLabs voice ID used for the mascot's reply speech. Picked to sound
- * like a friendly cartoon character rather than a human narrator. Override
- * with `VITE_MASCOT_VOICE_ID` to A/B alternative voices without a code change.
+ * ElevenLabs voice ID used for the mascot's reply speech. `JBFqnCBsd6RMkjVDRZzb`
+ * is "George" — a warm multilingual voice that pairs cleanly with the
+ * `eleven_multilingual_v2` model (`MASCOT_VOICE_MODEL_ID` below) so the
+ * mascot can speak any locale we ship without a voice swap. Override with
+ * `VITE_MASCOT_VOICE_ID` to A/B alternatives without a code change.
  */
 export const MASCOT_VOICE_ID =
-  (import.meta.env.VITE_MASCOT_VOICE_ID as string | undefined)?.trim() || 'ljX1ZrXuDIIRVcmiVSyR';
+  (import.meta.env.VITE_MASCOT_VOICE_ID as string | undefined)?.trim() || 'JBFqnCBsd6RMkjVDRZzb';
+
+/**
+ * ElevenLabs model used for mascot reply speech. `eleven_multilingual_v2`
+ * speaks every locale we ship; the older `eleven_monolingual_v1` would
+ * choke on non-Latin scripts. Override with `VITE_MASCOT_VOICE_MODEL_ID`
+ * to pin a different model (e.g. `eleven_turbo_v2_5` for lower latency
+ * at the cost of accent fidelity).
+ */
+export const MASCOT_VOICE_MODEL_ID =
+  (import.meta.env.VITE_MASCOT_VOICE_MODEL_ID as string | undefined)?.trim() ||
+  'eleven_multilingual_v2';

@@ -9,11 +9,10 @@
  *     3. App receives JWT, dispatches to Redux authSlice
  *     4. UserProvider calls GET /auth/me  (mock server)
  *
- *   Phase 2 — Onboarding steps (3 steps in Onboarding.tsx):
- *     Step 0: WelcomeStep            — "Continue"
+ *   Phase 2 — Onboarding steps (driven via data-testid="onboarding-next-button"):
+ *     Step 0: WelcomeStep            — "Get Started"
  *     Step 1: SkillsStep             — "Continue" or "Skip for Now"
- *     Step 2: ContextGatheringStep   — user-driven gate: "Start when ready" / "Continue" /
- *                                       "Skip for now" (skipped entirely if no sources connected)
+ *     Step 2: ContextGatheringStep   — user-driven gate (skipped if no sources connected)
  *
  *   Phase 3 — Completion verification:
  *     - App calls POST /settings/onboarding-complete (from SkillsStep)
@@ -32,13 +31,14 @@
 import { waitForApp, waitForAppReady, waitForAuthBootstrap } from '../helpers/app-helpers';
 import { buildBypassJwt, triggerAuthDeepLink, triggerDeepLink } from '../helpers/deep-link-helpers';
 import {
-  clickText,
   dumpAccessibilityTree,
   hasAppChrome,
   textExists,
   waitForWebView,
   waitForWindowVisible,
 } from '../helpers/element-helpers';
+import { resetApp } from '../helpers/reset-app';
+import { waitForHomePage, walkOnboarding } from '../helpers/shared-flows';
 import {
   clearRequestLog,
   getRequestLog,
@@ -78,20 +78,6 @@ async function waitForAnyText(candidates, timeout = 15_000) {
 }
 
 /**
- * Click the first matching text from a list of candidates.
- * Returns the clicked text or null if none found.
- */
-async function clickFirstMatch(candidates, timeout = 5_000) {
-  for (const text of candidates) {
-    if (await textExists(text)) {
-      await clickText(text, timeout);
-      return text;
-    }
-  }
-  return null;
-}
-
-/**
  * Verify Redux auth state via browser.execute (tauri-driver only).
  */
 async function getReduxAuthState() {
@@ -121,7 +107,14 @@ let hadOnboardingWalkthrough = false;
 describe('Login flow — complete with mock data (Linux)', () => {
   before(async () => {
     await startMockServer();
+    resetMockBehavior();
+    setMockBehavior('composioConnections', '[]');
     await waitForApp();
+    // Wipe any state from prior specs in this single-session run, but
+    // stop BEFORE the auth deep-link / onboarding walk — this spec
+    // exercises that login flow itself, so it has to start from the
+    // Welcome screen.
+    await resetApp('e2e-login-flow', { skipAuth: true });
     clearRequestLog();
     hadOnboardingWalkthrough = false;
   });
@@ -209,9 +202,12 @@ describe('Login flow — complete with mock data (Linux)', () => {
 
     // Real onboarding step markers
     const onboardingCandidates = [
-      'Welcome', // WelcomeStep heading
+      "Hi. I'm OpenHuman.", // WelcomeStep heading
+      "Let's Start", // WelcomeStep CTA
+      'Connect your Gmail', // SkillsStep heading
+      'Skip for Now', // SkillsStep CTA when no source is connected
       'Skip', // Onboarding defer button (top-right)
-      'Continue', // WelcomeStep CTA
+      'Continue', // Later onboarding CTAs
     ];
     const homeCandidates = ['Home', 'Skills', 'Conversations'];
 
@@ -231,62 +227,19 @@ describe('Login flow — complete with mock data (Linux)', () => {
   });
 
   it('walk through onboarding steps (if overlay is visible)', async () => {
-    // Check if we're on the WelcomeStep or any onboarding step
-    const onboardingVisible =
-      (await textExists('Welcome')) ||
-      (await textExists('Skip')) ||
-      (await textExists('Continue')) ||
-      (await textExists('Finish Setup'));
+    // Use the shared walkOnboarding helper which drives via
+    // data-testid="onboarding-next-button" — resilient to CTA label changes.
+    const beforeHash = await browser.execute(() => window.location.hash);
+    const alreadyOnHome = String(beforeHash).includes('/home');
 
-    if (!onboardingVisible) {
-      console.log('[LoginFlow] Onboarding overlay not visible — skipping step walkthrough');
+    if (alreadyOnHome) {
+      console.log('[LoginFlow] Already on /home — skipping onboarding walk');
       hadOnboardingWalkthrough = false;
       return;
     }
 
     hadOnboardingWalkthrough = true;
-
-    // Step 0: WelcomeStep — click "Continue"
-    if (await textExists('Welcome')) {
-      const clicked = await clickFirstMatch(['Continue'], 10_000);
-      console.log(`[LoginFlow] WelcomeStep: clicked "${clicked}"`);
-      await browser.pause(2_000);
-    }
-
-    // Step 1: SkillsStep — click "Skip for Now" (no skills connected in E2E)
-    {
-      const skillsVisible = await textExists('Connect Gmail');
-      if (skillsVisible) {
-        const clicked = await clickFirstMatch(['Skip for Now', 'Continue'], 10_000);
-        if (clicked) {
-          console.log(`[LoginFlow] SkillsStep: clicked "${clicked}"`);
-          await browser.pause(3_000);
-        }
-      }
-    }
-
-    // Step 2: ContextGatheringStep — intro gate. Heading is "Getting to know you"
-    // (pre-start) or "Reading your connected accounts" / "Context Ready" (post-start).
-    // We don't actually want the real LinkedIn enrichment pipeline to run in E2E
-    // (it would hit the Rust core), so prefer "Skip for now" when present.
-    // "Continue" covers both the no-Gmail branch (skipped stages render Continue
-    // immediately after Start) and the completed-pipeline final state.
-    {
-      const contextVisible =
-        (await textExists('Getting to know you')) ||
-        (await textExists('Reading your connected accounts')) ||
-        (await textExists('Context Ready'));
-      if (contextVisible) {
-        const clicked = await clickFirstMatch(
-          ['Skip for now', 'Continue', 'Start when ready'],
-          10_000
-        );
-        if (clicked) {
-          console.log(`[LoginFlow] ContextGatheringStep: clicked "${clicked}"`);
-          await browser.pause(3_000);
-        }
-      }
-    }
+    await walkOnboarding('[LoginFlow]');
   });
 
   // -----------------------------------------------------------------------
@@ -323,16 +276,7 @@ describe('Login flow — complete with mock data (Linux)', () => {
   });
 
   it('app navigated to Home page after onboarding', async () => {
-    const nameCandidates = [
-      'Test',
-      'Good morning',
-      'Good afternoon',
-      'Good evening',
-      'Message OpenHuman',
-      'Upgrade to Premium',
-    ];
-
-    const foundText = await waitForAnyText(nameCandidates, 15_000);
+    const foundText = await waitForHomePage(20_000);
 
     if (foundText) {
       console.log(`[LoginFlow] Home page confirmed: found "${foundText}"`);
@@ -402,7 +346,7 @@ describe('Login flow — complete with mock data (Linux)', () => {
 
     // Trigger bypass deep link (key=auth skips token consume)
     await triggerDeepLink(`openhuman://auth?token=${encodeURIComponent(bypassJwt)}&key=auth`);
-    await browser.pause(5_000);
+    await browser.pause(3_000);
 
     // Assert NO consume call was made (bypass skips it)
     const consumeCall = getRequestLog().find(
@@ -411,15 +355,11 @@ describe('Login flow — complete with mock data (Linux)', () => {
     expect(consumeCall).toBeUndefined();
     console.log('[LoginFlow] Bypass auth: no consume call (correct — token set directly)');
 
-    // Assert the app navigated to home (post-login UI marker)
-    const homeCandidates = [
-      'Good morning',
-      'Good afternoon',
-      'Good evening',
-      'Message OpenHuman',
-      'Home',
-    ];
-    const foundHome = await waitForAnyText(homeCandidates, 15_000);
+    // Clearing localStorage resets onboarding state — walk through it so the
+    // app reaches /home before we assert the home-page markers.
+    await walkOnboarding('[LoginFlow][bypass]');
+
+    const foundHome = await waitForHomePage(20_000);
     expect(foundHome).not.toBeNull();
     console.log(`[LoginFlow] Bypass auth: home reached with "${foundHome}"`);
 

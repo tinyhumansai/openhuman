@@ -132,6 +132,12 @@ pub enum AgentProgress {
         iteration: u32,
     },
 
+    /// The agent rewrote the per-thread task board. Emitted by the
+    /// `todo` tool (or `openhuman.todos_*` RPC) after the board has been persisted.
+    TaskBoardUpdated {
+        board: crate::openhuman::agent::task_board::TaskBoard,
+    },
+
     /// A chunk of visible assistant text arrived from the provider
     /// while the current iteration is still in flight.
     TextDelta {

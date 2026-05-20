@@ -3,58 +3,75 @@ use super::super::runtime::{process_channel_message, run_message_dispatch_loop};
 use super::super::{traits, Channel};
 use super::common::{use_real_agent_handler, NoopMemory, RecordingChannel, SlowProvider};
 use crate::openhuman::agent::bus::{mock_agent_run_turn, AgentTurnRequest, AgentTurnResponse};
-use crate::openhuman::providers;
+use crate::openhuman::inference::provider;
 use std::collections::HashMap;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 #[tokio::test]
 async fn message_dispatch_processes_messages_in_parallel() {
-    // Install a deterministic stub that takes 250ms per turn. Two messages
-    // should complete in ~250ms when processed concurrently (vs ~500ms
-    // sequentially), which keeps this test robust even if the real handler's
-    // latency profile changes.
-    let _bus_guard = mock_agent_run_turn(|_req: AgentTurnRequest| async move {
-        tokio::time::sleep(Duration::from_millis(250)).await;
-        Ok(AgentTurnResponse {
-            text: "echo: stub".to_string(),
-        })
+    // Install a deterministic stub that takes 250ms per turn and records
+    // the peak number of in-flight turns. This proves concurrency directly
+    // without relying on wall-clock thresholds that can wobble in CI.
+    let in_flight = Arc::new(AtomicUsize::new(0));
+    let peak_in_flight = Arc::new(AtomicUsize::new(0));
+    let _bus_guard = mock_agent_run_turn({
+        let in_flight = in_flight.clone();
+        let peak_in_flight = peak_in_flight.clone();
+        move |_req: AgentTurnRequest| {
+            let in_flight = in_flight.clone();
+            let peak_in_flight = peak_in_flight.clone();
+            async move {
+                let current = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+                peak_in_flight.fetch_max(current, Ordering::SeqCst);
+                tokio::time::sleep(Duration::from_millis(250)).await;
+                in_flight.fetch_sub(1, Ordering::SeqCst);
+                Ok(AgentTurnResponse {
+                    text: "echo: stub".to_string(),
+                })
+            }
+        }
     })
     .await;
 
-    let channel_impl = Arc::new(RecordingChannel::default());
-    let channel: Arc<dyn Channel> = channel_impl.clone();
+    let build_runtime = || {
+        let channel_impl = Arc::new(RecordingChannel::default());
+        let channel: Arc<dyn Channel> = channel_impl.clone();
 
-    let mut channels_by_name = HashMap::new();
-    channels_by_name.insert(channel.name().to_string(), channel);
+        let mut channels_by_name = HashMap::new();
+        channels_by_name.insert(channel.name().to_string(), channel);
 
-    let runtime_ctx = Arc::new(ChannelRuntimeContext {
-        channels_by_name: Arc::new(channels_by_name),
-        provider: Arc::new(SlowProvider {
-            delay: Duration::from_millis(5),
-        }),
-        default_provider: Arc::new("test-provider".to_string()),
-        memory: Arc::new(NoopMemory),
-        tools_registry: Arc::new(vec![]),
-        system_prompt: Arc::new("test-system-prompt".to_string()),
-        model: Arc::new("test-model".to_string()),
-        temperature: 0.0,
-        auto_save_memory: false,
-        max_tool_iterations: 10,
-        min_relevance_score: 0.0,
-        conversation_histories: Arc::new(Mutex::new(HashMap::new())),
-        provider_cache: Arc::new(Mutex::new(HashMap::new())),
-        route_overrides: Arc::new(Mutex::new(HashMap::new())),
-        api_url: None,
-        inference_url: None,
-        reliability: Arc::new(crate::openhuman::config::ReliabilityConfig::default()),
-        provider_runtime_options: providers::ProviderRuntimeOptions::default(),
-        workspace_dir: Arc::new(std::env::temp_dir()),
-        message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
-        multimodal: crate::openhuman::config::MultimodalConfig::default(),
-    });
+        let runtime_ctx = Arc::new(ChannelRuntimeContext {
+            channels_by_name: Arc::new(channels_by_name),
+            provider: Arc::new(SlowProvider {
+                delay: Duration::from_millis(5),
+            }),
+            default_provider: Arc::new("test-provider".to_string()),
+            memory: Arc::new(NoopMemory),
+            tools_registry: Arc::new(vec![]),
+            system_prompt: Arc::new("test-system-prompt".to_string()),
+            model: Arc::new("test-model".to_string()),
+            temperature: 0.0,
+            auto_save_memory: false,
+            max_tool_iterations: 10,
+            min_relevance_score: 0.0,
+            conversation_histories: Arc::new(Mutex::new(HashMap::new())),
+            provider_cache: Arc::new(Mutex::new(HashMap::new())),
+            route_overrides: Arc::new(Mutex::new(HashMap::new())),
+            api_url: None,
+            inference_url: None,
+            reliability: Arc::new(crate::openhuman::config::ReliabilityConfig::default()),
+            provider_runtime_options: provider::ProviderRuntimeOptions::default(),
+            workspace_dir: Arc::new(std::env::temp_dir()),
+            message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
+            multimodal: crate::openhuman::config::MultimodalConfig::default(),
+        });
 
+        (channel_impl, runtime_ctx)
+    };
+
+    let (parallel_channel, parallel_ctx) = build_runtime();
     let (tx, rx) = tokio::sync::mpsc::channel::<traits::ChannelMessage>(4);
     tx.send(traits::ChannelMessage {
         id: "1".to_string(),
@@ -80,17 +97,10 @@ async fn message_dispatch_processes_messages_in_parallel() {
     .unwrap();
     drop(tx);
 
-    let started = Instant::now();
-    run_message_dispatch_loop(rx, runtime_ctx, 2).await;
-    let elapsed = started.elapsed();
+    run_message_dispatch_loop(rx, parallel_ctx, 2).await;
+    assert_eq!(peak_in_flight.load(Ordering::SeqCst), 2);
 
-    assert!(
-        elapsed < Duration::from_millis(430),
-        "expected parallel dispatch (<430ms), got {:?}",
-        elapsed
-    );
-
-    let sent_messages = channel_impl.sent_messages.lock().await;
+    let sent_messages = parallel_channel.sent_messages.lock().await;
     assert_eq!(sent_messages.len(), 2);
 }
 
@@ -123,7 +133,7 @@ async fn process_channel_message_cancels_scoped_typing_task() {
         api_url: None,
         inference_url: None,
         reliability: Arc::new(crate::openhuman::config::ReliabilityConfig::default()),
-        provider_runtime_options: providers::ProviderRuntimeOptions::default(),
+        provider_runtime_options: provider::ProviderRuntimeOptions::default(),
         workspace_dir: Arc::new(std::env::temp_dir()),
         message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
         multimodal: crate::openhuman::config::MultimodalConfig::default(),
@@ -211,7 +221,7 @@ async fn dispatch_routes_through_agent_run_turn_bus_handler() {
         api_url: None,
         inference_url: None,
         reliability: Arc::new(crate::openhuman::config::ReliabilityConfig::default()),
-        provider_runtime_options: providers::ProviderRuntimeOptions::default(),
+        provider_runtime_options: provider::ProviderRuntimeOptions::default(),
         workspace_dir: Arc::new(std::env::temp_dir()),
         message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
         multimodal: crate::openhuman::config::MultimodalConfig::default(),

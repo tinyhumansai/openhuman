@@ -16,6 +16,27 @@ struct ModelRouteUpdate {
 }
 
 #[derive(Debug, Deserialize)]
+struct CloudProviderUpdate {
+    /// Opaque stable id. Empty / missing → server generates a new id.
+    id: Option<String>,
+    /// Routing slug, e.g. "openai", "my-deepseek". Must be unique per config.
+    slug: String,
+    /// Human-readable label.
+    #[serde(default)]
+    label: Option<String>,
+    endpoint: String,
+    /// Auth style: "bearer" | "anthropic" | "openhuman_jwt" | "none".
+    #[serde(default)]
+    auth_style: Option<String>,
+    /// Legacy field — tolerated on read for back-compat but not required.
+    #[serde(rename = "type", default)]
+    legacy_type: Option<String>,
+    /// Legacy field — tolerated on read.
+    #[serde(default)]
+    default_model: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct ModelSettingsUpdate {
     /// OpenHuman product backend URL. Used for auth, billing, voice, and
     /// every non-inference HTTP call. Almost always left blank so it
@@ -38,6 +59,20 @@ struct ModelSettingsUpdate {
     /// picks per-task models on its own). Omit to leave existing routes
     /// untouched.
     model_routes: Option<Vec<ModelRouteUpdate>>,
+    /// When present, REPLACES `config.cloud_providers` wholesale. The keys
+    /// themselves live in `auth-profiles.json` via
+    /// `cloud_provider_set_key` — they are NOT carried here.
+    cloud_providers: Option<Vec<CloudProviderUpdate>>,
+    primary_cloud: Option<String>,
+    chat_provider: Option<String>,
+    reasoning_provider: Option<String>,
+    agentic_provider: Option<String>,
+    coding_provider: Option<String>,
+    memory_provider: Option<String>,
+    embeddings_provider: Option<String>,
+    heartbeat_provider: Option<String>,
+    learning_provider: Option<String>,
+    subconscious_provider: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -89,6 +124,10 @@ struct MeetSettingsUpdate {
 #[derive(Debug, Deserialize)]
 struct LocalAiSettingsUpdate {
     runtime_enabled: Option<bool>,
+    /// MVP opt-in marker. Tied to `runtime_enabled` from the unified AI
+    /// panel toggle (both flip on enable, both flip off on disable) so
+    /// the user gets local AI working with a single click instead of
+    /// having to also apply a tier preset.
     opt_in_confirmed: Option<bool>,
     provider: Option<String>,
     base_url: Option<String>,
@@ -169,6 +208,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("get_meet_settings"),
         schemas("agent_server_status"),
         schemas("reset_local_data"),
+        schemas("get_data_paths"),
         schemas("get_onboarding_completed"),
         schemas("set_onboarding_completed"),
         schemas("get_dictation_settings"),
@@ -257,6 +297,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("reset_local_data"),
             handler: handle_reset_local_data,
+        },
+        RegisteredController {
+            schema: schemas("get_data_paths"),
+            handler: handle_get_data_paths,
         },
         RegisteredController {
             schema: schemas("get_onboarding_completed"),
@@ -372,6 +416,22 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     comment: "Optional list of {hint, model} pairs mapping task hints (reasoning, agentic, coding, summarization) to provider-specific model ids. Replaces config.model_routes wholesale; send [] to clear (e.g. when switching back to the OpenHuman built-in router).",
                     required: false,
                 },
+                FieldSchema {
+                    name: "cloud_providers",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Json)),
+                    comment: "Optional list of cloud provider entries {id, slug, label, endpoint, auth_style}. API keys are stored separately via cloud_provider_set_key. Replaces config.cloud_providers wholesale.",
+                    required: false,
+                },
+                optional_string("primary_cloud", "id of the cloud_providers entry used when a workload routes to 'cloud'. Empty string clears."),
+                optional_string("chat_provider", "Provider string for direct conversational chat workloads."),
+                optional_string("reasoning_provider", "Provider string for the main reasoning workload (e.g. 'cloud', 'ollama:llama3.1:8b', 'openai:gpt-4o')."),
+                optional_string("agentic_provider", "Provider string for sub-agent / tool-loop workloads."),
+                optional_string("coding_provider", "Provider string for code-generation workloads."),
+                optional_string("memory_provider", "Provider string for memory-tree extract + summarise."),
+                optional_string("embeddings_provider", "Provider string for embedding generation."),
+                optional_string("heartbeat_provider", "Provider string for the heartbeat background-reasoning loop."),
+                optional_string("learning_provider", "Provider string for learning / reflection passes."),
+                optional_string("subconscious_provider", "Provider string for subconscious evaluation."),
             ],
             outputs: vec![json_output("snapshot", "Updated config snapshot.")],
         },
@@ -471,7 +531,9 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 ),
                 optional_bool(
                     "opt_in_confirmed",
-                    "Explicit local AI opt-in marker required by bootstrap.",
+                    "MVP opt-in marker. Bootstrap hard-overrides to disabled when this is false, \
+                     regardless of `runtime_enabled`. Set in tandem with `runtime_enabled` from the \
+                     unified AI panel.",
                 ),
                 optional_string(
                     "provider",
@@ -645,6 +707,17 @@ pub fn schemas(function: &str) -> ControllerSchema {
             inputs: vec![],
             outputs: vec![json_output("result", "Reset result with removed paths.")],
         },
+        "get_data_paths" => ControllerSchema {
+            namespace: "config",
+            function: "get_data_paths",
+            description:
+                "Resolve the OpenHuman data directories (current workspace, default ~/.openhuman, active workspace marker) that reset_local_data would remove. Read-only — performs no filesystem changes.",
+            inputs: vec![],
+            outputs: vec![json_output(
+                "paths",
+                "Resolved data paths: current_openhuman_dir, default_openhuman_dir, active_workspace_marker_path.",
+            )],
+        },
         "get_onboarding_completed" => ControllerSchema {
             namespace: "config",
             function: "get_onboarding_completed",
@@ -802,41 +875,13 @@ fn handle_get_config(_params: Map<String, Value>) -> ControllerFuture {
 fn handle_get_client_config(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         log::debug!("[config][rpc] get_client_config enter");
-        let config = match config_rpc::load_config_with_timeout().await {
-            Ok(c) => c,
+        match config_rpc::load_and_get_client_config_snapshot().await {
+            Ok(snapshot) => to_json(snapshot),
             Err(err) => {
                 log::warn!("[config][rpc] get_client_config load failed: {err}");
-                return Err(err);
+                Err(err)
             }
-        };
-        let app_version =
-            std::env::var("OPENHUMAN_APP_VERSION").unwrap_or_else(|_| "unknown".to_string());
-        let api_key_set = config
-            .api_key
-            .as_deref()
-            .map(|k| !k.trim().is_empty())
-            .unwrap_or(false);
-        let model_routes: Vec<serde_json::Value> = config
-            .model_routes
-            .iter()
-            .map(|r| serde_json::json!({ "hint": r.hint, "model": r.model }))
-            .collect();
-        log::debug!(
-            "[config][rpc] get_client_config ok api_key_set={} model_routes_count={}",
-            api_key_set,
-            model_routes.len()
-        );
-        to_json(RpcOutcome::new(
-            serde_json::json!({
-                "api_url": config.api_url,
-                "inference_url": config.inference_url,
-                "default_model": config.default_model,
-                "app_version": app_version,
-                "api_key_set": api_key_set,
-                "model_routes": model_routes,
-            }),
-            vec!["client config read".to_string()],
-        ))
+        }
     })
 }
 
@@ -858,6 +903,80 @@ fn handle_update_model_settings(params: Map<String, Value>) -> ControllerFuture 
                     })
                     .collect()
             }),
+            cloud_providers: update
+                .cloud_providers
+                .map(|entries| {
+                    use crate::openhuman::config::schema::cloud_providers::{
+                        generate_provider_id, is_slug_reserved, migrate_legacy_fields, AuthStyle,
+                        CloudProviderCreds,
+                    };
+                    entries
+                        .into_iter()
+                        .map(|e| {
+                            let slug = e.slug.trim().to_string();
+                            if slug.is_empty() {
+                                return Err(
+                                    "cloud provider slug must not be empty".to_string()
+                                );
+                            }
+                            if is_slug_reserved(&slug) {
+                                return Err(format!(
+                                    "slug '{}' is reserved and cannot be used for a custom provider",
+                                    slug
+                                ));
+                            }
+                            let auth_style = match e
+                                .auth_style
+                                .as_deref()
+                                .unwrap_or("bearer")
+                                .to_ascii_lowercase()
+                                .as_str()
+                            {
+                                "bearer" => AuthStyle::Bearer,
+                                "anthropic" => AuthStyle::Anthropic,
+                                "openhuman_jwt" | "openhumanjwt" => AuthStyle::OpenhumanJwt,
+                                "none" => AuthStyle::None,
+                                other => {
+                                    return Err(format!(
+                                        "unknown auth_style '{}'; valid: bearer, anthropic, openhuman_jwt, none",
+                                        other
+                                    ))
+                                }
+                            };
+                            let id = e
+                                .id
+                                .filter(|s| !s.trim().is_empty())
+                                .unwrap_or_else(|| generate_provider_id(&slug));
+                            let label = e
+                                .label
+                                .filter(|s| !s.trim().is_empty())
+                                .unwrap_or_else(|| slug.clone());
+                            let mut entry = CloudProviderCreds {
+                                id,
+                                slug,
+                                label,
+                                endpoint: e.endpoint,
+                                auth_style,
+                                legacy_type: e.legacy_type,
+                                default_model: e.default_model,
+                            };
+                            // Apply any remaining legacy-field migration.
+                            migrate_legacy_fields(&mut entry);
+                            Ok(entry)
+                        })
+                        .collect::<Result<Vec<_>, String>>()
+                })
+                .transpose()?,
+            primary_cloud: update.primary_cloud,
+            chat_provider: update.chat_provider,
+            reasoning_provider: update.reasoning_provider,
+            agentic_provider: update.agentic_provider,
+            coding_provider: update.coding_provider,
+            memory_provider: update.memory_provider,
+            embeddings_provider: update.embeddings_provider,
+            heartbeat_provider: update.heartbeat_provider,
+            learning_provider: update.learning_provider,
+            subconscious_provider: update.subconscious_provider,
         };
         to_json(config_rpc::load_and_apply_model_settings(patch).await?)
     })
@@ -1062,6 +1181,22 @@ fn handle_agent_server_status(_params: Map<String, Value>) -> ControllerFuture {
 
 fn handle_reset_local_data(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async { to_json(config_rpc::reset_local_data().await?) })
+}
+
+fn handle_get_data_paths(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async {
+        log::debug!("[config][rpc] get_data_paths enter");
+        match config_rpc::get_data_paths().await {
+            Ok(outcome) => {
+                log::debug!("[config][rpc] get_data_paths ok");
+                to_json(outcome)
+            }
+            Err(err) => {
+                log::warn!("[config][rpc] get_data_paths fail: {err}");
+                Err(err)
+            }
+        }
+    })
 }
 
 fn handle_get_onboarding_completed(_params: Map<String, Value>) -> ControllerFuture {

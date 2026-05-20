@@ -37,6 +37,23 @@ pub(super) fn handle_sio_event(
         event_name,
         payload.len()
     );
+    // CodeRabbit #3250222027: even at debug level, raw bodies can leak
+    // PII / secrets / tokens. Log structural metadata (top-level shape +
+    // byte length) but never the raw text.
+    let payload_shape = match &data {
+        serde_json::Value::Object(map) => format!("object_keys={}", map.len()),
+        serde_json::Value::Array(arr) => format!("array_len={}", arr.len()),
+        serde_json::Value::String(_) => "string".to_string(),
+        serde_json::Value::Number(_) => "number".to_string(),
+        serde_json::Value::Bool(_) => "bool".to_string(),
+        serde_json::Value::Null => "null".to_string(),
+    };
+    log::debug!(
+        "[socket] event payload: name={} data_bytes={} shape={} preview_omitted=true",
+        event_name,
+        payload.len(),
+        payload_shape
+    );
     log::debug!("[socket] event dispatch: name={}", event_name);
 
     match event_name {
@@ -328,6 +345,33 @@ mod tests {
         let (tx, _rx) = mpsc::unbounded_channel::<String>();
         handle_sio_event("error", json!({"msg":"oops"}), &tx, &shared);
         assert_eq!(*shared.status.read(), ConnectionStatus::Error);
+    }
+
+    #[test]
+    fn handle_sio_event_debug_truncation_respects_utf8_boundary() {
+        // Serialized JSON must be >= 500 bytes with a multi-byte codepoint
+        // straddling byte 500 — mirrors OPENHUMAN-TAURI-KC (Cyrillic at 499..501).
+        let inner = format!("{}н", "a".repeat(498));
+        let payload_json = serde_json::Value::String(inner.clone()).to_string();
+        assert!(
+            payload_json.len() >= 500,
+            "fixture too short: {} bytes",
+            payload_json.len()
+        );
+        assert!(
+            !payload_json.is_char_boundary(500),
+            "fixture must place byte 500 inside a multi-byte character"
+        );
+
+        let shared = make_shared();
+        let (tx, _rx) = mpsc::unbounded_channel::<String>();
+        handle_sio_event(
+            "weird.unrelated.event",
+            serde_json::Value::String(inner),
+            &tx,
+            &shared,
+        );
+        assert_eq!(*shared.status.read(), ConnectionStatus::Disconnected);
     }
 
     #[test]

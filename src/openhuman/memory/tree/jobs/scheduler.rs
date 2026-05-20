@@ -6,7 +6,7 @@
 use std::time::Duration;
 
 use anyhow::Result;
-use chrono::{Datelike, Duration as ChronoDuration, NaiveDate, TimeZone, Utc};
+use chrono::{Datelike, Duration as ChronoDuration, NaiveDate, TimeZone, Timelike, Utc};
 
 use crate::openhuman::config::Config;
 use crate::openhuman::memory::tree::jobs::store;
@@ -19,15 +19,55 @@ static STARTED: std::sync::Once = std::sync::Once::new();
 /// see — not `Config::default()`.
 pub fn start(config: Config) {
     STARTED.call_once(|| {
+        // Daily midnight loop: digest + flush_stale.
+        let cfg1 = config.clone();
         tokio::spawn(async move {
             loop {
-                if let Err(err) = enqueue_daily_jobs(&config) {
+                if let Err(err) = enqueue_daily_jobs(&cfg1) {
                     log::warn!("[memory_tree::jobs] scheduler enqueue failed: {err:#}");
                 }
                 tokio::time::sleep(next_sleep_duration()).await;
             }
         });
+
+        // Periodic flush_stale loop (every 3 h) so L0 buffers seal
+        // promptly even for low-volume sources.
+        let cfg2 = config.clone();
+        tokio::spawn(async move {
+            // Fire once on startup so new installs & restarts don't wait
+            // up to 3 h for the first seal window.
+            enqueue_flush_stale(&cfg2);
+            loop {
+                tokio::time::sleep(Duration::from_secs(3 * 60 * 60)).await;
+                enqueue_flush_stale(&cfg2);
+            }
+        });
     });
+}
+
+fn enqueue_flush_stale(config: &Config) {
+    // Take a single `Utc::now()` reading and derive both the date and
+    // 3-hour block from it so the dedupe key can't disagree with itself
+    // across a 3-hour boundary.
+    let now = Utc::now();
+    let today_iso = now.date_naive().format("%Y-%m-%d").to_string();
+    let hour_block = now.hour() / 3;
+    match NewJob::flush_stale(&FlushStalePayload::default(), &today_iso, hour_block) {
+        Ok(new_job) => {
+            match store::enqueue(config, &new_job) {
+                Ok(Some(_)) => {
+                    super::worker::wake_workers();
+                }
+                Ok(None) => {} // dedupe-suppressed — OK
+                Err(err) => {
+                    log::warn!("[memory_tree::jobs] periodic flush_stale enqueue failed: {err:#}");
+                }
+            }
+        }
+        Err(err) => {
+            log::warn!("[memory_tree::jobs] flush_stale job build failed: {err:#}");
+        }
+    }
 }
 
 fn enqueue_daily_jobs(config: &Config) -> anyhow::Result<()> {
@@ -47,9 +87,10 @@ fn enqueue_daily_jobs(config: &Config) -> anyhow::Result<()> {
     }
 
     let today_iso = now.date_naive().format("%Y-%m-%d").to_string();
+    let hour_block = now.hour() / 3;
     if store::enqueue(
         config,
-        &NewJob::flush_stale(&FlushStalePayload::default(), &today_iso)?,
+        &NewJob::flush_stale(&FlushStalePayload::default(), &today_iso, hour_block)?,
     )?
     .is_some()
     {

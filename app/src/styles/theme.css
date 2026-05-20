@@ -17,7 +17,8 @@
    Root Variables & Theme Configuration
    ============================================ */
 :root {
-  /* Semantic color tokens */
+  /* Semantic color tokens — these initial defaults are overridden by the
+     Light Mode block at the bottom of this file. */
   --color-background: theme('colors.canvas.50');
   --color-surface: theme('colors.white');
   --color-surface-elevated: theme('colors.canvas.100');
@@ -568,4 +569,171 @@ body::before {
   --color-text-secondary: #525252;
   --color-text-tertiary: #737373;
   --color-text-muted: #a3a3a3;
+
+  --color-hover: #eff6ff;
+  --color-active: #dbeafe;
+  --color-focus: #2f6ef4;
+
+  --color-success: #34c759;
+  --color-warning: #e8a728;
+  --color-error: #ef4444;
+  --color-info: #2f6ef4;
+
+  /* Shadow tint used by elevated surfaces. Dark mode replaces this with a
+     softer alpha so layered cards don't turn into black holes. */
+  --shadow-tint: 0, 0, 0;
+}
+
+/* ============================================
+   Dark Mode — applied when <html class="dark">
+   ============================================ */
+:root.dark {
+  /* Page bg is darker than card/surface so elevated content (cards, menus,
+     panels) stands out against it. neutral-950 (#0a0a0a) for the page,
+     neutral-900 (#171717) for cards gives ~9% lightness delta — visible
+     but calm. */
+  --color-background: #000000;
+  --color-surface: #171717;
+  --color-surface-elevated: #1f1f1f;
+  --color-border: #2d2d2d;
+  --color-border-subtle: #1f1f1f;
+
+  --color-text-primary: #f5f5f5;
+  --color-text-secondary: #a3a3a3;
+  --color-text-tertiary: #737373;
+  --color-text-muted: #525252;
+
+  --color-hover: #1e293b;
+  --color-active: #1e3a8a;
+  --color-focus: #60a5fa;
+
+  --color-success: #4ade80;
+  --color-warning: #fbbf24;
+  --color-error: #f87171;
+  --color-info: #60a5fa;
+
+  --shadow-tint: 0, 0, 0;
+}
+
+/* Dark-mode overrides for component classes that hardcode light colors.
+   Keep these scoped — the Tailwind utility classes used in TSX still need
+   per-call `dark:` variants. This block only fixes the .btn / .card / .input
+   component shortcuts declared above. */
+:root.dark .card-elevated,
+:root.dark .card-interactive,
+:root.dark .market-card,
+:root.dark .chart-container {
+  background: var(--color-surface);
+  border-color: var(--color-border);
+  color: var(--color-text-primary);
+}
+
+:root.dark .card-interactive:hover {
+  background: var(--color-hover);
+  border-color: var(--color-focus);
+}
+
+:root.dark .input-elevated {
+  background: var(--color-surface);
+  border-color: var(--color-border);
+  color: var(--color-text-primary);
+}
+
+:root.dark .input-elevated::placeholder {
+  color: var(--color-text-muted);
+}
+
+:root.dark .input-elevated:focus {
+  border-color: var(--color-focus);
+  box-shadow:
+    0 0 0 3px rgba(96, 165, 250, 0.2),
+    0 1px 2px rgba(0, 0, 0, 0.4);
+}
+
+:root.dark .nav-item-premium {
+  color: var(--color-text-secondary);
+}
+
+:root.dark .nav-item-premium:hover {
+  color: var(--color-text-primary);
+  background: var(--color-hover);
+}
+
+:root.dark .nav-item-premium.active {
+  color: var(--color-focus);
+  background: rgba(96, 165, 250, 0.12);
+}
+
+:root.dark .nav-item-premium.active::before {
+  background: var(--color-focus);
+}
+
+:root.dark .btn-glass {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.1);
+  color: var(--color-text-primary);
+}
+
+:root.dark .btn-glass:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+:root.dark .btn-outline {
+  border-color: var(--color-border);
+  color: var(--color-text-primary);
+}
+
+:root.dark .btn-outline::before {
+  background: rgba(96, 165, 250, 0.1);
+}
+
+:root.dark .btn-outline:hover {
+  border-color: var(--color-focus);
+  color: var(--color-focus);
+}
+
+:root.dark .skeleton {
+  background: #262626;
+}
+
+:root.dark .skeleton::after {
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.06) 50%,
+    transparent 100%
+  );
+}
+
+:root.dark .scrollbar-elegant {
+  scrollbar-color: #404040 transparent;
+}
+
+:root.dark .scrollbar-elegant::-webkit-scrollbar-thumb {
+  background: #404040;
+}
+
+:root.dark .scrollbar-elegant::-webkit-scrollbar-thumb:hover {
+  background: #525252;
+}
+
+:root.dark .chart-grid {
+  background-image:
+    linear-gradient(0deg, #262626 1px, transparent 1px),
+    linear-gradient(90deg, #262626 1px, transparent 1px);
+}
+
+:root.dark .glass-surface {
+  background: rgba(23, 23, 23, 0.7);
+  border-color: rgba(255, 255, 255, 0.08);
+  box-shadow:
+    0 8px 32px rgba(0, 0, 0, 0.4),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+}
+
+/* Soften the noise overlay in dark mode — at full strength on a near-black
+   background the grain looks like dead pixels. */
+:root.dark body::before {
+  opacity: 0.15;
 }

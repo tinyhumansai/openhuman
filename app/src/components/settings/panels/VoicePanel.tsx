@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 
+import { useT } from '../../../lib/i18n/I18nContext';
 import {
   installPiper,
   installWhisper,
@@ -41,7 +42,14 @@ const PIPER_VOICE_PRESETS: ReadonlyArray<{ id: string; label: string }> = [
   { id: 'en_GB-northern_english_male-medium', label: 'GB · Northern English (male)' },
 ];
 
-const VoicePanel = () => {
+interface VoicePanelProps {
+  /** When true, render without the SettingsHeader chrome (used when embedded
+   *  inside the onboarding custom wizard). */
+  embedded?: boolean;
+}
+
+const VoicePanel = ({ embedded = false }: VoicePanelProps = {}) => {
+  const { t } = useT();
   const { navigateBack, navigateToSettings, breadcrumbs } = useSettingsNavigation();
   const [settings, setSettings] = useState<VoiceServerSettings | null>(null);
   const [savedSettings, setSavedSettings] = useState<VoiceServerSettings | null>(null);
@@ -203,9 +211,9 @@ const VoicePanel = () => {
           activation_mode: settings.activation_mode,
           skip_cleanup: settings.skip_cleanup,
         });
-        setNotice('Voice server restarted with the new settings.');
+        setNotice(t('voice.serverRestarted'));
       } else {
-        setNotice('Voice settings saved.');
+        setNotice(t('voice.settingsSaved'));
       }
 
       await loadData(true);
@@ -238,7 +246,7 @@ const VoicePanel = () => {
         activation_mode: settings.activation_mode,
         skip_cleanup: settings.skip_cleanup,
       });
-      setNotice('Voice server started.');
+      setNotice(t('voice.serverStarted'));
       await loadData(true);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to start voice server';
@@ -254,7 +262,7 @@ const VoicePanel = () => {
     setNotice(null);
     try {
       await openhumanVoiceServerStop();
-      setNotice('Voice server stopped.');
+      setNotice(t('voice.serverStopped'));
       await loadData(true);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to stop voice server';
@@ -306,6 +314,11 @@ const VoicePanel = () => {
     setTtsProvider(next);
     void persistProviders({ tts_provider: next });
   };
+
+  // Mascot voice picker moved to MascotPanel — see
+  // `app/src/components/settings/panels/MascotPanel.tsx`. The voice id,
+  // gender, and locale-default toggle all live in `mascotSlice`; this
+  // panel only handles Piper / Whisper / dictation now.
 
   /**
    * Map an install status snapshot to a button label. Single source of
@@ -383,38 +396,45 @@ const VoicePanel = () => {
 
   return (
     <div>
-      <SettingsHeader
-        title="Voice"
-        showBackButton={true}
-        onBack={navigateBack}
-        breadcrumbs={breadcrumbs}
-      />
+      {!embedded && (
+        <SettingsHeader
+          title={t('voice.title')}
+          showBackButton={true}
+          onBack={navigateBack}
+          breadcrumbs={breadcrumbs}
+        />
+      )}
 
-      <div className="p-4 space-y-4">
+      <div className={embedded ? 'space-y-4' : 'p-4 space-y-4'}>
         <section className="space-y-3">
           <div
-            className="bg-stone-50 rounded-lg border border-stone-200 p-4 space-y-4"
+            className="bg-stone-50 dark:bg-neutral-800/60 rounded-lg border border-stone-200 dark:border-neutral-800 p-4 space-y-4"
             data-testid="voice-providers-section">
             <div>
-              <h3 className="text-sm font-semibold text-stone-900">Voice Providers</h3>
-              <p className="text-xs text-stone-500 mt-1">
+              <h3 className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
+                Voice Providers
+              </h3>
+              <p className="text-xs text-stone-500 dark:text-neutral-400 mt-1">
                 Choose where transcription and synthesis run. Use the Install locally buttons to
-                download the binaries and models into your workspace — no manual{' '}
-                <code>WHISPER_BIN</code> or <code>PIPER_BIN</code> setup required.
+                download the binaries and models into your workspace. Local providers can be saved
+                before the install finishes — no manual <code>WHISPER_BIN</code> or{' '}
+                <code>PIPER_BIN</code> setup required.
               </p>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <label className="block space-y-1">
-                <span className="text-xs font-medium text-stone-600">Speech-to-Text Provider</span>
+                <span className="text-xs font-medium text-stone-600 dark:text-neutral-300">
+                  Speech-to-Text Provider
+                </span>
                 <select
                   aria-label="STT provider"
                   data-testid="stt-provider-select"
                   value={sttProvider || 'cloud'}
                   disabled={isSavingProviders}
                   onChange={e => onSttProviderChange(e.target.value as 'cloud' | 'whisper')}
-                  className="w-full rounded-md border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 focus:outline-none focus:ring-1 focus:ring-primary-400">
+                  className="w-full rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 focus:outline-none focus:ring-1 focus:ring-primary-400">
                   <option value="cloud">Cloud (Whisper proxy)</option>
-                  <option value="whisper" disabled={!whisperReady}>
+                  <option value="whisper">
                     Local Whisper{whisperReady ? '' : ' (install required)'}
                   </option>
                 </select>
@@ -440,10 +460,10 @@ const VoicePanel = () => {
                     data-testid="whisper-install-state"
                     className={`text-[11px] ${
                       whisperReady
-                        ? 'text-emerald-600'
+                        ? 'text-emerald-600 dark:text-emerald-300'
                         : whisperInstall?.state === 'error'
-                          ? 'text-red-600'
-                          : 'text-stone-500'
+                          ? 'text-red-600 dark:text-red-300'
+                          : 'text-stone-500 dark:text-neutral-400'
                     }`}>
                     {whisperInstall?.state === 'installing' && whisperInstall.stage
                       ? whisperInstall.stage
@@ -457,7 +477,9 @@ const VoicePanel = () => {
               </label>
               {sttProvider === 'whisper' && (
                 <label className="block space-y-1">
-                  <span className="text-xs font-medium text-stone-600">Whisper Model</span>
+                  <span className="text-xs font-medium text-stone-600 dark:text-neutral-300">
+                    Whisper Model
+                  </span>
                   <select
                     aria-label="Whisper model"
                     data-testid="stt-model-select"
@@ -479,7 +501,7 @@ const VoicePanel = () => {
                         )
                       );
                     }}
-                    className="w-full rounded-md border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 focus:outline-none focus:ring-1 focus:ring-primary-400">
+                    className="w-full rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 focus:outline-none focus:ring-1 focus:ring-primary-400">
                     <option value="tiny">Tiny (39 MB, fastest)</option>
                     <option value="base">Base (74 MB)</option>
                     <option value="small">Small (244 MB)</option>
@@ -491,16 +513,18 @@ const VoicePanel = () => {
                 </label>
               )}
               <label className="block space-y-1">
-                <span className="text-xs font-medium text-stone-600">Text-to-Speech Provider</span>
+                <span className="text-xs font-medium text-stone-600 dark:text-neutral-300">
+                  Text-to-Speech Provider
+                </span>
                 <select
                   aria-label="TTS provider"
                   data-testid="tts-provider-select"
                   value={ttsProvider || 'cloud'}
                   disabled={isSavingProviders}
                   onChange={e => onTtsProviderChange(e.target.value as 'cloud' | 'piper')}
-                  className="w-full rounded-md border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 focus:outline-none focus:ring-1 focus:ring-primary-400">
+                  className="w-full rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 focus:outline-none focus:ring-1 focus:ring-primary-400">
                   <option value="cloud">Cloud (ElevenLabs proxy)</option>
-                  <option value="piper" disabled={!piperReady}>
+                  <option value="piper">
                     Local Piper{piperReady ? '' : ' (install required)'}
                   </option>
                 </select>
@@ -526,10 +550,10 @@ const VoicePanel = () => {
                     data-testid="piper-install-state"
                     className={`text-[11px] ${
                       piperReady
-                        ? 'text-emerald-600'
+                        ? 'text-emerald-600 dark:text-emerald-300'
                         : piperInstall?.state === 'error'
-                          ? 'text-red-600'
-                          : 'text-stone-500'
+                          ? 'text-red-600 dark:text-red-300'
+                          : 'text-stone-500 dark:text-neutral-400'
                     }`}>
                     {piperInstall?.state === 'installing' && piperInstall.stage
                       ? piperInstall.stage
@@ -543,7 +567,9 @@ const VoicePanel = () => {
               </label>
               {ttsProvider === 'piper' && (
                 <label className="block space-y-1">
-                  <span className="text-xs font-medium text-stone-600">Piper Voice</span>
+                  <span className="text-xs font-medium text-stone-600 dark:text-neutral-300">
+                    Piper Voice
+                  </span>
                   <select
                     aria-label="Piper voice"
                     data-testid="tts-voice-select"
@@ -570,7 +596,7 @@ const VoicePanel = () => {
                         )
                       );
                     }}
-                    className="w-full rounded-md border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 focus:outline-none focus:ring-1 focus:ring-primary-400">
+                    className="w-full rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 focus:outline-none focus:ring-1 focus:ring-primary-400">
                     {PIPER_VOICE_PRESETS.map(v => (
                       <option key={v.id} value={v.id}>
                         {v.label}
@@ -597,10 +623,10 @@ const VoicePanel = () => {
                           );
                         }
                       }}
-                      className="mt-1 w-full rounded-md border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 focus:outline-none focus:ring-1 focus:ring-primary-400"
+                      className="mt-1 w-full rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 placeholder:text-stone-400 dark:placeholder:text-neutral-500 dark:text-neutral-500 dark:placeholder:text-neutral-500 focus:outline-none focus:ring-1 focus:ring-primary-400"
                     />
                   )}
-                  <p className="text-[11px] text-stone-500 mt-0.5">
+                  <p className="text-[11px] text-stone-500 dark:text-neutral-400 mt-0.5">
                     Voices come from{' '}
                     <code className="font-mono">huggingface.co/rhasspy/piper-voices</code>.
                     Switching voices may require an Install/Reinstall click to download the new{' '}
@@ -612,68 +638,101 @@ const VoicePanel = () => {
           </div>
         </section>
 
+        {/* Mascot voice picker now lives in Mascot settings. Link
+            kept here so users hunting in Voice settings can find it. */}
+        {ttsProvider !== 'piper' && (
+          <section className="space-y-3" data-testid="mascot-voice-link">
+            <div className="bg-stone-50 dark:bg-neutral-800/60 rounded-lg border border-stone-200 dark:border-neutral-800 p-4">
+              <h3 className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
+                Mascot Voice
+              </h3>
+              <p className="text-xs text-stone-500 dark:text-neutral-400 mt-1">
+                The ElevenLabs voice the mascot uses for spoken replies is configured under{' '}
+                <button
+                  type="button"
+                  onClick={() => navigateToSettings('mascot')}
+                  className="underline text-primary-600 dark:text-primary-300 hover:text-primary-700 dark:hover:text-primary-200">
+                  Mascot settings
+                </button>
+                .
+              </p>
+            </div>
+          </section>
+        )}
+
         <section className={`space-y-3 ${disabled ? 'opacity-60' : ''}`}>
-          <div className="bg-stone-50 rounded-lg border border-stone-200 p-4 space-y-4">
+          <div className="bg-stone-50 dark:bg-neutral-800/60 rounded-lg border border-stone-200 dark:border-neutral-800 p-4 space-y-4">
             <div>
-              <h3 className="text-sm font-semibold text-stone-900">Voice Settings</h3>
-              <p className="text-xs text-stone-500 mt-1">
-                Hold the hotkey to dictate and insert text into the active field.
+              <h3 className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
+                {t('voice.settings')}
+              </h3>
+              <p className="text-xs text-stone-500 dark:text-neutral-400 mt-1">
+                {t('voice.settingsDesc')}
               </p>
             </div>
 
             {!disabled && settings && (
               <>
                 <label className="block space-y-1">
-                  <span className="text-xs font-medium text-stone-600">Hotkey</span>
+                  <span className="text-xs font-medium text-stone-600 dark:text-neutral-300">
+                    {t('voice.hotkey')}
+                  </span>
                   <input
                     value={settings.hotkey}
                     onChange={e => updateSetting('hotkey', e.target.value)}
                     placeholder="Fn"
-                    className="w-full rounded-md border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 focus:outline-none focus:ring-1 focus:ring-primary-400"
+                    className="w-full rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 placeholder:text-stone-400 dark:placeholder:text-neutral-500 dark:text-neutral-500 dark:placeholder:text-neutral-500 focus:outline-none focus:ring-1 focus:ring-primary-400"
                   />
                 </label>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <label className="block space-y-1">
-                    <span className="text-xs font-medium text-stone-600">Activation Mode</span>
+                    <span className="text-xs font-medium text-stone-600 dark:text-neutral-300">
+                      {t('voice.activationMode')}
+                    </span>
                     <select
                       value={settings.activation_mode}
                       onChange={e =>
                         updateSetting('activation_mode', e.target.value as 'tap' | 'push')
                       }
-                      className="w-full rounded-md border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 focus:outline-none focus:ring-1 focus:ring-primary-400">
-                      <option value="push">Push to talk</option>
-                      <option value="tap">Tap to toggle</option>
+                      className="w-full rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 focus:outline-none focus:ring-1 focus:ring-primary-400">
+                      <option value="push">{t('voice.pushToTalk')}</option>
+                      <option value="tap">{t('voice.tapToToggle')}</option>
                     </select>
                   </label>
 
                   <label className="block space-y-1">
-                    <span className="text-xs font-medium text-stone-600">Writing Style</span>
+                    <span className="text-xs font-medium text-stone-600 dark:text-neutral-300">
+                      {t('voice.writingStyle')}
+                    </span>
                     <select
                       value={settings.skip_cleanup ? 'verbatim' : 'natural'}
                       onChange={e => updateSetting('skip_cleanup', e.target.value === 'verbatim')}
-                      className="w-full rounded-md border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 focus:outline-none focus:ring-1 focus:ring-primary-400">
-                      <option value="verbatim">Verbatim transcription</option>
-                      <option value="natural">Natural cleanup</option>
+                      className="w-full rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 focus:outline-none focus:ring-1 focus:ring-primary-400">
+                      <option value="verbatim">{t('voice.verbatimTranscription')}</option>
+                      <option value="natural">{t('voice.naturalCleanup')}</option>
                     </select>
                   </label>
                 </div>
 
-                <label className="flex items-center gap-2 text-sm text-stone-700">
+                <label className="flex items-center gap-2 text-sm text-stone-700 dark:text-neutral-200">
                   <input
                     type="checkbox"
+                    data-testid="voice-auto-start-toggle"
                     checked={settings.auto_start}
                     onChange={e => updateSetting('auto_start', e.target.checked)}
-                    className="h-4 w-4 rounded border-stone-300 text-primary-600 focus:ring-primary-500"
+                    className="h-4 w-4 rounded border-stone-300 dark:border-neutral-700 text-primary-600 dark:text-primary-300 focus:ring-primary-500"
                   />
-                  Start voice server automatically with the core
+                  {t('voice.autoStart')}
                 </label>
 
                 <div className="space-y-2">
                   <div>
-                    <span className="text-xs font-medium text-stone-600">Custom Dictionary</span>
-                    <p className="text-[11px] text-stone-400">
-                      Add names, technical terms, and domain words to improve recognition accuracy.
+                    <span className="text-xs font-medium text-stone-600 dark:text-neutral-300">
+                      {t('voice.customDictionary')}
+                    </span>
+                    <p className="text-[11px] text-stone-400 dark:text-neutral-500">
+                      {t('voice.customDictionaryDesc')}
                     </p>
                   </div>
                   <div className="flex gap-2">
@@ -693,8 +752,8 @@ const VoicePanel = () => {
                           setNewDictWord('');
                         }
                       }}
-                      placeholder="Add a word..."
-                      className="flex-1 rounded-md border border-stone-200 bg-white px-3 py-1.5 text-sm text-stone-900 placeholder:text-stone-400 focus:outline-none focus:ring-1 focus:ring-primary-400"
+                      placeholder={t('voice.addWord')}
+                      className="flex-1 rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-1.5 text-sm text-stone-900 dark:text-neutral-100 placeholder:text-stone-400 dark:placeholder:text-neutral-500 dark:text-neutral-500 dark:placeholder:text-neutral-500 focus:outline-none focus:ring-1 focus:ring-primary-400"
                     />
                     <button
                       type="button"
@@ -707,7 +766,7 @@ const VoicePanel = () => {
                       }}
                       disabled={!newDictWord.trim()}
                       className="px-3 py-1.5 text-xs rounded-md bg-primary-600 hover:bg-primary-700 disabled:opacity-60 text-white">
-                      Add
+                      {t('common.add')}
                     </button>
                   </div>
                   {settings.custom_dictionary.length > 0 && (
@@ -715,7 +774,7 @@ const VoicePanel = () => {
                       {settings.custom_dictionary.map(word => (
                         <span
                           key={word}
-                          className="inline-flex items-center gap-1 rounded-full bg-stone-100 px-2.5 py-0.5 text-xs text-stone-700">
+                          className="inline-flex items-center gap-1 rounded-full bg-stone-100 dark:bg-neutral-800 px-2.5 py-0.5 text-xs text-stone-700 dark:text-neutral-200">
                           {word}
                           <button
                             type="button"
@@ -725,7 +784,7 @@ const VoicePanel = () => {
                                 settings.custom_dictionary.filter(w => w !== word)
                               )
                             }
-                            className="ml-0.5 text-stone-400 hover:text-stone-700">
+                            className="ml-0.5 text-stone-400 dark:text-neutral-500 hover:text-stone-700 dark:hover:text-neutral-200 dark:text-neutral-200 dark:hover:text-neutral-200">
                             &times;
                           </button>
                         </span>
@@ -737,19 +796,19 @@ const VoicePanel = () => {
             )}
 
             {disabled && (
-              <div className="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+              <div className="rounded-md border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 p-4 text-sm text-amber-800 dark:text-amber-200">
                 Voice dictation is disabled until the local STT model is downloaded. Use the{' '}
                 <strong>Voice Providers</strong> section above to install Whisper.
               </div>
             )}
 
             {error && (
-              <div className="rounded-md border border-red-200 bg-red-50 p-3 text-xs text-red-600">
+              <div className="rounded-md border border-red-200 dark:border-red-500/30 bg-red-50 dark:bg-red-500/10 p-3 text-xs text-red-600 dark:text-red-300">
                 {error}
               </div>
             )}
             {notice && (
-              <div className="rounded-md border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-700">
+              <div className="rounded-md border border-emerald-200 dark:border-emerald-500/30 bg-emerald-50 dark:bg-emerald-500/10 p-3 text-xs text-emerald-700 dark:text-emerald-300">
                 {notice}
               </div>
             )}
@@ -757,24 +816,25 @@ const VoicePanel = () => {
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
+                data-testid="voice-save-settings"
                 onClick={() => void saveSettings(true)}
                 disabled={disabled || isSaving || !hasUnsavedChanges}
                 className="px-3 py-1.5 text-xs rounded-md bg-primary-600 hover:bg-primary-700 disabled:opacity-60 text-white">
-                {isSaving ? 'Saving…' : 'Save Voice Settings'}
+                {isSaving ? t('common.loading') : t('voice.saveVoiceSettings')}
               </button>
               <button
                 type="button"
                 onClick={() => void startServer()}
                 disabled={disabled || isStarting}
                 className="px-3 py-1.5 text-xs rounded-md bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white">
-                {isStarting ? 'Starting…' : 'Start Voice Server'}
+                {isStarting ? t('common.loading') : t('voice.startVoiceServer')}
               </button>
               <button
                 type="button"
                 onClick={() => void stopServer()}
                 disabled={!isRunning || isStopping}
-                className="px-3 py-1.5 text-xs rounded-md border border-stone-300 hover:border-stone-400 disabled:opacity-60 text-stone-700">
-                {isStopping ? 'Stopping…' : 'Stop Voice Server'}
+                className="px-3 py-1.5 text-xs rounded-md border border-stone-300 dark:border-neutral-700 hover:border-stone-400 dark:hover:border-neutral-600 disabled:opacity-60 text-stone-700 dark:text-neutral-200">
+                {isStopping ? t('common.loading') : t('voice.stopVoiceServer')}
               </button>
             </div>
           </div>
@@ -783,8 +843,8 @@ const VoicePanel = () => {
         <button
           type="button"
           onClick={() => navigateToSettings('voice-debug')}
-          className="flex items-center gap-1.5 text-xs text-stone-400 hover:text-stone-600 transition-colors">
-          Advanced settings
+          className="flex items-center gap-1.5 text-xs text-stone-400 dark:text-neutral-500 hover:text-stone-600 dark:text-neutral-300 dark:hover:text-neutral-300 transition-colors">
+          {t('settings.advanced')}
           <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
           </svg>

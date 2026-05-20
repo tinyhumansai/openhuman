@@ -2,8 +2,8 @@ use super::*;
 use crate::core::event_bus::{global, init_global, DomainEvent};
 use crate::openhuman::agent::dispatcher::XmlToolDispatcher;
 use crate::openhuman::agent::error::AgentError;
+use crate::openhuman::inference::provider::{ChatMessage, ChatRequest, ChatResponse, UsageInfo};
 use crate::openhuman::memory::Memory;
-use crate::openhuman::providers::{ChatMessage, ChatRequest, ChatResponse, UsageInfo};
 use anyhow::anyhow;
 use async_trait::async_trait;
 use parking_lot::Mutex;
@@ -121,7 +121,7 @@ fn sanitizers_and_tool_call_helpers_cover_fallback_paths() {
     assert_eq!(calls[0].tool_call_id.as_deref(), Some("parsed-3-1"));
     assert_eq!(calls[1].tool_call_id.as_deref(), Some("keep"));
 
-    let response = crate::openhuman::providers::ChatResponse {
+    let response = crate::openhuman::inference::provider::ChatResponse {
         text: Some(String::new()),
         tool_calls: vec![],
         usage: None,
@@ -302,12 +302,12 @@ fn helper_paths_cover_no_overlap_native_calls_and_truncation() {
     assert_eq!(appended.len(), 1);
     assert!(matches!(&appended[0], ConversationMessage::Chat(msg) if msg.content == "b"));
 
-    let native_calls = vec![crate::openhuman::providers::ToolCall {
+    let native_calls = vec![crate::openhuman::inference::provider::ToolCall {
         id: "native-1".into(),
         name: "echo".into(),
         arguments: "{}".into(),
     }];
-    let response = crate::openhuman::providers::ChatResponse {
+    let response = crate::openhuman::inference::provider::ChatResponse {
         text: Some(String::new()),
         tool_calls: native_calls.clone(),
         usage: None,

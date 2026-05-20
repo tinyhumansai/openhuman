@@ -30,7 +30,7 @@ pub fn create_embedding_provider(
             None, None, true, model, dims,
         ))),
         "ollama" => {
-            let base_url = crate::openhuman::local_ai::ollama_base_url();
+            let base_url = crate::openhuman::inference::local::ollama_base_url();
             Ok(Box::new(OllamaEmbedding::try_new(&base_url, model, dims)?))
         }
         "openai" => Ok(Box::new(OpenAiEmbedding::new(

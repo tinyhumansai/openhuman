@@ -80,8 +80,19 @@ jobs:
       - name: Install Appium and chromium driver
         if: steps.gate.outputs.present == 'true'
         run: |
-          npm install -g appium@3
-          appium driver install --source=npm appium-chromium-driver
+          APPIUM_ROOT="$(printf '%s' "$RUNNER_TEMP" | tr '\\' '/')/openhuman-appium"
+          APPIUM_BIN_DIR="$(printf '%s' "$RUNNER_TEMP" | tr '\\' '/')/openhuman-e2e-bin"
+          mkdir -p "$APPIUM_ROOT" "$APPIUM_BIN_DIR"
+          npm install --no-audit --no-fund --prefix "$APPIUM_ROOT" appium@3
+          printf '%s\n' \
+            '#!/usr/bin/env bash' \
+            'SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"' \
+            'APPIUM_ROOT="$(cd "$SCRIPT_DIR/../openhuman-appium" && pwd)"' \
+            'exec node "$APPIUM_ROOT/node_modules/appium/index.js" "$@"' \
+            > "$APPIUM_BIN_DIR/appium"
+          chmod +x "$APPIUM_BIN_DIR/appium"
+          echo "$APPIUM_BIN_DIR" >> "$GITHUB_PATH"
+          "$APPIUM_BIN_DIR/appium" driver install --source=npm appium-chromium-driver
       - name: Install JS dependencies
         if: steps.gate.outputs.present == 'true'
         run: pnpm install --frozen-lockfile

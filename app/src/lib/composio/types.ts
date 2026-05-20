@@ -12,7 +12,7 @@ export interface ComposioToolkitsResponse {
 export interface ComposioConnection {
   id: string;
   toolkit: string;
-  /** Typical values: `ACTIVE`, `CONNECTED`, `PENDING`, `FAILED`. */
+  /** Typical values: `ACTIVE`, `CONNECTED`, `PENDING`, `FAILED`, `EXPIRED`. */
   status: string;
   /** ISO timestamp (backend passthrough). */
   createdAt?: string;
@@ -117,7 +117,12 @@ export interface ComposioDisableTriggerResponse {
  * Mirrors the `SkillConnectionStatus` shape so the same
  * `UnifiedSkillCard` can render both.
  */
-export type ComposioConnectionState = 'disconnected' | 'pending' | 'connected' | 'error';
+export type ComposioConnectionState =
+  | 'disconnected'
+  | 'pending'
+  | 'connected'
+  | 'expired'
+  | 'error';
 
 export function deriveComposioState(
   connection: ComposioConnection | undefined
@@ -126,6 +131,7 @@ export function deriveComposioState(
   const status = connection.status.toUpperCase();
   if (status === 'ACTIVE' || status === 'CONNECTED') return 'connected';
   if (status === 'PENDING' || status === 'INITIATED' || status === 'INITIALIZING') return 'pending';
-  if (status === 'FAILED' || status === 'ERROR' || status === 'EXPIRED') return 'error';
+  if (status === 'EXPIRED') return 'expired';
+  if (status === 'FAILED' || status === 'ERROR') return 'error';
   return 'disconnected';
 }

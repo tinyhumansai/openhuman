@@ -125,9 +125,9 @@ impl ScoringConfig {
             Some(m) => m,
             None => {
                 log::debug!(
-                    "[memory_tree::score] llm_extractor not resolvable for llm_backend={} \
+                    "[memory_tree::score] llm_extractor not resolvable for memory_provider={:?} \
                      — using regex-only",
-                    config.memory_tree.llm_backend.as_str()
+                    config.memory_provider.as_deref().unwrap_or("cloud")
                 );
                 return Self::default_regex_only();
             }

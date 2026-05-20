@@ -2,6 +2,7 @@ import { useCallback, useMemo, useState } from 'react';
 
 import { useChannelDefinitions } from '../../../hooks/useChannelDefinitions';
 import { resolvePreferredAuthModeForChannel } from '../../../lib/channels/routing';
+import { useT } from '../../../lib/i18n/I18nContext';
 import { channelConnectionsApi } from '../../../services/api/channelConnectionsApi';
 import { setDefaultMessagingChannel } from '../../../store/channelConnectionsSlice';
 import { useAppDispatch, useAppSelector } from '../../../store/hooks';
@@ -14,10 +15,23 @@ import ChannelSetupModal from '../../channels/ChannelSetupModal';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
-const CHANNEL_ICONS: Record<string, string> = {
-  telegram: '\u2708\uFE0F',
-  discord: '\uD83C\uDFAE',
-  web: '\uD83C\uDF10',
+/**
+ * Mapping from `ChannelDefinition.icon` slugs to the emoji rendered next to
+ * each channel in the Messaging settings panel. Exported so unit tests can
+ * assert against it without rendering the full panel (the panel pulls in
+ * Redux, i18n, routing, and `useChannelDefinitions`, all of which make a
+ * focused render test more expensive than a direct mapping assertion).
+ * Keep in sync with the icon slugs returned by the backend
+ * `channels::controllers::definitions::all_channel_definitions`.
+ */
+export const CHANNEL_ICONS: Record<string, string> = {
+  telegram: '✈️',
+  discord: '🎮',
+  web: '🌐',
+  // Lark (国际版) / Feishu (中国版) — same backend, single icon. See #2048.
+  lark: '🪶',
+  // DingTalk (钉钉). See #2048.
+  dingtalk: '🔔',
 };
 
 function statusDot(status: ChannelConnectionStatus): string {
@@ -29,37 +43,38 @@ function statusDot(status: ChannelConnectionStatus): string {
     case 'error':
       return 'bg-coral-500';
     default:
-      return 'bg-stone-300';
+      return 'bg-stone-300 dark:bg-neutral-700';
   }
 }
 
-function statusLabel(status: ChannelConnectionStatus): string {
+function statusLabel(status: ChannelConnectionStatus, t: (key: string) => string): string {
   switch (status) {
     case 'connected':
-      return 'Connected';
+      return t('channels.status.connected');
     case 'connecting':
-      return 'Connecting';
+      return t('channels.status.connecting');
     case 'error':
-      return 'Error';
+      return t('channels.status.error');
     default:
-      return 'Not configured';
+      return t('channels.status.notConfigured');
   }
 }
 
 function statusColor(status: ChannelConnectionStatus): string {
   switch (status) {
     case 'connected':
-      return 'text-sage-600';
+      return 'text-sage-600 dark:text-sage-300';
     case 'connecting':
-      return 'text-amber-600';
+      return 'text-amber-600 dark:text-amber-300';
     case 'error':
-      return 'text-coral-600';
+      return 'text-coral-600 dark:text-coral-300';
     default:
-      return 'text-stone-400';
+      return 'text-stone-400 dark:text-neutral-500';
   }
 }
 
 const MessagingPanel = () => {
+  const { t } = useT();
   const { navigateBack, breadcrumbs } = useSettingsNavigation();
   const dispatch = useAppDispatch();
   const channelConnections = useAppSelector(state => state.channelConnections);
@@ -76,8 +91,10 @@ const MessagingPanel = () => {
   const recommendedRoute = useMemo(() => {
     const channel = channelConnections.defaultMessagingChannel;
     const authMode = resolvePreferredAuthModeForChannel(channelConnections, channel);
-    return authMode ? `${channel} via ${authMode}` : 'No active route';
-  }, [channelConnections]);
+    return authMode
+      ? t('channels.activeRouteValue').replace('{channel}', channel).replace('{authMode}', authMode)
+      : t('channels.noActiveRoute');
+  }, [channelConnections, t]);
 
   const bestStatus = useCallback(
     (channelId: ChannelType): ChannelConnectionStatus => {
@@ -107,7 +124,7 @@ const MessagingPanel = () => {
   return (
     <div>
       <SettingsHeader
-        title="Messaging"
+        title={t('settings.features.messaging')}
         showBackButton={true}
         onBack={navigateBack}
         breadcrumbs={breadcrumbs}
@@ -115,8 +132,10 @@ const MessagingPanel = () => {
 
       <div className="p-4 space-y-4">
         {/* Default channel selector */}
-        <section className="rounded-xl border border-stone-200 bg-white p-4 space-y-3">
-          <h3 className="text-sm font-semibold text-stone-900">Default Messaging Channel</h3>
+        <section className="rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 space-y-3">
+          <h3 className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
+            {t('channels.defaultMessaging')}
+          </h3>
           <div className="grid grid-cols-2 gap-2">
             {definitions.map(def => {
               const channelId = def.id as ChannelType;
@@ -130,16 +149,17 @@ const MessagingPanel = () => {
                   disabled={busy[busyKey]}
                   className={`rounded-lg border px-3 py-2 text-sm transition-colors ${
                     selected
-                      ? 'border-primary-500/60 bg-primary-50 text-primary-600'
-                      : 'border-stone-200 bg-stone-50 text-stone-600 hover:border-stone-300'
+                      ? 'border-primary-500/60 bg-primary-50 dark:bg-primary-500/10 text-primary-600 dark:text-primary-300'
+                      : 'border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 text-stone-600 dark:text-neutral-300 hover:border-stone-300 dark:border-neutral-700 dark:hover:border-neutral-700'
                   }`}>
                   {def.display_name}
                 </button>
               );
             })}
           </div>
-          <p className="text-xs text-stone-400">
-            Active route: <span className="text-primary-600">{recommendedRoute}</span>
+          <p className="text-xs text-stone-400 dark:text-neutral-500">
+            {t('channels.activeRoute')}:{' '}
+            <span className="text-primary-600 dark:text-primary-300">{recommendedRoute}</span>
           </p>
         </section>
 
@@ -150,17 +170,19 @@ const MessagingPanel = () => {
         )}
 
         {loading && (
-          <div className="rounded-xl border border-stone-200 bg-white p-4 text-sm text-stone-400">
-            Loading channel definitions...
+          <div className="rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 text-sm text-stone-400 dark:text-neutral-500">
+            {t('channels.loadingDefinitions')}
           </div>
         )}
 
         {/* Channel cards — click to open the shared ChannelSetupModal */}
         {!loading && (
-          <section className="rounded-xl border border-stone-200 bg-white p-4 space-y-3">
-            <h3 className="text-sm font-semibold text-stone-900">Channel Connections</h3>
-            <p className="text-xs text-stone-400">
-              Configure auth modes for each messaging channel.
+          <section className="rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 space-y-3">
+            <h3 className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
+              {t('channels.channelConnections')}
+            </h3>
+            <p className="text-xs text-stone-400 dark:text-neutral-500">
+              {t('channels.configureAuthModes')}
             </p>
             <div className="space-y-2">
               {configurableChannels.map(def => {
@@ -173,25 +195,27 @@ const MessagingPanel = () => {
                     key={channelId}
                     type="button"
                     onClick={() => setChannelModalDef(def)}
-                    className="w-full rounded-lg border border-stone-200 bg-stone-50 p-3 text-left transition-colors hover:bg-white hover:border-stone-300">
+                    className="w-full rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 p-3 text-left transition-colors hover:bg-white dark:bg-neutral-900 dark:hover:bg-neutral-800 hover:border-stone-300 dark:border-neutral-700 dark:hover:border-neutral-700">
                     <div className="flex items-center gap-3">
                       <span className="text-lg flex-shrink-0">{icon}</span>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
-                          <span className="text-sm font-medium text-stone-900">
+                          <span className="text-sm font-medium text-stone-900 dark:text-neutral-100">
                             {def.display_name}
                           </span>
                           <div
                             className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${statusDot(status)}`}
                           />
                           <span className={`text-xs ${statusColor(status)}`}>
-                            {statusLabel(status)}
+                            {statusLabel(status, t)}
                           </span>
                         </div>
-                        <p className="text-xs text-stone-500 mt-0.5">{def.description}</p>
+                        <p className="text-xs text-stone-500 dark:text-neutral-400 mt-0.5">
+                          {def.description}
+                        </p>
                       </div>
                       <svg
-                        className="w-4 h-4 text-stone-400 flex-shrink-0"
+                        className="w-4 h-4 text-stone-400 dark:text-neutral-500 flex-shrink-0"
                         fill="none"
                         stroke="currentColor"
                         viewBox="0 0 24 24">

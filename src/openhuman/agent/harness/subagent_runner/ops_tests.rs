@@ -26,6 +26,7 @@ fn make_def_named_tools(names: &[&str]) -> AgentDefinition {
         background: false,
         subagents: vec![],
         delegate_name: None,
+        agent_tier: crate::openhuman::agent::harness::definition::AgentTier::Worker,
         source: crate::openhuman::agent::harness::definition::DefinitionSource::Builtin,
     }
 }
@@ -134,7 +135,9 @@ fn append_subagent_role_contract_is_idempotent() {
 // ── End-to-end runner tests with mock provider ────────────────────────
 
 use crate::openhuman::agent::harness::fork_context::with_parent_context;
-use crate::openhuman::providers::{ChatRequest as PChatRequest, ChatResponse, Provider, ToolCall};
+use crate::openhuman::inference::provider::{
+    ChatRequest as PChatRequest, ChatResponse, Provider, ToolCall,
+};
 use parking_lot::Mutex;
 use std::sync::Arc;
 
@@ -142,8 +145,9 @@ use std::sync::Arc;
 /// to verify the bytes that arrive at the model.
 #[derive(Clone)]
 struct CapturedRequest {
-    messages: Vec<crate::openhuman::providers::ChatMessage>,
+    messages: Vec<crate::openhuman::inference::provider::ChatMessage>,
     tool_count: usize,
+    model: String,
 }
 
 struct ScriptedProvider {
@@ -175,12 +179,13 @@ impl Provider for ScriptedProvider {
     async fn chat(
         &self,
         request: PChatRequest<'_>,
-        _model: &str,
+        model: &str,
         _temperature: f64,
     ) -> anyhow::Result<ChatResponse> {
         self.captured.lock().push(CapturedRequest {
             messages: request.messages.to_vec(),
             tool_count: request.tools.map_or(0, |tools| tools.len()),
+            model: model.to_string(),
         });
         let mut q = self.responses.lock();
         if q.is_empty() {
@@ -237,7 +242,6 @@ fn make_parent(provider: Arc<dyn Provider>, tools: Vec<Box<dyn Tool>>) -> Parent
         session_id: "test-session".into(),
         channel: "test".into(),
         connected_integrations: vec![],
-        composio_client: None,
         tool_call_format: crate::openhuman::context::prompt::ToolCallFormat::PFormat,
         session_key: "0_test".into(),
         session_parent_prefix: None,
@@ -379,6 +383,7 @@ async fn typed_mode_returns_text_through_runner() {
                 skill_filter_override: None,
                 toolkit_override: None,
                 context: None,
+                model_override: None,
                 task_id: Some("t1".into()),
                 worker_thread_id: None,
             },
@@ -487,6 +492,7 @@ async fn typed_mode_filters_tools_by_skill_filter() {
                 skill_filter_override: Some("notion".into()),
                 toolkit_override: None,
                 context: None,
+                model_override: None,
                 task_id: None,
                 worker_thread_id: None,
             },
@@ -591,6 +597,87 @@ async fn runner_errors_outside_parent_context() {
     assert!(matches!(result, Err(SubagentRunError::NoParentContext)));
 }
 
+#[tokio::test]
+async fn runner_allows_spawn_at_max_depth() {
+    let provider = ScriptedProvider::new(vec![text_response("ok")]);
+    let parent = make_parent(provider.clone(), vec![]);
+    let def = make_def_named_tools(&[]);
+
+    let outcome = with_parent_context(parent, async {
+        with_spawn_depth(MAX_SPAWN_DEPTH - 1, async {
+            run_subagent(&def, "x", SubagentRunOptions::default()).await
+        })
+        .await
+    })
+    .await
+    .expect("runner should allow the configured maximum depth");
+
+    assert_eq!(outcome.output, "ok");
+    assert_eq!(provider.captured.lock().len(), 1);
+    assert_eq!(
+        current_spawn_depth(),
+        0,
+        "depth task-local must not leak after the run"
+    );
+}
+
+#[tokio::test]
+async fn runner_rejects_spawn_beyond_max_depth() {
+    let provider = ScriptedProvider::new(vec![text_response("should not be called")]);
+    let parent = make_parent(provider.clone(), vec![]);
+    let def = make_def_named_tools(&[]);
+
+    let result = with_parent_context(parent, async {
+        with_spawn_depth(MAX_SPAWN_DEPTH, async {
+            run_subagent(&def, "x", SubagentRunOptions::default()).await
+        })
+        .await
+    })
+    .await;
+
+    assert!(matches!(
+        result,
+        Err(SubagentRunError::SpawnDepthExceeded {
+            attempted_depth,
+            max_depth
+        }) if attempted_depth == MAX_SPAWN_DEPTH + 1 && max_depth == MAX_SPAWN_DEPTH
+    ));
+    assert!(
+        provider.captured.lock().is_empty(),
+        "depth rejection must happen before provider dispatch"
+    );
+    assert_eq!(
+        current_spawn_depth(),
+        0,
+        "depth task-local must not leak after rejection"
+    );
+}
+
+#[tokio::test]
+async fn typed_mode_model_override_pins_exact_model_for_spawn() {
+    let provider = ScriptedProvider::new(vec![text_response("ok")]);
+    let parent = make_parent(provider.clone(), vec![]);
+    let mut def = make_def_named_tools(&[]);
+    def.model = ModelSpec::Inherit;
+
+    let _ = with_parent_context(parent, async {
+        run_subagent(
+            &def,
+            "use the pinned model",
+            SubagentRunOptions {
+                model_override: Some("deepseek/deepseek-r2".into()),
+                ..Default::default()
+            },
+        )
+        .await
+    })
+    .await
+    .expect("runner should succeed");
+
+    let captured = provider.captured.lock();
+    assert_eq!(captured[0].model, "deepseek/deepseek-r2");
+}
+
 /// #1122 — when the parent attaches a progress sink, the inner loop
 /// emits `SubagentIterationStarted` for each round and a paired
 /// `SubagentToolCallStarted` / `SubagentToolCallCompleted` for each
@@ -687,3 +774,284 @@ async fn typed_mode_progress_emission_is_a_noop_without_sink() {
 
 // Truncation tests live in ops_truncation_tests.rs to keep this file
 // under the ~500-line guideline.
+
+// ── resolve_subagent_provider ─────────────────────────────────────────
+
+/// `Arc<dyn Provider>` identity helper — every test below uses a fresh
+/// `ScriptedProvider` and we want to assert "is this the *same* Arc as
+/// the parent's" without leaning on `PartialEq` on dyn trait objects.
+fn arc_ptr_eq<P: ?Sized>(a: &std::sync::Arc<P>, b: &std::sync::Arc<P>) -> bool {
+    std::sync::Arc::ptr_eq(a, b)
+}
+
+#[test]
+fn resolve_subagent_provider_inherit_uses_parent_provider_and_model() {
+    let parent: Arc<dyn Provider> = ScriptedProvider::new(vec![]);
+    let (resolved_provider, resolved_model) = super::resolve_subagent_provider(
+        &ModelSpec::Inherit,
+        "test_agent",
+        None,
+        parent.clone(),
+        "parent-model-x".to_string(),
+        false,
+        None,
+    );
+    assert!(
+        arc_ptr_eq(&parent, &resolved_provider),
+        "Inherit must return the parent's Arc unchanged"
+    );
+    assert_eq!(resolved_model, "parent-model-x");
+}
+
+#[test]
+fn resolve_subagent_provider_exact_overrides_only_model() {
+    // Exact keeps the parent's provider but replaces the model name.
+    // This is the explicit "I want a cheaper tier on the same backend"
+    // escape hatch.
+    let parent: Arc<dyn Provider> = ScriptedProvider::new(vec![]);
+    let (resolved_provider, resolved_model) = super::resolve_subagent_provider(
+        &ModelSpec::Exact("haiku-mini".to_string()),
+        "test_agent",
+        None,
+        parent.clone(),
+        "parent-model-x".to_string(),
+        false,
+        None,
+    );
+    assert!(
+        arc_ptr_eq(&parent, &resolved_provider),
+        "Exact must keep the parent's provider — only the model name changes"
+    );
+    assert_eq!(resolved_model, "haiku-mini");
+}
+
+#[test]
+fn resolve_subagent_provider_spawn_override_wins_over_definition_model() {
+    let parent: Arc<dyn Provider> = ScriptedProvider::new(vec![]);
+    let (resolved_provider, resolved_model) = super::resolve_subagent_provider(
+        &ModelSpec::Exact("definition-model".to_string()),
+        "test_agent",
+        None,
+        parent.clone(),
+        "parent-model-x".to_string(),
+        false,
+        Some("spawn-model-y"),
+    );
+    assert!(
+        arc_ptr_eq(&parent, &resolved_provider),
+        "inline spawn override should not change the provider"
+    );
+    assert_eq!(resolved_model, "spawn-model-y");
+}
+
+#[test]
+fn resolve_subagent_provider_config_model_wins_over_definition_model() {
+    use crate::openhuman::config::{Config, TeamModelConfig};
+
+    let mut config = Config::default();
+    config.teams.insert(
+        "test_agent".to_string(),
+        TeamModelConfig {
+            lead_model: None,
+            agent_model: Some("configured-agent-model".to_string()),
+        },
+    );
+
+    let parent: Arc<dyn Provider> = ScriptedProvider::new(vec![]);
+    let (resolved_provider, resolved_model) = super::resolve_subagent_provider(
+        &ModelSpec::Exact("definition-model".to_string()),
+        "test_agent",
+        Some(&config),
+        parent.clone(),
+        "parent-model-x".to_string(),
+        false,
+        None,
+    );
+    assert!(
+        arc_ptr_eq(&parent, &resolved_provider),
+        "config model pin should not change the provider"
+    );
+    assert_eq!(resolved_model, "configured-agent-model");
+}
+
+#[test]
+fn resolve_subagent_provider_inline_override_wins_over_config_model() {
+    use crate::openhuman::config::{Config, TeamModelConfig};
+
+    let mut config = Config::default();
+    config.teams.insert(
+        "test_agent".to_string(),
+        TeamModelConfig {
+            lead_model: None,
+            agent_model: Some("configured-agent-model".to_string()),
+        },
+    );
+
+    let parent: Arc<dyn Provider> = ScriptedProvider::new(vec![]);
+    let (_resolved_provider, resolved_model) = super::resolve_subagent_provider(
+        &ModelSpec::Exact("definition-model".to_string()),
+        "test_agent",
+        Some(&config),
+        parent.clone(),
+        "parent-model-x".to_string(),
+        false,
+        Some("inline-model"),
+    );
+    assert_eq!(resolved_model, "inline-model");
+}
+
+#[test]
+fn resolve_subagent_provider_config_alias_matches_issue_team_examples() {
+    use crate::openhuman::config::{Config, TeamModelConfig};
+
+    let mut config = Config::default();
+    config.teams.insert(
+        "research".to_string(),
+        TeamModelConfig {
+            lead_model: Some("research-lead-model".to_string()),
+            agent_model: Some("research-agent-model".to_string()),
+        },
+    );
+
+    let parent: Arc<dyn Provider> = ScriptedProvider::new(vec![]);
+    let (_provider, resolved_model) = super::resolve_subagent_provider(
+        &ModelSpec::Hint("agentic".to_string()),
+        "researcher",
+        Some(&config),
+        parent,
+        "parent-model-x".to_string(),
+        false,
+        None,
+    );
+    assert_eq!(resolved_model, "research-agent-model");
+}
+
+#[test]
+fn resolve_subagent_provider_hint_with_no_config_falls_back() {
+    // The async config load failed (transient I/O, missing file, etc.).
+    // The Hint arm must NOT silently swallow the failure and synthesise
+    // `{workload}-v1` — that's the OpenHuman-only naming that breaks
+    // Anthropic/OpenAI. Fall back to the parent's known-good
+    // (provider, model) instead.
+    let parent: Arc<dyn Provider> = ScriptedProvider::new(vec![]);
+    let (resolved_provider, resolved_model) = super::resolve_subagent_provider(
+        &ModelSpec::Hint("agentic".to_string()),
+        "test_agent",
+        None, // no config loaded
+        parent.clone(),
+        "real-claude-id".to_string(),
+        false,
+        None,
+    );
+    assert!(
+        arc_ptr_eq(&parent, &resolved_provider),
+        "config-load failure must fall back to parent provider, not synthesize a new one"
+    );
+    assert_eq!(
+        resolved_model, "real-claude-id",
+        "model must be parent's current model — NOT '{{workload}}-v1'"
+    );
+}
+
+#[test]
+fn resolve_subagent_provider_hint_with_config_routes_via_factory() {
+    // The Hint arm with a real config takes the workload-factory path.
+    // We don't assert the *resulting* provider identity here (the
+    // factory may return a fresh OpenHuman backend or whatever
+    // primary_cloud resolves to), but we DO assert the resolved model
+    // matches the workload's configured exact id — not the legacy
+    // `{workload}-v1` synthesis.
+    use crate::openhuman::config::Config;
+    let mut config = Config::default();
+    // Route `agentic` to OpenHuman backend explicitly. The backend
+    // returns the configured default_model, which we set to a known
+    // string so the assertion is meaningful.
+    config.agentic_provider = Some("openhuman".to_string());
+    config.default_model = Some("agentic-specific-model".to_string());
+
+    let parent: Arc<dyn Provider> = ScriptedProvider::new(vec![]);
+    let (_resolved_provider, resolved_model) = super::resolve_subagent_provider(
+        &ModelSpec::Hint("agentic".to_string()),
+        "test_agent",
+        Some(&config),
+        parent.clone(),
+        "parent-model-ignored-on-hint".to_string(),
+        false,
+        None,
+    );
+    assert_eq!(
+        resolved_model, "agentic-specific-model",
+        "Hint must use the factory-resolved exact model, not synthesise `agentic-v1` \
+         and not fall back to parent's model"
+    );
+}
+
+#[test]
+fn resolve_subagent_provider_hint_falls_back_on_factory_error() {
+    // An invalid provider string in the workload config (e.g. a typo
+    // like "groq:something") makes the factory return Err. The Hint
+    // arm must fall back to the parent provider rather than
+    // propagating — sub-agent execution should degrade to "use what
+    // the parent uses" not crash entirely.
+    use crate::openhuman::config::Config;
+    let mut config = Config::default();
+    config.agentic_provider = Some("groq:not-a-real-prefix".to_string());
+
+    let parent: Arc<dyn Provider> = ScriptedProvider::new(vec![]);
+    let (resolved_provider, resolved_model) = super::resolve_subagent_provider(
+        &ModelSpec::Hint("agentic".to_string()),
+        "test_agent",
+        Some(&config),
+        parent.clone(),
+        "fallback-model".to_string(),
+        false,
+        None,
+    );
+    assert!(
+        arc_ptr_eq(&parent, &resolved_provider),
+        "factory error must fall back to parent provider"
+    );
+    assert_eq!(resolved_model, "fallback-model");
+}
+
+// ── Probe regression tests (#1710 Wave 2) ──────────────────────────
+//
+// `user_is_signed_in_to_composio` replaces the legacy
+// `parent.composio_client.is_none()` gate. The legacy probe was
+// backend-only by construction: a direct-mode user with a stored API
+// key but no backend session token was falsely reported as "not signed
+// in" and the spawn-time integration refresh path was silently
+// skipped. These tests pin the new behaviour so that regression
+// can't sneak back in.
+
+#[test]
+fn direct_mode_user_with_stored_key_passes_signed_in_check() {
+    use super::user_is_signed_in_to_composio;
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut config = crate::openhuman::config::Config::default();
+    config.config_path = tmp.path().join("config.toml");
+    // Direct mode + inline API key (the `config.composio.api_key`
+    // fallback path inside `create_composio_client` — equivalent to a
+    // stored direct key as far as the probe is concerned).
+    config.composio.mode = crate::openhuman::config::schema::COMPOSIO_MODE_DIRECT.to_string();
+    config.composio.api_key = Some("test-direct-key".into());
+    assert!(
+        user_is_signed_in_to_composio(&config),
+        "direct-mode user with stored api key must be reported as signed in"
+    );
+}
+
+#[test]
+fn unsigned_in_user_fails_probe() {
+    use super::user_is_signed_in_to_composio;
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut config = crate::openhuman::config::Config::default();
+    config.config_path = tmp.path().join("config.toml");
+    // Default mode = backend, no session token → factory errors with
+    // "no backend session". Direct fallback is unreachable because
+    // mode is not "direct".
+    assert!(
+        !user_is_signed_in_to_composio(&config),
+        "user with neither backend session nor direct key must NOT be reported as signed in"
+    );
+}

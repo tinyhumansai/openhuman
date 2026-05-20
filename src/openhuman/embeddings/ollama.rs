@@ -185,6 +185,10 @@ impl EmbeddingProvider for OllamaEmbedding {
         "ollama"
     }
 
+    fn model_id(&self) -> &str {
+        &self.model
+    }
+
     fn dimensions(&self) -> usize {
         self.dims
     }
@@ -240,8 +244,8 @@ impl EmbeddingProvider for OllamaEmbedding {
                     "ollama embed request failed (is Ollama running at {}?): {e}",
                     self.base_url
                 );
-                crate::core::observability::report_error(
-                    message.as_str(),
+                crate::core::observability::report_error_or_expected(
+                    &message,
                     "embeddings",
                     "ollama_embed",
                     &[("model", self.model.as_str()), ("failure", "transport")],
@@ -262,8 +266,8 @@ impl EmbeddingProvider for OllamaEmbedding {
                     format!(": {detail}")
                 }
             );
-            crate::core::observability::report_error(
-                message.as_str(),
+            crate::core::observability::report_error_or_expected(
+                &message,
                 "embeddings",
                 "ollama_embed",
                 &[

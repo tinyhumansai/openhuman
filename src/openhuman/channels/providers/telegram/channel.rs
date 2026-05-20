@@ -11,6 +11,7 @@
 
 // Re-export so that the `#[path = "channel_tests.rs"]` test module can reach
 // `TelegramChannel` via `super::TelegramChannel`.
+#[allow(unused_imports)]
 pub use super::channel_types::TelegramChannel;
 #[cfg(test)]
 pub(super) use super::channel_types::TelegramTypingTask;

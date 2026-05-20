@@ -28,6 +28,16 @@ on:
         default: patch
         type: choice
         options: [patch, minor, major]
+      skip_e2e:
+        description:
+          Skip the entire pretest phase (unit/rust plus E2E) and continue
+          directly to create-release + build matrix. Use only when the
+          required pretest signal is already known (e.g. promoting a
+          staging tag whose pretests already ran green) and you need to
+          unblock a production cut.
+        required: false
+        type: boolean
+        default: false
 permissions:
   contents: write
   packages: write
@@ -40,6 +50,9 @@ concurrency:
 # Job dependency graph
 #
 #   prepare-build
+#        │
+#        ├─── pretest-tests   (reusable test-reusable.yml — unit + rust)
+#        ├─── pretest-e2e     (reusable e2e-reusable.yml — all 3 OS, full)
 #        │
 #        ├─── create-release
 #        │         │
@@ -296,13 +309,46 @@ jobs:
           echo "base_url=$BASE_URL" >> "$GITHUB_OUTPUT"
 
   # =========================================================================
+  # Phase 1b: Pretest gate — run the full test + E2E suite across every
+  # target OS exactly once on the build ref before we spin up the release
+  # draft or any signed-build matrix. Pretest failures abort the workflow
+  # before `create-release` runs, so a busted commit never produces a
+  # half-finished GH Release that has to be cleaned up.
+  # =========================================================================
+  pretest-tests:
+    name: Pretest — unit + rust
+    needs: [prepare-build]
+    if: ${{ !inputs.skip_e2e }}
+    uses: ./.github/workflows/test-reusable.yml
+    with:
+      ref: ${{ needs.prepare-build.outputs.build_ref }}
+  pretest-e2e:
+    name: Pretest — E2E (all OS, full suite)
+    needs: [prepare-build]
+    if: ${{ !inputs.skip_e2e }}
+    uses: ./.github/workflows/e2e-reusable.yml
+    with:
+      ref: ${{ needs.prepare-build.outputs.build_ref }}
+      run_linux: true
+      run_macos: true
+      run_windows: true
+      full: true
+
+  # =========================================================================
   # Phase 2: Create draft GitHub release
   # =========================================================================
   create-release:
     name: Create GitHub release
     runs-on: ubuntu-latest
     environment: Production
-    needs: prepare-build
+    needs: [prepare-build, pretest-tests, pretest-e2e]
+    if: >-
+      always()
+      && needs.prepare-build.result == 'success'
+      && (needs.pretest-tests.result == 'success'
+          || (inputs.skip_e2e && needs.pretest-tests.result == 'skipped'))
+      && (needs.pretest-e2e.result == 'success'
+          || (inputs.skip_e2e && needs.pretest-e2e.result == 'skipped'))
     outputs:
       release_id: ${{ steps.create.outputs.release_id }}
       upload_url: ${{ steps.create.outputs.upload_url }}
@@ -344,7 +390,14 @@ jobs:
   build-desktop:
     name: Build desktop matrix
     needs: [prepare-build, create-release]
-    if: needs.create-release.result == 'success'
+    # `always()` is load-bearing: when `skip_e2e=true` the pretest jobs are
+    # `skipped`, and GitHub propagates that skipped status transitively to any
+    # downstream job lacking an explicit status function — even though we only
+    # `needs` create-release here, the build would otherwise be skipped along
+    # with the pretests. Same pattern below for build-cli-linux / build-docker /
+    # publish-updater-manifest / publish-release / tag-docker-latest /
+    # record-sentry-deploy. See release-staging.yml for the working precedent.
+    if: always() && needs.create-release.result == 'success'
     uses: ./.github/workflows/build-desktop.yml
     secrets: inherit
     with:
@@ -362,6 +415,7 @@ jobs:
       with_release_upload: true
       release_id: ${{ needs.create-release.outputs.release_id }}
       build_sidecar: false
+      skip_pretests: ${{ inputs.skip_e2e }}
 
   # =========================================================================
   # Phase 3b: Build & push Docker image (runs parallel with build-desktop).
@@ -389,7 +443,7 @@ jobs:
   build-docker:
     name: "Docker: build and push"
     needs: [prepare-build, create-release]
-    if: needs.create-release.result == 'success'
+    if: always() && needs.create-release.result == 'success'
     runs-on: ubuntu-latest
     environment: Production
     env:
@@ -460,7 +514,7 @@ jobs:
   build-cli-linux:
     name: "CLI: ${{ matrix.target }}"
     needs: [prepare-build, create-release]
-    if: needs.create-release.result == 'success'
+    if: always() && needs.create-release.result == 'success'
     environment: Production
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -529,7 +583,7 @@ jobs:
   publish-updater-manifest:
     name: Publish updater manifest (latest.json)
     needs: [prepare-build, create-release, build-desktop]
-    if: needs.build-desktop.result == 'success'
+    if: always() && needs.build-desktop.result == 'success'
     runs-on: ubuntu-latest
     environment: Production
     steps:
@@ -562,7 +616,8 @@ jobs:
       - build-docker
       - publish-updater-manifest
     if: >-
-      needs.build-desktop.result == 'success'
+      always()
+      && needs.build-desktop.result == 'success'
       && needs.build-cli-linux.result == 'success'
       && needs.build-docker.result == 'success'
       && needs.publish-updater-manifest.result == 'success'
@@ -661,7 +716,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: Production
     needs: [prepare-build, publish-release]
-    if: needs.publish-release.result == 'success'
+    if: always() && needs.publish-release.result == 'success'
     env:
       REGISTRY: ghcr.io
       IMAGE_NAME: tinyhumansai/openhuman-core
@@ -697,8 +752,10 @@ jobs:
     runs-on: ubuntu-latest
     environment: Production
     needs: [prepare-build, publish-release]
+    if: always() && needs.publish-release.result == 'success'
     env:
       SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+      SENTRY_URL: ${{ vars.SENTRY_URL }}
     steps:
       - name: Install sentry-cli
         if: env.SENTRY_AUTH_TOKEN != ''
@@ -708,6 +765,7 @@ jobs:
         if: env.SENTRY_AUTH_TOKEN != ''
         shell: bash
         env:
+          SENTRY_URL: ${{ vars.SENTRY_URL }}
           SENTRY_ORG: ${{ vars.SENTRY_ORG }}
           # Marker lives on the React project's release; events from all
           # surfaces share the same `openhuman@<version>+<short_sha>` release
@@ -733,24 +791,39 @@ jobs:
     environment: Production
     needs:
       - prepare-build
+      - pretest-tests
+      - pretest-e2e
       - create-release
       - build-desktop
       - build-cli-linux
       - build-docker
       - publish-updater-manifest
+    # Two cleanup paths:
+    #   (a) pretest failed → no release yet, but `prepare-build` already
+    #       pushed a tag and (for main_head) a chore(release) commit; we
+    #       still need to delete the tag so a rerun doesn't trip the
+    #       "tag already exists" guard.
+    #   (b) any build phase failed after create-release succeeded — the
+    #       original behavior — delete the draft release, the tag, and any
+    #       pushed Docker image versions.
     if: >-
       always()
-      && needs.create-release.result == 'success'
-      && (needs.build-desktop.result == 'failure' || needs.build-desktop.result ==
-      'cancelled'
-          || needs.build-cli-linux.result == 'failure' || needs.build-cli-linux.result ==
-      'cancelled'
-          || needs.build-docker.result == 'failure' || needs.build-docker.result ==
-      'cancelled'
-          || needs.publish-updater-manifest.result == 'failure' || needs.publish-updater-manifest.result
-      == 'cancelled')
+      && needs.prepare-build.result == 'success'
+      && (
+        (needs.create-release.result != 'success'
+         && (needs.pretest-tests.result == 'failure' || needs.pretest-tests.result == 'cancelled'
+             || needs.pretest-e2e.result == 'failure' || needs.pretest-e2e.result == 'cancelled'))
+        || (needs.create-release.result == 'success'
+            && (needs.build-desktop.result == 'failure' || needs.build-desktop.result == 'cancelled'
+                || needs.build-cli-linux.result == 'failure' || needs.build-cli-linux.result == 'cancelled'
+                || needs.build-docker.result == 'failure' || needs.build-docker.result == 'cancelled'
+                || needs.publish-updater-manifest.result == 'failure' || needs.publish-updater-manifest.result == 'cancelled'))
+      )
     steps:
       - name: Delete GitHub release
+        # Skip on the pretest-failure cleanup path: create-release didn't run,
+        # so there's no draft release to delete (only an orphaned tag).
+        if: needs.create-release.result == 'success'
         uses: actions/github-script@v8
         with:
           script: |
@@ -790,7 +863,9 @@ jobs:
         # `:v<version>` and `:<version>` tags we just pushed and remove the
         # underlying package version. `:latest` is left alone — the previous
         # release is still pointed at it, and clobbering the moving tag here
-        # would orphan downstream pulls.
+        # would orphan downstream pulls. Skipped on the pretest-failure
+        # cleanup path where build-docker never ran.
+        if: needs.build-docker.result == 'success'
         continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

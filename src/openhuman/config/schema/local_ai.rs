@@ -232,22 +232,29 @@ impl LocalAiConfig {
         self.runtime_enabled
     }
 
-    /// Use the local model for embedding generation.
+    /// **Deprecated** — read from `Config::workload_uses_local("embeddings")`
+    /// instead. This helper only consults the legacy `usage.*` booleans, which
+    /// are no longer the source of truth after the unified AI settings
+    /// migration (schema_version >= 2).
+    #[deprecated(note = "Use Config::workload_uses_local(\"embeddings\")")]
     pub fn use_local_for_embeddings(&self) -> bool {
         self.runtime_enabled && self.usage.embeddings
     }
 
-    /// Use the local model inside the heartbeat loop.
+    /// **Deprecated** — read from `Config::workload_uses_local("heartbeat")`.
+    #[deprecated(note = "Use Config::workload_uses_local(\"heartbeat\")")]
     pub fn use_local_for_heartbeat(&self) -> bool {
         self.runtime_enabled && self.usage.heartbeat
     }
 
-    /// Use the local model for learning/reflection passes.
+    /// **Deprecated** — read from `Config::workload_uses_local("learning")`.
+    #[deprecated(note = "Use Config::workload_uses_local(\"learning\")")]
     pub fn use_local_for_learning(&self) -> bool {
         self.runtime_enabled && self.usage.learning_reflection
     }
 
-    /// Use the local model for subconscious evaluation and execution.
+    /// **Deprecated** — read from `Config::workload_uses_local("subconscious")`.
+    #[deprecated(note = "Use Config::workload_uses_local(\"subconscious\")")]
     pub fn use_local_for_subconscious(&self) -> bool {
         self.runtime_enabled && self.usage.subconscious
     }

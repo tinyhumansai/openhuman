@@ -2,9 +2,10 @@
 compile_error!("src-tauri host is desktop-only. Non-desktop targets are not supported.");
 
 mod cdp;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 mod cef_preflight;
 mod cef_profile;
+mod companion_commands;
 mod core_process;
 mod core_rpc;
 mod dictation_hotkeys;
@@ -31,6 +32,8 @@ mod webview_apis;
 mod whatsapp_scanner;
 mod window_state;
 
+#[cfg(target_os = "macos")]
+use tauri::menu::{PredefinedMenuItem, Submenu};
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use tauri::WindowEvent;
 #[cfg(not(target_os = "linux"))]
@@ -40,6 +43,7 @@ use tauri::{
 };
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, RunEvent, WebviewWindow};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+use tauri_plugin_notification::NotificationExt;
 
 #[cfg(any(windows, target_os = "linux"))]
 use tauri_plugin_deep_link::DeepLinkExt;
@@ -53,6 +57,12 @@ use objc2_app_kit::{NSPanel, NSWindowCollectionBehavior, NSWindowStyleMask};
 
 // CEF is the only runtime; alias kept so command handlers thread the runtime generic uniformly.
 pub(crate) type AppRuntime = tauri::Cef;
+
+static EARLY_TEARDOWN_RAN: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(target_os = "macos")]
+const APP_QUIT_MENU_ID: &str = "app_quit";
 
 #[tauri::command]
 fn core_rpc_url() -> String {
@@ -253,9 +263,246 @@ async fn restart_core_process(
 #[tauri::command]
 async fn start_core_process(
     state: tauri::State<'_, core_process::CoreProcessHandle>,
+    app: tauri::AppHandle<AppRuntime>,
 ) -> Result<(), String> {
     log::info!("[core] start_core_process: command invoked from frontend");
-    state.inner().ensure_running().await
+    state.inner().ensure_running().await?;
+    if let Some(notice) = state.inner().take_last_port_fallback_notice() {
+        let body = format!(
+            "OpenHuman is using port {} because {} was busy",
+            notice.chosen_port, notice.preferred_port
+        );
+        if let Err(err) = app
+            .notification()
+            .builder()
+            .title("OpenHuman")
+            .body(&body)
+            .show()
+        {
+            log::warn!("[core] fallback toast notification failed: {err}");
+        } else {
+            log::info!("[core] fallback toast shown: {body}");
+        }
+    }
+    Ok(())
+}
+
+/// Reset the user's local OpenHuman data and bounce the embedded core.
+///
+/// Replaces the prior two-step UI flow that called the core JSON-RPC
+/// `openhuman.config_reset_local_data` (in-process removal) followed by
+/// `restart_core_process`. The in-process removal failed on Windows with
+/// `ERROR_SHARING_VIOLATION` (os error 32) because the running core held
+/// open handles to SQLite databases, log files, the Sentry session store,
+/// etc. inside the directory it was being asked to delete — see
+/// OPENHUMAN-TAURI-AF.
+///
+/// New order:
+///
+/// 1. Query the core for the **paths** it would remove (`config_get_data_paths`)
+///    while the core is still up — these are derived from the loaded config
+///    and the active workspace marker, so the core is authoritative.
+/// 2. Acquire the restart lock so a concurrent `restart_core_process` cannot
+///    interleave with the remove.
+/// 3. Shut down the embedded core. `CoreProcessHandle::shutdown` cancels
+///    the cancellation token and awaits the tokio task, which drops the
+///    SQLite pool, log writer, etc. — releasing every Windows file handle.
+/// 4. Remove the three paths (current data dir, default data dir, active
+///    workspace marker) from this process. Missing entries are non-fatal.
+/// 5. Restart the embedded core via `ensure_running`.
+///
+/// Returns `Ok(())` only when the core is back up and the directories are
+/// gone (or were already absent). Any step's `Err` short-circuits and
+/// surfaces to the UI, which already renders the message as a toast.
+#[tauri::command]
+async fn reset_local_data(
+    state: tauri::State<'_, core_process::CoreProcessHandle>,
+) -> Result<(), String> {
+    log::info!("[core] reset_local_data: command invoked from frontend");
+
+    // ── 1. Ask the core for the paths it would remove ────────────────────
+    //
+    // The core is authoritative for path resolution (it owns config
+    // loading, the workspace marker, and the staging-vs-prod default-dir
+    // suffix). Resolve while the core is still up so we don't duplicate
+    // that logic here.
+    let paths = fetch_data_paths().await?;
+    log::info!(
+        "[core] reset_local_data: paths resolved current={} default={} marker={}",
+        paths.current_openhuman_dir.display(),
+        paths.default_openhuman_dir.display(),
+        paths.active_workspace_marker_path.display()
+    );
+
+    // ── 2. Acquire the restart lock ─────────────────────────────────────
+    //
+    // Prevents a concurrent `restart_core_process` from re-spawning the
+    // embedded server in the middle of the remove step.
+    let _guard = state.inner().restart_lock().await;
+    log::debug!("[core] reset_local_data: acquired restart lock");
+
+    // ── 3. Shut down the embedded core ──────────────────────────────────
+    //
+    // Drops the tokio task, which drops the SQLite pool, log writer, and
+    // every other RAII owner of a file handle inside the data directory.
+    // On Windows this is the load-bearing step for OPENHUMAN-TAURI-AF.
+    state.inner().shutdown().await;
+    log::info!("[core] reset_local_data: embedded core stopped");
+
+    // ── 4. Remove the paths ─────────────────────────────────────────────
+    //
+    // Missing entries are non-fatal: the user may already have manually
+    // cleared the dir, or the marker may not exist for fresh installs.
+    //
+    // Capture the first delete error (if any) instead of propagating with
+    // `?` — we must still restart the embedded core in step 5 so the app
+    // doesn't end up with the sidecar dead. The original delete error is
+    // surfaced after the restart attempt.
+    let delete_result: Result<(), String> = async {
+        remove_path_if_exists(
+            &paths.active_workspace_marker_path,
+            "active workspace marker",
+        )
+        .await?;
+        remove_dir_if_exists(&paths.current_openhuman_dir, "current openhuman dir").await?;
+        if paths.default_openhuman_dir != paths.current_openhuman_dir {
+            remove_dir_if_exists(&paths.default_openhuman_dir, "default openhuman dir").await?;
+        } else {
+            log::debug!(
+                "[core] reset_local_data: default dir == current dir; already removed above"
+            );
+        }
+        Ok(())
+    }
+    .await;
+    if let Err(ref e) = delete_result {
+        log::warn!("[core] reset_local_data: delete step failed: {e}; will still restart core");
+    }
+
+    // ── 5. Restart the embedded core ────────────────────────────────────
+    //
+    // Always attempt restart, even if delete failed — otherwise the user
+    // is left with a dead sidecar. If restart itself fails, prefer the
+    // original delete error (more actionable) over the restart error.
+    let restart_result = state.inner().ensure_running().await;
+    match (&delete_result, &restart_result) {
+        (Ok(()), Ok(())) => log::info!("[core] reset_local_data: embedded core back up"),
+        (Err(_), Ok(())) => log::warn!(
+            "[core] reset_local_data: core restarted but delete step failed; surfacing delete error"
+        ),
+        (Ok(()), Err(e)) => log::error!("[core] reset_local_data: core restart failed: {e}"),
+        (Err(_), Err(e)) => log::error!(
+            "[core] reset_local_data: both delete and restart failed; restart error: {e}"
+        ),
+    }
+    delete_result?;
+    restart_result?;
+    Ok(())
+}
+
+/// Resolved data paths returned by `config_get_data_paths`.
+struct ResolvedDataPaths {
+    current_openhuman_dir: std::path::PathBuf,
+    default_openhuman_dir: std::path::PathBuf,
+    active_workspace_marker_path: std::path::PathBuf,
+}
+
+/// Call the core's `config_get_data_paths` RPC and parse the response.
+async fn fetch_data_paths() -> Result<ResolvedDataPaths, String> {
+    let url = crate::core_rpc::core_rpc_url_value();
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "openhuman.config_get_data_paths",
+        "params": {}
+    });
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("config_get_data_paths client build failed: {e}"))?;
+    let req = crate::core_rpc::apply_auth(client.post(&url))?;
+    let res = req
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("config_get_data_paths request failed: {e}"))?;
+    if !res.status().is_success() {
+        return Err(format!("config_get_data_paths http {}", res.status()));
+    }
+    let envelope: serde_json::Value = res
+        .json()
+        .await
+        .map_err(|e| format!("config_get_data_paths decode failed: {e}"))?;
+    // JSON-RPC envelope wraps the `RpcOutcome` result twice:
+    // `{ "result": { "result": { ...paths... }, "logs": [...] } }`.
+    let inner = envelope
+        .pointer("/result/result")
+        .ok_or_else(|| "config_get_data_paths missing /result/result".to_string())?;
+    let current = inner
+        .get("current_openhuman_dir")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "config_get_data_paths missing current_openhuman_dir".to_string())?;
+    let default = inner
+        .get("default_openhuman_dir")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "config_get_data_paths missing default_openhuman_dir".to_string())?;
+    let marker = inner
+        .get("active_workspace_marker_path")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "config_get_data_paths missing active_workspace_marker_path".to_string())?;
+    Ok(ResolvedDataPaths {
+        current_openhuman_dir: std::path::PathBuf::from(current),
+        default_openhuman_dir: std::path::PathBuf::from(default),
+        active_workspace_marker_path: std::path::PathBuf::from(marker),
+    })
+}
+
+/// Remove a regular file if present. Missing → debug log + Ok.
+async fn remove_path_if_exists(path: &std::path::Path, label: &str) -> Result<(), String> {
+    match tokio::fs::remove_file(path).await {
+        Ok(()) => {
+            log::info!(
+                "[core] reset_local_data: removed {label} at {}",
+                path.display()
+            );
+            Ok(())
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            log::debug!(
+                "[core] reset_local_data: {label} already absent at {}",
+                path.display()
+            );
+            Ok(())
+        }
+        Err(e) => Err(format!(
+            "Failed to remove {label} at {}: {e}",
+            path.display()
+        )),
+    }
+}
+
+/// Remove a directory tree if present. Missing → debug log + Ok.
+async fn remove_dir_if_exists(path: &std::path::Path, label: &str) -> Result<(), String> {
+    match tokio::fs::remove_dir_all(path).await {
+        Ok(()) => {
+            log::info!(
+                "[core] reset_local_data: removed {label} at {}",
+                path.display()
+            );
+            Ok(())
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            log::debug!(
+                "[core] reset_local_data: {label} already absent at {}",
+                path.display()
+            );
+            Ok(())
+        }
+        Err(e) => Err(format!(
+            "Failed to remove {label} at {}: {e}",
+            path.display()
+        )),
+    }
 }
 
 /// Cleanly exit the application.
@@ -972,6 +1219,69 @@ fn show_main_window(app: &AppHandle<AppRuntime>) -> Result<(), String> {
     }
     Ok(())
 }
+
+#[cfg(target_os = "macos")]
+fn macos_app_menu(app: &AppHandle<AppRuntime>) -> tauri::Result<Menu<AppRuntime>> {
+    let about = PredefinedMenuItem::about(app, None, None)?;
+    let hide = PredefinedMenuItem::hide(app, None)?;
+    let hide_others = PredefinedMenuItem::hide_others(app, None)?;
+    let show_all = PredefinedMenuItem::show_all(app, None)?;
+    let quit = MenuItem::with_id(
+        app,
+        APP_QUIT_MENU_ID,
+        "Quit OpenHuman",
+        true,
+        Some("CmdOrCtrl+Q"),
+    )?;
+    let app_sep_1 = PredefinedMenuItem::separator(app)?;
+    let app_sep_2 = PredefinedMenuItem::separator(app)?;
+    let app_menu = Submenu::with_items(
+        app,
+        "OpenHuman",
+        true,
+        &[
+            &about,
+            &app_sep_1,
+            &hide,
+            &hide_others,
+            &show_all,
+            &app_sep_2,
+            &quit,
+        ],
+    )?;
+
+    let undo = PredefinedMenuItem::undo(app, None)?;
+    let redo = PredefinedMenuItem::redo(app, None)?;
+    let cut = PredefinedMenuItem::cut(app, None)?;
+    let copy = PredefinedMenuItem::copy(app, None)?;
+    let paste = PredefinedMenuItem::paste(app, None)?;
+    let select_all = PredefinedMenuItem::select_all(app, None)?;
+    let edit_sep_1 = PredefinedMenuItem::separator(app)?;
+    let edit_sep_2 = PredefinedMenuItem::separator(app)?;
+    let edit_menu = Submenu::with_items(
+        app,
+        "Edit",
+        true,
+        &[
+            &undo,
+            &redo,
+            &edit_sep_1,
+            &cut,
+            &copy,
+            &paste,
+            &edit_sep_2,
+            &select_all,
+        ],
+    )?;
+
+    let close = PredefinedMenuItem::close_window(app, None)?;
+    let minimize = PredefinedMenuItem::minimize(app, None)?;
+    let fullscreen = PredefinedMenuItem::fullscreen(app, None)?;
+    let window_menu = Submenu::with_items(app, "Window", true, &[&close, &minimize, &fullscreen])?;
+
+    Menu::with_items(app, &[&app_menu, &edit_menu, &window_menu])
+}
+
 #[cfg(target_os = "linux")]
 fn setup_tray(app: &AppHandle<AppRuntime>) -> tauri::Result<()> {
     let _ = app;
@@ -1206,6 +1516,18 @@ fn perform_early_teardown_sync(app_handle: &AppHandle<AppRuntime>) {
     log::info!("[app] perform_early_teardown_sync — early teardown complete");
 }
 
+fn perform_early_teardown_sync_once(app_handle: &AppHandle<AppRuntime>, reason: &str) {
+    if EARLY_TEARDOWN_RAN.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        log::info!(
+            "[app] perform_early_teardown_sync_once — already ran, skipping reason={reason}"
+        );
+        return;
+    }
+
+    log::info!("[app] perform_early_teardown_sync_once — reason={reason}");
+    perform_early_teardown_sync(app_handle);
+}
+
 /// Shared early teardown logic before CEF's shutdown to prevent races and zombie processes.
 /// Asynchronous version to be called from async Tauri commands (e.g. `restart_app`, updates).
 async fn perform_early_teardown_async(app_handle: &AppHandle<AppRuntime>) {
@@ -1229,7 +1551,7 @@ async fn perform_early_teardown_async(app_handle: &AppHandle<AppRuntime>) {
 /// Explicitly winds down CEF and Tauri before an app.exit(0)
 fn shutdown_app_sync(app_handle: &AppHandle<AppRuntime>, exit_code: i32) {
     log::info!("[app] shutdown_app_sync — starting early teardown");
-    perform_early_teardown_sync(app_handle);
+    perform_early_teardown_sync_once(app_handle, "shutdown_app_sync");
     log::info!("[app] shutdown_app_sync — early teardown complete, exiting");
     app_handle.exit(exit_code);
 }
@@ -1292,7 +1614,215 @@ fn warn_if_wsl_x11_desktop_launch() {
 #[cfg(not(target_os = "linux"))]
 fn warn_if_wsl_x11_desktop_launch() {}
 
+/// Returns `true` if a display server is available on Linux.
+/// Testable pure function: takes the env-presence booleans directly.
+#[cfg(any(target_os = "linux", test))]
+fn linux_display_server_present(display: bool, wayland_display: bool) -> bool {
+    display || wayland_display
+}
+
+/// Pre-CEF display-server check for Linux (Sentry OPENHUMAN-TAURI-K1).
+///
+/// CEF/Chromium requires X11 (`DISPLAY`) or Wayland (`WAYLAND_DISPLAY`) to
+/// initialise. Without either, `cef_initialize` returns 0 and the vendored
+/// `tauri-runtime-cef` asserts `result == 1` → panic `left: 0, right: 1`.
+/// This is fatal and silent on WSL2 without WSLg and on any headless Linux box.
+/// Detect it here and exit with a clear message before `CefRuntime::init` runs.
+#[cfg(target_os = "linux")]
+fn check_linux_display_server() {
+    if linux_display_server_present(
+        has_non_empty_env("DISPLAY"),
+        has_non_empty_env("WAYLAND_DISPLAY"),
+    ) {
+        log::debug!(
+            "[cef-preflight] Linux display server present: DISPLAY={:?} WAYLAND_DISPLAY={:?}",
+            std::env::var("DISPLAY").ok(),
+            std::env::var("WAYLAND_DISPLAY").ok()
+        );
+        return;
+    }
+    let msg = "[openhuman] no display server found (DISPLAY and WAYLAND_DISPLAY are both unset).\n\
+               OpenHuman requires an X11 or Wayland display to run.\n\
+               On WSL2: install WSLg or configure X11 forwarding from Windows.\n\
+               Set DISPLAY (e.g. export DISPLAY=:0) or WAYLAND_DISPLAY before launching.";
+    log::error!(
+        "[cef-preflight] Linux display server missing — CEF cannot initialize \
+         (OPENHUMAN-TAURI-K1): DISPLAY and WAYLAND_DISPLAY both unset"
+    );
+    eprintln!("\n{msg}\n");
+    std::process::exit(1);
+}
+
+#[cfg(not(target_os = "linux"))]
+fn check_linux_display_server() {}
+
+type CefCommandLineArg = (&'static str, Option<&'static str>);
+
+/// Returns `true` when the process is running as root (UID 0) on Linux.
+/// Testable pure function; takes the uid directly.
+#[cfg(any(target_os = "linux", test))]
+fn linux_is_root_uid(uid: u32) -> bool {
+    uid == 0
+}
+
+fn append_platform_cef_gpu_workarounds(args: &mut Vec<CefCommandLineArg>, os: &str, arch: &str) {
+    // Issue #1697: on Arch/Manjaro-family Linux systems, the AppImage can
+    // abort during CEF GPU process startup when EGL context creation fails
+    // before Chromium's own fallback path gets a usable renderer. Disable the
+    // hardware GPU path on Linux so packaged builds can still launch via
+    // software compositing.
+    if os == "linux" {
+        args.push(("--disable-gpu", None));
+        args.push(("--disable-gpu-compositing", None));
+        log::info!(
+            "[cef-startup] Linux detected: adding --disable-gpu and --disable-gpu-compositing (issue #1697)"
+        );
+    }
+
+    // Issue #1012: Intel macOS (x86_64) crashes with EXC_CRASH (SIGABRT)
+    // inside CrBrowserMain when CEF 146 tries to use GPU compositing via
+    // Metal on Intel GPU hardware/drivers. Disable GPU compositing on
+    // x86_64 macOS so the browser process falls back to software compositing
+    // instead of aborting.
+    if os == "macos" && arch == "x86_64" {
+        args.push(("--disable-gpu-compositing", None));
+        log::info!(
+            "[cef-startup] Intel macOS detected: adding --disable-gpu-compositing (issue #1012)"
+        );
+    }
+
+    // Sentry OPENHUMAN-TAURI-K1: `cef::initialize` returns 0 when running as
+    // root (uid 0) on Linux unless `--no-sandbox` is passed as a command-line
+    // argument. The `no_sandbox: 1` field in `cef::Settings` disables the
+    // sub-process sandbox but does NOT satisfy Chromium's separate root-user
+    // check in the browser process — that check requires the CLI flag.
+    //
+    // This hits CI / coder-bot / Docker environments (e.g.
+    // `/root/.hermes/profiles/coder-bot/home`) that run as root inside a
+    // container. Without the flag, `cef_initialize` returns 0 and the vendored
+    // runtime assertion fires (`left: 0, right: 1`).
+    #[cfg(target_os = "linux")]
+    {
+        let uid = nix::unistd::getuid().as_raw();
+        if os == "linux" && linux_is_root_uid(uid) {
+            args.push(("--no-sandbox", None));
+            log::info!(
+                "[cef-startup] running as root (uid=0) on Linux: adding --no-sandbox \
+                 (OPENHUMAN-TAURI-K1)"
+            );
+        }
+    }
+}
+
+/// Linux only: replace Xlib's default error handler with a logging no-op.
+///
+/// Why: on Wayland sessions (GNOME/KDE/Hyprland) running CEF via XWayland,
+/// the CEF browser process issues `XConfigureWindow` against a window the
+/// XWayland server hasn't fully realized yet, and Xlib's *default* error
+/// handler reacts to the resulting `BadWindow` by calling `exit(1)` — which
+/// kills the entire app before the main window ever paints. This reproduces
+/// reliably on Ubuntu 26.04 + GNOME-Wayland with the locally-built AppImage
+/// (issue #2001 item #2 — was punted as "separate display-side concerns"
+/// in PR #2032 but blocks any actual use of the app on a Wayland host).
+///
+/// XSetErrorHandler is a process-global registration; safe to install before
+/// any X display is opened. libX11 is already a runtime dep (verified via
+/// ldd of the compiled OpenHuman binary).
+#[cfg(target_os = "linux")]
+fn install_silent_x_error_handler() {
+    use std::ffi::c_void;
+    use std::os::raw::{c_int, c_uchar, c_ulong};
+    use std::sync::Once;
+
+    #[repr(C)]
+    struct XErrorEvent {
+        type_: c_int,
+        display: *mut c_void,
+        resourceid: c_ulong,
+        serial: c_ulong,
+        error_code: c_uchar,
+        request_code: c_uchar,
+        minor_code: c_uchar,
+    }
+
+    type ErrorHandler = unsafe extern "C" fn(*mut c_void, *mut XErrorEvent) -> c_int;
+    unsafe extern "C" {
+        fn XSetErrorHandler(handler: Option<ErrorHandler>) -> Option<ErrorHandler>;
+    }
+
+    unsafe extern "C" fn silent_handler(_display: *mut c_void, ev: *mut XErrorEvent) -> c_int {
+        if !ev.is_null() {
+            let e = unsafe { &*ev };
+            log::warn!(
+                "[x11] suppressed X protocol error: code={} request={} minor={} resource=0x{:x} serial={}",
+                e.error_code,
+                e.request_code,
+                e.minor_code,
+                e.resourceid,
+                e.serial
+            );
+        } else {
+            log::warn!("[x11] suppressed X protocol error (null event)");
+        }
+        0
+    }
+
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        unsafe {
+            XSetErrorHandler(Some(silent_handler));
+        }
+        log::info!(
+            "[x11] installed silent X error handler to prevent BadWindow exits on Wayland-XWayland (issue #2001 item #2)"
+        );
+    });
+}
+
+#[cfg(not(target_os = "linux"))]
+fn install_silent_x_error_handler() {}
+
 pub fn run() {
+    // Must run before any GTK/CEF code that could trigger X calls — otherwise
+    // Xlib's default handler calls exit(1) on the first BadWindow and we never
+    // reach this line. See helper doc above for the full reasoning.
+    install_silent_x_error_handler();
+
+    // ── Install a custom tokio runtime for tauri::async_runtime ─────────
+    //
+    // Tauri's default async runtime uses tokio multi-thread workers with
+    // a ~2 MB stack. The in-process core (spawned by
+    // `core_process::CoreProcessHandle::ensure_running` via
+    // `tokio::spawn(run_server_embedded(..))`) runs *on* that runtime, so
+    // every JSON-RPC handler — including the deep tower
+    // `web channel chat → orchestrator turn → delegate_to_integrations_agent
+    // → sub-agent → composio_list_tools → load_config_with_timeout` —
+    // burns through the same 2 MB. In `crahs.log` (2026-05-17, build
+    // 0.53.49) that tower plus the serde-monomorphised `Config` Visitor
+    // frames pushed past the guard page and aborted with
+    // `SIGBUS / KERN_PROTECTION_FAILURE`. The structural fix
+    // (`spawn_blocking` for the TOML parse + cache in
+    // `src/openhuman/config/{schema/load.rs, ops.rs}`) moves the
+    // largest contributor off the worker; bumping the worker stack
+    // itself gives the rest of the tower comfortable headroom so future
+    // additions don't immediately re-tip the same scale. 8 MiB matches
+    // the OS-default pthread main-thread stack on macOS, so we can
+    // assume "as much room as the main thread" everywhere.
+    //
+    // Must happen before any `tauri::async_runtime::*` call, otherwise
+    // `set(...)` panics with "runtime already initialized".
+    {
+        let custom_runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .thread_stack_size(8 * 1024 * 1024)
+            .build()
+            .expect("build custom tokio runtime for tauri async surface");
+        let handle = custom_runtime.handle().clone();
+        // Tauri docs: "you cannot drop the underlying TokioRuntime."
+        // Leak it so its lifetime matches the process.
+        std::mem::forget(custom_runtime);
+        tauri::async_runtime::set(handle);
+    }
+
     // Initialize Sentry for the Tauri shell (desktop host) process before any
     // other startup work. Reads `OPENHUMAN_TAURI_SENTRY_DSN` at runtime first,
     // then falls back to the value baked in at compile time via the release
@@ -1446,6 +1976,9 @@ pub fn run() {
     }
 
     warn_if_wsl_x11_desktop_launch();
+    // Exit before CEF if no display server is available — prevents the
+    // `assert_eq!(cef_initialize(…), 1)` panic (OPENHUMAN-TAURI-K1).
+    check_linux_display_server();
 
     // The vendored tauri-cef dev-server proxy builds a reqwest 0.13 client
     // (see vendor/tauri-cef/crates/tauri/src/protocol/tauri.rs) which calls
@@ -1533,7 +2066,12 @@ pub fn run() {
     #[cfg(target_os = "macos")]
     process_recovery::reap_stale_openhuman_processes();
 
-    #[cfg(target_os = "macos")]
+    // CEF cache-lock preflight: if another OpenHuman instance holds the CEF
+    // user-data-dir SingletonLock, `cef_initialize` returns 0 and the vendored
+    // runtime panics (`left: 0, right: 1`). Catch the collision here and exit
+    // cleanly. Stale locks (PID dead) are removed so crashed processes don't
+    // block subsequent launches. macOS: issue #864. Linux: OPENHUMAN-TAURI-K1.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     if let Err(e) = cef_preflight::check_default_cache() {
         eprintln!("\n[openhuman] {e}\n");
         std::process::exit(1);
@@ -1569,7 +2107,7 @@ pub fn run() {
         // `tauri-runtime-cef/src/cef_impl.rs`) routes value-less args that
         // don't start with `-` to `append_argument` (positional) instead of
         // `append_switch`, which means Chromium silently ignores them.
-        let mut args: Vec<(&str, Option<&str>)> = vec![
+        let mut args: Vec<CefCommandLineArg> = vec![
             ("--use-mock-keychain", None),
             ("--password-store", Some("basic")),
             // Enable SharedArrayBuffer so embedded apps that need WebRTC
@@ -1676,34 +2214,27 @@ pub fn run() {
         // `about:blank` (blank panel for Telegram / WhatsApp / Slack / Discord).
         // Same port the `cdp::CDP_HOST`/`cdp::CDP_PORT` constants expect.
         args.push(("--remote-debugging-port", Some("19222")));
-        // Issue #1012 — Intel macOS (x86_64) crashes with EXC_CRASH (SIGABRT)
-        // inside CrBrowserMain when CEF 146 tries to use GPU compositing via
-        // Metal on Intel GPU hardware/drivers. Disable GPU compositing on
-        // x86_64 macOS so the browser process falls back to software
-        // compositing instead of aborting. This flag is a no-op on Apple
-        // Silicon (arm64) and on non-macOS targets; all other GPU paths
-        // (WebGL, video decode) remain unaffected.
-        #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
-        {
-            args.push(("--disable-gpu-compositing", None));
-            log::info!("[cef-startup] Intel macOS detected: adding --disable-gpu-compositing (issue #1012)");
-        }
-        // Issue #1697 — Linux AppImage fails to launch on Mesa 26+ (Arch,
-        // Manjaro, EndeavourOS, CachyOS) with EGL_BAD_ATTRIBUTE during GPU
-        // context creation. Chromium's EGL initialization returns
-        // EGL_BAD_ATTRIBUTE for both ES 3.0 and 2.0 contexts on Mesa 26+,
-        // producing ContextResult::kFatalFailure. Disabling the entire GPU
-        // process forces SwiftShader software rendering so the app launches
-        // on these distros. The same CEF version works on Ubuntu/deb-based
-        // distros with older Mesa; this flag degrades gracefully there
-        // (software-only rendering, no WebGL).
-        #[cfg(target_os = "linux")]
-        {
-            args.push(("--disable-gpu", None));
-            log::info!("[cef-startup] Linux detected: adding --disable-gpu (issue #1697)");
-        }
+        append_platform_cef_gpu_workarounds(
+            &mut args,
+            std::env::consts::OS,
+            std::env::consts::ARCH,
+        );
         tauri::Builder::<tauri::Cef>::new().command_line_args::<&str, &str>(args)
     };
+
+    #[cfg(target_os = "macos")]
+    let builder = builder
+        // Use an app-owned Quit item for Cmd+Q instead of the native
+        // predefined Quit action. The predefined path calls
+        // NSApplication::terminate, which reaches CEF shutdown before
+        // OpenHuman's child-webview/core teardown can run.
+        .menu(macos_app_menu)
+        .on_menu_event(|app, event| {
+            if event.id().as_ref() == APP_QUIT_MENU_ID {
+                log::info!("[app-menu] action=quit");
+                shutdown_app_sync(app, 0);
+            }
+        });
 
     let builder = builder
         // Single-instance guard — MUST be the first plugin registered so the
@@ -1756,6 +2287,9 @@ pub fn run() {
         // gitbooks/overview/auto-update.md for the full pipeline.
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(dictation_hotkeys::DictationHotkeyState(
+            std::sync::Mutex::new(Vec::new()),
+        ))
+        .manage(companion_commands::CompanionHotkeyState(
             std::sync::Mutex::new(Vec::new()),
         ))
         .manage(webview_accounts::WebviewAccountsState::default())
@@ -2382,6 +2916,7 @@ pub fn run() {
             install_app_update,
             restart_core_process,
             start_core_process,
+            reset_local_data,
             app_quit,
             restart_app,
             get_active_user_id,
@@ -2417,7 +2952,10 @@ pub fn run() {
             file_logging::reveal_logs_folder,
             file_logging::logs_folder_path,
             meet_call::meet_call_open_window,
-            meet_call::meet_call_close_window
+            meet_call::meet_call_close_window,
+            companion_commands::register_companion_hotkey,
+            companion_commands::unregister_companion_hotkey,
+            companion_commands::companion_activate
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
@@ -2437,15 +2975,23 @@ pub fn run() {
             // window from tray click: main window not found`
             // (OPENHUMAN-TAURI-2X — 21 events, Windows only).
             //
-            // macOS uses `window.hide()` because the vendored CEF runtime
-            // routes that through `set_application_visibility(false)` at the
-            // NSApplication level (`tauri-runtime-cef/src/lib.rs:588`), which
-            // hides the CEF browser surface together with the host window.
-            // Windows is handled in the separate arm below — see issue #1607.
+            // macOS: hide the whole application on close instead of
+            // destroying the window. `AppHandle::hide()` calls
+            // `[NSApp hide:]` via `set_application_visibility(false)`,
+            // the standard macOS mechanism that reliably hides all
+            // windows. The vendored CEF runtime's per-window
+            // `WebviewWindow::hide()` sends `WindowMessage::Hide` →
+            // `cef::Window::hide()`, which does NOT propagate to the
+            // visible NSWindow frame and leaves the window on screen
+            // (issue #2049). Dock-click fires `RunEvent::Reopen` which
+            // calls `show_main_window()` to restore.
             //
-            // Linux is left out: `setup_tray` early-returns on Linux because
-            // tray creation panics inside GTK during packaged runs, so the
-            // hide-on-close behavior would strand the user with no way back.
+            // Windows is handled in the separate arm below — see #1607.
+            //
+            // Linux is left out: `setup_tray` early-returns on Linux
+            // because tray creation panics inside GTK during packaged
+            // runs, so hide-on-close would strand the user with no way
+            // back.
             #[cfg(target_os = "macos")]
             RunEvent::WindowEvent {
                 label,
@@ -2453,11 +2999,13 @@ pub fn run() {
                 ..
             } if label == "main" => {
                 log::info!(
-                    "[window] close requested on main window — hiding instead of destroying"
+                    "[window] close requested on main window — hiding app"
                 );
                 api.prevent_close();
-                if let Some(window) = app_handle.get_webview_window("main") {
-                    let _ = window.hide();
+                if let Err(err) = app_handle.hide() {
+                    log::warn!(
+                        "[window] app_handle.hide() failed on close request: {err}"
+                    );
                 }
             }
             // Windows: full hide-to-tray.
@@ -2518,7 +3066,7 @@ pub fn run() {
                 //      do not wait — that would block the main thread
                 //      and starve CEF's UI loop. The kernel reaps the
                 //      child after Tauri exits.
-                perform_early_teardown_sync(app_handle);
+                perform_early_teardown_sync_once(app_handle, "exit_requested");
             }
             RunEvent::Exit => {
                 log::info!("[app] RunEvent::Exit — cef::shutdown follows");
@@ -2845,6 +3393,41 @@ mod tests {
     }
 
     // -------------------------------------------------------------------------
+    // Linux display-server pre-flight (Sentry OPENHUMAN-TAURI-K1)
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn linux_display_present_with_x11() {
+        assert!(linux_display_server_present(true, false));
+    }
+
+    #[test]
+    fn linux_display_present_with_wayland() {
+        assert!(linux_display_server_present(false, true));
+    }
+
+    #[test]
+    fn linux_display_present_with_both() {
+        assert!(linux_display_server_present(true, true));
+    }
+
+    #[test]
+    fn linux_display_absent_without_either() {
+        assert!(!linux_display_server_present(false, false));
+    }
+
+    #[test]
+    fn linux_root_uid_detected() {
+        assert!(linux_is_root_uid(0));
+    }
+
+    #[test]
+    fn linux_non_root_uid_not_detected() {
+        assert!(!linux_is_root_uid(1000));
+        assert!(!linux_is_root_uid(1));
+    }
+
+    // -------------------------------------------------------------------------
     // Platform constants (issue #1012 Sentry tagging)
     // -------------------------------------------------------------------------
 
@@ -2871,6 +3454,36 @@ mod tests {
     #[test]
     fn platform_os_is_macos_on_macos_build() {
         assert_eq!(std::env::consts::OS, "macos");
+    }
+
+    #[test]
+    fn platform_cef_gpu_workarounds_disable_linux_gpu_path() {
+        let mut args = Vec::new();
+        append_platform_cef_gpu_workarounds(&mut args, "linux", "x86_64");
+
+        assert!(args.contains(&("--disable-gpu", None)));
+        assert!(args.contains(&("--disable-gpu-compositing", None)));
+    }
+
+    #[test]
+    fn platform_cef_gpu_workarounds_disable_intel_macos_compositing_only() {
+        let mut args = Vec::new();
+        append_platform_cef_gpu_workarounds(&mut args, "macos", "x86_64");
+
+        assert_eq!(args, vec![("--disable-gpu-compositing", None)]);
+    }
+
+    #[test]
+    fn platform_cef_gpu_workarounds_leave_other_platforms_alone() {
+        for (os, arch) in [("macos", "aarch64"), ("windows", "x86_64")] {
+            let mut args = Vec::new();
+            append_platform_cef_gpu_workarounds(&mut args, os, arch);
+
+            assert!(
+                args.is_empty(),
+                "unexpected CEF GPU flags for {os}/{arch}: {args:?}"
+            );
+        }
     }
 
     /// On an Intel macOS build the ARCH constant must equal "x86_64".
@@ -3199,5 +3812,35 @@ mod tests {
             Some(v) => std::env::set_var("PATH", v),
             None => std::env::remove_var("PATH"),
         }
+    }
+
+    /// Regression guard for issue #2228: `tauri-plugin-single-instance` must
+    /// enable the `deep-link` feature so that second-launch deep-link payloads
+    /// (e.g. `openhuman://oauth/...` callbacks from Windows/Linux system
+    /// browsers) are forwarded into the primary instance. Without it, hot OAuth
+    /// callbacks silently no-op while only focusing the existing window.
+    #[test]
+    fn single_instance_dep_enables_deep_link_feature() {
+        let manifest_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
+        let manifest =
+            std::fs::read_to_string(&manifest_path).expect("read app/src-tauri/Cargo.toml");
+        let parsed: toml::Value = manifest.parse().expect("parse Cargo.toml");
+
+        let dep = parsed
+            .get("dependencies")
+            .and_then(|d| d.get("tauri-plugin-single-instance"))
+            .expect("tauri-plugin-single-instance dependency must exist");
+
+        let features = dep.get("features").and_then(|f| f.as_array()).expect(
+            "tauri-plugin-single-instance must be a table with a `features` array \
+                 — issue #2228 requires the `deep-link` feature to forward hot-instance \
+                 OAuth callbacks on Windows/Linux",
+        );
+
+        assert!(
+            features.iter().any(|v| v.as_str() == Some("deep-link")),
+            "tauri-plugin-single-instance must enable the `deep-link` feature \
+             (issue #2228 — hot-instance OAuth callback forwarding)"
+        );
     }
 }

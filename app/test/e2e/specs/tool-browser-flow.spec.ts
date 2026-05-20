@@ -1,10 +1,10 @@
-import { waitForApp, waitForAppReady } from '../helpers/app-helpers';
+// @ts-nocheck
+import { waitForApp } from '../helpers/app-helpers';
 import { callOpenhumanRpc } from '../helpers/core-rpc';
-import { triggerAuthDeepLinkBypass } from '../helpers/deep-link-helpers';
-import { waitForWebView, waitForWindowVisible } from '../helpers/element-helpers';
-import { supportsExecuteScript } from '../helpers/platform';
-import { completeOnboardingIfVisible } from '../helpers/shared-flows';
+import { resetApp } from '../helpers/reset-app';
 import { clearRequestLog, getRequestLog, startMockServer, stopMockServer } from '../mock-server';
+
+const USER_ID = 'e2e-tool-browser';
 
 /**
  * Browser tool E2E spec — coverage matrix rows 7.1.1 (open URL) and
@@ -65,26 +65,14 @@ interface ListDefinitionsResult {
 
 describe('System tools — Browser (open URL + automation registry)', () => {
   before(async function beforeSuite() {
-    if (!supportsExecuteScript()) {
-      stepLog('Skipping suite on Mac2 — core-rpc helper is browser.execute-bound');
-      this.skip();
-    }
-
-    stepLog('starting mock server');
+    this.timeout(90_000);
     await startMockServer();
-    stepLog('waiting for app');
     await waitForApp();
-    stepLog('triggering auth bypass deep link');
-    await triggerAuthDeepLinkBypass('e2e-tool-browser');
-    await waitForWindowVisible(25_000);
-    await waitForWebView(15_000);
-    await waitForAppReady(15_000);
-    await completeOnboardingIfVisible('[ToolBrowserE2E]');
+    await resetApp(USER_ID);
     clearRequestLog();
   });
 
   after(async () => {
-    stepLog('stopping mock server');
     await stopMockServer();
   });
 
@@ -95,7 +83,10 @@ describe('System tools — Browser (open URL + automation registry)', () => {
     const status = await callOpenhumanRpc<ServerStatus>('openhuman.agent_server_status', {});
     stepLog('agent_server_status response', status);
     expect(status.ok).toBe(true);
-    expect(status.result?.running).toBe(true);
+    // agent_server_status uses RpcOutcome::single_log so the JSON-RPC result
+    // is { result: { running, url }, logs: [...] } — unwrap one level.
+    const statusPayload = (status.result as any)?.result ?? status.result;
+    expect(statusPayload?.running).toBe(true);
 
     const list = await callOpenhumanRpc<ListDefinitionsResult>(
       'openhuman.agent_list_definitions',

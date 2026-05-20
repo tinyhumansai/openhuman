@@ -25,13 +25,24 @@ use crate::openhuman::agent::harness;
 use crate::openhuman::agent::hooks::{self, ToolCallRecord, TurnContext};
 use crate::openhuman::agent::memory_loader::collect_recall_citations;
 use crate::openhuman::agent::progress::AgentProgress;
+use crate::openhuman::agent::tool_policy::{ToolPolicyDecision, ToolPolicyRequest};
+use crate::openhuman::agent_experience::{
+    prepend_experience_block, render_experience_hits, AgentExperienceStore, ExperienceQuery,
+};
 use crate::openhuman::context::prompt::{LearnedContextData, PromptContext, PromptTool};
 use crate::openhuman::context::{ReductionOutcome, ARCHIVIST_EXTRACTION_PROMPT};
+use crate::openhuman::inference::model_context::context_window_for_model;
+use crate::openhuman::inference::provider::{
+    ChatMessage, ChatRequest, ConversationMessage, ProviderDelta,
+};
 use crate::openhuman::memory::MemoryCategory;
-use crate::openhuman::providers::{ChatMessage, ChatRequest, ConversationMessage, ProviderDelta};
 use crate::openhuman::tools::traits::ToolCallOptions;
 use crate::openhuman::tools::Tool;
 use crate::openhuman::util::truncate_with_ellipsis;
+
+use crate::openhuman::agent::harness::token_budget::{
+    trim_chat_messages_to_budget, trim_conversation_history_to_budget,
+};
 use anyhow::Result;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
@@ -265,6 +276,12 @@ impl Agent {
         // error. The timestamp is bumped on every successful `load` (even
         // when the digest is empty) so an empty workspace doesn't get
         // re-queried every turn.
+        //
+        // Gate STM preemptive recall on the session turn index, independent
+        // of tree-prefetch success/failure. (Previously keyed off
+        // `last_tree_prefetch_at.is_none()`, which stays `None` when tree
+        // prefetch fails — re-firing STM recall on every later turn.)
+        let is_first_turn_for_stm = self.context.stats().session_memory_current_turn == 0;
         let now = std::time::Instant::now();
         let context = if crate::openhuman::agent::tree_loader::should_prefetch(
             self.last_tree_prefetch_at,
@@ -307,6 +324,70 @@ impl Agent {
             context
         };
 
+        // ── Phase 3 STM preemptive recall ────────────────────────────
+        // On the very first turn only, assemble a bounded cross-thread
+        // context block from the FTS5 episodic arm (keyword match) and the
+        // segment-embedding arm (cosine similarity). The block rides on the
+        // user message (NOT the system prompt) to keep the KV-cache prefix
+        // stable, exactly like the tree-context injection above.
+        //
+        // Gate: `learning.stm_recall_enabled` must be true AND this must
+        // be the first turn (STM is snapshot-frozen at session start).
+        // Failure is non-fatal — bare `context` passes through untouched.
+        let context = if is_first_turn_for_stm {
+            // Load config to check the gate. Use a cached load (cheap).
+            let stm_enabled = crate::openhuman::config::rpc::load_config_with_timeout()
+                .await
+                .map(|cfg| cfg.learning.stm_recall_enabled)
+                .unwrap_or(true); // default: enabled
+
+            if stm_enabled {
+                if let Some(conn) = self.memory.sqlite_conn() {
+                    use crate::openhuman::memory::stm_recall::recall::{stm_recall, StmRecallOpts};
+                    let opts = StmRecallOpts {
+                        exclude_session: &self.event_session_id,
+                        query: if user_message.trim().is_empty() {
+                            None
+                        } else {
+                            Some(user_message)
+                        },
+                        model_signature: None,
+                    };
+                    match stm_recall(&conn, &opts, None) {
+                        Ok(block) if !block.is_empty() => {
+                            let stm_md = block.render();
+                            log::info!(
+                                "[stm_recall] preemptive block injected: {} items, ~{} chars, fts5_candidates={}, dropped_dedup={}",
+                                block.items.len(),
+                                stm_md.chars().count(),
+                                block.fts5_candidates,
+                                block.dropped_dedup
+                            );
+                            format!("{stm_md}{context}")
+                        }
+                        Ok(_) => {
+                            log::debug!(
+                                "[stm_recall] preemptive recall: no cross-thread context found"
+                            );
+                            context
+                        }
+                        Err(e) => {
+                            log::warn!("[stm_recall] preemptive recall failed (non-fatal): {e}");
+                            context
+                        }
+                    }
+                } else {
+                    log::debug!("[stm_recall] preemptive recall skipped — no SQLite connection on memory backend");
+                    context
+                }
+            } else {
+                log::debug!("[stm_recall] preemptive recall skipped — stm_recall_enabled=false");
+                context
+            }
+        } else {
+            context
+        };
+
         let enriched = if context.is_empty() {
             log::info!("[agent] no memory context found — using raw user message");
             self.last_memory_context = None;
@@ -319,6 +400,10 @@ impl Agent {
             self.last_memory_context = Some(context.clone());
             format!("{context}{user_message}")
         };
+
+        let enriched = self
+            .inject_agent_experience_context(user_message, enriched)
+            .await;
 
         // ── SKILL.md body injection (#781) ───────────────────────────
         // Match installed SKILL.md skills against the user message and
@@ -417,6 +502,21 @@ impl Agent {
                     self.history.len()
                 );
 
+                if let Some(context_window) = context_window_for_model(&effective_model) {
+                    let budget_outcome =
+                        trim_conversation_history_to_budget(&mut self.history, context_window);
+                    if budget_outcome.trimmed {
+                        log::warn!(
+                            "[agent_loop] pre-dispatch history trimmed model={} context_window={} original_tokens={} final_tokens={} messages_removed={}",
+                            effective_model,
+                            context_window,
+                            budget_outcome.original_tokens,
+                            budget_outcome.final_tokens,
+                            budget_outcome.messages_removed
+                        );
+                    }
+                }
+
                 // Global context management: run the reduction chain
                 // before every provider hit. Cheap when the guard is
                 // healthy; executes the summarizer LLM call
@@ -486,7 +586,8 @@ impl Agent {
                 // a resumed session to provide a byte-identical prefix for
                 // KV cache reuse. After `.take()` the cache is consumed;
                 // subsequent iterations rebuild from history normally.
-                let messages = if let Some(mut cached) = self.cached_transcript_messages.take() {
+                let mut messages = if let Some(mut cached) = self.cached_transcript_messages.take()
+                {
                     // Append only the delta (new user message) from the
                     // end of the current history.
                     let new_tail = self.tool_dispatcher.to_provider_messages(
@@ -502,6 +603,21 @@ impl Agent {
                 } else {
                     self.tool_dispatcher.to_provider_messages(&self.history)
                 };
+                if let Some(context_window) = context_window_for_model(&effective_model) {
+                    let budget_outcome =
+                        trim_chat_messages_to_budget(&mut messages, context_window);
+                    if budget_outcome.trimmed {
+                        log::warn!(
+                            "[agent_loop] pre-dispatch provider messages trimmed model={} context_window={} original_tokens={} final_tokens={} messages_removed={}",
+                            effective_model,
+                            context_window,
+                            budget_outcome.original_tokens,
+                            budget_outcome.final_tokens,
+                            budget_outcome.messages_removed
+                        );
+                    }
+                }
+
                 last_provider_messages = Some(messages.clone());
 
                 log::info!(
@@ -729,7 +845,12 @@ impl Agent {
                             assistant_response: final_text.clone(),
                             tool_calls: all_tool_records,
                             turn_duration_ms: turn_started.elapsed().as_millis() as u64,
-                            session_id: None,
+                            session_id: Some(self.event_session_id.clone())
+                                .filter(|session_id| !session_id.trim().is_empty()),
+                            agent_id: Some(self.agent_definition_id.clone())
+                                .filter(|agent_id| !agent_id.trim().is_empty()),
+                            entrypoint: Some(self.event_channel.clone())
+                                .filter(|entrypoint| !entrypoint.trim().is_empty()),
                             iteration_count: iteration + 1,
                         };
                         hooks::fire_hooks(&self.post_turn_hooks, ctx);
@@ -902,7 +1023,7 @@ impl Agent {
         // later), which is the right amount of retry behaviour for a
         // librarian task that's idempotent across reruns.
         if result.is_ok() && self.context.should_extract_session_memory() {
-            self.spawn_session_memory_extraction();
+            self.spawn_session_memory_extraction().await;
             // Sibling pipeline (#1399): heuristic transcript ingestion
             // turns the just-written transcript into durable
             // conversational memory + reflections so a brand-new chat
@@ -912,6 +1033,58 @@ impl Agent {
         }
 
         result
+    }
+
+    async fn inject_agent_experience_context(
+        &self,
+        user_message: &str,
+        enriched: String,
+    ) -> String {
+        const MAX_EXPERIENCE_HITS: usize = 3;
+        const MAX_EXPERIENCE_BLOCK_BYTES: usize = 2048;
+
+        if !self.learning_enabled {
+            return enriched;
+        }
+
+        let tools = self
+            .visible_tool_specs
+            .iter()
+            .map(|spec| spec.name.clone())
+            .collect();
+        let store = AgentExperienceStore::new(self.memory.clone());
+        let query = ExperienceQuery {
+            query: user_message.to_string(),
+            tools,
+            tags: Vec::new(),
+            agent_id: Some(self.agent_definition_id.clone()).filter(|id| !id.trim().is_empty()),
+            entrypoint: Some(self.event_channel.clone())
+                .filter(|entrypoint| !entrypoint.trim().is_empty()),
+            max_hits: MAX_EXPERIENCE_HITS,
+        };
+
+        match store.retrieve(query).await {
+            Ok(hits) => {
+                let matched_hits: Vec<_> = hits
+                    .into_iter()
+                    .filter(|hit| !hit.match_reasons.is_empty())
+                    .collect();
+                let block = render_experience_hits(&matched_hits, MAX_EXPERIENCE_BLOCK_BYTES);
+                if block.is_empty() {
+                    return enriched;
+                }
+                log::debug!(
+                    "[agent-experience] injected {} experience hit(s) bytes={}",
+                    matched_hits.len(),
+                    block.len()
+                );
+                prepend_experience_block(&enriched, &block)
+            }
+            Err(err) => {
+                log::warn!("[agent-experience] retrieval failed (non-fatal): {err}");
+                enriched
+            }
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────
@@ -972,76 +1145,102 @@ impl Agent {
                 false,
             )
         } else if let Some(tool) = self.tools.iter().find(|t| t.name() == call.name) {
-            // Per-call options: ask the tool for markdown output when the
-            // context manager is configured to prefer it. Tools that
-            // implement `execute_with_options` will populate
-            // `markdown_formatted`; others fall through to the default
-            // implementation which forwards to `execute`.
-            let prefer_markdown = self.context.prefer_markdown_tool_output();
-            let options = ToolCallOptions { prefer_markdown };
-            let outcome = tool
-                .execute_with_options(call.arguments.clone(), options)
-                .await;
-            match outcome {
-                Ok(r) => {
-                    if !r.is_error {
-                        let mut output = r.output_for_llm(prefer_markdown);
-                        if prefer_markdown && r.markdown_formatted.is_some() {
-                            log::debug!(
-                                "[agent_loop] tool={} returned markdown payload bytes={}",
-                                call.name,
-                                output.len()
-                            );
-                        }
-                        // Issue #574 — if a payload summarizer is wired
-                        // in (orchestrator session only) and the output
-                        // exceeds the configured threshold, hand it to
-                        // the summarizer sub-agent before it enters
-                        // history. On any failure or below-threshold
-                        // payload, leave `output` untouched and let the
-                        // existing tool_result_budget_bytes truncation
-                        // pipeline handle it downstream.
-                        if let Some(ps) = self.payload_summarizer.as_ref() {
-                            log::debug!(
-                                "[agent_loop] payload_summarizer intercepting tool={} bytes={}",
-                                call.name,
-                                output.len()
-                            );
-                            match ps.maybe_summarize(&call.name, None, &output).await {
-                                Ok(Some(payload)) => {
-                                    log::info!(
-                                        "[agent_loop] payload_summarizer compressed tool={} {}->{} bytes",
-                                        call.name,
-                                        payload.original_bytes,
-                                        payload.summary_bytes
-                                    );
-                                    output = payload.summary;
-                                }
-                                Ok(None) => {
-                                    log::debug!(
-                                        "[agent_loop] payload_summarizer pass-through tool={} bytes={}",
-                                        call.name,
-                                        output.len()
-                                    );
-                                }
-                                Err(e) => {
-                                    log::warn!(
-                                        "[agent_loop] payload_summarizer error tool={} err={} (passing raw payload through)",
-                                        call.name,
-                                        e
-                                    );
+            let policy_request = ToolPolicyRequest {
+                tool_name: call.name.clone(),
+                arguments: call.arguments.clone(),
+                session_id: self.event_session_id().to_string(),
+                channel: self.event_channel().to_string(),
+                agent_definition_id: self.agent_definition_id.to_string(),
+            };
+            if let ToolPolicyDecision::Deny { reason } =
+                self.tool_policy.check(&policy_request).await
+            {
+                tracing::debug!(
+                    tool = call.name.as_str(),
+                    policy = self.tool_policy.name(),
+                    reason = %reason,
+                    "[agent_loop] tool denied by policy"
+                );
+                (
+                    format!(
+                        "Tool '{}' denied by policy '{}': {reason}",
+                        call.name,
+                        self.tool_policy.name()
+                    ),
+                    false,
+                )
+            } else {
+                // Per-call options: ask the tool for markdown output when the
+                // context manager is configured to prefer it. Tools that
+                // implement `execute_with_options` will populate
+                // `markdown_formatted`; others fall through to the default
+                // implementation which forwards to `execute`.
+                let prefer_markdown = self.context.prefer_markdown_tool_output();
+                let options = ToolCallOptions { prefer_markdown };
+                let outcome = tool
+                    .execute_with_options(call.arguments.clone(), options)
+                    .await;
+                match outcome {
+                    Ok(r) => {
+                        if !r.is_error {
+                            let mut output = r.output_for_llm(prefer_markdown);
+                            if prefer_markdown && r.markdown_formatted.is_some() {
+                                log::debug!(
+                                    "[agent_loop] tool={} returned markdown payload bytes={}",
+                                    call.name,
+                                    output.len()
+                                );
+                            }
+                            // Issue #574 — if a payload summarizer is wired
+                            // in (orchestrator session only) and the output
+                            // exceeds the configured threshold, hand it to
+                            // the summarizer sub-agent before it enters
+                            // history. On any failure or below-threshold
+                            // payload, leave `output` untouched and let the
+                            // existing tool_result_budget_bytes truncation
+                            // pipeline handle it downstream.
+                            if let Some(ps) = self.payload_summarizer.as_ref() {
+                                log::debug!(
+                                    "[agent_loop] payload_summarizer intercepting tool={} bytes={}",
+                                    call.name,
+                                    output.len()
+                                );
+                                match ps.maybe_summarize(&call.name, None, &output).await {
+                                    Ok(Some(payload)) => {
+                                        log::info!(
+                                            "[agent_loop] payload_summarizer compressed tool={} {}->{} bytes",
+                                            call.name,
+                                            payload.original_bytes,
+                                            payload.summary_bytes
+                                        );
+                                        output = payload.summary;
+                                    }
+                                    Ok(None) => {
+                                        log::debug!(
+                                            "[agent_loop] payload_summarizer pass-through tool={} bytes={}",
+                                            call.name,
+                                            output.len()
+                                        );
+                                    }
+                                    Err(e) => {
+                                        log::warn!(
+                                            "[agent_loop] payload_summarizer error tool={} err={} (passing raw payload through)",
+                                            call.name,
+                                            e
+                                        );
+                                    }
                                 }
                             }
+                            (output, true)
+                        } else {
+                            (
+                                format!("Error: {}", r.output_for_llm(prefer_markdown)),
+                                false,
+                            )
                         }
-                        (output, true)
-                    } else {
-                        (
-                            format!("Error: {}", r.output_for_llm(prefer_markdown)),
-                            false,
-                        )
                     }
+                    Err(e) => (format!("Error executing {}: {e}", call.name), false),
                 }
-                Err(e) => (format!("Error executing {}: {e}", call.name), false),
             }
         } else {
             (format!("Unknown tool: {}", call.name), false)
@@ -1162,7 +1361,6 @@ impl Agent {
             session_id: self.event_session_id().to_string(),
             channel: self.event_channel().to_string(),
             connected_integrations: self.connected_integrations.clone(),
-            composio_client: self.composio_client.clone(),
             tool_call_format: self.tool_dispatcher.tool_call_format(),
             session_key: self.session_key.clone(),
             session_parent_prefix: self.session_parent_prefix.clone(),
@@ -1221,14 +1419,124 @@ impl Agent {
         self.history.extend(other_messages);
     }
 
+    /// Bound a resumed transcript prefix to the agent history window.
+    ///
+    /// Resume paths may load a long prior transcript directly into
+    /// `cached_transcript_messages` (provider-ready `ChatMessage`s), which
+    /// bypasses `self.history`-based trimming/reduction. Keep at most
+    /// `max_history_messages` entries while preserving the leading system
+    /// message when present.
+    pub(super) fn bound_cached_transcript_messages(
+        &self,
+        messages: Vec<ChatMessage>,
+    ) -> Vec<ChatMessage> {
+        let max = self.config.max_history_messages.max(1);
+        if messages.len() <= max {
+            return messages;
+        }
+
+        if matches!(messages.first(), Some(msg) if msg.role == "system") {
+            let keep_tail = max.saturating_sub(1);
+            let start = messages.len().saturating_sub(keep_tail);
+            let mut bounded = Vec::with_capacity(max);
+            bounded.push(messages[0].clone());
+            if keep_tail > 0 {
+                bounded.extend(messages[start..].iter().cloned());
+            }
+            bounded
+        } else {
+            let start = messages.len().saturating_sub(max);
+            messages[start..].to_vec()
+        }
+    }
+
     /// Pre-fetches learned context data from memory (observations, patterns, user profile).
     ///
     /// This is an async, non-blocking operation that populates the context
     /// for the system prompt.
+    ///
+    /// # Explicit-preferences narrow path
+    ///
+    /// When `learning_enabled` is `false` but `explicit_preferences_enabled`
+    /// is `true`, only the `user_profile` namespace (pinned preferences from
+    /// the `remember_preference` tool) is fetched and returned.  All other
+    /// inference-derived data (observations, patterns, reflections, tree
+    /// summaries) remains empty — the inference stack is not touched.
     pub(super) async fn fetch_learned_context(&self) -> LearnedContextData {
-        if !self.learning_enabled {
+        // Fast path: neither the full learning subsystem nor the explicit
+        // preferences path is active — skip all memory reads.
+        if !self.learning_enabled && !self.explicit_preferences_enabled {
+            tracing::debug!(
+                "[learning] fetch_learned_context: both learning_enabled and \
+                 explicit_preferences_enabled are false — returning empty context"
+            );
             return LearnedContextData::default();
         }
+
+        // Narrow explicit-preferences path: only fetch pinned user_profile
+        // entries; skip all inference-derived data.
+        if !self.learning_enabled && self.explicit_preferences_enabled {
+            tracing::debug!(
+                "[learning] fetch_learned_context: explicit_preferences_enabled=true, \
+                 learning_enabled=false — fetching only pinned user_profile entries"
+            );
+            let profile_entries = self
+                .memory
+                .list(
+                    Some("user_profile"),
+                    // Core category is used by RememberPreferenceTool for pinned entries.
+                    // We list without category filter so we pick up both Core entries
+                    // (pinned) and any Custom("user_profile") entries from the older
+                    // UserProfileHook code path, keeping this backward-compatible.
+                    None,
+                    None,
+                )
+                .await
+                .unwrap_or_default();
+
+            // `.list()` already scopes to the `user_profile` namespace at the
+            // store layer (via the `Some("user_profile")` argument above).  This
+            // `.filter()` is a defensive guard against any future store-layer
+            // change that might weaken that scoping — it is not load-bearing
+            // under the current implementation.
+            if profile_entries.len() > 50 {
+                tracing::warn!(
+                    total = profile_entries.len(),
+                    dropped = profile_entries.len() - 50,
+                    "[learning] user_profile pinned preferences exceed prompt cap of 50; \
+                     {} entries will be dropped from this turn's context",
+                    profile_entries.len() - 50,
+                );
+            }
+            let user_profile: Vec<String> = profile_entries
+                .iter()
+                .filter(|e| {
+                    e.namespace
+                        .as_deref()
+                        .map_or(false, |ns| ns == "user_profile")
+                })
+                .take(50)
+                .map(|e| sanitize_learned_entry(&e.content))
+                .collect();
+
+            tracing::debug!(
+                "[learning] fetch_learned_context: fetched {} pinned user_profile entries",
+                user_profile.len()
+            );
+
+            return LearnedContextData {
+                observations: Vec::new(),
+                patterns: Vec::new(),
+                user_profile,
+                reflections: Vec::new(),
+                tree_root_summaries: Vec::new(),
+            };
+        }
+
+        // Full learning path: fetch all inference-derived data.
+        tracing::debug!(
+            "[learning] fetch_learned_context: learning_enabled=true — fetching full context"
+        );
 
         let obs_entries = self
             .memory
@@ -1324,12 +1632,19 @@ impl Agent {
 
     /// Fetches the user's active Composio connections and populates
     /// `self.connected_integrations` so the system prompt can surface them.
-    /// Also caches a [`ComposioClient`] on the session so the sub-agent
-    /// runner can construct per-action tools for `integrations_agent` spawns
-    /// without rebuilding the client on every call.
     ///
     /// Delegates to the shared [`crate::openhuman::composio::fetch_connected_integrations`]
     /// which is the single source of truth for integration discovery.
+    ///
+    /// **No session-scoped Composio client is cached on the agent any
+    /// more (#1710 Wave 2)**. Every downstream caller that needs to
+    /// dispatch a Composio action now resolves a fresh client via
+    /// [`crate::openhuman::composio::client::create_composio_client`]
+    /// at call time so the live `composio.mode` toggle is honoured
+    /// without rebuilding the session — see `ComposioActionTool`,
+    /// `ProviderContext::execute`, the 5 migrated agent tools in
+    /// `composio/tools.rs`, and the spawn-time per-action tool build
+    /// path in `subagent_runner/ops.rs`.
     pub async fn fetch_connected_integrations(&mut self) {
         let config = match crate::openhuman::config::Config::load_or_init().await {
             Ok(c) => c,
@@ -1342,7 +1657,6 @@ impl Agent {
         };
         self.connected_integrations =
             crate::openhuman::composio::fetch_connected_integrations(&config).await;
-        self.composio_client = crate::openhuman::composio::build_composio_client(&config);
     }
 
     /// Re-synthesise `delegate_*` tools for the orchestrator's `subagents`
@@ -1473,7 +1787,11 @@ impl Agent {
         }
 
         // Rebuild the visible-spec cache from the new tool_specs so the
-        // next provider call carries the reconciled schema.
+        // next provider call carries the reconciled schema. Dedup
+        // afterward so a delegate synthesised here (e.g.
+        // `delegate_name = "research"`) doesn't collide with a
+        // same-named skill tool on the wire — Anthropic 400s on dup
+        // tool names where OpenHuman's backend silently accepts.
         let visible_specs: Vec<crate::openhuman::tools::ToolSpec> =
             if self.visible_tool_names.is_empty() {
                 (*self.tool_specs).clone()
@@ -1484,7 +1802,7 @@ impl Agent {
                     .cloned()
                     .collect()
             };
-        self.visible_tool_specs = Arc::new(visible_specs);
+        self.visible_tool_specs = Arc::new(super::builder::dedup_visible_tool_specs(visible_specs));
 
         // Compute add/remove deltas for the log line — useful when
         // diagnosing a Composio connect/revoke that should have rebuilt
@@ -1571,11 +1889,18 @@ impl Agent {
                             );
                             return;
                         }
-                        log::info!(
-                            "[transcript] loaded {} messages for resume",
-                            session.messages.len()
-                        );
-                        self.cached_transcript_messages = Some(session.messages);
+                        let loaded_count = session.messages.len();
+                        log::info!("[transcript] loaded {} messages for resume", loaded_count);
+                        let bounded = self.bound_cached_transcript_messages(session.messages);
+                        if bounded.len() < loaded_count {
+                            log::warn!(
+                                "[transcript] resume prefix trimmed from {} to {} messages (max_history_messages={})",
+                                loaded_count,
+                                bounded.len(),
+                                self.config.max_history_messages
+                            );
+                        }
+                        self.cached_transcript_messages = Some(bounded);
                     }
                     Err(err) => {
                         log::warn!(
@@ -1655,7 +1980,7 @@ impl Agent {
             output_tokens,
             cached_input_tokens,
             charged_amount_usd,
-            thread_id: crate::openhuman::providers::thread_context::current_thread_id(),
+            thread_id: crate::openhuman::inference::provider::thread_context::current_thread_id(),
         };
 
         if let Err(err) = transcript::write_transcript(path, messages, &meta, turn_usage) {
@@ -1676,7 +2001,29 @@ impl Agent {
     /// Gated by [`context_pipeline::SessionMemoryState::should_extract`]
     /// — see its docs for the threshold invariants. Safe to call from
     /// inside `turn()` after the turn body has settled.
-    pub(super) fn spawn_session_memory_extraction(&mut self) {
+    pub(super) async fn spawn_session_memory_extraction(&mut self) {
+        // ── Flush the trailing open segment before the session winds down ──
+        //
+        // The ArchivistHook manages per-turn segment lifecycle but cannot
+        // force-close the *last* open segment because there is no explicit
+        // "session end" event in the turn loop. `spawn_session_memory_extraction`
+        // is the closest available signal: it fires when the context manager
+        // decides the session has accumulated enough material to archive.
+        //
+        // GUARANTEE: the flush is *awaited* here (not fire-and-forget) so
+        // the trailing segment always receives its recap + embedding + tree
+        // ingest before the function returns, even during runtime wind-down.
+        // This honours the doc-comment guarantee on `flush_open_segment` in
+        // `archivist.rs`. No deadlock risk: no mutex guard is held across
+        // this await point.
+        if let Some(ref archivist) = self.archivist_hook {
+            let session_id = self.event_session_id.clone();
+            log::debug!(
+                "[archivist] awaiting flush_open_segment for session={session_id} at session wind-down"
+            );
+            archivist.flush_open_segment(&session_id).await;
+        }
+
         let Some(registry) = harness::AgentDefinitionRegistry::global() else {
             log::debug!("[session_memory] registry not initialised — skipping extraction spawn");
             return;

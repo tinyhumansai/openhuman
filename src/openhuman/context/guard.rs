@@ -4,7 +4,7 @@
 //! when usage exceeds a threshold. A circuit breaker disables compaction after
 //! consecutive failures to prevent infinite retry loops.
 
-use crate::openhuman::providers::UsageInfo;
+use crate::openhuman::inference::provider::UsageInfo;
 
 /// Threshold (0.0–1.0) at which auto-compaction is triggered.
 pub(crate) const COMPACTION_TRIGGER_THRESHOLD: f64 = 0.90;

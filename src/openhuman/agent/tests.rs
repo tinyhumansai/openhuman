@@ -29,11 +29,11 @@ use crate::openhuman::agent::dispatcher::{
 };
 use crate::openhuman::agent::harness::session::Agent;
 use crate::openhuman::config::{AgentConfig, MemoryConfig};
-use crate::openhuman::memory::{self, Memory};
-use crate::openhuman::providers::{
+use crate::openhuman::inference::provider::{
     ChatMessage, ChatRequest, ChatResponse, ConversationMessage, Provider, ToolCall,
     ToolResultMessage,
 };
+use crate::openhuman::memory::{self, Memory};
 use crate::openhuman::tools::{Tool, ToolResult};
 use anyhow::Result;
 use async_trait::async_trait;

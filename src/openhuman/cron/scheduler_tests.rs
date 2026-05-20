@@ -3,6 +3,8 @@ use crate::openhuman::config::Config;
 use crate::openhuman::cron::{self, ActiveHours, DeliveryConfig};
 use crate::openhuman::security::SecurityPolicy;
 use chrono::{Duration as ChronoDuration, Timelike, Utc};
+#[cfg(not(windows))]
+use std::os::unix::fs::PermissionsExt;
 use std::sync::Arc;
 use tempfile::TempDir;
 
@@ -175,19 +177,25 @@ async fn execute_job_with_retry_recovers_after_first_failure() {
     let mut config = test_config(&tmp).await;
     config.reliability.scheduler_retries = 1;
     config.reliability.provider_backoff_ms = 1;
-    config.autonomy.allowed_commands = vec!["sh".into()];
+    config.autonomy.allowed_commands = vec!["retry-once.sh".into()];
     let security = SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir);
 
     // Pin absolute paths inside the script too — some dev
     // environments have a homebrew `touch` on PATH that macOS
     // SIP refuses to execute under an unsigned cargo-test binary.
+    let script = config.workspace_dir.join("retry-once.sh");
     tokio::fs::write(
-        config.workspace_dir.join("retry-once.sh"),
+        &script,
         "#!/bin/sh\nif [ -f retry-ok.flag ]; then\n  echo recovered\n  exit 0\nfi\n/usr/bin/touch retry-ok.flag\nexit 1\n",
     )
     .await
     .unwrap();
-    let job = test_job("/bin/sh ./retry-once.sh");
+    let mut permissions = tokio::fs::metadata(&script).await.unwrap().permissions();
+    permissions.set_mode(0o755);
+    tokio::fs::set_permissions(&script, permissions)
+        .await
+        .unwrap();
+    let job = test_job("./retry-once.sh");
 
     let (success, output) = execute_job_with_retry(&config, &security, &job).await;
     assert!(success);

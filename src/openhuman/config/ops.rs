@@ -29,6 +29,15 @@ const CONFIG_LOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(
 ///
 /// This is used by JSON-RPC and CLI handlers to ensure they don't hang
 /// indefinitely if disk I/O is blocked.
+///
+/// The TOML parse itself runs on the blocking pool via
+/// `parse_config_with_recovery` (see `src/openhuman/config/schema/load.rs`)
+/// so the recursive-descent parser's serde Visitor frames don't compound
+/// with whatever deep async tower called us. That's the stack-overflow
+/// fix from `crahs.log` (2026-05-17); a per-call cache here would shave
+/// the disk read on hot paths but proved racy across the in-process
+/// integration tests (re-used workspace paths, concurrent server tasks
+/// loading mid-mutation), so it isn't worth it.
 pub async fn load_config_with_timeout() -> Result<Config, String> {
     match tokio::time::timeout(CONFIG_LOAD_TIMEOUT, Config::load_or_init()).await {
         Ok(Ok(mut config)) => {
@@ -92,6 +101,42 @@ fn config_openhuman_dir(config: &Config) -> PathBuf {
         .map_or_else(|| PathBuf::from("."), PathBuf::from)
 }
 
+fn is_windows_file_lock_error(error: &std::io::Error) -> bool {
+    cfg!(windows) && matches!(error.raw_os_error(), Some(32 | 33))
+}
+
+fn reset_local_data_remove_error(path: &Path, error: &std::io::Error) -> String {
+    if is_windows_file_lock_error(error) {
+        tracing::warn!(
+            path = %path.display(),
+            error = %error,
+            "[config] reset_local_data: Windows file lock blocked local data deletion"
+        );
+        return format!(
+            "Failed to remove {} because it is locked by another OpenHuman window or process. Close all OpenHuman windows and try again. ({error})",
+            path.display()
+        );
+    }
+
+    format!("Failed to remove {}: {error}", path.display())
+}
+
+fn reset_local_data_marker_remove_error(path: &Path, error: &std::io::Error) -> String {
+    if is_windows_file_lock_error(error) {
+        tracing::warn!(
+            marker = %path.display(),
+            error = %error,
+            "[config] reset_local_data: Windows file lock blocked active workspace marker deletion"
+        );
+        return format!(
+            "Failed to remove active workspace marker {} because it is locked by another OpenHuman window or process. Close all OpenHuman windows and try again. ({error})",
+            path.display()
+        );
+    }
+
+    format!("Failed to remove active workspace marker: {error}")
+}
+
 /// Internal helper to reset local data by removing specific directories and markers.
 async fn reset_local_data_for_paths(
     current_openhuman_dir: &Path,
@@ -108,9 +153,12 @@ async fn reset_local_data_for_paths(
     let mut removed_paths = Vec::new();
 
     if active_workspace_marker.exists() {
-        tokio::fs::remove_file(&active_workspace_marker)
-            .await
-            .map_err(|e| format!("Failed to remove active workspace marker: {e}"))?;
+        if let Err(error) = tokio::fs::remove_file(&active_workspace_marker).await {
+            return Err(reset_local_data_marker_remove_error(
+                &active_workspace_marker,
+                &error,
+            ));
+        }
         tracing::debug!(
             marker = %active_workspace_marker.display(),
             "[config] reset_local_data: removed active workspace marker"
@@ -127,9 +175,9 @@ async fn reset_local_data_for_paths(
             continue;
         }
 
-        tokio::fs::remove_dir_all(target_dir)
-            .await
-            .map_err(|e| format!("Failed to remove {}: {e}", target_dir.display()))?;
+        if let Err(error) = tokio::fs::remove_dir_all(target_dir).await {
+            return Err(reset_local_data_remove_error(target_dir, &error));
+        }
         tracing::debug!(
             dir = %target_dir.display(),
             "[config] reset_local_data: removed directory"
@@ -166,6 +214,66 @@ pub fn snapshot_config_json(config: &Config) -> Result<serde_json::Value, String
     }))
 }
 
+/// Serializes the client-facing AI config slice consumed by the settings UI.
+pub fn client_config_json(config: &Config) -> serde_json::Value {
+    let app_version =
+        std::env::var("OPENHUMAN_APP_VERSION").unwrap_or_else(|_| "unknown".to_string());
+    let api_key_set = config
+        .api_key
+        .as_deref()
+        .map(|k| !k.trim().is_empty())
+        .unwrap_or(false);
+    let model_routes: Vec<serde_json::Value> = config
+        .model_routes
+        .iter()
+        .map(|r| serde_json::json!({ "hint": r.hint, "model": r.model }))
+        .collect();
+    let cloud_providers: Vec<serde_json::Value> = config
+        .cloud_providers
+        .iter()
+        .map(|c| {
+            serde_json::json!({
+                "id": c.id,
+                "slug": c.slug,
+                "label": c.label,
+                "endpoint": c.endpoint,
+                "auth_style": c.auth_style.as_str(),
+            })
+        })
+        .collect();
+
+    serde_json::json!({
+        "api_url": config.api_url,
+        "inference_url": config.inference_url,
+        "default_model": config.default_model,
+        "app_version": app_version,
+        "api_key_set": api_key_set,
+        "model_routes": model_routes,
+        "cloud_providers": cloud_providers,
+        "primary_cloud": config.primary_cloud,
+        "chat_provider": config.chat_provider,
+        "reasoning_provider": config.reasoning_provider,
+        "agentic_provider": config.agentic_provider,
+        "coding_provider": config.coding_provider,
+        "memory_provider": config.memory_provider,
+        "embeddings_provider": config.embeddings_provider,
+        "heartbeat_provider": config.heartbeat_provider,
+        "learning_provider": config.learning_provider,
+        "subconscious_provider": config.subconscious_provider,
+    })
+}
+
+/// Loads config and returns the client-facing AI config slice.
+pub async fn load_and_get_client_config_snapshot() -> Result<RpcOutcome<serde_json::Value>, String>
+{
+    let config = load_config_with_timeout().await?;
+    let snapshot = client_config_json(&config);
+    Ok(RpcOutcome::new(
+        snapshot,
+        vec!["client config read".to_string()],
+    ))
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct ModelSettingsPatch {
     pub api_url: Option<String>,
@@ -181,6 +289,24 @@ pub struct ModelSettingsPatch {
     /// router picks per-task models on its own). Leave `None` to keep the
     /// current routes untouched.
     pub model_routes: Option<Vec<crate::openhuman::config::ModelRouteConfig>>,
+    /// When `Some`, REPLACES the entire `config.cloud_providers` array with
+    /// the supplied entries (each lacking the API key — those live in
+    /// `auth-profiles.json` via [`crate::openhuman::credentials::AuthService`]).
+    /// Pass `Some(vec![])` to clear all third-party cloud providers.
+    pub cloud_providers:
+        Option<Vec<crate::openhuman::config::schema::cloud_providers::CloudProviderCreds>>,
+    /// Id of the `cloud_providers` entry used when a workload routes to
+    /// `"cloud"`. Empty string clears (factory falls back to OpenHuman).
+    pub primary_cloud: Option<String>,
+    pub chat_provider: Option<String>,
+    pub reasoning_provider: Option<String>,
+    pub agentic_provider: Option<String>,
+    pub coding_provider: Option<String>,
+    pub memory_provider: Option<String>,
+    pub embeddings_provider: Option<String>,
+    pub heartbeat_provider: Option<String>,
+    pub learning_provider: Option<String>,
+    pub subconscious_provider: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -236,6 +362,11 @@ pub struct MeetSettingsPatch {
 #[derive(Debug, Clone, Default)]
 pub struct LocalAiSettingsPatch {
     pub runtime_enabled: Option<bool>,
+    /// MVP opt-in marker. Bootstrap hard-overrides status to "disabled"
+    /// when this is `false`, regardless of `runtime_enabled`. The unified
+    /// AI panel ties the two together (both flip on enable, both flip
+    /// off on disable) so a single toggle gives the user the obvious
+    /// behaviour without needing to apply a preset first.
     pub opt_in_confirmed: Option<bool>,
     pub provider: Option<String>,
     pub base_url: Option<String>,
@@ -315,7 +446,63 @@ pub async fn apply_model_settings(
         // (or an empty vec when switching back to the OpenHuman in-built router).
         config.model_routes = routes;
     }
+    if let Some(providers) = update.cloud_providers {
+        config.cloud_providers = providers;
+    }
+    if let Some(primary) = update.primary_cloud {
+        let trimmed = primary.trim();
+        config.primary_cloud = if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        };
+    }
+
+    // Per-workload provider strings. Empty / blank → None (factory default).
+    let normalise_provider = |s: String| -> Option<String> {
+        let t = s.trim();
+        if t.is_empty() {
+            None
+        } else {
+            Some(t.to_string())
+        }
+    };
+    if let Some(s) = update.chat_provider {
+        config.chat_provider = normalise_provider(s);
+    }
+    if let Some(s) = update.reasoning_provider {
+        config.reasoning_provider = normalise_provider(s);
+    }
+    if let Some(s) = update.agentic_provider {
+        config.agentic_provider = normalise_provider(s);
+    }
+    if let Some(s) = update.coding_provider {
+        config.coding_provider = normalise_provider(s);
+    }
+    if let Some(s) = update.memory_provider {
+        config.memory_provider = normalise_provider(s);
+    }
+    if let Some(s) = update.embeddings_provider {
+        config.embeddings_provider = normalise_provider(s);
+    }
+    if let Some(s) = update.heartbeat_provider {
+        config.heartbeat_provider = normalise_provider(s);
+    }
+    if let Some(s) = update.learning_provider {
+        config.learning_provider = normalise_provider(s);
+    }
+    if let Some(s) = update.subconscious_provider {
+        config.subconscious_provider = normalise_provider(s);
+    }
+
     config.save().await.map_err(|e| e.to_string())?;
+    // #1574 §4: the AIPanel workload matrix changes the embedder via THIS
+    // (model-settings) path — `embeddings_provider` above — not the
+    // memory-settings path. Trigger the same idempotent re-embed backfill
+    // so a UI embedder switch recovers prior memory under the new
+    // signature. Coverage-gated + non-fatal: if the active signature did
+    // not actually change, this enqueues nothing.
+    crate::openhuman::memory::tree::jobs::ensure_reembed_backfill(config);
     let snapshot = snapshot_config_json(config)?;
     Ok(RpcOutcome::new(
         snapshot,
@@ -359,6 +546,13 @@ pub async fn apply_memory_settings(
         }
     }
     config.save().await.map_err(|e| e.to_string())?;
+    // #1574 §4: the embedder may have just changed (provider/model/dims).
+    // Ensure a re-embed backfill chain exists for the new active signature
+    // so prior memory becomes retrievable again instead of silently going
+    // dark. Idempotent + non-fatal (covered space enqueues nothing; errors
+    // are logged, never fail the settings save). §7's migration is
+    // one-shot so it does not cover a later switch — this does.
+    crate::openhuman::memory::tree::jobs::ensure_reembed_backfill(config);
     let snapshot = snapshot_config_json(config)?;
     Ok(RpcOutcome::new(
         snapshot,
@@ -574,7 +768,7 @@ pub async fn apply_local_ai_settings(
     }
     if let Some(provider) = update.provider {
         config.local_ai.provider =
-            crate::openhuman::local_ai::provider::normalize_provider(&provider);
+            crate::openhuman::inference::local::provider::normalize_provider(&provider);
     }
     if let Some(base_url) = update.base_url {
         config.local_ai.base_url = if base_url.trim().is_empty() {
@@ -711,17 +905,49 @@ pub fn get_runtime_flags() -> RpcOutcome<RuntimeFlagsOut> {
 }
 
 /// Updates the `OPENHUMAN_BROWSER_ALLOW_ALL` environment flag.
+///
+/// **Security note:** when enabled, this disables the browser tool's
+/// per-domain allowlist for the entire process. Both transitions are
+/// audit-logged at WARN level with a `[SECURITY]` prefix so operators
+/// (and `journalctl -g '\[SECURITY\]'` style scrapes) can spot
+/// allowlist toggles in the live log stream.
+///
+/// `is_private_host` checks still apply to the resolved IP, so this
+/// flag does not unlock loopback / RFC1918 destinations.
 pub fn set_browser_allow_all(enabled: bool) -> RpcOutcome<RuntimeFlagsOut> {
+    let was_enabled = env_flag_enabled("OPENHUMAN_BROWSER_ALLOW_ALL");
     if enabled {
         std::env::set_var("OPENHUMAN_BROWSER_ALLOW_ALL", "1");
     } else {
         std::env::remove_var("OPENHUMAN_BROWSER_ALLOW_ALL");
     }
+    let now_enabled = env_flag_enabled("OPENHUMAN_BROWSER_ALLOW_ALL");
     let flags = RuntimeFlagsOut {
-        browser_allow_all: env_flag_enabled("OPENHUMAN_BROWSER_ALLOW_ALL"),
+        browser_allow_all: now_enabled,
         log_prompts: env_flag_enabled("OPENHUMAN_LOG_PROMPTS"),
     };
-    RpcOutcome::single_log(flags, "browser allow-all flag updated")
+
+    if was_enabled != now_enabled {
+        if now_enabled {
+            tracing::warn!(
+                "[SECURITY] browser allow-all enabled via RPC: \
+                 per-domain allowlist is now bypassed for all sessions \
+                 (private-host check still applies)"
+            );
+        } else {
+            tracing::info!(
+                "[SECURITY] browser allow-all disabled via RPC: \
+                 per-domain allowlist re-enforced"
+            );
+        }
+    }
+
+    let log_msg = if now_enabled {
+        "[SECURITY] browser allow-all flag set to enabled"
+    } else {
+        "[SECURITY] browser allow-all flag set to disabled"
+    };
+    RpcOutcome::single_log(flags, log_msg)
 }
 
 /// Checks if a specific onboarding flag file exists in the workspace.
@@ -1021,11 +1247,53 @@ pub fn agent_server_status() -> RpcOutcome<serde_json::Value> {
 }
 
 /// Deletes all local data directories and workspace markers.
+///
+/// Runs **inside the core's tokio task**, which means the running core
+/// holds open handles to SQLite databases, log files, the Sentry session
+/// store, etc. On Windows, `remove_dir_all` therefore fails with
+/// `ERROR_SHARING_VIOLATION` (os error 32) — see OPENHUMAN-TAURI-AF.
+///
+/// GUI callers must use the Tauri-side `reset_local_data` command instead:
+/// it stops the embedded core via `CoreProcessHandle::shutdown` (dropping
+/// the file handles), removes the directories from the Tauri host process,
+/// and restarts the core. This JSON-RPC method is kept for headless / CLI
+/// callers where in-process removal is acceptable (POSIX file semantics
+/// tolerate unlinking open files; on Windows the CLI invocation runs
+/// without the core attached, so no handle is in the way).
 pub async fn reset_local_data() -> Result<RpcOutcome<serde_json::Value>, String> {
     let config = load_config_with_timeout().await?;
     let current_openhuman_dir = config_openhuman_dir(&config);
     let default_openhuman_dir = default_openhuman_dir();
     reset_local_data_for_paths(&current_openhuman_dir, &default_openhuman_dir).await
+}
+
+/// Reports the resolved paths that `reset_local_data` would remove, without
+/// performing any filesystem changes.
+///
+/// Lets the Tauri-side `reset_local_data` command discover the active
+/// workspace dir, the default `~/.openhuman` dir (which can differ when
+/// `OPENHUMAN_WORKSPACE` is set or a staging build is in use), and the
+/// active workspace marker file **before** the core sidecar is shut down —
+/// after which the Tauri shell removes them while no process holds open
+/// handles. See OPENHUMAN-TAURI-AF for the Windows file-locking failure
+/// that motivated the split.
+pub async fn get_data_paths() -> Result<RpcOutcome<serde_json::Value>, String> {
+    let config = load_config_with_timeout().await?;
+    let current_openhuman_dir = config_openhuman_dir(&config);
+    let default_openhuman_dir = default_openhuman_dir();
+    let active_workspace_marker = active_workspace_marker_path(&default_openhuman_dir);
+    Ok(RpcOutcome::new(
+        json!({
+            "current_openhuman_dir": current_openhuman_dir.display().to_string(),
+            "default_openhuman_dir": default_openhuman_dir.display().to_string(),
+            "active_workspace_marker_path": active_workspace_marker.display().to_string(),
+        }),
+        vec![format!(
+            "data paths resolved (current={}, default={})",
+            current_openhuman_dir.display(),
+            default_openhuman_dir.display()
+        )],
+    ))
 }
 
 #[cfg(test)]

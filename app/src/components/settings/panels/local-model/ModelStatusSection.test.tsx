@@ -1,7 +1,7 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
-import type { LocalAiDiagnostics, RepairAction } from '../../../../utils/tauriCommands';
+import type { LocalAiDiagnostics } from '../../../../utils/tauriCommands';
 import ModelStatusSection from './ModelStatusSection';
 
 const defaultProps = {
@@ -55,11 +55,11 @@ const makeDiagnostics = (overrides: Partial<LocalAiDiagnostics> = {}): LocalAiDi
 });
 
 describe('ModelStatusSection diagnostics', () => {
-  it('disables bootstrap controls when runtime is disabled', () => {
+  it('still renders runtime status when runtime is disabled', () => {
     render(<ModelStatusSection {...defaultProps} runtimeEnabled={false} />);
 
-    expect(screen.getByRole('button', { name: 'Bootstrap / Resume' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Force Re-bootstrap' })).toBeDisabled();
+    expect(screen.getByText('Runtime Status')).toBeTruthy();
+    expect(screen.getByText('Refresh')).toBeTruthy();
   });
 
   it('shows the base URL being checked', () => {
@@ -122,64 +122,16 @@ describe('ModelStatusSection diagnostics', () => {
     expect(screen.getByText('/opt/homebrew/bin/ollama')).toBeTruthy();
   });
 
-  it('renders repair action buttons', () => {
-    const repairActions: RepairAction[] = [
-      { action: 'install_ollama' },
-      { action: 'start_server', binary_path: '/usr/local/bin/ollama' },
-      { action: 'pull_model', model: 'gemma3:1b-it-qat' },
-    ];
+  it('renders manual-management guidance when diagnostics fail', () => {
     render(
       <ModelStatusSection
         {...defaultProps}
-        diagnostics={makeDiagnostics({
-          ok: false,
-          issues: ['Ollama server is not running'],
-          repair_actions: repairActions,
-        })}
+        diagnostics={makeDiagnostics({ ok: false, issues: ['Ollama server is not running'] })}
       />
     );
-    expect(screen.getByText('Install Ollama')).toBeTruthy();
-    expect(screen.getByText('Start Server')).toBeTruthy();
-    expect(screen.getByText('Pull gemma3:1b-it-qat')).toBeTruthy();
-  });
-
-  it('calls onRepairAction with the correct action when button is clicked', () => {
-    const onRepairAction = vi.fn();
-    const repairActions: RepairAction[] = [{ action: 'install_ollama' }];
-    render(
-      <ModelStatusSection
-        {...defaultProps}
-        onRepairAction={onRepairAction}
-        diagnostics={makeDiagnostics({
-          ok: false,
-          issues: ['Ollama server is not running'],
-          repair_actions: repairActions,
-        })}
-      />
-    );
-    fireEvent.click(screen.getByText('Install Ollama'));
-    expect(onRepairAction).toHaveBeenCalledWith({ action: 'install_ollama' });
-  });
-
-  it('calls onRepairAction with pull_model action', () => {
-    const onRepairAction = vi.fn();
-    const repairActions: RepairAction[] = [{ action: 'pull_model', model: 'gemma3:1b-it-qat' }];
-    render(
-      <ModelStatusSection
-        {...defaultProps}
-        onRepairAction={onRepairAction}
-        diagnostics={makeDiagnostics({
-          ok: false,
-          issues: ['Chat model is not installed'],
-          repair_actions: repairActions,
-        })}
-      />
-    );
-    fireEvent.click(screen.getByText('Pull gemma3:1b-it-qat'));
-    expect(onRepairAction).toHaveBeenCalledWith({
-      action: 'pull_model',
-      model: 'gemma3:1b-it-qat',
-    });
+    expect(
+      screen.getByText(/Manage the Ollama process and model pulls outside OpenHuman/)
+    ).toBeTruthy();
   });
 
   it('does not render repair actions section when repair_actions is empty', () => {
@@ -211,5 +163,237 @@ describe('ModelStatusSection diagnostics', () => {
   it('renders prompt text when diagnostics is null', () => {
     render(<ModelStatusSection {...defaultProps} diagnostics={null} />);
     expect(screen.getByText(/Click.*Run Diagnostics/)).toBeTruthy();
+  });
+
+  it('shows external-runtime guidance when ollama is unavailable', () => {
+    render(
+      <ModelStatusSection
+        {...defaultProps}
+        downloads={{
+          state: 'idle',
+          warning: null,
+          progress: 0,
+          downloaded_bytes: null,
+          total_bytes: null,
+          speed_bps: null,
+          eta_seconds: null,
+          ollama_available: false,
+          chat: {
+            id: 'gemma3:1b-it-qat',
+            provider: 'ollama',
+            state: 'missing',
+            progress: null,
+            downloaded_bytes: null,
+            total_bytes: null,
+            speed_bps: null,
+            eta_seconds: null,
+            warning: null,
+            path: null,
+          },
+          vision: {
+            id: '',
+            provider: 'ollama',
+            state: 'missing',
+            progress: null,
+            downloaded_bytes: null,
+            total_bytes: null,
+            speed_bps: null,
+            eta_seconds: null,
+            warning: null,
+            path: null,
+          },
+          embedding: {
+            id: 'bge-m3',
+            provider: 'ollama',
+            state: 'missing',
+            progress: null,
+            downloaded_bytes: null,
+            total_bytes: null,
+            speed_bps: null,
+            eta_seconds: null,
+            warning: null,
+            path: null,
+          },
+          stt: {
+            id: 'whisper',
+            provider: 'whisper',
+            state: 'missing',
+            progress: null,
+            downloaded_bytes: null,
+            total_bytes: null,
+            speed_bps: null,
+            eta_seconds: null,
+            warning: null,
+            path: null,
+          },
+          tts: {
+            id: 'piper',
+            provider: 'piper',
+            state: 'missing',
+            progress: null,
+            downloaded_bytes: null,
+            total_bytes: null,
+            speed_bps: null,
+            eta_seconds: null,
+            warning: null,
+            path: null,
+          },
+        }}
+      />
+    );
+
+    expect(screen.getByText('Ollama runtime unavailable')).toBeTruthy();
+    expect(screen.getByText(/external inference runtime/)).toBeTruthy();
+    expect(screen.getByText('Ollama docs')).toBeTruthy();
+  });
+
+  it('renders docs link instead of install controls when ollama is unavailable', () => {
+    render(
+      <ModelStatusSection
+        {...defaultProps}
+        downloads={{
+          state: 'idle',
+          warning: null,
+          progress: 0,
+          downloaded_bytes: null,
+          total_bytes: null,
+          speed_bps: null,
+          eta_seconds: null,
+          ollama_available: false,
+          chat: {
+            id: 'gemma3:1b-it-qat',
+            provider: 'ollama',
+            state: 'missing',
+            progress: null,
+            downloaded_bytes: null,
+            total_bytes: null,
+            speed_bps: null,
+            eta_seconds: null,
+            warning: null,
+            path: null,
+          },
+          vision: {
+            id: '',
+            provider: 'ollama',
+            state: 'missing',
+            progress: null,
+            downloaded_bytes: null,
+            total_bytes: null,
+            speed_bps: null,
+            eta_seconds: null,
+            warning: null,
+            path: null,
+          },
+          embedding: {
+            id: 'bge-m3',
+            provider: 'ollama',
+            state: 'missing',
+            progress: null,
+            downloaded_bytes: null,
+            total_bytes: null,
+            speed_bps: null,
+            eta_seconds: null,
+            warning: null,
+            path: null,
+          },
+          stt: {
+            id: 'whisper',
+            provider: 'whisper',
+            state: 'missing',
+            progress: null,
+            downloaded_bytes: null,
+            total_bytes: null,
+            speed_bps: null,
+            eta_seconds: null,
+            warning: null,
+            path: null,
+          },
+          tts: {
+            id: 'piper',
+            provider: 'piper',
+            state: 'missing',
+            progress: null,
+            downloaded_bytes: null,
+            total_bytes: null,
+            speed_bps: null,
+            eta_seconds: null,
+            warning: null,
+            path: null,
+          },
+        }}
+      />
+    );
+
+    expect(screen.queryByRole('button', { name: 'Install Ollama' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Set Path' })).toBeNull();
+    expect(screen.getByRole('link', { name: 'Ollama docs' })).toBeTruthy();
+  });
+
+  it('accepts a model that meets the context minimum', () => {
+    render(
+      <ModelStatusSection
+        {...defaultProps}
+        diagnostics={makeDiagnostics({
+          installed_models: [
+            {
+              name: 'bge-m3:latest',
+              context_length: 8192,
+              eligibility: { status: 'ok', context_length: 8192 },
+            },
+          ],
+        })}
+      />
+    );
+    expect(screen.getByText('8,192 ctx ✓')).toBeTruthy();
+  });
+
+  it('rejects and visually flags a model below the context minimum', () => {
+    render(
+      <ModelStatusSection
+        {...defaultProps}
+        diagnostics={makeDiagnostics({
+          installed_models: [
+            {
+              name: 'tiny-embed:latest',
+              context_length: 2048,
+              eligibility: { status: 'below_minimum', context_length: 2048, required: 8192 },
+            },
+          ],
+          issues: [
+            'Embedding model `tiny-embed:latest` has a 2048-token context window; the memory layer requires at least 8192.',
+          ],
+          ok: false,
+        })}
+      />
+    );
+    expect(screen.getByText('2,048 ctx — below 8,192 min')).toBeTruthy();
+    // Model name is rendered in the rejection (red) treatment.
+    const name = screen.getByTitle('tiny-embed:latest');
+    expect(name.className).toContain('text-red-700');
+  });
+
+  it('marks an unknown context window without rejecting it', () => {
+    render(
+      <ModelStatusSection
+        {...defaultProps}
+        diagnostics={makeDiagnostics({
+          installed_models: [
+            { name: 'mystery:latest', eligibility: { status: 'unknown', required: 8192 } },
+          ],
+        })}
+      />
+    );
+    expect(screen.getByText('ctx unknown')).toBeTruthy();
+  });
+
+  it('renders models with no eligibility (older core) without a badge', () => {
+    render(
+      <ModelStatusSection
+        {...defaultProps}
+        diagnostics={makeDiagnostics({ installed_models: [{ name: 'legacy:latest', size: 1234 }] })}
+      />
+    );
+    expect(screen.getByText('legacy:latest')).toBeTruthy();
+    expect(screen.queryByText(/ctx/)).toBeNull();
   });
 });

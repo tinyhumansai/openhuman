@@ -447,6 +447,12 @@ fn parse_function_params(
         let raw_value = args
             .get(i + 1)
             .ok_or_else(|| format!("missing value for --{key}"))?;
+        if raw_value.starts_with("--") {
+            let next_key = raw_value.trim_start_matches("--").replace('-', "_");
+            if schema.inputs.iter().any(|input| input.name == next_key) {
+                return Err(format!("missing value for --{key}"));
+            }
+        }
         let value = parse_input_value(&spec.ty, raw_value)?;
         out.insert(key, value);
         i += 2;

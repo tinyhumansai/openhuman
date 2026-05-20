@@ -55,7 +55,8 @@ async function waitForAny(texts: string[], timeout = 10_000): Promise<string | n
 }
 
 describe('Agent review — canonical onboarding + privacy flow', () => {
-  before(async () => {
+  before(async function beforeSuite() {
+    this.timeout(90_000);
     // Force label so the run dir is predictable: "<ts>-agent-review".
     process.env.E2E_ARTIFACT_LABEL = process.env.E2E_ARTIFACT_LABEL || 'agent-review';
     getArtifactDir();
@@ -72,7 +73,8 @@ describe('Agent review — canonical onboarding + privacy flow', () => {
     console.log(`[agent-review] artifacts: ${getArtifactDir()}`);
   });
 
-  it('01 launches and reaches welcome', async () => {
+  it('01 launches and reaches welcome', async function () {
+    this.timeout(90_000);
     await triggerAuthDeepLink('e2e-agent-review-token');
     await waitForWindowVisible(25_000);
     await waitForWebView(15_000);

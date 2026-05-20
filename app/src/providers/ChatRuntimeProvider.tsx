@@ -9,6 +9,7 @@ import {
   type ChatIterationStartEvent,
   type ChatSegmentEvent,
   type ChatSubagentDoneEvent,
+  type ChatTaskBoardUpdatedEvent,
   type ChatToolCallEvent,
   type ChatToolResultEvent,
   type ProactiveMessageEvent,
@@ -24,6 +25,7 @@ import {
   recordChatTurnUsage,
   setInferenceStatusForThread,
   setStreamingAssistantForThread,
+  setTaskBoardForThread,
   setToolTimelineForThread,
   type StreamingAssistantState,
   type ToolTimelineEntry,
@@ -675,6 +677,10 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
           ];
         }
         dispatch(setToolTimelineForThread({ threadId: event.thread_id, entries }));
+      },
+      onTaskBoardUpdated: (event: ChatTaskBoardUpdatedEvent) => {
+        if (!event.task_board) return;
+        dispatch(setTaskBoardForThread({ threadId: event.thread_id, board: event.task_board }));
       },
       onProactiveMessage: (event: ProactiveMessageEvent) => {
         const messageDigest = proactiveMessageDigest(event.full_response ?? '');

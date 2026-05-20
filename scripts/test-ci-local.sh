@@ -121,19 +121,19 @@ if [[ "${1:-}" == "--manual" ]]; then
 
     # Step 2: Install Node dependencies
     echo ">>> Step 2: Install Node dependencies"
-    yarn install --frozen-lockfile
+    pnpm install --frozen-lockfile
 
     # Step 3: Install skills dependencies and build
     echo ">>> Step 3: Build skills"
-    (cd skills && yarn install --frozen-lockfile && yarn build)
+    (cd skills && pnpm install --frozen-lockfile && pnpm build)
 
     # Step 4: Build frontend
     echo ">>> Step 4: Build frontend"
-    NODE_ENV=production yarn build
+    NODE_ENV=production pnpm build
 
     # Step 5: Build Tauri (aarch64)
     echo ">>> Step 5: Build Tauri app (aarch64-apple-darwin)"
-    yarn tauri build --target aarch64-apple-darwin
+    pnpm tauri build --target aarch64-apple-darwin
 
     echo ""
     echo "=== Build complete ==="

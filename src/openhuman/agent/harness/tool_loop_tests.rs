@@ -1,8 +1,8 @@
 use super::*;
 use crate::openhuman::approval::ApprovalManager;
 use crate::openhuman::config::AutonomyConfig;
-use crate::openhuman::providers::traits::ProviderCapabilities;
-use crate::openhuman::providers::ChatResponse;
+use crate::openhuman::inference::provider::traits::ProviderCapabilities;
+use crate::openhuman::inference::provider::ChatResponse;
 use crate::openhuman::security::AutonomyLevel;
 use crate::openhuman::tools::{ToolResult, ToolScope};
 use async_trait::async_trait;
@@ -388,7 +388,7 @@ async fn run_tool_call_loop_persists_native_tool_results_as_tool_messages() {
         responses: Mutex::new(vec![
             Ok(ChatResponse {
                 text: Some(String::new()),
-                tool_calls: vec![crate::openhuman::providers::ToolCall {
+                tool_calls: vec![crate::openhuman::inference::provider::ToolCall {
                     id: "call-1".into(),
                     name: "echo".into(),
                     arguments: "{}".into(),
@@ -878,7 +878,7 @@ async fn run_tool_call_loop_applies_per_tool_max_result_size_cap() {
     assert!(
         tool_results.content.contains("[truncated by tool cap:"),
         "expected truncation marker, got body: {}",
-        &tool_results.content[..tool_results.content.len().min(200)]
+        crate::openhuman::util::utf8_safe_prefix_at_byte_boundary(&tool_results.content, 200)
     );
     assert!(
         tool_results.content.len() < 1_000,

@@ -169,20 +169,44 @@ esac
 
 # Mock URL must reach the core sidecar — XCUITest doesn't inherit env,
 # and CEF child processes won't either. Pinning via config.toml works
-# on every platform.
-E2E_CONFIG_DIR="$HOME/.openhuman"
+# on every platform. The runner always sets OPENHUMAN_WORKSPACE above;
+# Config::load_or_init gives that path precedence over $HOME/.openhuman.
+E2E_CONFIG_DIR="${OPENHUMAN_WORKSPACE:-$HOME/.openhuman}"
 E2E_CONFIG_FILE="$E2E_CONFIG_DIR/config.toml"
 mkdir -p "$E2E_CONFIG_DIR"
 if [ -f "$E2E_CONFIG_FILE" ]; then
   E2E_CONFIG_BACKUP="$E2E_CONFIG_FILE.e2e-backup.$$"
   cp "$E2E_CONFIG_FILE" "$E2E_CONFIG_BACKUP"
-  sed -i.bak '/^api_url[[:space:]]*=/d' "$E2E_CONFIG_FILE" && rm -f "$E2E_CONFIG_FILE.bak"
-  EXISTING_CONTENT="$(cat "$E2E_CONFIG_FILE")"
-  printf 'api_url = "http://127.0.0.1:%s"\n%s\n' "${E2E_MOCK_PORT}" "$EXISTING_CONTENT" > "$E2E_CONFIG_FILE"
-else
-  printf 'api_url = "http://127.0.0.1:%s"\n' "${E2E_MOCK_PORT}" > "$E2E_CONFIG_FILE"
 fi
-echo "[runner] Wrote E2E config.toml with api_url=http://127.0.0.1:${E2E_MOCK_PORT}"
+
+# Write a complete E2E config that routes ALL LLM inference through the mock
+# server via OpenAiCompatibleProvider (supports_streaming=true).
+#
+# WHY pre-populate cloud_providers here:
+#   The unify_ai_provider_settings migration runs on first startup. If
+#   cloud_providers is empty it seeds an OpenHuman entry and sets primary_cloud
+#   to that entry — which routes all inference to OpenHumanBackendProvider
+#   (supports_streaming=false, always returns non-streaming responses, so the
+#   mock server never receives /openai/v1/chat/completions).
+#
+#   By pre-populating [[cloud_providers]] with a "none" auth mock entry and
+#   setting primary_cloud to its id, the migration sees !is_empty() and skips
+#   seeding entirely. provider_for_role() resolves unset workloads via
+#   primary_cloud → slug "e2e" (non-openhuman) → returns "e2e:" →
+#   make_cloud_provider_by_slug → auth_style=none → OpenAiCompatibleProvider
+#   → supports_streaming=true → streams to mock at /openai/v1/chat/completions.
+cat > "$E2E_CONFIG_FILE" << TOMLEOF
+api_url = "http://127.0.0.1:${E2E_MOCK_PORT}"
+primary_cloud = "p_e2e_mock"
+
+[[cloud_providers]]
+id = "p_e2e_mock"
+slug = "e2e"
+label = "E2E Mock"
+endpoint = "http://127.0.0.1:${E2E_MOCK_PORT}/openai/v1"
+auth_style = "none"
+TOMLEOF
+echo "[runner] Wrote E2E config.toml routing inference to mock at http://127.0.0.1:${E2E_MOCK_PORT}"
 
 DIST_JS="$(ls dist/assets/index-*.js 2>/dev/null | head -1)"
 if [ -z "$DIST_JS" ]; then
@@ -326,28 +350,40 @@ APP_LOG="$LOG_DIR/openhuman-e2e-app-${LOG_SUFFIX}.log"
 APP_ARGS=()
 # CEF/Chromium needs extra coaxing in headless / containerized Linux runs:
 #
-#   --no-sandbox            crbug.com/638180 — refuses to start as root
-#                           without this. The openhuman_ci docker image
-#                           runs as uid 0.
+#   --no-sandbox            crbug.com/638180 — needed only when the runner is
+#                           uid 0 or the cached CEF chrome-sandbox helper is
+#                           missing/misconfigured. Non-root Linux runs with a
+#                           valid helper keep Chromium sandboxing.
 #   --disable-dev-shm-usage docker /dev/shm is often 64 MB; Chromium
 #                           assumes ≥2 GB and crashes mid-startup
 #                           ("Failed global descriptor lookup: 7" in the
 #                           zygote helper).
 #   --disable-gpu           no GPU in the CI container.
-#   --no-zygote             skips the zygote launcher that wants dbus.
+#   --no-zygote             skips the zygote launcher that wants dbus; Chromium
+#                           only permits this when sandboxing is also disabled.
 #
 # Apply only on Linux. macOS/Windows runners are unprivileged users with a
 # real display / GPU; leaving the sandbox on there is correct.
 case "$OS" in
   Linux)
-    if [ "$(id -u 2>/dev/null || echo 0)" = "0" ]; then
-      APP_ARGS+=("--no-sandbox")
-    fi
     APP_ARGS+=(
       "--disable-dev-shm-usage"
       "--disable-gpu"
-      "--no-zygote"
     )
+    NO_SANDBOX_REASON=""
+    if [ "$(id -u)" -eq 0 ]; then
+      NO_SANDBOX_REASON="runner is uid 0"
+    elif [ -n "${CEF_DIST_DIR:-}" ]; then
+      SANDBOX_HELPER="$CEF_DIST_DIR/chrome-sandbox"
+      SANDBOX_HELPER_MODE="$(stat -c '%u:%a' "$SANDBOX_HELPER" 2>/dev/null || true)"
+      if [ "$SANDBOX_HELPER_MODE" != "0:4755" ]; then
+        NO_SANDBOX_REASON="chrome-sandbox helper is not root-owned mode 4755"
+      fi
+    fi
+    if [ -n "$NO_SANDBOX_REASON" ]; then
+      APP_ARGS+=("--no-sandbox" "--no-zygote")
+      echo "[runner] Linux CEF sandbox disabled: $NO_SANDBOX_REASON"
+    fi
     echo "[runner] Linux CEF args: ${APP_ARGS[*]}"
     ;;
 esac

@@ -2,7 +2,6 @@
 import { waitForApp, waitForAppReady } from '../helpers/app-helpers';
 import { triggerAuthDeepLinkBypass } from '../helpers/deep-link-helpers';
 import {
-  clickText,
   dumpAccessibilityTree,
   textExists,
   waitForText,
@@ -41,7 +40,8 @@ async function waitForRequest(method, urlFragment, timeout = 20_000) {
 // environment (mock backend lacks streaming SSE support). Skip on Linux only.
 const suiteRunner = process.platform === 'linux' ? describe.skip : describe;
 suiteRunner('Conversations web channel flow', () => {
-  before(async () => {
+  before(async function beforeSuite() {
+    this.timeout(90_000);
     stepLog('starting mock server');
     await startMockServer();
     stepLog('waiting for app');
@@ -55,7 +55,8 @@ suiteRunner('Conversations web channel flow', () => {
     await stopMockServer();
   });
 
-  it('sends UI message through agent loop and renders response', async () => {
+  it('sends UI message through agent loop and renders response', async function () {
+    this.timeout(180_000);
     stepLog('trigger deep link');
     await triggerAuthDeepLinkBypass('e2e-conversations-token');
     stepLog('wait for window');
@@ -77,20 +78,14 @@ suiteRunner('Conversations web channel flow', () => {
     await completeOnboardingIfVisible('[ConversationsE2E]');
 
     stepLog('open conversations');
-    // Navigate via hash — "Message OpenHuman" button may not reliably open conversations
+    // Navigate via hash to /chat (the unified agent + web channel page).
+    // 'Message OpenHuman' button was removed from Home in a redesign — navigate directly.
     await navigateToConversations();
-    // If navigating to /conversations doesn't open a thread, try clicking the input area
+    // If navigating to /chat doesn't show threads, retry via direct hash.
     const hasInput = await textExists('Type a message...');
     if (!hasInput) {
-      // Try the home page "Message OpenHuman" button as fallback
-      await navigateViaHash('/home');
-      try {
-        await waitForText('Message OpenHuman', 10_000);
-        await clickText('Message OpenHuman', 10_000);
-      } catch {
-        stepLog('Message OpenHuman button not found, staying on conversations');
-        await navigateToConversations();
-      }
+      await navigateViaHash('/chat');
+      await browser.pause(2_000);
     }
 
     stepLog('send message');

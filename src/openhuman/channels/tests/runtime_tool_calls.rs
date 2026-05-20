@@ -8,7 +8,7 @@ use super::common::{
     IterativeToolProvider, MockPriceTool, ModelCaptureProvider, NoopMemory, RecordingChannel,
     TelegramRecordingChannel, ToolCallingAliasProvider, ToolCallingProvider,
 };
-use crate::openhuman::providers::{self, Provider};
+use crate::openhuman::inference::provider::{self, Provider};
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
@@ -39,7 +39,7 @@ async fn process_channel_message_executes_tool_calls_instead_of_sending_raw_json
         api_url: None,
         inference_url: None,
         reliability: Arc::new(crate::openhuman::config::ReliabilityConfig::default()),
-        provider_runtime_options: providers::ProviderRuntimeOptions::default(),
+        provider_runtime_options: provider::ProviderRuntimeOptions::default(),
         workspace_dir: Arc::new(std::env::temp_dir()),
         message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
         multimodal: crate::openhuman::config::MultimodalConfig::default(),
@@ -94,7 +94,7 @@ async fn process_channel_message_executes_tool_calls_with_alias_tags() {
         api_url: None,
         inference_url: None,
         reliability: Arc::new(crate::openhuman::config::ReliabilityConfig::default()),
-        provider_runtime_options: providers::ProviderRuntimeOptions::default(),
+        provider_runtime_options: provider::ProviderRuntimeOptions::default(),
         workspace_dir: Arc::new(std::env::temp_dir()),
         message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
         multimodal: crate::openhuman::config::MultimodalConfig::default(),
@@ -158,7 +158,7 @@ async fn process_channel_message_handles_models_command_without_llm_call() {
         api_url: None,
         inference_url: None,
         reliability: Arc::new(crate::openhuman::config::ReliabilityConfig::default()),
-        provider_runtime_options: providers::ProviderRuntimeOptions::default(),
+        provider_runtime_options: provider::ProviderRuntimeOptions::default(),
         workspace_dir: Arc::new(std::env::temp_dir()),
         message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
         multimodal: crate::openhuman::config::MultimodalConfig::default(),
@@ -249,7 +249,7 @@ async fn process_channel_message_uses_route_override_provider_and_model() {
         api_url: None,
         inference_url: None,
         reliability: Arc::new(crate::openhuman::config::ReliabilityConfig::default()),
-        provider_runtime_options: providers::ProviderRuntimeOptions::default(),
+        provider_runtime_options: provider::ProviderRuntimeOptions::default(),
         workspace_dir: Arc::new(std::env::temp_dir()),
         message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
         multimodal: crate::openhuman::config::MultimodalConfig::default(),
@@ -298,7 +298,7 @@ async fn process_channel_message_respects_configured_max_tool_iterations_above_d
         api_url: None,
         inference_url: None,
         reliability: Arc::new(crate::openhuman::config::ReliabilityConfig::default()),
-        provider_runtime_options: providers::ProviderRuntimeOptions::default(),
+        provider_runtime_options: provider::ProviderRuntimeOptions::default(),
         workspace_dir: Arc::new(std::env::temp_dir()),
         message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
         multimodal: crate::openhuman::config::MultimodalConfig::default(),
@@ -354,7 +354,7 @@ async fn process_channel_message_reports_configured_max_tool_iterations_limit() 
         api_url: None,
         inference_url: None,
         reliability: Arc::new(crate::openhuman::config::ReliabilityConfig::default()),
-        provider_runtime_options: providers::ProviderRuntimeOptions::default(),
+        provider_runtime_options: provider::ProviderRuntimeOptions::default(),
         workspace_dir: Arc::new(std::env::temp_dir()),
         message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
         multimodal: crate::openhuman::config::MultimodalConfig::default(),

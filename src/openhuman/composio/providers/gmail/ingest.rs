@@ -171,6 +171,10 @@ pub(crate) fn raw_to_email_message(raw: &Value) -> Option<EmailMessage> {
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
+    let list_unsubscribe = raw
+        .get("list_unsubscribe")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
     let source_ref = if id.is_empty() {
         None
     } else {
@@ -184,6 +188,7 @@ pub(crate) fn raw_to_email_message(raw: &Value) -> Option<EmailMessage> {
         sent_at,
         body,
         source_ref,
+        list_unsubscribe,
     })
 }
 
@@ -829,6 +834,7 @@ mod tests {
             sent_at: chrono::Utc::now(),
             body: "body".into(),
             source_ref: None,
+            list_unsubscribe: None,
         }];
         assert_eq!(pick_thread_subject(&messages), "Phoenix kickoff");
     }
@@ -843,6 +849,7 @@ mod tests {
             sent_at: chrono::Utc::now(),
             body: "body".into(),
             source_ref: None,
+            list_unsubscribe: None,
         }];
         assert_eq!(pick_thread_subject(&messages), "(no subject)");
     }

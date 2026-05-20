@@ -4,10 +4,20 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@tauri-apps/api/app', () => ({ getVersion: vi.fn() }));
 
+const configMock = vi.hoisted(() => ({ isDev: true }));
+
+vi.mock('../../utils/config', () => ({
+  APP_VERSION: '0.0.0-test',
+  get IS_DEV() {
+    return configMock.isDev;
+  },
+}));
+
 describe('apiClient version headers', () => {
   beforeEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
+    configMock.isDev = true;
     vi.mocked(isTauri).mockReturnValue(false);
     vi.stubGlobal('fetch', vi.fn());
   });
@@ -47,6 +57,54 @@ describe('apiClient version headers', () => {
     const headers = requestInit.headers as Record<string, string>;
     expect(headers['x-tauri-version']).toBe('1.2.3desktop+build');
     expect(headers).not.toHaveProperty('x-web-version');
+  });
+
+  it('logs request diagnostics in dev without leaking authorization headers', async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      headers: new Headers({ 'content-type': 'application/json' }),
+      json: async () => ({ success: true }),
+    } as Response);
+
+    const { apiClient, setStoreForApiClient } = await import('../apiClient');
+    setStoreForApiClient(() => 'secret-session-token');
+
+    await apiClient.post('/version-check', { ok: true });
+
+    const requestInit = fetchMock.mock.calls[0][1] as RequestInit;
+    const requestHeaders = requestInit.headers as Record<string, string>;
+    expect(requestHeaders.Authorization).toBe('Bearer secret-session-token');
+
+    const logMock = vi.mocked(console.log);
+    expect(logMock).toHaveBeenCalledWith(
+      'request',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.not.objectContaining({
+          Authorization: expect.any(String),
+          authorization: expect.any(String),
+        }),
+      })
+    );
+  });
+
+  it('does not log request diagnostics in production', async () => {
+    configMock.isDev = false;
+
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      headers: new Headers({ 'content-type': 'application/json' }),
+      json: async () => ({ success: true }),
+    } as Response);
+
+    const { apiClient, setStoreForApiClient } = await import('../apiClient');
+    setStoreForApiClient(() => 'secret-session-token');
+
+    await apiClient.get('/version-check');
+
+    expect(console.log).not.toHaveBeenCalledWith('request', expect.anything());
   });
 
   it('retries tauri version lookup after a transient failure', async () => {

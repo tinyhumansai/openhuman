@@ -1575,8 +1575,9 @@ pub struct FlushNowResponse {
 /// depending on `memory_tree.llm_backend`), and persists the new L1+
 /// summaries — i.e. the tree gets built using the user's chosen AI.
 ///
-/// Idempotent: the dedupe key is `flush_stale:<UTC date>`, so spamming
-/// the button doesn't queue duplicates.
+/// Idempotent: the dedupe key is `flush_stale:<UTC date>-h<block>`
+/// where `<block>` is the current 3-hour UTC block (0..=7), so
+/// spamming the button within the same window doesn't queue duplicates.
 pub async fn flush_now_rpc(config: &Config) -> Result<RpcOutcome<FlushNowResponse>, String> {
     use crate::openhuman::memory::tree::jobs::store as jobs_store;
     use crate::openhuman::memory::tree::jobs::types::{FlushStalePayload, NewJob};
@@ -1593,8 +1594,11 @@ pub async fn flush_now_rpc(config: &Config) -> Result<RpcOutcome<FlushNowRespons
         let payload = FlushStalePayload {
             max_age_secs: Some(0),
         };
-        let date_iso = chrono::Utc::now().format("%Y-%m-%d").to_string();
-        let job = NewJob::flush_stale(&payload, &date_iso).context("build flush_stale NewJob")?;
+        let now = chrono::Utc::now();
+        let date_iso = now.format("%Y-%m-%d").to_string();
+        let hour_block = chrono::Timelike::hour(&now) / 3;
+        let job = NewJob::flush_stale(&payload, &date_iso, hour_block)
+            .context("build flush_stale NewJob")?;
         let enqueued = jobs_store::enqueue(&cfg, &job)
             .context("enqueue flush_stale job")?
             .is_some();
@@ -1722,6 +1726,23 @@ pub async fn set_llm_rpc(
         staged.memory_tree.llm_summariser_model = Some(model);
         changed_models.push("summariser_model");
     }
+
+    // Mirror to the unified memory_provider AFTER optional model overrides so
+    // the persisted routing reflects the final staged values. The extract
+    // model isn't applied to memory_provider — it's a hint for the separate
+    // extractor path, not a top-level provider switch.
+    staged.memory_provider = Some(match parsed {
+        crate::openhuman::config::schema::LlmBackend::Local => {
+            let m = staged
+                .memory_tree
+                .llm_summariser_model
+                .clone()
+                .or_else(|| staged.memory_tree.llm_extractor_model.clone())
+                .unwrap_or_else(|| staged.local_ai.chat_model_id.clone());
+            format!("ollama:{m}")
+        }
+        crate::openhuman::config::schema::LlmBackend::Cloud => "cloud".to_string(),
+    });
 
     // Persist the staged version to config.toml. Atomic write-temp +
     // rename per Config::save. Commit to the live config only after a

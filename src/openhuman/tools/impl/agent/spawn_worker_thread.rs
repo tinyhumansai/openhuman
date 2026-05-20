@@ -135,8 +135,9 @@ impl Tool for SpawnWorkerThreadTool {
 
         // ── Depth Guard ────────────────────────────────────────────────
         // Check if the current thread is already a worker thread.
-        let current_thread_id = crate::openhuman::providers::thread_context::current_thread_id()
-            .unwrap_or_else(|| "unknown".to_string());
+        let current_thread_id =
+            crate::openhuman::inference::provider::thread_context::current_thread_id()
+                .unwrap_or_else(|| "unknown".to_string());
 
         tracing::info!(
             agent_id = %agent_id,
@@ -224,6 +225,7 @@ impl Tool for SpawnWorkerThreadTool {
             skill_filter_override: None,
             toolkit_override,
             context,
+            model_override: None,
             task_id: None,
             worker_thread_id: Some(worker_thread_id.clone()),
         };
@@ -288,7 +290,7 @@ mod tests {
 
     struct MockProvider;
     #[async_trait]
-    impl crate::openhuman::providers::Provider for MockProvider {
+    impl crate::openhuman::inference::provider::Provider for MockProvider {
         async fn chat_with_system(
             &self,
             _: Option<&str>,
@@ -300,11 +302,11 @@ mod tests {
         }
         async fn chat(
             &self,
-            _: crate::openhuman::providers::ChatRequest<'_>,
+            _: crate::openhuman::inference::provider::ChatRequest<'_>,
             _: &str,
             _: f64,
-        ) -> anyhow::Result<crate::openhuman::providers::ChatResponse> {
-            Ok(crate::openhuman::providers::ChatResponse {
+        ) -> anyhow::Result<crate::openhuman::inference::provider::ChatResponse> {
+            Ok(crate::openhuman::inference::provider::ChatResponse {
                 text: Some("done".into()),
                 tool_calls: vec![],
                 usage: None,
@@ -386,7 +388,6 @@ mod tests {
             skills: Arc::new(vec![]),
             memory_context: std::sync::Arc::new(None),
             connected_integrations: vec![],
-            composio_client: None,
             on_progress: None,
             agent_config: crate::openhuman::config::AgentConfig::default(),
             tool_call_format: crate::openhuman::context::prompt::ToolCallFormat::Native,
@@ -409,26 +410,29 @@ mod tests {
         )
         .unwrap();
 
-        crate::openhuman::providers::thread_context::with_thread_id(thread_id.to_string(), async {
-            let parent = test_parent_ctx(temp.path().to_path_buf());
-            with_parent_context(parent, async {
-                let tool = SpawnWorkerThreadTool::new();
-                let result = tool
-                    .execute(json!({
-                        "agent_id": "researcher",
-                        "prompt": "do it",
-                        "task_title": "Task"
-                    }))
-                    .await
-                    .unwrap();
+        crate::openhuman::inference::provider::thread_context::with_thread_id(
+            thread_id.to_string(),
+            async {
+                let parent = test_parent_ctx(temp.path().to_path_buf());
+                with_parent_context(parent, async {
+                    let tool = SpawnWorkerThreadTool::new();
+                    let result = tool
+                        .execute(json!({
+                            "agent_id": "researcher",
+                            "prompt": "do it",
+                            "task_title": "Task"
+                        }))
+                        .await
+                        .unwrap();
 
-                assert!(result.is_error);
-                assert!(result
-                    .output()
-                    .contains("cannot spawn other worker threads"));
-            })
-            .await;
-        })
+                    assert!(result.is_error);
+                    assert!(result
+                        .output()
+                        .contains("cannot spawn other worker threads"));
+                })
+                .await;
+            },
+        )
         .await;
     }
 
@@ -448,26 +452,29 @@ mod tests {
         )
         .unwrap();
 
-        crate::openhuman::providers::thread_context::with_thread_id(thread_id.to_string(), async {
-            let parent = test_parent_ctx(temp.path().to_path_buf());
-            with_parent_context(parent, async {
-                let tool = SpawnWorkerThreadTool::new();
-                let result = tool
-                    .execute(json!({
-                        "agent_id": "researcher",
-                        "prompt": "do it",
-                        "task_title": "Task"
-                    }))
-                    .await
-                    .unwrap();
+        crate::openhuman::inference::provider::thread_context::with_thread_id(
+            thread_id.to_string(),
+            async {
+                let parent = test_parent_ctx(temp.path().to_path_buf());
+                with_parent_context(parent, async {
+                    let tool = SpawnWorkerThreadTool::new();
+                    let result = tool
+                        .execute(json!({
+                            "agent_id": "researcher",
+                            "prompt": "do it",
+                            "task_title": "Task"
+                        }))
+                        .await
+                        .unwrap();
 
-                assert!(result.is_error);
-                assert!(result
-                    .output()
-                    .contains("cannot spawn other worker threads"));
-            })
-            .await;
-        })
+                    assert!(result.is_error);
+                    assert!(result
+                        .output()
+                        .contains("cannot spawn other worker threads"));
+                })
+                .await;
+            },
+        )
         .await;
     }
 }

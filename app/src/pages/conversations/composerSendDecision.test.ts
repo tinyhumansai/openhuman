@@ -4,6 +4,7 @@ import {
   evaluateComposerSend,
   getComposerBlockedSendFeedback,
   handleComposerSlashCommand,
+  shouldSendComposerKeyDown,
 } from './composerSendDecision';
 
 describe('evaluateComposerSend', () => {
@@ -104,20 +105,42 @@ describe('handleComposerSlashCommand', () => {
   });
 });
 
+describe('shouldSendComposerKeyDown', () => {
+  it('allows Enter to send when IME composition is inactive', () => {
+    expect(shouldSendComposerKeyDown({ key: 'Enter' })).toBe(true);
+  });
+
+  it('does not send on Shift+Enter', () => {
+    expect(shouldSendComposerKeyDown({ key: 'Enter', shiftKey: true })).toBe(false);
+  });
+
+  it('does not send while React reports IME composition', () => {
+    expect(shouldSendComposerKeyDown({ key: 'Enter', nativeEvent: { isComposing: true } })).toBe(
+      false
+    );
+  });
+
+  it('does not send while the browser reports legacy IME keyCode 229', () => {
+    expect(shouldSendComposerKeyDown({ key: 'Enter', nativeEvent: { keyCode: 229 } })).toBe(false);
+  });
+
+  it('does not send while textarea composition state is active', () => {
+    expect(shouldSendComposerKeyDown({ key: 'Enter' }, true)).toBe(false);
+  });
+});
+
 describe('getComposerBlockedSendFeedback', () => {
-  it('returns modal and error feedback for usage-limit blocking', () => {
+  it('returns error feedback for usage-limit blocking', () => {
     expect(getComposerBlockedSendFeedback('usage_limit_reached')).toEqual({
-      showLimitModal: true,
       error: {
         code: 'usage_limit_reached',
-        message: 'Usage limit reached. Upgrade or wait for reset.',
+        message: 'Included budget exhausted. Top up credits or upgrade to continue.',
       },
     });
   });
 
   it('returns send error feedback for socket-disconnected blocking', () => {
     expect(getComposerBlockedSendFeedback('socket_disconnected')).toEqual({
-      showLimitModal: false,
       error: {
         code: 'socket_disconnected',
         message:

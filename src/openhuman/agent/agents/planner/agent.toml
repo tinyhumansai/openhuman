@@ -11,6 +11,12 @@ omit_memory_context = false
 omit_safety_preamble = true
 omit_skills_catalog = true
 
+# Spawn hierarchy: this is the deep-thinking tier (reasoning model hint).
+# The planner produces a DAG of leaf tasks for downstream workers; it
+# must NOT delegate to another `reasoning` agent. The loader rejects
+# any same-tier entry added to a future `subagents` list.
+agent_tier = "reasoning"
+
 [model]
 hint = "reasoning"
 

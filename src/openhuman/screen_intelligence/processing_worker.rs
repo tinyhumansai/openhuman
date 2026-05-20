@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::openhuman::config::Config;
-use crate::openhuman::local_ai;
+use crate::openhuman::inference::local as local_ai;
 
 use super::helpers::{persist_vision_summary, push_ephemeral_vision_summary, truncate_tail};
 use super::state::AccessibilityEngine;

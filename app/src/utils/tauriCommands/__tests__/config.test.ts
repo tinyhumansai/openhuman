@@ -22,7 +22,7 @@ describe('openhumanGetClientConfig', () => {
     await expect(openhumanGetClientConfig()).rejects.toThrow(/Not running in Tauri/i);
   });
 
-  it('dispatches openhuman.config_get_client_config and returns the response', async () => {
+  it('dispatches openhuman.inference_get_client_config and returns the response', async () => {
     const expected = {
       result: {
         api_url: 'https://api.openai.com/v1/chat/completions',
@@ -36,7 +36,7 @@ describe('openhumanGetClientConfig', () => {
 
     const got = await openhumanGetClientConfig();
 
-    expect(callCoreRpc).toHaveBeenCalledWith({ method: 'openhuman.config_get_client_config' });
+    expect(callCoreRpc).toHaveBeenCalledWith({ method: 'openhuman.inference_get_client_config' });
     expect(got).toEqual(expected);
   });
 });

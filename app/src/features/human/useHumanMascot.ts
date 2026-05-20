@@ -1,7 +1,9 @@
 import debug from 'debug';
 import { useEffect, useRef, useState } from 'react';
+import { useSelector } from 'react-redux';
 
 import { subscribeChatEvents } from '../../services/chatService';
+import { selectEffectiveMascotVoiceId } from '../../store/mascotSlice';
 import type { MascotFace } from './Mascot';
 import { lerpViseme, VISEMES, type VisemeShape } from './Mascot/visemes';
 import { type PlaybackHandle, playBase64Audio, swallowAudioStop } from './voice/audioPlayer';
@@ -110,6 +112,15 @@ export function useHumanMascot(options: UseHumanMascotOptions = {}): UseHumanMas
   const { speakReplies = false, listening = false } = options;
   const speakRef = useRef(speakReplies);
   speakRef.current = speakReplies;
+
+  // Effective mascot voice id: resolves the manual override, the
+  // locale-default toggle, and the build-time fallback into a single
+  // string (see `selectEffectiveMascotVoiceId`). Mirrored into a ref so
+  // the inner `startTtsPlayback` closure always reads the latest value
+  // without having to re-create the callback on every re-render.
+  const effectiveMascotVoiceId = useSelector(selectEffectiveMascotVoiceId);
+  const mascotVoiceIdRef = useRef<string>(effectiveMascotVoiceId);
+  mascotVoiceIdRef.current = effectiveMascotVoiceId;
 
   const [face, setFace] = useState<MascotFace>('idle');
   const targetRef = useRef<VisemeShape>(VISEMES.REST);
@@ -234,7 +245,11 @@ export function useHumanMascot(options: UseHumanMascotOptions = {}): UseHumanMas
       setFace('thinking');
       let tts;
       try {
-        tts = await synthesizeSpeech(text);
+        // Always pass the effective voice id — the selector already
+        // resolves manual override / locale default / build-time
+        // fallback to a single string, so `synthesizeSpeech` doesn't
+        // need its own fallback branch here.
+        tts = await synthesizeSpeech(text, { voiceId: mascotVoiceIdRef.current });
       } catch (err) {
         // Voice path unavailable — degrade cleanly to text-only behavior.
         if (isStillCurrent()) degraded = true;

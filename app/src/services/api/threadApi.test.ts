@@ -85,4 +85,37 @@ describe('threadApi', () => {
     });
     expect(result).toEqual(thread);
   });
+
+  it('loads and updates a task board via threads RPC', async () => {
+    const taskBoard = {
+      threadId: 'thread-1',
+      updatedAt: '2026-05-04T10:00:05Z',
+      cards: [{ id: 'task-1', title: 'Plan', status: 'todo' as const, order: 0, updatedAt: 'now' }],
+    };
+    mockCallCoreRpc.mockResolvedValueOnce({ data: { taskBoard } });
+
+    const { threadApi } = await import('./threadApi');
+    await expect(threadApi.getTaskBoard('thread-1')).resolves.toEqual(taskBoard);
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.threads_task_board_get',
+      params: { thread_id: 'thread-1' },
+    });
+
+    mockCallCoreRpc.mockResolvedValueOnce({ data: { taskBoard } });
+    await expect(threadApi.putTaskBoard('thread-1', taskBoard.cards)).resolves.toEqual(taskBoard);
+    expect(mockCallCoreRpc).toHaveBeenLastCalledWith({
+      method: 'openhuman.threads_task_board_put',
+      params: { thread_id: 'thread-1', cards: taskBoard.cards },
+    });
+  });
+
+  it('returns null when task board RPC envelopes omit the board', async () => {
+    mockCallCoreRpc.mockResolvedValueOnce({ data: {} });
+
+    const { threadApi } = await import('./threadApi');
+    await expect(threadApi.getTaskBoard('thread-1')).resolves.toBeNull();
+
+    mockCallCoreRpc.mockResolvedValueOnce({ data: {} });
+    await expect(threadApi.putTaskBoard('thread-1', [])).resolves.toBeNull();
+  });
 });

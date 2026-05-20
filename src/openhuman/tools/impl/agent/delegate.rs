@@ -1,5 +1,7 @@
 use crate::openhuman::config::DelegateAgentConfig;
-use crate::openhuman::providers::{self, Provider};
+use crate::openhuman::inference::provider::{
+    create_backend_inference_provider, Provider, ProviderRuntimeOptions, INFERENCE_BACKEND_ID,
+};
 use crate::openhuman::security::policy::ToolOperation;
 use crate::openhuman::security::SecurityPolicy;
 use crate::openhuman::tool_timeout::tool_execution_timeout_secs;
@@ -18,7 +20,7 @@ pub struct DelegateTool {
     agents: Arc<HashMap<String, DelegateAgentConfig>>,
     security: Arc<SecurityPolicy>,
     /// Provider runtime options inherited from root config.
-    provider_runtime_options: providers::ProviderRuntimeOptions,
+    provider_runtime_options: ProviderRuntimeOptions,
     /// Depth at which this tool instance lives in the delegation chain.
     depth: u32,
 }
@@ -28,17 +30,13 @@ impl DelegateTool {
         agents: HashMap<String, DelegateAgentConfig>,
         security: Arc<SecurityPolicy>,
     ) -> Self {
-        Self::new_with_options(
-            agents,
-            security,
-            providers::ProviderRuntimeOptions::default(),
-        )
+        Self::new_with_options(agents, security, ProviderRuntimeOptions::default())
     }
 
     pub fn new_with_options(
         agents: HashMap<String, DelegateAgentConfig>,
         security: Arc<SecurityPolicy>,
-        provider_runtime_options: providers::ProviderRuntimeOptions,
+        provider_runtime_options: ProviderRuntimeOptions,
     ) -> Self {
         Self {
             agents: Arc::new(agents),
@@ -56,19 +54,14 @@ impl DelegateTool {
         security: Arc<SecurityPolicy>,
         depth: u32,
     ) -> Self {
-        Self::with_depth_and_options(
-            agents,
-            security,
-            depth,
-            providers::ProviderRuntimeOptions::default(),
-        )
+        Self::with_depth_and_options(agents, security, depth, ProviderRuntimeOptions::default())
     }
 
     pub fn with_depth_and_options(
         agents: HashMap<String, DelegateAgentConfig>,
         security: Arc<SecurityPolicy>,
         depth: u32,
-        provider_runtime_options: providers::ProviderRuntimeOptions,
+        provider_runtime_options: ProviderRuntimeOptions,
     ) -> Self {
         Self {
             agents: Arc::new(agents),
@@ -184,7 +177,7 @@ impl Tool for DelegateTool {
             return Ok(ToolResult::error(error));
         }
 
-        let provider: Box<dyn Provider> = match providers::create_backend_inference_provider(
+        let provider: Box<dyn Provider> = match create_backend_inference_provider(
             None,
             None,
             None,
@@ -238,8 +231,7 @@ impl Tool for DelegateTool {
 
                 Ok(ToolResult::success(format!(
                     "[Agent '{agent_name}' ({}/{})]\n{rendered}",
-                    providers::INFERENCE_BACKEND_ID,
-                    agent_config.model
+                    INFERENCE_BACKEND_ID, agent_config.model
                 )))
             }
             Err(e) => Ok(ToolResult::error(format!(
