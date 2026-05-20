@@ -31,6 +31,9 @@ primary_region = '<your-region>'
   force_https = true
   auto_stop_machines = 'stop'
   auto_start_machines = true
+  # min_machines_running = 0 fully stops the machine when idle (cheapest), but
+  # the first request after idle pays a cold-start penalty (container boot +
+  # Rust binary init — several seconds). Set to 1 to keep one machine warm.
   min_machines_running = 0
   processes = ['app']
 

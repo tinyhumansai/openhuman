@@ -432,6 +432,9 @@ primary_region = '<your-region>'
   force_https = true
   auto_stop_machines = 'stop'
   auto_start_machines = true
+  # min_machines_running = 0 fully stops the machine when idle (cheapest), but
+  # the first request after idle pays a cold-start penalty (container boot +
+  # Rust binary init — several seconds). Set to 1 to keep one machine warm.
   min_machines_running = 0
   processes = ['app']
 
@@ -528,7 +531,10 @@ jobs:
     concurrency: deploy-group
     steps:
       - uses: actions/checkout@v4
-      - uses: superfly/flyctl-actions/setup-flyctl@master
+      # Pin the Fly action to a tagged release (or a full commit SHA) rather
+      # than `@master` — tracking a moving branch trusts every future commit
+      # pushed there, including any made by a compromised maintainer account.
+      - uses: superfly/flyctl-actions/setup-flyctl@1.5
       - run: flyctl deploy --remote-only --config .fly/fly.toml
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
