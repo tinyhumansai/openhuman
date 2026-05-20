@@ -197,6 +197,30 @@ impl ComposioProvider for ClickUpProvider {
             }
         };
 
+        // Re-check the budget here — `resolve_user_id` just spent one
+        // request, and if that pushed us over the cap, firing
+        // `CLICKUP_GET_AUTHORIZED_TEAMS_WORKSPACES` would be wasted
+        // work. Bailing here keeps the per-day API call count strictly
+        // honoured even when we entered the sync with one slot left.
+        if state.budget_exhausted() {
+            tracing::info!(
+                connection_id = %connection_id,
+                "[composio:clickup] budget exhausted after user-id probe, skipping sync"
+            );
+            state.save(&memory).await?;
+            return Ok(SyncOutcome {
+                toolkit: "clickup".to_string(),
+                connection_id: Some(connection_id),
+                reason: reason.as_str().to_string(),
+                items_ingested: 0,
+                started_at_ms,
+                finished_at_ms: sync::now_ms(),
+                summary: "clickup sync skipped: daily budget exhausted after user-id probe"
+                    .to_string(),
+                details: json!({ "budget_exhausted": true, "user_id_resolved": true }),
+            });
+        }
+
         // ── Step 4: resolve which workspaces (teams) to iterate ─────
         let workspaces = match self.resolve_workspaces(ctx, &mut state).await {
             Ok(ws) => ws,

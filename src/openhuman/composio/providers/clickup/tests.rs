@@ -140,6 +140,16 @@ fn curated_tools_contains_core_read_surface() {
 
 #[test]
 fn default_impl_matches_new() {
-    let _a = ClickUpProvider::new();
-    let _b = ClickUpProvider::default();
+    // `ClickUpProvider` is a unit struct, so we compare observable
+    // trait surface instead of deriving `PartialEq`. This catches a
+    // future regression where `new()` and `default()` drift apart
+    // (e.g. one is given an extra field but the other is forgotten).
+    let a = ClickUpProvider::new();
+    let b = ClickUpProvider::default();
+    assert_eq!(a.toolkit_slug(), b.toolkit_slug());
+    assert_eq!(a.sync_interval_secs(), b.sync_interval_secs());
+    assert_eq!(
+        a.curated_tools().map(<[_]>::len),
+        b.curated_tools().map(<[_]>::len),
+    );
 }
