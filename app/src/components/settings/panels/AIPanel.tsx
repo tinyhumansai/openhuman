@@ -547,7 +547,7 @@ const ProviderKeyDialog = ({
         : slug === 'openrouter'
           ? 'sk-or-...'
           : slug === 'orcarouter'
-            ? 'sk-or...'
+            ? 'sk-orca-...'
             : 'your-api-key';
 
   const fieldLabel = isLocalRuntime ? 'Endpoint URL' : t('settings.ai.apiKeyFieldLabel');
