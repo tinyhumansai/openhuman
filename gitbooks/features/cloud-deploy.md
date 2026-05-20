@@ -458,16 +458,24 @@ redeploy.
 ### Step 4 — Set secrets
 
 ```bash
+# Required
 fly secrets set OPENHUMAN_CORE_TOKEN="$(openssl rand -hex 32)"
 fly secrets set BACKEND_URL="https://api.tinyhumans.ai"
+fly secrets set OPENHUMAN_APP_ENV="production"
 
 # Recommended for any publicly-reachable deployment:
 fly secrets set OPENHUMAN_AUTO_UPDATE_RPC_MUTATIONS_ENABLED="false"
 fly secrets set OPENHUMAN_AUTO_UPDATE_RESTART_STRATEGY="supervisor"
+
+# Optional — error reporting and analytics:
+fly secrets set OPENHUMAN_CORE_SENTRY_DSN="https://<key>@o<org>.ingest.sentry.io/<project>"
+fly secrets set OPENHUMAN_ANALYTICS_ENABLED="true"
 ```
 
 Save the value of `OPENHUMAN_CORE_TOKEN` — you will need it to connect the
-desktop app later.
+desktop app later. **Anyone with this token can drive the core**; treat it
+like a password and rotate it with `fly secrets set OPENHUMAN_CORE_TOKEN="$(openssl rand -hex 32)"`
+after any suspected leak.
 
 ### Step 5 — Deploy
 
