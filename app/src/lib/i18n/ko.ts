@@ -1843,7 +1843,7 @@ const ko: TranslationMap = {
   'settings.mascot.characterDesc': 'OpenHuman 캐릭터를 선택하세요.',
   'settings.mascot.characterHeading': '캐릭터',
   'settings.mascot.customGifError':
-    'HTTPS .gif URL, file:// .gif URL 또는 로컬 .gif 경로를 입력하세요.',
+    'HTTPS .gif URL, loopback HTTP .gif URL, file:// .gif URL 또는 로컬 .gif 경로를 입력하세요.',
   'settings.mascot.customGifHeading': '사용자 지정 GIF 아바타',
   'settings.mascot.customGifLabel': '사용자 지정 GIF 아바타 URL',
   'settings.mascot.characterPreview': '미리보기',

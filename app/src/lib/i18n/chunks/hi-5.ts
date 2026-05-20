@@ -207,7 +207,7 @@ const hi5: TranslationMap = {
   'settings.mascot.characterDesc': 'कैरेक्टर विवरण',
   'settings.mascot.characterHeading': 'कैरेक्टर शीर्षक',
   'settings.mascot.customGifError':
-    'Enter an HTTPS .gif URL, file:// .gif URL, or local .gif path.',
+    'Enter an HTTPS .gif URL, loopback HTTP .gif URL, file:// .gif URL, or local .gif path.',
   'settings.mascot.customGifHeading': 'Custom GIF avatar',
   'settings.mascot.customGifLabel': 'Custom GIF avatar URL',
   'settings.mascot.colorDesc': 'रंग विवरण',

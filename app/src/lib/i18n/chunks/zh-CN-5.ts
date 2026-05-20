@@ -191,7 +191,7 @@ const zhCN5: TranslationMap = {
   'settings.mascot.characterDesc': '选择你的 OpenHuman 角色',
   'settings.mascot.characterHeading': '角色',
   'settings.mascot.customGifError':
-    'Enter an HTTPS .gif URL, file:// .gif URL, or local .gif path.',
+    'Enter an HTTPS .gif URL, loopback HTTP .gif URL, file:// .gif URL, or local .gif path.',
   'settings.mascot.customGifHeading': 'Custom GIF avatar',
   'settings.mascot.customGifLabel': 'Custom GIF avatar URL',
   'settings.mascot.colorDesc': '选择颜色方案',
