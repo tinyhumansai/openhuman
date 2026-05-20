@@ -2,7 +2,6 @@
 import { waitForApp, waitForAppReady } from '../helpers/app-helpers';
 import { triggerAuthDeepLinkBypass } from '../helpers/deep-link-helpers';
 import {
-  clickText,
   dumpAccessibilityTree,
   textExists,
   waitForText,
@@ -79,20 +78,14 @@ suiteRunner('Conversations web channel flow', () => {
     await completeOnboardingIfVisible('[ConversationsE2E]');
 
     stepLog('open conversations');
-    // Navigate via hash — "Message OpenHuman" button may not reliably open conversations
+    // Navigate via hash to /chat (the unified agent + web channel page).
+    // 'Message OpenHuman' button was removed from Home in a redesign — navigate directly.
     await navigateToConversations();
-    // If navigating to /conversations doesn't open a thread, try clicking the input area
+    // If navigating to /chat doesn't show threads, retry via direct hash.
     const hasInput = await textExists('Type a message...');
     if (!hasInput) {
-      // Try the home page "Message OpenHuman" button as fallback
-      await navigateViaHash('/home');
-      try {
-        await waitForText('Message OpenHuman', 10_000);
-        await clickText('Message OpenHuman', 10_000);
-      } catch {
-        stepLog('Message OpenHuman button not found, staying on conversations');
-        await navigateToConversations();
-      }
+      await navigateViaHash('/chat');
+      await browser.pause(2_000);
     }
 
     stepLog('send message');

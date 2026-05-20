@@ -224,6 +224,46 @@ async fn embed_server_error() {
     assert!(msg.contains("rate limited"), "body: {msg}");
 }
 
+/// 429 rate-limit responses must format their message in the canonical
+/// `"... API error (<status>): <body>"` shape so the shared
+/// `is_transient_upstream_http_message` classifier in `core::observability`
+/// demotes them to a warning breadcrumb instead of a Sentry error event.
+#[tokio::test]
+async fn embed_429_uses_canonical_transient_format() {
+    let app = Router::new().route(
+        "/v1/embeddings",
+        post(|| async {
+            (
+                StatusCode::TOO_MANY_REQUESTS,
+                r#"{"error":{"message":"Rate limit exceeded.","type":"rate_limit_error"}}"#,
+            )
+        }),
+    );
+    let url = start_mock(app).await;
+    let p = OpenAiEmbedding::new(&url, "k", "m", 1);
+
+    let err = p.embed(&["hi"]).await.unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.contains("(429 Too Many Requests)"),
+        "expected canonical transient HTTP shape, got: {msg}"
+    );
+    // Pin the shape to the exact substring `is_transient_upstream_http_message`
+    // matches on (`"api error (<status> "`). The broader
+    // `is_transient_message_failure` classifier below also passes for the *old*
+    // `"Embedding API error 429 …"` format, so without this assertion a future
+    // refactor could silently revert the format and the test would still go
+    // green.
+    assert!(
+        msg.to_ascii_lowercase().contains("api error (429 "),
+        "message must match is_transient_upstream_http_message classifier arm: {msg}"
+    );
+    assert!(
+        crate::core::observability::is_transient_message_failure(&msg),
+        "message should classify as transient: {msg}"
+    );
+}
+
 #[tokio::test]
 async fn embed_budget_exhausted_400_still_errors() {
     // OPENHUMAN-TAURI-JM: the backend returns HTTP 400 with a budget-exhausted

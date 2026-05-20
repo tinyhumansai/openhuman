@@ -54,11 +54,9 @@ async function waitForCoreSidecar(timeout = 30_000): Promise<void> {
   let lastErr: unknown;
   await browser.waitUntil(
     async () => {
-      // Use openhuman.about_app_list as a lightweight ping — it's a
-      // read-only catalog fetch that succeeds as soon as the core is up.
-      const result = await callOpenhumanRpc('openhuman.about_app_list', {});
+      const result = await callOpenhumanRpc('core.ping', {});
       if (result.ok) {
-        stepLog('core sidecar ready', { result: result.result });
+        stepLog('core ready (ping ok)', { result: result.result });
         return true;
       }
       lastErr = result.error;
@@ -73,8 +71,7 @@ async function waitForCoreSidecar(timeout = 30_000): Promise<void> {
 }
 
 describe('Notifications', () => {
-  before(async function beforeSuite() {
-    this.timeout(90_000);
+  before(async () => {
     await startMockServer();
     await waitForApp();
 
@@ -204,10 +201,9 @@ describe('Notifications', () => {
     }
     expect(sectionVisible).toBe(true);
 
-    // The heading text: t('alerts.title') = 'Alerts'.
-    // The empty state: t('alerts.empty') = 'No alerts yet'.
-    await waitForText('Alerts', 8_000);
-    await waitForText('No alerts yet', 8_000);
+    // The heading text should also be present.
+    await waitForText('System Events', 8_000);
+    await waitForText('All caught up', 8_000);
   });
 
   it('native notification permission command returns a valid state', async () => {
