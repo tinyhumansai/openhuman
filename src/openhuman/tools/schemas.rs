@@ -20,6 +20,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         tools_schemas("tools_web_search"),
         tools_schemas("tools_seltz_search"),
         tools_schemas("tools_apify_linkedin_scrape"),
+        tools_schemas("tools_polymarket_execute"),
     ]
 }
 
@@ -40,6 +41,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: tools_schemas("tools_apify_linkedin_scrape"),
             handler: handle_apify_linkedin_scrape,
+        },
+        RegisteredController {
+            schema: tools_schemas("tools_polymarket_execute"),
+            handler: handle_polymarket_execute,
         },
     ]
 }
@@ -215,6 +220,33 @@ pub fn tools_schemas(function: &str) -> ControllerSchema {
                     required: true,
                 },
             ],
+        },
+        "tools_polymarket_execute" => ControllerSchema {
+            namespace: "tools",
+            function: "polymarket_execute",
+            description: "Execute a Polymarket action (Gamma + CLOB APIs, including authenticated reads and trading writes). \
+                          Exposed for Tauri-driven smoke + admin flows. Agent-facing path \
+                          goes through the normal harness tool registry.",
+            inputs: vec![
+                FieldSchema {
+                    name: "action",
+                    ty: TypeSchema::String,
+                    comment: "Polymarket action: list_markets | get_market | list_events | get_orderbook | get_price | get_positions | get_balance | get_open_orders | get_usdc_allowance | place_order | cancel_order.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "arguments",
+                    ty: TypeSchema::Json,
+                    comment: "Per-action argument object (market_id, slug, token_id, side, limit, ...).",
+                    required: false,
+                },
+            ],
+            outputs: vec![FieldSchema {
+                name: "data",
+                ty: TypeSchema::Json,
+                comment: "Tool result payload (provider response wrapped with action/source).",
+                required: true,
+            }],
         },
         _ => ControllerSchema {
             namespace: "tools",
@@ -468,18 +500,86 @@ fn handle_apify_linkedin_scrape(params: Map<String, Value>) -> ControllerFuture 
     })
 }
 
+fn handle_polymarket_execute(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let action = params
+            .get("action")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .ok_or_else(|| "missing or empty `action`".to_string())?;
+        let arguments = params.get("arguments").cloned();
+
+        let config = config_rpc::load_config_with_timeout().await?;
+        let enabled = config.integrations.polymarket.enabled;
+        tracing::debug!(
+            action = %action,
+            enabled,
+            has_arguments = arguments.is_some(),
+            "[tools] polymarket_execute: entry"
+        );
+        if !enabled {
+            tracing::debug!(action = %action, "[tools] polymarket_execute: disabled");
+            return Err("Polymarket integration is disabled in config.".to_string());
+        }
+
+        let security = std::sync::Arc::new(crate::openhuman::security::SecurityPolicy::default());
+        let tool = crate::openhuman::tools::implementations::network::PolymarketTool::new(
+            &config.integrations.polymarket,
+            security,
+        );
+
+        let mut args = match arguments {
+            Some(Value::Object(map)) => Value::Object(map),
+            Some(_) => {
+                tracing::debug!(
+                    action = %action,
+                    "[tools] polymarket_execute: invalid arguments shape"
+                );
+                return Err("`arguments` must be a JSON object when provided".to_string());
+            }
+            None => json!({}),
+        };
+        if let Value::Object(ref mut map) = args {
+            map.insert("action".to_string(), Value::String(action.clone()));
+        }
+        tracing::trace!(action = %action, args = ?args, "[tools] polymarket_execute: dispatch");
+
+        let result = tool.execute(args).await.map_err(|e| {
+            tracing::error!(
+                action = %action,
+                enabled,
+                error = %e,
+                "[tools] polymarket_execute: execution failed"
+            );
+            format!("polymarket execute failed: {e:#}")
+        })?;
+
+        tracing::debug!(
+            action = %action,
+            is_error = result.is_error,
+            "[tools] polymarket_execute: success"
+        );
+
+        let payload = json!({ "data": result.output() });
+        let log = vec![format!("tools.polymarket_execute: action={action}")];
+        RpcOutcome::new(payload, log).into_cli_compatible_json()
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn all_schemas_returns_four() {
-        assert_eq!(all_controller_schemas().len(), 4);
+    fn all_schemas_returns_five() {
+        assert_eq!(all_controller_schemas().len(), 5);
     }
 
     #[test]
-    fn all_controllers_returns_four() {
-        assert_eq!(all_registered_controllers().len(), 4);
+    fn all_controllers_returns_five() {
+        assert_eq!(all_registered_controllers().len(), 5);
     }
 
     #[test]

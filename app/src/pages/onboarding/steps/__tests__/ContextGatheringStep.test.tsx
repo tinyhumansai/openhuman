@@ -248,9 +248,7 @@ describe('ContextGatheringStep', () => {
     );
 
     await waitFor(() => {
-      expect(
-        screen.getByText(/we couldn't build your full profile right now/i)
-      ).toBeInTheDocument();
+      expect(screen.getByText(/your chat is ready/i)).toBeInTheDocument();
     });
 
     fireEvent.click(screen.getByRole('button', { name: /continue to chat/i }));
@@ -281,9 +279,7 @@ describe('ContextGatheringStep', () => {
     );
 
     await waitFor(() => {
-      expect(
-        screen.getByText(/we couldn't build your full profile right now/i)
-      ).toBeInTheDocument();
+      expect(screen.getByText(/your chat is ready/i)).toBeInTheDocument();
     });
 
     expect(screen.getByRole('button', { name: /continue to chat/i })).toBeInTheDocument();

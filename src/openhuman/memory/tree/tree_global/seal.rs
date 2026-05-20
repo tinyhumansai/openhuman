@@ -307,7 +307,12 @@ async fn seal_one_level(
             .map(|n| n.max(0) as u32)
             .context("Failed to read current max_level for global tree")?;
 
-        store::insert_summary_tx(&tx, &node, Some(&staged_global))?;
+        store::insert_summary_tx(
+            &tx,
+            &node,
+            Some(&staged_global),
+            &crate::openhuman::memory::tree::store::tree_active_signature(config),
+        )?;
         // Index any entities the summariser emitted. No-op under
         // InertSummariser (entities stays empty by design — see
         // summariser/inert.rs). Becomes active when the Ollama summariser
@@ -452,7 +457,12 @@ mod tests {
     fn insert_daily(cfg: &Config, node: &SummaryNode) {
         with_connection(cfg, |conn| {
             let tx = conn.unchecked_transaction()?;
-            store::insert_summary_tx(&tx, node, None)?;
+            store::insert_summary_tx(
+                &tx,
+                node,
+                None,
+                &crate::openhuman::memory::tree::store::tree_active_signature(cfg),
+            )?;
             tx.commit()?;
             Ok(())
         })

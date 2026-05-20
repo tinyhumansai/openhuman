@@ -271,11 +271,19 @@ async fn seal_populates_summary_embedding() {
     .unwrap();
     assert_eq!(sealed.len(), 1, "expected one seal at the budget crossing");
 
+    // #1574 cutover: the seal path no longer writes the legacy
+    // `mem_tree_summaries.embedding` column — the vector is persisted to the
+    // per-model sidecar at the active signature inside the seal tx. Assert
+    // it round-trips through the public accessor (which reads the sidecar at
+    // the active signature), validating the write-side cutover end to end.
     let summary = src_store::get_summary(&cfg, &sealed[0]).unwrap().unwrap();
-    let emb = summary
-        .embedding
-        .as_ref()
-        .expect("sealed summary must have embedding");
+    assert!(
+        summary.embedding.is_none(),
+        "legacy summary embedding column must be NULL post-cutover"
+    );
+    let emb = src_store::get_summary_embedding(&cfg, &sealed[0])
+        .unwrap()
+        .expect("sealed summary must have an embedding in the per-model sidecar");
     assert_eq!(emb.len(), EMBEDDING_DIM);
 }
 

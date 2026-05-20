@@ -390,7 +390,14 @@ jobs:
   build-desktop:
     name: Build desktop matrix
     needs: [prepare-build, create-release]
-    if: needs.create-release.result == 'success'
+    # `always()` is load-bearing: when `skip_e2e=true` the pretest jobs are
+    # `skipped`, and GitHub propagates that skipped status transitively to any
+    # downstream job lacking an explicit status function — even though we only
+    # `needs` create-release here, the build would otherwise be skipped along
+    # with the pretests. Same pattern below for build-cli-linux / build-docker /
+    # publish-updater-manifest / publish-release / tag-docker-latest /
+    # record-sentry-deploy. See release-staging.yml for the working precedent.
+    if: always() && needs.create-release.result == 'success'
     uses: ./.github/workflows/build-desktop.yml
     secrets: inherit
     with:
@@ -436,7 +443,7 @@ jobs:
   build-docker:
     name: "Docker: build and push"
     needs: [prepare-build, create-release]
-    if: needs.create-release.result == 'success'
+    if: always() && needs.create-release.result == 'success'
     runs-on: ubuntu-latest
     environment: Production
     env:
@@ -507,7 +514,7 @@ jobs:
   build-cli-linux:
     name: "CLI: ${{ matrix.target }}"
     needs: [prepare-build, create-release]
-    if: needs.create-release.result == 'success'
+    if: always() && needs.create-release.result == 'success'
     environment: Production
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -576,7 +583,7 @@ jobs:
   publish-updater-manifest:
     name: Publish updater manifest (latest.json)
     needs: [prepare-build, create-release, build-desktop]
-    if: needs.build-desktop.result == 'success'
+    if: always() && needs.build-desktop.result == 'success'
     runs-on: ubuntu-latest
     environment: Production
     steps:
@@ -609,7 +616,8 @@ jobs:
       - build-docker
       - publish-updater-manifest
     if: >-
-      needs.build-desktop.result == 'success'
+      always()
+      && needs.build-desktop.result == 'success'
       && needs.build-cli-linux.result == 'success'
       && needs.build-docker.result == 'success'
       && needs.publish-updater-manifest.result == 'success'
@@ -708,7 +716,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: Production
     needs: [prepare-build, publish-release]
-    if: needs.publish-release.result == 'success'
+    if: always() && needs.publish-release.result == 'success'
     env:
       REGISTRY: ghcr.io
       IMAGE_NAME: tinyhumansai/openhuman-core
@@ -744,6 +752,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: Production
     needs: [prepare-build, publish-release]
+    if: always() && needs.publish-release.result == 'success'
     env:
       SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
       SENTRY_URL: ${{ vars.SENTRY_URL }}

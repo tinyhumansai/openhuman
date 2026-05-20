@@ -165,6 +165,45 @@ const ru5: TranslationMap = {
   'settings.localModel.status.triggering': 'Запуск...',
   'settings.localModel.status.unavailable': 'Недоступно',
   'settings.localModel.status.working': 'Работаю...',
+  'settings.developerMenu.ai.title': 'Конфигурация ИИ',
+  'settings.developerMenu.ai.desc':
+    'Облачные провайдеры, локальные модели Ollama и маршрутизация по типам нагрузки',
+  'settings.developerMenu.screenAwareness.title': 'Осведомленность об экране',
+  'settings.developerMenu.screenAwareness.desc':
+    'Разрешения на захват экрана, политика мониторинга и управление сессиями',
+  'settings.developerMenu.messagingChannels.title': 'Каналы сообщений',
+  'settings.developerMenu.messagingChannels.desc':
+    'Настройка режимов аутентификации Telegram/Discord и маршрутизации канала по умолчанию',
+  'settings.developerMenu.tools.title': 'Инструменты',
+  'settings.developerMenu.tools.desc':
+    'Включайте или отключайте возможности, которые OpenHuman может использовать от вашего имени',
+  'settings.developerMenu.agentChat.title': 'Чат агента',
+  'settings.developerMenu.agentChat.desc':
+    'Тестируйте разговор агента с переопределениями модели и температуры',
+  'settings.developerMenu.cronJobs.title': 'Задачи cron',
+  'settings.developerMenu.cronJobs.desc':
+    'Просмотр и настройка запланированных задач для runtime-навыков',
+  'settings.developerMenu.localModelDebug.title': 'Отладка локальной модели',
+  'settings.developerMenu.localModelDebug.desc':
+    'Конфигурация Ollama, загрузка ресурсов, тесты модели и диагностика',
+  'settings.developerMenu.webhooks.title': 'Вебхуки',
+  'settings.developerMenu.webhooks.desc':
+    'Проверяйте регистрации runtime-вебхуков и журналы захваченных запросов',
+  'settings.developerMenu.intelligence.title': 'Интеллект',
+  'settings.developerMenu.intelligence.desc':
+    'Рабочая область памяти, подсознательный движок, сны и настройки',
+  'settings.developerMenu.notificationRouting.title': 'Маршрутизация уведомлений',
+  'settings.developerMenu.notificationRouting.desc':
+    'Оценка важности ИИ и эскалация оркестратору для интеграционных оповещений',
+  'settings.developerMenu.composeioTriggers.title': 'Триггеры ComposeIO',
+  'settings.developerMenu.composeioTriggers.desc': 'Просмотр истории и архива триггеров ComposeIO',
+  'settings.developerMenu.composioRouting.title': 'Маршрутизация Composio (прямой режим)',
+  'settings.developerMenu.composioRouting.desc':
+    'Используйте собственный API-ключ Composio и направляйте вызовы напрямую в backend.composio.dev',
+  'settings.developerMenu.integrationTriggers.title': 'Триггеры интеграций',
+  'settings.developerMenu.integrationTriggers.desc':
+    'Настройка параметров AI-триажа для триггеров интеграций Composio',
+  'settings.appearance.menuDesc': 'Выберите светлую, темную или системную тему',
   'settings.mascot.active': 'Активно',
   'settings.mascot.characterDesc': 'Описание персонажа',
   'settings.mascot.characterHeading': 'Персонаж',
@@ -172,6 +211,8 @@ const ru5: TranslationMap = {
   'settings.mascot.colorHeading': 'Цвет',
   'settings.mascot.loadingLibrary': 'Загрузка библиотеки OpenHuman…',
   'settings.mascot.localDefault': 'Локальный OpenHuman (по умолчанию)',
+  'settings.mascot.menuTitle': 'Маскот',
+  'settings.mascot.menuDesc': 'Выберите цвет маскота, используемый во всем приложении',
   'settings.mascot.noCharacters': 'Персонажи OpenHuman пока недоступны',
   'settings.mascot.noColorVariants': 'Нет цветовых вариантов',
   'settings.mascot.voice.current': 'текущий',

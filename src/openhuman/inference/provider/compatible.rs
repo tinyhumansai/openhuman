@@ -115,6 +115,17 @@ impl OpenAiCompatibleProvider {
         Self::new_with_options(name, base_url, credential, auth_style, false, None, false)
     }
 
+    fn enrich_404_message(&self, base: String, status: reqwest::StatusCode) -> String {
+        if status == reqwest::StatusCode::NOT_FOUND && !self.supports_responses_fallback {
+            format!(
+                "{base}; check that your endpoint URL is correct \
+                 and the model name exists on your provider"
+            )
+        } else {
+            base
+        }
+    }
+
     /// Create a provider with a custom User-Agent header.
     ///
     /// Some providers (for example Kimi Code) require a specific User-Agent
@@ -456,6 +467,13 @@ impl OpenAiCompatibleProvider {
             let message = format!("{} Responses API error: {sanitized}", self.name);
             if super::is_budget_exhausted_http_400(status, &error) {
                 super::log_budget_exhausted_http_400(
+                    "responses_api",
+                    self.name.as_str(),
+                    Some(model),
+                    status,
+                );
+            } else if super::is_provider_access_policy_denied_http_403(status, &error) {
+                super::log_provider_access_policy_denied_http_403(
                     "responses_api",
                     self.name.as_str(),
                     Some(model),
@@ -804,6 +822,13 @@ impl OpenAiCompatibleProvider {
             );
             if super::is_budget_exhausted_http_400(status, &body) {
                 super::log_budget_exhausted_http_400(
+                    "streaming_chat",
+                    self.name.as_str(),
+                    Some(native_request.model.as_str()),
+                    status,
+                );
+            } else if super::is_provider_access_policy_denied_http_403(status, &body) {
+                super::log_provider_access_policy_denied_http_403(
                     "streaming_chat",
                     self.name.as_str(),
                     Some(native_request.model.as_str()),
@@ -1272,9 +1297,19 @@ impl Provider for OpenAiCompatibleProvider {
             }
 
             let status_str = status.as_u16().to_string();
-            let message = format!("{} API error ({status}): {sanitized}", self.name);
+            let message = self.enrich_404_message(
+                format!("{} API error ({status}): {sanitized}", self.name),
+                status,
+            );
             if super::is_budget_exhausted_http_400(status, &error) {
                 super::log_budget_exhausted_http_400(
+                    "chat_completions",
+                    self.name.as_str(),
+                    Some(model),
+                    status,
+                );
+            } else if super::is_provider_access_policy_denied_http_403(status, &error) {
+                super::log_provider_access_policy_denied_http_403(
                     "chat_completions",
                     self.name.as_str(),
                     Some(model),
@@ -1392,7 +1427,9 @@ impl Provider for OpenAiCompatibleProvider {
                     });
             }
 
-            return Err(super::api_error(&self.name, response).await);
+            let err = super::api_error(&self.name, response).await;
+            let enriched = self.enrich_404_message(format!("{err:#}"), status);
+            return Err(anyhow::anyhow!("{enriched}"));
         }
 
         let body = response.text().await?;
@@ -1698,9 +1735,19 @@ impl Provider for OpenAiCompatibleProvider {
             }
 
             let status_str = status.as_u16().to_string();
-            let message = format!("{} API error ({status}): {sanitized}", self.name);
+            let message = self.enrich_404_message(
+                format!("{} API error ({status}): {sanitized}", self.name),
+                status,
+            );
             if super::is_budget_exhausted_http_400(status, &error) {
                 super::log_budget_exhausted_http_400(
+                    "native_chat",
+                    self.name.as_str(),
+                    Some(model),
+                    status,
+                );
+            } else if super::is_provider_access_policy_denied_http_403(status, &error) {
+                super::log_provider_access_policy_denied_http_403(
                     "native_chat",
                     self.name.as_str(),
                     Some(model),
@@ -1838,6 +1885,13 @@ impl Provider for OpenAiCompatibleProvider {
                 let message = format!("{}: {}", status, sanitized_error);
                 if super::is_budget_exhausted_http_400(status, &raw_error) {
                     super::log_budget_exhausted_http_400(
+                        "stream_chat",
+                        provider_name.as_str(),
+                        Some(model_owned.as_str()),
+                        status,
+                    );
+                } else if super::is_provider_access_policy_denied_http_403(status, &raw_error) {
+                    super::log_provider_access_policy_denied_http_403(
                         "stream_chat",
                         provider_name.as_str(),
                         Some(model_owned.as_str()),

@@ -155,8 +155,14 @@ const es4: TranslationMap = {
   'onboarding.contextGathering.title': 'Recopilación de contexto',
   'openhuman.team_list_teams': 'Lista de equipos',
   'overlay.ariaAttention': 'Mensaje de atención',
+  'overlay.ariaCompanion': 'Acompañante activo',
   'overlay.ariaOrb': 'Overlay de OpenHuman',
   'overlay.ariaVoiceActive': 'Entrada de voz activa',
+  'overlay.companion.error': 'Error',
+  'overlay.companion.listening': 'Escuchando…',
+  'overlay.companion.pointing': 'Señalando…',
+  'overlay.companion.speaking': 'Hablando…',
+  'overlay.companion.thinking': 'Pensando…',
   'overlay.orbTitle': 'Arrastra para mover · Doble clic para restablecer posición',
   'pages.settings.account.connections': 'Conexiones',
   'pages.settings.account.connectionsDesc': 'Descripción de conexiones',
@@ -176,6 +182,9 @@ const es4: TranslationMap = {
   'pages.settings.aiSection.description':
     'Proveedores de modelos de lenguaje, Ollama local y voz (STT / TTS).',
   'pages.settings.aiSection.title': 'IA',
+  'pages.settings.features.desktopCompanion': 'Acompañante de escritorio',
+  'pages.settings.features.desktopCompanionDesc':
+    'Asistente de voz con conciencia de pantalla — escucha, ve, habla, señala',
   'pages.settings.features.messagingChannels': 'Canales de mensajería',
   'pages.settings.features.messagingChannelsDesc': 'Descripción de canales de mensajería',
   'pages.settings.features.notifications': 'Notificaciones',
@@ -373,6 +382,9 @@ const es4: TranslationMap = {
   'settings.billing.subscription.paymentConfirmed': 'Pago confirmado',
   'settings.billing.subscription.perMonth': 'Por mes',
   'settings.billing.subscription.popular': 'Popular',
+  'pages.settings.account.migration': 'Importar desde otro asistente',
+  'pages.settings.account.migrationDesc':
+    'Migra memoria y notas desde OpenClaw (y pronto Hermes) a este espacio de trabajo.',
 };
 
 export default es4;

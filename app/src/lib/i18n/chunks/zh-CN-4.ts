@@ -151,8 +151,14 @@ const zhCN4: TranslationMap = {
   'onboarding.contextGathering.title': '上下文收集',
   'openhuman.team_list_teams': '团队列表',
   'overlay.ariaAttention': '注意消息',
+  'overlay.ariaCompanion': '伴侣已激活',
   'overlay.ariaOrb': 'OpenHuman 浮层',
   'overlay.ariaVoiceActive': '语音输入已激活',
+  'overlay.companion.error': '错误',
+  'overlay.companion.listening': '正在聆听…',
+  'overlay.companion.pointing': '正在指向…',
+  'overlay.companion.speaking': '正在说话…',
+  'overlay.companion.thinking': '正在思考…',
   'overlay.orbTitle': '拖动以移动 · 双击重置位置',
   'pages.settings.account.connections': '连接',
   'pages.settings.account.connectionsDesc': '管理已连接的账户和服务',
@@ -170,6 +176,9 @@ const zhCN4: TranslationMap = {
   'pages.settings.ai.voiceDesc': '配置语音输入和输出',
   'pages.settings.aiSection.description': '语言模型提供商、本地 Ollama 以及语音（STT / TTS）。',
   'pages.settings.aiSection.title': 'AI',
+  'pages.settings.features.desktopCompanion': '桌面伴侣',
+  'pages.settings.features.desktopCompanionDesc':
+    '具有屏幕感知能力的语音助手 — 倾听、观看、说话、指向',
   'pages.settings.features.messagingChannels': '消息渠道',
   'pages.settings.features.messagingChannelsDesc': '配置消息渠道和集成',
   'pages.settings.features.notifications': '通知',
@@ -365,6 +374,9 @@ const zhCN4: TranslationMap = {
   'settings.billing.subscription.paymentConfirmed': '支付已确认',
   'settings.billing.subscription.perMonth': '每月',
   'settings.billing.subscription.popular': '热门',
+  'pages.settings.account.migration': '从其他助手导入',
+  'pages.settings.account.migrationDesc':
+    '将 OpenClaw（即将支持 Hermes）的记忆和笔记迁移到此工作区。',
 };
 
 export default zhCN4;

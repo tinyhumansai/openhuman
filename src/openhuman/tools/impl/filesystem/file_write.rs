@@ -319,7 +319,14 @@ mod tests {
             .unwrap();
 
         assert!(result.is_error);
-        assert!(result.output().contains("escapes workspace"));
+        // SecurityPolicy now blocks symlink escapes at the is_path_allowed
+        // layer (#1927) — error becomes "Path not allowed by security
+        // policy" rather than the deeper "escapes workspace" message.
+        let out = result.output();
+        assert!(
+            out.contains("escapes workspace") || out.contains("not allowed"),
+            "expected escape/not-allowed error, got: {out}"
+        );
         assert!(!outside.join("hijack.txt").exists());
 
         let _ = tokio::fs::remove_dir_all(&root).await;
@@ -395,9 +402,13 @@ mod tests {
             .unwrap();
 
         assert!(result.is_error, "writing through symlink must be blocked");
+        // The symlink-safe is_path_allowed check (#1927) blocks at the
+        // policy layer before the tool's own symlink-target detection
+        // runs; accept either error message.
+        let out = result.output();
         assert!(
-            result.output().contains("symlink"),
-            "error should mention symlink"
+            out.contains("symlink") || out.contains("not allowed"),
+            "error should mention symlink or policy block, got: {out}"
         );
 
         // Verify original file was not modified

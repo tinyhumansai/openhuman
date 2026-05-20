@@ -45,7 +45,7 @@ const Home = () => {
   const { t } = useT();
   const { user } = useUser();
   const navigate = useNavigate();
-  const { isRateLimited, shouldShowBudgetCompletedMessage } = useUsageState();
+  const { shouldShowBudgetCompletedMessage } = useUsageState();
   const _userName = resolveHomeUserName(user);
   const userName = _userName.split(' ')[0]; // Get first name only
   const promoCredits = user?.usage?.promotionBalanceUsd ?? 0;
@@ -148,17 +148,7 @@ const Home = () => {
   return (
     <div className="min-h-full flex flex-col items-center justify-center p-4">
       <div className="max-w-md w-full">
-        {isRateLimited && (
-          <UsageLimitBanner
-            tone="warning"
-            icon="⏳"
-            title="You’ve Hit Your Limits"
-            message="You’ve reached your short-term usage cap. Buy top-up credits to keep going right away."
-            ctaLabel="Buy top-up credits"
-          />
-        )}
-
-        {!isRateLimited && shouldShowBudgetCompletedMessage && (
+        {shouldShowBudgetCompletedMessage && (
           <UsageLimitBanner
             tone="danger"
             icon="⚠️"

@@ -154,8 +154,14 @@ const ru4: TranslationMap = {
   'onboarding.contextGathering.title': 'Сбор контекста',
   'openhuman.team_list_teams': 'Список команд',
   'overlay.ariaAttention': 'Сообщение',
+  'overlay.ariaCompanion': 'Спутник активен',
   'overlay.ariaOrb': 'Оверлей OpenHuman',
   'overlay.ariaVoiceActive': 'Голосовой ввод активен',
+  'overlay.companion.error': 'Ошибка',
+  'overlay.companion.listening': 'Слушает…',
+  'overlay.companion.pointing': 'Указывает…',
+  'overlay.companion.speaking': 'Говорит…',
+  'overlay.companion.thinking': 'Думает…',
   'overlay.orbTitle': 'Перетащи для перемещения · Двойной клик для сброса позиции',
   'pages.settings.account.connections': 'Подключения',
   'pages.settings.account.connectionsDesc': 'Описание подключений',
@@ -174,6 +180,9 @@ const ru4: TranslationMap = {
   'pages.settings.ai.voiceDesc': 'Описание голоса',
   'pages.settings.aiSection.description': 'Языковые модели, локальный Ollama и голос (STT / TTS).',
   'pages.settings.aiSection.title': 'ИИ',
+  'pages.settings.features.desktopCompanion': 'Десктоп-спутник',
+  'pages.settings.features.desktopCompanionDesc':
+    'Голосовой ассистент с распознаванием экрана — слушает, видит, говорит, указывает',
   'pages.settings.features.messagingChannels': 'Каналы мессенджеров',
   'pages.settings.features.messagingChannelsDesc': 'Описание каналов сообщений',
   'pages.settings.features.notifications': 'Уведомления',
@@ -370,6 +379,9 @@ const ru4: TranslationMap = {
   'settings.billing.subscription.paymentConfirmed': 'Оплата подтверждена',
   'settings.billing.subscription.perMonth': 'В месяц',
   'settings.billing.subscription.popular': 'Популярное',
+  'pages.settings.account.migration': 'Импорт из другого ассистента',
+  'pages.settings.account.migrationDesc':
+    'Перенесите память и заметки из OpenClaw (а вскоре и Hermes) в это рабочее пространство.',
 };
 
 export default ru4;
