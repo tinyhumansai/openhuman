@@ -548,6 +548,16 @@ pub fn all_tools_with_runtime(
         tracing::debug!("[integrations] polymarket disabled — skipping");
     }
 
+    if root_config.integrations.kalshi.enabled {
+        tools.push(Box::new(KalshiTool::new(
+            &root_config.integrations.kalshi,
+            security.clone(),
+        )));
+        tracing::debug!("[integrations] registered kalshi tool (read + trading)");
+    } else {
+        tracing::debug!("[integrations] kalshi disabled — skipping");
+    }
+
     // Coding-harness `lsp` tool (issue #1205) — capability-gated by the
     // OPENHUMAN_LSP_ENABLED env var. The backend (real language-server
     // bridge) is a follow-up; today the gate just controls visibility
