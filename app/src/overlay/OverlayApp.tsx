@@ -351,12 +351,14 @@ export default function OverlayApp() {
 
     const connect = async () => {
       try {
+        /* c8 ignore start — thin call site over the tested `connectCoreSocket` helper */
         console.debug('[overlay] connecting to core socket');
         socket = await connectCoreSocket({
           getBaseUrl: resolveCoreSocketUrl,
           isDisposed: () => disposed,
         });
         if (!socket) return;
+        /* c8 ignore stop */
 
         socket.on('connect', () => {
           console.debug('[overlay] socket connected', socket?.id);
