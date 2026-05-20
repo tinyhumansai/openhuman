@@ -125,6 +125,7 @@ Requires Docker Desktop or Colima. The repo is bind-mounted so builds persist be
 | `E2E_MOCK_PORT` | `18473` | Mock backend server port |
 | `OPENHUMAN_WORKSPACE` | (temp dir) | App workspace directory |
 | `OPENHUMAN_SERVICE_MOCK` | `0` | Enable service mock mode |
+| `OPENHUMAN_E2E_MODE` | unset | Enables destructive test-support RPCs; the E2E runner sets this to `1` |
 | `OPENHUMAN_E2E_AUTH_BYPASS` | unset | Enable JWT bypass auth |
 | `DEBUG_E2E_DEEPLINK` | (verbose) | Set to `0` to silence deep link logs |
 | `E2E_FORCE_CARGO_CLEAN` | unset | Force cargo clean before E2E build |
