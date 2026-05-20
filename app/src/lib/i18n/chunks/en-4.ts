@@ -143,7 +143,7 @@ const en4: TranslationMap = {
   'onboarding.contextGathering.buildingProfile': 'Building your profile...',
   'onboarding.contextGathering.continueToChat': 'Continue to chat',
   'onboarding.contextGathering.errorDesc':
-    "We couldn't build your full profile right now, but that's okay — you can continue and your profile will build over time.",
+    "Your chat is ready. We'll keep building your full profile in the background, so you can continue now and refine it over time.",
   'onboarding.contextGathering.coreAlive': 'Core is reachable — first launch can take a minute.',
   'onboarding.contextGathering.coreAliveProbing': 'Checking core connection…',
   'onboarding.contextGathering.coreUnreachable':

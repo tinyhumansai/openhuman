@@ -1489,7 +1489,7 @@ const en: TranslationMap = {
   'onboarding.contextGathering.coreUnreachable':
     'Core is not responding. You can continue and try again later.',
   'onboarding.contextGathering.errorDesc':
-    "We couldn't build your full profile right now, but that's okay — you can continue and your profile will build over time.",
+    "Your chat is ready. We'll keep building your full profile in the background, so you can continue now and refine it over time.",
   'onboarding.contextGathering.stillWorkingDesc':
     'First launch can take 30–60 seconds while we warm up your local model and tools. You can continue to chat at any time — profile build keeps running in the background.',
   'onboarding.contextGathering.stillWorkingTitle': 'Still working on your profile…',

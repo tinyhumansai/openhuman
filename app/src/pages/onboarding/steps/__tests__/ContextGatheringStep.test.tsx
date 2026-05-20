@@ -397,6 +397,89 @@ describe('ContextGatheringStep', () => {
       });
     });
 
+    it('treats HTTP 401 as alive (auth not ready yet, core is up)', async () => {
+      vi.useFakeTimers();
+      testCoreRpcConnection.mockResolvedValue({ ok: false, status: 401 } as Response);
+
+      let resolveGmail!: (v: unknown) => void;
+      callCoreRpc.mockImplementation(
+        () =>
+          new Promise(res => {
+            resolveGmail = res;
+          })
+      );
+
+      renderWithProviders(
+        <ContextGatheringStep connectedSources={['composio:gmail']} onNext={vi.fn()} />
+      );
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_500);
+      });
+      vi.useRealTimers();
+
+      const indicator = await screen.findByTestId('core-alive-indicator');
+      await waitFor(() => {
+        expect(indicator.getAttribute('data-alive-state')).toBe('alive');
+      });
+
+      await act(async () => {
+        resolveGmail({ successful: true, data: { messages: [] } });
+      });
+    });
+
+    it('passes an AbortSignal so a TCP black-hole probe cannot hang forever', async () => {
+      vi.useFakeTimers();
+      // Hang the probe indefinitely so the only way it can resolve is via
+      // the controller-driven abort path. Capture whether the signal was
+      // forwarded.
+      testCoreRpcConnection.mockImplementation(
+        ((_url: string, _token?: string, init?: { signal?: AbortSignal }) =>
+          new Promise<Response>((_, reject) => {
+            init?.signal?.addEventListener('abort', () =>
+              reject(new DOMException('aborted', 'AbortError'))
+            );
+          })) as never
+      );
+
+      let resolveGmail!: (v: unknown) => void;
+      callCoreRpc.mockImplementation(
+        () =>
+          new Promise(res => {
+            resolveGmail = res;
+          })
+      );
+
+      renderWithProviders(
+        <ContextGatheringStep connectedSources={['composio:gmail']} onNext={vi.fn()} />
+      );
+
+      // Enter still-working state.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_500);
+      });
+      // Drive the per-probe 3s timeout to fire the abort.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3_500);
+      });
+      vi.useRealTimers();
+
+      expect(testCoreRpcConnection).toHaveBeenCalled();
+      const lastCall = testCoreRpcConnection.mock.calls[
+        testCoreRpcConnection.mock.calls.length - 1
+      ] as unknown as [string, string | undefined, { signal?: AbortSignal } | undefined];
+      expect(lastCall[2]?.signal).toBeInstanceOf(AbortSignal);
+
+      const indicator = await screen.findByTestId('core-alive-indicator');
+      await waitFor(() => {
+        expect(indicator.getAttribute('data-alive-state')).toBe('unreachable');
+      });
+
+      await act(async () => {
+        resolveGmail({ successful: true, data: { messages: [] } });
+      });
+    });
+
     it('reports unreachable when core.ping rejects', async () => {
       vi.useFakeTimers();
       testCoreRpcConnection.mockRejectedValue(new Error('ECONNREFUSED'));

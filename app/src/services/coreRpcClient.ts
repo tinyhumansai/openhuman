@@ -360,7 +360,8 @@ export async function getCoreRpcToken(): Promise<string | null> {
  */
 export async function testCoreRpcConnection(
   url: string,
-  tokenOverride?: string
+  tokenOverride?: string,
+  init?: { signal?: AbortSignal }
 ): Promise<Response> {
   const token = tokenOverride?.trim() || (await getCoreRpcToken());
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -371,6 +372,7 @@ export async function testCoreRpcConnection(
     method: 'POST',
     headers,
     body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'core.ping', params: {} }),
+    signal: init?.signal,
   });
 }
 

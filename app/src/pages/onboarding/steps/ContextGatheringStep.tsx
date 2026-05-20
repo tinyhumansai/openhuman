@@ -29,6 +29,14 @@ const STILL_WORKING_THRESHOLD_MS = 30_000;
 /** How often we probe `core.ping` after entering the still-working state. */
 const ALIVE_PROBE_INTERVAL_MS = 5_000;
 
+/**
+ * Per-probe network budget. `testCoreRpcConnection` uses raw `fetch()` with
+ * no built-in timeout, so we have to bound the probe ourselves — otherwise a
+ * TCP black-hole (firewall drop, suspended laptop wake) lets the first probe
+ * hang forever and the single-flight guard blocks every subsequent tick.
+ */
+const PROBE_TIMEOUT_MS = 3_000;
+
 type AliveState = 'unknown' | 'probing' | 'alive' | 'unreachable';
 
 interface ContextGatheringStepProps {
@@ -311,32 +319,41 @@ const ContextGatheringStep = ({
     return () => window.clearTimeout(timer);
   }, [finished, hasGmail, hasError]);
 
-  // Periodic alive probe while in still-working state. `core.ping` bypasses
-  // bearer auth and resolves quickly even when the busy snapshot RPC is
-  // holding the worker, so a green ping during a slow snapshot is exactly
-  // the alive-but-slow signal users need to see.
+  // Periodic alive probe while in still-working state. `core.ping` resolves
+  // quickly even when the busy snapshot RPC is holding the worker, so a
+  // green ping during a slow snapshot is exactly the alive-but-slow signal
+  // users need to see. On cold start the bearer token may not be resolved
+  // yet (IPC race) and the probe will come back 401 — that means auth is
+  // still warming up, not that the core is down, so we treat 401 as `alive`.
   useEffect(() => {
     if (!stillWorking || finished || hasError) return;
     let cancelled = false;
     // Single-flight guard so a slow probe never gets shadowed by the next
-    // 5s tick. Without it, an unreachable core (each probe times out after
-    // the global fetch budget) would stack overlapping in-flight promises
-    // and the last-to-resolve would race `aliveState`.
+    // 5s tick. Each probe also bounds itself with its own AbortController
+    // (PROBE_TIMEOUT_MS) so a TCP-black-hole core (firewall, suspended
+    // laptop) cannot leave us with a permanently in-flight fetch and a
+    // permanently blocked guard — that would re-create exactly the
+    // "Checking core connection…" forever failure mode this UI exists to
+    // fix.
     let inFlight = false;
 
     const probe = async () => {
       if (cancelled || inFlight) return;
       inFlight = true;
       setAliveState(prev => (prev === 'unknown' ? 'probing' : prev));
+      const controller = new AbortController();
+      const timer = window.setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
       try {
         const url = await getCoreRpcUrl();
-        const response = await testCoreRpcConnection(url);
+        const response = await testCoreRpcConnection(url, undefined, { signal: controller.signal });
         if (!cancelled) {
-          setAliveState(response.ok ? 'alive' : 'unreachable');
+          // 401 = auth not ready yet (cold-start IPC race), not a dead core.
+          setAliveState(response.ok || response.status === 401 ? 'alive' : 'unreachable');
         }
       } catch {
         if (!cancelled) setAliveState('unreachable');
       } finally {
+        window.clearTimeout(timer);
         inFlight = false;
       }
     };
