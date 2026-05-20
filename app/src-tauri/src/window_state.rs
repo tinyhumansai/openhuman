@@ -304,16 +304,13 @@ fn pick_monitor_for_window(
 ) -> Option<WorkArea> {
     let win_right = x.saturating_add(width as i32);
     let win_bottom = y.saturating_add(height as i32);
-    work_areas
-        .iter()
-        .copied()
-        .find(|wa| {
-            let mon_right = wa.x.saturating_add(wa.width as i32);
-            let mon_bottom = wa.y.saturating_add(wa.height as i32);
-            let overlap_w = (win_right.min(mon_right) - x.max(wa.x)).max(0);
-            let overlap_h = (win_bottom.min(mon_bottom) - y.max(wa.y)).max(0);
-            overlap_w >= MIN_VISIBLE_OVERLAP_PX && overlap_h >= MIN_VISIBLE_OVERLAP_PX
-        })
+    work_areas.iter().copied().find(|wa| {
+        let mon_right = wa.x.saturating_add(wa.width as i32);
+        let mon_bottom = wa.y.saturating_add(wa.height as i32);
+        let overlap_w = (win_right.min(mon_right) - x.max(wa.x)).max(0);
+        let overlap_h = (win_bottom.min(mon_bottom) - y.max(wa.y)).max(0);
+        overlap_w >= MIN_VISIBLE_OVERLAP_PX && overlap_h >= MIN_VISIBLE_OVERLAP_PX
+    })
 }
 
 /// Clamp width/height into the work area while preserving the
