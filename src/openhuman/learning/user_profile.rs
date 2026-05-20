@@ -316,6 +316,8 @@ mod tests {
             tool_calls: Vec::new(),
             turn_duration_ms: 10,
             session_id: None,
+            agent_id: None,
+            entrypoint: None,
             iteration_count: 1,
         };
 

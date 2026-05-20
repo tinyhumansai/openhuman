@@ -5,22 +5,33 @@ use super::common::{use_real_agent_handler, NoopMemory, RecordingChannel, SlowPr
 use crate::openhuman::agent::bus::{mock_agent_run_turn, AgentTurnRequest, AgentTurnResponse};
 use crate::openhuman::inference::provider;
 use std::collections::HashMap;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 #[tokio::test]
 async fn message_dispatch_processes_messages_in_parallel() {
-    // Install a deterministic stub that takes 250ms per turn. Two messages
-    // should complete materially faster than a fully sequential path. In
-    // practice the test harness adds non-trivial fixed overhead (channel
-    // typing/reply work, bus dispatch, CI scheduling), so the assertion
-    // targets "well below sequential" instead of the ideal 250ms floor.
-    let _bus_guard = mock_agent_run_turn(|_req: AgentTurnRequest| async move {
-        tokio::time::sleep(Duration::from_millis(250)).await;
-        Ok(AgentTurnResponse {
-            text: "echo: stub".to_string(),
-        })
+    // Install a deterministic stub that takes 250ms per turn and records
+    // the peak number of in-flight turns. This proves concurrency directly
+    // without relying on wall-clock thresholds that can wobble in CI.
+    let in_flight = Arc::new(AtomicUsize::new(0));
+    let peak_in_flight = Arc::new(AtomicUsize::new(0));
+    let _bus_guard = mock_agent_run_turn({
+        let in_flight = in_flight.clone();
+        let peak_in_flight = peak_in_flight.clone();
+        move |_req: AgentTurnRequest| {
+            let in_flight = in_flight.clone();
+            let peak_in_flight = peak_in_flight.clone();
+            async move {
+                let current = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+                peak_in_flight.fetch_max(current, Ordering::SeqCst);
+                tokio::time::sleep(Duration::from_millis(250)).await;
+                in_flight.fetch_sub(1, Ordering::SeqCst);
+                Ok(AgentTurnResponse {
+                    text: "echo: stub".to_string(),
+                })
+            }
+        }
     })
     .await;
 
@@ -60,27 +71,6 @@ async fn message_dispatch_processes_messages_in_parallel() {
         (channel_impl, runtime_ctx)
     };
 
-    let (baseline_channel, baseline_ctx) = build_runtime();
-    let (baseline_tx, baseline_rx) = tokio::sync::mpsc::channel::<traits::ChannelMessage>(2);
-    baseline_tx
-        .send(traits::ChannelMessage {
-            id: "baseline".to_string(),
-            sender: "alice".to_string(),
-            reply_target: "alice".to_string(),
-            content: "hello".to_string(),
-            channel: "test-channel".to_string(),
-            timestamp: 1,
-            thread_ts: None,
-        })
-        .await
-        .unwrap();
-    drop(baseline_tx);
-
-    let baseline_started = Instant::now();
-    run_message_dispatch_loop(baseline_rx, baseline_ctx, 1).await;
-    let baseline_elapsed = baseline_started.elapsed();
-    assert_eq!(baseline_channel.sent_messages.lock().await.len(), 1);
-
     let (parallel_channel, parallel_ctx) = build_runtime();
     let (tx, rx) = tokio::sync::mpsc::channel::<traits::ChannelMessage>(4);
     tx.send(traits::ChannelMessage {
@@ -107,18 +97,8 @@ async fn message_dispatch_processes_messages_in_parallel() {
     .unwrap();
     drop(tx);
 
-    let started = Instant::now();
     run_message_dispatch_loop(rx, parallel_ctx, 2).await;
-    let elapsed = started.elapsed();
-
-    let allowed_parallel = baseline_elapsed + Duration::from_millis(180);
-    assert!(
-        elapsed < allowed_parallel,
-        "expected parallel dispatch (< {:?}) based on single-message baseline {:?}, got {:?}",
-        allowed_parallel,
-        baseline_elapsed,
-        elapsed
-    );
+    assert_eq!(peak_in_flight.load(Ordering::SeqCst), 2);
 
     let sent_messages = parallel_channel.sent_messages.lock().await;
     assert_eq!(sent_messages.len(), 2);

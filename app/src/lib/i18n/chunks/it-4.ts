@@ -153,6 +153,14 @@ const it4: TranslationMap = {
   'onboarding.contextGathering.continueToChat': 'Continua alla chat',
   'onboarding.contextGathering.errorDesc':
     'Non siamo riusciti a costruire il tuo profilo completo ora, ma va bene — puoi continuare e il tuo profilo si svilupperà nel tempo.',
+  'onboarding.contextGathering.coreAlive':
+    'Il core è raggiungibile — il primo avvio può richiedere un minuto.',
+  'onboarding.contextGathering.coreAliveProbing': 'Verifica della connessione al core…',
+  'onboarding.contextGathering.coreUnreachable':
+    'Il core non risponde. Puoi continuare e riprovare più tardi.',
+  'onboarding.contextGathering.stillWorkingDesc':
+    'Il primo avvio può richiedere 30–60 secondi mentre prepariamo il tuo modello locale e gli strumenti. Puoi continuare la chat in qualsiasi momento — la costruzione del profilo continua in background.',
+  'onboarding.contextGathering.stillWorkingTitle': 'Stiamo ancora preparando il tuo profilo…',
   'onboarding.contextGathering.title': 'Raccolta del contesto',
   'openhuman.team_list_teams': 'Elenco team',
   'overlay.ariaAttention': 'Messaggio di attenzione',

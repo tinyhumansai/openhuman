@@ -19,8 +19,7 @@ import { startMockServer, stopMockServer } from '../mock-server';
 const USER_ID = 'e2e-settings-channels';
 
 describe('Settings - Channels & Permissions', () => {
-  before(async function beforeSuite() {
-    this.timeout(90_000);
+  before(async () => {
     await startMockServer();
     await waitForApp();
     await resetApp(USER_ID);
@@ -30,8 +29,7 @@ describe('Settings - Channels & Permissions', () => {
     await stopMockServer();
   });
 
-  it('allows switching default messaging channel (13.2.1)', async function () {
-    this.timeout(90_000);
+  it('allows switching default messaging channel (13.2.1)', async () => {
     await navigateViaHash('/settings/messaging');
 
     await waitForText('Default Messaging Channel', 15_000);
@@ -39,21 +37,18 @@ describe('Settings - Channels & Permissions', () => {
     expect(await textExists('Discord')).toBe(true);
 
     await clickText('Discord');
-    // After clicking Discord, the route summary shows either an active route
-    // or "No active route" (when no Discord account is connected in E2E).
-    // We assert that the Active route label is rendered either way.
-    await browser.pause(1_000);
-    expect((await textExists('Active route')) || (await textExists('No active route'))).toBe(true);
+    // The active-route line always renders regardless of connection state.
+    await waitForText('Active route', 5_000);
   });
 
-  it('renders privacy settings and analytics toggle (13.2.2)', async function () {
-    this.timeout(90_000);
+  it('renders privacy settings and analytics toggle (13.2.2)', async () => {
     await navigateViaHash('/settings/privacy');
 
-    // Privacy panel shows 'Privacy & Security' as the panel title and
-    // 'Share Anonymized Usage Data' as the analytics toggle label.
     await waitForText('Privacy', 15_000);
+    // PrivacyPanel renders "Anonymized Analytics" section header (not "Data Sharing")
     await waitForText('Anonymized Analytics', 15_000);
     expect(await textExists('Share Anonymized Usage Data')).toBe(true);
+    // Capability list section is "What leaves your computer" (not "Permission Metadata")
+    await waitForText('What leaves your computer', 5_000);
   });
 });

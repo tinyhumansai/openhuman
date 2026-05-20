@@ -52,6 +52,8 @@ impl Tool for McpListServersTool {
                     "endpoint": server.endpoint,
                     "description": server.description,
                     "timeout_secs": server.timeout_secs,
+                    "allowed_tools": server.allowed_tools,
+                    "disallowed_tools": server.disallowed_tools,
                     "auth": server.auth,
                     "source": server.source,
                 })
@@ -82,6 +84,18 @@ impl Tool for McpListServersTool {
                 ));
                 if let Some(description) = server.description.as_deref() {
                     md.push_str(&format!("\n  - {description}"));
+                }
+                if !server.allowed_tools.is_empty() {
+                    md.push_str(&format!(
+                        "\n  - allowed tools: `{}`",
+                        server.allowed_tools.join("`, `")
+                    ));
+                }
+                if !server.disallowed_tools.is_empty() {
+                    md.push_str(&format!(
+                        "\n  - disallowed tools: `{}`",
+                        server.disallowed_tools.join("`, `")
+                    ));
                 }
             }
             md
@@ -290,6 +304,8 @@ mod tests {
             cwd: None,
             description: Some("Docs MCP".into()),
             enabled: true,
+            allowed_tools: Vec::new(),
+            disallowed_tools: Vec::new(),
             timeout_secs: 30,
             auth: crate::openhuman::config::McpAuthConfig::None,
         });

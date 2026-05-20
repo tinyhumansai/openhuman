@@ -574,7 +574,7 @@ fn forbidden_path_argument(security: &SecurityPolicy, command: &str) -> Option<S
                 || candidate.starts_with("~/")
                 || candidate.contains('/');
 
-            if looks_like_path && !security.is_path_allowed(candidate) {
+            if looks_like_path && !security.is_path_string_allowed(candidate) {
                 return Some(candidate.to_string());
             }
         }

@@ -34,6 +34,14 @@ const pt3: TranslationMap = {
   'workspace.building': 'Construindo...',
   'workspace.buildSummaryTrees': 'Construir Árvores de Resumo',
   'workspace.viewVault': 'Ver Cofre',
+  'workspace.openingVaultTitle': 'Opening vault in Obsidian',
+  'workspace.openingVaultMessage':
+    "If Obsidian doesn't open, install it from obsidian.md or use Reveal Folder. Vault path:",
+  'workspace.openVaultFailedTitle': "Couldn't open vault in Obsidian",
+  'workspace.openVaultFailedMessage':
+    'Use Reveal Folder to open the vault directory directly. Vault path:',
+  'workspace.revealVaultFailed': "Couldn't reveal vault folder",
+  'workspace.revealFolder': 'Reveal Folder',
   'workspace.graphLoadFailed': 'Falha ao carregar grafo de memória',
   'workspace.loadingGraph': 'Carregando grafo de memória...',
   'workspace.graphViewMode': 'Modo de visualização do grafo de memória',

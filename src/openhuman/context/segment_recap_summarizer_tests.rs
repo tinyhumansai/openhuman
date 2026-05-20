@@ -147,6 +147,8 @@ async fn rolling_recap_does_not_close_segment_or_write_summary_or_embedding() {
             tool_calls: vec![],
             turn_duration_ms: 50,
             session_id: Some(session.into()),
+            agent_id: None,
+            entrypoint: None,
             iteration_count: i as usize,
         })
         .await
@@ -223,6 +225,8 @@ async fn compaction_uses_recap_text_not_inner_summarizer() {
         tool_calls: vec![],
         turn_duration_ms: 50,
         session_id: Some(session.into()),
+        agent_id: None,
+        entrypoint: None,
         iteration_count: 1,
     })
     .await
@@ -366,6 +370,8 @@ async fn bookend_stub_never_becomes_compaction_falls_back_to_inner() {
         tool_calls: vec![],
         turn_duration_ms: 50,
         session_id: Some(session.into()),
+        agent_id: None,
+        entrypoint: None,
         iteration_count: 1,
     })
     .await
@@ -426,6 +432,8 @@ async fn failing_provider_yields_inert_clipped_recap_used_as_compaction() {
         tool_calls: vec![],
         turn_duration_ms: 50,
         session_id: Some(session.into()),
+        agent_id: None,
+        entrypoint: None,
         iteration_count: 1,
     })
     .await
@@ -527,6 +535,8 @@ async fn phase1_finalize_path_still_persists_summary_and_embedding() {
             tool_calls: vec![],
             turn_duration_ms: 50,
             session_id: Some(session.into()),
+            agent_id: None,
+            entrypoint: None,
             iteration_count: i as usize,
         })
         .await

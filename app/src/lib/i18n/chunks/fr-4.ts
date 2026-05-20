@@ -152,7 +152,15 @@ const fr4: TranslationMap = {
   'onboarding.contextGathering.buildingProfile': 'Construction de ton profil…',
   'onboarding.contextGathering.continueToChat': 'Accéder au chat',
   'onboarding.contextGathering.errorDesc':
-    "Nous n'avons pas pu construire ton profil complet pour le moment, mais ce n'est pas grave — tu peux continuer et ton profil se construira au fil du temps.",
+    "Nous n'avons pas pu créer votre profil complet pour l'instant, mais ce n'est pas grave — vous pouvez continuer et votre profil se construira au fil du temps.",
+  'onboarding.contextGathering.coreAlive':
+    'Le cœur est accessible — le premier lancement peut prendre une minute.',
+  'onboarding.contextGathering.coreAliveProbing': 'Vérification de la connexion au cœur…',
+  'onboarding.contextGathering.coreUnreachable':
+    'Le cœur ne répond pas. Tu peux continuer et réessayer plus tard.',
+  'onboarding.contextGathering.stillWorkingDesc':
+    'Le premier lancement peut prendre 30 à 60 secondes pendant que nous préparons ton modèle local et tes outils. Tu peux accéder au chat à tout moment — la construction du profil continue en arrière-plan.',
+  'onboarding.contextGathering.stillWorkingTitle': 'Construction de ton profil en cours…',
   'onboarding.contextGathering.title': 'Collecte de contexte',
   'openhuman.team_list_teams': 'Liste des équipes',
   'overlay.ariaAttention': "Message d'attention",

@@ -3,6 +3,7 @@ use std::fs;
 use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use log::{debug, warn};
@@ -29,8 +30,20 @@ use crate::rpc::RpcOutcome;
 const LOG_PREFIX: &str = "[app_state]";
 const APP_STATE_FILENAME: &str = "app-state.json";
 const CURRENT_USER_REFRESH_TTL: Duration = Duration::from_secs(5);
+const RUNTIME_SNAPSHOT_TTL: Duration = Duration::from_secs(2);
+const AUTH_FETCH_TIMEOUT: Duration = Duration::from_secs(5);
+const RUNTIME_SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(10);
 static APP_STATE_FILE_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 static CURRENT_USER_CACHE: Lazy<Mutex<Option<CachedCurrentUser>>> = Lazy::new(|| Mutex::new(None));
+static RUNTIME_SNAPSHOT_CACHE: Lazy<Mutex<Option<CachedRuntimeSnapshot>>> =
+    Lazy::new(|| Mutex::new(None));
+static SNAPSHOT_REQ_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Debug, Clone)]
+struct CachedRuntimeSnapshot {
+    snapshot: RuntimeSnapshot,
+    fetched_at: Instant,
+}
 
 #[derive(Debug, Clone)]
 struct CachedCurrentUser {
@@ -402,52 +415,120 @@ pub fn peek_cached_current_user_identity() -> Option<crate::openhuman::agent::pr
     }
 }
 
-async fn build_runtime_snapshot(config: &Config) -> RuntimeSnapshot {
-    let screen_intelligence = {
-        let _ = crate::openhuman::screen_intelligence::global_engine()
-            .apply_config(config.screen_intelligence.clone())
-            .await;
-        crate::openhuman::screen_intelligence::global_engine()
-            .status()
-            .await
-    };
-
-    let local_ai = match crate::openhuman::inference::rpc::inference_status(config).await {
-        Ok(outcome) => outcome.value,
-        Err(error) => {
-            warn!("{LOG_PREFIX} local_ai status failed during snapshot: {error}");
-            crate::openhuman::inference::LocalAiStatus::disabled(config)
-        }
-    };
-
-    let autocomplete = crate::openhuman::autocomplete::global_engine()
-        .status()
-        .await;
-
-    let service = match crate::openhuman::service::status(config) {
-        Ok(status) => status,
-        Err(error) => {
-            let message = error.to_string();
-            warn!("{LOG_PREFIX} service status failed during snapshot: {message}");
-            ServiceStatus {
-                state: ServiceState::Unknown(message.clone()),
-                unit_path: None,
-                label: "OpenHuman".to_string(),
-                details: Some(message),
+async fn build_runtime_snapshot(config: &Config, req_id: u64) -> RuntimeSnapshot {
+    {
+        let cache = RUNTIME_SNAPSHOT_CACHE.lock();
+        if let Some(entry) = cache.as_ref() {
+            if entry.fetched_at.elapsed() < RUNTIME_SNAPSHOT_TTL {
+                debug!(
+                    "{LOG_PREFIX} build_runtime_snapshot: returning cached snapshot req_id={} age_ms={}",
+                    req_id,
+                    entry.fetched_at.elapsed().as_millis()
+                );
+                return entry.snapshot.clone();
             }
         }
+    }
+
+    let si_config = config.screen_intelligence.clone();
+    let config_for_local_ai = config.clone();
+    let config_for_autocomplete = config.clone();
+    let config_for_service = config.clone();
+
+    let t0 = Instant::now();
+
+    let (screen_intelligence, local_ai, autocomplete, service) = tokio::join!(
+        async {
+            let t = Instant::now();
+            let _ = crate::openhuman::screen_intelligence::global_engine()
+                .apply_config(si_config)
+                .await;
+            let status = crate::openhuman::screen_intelligence::global_engine()
+                .status()
+                .await;
+            (status, t.elapsed().as_millis())
+        },
+        async {
+            let t = Instant::now();
+            let status = match crate::openhuman::inference::rpc::inference_status(
+                &config_for_local_ai,
+            )
+            .await
+            {
+                Ok(outcome) => outcome.value,
+                Err(error) => {
+                    warn!("{LOG_PREFIX} local_ai status failed during snapshot: {error}");
+                    crate::openhuman::inference::LocalAiStatus::disabled(&config_for_local_ai)
+                }
+            };
+            (status, t.elapsed().as_millis())
+        },
+        async {
+            let t = Instant::now();
+            let status = crate::openhuman::autocomplete::global_engine()
+                .status_with_config(&config_for_autocomplete)
+                .await;
+            (status, t.elapsed().as_millis())
+        },
+        async {
+            let t = Instant::now();
+            let status = tokio::task::spawn_blocking(move || {
+                crate::openhuman::service::status(&config_for_service)
+            })
+            .await
+            .unwrap_or_else(|_| Err(anyhow::anyhow!("service status task panicked")));
+            let status = match status {
+                Ok(s) => s,
+                Err(error) => {
+                    let message = error.to_string();
+                    warn!("{LOG_PREFIX} service status failed during snapshot: {message}");
+                    ServiceStatus {
+                        state: ServiceState::Unknown(message.clone()),
+                        unit_path: None,
+                        label: "OpenHuman".to_string(),
+                        details: Some(message),
+                    }
+                }
+            };
+            (status, t.elapsed().as_millis())
+        }
+    );
+
+    let total_ms = t0.elapsed().as_millis();
+    debug!(
+        "{LOG_PREFIX} build_runtime_snapshot timings req_id={} si_ms={} local_ai_ms={} autocomplete_ms={} service_ms={} total_ms={}",
+        req_id,
+        screen_intelligence.1,
+        local_ai.1,
+        autocomplete.1,
+        service.1,
+        total_ms,
+    );
+
+    let snapshot = RuntimeSnapshot {
+        screen_intelligence: screen_intelligence.0,
+        local_ai: local_ai.0,
+        autocomplete: autocomplete.0,
+        service: service.0,
     };
 
-    RuntimeSnapshot {
-        screen_intelligence,
-        local_ai,
-        autocomplete,
-        service,
-    }
+    *RUNTIME_SNAPSHOT_CACHE.lock() = Some(CachedRuntimeSnapshot {
+        snapshot: snapshot.clone(),
+        fetched_at: Instant::now(),
+    });
+
+    snapshot
 }
 
 pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
+    let req_id = SNAPSHOT_REQ_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let t_total = Instant::now();
+
+    let t_config = Instant::now();
     let config = config_rpc::load_config_with_timeout().await?;
+    let config_ms = t_config.elapsed().as_millis();
+
+    let t_auth = Instant::now();
     // Load the `app-session` auth profile exactly once and derive both
     // the session-state view and the raw token from it. The previous
     // implementation called `build_session_state` + `get_session_token`
@@ -460,10 +541,19 @@ pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
     let session_token = session_token_from_profile(session_profile.as_ref());
     let stored_user = sanitize_snapshot_user(auth.user.clone());
     let current_user = if let Some(token) = session_token.clone().filter(|t| !t.trim().is_empty()) {
-        match fetch_current_user_cached(&config, &token).await {
-            Ok(fresh_user) => fresh_user.or(stored_user.clone()),
-            Err(error) => {
+        match tokio::time::timeout(
+            AUTH_FETCH_TIMEOUT,
+            fetch_current_user_cached(&config, &token),
+        )
+        .await
+        {
+            Ok(Ok(fresh_user)) => fresh_user.or(stored_user.clone()),
+            Ok(Err(error)) => {
                 warn!("{LOG_PREFIX} current user refresh failed; using stored snapshot fallback: {error}");
+                stored_user.clone()
+            }
+            Err(_) => {
+                warn!("{LOG_PREFIX} current user fetch timed out after {}s; using stored snapshot fallback", AUTH_FETCH_TIMEOUT.as_secs());
                 stored_user.clone()
             }
         }
@@ -471,11 +561,40 @@ pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
         stored_user.clone()
     };
     auth.user = current_user.clone();
+    let auth_ms = t_auth.elapsed().as_millis();
+
+    let t_local_state = Instant::now();
     let local_state = load_stored_app_state(&config)?;
-    let runtime = build_runtime_snapshot(&config).await;
+    let local_state_ms = t_local_state.elapsed().as_millis();
+
+    let t_runtime = Instant::now();
+    let runtime = match tokio::time::timeout(
+        RUNTIME_SNAPSHOT_TIMEOUT,
+        build_runtime_snapshot(&config, req_id),
+    )
+    .await
+    {
+        Ok(snapshot) => snapshot,
+        Err(_) => {
+            warn!(
+                "{LOG_PREFIX} build_runtime_snapshot timed out after {}s req_id={}; returning degraded runtime snapshot",
+                RUNTIME_SNAPSHOT_TIMEOUT.as_secs(),
+                req_id
+            );
+            degraded_runtime_snapshot(&config)
+        }
+    };
+    let runtime_ms = t_runtime.elapsed().as_millis();
+
+    let total_ms = t_total.elapsed().as_millis();
+    debug!(
+        "{LOG_PREFIX} snapshot timings req_id={} config_ms={} auth_ms={} local_state_ms={} runtime_ms={} total_ms={}",
+        req_id, config_ms, auth_ms, local_state_ms, runtime_ms, total_ms
+    );
 
     debug!(
-        "{LOG_PREFIX} snapshot auth={} onboarding={} chat_onboarding={} analytics={} meet_handoff={} si_active={} local_ai_state={} autocomplete_phase={} service_state={:?}",
+        "{LOG_PREFIX} snapshot req_id={} auth={} onboarding={} chat_onboarding={} analytics={} meet_handoff={} si_active={} local_ai_state={} autocomplete_phase={} service_state={:?}",
+        req_id,
         auth.is_authenticated,
         config.onboarding_completed,
         config.chat_onboarding_completed,
@@ -501,6 +620,74 @@ pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
         },
         vec!["core app state snapshot fetched".to_string()],
     ))
+}
+
+fn degraded_runtime_snapshot(config: &Config) -> RuntimeSnapshot {
+    use crate::openhuman::screen_intelligence::{
+        AccessibilityFeatures, PermissionState, PermissionStatus, SessionStatus,
+    };
+
+    RuntimeSnapshot {
+        screen_intelligence: AccessibilityStatus {
+            platform_supported: cfg!(target_os = "macos"),
+            permissions: PermissionStatus {
+                screen_recording: PermissionState::Unknown,
+                accessibility: PermissionState::Unknown,
+                input_monitoring: PermissionState::Unknown,
+                microphone: PermissionState::Unknown,
+            },
+            features: AccessibilityFeatures {
+                screen_monitoring: false,
+            },
+            session: SessionStatus {
+                active: false,
+                started_at_ms: None,
+                expires_at_ms: None,
+                remaining_ms: None,
+                ttl_secs: 0,
+                panic_hotkey: config.screen_intelligence.panic_stop_hotkey.clone(),
+                stop_reason: None,
+                capture_count: 0,
+                frames_in_memory: 0,
+                last_capture_at_ms: None,
+                last_context: None,
+                last_window_title: None,
+                vision_enabled: false,
+                vision_state: "degraded".to_string(),
+                vision_queue_depth: 0,
+                last_vision_at_ms: None,
+                last_vision_summary: None,
+                vision_persist_count: 0,
+                last_vision_persisted_key: None,
+                last_vision_persist_error: None,
+            },
+            foreground_context: None,
+            config: config.screen_intelligence.clone(),
+            denylist: vec![],
+            is_context_blocked: false,
+            permission_check_process_path: None,
+            core_process: None,
+        },
+        local_ai: crate::openhuman::inference::LocalAiStatus::disabled(config),
+        autocomplete: crate::openhuman::autocomplete::AutocompleteStatus {
+            platform_supported: cfg!(target_os = "macos"),
+            enabled: config.autocomplete.enabled,
+            running: false,
+            phase: "degraded".to_string(),
+            debounce_ms: config.autocomplete.debounce_ms,
+            model_id: config.local_ai.chat_model_id.clone(),
+            app_name: None,
+            last_error: Some("snapshot timed out".to_string()),
+            updated_at_ms: None,
+            suggestion: None,
+        },
+        service: ServiceStatus {
+            state: ServiceState::Unknown("snapshot timed out".to_string()),
+            unit_path: None,
+            label: "OpenHuman".to_string(),
+            details: Some("runtime snapshot timed out".to_string()),
+        },
+    }
 }
 
 pub async fn update_local_state(

@@ -30,12 +30,24 @@ pub enum BackendApiError {
 }
 
 /// Extract `(provider, message_id)` from a backend channel path of the
-/// shape `/channels/<provider>/messages/<id>`. Returns `None` for paths
-/// with a different segment count or non-`channels` first segment.
+/// shape `…/channels/<provider>/messages/<id>`. Returns `None` for paths
+/// that do not contain this four-segment subsequence.
+///
+/// Handles both the canonical four-segment form and paths with an arbitrary
+/// base-path prefix (e.g. `/api/v1/channels/telegram/messages/1103`) via a
+/// sliding window so that `BACKEND_URL` variants with path prefixes do not
+/// silently fall through to `report_error` (OPENHUMAN-TAURI-R7).
 fn parse_message_path(path: &str) -> Option<(&str, &str)> {
     let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    // Fast path: exact four-segment canonical form /channels/<p>/messages/<id>
     if segments.len() == 4 && segments[0] == "channels" && segments[2] == "messages" {
         return Some((segments[1], segments[3]));
+    }
+    // Sliding window: handles base-path prefixes like /api/v1/channels/<p>/messages/<id>
+    for window in segments.windows(4) {
+        if window[0] == "channels" && window[2] == "messages" {
+            return Some((window[1], window[3]));
+        }
     }
     None
 }
@@ -524,6 +536,28 @@ impl BackendOAuthClient {
                         provider: provider.to_string(),
                         message_id: message_id.to_string(),
                     }));
+                }
+                // Defense-in-depth: PATCH/DELETE 404s on any channel-message path that
+                // parse_message_path could not parse (e.g. exotic URL variant with extra
+                // segments). Still an expected backend state — suppress the Sentry event
+                // without propagating a typed error. Targets OPENHUMAN-TAURI-R7.
+                if (method == Method::PATCH || method == Method::DELETE)
+                    && url.path().contains("/channels/")
+                    && url.path().contains("/messages/")
+                {
+                    tracing::debug!(
+                        domain = "backend_api",
+                        operation = "authed_json",
+                        "[backend_api] channel-message 404 on {} {} — path not matched by \
+                         parse_message_path, suppressing Sentry (TAURI-R7 defense-in-depth)",
+                        method.as_str(),
+                        url.path(),
+                    );
+                    anyhow::bail!(
+                        "channel message not found (404) on {} {}",
+                        method.as_str(),
+                        url.path(),
+                    );
                 }
             }
 

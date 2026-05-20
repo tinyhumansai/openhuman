@@ -343,6 +343,27 @@ pub fn all_tools_with_runtime(
         tracing::debug!("[seltz] disabled — set SELTZ_API_KEY to enable");
     }
 
+    // SearXNG — self-hosted web search, gated on `searxng.enabled`.
+    // This is useful for users who want current web results without routing
+    // queries through OpenHuman's backend or a hosted search API.
+    if root_config.searxng.enabled {
+        tools.push(Box::new(
+            crate::openhuman::integrations::SearxngSearchTool::new(
+                root_config.searxng.base_url.clone(),
+                root_config.searxng.max_results,
+                root_config.searxng.default_language.clone(),
+                root_config.searxng.timeout_secs,
+            ),
+        ));
+        tracing::debug!(
+            base_url = %root_config.searxng.base_url,
+            max_results = root_config.searxng.max_results,
+            "[searxng] registered searxng_search tool"
+        );
+    } else {
+        tracing::debug!("[searxng] disabled — set searxng.enabled=true to enable");
+    }
+
     // Managed Node.js exec tools — gated on `root_config.node.enabled`.
     // Both share the same `NodeBootstrap` as ShellTool so the download +
     // extract + install pipeline runs at most once per session.

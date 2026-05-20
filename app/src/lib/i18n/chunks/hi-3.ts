@@ -33,6 +33,14 @@ const hi3: TranslationMap = {
   'workspace.building': 'बन रहा है...',
   'workspace.buildSummaryTrees': 'समरी ट्री बनाएं',
   'workspace.viewVault': 'वॉल्ट देखें',
+  'workspace.openingVaultTitle': 'Opening vault in Obsidian',
+  'workspace.openingVaultMessage':
+    "If Obsidian doesn't open, install it from obsidian.md or use Reveal Folder. Vault path:",
+  'workspace.openVaultFailedTitle': "Couldn't open vault in Obsidian",
+  'workspace.openVaultFailedMessage':
+    'Use Reveal Folder to open the vault directory directly. Vault path:',
+  'workspace.revealVaultFailed': "Couldn't reveal vault folder",
+  'workspace.revealFolder': 'Reveal Folder',
   'workspace.graphLoadFailed': 'मेमोरी ग्राफ लोड नहीं हो पाया',
   'workspace.loadingGraph': 'मेमोरी ग्राफ लोड हो रहा है...',
   'workspace.graphViewMode': 'मेमोरी ग्राफ व्यू मोड',

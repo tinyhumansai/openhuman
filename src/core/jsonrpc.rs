@@ -602,23 +602,102 @@ async fn http_request_log_middleware(req: Request, next: Next) -> Response {
     response
 }
 
+/// Environment variable for additional comma-separated origins to allow.
+/// Intended for debug harnesses and E2E setups that don't run on loopback —
+/// e.g. `OPENHUMAN_CORE_ALLOWED_ORIGINS=https://e2e.internal,http://my-debugger:8080`.
+const ALLOWED_ORIGINS_ENV: &str = "OPENHUMAN_CORE_ALLOWED_ORIGINS";
+
+/// Decides whether a browser `Origin` header value is allowed to make
+/// authenticated cross-origin requests against the local RPC server.
+///
+/// The RPC server only ever serves three legitimate consumers:
+///   1. The bundled Tauri v2 webview — `tauri://localhost` on macOS/Linux and
+///      `http(s)://tauri.localhost` on Windows.
+///   2. The Vite dev server during `pnpm dev` — any port on loopback hosts.
+///   3. Operator-controlled debug harnesses opted in via
+///      `OPENHUMAN_CORE_ALLOWED_ORIGINS`.
+///
+/// Anything else (a random web page that has somehow obtained the bearer
+/// token via leaked logs / screenshots / a compromised third-party origin
+/// loaded in a CEF child webview) must be refused — the bearer token alone
+/// is not enough authorization without an origin binding.
+pub(super) fn is_origin_allowed(origin: &str) -> bool {
+    // Tauri v2 webview origins. Windows uses an HTTP(S) custom host; macOS
+    // and Linux use the `tauri://` scheme. We accept both for portability.
+    if matches!(
+        origin,
+        "tauri://localhost" | "http://tauri.localhost" | "https://tauri.localhost"
+    ) {
+        return true;
+    }
+
+    // Loopback origins on any port (Vite dev server, E2E driver, CLI tools).
+    if let Some(rest) = origin.strip_prefix("http://") {
+        let authority = rest.split('/').next().unwrap_or("");
+        let host = if let Some(stripped) = authority.strip_prefix('[') {
+            // IPv6 literal: `[::1]:1420` → `::1`
+            stripped.split(']').next().unwrap_or("")
+        } else {
+            authority.split(':').next().unwrap_or("")
+        };
+        if matches!(host, "127.0.0.1" | "localhost" | "::1") {
+            return true;
+        }
+    }
+
+    // Env override: comma-separated exact matches.
+    if let Ok(extra) = std::env::var(ALLOWED_ORIGINS_ENV) {
+        for candidate in extra.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+            if candidate == origin {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
 /// Middleware for handling Cross-Origin Resource Sharing (CORS).
+///
+/// Reads the request's `Origin` header before invoking the inner handler so
+/// the same value can be echoed back (when allowed) on the response.
 async fn cors_middleware(req: Request, next: Next) -> Response {
+    let origin = req
+        .headers()
+        .get(header::ORIGIN)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned);
+
     if req.method() == Method::OPTIONS {
-        return with_cors_headers(StatusCode::NO_CONTENT.into_response());
+        return with_cors_headers(StatusCode::NO_CONTENT.into_response(), origin.as_deref());
     }
 
     let response = next.run(req).await;
-    with_cors_headers(response)
+    with_cors_headers(response, origin.as_deref())
 }
 
 /// Injects CORS headers into a response.
-fn with_cors_headers(mut response: Response) -> Response {
+///
+/// If the request carried an `Origin` header and that origin is on the
+/// allowlist, the value is echoed back in `Access-Control-Allow-Origin` and
+/// `Vary: Origin` is set so intermediate caches keep per-origin responses
+/// distinct. Disallowed origins receive no `Access-Control-Allow-Origin`
+/// header at all — the browser will then refuse to surface the response to
+/// the calling JS. Non-browser callers (no `Origin` header) are unaffected.
+pub(super) fn with_cors_headers(mut response: Response, origin: Option<&str>) -> Response {
     let headers = response.headers_mut();
-    headers.insert(
-        header::ACCESS_CONTROL_ALLOW_ORIGIN,
-        HeaderValue::from_static("*"),
-    );
+    headers.insert(header::VARY, HeaderValue::from_static("Origin"));
+
+    if let Some(o) = origin {
+        if is_origin_allowed(o) {
+            if let Ok(val) = HeaderValue::from_str(o) {
+                headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, val);
+            }
+        } else {
+            tracing::warn!("[cors] rejected disallowed origin: {}", o);
+        }
+    }
+
     headers.insert(
         header::ACCESS_CONTROL_ALLOW_METHODS,
         HeaderValue::from_static("GET, POST, OPTIONS"),
@@ -636,7 +715,34 @@ fn with_cors_headers(mut response: Response) -> Response {
 
 /// Handler for the health check endpoint.
 async fn health_handler() -> impl IntoResponse {
-    (StatusCode::OK, Json(json!({ "ok": true })))
+    let snapshot = crate::openhuman::health::snapshot();
+    let unhealthy: Vec<&str> = snapshot
+        .components
+        .iter()
+        .filter_map(|(name, c)| {
+            if c.status == "ok" || c.status == "starting" {
+                None
+            } else {
+                Some(name.as_str())
+            }
+        })
+        .collect();
+    let is_ok = unhealthy.is_empty();
+
+    let status = if is_ok {
+        StatusCode::OK
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
+    };
+
+    tracing::debug!(
+        "[health] status={} components={} unhealthy={:?}",
+        status.as_u16(),
+        snapshot.components.len(),
+        unhealthy
+    );
+
+    (status, Json(snapshot))
 }
 
 /// Handler for the schema discovery endpoint.
@@ -747,6 +853,14 @@ fn core_host() -> String {
         .unwrap_or_else(|| "127.0.0.1".to_string())
 }
 
+/// Metadata sent back to the Tauri host once the embedded core has selected
+/// and bound its listen port.
+#[derive(Debug, Clone)]
+pub struct EmbeddedReadySignal {
+    pub port: u16,
+    pub fallback_from: Option<u16>,
+}
+
 /// Runs the HTTP/JSON-RPC server.
 ///
 /// This function binds to the specified host and port, initializes the router,
@@ -756,7 +870,7 @@ pub async fn run_server(
     port: Option<u16>,
     socketio_enabled: bool,
 ) -> anyhow::Result<()> {
-    run_server_inner(host, port, socketio_enabled, false, None).await
+    run_server_inner(host, port, socketio_enabled, false, None, None).await
 }
 
 /// Like [`run_server`] but marks the instance as embedded.
@@ -766,7 +880,34 @@ pub async fn run_server_embedded(
     socketio_enabled: bool,
     shutdown_token: CancellationToken,
 ) -> anyhow::Result<()> {
-    run_server_inner(host, port, socketio_enabled, true, Some(shutdown_token)).await
+    run_server_inner(
+        host,
+        port,
+        socketio_enabled,
+        true,
+        Some(shutdown_token),
+        None,
+    )
+    .await
+}
+
+/// Embedded entrypoint with an explicit readiness callback.
+pub async fn run_server_embedded_with_ready(
+    host: Option<&str>,
+    port: Option<u16>,
+    socketio_enabled: bool,
+    shutdown_token: CancellationToken,
+    ready_tx: tokio::sync::oneshot::Sender<EmbeddedReadySignal>,
+) -> anyhow::Result<()> {
+    run_server_inner(
+        host,
+        port,
+        socketio_enabled,
+        true,
+        Some(shutdown_token),
+        Some(ready_tx),
+    )
+    .await
 }
 
 /// Internal server entrypoint.
@@ -776,6 +917,7 @@ async fn run_server_inner(
     socketio_enabled: bool,
     embedded_core: bool,
     shutdown_token: Option<CancellationToken>,
+    ready_tx: Option<tokio::sync::oneshot::Sender<EmbeddedReadySignal>>,
 ) -> anyhow::Result<()> {
     // Ensure all controllers are registered before starting.
     let _ = all::all_registered_controllers();
@@ -896,15 +1038,32 @@ async fn run_server_inner(
         }
     }
 
-    let port = resolved_port;
+    let preferred_port = resolved_port;
     let host = resolved_host;
-    let bind_addr = format!("{host}:{port}");
-    let listener = tokio::net::TcpListener::bind((host.as_str(), port))
-        .await
-        .map_err(|e| {
-            log::error!("[core] Failed to bind to {bind_addr}: {e}");
-            e
-        })?;
+    let pick = crate::openhuman::connectivity::rpc::pick_listen_port_for_host(
+        host.as_str(),
+        preferred_port,
+    )
+    .await
+    .map_err(|err| {
+        log::error!("[core] Failed to bind to {host}:{preferred_port}: {err}");
+        anyhow::Error::new(err)
+    })?;
+    let listen_port = pick.port;
+    let bind_addr = format!("{host}:{listen_port}");
+    let listener = pick.listener;
+
+    // Synchronize OPENHUMAN_CORE_RPC_URL with the actual bound port so
+    // connectivity::rpc::resolve_listen_port() (used by openhuman.connectivity_diag)
+    // reports the live listener instead of the originally-requested port when
+    // fallback engaged. Embedded path also calls this via apply_embedded_ready_signal,
+    // but the standalone CLI never did before — leaving diag stale on fallback.
+    //
+    // SAFETY: set_var is process-global; this runs once during bind and the
+    // standalone CLI doesn't share its env with concurrent test threads.
+    unsafe {
+        std::env::set_var("OPENHUMAN_CORE_RPC_URL", format!("http://{bind_addr}/rpc"));
+    }
 
     let app = build_core_http_router(socketio_enabled);
 
@@ -920,6 +1079,13 @@ async fn run_server_inner(
         log::info!("[rpc:socketio] Socket.IO — ws://{bind_addr}/socket.io/ (same HTTP server)");
     } else {
         log::info!("[rpc:socketio] disabled (--jsonrpc-only)");
+    }
+
+    if let Some(tx) = ready_tx {
+        let _ = tx.send(EmbeddedReadySignal {
+            port: listen_port,
+            fallback_from: pick.fallback_from,
+        });
     }
 
     // Background bootstrap for services — gated on login state.
@@ -1421,3 +1587,7 @@ fn build_http_schema_dump() -> HttpSchemaDump {
 #[cfg(test)]
 #[path = "jsonrpc_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "jsonrpc_cors_tests.rs"]
+mod cors_tests;

@@ -24,9 +24,11 @@ async function waitForRequest(method, urlFragment, timeout = 15_000) {
 }
 
 async function waitForHome(timeout = 20_000) {
+  // Home.tsx renders t('home.askAssistant') = 'Ask your assistant anything...' as stable CTA.
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
-    if (await textExists('Message OpenHuman')) return true;
+    if (await textExists('Ask your assistant anything')) return true;
+    if (await textExists('Your device is connected')) return true;
     await browser.pause(700);
   }
   return false;

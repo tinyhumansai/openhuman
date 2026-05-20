@@ -64,8 +64,7 @@ function unwrapRpcValue<T = unknown>(raw: unknown): T | undefined {
 }
 
 describe('Webhook tunnel CRUD (UI + core RPC + mock backend)', () => {
-  before(async function beforeSuite() {
-    this.timeout(90_000);
+  before(async () => {
     await startMockServer();
     await resetMockBehavior();
     await waitForApp();
@@ -82,11 +81,10 @@ describe('Webhook tunnel CRUD (UI + core RPC + mock backend)', () => {
   });
 
   it('reached the logged-in shell after onboarding', async () => {
-    // Home page renders a CTA button with this text (t('home.askAssistant')).
-    // The old anchors ('Message OpenHuman', 'Good morning', 'Upgrade to
-    // Premium') no longer appear on the home page.
+    // Home.tsx: t('home.askAssistant') is the stable home page CTA button text.
     const atHome =
-      (await textExists('Ask your assistant anything')) || (await textExists('Ask your assistant'));
+      (await textExists('Ask your assistant anything')) ||
+      (await textExists('Your device is connected'));
     expect(atHome).toBe(true);
   });
 
