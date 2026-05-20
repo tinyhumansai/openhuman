@@ -138,4 +138,11 @@ describe('BottomTabBar', () => {
     const { container } = await renderBottomTabBar('/');
     expect(container.firstChild).toBeNull();
   });
+
+  it('uses pointer-events-none on the full-width shell so side areas do not block clicks', async () => {
+    const { container } = await renderBottomTabBar('/home');
+    const shell = container.firstElementChild;
+    expect(shell).toHaveClass('pointer-events-none');
+    expect(shell?.querySelector('nav')).toHaveClass('pointer-events-auto');
+  });
 });

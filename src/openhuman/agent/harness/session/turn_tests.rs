@@ -3,12 +3,14 @@ use crate::core::event_bus::{global, init_global, DomainEvent};
 use crate::openhuman::agent::dispatcher::XmlToolDispatcher;
 use crate::openhuman::agent::hooks::{PostTurnHook, TurnContext};
 use crate::openhuman::agent::memory_loader::MemoryLoader;
+use crate::openhuman::agent::tool_policy::{ToolPolicy, ToolPolicyDecision, ToolPolicyRequest};
 use crate::openhuman::inference::provider::{ChatRequest, ChatResponse, Provider};
 use crate::openhuman::memory::Memory;
-use crate::openhuman::tools::Tool;
 use crate::openhuman::tools::ToolResult;
+use crate::openhuman::tools::{PermissionLevel, Tool};
 use async_trait::async_trait;
 use std::collections::HashSet;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::sync::Mutex as AsyncMutex;
 use tokio::sync::Notify;
@@ -106,6 +108,47 @@ impl Tool for EchoTool {
     }
 }
 
+struct CountingTool {
+    calls: Arc<AtomicUsize>,
+}
+
+#[async_trait]
+impl Tool for CountingTool {
+    fn name(&self) -> &str {
+        "counting"
+    }
+
+    fn description(&self) -> &str {
+        "counting"
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({"type":"object"})
+    }
+
+    async fn execute(&self, _args: serde_json::Value) -> Result<ToolResult> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        Ok(ToolResult::success("counting-output"))
+    }
+}
+
+struct DenyCountingPolicy;
+
+#[async_trait]
+impl ToolPolicy for DenyCountingPolicy {
+    fn name(&self) -> &str {
+        "deny_counting"
+    }
+
+    async fn check(&self, request: &ToolPolicyRequest) -> ToolPolicyDecision {
+        assert_eq!(request.tool_name, "counting");
+        assert_eq!(request.session_id, "turn-test-session");
+        assert_eq!(request.channel, "turn-test-channel");
+        assert_eq!(request.agent_definition_id, "main");
+        ToolPolicyDecision::deny("locked by test policy")
+    }
+}
+
 struct LongTool;
 
 #[async_trait]
@@ -124,6 +167,34 @@ impl Tool for LongTool {
 
     async fn execute(&self, _args: serde_json::Value) -> Result<ToolResult> {
         Ok(ToolResult::success("x".repeat(800)))
+    }
+}
+
+struct CountingWriteTool {
+    calls: Arc<AtomicUsize>,
+}
+
+#[async_trait]
+impl Tool for CountingWriteTool {
+    fn name(&self) -> &str {
+        "write_notes"
+    }
+
+    fn description(&self) -> &str {
+        "write notes"
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({"type":"object"})
+    }
+
+    async fn execute(&self, _args: serde_json::Value) -> Result<ToolResult> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        Ok(ToolResult::success("write-output"))
+    }
+
+    fn permission_level(&self) -> PermissionLevel {
+        PermissionLevel::Write
     }
 }
 
@@ -375,6 +446,146 @@ async fn execute_tool_call_reports_unknown_tool() {
     assert!(!result.success);
     assert!(result.output.contains("Unknown tool: missing"));
     assert_eq!(record.name, "missing");
+    assert!(!record.success);
+}
+
+#[tokio::test]
+async fn execute_tool_call_denies_tool_above_channel_permission() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let provider: Arc<dyn Provider> = Arc::new(DummyProvider);
+    let mut config = crate::openhuman::config::AgentConfig::default();
+    config
+        .channel_permissions
+        .insert("turn-test-channel".into(), "read_only".into());
+    let agent = make_agent_with_builder(
+        provider,
+        vec![Box::new(CountingWriteTool {
+            calls: Arc::clone(&calls),
+        })],
+        Box::new(FixedMemoryLoader {
+            context: String::new(),
+        }),
+        vec![],
+        config,
+        crate::openhuman::config::ContextConfig::default(),
+    );
+    let call = ParsedToolCall {
+        name: "write_notes".into(),
+        arguments: serde_json::json!({"text":"hello"}),
+        tool_call_id: Some("write-1".into()),
+    };
+
+    let (result, record) = agent.execute_tool_call(&call, 0).await;
+
+    assert!(!result.success);
+    assert!(result.output.contains("blocked by tool policy"));
+    assert_eq!(record.name, "write_notes");
+    assert!(!record.success);
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn system_prompt_includes_tool_policy_boundary() {
+    let provider: Arc<dyn Provider> = Arc::new(DummyProvider);
+    let mut config = crate::openhuman::config::AgentConfig::default();
+    config
+        .channel_permissions
+        .insert("turn-test-channel".into(), "read_only".into());
+    let agent = make_agent_with_builder(
+        provider,
+        vec![
+            Box::new(EchoTool),
+            Box::new(CountingWriteTool {
+                calls: Arc::new(AtomicUsize::new(0)),
+            }),
+        ],
+        Box::new(FixedMemoryLoader {
+            context: String::new(),
+        }),
+        vec![],
+        config,
+        crate::openhuman::config::ContextConfig::default(),
+    );
+
+    let prompt = agent
+        .build_system_prompt(LearnedContextData::default())
+        .expect("prompt");
+
+    assert!(prompt.contains("## Tool Policy Boundary"));
+    assert!(prompt.contains("Allowed tools: echo"));
+    assert!(prompt.contains("Restricted tools: 1 omitted by policy"));
+    assert!(!prompt.contains("write_notes"));
+}
+
+#[test]
+fn set_agent_definition_name_refreshes_tool_policy_identity() {
+    let provider: Arc<dyn Provider> = Arc::new(DummyProvider);
+    let mut config = crate::openhuman::config::AgentConfig::default();
+    config
+        .channel_permissions
+        .insert("turn-test-channel".into(), "read_only".into());
+    let mut agent = make_agent_with_builder(
+        provider,
+        vec![
+            Box::new(EchoTool),
+            Box::new(CountingWriteTool {
+                calls: Arc::new(AtomicUsize::new(0)),
+            }),
+        ],
+        Box::new(FixedMemoryLoader {
+            context: String::new(),
+        }),
+        vec![],
+        config,
+        crate::openhuman::config::ContextConfig::default(),
+    );
+
+    agent.set_agent_definition_name("renamed_agent");
+
+    assert_eq!(agent.tool_policy_session.profile.agent_id, "renamed_agent");
+    let prompt = agent
+        .build_system_prompt(LearnedContextData::default())
+        .expect("prompt");
+    assert!(prompt.contains("Agent: renamed_agent"));
+}
+
+#[tokio::test]
+async fn execute_tool_call_denies_by_policy_before_tool_runs() {
+    let workspace = tempfile::TempDir::new().expect("temp workspace");
+    let workspace_path = workspace.path().to_path_buf();
+    std::mem::forget(workspace);
+    let memory_cfg = crate::openhuman::config::MemoryConfig {
+        backend: "none".into(),
+        ..crate::openhuman::config::MemoryConfig::default()
+    };
+    let mem: Arc<dyn Memory> =
+        Arc::from(crate::openhuman::memory::create_memory(&memory_cfg, &workspace_path).unwrap());
+    let calls = Arc::new(AtomicUsize::new(0));
+
+    let agent = Agent::builder()
+        .provider(Box::new(DummyProvider))
+        .tools(vec![Box::new(CountingTool {
+            calls: Arc::clone(&calls),
+        })])
+        .memory(mem)
+        .tool_dispatcher(Box::new(XmlToolDispatcher))
+        .workspace_dir(workspace_path)
+        .event_context("turn-test-session", "turn-test-channel")
+        .tool_policy(Arc::new(DenyCountingPolicy))
+        .build()
+        .unwrap();
+    let call = ParsedToolCall {
+        name: "counting".into(),
+        arguments: serde_json::json!({ "value": 1 }),
+        tool_call_id: Some("policy-1".into()),
+    };
+
+    let (result, record) = agent.execute_tool_call(&call, 0).await;
+    assert!(!result.success);
+    assert!(result.output.contains("denied by policy 'deny_counting'"));
+    assert!(result.output.contains("locked by test policy"));
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    assert_eq!(record.name, "counting");
     assert!(!record.success);
 }
 

@@ -46,6 +46,15 @@ const bn4: TranslationMap = {
   'composio.connect.subdomainInvalid':
     'শুধু সংক্ষিপ্ত সাবডোমেইন লিখুন (যেমন "acme"), পুরো URL নয়। এতে শুধু অক্ষর, সংখ্যা এবং হাইফেন থাকা উচিত।',
   'composio.connect.subdomainRequired': 'চালিয়ে যেতে আপনার Atlassian সাবডোমেইন দিন।',
+  'composio.connect.dynamicsOrgNameLabel': 'Dynamics 365 সংস্থার নাম',
+  'composio.connect.dynamicsOrgNameHint':
+    'উদাহরণস্বরূপ, myorg.crm.dynamics.com-এর জন্য "myorg"। সম্পূর্ণ URL নয়, শুধু সংক্ষিপ্ত সংস্থার নাম লিখুন।',
+  'composio.connect.needsFieldsPrefix': 'সংযোগ করতে',
+  'composio.connect.needsFieldsSuffix':
+    'আমাদের আরও কিছু তথ্য প্রয়োজন। নিচের অনুপস্থিত ফিল্ডগুলি পূরণ করুন এবং আবার চেষ্টা করুন।',
+  'composio.connect.requiredFieldEmpty': 'এই ফিল্ডটি আবশ্যক।',
+  'composio.connect.wabaIdHint':
+    'আপনার Meta অ্যাক্সেস টোকেন ব্যবহার করে GET /me/businesses তারপর GET /{business_id}/owned_whatsapp_business_accounts এর মাধ্যমে এটি খুঁজে পান।',
   'composio.connect.wabaIdLabel': 'WABA ID লেবেল',
   'composio.connect.wabaIdRequired':
     'চালিয়ে যেতে আপনার WhatsApp Business Account ID (WABA ID) দিন।',
@@ -143,7 +152,14 @@ const bn4: TranslationMap = {
   'onboarding.contextGathering.buildingProfile': 'আপনার প্রোফাইল তৈরি হচ্ছে...',
   'onboarding.contextGathering.continueToChat': 'চ্যাটে চালিয়ে যান',
   'onboarding.contextGathering.errorDesc':
-    'আমরা এই মুহূর্তে আপনার সম্পূর্ণ প্রোফাইল তৈরি করতে পারিনি, কিন্তু সমস্যা নেই — আপনি চালিয়ে যেতে পারেন, আপনার প্রোফাইল সময়ের সাথে তৈরি হতে থাকবে।',
+    'আমরা এখনই আপনার পূর্ণ প্রোফাইল তৈরি করতে পারিনি, কিন্তু সমস্যা নেই — আপনি চালিয়ে যেতে পারেন এবং আপনার প্রোফাইল সময়ের সাথে তৈরি হবে।',
+  'onboarding.contextGathering.coreAlive': 'কোর সংযোগযোগ্য — প্রথম লঞ্চ এক মিনিট সময় নিতে পারে।',
+  'onboarding.contextGathering.coreAliveProbing': 'কোর সংযোগ যাচাই করা হচ্ছে…',
+  'onboarding.contextGathering.coreUnreachable':
+    'কোর সাড়া দিচ্ছে না। আপনি চালিয়ে যেতে পারেন এবং পরে আবার চেষ্টা করতে পারেন।',
+  'onboarding.contextGathering.stillWorkingDesc':
+    'আমরা আপনার লোকাল মডেল এবং টুলস প্রস্তুত করছি, প্রথম লঞ্চ ৩০–৬০ সেকেন্ড সময় নিতে পারে। আপনি যেকোনো সময় চ্যাটে যেতে পারেন — প্রোফাইল তৈরি ব্যাকগ্রাউন্ডে চলতে থাকবে।',
+  'onboarding.contextGathering.stillWorkingTitle': 'এখনও আপনার প্রোফাইলে কাজ চলছে…',
   'onboarding.contextGathering.title': 'কন্টেক্সট সংগ্রহ',
   'openhuman.team_list_teams': 'টিম তালিকা',
   'overlay.ariaAttention': 'মনোযোগের বার্তা',

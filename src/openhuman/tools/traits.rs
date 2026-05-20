@@ -195,6 +195,36 @@ pub trait Tool: Send + Sync {
         false
     }
 
+    /// Whether this tool produces an externally-observable side effect
+    /// (outbound Slack/Telegram/email/calendar/webhook write, etc.).
+    ///
+    /// When `true`, the agent harness routes the call through the
+    /// `ApprovalGate` before `execute()` runs. Local file writes,
+    /// memory writes, and TTS `reply_speech` stay `false` — they are
+    /// either reversible inside the user's machine or considered
+    /// internal per issue #1339.
+    ///
+    /// Default: `false`. Override on tools that talk to external
+    /// services on the user's behalf.
+    fn external_effect(&self) -> bool {
+        false
+    }
+
+    /// Args-aware version of [`Self::external_effect`]. Tools whose
+    /// classification depends on the call arguments (e.g. the
+    /// `composio` tool gates `action="execute"` but lets
+    /// `action="list"` / `action="connect"` flow through unprompted)
+    /// override this method to peek at `args`.
+    ///
+    /// The harness calls this method (not the arg-less variant) at
+    /// the gate-decision point, so most tools that need per-call
+    /// gating should override here rather than [`Self::external_effect`].
+    /// Default: defer to the arg-less classification so existing
+    /// overrides keep working without changes.
+    fn external_effect_with_args(&self, _args: &serde_json::Value) -> bool {
+        self.external_effect()
+    }
+
     /// Per-tool cap on the character length of the result body sent
     /// back to the model.
     ///
@@ -321,6 +351,12 @@ mod tests {
     fn default_max_result_size_chars_is_none() {
         let tool = DummyTool;
         assert!(tool.max_result_size_chars().is_none());
+    }
+
+    #[test]
+    fn default_external_effect_is_false() {
+        let tool = DummyTool;
+        assert!(!tool.external_effect());
     }
 
     // ── PermissionLevel ordering ───────────────────────────────────

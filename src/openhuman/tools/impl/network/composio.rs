@@ -41,8 +41,22 @@ impl ComposioTool {
         default_entity_id: Option<&str>,
         security: Arc<SecurityPolicy>,
     ) -> Self {
+        let trimmed = api_key.trim();
+        if trimmed.len() != api_key.len() {
+            // The key carried leading/trailing whitespace that would otherwise
+            // reach Composio's `x-api-key` header verbatim and trip the
+            // server-side "Invalid API key format" 401 (Sentry TAURI-RUST-D3).
+            // We trim here so the request succeeds; logging the length delta
+            // (never the key itself) helps trace which credential source
+            // produced a dirty value without leaking the secret.
+            tracing::debug!(
+                original_len = api_key.len(),
+                trimmed_len = trimmed.len(),
+                "[composio] trimmed leading/trailing whitespace from api_key"
+            );
+        }
         Self {
-            api_key: api_key.to_string(),
+            api_key: trimmed.to_string(),
             default_entity_id: normalize_entity_id(default_entity_id.unwrap_or("default")),
             security,
         }
@@ -552,6 +566,29 @@ impl Tool for ComposioTool {
         // it in the Skill category so the skills sub-agent
         // (`category_filter = "skill"`) can see and call it.
         ToolCategory::Skill
+    }
+
+    fn external_effect(&self) -> bool {
+        // Conservative default for the arg-less path: assume any
+        // composio call is a write so callers that don't reach the
+        // args-aware override still get gated. The harness uses
+        // `external_effect_with_args` (below) which inspects
+        // `action` and lets read-only branches through.
+        true
+    }
+
+    fn external_effect_with_args(&self, args: &serde_json::Value) -> bool {
+        // `action="list"` enumerates available Composio actions —
+        // a read-only catalog call. `action="connect"` only returns
+        // an OAuth URL the user then visits manually; the
+        // subsequent OAuth handoff is its own consent flow so the
+        // tool call itself has no outbound side effect to gate.
+        // `action="execute"` (or anything unknown / missing) is the
+        // write path and routes through the approval gate.
+        match args.get("action").and_then(|v| v.as_str()) {
+            Some("list") | Some("connect") => false,
+            _ => true,
+        }
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {

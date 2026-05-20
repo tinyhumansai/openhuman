@@ -23,6 +23,7 @@ controller registry plus the core security policy read gate:
 
 | MCP tool | Backing RPC | Purpose |
 | --- | --- | --- |
+| `searxng_search`* | `openhuman.tools_searxng_search` | Search a configured self-hosted SearXNG instance. |
 | `memory.search` | `openhuman.memory_tree_search` | Keyword search over memory-tree chunks. |
 | `memory.recall` | `openhuman.memory_tree_recall` | Semantic recall over memory-tree summaries/chunks. |
 | `tree.read_chunk` | `openhuman.memory_tree_get_chunk` | Read one chunk returned by search or recall. |
@@ -30,11 +31,35 @@ controller registry plus the core security policy read gate:
 | `tree.top_entities` | `openhuman.memory_tree_top_entities` | Most-referenced canonical entities, optionally filtered by kind. |
 | `tree.list_sources` | `openhuman.memory_tree_list_sources` | Distinct ingest sources with chunk counts and last-activity timestamps. |
 
+* `searxng_search` is present only when SearXNG is enabled.
+
+`searxng_search` is added to the MCP catalog when SearXNG is enabled. It accepts
+`query`, optional `categories` (`web`, `news`, `images`), optional `language`,
+and optional `max_results` (1-50).
 `memory.search` and `memory.recall` accept `query` plus optional `k` (default
-10, capped at 50). `tree.read_chunk` accepts `chunk_id`. `tree.browse`
-accepts optional `source_kinds`, `source_ids`, `entity_ids`, `since_ms`,
-`until_ms`, `query`, `k`, and `offset`. `tree.top_entities` accepts optional
-`kind` and `k`. `tree.list_sources` accepts an optional `user_email_hint`.
+10, capped at 50). `tree.read_chunk` accepts `chunk_id`. `tree.browse` accepts
+optional `source_kinds`, `source_ids`, `entity_ids`, `since_ms`, `until_ms`,
+`query`, `k`, and `offset`. `tree.top_entities` accepts optional `kind` and
+`k`. `tree.list_sources` accepts an optional `user_email_hint`.
+
+Enable SearXNG in `config.toml` or via environment:
+
+```toml
+[searxng]
+enabled = true
+base_url = "http://localhost:8080"
+max_results = 10
+default_language = "en"
+timeout_seconds = 10
+```
+
+```bash
+OPENHUMAN_SEARXNG_ENABLED=true
+OPENHUMAN_SEARXNG_BASE_URL=http://localhost:8080
+OPENHUMAN_SEARXNG_MAX_RESULTS=10
+OPENHUMAN_SEARXNG_DEFAULT_LANGUAGE=en
+OPENHUMAN_SEARXNG_TIMEOUT_SECONDS=10
+```
 
 ## Tool Registry
 

@@ -1,5 +1,31 @@
 use super::*;
+use std::path::Path;
 use std::sync::Arc;
+
+struct WorkspaceEnvGuard {
+    previous: Option<std::ffi::OsString>,
+}
+
+impl WorkspaceEnvGuard {
+    fn set(path: &Path) -> Self {
+        let previous = std::env::var_os("OPENHUMAN_WORKSPACE");
+        unsafe {
+            std::env::set_var("OPENHUMAN_WORKSPACE", path);
+        }
+        Self { previous }
+    }
+}
+
+impl Drop for WorkspaceEnvGuard {
+    fn drop(&mut self) {
+        unsafe {
+            match self.previous.take() {
+                Some(value) => std::env::set_var("OPENHUMAN_WORKSPACE", value),
+                None => std::env::remove_var("OPENHUMAN_WORKSPACE"),
+            }
+        }
+    }
+}
 
 /// Minimal `Arc<Config>` for the agent-tool constructors. All five
 /// composio agent tools now resolve their client per call through
@@ -213,7 +239,10 @@ fn agent_tools_register_when_backend_signed_in() {
     assert_eq!(
         tools.len(),
         5,
-        "backend session present → all 5 generic composio agent tools should register"
+        "backend session present → all 5 generic composio agent tools should register \
+         (list_toolkits, list_connections, authorize, list_tools, execute). Scope \
+         elevation is intentionally NOT exposed as an agent tool — the user must \
+         flip scopes themselves in the Connections UI."
     );
 }
 
@@ -223,7 +252,9 @@ fn agent_tools_register_when_direct_mode_with_stored_key_and_no_backend_session(
     // user with a working personal Composio API key was getting `0`
     // tools registered because the gate hard-bound to
     // `build_composio_client` (backend-only). With the mode-aware probe
-    // in place this now correctly returns the full 5 generic tools.
+    // in place this now correctly returns the full generic tool set
+    // (5 tools: list_toolkits, list_connections, authorize, list_tools,
+    // execute). Scope elevation is not an agent tool — UI-only.
     let tmp = tempfile::tempdir().expect("tempdir");
     let mut config = crate::openhuman::config::Config::default();
     config.config_path = tmp.path().join("config.toml");
@@ -310,9 +341,7 @@ async fn sandbox_read_only_passes_through_read_scope_actions_to_downstream_gates
     let _env_guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
     let tmp = tempfile::tempdir().expect("tempdir");
-    unsafe {
-        std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
-    }
+    let _workspace_guard = WorkspaceEnvGuard::set(tmp.path());
 
     let mut config = crate::openhuman::config::Config::default();
     config.config_path = tmp.path().join("config.toml");
@@ -332,10 +361,6 @@ async fn sandbox_read_only_passes_through_read_scope_actions_to_downstream_gates
         !msg.contains("strict read-only"),
         "read-scoped slug must not hit the sandbox gate, got: {msg}"
     );
-
-    unsafe {
-        std::env::remove_var("OPENHUMAN_WORKSPACE");
-    }
 }
 
 #[tokio::test]
@@ -353,9 +378,7 @@ async fn sandbox_unset_leaves_all_scopes_to_downstream_gates() {
     let _env_guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
     let tmp = tempfile::tempdir().expect("tempdir");
-    unsafe {
-        std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
-    }
+    let _workspace_guard = WorkspaceEnvGuard::set(tmp.path());
 
     let mut config = crate::openhuman::config::Config::default();
     config.config_path = tmp.path().join("config.toml");
@@ -372,10 +395,6 @@ async fn sandbox_unset_leaves_all_scopes_to_downstream_gates() {
         !msg.contains("strict read-only"),
         "no sandbox scope must never trigger the gate, got: {msg}"
     );
-
-    unsafe {
-        std::env::remove_var("OPENHUMAN_WORKSPACE");
-    }
 }
 
 #[tokio::test]
@@ -394,9 +413,7 @@ async fn sandbox_sandboxed_mode_does_not_trigger_readonly_gate() {
     let _env_guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
     let tmp = tempfile::tempdir().expect("tempdir");
-    unsafe {
-        std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
-    }
+    let _workspace_guard = WorkspaceEnvGuard::set(tmp.path());
 
     let mut config = crate::openhuman::config::Config::default();
     config.config_path = tmp.path().join("config.toml");
@@ -418,10 +435,6 @@ async fn sandbox_sandboxed_mode_does_not_trigger_readonly_gate() {
         !msg.contains("strict read-only"),
         "Sandboxed mode must not trigger the read-only gate, got: {msg}"
     );
-
-    unsafe {
-        std::env::remove_var("OPENHUMAN_WORKSPACE");
-    }
 }
 
 // ── render_tools_markdown ───────────────────────────────────────────
@@ -647,9 +660,7 @@ async fn list_tools_in_direct_mode_returns_empty_without_hitting_backend() {
     let _env_guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
     let tmp = tempfile::tempdir().expect("tempdir");
-    unsafe {
-        std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
-    }
+    let _workspace_guard = WorkspaceEnvGuard::set(tmp.path());
 
     let mut config = crate::openhuman::config::Config::default();
     config.config_path = tmp.path().join("config.toml");
@@ -681,10 +692,6 @@ async fn list_tools_in_direct_mode_returns_empty_without_hitting_backend() {
         body.contains("\"tools\":[]") || body.contains("\"tools\": []"),
         "direct-mode list_tools body should contain an empty tools array: {body}"
     );
-
-    unsafe {
-        std::env::remove_var("OPENHUMAN_WORKSPACE");
-    }
 }
 
 #[tokio::test]
@@ -708,9 +715,7 @@ async fn execute_tool_per_call_factory_means_no_baked_client() {
     let _env_guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
     let tmp = tempfile::tempdir().unwrap();
-    unsafe {
-        std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
-    }
+    let _workspace_guard = WorkspaceEnvGuard::set(tmp.path());
 
     let mut config = crate::openhuman::config::Config::default();
     config.config_path = tmp.path().join("config.toml");
@@ -738,10 +743,6 @@ async fn execute_tool_per_call_factory_means_no_baked_client() {
         !msg.contains("staging-api") && !msg.contains("agent-integrations"),
         "must not leak backend-tenant routing artifacts in direct mode: {msg}"
     );
-
-    unsafe {
-        std::env::remove_var("OPENHUMAN_WORKSPACE");
-    }
 }
 
 #[tokio::test]
@@ -760,9 +761,7 @@ async fn list_toolkits_in_direct_mode_returns_empty_without_hitting_backend() {
     let _env_guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
     let tmp = tempfile::tempdir().expect("tempdir");
-    unsafe {
-        std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
-    }
+    let _workspace_guard = WorkspaceEnvGuard::set(tmp.path());
 
     let mut config = crate::openhuman::config::Config::default();
     config.config_path = tmp.path().join("config.toml");
@@ -793,10 +792,6 @@ async fn list_toolkits_in_direct_mode_returns_empty_without_hitting_backend() {
         body.contains("\"toolkits\":[]") || body.contains("\"toolkits\": []"),
         "direct-mode list_toolkits body should contain an empty toolkits array: {body}"
     );
-
-    unsafe {
-        std::env::remove_var("OPENHUMAN_WORKSPACE");
-    }
 }
 
 #[test]
@@ -833,9 +828,7 @@ async fn authorize_in_direct_mode_refuses_with_app_composio_dev_hint() {
     let _env_guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
     let tmp = tempfile::tempdir().expect("tempdir");
-    unsafe {
-        std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
-    }
+    let _workspace_guard = WorkspaceEnvGuard::set(tmp.path());
 
     let mut config = crate::openhuman::config::Config::default();
     config.config_path = tmp.path().join("config.toml");
@@ -862,8 +855,4 @@ async fn authorize_in_direct_mode_refuses_with_app_composio_dev_hint() {
         !msg.contains("staging-api") && !msg.contains("agent-integrations"),
         "must not leak backend-tenant routing artifacts in direct mode: {msg}"
     );
-
-    unsafe {
-        std::env::remove_var("OPENHUMAN_WORKSPACE");
-    }
 }

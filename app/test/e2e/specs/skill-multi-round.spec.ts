@@ -17,8 +17,7 @@ import { startMockServer, stopMockServer } from '../mock-server';
 const USER_ID = 'e2e-skill-multi-round';
 
 describe('Multi-round tool conversation smoke', () => {
-  before(async function beforeSuite() {
-    this.timeout(90_000);
+  before(async () => {
     await startMockServer();
     await waitForApp();
     await resetApp(USER_ID);
@@ -35,10 +34,11 @@ describe('Multi-round tool conversation smoke', () => {
     const hash = await browser.execute(() => window.location.hash);
     expect(String(hash)).toContain('/chat');
 
+    // /chat page renders 'Threads' (t('chat.threads')) as a stable sidebar heading.
     const ok =
-      (await textExists('Type a message...')) ||
-      (await textExists('Ask the agent anything...')) ||
-      (await textExists('Conversation'));
+      (await textExists('Threads')) ||
+      (await textExists('New')) ||
+      (await textExists('Type a message'));
     expect(ok).toBe(true);
   });
 });

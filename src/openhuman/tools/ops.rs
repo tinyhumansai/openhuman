@@ -291,11 +291,39 @@ pub fn all_tools_with_runtime(
     // knobs still come from `config.web_search`, but there is no
     // enable flag: every session needs research as a baseline
     // capability.
-    tools.push(Box::new(WebSearchTool::new(
-        crate::openhuman::integrations::build_client(root_config),
-        root_config.web_search.max_results,
-        root_config.web_search.timeout_secs,
-    )));
+    let seltz_has_api_key = root_config
+        .seltz
+        .api_key
+        .as_deref()
+        .is_some_and(|key| !key.trim().is_empty());
+    let direct_seltz_for_web_search = if root_config.seltz.enabled && seltz_has_api_key {
+        tracing::debug!(
+            max_results = root_config.seltz.max_results,
+            timeout_secs = root_config.seltz.timeout_secs,
+            "[web_search] direct Seltz routing enabled"
+        );
+        Some(crate::openhuman::integrations::SeltzSearchTool::new(
+            root_config.seltz.api_key.clone(),
+            root_config.seltz.api_url.clone(),
+            root_config.seltz.max_results,
+            root_config.seltz.timeout_secs,
+        ))
+    } else {
+        tracing::debug!(
+            seltz_enabled = root_config.seltz.enabled,
+            has_api_key = seltz_has_api_key,
+            "[web_search] direct Seltz routing disabled; backend proxy path remains"
+        );
+        None
+    };
+    tools.push(Box::new(
+        WebSearchTool::new(
+            crate::openhuman::integrations::build_client(root_config),
+            root_config.web_search.max_results,
+            root_config.web_search.timeout_secs,
+        )
+        .with_direct_search(direct_seltz_for_web_search),
+    ));
 
     // Seltz — direct-API web search, gated on `seltz.enabled` (auto-set
     // when `SELTZ_API_KEY` env var is present). Unlike the backend-proxied
@@ -313,6 +341,27 @@ pub fn all_tools_with_runtime(
         tracing::debug!("[seltz] registered seltz_search tool");
     } else {
         tracing::debug!("[seltz] disabled — set SELTZ_API_KEY to enable");
+    }
+
+    // SearXNG — self-hosted web search, gated on `searxng.enabled`.
+    // This is useful for users who want current web results without routing
+    // queries through OpenHuman's backend or a hosted search API.
+    if root_config.searxng.enabled {
+        tools.push(Box::new(
+            crate::openhuman::integrations::SearxngSearchTool::new(
+                root_config.searxng.base_url.clone(),
+                root_config.searxng.max_results,
+                root_config.searxng.default_language.clone(),
+                root_config.searxng.timeout_secs,
+            ),
+        ));
+        tracing::debug!(
+            base_url = %root_config.searxng.base_url,
+            max_results = root_config.searxng.max_results,
+            "[searxng] registered searxng_search tool"
+        );
+    } else {
+        tracing::debug!("[searxng] disabled — set searxng.enabled=true to enable");
     }
 
     // Managed Node.js exec tools — gated on `root_config.node.enabled`.
@@ -378,7 +427,7 @@ pub fn all_tools_with_runtime(
     // ── Agent integration tools (backend-proxied) ─────────────────
     if let Some(client) = crate::openhuman::integrations::build_client(root_config) {
         tracing::debug!("[integrations] client built successfully");
-        if root_config.integrations.apify.enabled {
+        if root_config.integrations.apify.is_active() {
             tools.push(Box::new(
                 crate::openhuman::integrations::ApifyRunActorTool::new(Arc::clone(&client)),
             ));
@@ -392,7 +441,7 @@ pub fn all_tools_with_runtime(
         } else {
             tracing::debug!("[integrations] apify disabled — skipping");
         }
-        if root_config.integrations.google_places.enabled {
+        if root_config.integrations.google_places.is_active() {
             tools.push(Box::new(
                 crate::openhuman::integrations::GooglePlacesSearchTool::new(Arc::clone(&client)),
             ));
@@ -403,7 +452,7 @@ pub fn all_tools_with_runtime(
         } else {
             tracing::debug!("[integrations] google_places disabled — skipping");
         }
-        if root_config.integrations.parallel.enabled {
+        if root_config.integrations.parallel.is_active() {
             tools.push(Box::new(
                 crate::openhuman::integrations::ParallelSearchTool::new(Arc::clone(&client)),
             ));
@@ -426,7 +475,21 @@ pub fn all_tools_with_runtime(
         } else {
             tracing::debug!("[integrations] parallel disabled — skipping");
         }
-        if root_config.integrations.stock_prices.enabled {
+        if root_config.integrations.tinyfish.is_active() {
+            tools.push(Box::new(
+                crate::openhuman::integrations::TinyFishSearchTool::new(Arc::clone(&client)),
+            ));
+            tools.push(Box::new(
+                crate::openhuman::integrations::TinyFishFetchTool::new(Arc::clone(&client)),
+            ));
+            tools.push(Box::new(
+                crate::openhuman::integrations::TinyFishAgentRunTool::new(Arc::clone(&client)),
+            ));
+            tracing::debug!("[integrations] registered tinyfish tools");
+        } else {
+            tracing::debug!("[integrations] tinyfish disabled — skipping");
+        }
+        if root_config.integrations.stock_prices.is_active() {
             tools.push(Box::new(
                 crate::openhuman::integrations::StockQuoteTool::new(Arc::clone(&client)),
             ));
@@ -446,7 +509,7 @@ pub fn all_tools_with_runtime(
         } else {
             tracing::debug!("[integrations] stock_prices disabled — skipping");
         }
-        if root_config.integrations.twilio.enabled {
+        if root_config.integrations.twilio.is_active() {
             tools.push(Box::new(
                 crate::openhuman::integrations::TwilioCallTool::new(Arc::clone(&client)),
             ));

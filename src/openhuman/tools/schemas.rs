@@ -11,6 +11,7 @@ use serde_json::{json, Map, Value};
 use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 use crate::openhuman::config::rpc as config_rpc;
+use crate::openhuman::integrations::searxng::MAX_RESULTS as SEARXNG_MAX_RESULTS;
 use crate::openhuman::tools::traits::Tool;
 use crate::rpc::RpcOutcome;
 
@@ -19,6 +20,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         tools_schemas("tools_composio_execute"),
         tools_schemas("tools_web_search"),
         tools_schemas("tools_seltz_search"),
+        tools_schemas("tools_searxng_search"),
         tools_schemas("tools_apify_linkedin_scrape"),
         tools_schemas("tools_polymarket_execute"),
     ]
@@ -37,6 +39,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: tools_schemas("tools_seltz_search"),
             handler: handle_seltz_search,
+        },
+        RegisteredController {
+            schema: tools_schemas("tools_searxng_search"),
+            handler: handle_searxng_search,
         },
         RegisteredController {
             schema: tools_schemas("tools_apify_linkedin_scrape"),
@@ -191,6 +197,50 @@ pub fn tools_schemas(function: &str) -> ControllerSchema {
                 name: "documents",
                 ty: TypeSchema::Array(Box::new(TypeSchema::Json)),
                 comment: "Each item: {url, content, title?, published_date?}.",
+                required: true,
+            }],
+        },
+        "tools_searxng_search" => ControllerSchema {
+            namespace: "tools",
+            function: "searxng_search",
+            description:
+                "Web search via a user-configured SearXNG instance. Returns normalized \
+                          results with title, URL, snippet, and source. Intended for private, \
+                          self-hosted search without routing queries through the OpenHuman backend.",
+            inputs: vec![
+                FieldSchema {
+                    name: "query",
+                    ty: TypeSchema::String,
+                    comment: "Search query string.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "categories",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Array(Box::new(
+                        TypeSchema::Enum {
+                            variants: vec!["web", "general", "news", "images"],
+                        },
+                    )))),
+                    comment: "Optional SearXNG categories. `web` maps to SearXNG `general`.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "language",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "Optional language code, e.g. `en`, `zh-CN`, or `fr`.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "max_results",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
+                    comment: "Max results (1-50, default from searxng.max_results).",
+                    required: false,
+                },
+            ],
+            outputs: vec![FieldSchema {
+                name: "results",
+                ty: TypeSchema::Array(Box::new(TypeSchema::Json)),
+                comment: "Each item: {title, url, snippet, source}.",
                 required: true,
             }],
         },
@@ -464,6 +514,74 @@ fn handle_seltz_search(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
+fn handle_searxng_search(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let query = params
+            .get("query")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .ok_or_else(|| "missing or empty `query`".to_string())?;
+        let max_results = params
+            .get("max_results")
+            .and_then(Value::as_u64)
+            .map(|n| n.clamp(1, SEARXNG_MAX_RESULTS as u64) as usize);
+        let categories = optional_string_array(&params, "categories")?;
+        let language = params
+            .get("language")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
+
+        let config = config_rpc::load_config_with_timeout().await?;
+        if !config.searxng.enabled {
+            tracing::debug!("[rpc][tools.searxng_search] searxng disabled — rejecting");
+            return Err(
+                "SearXNG search is not enabled. Set searxng.enabled=true or OPENHUMAN_SEARXNG_ENABLED=true."
+                    .to_string(),
+            );
+        }
+
+        tracing::debug!(
+            query_len = query.chars().count(),
+            max_results = max_results.unwrap_or(config.searxng.max_results),
+            category_count = categories.len(),
+            has_language = language.is_some(),
+            base_url = %config.searxng.base_url,
+            "[rpc][tools.searxng_search] start"
+        );
+
+        let tool = crate::openhuman::integrations::SearxngSearchTool::new(
+            config.searxng.base_url.clone(),
+            config.searxng.max_results,
+            config.searxng.default_language.clone(),
+            config.searxng.timeout_secs,
+        );
+
+        let response = tool
+            .search(crate::openhuman::integrations::SearxngSearchArgs {
+                query,
+                categories,
+                language,
+                max_results,
+            })
+            .await
+            .map_err(|e| format!("searxng search failed: {e:#}"))?;
+
+        let result_count = response.results.len();
+        let payload = json!({
+            "query": response.query,
+            "results": response.results,
+        });
+        let log = vec![format!(
+            "[rpc][tools.searxng_search] success results={result_count}"
+        )];
+        RpcOutcome::new(payload, log).into_cli_compatible_json()
+    })
+}
+
 fn handle_apify_linkedin_scrape(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let profile_url = params
@@ -498,6 +616,28 @@ fn handle_apify_linkedin_scrape(params: Map<String, Value>) -> ControllerFuture 
         )];
         RpcOutcome::new(payload, log).into_cli_compatible_json()
     })
+}
+
+fn optional_string_array(params: &Map<String, Value>, key: &str) -> Result<Vec<String>, String> {
+    let Some(value) = params.get(key) else {
+        return Ok(Vec::new());
+    };
+    if value.is_null() {
+        return Ok(Vec::new());
+    }
+    let items = value
+        .as_array()
+        .ok_or_else(|| format!("`{key}` must be an array of strings"))?;
+    items
+        .iter()
+        .filter_map(|item| match item.as_str() {
+            Some(value) => {
+                let trimmed = value.trim();
+                (!trimmed.is_empty()).then(|| Ok(trimmed.to_string()))
+            }
+            None => Some(Err(format!("`{key}` must contain only strings"))),
+        })
+        .collect()
 }
 
 fn handle_polymarket_execute(params: Map<String, Value>) -> ControllerFuture {
@@ -573,13 +713,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn all_schemas_returns_five() {
-        assert_eq!(all_controller_schemas().len(), 5);
+    fn all_schemas_returns_six() {
+        assert_eq!(all_controller_schemas().len(), 6);
     }
 
     #[test]
-    fn all_controllers_returns_five() {
-        assert_eq!(all_registered_controllers().len(), 5);
+    fn all_controllers_returns_six() {
+        assert_eq!(all_registered_controllers().len(), 6);
     }
 
     #[test]
@@ -609,6 +749,26 @@ mod tests {
         assert!(s.inputs.iter().any(|f| f.name == "query" && f.required));
         assert!(s.inputs.iter().any(|f| f.name == "include_domains"));
         assert!(s.inputs.iter().any(|f| f.name == "scope"));
+    }
+
+    #[test]
+    fn searxng_search_schema_shape() {
+        let s = tools_schemas("tools_searxng_search");
+        assert_eq!(s.namespace, "tools");
+        assert_eq!(s.function, "searxng_search");
+        assert!(s.inputs.iter().any(|f| f.name == "query" && f.required));
+        assert!(s.inputs.iter().any(|f| f.name == "categories"));
+        assert!(s.inputs.iter().any(|f| f.name == "language"));
+    }
+
+    #[test]
+    fn optional_string_array_trims_and_drops_blank_entries() {
+        let params =
+            Map::from_iter([("categories".to_string(), json!([" web ", "", "  ", "news"]))]);
+
+        let values = optional_string_array(&params, "categories").expect("string array");
+
+        assert_eq!(values, vec!["web", "news"]);
     }
 
     #[test]

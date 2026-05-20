@@ -255,6 +255,15 @@ pub struct McpServerConfig {
     /// Whether this server should be exposed to the MCP bridge tools.
     #[serde(default = "defaults::default_true")]
     pub enabled: bool,
+    /// Exact remote tool names this server may expose through the generic
+    /// MCP bridge. Empty means all remote tools are allowed unless they
+    /// appear in `disallowed_tools`.
+    #[serde(default)]
+    pub allowed_tools: Vec<String>,
+    /// Exact remote tool names that should always be hidden and blocked.
+    /// This denylist takes precedence over `allowed_tools`.
+    #[serde(default)]
+    pub disallowed_tools: Vec<String>,
     /// Per-request timeout in seconds.
     #[serde(default = "default_mcp_timeout_secs")]
     pub timeout_secs: u64,
@@ -281,6 +290,8 @@ impl Default for McpServerConfig {
             cwd: None,
             description: None,
             enabled: defaults::default_true(),
+            allowed_tools: Vec::new(),
+            disallowed_tools: Vec::new(),
             timeout_secs: default_mcp_timeout_secs(),
             auth: McpAuthConfig::None,
         }
@@ -402,6 +413,54 @@ impl Default for SeltzConfig {
             api_url: None,
             max_results: default_seltz_max_results(),
             timeout_secs: default_seltz_timeout_secs(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct SearxngConfig {
+    /// When `true`, register `searxng_search` as an agent and MCP tool.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Base URL for the user's SearXNG instance.
+    #[serde(default = "default_searxng_base_url")]
+    pub base_url: String,
+    /// Max results per query (1-50, default 10).
+    #[serde(default = "default_searxng_max_results")]
+    pub max_results: usize,
+    /// Language code passed to SearXNG when a call omits `language`.
+    #[serde(default = "default_searxng_language")]
+    pub default_language: String,
+    /// Per-request timeout in seconds (default 10).
+    #[serde(default = "default_searxng_timeout_secs", alias = "timeout_seconds")]
+    pub timeout_secs: u64,
+}
+
+fn default_searxng_base_url() -> String {
+    "http://localhost:8080".into()
+}
+
+fn default_searxng_max_results() -> usize {
+    10
+}
+
+fn default_searxng_language() -> String {
+    "en".into()
+}
+
+fn default_searxng_timeout_secs() -> u64 {
+    10
+}
+
+impl Default for SearxngConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            base_url: default_searxng_base_url(),
+            max_results: default_searxng_max_results(),
+            default_language: default_searxng_language(),
+            timeout_secs: default_searxng_timeout_secs(),
         }
     }
 }
@@ -538,18 +597,69 @@ pub struct ComputerControlConfig {
 
 // ── Agent integration tools (backend-proxied) ───────────────────────
 
-/// Per-integration on/off toggle.
+/// Routing mode for an integration that supports a backend-managed
+/// default and an optional BYO ("bring your own API key") override.
+pub const INTEGRATION_MODE_MANAGED: &str = "managed";
+pub const INTEGRATION_MODE_BYO: &str = "byo";
+
+fn default_integration_mode() -> String {
+    INTEGRATION_MODE_MANAGED.into()
+}
+
+/// Per-integration toggle.
+///
+/// Defaults to **OpenHuman-managed** routing: the OpenHuman backend
+/// owns the upstream API key, billing, and rate limits — the user only
+/// has to flip `enabled` to make the tools available.
+///
+/// Users who hold their own provider account can switch `mode` to
+/// `"byo"` and supply `api_key`. In that case tools register **iff**
+/// the integration is `enabled = true` **and** `api_key` is a non-empty
+/// trimmed string — see [`IntegrationToggle::is_active`]. This mirrors
+/// the rule the Settings UI surfaces to the user ("loaded iff API key
+/// is provided and enabled").
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct IntegrationToggle {
     #[serde(default = "defaults::default_true")]
     pub enabled: bool,
+    /// Routing mode. One of [`INTEGRATION_MODE_MANAGED`] (default — the
+    /// OpenHuman backend proxies the call) or [`INTEGRATION_MODE_BYO`]
+    /// (the user's own API key is required and tools refuse to
+    /// register without it).
+    #[serde(default = "default_integration_mode")]
+    pub mode: String,
+    /// API key for [`INTEGRATION_MODE_BYO`]. Ignored in managed mode.
+    /// Trimmed empty / `None` ⇒ no BYO key configured.
+    #[serde(default)]
+    pub api_key: Option<String>,
+}
+
+impl IntegrationToggle {
+    /// Returns true when the integration should be wired up at tool-
+    /// registration time. Managed mode requires only `enabled`; BYO
+    /// mode requires both `enabled` and a non-empty `api_key`.
+    pub fn is_active(&self) -> bool {
+        if !self.enabled {
+            return false;
+        }
+        match self.mode.as_str() {
+            INTEGRATION_MODE_BYO => self
+                .api_key
+                .as_deref()
+                .map(|s| !s.trim().is_empty())
+                .unwrap_or(false),
+            _ => true,
+        }
+    }
 }
 
 impl Default for IntegrationToggle {
     fn default() -> Self {
         Self {
             enabled: defaults::default_true(),
+            mode: default_integration_mode(),
+            api_key: None,
         }
     }
 }
@@ -677,8 +787,11 @@ impl Default for PolymarketConfig {
 /// Composio in particular is unconditionally enabled and has no toggle:
 /// as long as the user is signed in, composio tools are available.
 ///
-/// The per-tool toggles below are preserved because integrations may
-/// incur per-call costs or may still be in phased rollout.
+/// The per-tool `apify`, `twilio`, `google_places`, `parallel`, and `tinyfish`
+/// flags below are preserved because those integrations incur per-call
+/// costs that the user may legitimately want to turn off; composio
+/// costs are metered server-side, so there is no client-side toggle
+/// for it.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 #[serde(default)]
 pub struct IntegrationsConfig {
@@ -698,6 +811,10 @@ pub struct IntegrationsConfig {
     #[serde(default)]
     pub parallel: IntegrationToggle,
 
+    /// TinyFish web search, fetch, and browser automation integration.
+    #[serde(default)]
+    pub tinyfish: IntegrationToggle,
+
     /// Stock-price / market-data integration (Alpha Vantage on the backend).
     #[serde(default)]
     pub stock_prices: IntegrationToggle,
@@ -705,4 +822,63 @@ pub struct IntegrationsConfig {
     /// Polymarket browse + trading APIs (Gamma + CLOB).
     #[serde(default)]
     pub polymarket: PolymarketConfig,
+}
+
+#[cfg(test)]
+mod integration_toggle_tests {
+    use super::*;
+
+    #[test]
+    fn managed_mode_active_when_enabled_without_key() {
+        let toggle = IntegrationToggle {
+            enabled: true,
+            mode: INTEGRATION_MODE_MANAGED.into(),
+            api_key: None,
+        };
+        assert!(toggle.is_active());
+    }
+
+    #[test]
+    fn managed_mode_inactive_when_disabled() {
+        let toggle = IntegrationToggle {
+            enabled: false,
+            mode: INTEGRATION_MODE_MANAGED.into(),
+            api_key: Some("ignored".into()),
+        };
+        assert!(!toggle.is_active());
+    }
+
+    #[test]
+    fn byo_mode_requires_non_empty_key() {
+        let mut toggle = IntegrationToggle {
+            enabled: true,
+            mode: INTEGRATION_MODE_BYO.into(),
+            api_key: None,
+        };
+        assert!(!toggle.is_active(), "missing key");
+
+        toggle.api_key = Some("   ".into());
+        assert!(!toggle.is_active(), "whitespace key");
+
+        toggle.api_key = Some("real-key".into());
+        assert!(toggle.is_active());
+    }
+
+    #[test]
+    fn byo_mode_inactive_when_disabled_even_with_key() {
+        let toggle = IntegrationToggle {
+            enabled: false,
+            mode: INTEGRATION_MODE_BYO.into(),
+            api_key: Some("real-key".into()),
+        };
+        assert!(!toggle.is_active());
+    }
+
+    #[test]
+    fn default_is_managed_and_active() {
+        let toggle = IntegrationToggle::default();
+        assert_eq!(toggle.mode, INTEGRATION_MODE_MANAGED);
+        assert!(toggle.api_key.is_none());
+        assert!(toggle.is_active());
+    }
 }

@@ -36,6 +36,7 @@ pub mod session;
 pub(crate) mod session_queue;
 pub(crate) mod spawn_depth_context;
 pub mod subagent_runner;
+mod token_budget;
 pub(crate) mod tool_filter;
 mod tool_loop;
 

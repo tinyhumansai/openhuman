@@ -69,6 +69,7 @@ fn make_router(
                 Route {
                     provider_name: provider_name.to_string(),
                     model: model.to_string(),
+                    context_window: None,
                 },
             )
         })

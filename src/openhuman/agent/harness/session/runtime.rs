@@ -11,6 +11,7 @@ use super::types::{Agent, AgentBuilder};
 use crate::core::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::agent::dispatcher::ParsedToolCall;
 use crate::openhuman::agent::error::AgentError;
+use crate::openhuman::agent_tool_policy::ToolPolicyEngine;
 use crate::openhuman::inference::provider::{self, ConversationMessage, Provider, ToolCall};
 use crate::openhuman::memory::Memory;
 use crate::openhuman::prompt_injection::{
@@ -157,6 +158,7 @@ impl Agent {
     pub fn set_event_context(&mut self, session_id: impl Into<String>, channel: impl Into<String>) {
         self.event_session_id = session_id.into();
         self.event_channel = channel.into();
+        self.rebuild_tool_policy_session();
     }
 
     /// Override the agent definition name used for session transcript
@@ -195,6 +197,7 @@ impl Agent {
             .unwrap_or("0");
         self.session_key = format!("{prefix}_{sanitized}");
         self.agent_definition_name = name;
+        self.rebuild_tool_policy_session();
     }
 
     /// Attach a progress event sender for real-time turn updates.
@@ -210,19 +213,27 @@ impl Agent {
     }
 
     /// Restrict which tools the main agent can see and call for this
-    /// session. An empty set restores the default "all visible"
-    /// behavior.
+    /// session. An empty set restores the default "all visible" behavior,
+    /// still subject to the configured channel permission policy.
     pub fn set_visible_tool_names(&mut self, names: HashSet<String>) {
         self.visible_tool_names = names;
-        let visible_specs = if self.visible_tool_names.is_empty() {
-            (*self.tool_specs).clone()
-        } else {
-            self.tool_specs
-                .iter()
-                .filter(|spec| self.visible_tool_names.contains(&spec.name))
-                .cloned()
-                .collect()
-        };
+        self.rebuild_tool_policy_session();
+    }
+
+    pub(super) fn rebuild_tool_policy_session(&mut self) {
+        self.tool_policy_session = ToolPolicyEngine::build_session(
+            &self.agent_definition_name,
+            &self.event_channel,
+            "session",
+            &self.config.channel_permissions,
+            self.tools.as_slice(),
+            &self.visible_tool_names,
+        );
+        let visible_specs = super::builder::visible_tool_specs_for_policy(
+            self.tool_specs.as_slice(),
+            &self.visible_tool_names,
+            &self.tool_policy_session,
+        );
         self.visible_tool_specs = Arc::new(super::builder::dedup_visible_tool_specs(visible_specs));
     }
 

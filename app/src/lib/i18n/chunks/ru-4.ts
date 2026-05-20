@@ -46,6 +46,15 @@ const ru4: TranslationMap = {
   'composio.connect.subdomainInvalid':
     'Введите только короткий поддомен (например, "acme"), а не полный URL. Допустимы только буквы, цифры и дефисы.',
   'composio.connect.subdomainRequired': 'Введи свой поддомен Atlassian для продолжения.',
+  'composio.connect.dynamicsOrgNameLabel': 'Название организации Dynamics 365',
+  'composio.connect.dynamicsOrgNameHint':
+    'Например, "myorg" для myorg.crm.dynamics.com. Введите только короткое название организации, а не полный URL.',
+  'composio.connect.needsFieldsPrefix': 'Чтобы подключить',
+  'composio.connect.needsFieldsSuffix':
+    'нам нужно немного больше информации. Заполните недостающие поля ниже и повторите попытку.',
+  'composio.connect.requiredFieldEmpty': 'Это поле обязательно для заполнения.',
+  'composio.connect.wabaIdHint':
+    'Найдите его через GET /me/businesses, затем GET /{business_id}/owned_whatsapp_business_accounts, используя ваш токен доступа Meta.',
   'composio.connect.wabaIdLabel': 'ID аккаунта WhatsApp Business',
   'composio.connect.wabaIdRequired':
     'Введи ID аккаунта WhatsApp Business (WABA ID) для продолжения.',
@@ -143,7 +152,14 @@ const ru4: TranslationMap = {
   'onboarding.contextGathering.buildingProfile': 'Составление профиля...',
   'onboarding.contextGathering.continueToChat': 'Перейти в чат',
   'onboarding.contextGathering.errorDesc':
-    'Сейчас не удалось построить ваш полный профиль, но это нормально — вы можете продолжить, и ваш профиль будет формироваться со временем.',
+    'Мы не смогли построить ваш полный профиль прямо сейчас, но это нормально — вы можете продолжить, и профиль будет дополняться со временем.',
+  'onboarding.contextGathering.coreAlive': 'Ядро доступно — первый запуск может занять минуту.',
+  'onboarding.contextGathering.coreAliveProbing': 'Проверка соединения с ядром…',
+  'onboarding.contextGathering.coreUnreachable':
+    'Ядро не отвечает. Можно продолжить и попробовать позже.',
+  'onboarding.contextGathering.stillWorkingDesc':
+    'Первый запуск может занять 30–60 секунд, пока мы прогреваем локальную модель и инструменты. Вы можете перейти в чат в любой момент — построение профиля продолжится в фоне.',
+  'onboarding.contextGathering.stillWorkingTitle': 'Профиль ещё составляется…',
   'onboarding.contextGathering.title': 'Сбор контекста',
   'openhuman.team_list_teams': 'Список команд',
   'overlay.ariaAttention': 'Сообщение',

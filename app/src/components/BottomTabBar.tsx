@@ -180,7 +180,10 @@ const BottomTabBar = () => {
   };
 
   return (
-    <div className="absolute inset-x-0 bottom-0 z-50">
+    // pointer-events-none on the full-width shell so transparent areas (e.g.
+    // beside the centered nav pill) do not steal clicks from sticky footers
+    // such as Settings SaveBar. Only the <nav> pill re-enables hits.
+    <div className="pointer-events-none absolute inset-x-0 bottom-0 z-50">
       {/* Hover strip — only matters when collapsed; provides a 12px bottom
           edge the user can mouse into to reveal the bar again. */}
       {collapsed && (

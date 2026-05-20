@@ -46,6 +46,15 @@ const id4: TranslationMap = {
   'composio.connect.subdomainInvalid':
     'Masukkan hanya subdomain pendek (mis. "acme"), bukan URL lengkap. Hanya boleh berisi huruf, angka, dan tanda hubung.',
   'composio.connect.subdomainRequired': 'Masukkan subdomain Atlassian Anda untuk melanjutkan.',
+  'composio.connect.dynamicsOrgNameLabel': 'Nama Organisasi Dynamics 365',
+  'composio.connect.dynamicsOrgNameHint':
+    'Misalnya, "myorg" untuk myorg.crm.dynamics.com. Masukkan nama organisasi pendek saja, bukan URL lengkap.',
+  'composio.connect.needsFieldsPrefix': 'Untuk menghubungkan',
+  'composio.connect.needsFieldsSuffix':
+    'kami memerlukan informasi tambahan. Isi bidang yang hilang di bawah dan coba lagi.',
+  'composio.connect.requiredFieldEmpty': 'Bidang ini wajib diisi.',
+  'composio.connect.wabaIdHint':
+    'Temukan melalui GET /me/businesses lalu GET /{business_id}/owned_whatsapp_business_accounts menggunakan token akses Meta Anda.',
   'composio.connect.wabaIdLabel': 'Label ID WABA',
   'composio.connect.wabaIdRequired':
     'Masukkan ID Akun Bisnis WhatsApp (WABA ID) Anda untuk melanjutkan.',
@@ -143,7 +152,15 @@ const id4: TranslationMap = {
   'onboarding.contextGathering.buildingProfile': 'Membangun profil Anda...',
   'onboarding.contextGathering.continueToChat': 'Lanjutkan ke chat',
   'onboarding.contextGathering.errorDesc':
-    'Kami belum bisa membangun profil lengkap Anda sekarang, tetapi tidak apa-apa — Anda bisa melanjutkan dan profil Anda akan terbangun seiring waktu.',
+    'Kami tidak bisa membangun profil lengkap Anda sekarang, tapi tidak apa-apa — Anda bisa lanjut dan profil Anda akan terbentuk seiring waktu.',
+  'onboarding.contextGathering.coreAlive':
+    'Core dapat diakses — peluncuran pertama bisa memakan waktu satu menit.',
+  'onboarding.contextGathering.coreAliveProbing': 'Memeriksa koneksi core…',
+  'onboarding.contextGathering.coreUnreachable':
+    'Core tidak merespons. Anda bisa melanjutkan dan coba lagi nanti.',
+  'onboarding.contextGathering.stillWorkingDesc':
+    'Peluncuran pertama bisa memakan waktu 30–60 detik sementara kami menyiapkan model dan alat lokal Anda. Anda bisa melanjutkan ke chat kapan saja — pembuatan profil tetap berjalan di latar belakang.',
+  'onboarding.contextGathering.stillWorkingTitle': 'Masih membangun profil Anda…',
   'onboarding.contextGathering.title': 'Pengumpulan Konteks',
   'openhuman.team_list_teams': 'Daftar tim',
   'overlay.ariaAttention': 'Pesan perhatian',

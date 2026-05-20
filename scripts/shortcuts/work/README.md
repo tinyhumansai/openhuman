@@ -35,8 +35,13 @@ and `pnpm work start 1234 …` are equivalent.
    `--agent cursor` or `--agent cursor-agent`, it uses
    `cursor-agent --yolo`.
 
+By default the script also tries to assign the issue to `@me` through GitHub
+as soon as work starts.
+
 ## Config
 
 - `WORK_REPO=owner/name` — override the target repo.
 - `WORK_BRANCH_PREFIX=issue` — branch is `<prefix>/<num>-<slug>`.
+- `WORK_AUTO_ASSIGN=1` — auto-assign the issue to `@me` when work starts. Set
+  to `0` to disable.
 - Requires `git`, `gh`, `jq`, plus the agent CLI (default `claude`).

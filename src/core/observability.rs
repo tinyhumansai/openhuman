@@ -435,6 +435,25 @@ fn is_provider_user_state_message(lower: &str) -> bool {
         return true;
     }
 
+    // OPENHUMAN-TAURI-XX: custom_openai upstream rejected the request with
+    // its own 400. Wire shape produced by
+    // `inference/provider/compatible.rs::is_custom_openai_upstream_bad_request_http_400`:
+    //
+    //   custom_openai API error (400 Bad Request): {"error":{
+    //     "message":"Bad request to upstream provider",
+    //     "type":"upstream_error","status":400}}
+    //
+    // Anchored to the `custom_openai api error (400` prefix so this can't
+    // silence unrelated errors that happen to mention both
+    // "bad request to upstream provider" and "upstream_error" elsewhere
+    // (e.g. a future provider whose envelope reuses one of those strings).
+    if lower.contains("custom_openai api error (400")
+        && lower.contains("bad request to upstream provider")
+        && lower.contains("upstream_error")
+    {
+        return true;
+    }
+
     // OPENHUMAN-TAURI-97: composio authorize with a blank required field —
     // SharePoint Subdomain, WhatsApp WABA ID, Tenant Name, etc.
     // Backend returns 500 with `"Missing required fields: …"` body.
@@ -461,6 +480,16 @@ fn is_provider_user_state_message(lower: &str) -> bool {
     // `HTTP 403: Request had insufficient authentication scopes.`
     // (or any sibling OAuth scope rejection from composio's toolkits).
     if lower.contains("insufficient authentication scopes") {
+        return true;
+    }
+
+    // OPENHUMAN-TAURI-S7: provider policy rejection on Kimi's coding
+    // endpoint when requests are not sent from an approved coding-agent
+    // client. Canonical body contains `access_terminated_error` and:
+    // "currently only available for Coding Agents ...".
+    if lower.contains("access_terminated_error")
+        || lower.contains("currently only available for coding agents")
+    {
         return true;
     }
 
@@ -1066,6 +1095,48 @@ pub fn is_budget_event(event: &sentry::protocol::Event<'_>) -> bool {
     event_contains_budget_exhausted_message(event)
 }
 
+/// 404 on PATCH/DELETE to a channel-message path is an expected backend state
+/// (user deleted the message provider-side, backend GC'd the relay row). The
+/// primary suppression lives in `authed_json` via `parse_message_path` +
+/// defense-in-depth inline check. This filter is the outermost safety net for
+/// any future call site that bypasses both. Targets OPENHUMAN-TAURI-R7.
+///
+/// Match criteria (all required):
+/// - tag `domain == "backend_api"`
+/// - tag `failure == "non_2xx"`
+/// - tag `status == "404"`
+/// - tag `method == "PATCH"` or `"DELETE"`
+/// - event message or exception value contains both `"/channels/"` and `"/messages/"`
+pub fn is_channel_message_not_found_event(event: &sentry::protocol::Event<'_>) -> bool {
+    let tags = &event.tags;
+    if tags.get("domain").map(String::as_str) != Some("backend_api") {
+        return false;
+    }
+    if tags.get("failure").map(String::as_str) != Some("non_2xx") {
+        return false;
+    }
+    if tags.get("status").map(String::as_str) != Some("404") {
+        return false;
+    }
+    let method = tags.get("method").map(String::as_str).unwrap_or("");
+    if method != "PATCH" && method != "DELETE" {
+        return false;
+    }
+    event_contains_channel_message_path(event)
+}
+
+fn event_contains_channel_message_path(event: &sentry::protocol::Event<'_>) -> bool {
+    let has_pattern = |s: &str| s.contains("/channels/") && s.contains("/messages/");
+    if event.message.as_deref().is_some_and(has_pattern) {
+        return true;
+    }
+    event
+        .exception
+        .values
+        .iter()
+        .any(|exc| exc.value.as_deref().is_some_and(has_pattern))
+}
+
 fn event_contains_budget_exhausted_message(event: &sentry::protocol::Event<'_>) -> bool {
     if event
         .message
@@ -1565,6 +1636,56 @@ mod tests {
     }
 
     #[test]
+    fn classifies_custom_openai_upstream_bad_request_as_provider_user_state() {
+        assert_eq!(
+            expected_error_kind(
+                "custom_openai API error (400 Bad Request): \
+                 {\"error\":{\"message\":\"Bad request to upstream provider\",\
+                 \"type\":\"upstream_error\",\"status\":400}}"
+            ),
+            Some(ExpectedErrorKind::ProviderUserState)
+        );
+
+        // Wrapped by higher-level callers (`agent.run_single`,
+        // `rpc.invoke_method`) must still classify.
+        assert_eq!(
+            expected_error_kind(
+                "agent.run_single failed: custom_openai API error (400 Bad Request): \
+                 {\"error\":{\"message\":\"Bad request to upstream provider\",\
+                 \"type\":\"upstream_error\",\"status\":400}}"
+            ),
+            Some(ExpectedErrorKind::ProviderUserState)
+        );
+    }
+
+    /// Regression for CodeRabbit feedback on PR #2107: the matcher must
+    /// not demote unrelated errors that happen to contain both
+    /// "bad request to upstream provider" and "upstream_error" without
+    /// the `custom_openai API error (400` anchor.
+    #[test]
+    fn does_not_silence_unrelated_error_with_only_inner_substrings() {
+        // No `custom_openai API error (400` prefix → must NOT classify
+        // as ProviderUserState, otherwise we'd silence actionable bugs.
+        assert_eq!(
+            expected_error_kind(
+                "internal panic in router: bad request to upstream provider \
+                 (state=upstream_error)"
+            ),
+            None,
+        );
+
+        // A future hypothetical provider envelope reusing one substring
+        // also must not classify.
+        assert_eq!(
+            expected_error_kind(
+                "anthropic_api error: upstream_error encountered while \
+                 forwarding bad request to upstream provider"
+            ),
+            None,
+        );
+    }
+
+    #[test]
     fn classifies_missing_required_fields_as_provider_user_state() {
         // OPENHUMAN-TAURI-97: composio authorize with a blank required
         // field. Backend wraps the composio 400 as 500 with the inner
@@ -1611,6 +1732,23 @@ mod tests {
         // the gmail prefix).
         assert_eq!(
             expected_error_kind("HTTP 403: Request had insufficient authentication scopes."),
+            Some(ExpectedErrorKind::ProviderUserState)
+        );
+    }
+
+    #[test]
+    fn classifies_access_terminated_provider_policy_as_provider_user_state() {
+        assert_eq!(
+            expected_error_kind(
+                "custom_openai API error (403 Forbidden): {\"error\":{\"message\":\"Kimi For Coding is currently only available for Coding Agents such as Kimi CLI, Claude Code, Roo Code, Kilo Code, etc.\",\"type\":\"access_terminated_error\"}}"
+            ),
+            Some(ExpectedErrorKind::ProviderUserState)
+        );
+
+        assert_eq!(
+            expected_error_kind(
+                "agent turn failed: custom_openai API error (403): currently only available for coding agents"
+            ),
             Some(ExpectedErrorKind::ProviderUserState)
         );
     }
@@ -2450,6 +2588,83 @@ mod tests {
         assert!(!is_max_iterations_event(&event_with_message("")));
         assert!(!is_max_iterations_event(&sentry::protocol::Event::default()));
     }
+
+    // ── is_channel_message_not_found_event (TAURI-R7) ────────────────────────
+
+    fn channel_message_404_event(method: &str) -> sentry::protocol::Event<'static> {
+        let mut event = sentry::protocol::Event::default();
+        event.tags.insert("domain".into(), "backend_api".into());
+        event.tags.insert("failure".into(), "non_2xx".into());
+        event.tags.insert("status".into(), "404".into());
+        event.tags.insert("method".into(), method.into());
+        event.message = Some(
+            "PATCH /channels/telegram/messages/1103 failed (404); response_body_len=172"
+                .to_string(),
+        );
+        event
+    }
+
+    #[test]
+    fn channel_message_not_found_filter_matches_patch() {
+        // Canonical TAURI-R7 shape: PATCH 404 on a channel-message path.
+        assert!(is_channel_message_not_found_event(
+            &channel_message_404_event("PATCH")
+        ));
+    }
+
+    #[test]
+    fn channel_message_not_found_filter_matches_delete() {
+        assert!(is_channel_message_not_found_event(
+            &channel_message_404_event("DELETE")
+        ));
+    }
+
+    #[test]
+    fn channel_message_not_found_filter_ignores_get_404() {
+        // GET 404 on a channel-message path is NOT an expected state — must keep Sentry signal.
+        assert!(!is_channel_message_not_found_event(
+            &channel_message_404_event("GET")
+        ));
+    }
+
+    #[test]
+    fn channel_message_not_found_filter_ignores_non_channel_path() {
+        let mut event = channel_message_404_event("PATCH");
+        event.message = Some("PATCH /auth/profile failed (404); response_body_len=42".to_string());
+        assert!(!is_channel_message_not_found_event(&event));
+    }
+
+    #[test]
+    fn channel_message_not_found_filter_ignores_wrong_status() {
+        let mut event = channel_message_404_event("PATCH");
+        event.tags.insert("status".into(), "403".into());
+        assert!(!is_channel_message_not_found_event(&event));
+    }
+
+    #[test]
+    fn channel_message_not_found_filter_ignores_wrong_domain() {
+        let mut event = channel_message_404_event("PATCH");
+        event.tags.insert("domain".into(), "channels".into());
+        assert!(!is_channel_message_not_found_event(&event));
+    }
+
+    #[test]
+    fn channel_message_not_found_filter_matches_exception_path() {
+        // sentry-tracing with attach_stacktrace=true populates exception list.
+        let mut event = sentry::protocol::Event::default();
+        event.tags.insert("domain".into(), "backend_api".into());
+        event.tags.insert("failure".into(), "non_2xx".into());
+        event.tags.insert("status".into(), "404".into());
+        event.tags.insert("method".into(), "PATCH".into());
+        event.exception = vec![sentry::protocol::Exception {
+            value: Some("PATCH /channels/discord/messages/abc failed (404): Not Found".to_string()),
+            ..Default::default()
+        }]
+        .into();
+        assert!(is_channel_message_not_found_event(&event));
+    }
+
+    // ── LoopbackUnavailable (TAURI-R5, TAURI-R6) ─────────────────────────────
 
     /// Verbatim body shape from OPENHUMAN-TAURI-R5 (~2.5k events): the
     /// `integrations.get` site reaches the embedded core's `127.0.0.1:18474`

@@ -184,3 +184,87 @@ fn peek_cached_current_user_identity_returns_none_when_only_empty_fields_exist()
 
     assert!(peek_cached_current_user_identity().is_none());
 }
+
+// ── RuntimeSnapshot cache tests ──────────────────────────────────────────────
+
+struct SnapshotCacheResetGuard;
+impl Drop for SnapshotCacheResetGuard {
+    fn drop(&mut self) {
+        *RUNTIME_SNAPSHOT_CACHE.lock() = None;
+    }
+}
+
+#[test]
+fn runtime_snapshot_cache_hit_within_ttl() {
+    let _reset = SnapshotCacheResetGuard;
+
+    let dummy = build_dummy_runtime_snapshot();
+    *RUNTIME_SNAPSHOT_CACHE.lock() = Some(CachedRuntimeSnapshot {
+        snapshot: dummy.clone(),
+        fetched_at: Instant::now(),
+    });
+
+    let cache = RUNTIME_SNAPSHOT_CACHE.lock();
+    let entry = cache.as_ref().expect("cache should have entry");
+    assert!(
+        entry.fetched_at.elapsed() < RUNTIME_SNAPSHOT_TTL,
+        "fresh entry should be within TTL"
+    );
+    assert_eq!(entry.snapshot.autocomplete.phase, dummy.autocomplete.phase);
+}
+
+#[test]
+fn runtime_snapshot_cache_miss_after_ttl() {
+    let _reset = SnapshotCacheResetGuard;
+
+    *RUNTIME_SNAPSHOT_CACHE.lock() = Some(CachedRuntimeSnapshot {
+        snapshot: build_dummy_runtime_snapshot(),
+        fetched_at: Instant::now() - (RUNTIME_SNAPSHOT_TTL + Duration::from_millis(100)),
+    });
+
+    let cache = RUNTIME_SNAPSHOT_CACHE.lock();
+    let entry = cache.as_ref().expect("cache should have entry");
+    assert!(
+        entry.fetched_at.elapsed() >= RUNTIME_SNAPSHOT_TTL,
+        "stale entry should be past TTL"
+    );
+}
+
+#[test]
+fn degraded_runtime_snapshot_has_expected_degraded_fields() {
+    let cfg = Config::default();
+    let snapshot = degraded_runtime_snapshot(&cfg);
+
+    assert_eq!(snapshot.autocomplete.phase, "degraded");
+    assert_eq!(snapshot.local_ai.state, "disabled");
+    assert!(
+        matches!(
+            snapshot.service.state,
+            crate::openhuman::service::ServiceState::Unknown(_)
+        ),
+        "service state should be Unknown in degraded snapshot"
+    );
+    assert!(!snapshot.screen_intelligence.session.active);
+}
+
+#[test]
+fn auth_fetch_timeout_constant_is_below_rpc_timeout() {
+    // The 30s RPC timeout on the frontend means auth fetch + runtime snapshot
+    // must fit comfortably. Verify the constants are sane.
+    assert!(
+        AUTH_FETCH_TIMEOUT.as_secs() < 15,
+        "auth fetch timeout should be well under the 30s RPC timeout"
+    );
+    assert!(
+        RUNTIME_SNAPSHOT_TIMEOUT.as_secs() < 20,
+        "runtime snapshot timeout should be well under the 30s RPC timeout"
+    );
+    assert!(
+        AUTH_FETCH_TIMEOUT + RUNTIME_SNAPSHOT_TIMEOUT < Duration::from_secs(30),
+        "total of auth + runtime timeouts must fit within the 30s RPC timeout"
+    );
+}
+
+fn build_dummy_runtime_snapshot() -> RuntimeSnapshot {
+    degraded_runtime_snapshot(&Config::default())
+}

@@ -120,7 +120,7 @@ impl Tool for ApplyPatchTool {
                     "edit[{i}]: `old_string` must not be empty"
                 )));
             }
-            if !self.security.is_path_allowed(path) {
+            if !self.security.is_path_string_allowed(path) {
                 return Ok(ToolResult::error(format!(
                     "edit[{i}]: path not allowed: {path}"
                 )));
@@ -153,21 +153,13 @@ impl Tool for ApplyPatchTool {
                     }
                 }
 
-                let resolved = match tokio::fs::canonicalize(&full).await {
+                // Security check: validate path string, resolve symlinks, confirm workspace containment.
+                let resolved = match self.security.validate_path(&edit.path).await {
                     Ok(p) => p,
-                    Err(e) => {
-                        return Ok(ToolResult::error(format!(
-                            "edit[{}]: failed to resolve {}: {e}",
-                            edit.index, edit.path
-                        )))
+                    Err(msg) => {
+                        return Ok(ToolResult::error(format!("edit[{}]: {msg}", edit.index)))
                     }
                 };
-                if !self.security.is_resolved_path_allowed(&resolved) {
-                    return Ok(ToolResult::error(format!(
-                        "edit[{}]: resolved path escapes workspace",
-                        edit.index
-                    )));
-                }
                 if let Ok(meta) = tokio::fs::metadata(&resolved).await {
                     if meta.len() > MAX_FILE_BYTES {
                         return Ok(ToolResult::error(format!(

@@ -46,6 +46,15 @@ const ar4: TranslationMap = {
   'composio.connect.subdomainInvalid':
     'أدخل النطاق الفرعي القصير فقط (مثل "acme")، وليس الرابط الكامل. يجب أن يحتوي فقط على أحرف وأرقام وشُرَط.',
   'composio.connect.subdomainRequired': 'يرجى إدخال نطاقك الفرعي في Atlassian للمتابعة.',
+  'composio.connect.dynamicsOrgNameLabel': 'اسم مؤسسة Dynamics 365',
+  'composio.connect.dynamicsOrgNameHint':
+    'على سبيل المثال، "myorg" لـ myorg.crm.dynamics.com. أدخل اسم المؤسسة المختصر فقط، وليس الرابط الكامل.',
+  'composio.connect.needsFieldsPrefix': 'للاتصال',
+  'composio.connect.needsFieldsSuffix':
+    'نحتاج إلى مزيد من المعلومات. املأ الحقول الناقصة أدناه وحاول مرة أخرى.',
+  'composio.connect.requiredFieldEmpty': 'هذا الحقل مطلوب.',
+  'composio.connect.wabaIdHint':
+    'احصل عليه عبر GET /me/businesses ثم GET /{business_id}/owned_whatsapp_business_accounts باستخدام رمز وصول Meta الخاص بك.',
   'composio.connect.wabaIdLabel': 'تسمية معرف WABA',
   'composio.connect.wabaIdRequired': 'يرجى إدخال معرف حساب WhatsApp Business (WABA ID) للمتابعة.',
   'composio.connect.waitingFor': 'بانتظار',
@@ -142,7 +151,14 @@ const ar4: TranslationMap = {
   'onboarding.contextGathering.buildingProfile': 'جارٍ بناء ملفك الشخصي...',
   'onboarding.contextGathering.continueToChat': 'المتابعة إلى المحادثة',
   'onboarding.contextGathering.errorDesc':
-    'لم نتمكّن من بناء ملفك الشخصي بالكامل الآن، لكن لا بأس — يمكنك المتابعة وسيكتمل ملفك تدريجيًا مع مرور الوقت.',
+    'تعذّر إنشاء ملفك الكامل الآن، لكن لا بأس — يمكنك المتابعة وسيُبنى ملفك مع الوقت.',
+  'onboarding.contextGathering.coreAlive': 'النواة متاحة — قد يستغرق التشغيل الأول دقيقة.',
+  'onboarding.contextGathering.coreAliveProbing': 'يجري التحقق من اتصال النواة…',
+  'onboarding.contextGathering.coreUnreachable':
+    'النواة لا تستجيب. يمكنك المتابعة والمحاولة لاحقًا.',
+  'onboarding.contextGathering.stillWorkingDesc':
+    'قد يستغرق التشغيل الأول 30–60 ثانية أثناء تهيئة نموذجك المحلي والأدوات. يمكنك المتابعة إلى المحادثة في أي وقت — يستمر بناء الملف الشخصي في الخلفية.',
+  'onboarding.contextGathering.stillWorkingTitle': 'لا يزال العمل جاريًا على ملفك الشخصي…',
   'onboarding.contextGathering.title': 'جمع السياق',
   'openhuman.team_list_teams': 'قائمة الفرق',
   'overlay.ariaAttention': 'رسالة انتباه',

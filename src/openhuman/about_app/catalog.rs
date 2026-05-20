@@ -47,6 +47,12 @@ const GITHUB_RELEASES_METADATA: Option<CapabilityPrivacy> = Some(CapabilityPriva
     destinations: &["GitHub Releases"],
 });
 
+const SEARXNG_RAW_TO_CONFIGURED_INSTANCE: Option<CapabilityPrivacy> = Some(CapabilityPrivacy {
+    leaves_device: true,
+    data_kind: PrivacyDataKind::Raw,
+    destinations: &["Configured SearXNG instance"],
+});
+
 // Direct-mode Composio: the user's API key and tool arguments leave the
 // device — they are sent to backend.composio.dev, not the OpenHuman backend.
 // LOCAL_CREDENTIALS was incorrect here because leaves_device must be true.
@@ -156,6 +162,16 @@ const CAPABILITIES: &[Capability] = &[
         category: CapabilityCategory::Conversation,
         description: "Show the sequence of tool calls and actions used to answer a request.",
         how_to: "Conversations > Tool timeline",
+        status: CapabilityStatus::Beta,
+        privacy: None,
+    },
+    Capability {
+        id: "conversation.subagent_mascots",
+        name: "Subagent Mascots",
+        domain: "conversation",
+        category: CapabilityCategory::Conversation,
+        description: "Show delegated sub-agents as colored companion mascots with compact activity bubbles and running, completed, or failed states.",
+        how_to: "Human > ask the assistant to delegate work to sub-agents",
         status: CapabilityStatus::Beta,
         privacy: None,
     },
@@ -289,6 +305,16 @@ const CAPABILITIES: &[Capability] = &[
         privacy: LOCAL_RAW,
     },
     Capability {
+        id: "intelligence.searxng_search",
+        name: "SearXNG Search",
+        domain: "intelligence",
+        category: CapabilityCategory::Intelligence,
+        description: "Search a configured self-hosted SearXNG instance from agent and MCP tools, returning normalized title, URL, snippet, and source results.",
+        how_to: "Set `[searxng] enabled = true` and `base_url` in config.toml, or use OPENHUMAN_SEARXNG_* environment variables.",
+        status: CapabilityStatus::Beta,
+        privacy: SEARXNG_RAW_TO_CONFIGURED_INSTANCE,
+    },
+    Capability {
         id: "intelligence.tool_registry",
         name: "Tool Registry",
         domain: "intelligence",
@@ -407,6 +433,17 @@ const CAPABILITIES: &[Capability] = &[
         how_to: "Conversations > Ask the assistant to run an Apify actor",
         status: CapabilityStatus::Beta,
         privacy: None,
+    },
+    Capability {
+        id: "skills.tinyfish_web_automation",
+        name: "TinyFish Web Automation",
+        domain: "skills",
+        category: CapabilityCategory::Skills,
+        description:
+            "Search the web, render JavaScript-heavy pages, and run goal-based browser automations through TinyFish.",
+        how_to: "Conversations > Ask the assistant to search, fetch, or automate a website with TinyFish",
+        status: CapabilityStatus::Beta,
+        privacy: DERIVED_TO_BACKEND,
     },
     Capability {
         id: "skills.toggle_enabled",

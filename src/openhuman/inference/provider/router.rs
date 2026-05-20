@@ -23,6 +23,8 @@ fn openhuman_tier_to_hint(model: &str) -> Option<&'static str> {
 pub struct Route {
     pub provider_name: String,
     pub model: String,
+    /// Known context window for `model` when discoverable (tokens).
+    pub context_window: Option<u64>,
 }
 
 /// Multi-model router — routes requests to different provider+model combos

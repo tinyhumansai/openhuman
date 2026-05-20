@@ -46,6 +46,15 @@ const es4: TranslationMap = {
   'composio.connect.subdomainInvalid':
     'Introduce solo el subdominio corto (p. ej. "acme"), no la URL completa. Debe contener solo letras, números y guiones.',
   'composio.connect.subdomainRequired': 'Ingresa tu subdominio de Atlassian para continuar.',
+  'composio.connect.dynamicsOrgNameLabel': 'Nombre de la organización de Dynamics 365',
+  'composio.connect.dynamicsOrgNameHint':
+    'Por ejemplo, "myorg" para myorg.crm.dynamics.com. Introduce solo el nombre corto de la organización, no la URL completa.',
+  'composio.connect.needsFieldsPrefix': 'Para conectar',
+  'composio.connect.needsFieldsSuffix':
+    'necesitamos un poco más de información. Completa los campos que faltan abajo y vuelve a intentarlo.',
+  'composio.connect.requiredFieldEmpty': 'Este campo es obligatorio.',
+  'composio.connect.wabaIdHint':
+    'Encuéntralo mediante GET /me/businesses y luego GET /{business_id}/owned_whatsapp_business_accounts usando tu token de acceso de Meta.',
   'composio.connect.wabaIdLabel': 'Etiqueta de ID de WABA',
   'composio.connect.wabaIdRequired':
     'Ingresa tu ID de cuenta de WhatsApp Business (WABA ID) para continuar.',
@@ -143,7 +152,15 @@ const es4: TranslationMap = {
   'onboarding.contextGathering.buildingProfile': 'Construyendo tu perfil...',
   'onboarding.contextGathering.continueToChat': 'Continuar al chat',
   'onboarding.contextGathering.errorDesc':
-    'No pudimos construir tu perfil completo en este momento, pero no pasa nada: puedes continuar y tu perfil se irá construyendo con el tiempo.',
+    'No pudimos construir tu perfil completo ahora mismo, pero no pasa nada — puedes continuar y tu perfil se construirá con el tiempo.',
+  'onboarding.contextGathering.coreAlive':
+    'El núcleo está disponible — el primer arranque puede tardar un minuto.',
+  'onboarding.contextGathering.coreAliveProbing': 'Comprobando la conexión con el núcleo…',
+  'onboarding.contextGathering.coreUnreachable':
+    'El núcleo no responde. Puedes continuar e intentarlo más tarde.',
+  'onboarding.contextGathering.stillWorkingDesc':
+    'El primer arranque puede tardar 30–60 segundos mientras preparamos tu modelo local y tus herramientas. Puedes continuar al chat en cualquier momento — la construcción del perfil sigue en segundo plano.',
+  'onboarding.contextGathering.stillWorkingTitle': 'Seguimos trabajando en tu perfil…',
   'onboarding.contextGathering.title': 'Recopilación de contexto',
   'openhuman.team_list_teams': 'Lista de equipos',
   'overlay.ariaAttention': 'Mensaje de atención',

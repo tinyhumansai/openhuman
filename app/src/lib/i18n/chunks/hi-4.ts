@@ -46,6 +46,15 @@ const hi4: TranslationMap = {
   'composio.connect.subdomainInvalid':
     'केवल छोटा सबडोमेन दर्ज करें (जैसे "acme"), पूर्ण URL नहीं। इसमें केवल अक्षर, संख्याएँ और हाइफ़न होने चाहिए।',
   'composio.connect.subdomainRequired': 'जारी रखने के लिए अपना Atlassian subdomain डालें।',
+  'composio.connect.dynamicsOrgNameLabel': 'Dynamics 365 संगठन का नाम',
+  'composio.connect.dynamicsOrgNameHint':
+    'उदाहरण के लिए, myorg.crm.dynamics.com के लिए "myorg"। केवल छोटा संगठन नाम दर्ज करें, पूरा URL नहीं।',
+  'composio.connect.needsFieldsPrefix': 'कनेक्ट करने के लिए',
+  'composio.connect.needsFieldsSuffix':
+    'हमें कुछ अतिरिक्त जानकारी चाहिए। नीचे लापता फ़ील्ड भरें और फिर से प्रयास करें।',
+  'composio.connect.requiredFieldEmpty': 'यह फ़ील्ड आवश्यक है।',
+  'composio.connect.wabaIdHint':
+    'अपने Meta एक्सेस टोकन का उपयोग करके GET /me/businesses फिर GET /{business_id}/owned_whatsapp_business_accounts के माध्यम से इसे प्राप्त करें।',
   'composio.connect.wabaIdLabel': 'Waba आईडी लेबल',
   'composio.connect.wabaIdRequired':
     'जारी रखने के लिए अपना WhatsApp Business Account ID (WABA ID) डालें।',
@@ -144,6 +153,14 @@ const hi4: TranslationMap = {
   'onboarding.contextGathering.continueToChat': 'चैट पर जाएं',
   'onboarding.contextGathering.errorDesc':
     'हम अभी आपकी पूरी प्रोफ़ाइल नहीं बना सके, लेकिन कोई बात नहीं — आप जारी रख सकते हैं और आपकी प्रोफ़ाइल समय के साथ बनती जाएगी।',
+  'onboarding.contextGathering.coreAlive':
+    'कोर पहुँच योग्य है — पहली बार लॉन्च करने में एक मिनट लग सकता है।',
+  'onboarding.contextGathering.coreAliveProbing': 'कोर कनेक्शन की जाँच की जा रही है…',
+  'onboarding.contextGathering.coreUnreachable':
+    'कोर प्रतिक्रिया नहीं दे रहा है। आप जारी रख सकते हैं और बाद में पुनः प्रयास कर सकते हैं।',
+  'onboarding.contextGathering.stillWorkingDesc':
+    'हम आपके स्थानीय मॉडल और टूल्स को तैयार कर रहे हैं, पहली बार लॉन्च करने में 30–60 सेकंड लग सकते हैं। आप कभी भी चैट पर जा सकते हैं — प्रोफ़ाइल पृष्ठभूमि में बनती रहेगी।',
+  'onboarding.contextGathering.stillWorkingTitle': 'आपकी प्रोफ़ाइल पर अब भी काम चल रहा है…',
   'onboarding.contextGathering.title': 'कॉन्टेक्स्ट गैदरिंग',
   'openhuman.team_list_teams': 'टीम सूची टीमें',
   'overlay.ariaAttention': 'ध्यान संदेश',

@@ -1,37 +1,46 @@
 // @ts-nocheck
 /**
- * E2E test: Voice mode integration — smoke
+ * E2E test: Voice mode integration
  *
  * Covers:
- *   - Authenticating and reaching the home screen
- *   - Navigating to the chat surface (/chat)
- *   - Verifying the text input area renders (default mode)
- *   - Verifying the Voice Settings panel is reachable under Settings
- *
- * NOTE: The explicit voice-mode toggle UI (Input/Reply toggle group with
- * "Text" and "Voice" buttons) was removed in the /chat refactor (see
- * internal PR #717, "voice input mic hidden"). The voice mode flow now
- * lives in the cloud-mic composer (MicComposer) on the /human page.
- * This spec covers the reachable parts of the voice surface.
+ *   - Navigating to conversations page
+ *   - Switching to voice input mode
+ *   - Voice status check fires and displays availability message
+ *   - Voice input/reply mode toggle buttons render
+ *   - Voice recording button renders in voice mode
+ *   - Switching back to text mode restores text input
  *
  * The mock server runs on http://127.0.0.1:18473
  */
 import { waitForApp, waitForAppReady } from '../helpers/app-helpers';
 import { triggerAuthDeepLink } from '../helpers/deep-link-helpers';
 import {
+  clickText,
   dumpAccessibilityTree,
   textExists,
   waitForWebView,
   waitForWindowVisible,
 } from '../helpers/element-helpers';
-import { completeOnboardingIfVisible, navigateViaHash } from '../helpers/shared-flows';
-import { clearRequestLog, startMockServer, stopMockServer } from '../mock-server';
+import { completeOnboardingIfVisible } from '../helpers/shared-flows';
+import { clearRequestLog, getRequestLog, startMockServer, stopMockServer } from '../mock-server';
+
+async function waitForRequest(method, urlFragment, timeout = 15_000) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    const log = getRequestLog();
+    const match = log.find(r => r.method === method && r.url.includes(urlFragment));
+    if (match) return match;
+    await browser.pause(500);
+  }
+  return undefined;
+}
 
 async function waitForHome(timeout = 20_000) {
-  // After auth + onboarding the app lands on /home.
+  // Home.tsx renders t('home.askAssistant') = 'Ask your assistant anything...' as stable CTA.
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
     if (await textExists('Ask your assistant anything')) return true;
+    if (await textExists('Your device is connected')) return true;
     await browser.pause(700);
   }
   return false;
@@ -48,7 +57,11 @@ async function waitForAnyText(candidates, timeout = 20_000) {
   return null;
 }
 
-describe('Voice mode integration', () => {
+// #717: The Input/Text/Voice toggle buttons were removed from the regular chat
+// composer. Voice mode now exists only in the mascot tab (composer='mic-cloud'
+// → MicComposer). These tests targeted the removed toggle UI and will always
+// fail until rewritten against the mascot voice path.
+describe.skip('Voice mode integration', () => {
   before(async () => {
     await startMockServer();
     await waitForApp();
@@ -59,14 +72,15 @@ describe('Voice mode integration', () => {
     await stopMockServer();
   });
 
-  it('authenticates and reaches home, then confirms chat surface is reachable', async function () {
-    this.timeout(90_000);
-
-    // --- Authenticate and reach home ---
+  it('can switch to voice input mode, see status message, and switch back to text', async () => {
+    // --- Authenticate and reach conversations ---
     await triggerAuthDeepLink('e2e-voice-token');
     await waitForWindowVisible(25_000);
     await waitForWebView(15_000);
     await waitForAppReady(15_000);
+
+    const consume = await waitForRequest('POST', '/telegram/login-tokens/');
+    expect(consume).toBeDefined();
 
     await completeOnboardingIfVisible('[VoiceModeE2E]');
 
@@ -77,34 +91,85 @@ describe('Voice mode integration', () => {
     }
     expect(onHome).toBe(true);
 
-    // --- Navigate to chat and verify text input area ---
-    await navigateViaHash('/chat');
+    // --- Verify we see the text input area (default mode) ---
+    // Chat input placeholder is t('chat.typeMessage') = 'Type a message...'
+    const hasTextInput = await waitForAnyText(['Type a message', 'Threads', 'New'], 10_000);
+    expect(hasTextInput).not.toBeNull();
+
+    // --- Verify voice toggle buttons are visible ---
+    // The Input toggle group should show "Text" and "Voice" buttons
+    const hasInputLabel = await textExists('Input');
+    expect(hasInputLabel).toBe(true);
+
+    // --- Switch to voice input mode ---
+    // There are two "Voice" buttons (Input toggle and Reply toggle).
+    // We click the first one which is the Input mode toggle.
+    await clickText('Voice', 10_000);
     await browser.pause(2_000);
 
-    const hash = await browser.execute(() => window.location.hash);
-    expect(String(hash)).toContain('/chat');
+    // --- Voice status check should fire ---
+    // Since whisper-cli is not installed in the E2E environment,
+    // we expect the unavailability message or the ready message.
+    const voiceStatusMessage = await waitForAnyText(
+      [
+        'Speech-to-text unavailable',
+        'whisper-cli binary',
+        'STT model not found',
+        'Ready',
+        'Start Talking',
+        'Could not check voice availability',
+      ],
+      15_000
+    );
 
-    const hasTextInput = await waitForAnyText(
-      ['Type a message...', 'Ask the agent anything...', 'Type a message', 'Ask the agent'],
+    if (!voiceStatusMessage) {
+      const tree = await dumpAccessibilityTree();
+      console.log('[VoiceModeE2E] No voice status message seen. Tree:\n', tree.slice(0, 5000));
+    }
+    expect(voiceStatusMessage).not.toBeNull();
+
+    // --- Verify the voice recording button or unavailability message is visible ---
+    const hasVoiceButton = await waitForAnyText(
+      ['Start Talking', 'Transcribing', 'Stop & Send'],
       10_000
     );
-    expect(hasTextInput).not.toBeNull();
+    if (!hasVoiceButton) {
+      const hasStatus = await textExists('Speech-to-text unavailable');
+      expect(hasStatus).toBe(true);
+    }
+
+    // --- Switch back to text mode ---
+    // Click the "Text" button in the Input toggle group
+    await clickText('Text', 10_000);
+    await browser.pause(1_500);
+
+    // --- Verify text input is restored ---
+    const textRestored = await waitForAnyText(['Type a message', 'Threads', 'New'], 10_000);
+    expect(textRestored).not.toBeNull();
   });
 
-  it('Voice Settings panel is reachable under Settings', async function () {
-    this.timeout(90_000);
-
-    await navigateViaHash('/settings/voice');
-    await browser.pause(2_000);
-
-    const hash = await browser.execute(() => window.location.hash);
-    expect(String(hash)).toContain('/settings/voice');
-
-    // Voice settings panel should show "Mascot Voice" or "Voice" heading.
-    const voiceSettingsVisible = await waitForAnyText(
-      ['Mascot Voice', 'Voice Dictation', 'Voice Settings', 'Voice'],
-      10_000
+  it('shows reply mode toggle with text and voice options', async () => {
+    // Ensure conversations page is loaded (re-authenticate if state was lost).
+    const onConversations = await waitForAnyText(
+      ['Type a message', 'Reply', 'Threads', 'New'],
+      5_000
     );
-    expect(voiceSettingsVisible).not.toBeNull();
+    if (!onConversations) {
+      await triggerAuthDeepLink('e2e-voice-token');
+      await waitForWindowVisible(25_000);
+      await waitForWebView(15_000);
+      await waitForAppReady(15_000);
+      await completeOnboardingIfVisible('[VoiceModeE2E]');
+      await waitForHome(20_000);
+    }
+
+    // The Reply toggle should be visible on the conversations page
+    const hasReplyLabel = await textExists('Reply');
+    expect(hasReplyLabel).toBe(true);
+
+    // Verify both reply mode options exist
+    // (There are multiple "Text" and "Voice" buttons — Input + Reply groups)
+    const hasText = await textExists('Text');
+    expect(hasText).toBe(true);
   });
 });

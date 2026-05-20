@@ -128,8 +128,8 @@ const SettingsHome = () => {
         },
         {
           id: 'appearance',
-          title: t('settings.appearance'),
-          description: t('settings.appearanceDesc'),
+          title: t('settings.appearance.title'),
+          description: t('settings.appearance.menuDesc'),
           icon: (
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path
@@ -144,8 +144,8 @@ const SettingsHome = () => {
         },
         {
           id: 'mascot',
-          title: t('settings.mascot'),
-          description: t('settings.mascotDesc'),
+          title: t('settings.mascot.menuTitle'),
+          description: t('settings.mascot.menuDesc'),
           icon: (
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path

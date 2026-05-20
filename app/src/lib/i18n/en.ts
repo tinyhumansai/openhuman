@@ -1359,6 +1359,9 @@ const en: TranslationMap = {
   'composio.connect.atlassianSubdomainHint': 'acme',
   'composio.connect.atlassianSubdomainLabel': 'Atlassian subdomain',
   'composio.connect.connect': 'Connect',
+  'composio.connect.dynamicsOrgNameHint':
+    'For example, "myorg" for myorg.crm.dynamics.com. Enter the short org name only, not the full URL.',
+  'composio.connect.dynamicsOrgNameLabel': 'Dynamics 365 Organization Name',
   'composio.connect.connectionFailed': 'Connection failed (status: ${hit.status}).',
   'composio.connect.disconnectFailed': 'Disconnect failed: {msg}',
   'composio.connect.disconnecting': 'Disconnecting…',
@@ -1367,6 +1370,9 @@ const en: TranslationMap = {
     "account. We'll open a browser window, you approve access there, and this app will detect the connection automatically.",
   'composio.connect.isConnected': 'is connected.',
   'composio.connect.manage': 'Manage',
+  'composio.connect.needsFieldsPrefix': 'To connect',
+  'composio.connect.needsFieldsSuffix':
+    'we need a bit more information. Fill in the missing fields below and try again.',
   'composio.connect.needsSubdomain': 'To connect',
   'composio.connect.needsSubdomainSuffix':
     'enter your Atlassian subdomain (e.g. acme for acme.atlassian.net) and try again.',
@@ -1379,12 +1385,15 @@ const en: TranslationMap = {
     "OpenHuman's own agent permissions are controlled below as read, write, and admin toggles.",
   'composio.connect.reopenBrowser': 'Reopen browser',
   'composio.connect.requestingUrl': 'Requesting connect URL…',
+  'composio.connect.requiredFieldEmpty': 'This field is required.',
   'composio.connect.retryConnection': 'Retry connection',
   'composio.connect.scopeLoadError': "Couldn't load scope preferences: {msg}",
   'composio.connect.scopeSaveError': "Couldn't save {key} scope: {msg}",
   'composio.connect.subdomainInvalid':
     'Enter the short subdomain only (e.g. "acme"), not the full URL. It should contain only letters, numbers, and hyphens.',
   'composio.connect.subdomainRequired': 'Please enter your Atlassian subdomain to continue.',
+  'composio.connect.wabaIdHint':
+    'Find it via GET /me/businesses then GET /{business_id}/owned_whatsapp_business_accounts using your Meta access token.',
   'composio.connect.wabaIdLabel': 'WhatsApp Business Account ID (WABA ID)',
   'composio.connect.wabaIdRequired':
     'Please enter your WhatsApp Business Account ID (WABA ID) to continue.',
@@ -1484,8 +1493,15 @@ const en: TranslationMap = {
   'onboarding.contextGathering.buildingDesc': 'Gathering context from your connected accounts…',
   'onboarding.contextGathering.buildingProfile': 'Building your profile...',
   'onboarding.contextGathering.continueToChat': 'Continue to chat',
+  'onboarding.contextGathering.coreAlive': 'Core is reachable — first launch can take a minute.',
+  'onboarding.contextGathering.coreAliveProbing': 'Checking core connection…',
+  'onboarding.contextGathering.coreUnreachable':
+    'Core is not responding. You can continue and try again later.',
   'onboarding.contextGathering.errorDesc':
     "Your chat is ready. We'll keep building your full profile in the background, so you can continue now and refine it over time.",
+  'onboarding.contextGathering.stillWorkingDesc':
+    'First launch can take 30–60 seconds while we warm up your local model and tools. You can continue to chat at any time — profile build keeps running in the background.',
+  'onboarding.contextGathering.stillWorkingTitle': 'Still working on your profile…',
   'onboarding.contextGathering.title': 'Context Gathering',
   'openhuman.team_list_teams': 'Team list teams',
   'overlay.ariaAttention': 'Attention message',
@@ -1862,6 +1878,16 @@ const en: TranslationMap = {
   'settings.localModel.status.notFound': 'Not found',
   'settings.localModel.status.notRunning': 'Not running',
   'settings.localModel.status.ollamaBinaryPath': 'Ollama binary path',
+  'localModel.ollamaServer.helperText': 'Example: http://192.168.1.5:11434',
+  'localModel.ollamaServer.label': 'Ollama Server URL',
+  'localModel.ollamaServer.modelCount': 'models',
+  'localModel.ollamaServer.placeholder': 'http://localhost:11434',
+  'localModel.ollamaServer.reachable': 'Reachable',
+  'localModel.ollamaServer.resetButton': 'Reset to default',
+  'localModel.ollamaServer.saveButton': 'Save',
+  'localModel.ollamaServer.testButton': 'Test Connection',
+  'localModel.ollamaServer.unreachable': 'Unreachable',
+  'localModel.ollamaServer.validationError': 'Must be a valid http:// or https:// URL',
   'settings.localModel.status.ollamaDiagnostics': 'Ollama Diagnostics',
   'settings.localModel.status.ollamaNotInstalled': 'Ollama runtime unavailable',
   'settings.localModel.status.ollamaNotInstalledDesc':
@@ -1883,6 +1909,44 @@ const en: TranslationMap = {
   'settings.localModel.status.triggering': 'Triggering...',
   'settings.localModel.status.unavailable': 'Unavailable',
   'settings.localModel.status.working': 'Working...',
+  'settings.developerMenu.ai.title': 'AI Configuration',
+  'settings.developerMenu.ai.desc':
+    'Cloud providers, local Ollama models, and per-workload routing',
+  'settings.developerMenu.screenAwareness.title': 'Screen Awareness',
+  'settings.developerMenu.screenAwareness.desc':
+    'Screen capture permissions, monitoring policy, and session controls',
+  'settings.developerMenu.messagingChannels.title': 'Messaging Channels',
+  'settings.developerMenu.messagingChannels.desc':
+    'Configure Telegram/Discord auth modes and default channel routing',
+  'settings.developerMenu.tools.title': 'Tools',
+  'settings.developerMenu.tools.desc':
+    'Enable or disable capabilities OpenHuman can use on your behalf',
+  'settings.developerMenu.agentChat.title': 'Agent Chat',
+  'settings.developerMenu.agentChat.desc':
+    'Test agent conversation with model and temperature overrides',
+  'settings.developerMenu.cronJobs.title': 'Cron Jobs',
+  'settings.developerMenu.cronJobs.desc': 'View and configure scheduled jobs for runtime skills',
+  'settings.developerMenu.localModelDebug.title': 'Local Model Debug',
+  'settings.developerMenu.localModelDebug.desc':
+    'Ollama config, asset downloads, model tests, and diagnostics',
+  'settings.developerMenu.webhooks.title': 'Webhooks',
+  'settings.developerMenu.webhooks.desc':
+    'Inspect runtime webhook registrations and captured request logs',
+  'settings.developerMenu.intelligence.title': 'Intelligence',
+  'settings.developerMenu.intelligence.desc':
+    'Memory workspace, subconscious engine, dreams, and settings',
+  'settings.developerMenu.notificationRouting.title': 'Notification Routing',
+  'settings.developerMenu.notificationRouting.desc':
+    'AI importance scoring and orchestrator escalation for integration alerts',
+  'settings.developerMenu.composeioTriggers.title': 'ComposeIO Triggers',
+  'settings.developerMenu.composeioTriggers.desc': 'View ComposeIO trigger history and archive',
+  'settings.developerMenu.composioRouting.title': 'Composio Routing (Direct Mode)',
+  'settings.developerMenu.composioRouting.desc':
+    'Bring your own Composio API key and route calls directly to backend.composio.dev',
+  'settings.developerMenu.integrationTriggers.title': 'Integration Triggers',
+  'settings.developerMenu.integrationTriggers.desc':
+    'Configure AI triage settings for Composio integration triggers',
+  'settings.appearance.menuDesc': 'Pick light, dark, or match your system theme',
   'settings.appearance.title': 'Appearance',
   'settings.appearance.themeHeading': 'Theme',
   'settings.appearance.themeAria': 'Theme',
@@ -1912,6 +1976,8 @@ const en: TranslationMap = {
   'settings.mascot.title': 'OpenHuman',
   'settings.mascot.loadingLibrary': 'Loading OpenHuman library…',
   'settings.mascot.localDefault': 'Local OpenHuman (default)',
+  'settings.mascot.menuTitle': 'Mascot',
+  'settings.mascot.menuDesc': 'Pick the mascot color used across the app',
   'settings.mascot.noCharacters': 'No OpenHuman characters are available yet',
   'settings.mascot.noColorVariants': 'No color variants',
   'settings.mascot.voice.current': 'current',

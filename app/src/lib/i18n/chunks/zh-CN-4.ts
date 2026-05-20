@@ -46,6 +46,14 @@ const zhCN4: TranslationMap = {
   'composio.connect.subdomainInvalid':
     '仅输入短子域名（例如 "acme"），而非完整 URL。只能包含字母、数字和连字符。',
   'composio.connect.subdomainRequired': '请输入你的 Atlassian 子域名以继续。',
+  'composio.connect.dynamicsOrgNameLabel': 'Dynamics 365 组织名称',
+  'composio.connect.dynamicsOrgNameHint':
+    '例如，myorg.crm.dynamics.com 的组织名称为 "myorg"。仅输入简短的组织名称，而不是完整 URL。',
+  'composio.connect.needsFieldsPrefix': '若要连接',
+  'composio.connect.needsFieldsSuffix': '我们需要一些额外信息。请填写下面缺失的字段并重试。',
+  'composio.connect.requiredFieldEmpty': '此字段为必填项。',
+  'composio.connect.wabaIdHint':
+    '通过 Meta 访问令牌调用 GET /me/businesses，然后 GET /{business_id}/owned_whatsapp_business_accounts 获取。',
   'composio.connect.wabaIdLabel': 'WhatsApp 企业账户 ID',
   'composio.connect.wabaIdRequired': '请输入你的 WhatsApp 企业账户 ID（WABA ID）以继续。',
   'composio.connect.waitingFor': '等待中',
@@ -141,7 +149,13 @@ const zhCN4: TranslationMap = {
   'onboarding.contextGathering.buildingProfile': '正在构建你的档案...',
   'onboarding.contextGathering.continueToChat': '前往对话',
   'onboarding.contextGathering.errorDesc':
-    '暂时无法完整构建你的档案，但没关系——你可以继续，档案会随时间逐步完善。',
+    '我们暂时无法构建你的完整资料，但没关系——你可以继续，资料会随时间逐步完善。',
+  'onboarding.contextGathering.coreAlive': '核心可访问 — 首次启动可能需要一分钟。',
+  'onboarding.contextGathering.coreAliveProbing': '正在检查核心连接…',
+  'onboarding.contextGathering.coreUnreachable': '核心未响应。你可以继续，稍后再试。',
+  'onboarding.contextGathering.stillWorkingDesc':
+    '我们正在预热本地模型与工具，首次启动可能需要 30–60 秒。你可以随时进入对话 — 档案构建会在后台继续进行。',
+  'onboarding.contextGathering.stillWorkingTitle': '仍在生成你的档案…',
   'onboarding.contextGathering.title': '上下文收集',
   'openhuman.team_list_teams': '团队列表',
   'overlay.ariaAttention': '注意消息',

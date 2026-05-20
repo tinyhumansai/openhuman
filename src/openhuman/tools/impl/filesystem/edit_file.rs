@@ -91,11 +91,6 @@ impl Tool for EditFileTool {
                 "Rate limit exceeded: too many actions in the last hour",
             ));
         }
-        if !self.security.is_path_allowed(path) {
-            return Ok(ToolResult::error(format!(
-                "Path not allowed by security policy: {path}"
-            )));
-        }
         if !self.security.record_action() {
             return Ok(ToolResult::error(
                 "Rate limit exceeded: action budget exhausted",
@@ -116,16 +111,11 @@ impl Tool for EditFileTool {
             }
         }
 
-        let resolved = match tokio::fs::canonicalize(&full).await {
+        // Security check: validate path string, resolve symlinks, confirm workspace containment.
+        let resolved = match self.security.validate_path(path).await {
             Ok(p) => p,
-            Err(e) => return Ok(ToolResult::error(format!("Failed to resolve path: {e}"))),
+            Err(msg) => return Ok(ToolResult::error(msg)),
         };
-        if !self.security.is_resolved_path_allowed(&resolved) {
-            return Ok(ToolResult::error(format!(
-                "Resolved path escapes workspace: {}",
-                resolved.display()
-            )));
-        }
 
         if let Ok(meta) = tokio::fs::metadata(&resolved).await {
             if meta.len() > MAX_FILE_BYTES {

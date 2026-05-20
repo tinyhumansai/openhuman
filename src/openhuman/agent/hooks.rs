@@ -24,6 +24,10 @@ pub struct TurnContext {
     pub turn_duration_ms: u64,
     /// Optional session identifier for tracking across multiple turns.
     pub session_id: Option<String>,
+    /// Canonical agent definition id that produced the turn, when known.
+    pub agent_id: Option<String>,
+    /// Runtime entrypoint/channel that produced the turn, when known.
+    pub entrypoint: Option<String>,
     /// How many times the LLM was called during this turn.
     pub iteration_count: usize,
 }
@@ -181,6 +185,8 @@ mod tests {
             }],
             turn_duration_ms: 500,
             session_id: Some("sess-1".into()),
+            agent_id: Some("orchestrator".into()),
+            entrypoint: Some("cli".into()),
             iteration_count: 2,
         };
         let json = serde_json::to_string(&ctx).unwrap();
@@ -199,6 +205,8 @@ mod tests {
             tool_calls: vec![],
             turn_duration_ms: 1,
             session_id: None,
+            agent_id: None,
+            entrypoint: None,
             iteration_count: 1,
         };
         // Should not panic

@@ -19,8 +19,8 @@ const developerItems = [
   // top-level menu space.
   {
     id: 'ai',
-    titleKey: 'devOptions.menuAi',
-    descriptionKey: 'devOptions.menuAiDesc',
+    titleKey: 'settings.developerMenu.ai.title',
+    descriptionKey: 'settings.developerMenu.ai.desc',
     route: 'ai',
     icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -35,8 +35,8 @@ const developerItems = [
   },
   {
     id: 'screen-intelligence',
-    titleKey: 'devOptions.menuScreenAware',
-    descriptionKey: 'devOptions.menuScreenAwareDesc',
+    titleKey: 'settings.developerMenu.screenAwareness.title',
+    descriptionKey: 'settings.developerMenu.screenAwareness.desc',
     route: 'screen-intelligence',
     icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -51,8 +51,8 @@ const developerItems = [
   },
   {
     id: 'messaging',
-    titleKey: 'devOptions.menuMessaging',
-    descriptionKey: 'devOptions.menuMessagingDesc',
+    titleKey: 'settings.developerMenu.messagingChannels.title',
+    descriptionKey: 'settings.developerMenu.messagingChannels.desc',
     route: 'messaging',
     icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -67,8 +67,8 @@ const developerItems = [
   },
   {
     id: 'tools',
-    titleKey: 'devOptions.menuTools',
-    descriptionKey: 'devOptions.menuToolsDesc',
+    titleKey: 'settings.developerMenu.tools.title',
+    descriptionKey: 'settings.developerMenu.tools.desc',
     route: 'tools',
     icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -89,8 +89,8 @@ const developerItems = [
   },
   {
     id: 'agent-chat',
-    titleKey: 'devOptions.menuAgentChat',
-    descriptionKey: 'devOptions.menuAgentChatDesc',
+    titleKey: 'settings.developerMenu.agentChat.title',
+    descriptionKey: 'settings.developerMenu.agentChat.desc',
     route: 'agent-chat',
     icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -105,8 +105,8 @@ const developerItems = [
   },
   {
     id: 'cron-jobs',
-    titleKey: 'devOptions.menuCronJobs',
-    descriptionKey: 'devOptions.menuCronJobsDesc',
+    titleKey: 'settings.developerMenu.cronJobs.title',
+    descriptionKey: 'settings.developerMenu.cronJobs.desc',
     route: 'cron-jobs',
     icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -121,8 +121,8 @@ const developerItems = [
   },
   {
     id: 'local-model-debug',
-    titleKey: 'devOptions.menuLocalModelDebug',
-    descriptionKey: 'devOptions.menuLocalModelDebugDesc',
+    titleKey: 'settings.developerMenu.localModelDebug.title',
+    descriptionKey: 'settings.developerMenu.localModelDebug.desc',
     route: 'local-model-debug',
     icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -137,8 +137,8 @@ const developerItems = [
   },
   {
     id: 'webhooks-debug',
-    titleKey: 'devOptions.menuWebhooksDebug',
-    descriptionKey: 'devOptions.menuWebhooksDebugDesc',
+    titleKey: 'settings.developerMenu.webhooks.title',
+    descriptionKey: 'settings.developerMenu.webhooks.desc',
     route: 'webhooks-debug',
     icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -153,8 +153,8 @@ const developerItems = [
   },
   {
     id: 'intelligence',
-    titleKey: 'devOptions.menuIntelligence',
-    descriptionKey: 'devOptions.menuIntelligenceDesc',
+    titleKey: 'settings.developerMenu.intelligence.title',
+    descriptionKey: 'settings.developerMenu.intelligence.desc',
     route: 'intelligence',
     icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -169,8 +169,8 @@ const developerItems = [
   },
   {
     id: 'notification-routing',
-    titleKey: 'devOptions.menuNotificationRouting',
-    descriptionKey: 'devOptions.menuNotificationRoutingDesc',
+    titleKey: 'settings.developerMenu.notificationRouting.title',
+    descriptionKey: 'settings.developerMenu.notificationRouting.desc',
     route: 'notification-routing',
     icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -185,8 +185,8 @@ const developerItems = [
   },
   {
     id: 'webhooks-triggers',
-    titleKey: 'devOptions.menuComposeIOTriggers',
-    descriptionKey: 'devOptions.menuComposeIOTriggersDesc',
+    titleKey: 'settings.developerMenu.composeioTriggers.title',
+    descriptionKey: 'settings.developerMenu.composeioTriggers.desc',
     route: 'webhooks-triggers',
     icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -201,8 +201,8 @@ const developerItems = [
   },
   {
     id: 'composio-routing',
-    titleKey: 'devOptions.menuComposioRouting',
-    descriptionKey: 'devOptions.menuComposioRoutingDesc',
+    titleKey: 'settings.developerMenu.composioRouting.title',
+    descriptionKey: 'settings.developerMenu.composioRouting.desc',
     route: 'composio-routing',
     icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -217,8 +217,8 @@ const developerItems = [
   },
   {
     id: 'composio-triggers',
-    titleKey: 'devOptions.menuComposioTriggers',
-    descriptionKey: 'devOptions.menuComposioTriggersDesc',
+    titleKey: 'settings.developerMenu.integrationTriggers.title',
+    descriptionKey: 'settings.developerMenu.integrationTriggers.desc',
     route: 'composio-triggers',
     icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
