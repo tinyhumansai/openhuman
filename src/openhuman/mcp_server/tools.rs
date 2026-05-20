@@ -959,7 +959,9 @@ mod tests {
         for tool in tools {
             let name = tool["name"].as_str().expect("tool name");
             assert!(
-                tool.get("annotations").map(Value::is_object).unwrap_or(false),
+                tool.get("annotations")
+                    .map(Value::is_object)
+                    .unwrap_or(false),
                 "tool `{name}` is missing a serialized `annotations` object",
             );
         }
@@ -1021,7 +1023,9 @@ mod tests {
             .find(|spec| spec.name == "agent.run_subagent")
             .expect("agent.run_subagent must be registered");
         assert_eq!(
-            spec.annotations.get("readOnlyHint").and_then(Value::as_bool),
+            spec.annotations
+                .get("readOnlyHint")
+                .and_then(Value::as_bool),
             Some(false)
         );
         assert_eq!(
