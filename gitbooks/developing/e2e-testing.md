@@ -113,6 +113,10 @@ Requires Docker Desktop or Colima. The repo is bind-mounted so builds persist be
 3. **Use `hasAppChrome()`** instead of checking for `XCUIElementTypeMenuBar`
 4. **Use `waitForWebView()`** instead of checking for `XCUIElementTypeWebView`
 5. For macOS-only tests, use `process.platform` guards or separate spec files
+6. Use `navigateViaHash(route)` for hash routes; it waits for the hash,
+   `document.readyState`, and a mounted React root before returning. After
+   onboarding, `walkOnboarding()` also waits for `#/home` plus a Home-page
+   marker before specs navigate elsewhere.
 
 ---
 
