@@ -16,6 +16,7 @@ For the full contributor reference, see [`CONTRIBUTING.md`](CONTRIBUTING.md).
 - [Step 5 — Create your branch](#step-5--create-your-branch)
 - [Step 6 — Make your change and verify it](#step-6--make-your-change-and-verify-it)
 - [Step 7 — Push and open a Pull Request](#step-7--push-and-open-a-pull-request)
+- [Optional — Let an AI coding agent guide you](#optional--let-an-ai-coding-agent-guide-you)
 - [Keeping your fork up to date](#keeping-your-fork-up-to-date)
 - [Troubleshooting common issues](#troubleshooting-common-issues)
 
@@ -37,7 +38,8 @@ OpenHuman is a desktop AI assistant app. The codebase has three main parts:
 
 ## Step 1 — Install the required tools
 
-### macOS (recommended for beginners)
+<details>
+<summary><strong>macOS setup</strong> (recommended for beginners)</summary>
 
 Install [Homebrew](https://brew.sh) first if you don't have it:
 
@@ -64,7 +66,7 @@ brew install cmake
 xcode-select --install
 ```
 
-### Verify everything is installed
+Verify everything is installed:
 
 ```bash
 node --version     # should be v24.x.x or higher
@@ -74,6 +76,67 @@ cmake --version    # any recent version
 ```
 
 > **Node version warning**: The project requires Node 24+. If you see a warning like `Unsupported engine: wanted >=24.0.0 (current: v22.x.x)`, upgrade Node. Using `nvm`? Run `nvm install 24 && nvm use 24`.
+
+</details>
+
+<details>
+<summary><strong>Windows setup</strong></summary>
+
+Open PowerShell or Windows Terminal.
+
+Install Node.js 24+ with `nvm-windows`:
+
+```powershell
+winget install CoreyButler.NVMforWindows
+```
+
+Close and reopen your terminal, then run:
+
+```powershell
+nvm install 24
+nvm use 24
+node --version     # should be v24.x.x or higher
+```
+
+Install pnpm:
+
+```powershell
+npm install -g pnpm@10.10.0
+pnpm --version     # should be 10.10.0
+```
+
+Install Rust:
+
+```powershell
+winget install Rustlang.Rustup
+```
+
+Close and reopen your terminal, then run:
+
+```powershell
+rustup toolchain install 1.93.0 --profile minimal
+rustup component add rustfmt clippy --toolchain 1.93.0
+rustc --version    # should be 1.93.0
+```
+
+Install CMake:
+
+```powershell
+winget install Kitware.CMake
+cmake --version    # any recent version
+```
+
+Install Visual Studio Build Tools:
+
+```powershell
+winget install Microsoft.VisualStudio.2022.BuildTools
+```
+
+When the installer opens, select **Desktop development with C++**. Make sure it includes the Windows SDK and MSVC v143 build tools.
+
+> **Node version warning**: The project requires Node 24+. If you see a warning like `Unsupported engine: wanted >=24.0.0 (current: v22.x.x)`, run `nvm install 24 && nvm use 24`.
+
+</details>
 
 ---
 
@@ -229,6 +292,24 @@ git push -u origin your-branch-name
 4. Fill in the PR template completely
 5. Link the issue with `Closes #ISSUE_NUMBER` in the description
 6. Submit
+
+---
+
+## Optional — Let an AI coding agent guide you
+
+If you use Claude Code, Cursor, AmpCode, Codex, or another coding agent, you can paste this prompt after cloning the repo:
+
+```text
+I want to make my first contribution to OpenHuman. First read these upstream docs:
+
+CONTRIBUTING.md: https://raw.githubusercontent.com/tinyhumansai/openhuman/main/CONTRIBUTING.md
+AGENTS.md: https://raw.githubusercontent.com/tinyhumansai/openhuman/main/AGENTS.md
+CLAUDE.md: https://raw.githubusercontent.com/tinyhumansai/openhuman/main/CLAUDE.md
+
+If you can see the cloned repo locally, also read those files directly from the repo. Then guide me step by step: verify my tools, install dependencies, initialize submodules, create a branch, make the smallest safe change for my issue, run the right checks, and prepare a PR. Do not skip failed checks; explain any blocked command with the exact command and error.
+```
+
+The agent should still ask before destructive actions like deleting files, resetting branches, or force-pushing. You are responsible for reviewing the final diff before opening a PR.
 
 ---
 

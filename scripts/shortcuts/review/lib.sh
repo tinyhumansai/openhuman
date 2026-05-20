@@ -28,6 +28,26 @@ require() {
   done
 }
 
+gh_assign_self_issue() {
+  local issue="$1"
+  local repo="$2"
+  if gh issue edit "$issue" -R "$repo" --add-assignee "@me" >/dev/null 2>&1; then
+    info "assigned issue #$issue to @me"
+  else
+    warn "could not assign issue #$issue to @me; continuing"
+  fi
+}
+
+gh_assign_self_pr() {
+  local pr="$1"
+  local repo="$2"
+  if gh pr edit "$pr" -R "$repo" --add-assignee "@me" >/dev/null 2>&1; then
+    info "assigned PR #$pr to @me"
+  else
+    warn "could not assign PR #$pr to @me; continuing"
+  fi
+}
+
 # Summarize free-form text via a local LLM CLI (expects `-p <prompt>`).
 # Usage: summarize_text <tool> <input>
 # Tools used here: gemini (default for summaries), claude, or any CLI that

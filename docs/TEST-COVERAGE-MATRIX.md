@@ -124,6 +124,7 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 | 3.1.2 | Model Download & Installation | WD    | `local-model-runtime.spec.ts`                            | ✅     |       |
 | 3.1.3 | Model Version Handling        | RU    | `src/openhuman/local_ai/model_ids.rs`                    | ✅     |       |
 | 3.1.4 | LM Studio Model Discovery     | RU+RI | `src/openhuman/local_ai/service/ollama_admin_tests.rs`, `tests/json_rpc_e2e.rs` | ✅ | Uses LM Studio's OpenAI-compatible `/v1/models` surface |
+| 3.1.5 | Model Context-Window Requirement Gate | RU+VU | `src/openhuman/inference/local/model_requirements.rs`, `src/openhuman/inference/local/ollama.rs`, `src/openhuman/inference/local/service/ollama_admin_tests.rs`, `app/src/components/settings/panels/local-model/ModelStatusSection.test.tsx` | ✅ | Rejects Ollama models whose native context window is below the memory-layer minimum (`local_ai.model_context_check`) |
 
 ### 3.2 Runtime Execution
 
@@ -188,6 +189,7 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 | 4.3.1 | Tool Trigger via Chat      | WD    | `skill-execution-flow.spec.ts`, `skill-multi-round.spec.ts` | ✅     |       |
 | 4.3.2 | Permission-Based Execution | RU+WD | `src/openhuman/tools/`, `skill-execution-flow.spec.ts`      | ✅     |       |
 | 4.3.3 | Tool Failure Handling      | WD    | `skill-execution-flow.spec.ts`                              | ✅     |       |
+| 4.3.4 | Subagent Mascot Visualization | VU | `app/src/features/human/SubMascotLayer.test.tsx`, `app/src/features/human/HumanPage.test.tsx` | ✅ | Renders spawned/completed/failed subagent timeline rows as colored companion mascots with activity bubbles |
 
 ---
 
@@ -197,7 +199,7 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 
 | ID    | Feature            | Layer | Test path(s)                                                             | Status | Notes |
 | ----- | ------------------ | ----- | ------------------------------------------------------------------------ | ------ | ----- |
-| 5.1.1 | Screen Capture     | WD+RI | `screen-intelligence.spec.ts`, `tests/screen_intelligence_vision_e2e.rs` | ✅     |       |
+| 5.1.1 | Screen Capture     | RI    | `tests/screen_intelligence_vision_e2e.rs`                                | ✅     |       |
 | 5.1.2 | Context Extraction | RI    | `tests/screen_intelligence_vision_e2e.rs`                                | ✅     |       |
 | 5.1.3 | Memory Injection   | RI    | `tests/memory_graph_sync_e2e.rs`                                         | ✅     |       |
 
@@ -256,6 +258,7 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 | ----- | -------------------- | ----- | ----------------------------------- | ------ | ------------------ |
 | 7.2.1 | HTTP / API Requests  | RU+WD | `service-connectivity-flow.spec.ts` | ✅     |                    |
 | 7.2.2 | Web Search Execution | WD    | `skill-execution-flow.spec.ts`      | 🟡     | Generic skill path |
+| 7.2.3 | TinyFish Integration Tools | RU | `src/openhuman/integrations/tinyfish_tests.rs`, `src/openhuman/tools/ops_tests.rs::all_tools_executes_tinyfish_family_against_fake_backend` | ✅ | Backend-proxied Search, Fetch, and Agent run tools covered with fake backend |
 
 ---
 
@@ -377,7 +380,7 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 
 | ID     | Feature                | Layer | Test path(s)                                | Status | Notes                            |
 | ------ | ---------------------- | ----- | ------------------------------------------- | ------ | -------------------------------- |
-| 10.7.1 | Integration Disconnect | WD    | `gmail-flow.spec.ts`, `notion-flow.spec.ts` | ✅     |                                  |
+| 10.7.1 | Integration Disconnect | WD    | `gmail-flow.spec.ts`                        | ✅     |                                  |
 | 10.7.2 | Token Revocation       | RU    | `src/openhuman/credentials/`                | ✅     |                                  |
 | 10.7.3 | Re-Authorization Flow  | WD    | `skill-oauth.spec.ts`                       | 🟡     | Re-auth post-revoke not asserted |
 | 10.7.4 | Permission Re-Sync     | WD    | _missing_ — tracked #968                    | ❌     |                                  |
@@ -440,6 +443,7 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 | ------ | ------------------ | ----- | -------------------------------------------------------------------- | ------ | --------------------- |
 | 13.1.1 | Profile Management | VU    | `app/src/components/settings/panels/__tests__/PrivacyPanel.test.tsx` | 🟡     |                       |
 | 13.1.2 | Linked Accounts    | WD    | `auth-access-control.spec.ts`                                        | 🟡     | UI surface unasserted |
+| 13.1.3 | Meet Handoff Prompt-Injection Guard | VU | `app/src/services/__tests__/webviewAccountService.meetPromptInjection.test.ts` (this PR) | ✅ | Was ❌ — guard blocks handoff on hostile transcripts and wraps non-blocked transcripts in `<meeting_transcript source="untrusted_external_audio">` delimiters (#1920) |
 
 ### 13.2 Automation & Channels
 
@@ -470,6 +474,7 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 | 13.5.1 | Clear App Data   | WD    | `app/test/e2e/specs/settings-data-management.spec.ts`   | ✅     | Destructive — confirm-then-reset       |
 | 13.5.2 | Cache Reset      | WD    | `app/test/e2e/specs/settings-data-management.spec.ts`   | ✅     |                                        |
 | 13.5.3 | Full State Reset | WD    | `app/test/e2e/specs/settings-data-management.spec.ts`   | ✅     | Restart-and-verify fresh-install state |
+| 13.5.4 | Migration from another assistant (OpenClaw) | VU+RU | `app/src/components/settings/panels/__tests__/MigrationPanel.test.tsx` (this PR), `src/openhuman/migration/ops.rs` (existing) | ✅ | Was ❌ — UI now wraps the existing `openhuman.migrate_openclaw` RPC with preview-then-apply + confirm. Hermes tracked as follow-up under #1440 (#1440) |
 
 ---
 
@@ -477,11 +482,11 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 
 | Status           | Count                                            |
 | ---------------- | ------------------------------------------------ |
-| ✅ Covered       | 65                                               |
+| ✅ Covered       | 66                                               |
 | 🟡 Partial       | 27                                               |
-| ❌ Missing       | 27                                               |
+| ❌ Missing       | 26                                               |
 | 🚫 Manual smoke  | 11                                               |
-| **Total leaves** | **130 explicit + nested = 201 product features** |
+| **Total leaves** | **131 explicit + nested = 202 product features** |
 
 PR-A delta: 13 leaves moved from ❌ → ✅ via 5 WDIO specs + 2 Vitest + 1 Rust integration test.
 Remaining gaps tracked under sub-issues #965 (process), #966 (docs), #967 (tools), #968 (auth/perm), #969 (settings), #970 (rewards), #971 (manual smoke).

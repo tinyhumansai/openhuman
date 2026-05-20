@@ -10,6 +10,8 @@ import {
   clearStoredCoreToken,
   storeRpcUrl,
 } from '../../utils/configPersistence';
+import { PRIVACY_POLICY_URL, TERMS_OF_USE_URL } from '../../utils/links';
+import { openUrl } from '../../utils/openUrl';
 import Welcome from '../Welcome';
 
 const oauthButtonSpy = vi.fn();
@@ -59,6 +61,8 @@ vi.mock('../../utils/clearAllAppData', () => ({
   clearAllAppData: (...args: unknown[]) => mockClearAllAppData(...args),
 }));
 
+vi.mock('../../utils/openUrl', () => ({ openUrl: vi.fn().mockResolvedValue(undefined) }));
+
 vi.mock('../../services/coreRpcClient', () => ({
   clearCoreRpcUrlCache: vi.fn(),
   clearCoreRpcTokenCache: vi.fn(),
@@ -98,6 +102,7 @@ describe('Welcome auth entrypoint', () => {
   beforeEach(() => {
     oauthButtonSpy.mockReset();
     oauthOverrideSpy.mockReset();
+    vi.mocked(openUrl).mockClear();
     vi.mocked(useDeepLinkAuthState).mockReturnValue({
       isProcessing: false,
       errorMessage: null,
@@ -114,6 +119,22 @@ describe('Welcome auth entrypoint', () => {
     expect(screen.getByRole('button', { name: 'github' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'twitter' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'discord' })).not.toBeInTheDocument();
+  });
+
+  it('renders legal links with valid targets and opens them externally', () => {
+    renderWithProviders(<Welcome />);
+
+    const termsLink = screen.getByRole('link', { name: 'Terms' });
+    const privacyLink = screen.getByRole('link', { name: 'Privacy Policy' });
+
+    expect(termsLink).toHaveAttribute('href', TERMS_OF_USE_URL);
+    expect(privacyLink).toHaveAttribute('href', PRIVACY_POLICY_URL);
+
+    fireEvent.click(termsLink);
+    fireEvent.click(privacyLink);
+
+    expect(openUrl).toHaveBeenNthCalledWith(1, TERMS_OF_USE_URL);
+    expect(openUrl).toHaveBeenNthCalledWith(2, PRIVACY_POLICY_URL);
   });
 
   it('delegates OAuth clicks to OAuthProviderButton without an override', () => {

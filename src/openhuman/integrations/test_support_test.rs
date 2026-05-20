@@ -124,6 +124,18 @@ async fn fake_backend_exercises_optional_and_fallback_response_paths() {
     .await;
     assert_eq!(search["data"]["searchId"], json!("search-0"));
     assert_eq!(search["data"]["results"], json!([]));
+
+    let tinyfish = post_json(
+        &client,
+        format!("{}/agent-integrations/tinyfish/agent/run", backend.base_url),
+        json!({
+            "url": "https://example.com",
+            "goal": "Return JSON"
+        }),
+    )
+    .await;
+    assert_eq!(tinyfish["data"]["status"], json!("COMPLETED"));
+    assert_eq!(tinyfish["data"]["result"]["ok"], json!(true));
 }
 
 #[tokio::test]

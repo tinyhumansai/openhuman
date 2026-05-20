@@ -30,6 +30,7 @@ pub mod context;
 pub mod cost;
 pub mod credentials;
 pub mod cron;
+pub mod desktop_companion;
 pub mod dev_paths;
 pub mod doctor;
 pub mod embeddings;

@@ -136,6 +136,15 @@ pub fn all_tools_with_runtime(
         Box::new(MemoryRecallTool::new(memory.clone())),
         Box::new(MemoryForgetTool::new(memory.clone(), security.clone())),
         Box::new(MemoryTreeTool),
+        // Explicit user-preference pinning — always registered so the model
+        // can save user-stated preferences regardless of whether the full
+        // inference-based learning subsystem is enabled.  The preference
+        // injection into the system prompt is controlled independently by
+        // `config.learning.explicit_preferences_enabled`.
+        Box::new(RememberPreferenceTool::new(
+            memory.clone(),
+            security.clone(),
+        )),
         // WhatsApp data store — read-only agent surface (issue #1341).
         // The matching `whatsapp_data_ingest` write-path stays internal-only
         // (registered in `src/core/all.rs::build_internal_only_controllers`)
@@ -228,6 +237,22 @@ pub fn all_tools_with_runtime(
         root_config.curl.timeout_secs,
     )));
 
+    // Phase 3 STM recall — on-demand cross-thread episodic search tool.
+    // Feature-gated on `learning.stm_recall_enabled` (default true) so the
+    // tool surface and the preemptive prompt injection are enabled/disabled
+    // together. `session_id` is not known at tool-build time; exclude-own-
+    // session is enforced by the preemptive first-turn injection in turn.rs
+    // (the on-demand tool intentionally uses an empty exclude_session).
+    if root_config.learning.stm_recall_enabled {
+        tools.push(Box::new(
+            crate::openhuman::memory::stm_recall::tool::StmRecallTool::new(
+                memory.clone(),
+                String::new(),
+                None,
+            ),
+        ));
+    }
+
     // gitbooks — answers questions about OpenHuman by calling the
     // GitBook MCP server. Two tools mirroring the upstream MCP tools.
     if root_config.gitbooks.enabled {
@@ -266,11 +291,39 @@ pub fn all_tools_with_runtime(
     // knobs still come from `config.web_search`, but there is no
     // enable flag: every session needs research as a baseline
     // capability.
-    tools.push(Box::new(WebSearchTool::new(
-        crate::openhuman::integrations::build_client(root_config),
-        root_config.web_search.max_results,
-        root_config.web_search.timeout_secs,
-    )));
+    let seltz_has_api_key = root_config
+        .seltz
+        .api_key
+        .as_deref()
+        .is_some_and(|key| !key.trim().is_empty());
+    let direct_seltz_for_web_search = if root_config.seltz.enabled && seltz_has_api_key {
+        tracing::debug!(
+            max_results = root_config.seltz.max_results,
+            timeout_secs = root_config.seltz.timeout_secs,
+            "[web_search] direct Seltz routing enabled"
+        );
+        Some(crate::openhuman::integrations::SeltzSearchTool::new(
+            root_config.seltz.api_key.clone(),
+            root_config.seltz.api_url.clone(),
+            root_config.seltz.max_results,
+            root_config.seltz.timeout_secs,
+        ))
+    } else {
+        tracing::debug!(
+            seltz_enabled = root_config.seltz.enabled,
+            has_api_key = seltz_has_api_key,
+            "[web_search] direct Seltz routing disabled; backend proxy path remains"
+        );
+        None
+    };
+    tools.push(Box::new(
+        WebSearchTool::new(
+            crate::openhuman::integrations::build_client(root_config),
+            root_config.web_search.max_results,
+            root_config.web_search.timeout_secs,
+        )
+        .with_direct_search(direct_seltz_for_web_search),
+    ));
 
     // Seltz — direct-API web search, gated on `seltz.enabled` (auto-set
     // when `SELTZ_API_KEY` env var is present). Unlike the backend-proxied
@@ -353,7 +406,7 @@ pub fn all_tools_with_runtime(
     // ── Agent integration tools (backend-proxied) ─────────────────
     if let Some(client) = crate::openhuman::integrations::build_client(root_config) {
         tracing::debug!("[integrations] client built successfully");
-        if root_config.integrations.apify.enabled {
+        if root_config.integrations.apify.is_active() {
             tools.push(Box::new(
                 crate::openhuman::integrations::ApifyRunActorTool::new(Arc::clone(&client)),
             ));
@@ -367,7 +420,7 @@ pub fn all_tools_with_runtime(
         } else {
             tracing::debug!("[integrations] apify disabled — skipping");
         }
-        if root_config.integrations.google_places.enabled {
+        if root_config.integrations.google_places.is_active() {
             tools.push(Box::new(
                 crate::openhuman::integrations::GooglePlacesSearchTool::new(Arc::clone(&client)),
             ));
@@ -378,7 +431,7 @@ pub fn all_tools_with_runtime(
         } else {
             tracing::debug!("[integrations] google_places disabled — skipping");
         }
-        if root_config.integrations.parallel.enabled {
+        if root_config.integrations.parallel.is_active() {
             tools.push(Box::new(
                 crate::openhuman::integrations::ParallelSearchTool::new(Arc::clone(&client)),
             ));
@@ -401,7 +454,21 @@ pub fn all_tools_with_runtime(
         } else {
             tracing::debug!("[integrations] parallel disabled — skipping");
         }
-        if root_config.integrations.stock_prices.enabled {
+        if root_config.integrations.tinyfish.is_active() {
+            tools.push(Box::new(
+                crate::openhuman::integrations::TinyFishSearchTool::new(Arc::clone(&client)),
+            ));
+            tools.push(Box::new(
+                crate::openhuman::integrations::TinyFishFetchTool::new(Arc::clone(&client)),
+            ));
+            tools.push(Box::new(
+                crate::openhuman::integrations::TinyFishAgentRunTool::new(Arc::clone(&client)),
+            ));
+            tracing::debug!("[integrations] registered tinyfish tools");
+        } else {
+            tracing::debug!("[integrations] tinyfish disabled — skipping");
+        }
+        if root_config.integrations.stock_prices.is_active() {
             tools.push(Box::new(
                 crate::openhuman::integrations::StockQuoteTool::new(Arc::clone(&client)),
             ));
@@ -421,7 +488,7 @@ pub fn all_tools_with_runtime(
         } else {
             tracing::debug!("[integrations] stock_prices disabled — skipping");
         }
-        if root_config.integrations.twilio.enabled {
+        if root_config.integrations.twilio.is_active() {
             tools.push(Box::new(
                 crate::openhuman::integrations::TwilioCallTool::new(Arc::clone(&client)),
             ));
@@ -448,6 +515,16 @@ pub fn all_tools_with_runtime(
         tracing::debug!(
             "[integrations] build_client returned None — integration tools not registered"
         );
+    }
+
+    if root_config.integrations.polymarket.enabled {
+        tools.push(Box::new(PolymarketTool::new(
+            &root_config.integrations.polymarket,
+            security.clone(),
+        )));
+        tracing::debug!("[integrations] registered polymarket tool (read + trading)");
+    } else {
+        tracing::debug!("[integrations] polymarket disabled — skipping");
     }
 
     // Coding-harness `lsp` tool (issue #1205) — capability-gated by the

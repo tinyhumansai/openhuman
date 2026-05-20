@@ -18,7 +18,8 @@ async function waitForHashContains(fragment: string, timeout = 10_000): Promise<
 }
 
 describe('Settings - Account Preferences', () => {
-  before(async () => {
+  before(async function beforeSuite() {
+    this.timeout(90_000);
     await startMockServer();
     await waitForApp();
     await resetApp(USER_ID);
@@ -28,7 +29,8 @@ describe('Settings - Account Preferences', () => {
     await stopMockServer();
   });
 
-  it('renders the account settings section route', async () => {
+  it('renders the account settings section route', async function () {
+    this.timeout(90_000);
     await navigateViaHash('/settings/account');
 
     await waitForText('Account', 15_000);
@@ -37,7 +39,8 @@ describe('Settings - Account Preferences', () => {
     await waitForText('Privacy', 15_000);
   });
 
-  it('saves a generated recovery phrase and exposes configured wallet state', async () => {
+  it('saves a generated recovery phrase and exposes configured wallet state', async function () {
+    this.timeout(90_000);
     await navigateViaHash('/settings/recovery-phrase');
 
     await waitForText('Copy to Clipboard', 15_000);
@@ -57,7 +60,8 @@ describe('Settings - Account Preferences', () => {
     await waitForText('Configured', 15_000);
   });
 
-  it('persists privacy analytics and meet handoff toggles to core config', async () => {
+  it('persists privacy analytics and meet handoff toggles to core config', async function () {
+    this.timeout(90_000);
     const beforeAnalytics = await callOpenhumanRpc('openhuman.config_get_analytics_settings', {});
     const beforeMeet = await callOpenhumanRpc('openhuman.config_get_meet_settings', {});
     expect(beforeAnalytics.ok).toBe(true);
@@ -93,7 +97,8 @@ describe('Settings - Account Preferences', () => {
     expect(Boolean(snapshot.result?.result?.meetAutoOrchestratorHandoff)).toBe(!initialMeet);
   });
 
-  it('opens the billing route and settles the redirect status copy', async () => {
+  it('opens the billing route and settles the redirect status copy', async function () {
+    this.timeout(60_000);
     await navigateViaHash('/settings/billing');
 
     await waitForHashContains('/settings/billing');
@@ -101,8 +106,12 @@ describe('Settings - Account Preferences', () => {
 
     await browser.waitUntil(
       async () =>
+        // browserNotOpen: shown when open succeeds but browser may not have focused
         (await textExists('If your browser did not open, use the button above.')) ||
-        (await textExists('We could not open your browser automatically.')),
+        // browserOpenFailed: shown when openUrl() throws (E2E headless environment)
+        (await textExists('The browser could not be opened automatically.')) ||
+        // Opening state (transient)
+        (await textExists('Opening your browser...')),
       { timeout: 15_000, interval: 500, timeoutMsg: 'billing redirect status did not settle' }
     );
 

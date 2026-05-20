@@ -16,6 +16,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { agentProfilesApi } from '../../services/api/agentProfilesApi';
 import { threadApi } from '../../services/api/threadApi';
 import { chatSend } from '../../services/chatService';
+import { CoreRpcError } from '../../services/coreRpcClient';
 import agentProfileReducer from '../../store/agentProfileSlice';
 import chatRuntimeReducer from '../../store/chatRuntimeSlice';
 import socketReducer from '../../store/socketSlice';
@@ -31,20 +32,15 @@ const { mockGetThreads, mockGetThreadMessages, mockUseUsageState } = vi.hoisted(
     teamUsage: null as null | {
       cycleBudgetUsd: number;
       remainingUsd: number;
-      fiveHourCapUsd: number;
-      cycleLimit5hr: number;
-      bypassCycleLimit: boolean;
-      fiveHourResetsAt: string | null;
+      cycleSpentUsd: number;
       cycleEndsAt: string | null;
     },
     currentPlan: null,
     currentTier: 'FREE' as 'FREE' | 'BASIC' | 'PRO',
     isFreeTier: true,
-    usagePct10h: 0,
-    usagePct7d: 0,
+    usagePct: 0,
     isNearLimit: false,
     isAtLimit: false,
-    isRateLimited: false,
     isBudgetExhausted: false,
     shouldShowBudgetCompletedMessage: false,
     isLoading: false,
@@ -241,11 +237,9 @@ async function renderSelectedConversation(
     currentPlan: null,
     currentTier: 'FREE' as const,
     isFreeTier: true,
-    usagePct10h: options.isAtLimit ? 1 : 0,
-    usagePct7d: options.isAtLimit ? 1 : 0,
+    usagePct: options.isAtLimit ? 1 : 0,
     isNearLimit: Boolean(options.isAtLimit),
     isAtLimit: Boolean(options.isAtLimit),
-    isRateLimited: Boolean(options.isAtLimit),
     isBudgetExhausted: false,
     shouldShowBudgetCompletedMessage: false,
     isLoading: false,
@@ -290,11 +284,9 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
       currentPlan: null,
       currentTier: 'FREE' as const,
       isFreeTier: true,
-      usagePct10h: 0,
-      usagePct7d: 0,
+      usagePct: 0.0,
       isNearLimit: false,
       isAtLimit: false,
-      isRateLimited: false,
       isBudgetExhausted: false,
       shouldShowBudgetCompletedMessage: false,
       isLoading: false,
@@ -367,17 +359,15 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
   });
 
   // Covers lines 1455-1483: quota pill loading state
-  it('renders "loading…" quota pill when isLoadingBudget=true', async () => {
+  it('renders "Loading…" quota pill when isLoadingBudget=true', async () => {
     mockUseUsageState.mockReturnValue({
       teamUsage: null,
       currentPlan: null,
       currentTier: 'FREE' as const,
       isFreeTier: true,
-      usagePct10h: 0,
-      usagePct7d: 0,
+      usagePct: 0.0,
       isNearLimit: false,
       isAtLimit: false,
-      isRateLimited: false,
       isBudgetExhausted: false,
       shouldShowBudgetCompletedMessage: false,
       isLoading: true,
@@ -388,32 +378,22 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
       await renderConversations({ thread: emptyThreadState });
     });
 
-    expect(screen.getByText('loading…')).toBeInTheDocument();
+    expect(screen.getByText('Loading…')).toBeInTheDocument();
   });
 
   // Covers lines 1417-1439: budget banner + lines 1455-1516: LimitPill + tooltip
   it('renders budget-limit banner and limit pills when teamUsage is present', async () => {
     // cycleBudgetUsd: 0 → renders "Your included budget is complete" branch
-    const teamUsage = {
-      cycleBudgetUsd: 0,
-      remainingUsd: 0,
-      fiveHourCapUsd: 5,
-      cycleLimit5hr: 5,
-      bypassCycleLimit: false,
-      fiveHourResetsAt: null,
-      cycleEndsAt: null,
-    };
+    const teamUsage = { cycleBudgetUsd: 0, remainingUsd: 0, cycleSpentUsd: 0, cycleEndsAt: null };
 
     mockUseUsageState.mockReturnValue({
       teamUsage,
       currentPlan: null,
       currentTier: 'PRO' as const,
       isFreeTier: false,
-      usagePct10h: 1.0,
-      usagePct7d: 1.0,
+      usagePct: 1.0,
       isNearLimit: true,
       isAtLimit: true,
-      isRateLimited: false,
       isBudgetExhausted: true,
       shouldShowBudgetCompletedMessage: true,
       isLoading: false,
@@ -427,8 +407,8 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     // Budget-exceeded banner (lines 1417-1439) — cycleBudgetUsd=0 gives "included budget" message
     expect(screen.getByText(/Your included budget is complete/i)).toBeInTheDocument();
 
-    // LimitPill components (lines 1459-1480) — their label text
-    expect(screen.getByText('7d')).toBeInTheDocument();
+    // LimitPill renders with the cycle label
+    expect(screen.getByText('Cycle')).toBeInTheDocument();
   });
 
   // Covers line 247: if (cancelled) return — the non-cancelled path through loadThreads callback
@@ -523,11 +503,9 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
       currentPlan: null,
       currentTier: 'FREE' as const,
       isFreeTier: true,
-      usagePct10h: 0.85,
-      usagePct7d: 0.85,
+      usagePct: 0.85,
       isNearLimit: true,
       isAtLimit: false,
-      isRateLimited: false,
       isBudgetExhausted: false,
       shouldShowBudgetCompletedMessage: false,
       isLoading: false,
@@ -557,11 +535,9 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
       currentPlan: null,
       currentTier: 'FREE' as const,
       isFreeTier: true,
-      usagePct10h: 0.9,
-      usagePct7d: 0.9,
+      usagePct: 0.9,
       isNearLimit: true,
       isAtLimit: false,
-      isRateLimited: false,
       isBudgetExhausted: false,
       shouldShowBudgetCompletedMessage: false,
       isLoading: false,
@@ -589,26 +565,16 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
   it('clicking "Top Up" in the budget banner calls openUrl', async () => {
     const { openUrl } = await import('../../utils/openUrl');
 
-    const teamUsage = {
-      cycleBudgetUsd: 10,
-      remainingUsd: 0,
-      fiveHourCapUsd: 5,
-      cycleLimit5hr: 5,
-      bypassCycleLimit: false,
-      fiveHourResetsAt: null,
-      cycleEndsAt: null,
-    };
+    const teamUsage = { cycleBudgetUsd: 10, remainingUsd: 0, cycleSpentUsd: 10, cycleEndsAt: null };
 
     mockUseUsageState.mockReturnValue({
       teamUsage,
       currentPlan: null,
       currentTier: 'PRO' as const,
       isFreeTier: false,
-      usagePct10h: 1.0,
-      usagePct7d: 1.0,
+      usagePct: 1.0,
       isNearLimit: true,
       isAtLimit: true,
-      isRateLimited: false,
       isBudgetExhausted: true,
       shouldShowBudgetCompletedMessage: true,
       isLoading: false,
@@ -619,8 +585,8 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
       await renderConversations({ thread: emptyThreadState });
     });
 
-    // Budget banner renders — cycleBudgetUsd: 10 > 0 → "You've hit your weekly limit"
-    expect(screen.getByText(/You've hit your weekly limit/i)).toBeInTheDocument();
+    // Budget banner renders — cycleBudgetUsd: 10 > 0 → cycle-budget exhausted copy
+    expect(screen.getByText(/used your included cycle budget/i)).toBeInTheDocument();
 
     // Click "Top Up" button — covers line 1442-1443 (onClick callback)
     const topUpBtn = screen.getByText('Top Up');
@@ -629,42 +595,6 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     });
 
     expect(openUrl).toHaveBeenCalled();
-  });
-
-  // Covers line 1437: rate-limit message branch (isRateLimited=true, shouldShowBudgetCompletedMessage=false)
-  it('renders rate-limit message in budget banner when isRateLimited=true', async () => {
-    const teamUsage = {
-      cycleBudgetUsd: 10,
-      remainingUsd: 5,
-      fiveHourCapUsd: 5,
-      cycleLimit5hr: 5,
-      bypassCycleLimit: false,
-      fiveHourResetsAt: null,
-      cycleEndsAt: null,
-    };
-
-    mockUseUsageState.mockReturnValue({
-      teamUsage,
-      currentPlan: null,
-      currentTier: 'PRO' as const,
-      isFreeTier: false,
-      usagePct10h: 1.0,
-      usagePct7d: 0.5,
-      isNearLimit: true,
-      isAtLimit: false,
-      isRateLimited: true,
-      isBudgetExhausted: false,
-      shouldShowBudgetCompletedMessage: false,
-      isLoading: false,
-      refresh: vi.fn(),
-    });
-
-    await act(async () => {
-      await renderConversations({ thread: emptyThreadState });
-    });
-
-    // isRateLimited=true, shouldShowBudgetCompletedMessage=false → rate-limit branch (line 1437)
-    expect(screen.getByText(/10-hour rate limit reached/i)).toBeInTheDocument();
   });
 
   it('handles /new from the composer without a selected thread or sending chat text', async () => {
@@ -686,15 +616,14 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     expect(textarea).toHaveValue('');
   });
 
-  it('shows the usage-limit modal instead of sending when the account is at limit', async () => {
+  it('blocks the send when the account is over budget (no rate-limit modal anymore)', async () => {
     const { textarea } = await renderSelectedConversation({ isAtLimit: true });
 
     await submitComposerText(textarea, 'hello at limit');
 
-    await waitFor(() => {
-      expect(screen.getByText('Usage Limit Reached')).toBeInTheDocument();
-    });
-    expect(screen.getByText(/Usage limit reached/i)).toBeInTheDocument();
+    // Backend PR #790 removed the rate-limit modal; over-budget now surfaces
+    // only the inline send-error (which clears as soon as the user keeps
+    // typing). The contract we still care about: chatSend is suppressed.
     expect(chatSend).not.toHaveBeenCalled();
   });
 
@@ -715,6 +644,166 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
       model: 'reasoning-v1',
       profileId: 'default',
       locale: 'en',
+    });
+  });
+
+  it('blocks duplicate sends while the first send is still pending', async () => {
+    let resolveSend: (() => void) | undefined;
+    vi.mocked(chatSend).mockImplementationOnce(
+      () =>
+        new Promise<void>(resolve => {
+          resolveSend = resolve;
+        })
+    );
+    const { textarea, thread } = await renderSelectedConversation();
+
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: 'slow backend' } });
+    });
+    await waitFor(() => {
+      expect(textarea).toHaveValue('slow backend');
+      expect(screen.getByRole('button', { name: 'Send message' })).not.toBeDisabled();
+    });
+
+    const sendButton = screen.getByRole('button', { name: 'Send message' });
+    await act(async () => {
+      fireEvent.click(sendButton);
+      fireEvent.click(sendButton);
+      fireEvent.click(sendButton);
+    });
+
+    await waitFor(() => {
+      expect(chatSend).toHaveBeenCalledTimes(1);
+    });
+    expect(threadApi.appendMessage).toHaveBeenCalledTimes(1);
+    expect(chatSend).toHaveBeenCalledWith({
+      threadId: thread.id,
+      message: 'slow backend',
+      model: 'reasoning-v1',
+      profileId: 'default',
+      locale: 'en',
+    });
+    expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
+    resolveSend?.();
+  });
+
+  it('releases the pending-send lock when appendMessage rejects with a generic error', async () => {
+    vi.mocked(threadApi.appendMessage).mockRejectedValueOnce(new Error('disk full'));
+    const { textarea } = await renderSelectedConversation();
+
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: 'will fail locally' } });
+    });
+    const sendButton = screen.getByRole('button', { name: 'Send message' });
+    await act(async () => {
+      fireEvent.click(sendButton);
+    });
+
+    // chatSend never runs because the local append failed first.
+    await waitFor(() => {
+      expect(threadApi.appendMessage).toHaveBeenCalledTimes(1);
+    });
+    expect(chatSend).not.toHaveBeenCalled();
+
+    // Pending guard released: the user can re-enter text and the send button
+    // enables again.
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: 'retry' } });
+    });
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Send message' })).not.toBeDisabled();
+    });
+  });
+
+  it('releases the pending-send lock when appendMessage hits a stale-thread error', async () => {
+    vi.mocked(threadApi.appendMessage).mockRejectedValueOnce(
+      new CoreRpcError('thread missing', 'thread_not_found')
+    );
+    const { textarea } = await renderSelectedConversation();
+
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: 'stale thread send' } });
+    });
+    const sendButton = screen.getByRole('button', { name: 'Send message' });
+    await act(async () => {
+      fireEvent.click(sendButton);
+    });
+
+    await waitFor(() => {
+      expect(threadApi.appendMessage).toHaveBeenCalledTimes(1);
+    });
+    expect(chatSend).not.toHaveBeenCalled();
+
+    // Stale-thread branch silently clears the guard; typing must re-enable Send.
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: 'retry' } });
+    });
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Send message' })).not.toBeDisabled();
+    });
+  });
+
+  it('clears the pending guard when the 120s silence timer fires', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { textarea } = await renderSelectedConversation();
+
+      await act(async () => {
+        fireEvent.change(textarea, { target: { value: 'hang the backend' } });
+      });
+      const sendButton = screen.getByRole('button', { name: 'Send message' });
+      await act(async () => {
+        fireEvent.click(sendButton);
+      });
+      await waitFor(() => {
+        expect(chatSend).toHaveBeenCalledTimes(1);
+      });
+
+      // Fast-forward past the 120s silence window with no inference signals.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(120_000);
+      });
+
+      // After the safety timeout, typing should re-enable Send — proves the
+      // pending guard was reset inside the timeout callback.
+      await act(async () => {
+        fireEvent.change(textarea, { target: { value: 'retry after timeout' } });
+      });
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: 'Send message' })).not.toBeDisabled();
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('releases the pending-send lock when chatSend rejects', async () => {
+    vi.mocked(chatSend).mockRejectedValueOnce(new Error('emit failed'));
+    const { textarea } = await renderSelectedConversation();
+
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: 'doomed send' } });
+    });
+    await waitFor(() => {
+      expect(textarea).toHaveValue('doomed send');
+    });
+
+    const sendButton = screen.getByRole('button', { name: 'Send message' });
+    await act(async () => {
+      fireEvent.click(sendButton);
+    });
+
+    await waitFor(() => {
+      expect(chatSend).toHaveBeenCalledTimes(1);
+    });
+
+    // After the failed send, typing again should leave the composer enabled so
+    // the user can retry — proves the pending guard was released.
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: 'retry send' } });
+    });
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Send message' })).not.toBeDisabled();
     });
   });
 
@@ -1096,5 +1185,89 @@ describe('Conversations — worker thread back-to-parent navigation (#1624)', ()
     // The loadThreadMessages thunk goes through the threadApi.getThreadMessages
     // helper — verify it was kicked off for the parent thread.
     expect(mockGetThreadMessages).toHaveBeenCalledWith('t-parent');
+  });
+
+  // Covers line 1871: t('chat.budgetComplete') — cycleBudgetUsd=0 exhausted branch
+  it('renders budgetComplete copy when cycleBudgetUsd=0 and budget is exhausted', async () => {
+    const teamUsage = { cycleBudgetUsd: 0, remainingUsd: 0, cycleSpentUsd: 0, cycleEndsAt: null };
+
+    mockUseUsageState.mockReturnValue({
+      teamUsage,
+      currentPlan: null,
+      currentTier: 'PRO' as const,
+      isFreeTier: false,
+      usagePct: 1.0,
+      isNearLimit: true,
+      isAtLimit: true,
+      isBudgetExhausted: true,
+      shouldShowBudgetCompletedMessage: true,
+      isLoading: false,
+      refresh: vi.fn(),
+    });
+
+    await act(async () => {
+      await renderConversations({ thread: emptyThreadState });
+    });
+
+    // cycleBudgetUsd=0 → false branch of cycleBudgetUsd > 0 ternary → budgetComplete key
+    expect(screen.getByText(/Your included budget is complete/i)).toBeInTheDocument();
+  });
+
+  // Covers line 1910: cycleEndsAt truthy branch inside cycle-pill tooltip
+  it('renders reset time in cycle-pill tooltip when cycleEndsAt is set', async () => {
+    const teamUsage = {
+      cycleBudgetUsd: 10,
+      remainingUsd: 5,
+      cycleSpentUsd: 5,
+      cycleEndsAt: '2026-06-01T00:00:00.000Z',
+    };
+
+    mockUseUsageState.mockReturnValue({
+      teamUsage,
+      currentPlan: null,
+      currentTier: 'PRO' as const,
+      isFreeTier: false,
+      usagePct: 0.5,
+      isNearLimit: false,
+      isAtLimit: false,
+      isBudgetExhausted: false,
+      shouldShowBudgetCompletedMessage: false,
+      isLoading: false,
+      refresh: vi.fn(),
+    });
+
+    await act(async () => {
+      await renderConversations({ thread: emptyThreadState });
+    });
+
+    // Tooltip is hidden via CSS but present in DOM; cycleEndsAt truthy → reset span renders
+    expect(screen.getByText('Cycle')).toBeInTheDocument();
+    // The tooltip resets span contains "resets" text (covers line 1910 conditional)
+    const resetSpans = document.querySelectorAll('[class*="text-stone-400"]');
+    expect(resetSpans.length).toBeGreaterThan(0);
+  });
+
+  // Covers lines 1903-1904: loading animation span when isLoading=true, teamUsage=null
+  it('renders loading pulse span in cycle-pill area when isLoading=true', async () => {
+    mockUseUsageState.mockReturnValue({
+      teamUsage: null,
+      currentPlan: null,
+      currentTier: 'FREE' as const,
+      isFreeTier: true,
+      usagePct: 0,
+      isNearLimit: false,
+      isAtLimit: false,
+      isBudgetExhausted: false,
+      shouldShowBudgetCompletedMessage: false,
+      isLoading: true,
+      refresh: vi.fn(),
+    });
+
+    await act(async () => {
+      await renderConversations({ thread: emptyThreadState });
+    });
+
+    // Loading span with animate-pulse is present when teamUsage=null and loading
+    expect(screen.getByText('Loading…')).toBeInTheDocument();
   });
 });

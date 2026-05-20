@@ -165,6 +165,44 @@ const hi5: TranslationMap = {
   'settings.localModel.status.triggering': 'ट्रिगर हो रहा है...',
   'settings.localModel.status.unavailable': 'उपलब्ध नहीं',
   'settings.localModel.status.working': 'काम हो रहा है...',
+  'settings.developerMenu.ai.title': 'AI कॉन्फ़िगरेशन',
+  'settings.developerMenu.ai.desc': 'क्लाउड प्रदाता, स्थानीय Ollama मॉडल, और प्रति-वर्कलोड रूटिंग',
+  'settings.developerMenu.screenAwareness.title': 'स्क्रीन अवेयरनेस',
+  'settings.developerMenu.screenAwareness.desc':
+    'स्क्रीन कैप्चर अनुमतियां, मॉनिटरिंग नीति, और सत्र नियंत्रण',
+  'settings.developerMenu.messagingChannels.title': 'मैसेजिंग चैनल',
+  'settings.developerMenu.messagingChannels.desc':
+    'Telegram/Discord प्रमाणीकरण मोड और डिफ़ॉल्ट चैनल रूटिंग कॉन्फ़िगर करें',
+  'settings.developerMenu.tools.title': 'टूल्स',
+  'settings.developerMenu.tools.desc':
+    'OpenHuman आपकी ओर से जिन क्षमताओं का उपयोग कर सकता है, उन्हें सक्षम या अक्षम करें',
+  'settings.developerMenu.agentChat.title': 'एजेंट चैट',
+  'settings.developerMenu.agentChat.desc':
+    'मॉडल और तापमान ओवरराइड के साथ एजेंट वार्तालाप का परीक्षण करें',
+  'settings.developerMenu.cronJobs.title': 'Cron जॉब्स',
+  'settings.developerMenu.cronJobs.desc':
+    'रनटाइम स्किल्स के लिए शेड्यूल किए गए जॉब देखें और कॉन्फ़िगर करें',
+  'settings.developerMenu.localModelDebug.title': 'लोकल मॉडल डिबग',
+  'settings.developerMenu.localModelDebug.desc':
+    'Ollama कॉन्फ़िगरेशन, एसेट डाउनलोड, मॉडल टेस्ट, और डायग्नोस्टिक्स',
+  'settings.developerMenu.webhooks.title': 'वेबहुक्स',
+  'settings.developerMenu.webhooks.desc':
+    'रनटाइम वेबहुक रजिस्ट्रेशन और कैप्चर किए गए अनुरोध लॉग देखें',
+  'settings.developerMenu.intelligence.title': 'इंटेलिजेंस',
+  'settings.developerMenu.intelligence.desc':
+    'मेमोरी वर्कस्पेस, सबकॉन्शस इंजन, ड्रीम्स, और सेटिंग्स',
+  'settings.developerMenu.notificationRouting.title': 'नोटिफ़िकेशन रूटिंग',
+  'settings.developerMenu.notificationRouting.desc':
+    'AI महत्व स्कोरिंग और इंटीग्रेशन अलर्ट के लिए ऑर्केस्ट्रेटर एस्केलेशन',
+  'settings.developerMenu.composeioTriggers.title': 'ComposeIO ट्रिगर्स',
+  'settings.developerMenu.composeioTriggers.desc': 'ComposeIO ट्रिगर इतिहास और आर्काइव देखें',
+  'settings.developerMenu.composioRouting.title': 'Composio रूटिंग (डायरेक्ट मोड)',
+  'settings.developerMenu.composioRouting.desc':
+    'अपनी Composio API कुंजी लाएं और कॉल सीधे backend.composio.dev पर रूट करें',
+  'settings.developerMenu.integrationTriggers.title': 'इंटीग्रेशन ट्रिगर्स',
+  'settings.developerMenu.integrationTriggers.desc':
+    'Composio इंटीग्रेशन ट्रिगर्स के लिए AI ट्रायेज सेटिंग्स कॉन्फ़िगर करें',
+  'settings.appearance.menuDesc': 'लाइट, डार्क, या सिस्टम थीम से मिलान चुनें',
   'settings.mascot.active': 'एक्टिव',
   'settings.mascot.characterDesc': 'कैरेक्टर विवरण',
   'settings.mascot.characterHeading': 'कैरेक्टर शीर्षक',
@@ -172,6 +210,8 @@ const hi5: TranslationMap = {
   'settings.mascot.colorHeading': 'रंग शीर्षक',
   'settings.mascot.loadingLibrary': 'OpenHuman लाइब्रेरी लोड हो रही है…',
   'settings.mascot.localDefault': 'लोकल OpenHuman (डिफ़ॉल्ट)',
+  'settings.mascot.menuTitle': 'मास्कॉट',
+  'settings.mascot.menuDesc': 'ऐप में उपयोग होने वाला मास्कॉट रंग चुनें',
   'settings.mascot.noCharacters': 'अभी तक कोई OpenHuman कैरेक्टर उपलब्ध नहीं है',
   'settings.mascot.noColorVariants': 'कोई कलर वेरिएंट नहीं',
   'settings.mascot.voice.current': 'वर्तमान',
@@ -420,6 +460,28 @@ const hi5: TranslationMap = {
   'settings.localModel.status.ollamaDocs': 'Ollama दस्तावेज़',
   'settings.localModel.status.thenRetry':
     'सेटअप निर्देशों के लिए, फिर आपका रनटाइम पहुँच योग्य होने के बाद पुनः प्रयास करें।',
+  'settings.appearance.title': 'Appearance',
+  'settings.appearance.themeHeading': 'Theme',
+  'settings.appearance.themeAria': 'Theme',
+  'settings.appearance.modeLight': 'Light',
+  'settings.appearance.modeLightDesc': 'Bright surfaces, dark text.',
+  'settings.appearance.modeDark': 'Dark',
+  'settings.appearance.modeDarkDesc': 'Dim surfaces, easier on the eyes after dusk.',
+  'settings.appearance.modeSystem': 'Match system',
+  'settings.appearance.modeSystemDesc': 'Follow your OS appearance setting.',
+  'settings.appearance.helperText':
+    'Dark mode switches the entire app — chat, settings, panels — to a dim palette. "Match system" follows your OS appearance and updates live.',
+  'settings.mascot.characterPreview': 'Preview',
+  'settings.mascot.characterStates': 'states',
+  'settings.mascot.characterVisemes': 'visemes',
+  'settings.mascot.colorAria': 'OpenHuman color',
+  'settings.mascot.colorBlack': 'Black',
+  'settings.mascot.colorBurgundy': 'Burgundy',
+  'settings.mascot.colorGreen': 'Green',
+  'settings.mascot.colorNavy': 'Navy',
+  'settings.mascot.colorYellow': 'Yellow',
+  'settings.mascot.libraryUnavailable': 'OpenHuman library unavailable',
+  'settings.mascot.title': 'OpenHuman',
 };
 
 export default hi5;

@@ -76,9 +76,71 @@ pub struct LearningConfig {
     #[serde(default = "default_true")]
     pub stability_detector_enabled: bool,
 
+    /// Enable episodic capture (ArchivistHook) regardless of the master
+    /// `learning.enabled` toggle.
+    ///
+    /// Episodic capture is the system-of-record for chat turns
+    /// (`episodic_log` FTS5 table, conversation segmentation, segment
+    /// summaries with LLM recap, and segment embeddings). It must remain
+    /// active even when the inference stack
+    /// (reflection / stability-detector) is off.
+    ///
+    /// Default: `true`. Set to `false` to fully disable the Archivist.
+    ///
+    /// Override via `OPENHUMAN_LEARNING_EPISODIC_CAPTURE_ENABLED=0|1`.
+    #[serde(default = "default_true")]
+    pub episodic_capture_enabled: bool,
+
+    /// Enable preemptive STM recall injection at session start and on-demand
+    /// `stm_recall_search` tool exposure.
+    ///
+    /// When enabled, a bounded cross-thread context block is assembled from
+    /// recent episodic entries (FTS5 keyword arm) and segment recaps (cosine
+    /// similarity arm) from OTHER sessions and injected into the first turn's
+    /// user message. The `stm_recall_search` tool is also registered in the
+    /// agent's tool list.
+    ///
+    /// Default: `true`. Set to `false` to fully disable STM recall.
+    ///
+    /// Override via `OPENHUMAN_LEARNING_STM_RECALL_ENABLED=0|1`.
+    #[serde(default = "default_true")]
+    pub stm_recall_enabled: bool,
+
+    /// Use the rolling segment recap as the compaction text for evicted turns
+    /// (Phase 1.5 — unified compaction).
+    ///
+    /// When `true`, the [`ContextManager`]'s autocompaction summarizer is
+    /// wrapped with a `SegmentRecapSummarizer` that first tries to obtain the
+    /// current open segment's rolling recap from the `ArchivistHook` and uses
+    /// it as the replacement text for the evicted head. If the rolling recap
+    /// is unavailable (no archivist, no open segment, LLM failure, flag off)
+    /// the inner `ProviderSummarizer` runs as before — the live prompt is
+    /// NEVER left over-budget regardless of the recap path's health.
+    ///
+    /// Default: `true`. Set to `false` to revert to the standalone
+    /// `ProviderSummarizer` path (today's behaviour, Phase 1.5 completely
+    /// absent from the hot path).
+    ///
+    /// Override via `OPENHUMAN_LEARNING_UNIFIED_COMPACTION_ENABLED=0|1`.
+    #[serde(default = "default_true")]
+    pub unified_compaction_enabled: bool,
+
     /// How often the periodic rebuild loop runs in seconds. Default: 1800 (30 minutes).
     #[serde(default = "default_rebuild_interval_secs")]
     pub rebuild_interval_secs: u64,
+
+    /// Enable explicit user-preference injection into the system prompt.
+    ///
+    /// When `true` (the default), preferences saved via the `remember_preference`
+    /// tool are injected into every session prompt regardless of whether the full
+    /// inference-based learning subsystem (`enabled`) is on.  This is the
+    /// narrow, always-on path for user-authoritative pinned preferences —
+    /// no reflection, no heuristics, no stability engine.
+    ///
+    /// Explicitly set to `false` (or `OPENHUMAN_LEARNING_EXPLICIT_PREFERENCES_ENABLED=0`)
+    /// to suppress all preference injection even for explicitly pinned entries.
+    #[serde(default = "default_true")]
+    pub explicit_preferences_enabled: bool,
 }
 
 fn default_rebuild_interval_secs() -> u64 {
@@ -111,6 +173,10 @@ impl Default for LearningConfig {
             chat_to_tree_enabled: default_true(),
             stability_detector_enabled: default_true(),
             rebuild_interval_secs: default_rebuild_interval_secs(),
+            episodic_capture_enabled: default_true(),
+            stm_recall_enabled: default_true(),
+            unified_compaction_enabled: default_true(),
+            explicit_preferences_enabled: default_true(),
         }
     }
 }
