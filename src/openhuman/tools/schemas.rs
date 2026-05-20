@@ -23,6 +23,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         tools_schemas("tools_searxng_search"),
         tools_schemas("tools_apify_linkedin_scrape"),
         tools_schemas("tools_polymarket_execute"),
+        tools_schemas("tools_kalshi_execute"),
     ]
 }
 
@@ -51,6 +52,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: tools_schemas("tools_polymarket_execute"),
             handler: handle_polymarket_execute,
+        },
+        RegisteredController {
+            schema: tools_schemas("tools_kalshi_execute"),
+            handler: handle_kalshi_execute,
         },
     ]
 }
@@ -288,6 +293,33 @@ pub fn tools_schemas(function: &str) -> ControllerSchema {
                     name: "arguments",
                     ty: TypeSchema::Json,
                     comment: "Per-action argument object (market_id, slug, token_id, side, limit, ...).",
+                    required: false,
+                },
+            ],
+            outputs: vec![FieldSchema {
+                name: "data",
+                ty: TypeSchema::Json,
+                comment: "Tool result payload (provider response wrapped with action/source).",
+                required: true,
+            }],
+        },
+        "tools_kalshi_execute" => ControllerSchema {
+            namespace: "tools",
+            function: "kalshi_execute",
+            description: "Execute a Kalshi action (public market reads + authenticated portfolio and trading actions). \
+                          Exposed for Tauri-driven smoke + admin flows. Agent-facing path \
+                          goes through the normal harness tool registry.",
+            inputs: vec![
+                FieldSchema {
+                    name: "action",
+                    ty: TypeSchema::String,
+                    comment: "Kalshi action: list_markets | get_market | list_events | get_event | get_orderbook | get_positions | get_balance | get_open_orders | get_fills | place_order | cancel_order.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "arguments",
+                    ty: TypeSchema::Json,
+                    comment: "Per-action argument object (ticker, event_ticker, depth, order_action, type, count, yes_price, no_price, order_id, approved, ...).",
                     required: false,
                 },
             ],
@@ -708,18 +740,86 @@ fn handle_polymarket_execute(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
+fn handle_kalshi_execute(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let action = params
+            .get("action")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .ok_or_else(|| "missing or empty `action`".to_string())?;
+        let arguments = params.get("arguments").cloned();
+
+        let config = config_rpc::load_config_with_timeout().await?;
+        let enabled = config.integrations.kalshi.enabled;
+        tracing::debug!(
+            action = %action,
+            enabled,
+            has_arguments = arguments.is_some(),
+            "[tools] kalshi_execute: entry"
+        );
+        if !enabled {
+            tracing::debug!(action = %action, "[tools] kalshi_execute: disabled");
+            return Err("Kalshi integration is disabled in config.".to_string());
+        }
+
+        let security = std::sync::Arc::new(crate::openhuman::security::SecurityPolicy::default());
+        let tool = crate::openhuman::tools::implementations::network::KalshiTool::new(
+            &config.integrations.kalshi,
+            security,
+        );
+
+        let mut args = match arguments {
+            Some(Value::Object(map)) => Value::Object(map),
+            Some(_) => {
+                tracing::debug!(
+                    action = %action,
+                    "[tools] kalshi_execute: invalid arguments shape"
+                );
+                return Err("`arguments` must be a JSON object when provided".to_string());
+            }
+            None => json!({}),
+        };
+        if let Value::Object(ref mut map) = args {
+            map.insert("action".to_string(), Value::String(action.clone()));
+        }
+        tracing::trace!(action = %action, args = ?args, "[tools] kalshi_execute: dispatch");
+
+        let result = tool.execute(args).await.map_err(|e| {
+            tracing::error!(
+                action = %action,
+                enabled,
+                error = %e,
+                "[tools] kalshi_execute: execution failed"
+            );
+            format!("kalshi execute failed: {e:#}")
+        })?;
+
+        tracing::debug!(
+            action = %action,
+            is_error = result.is_error,
+            "[tools] kalshi_execute: success"
+        );
+
+        let payload = json!({ "data": result.output() });
+        let log = vec![format!("tools.kalshi_execute: action={action}")];
+        RpcOutcome::new(payload, log).into_cli_compatible_json()
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn all_schemas_returns_six() {
-        assert_eq!(all_controller_schemas().len(), 6);
+    fn all_schemas_returns_seven() {
+        assert_eq!(all_controller_schemas().len(), 7);
     }
 
     #[test]
-    fn all_controllers_returns_six() {
-        assert_eq!(all_registered_controllers().len(), 6);
+    fn all_controllers_returns_seven() {
+        assert_eq!(all_registered_controllers().len(), 7);
     }
 
     #[test]
