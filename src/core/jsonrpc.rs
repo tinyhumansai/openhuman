@@ -160,8 +160,9 @@ pub async fn rpc_handler(State(state): State<AppState>, Json(req): Json<RpcReque
 /// Invokes a JSON-RPC method by name.
 ///
 /// This is a high-level wrapper around [`invoke_method_inner`] that adds
-/// automatic session management logic. If a call fails with a 401 Unauthorized
-/// error from the backend, it will automatically clear the local session.
+/// automatic session management logic. If a call fails with a confirmed
+/// OpenHuman session-expired error, it will automatically clear the local
+/// session.
 ///
 /// # Arguments
 ///
@@ -171,27 +172,34 @@ pub async fn rpc_handler(State(state): State<AppState>, Json(req): Json<RpcReque
 pub async fn invoke_method(state: AppState, method: &str, params: Value) -> Result<Value, String> {
     let result = invoke_method_inner(state, method, params).await;
 
-    // Session auto-cleanup: if the backend says we're unauthorized, publish
-    // a `SessionExpired` event. The credentials subscriber clears the stored
-    // token, flips the scheduler-gate signed-out override so background
-    // workers stand down, and (eventually) pushes a sign-out to the UI.
-    // Centralising via the event bus means 401 detection from any path
-    // (this one, `llm_provider.api_error`, …) gets the same teardown.
+    // Session auto-cleanup: if the OpenHuman auth session is explicitly
+    // expired, publish a `SessionExpired` event. The credentials subscriber
+    // clears the stored token, flips the scheduler-gate signed-out override
+    // so background workers stand down, and (eventually) pushes a sign-out to
+    // the UI. Generic downstream/provider 401s must stay recoverable errors;
+    // otherwise a scoped integration failure can log the user out.
     if let Err(ref msg) = result {
+        let sanitized_reason = crate::openhuman::inference::provider::ops::sanitize_api_error(msg);
         if is_session_expired_error(msg) {
             log::warn!(
-                "[jsonrpc] backend returned 401 for method '{}' — publishing SessionExpired",
-                method
+                "[jsonrpc] confirmed session expiry for method '{}' — publishing SessionExpired: {}",
+                method,
+                sanitized_reason
             );
             // Scrub before publishing — subscribers log `reason`, and the
             // upstream error string could include API keys / tokens from
-            // pasted-through provider replies. `sanitize_api_error` runs
-            // `scrub_secret_patterns` and truncates.
+            // pasted-through provider replies.
             crate::core::event_bus::publish_global(
                 crate::core::event_bus::DomainEvent::SessionExpired {
                     source: format!("jsonrpc.invoke_method:{method}"),
-                    reason: crate::openhuman::inference::provider::ops::sanitize_api_error(msg),
+                    reason: sanitized_reason,
                 },
+            );
+        } else if is_unconfirmed_unauthorized_error(msg) {
+            log::warn!(
+                "[jsonrpc] unauthorized error for method '{}' did not match OpenHuman session expiry — leaving session intact: {}",
+                method,
+                sanitized_reason
             );
         }
     }
@@ -201,18 +209,12 @@ pub async fn invoke_method(state: AppState, method: &str, params: Value) -> Resu
 
 /// Helper to determine if an error message indicates an expired or invalid session.
 ///
-/// Deliberately **looser** than
-/// [`crate::core::observability::is_session_expired_message`]: this
-/// dispatch-site predicate also matches the generic `"401 + unauthorized"` /
-/// `"invalid token"` pair so token cleanup +
-/// `DomainEvent::SessionExpired` publish fire on *any* 401, including
-/// BYO-key provider failures (which clear the stale local token even if
-/// the user mis-configured an OpenAI / Anthropic key). The strict
-/// classifier in `observability` is for the agent / web-channel
-/// `report_error_or_expected` call sites, where matching too loosely would
-/// silence actionable BYO-key configuration errors (OPENHUMAN-TAURI-26
-/// rationale: the agent-layer demote must NOT also swallow generic
-/// provider 401s).
+/// Uses the same strict classifier as observability so only explicit
+/// OpenHuman auth-session failures clear the app session. A generic
+/// `"401 Unauthorized"` or `"invalid token"` can come from BYO-key
+/// providers, Composio, channels, or other scoped downstream calls; those
+/// must surface as recoverable errors rather than publishing
+/// `DomainEvent::SessionExpired`.
 ///
 /// "No backend session token" is also treated as a session-expired signal: the
 /// auth profile is missing entirely (the user was never signed in, or their
@@ -228,12 +230,15 @@ pub async fn invoke_method(state: AppState, method: &str, params: Value) -> Resu
 /// no JWT in the store. This is the same auth-boundary condition, just surfaced
 /// as a local guard rather than a backend response.
 fn is_session_expired_error(msg: &str) -> bool {
-    let lower = msg.to_lowercase();
-    (lower.contains("401") && lower.contains("unauthorized"))
-        || lower.contains("invalid token")
-        || lower.contains("no backend session token")
-        || lower.contains("session jwt required")
-        || msg.contains("SESSION_EXPIRED")
+    crate::core::observability::is_session_expired_message(msg)
+}
+
+/// Detect auth-looking failures that are not specific enough to clear the
+/// OpenHuman session. This is only for diagnostics; it must not feed the
+/// `SessionExpired` publish path.
+fn is_unconfirmed_unauthorized_error(msg: &str) -> bool {
+    let lower = msg.to_ascii_lowercase();
+    (lower.contains("401") && lower.contains("unauthorized")) || lower.contains("invalid token")
 }
 
 /// Returns `true` when the error message comes from JSON-RPC params validation

@@ -7,7 +7,8 @@ use tokio_util::sync::CancellationToken;
 
 use super::{
     build_http_schema_dump, default_state, escape_html, invoke_method, is_param_validation_error,
-    is_session_expired_error, params_to_object, parse_json_params, rpc_handler, type_name,
+    is_session_expired_error, is_unconfirmed_unauthorized_error, params_to_object,
+    parse_json_params, rpc_handler, type_name,
 };
 
 struct EnvVarGuard {
@@ -564,26 +565,46 @@ fn parse_json_params_reports_error_message() {
 }
 
 #[test]
-fn is_session_expired_error_matches_401_unauthorized() {
-    assert!(is_session_expired_error(
+fn is_session_expired_error_does_not_match_generic_401_unauthorized() {
+    assert!(!is_session_expired_error(
         "backend returned 401 Unauthorized"
     ));
-    assert!(is_session_expired_error("401 UNAUTHORIZED"));
-    assert!(is_session_expired_error("got 401 and unauthorized body"));
+    assert!(!is_session_expired_error("401 UNAUTHORIZED"));
+    assert!(!is_session_expired_error("got 401 and unauthorized body"));
 }
 
 #[test]
-fn is_session_expired_error_requires_both_401_and_unauthorized() {
-    // 401 alone is not sufficient — could be HTTP/3.01 nonsense or
-    // unrelated text. We require the string "unauthorized" too.
+fn unconfirmed_unauthorized_error_matches_generic_401_for_diagnostics_only() {
+    assert!(is_unconfirmed_unauthorized_error(
+        "backend returned 401 Unauthorized"
+    ));
+    assert!(is_unconfirmed_unauthorized_error("401 UNAUTHORIZED"));
+    assert!(is_unconfirmed_unauthorized_error(
+        "got 401 and unauthorized body"
+    ));
+}
+
+#[test]
+fn is_session_expired_error_does_not_match_partial_auth_text() {
     assert!(!is_session_expired_error("server returned 401"));
     assert!(!is_session_expired_error("unauthorized without code"));
 }
 
 #[test]
-fn is_session_expired_error_matches_invalid_token_case_insensitive() {
-    assert!(is_session_expired_error("Invalid Token"));
-    assert!(is_session_expired_error("got an invalid token here"));
+fn is_session_expired_error_does_not_match_invalid_token_case_insensitive() {
+    assert!(!is_session_expired_error("Invalid Token"));
+    assert!(!is_session_expired_error("got an invalid token here"));
+    assert!(is_unconfirmed_unauthorized_error("Invalid Token"));
+    assert!(is_unconfirmed_unauthorized_error(
+        "got an invalid token here"
+    ));
+}
+
+#[test]
+fn is_session_expired_error_matches_openhuman_session_expired_body() {
+    assert!(is_session_expired_error(
+        r#"OpenHuman API error (401 Unauthorized): {"success":false,"error":"Session expired. Please log in again."}"#
+    ));
 }
 
 #[test]
