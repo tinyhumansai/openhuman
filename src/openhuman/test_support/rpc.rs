@@ -16,8 +16,7 @@ use crate::openhuman::config::{clear_active_user, default_root_openhuman_dir};
 use crate::openhuman::cron;
 use crate::rpc::RpcOutcome;
 
-const E2E_MODE_ENV: &str = "OPENHUMAN_E2E_MODE";
-const E2E_MODE_ENABLED: &str = "1";
+const E2E_MODE_ENV_VAR: &str = "OPENHUMAN_E2E_MODE";
 
 /// Wipe summary returned to the caller for debug visibility.
 #[derive(Debug, Serialize)]
@@ -28,6 +27,19 @@ pub struct ResetSummary {
     pub active_user_cleared: bool,
 }
 
+fn ensure_e2e_mode_enabled() -> Result<(), String> {
+    ensure_e2e_mode_value(std::env::var(E2E_MODE_ENV_VAR).ok().as_deref())
+}
+
+fn ensure_e2e_mode_value(raw: Option<&str>) -> Result<(), String> {
+    match raw.map(str::trim) {
+        Some("1" | "true" | "TRUE" | "yes" | "YES") => Ok(()),
+        _ => Err(format!(
+            "test_reset is disabled unless {E2E_MODE_ENV_VAR} is set to one of: 1, true, TRUE, yes, YES"
+        )),
+    }
+}
+
 /// Reset persistent state to the "fresh install" baseline.
 ///
 /// Errors at any individual wipe step short-circuit and surface back to the
@@ -35,7 +47,10 @@ pub struct ResetSummary {
 /// downstream tests pass on contaminated state.
 pub async fn reset() -> Result<RpcOutcome<ResetSummary>, String> {
     log::debug!("[test_reset] entry");
-    ensure_e2e_mode()?;
+    ensure_e2e_mode_enabled().map_err(|e| {
+        log::debug!("[test_reset] rejected: {e}");
+        e
+    })?;
 
     let mut config = Config::load_or_init()
         .await
@@ -107,77 +122,45 @@ pub async fn reset_json() -> Result<serde_json::Value, String> {
     }))
 }
 
-fn ensure_e2e_mode() -> Result<(), String> {
-    match std::env::var(E2E_MODE_ENV) {
-        Ok(value) if value.trim() == E2E_MODE_ENABLED => Ok(()),
-        _ => Err(format!(
-            "test_reset is only available when {E2E_MODE_ENV}={E2E_MODE_ENABLED}; run it from the E2E harness"
-        )),
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{ensure_e2e_mode_value, reset, E2E_MODE_ENV_VAR};
+    use std::sync::{Mutex, OnceLock};
 
-    static E2E_MODE_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    static E2E_MODE_ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
-    struct EnvGuard {
-        key: &'static str,
-        old: Option<std::ffi::OsString>,
-    }
-
-    impl EnvGuard {
-        fn set(key: &'static str, value: &str) -> Self {
-            let old = std::env::var_os(key);
-            std::env::set_var(key, value);
-            Self { key, old }
-        }
-
-        fn remove(key: &'static str) -> Self {
-            let old = std::env::var_os(key);
-            std::env::remove_var(key);
-            Self { key, old }
-        }
-    }
-
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            match &self.old {
-                Some(value) => std::env::set_var(self.key, value),
-                None => std::env::remove_var(self.key),
-            }
-        }
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        E2E_MODE_ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     #[tokio::test]
-    async fn reset_requires_e2e_mode() {
-        let _lock = E2E_MODE_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let _guard = EnvGuard::remove(E2E_MODE_ENV);
+    async fn reset_rejects_when_e2e_mode_unset() {
+        let _guard = env_lock();
+        let prior = std::env::var(E2E_MODE_ENV_VAR).ok();
+        std::env::remove_var(E2E_MODE_ENV_VAR);
 
-        let err = match reset().await {
-            Ok(_) => panic!("reset should require E2E mode"),
-            Err(err) => err,
-        };
+        let err = reset()
+            .await
+            .expect_err("unset E2E mode must reject test_reset");
 
-        assert!(err.contains(E2E_MODE_ENV));
-        assert!(err.contains(E2E_MODE_ENABLED));
+        match prior {
+            Some(value) => std::env::set_var(E2E_MODE_ENV_VAR, value),
+            None => std::env::remove_var(E2E_MODE_ENV_VAR),
+        }
+
+        assert!(
+            err.contains("OPENHUMAN_E2E_MODE") && err.contains("is set to one of"),
+            "unexpected guard error: {err}"
+        );
     }
 
     #[test]
-    fn e2e_mode_accepts_runtime_flag() {
-        let _lock = E2E_MODE_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let _guard = EnvGuard::set(E2E_MODE_ENV, E2E_MODE_ENABLED);
-
-        assert!(ensure_e2e_mode().is_ok());
-    }
-
-    #[test]
-    fn e2e_mode_rejects_other_values() {
-        let _lock = E2E_MODE_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let _guard = EnvGuard::set(E2E_MODE_ENV, "true");
-
-        let err = ensure_e2e_mode().expect_err("only the explicit E2E flag is accepted");
-        assert!(err.contains(E2E_MODE_ENV));
+    fn reset_guard_accepts_explicit_e2e_mode() {
+        ensure_e2e_mode_value(Some("1")).expect("1 enables E2E mode");
+        ensure_e2e_mode_value(Some("true")).expect("true enables E2E mode");
+        ensure_e2e_mode_value(Some("yes")).expect("yes enables E2E mode");
     }
 }

@@ -239,7 +239,10 @@ fn agent_tools_register_when_backend_signed_in() {
     assert_eq!(
         tools.len(),
         5,
-        "backend session present → all 5 generic composio agent tools should register"
+        "backend session present → all 5 generic composio agent tools should register \
+         (list_toolkits, list_connections, authorize, list_tools, execute). Scope \
+         elevation is intentionally NOT exposed as an agent tool — the user must \
+         flip scopes themselves in the Connections UI."
     );
 }
 
@@ -249,7 +252,9 @@ fn agent_tools_register_when_direct_mode_with_stored_key_and_no_backend_session(
     // user with a working personal Composio API key was getting `0`
     // tools registered because the gate hard-bound to
     // `build_composio_client` (backend-only). With the mode-aware probe
-    // in place this now correctly returns the full 5 generic tools.
+    // in place this now correctly returns the full generic tool set
+    // (5 tools: list_toolkits, list_connections, authorize, list_tools,
+    // execute). Scope elevation is not an agent tool — UI-only.
     let tmp = tempfile::tempdir().expect("tempdir");
     let mut config = crate::openhuman::config::Config::default();
     config.config_path = tmp.path().join("config.toml");

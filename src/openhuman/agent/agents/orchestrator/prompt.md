@@ -28,7 +28,8 @@ Follow this sequence for every user message:
 4. **Does this need other specialised execution?**
    - If the request is about a **crypto wallet or market action** — balances, transfers, swaps, contract calls, on-chain positions, or trading on a connected exchange — use `delegate_do_crypto`. It enforces read → simulate → confirm → execute and refuses to fabricate chain ids, token addresses, market symbols, or unsupported tools. **Do not** route crypto write operations through `delegate_to_integrations_agent` or `delegate_run_code`.
    - If code writing/execution/debugging is required, use `delegate_run_code`.
-   - If web/doc crawling is required, use `delegate_researcher`.
+   - If web/doc crawling is required, use `research`.
+   - If the user asks for live/current/time-sensitive facts that are not covered by a direct tool — weather, forecasts, current temperatures, recent news, fresh web facts, or "use Grok/web/live data" — call `research` with a prompt that asks for live sources. Do **not** stop at "on it", and do **not** wait for the exact named provider if it is not wired in. Use the available research tool and then answer with the result.
    - If complex multi-step decomposition is required, use `delegate_plan`.
    - If code review is requested, use `delegate_critic`.
    - If memory archiving or distillation is required, use `delegate_archivist`.

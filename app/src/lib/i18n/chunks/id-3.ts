@@ -34,6 +34,14 @@ const id3: TranslationMap = {
   'workspace.building': 'Membangun...',
   'workspace.buildSummaryTrees': 'Bangun Pohon Ringkasan',
   'workspace.viewVault': 'Lihat Vault',
+  'workspace.openingVaultTitle': 'Opening vault in Obsidian',
+  'workspace.openingVaultMessage':
+    "If Obsidian doesn't open, install it from obsidian.md or use Reveal Folder. Vault path:",
+  'workspace.openVaultFailedTitle': "Couldn't open vault in Obsidian",
+  'workspace.openVaultFailedMessage':
+    'Use Reveal Folder to open the vault directory directly. Vault path:',
+  'workspace.revealVaultFailed': "Couldn't reveal vault folder",
+  'workspace.revealFolder': 'Reveal Folder',
   'workspace.graphLoadFailed': 'Gagal memuat grafik memori',
   'workspace.loadingGraph': 'Memuat grafik memori...',
   'workspace.graphViewMode': 'Mode tampilan grafik memori',
