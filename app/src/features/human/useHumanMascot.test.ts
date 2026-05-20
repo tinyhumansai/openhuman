@@ -562,10 +562,10 @@ describe('useHumanMascot TTS playback', () => {
         await Promise.resolve();
       });
 
-      // Second-arg is undefined → synthesizeSpeech falls through to its
-      // own MASCOT_VOICE_ID default. Locks the no-regression contract
-      // for users who never opened the picker.
-      expect(synthesizeSpeech).toHaveBeenCalledWith('hello', undefined);
+      // Selector now resolves the build-time `MASCOT_VOICE_ID` default
+      // eagerly so the call site never has to fall back. Locks the
+      // no-regression contract for users who never opened the picker.
+      expect(synthesizeSpeech).toHaveBeenCalledWith('hello', { voiceId: 'JBFqnCBsd6RMkjVDRZzb' });
     });
   });
 });

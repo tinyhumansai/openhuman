@@ -317,6 +317,7 @@ jobs:
     needs: [prepare-build, build-desktop, build-docker]
     env:
       SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+      SENTRY_URL: ${{ vars.SENTRY_URL }}
     steps:
       - name: Install sentry-cli
         if: env.SENTRY_AUTH_TOKEN != ''
@@ -326,6 +327,7 @@ jobs:
         if: env.SENTRY_AUTH_TOKEN != ''
         shell: bash
         env:
+          SENTRY_URL: ${{ vars.SENTRY_URL }}
           SENTRY_ORG: ${{ vars.SENTRY_ORG }}
           # Marker lives on the React project's release; events from all
           # surfaces share the same `openhuman@<version>+<short_sha>` release

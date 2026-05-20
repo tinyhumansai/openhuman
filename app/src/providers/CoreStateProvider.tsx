@@ -45,6 +45,7 @@ const log = debugFactory('core-state');
 const POLL_MS = 2000;
 const MAX_BOOTSTRAP_RETRIES = 5;
 const SUPPRESS_POLL_WARNING_AT = MAX_BOOTSTRAP_RETRIES + 1;
+const BACKOFF_POLL_MS = 10_000;
 
 /** Extract only non-sensitive fields from an RPC/fetch error. */
 function sanitizeError(error: unknown): { message?: string; code?: string; status?: number } {
@@ -67,12 +68,25 @@ export function coreStatePollFailureWarningMessage(failureCount: number): string
     return null;
   }
   if (failureCount <= MAX_BOOTSTRAP_RETRIES) {
-    return `[core-state] poll failed (attempt ${failureCount}/${MAX_BOOTSTRAP_RETRIES}):`;
+    return `[core-state] bootstrap poll failed (attempt ${failureCount}/${MAX_BOOTSTRAP_RETRIES}):`;
   }
   if (failureCount === SUPPRESS_POLL_WARNING_AT) {
-    return '[core-state] poll failed repeatedly; suppressing further warnings until core state recovers:';
+    return '[core-state] bootstrap budget exhausted; continuing with backoff. Suppressing further warnings until recovery:';
   }
   return null;
+}
+
+export function coreStatePollFailureDebugMessage(failureCount: number): string | null {
+  if (failureCount <= 0) {
+    return null;
+  }
+  if (failureCount < MAX_BOOTSTRAP_RETRIES) {
+    return `refresh failed during bootstrap retry ${failureCount}/${MAX_BOOTSTRAP_RETRIES}; nextAction=retrying`;
+  }
+  if (failureCount === MAX_BOOTSTRAP_RETRIES) {
+    return `refresh failed during bootstrap retry ${failureCount}/${MAX_BOOTSTRAP_RETRIES}; nextAction=marking-ready-with-fallback`;
+  }
+  return `refresh failed after ${failureCount} consecutive poll failures; bootstrapRetryLimit=${MAX_BOOTSTRAP_RETRIES}; nextAction=continuing-background-polling-with-warnings-suppressed`;
 }
 
 function decodeJwtPayload(token: string): Record<string, unknown> | null {
@@ -425,12 +439,10 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
         if (!cancelled) {
           bootstrapFailCountRef.current += 1;
           const safe = sanitizeError(error);
-          log(
-            'refresh failed attempt=%d/%d error=%O',
-            bootstrapFailCountRef.current,
-            MAX_BOOTSTRAP_RETRIES,
-            safe
-          );
+          const debugMessage = coreStatePollFailureDebugMessage(bootstrapFailCountRef.current);
+          if (debugMessage) {
+            log('%s error=%O', debugMessage, safe);
+          }
           const warningMessage = coreStatePollFailureWarningMessage(bootstrapFailCountRef.current);
           if (warningMessage) {
             console.warn(warningMessage, safe);
@@ -462,12 +474,14 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
     void load();
     let timeoutId: number | null = null;
     const scheduleNext = () => {
+      const delay =
+        bootstrapFailCountRef.current >= MAX_BOOTSTRAP_RETRIES ? BACKOFF_POLL_MS : POLL_MS;
       timeoutId = window.setTimeout(async () => {
         await doRefresh();
         if (!cancelled) {
           scheduleNext();
         }
-      }, POLL_MS);
+      }, delay);
     };
     scheduleNext();
 
@@ -559,7 +573,15 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
   const updateLocalState = useCallback(
     async (params: Parameters<typeof updateCoreLocalState>[0]) => {
       await updateCoreLocalState(params);
-      await refresh();
+      // The follow-up refresh is best-effort cache reconciliation, not part
+      // of the write contract — sibling helpers (setAnalyticsEnabled,
+      // setMeetAutoOrchestratorHandoff, …) already swallow here. An
+      // un-caught `app_state_snapshot` timeout used to bubble out of
+      // `setEncryptionKey` / `setOnboardingTasks` callers as an unhandled
+      // rejection → OPENHUMAN-REACT-Z/Y. The next poll tick will reconcile.
+      await refresh().catch(err => {
+        log('refresh failed after updateLocalState: %O', sanitizeError(err));
+      });
     },
     [refresh]
   );
@@ -580,7 +602,13 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
       // restartApp call here was redundant and skipped the persist purge,
       // letting redux-persist rehydrate the prior user's slices on launch
       // (#900). Restart now happens inside handleIdentityFlip after purge.
-      await refresh();
+      // Swallow refresh failures here so a cold-boot `app_state_snapshot`
+      // timeout post-login doesn't surface as an unhandled rejection
+      // (OPENHUMAN-REACT-Z/Y) — the polling loop reconciles within
+      // `POLL_MS`.
+      await refresh().catch(err => {
+        log('refresh failed after session store: %O', sanitizeError(err));
+      });
       await refreshTeams().catch(err => {
         log('refreshTeams failed after session store: %O', sanitizeError(err));
       });

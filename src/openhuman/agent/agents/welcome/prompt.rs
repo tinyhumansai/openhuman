@@ -179,12 +179,14 @@ mod tests {
                 toolkit: "gmail".into(),
                 description: "Email access.".into(),
                 tools: Vec::new(),
+                gated_tools: Vec::new(),
                 connected: true,
             },
             ConnectedIntegration {
                 toolkit: "notion".into(),
                 description: "Pitch during onboarding.".into(),
                 tools: Vec::new(),
+                gated_tools: Vec::new(),
                 connected: false,
             },
         ];

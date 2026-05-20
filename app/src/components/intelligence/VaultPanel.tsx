@@ -3,17 +3,21 @@
  * files mirrored into memory under namespace `vault:<id>`. Sits inside
  * the Intelligence ▸ Memory tab.
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { ToastNotification } from '../../types/intelligence';
 import {
   type CoreVault,
-  type CoreVaultSyncReport,
+  type CoreVaultSyncState,
   openhumanVaultCreate,
   openhumanVaultList,
   openhumanVaultRemove,
   openhumanVaultSync,
+  openhumanVaultSyncStatus,
 } from '../../utils/tauriCommands/vault';
+
+/** How often the UI re-polls for sync progress while a sync is running (ms). */
+const SYNC_POLL_INTERVAL_MS = 1_500;
 
 interface VaultPanelProps {
   onToast?: (toast: Omit<ToastNotification, 'id'>) => void;
@@ -24,11 +28,27 @@ export function VaultPanel({ onToast }: VaultPanelProps) {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [busy, setBusy] = useState<Record<string, 'sync' | 'remove' | undefined>>({});
+  const [syncProgress, setSyncProgress] = useState<
+    Record<string, { ingested: number; total: number } | undefined>
+  >({});
   const [creating, setCreating] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [newName, setNewName] = useState('');
   const [newPath, setNewPath] = useState('');
   const [newExcludes, setNewExcludes] = useState('');
+
+  // Track active polling timers so we can cancel them on unmount.
+  const pollTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+
+  // Cancel all active poll timers on unmount.
+  useEffect(() => {
+    const timers = pollTimers.current;
+    return () => {
+      for (const t of Object.values(timers)) {
+        clearTimeout(t);
+      }
+    };
+  }, []);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -88,29 +108,99 @@ export function VaultPanel({ onToast }: VaultPanelProps) {
   const handleSync = useCallback(
     async (vault: CoreVault) => {
       setBusy(b => ({ ...b, [vault.id]: 'sync' }));
+      setSyncProgress(p => ({ ...p, [vault.id]: undefined }));
+
+      // Start the background sync.
       try {
-        const resp = await openhumanVaultSync(vault.id);
-        const r: CoreVaultSyncReport = resp.result;
-        onToast?.({
-          type: r.failed > 0 ? 'info' : 'success',
-          title: `Synced "${vault.name}"`,
-          message:
-            `Ingested ${r.ingested}, unchanged ${r.unchanged}, removed ${r.removed}` +
-            (r.failed > 0 ? `, failed ${r.failed}` : '') +
-            (r.skipped_unsupported > 0 ? `, skipped ${r.skipped_unsupported}` : '') +
-            ` · ${(r.duration_ms / 1000).toFixed(1)}s`,
-        });
-        await reload();
+        await openhumanVaultSync(vault.id);
       } catch (err) {
-        console.error('[ui-flow][vault-panel] sync failed', err);
+        console.error('[ui-flow][vault-panel] sync start failed', err);
         onToast?.({
           type: 'error',
           title: 'Sync failed',
           message: err instanceof Error ? err.message : String(err),
         });
-      } finally {
         setBusy(b => ({ ...b, [vault.id]: undefined }));
+        return;
       }
+
+      console.debug('[ui-flow][vault-panel] sync started, polling for status', {
+        vaultId: vault.id,
+      });
+
+      // Poll until the background task finishes.
+      const vaultId = vault.id;
+      const vaultName = vault.name;
+
+      const poll = async () => {
+        let st: CoreVaultSyncState;
+        try {
+          const resp = await openhumanVaultSyncStatus(vaultId);
+          st = resp.result;
+        } catch (err) {
+          console.error('[ui-flow][vault-panel] sync status poll failed', err);
+          setBusy(b => ({ ...b, [vaultId]: undefined }));
+          setSyncProgress(p => ({ ...p, [vaultId]: undefined }));
+          onToast?.({
+            type: 'error',
+            title: 'Sync failed',
+            message: err instanceof Error ? err.message : String(err),
+          });
+          return;
+        }
+
+        // Update progress indicator while running.
+        if (st.total > 0) {
+          setSyncProgress(p => ({ ...p, [vaultId]: { ingested: st.ingested, total: st.total } }));
+        }
+
+        console.debug('[ui-flow][vault-panel] sync poll', {
+          vaultId,
+          status: st.status,
+          ingested: st.ingested,
+          total: st.total,
+        });
+
+        if (st.status === 'completed' || st.status === 'failed') {
+          // Clear polling state and show final toast.
+          delete pollTimers.current[vaultId];
+          setBusy(b => ({ ...b, [vaultId]: undefined }));
+          setSyncProgress(p => ({ ...p, [vaultId]: undefined }));
+
+          if (st.status === 'failed') {
+            onToast?.({
+              type: 'error',
+              title: `Sync failed for "${vaultName}"`,
+              message:
+                st.errors.length > 0
+                  ? st.errors.slice(0, 3).join('; ')
+                  : `Failed ${st.failed} file(s)`,
+            });
+          } else {
+            onToast?.({
+              type: st.failed > 0 ? 'info' : 'success',
+              title: `Synced "${vaultName}"`,
+              message:
+                `Ingested ${st.ingested}, unchanged ${st.unchanged}, removed ${st.removed}` +
+                (st.failed > 0 ? `, failed ${st.failed}` : '') +
+                (st.skipped_unsupported > 0 ? `, skipped ${st.skipped_unsupported}` : '') +
+                (st.duration_ms > 0 ? ` · ${(st.duration_ms / 1000).toFixed(1)}s` : ''),
+            });
+          }
+          await reload();
+          return;
+        }
+
+        // Still running — schedule the next poll.
+        pollTimers.current[vaultId] = setTimeout(() => {
+          void poll();
+        }, SYNC_POLL_INTERVAL_MS);
+      };
+
+      // First poll fires immediately (0 ms delay) so tests don't need fake timers.
+      pollTimers.current[vaultId] = setTimeout(() => {
+        void poll();
+      }, 0);
     },
     [onToast, reload]
   );
@@ -272,7 +362,11 @@ export function VaultPanel({ onToast }: VaultPanelProps) {
                     className="rounded-md border border-primary-300 bg-white dark:bg-neutral-900 px-3 py-1.5 text-xs
                                font-semibold text-primary-700 dark:text-primary-300 shadow-sm transition-colors
                                hover:bg-primary-50 dark:hover:bg-primary-500/15 disabled:cursor-not-allowed disabled:opacity-50">
-                    {state === 'sync' ? 'Syncing…' : 'Sync'}
+                    {state === 'sync'
+                      ? (syncProgress[v.id]?.total ?? 0) > 0
+                        ? `Syncing… ${syncProgress[v.id]!.ingested}/${syncProgress[v.id]!.total}`
+                        : 'Syncing…'
+                      : 'Sync'}
                   </button>
                   <button
                     type="button"

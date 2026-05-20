@@ -34,6 +34,7 @@
 
 mod descriptions;
 pub(crate) mod helpers;
+mod scope_lookup;
 pub mod tool_scope;
 mod traits;
 mod types;
@@ -212,6 +213,7 @@ pub(crate) use helpers::pick_str;
 pub use registry::{
     all_providers, get_provider, init_default_providers, register_provider, ProviderArc,
 };
+pub use scope_lookup::{curated_scope_for, toolkit_has_scope};
 pub use tool_scope::{classify_unknown, find_curated, toolkit_from_slug, CuratedTool, ToolScope};
 pub use traits::ComposioProvider;
 pub use types::{ProviderContext, ProviderUserProfile, SyncOutcome, SyncReason};
@@ -282,6 +284,9 @@ mod tests {
         let back: SyncReason = serde_json::from_str(&s).unwrap();
         assert_eq!(back, SyncReason::ConnectionCreated);
     }
+
+    // Note: `toolkit_has_scope` tests now live in `scope_lookup.rs`
+    // alongside the implementation.
 
     #[test]
     fn capability_matrix_distinguishes_native_from_catalog_only_toolkits() {

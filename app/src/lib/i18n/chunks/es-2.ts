@@ -251,6 +251,16 @@ const es2: TranslationMap = {
     'Interruptor principal. Desactivado por defecto — Ollama permanece inactivo. Cuando está activado, el resumidor de árbol, la inteligencia de pantalla y el autocompletado siempre usan el modelo local.',
   'localModel.advancedSettings': 'Configuración avanzada',
   'localModel.debugTitle': 'Depuración de modelo local',
+  'localModel.ollamaServer.helperText': 'Ejemplo: http://192.168.1.5:11434',
+  'localModel.ollamaServer.label': 'URL del servidor Ollama',
+  'localModel.ollamaServer.modelCount': 'modelos',
+  'localModel.ollamaServer.placeholder': 'http://localhost:11434',
+  'localModel.ollamaServer.reachable': 'Accesible',
+  'localModel.ollamaServer.resetButton': 'Restablecer al valor predeterminado',
+  'localModel.ollamaServer.saveButton': 'Guardar',
+  'localModel.ollamaServer.testButton': 'Probar conexión',
+  'localModel.ollamaServer.unreachable': 'No accesible',
+  'localModel.ollamaServer.validationError': 'Debe ser una URL http:// o https:// válida',
   'screenAwareness.debugTitle': 'Depuración de Conciencia de pantalla',
   'memory.debugTitle': 'Depuración de memoria',
   'webhooks.debugTitle': 'Depuración de webhooks',
@@ -289,10 +299,10 @@ const es2: TranslationMap = {
   'chat.topUpToContinue': 'Recarga para continuar.',
   'chat.budgetComplete':
     'Tu presupuesto incluido se agotó. Agrega créditos o mejora tu plan para continuar.',
-  'chat.rateLimitReached': 'Límite de velocidad de 10 horas alcanzado.',
   'chat.topUp': 'Recargar',
-  'chat.fiveHourLimit': 'Límite de 5 horas',
-  'chat.weeklyLimit': 'Límite semanal',
+  'chat.cycle': 'Ciclo',
+  'chat.cycleSpent': 'Gastado este ciclo',
+  'chat.cycleRemaining': 'Restante',
   'chat.left': 'restante',
   'chat.setup': 'Configurar',
   'chat.switchToText': 'Cambiar a texto',
@@ -383,6 +393,40 @@ const es2: TranslationMap = {
   'insights.relationships': 'Relaciones',
   'insights.skills': 'Habilidades',
   'insights.opinions': 'Opiniones',
+  // Developer options menu items (#2225) — English stubs; native translations welcome
+  'devOptions.menuAi': 'AI Configuration',
+  'devOptions.menuAiDesc': 'Cloud providers, local Ollama models, and per-workload routing',
+  'devOptions.menuScreenAware': 'Screen Awareness',
+  'devOptions.menuScreenAwareDesc':
+    'Screen capture permissions, monitoring policy, and session controls',
+  'devOptions.menuMessaging': 'Messaging Channels',
+  'devOptions.menuMessagingDesc':
+    'Configure Telegram/Discord auth modes and default channel routing',
+  'devOptions.menuTools': 'Tools',
+  'devOptions.menuToolsDesc': 'Enable or disable capabilities OpenHuman can use on your behalf',
+  'devOptions.menuAgentChat': 'Agent Chat',
+  'devOptions.menuAgentChatDesc': 'Test agent conversation with model and temperature overrides',
+  'devOptions.menuCronJobs': 'Cron Jobs',
+  'devOptions.menuCronJobsDesc': 'View and configure scheduled jobs for runtime skills',
+  'devOptions.menuLocalModelDebug': 'Local Model Debug',
+  'devOptions.menuLocalModelDebugDesc':
+    'Ollama config, asset downloads, model tests, and diagnostics',
+  'devOptions.menuWebhooksDebug': 'Webhooks',
+  'devOptions.menuWebhooksDebugDesc':
+    'Inspect runtime webhook registrations and captured request logs',
+  'devOptions.menuIntelligence': 'Intelligence',
+  'devOptions.menuIntelligenceDesc': 'Memory workspace, subconscious engine, dreams, and settings',
+  'devOptions.menuNotificationRouting': 'Notification Routing',
+  'devOptions.menuNotificationRoutingDesc':
+    'AI importance scoring and orchestrator escalation for integration alerts',
+  'devOptions.menuComposeIOTriggers': 'ComposeIO Triggers',
+  'devOptions.menuComposeIOTriggersDesc': 'View ComposeIO trigger history and archive',
+  'devOptions.menuComposioRouting': 'Composio Routing (Direct Mode)',
+  'devOptions.menuComposioRoutingDesc':
+    'Bring your own Composio API key and route calls directly to backend.composio.dev',
+  'devOptions.menuComposioTriggers': 'Integration Triggers',
+  'devOptions.menuComposioTriggersDesc':
+    'Configure AI triage settings for Composio integration triggers',
 };
 
 export default es2;

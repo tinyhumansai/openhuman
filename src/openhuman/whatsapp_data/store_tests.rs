@@ -4,17 +4,44 @@
 //! `store.rs`. They focus on cross-account scoping guarantees: data written
 //! for one `account_id` must never appear in queries for a different account.
 
+use super::super::sqlite_retry::BUSY_TIMEOUT;
 use super::super::types::{
     ChatMeta, IngestMessage, ListChatsRequest, ListMessagesRequest, SearchMessagesRequest,
 };
 use super::WhatsAppDataStore;
 use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::mpsc;
+use std::thread;
+use std::time::Duration;
 use tempfile::tempdir;
 
 fn make_store() -> (WhatsAppDataStore, tempfile::TempDir) {
     let tmp = tempdir().expect("tempdir");
     let store = WhatsAppDataStore::new(tmp.path()).expect("store");
     (store, tmp)
+}
+
+fn db_path_for(tmp: &tempfile::TempDir) -> PathBuf {
+    tmp.path().join("whatsapp_data").join("whatsapp_data.db")
+}
+
+/// Hold an immediate write transaction until the returned sender fires, then commit.
+fn spawn_write_blocker(db_path: PathBuf) -> mpsc::Sender<()> {
+    let (hold_tx, hold_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    thread::spawn(move || {
+        let conn = rusqlite::Connection::open(&db_path).expect("blocker open");
+        conn.busy_timeout(BUSY_TIMEOUT)
+            .expect("blocker busy_timeout");
+        conn.execute_batch("BEGIN IMMEDIATE")
+            .expect("blocker BEGIN IMMEDIATE");
+        hold_tx.send(()).expect("blocker ready signal");
+        let _ = release_rx.recv();
+        conn.execute_batch("COMMIT").expect("blocker COMMIT");
+    });
+    hold_rx.recv().expect("blocker must acquire write lock");
+    release_tx
 }
 
 fn chat_meta(name: &str) -> ChatMeta {
@@ -335,6 +362,101 @@ fn prune_old_messages_refreshes_chat_stats() {
     assert_eq!(
         chats_after[0].last_message_ts, 2_000_000_000,
         "last_message_ts must reflect the surviving message"
+    );
+}
+
+/// Concurrent external write lock must not fail ingest — busy_timeout +
+/// retry_on_sqlite_busy should wait for the blocker to commit.
+#[test]
+fn upsert_chats_succeeds_after_sqlite_busy_contention() {
+    let (store, tmp) = make_store();
+    let workspace = tmp.path().to_path_buf();
+    let db_path = db_path_for(&tmp);
+    let mut chats = HashMap::new();
+    chats.insert("chat@c.us".to_string(), chat_meta("Alice"));
+
+    let release = spawn_write_blocker(db_path);
+    let upsert_handle = thread::spawn(move || store.upsert_chats("acct1", &chats));
+    // Let upsert reach SQLite busy wait, then release the external write lock.
+    thread::sleep(Duration::from_millis(50));
+    release.send(()).expect("release blocker");
+
+    let count = upsert_handle
+        .join()
+        .expect("upsert thread")
+        .expect("upsert must succeed once blocker releases");
+    assert_eq!(count, 1);
+
+    let store = WhatsAppDataStore::new(&workspace).expect("reopen store");
+    let rows = store
+        .list_chats(&ListChatsRequest {
+            account_id: Some("acct1".to_string()),
+            limit: None,
+            offset: None,
+        })
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+}
+
+#[test]
+fn prune_old_messages_succeeds_after_sqlite_busy_contention() {
+    let (store, tmp) = make_store();
+    let workspace = tmp.path().to_path_buf();
+    let db_path = db_path_for(&tmp);
+    let mut chats = HashMap::new();
+    chats.insert("chat@c.us".to_string(), chat_meta("Chat"));
+    store.upsert_chats("acct1", &chats).unwrap();
+    store
+        .upsert_messages(
+            "acct1",
+            &[
+                simple_message("old", "chat@c.us", "old", 1_000_000),
+                simple_message("new", "chat@c.us", "new", 2_000_000_000),
+            ],
+        )
+        .unwrap();
+
+    let release = spawn_write_blocker(db_path);
+    let prune_handle = thread::spawn(move || store.prune_old_messages(1_500_000_000));
+    thread::sleep(Duration::from_millis(50));
+    release.send(()).expect("release blocker");
+
+    let pruned = prune_handle
+        .join()
+        .expect("prune thread")
+        .expect("prune must succeed once blocker releases");
+    assert_eq!(pruned, 1);
+
+    let store = WhatsAppDataStore::new(&workspace).expect("reopen store");
+    let chats_after = store
+        .list_chats(&ListChatsRequest {
+            account_id: Some("acct1".to_string()),
+            limit: None,
+            offset: None,
+        })
+        .unwrap();
+    assert_eq!(chats_after[0].message_count, 1);
+}
+
+#[test]
+fn open_conn_configures_busy_timeout_and_wal() {
+    let (store, _tmp) = make_store();
+    let conn = store.open_conn_for_test().expect("open");
+    let busy_ms: i64 = conn
+        .pragma_query_value(None, "busy_timeout", |v| v.get(0))
+        .expect("busy_timeout pragma");
+    assert_eq!(
+        busy_ms,
+        BUSY_TIMEOUT.as_millis() as i64,
+        "busy_timeout must match configured window"
+    );
+    let journal_mode: String = conn
+        .pragma_query_value(None, "journal_mode", |v| v.get(0))
+        .expect("journal_mode pragma");
+    assert_eq!(
+        journal_mode.to_ascii_lowercase(),
+        "wal",
+        "journal_mode must be WAL"
     );
 }
 

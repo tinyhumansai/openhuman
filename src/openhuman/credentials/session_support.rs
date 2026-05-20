@@ -2,7 +2,7 @@
 
 use crate::openhuman::config::Config;
 
-use super::profiles::{AuthProfileKind, TokenSet};
+use super::profiles::{AuthProfile, AuthProfileKind, TokenSet};
 use super::responses::{AuthProfileSummary, AuthStateResponse};
 use super::AuthService;
 
@@ -87,18 +87,37 @@ fn session_user_value(
 }
 
 pub fn build_session_state(config: &Config) -> Result<AuthStateResponse, String> {
-    let auth_service = AuthService::from_config(config);
-    let profile = auth_service
-        .get_profile(APP_SESSION_PROVIDER, None)
-        .map_err(|e| e.to_string())?;
+    let profile = load_app_session_profile(config)?;
+    Ok(session_state_from_profile(profile.as_ref()))
+}
 
+pub fn get_session_token(config: &Config) -> Result<Option<String>, String> {
+    let profile = load_app_session_profile(config)?;
+    Ok(session_token_from_profile(profile.as_ref()))
+}
+
+/// Load the `app-session` profile once. Callers that need both the
+/// session-state view (`session_state_from_profile`) AND the raw token
+/// (`session_token_from_profile`) should call this once and pass the
+/// result to both helpers — every load takes the auth-profile store
+/// lock, and on Windows the `app_state_snapshot` hot path used to take
+/// it twice per call which materially increased lock contention
+/// (Sentry: "Timed out waiting for auth profile lock").
+pub fn load_app_session_profile(config: &Config) -> Result<Option<AuthProfile>, String> {
+    let auth_service = AuthService::from_config(config);
+    auth_service
+        .get_profile(APP_SESSION_PROVIDER, None)
+        .map_err(|e| e.to_string())
+}
+
+pub fn session_state_from_profile(profile: Option<&AuthProfile>) -> AuthStateResponse {
     let Some(profile) = profile else {
-        return Ok(AuthStateResponse {
+        return AuthStateResponse {
             is_authenticated: false,
             user_id: None,
             user: None,
             profile_id: None,
-        });
+        };
     };
 
     let is_authenticated = profile
@@ -107,20 +126,24 @@ pub fn build_session_state(config: &Config) -> Result<AuthStateResponse, String>
         .map(|token| !token.trim().is_empty())
         .unwrap_or(false);
 
-    Ok(AuthStateResponse {
+    AuthStateResponse {
         is_authenticated,
         user_id: profile.metadata.get("user_id").cloned(),
-        user: session_user_value(&profile),
-        profile_id: Some(profile.id),
-    })
+        user: session_user_value(profile),
+        profile_id: Some(profile.id.clone()),
+    }
 }
 
-pub fn get_session_token(config: &Config) -> Result<Option<String>, String> {
-    let auth_service = AuthService::from_config(config);
-    let profile = auth_service
-        .get_profile(APP_SESSION_PROVIDER, None)
-        .map_err(|e| e.to_string())?;
-    Ok(profile.and_then(|entry| entry.token))
+pub fn session_token_from_profile(profile: Option<&AuthProfile>) -> Option<String> {
+    // Mirror the `is_authenticated` check in `session_state_from_profile`
+    // (trim + non-empty) so the two views of the same profile never
+    // disagree — i.e. we never return `Some("   ")` while reporting
+    // `is_authenticated = false`.
+    profile
+        .and_then(|entry| entry.token.as_deref())
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+        .map(str::to_string)
 }
 
 #[cfg(test)]
@@ -314,6 +337,29 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let config = test_config(&tmp);
         assert!(get_session_token(&config).unwrap().is_none());
+    }
+
+    /// Regression for CodeRabbit feedback on PR #2085: a profile whose
+    /// token is whitespace-only must come back as `None`, matching the
+    /// `is_authenticated` view (which trims + filters empty).
+    #[test]
+    fn session_token_from_profile_normalises_blank_tokens_to_none() {
+        let p_blank = profile_fixture(AuthProfileKind::Token, Some("   "));
+        assert!(session_token_from_profile(Some(&p_blank)).is_none());
+
+        let p_empty = profile_fixture(AuthProfileKind::Token, Some(""));
+        assert!(session_token_from_profile(Some(&p_empty)).is_none());
+
+        let p_none = profile_fixture(AuthProfileKind::Token, None);
+        assert!(session_token_from_profile(Some(&p_none)).is_none());
+
+        let p_real = profile_fixture(AuthProfileKind::Token, Some("  tok  "));
+        // Trim leaks into the returned value — this matches the
+        // `is_authenticated` semantic that "  tok  " is a real token.
+        assert_eq!(
+            session_token_from_profile(Some(&p_real)).as_deref(),
+            Some("tok")
+        );
     }
 
     #[test]

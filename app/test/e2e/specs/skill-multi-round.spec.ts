@@ -34,10 +34,11 @@ describe('Multi-round tool conversation smoke', () => {
     const hash = await browser.execute(() => window.location.hash);
     expect(String(hash)).toContain('/chat');
 
+    // /chat page renders 'Threads' (t('chat.threads')) as a stable sidebar heading.
     const ok =
-      (await textExists('Message OpenHuman')) ||
-      (await textExists('Type a message')) ||
-      (await textExists('Conversation'));
+      (await textExists('Threads')) ||
+      (await textExists('New')) ||
+      (await textExists('Type a message'));
     expect(ok).toBe(true);
   });
 });

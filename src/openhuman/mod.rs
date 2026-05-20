@@ -17,6 +17,8 @@
 pub mod about_app;
 pub mod accessibility;
 pub mod agent;
+pub mod agent_experience;
+pub mod agent_tool_policy;
 pub mod app_state;
 pub mod approval;
 pub mod audio_toolkit;
@@ -30,6 +32,7 @@ pub mod context;
 pub mod cost;
 pub mod credentials;
 pub mod cron;
+pub mod desktop_companion;
 pub mod dev_paths;
 pub mod doctor;
 pub mod embeddings;

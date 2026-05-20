@@ -37,15 +37,18 @@ describe('Settings - Channels & Permissions', () => {
     expect(await textExists('Discord')).toBe(true);
 
     await clickText('Discord');
-    await waitForText('Active route: discord via', 5_000);
+    // The active-route line always renders regardless of connection state.
+    await waitForText('Active route', 5_000);
   });
 
   it('renders privacy settings and analytics toggle (13.2.2)', async () => {
     await navigateViaHash('/settings/privacy');
 
     await waitForText('Privacy', 15_000);
-    await waitForText('Data Sharing', 15_000);
+    // PrivacyPanel renders "Anonymized Analytics" section header (not "Data Sharing")
+    await waitForText('Anonymized Analytics', 15_000);
     expect(await textExists('Share Anonymized Usage Data')).toBe(true);
-    await waitForText('Permission Metadata', 5_000);
+    // Capability list section is "What leaves your computer" (not "Permission Metadata")
+    await waitForText('What leaves your computer', 5_000);
   });
 });

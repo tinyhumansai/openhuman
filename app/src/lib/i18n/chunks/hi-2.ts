@@ -246,6 +246,16 @@ const hi2: TranslationMap = {
     'मास्टर स्विच। डिफ़ॉल्ट रूप से बंद — Ollama आइडल रहता है। चालू होने पर tree summarizer, screen intelligence और autocomplete हमेशा लोकल मॉडल इस्तेमाल करते हैं।',
   'localModel.advancedSettings': 'एडवांस्ड सेटिंग्स',
   'localModel.debugTitle': 'लोकल मॉडल डिबग',
+  'localModel.ollamaServer.helperText': 'उदाहरण: http://192.168.1.5:11434',
+  'localModel.ollamaServer.label': 'Ollama सर्वर URL',
+  'localModel.ollamaServer.modelCount': 'मॉडल',
+  'localModel.ollamaServer.placeholder': 'http://localhost:11434',
+  'localModel.ollamaServer.reachable': 'पहुंचने योग्य',
+  'localModel.ollamaServer.resetButton': 'डिफ़ॉल्ट पर रीसेट करें',
+  'localModel.ollamaServer.saveButton': 'सहेजें',
+  'localModel.ollamaServer.testButton': 'कनेक्शन जांचें',
+  'localModel.ollamaServer.unreachable': 'पहुंचने योग्य नहीं',
+  'localModel.ollamaServer.validationError': 'एक मान्य http:// या https:// URL होना चाहिए',
   'screenAwareness.debugTitle': 'स्क्रीन अवेयरनेस डिबग',
   'memory.debugTitle': 'मेमोरी डिबग',
   'webhooks.debugTitle': 'Webhooks डिबग',
@@ -283,10 +293,10 @@ const hi2: TranslationMap = {
   'chat.resets': 'रीसेट होता है',
   'chat.topUpToContinue': 'जारी रखने के लिए टॉप अप करें।',
   'chat.budgetComplete': 'आपका बजट पूरा हो गया। जारी रखने के लिए क्रेडिट जोड़ें या अपग्रेड करें।',
-  'chat.rateLimitReached': '10-घंटे की रेट लिमिट पहुँच गई।',
   'chat.topUp': 'टॉप अप करें',
-  'chat.fiveHourLimit': '5-घंटे की सीमा',
-  'chat.weeklyLimit': 'साप्ताहिक सीमा',
+  'chat.cycle': 'चक्र',
+  'chat.cycleSpent': 'इस चक्र में खर्च',
+  'chat.cycleRemaining': 'शेष',
   'chat.left': 'बचा हुआ',
   'chat.setup': 'सेट अप करें',
   'chat.switchToText': 'टेक्स्ट पर स्विच करें',
@@ -377,6 +387,40 @@ const hi2: TranslationMap = {
   'insights.relationships': 'रिश्ते',
   'insights.skills': 'स्किल्स',
   'insights.opinions': 'राय',
+  // Developer options menu items (#2225) — English stubs; native translations welcome
+  'devOptions.menuAi': 'AI Configuration',
+  'devOptions.menuAiDesc': 'Cloud providers, local Ollama models, and per-workload routing',
+  'devOptions.menuScreenAware': 'Screen Awareness',
+  'devOptions.menuScreenAwareDesc':
+    'Screen capture permissions, monitoring policy, and session controls',
+  'devOptions.menuMessaging': 'Messaging Channels',
+  'devOptions.menuMessagingDesc':
+    'Configure Telegram/Discord auth modes and default channel routing',
+  'devOptions.menuTools': 'Tools',
+  'devOptions.menuToolsDesc': 'Enable or disable capabilities OpenHuman can use on your behalf',
+  'devOptions.menuAgentChat': 'Agent Chat',
+  'devOptions.menuAgentChatDesc': 'Test agent conversation with model and temperature overrides',
+  'devOptions.menuCronJobs': 'Cron Jobs',
+  'devOptions.menuCronJobsDesc': 'View and configure scheduled jobs for runtime skills',
+  'devOptions.menuLocalModelDebug': 'Local Model Debug',
+  'devOptions.menuLocalModelDebugDesc':
+    'Ollama config, asset downloads, model tests, and diagnostics',
+  'devOptions.menuWebhooksDebug': 'Webhooks',
+  'devOptions.menuWebhooksDebugDesc':
+    'Inspect runtime webhook registrations and captured request logs',
+  'devOptions.menuIntelligence': 'Intelligence',
+  'devOptions.menuIntelligenceDesc': 'Memory workspace, subconscious engine, dreams, and settings',
+  'devOptions.menuNotificationRouting': 'Notification Routing',
+  'devOptions.menuNotificationRoutingDesc':
+    'AI importance scoring and orchestrator escalation for integration alerts',
+  'devOptions.menuComposeIOTriggers': 'ComposeIO Triggers',
+  'devOptions.menuComposeIOTriggersDesc': 'View ComposeIO trigger history and archive',
+  'devOptions.menuComposioRouting': 'Composio Routing (Direct Mode)',
+  'devOptions.menuComposioRoutingDesc':
+    'Bring your own Composio API key and route calls directly to backend.composio.dev',
+  'devOptions.menuComposioTriggers': 'Integration Triggers',
+  'devOptions.menuComposioTriggersDesc':
+    'Configure AI triage settings for Composio integration triggers',
 };
 
 export default hi2;

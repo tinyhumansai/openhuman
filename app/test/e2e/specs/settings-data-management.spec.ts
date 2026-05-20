@@ -54,7 +54,9 @@ describe('Settings - Data Management', () => {
     await clickText('Clear App Data');
 
     // After reset the app reloads to the Welcome screen.
+    // Welcome page renders t('welcome.title') = 'Welcome to OpenHuman'
     await waitForText('Welcome', 25_000);
-    expect(await textExists('Sign in')).toBe(true);
+    // Welcome page shows runtime selector, not a "Sign in" text link.
+    expect(await textExists('Select a Runtime')).toBe(true);
   });
 });

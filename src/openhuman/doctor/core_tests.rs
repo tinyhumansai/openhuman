@@ -1,4 +1,11 @@
 use super::*;
+use tempfile::TempDir;
+
+fn test_config_in(tmp: &TempDir) -> Config {
+    let mut cfg = Config::default();
+    cfg.workspace_dir = tmp.path().to_path_buf();
+    cfg
+}
 
 #[test]
 fn config_validation_warns_no_channels() {
@@ -50,4 +57,57 @@ fn embedding_provider_validation_rejects_non_http_scheme() {
 fn embedding_provider_validation_rejects_malformed_url() {
     let err = embedding_provider_validation_error("custom:not a url").expect("should fail");
     assert!(err.contains("invalid custom provider URL"), "{err}");
+}
+
+// ── check_memory_tree_db tests (#2206) ───────────────────────────────────────
+
+/// When the workspace exists but the DB file has never been created,
+/// `check_memory_tree_db` should push exactly one `Warn` item mentioning
+/// "not yet created".
+#[test]
+fn check_memory_tree_db_warns_when_db_missing() {
+    let tmp = TempDir::new().expect("tempdir");
+    let cfg = test_config_in(&tmp);
+
+    let mut items = vec![];
+    check_memory_tree_db(&cfg, &mut items);
+
+    assert_eq!(items.len(), 1, "expected exactly one diagnostic item");
+    assert_eq!(items[0].severity, Severity::Warn);
+    assert!(
+        items[0].message.contains("not yet created"),
+        "unexpected message: {}",
+        items[0].message
+    );
+}
+
+/// After `with_connection` has successfully initialised the DB, the probe
+/// should push an `Ok` item.
+#[test]
+fn check_memory_tree_db_ok_when_accessible() {
+    let tmp = TempDir::new().expect("tempdir");
+    let cfg = test_config_in(&tmp);
+
+    // Trigger DB creation.
+    crate::openhuman::memory::tree::store::with_connection(&cfg, |_conn| Ok(()))
+        .expect("DB init must succeed");
+
+    let mut items = vec![];
+    check_memory_tree_db(&cfg, &mut items);
+
+    // There may be a Warn about the SHM file on some platforms; there must
+    // be at least one Ok item about the DB being accessible.
+    let ok_items: Vec<_> = items
+        .iter()
+        .filter(|i| i.severity == Severity::Ok && i.category == "memory_tree_db")
+        .collect();
+    assert!(
+        !ok_items.is_empty(),
+        "expected at least one Ok memory_tree_db item; got: {items:?}"
+    );
+    assert!(
+        ok_items[0].message.contains("accessible"),
+        "unexpected ok message: {}",
+        ok_items[0].message
+    );
 }

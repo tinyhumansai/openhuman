@@ -17,6 +17,9 @@ use super::credentials::scrub_credentials;
 use super::parse::{build_native_assistant_history, parse_structured_tool_calls, parse_tool_calls};
 use super::payload_summarizer::PayloadSummarizer;
 use crate::openhuman::context::guard::{ContextCheckResult, ContextGuard};
+use crate::openhuman::inference::model_context::context_window_for_model;
+
+use super::token_budget::trim_chat_messages_to_budget;
 
 /// Minimum characters per chunk when relaying LLM text to a streaming draft.
 const STREAM_CHUNK_MIN_CHARS: usize = 80;
@@ -153,7 +156,9 @@ pub(crate) async fn run_tool_call_loop(
             .join(", ")
     );
 
-    let mut context_guard = ContextGuard::new();
+    let mut context_guard = context_window_for_model(model)
+        .map(ContextGuard::with_context_window)
+        .unwrap_or_else(ContextGuard::new);
     let mut turn_cost = TurnCost::new();
 
     // Announce turn start to progress subscribers (if any). We use
@@ -233,6 +238,28 @@ pub(crate) async fn run_tool_call_loop(
                     ],
                 );
                 anyhow::bail!(msg);
+            }
+        }
+
+        if let Some(context_window) = context_window_for_model(model) {
+            let budget_outcome = trim_chat_messages_to_budget(history, context_window);
+            if budget_outcome.trimmed {
+                log::warn!(
+                    "[agent_loop] pre-dispatch history trimmed model={} context_window={} original_tokens={} final_tokens={} messages_removed={}",
+                    model,
+                    context_window,
+                    budget_outcome.original_tokens,
+                    budget_outcome.final_tokens,
+                    budget_outcome.messages_removed
+                );
+            } else {
+                tracing::debug!(
+                    iteration,
+                    model,
+                    context_window,
+                    estimated_tokens = budget_outcome.final_tokens,
+                    "[agent_loop] pre-dispatch token budget ok"
+                );
             }
         }
 
@@ -642,6 +669,43 @@ pub(crate) async fn run_tool_call_loop(
                         call.name
                     );
                     continue;
+                }
+            }
+
+            // ── External-effect approval gate (#1339) ─────────
+            // Tools whose `external_effect()` returns true route
+            // through the process-global `ApprovalGate` so the UI
+            // can prompt the user before `execute()` runs. The gate
+            // is `None` when supervised mode is disabled or in test
+            // envs — behavior matches the pre-#1339 path.
+            if let Some(tool) = tool_opt {
+                if tool.external_effect_with_args(&call.arguments) {
+                    if let Some(gate) = crate::openhuman::approval::ApprovalGate::try_global() {
+                        let summary = crate::openhuman::approval::summarize_action(
+                            &call.name,
+                            &call.arguments,
+                        );
+                        let redacted = crate::openhuman::approval::redact_args(&call.arguments);
+                        match gate.intercept(&call.name, &summary, redacted).await {
+                            crate::openhuman::approval::GateOutcome::Allow => {}
+                            crate::openhuman::approval::GateOutcome::Deny { reason } => {
+                                tracing::warn!(
+                                    iteration,
+                                    tool = call.name.as_str(),
+                                    reason = %reason,
+                                    "[agent_loop] approval gate denied tool call"
+                                );
+                                emit_failed_completion(&reason).await;
+                                individual_results.push(reason.clone());
+                                let _ = writeln!(
+                                    tool_results,
+                                    "<tool_result name=\"{}\">\n{reason}\n</tool_result>",
+                                    call.name
+                                );
+                                continue;
+                            }
+                        }
+                    }
                 }
             }
 

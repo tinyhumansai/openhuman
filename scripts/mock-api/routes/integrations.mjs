@@ -166,6 +166,29 @@ export function handleIntegrations(ctx) {
   }
 
   if (
+    method === "POST" &&
+    /^\/agent-integrations\/composio\/authorize\/?$/.test(url)
+  ) {
+    const toolkit =
+      typeof parsedBody?.toolkit === "string" ? parsedBody.toolkit.trim() : "";
+    if (!toolkit) {
+      json(res, 400, {
+        success: false,
+        error: "Missing required field: toolkit",
+      });
+      return true;
+    }
+    json(res, 200, {
+      success: true,
+      data: {
+        connectUrl: `https://composio.example/${toolkit}/consent`,
+        connectionId: `conn-${toolkit}-pending`,
+      },
+    });
+    return true;
+  }
+
+  if (
     method === "GET" &&
     /^\/agent-integrations\/composio\/triggers\/available(\?.*)?$/.test(url)
   ) {

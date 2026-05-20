@@ -1,11 +1,16 @@
-//! CEF cache-lock preflight check (macOS).
+//! CEF cache-lock preflight check (macOS and Linux).
 //!
 //! When another OpenHuman instance is already running, it holds an exclusive
-//! lock on the CEF user-data-dir at `~/Library/Caches/com.openhuman.app/cef`.
+//! lock on the CEF user-data-dir. On macOS this is
+//! `~/Library/Caches/com.openhuman.app/cef`; on Linux it is the path in
+//! `OPENHUMAN_CEF_CACHE_PATH` (set by `cef_profile::prepare_process_cache_path`
+//! before this module runs), falling back to `$XDG_CACHE_HOME/<id>/cef` or
+//! `$HOME/.cache/<id>/cef` when the env var is absent.
+//!
 //! The vendored `tauri-runtime-cef` crate calls `cef::initialize()` and
 //! asserts the result equals `1`; on lock collision it returns `0` and the
 //! assertion panics with a Rust backtrace and no actionable message
-//! (see issue #864).
+//! (Sentry OPENHUMAN-TAURI-K1 on Linux, issue #864 on macOS).
 //!
 //! This module runs *before* the Tauri builder constructs the runtime.
 //! It detects the lock-holder PID via Chromium's `SingletonLock` symlink and
@@ -72,7 +77,12 @@ impl fmt::Display for CefLockError {
 
 impl std::error::Error for CefLockError {}
 
-/// Resolves the macOS default CEF cache directory and runs the preflight.
+/// Resolves the platform default CEF cache directory and runs the preflight.
+///
+/// Checks `OPENHUMAN_CEF_CACHE_PATH` first (always set by
+/// `cef_profile::prepare_process_cache_path` before this runs). Falls back
+/// to the platform-specific default: `~/Library/Caches/<id>/cef` on macOS,
+/// `$XDG_CACHE_HOME/<id>/cef` or `$HOME/.cache/<id>/cef` on Linux.
 pub fn check_default_cache() -> Result<(), CefLockError> {
     if let Some(configured) = std::env::var_os("OPENHUMAN_CEF_CACHE_PATH") {
         let configured = PathBuf::from(configured);
@@ -84,10 +94,22 @@ pub fn check_default_cache() -> Result<(), CefLockError> {
     }
 
     let home = std::env::var_os("HOME").ok_or(CefLockError::NoHomeDir)?;
-    let cache_path = PathBuf::from(home)
-        .join("Library/Caches")
+    let home = PathBuf::from(home);
+
+    #[cfg(target_os = "macos")]
+    let cache_path = home.join("Library/Caches").join(APP_IDENTIFIER).join("cef");
+
+    // On Linux: $XDG_CACHE_HOME/<id>/cef or $HOME/.cache/<id>/cef.
+    // This matches the fallback path in tauri-runtime-cef's CefRuntime::init
+    // (via `dirs::cache_dir()`).
+    #[cfg(target_os = "linux")]
+    let cache_path = std::env::var_os("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .unwrap_or_else(|| home.join(".cache"))
         .join(APP_IDENTIFIER)
         .join("cef");
+
     log::debug!("[cef-preflight] cache_path={}", cache_path.display());
     check_cef_cache_lock(&cache_path)
 }
@@ -201,6 +223,12 @@ mod tests {
     use super::*;
     use std::os::unix::fs::symlink;
 
+    // Shared lock for all tests that mutate process-global env vars.
+    // Each test previously had its own local `static ENV_LOCK`, allowing
+    // concurrent test threads to race on OPENHUMAN_CEF_CACHE_PATH /
+    // XDG_CACHE_HOME. A single module-level lock serialises them.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn parse_target_simple() {
         assert_eq!(
@@ -308,6 +336,88 @@ mod tests {
             fs::symlink_metadata(tmp.join("SingletonLock")).is_ok(),
             "unparseable lock must NOT be removed"
         );
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    /// `check_default_cache` must use `OPENHUMAN_CEF_CACHE_PATH` when set —
+    /// on both macOS and Linux the profile module always sets this before the
+    /// preflight runs, so the platform-specific fallback paths are irrelevant
+    /// in production, but the configured-path branch must work on all platforms.
+    #[test]
+    fn check_default_cache_uses_configured_env_path() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+        let prior = std::env::var_os("OPENHUMAN_CEF_CACHE_PATH");
+        let tmp = fresh_tmp("default-cache-env");
+
+        std::env::set_var("OPENHUMAN_CEF_CACHE_PATH", &tmp);
+        let result = check_default_cache();
+
+        match prior {
+            Some(v) => std::env::set_var("OPENHUMAN_CEF_CACHE_PATH", v),
+            None => std::env::remove_var("OPENHUMAN_CEF_CACHE_PATH"),
+        }
+
+        assert!(result.is_ok(), "expected Ok with no lock, got {result:?}");
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    /// `check_default_cache` with env-path pointing to a dir holding a live lock
+    /// must return `CefLockError::Held`.
+    #[test]
+    fn check_default_cache_env_path_held_returns_err() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+        let prior = std::env::var_os("OPENHUMAN_CEF_CACHE_PATH");
+        let tmp = fresh_tmp("default-cache-held");
+        let me = std::process::id() as i32;
+        symlink(format!("testhost-{me}"), tmp.join("SingletonLock")).unwrap();
+
+        std::env::set_var("OPENHUMAN_CEF_CACHE_PATH", &tmp);
+        let result = check_default_cache();
+
+        match prior {
+            Some(v) => std::env::set_var("OPENHUMAN_CEF_CACHE_PATH", v),
+            None => std::env::remove_var("OPENHUMAN_CEF_CACHE_PATH"),
+        }
+
+        match result {
+            Err(CefLockError::Held { pid, .. }) => assert_eq!(pid, me),
+            other => panic!("expected Held, got {other:?}"),
+        }
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    /// On Linux, `check_default_cache` without `OPENHUMAN_CEF_CACHE_PATH` set
+    /// must fall back to `$XDG_CACHE_HOME/<id>/cef` and return Ok when no lock
+    /// is present.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn check_default_cache_linux_xdg_fallback_no_lock() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+        let prior_cache = std::env::var_os("OPENHUMAN_CEF_CACHE_PATH");
+        let prior_xdg = std::env::var_os("XDG_CACHE_HOME");
+        std::env::remove_var("OPENHUMAN_CEF_CACHE_PATH");
+
+        // Redirect XDG_CACHE_HOME to a temp dir we control.
+        let tmp = fresh_tmp("linux-xdg-fallback");
+        std::env::set_var("XDG_CACHE_HOME", &tmp);
+
+        let result = check_default_cache();
+
+        std::env::remove_var("XDG_CACHE_HOME");
+        match prior_cache {
+            Some(v) => std::env::set_var("OPENHUMAN_CEF_CACHE_PATH", v),
+            None => {}
+        }
+        match prior_xdg {
+            Some(v) => std::env::set_var("XDG_CACHE_HOME", v),
+            None => {}
+        }
+
+        // No SingletonLock under tmp/<id>/cef — should be Ok.
+        assert!(result.is_ok(), "expected Ok with no lock, got {result:?}");
         let _ = fs::remove_dir_all(&tmp);
     }
 }

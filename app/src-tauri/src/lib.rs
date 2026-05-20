@@ -2,9 +2,10 @@
 compile_error!("src-tauri host is desktop-only. Non-desktop targets are not supported.");
 
 mod cdp;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 mod cef_preflight;
 mod cef_profile;
+mod companion_commands;
 mod core_process;
 mod core_rpc;
 mod dictation_hotkeys;
@@ -42,6 +43,7 @@ use tauri::{
 };
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, RunEvent, WebviewWindow};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+use tauri_plugin_notification::NotificationExt;
 
 #[cfg(any(windows, target_os = "linux"))]
 use tauri_plugin_deep_link::DeepLinkExt;
@@ -261,9 +263,28 @@ async fn restart_core_process(
 #[tauri::command]
 async fn start_core_process(
     state: tauri::State<'_, core_process::CoreProcessHandle>,
+    app: tauri::AppHandle<AppRuntime>,
 ) -> Result<(), String> {
     log::info!("[core] start_core_process: command invoked from frontend");
-    state.inner().ensure_running().await
+    state.inner().ensure_running().await?;
+    if let Some(notice) = state.inner().take_last_port_fallback_notice() {
+        let body = format!(
+            "OpenHuman is using port {} because {} was busy",
+            notice.chosen_port, notice.preferred_port
+        );
+        if let Err(err) = app
+            .notification()
+            .builder()
+            .title("OpenHuman")
+            .body(&body)
+            .show()
+        {
+            log::warn!("[core] fallback toast notification failed: {err}");
+        } else {
+            log::info!("[core] fallback toast shown: {body}");
+        }
+    }
+    Ok(())
 }
 
 /// Reset the user's local OpenHuman data and bounce the embedded core.
@@ -1593,7 +1614,123 @@ fn warn_if_wsl_x11_desktop_launch() {
 #[cfg(not(target_os = "linux"))]
 fn warn_if_wsl_x11_desktop_launch() {}
 
+/// Returns `true` if a display server is available on Linux.
+/// Testable pure function: takes the env-presence booleans directly.
+#[cfg(any(target_os = "linux", test))]
+fn linux_display_server_present(display: bool, wayland_display: bool) -> bool {
+    display || wayland_display
+}
+
+/// Pre-CEF display-server check for Linux (Sentry OPENHUMAN-TAURI-K1).
+///
+/// CEF/Chromium requires X11 (`DISPLAY`) or Wayland (`WAYLAND_DISPLAY`) to
+/// initialise. Without either, `cef_initialize` returns 0 and the vendored
+/// `tauri-runtime-cef` asserts `result == 1` → panic `left: 0, right: 1`.
+/// This is fatal and silent on WSL2 without WSLg and on any headless Linux box.
+/// Detect it here and exit with a clear message before `CefRuntime::init` runs.
+#[cfg(target_os = "linux")]
+fn check_linux_display_server() {
+    if linux_display_server_present(
+        has_non_empty_env("DISPLAY"),
+        has_non_empty_env("WAYLAND_DISPLAY"),
+    ) {
+        log::debug!(
+            "[cef-preflight] Linux display server present: DISPLAY={:?} WAYLAND_DISPLAY={:?}",
+            std::env::var("DISPLAY").ok(),
+            std::env::var("WAYLAND_DISPLAY").ok()
+        );
+        return;
+    }
+    let msg = "[openhuman] no display server found (DISPLAY and WAYLAND_DISPLAY are both unset).\n\
+               OpenHuman requires an X11 or Wayland display to run.\n\
+               On WSL2: install WSLg or configure X11 forwarding from Windows.\n\
+               Set DISPLAY (e.g. export DISPLAY=:0) or WAYLAND_DISPLAY before launching.";
+    log::error!(
+        "[cef-preflight] Linux display server missing — CEF cannot initialize \
+         (OPENHUMAN-TAURI-K1): DISPLAY and WAYLAND_DISPLAY both unset"
+    );
+    eprintln!("\n{msg}\n");
+    std::process::exit(1);
+}
+
+#[cfg(not(target_os = "linux"))]
+fn check_linux_display_server() {}
+
+/// Pure predicate: given a candidate `DBUS_SESSION_BUS_ADDRESS` value, decide
+/// whether it points to a transport `zbus` can actually open.
+///
+/// `tauri-plugin-single-instance` on Linux calls
+/// `zbus::blocking::connection::Builder::session().unwrap()` in its `setup()`
+/// closure. When `DBUS_SESSION_BUS_ADDRESS` is missing or set to `disabled`
+/// (the literal string WSL2-without-WSLg sets), zbus returns
+/// `Address("unsupported transport 'disabled'")` and the unwrap blows up the
+/// whole process before any window is created (Sentry OPENHUMAN-TAURI-TM).
+///
+/// We treat an address as reachable only when at least one alternative listed
+/// in the env var uses a transport `zbus` ships with: `unix:`, `tcp:`,
+/// `launchd:`, or `autolaunch:`. Anything else (`disabled`, empty, unknown
+/// scheme) is treated as unreachable so we can skip registering the plugin
+/// instead of crashing.
+#[cfg(any(target_os = "linux", test))]
+fn dbus_address_is_supported(addr: &str) -> bool {
+    addr.split(';').any(|entry| {
+        let entry = entry.trim();
+        if entry.is_empty() {
+            return false;
+        }
+        let transport = entry.split(':').next().unwrap_or("").trim();
+        matches!(transport, "unix" | "tcp" | "launchd" | "autolaunch")
+    })
+}
+
+/// Pure predicate: decide whether the Linux D-Bus session bus is reachable
+/// based on the relevant env vars and (optionally) the existence of the
+/// `$XDG_RUNTIME_DIR/bus` socket.
+///
+/// Used to gate registration of `tauri-plugin-single-instance` on Linux so
+/// WSL2-without-WSLg / minimal-container launches don't crash on the plugin's
+/// `unwrap()` (Sentry OPENHUMAN-TAURI-TM).
+#[cfg(any(target_os = "linux", test))]
+fn linux_dbus_session_reachable(
+    dbus_session_bus_address: Option<&str>,
+    xdg_runtime_bus_socket_exists: bool,
+) -> bool {
+    match dbus_session_bus_address {
+        Some(addr) => dbus_address_is_supported(addr),
+        // When the env var is unset, zbus falls back to autolaunch which on
+        // most distros requires `$XDG_RUNTIME_DIR/bus` to exist. Treat its
+        // absence as "no D-Bus".
+        None => xdg_runtime_bus_socket_exists,
+    }
+}
+
+/// Returns `true` when this process can safely register
+/// `tauri-plugin-single-instance` without tripping the
+/// `Address("unsupported transport 'disabled'")` panic on Linux.
+/// Always `true` on non-Linux platforms.
+#[cfg(target_os = "linux")]
+fn can_register_single_instance_plugin() -> bool {
+    let env_addr = std::env::var("DBUS_SESSION_BUS_ADDRESS").ok();
+    let runtime_bus_present = std::env::var("XDG_RUNTIME_DIR")
+        .ok()
+        .map(|dir| std::path::Path::new(&dir).join("bus").exists())
+        .unwrap_or(false);
+    linux_dbus_session_reachable(env_addr.as_deref(), runtime_bus_present)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn can_register_single_instance_plugin() -> bool {
+    true
+}
+
 type CefCommandLineArg = (&'static str, Option<&'static str>);
+
+/// Returns `true` when the process is running as root (UID 0) on Linux.
+/// Testable pure function; takes the uid directly.
+#[cfg(any(target_os = "linux", test))]
+fn linux_is_root_uid(uid: u32) -> bool {
+    uid == 0
+}
 
 fn append_platform_cef_gpu_workarounds(args: &mut Vec<CefCommandLineArg>, os: &str, arch: &str) {
     // Issue #1697: on Arch/Manjaro-family Linux systems, the AppImage can
@@ -1620,9 +1757,103 @@ fn append_platform_cef_gpu_workarounds(args: &mut Vec<CefCommandLineArg>, os: &s
             "[cef-startup] Intel macOS detected: adding --disable-gpu-compositing (issue #1012)"
         );
     }
+
+    // Sentry OPENHUMAN-TAURI-K1: `cef::initialize` returns 0 when running as
+    // root (uid 0) on Linux unless `--no-sandbox` is passed as a command-line
+    // argument. The `no_sandbox: 1` field in `cef::Settings` disables the
+    // sub-process sandbox but does NOT satisfy Chromium's separate root-user
+    // check in the browser process — that check requires the CLI flag.
+    //
+    // This hits CI / coder-bot / Docker environments (e.g.
+    // `/root/.hermes/profiles/coder-bot/home`) that run as root inside a
+    // container. Without the flag, `cef_initialize` returns 0 and the vendored
+    // runtime assertion fires (`left: 0, right: 1`).
+    #[cfg(target_os = "linux")]
+    {
+        let uid = nix::unistd::getuid().as_raw();
+        if os == "linux" && linux_is_root_uid(uid) {
+            args.push(("--no-sandbox", None));
+            log::info!(
+                "[cef-startup] running as root (uid=0) on Linux: adding --no-sandbox \
+                 (OPENHUMAN-TAURI-K1)"
+            );
+        }
+    }
 }
 
+/// Linux only: replace Xlib's default error handler with a logging no-op.
+///
+/// Why: on Wayland sessions (GNOME/KDE/Hyprland) running CEF via XWayland,
+/// the CEF browser process issues `XConfigureWindow` against a window the
+/// XWayland server hasn't fully realized yet, and Xlib's *default* error
+/// handler reacts to the resulting `BadWindow` by calling `exit(1)` — which
+/// kills the entire app before the main window ever paints. This reproduces
+/// reliably on Ubuntu 26.04 + GNOME-Wayland with the locally-built AppImage
+/// (issue #2001 item #2 — was punted as "separate display-side concerns"
+/// in PR #2032 but blocks any actual use of the app on a Wayland host).
+///
+/// XSetErrorHandler is a process-global registration; safe to install before
+/// any X display is opened. libX11 is already a runtime dep (verified via
+/// ldd of the compiled OpenHuman binary).
+#[cfg(target_os = "linux")]
+fn install_silent_x_error_handler() {
+    use std::ffi::c_void;
+    use std::os::raw::{c_int, c_uchar, c_ulong};
+    use std::sync::Once;
+
+    #[repr(C)]
+    struct XErrorEvent {
+        type_: c_int,
+        display: *mut c_void,
+        resourceid: c_ulong,
+        serial: c_ulong,
+        error_code: c_uchar,
+        request_code: c_uchar,
+        minor_code: c_uchar,
+    }
+
+    type ErrorHandler = unsafe extern "C" fn(*mut c_void, *mut XErrorEvent) -> c_int;
+    unsafe extern "C" {
+        fn XSetErrorHandler(handler: Option<ErrorHandler>) -> Option<ErrorHandler>;
+    }
+
+    unsafe extern "C" fn silent_handler(_display: *mut c_void, ev: *mut XErrorEvent) -> c_int {
+        if !ev.is_null() {
+            let e = unsafe { &*ev };
+            log::warn!(
+                "[x11] suppressed X protocol error: code={} request={} minor={} resource=0x{:x} serial={}",
+                e.error_code,
+                e.request_code,
+                e.minor_code,
+                e.resourceid,
+                e.serial
+            );
+        } else {
+            log::warn!("[x11] suppressed X protocol error (null event)");
+        }
+        0
+    }
+
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        unsafe {
+            XSetErrorHandler(Some(silent_handler));
+        }
+        log::info!(
+            "[x11] installed silent X error handler to prevent BadWindow exits on Wayland-XWayland (issue #2001 item #2)"
+        );
+    });
+}
+
+#[cfg(not(target_os = "linux"))]
+fn install_silent_x_error_handler() {}
+
 pub fn run() {
+    // Must run before any GTK/CEF code that could trigger X calls — otherwise
+    // Xlib's default handler calls exit(1) on the first BadWindow and we never
+    // reach this line. See helper doc above for the full reasoning.
+    install_silent_x_error_handler();
+
     // ── Install a custom tokio runtime for tauri::async_runtime ─────────
     //
     // Tauri's default async runtime uses tokio multi-thread workers with
@@ -1812,6 +2043,9 @@ pub fn run() {
     }
 
     warn_if_wsl_x11_desktop_launch();
+    // Exit before CEF if no display server is available — prevents the
+    // `assert_eq!(cef_initialize(…), 1)` panic (OPENHUMAN-TAURI-K1).
+    check_linux_display_server();
 
     // The vendored tauri-cef dev-server proxy builds a reqwest 0.13 client
     // (see vendor/tauri-cef/crates/tauri/src/protocol/tauri.rs) which calls
@@ -1899,7 +2133,12 @@ pub fn run() {
     #[cfg(target_os = "macos")]
     process_recovery::reap_stale_openhuman_processes();
 
-    #[cfg(target_os = "macos")]
+    // CEF cache-lock preflight: if another OpenHuman instance holds the CEF
+    // user-data-dir SingletonLock, `cef_initialize` returns 0 and the vendored
+    // runtime panics (`left: 0, right: 1`). Catch the collision here and exit
+    // cleanly. Stale locks (PID dead) are removed so crashed processes don't
+    // block subsequent launches. macOS: issue #864. Linux: OPENHUMAN-TAURI-K1.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     if let Err(e) = cef_preflight::check_default_cache() {
         eprintln!("\n[openhuman] {e}\n");
         std::process::exit(1);
@@ -2064,18 +2303,28 @@ pub fn run() {
             }
         });
 
-    let builder = builder
-        // Single-instance guard — MUST be the first plugin registered so the
-        // secondary-process exit path triggers before any other plugin setup
-        // (and before `Builder::build()` reaches `CefRuntime::init`). Without
-        // this, launching a second instance races into CEF init while the
-        // primary still holds the cache lock; `cef::initialize` returns 0 and
-        // the vendored runtime asserts (Sentry OPENHUMAN-TAURI-A — 442 events
-        // across Win10/11 + Linux, all releases). The callback receives the
-        // secondary's argv/cwd; we forward deep-link args and focus the main
-        // window. Deep-link payloads stay handled by `tauri-plugin-deep-link`
-        // — we just need to wake the primary so it observes them.
-        .plugin(tauri_plugin_single_instance::init(
+    // Single-instance guard — MUST be the first plugin registered so the
+    // secondary-process exit path triggers before any other plugin setup
+    // (and before `Builder::build()` reaches `CefRuntime::init`). Without
+    // this, launching a second instance races into CEF init while the
+    // primary still holds the cache lock; `cef::initialize` returns 0 and
+    // the vendored runtime asserts (Sentry OPENHUMAN-TAURI-A — 442 events
+    // across Win10/11 + Linux, all releases). The callback receives the
+    // secondary's argv/cwd; we forward deep-link args and focus the main
+    // window. Deep-link payloads stay handled by `tauri-plugin-deep-link`
+    // — we just need to wake the primary so it observes them.
+    //
+    // On Linux the plugin's `setup()` calls
+    // `zbus::blocking::connection::Builder::session().unwrap()`, which panics
+    // with `Address("unsupported transport 'disabled'")` when the D-Bus
+    // session bus is unreachable (WSL2-without-WSLg, minimal containers, root
+    // launches without `$XDG_RUNTIME_DIR/bus`) — Sentry OPENHUMAN-TAURI-TM.
+    // Probe for a usable session bus first and skip the plugin if absent;
+    // single-instance enforcement is best-effort in those environments
+    // anyway, and a graceful skip is strictly better than crashing at
+    // startup.
+    let builder = if can_register_single_instance_plugin() {
+        builder.plugin(tauri_plugin_single_instance::init(
             |app: &AppHandle<AppRuntime>, args, cwd| {
                 // Don't log raw argv/cwd: deep-link callbacks (OAuth codes,
                 // magic links) can carry auth tokens that would otherwise leak
@@ -2090,6 +2339,17 @@ pub fn run() {
                 }
             },
         ))
+    } else {
+        log::warn!(
+            "[single-instance] D-Bus session bus unreachable (DBUS_SESSION_BUS_ADDRESS={:?}, \
+             XDG_RUNTIME_DIR={:?}); skipping tauri-plugin-single-instance to avoid \
+             OPENHUMAN-TAURI-TM panic. Multiple OpenHuman instances will not be deduplicated.",
+            std::env::var("DBUS_SESSION_BUS_ADDRESS").ok(),
+            std::env::var("XDG_RUNTIME_DIR").ok()
+        );
+        builder
+    };
+    let builder = builder
         // Explicitly disable `open_js_links_on_click`: tauri-plugin-opener
         // defaults to injecting `init-iife.js` into *every* webview — a
         // global click listener that invokes `plugin:opener|open_url` via
@@ -2115,6 +2375,9 @@ pub fn run() {
         // gitbooks/overview/auto-update.md for the full pipeline.
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(dictation_hotkeys::DictationHotkeyState(
+            std::sync::Mutex::new(Vec::new()),
+        ))
+        .manage(companion_commands::CompanionHotkeyState(
             std::sync::Mutex::new(Vec::new()),
         ))
         .manage(webview_accounts::WebviewAccountsState::default())
@@ -2777,7 +3040,10 @@ pub fn run() {
             file_logging::reveal_logs_folder,
             file_logging::logs_folder_path,
             meet_call::meet_call_open_window,
-            meet_call::meet_call_close_window
+            meet_call::meet_call_close_window,
+            companion_commands::register_companion_hotkey,
+            companion_commands::unregister_companion_hotkey,
+            companion_commands::companion_activate
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
@@ -2797,15 +3063,23 @@ pub fn run() {
             // window from tray click: main window not found`
             // (OPENHUMAN-TAURI-2X — 21 events, Windows only).
             //
-            // macOS uses `window.hide()` because the vendored CEF runtime
-            // routes that through `set_application_visibility(false)` at the
-            // NSApplication level (`tauri-runtime-cef/src/lib.rs:588`), which
-            // hides the CEF browser surface together with the host window.
-            // Windows is handled in the separate arm below — see issue #1607.
+            // macOS: hide the whole application on close instead of
+            // destroying the window. `AppHandle::hide()` calls
+            // `[NSApp hide:]` via `set_application_visibility(false)`,
+            // the standard macOS mechanism that reliably hides all
+            // windows. The vendored CEF runtime's per-window
+            // `WebviewWindow::hide()` sends `WindowMessage::Hide` →
+            // `cef::Window::hide()`, which does NOT propagate to the
+            // visible NSWindow frame and leaves the window on screen
+            // (issue #2049). Dock-click fires `RunEvent::Reopen` which
+            // calls `show_main_window()` to restore.
             //
-            // Linux is left out: `setup_tray` early-returns on Linux because
-            // tray creation panics inside GTK during packaged runs, so the
-            // hide-on-close behavior would strand the user with no way back.
+            // Windows is handled in the separate arm below — see #1607.
+            //
+            // Linux is left out: `setup_tray` early-returns on Linux
+            // because tray creation panics inside GTK during packaged
+            // runs, so hide-on-close would strand the user with no way
+            // back.
             #[cfg(target_os = "macos")]
             RunEvent::WindowEvent {
                 label,
@@ -2813,11 +3087,13 @@ pub fn run() {
                 ..
             } if label == "main" => {
                 log::info!(
-                    "[window] close requested on main window — hiding instead of destroying"
+                    "[window] close requested on main window — hiding app"
                 );
                 api.prevent_close();
-                if let Some(window) = app_handle.get_webview_window("main") {
-                    let _ = window.hide();
+                if let Err(err) = app_handle.hide() {
+                    log::warn!(
+                        "[window] app_handle.hide() failed on close request: {err}"
+                    );
                 }
             }
             // Windows: full hide-to-tray.
@@ -3205,6 +3481,108 @@ mod tests {
     }
 
     // -------------------------------------------------------------------------
+    // Linux display-server pre-flight (Sentry OPENHUMAN-TAURI-K1)
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn linux_display_present_with_x11() {
+        assert!(linux_display_server_present(true, false));
+    }
+
+    #[test]
+    fn linux_display_present_with_wayland() {
+        assert!(linux_display_server_present(false, true));
+    }
+
+    #[test]
+    fn linux_display_present_with_both() {
+        assert!(linux_display_server_present(true, true));
+    }
+
+    #[test]
+    fn linux_display_absent_without_either() {
+        assert!(!linux_display_server_present(false, false));
+    }
+
+    #[test]
+    fn linux_root_uid_detected() {
+        assert!(linux_is_root_uid(0));
+    }
+
+    #[test]
+    fn linux_non_root_uid_not_detected() {
+        assert!(!linux_is_root_uid(1000));
+        assert!(!linux_is_root_uid(1));
+    }
+
+    // -------------------------------------------------------------------------
+    // Linux D-Bus session-bus probe (Sentry OPENHUMAN-TAURI-TM)
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn dbus_address_unix_is_supported() {
+        assert!(dbus_address_is_supported("unix:path=/run/user/1000/bus"));
+        assert!(dbus_address_is_supported("unix:abstract=/tmp/dbus-abc"));
+    }
+
+    #[test]
+    fn dbus_address_tcp_and_launchd_supported() {
+        assert!(dbus_address_is_supported("tcp:host=localhost,port=1234"));
+        assert!(dbus_address_is_supported(
+            "launchd:env=DBUS_LAUNCHD_SESSION_BUS_SOCKET"
+        ));
+        assert!(dbus_address_is_supported("autolaunch:"));
+    }
+
+    #[test]
+    fn dbus_address_disabled_is_unsupported() {
+        // The literal value WSL2-without-WSLg sets — root cause of the panic.
+        assert!(!dbus_address_is_supported("disabled"));
+        assert!(!dbus_address_is_supported(""));
+        assert!(!dbus_address_is_supported("   "));
+    }
+
+    #[test]
+    fn dbus_address_unknown_transport_is_unsupported() {
+        assert!(!dbus_address_is_supported("nonce-tcp:host=localhost"));
+        assert!(!dbus_address_is_supported("bogus:"));
+    }
+
+    #[test]
+    fn dbus_address_picks_first_supported_in_list() {
+        // zbus walks the semicolon-separated list and uses the first reachable
+        // transport, so one good entry is enough.
+        assert!(dbus_address_is_supported(
+            "disabled;unix:path=/run/user/1000/bus"
+        ));
+        assert!(dbus_address_is_supported(
+            "bogus:;tcp:host=localhost,port=55"
+        ));
+        assert!(!dbus_address_is_supported("disabled;bogus:"));
+    }
+
+    #[test]
+    fn dbus_reachable_when_env_addr_is_supported() {
+        assert!(linux_dbus_session_reachable(
+            Some("unix:path=/run/user/1000/bus"),
+            false,
+        ));
+    }
+
+    #[test]
+    fn dbus_unreachable_when_env_addr_disabled() {
+        // Even if the socket exists, an explicit `disabled` value means the
+        // session bus is intentionally turned off and zbus will reject it.
+        assert!(!linux_dbus_session_reachable(Some("disabled"), true));
+    }
+
+    #[test]
+    fn dbus_falls_back_to_runtime_socket_when_env_unset() {
+        assert!(linux_dbus_session_reachable(None, true));
+        assert!(!linux_dbus_session_reachable(None, false));
+    }
+
+    // -------------------------------------------------------------------------
     // Platform constants (issue #1012 Sentry tagging)
     // -------------------------------------------------------------------------
 
@@ -3589,5 +3967,35 @@ mod tests {
             Some(v) => std::env::set_var("PATH", v),
             None => std::env::remove_var("PATH"),
         }
+    }
+
+    /// Regression guard for issue #2228: `tauri-plugin-single-instance` must
+    /// enable the `deep-link` feature so that second-launch deep-link payloads
+    /// (e.g. `openhuman://oauth/...` callbacks from Windows/Linux system
+    /// browsers) are forwarded into the primary instance. Without it, hot OAuth
+    /// callbacks silently no-op while only focusing the existing window.
+    #[test]
+    fn single_instance_dep_enables_deep_link_feature() {
+        let manifest_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
+        let manifest =
+            std::fs::read_to_string(&manifest_path).expect("read app/src-tauri/Cargo.toml");
+        let parsed: toml::Value = manifest.parse().expect("parse Cargo.toml");
+
+        let dep = parsed
+            .get("dependencies")
+            .and_then(|d| d.get("tauri-plugin-single-instance"))
+            .expect("tauri-plugin-single-instance dependency must exist");
+
+        let features = dep.get("features").and_then(|f| f.as_array()).expect(
+            "tauri-plugin-single-instance must be a table with a `features` array \
+                 — issue #2228 requires the `deep-link` feature to forward hot-instance \
+                 OAuth callbacks on Windows/Linux",
+        );
+
+        assert!(
+            features.iter().any(|v| v.as_str() == Some("deep-link")),
+            "tauri-plugin-single-instance must enable the `deep-link` feature \
+             (issue #2228 — hot-instance OAuth callback forwarding)"
+        );
     }
 }

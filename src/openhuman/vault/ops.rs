@@ -1,15 +1,17 @@
 //! RPC-facing operations for the vault domain.
 
 use chrono::Utc;
+use futures::FutureExt;
 use uuid::Uuid;
 
 use crate::openhuman::config::Config;
 use crate::openhuman::memory::ops::{clear_namespace, ClearNamespaceParams};
 use crate::rpc::RpcOutcome;
 
+use super::state;
 use super::store;
 use super::sync;
-use super::types::{Vault, VaultFile, VaultSyncReport};
+use super::types::{Vault, VaultFile, VaultSyncState, VaultSyncStatus};
 
 /// Create a new vault pointing at a local folder.
 pub async fn vault_create(
@@ -139,8 +141,16 @@ pub async fn vault_remove(
     ))
 }
 
-/// Trigger an immediate sync of a vault. Blocks until complete.
-pub async fn vault_sync(config: &Config, id: &str) -> Result<RpcOutcome<VaultSyncReport>, String> {
+/// Trigger a vault sync as a background task and return immediately.
+///
+/// The caller should poll `vault_sync_status` to track progress and retrieve
+/// the final outcome.  Returns an error if a sync is already running for this
+/// vault so the caller can surface a user-friendly message instead of silently
+/// queuing a duplicate.
+pub async fn vault_sync(
+    config: &Config,
+    id: &str,
+) -> Result<RpcOutcome<serde_json::Value>, String> {
     let id = id.trim();
     if id.is_empty() {
         return Err("vault_id must not be empty".to_string());
@@ -148,21 +158,109 @@ pub async fn vault_sync(config: &Config, id: &str) -> Result<RpcOutcome<VaultSyn
     let vault = store::get_vault(config, id)
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("vault not found: {id}"))?;
-    log::debug!("[vault] sync: entry id={id} root={:?}", vault.root_path);
-    let report = sync::sync_vault(config, &vault).await;
+
+    // Register in the state map; returns Err if already running.
+    let started_at_ms = Utc::now().timestamp_millis();
+    state::start(id, started_at_ms).map_err(|e| format!("sync already in progress: {e}"))?;
+
     log::debug!(
-        "[vault] sync: exit id={id} scanned={} ingested={} unchanged={} removed={} failed={} skipped={} duration_ms={}",
-        report.scanned,
-        report.ingested,
-        report.unchanged,
-        report.removed,
-        report.failed,
-        report.skipped_unsupported,
-        report.duration_ms,
+        "[vault] sync: background task spawned id={id} root={:?}",
+        vault.root_path,
     );
-    let msg = format!(
-        "vault sync done — ingested {}, unchanged {}, removed {}, failed {}",
-        report.ingested, report.unchanged, report.removed, report.failed
+
+    // Clone what the background task needs — Config is Clone (derives it).
+    let config_clone = config.clone();
+    let vault_id = id.to_string();
+
+    tokio::spawn(async move {
+        log::debug!("[vault] sync: background task running id={vault_id}");
+
+        // Wrap the work in catch_unwind so a panic inside sync_vault cannot leave
+        // the vault state permanently stuck in `Running`.  Without this guard a
+        // panic would unwind the task, the state map entry would never be updated,
+        // and every subsequent sync attempt would be rejected with "already in progress"
+        // until the app is restarted.
+        let result =
+            std::panic::AssertUnwindSafe(async { sync::sync_vault(&config_clone, &vault).await })
+                .catch_unwind()
+                .await;
+
+        match result {
+            Ok(report) => {
+                let success = report.failed == 0;
+                let finished_at_ms = Utc::now().timestamp_millis();
+
+                // Write final counters back into the state map.
+                state::update_progress(&vault_id, |s| {
+                    s.status = if success {
+                        VaultSyncStatus::Completed
+                    } else {
+                        VaultSyncStatus::Failed
+                    };
+                    s.finished_at_ms = Some(finished_at_ms);
+                    s.ingested = report.ingested;
+                    s.unchanged = report.unchanged;
+                    s.removed = report.removed;
+                    s.failed = report.failed;
+                    s.skipped_unsupported = report.skipped_unsupported;
+                    s.scanned = report.scanned;
+                    s.duration_ms = report.duration_ms;
+                    s.errors = report.errors.clone();
+                });
+
+                log::debug!(
+                    "[vault] sync: background task done id={vault_id} ingested={} failed={} duration_ms={}",
+                    report.ingested,
+                    report.failed,
+                    report.duration_ms,
+                );
+            }
+            Err(_) => {
+                log::error!(
+                    "[vault] sync: background task panicked id={vault_id} — marking state as Failed"
+                );
+                state::update_progress(&vault_id, |s| {
+                    s.status = VaultSyncStatus::Failed;
+                    s.errors = vec!["sync task panicked unexpectedly".to_string()];
+                });
+            }
+        }
+    });
+
+    Ok(RpcOutcome::single_log(
+        serde_json::json!({ "status": "started", "vault_id": id }),
+        format!("vault sync started in background: {id}"),
+    ))
+}
+
+/// Return the current sync progress for a vault.
+///
+/// Returns an `Idle` state if no sync has ever run for this vault.
+pub async fn vault_sync_status(id: &str) -> Result<RpcOutcome<VaultSyncState>, String> {
+    let id = id.trim();
+    if id.is_empty() {
+        return Err("vault_id must not be empty".to_string());
+    }
+    let st = state::get(id).unwrap_or_else(|| VaultSyncState {
+        vault_id: id.to_string(),
+        status: VaultSyncStatus::Idle,
+        scanned: 0,
+        ingested: 0,
+        unchanged: 0,
+        removed: 0,
+        failed: 0,
+        skipped_unsupported: 0,
+        total: 0,
+        started_at_ms: 0,
+        finished_at_ms: None,
+        duration_ms: 0,
+        errors: vec![],
+    });
+    log::debug!(
+        "[vault] sync_status: id={id} status={:?} ingested={} total={}",
+        st.status,
+        st.ingested,
+        st.total,
     );
-    Ok(RpcOutcome::single_log(report, msg))
+    Ok(RpcOutcome::single_log(st, "vault sync status"))
 }

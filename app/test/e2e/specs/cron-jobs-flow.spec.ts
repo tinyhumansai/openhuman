@@ -132,8 +132,10 @@ describe('Cron jobs settings panel (real UI flow)', () => {
   });
 
   it('completing onboarding lands the user on the home screen', async () => {
+    // Home.tsx renders t('home.askAssistant') = 'Ask your assistant anything...' as the stable
+    // CTA button. Old strings ('Good morning', 'Message OpenHuman', etc.) are no longer rendered.
     const home = await waitForAnyText(
-      ['Message OpenHuman', 'Good morning', 'Good afternoon', 'Good evening', 'Upgrade to Premium'],
+      ['Ask your assistant anything', 'Your device is connected'],
       15_000
     );
     expect(home).toBeTruthy();

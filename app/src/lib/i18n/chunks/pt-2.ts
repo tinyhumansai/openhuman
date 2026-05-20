@@ -251,6 +251,16 @@ const pt2: TranslationMap = {
     'Chave mestre. Desligado por padrão — Ollama fica inativo. Quando ligado, o sumarizador de árvore, inteligência de tela e autocompletar sempre usam o modelo local.',
   'localModel.advancedSettings': 'Configurações avançadas',
   'localModel.debugTitle': 'Depuração de Modelo Local',
+  'localModel.ollamaServer.helperText': 'Exemplo: http://192.168.1.5:11434',
+  'localModel.ollamaServer.label': 'URL do servidor Ollama',
+  'localModel.ollamaServer.modelCount': 'modelos',
+  'localModel.ollamaServer.placeholder': 'http://localhost:11434',
+  'localModel.ollamaServer.reachable': 'Acessível',
+  'localModel.ollamaServer.resetButton': 'Redefinir para padrão',
+  'localModel.ollamaServer.saveButton': 'Salvar',
+  'localModel.ollamaServer.testButton': 'Testar conexão',
+  'localModel.ollamaServer.unreachable': 'Inacessível',
+  'localModel.ollamaServer.validationError': 'Deve ser uma URL http:// ou https:// válida',
   'screenAwareness.debugTitle': 'Depuração de Reconhecimento de Tela',
   'memory.debugTitle': 'Depuração de Memória',
   'webhooks.debugTitle': 'Depuração de Webhooks',
@@ -289,10 +299,10 @@ const pt2: TranslationMap = {
   'chat.topUpToContinue': 'Adicione créditos para continuar.',
   'chat.budgetComplete':
     'Seu orçamento incluído foi esgotado. Adicione créditos ou faça upgrade para continuar.',
-  'chat.rateLimitReached': 'Limite de taxa de 10 horas atingido.',
   'chat.topUp': 'Adicionar Créditos',
-  'chat.fiveHourLimit': 'Limite de 5 horas',
-  'chat.weeklyLimit': 'Limite semanal',
+  'chat.cycle': 'Ciclo',
+  'chat.cycleSpent': 'Gasto neste ciclo',
+  'chat.cycleRemaining': 'Restante',
   'chat.left': 'restante',
   'chat.setup': 'Configurar',
   'chat.switchToText': 'Mudar para texto',
@@ -383,6 +393,40 @@ const pt2: TranslationMap = {
   'insights.relationships': 'Relacionamentos',
   'insights.skills': 'Habilidades',
   'insights.opinions': 'Opiniões',
+  // Developer options menu items (#2225) — English stubs; native translations welcome
+  'devOptions.menuAi': 'AI Configuration',
+  'devOptions.menuAiDesc': 'Cloud providers, local Ollama models, and per-workload routing',
+  'devOptions.menuScreenAware': 'Screen Awareness',
+  'devOptions.menuScreenAwareDesc':
+    'Screen capture permissions, monitoring policy, and session controls',
+  'devOptions.menuMessaging': 'Messaging Channels',
+  'devOptions.menuMessagingDesc':
+    'Configure Telegram/Discord auth modes and default channel routing',
+  'devOptions.menuTools': 'Tools',
+  'devOptions.menuToolsDesc': 'Enable or disable capabilities OpenHuman can use on your behalf',
+  'devOptions.menuAgentChat': 'Agent Chat',
+  'devOptions.menuAgentChatDesc': 'Test agent conversation with model and temperature overrides',
+  'devOptions.menuCronJobs': 'Cron Jobs',
+  'devOptions.menuCronJobsDesc': 'View and configure scheduled jobs for runtime skills',
+  'devOptions.menuLocalModelDebug': 'Local Model Debug',
+  'devOptions.menuLocalModelDebugDesc':
+    'Ollama config, asset downloads, model tests, and diagnostics',
+  'devOptions.menuWebhooksDebug': 'Webhooks',
+  'devOptions.menuWebhooksDebugDesc':
+    'Inspect runtime webhook registrations and captured request logs',
+  'devOptions.menuIntelligence': 'Intelligence',
+  'devOptions.menuIntelligenceDesc': 'Memory workspace, subconscious engine, dreams, and settings',
+  'devOptions.menuNotificationRouting': 'Notification Routing',
+  'devOptions.menuNotificationRoutingDesc':
+    'AI importance scoring and orchestrator escalation for integration alerts',
+  'devOptions.menuComposeIOTriggers': 'ComposeIO Triggers',
+  'devOptions.menuComposeIOTriggersDesc': 'View ComposeIO trigger history and archive',
+  'devOptions.menuComposioRouting': 'Composio Routing (Direct Mode)',
+  'devOptions.menuComposioRoutingDesc':
+    'Bring your own Composio API key and route calls directly to backend.composio.dev',
+  'devOptions.menuComposioTriggers': 'Integration Triggers',
+  'devOptions.menuComposioTriggersDesc':
+    'Configure AI triage settings for Composio integration triggers',
 };
 
 export default pt2;

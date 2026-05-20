@@ -10,6 +10,8 @@ import {
 } from '../../../../services/api/aiSettingsApi';
 import { creditsApi } from '../../../../services/api/creditsApi';
 import { renderWithProviders } from '../../../../test/test-utils';
+// Lazy import so the typed mock is available to individual tests.
+import { openhumanUpdateLocalAiSettings as openhumanUpdateLocalAiSettingsMock } from '../../../../utils/tauriCommands/config';
 import {
   openhumanHeartbeatSettingsGet,
   openhumanHeartbeatSettingsSet,
@@ -19,6 +21,7 @@ import AIPanel from '../AIPanel';
 
 vi.mock('../../../../services/api/aiSettingsApi', () => ({
   ALL_WORKLOADS: [
+    'chat',
     'reasoning',
     'agentic',
     'coding',
@@ -41,6 +44,8 @@ vi.mock('../../../../services/api/aiSettingsApi', () => ({
         : `${r.providerSlug}:${r.model}`
   ),
   localProvider: { download: vi.fn(), applyPreset: vi.fn() },
+  flushCloudProviders: vi.fn().mockResolvedValue(undefined),
+  listProviderModels: vi.fn().mockResolvedValue([]),
 }));
 
 vi.mock('../../hooks/useSettingsNavigation', () => ({
@@ -63,6 +68,20 @@ vi.mock('../../../../services/api/creditsApi', () => ({
 
 vi.mock('../../../../lib/composio/composioApi', () => ({ listConnections: vi.fn() }));
 
+// The Ollama / LM Studio toggle persists `local_ai.base_url` via this command.
+// Mock it so tests can assert the call shape without crossing into Tauri IPC.
+vi.mock('../../../../utils/tauriCommands/config', async () => {
+  const actual = await vi.importActual<typeof import('../../../../utils/tauriCommands/config')>(
+    '../../../../utils/tauriCommands/config'
+  );
+  return {
+    ...actual,
+    openhumanUpdateLocalAiSettings: vi
+      .fn()
+      .mockResolvedValue({ result: { config: {}, workspace_dir: '', config_path: '' }, logs: [] }),
+  };
+});
+
 const baseSettings = {
   cloudProviders: [
     {
@@ -75,6 +94,7 @@ const baseSettings = {
     },
   ],
   routing: {
+    chat: { kind: 'openhuman' as const },
     reasoning: { kind: 'openhuman' as const },
     agentic: { kind: 'openhuman' as const },
     coding: { kind: 'openhuman' as const },
@@ -104,12 +124,29 @@ const baseHeartbeatSettings = {
 const baseUsage = {
   remainingUsd: 1.5,
   cycleBudgetUsd: 10,
-  cycleLimit5hr: 0.12,
-  cycleLimit7day: 8.5,
-  fiveHourCapUsd: 1,
-  fiveHourResetsAt: '2026-05-17T08:00:00.000Z',
+  cycleSpentUsd: 8.5,
   cycleStartDate: '2026-05-14T00:00:00.000Z',
   cycleEndsAt: '2026-05-21T00:00:00.000Z',
+  plan: {
+    plan: 'BASIC',
+    name: 'Basic',
+    marginPercent: 25,
+    payAsYouGoMarginPercent: 50,
+    discountVsPayAsYouGoPercent: 50,
+  },
+  insights: {
+    period: { startDate: '2026-05-14T00:00:00.000Z', endDate: '2026-05-21T00:00:00.000Z' },
+    totals: {
+      inferenceUsd: 6,
+      integrationsUsd: 2.5,
+      totalUsd: 8.5,
+      inferenceCalls: 120,
+      integrationCalls: 6,
+    },
+    dailySeries: [],
+    topModels: [],
+    topIntegrations: [],
+  },
 };
 
 const baseTransactions = [
@@ -199,10 +236,11 @@ describe('AIPanel', () => {
     await waitFor(() => expect(screen.getAllByText(/OpenHuman/i).length).toBeGreaterThan(0));
   });
 
-  it('renders all eight workload labels', async () => {
+  it('renders all nine workload labels', async () => {
     renderWithProviders(<AIPanel />);
-    await waitFor(() => expect(screen.getByText('Reasoning')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('Chat')).toBeInTheDocument());
     for (const label of [
+      'Chat',
       'Reasoning',
       'Agentic',
       'Coding',
@@ -231,6 +269,7 @@ describe('AIPanel', () => {
         },
       ],
       routing: {
+        chat: { kind: 'openhuman' as const },
         reasoning: {
           kind: 'cloud' as const,
           providerSlug: 'anthropic',
@@ -255,9 +294,12 @@ describe('AIPanel', () => {
     await waitFor(() => expect(screen.getAllByText(/Anthropic/i).length).toBeGreaterThan(0));
 
     // Trigger a routing change so the SaveBar appears, then save.
-    // Click the "Default" button on the Reasoning row to change routing.
-    const defaultButtons = screen.getAllByText('Default');
-    fireEvent.click(defaultButtons[0]);
+    // Click the "Default" button specifically on the Reasoning row (which is
+    // currently set to custom cloud routing) to switch it back to openhuman.
+    const reasoningRow = screen
+      .getByText('Reasoning')
+      .closest('[class*="flex items-center justify-between"]');
+    fireEvent.click(within(reasoningRow as HTMLElement).getByText('Default'));
 
     // SaveBar should appear.
     await waitFor(() => expect(screen.getByText(/unsaved change/i)).toBeInTheDocument());
@@ -330,6 +372,7 @@ describe('AIPanel', () => {
         },
       ],
       routing: {
+        chat: { kind: 'openhuman' as const },
         reasoning: { kind: 'cloud' as const, providerSlug: 'openai', model: 'gpt-4o' },
         agentic: { kind: 'cloud' as const, providerSlug: 'openai', model: 'gpt-4o-mini' },
         coding: { kind: 'openhuman' as const },
@@ -420,6 +463,130 @@ describe('AIPanel', () => {
     expect(screen.queryByRole('switch', { name: /Disconnect OpenAI/i })).not.toBeInTheDocument();
   });
 
+  // ─── local runtime: Ollama endpoint URL dialog ──────────────────────────────
+
+  it('toggling Ollama ON shows an Endpoint URL field with localhost default', async () => {
+    vi.mocked(loadAISettings).mockResolvedValue({ ...baseSettings, cloudProviders: [] });
+    renderWithProviders(<AIPanel />);
+    await waitFor(() =>
+      expect(screen.getByRole('switch', { name: /Connect Ollama/i })).toBeInTheDocument()
+    );
+    fireEvent.click(screen.getByRole('switch', { name: /Connect Ollama/i }));
+
+    // ProviderKeyDialog renders in endpoint mode for local runtimes: the
+    // input is labelled "Endpoint URL", not "API key".
+    const dialog = await screen.findByRole('dialog', { name: /Connect Ollama/i });
+    const urlInput = within(dialog).getByLabelText(/Endpoint URL/i) as HTMLInputElement;
+    expect(urlInput).toBeInTheDocument();
+    expect(urlInput.value).toBe('http://localhost:11434/v1');
+    expect(within(dialog).queryByLabelText(/API key/i)).not.toBeInTheDocument();
+  });
+
+  it('rejects a non-http endpoint URL and keeps the dialog open', async () => {
+    vi.mocked(loadAISettings).mockResolvedValue({ ...baseSettings, cloudProviders: [] });
+    renderWithProviders(<AIPanel />);
+    await waitFor(() =>
+      expect(screen.getByRole('switch', { name: /Connect Ollama/i })).toBeInTheDocument()
+    );
+    fireEvent.click(screen.getByRole('switch', { name: /Connect Ollama/i }));
+    const dialog = await screen.findByRole('dialog', { name: /Connect Ollama/i });
+    const urlInput = within(dialog).getByLabelText(/Endpoint URL/i);
+    fireEvent.change(urlInput, { target: { value: 'ftp://nope' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Save$/i }));
+
+    // Inline error appears; dialog stays mounted; base_url persist never fires.
+    await waitFor(() =>
+      expect(within(dialog).getByText(/must start with http/i)).toBeInTheDocument()
+    );
+    expect(vi.mocked(openhumanUpdateLocalAiSettingsMock)).not.toHaveBeenCalled();
+  });
+
+  it('Ollama save normalizes the endpoint and persists local_ai.base_url', async () => {
+    vi.mocked(loadAISettings).mockResolvedValue({ ...baseSettings, cloudProviders: [] });
+    renderWithProviders(<AIPanel />);
+    await waitFor(() =>
+      expect(screen.getByRole('switch', { name: /Connect Ollama/i })).toBeInTheDocument()
+    );
+    fireEvent.click(screen.getByRole('switch', { name: /Connect Ollama/i }));
+    const dialog = await screen.findByRole('dialog', { name: /Connect Ollama/i });
+
+    // Type a host with no path — the URL normalizer must append `/v1` for
+    // the /models probe and the base_url derivation strips it back off.
+    fireEvent.change(within(dialog).getByLabelText(/Endpoint URL/i), {
+      target: { value: 'http://10.0.0.4:11434' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Save$/i }));
+
+    await waitFor(() => expect(openhumanUpdateLocalAiSettingsMock).toHaveBeenCalled());
+    const [arg] = vi.mocked(openhumanUpdateLocalAiSettingsMock).mock.calls[0];
+    expect(arg).toMatchObject({
+      base_url: 'http://10.0.0.4:11434',
+      provider: 'ollama',
+      runtime_enabled: true,
+      opt_in_confirmed: true,
+    });
+  });
+
+  // ─── Custom routing dialog: per-workload temperature override ───────────────
+
+  it('Custom routing dialog saves the routing change immediately from the modal', async () => {
+    const settingsWithOpenAI = {
+      cloudProviders: [
+        {
+          id: 'p_openai_1',
+          slug: 'openai',
+          label: 'OpenAI',
+          endpoint: 'https://api.openai.com/v1',
+          auth_style: 'bearer' as const,
+          has_api_key: true,
+        },
+      ],
+      routing: {
+        ...baseSettings.routing,
+        reasoning: { kind: 'cloud' as const, providerSlug: 'openai', model: 'gpt-4o' },
+      },
+    };
+    vi.mocked(loadAISettings).mockResolvedValue(settingsWithOpenAI);
+    vi.mocked(saveAISettings).mockResolvedValue(undefined);
+    renderWithProviders(<AIPanel />);
+
+    // Wait for the Reasoning workload row (identified by its unique
+    // description text), then click its "Custom" segment to open the
+    // Custom routing dialog.
+    const reasoningRow = await screen.findByText(/Main chat agent/i);
+    const rowEl = reasoningRow.closest('div.flex.items-center.justify-between');
+    expect(rowEl).not.toBeNull();
+    fireEvent.click(within(rowEl as HTMLElement).getByRole('button', { name: /Custom/i }));
+
+    const dialog = await screen.findByRole('dialog', { name: /Custom routing/i });
+
+    // Enable temperature override; the slider + numeric input become visible.
+    const tempToggle = within(dialog).getByLabelText(/Temperature override/i);
+    fireEvent.click(tempToggle);
+
+    const tempValueInput = within(dialog).getByLabelText(
+      /Temperature override \(value\)/i
+    ) as HTMLInputElement;
+    expect(tempValueInput).toBeInTheDocument();
+    fireEvent.change(tempValueInput, { target: { value: '0.2' } });
+
+    // Save dialog → persists immediately without requiring the sticky Save bar.
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Save$/i }));
+    await waitFor(() => expect(vi.mocked(saveAISettings)).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: /Custom routing/i })).not.toBeInTheDocument()
+    );
+    expect(screen.queryByText(/unsaved change/i)).not.toBeInTheDocument();
+
+    const [, next] = vi.mocked(saveAISettings).mock.calls[0];
+    expect(next.routing.reasoning).toEqual({
+      kind: 'cloud',
+      providerSlug: 'openai',
+      model: 'gpt-4o',
+      temperature: 0.2,
+    });
+  });
+
   it('renders background loop diagnostics with newest spend row and budget math', async () => {
     renderWithProviders(<AIPanel />);
 
@@ -436,7 +603,7 @@ describe('AIPanel', () => {
 
     expect(screen.getByText('Week budget')).toBeInTheDocument();
     expect(screen.getByText('$10.0000')).toBeInTheDocument();
-    expect(screen.getByText('Week remaining')).toBeInTheDocument();
+    expect(screen.getByText('Cycle remaining')).toBeInTheDocument();
     expect(screen.getByText('$1.5000')).toBeInTheDocument();
     expect(screen.getByText('Avg spend row')).toBeInTheDocument();
     expect(screen.getByText('Bg API reads')).toBeInTheDocument();

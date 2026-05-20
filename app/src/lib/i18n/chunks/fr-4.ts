@@ -46,6 +46,15 @@ const fr4: TranslationMap = {
   'composio.connect.subdomainInvalid':
     'Saisissez uniquement le sous-domaine court (par ex. "acme"), pas l\'URL complète. Il doit contenir uniquement des lettres, chiffres et tirets.',
   'composio.connect.subdomainRequired': 'Saisis ton sous-domaine Atlassian pour continuer.',
+  'composio.connect.dynamicsOrgNameLabel': "Nom de l'organisation Dynamics 365",
+  'composio.connect.dynamicsOrgNameHint':
+    'Par exemple, "myorg" pour myorg.crm.dynamics.com. Saisis uniquement le nom court de l\'organisation, pas l\'URL complète.',
+  'composio.connect.needsFieldsPrefix': 'Pour connecter',
+  'composio.connect.needsFieldsSuffix':
+    "nous avons besoin d'un peu plus d'informations. Remplis les champs manquants ci-dessous et réessaie.",
+  'composio.connect.requiredFieldEmpty': 'Ce champ est obligatoire.',
+  'composio.connect.wabaIdHint':
+    "Trouve-le via GET /me/businesses puis GET /{business_id}/owned_whatsapp_business_accounts en utilisant ton jeton d'accès Meta.",
   'composio.connect.wabaIdLabel': "Libellé de l'identifiant WABA",
   'composio.connect.wabaIdRequired':
     'Saisis ton identifiant WhatsApp Business Account (WABA ID) pour continuer.',
@@ -144,11 +153,25 @@ const fr4: TranslationMap = {
   'onboarding.contextGathering.continueToChat': 'Accéder au chat',
   'onboarding.contextGathering.errorDesc':
     "Nous n'avons pas pu créer votre profil complet pour l'instant, mais ce n'est pas grave — vous pouvez continuer et votre profil se construira au fil du temps.",
+  'onboarding.contextGathering.coreAlive':
+    'Le cœur est accessible — le premier lancement peut prendre une minute.',
+  'onboarding.contextGathering.coreAliveProbing': 'Vérification de la connexion au cœur…',
+  'onboarding.contextGathering.coreUnreachable':
+    'Le cœur ne répond pas. Tu peux continuer et réessayer plus tard.',
+  'onboarding.contextGathering.stillWorkingDesc':
+    'Le premier lancement peut prendre 30 à 60 secondes pendant que nous préparons ton modèle local et tes outils. Tu peux accéder au chat à tout moment — la construction du profil continue en arrière-plan.',
+  'onboarding.contextGathering.stillWorkingTitle': 'Construction de ton profil en cours…',
   'onboarding.contextGathering.title': 'Collecte de contexte',
   'openhuman.team_list_teams': 'Liste des équipes',
   'overlay.ariaAttention': "Message d'attention",
+  'overlay.ariaCompanion': 'Compagnon actif',
   'overlay.ariaOrb': 'Overlay OpenHuman',
   'overlay.ariaVoiceActive': 'Saisie vocale active',
+  'overlay.companion.error': 'Erreur',
+  'overlay.companion.listening': 'À l’écoute…',
+  'overlay.companion.pointing': 'En train de pointer…',
+  'overlay.companion.speaking': 'En train de parler…',
+  'overlay.companion.thinking': 'Réflexion…',
   'overlay.orbTitle': 'Glisse pour déplacer · Double-clique pour réinitialiser la position',
   'pages.settings.account.connections': 'Connexions',
   'pages.settings.account.connectionsDesc': 'Description des connexions',
@@ -168,6 +191,9 @@ const fr4: TranslationMap = {
   'pages.settings.aiSection.description':
     'Fournisseurs de modèles de langage, Ollama local et voix (STT / TTS).',
   'pages.settings.aiSection.title': 'IA',
+  'pages.settings.features.desktopCompanion': 'Compagnon de bureau',
+  'pages.settings.features.desktopCompanionDesc':
+    "Assistant vocal avec conscience de l'écran — écoute, voit, parle, pointe",
   'pages.settings.features.messagingChannels': 'Canaux de messagerie',
   'pages.settings.features.messagingChannelsDesc': 'Description des canaux de messagerie',
   'pages.settings.features.notifications': 'Notifications',
@@ -364,6 +390,9 @@ const fr4: TranslationMap = {
   'settings.billing.subscription.paymentConfirmed': 'Paiement confirmé',
   'settings.billing.subscription.perMonth': 'Par mois',
   'settings.billing.subscription.popular': 'Populaire',
+  'pages.settings.account.migration': 'Importer depuis un autre assistant',
+  'pages.settings.account.migrationDesc':
+    'Migrez la mémoire et les notes depuis OpenClaw (et bientôt Hermes) vers cet espace de travail.',
 };
 
 export default fr4;

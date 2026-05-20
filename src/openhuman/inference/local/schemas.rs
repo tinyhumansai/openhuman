@@ -2,6 +2,11 @@ use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
+#[derive(Debug, Deserialize)]
+struct LocalAiTestConnectionParams {
+    url: String,
+}
+
 use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 use crate::openhuman::config::rpc as config_rpc;
@@ -72,6 +77,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("local_ai_install_piper"),
         schemas("local_ai_whisper_install_status"),
         schemas("local_ai_piper_install_status"),
+        schemas("local_ai_test_connection"),
     ]
 }
 
@@ -124,6 +130,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("local_ai_piper_install_status"),
             handler: handle_local_ai_piper_install_status,
+        },
+        RegisteredController {
+            schema: schemas("local_ai_test_connection"),
+            handler: handle_local_ai_test_connection,
         },
     ]
 }
@@ -250,6 +260,13 @@ pub fn schemas(function: &str) -> ControllerSchema {
             description: "Query the Piper install state (missing / installing / installed / broken / error) plus per-stage download progress.",
             inputs: vec![],
             outputs: vec![json_output("status", "Piper install status payload.")],
+        },
+        "local_ai_test_connection" => ControllerSchema {
+            namespace: "local_ai",
+            function: "test_connection",
+            description: "Test connectivity to an Ollama server URL. Returns reachable status and model count.",
+            inputs: vec![required_string("url", "Ollama server URL to test.")],
+            outputs: vec![json_output("result", "Connection test result.")],
         },
         _ => ControllerSchema {
             namespace: "local_ai",
@@ -524,6 +541,18 @@ fn handle_local_ai_install_piper(params: Map<String, Value>) -> ControllerFuture
             crate::openhuman::inference::local::voice_install_common::ENGINE_PIPER,
         );
         serde_json::to_value(status).map_err(|e| format!("serialize piper status: {e}"))
+    })
+}
+
+fn handle_local_ai_test_connection(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let p = deserialize_params::<LocalAiTestConnectionParams>(params)?;
+        let result =
+            crate::openhuman::inference::local::service::ollama_admin::test_ollama_connection(
+                &p.url,
+            )
+            .await?;
+        serde_json::to_value(result).map_err(|e| format!("serialize test_connection result: {e}"))
     })
 }
 

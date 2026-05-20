@@ -1,52 +1,25 @@
 // @ts-nocheck
 /**
- * E2E test: Card Payment Flow (Stripe).
+ * E2E test: Billing panel (card/Stripe path).
  *
- * Covers:
- *   5.1.1  Stripe checkout session created on upgrade
- *   5.1.2  Checkout session with annual billing
- *   5.2.1  Successful payment detected via polling
- *   5.2.2  Failed purchase handled gracefully
- *   5.3.1  Plan transition FREE → PRO
- *   5.3.2  Manage Subscription opens Stripe portal
+ * The in-app Stripe checkout UI was removed; billing now lives on the web
+ * dashboard. These tests verify the billing redirect panel that replaced it:
+ *
+ *   5.1  Billing panel renders the "moved to web" redirect page
+ *   5.2  "Open billing dashboard" button is present
+ *   5.3  Back-to-settings navigation works after visiting billing
  */
 import { waitForApp } from '../helpers/app-helpers';
-import { clickText, textExists } from '../helpers/element-helpers';
+import { textExists, waitForText } from '../helpers/element-helpers';
 import {
   navigateToBilling,
   navigateToHome,
+  navigateToSettings,
   performFullLogin,
-  waitForTextToDisappear,
 } from '../helpers/shared-flows';
-import {
-  clearRequestLog,
-  getRequestLog,
-  resetMockBehavior,
-  setMockBehavior,
-  startMockServer,
-  stopMockServer,
-} from '../mock-server';
+import { clearRequestLog, startMockServer, stopMockServer } from '../mock-server';
 
 const LOG_PREFIX = '[PaymentFlow]';
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-async function waitForRequest(method, urlFragment, timeout = 15_000) {
-  const deadline = Date.now() + timeout;
-  while (Date.now() < deadline) {
-    const log = getRequestLog();
-    const match = log.find(r => r.method === method && r.url.includes(urlFragment));
-    if (match) return match;
-    await browser.pause(500);
-  }
-  return undefined;
-}
-
-// ===========================================================================
-// Tests
-// ===========================================================================
 
 describe('Card Payment Flow', () => {
   before(async () => {
@@ -56,7 +29,6 @@ describe('Card Payment Flow', () => {
   });
 
   after(async () => {
-    resetMockBehavior();
     await stopMockServer();
   });
 
@@ -64,132 +36,46 @@ describe('Card Payment Flow', () => {
     await performFullLogin('e2e-card-payment-token');
   });
 
-  it('5.1.1 — checkout session is created on Stripe card upgrade', async () => {
+  it('5.1 — billing panel shows "moved to web" redirect page', async () => {
     await navigateToBilling();
-    clearRequestLog();
+    // BillingPanel.tsx renders t('settings.billing.movedToWeb') = 'Billing moved to the web'
+    await waitForText('Billing moved to the web', 10_000);
+    console.log(`${LOG_PREFIX} 5.1 — billing redirect panel loaded`);
+  });
 
-    await clickText('Upgrade', 10_000);
-    console.log(`${LOG_PREFIX} Clicked Upgrade`);
-    await browser.pause(3_000);
+  it('5.2 — "Open billing dashboard" button is present', async () => {
+    // Should still be on billing panel from previous test; navigate again to be safe.
+    await navigateToBilling();
+    // t('settings.billing.openDashboard') = 'Open billing dashboard'
+    const hasButton = await textExists('Open billing dashboard');
+    expect(hasButton).toBe(true);
+    console.log(`${LOG_PREFIX} 5.2 — "Open billing dashboard" button present`);
+  });
 
-    const purchaseCall = await waitForRequest('POST', '/payments/stripe/purchasePlan', 10_000);
-    expect(purchaseCall).toBeDefined();
+  it('5.3 — back-to-settings navigation works', async () => {
+    await navigateToBilling();
+    await waitForText('Billing moved to the web', 10_000);
 
-    // Log which plan was requested (could be BASIC or PRO depending on which Upgrade was clicked)
-    if (purchaseCall?.body) {
-      const body = typeof purchaseCall.body === 'string' ? purchaseCall.body : '';
-      console.log(`${LOG_PREFIX} Purchase body: ${body}`);
+    // t('settings.billing.backToSettings') = 'Back to settings'
+    const hasBack = await textExists('Back to settings');
+    if (hasBack) {
+      const { clickText } = await import('../helpers/element-helpers');
+      await clickText('Back to settings', 5_000);
+      await browser.pause(1_500);
+      // Should be back on a settings page
+      const onSettings =
+        (await textExists('Settings')) ||
+        (await textExists('Account')) ||
+        (await textExists('Data'));
+      expect(onSettings).toBe(true);
+      console.log(`${LOG_PREFIX} 5.3 — back-to-settings navigation works`);
+    } else {
+      // Fallback: use PageBackButton's generic back arrow
+      await navigateToSettings();
+      const onSettings = await textExists('Settings');
+      expect(onSettings).toBe(true);
+      console.log(`${LOG_PREFIX} 5.3 — navigated back to settings via fallback`);
     }
-
-    console.log(`${LOG_PREFIX} 5.1.1 — Stripe checkout session created`);
-
-    // Activate the plan so polling clears
-    setMockBehavior('plan', 'BASIC');
-    setMockBehavior('planActive', 'true');
-    setMockBehavior('planExpiry', new Date(Date.now() + 30 * 86400000).toISOString());
-    await waitForTextToDisappear('Waiting', 25_000);
-    await navigateToHome();
-  });
-
-  it('5.2.1 — successful payment detected via polling', async () => {
-    // Seed mock state explicitly so this test is self-contained
-    setMockBehavior('plan', 'BASIC');
-    setMockBehavior('planActive', 'true');
-    setMockBehavior('planExpiry', new Date(Date.now() + 30 * 86400000).toISOString());
-    clearRequestLog();
-
-    await navigateToBilling();
-    await browser.pause(3_000);
-
-    // BillingPanel fetches currentPlan on mount
-    const planCall = await waitForRequest('GET', '/payments/stripe/currentPlan', 10_000);
-    expect(planCall).toBeDefined();
-
-    // Verify billing page content loaded
-    const hasPlanInfo =
-      (await textExists('Current Plan')) ||
-      (await textExists('BASIC')) ||
-      (await textExists('Basic')) ||
-      (await textExists('FREE')) ||
-      (await textExists('Upgrade'));
-    expect(hasPlanInfo).toBe(true);
-
-    console.log(`${LOG_PREFIX} 5.2.1 — Billing page loaded with plan info after payment`);
-    await navigateToHome();
-  });
-
-  it('5.2.2 — failed purchase API call handled gracefully', async () => {
-    resetMockBehavior();
-    setMockBehavior('purchaseError', 'true');
-    clearRequestLog();
-    await navigateToBilling();
-
-    // Click Upgrade — this should hit the mock which returns a 500 error
-    await clickText('Upgrade', 10_000);
-    console.log(`${LOG_PREFIX} Clicked Upgrade (expecting failure)`);
-    await browser.pause(3_000);
-
-    // Verify the purchase API was called
-    const purchaseCall = await waitForRequest('POST', '/payments/stripe/purchasePlan', 10_000);
-    expect(purchaseCall).toBeDefined();
-
-    // The app should remain on the billing page without crashing.
-    // It should NOT show "Waiting for payment" since the API returned an error.
-    const hasBillingContent =
-      (await textExists('Current Plan')) ||
-      (await textExists('FREE')) ||
-      (await textExists('Upgrade'));
-    expect(hasBillingContent).toBe(true);
-
-    console.log(`${LOG_PREFIX} 5.2.2 — App handled purchase error gracefully`);
-    resetMockBehavior();
-    await navigateToHome();
-  });
-
-  it('5.3.1 — plan transition from FREE to PRO', async () => {
-    // Start from FREE plan
-    resetMockBehavior();
-    clearRequestLog();
-    await navigateToBilling();
-
-    await clickText('Upgrade', 10_000);
-    console.log(`${LOG_PREFIX} Clicked Upgrade for PRO`);
-    await browser.pause(3_000);
-
-    const purchaseCall = await waitForRequest('POST', '/payments/stripe/purchasePlan', 10_000);
-    expect(purchaseCall).toBeDefined();
-
-    setMockBehavior('plan', 'PRO');
-    setMockBehavior('planActive', 'true');
-    setMockBehavior('planExpiry', new Date(Date.now() + 30 * 86400000).toISOString());
-    await waitForTextToDisappear('Waiting', 25_000);
-
-    console.log(`${LOG_PREFIX} 5.3.1 — Plan transition to PRO verified`);
-    await navigateToHome();
-  });
-
-  it('5.3.2 — Manage Subscription opens Stripe portal', async () => {
-    // Seed mock with active subscription so "Manage" button appears
-    setMockBehavior('plan', 'PRO');
-    setMockBehavior('planActive', 'true');
-    setMockBehavior('planExpiry', new Date(Date.now() + 30 * 86400000).toISOString());
-    clearRequestLog();
-
-    await navigateToBilling();
-    await browser.pause(3_000);
-
-    const hasManage = await textExists('Manage');
-    expect(hasManage).toBe(true);
-
-    await clickText('Manage', 10_000);
-    console.log(`${LOG_PREFIX} Clicked Manage`);
-    await browser.pause(3_000);
-
-    const portalCall = await waitForRequest('POST', '/payments/stripe/portal', 10_000);
-    expect(portalCall).toBeDefined();
-
-    console.log(`${LOG_PREFIX} 5.3.2 — Stripe portal call verified`);
-    resetMockBehavior();
     await navigateToHome();
   });
 });

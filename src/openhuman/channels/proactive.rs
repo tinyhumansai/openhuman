@@ -163,6 +163,39 @@ impl EventHandler for ProactiveMessageSubscriber {
                     channel = %key,
                     "[proactive] delivering to active external channel"
                 );
+
+                // ── External-effect approval gate (#1339) ─────
+                // Proactive sends to Telegram/Discord/Slack/etc.
+                // are outbound writes — route through the gate
+                // before handing off to the channel implementation.
+                // Web delivery above is internal and exempt.
+                if let Some(gate) = crate::openhuman::approval::ApprovalGate::try_global() {
+                    let summary = format!(
+                        "proactive-send to {key} ({} chars)",
+                        message.chars().count()
+                    );
+                    let redacted = serde_json::json!({
+                        "channel": key,
+                        "source": source.to_string(),
+                        "message_chars": message.chars().count(),
+                    });
+                    match gate
+                        .intercept("channels.proactive_send", &summary, redacted)
+                        .await
+                    {
+                        crate::openhuman::approval::GateOutcome::Allow => {}
+                        crate::openhuman::approval::GateOutcome::Deny { reason } => {
+                            tracing::warn!(
+                                source = %source,
+                                channel = %key,
+                                reason = %reason,
+                                "[proactive] approval gate denied external delivery"
+                            );
+                            return;
+                        }
+                    }
+                }
+
                 match ch.send(&SendMessage::new(message, "")).await {
                     Ok(()) => {
                         tracing::debug!(

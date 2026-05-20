@@ -891,11 +891,25 @@ impl UnifiedMemory {
         chunks: &[StoredChunk],
         relations: &[RelationMatch],
     ) -> HashMap<String, f64> {
-        let mut doc_scores: HashMap<String, f64> = HashMap::new();
+        if relations.is_empty() {
+            return HashMap::new();
+        }
+
+        let mut doc_scores: HashMap<String, f64> =
+            HashMap::with_capacity(docs.len().max(relations.len()));
         let chunk_to_doc = chunks
             .iter()
-            .map(|chunk| (chunk.chunk_id.clone(), chunk.document_id.clone()))
+            .map(|chunk| (chunk.chunk_id.as_str(), chunk.document_id.as_str()))
             .collect::<HashMap<_, _>>();
+        let normalized_docs = docs
+            .iter()
+            .map(|doc| {
+                (
+                    doc.document_id.as_str(),
+                    Self::normalize_search_text(&doc.content),
+                )
+            })
+            .collect::<Vec<_>>();
 
         for relation in relations {
             let base = f64::from(relation.relation.evidence_count) / relation.hop.max(1) as f64;
@@ -903,19 +917,22 @@ impl UnifiedMemory {
                 *doc_scores.entry(document_id.clone()).or_insert(0.0) += base;
             }
             for chunk_id in &relation.relation.chunk_ids {
-                if let Some(document_id) = chunk_to_doc.get(chunk_id) {
-                    *doc_scores.entry(document_id.clone()).or_insert(0.0) += base * 0.9;
+                if let Some(document_id) = chunk_to_doc.get(chunk_id.as_str()) {
+                    *doc_scores.entry((*document_id).to_string()).or_insert(0.0) += base * 0.9;
                 }
             }
 
-            for doc in docs {
-                let normalized = Self::normalize_search_text(&doc.content);
-                let subject = Self::normalize_search_text(&relation.relation.subject);
-                let object = Self::normalize_search_text(&relation.relation.object);
+            let subject = Self::normalize_search_text(&relation.relation.subject);
+            let object = Self::normalize_search_text(&relation.relation.object);
+            if subject.is_empty() && object.is_empty() {
+                continue;
+            }
+
+            for (document_id, normalized) in &normalized_docs {
                 if (!subject.is_empty() && normalized.contains(&subject))
                     || (!object.is_empty() && normalized.contains(&object))
                 {
-                    *doc_scores.entry(doc.document_id.clone()).or_insert(0.0) += base * 0.35;
+                    *doc_scores.entry((*document_id).to_string()).or_insert(0.0) += base * 0.35;
                 }
             }
         }
