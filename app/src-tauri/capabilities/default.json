@@ -20,6 +20,7 @@
     "notification:allow-request-permission",
     "notification:allow-notify",
     "opener:default",
+    "opener:allow-reveal-item-in-dir",
     {
       "identifier": "opener:allow-open-url",
       "allow": [
