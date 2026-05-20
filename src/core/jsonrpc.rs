@@ -414,11 +414,91 @@ fn error_html(message: &str) -> String {
     )
 }
 
+/// Inspect the browser fetch-metadata + Referer/Origin headers and decide
+/// whether the inbound `/auth/telegram` request looks like a legitimate
+/// top-level redirect from Telegram, or a cross-site CSRF attempt.
+///
+/// The endpoint cannot require a bearer token (the redirect happens in a
+/// fresh browser tab; `EventSource`-style header injection is not an
+/// option), and there is no in-process state issued by an authenticated
+/// FE flow today (`/start register` is initiated in Telegram, not in the
+/// local app). So this fetch-metadata gate is the layer that distinguishes
+/// "user clicked the link the bot sent them" from "malicious page
+/// navigates the user's loopback core via `window.location`/`<img>`".
+///
+/// Accepted shapes:
+/// - All `Sec-Fetch-*` headers absent (older browsers, CLI clients).
+/// - `Sec-Fetch-Mode: navigate` AND `Sec-Fetch-Dest: document`.
+/// - `Sec-Fetch-Site` is `same-origin` / `none`, OR `cross-site` with a
+///   `Referer` that starts with `https://t.me/` (the legit bot redirect).
+///
+/// Rejected shapes:
+/// - `Sec-Fetch-Mode` is `no-cors` / `cors` / `same-origin` (only
+///   `navigate` makes sense for a top-level page load).
+/// - `Sec-Fetch-Dest` is anything other than `document` (image/script/
+///   iframe embeds from malicious pages).
+/// - `Sec-Fetch-Site: cross-site` with a `Referer`/`Origin` that is not
+///   `https://t.me/...` (CSRF redirect from a third-party site).
+fn telegram_callback_origin_ok(headers: &axum::http::HeaderMap) -> Result<(), &'static str> {
+    let get_str = |name: &str| -> Option<&str> {
+        headers
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+    };
+
+    let mode = get_str("sec-fetch-mode");
+    let dest = get_str("sec-fetch-dest");
+    let site = get_str("sec-fetch-site");
+    let referer = get_str("referer");
+    let origin = get_str("origin");
+
+    if let Some(mode) = mode {
+        if mode != "navigate" {
+            return Err("Sec-Fetch-Mode must be 'navigate'");
+        }
+    }
+    if let Some(dest) = dest {
+        if dest != "document" {
+            return Err("Sec-Fetch-Dest must be 'document'");
+        }
+    }
+
+    let referer_is_telegram = referer
+        .map(|r| r.starts_with("https://t.me/") || r.starts_with("https://web.telegram.org/"))
+        .unwrap_or(false);
+    let origin_is_telegram = origin
+        .map(|o| o == "https://t.me" || o == "https://web.telegram.org")
+        .unwrap_or(false);
+
+    if let Some(site) = site {
+        if site == "cross-site" && !(referer_is_telegram || origin_is_telegram) {
+            return Err("cross-site redirect must originate from telegram");
+        }
+    } else if let Some(referer) = referer {
+        // No Sec-Fetch-Site: fall back to Referer host check. Accept any
+        // 127.0.0.1/localhost referer (direct nav inside the local app),
+        // accept telegram referer (legit bot redirect), reject everything
+        // else.
+        let local =
+            referer.starts_with("http://127.0.0.1") || referer.starts_with("http://localhost");
+        if !(local || referer_is_telegram) {
+            return Err("Referer must be telegram or local");
+        }
+    }
+
+    Ok(())
+}
+
 /// Handles the Telegram authentication callback.
 ///
 /// It consumes a one-time token, exchanges it for a JWT from the backend,
 /// and stores the session locally.
-async fn telegram_auth_handler(Query(query): Query<TelegramAuthQuery>) -> impl IntoResponse {
+async fn telegram_auth_handler(
+    headers: axum::http::HeaderMap,
+    Query(query): Query<TelegramAuthQuery>,
+) -> impl IntoResponse {
     let html_response = |status: StatusCode, body: String| -> Response {
         (
             status,
@@ -427,6 +507,18 @@ async fn telegram_auth_handler(Query(query): Query<TelegramAuthQuery>) -> impl I
         )
             .into_response()
     };
+
+    if let Err(reason) = telegram_callback_origin_ok(&headers) {
+        log::warn!("[auth:telegram] rejecting callback: {reason}");
+        return html_response(
+            StatusCode::FORBIDDEN,
+            error_html(
+                "This login callback did not come from the Telegram bot. \
+                 Open the link the bot sent you directly, do not let \
+                 another page redirect you here.",
+            ),
+        );
+    }
 
     let token = match query
         .token
