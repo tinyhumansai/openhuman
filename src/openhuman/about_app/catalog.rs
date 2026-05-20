@@ -74,6 +74,18 @@ const POLYMARKET_TRADING_DATA: Option<CapabilityPrivacy> = Some(CapabilityPrivac
     destinations: &["Polymarket CLOB API"],
 });
 
+const KALSHI_MARKET_DATA: Option<CapabilityPrivacy> = Some(CapabilityPrivacy {
+    leaves_device: true,
+    data_kind: PrivacyDataKind::Metadata,
+    destinations: &["Kalshi API"],
+});
+
+const KALSHI_TRADING_DATA: Option<CapabilityPrivacy> = Some(CapabilityPrivacy {
+    leaves_device: true,
+    data_kind: PrivacyDataKind::Derived,
+    destinations: &["Kalshi API"],
+});
+
 const CAPABILITIES: &[Capability] = &[
     Capability {
         id: "conversation.create",
@@ -571,6 +583,26 @@ const CAPABILITIES: &[Capability] = &[
         how_to: "Conversations > ask the assistant to trade on Polymarket (tool: polymarket; set `approved=true` for write actions).",
         status: CapabilityStatus::Beta,
         privacy: POLYMARKET_TRADING_DATA,
+    },
+    Capability {
+        id: "skills.kalshi_readonly",
+        name: "Kalshi Read-Only Browse",
+        domain: "skills",
+        category: CapabilityCategory::Skills,
+        description: "Browse Kalshi markets, events, and orderbooks via the trade-api v2 public endpoints.",
+        how_to: "Conversations > ask the assistant to browse Kalshi (tool: kalshi).",
+        status: CapabilityStatus::Beta,
+        privacy: KALSHI_MARKET_DATA,
+    },
+    Capability {
+        id: "skills.kalshi_trading",
+        name: "Kalshi Trading",
+        domain: "skills",
+        category: CapabilityCategory::Skills,
+        description: "Read Kalshi portfolio state and place/cancel signed orders with explicit approval for write actions.",
+        how_to: "Conversations > ask the assistant to trade on Kalshi (tool: kalshi; set `approved=true` for write actions).",
+        status: CapabilityStatus::Beta,
+        privacy: KALSHI_TRADING_DATA,
     },
     Capability {
         id: "local_ai.download_model",
