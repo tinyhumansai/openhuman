@@ -49,7 +49,8 @@ const PROMPT = `Echo the marker ${CANARY} back.`;
 const ASSISTANT_REPLY_PIECES = ['Sure — ', 'here is the marker ', `${CANARY}`, '. End of reply.'];
 
 describe('Chat harness — send + stream', () => {
-  before(async () => {
+  before(async function beforeSuite() {
+    this.timeout(90_000);
     await startMockServer();
     await waitForApp();
     await resetApp(USER_ID);
@@ -85,7 +86,8 @@ describe('Chat harness — send + stream', () => {
     expect(typeof threadId).toBe('string');
   });
 
-  it('sends a message, observes streaming deltas, and lands the full reply', async () => {
+  it('sends a message, observes streaming deltas, and lands the full reply', async function () {
+    this.timeout(90_000);
     await typeIntoComposer(PROMPT);
     const sent = await browser.waitUntil(async () => await clickSend(), {
       timeout: 5_000,

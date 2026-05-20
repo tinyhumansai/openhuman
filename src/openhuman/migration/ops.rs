@@ -55,6 +55,40 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn migrate_openclaw_apply_imports_markdown_entries_into_target_workspace() {
+        // Regression for #1440: prior to this PR the Apply path
+        // (`dry_run = false`) bailed at `create_memory_for_migration`
+        // because the unified namespace memory core hard-disabled it.
+        // With the disable removed, Apply must actually move markdown
+        // entries from the OpenClaw source workspace into the target.
+        let tmp = TempDir::new().unwrap();
+        let config = test_config(&tmp);
+
+        // Fake OpenClaw workspace with two markdown entries — no
+        // brain.db needed; the migration path reads MEMORY.md + any
+        // memory/*.md files.
+        let source = tmp.path().join("openclaw-src");
+        std::fs::create_dir_all(source.join("memory")).unwrap();
+        std::fs::write(source.join("MEMORY.md"), "# Top-level note\nimport me").unwrap();
+        std::fs::write(
+            source.join("memory").join("sprint.md"),
+            "# Sprint plan\nweek one design",
+        )
+        .unwrap();
+
+        let outcome = migrate_openclaw(&config, Some(source), false)
+            .await
+            .expect("apply path should succeed on the unified core after #1440");
+        let report = outcome.value;
+        assert!(!report.dry_run, "apply must produce a non-dry-run report");
+        assert!(
+            report.stats.imported >= 1,
+            "apply must import at least one entry; stats={:?}",
+            report.stats
+        );
+    }
+
+    #[tokio::test]
     async fn migrate_openclaw_returns_error_for_missing_source_workspace() {
         // Pointing at a non-existent source directory must surface as
         // an Err from the wrapper (the underlying `migrate_openclaw_memory`

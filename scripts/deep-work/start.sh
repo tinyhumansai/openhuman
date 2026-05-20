@@ -42,6 +42,7 @@ issue="$1"
 shift
 
 repo=$(resolve_deep_work_repo)
+auto_assign="${DEEP_WORK_AUTO_ASSIGN:-${WORK_AUTO_ASSIGN:-1}}"
 
 echo "[deep-work] 🚀 Starting full workflow for issue #$issue from $repo"
 
@@ -56,6 +57,10 @@ echo "[deep-work] === Step 1: Fetching issue details ==="
 echo "[deep-work] fetching issue #$issue from $repo..."
 issue_json=$(gh issue view "$issue" -R "$repo" \
   --json number,title,body,labels,state,url,assignees)
+
+if [ "$auto_assign" = "1" ]; then
+  gh_assign_self_issue "$issue" "$repo"
+fi
 
 state=$(jq -r '.state' <<<"$issue_json")
 if [ "$state" != "OPEN" ]; then
@@ -303,6 +308,11 @@ pr_url=$(gh pr create \
   --head "$(gh auth status 2>&1 | grep 'Logged in.*as' | sed 's/.*as //' | cut -d' ' -f1):$branch" \
   --base main \
   --repo "$repo")
+
+pr_number="${pr_url##*/}"
+if [ "$auto_assign" = "1" ]; then
+  gh_assign_self_pr "$pr_number" "$repo"
+fi
 
 echo "[deep-work] 📝 draft PR created: $pr_url"
 

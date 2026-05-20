@@ -120,7 +120,7 @@ jobs:
             args: --target x86_64-apple-darwin
             target: x86_64-apple-darwin
             artifact_suffix: x86_64-apple-darwin
-          - platform: ubuntu-22.04
+          - platform: ubuntu-24.04
             args: --target x86_64-unknown-linux-gnu --bundles deb appimage
             target: x86_64-unknown-linux-gnu
             artifact_suffix: ubuntu
@@ -162,7 +162,7 @@ jobs:
         with:
           targets: ${{ matrix.settings.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
       - name: Install Tauri dependencies (ubuntu only)
-        if: matrix.settings.platform == 'ubuntu-22.04'
+        if: matrix.settings.platform == 'ubuntu-24.04'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -398,6 +398,7 @@ jobs:
           # here would tag uploads against a different release than events.
           SENTRY_RELEASE: openhuman@${{ inputs.version }}+${{ inputs.short_sha }}
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_URL: ${{ vars.SENTRY_URL }}
           SENTRY_ORG: ${{ vars.SENTRY_ORG }}
           # SENTRY_PROJECT here is consumed by sentry-vite-plugin during the
           # Vite build that runs inside `cargo tauri build` — it uploads
@@ -457,7 +458,7 @@ jobs:
       # ensures this still runs when `cargo tauri build` failed at bundling
       # (the binary itself is produced before bundling starts).
       - name: Dump linked libraries of built binary (ubuntu debug)
-        if: always() && matrix.settings.platform == 'ubuntu-22.04'
+        if: always() && matrix.settings.platform == 'ubuntu-24.04'
         shell: bash
         env:
           PROFILE: ${{ inputs.build_profile }}
@@ -477,6 +478,27 @@ jobs:
             fi
           done
 
+      # Strip host graphics libraries (Mesa/libdrm/libva/libgbm) that lib4bin
+      # ldd-walks into the AppImage. Those drivers must come from the user's
+      # host system — even on a current Ubuntu runner the bundled Mesa can
+      # fail to initialize newer GPUs (RDNA3, Intel Arc, Lovelace) and
+      # crashes CEF on launch because the bundled libs shadow the host's
+      # working ones on LD_LIBRARY_PATH. CEF's own SwiftShader subdir is
+      # untouched. Re-signs the AppImage + updater tarball when signing
+      # is enabled.
+      - name: Strip host graphics libs from AppImage
+        if: matrix.settings.platform == 'ubuntu-24.04'
+        shell: bash
+        env:
+          MATRIX_TARGET: ${{ matrix.settings.target }}
+          PROFILE: ${{ inputs.build_profile }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY || secrets.UPDATER_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || secrets.UPDATER_PRIVATE_KEY_PASSWORD }}
+        run: |
+          bash scripts/release/strip-appimage-graphics-libs.sh \
+            "app/src-tauri/target/${MATRIX_TARGET}/${PROFILE}/bundle" \
+            "target/${MATRIX_TARGET}/${PROFILE}/bundle"
+
       # Regression guard for #1403: if @sentry/vite-plugin silently no-op'd
       # (e.g. SENTRY_AUTH_TOKEN missing, or the `sourcemaps.assets` glob
       # didn't match dist/assets) production events arrive in Sentry as
@@ -489,6 +511,7 @@ jobs:
         shell: bash
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_URL: ${{ vars.SENTRY_URL }}
         run: node scripts/release/verify-sentry-sourcemaps.mjs
 
       # ---- Sentry DIF uploads ------------------------------------------------
@@ -504,6 +527,7 @@ jobs:
         shell: bash
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_URL: ${{ vars.SENTRY_URL }}
           SENTRY_ORG: ${{ vars.SENTRY_ORG }}
           SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT_TAURI }}
           SENTRY_RELEASE: openhuman@${{ inputs.version }}+${{ inputs.short_sha }}
@@ -533,6 +557,7 @@ jobs:
         shell: bash
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_URL: ${{ vars.SENTRY_URL }}
           SENTRY_ORG: ${{ vars.SENTRY_ORG }}
           SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT_CORE }}
           SENTRY_RELEASE: openhuman@${{ inputs.version }}+${{ inputs.short_sha }}

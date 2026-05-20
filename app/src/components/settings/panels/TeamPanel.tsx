@@ -1,11 +1,16 @@
+import debug from 'debug';
 import { useCallback, useEffect, useState } from 'react';
 
 import { useT } from '../../../lib/i18n/I18nContext';
 import { useCoreState } from '../../../providers/CoreStateProvider';
 import { teamApi } from '../../../services/api/teamApi';
+import { CoreRpcError } from '../../../services/coreRpcClient';
 import type { TeamWithRole } from '../../../types/team';
+import { sanitizeError } from '../../../utils/sanitize';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
+
+const log = debug('core-rpc:error');
 
 const TeamPanel = () => {
   const { t } = useT();
@@ -30,13 +35,26 @@ const TeamPanel = () => {
     setIsLoading(true);
     try {
       await refreshTeams();
+    } catch (err) {
+      // Bootstrap-time `team_list_teams` failures (cold core boot, backend
+      // 504, local AbortController hit `CORE_RPC_TIMEOUT_MS`) used to leak
+      // as unhandled promise rejections via the `void` in the useEffect
+      // below, polluting Sentry as OPENHUMAN-REACT-15/11. The next visible
+      // user action retries, so swallow silently for transient kinds.
+      const kind = err instanceof CoreRpcError ? err.kind : 'unknown';
+      log('refreshTeams failed in TeamPanel (kind=%s): %O', kind, sanitizeError(err));
     } finally {
       setIsLoading(false);
     }
   }, [refreshTeams]);
 
   useEffect(() => {
-    void refreshTeamsWithLoading();
+    // `refreshTeamsWithLoading` already absorbs rejections internally, but
+    // keep the `.catch()` as a belt-and-suspenders guard so a future refactor
+    // that re-throws cannot regress the unhandled-rejection family.
+    refreshTeamsWithLoading().catch(err => {
+      log('refreshTeamsWithLoading rethrew unexpectedly: %O', sanitizeError(err));
+    });
   }, [refreshTeamsWithLoading]);
 
   const handleCreateTeam = async () => {

@@ -34,7 +34,9 @@ pub mod sandbox_context;
 pub(crate) mod self_healing;
 pub mod session;
 pub(crate) mod session_queue;
+pub(crate) mod spawn_depth_context;
 pub mod subagent_runner;
+mod token_budget;
 pub(crate) mod tool_filter;
 mod tool_loop;
 
@@ -45,6 +47,7 @@ pub use definition::{
 pub use fork_context::{current_parent, with_parent_context, ParentExecutionContext};
 pub use interrupt::{check_interrupt, InterruptFence, InterruptedError};
 pub use sandbox_context::{current_sandbox_mode, with_current_sandbox_mode};
+pub(crate) use spawn_depth_context::{current_spawn_depth, with_spawn_depth, MAX_SPAWN_DEPTH};
 pub use subagent_runner::{run_subagent, SubagentRunError, SubagentRunOptions};
 
 pub(crate) use instructions::build_tool_instructions_filtered;

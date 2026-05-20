@@ -8,6 +8,7 @@ import { beforeEach, describe, expect, type Mock, test, vi } from 'vitest';
 
 import { callCoreRpc } from '../../services/coreRpcClient';
 import {
+  memoryTreeBackfillStatus,
   memoryTreeChunkScore,
   memoryTreeDeleteChunk,
   memoryTreeEntityIndexFor,
@@ -353,5 +354,29 @@ describe('memoryTreeGraphExport', () => {
     });
     expect(out.nodes).toHaveLength(1);
     expect(out.edges).toHaveLength(1);
+  });
+});
+
+describe('memoryTreeBackfillStatus', () => {
+  test('dispatches openhuman.memory_tree_memory_backfill_status and unwraps', async () => {
+    mockCallCoreRpc.mockResolvedValueOnce({
+      result: { in_progress: true, pending_jobs: 3 },
+      logs: ['memory_tree: backfill_status in_progress=true pending=3'],
+    });
+
+    const out = await memoryTreeBackfillStatus();
+
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.memory_tree_memory_backfill_status',
+    });
+    expect(out.in_progress).toBe(true);
+    expect(out.pending_jobs).toBe(3);
+  });
+
+  test('handles bare-value responses (no logs envelope)', async () => {
+    mockCallCoreRpc.mockResolvedValueOnce({ in_progress: false, pending_jobs: 0 });
+    const out = await memoryTreeBackfillStatus();
+    expect(out.in_progress).toBe(false);
+    expect(out.pending_jobs).toBe(0);
   });
 });

@@ -128,14 +128,12 @@ impl UnifiedMemory {
         // Event extraction tables.
         conn.execute_batch(super::events::EVENTS_INIT_SQL)?;
 
-        // User profile accumulation table.
-        conn.execute_batch(super::profile::PROFILE_INIT_SQL)?;
-
-        // Phase 3 (#566): idempotently add new columns to existing databases.
-        // New installs already have these columns via PROFILE_INIT_SQL above.
-        // Existing DBs need the migration to add state/stability/user_state/evidence_refs_json.
-        // We run the ALTER TABLE statements directly on `conn` before wrapping it in Arc<Mutex>.
-        // SQL arrays are defined as constants in profile.rs to avoid duplication.
+        // Phase 3 (#566): add new columns to existing databases BEFORE running
+        // PROFILE_INIT_SQL. PROFILE_INIT_SQL includes indexes that reference
+        // state/stability/user_state — those CREATE INDEX statements fail on
+        // pre-Phase-3 databases unless the columns already exist.
+        // On fresh installs the table doesn't exist yet so ALTER TABLE fails
+        // silently here; PROFILE_INIT_SQL then creates it with all columns.
         {
             use super::profile::PHASE3_COLUMNS_SQL;
             for sql in PHASE3_COLUMNS_SQL.iter() {
@@ -143,6 +141,28 @@ impl UnifiedMemory {
                     Ok(_) => tracing::debug!("[profile:init] applied: {sql}"),
                     Err(e) => {
                         tracing::trace!("[profile:init] skipped (probably already exists): {e}")
+                    }
+                }
+            }
+        }
+
+        // User profile accumulation table (CREATE TABLE IF NOT EXISTS + all indexes).
+        // On existing databases the table creation is a no-op; the index creation
+        // succeeds because PHASE3_COLUMNS_SQL above has already added the columns.
+        conn.execute_batch(super::profile::PROFILE_INIT_SQL)?;
+
+        // Phase 3 indexes: idempotently restore performance indexes removed in #1616.
+        // New installs get these from PROFILE_INIT_SQL; existing DBs get them here,
+        // after PHASE3_COLUMNS_SQL has ensured the columns exist.
+        {
+            use super::profile::PHASE3_INDEXES_SQL;
+            for sql in PHASE3_INDEXES_SQL {
+                match conn.execute_batch(sql) {
+                    Ok(_) => tracing::debug!("[profile:init] index applied: {sql}"),
+                    Err(e) => {
+                        tracing::warn!(
+                            "[profile:init] index creation failed (non-fatal): {sql}: {e}"
+                        );
                     }
                 }
             }

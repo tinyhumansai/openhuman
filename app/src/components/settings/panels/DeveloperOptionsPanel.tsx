@@ -19,8 +19,8 @@ const developerItems = [
   // top-level menu space.
   {
     id: 'ai',
-    title: 'AI Configuration',
-    description: 'Cloud providers, local Ollama models, and per-workload routing',
+    titleKey: 'settings.developerMenu.ai.title',
+    descriptionKey: 'settings.developerMenu.ai.desc',
     route: 'ai',
     icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -35,8 +35,8 @@ const developerItems = [
   },
   {
     id: 'screen-intelligence',
-    title: 'Screen Awareness',
-    description: 'Screen capture permissions, monitoring policy, and session controls',
+    titleKey: 'settings.developerMenu.screenAwareness.title',
+    descriptionKey: 'settings.developerMenu.screenAwareness.desc',
     route: 'screen-intelligence',
     icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -51,8 +51,8 @@ const developerItems = [
   },
   {
     id: 'messaging',
-    title: 'Messaging Channels',
-    description: 'Configure Telegram/Discord auth modes and default channel routing',
+    titleKey: 'settings.developerMenu.messagingChannels.title',
+    descriptionKey: 'settings.developerMenu.messagingChannels.desc',
     route: 'messaging',
     icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -67,8 +67,8 @@ const developerItems = [
   },
   {
     id: 'tools',
-    title: 'Tools',
-    description: 'Enable or disable capabilities OpenHuman can use on your behalf',
+    titleKey: 'settings.developerMenu.tools.title',
+    descriptionKey: 'settings.developerMenu.tools.desc',
     route: 'tools',
     icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -89,8 +89,8 @@ const developerItems = [
   },
   {
     id: 'agent-chat',
-    title: 'Agent Chat',
-    description: 'Test agent conversation with model and temperature overrides',
+    titleKey: 'settings.developerMenu.agentChat.title',
+    descriptionKey: 'settings.developerMenu.agentChat.desc',
     route: 'agent-chat',
     icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -105,8 +105,8 @@ const developerItems = [
   },
   {
     id: 'cron-jobs',
-    title: 'Cron Jobs',
-    description: 'View and configure scheduled jobs for runtime skills',
+    titleKey: 'settings.developerMenu.cronJobs.title',
+    descriptionKey: 'settings.developerMenu.cronJobs.desc',
     route: 'cron-jobs',
     icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -121,8 +121,8 @@ const developerItems = [
   },
   {
     id: 'local-model-debug',
-    title: 'Local Model Debug',
-    description: 'Ollama config, asset downloads, model tests, and diagnostics',
+    titleKey: 'settings.developerMenu.localModelDebug.title',
+    descriptionKey: 'settings.developerMenu.localModelDebug.desc',
     route: 'local-model-debug',
     icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -137,8 +137,8 @@ const developerItems = [
   },
   {
     id: 'webhooks-debug',
-    title: 'Webhooks',
-    description: 'Inspect runtime webhook registrations and captured request logs',
+    titleKey: 'settings.developerMenu.webhooks.title',
+    descriptionKey: 'settings.developerMenu.webhooks.desc',
     route: 'webhooks-debug',
     icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -153,8 +153,8 @@ const developerItems = [
   },
   {
     id: 'intelligence',
-    title: 'Intelligence',
-    description: 'Memory workspace, subconscious engine, dreams, and settings',
+    titleKey: 'settings.developerMenu.intelligence.title',
+    descriptionKey: 'settings.developerMenu.intelligence.desc',
     route: 'intelligence',
     icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -169,8 +169,8 @@ const developerItems = [
   },
   {
     id: 'notification-routing',
-    title: 'Notification Routing',
-    description: 'AI importance scoring and orchestrator escalation for integration alerts',
+    titleKey: 'settings.developerMenu.notificationRouting.title',
+    descriptionKey: 'settings.developerMenu.notificationRouting.desc',
     route: 'notification-routing',
     icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -185,8 +185,8 @@ const developerItems = [
   },
   {
     id: 'webhooks-triggers',
-    title: 'ComposeIO Triggers',
-    description: 'View ComposeIO trigger history and archive',
+    titleKey: 'settings.developerMenu.composeioTriggers.title',
+    descriptionKey: 'settings.developerMenu.composeioTriggers.desc',
     route: 'webhooks-triggers',
     icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -201,8 +201,8 @@ const developerItems = [
   },
   {
     id: 'composio-routing',
-    title: 'Composio Routing (Direct Mode)',
-    description: 'Bring your own Composio API key and route calls directly to backend.composio.dev',
+    titleKey: 'settings.developerMenu.composioRouting.title',
+    descriptionKey: 'settings.developerMenu.composioRouting.desc',
     route: 'composio-routing',
     icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -217,8 +217,8 @@ const developerItems = [
   },
   {
     id: 'composio-triggers',
-    title: 'Integration Triggers',
-    description: 'Configure AI triage settings for Composio integration triggers',
+    titleKey: 'settings.developerMenu.integrationTriggers.title',
+    descriptionKey: 'settings.developerMenu.integrationTriggers.desc',
     route: 'composio-triggers',
     icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -483,8 +483,8 @@ const DeveloperOptionsPanel = () => {
           <SettingsMenuItem
             key={item.id}
             icon={item.icon}
-            title={item.title}
-            description={item.description}
+            title={t(item.titleKey)}
+            description={t(item.descriptionKey)}
             onClick={() => navigateToSettings(item.route)}
             isFirst={index === 0}
             isLast={false}

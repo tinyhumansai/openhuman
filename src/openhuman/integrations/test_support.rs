@@ -661,6 +661,121 @@ pub async fn spawn_fake_integration_backend() -> FakeIntegrationBackend {
                     }))
                 }
             }),
+        )
+        .route(
+            "/agent-integrations/tinyfish/search",
+            post({
+                let state = state.clone();
+                move |Json(body): Json<Value>| async move {
+                    record(
+                        &state,
+                        "POST",
+                        "/agent-integrations/tinyfish/search".to_string(),
+                        body.clone(),
+                    );
+                    let query = body
+                        .get("query")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown");
+                    Json(json!({
+                        "success": true,
+                        "data": {
+                            "query": query,
+                            "results": [
+                                {
+                                    "position": 1,
+                                    "site_name": "example.com",
+                                    "title": format!("TinyFish result for {query}"),
+                                    "snippet": "Rendered search result from fake backend",
+                                    "url": "https://example.com/tinyfish"
+                                }
+                            ],
+                            "total_results": 1,
+                            "costUsd": 0.0
+                        }
+                    }))
+                }
+            }),
+        )
+        .route(
+            "/agent-integrations/tinyfish/fetch",
+            post({
+                let state = state.clone();
+                move |Json(body): Json<Value>| async move {
+                    record(
+                        &state,
+                        "POST",
+                        "/agent-integrations/tinyfish/fetch".to_string(),
+                        body.clone(),
+                    );
+                    let urls = as_string_array(&body, "urls");
+                    let format = body
+                        .get("format")
+                        .and_then(Value::as_str)
+                        .unwrap_or("markdown");
+                    let results: Vec<Value> = urls
+                        .iter()
+                        .map(|url| {
+                            json!({
+                                "url": url,
+                                "final_url": url,
+                                "title": format!("Fetched {url}"),
+                                "description": "Fake TinyFish rendered page",
+                                "language": "en",
+                                "format": format,
+                                "latency_ms": 42,
+                                "text": format!("# Fetched\n\nTinyFish content for {url}"),
+                                "links": ["https://example.com/next"],
+                                "image_links": ["https://example.com/image.png"]
+                            })
+                        })
+                        .collect();
+                    Json(json!({
+                        "success": true,
+                        "data": {
+                            "results": results,
+                            "errors": [],
+                            "costUsd": 0.0
+                        }
+                    }))
+                }
+            }),
+        )
+        .route(
+            "/agent-integrations/tinyfish/agent/run",
+            post({
+                let state = state.clone();
+                move |Json(body): Json<Value>| async move {
+                    record(
+                        &state,
+                        "POST",
+                        "/agent-integrations/tinyfish/agent/run".to_string(),
+                        body.clone(),
+                    );
+                    let url = body
+                        .get("url")
+                        .and_then(Value::as_str)
+                        .unwrap_or("https://example.com");
+                    let goal = body
+                        .get("goal")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown goal");
+                    Json(json!({
+                        "success": true,
+                        "data": {
+                            "run_id": "run_tinyfish_fake",
+                            "status": "COMPLETED",
+                            "num_of_steps": 3,
+                            "result": {
+                                "url": url,
+                                "goal": goal,
+                                "ok": true
+                            },
+                            "costUsd": 0.12
+                        }
+                    }))
+                }
+            }),
         );
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
