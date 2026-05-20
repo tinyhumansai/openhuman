@@ -769,10 +769,10 @@ impl Agent {
             &config.workspace_dir,
         ));
         // Phase 1 of #1401: see comment in channels/runtime/startup.rs.
-        let audit = Arc::new(crate::openhuman::security::AuditLogger::new(
+        let audit = crate::openhuman::security::get_or_create_workspace_audit_logger(
             crate::openhuman::config::AuditConfig::default(),
             config.workspace_dir.clone(),
-        )?);
+        )?;
 
         let local_embedding = config.workload_local_model("embeddings");
         let memory: Arc<dyn Memory> = Arc::from(memory::create_memory_with_local_ai(

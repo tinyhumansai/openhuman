@@ -62,9 +62,10 @@ impl ShellTool {
         }
     }
 
-    /// Emit a single `CommandExecution` audit event. Failures are swallowed
-    /// because audit writes must not block tool execution; the writer logs
-    /// internal errors via `log::warn`.
+    /// Emit a single `CommandExecution` audit event. A write failure is logged
+    /// as a structured warning but not propagated — audit must never block or
+    /// fail a tool call, yet a silently broken audit trail must not go
+    /// unnoticed.
     fn emit_audit(
         &self,
         command: &str,
@@ -73,7 +74,7 @@ impl ShellTool {
         success: bool,
         duration_ms: u64,
     ) {
-        let _ = self.audit.log_command_event(CommandExecutionLog {
+        if let Err(error) = self.audit.log_command_event(CommandExecutionLog {
             channel: "tool:shell",
             command,
             risk_level: "unknown",
@@ -81,7 +82,13 @@ impl ShellTool {
             allowed,
             success,
             duration_ms,
-        });
+        }) {
+            tracing::warn!(
+                error = %error,
+                channel = "tool:shell",
+                "[shell] failed to persist command execution audit event"
+            );
+        }
     }
 }
 

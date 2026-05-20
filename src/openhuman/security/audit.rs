@@ -5,10 +5,11 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use uuid::Uuid;
 
 /// Audit event types
@@ -149,6 +150,37 @@ pub struct AuditLogger {
     log_path: PathBuf,
     config: AuditConfig,
     buffer: Mutex<Vec<AuditEvent>>,
+    /// Serializes the rotate + append + fsync critical section so concurrent
+    /// callers sharing one logger cannot interleave partial JSON lines.
+    write_lock: Mutex<()>,
+}
+
+/// Process-global cache of one [`AuditLogger`] per workspace directory.
+///
+/// Multiple agent sessions in the same process share a workspace and therefore
+/// the same `<workspace>/audit.log`. Handing each session its own logger would
+/// let concurrent appends race on rotation and interleave partial lines; this
+/// registry guarantees a single `Arc<AuditLogger>` per workspace so all writes
+/// serialize through one instance's `write_lock`.
+static WORKSPACE_AUDIT_LOGGERS: OnceLock<Mutex<HashMap<PathBuf, Arc<AuditLogger>>>> =
+    OnceLock::new();
+
+/// Return the shared [`AuditLogger`] for `openhuman_dir`, creating it on first
+/// use. All callers targeting the same workspace receive the same `Arc`, so log
+/// rotation and appends coordinate through one logger. The `config` of the first
+/// caller for a given workspace wins; later callers reuse the cached logger.
+pub fn get_or_create_workspace_audit_logger(
+    config: AuditConfig,
+    openhuman_dir: PathBuf,
+) -> Result<Arc<AuditLogger>> {
+    let registry = WORKSPACE_AUDIT_LOGGERS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut map = registry.lock();
+    if let Some(existing) = map.get(&openhuman_dir) {
+        return Ok(Arc::clone(existing));
+    }
+    let logger = Arc::new(AuditLogger::new(config, openhuman_dir.clone())?);
+    map.insert(openhuman_dir, Arc::clone(&logger));
+    Ok(logger)
 }
 
 /// Structured command execution details for audit logging.
@@ -177,6 +209,7 @@ impl AuditLogger {
                 max_size_mb: 0,
             },
             buffer: Mutex::new(Vec::new()),
+            write_lock: Mutex::new(()),
         })
     }
 
@@ -192,6 +225,7 @@ impl AuditLogger {
             log_path,
             config,
             buffer: Mutex::new(Vec::new()),
+            write_lock: Mutex::new(()),
         })
     }
 
@@ -207,11 +241,14 @@ impl AuditLogger {
             event.event_id
         );
 
-        // Check log size and rotate if needed
-        self.rotate_if_needed()?;
-
-        // Serialize and write
+        // Serialize the event outside the write lock — formatting is pure.
         let line = serde_json::to_string(event)?;
+
+        // Hold `write_lock` across rotate + append + fsync so concurrent
+        // callers sharing this logger cannot interleave partial lines or
+        // race on rotation renames.
+        let _guard = self.write_lock.lock();
+        self.rotate_if_needed()?;
         let mut file = OpenOptions::new()
             .create(true)
             .append(true)
@@ -354,6 +391,19 @@ mod tests {
         let event = AuditEvent::new(AuditEventType::CommandExecution);
         logger.log(&event)?;
         assert!(!logger.config.enabled);
+        Ok(())
+    }
+
+    #[test]
+    fn workspace_audit_logger_is_shared_per_workspace() -> Result<()> {
+        let tmp = TempDir::new()?;
+        let cfg = AuditConfig::default();
+        let first = get_or_create_workspace_audit_logger(cfg.clone(), tmp.path().to_path_buf())?;
+        let second = get_or_create_workspace_audit_logger(cfg, tmp.path().to_path_buf())?;
+        assert!(
+            Arc::ptr_eq(&first, &second),
+            "same workspace must yield the same shared logger instance"
+        );
         Ok(())
     }
 

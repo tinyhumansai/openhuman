@@ -40,13 +40,11 @@ fn build_runtime_tools(config: &Config) -> Result<Vec<Box<dyn Tool>>, String> {
         &config.workspace_dir,
     ));
     // Phase 1 of #1401: see comment in channels/runtime/startup.rs.
-    let audit = Arc::new(
-        crate::openhuman::security::AuditLogger::new(
-            crate::openhuman::config::AuditConfig::default(),
-            config.workspace_dir.clone(),
-        )
-        .map_err(|e| e.to_string())?,
-    );
+    let audit = crate::openhuman::security::get_or_create_workspace_audit_logger(
+        crate::openhuman::config::AuditConfig::default(),
+        config.workspace_dir.clone(),
+    )
+    .map_err(|e| e.to_string())?;
     let runtime: Arc<dyn RuntimeAdapter> = Arc::new(NativeRuntime::new());
     let local_embedding = config.workload_local_model("embeddings");
     trace!("[runtime_node::ops] build_runtime_tools: create_memory_with_local_ai");
