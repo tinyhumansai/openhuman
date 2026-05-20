@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{json, Map, Value};
 
@@ -8,7 +8,8 @@ use crate::openhuman::mcp_server::McpToolSpec;
 use crate::rpc::RpcOutcome;
 
 use super::types::{
-    ToolRegistryEntry, ToolRegistryHealth, ToolRegistryList, ToolRegistryTransport,
+    ToolPolicyDiagnostics, ToolRegistryEntry, ToolRegistryHealth, ToolRegistryList,
+    ToolRegistryTransport,
 };
 
 const REGISTRY_ENTRY_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -21,6 +22,37 @@ pub fn list_tools() -> RpcOutcome<ToolRegistryList> {
         tools.len()
     );
     RpcOutcome::new(ToolRegistryList { tools }, vec![])
+}
+
+/// Return redacted diagnostics for policy/tool visibility reviews.
+pub fn diagnostics() -> RpcOutcome<ToolPolicyDiagnostics> {
+    let tools = registry_entries();
+    let total_tools = tools.len();
+    let enabled_tools = tools.iter().filter(|entry| entry.enabled).count();
+    let mcp_stdio_tools = tools
+        .iter()
+        .filter(|entry| entry.transport == ToolRegistryTransport::McpStdio)
+        .count();
+    let json_rpc_tools = tools
+        .iter()
+        .filter(|entry| entry.transport == ToolRegistryTransport::JsonRpc)
+        .count();
+    let possible_write_surfaces = tools
+        .iter()
+        .filter(|entry| looks_write_capable(&entry.tool_id))
+        .map(|entry| entry.tool_id.clone())
+        .collect::<Vec<_>>();
+    let policy_surfaces = policy_surface_ids();
+
+    let diagnostics = ToolPolicyDiagnostics {
+        total_tools,
+        enabled_tools,
+        mcp_stdio_tools,
+        json_rpc_tools,
+        possible_write_surfaces,
+        policy_surfaces,
+    };
+    RpcOutcome::new(diagnostics, vec![])
 }
 
 /// Look up one registry entry by stable `tool_id`.
@@ -227,6 +259,57 @@ fn push_unique(tags: &mut Vec<String>, tag: &str) {
     }
 }
 
+fn looks_write_capable(tool_id: &str) -> bool {
+    const MARKERS: &[&str] = &[
+        "add", "apply", "create", "decide", "delete", "email", "execute", "forget", "ingest",
+        "post", "put", "remove", "run", "send", "store", "update", "write",
+    ];
+    let lower = tool_id.to_ascii_lowercase();
+    MARKERS.iter().any(|marker| {
+        lower == *marker
+            || lower.contains(&format!(".{marker}"))
+            || lower.contains(&format!("_{marker}"))
+            || lower.contains(&format!("{marker}_"))
+    })
+}
+
+fn policy_surface_ids() -> Vec<String> {
+    let mut ids = [
+        "security.policy_info",
+        "approval.list_pending",
+        "approval.list_recent_decisions",
+        "approval.decide",
+        "tool_registry.list",
+        "tool_registry.get",
+        "tool_registry.diagnostics",
+    ]
+    .into_iter()
+    .map(String::from)
+    .collect::<BTreeSet<_>>();
+
+    ids.extend(
+        all::all_controller_schemas()
+            .into_iter()
+            .map(|schema| schema.method_name())
+            .filter(|tool_id| is_policy_surface(tool_id)),
+    );
+
+    ids.into_iter().collect()
+}
+
+fn is_policy_surface(tool_id: &str) -> bool {
+    matches!(
+        tool_id,
+        "security.policy_info"
+            | "approval.list_pending"
+            | "approval.list_recent_decisions"
+            | "approval.decide"
+            | "tool_registry.list"
+            | "tool_registry.get"
+            | "tool_registry.diagnostics"
+    )
+}
+
 fn title_from_function(function: &str) -> String {
     function
         .split('_')
@@ -283,6 +366,26 @@ mod tests {
         sorted.dedup();
 
         assert_eq!(ids, sorted);
+    }
+
+    #[test]
+    fn diagnostics_reports_inventory_and_policy_surfaces() {
+        let outcome = diagnostics();
+
+        assert!(outcome.value.total_tools > 0);
+        assert_eq!(outcome.value.total_tools, outcome.value.enabled_tools);
+        assert!(outcome.value.mcp_stdio_tools > 0);
+        assert!(outcome.value.json_rpc_tools > 0);
+        assert!(outcome
+            .value
+            .policy_surfaces
+            .iter()
+            .any(|tool_id| tool_id == "security.policy_info"));
+        assert!(outcome
+            .value
+            .possible_write_surfaces
+            .iter()
+            .any(|tool_id| tool_id == "tools.composio_execute"));
     }
 
     #[test]
