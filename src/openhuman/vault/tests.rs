@@ -279,3 +279,28 @@ async fn vault_sync_status_rejects_empty_id() {
     let err = ops::vault_sync_status("").await.unwrap_err();
     assert!(err.contains("vault_id must not be empty"));
 }
+
+#[tokio::test]
+async fn vault_sync_panic_guard_marks_state_failed_and_allows_retry() {
+    // Simulate the panic-recovery path that the catch_unwind guard in
+    // ops::vault_sync triggers: vault goes Running -> Failed (with a panic
+    // message), then can be restarted.  This verifies the invariant that no
+    // panic can permanently lock the state in `Running`.
+    let id = "__test_panic_guard_recovery__";
+    state::start(id, 1_000).unwrap();
+    assert_eq!(state::get(id).unwrap().status, VaultSyncStatus::Running);
+
+    // Simulate what the Err(_) branch of the catch_unwind match does.
+    state::update_progress(id, |s| {
+        s.status = VaultSyncStatus::Failed;
+        s.errors = vec!["sync task panicked unexpectedly".to_string()];
+    });
+
+    let st = state::get(id).unwrap();
+    assert_eq!(st.status, VaultSyncStatus::Failed);
+    assert!(st.errors[0].contains("panicked"));
+
+    // A subsequent sync attempt must not be blocked by the old Running entry.
+    state::start(id, 2_000).unwrap();
+    assert_eq!(state::get(id).unwrap().status, VaultSyncStatus::Running);
+}

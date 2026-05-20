@@ -29,18 +29,6 @@ export interface CoreVaultFile {
   status: CoreVaultFileStatus;
 }
 
-export interface CoreVaultSyncReport {
-  vault_id: string;
-  scanned: number;
-  ingested: number;
-  unchanged: number;
-  removed: number;
-  failed: number;
-  skipped_unsupported: number;
-  duration_ms: number;
-  errors: string[];
-}
-
 export type CoreVaultSyncStatus = 'idle' | 'running' | 'completed' | 'failed';
 
 /** Live progress returned by `openhuman.vault_sync_status`. */

@@ -1,6 +1,7 @@
 //! RPC-facing operations for the vault domain.
 
 use chrono::Utc;
+use futures::FutureExt;
 use uuid::Uuid;
 
 use crate::openhuman::config::Config;
@@ -173,35 +174,57 @@ pub async fn vault_sync(
 
     tokio::spawn(async move {
         log::debug!("[vault] sync: background task running id={vault_id}");
-        let report = sync::sync_vault(&config_clone, &vault).await;
 
-        let success = report.failed == 0;
-        let finished_at_ms = Utc::now().timestamp_millis();
+        // Wrap the work in catch_unwind so a panic inside sync_vault cannot leave
+        // the vault state permanently stuck in `Running`.  Without this guard a
+        // panic would unwind the task, the state map entry would never be updated,
+        // and every subsequent sync attempt would be rejected with "already in progress"
+        // until the app is restarted.
+        let result =
+            std::panic::AssertUnwindSafe(async { sync::sync_vault(&config_clone, &vault).await })
+                .catch_unwind()
+                .await;
 
-        // Write final counters back into the state map.
-        state::update_progress(&vault_id, |s| {
-            s.status = if success {
-                VaultSyncStatus::Completed
-            } else {
-                VaultSyncStatus::Failed
-            };
-            s.finished_at_ms = Some(finished_at_ms);
-            s.ingested = report.ingested;
-            s.unchanged = report.unchanged;
-            s.removed = report.removed;
-            s.failed = report.failed;
-            s.skipped_unsupported = report.skipped_unsupported;
-            s.scanned = report.scanned;
-            s.duration_ms = report.duration_ms;
-            s.errors = report.errors.clone();
-        });
+        match result {
+            Ok(report) => {
+                let success = report.failed == 0;
+                let finished_at_ms = Utc::now().timestamp_millis();
 
-        log::debug!(
-            "[vault] sync: background task done id={vault_id} ingested={} failed={} duration_ms={}",
-            report.ingested,
-            report.failed,
-            report.duration_ms,
-        );
+                // Write final counters back into the state map.
+                state::update_progress(&vault_id, |s| {
+                    s.status = if success {
+                        VaultSyncStatus::Completed
+                    } else {
+                        VaultSyncStatus::Failed
+                    };
+                    s.finished_at_ms = Some(finished_at_ms);
+                    s.ingested = report.ingested;
+                    s.unchanged = report.unchanged;
+                    s.removed = report.removed;
+                    s.failed = report.failed;
+                    s.skipped_unsupported = report.skipped_unsupported;
+                    s.scanned = report.scanned;
+                    s.duration_ms = report.duration_ms;
+                    s.errors = report.errors.clone();
+                });
+
+                log::debug!(
+                    "[vault] sync: background task done id={vault_id} ingested={} failed={} duration_ms={}",
+                    report.ingested,
+                    report.failed,
+                    report.duration_ms,
+                );
+            }
+            Err(_) => {
+                log::error!(
+                    "[vault] sync: background task panicked id={vault_id} — marking state as Failed"
+                );
+                state::update_progress(&vault_id, |s| {
+                    s.status = VaultSyncStatus::Failed;
+                    s.errors = vec!["sync task panicked unexpectedly".to_string()];
+                });
+            }
+        }
     });
 
     Ok(RpcOutcome::single_log(
