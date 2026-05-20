@@ -810,3 +810,20 @@ async fn signed_reads_require_credentials() {
     assert!(result.output().contains("credentials are required"));
     assert_eq!(calls.load(Ordering::Relaxed), 0);
 }
+
+#[tokio::test]
+async fn ensure_https_blocks_signed_reads_on_non_loopback_http() {
+    let tool = authed_tool("http://example.com:8080/trade-api/v2".to_string(), 15);
+
+    let result = tool
+        .execute(json!({ "action": "get_positions" }))
+        .await
+        .unwrap();
+
+    assert!(result.is_error, "expected error, got success");
+    assert!(
+        result.output().contains("non-HTTPS URL"),
+        "expected HTTPS guard rejection, got: {}",
+        result.output()
+    );
+}
