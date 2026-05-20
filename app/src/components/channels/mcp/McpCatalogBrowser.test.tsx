@@ -32,9 +32,9 @@ describe('McpCatalogBrowser', () => {
 
     const input = screen.getByPlaceholderText('Search Smithery catalog...');
 
-    // Advance past the initial debounce
+    // Advance past the initial debounce and flush async work.
     await act(async () => {
-      vi.advanceTimersByTime(300);
+      await vi.runAllTimersAsync();
     });
     mockRegistrySearch.mockClear();
 
@@ -44,9 +44,9 @@ describe('McpCatalogBrowser', () => {
     // Before debounce fires, no new call
     expect(mockRegistrySearch).not.toHaveBeenCalled();
 
-    // Advance past the 250ms debounce
+    // Advance past the 250ms debounce and flush.
     await act(async () => {
-      vi.advanceTimersByTime(300);
+      await vi.runAllTimersAsync();
     });
 
     expect(mockRegistrySearch).toHaveBeenCalledWith({ query: 'github', page: 1, page_size: 20 });
@@ -65,13 +65,12 @@ describe('McpCatalogBrowser', () => {
     mockRegistrySearch.mockResolvedValue({ servers, page: 1, total_pages: 1 });
     render(<McpCatalogBrowser onSelectInstall={() => {}} />);
 
+    // Advance past the 250ms debounce and flush all pending async work.
     await act(async () => {
-      vi.advanceTimersByTime(300);
+      await vi.runAllTimersAsync();
     });
 
-    await waitFor(() => {
-      expect(screen.getByText('File Server')).toBeInTheDocument();
-    });
+    expect(screen.getByText('File Server')).toBeInTheDocument();
     expect(screen.getByText('Reads files')).toBeInTheDocument();
   });
 
@@ -82,10 +81,10 @@ describe('McpCatalogBrowser', () => {
     render(<McpCatalogBrowser onSelectInstall={onSelectInstall} />);
 
     await act(async () => {
-      vi.advanceTimersByTime(300);
+      await vi.runAllTimersAsync();
     });
 
-    await waitFor(() => screen.getByText('File Server'));
+    expect(screen.getByText('File Server')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Install' }));
     expect(onSelectInstall).toHaveBeenCalledWith('acme/file-server');
@@ -97,10 +96,9 @@ describe('McpCatalogBrowser', () => {
     render(<McpCatalogBrowser onSelectInstall={() => {}} />);
 
     await act(async () => {
-      vi.advanceTimersByTime(300);
+      await vi.runAllTimersAsync();
     });
 
-    await waitFor(() => screen.getByText('Load more'));
     expect(screen.getByRole('button', { name: 'Load more' })).toBeInTheDocument();
   });
 
@@ -109,9 +107,9 @@ describe('McpCatalogBrowser', () => {
     render(<McpCatalogBrowser onSelectInstall={() => {}} />);
 
     await act(async () => {
-      vi.advanceTimersByTime(300);
+      await vi.runAllTimersAsync();
     });
 
-    await waitFor(() => screen.getByText('Network error'));
+    expect(screen.getByText('Network error')).toBeInTheDocument();
   });
 });
