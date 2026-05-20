@@ -93,9 +93,13 @@ enum KalshiRequest {
         no_price: Option<u64>,
         #[serde(default)]
         expiration_ts: Option<u64>,
+        #[serde(default)]
+        approved: Option<bool>,
     },
     CancelOrder {
         order_id: String,
+        #[serde(default)]
+        approved: Option<bool>,
     },
 }
 
@@ -279,10 +283,12 @@ impl KalshiTool {
                 yes_price,
                 no_price,
                 expiration_ts,
+                approved,
             } => {
                 self.security
                     .enforce_tool_operation(ToolOperation::Act, "kalshi.place_order")
                     .map_err(anyhow::Error::msg)?;
+                require_write_approval(approved)?;
 
                 let ticker = non_empty(Some(ticker.as_str()))
                     .ok_or_else(|| anyhow::anyhow!("'ticker' cannot be empty"))?;
@@ -328,10 +334,11 @@ impl KalshiTool {
                     "data": data,
                 }))
             }
-            KalshiRequest::CancelOrder { order_id } => {
+            KalshiRequest::CancelOrder { order_id, approved } => {
                 self.security
                     .enforce_tool_operation(ToolOperation::Act, "kalshi.cancel_order")
                     .map_err(anyhow::Error::msg)?;
+                require_write_approval(approved)?;
 
                 let order_id = non_empty(Some(order_id.as_str()))
                     .ok_or_else(|| anyhow::anyhow!("'order_id' cannot be empty"))?;
@@ -616,6 +623,10 @@ impl Tool for KalshiTool {
                 "order_id": {
                     "type": "string",
                     "description": "Order id for cancel_order."
+                },
+                "approved": {
+                    "type": "boolean",
+                    "description": "Required=true for write actions (place_order, cancel_order)."
                 }
             },
             "required": ["action"]
@@ -748,5 +759,15 @@ fn ensure_https(url: &str) -> Result<()> {
     anyhow::bail!(
         "Refusing to transmit Kalshi credentials over non-HTTPS URL: \
          URL scheme must be https (loopback http allowed for local mock)"
+    )
+}
+
+fn require_write_approval(approved: Option<bool>) -> Result<()> {
+    if approved.unwrap_or(false) {
+        return Ok(());
+    }
+
+    anyhow::bail!(
+        "Kalshi write requires explicit user approval. Re-invoke with arguments.approved = true after confirming with the user."
     )
 }
