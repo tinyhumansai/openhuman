@@ -645,36 +645,83 @@ async fn schema_handler(State(_state): State<AppState>) -> impl IntoResponse {
 }
 
 /// Query parameters for the events SSE endpoint.
+///
+/// `client_id` selects which broadcast events to forward; `token` is the
+/// single-shot bind token minted by the `core.events_subscribe_token` RPC.
+/// Both are required — browser `EventSource` cannot attach an
+/// `Authorization` header, so the bind token is the only credential the
+/// endpoint accepts.
 #[derive(Debug, serde::Deserialize)]
 struct EventsQuery {
-    /// Unique identifier for the client requesting events.
     client_id: String,
+    #[serde(default)]
+    token: Option<String>,
 }
 
 /// Handler for the main events SSE endpoint.
 ///
-/// Streams real-time events filtered by `client_id`.
-async fn events_handler(
-    Query(query): Query<EventsQuery>,
-) -> Sse<impl tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>>> {
+/// Validates the supplied bind token against the per-subscription store,
+/// then streams real-time events filtered by `client_id`. The token is
+/// consumed on validation so a leaked URL cannot be replayed.
+async fn events_handler(Query(query): Query<EventsQuery>) -> Response {
+    let supplied_token = query
+        .token
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let Some(supplied_token) = supplied_token else {
+        log::warn!(
+            "[events] reject subscribe: missing bind token (client_id_len={})",
+            query.client_id.len()
+        );
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({
+                "ok": false,
+                "error": "unauthorized",
+                "message": "Missing 'token' query parameter. Mint one with the `core.events_subscribe_token` RPC."
+            })),
+        )
+            .into_response();
+    };
+    if !crate::core::event_bind_tokens::consume(&query.client_id, supplied_token) {
+        log::warn!(
+            "[events] reject subscribe: bind token invalid or expired (client_id_len={})",
+            query.client_id.len()
+        );
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({
+                "ok": false,
+                "error": "unauthorized",
+                "message": "Bind token is unknown, expired, or bound to a different client_id."
+            })),
+        )
+            .into_response();
+    }
+
     let client_id = query.client_id;
     let rx = crate::openhuman::channels::providers::web::subscribe_web_channel_events();
-    let stream = tokio_stream::wrappers::BroadcastStream::new(rx).filter_map(move |item| {
-        let event = match item {
-            Ok(ev) => ev,
-            Err(_) => return None,
-        };
-        if event.client_id != client_id {
-            return None;
-        }
-        let data = match serde_json::to_string(&event) {
-            Ok(data) => data,
-            Err(_) => return None,
-        };
-        Some(Ok(Event::default().event(event.event).data(data)))
-    });
+    let stream = tokio_stream::wrappers::BroadcastStream::new(rx).filter_map(
+        move |item| -> Option<Result<Event, std::convert::Infallible>> {
+            let event = match item {
+                Ok(ev) => ev,
+                Err(_) => return None,
+            };
+            if event.client_id != client_id {
+                return None;
+            }
+            let data = match serde_json::to_string(&event) {
+                Ok(data) => data,
+                Err(_) => return None,
+            };
+            Some(Ok(Event::default().event(event.event).data(data)))
+        },
+    );
 
-    Sse::new(stream).keep_alive(KeepAlive::new().interval(std::time::Duration::from_secs(10)))
+    Sse::new(stream)
+        .keep_alive(KeepAlive::new().interval(std::time::Duration::from_secs(10)))
+        .into_response()
 }
 
 /// Handler for the webhook debug events SSE endpoint.
@@ -705,7 +752,7 @@ async fn root_handler() -> impl IntoResponse {
             "endpoints": {
                 "health": "/health",
                 "schema": "/schema",
-                "events": "/events?client_id=<id>",
+                "events": "/events?client_id=<id>&token=<core.events_subscribe_token>",
                 "rpc": "/rpc"
             },
             "usage": {
