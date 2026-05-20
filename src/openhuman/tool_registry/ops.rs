@@ -13,6 +13,15 @@ use super::types::{
 };
 
 const REGISTRY_ENTRY_VERSION: &str = env!("CARGO_PKG_VERSION");
+const POLICY_SURFACES: &[&str] = &[
+    "security.policy_info",
+    "approval.list_pending",
+    "approval.list_recent_decisions",
+    "approval.decide",
+    "tool_registry.list",
+    "tool_registry.get",
+    "tool_registry.diagnostics",
+];
 
 /// Return the current read-only tool registry snapshot.
 pub fn list_tools() -> RpcOutcome<ToolRegistryList> {
@@ -274,18 +283,11 @@ fn looks_write_capable(tool_id: &str) -> bool {
 }
 
 fn policy_surface_ids() -> Vec<String> {
-    let mut ids = [
-        "security.policy_info",
-        "approval.list_pending",
-        "approval.list_recent_decisions",
-        "approval.decide",
-        "tool_registry.list",
-        "tool_registry.get",
-        "tool_registry.diagnostics",
-    ]
-    .into_iter()
-    .map(String::from)
-    .collect::<BTreeSet<_>>();
+    let mut ids = POLICY_SURFACES
+        .iter()
+        .copied()
+        .map(String::from)
+        .collect::<BTreeSet<_>>();
 
     ids.extend(
         all::all_controller_schemas()
@@ -298,16 +300,7 @@ fn policy_surface_ids() -> Vec<String> {
 }
 
 fn is_policy_surface(tool_id: &str) -> bool {
-    matches!(
-        tool_id,
-        "security.policy_info"
-            | "approval.list_pending"
-            | "approval.list_recent_decisions"
-            | "approval.decide"
-            | "tool_registry.list"
-            | "tool_registry.get"
-            | "tool_registry.diagnostics"
-    )
+    POLICY_SURFACES.contains(&tool_id)
 }
 
 fn title_from_function(function: &str) -> String {
