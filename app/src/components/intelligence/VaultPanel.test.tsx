@@ -256,11 +256,7 @@ describe('<VaultPanel />', () => {
     fireEvent.click(screen.getByText('Sync'));
     await waitFor(() =>
       expect(onToast).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: 'error',
-          title: 'Sync failed',
-          message: 'poll error',
-        })
+        expect.objectContaining({ type: 'error', title: 'Sync failed', message: 'poll error' })
       )
     );
   });
@@ -270,9 +266,7 @@ describe('<VaultPanel />', () => {
       .mockResolvedValueOnce({ result: [vault()], logs: [] })
       .mockResolvedValueOnce({ result: [vault()], logs: [] });
     mockSync.mockResolvedValueOnce({ result: { status: 'started', vault_id: 'v-1' }, logs: [] });
-    mockSyncStatus.mockResolvedValueOnce(
-      syncState({ status: 'failed', failed: 3, errors: [] })
-    );
+    mockSyncStatus.mockResolvedValueOnce(syncState({ status: 'failed', failed: 3, errors: [] }));
     const onToast = vi.fn();
     render(<VaultPanel onToast={onToast} />);
     await waitFor(() => screen.getByTestId('vault-list'));
@@ -303,9 +297,7 @@ describe('<VaultPanel />', () => {
     fireEvent.click(screen.getByText('Sync'));
     await waitFor(() =>
       expect(onToast).toHaveBeenCalledWith(
-        expect.objectContaining({
-          message: expect.stringContaining('skipped 5'),
-        })
+        expect.objectContaining({ message: expect.stringContaining('skipped 5') })
       )
     );
   });
