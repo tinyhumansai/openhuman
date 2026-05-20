@@ -146,8 +146,13 @@ fn custom_provider_rejects_abstract_tier_without_concrete_default_model() {
         ..Default::default()
     });
 
-    let err = create_chat_provider_from_string("reasoning", "deepseek:reasoning-v1", &config)
-        .expect_err("abstract tier without concrete provider default should fail");
+    // Can't use `.expect_err(..)` here because `Box<dyn Provider>` doesn't
+    // implement `Debug`, so the success arm has no Debug to print.
+    let err = match create_chat_provider_from_string("reasoning", "deepseek:reasoning-v1", &config)
+    {
+        Ok(_) => panic!("abstract tier without concrete provider default should fail"),
+        Err(e) => e,
+    };
     assert!(err.to_string().contains("abstract tier"));
 }
 

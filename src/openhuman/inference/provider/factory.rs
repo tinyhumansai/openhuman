@@ -36,10 +36,18 @@ pub const PROVIDER_OPENHUMAN: &str = "openhuman";
 pub const OLLAMA_PROVIDER_PREFIX: &str = "ollama:";
 
 fn is_abstract_tier_model(model: &str) -> bool {
-    matches!(
-        model.trim(),
-        "reasoning-v1" | "reasoning-quick-v1" | "agentic-v1" | "coding-v1" | "summarization-v1"
-    )
+    use crate::openhuman::config::{
+        MODEL_AGENTIC_V1, MODEL_CODING_V1, MODEL_REASONING_QUICK_V1, MODEL_REASONING_V1,
+    };
+    // No dedicated constant for the summarization tier yet; keep the literal
+    // in sync with the tier name used by the summarizer sub-agent.
+    const MODEL_SUMMARIZATION_V1: &str = "summarization-v1";
+    let trimmed = model.trim();
+    trimmed == MODEL_REASONING_V1
+        || trimmed == MODEL_REASONING_QUICK_V1
+        || trimmed == MODEL_AGENTIC_V1
+        || trimmed == MODEL_CODING_V1
+        || trimmed == MODEL_SUMMARIZATION_V1
 }
 
 /// Auth-profile storage key for a slug-keyed provider.
