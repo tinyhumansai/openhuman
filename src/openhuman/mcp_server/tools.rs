@@ -1100,23 +1100,18 @@ mod tests {
 
     #[test]
     fn read_only_tools_are_marked_read_only_and_closed_world() {
-        // Every tool except `agent.run_subagent` reads local OpenHuman state
-        // (memory tree / agent registry). Per MCP spec defaults these would be
-        // `readOnlyHint: false` and `openWorldHint: true`, so we MUST set both
-        // explicitly to communicate accurate safety affordances to clients.
-        let read_only_names = [
-            "core.list_tools",
-            "core.tool_instructions",
-            "agent.list_subagents",
-            "memory.search",
-            "memory.recall",
-            "tree.read_chunk",
-            "tree.browse",
-            "tree.top_entities",
-            "tree.list_sources",
-        ];
+        // Every tool except the act-capable ones reads local OpenHuman state
+        // (memory tree / agent registry) or queries an external read-only
+        // search engine. Per MCP spec defaults these would be
+        // `readOnlyHint: false` and `openWorldHint: true`, so we MUST set
+        // `readOnlyHint` explicitly to communicate accurate safety affordances
+        // to clients. (`searxng_search` is read-only but openWorld, so it
+        // verifies the read-only axis here and is exempt from the
+        // openWorld=false check below.)
+        let act_tool_names = ["agent.run_subagent"];
+        let open_world_read_only = ["searxng_search"];
         for spec in tool_specs() {
-            if !read_only_names.contains(&spec.name) {
+            if act_tool_names.contains(&spec.name) {
                 continue;
             }
             let annotations = &spec.annotations;
@@ -1126,11 +1121,13 @@ mod tests {
                 "expected `{}` to advertise readOnlyHint=true",
                 spec.name
             );
+            let expected_open_world = open_world_read_only.contains(&spec.name);
             assert_eq!(
                 annotations.get("openWorldHint").and_then(Value::as_bool),
-                Some(false),
-                "expected `{}` to advertise openWorldHint=false",
-                spec.name
+                Some(expected_open_world),
+                "expected `{}` to advertise openWorldHint={}",
+                spec.name,
+                expected_open_world
             );
             // Per spec these are meaningful only when readOnlyHint == false.
             // Emitting them on a read-only tool would be misleading.
