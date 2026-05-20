@@ -179,9 +179,23 @@ pub async fn invoke_method(state: AppState, method: &str, params: Value) -> Resu
     // (this one, `llm_provider.api_error`, …) gets the same teardown.
     if let Err(ref msg) = result {
         if is_session_expired_error(msg) {
+            // Method context + a short marker substring on the matched
+            // error lets us tell at a glance whether the SessionExpired
+            // came from the backend boundary (`SESSION_EXPIRED:` tag),
+            // the local missing-profile guard, or the no-JWT guard. #2286.
+            let matched = if msg.contains("SESSION_EXPIRED") {
+                "backend-sentinel"
+            } else if msg.to_lowercase().contains("no backend session token") {
+                "no-backend-session-token"
+            } else if msg.to_lowercase().contains("session jwt required") {
+                "session-jwt-required"
+            } else {
+                "unknown"
+            };
             log::warn!(
-                "[jsonrpc] backend returned 401 for method '{}' — publishing SessionExpired",
-                method
+                "[jsonrpc] session-expired signal for method '{}' (match={}) — publishing SessionExpired",
+                method,
+                matched
             );
             // Scrub before publishing — subscribers log `reason`, and the
             // upstream error string could include API keys / tokens from
@@ -199,39 +213,38 @@ pub async fn invoke_method(state: AppState, method: &str, params: Value) -> Resu
     result
 }
 
-/// Helper to determine if an error message indicates an expired or invalid session.
+/// Helper to determine if an error message indicates an expired or invalid
+/// OpenHuman user session.
 ///
-/// Deliberately **looser** than
-/// [`crate::core::observability::is_session_expired_message`]: this
-/// dispatch-site predicate also matches the generic `"401 + unauthorized"` /
-/// `"invalid token"` pair so token cleanup +
-/// `DomainEvent::SessionExpired` publish fire on *any* 401, including
-/// BYO-key provider failures (which clear the stale local token even if
-/// the user mis-configured an OpenAI / Anthropic key). The strict
-/// classifier in `observability` is for the agent / web-channel
-/// `report_error_or_expected` call sites, where matching too loosely would
-/// silence actionable BYO-key configuration errors (OPENHUMAN-TAURI-26
-/// rationale: the agent-layer demote must NOT also swallow generic
-/// provider 401s).
+/// **Narrow on purpose** (see #2286). Earlier versions matched any
+/// `"401 + unauthorized"` / `"invalid token"` substring, which signed users
+/// out for downstream / integration / BYO-key failures that had nothing to do
+/// with the OpenHuman session (Discord card-open, BYO-key mis-config,
+/// integration 401s, Lark channel 401, MCP server 401, …). Each of those
+/// would publish `DomainEvent::SessionExpired`, the credentials subscriber
+/// would clear the local token, and the user would bounce back to Welcome /
+/// sign-in for a 401 that the OpenHuman backend never emitted.
 ///
-/// "No backend session token" is also treated as a session-expired signal: the
-/// auth profile is missing entirely (the user was never signed in, or their
-/// stored profile was wiped between login and the next RPC). The frontend may
-/// still believe it holds a session token from an optimistic post-login patch,
-/// so we want the same auto-cleanup + UI-level re-auth path to fire instead of
-/// repeatedly reporting this as a hard error to Sentry. See #1465-ish: users
-/// stuck on the onboarding `SkillsStep` would spam `composio_list_connections`
-/// failures every 5 s without ever being bounced back to the login screen.
+/// To fix it we tagged real backend-session 401s at the API boundary in
+/// [`crate::api::rest`] with the `SESSION_EXPIRED:` sentinel and dropped the
+/// generic `"401 + unauthorized"` match here. The classifier now matches
+/// only:
 ///
-/// "session JWT required" covers the case where a prior 401 already cleared the
-/// token and the very next RPC call (e.g. `channels_telegram_login_start`) finds
-/// no JWT in the store. This is the same auth-boundary condition, just surfaced
-/// as a local guard rather than a backend response.
+/// - `SESSION_EXPIRED` — the authoritative backend-boundary marker
+///   (`api/rest.rs` 401 path and `openhuman_backend.rs` no-session path).
+/// - `"no backend session token"` — local guard that fires when the auth
+///   profile is missing entirely (e.g. users stuck on onboarding's
+///   `SkillsStep` would otherwise spam `composio_list_connections` failures
+///   every 5 s without ever being bounced back to sign-in — see #1465-ish).
+/// - `"session jwt required"` — local guard for the case where a prior 401
+///   already cleared the token and the very next RPC call finds no JWT in
+///   the store. Same auth-boundary condition, just surfaced locally.
+///
+/// Downstream / integration / BYO-key 401s are *not* matched: they surface
+/// as typed recoverable errors via their own provider paths.
 fn is_session_expired_error(msg: &str) -> bool {
     let lower = msg.to_lowercase();
-    (lower.contains("401") && lower.contains("unauthorized"))
-        || lower.contains("invalid token")
-        || lower.contains("no backend session token")
+    lower.contains("no backend session token")
         || lower.contains("session jwt required")
         || msg.contains("SESSION_EXPIRED")
 }

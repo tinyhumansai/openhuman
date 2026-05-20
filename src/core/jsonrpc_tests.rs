@@ -564,32 +564,61 @@ fn parse_json_params_reports_error_message() {
 }
 
 #[test]
-fn is_session_expired_error_matches_401_unauthorized() {
-    assert!(is_session_expired_error(
+fn is_session_expired_error_does_not_match_generic_401_unauthorized() {
+    // #2286: bare `"401 + unauthorized"` shapes from downstream / integration
+    // / BYO-key paths used to match and clear the OpenHuman user session.
+    // The classifier is narrow now — only the boundary-tagged sentinel and
+    // the two literal local guards trigger a SessionExpired publish.
+    assert!(!is_session_expired_error(
         "backend returned 401 Unauthorized"
     ));
-    assert!(is_session_expired_error("401 UNAUTHORIZED"));
-    assert!(is_session_expired_error("got 401 and unauthorized body"));
+    assert!(!is_session_expired_error("401 UNAUTHORIZED"));
+    assert!(!is_session_expired_error("got 401 and unauthorized body"));
 }
 
 #[test]
-fn is_session_expired_error_requires_both_401_and_unauthorized() {
-    // 401 alone is not sufficient — could be HTTP/3.01 nonsense or
-    // unrelated text. We require the string "unauthorized" too.
-    assert!(!is_session_expired_error("server returned 401"));
-    assert!(!is_session_expired_error("unauthorized without code"));
+fn is_session_expired_error_does_not_match_byo_key_provider_401() {
+    // #2286 acceptance: BYO-key provider mis-configuration (the user pasted
+    // a stale OpenAI / Anthropic key) must NOT sign the user out of
+    // OpenHuman. The inference provider path emits shapes like these.
+    assert!(!is_session_expired_error(
+        "openai: 401 Unauthorized: Incorrect API key provided"
+    ));
+    assert!(!is_session_expired_error(
+        "anthropic api_error: 401 invalid x-api-key"
+    ));
+    assert!(!is_session_expired_error(
+        "POST https://api.openai.com/v1/chat/completions failed (401): Invalid token"
+    ));
 }
 
 #[test]
-fn is_session_expired_error_matches_invalid_token_case_insensitive() {
-    assert!(is_session_expired_error("Invalid Token"));
-    assert!(is_session_expired_error("got an invalid token here"));
+fn is_session_expired_error_does_not_match_integration_or_channel_401() {
+    // #2286 acceptance: integration / channel-status fetches returning 401
+    // (Discord card-open, Lark channel auth refresh, MCP server token
+    // refresh, …) must not clear the OpenHuman session.
+    assert!(!is_session_expired_error(
+        "lark channel status fetch returned 401 Unauthorized"
+    ));
+    assert!(!is_session_expired_error(
+        "mcp_client: 401 Unauthorized fetching tools/list"
+    ));
+    assert!(!is_session_expired_error(
+        "composio integration GET /connections failed (401): invalid integration token"
+    ));
 }
 
 #[test]
-fn is_session_expired_error_matches_session_expired_sentinel() {
-    // The SESSION_EXPIRED sentinel is case-sensitive by design.
+fn is_session_expired_error_matches_backend_sentinel() {
+    // `SESSION_EXPIRED:` is the authoritative marker emitted by both the
+    // OpenHuman backend boundary in `api/rest.rs` (#2286) and the inference
+    // backend's no-session path in
+    // `openhuman/inference/provider/openhuman_backend.rs`.
     assert!(is_session_expired_error("SESSION_EXPIRED: please re-auth"));
+    assert!(is_session_expired_error(
+        "SESSION_EXPIRED: POST /api/me failed (401): {\"error\":\"unauthorized\"}"
+    ));
+    // Case-sensitive by design.
     assert!(!is_session_expired_error("session_expired lowercase"));
 }
 
@@ -598,6 +627,9 @@ fn is_session_expired_error_does_not_match_unrelated_errors() {
     assert!(!is_session_expired_error("network timeout"));
     assert!(!is_session_expired_error("500 internal server error"));
     assert!(!is_session_expired_error(""));
+    // Plain "invalid token" from a provider must no longer match — that
+    // was the BYO-key signal pre-#2286.
+    assert!(!is_session_expired_error("Invalid Token"));
 }
 
 #[test]
