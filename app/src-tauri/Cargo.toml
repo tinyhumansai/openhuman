@@ -50,8 +50,10 @@ tauri-plugin-opener = "2"
 # `cef::initialize(...) != 1` cache-lock panic seen in production
 # (Sentry OPENHUMAN-TAURI-A). The plugin acquires a per-identifier
 # lock before any tauri::Builder work happens, so the secondary
-# process exits cleanly after handing its argv to the primary.
-tauri-plugin-single-instance = "2"
+# process exits cleanly after handing its argv to the primary. The `deep-link`
+# feature forwards second-launch deep-link payloads to the primary instance on
+# Windows/Linux, which is required for hot-instance OAuth callbacks.
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 # Auto-update for the Tauri shell itself. The core sidecar already has its own
 # updater (see `core_update.rs`); this plugin handles the .app/.exe/.AppImage
 # bundle. Both are needed because shipping a new RPC method requires both
@@ -129,7 +131,7 @@ cef = { version = "=146.4.1", default-features = false }
 openhuman_core = { path = "../..", package = "openhuman", default-features = false }
 
 [target.'cfg(unix)'.dependencies]
-nix = { version = "0.29", default-features = false, features = ["signal"] }
+nix = { version = "0.29", default-features = false, features = ["signal", "user"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"

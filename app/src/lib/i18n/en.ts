@@ -99,6 +99,42 @@ const en: TranslationMap = {
   'settings.account.connectionsDesc': 'Manage linked accounts and services',
   'settings.account.privacy': 'Privacy',
   'settings.account.privacyDesc': 'Control what data leaves your computer',
+  'migration.title': 'Import from another assistant',
+  'migration.description':
+    'Migrate memory and notes from another local assistant into this workspace. Start with a Preview to see exactly what would change, then Apply to copy the data over. Your current memory is backed up first.',
+  'migration.vendorLabel': 'Source vendor',
+  'migration.sourceLabel': 'Source workspace path (optional)',
+  'migration.sourcePlaceholder': 'Leave blank to auto-detect (e.g. ~/.openclaw/workspace)',
+  'migration.sourceHint':
+    "Defaults to the vendor's standard location when blank. Set an explicit path if you've moved the workspace elsewhere.",
+  'migration.previewAction': 'Preview',
+  'migration.previewRunning': 'Previewing…',
+  'migration.applyAction': 'Apply import',
+  'migration.applyRunning': 'Importing…',
+  'migration.applyDisclaimer':
+    'Apply is unlocked after a successful Preview of the same source. Existing memory is backed up before any import.',
+  'migration.reportTitlePreview': 'Preview — nothing imported yet',
+  'migration.reportTitleApplied': 'Import complete',
+  'migration.report.source': 'Source workspace',
+  'migration.report.target': 'Target workspace',
+  'migration.report.fromSqlite': 'From SQLite (brain.db)',
+  'migration.report.fromMarkdown': 'From Markdown',
+  'migration.report.imported': 'Imported',
+  'migration.report.skippedUnchanged': 'Skipped (unchanged)',
+  'migration.report.renamedConflicts': 'Renamed on conflict',
+  'migration.report.warnings': 'Warnings',
+  'migration.report.previewHint':
+    'No data has been imported yet. Click Apply import to copy it over.',
+  'migration.report.appliedHint':
+    'Imported entries are now in your memory. Re-run Preview if you want to compare again.',
+  'migration.hermesComingSoonPrefix': 'Hermes importer is on the roadmap — see ',
+  'migration.hermesComingSoonSuffix':
+    ' for context. Pick OpenClaw to migrate today; Hermes lands in a follow-up.',
+  'migration.hermesLinkText': '#1440',
+  'migration.confirmImport.singular':
+    'Import {count} entry into the current workspace?\n\nSource: {source}\nTarget: {target}\n\nExisting memory will be backed up before the import runs.',
+  'migration.confirmImport.plural':
+    'Import {count} entries into the current workspace?\n\nSource: {source}\nTarget: {target}\n\nExisting memory will be backed up before the import runs.',
 
   // Settings: Notifications
   'settings.notifications.doNotDisturb': 'Do Not Disturb',
@@ -1449,15 +1485,24 @@ const en: TranslationMap = {
   'onboarding.contextGathering.buildingProfile': 'Building your profile...',
   'onboarding.contextGathering.continueToChat': 'Continue to chat',
   'onboarding.contextGathering.errorDesc':
-    "We couldn't build your full profile right now, but that's okay — you can continue and your profile will build over time.",
+    "Your chat is ready. We'll keep building your full profile in the background, so you can continue now and refine it over time.",
   'onboarding.contextGathering.title': 'Context Gathering',
   'openhuman.team_list_teams': 'Team list teams',
   'overlay.ariaAttention': 'Attention message',
+  'overlay.ariaCompanion': 'Companion active',
   'overlay.ariaOrb': 'OpenHuman overlay',
   'overlay.ariaVoiceActive': 'Voice input active',
+  'overlay.companion.error': 'Error',
+  'overlay.companion.listening': 'Listening…',
+  'overlay.companion.pointing': 'Pointing…',
+  'overlay.companion.speaking': 'Speaking…',
+  'overlay.companion.thinking': 'Thinking…',
   'overlay.orbTitle': 'Drag to move · Double-click to reset position',
   'pages.settings.account.connections': 'Connections',
-  'pages.settings.account.connectionsDesc': 'Manage linked accounts and services',
+  'pages.settings.account.connectionsDesc': 'Review and manage linked account connections',
+  'pages.settings.account.migration': 'Import from another assistant',
+  'pages.settings.account.migrationDesc':
+    'Bring memory and notes over from OpenClaw (Hermes coming soon)',
   'pages.settings.account.privacy': 'Privacy',
   'pages.settings.account.privacyDesc': 'Control what data leaves your computer',
   'pages.settings.account.recoveryPhrase': 'Recovery phrase',
@@ -1474,6 +1519,9 @@ const en: TranslationMap = {
   'pages.settings.aiSection.description':
     'Language model providers, local Ollama, and voice (STT / TTS).',
   'pages.settings.aiSection.title': 'AI',
+  'pages.settings.features.desktopCompanion': 'Desktop Companion',
+  'pages.settings.features.desktopCompanionDesc':
+    'Voice assistant with screen awareness — listens, sees, speaks, points',
   'pages.settings.features.messagingChannels': 'Messaging channels',
   'pages.settings.features.messagingChannelsDesc': 'Messaging channels desc',
   'pages.settings.features.notifications': 'Notifications',
@@ -2113,6 +2161,45 @@ const en: TranslationMap = {
   'settings.localModel.status.ollamaDocs': 'Ollama docs',
   'settings.localModel.status.thenRetry':
     'for setup instructions, then retry after your runtime is reachable.',
+  // Developer options menu items (#2225)
+  'devOptions.menuAi': 'AI Configuration',
+  'devOptions.menuAiDesc': 'Cloud providers, local Ollama models, and per-workload routing',
+  'devOptions.menuScreenAware': 'Screen Awareness',
+  'devOptions.menuScreenAwareDesc':
+    'Screen capture permissions, monitoring policy, and session controls',
+  'devOptions.menuMessaging': 'Messaging Channels',
+  'devOptions.menuMessagingDesc':
+    'Configure Telegram/Discord auth modes and default channel routing',
+  'devOptions.menuTools': 'Tools',
+  'devOptions.menuToolsDesc': 'Enable or disable capabilities OpenHuman can use on your behalf',
+  'devOptions.menuAgentChat': 'Agent Chat',
+  'devOptions.menuAgentChatDesc': 'Test agent conversation with model and temperature overrides',
+  'devOptions.menuCronJobs': 'Cron Jobs',
+  'devOptions.menuCronJobsDesc': 'View and configure scheduled jobs for runtime skills',
+  'devOptions.menuLocalModelDebug': 'Local Model Debug',
+  'devOptions.menuLocalModelDebugDesc':
+    'Ollama config, asset downloads, model tests, and diagnostics',
+  'devOptions.menuWebhooksDebug': 'Webhooks',
+  'devOptions.menuWebhooksDebugDesc':
+    'Inspect runtime webhook registrations and captured request logs',
+  'devOptions.menuIntelligence': 'Intelligence',
+  'devOptions.menuIntelligenceDesc': 'Memory workspace, subconscious engine, dreams, and settings',
+  'devOptions.menuNotificationRouting': 'Notification Routing',
+  'devOptions.menuNotificationRoutingDesc':
+    'AI importance scoring and orchestrator escalation for integration alerts',
+  'devOptions.menuComposeIOTriggers': 'ComposeIO Triggers',
+  'devOptions.menuComposeIOTriggersDesc': 'View ComposeIO trigger history and archive',
+  'devOptions.menuComposioRouting': 'Composio Routing (Direct Mode)',
+  'devOptions.menuComposioRoutingDesc':
+    'Bring your own Composio API key and route calls directly to backend.composio.dev',
+  'devOptions.menuComposioTriggers': 'Integration Triggers',
+  'devOptions.menuComposioTriggersDesc':
+    'Configure AI triage settings for Composio integration triggers',
+  // Settings menu: Appearance + Mascot (#2225)
+  'settings.appearance': 'Appearance',
+  'settings.appearanceDesc': 'Pick light, dark, or match your system theme',
+  'settings.mascot': 'Mascot',
+  'settings.mascotDesc': 'Pick the mascot color used across the app',
 };
 
 export default en;

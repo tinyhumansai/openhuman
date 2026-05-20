@@ -67,6 +67,10 @@ pub struct Agent {
     pub(super) last_tree_prefetch_at: Option<std::time::Instant>,
     pub(super) post_turn_hooks: Vec<Arc<dyn PostTurnHook>>,
     pub(super) learning_enabled: bool,
+    /// When `true`, pinned preferences stored via `remember_preference` are
+    /// fetched from the `user_profile` namespace and injected into the system
+    /// prompt on every turn, independent of `learning_enabled`.
+    pub(super) explicit_preferences_enabled: bool,
     pub(super) event_session_id: String,
     pub(super) event_channel: String,
     /// Human-readable agent definition name (e.g. `"main"`,
@@ -206,6 +210,7 @@ pub struct AgentBuilder {
     pub(super) auto_save: Option<bool>,
     pub(super) post_turn_hooks: Vec<Arc<dyn PostTurnHook>>,
     pub(super) learning_enabled: bool,
+    pub(super) explicit_preferences_enabled: bool,
     pub(super) event_session_id: Option<String>,
     pub(super) event_channel: Option<String>,
     pub(super) agent_definition_name: Option<String>,

@@ -42,7 +42,8 @@ async function waitForRequest(
 }
 
 describe('Skills registry flow', () => {
-  before(async () => {
+  before(async function beforeSuite() {
+    this.timeout(90_000);
     await startMockServer();
     await waitForApp();
     await resetApp(USER_ID);

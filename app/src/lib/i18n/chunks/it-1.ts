@@ -387,6 +387,48 @@ const it1: TranslationMap = {
   'settings.about.releasesDesc': 'Sfoglia le note di rilascio e le build precedenti su GitHub.',
   'settings.about.openReleases': 'Apri release GitHub',
   'settings.ai.overview': 'Panoramica sistema AI',
+  'migration.title': 'Importa da un altro assistente',
+  'migration.description':
+    'Migra memoria e note da un altro assistente locale in questo spazio di lavoro. Inizia con Anteprima per vedere esattamente cosa cambierebbe, poi premi Applica per copiare i dati. La memoria attuale viene salvata in backup per prima.',
+  'migration.vendorLabel': 'Provider di origine',
+  'migration.sourceLabel': 'Percorso dello spazio di lavoro di origine (facoltativo)',
+  'migration.sourcePlaceholder':
+    'Lascia vuoto per rilevamento automatico (es. ~/.openclaw/workspace)',
+  'migration.sourceHint':
+    'Vuoto usa la posizione predefinita del provider. Inserisci un percorso esplicito se hai spostato lo spazio di lavoro.',
+  'migration.previewAction': 'Anteprima',
+  'migration.previewRunning': 'Anteprima in corso…',
+  'migration.applyAction': "Applica l'import",
+  'migration.applyRunning': 'Importazione in corso…',
+  'migration.applyDisclaimer':
+    "Applica si sblocca dopo un'Anteprima riuscita della stessa origine. La memoria esistente viene salvata in backup prima di qualsiasi import.",
+  'migration.reportTitlePreview': 'Anteprima — nessun import effettuato',
+  'migration.reportTitleApplied': 'Importazione completata',
+  'migration.report.source': 'Spazio di lavoro di origine',
+  'migration.report.target': 'Spazio di lavoro di destinazione',
+  'migration.report.fromSqlite': 'Da SQLite (brain.db)',
+  'migration.report.fromMarkdown': 'Da Markdown',
+  'migration.report.imported': 'Importati',
+  'migration.report.skippedUnchanged': 'Saltati (non modificati)',
+  'migration.report.renamedConflicts': 'Rinominati in caso di conflitto',
+  'migration.report.warnings': 'Avvisi',
+  'migration.report.previewHint':
+    "Nessun dato è ancora stato importato. Premi Applica l'import per copiarlo.",
+  'migration.report.appliedHint':
+    'Le voci importate sono ora nella tua memoria. Riesegui Anteprima per confrontare di nuovo.',
+  'migration.hermesComingSoonPrefix': "L'importatore Hermes è nella roadmap — vedi ",
+  'migration.hermesComingSoonSuffix':
+    ' per il contesto. Usa OpenClaw per migrare oggi; Hermes arriverà in una release successiva.',
+  'migration.hermesLinkText': '#1440',
+  'migration.confirmImport.singular':
+    "Importare {count} voce nello spazio di lavoro attuale?\n\nOrigine: {source}\nDestinazione: {target}\n\nLa memoria esistente verrà salvata in backup prima dell'import.",
+  'migration.confirmImport.plural':
+    "Importare {count} voci nello spazio di lavoro attuale?\n\nOrigine: {source}\nDestinazione: {target}\n\nLa memoria esistente verrà salvata in backup prima dell'import.",
+  // Settings menu: Appearance + Mascot (#2225) — English stubs; native translations welcome
+  'settings.appearance': 'Appearance',
+  'settings.appearanceDesc': 'Pick light, dark, or match your system theme',
+  'settings.mascot': 'Mascot',
+  'settings.mascotDesc': 'Pick the mascot color used across the app',
 };
 
 export default it1;

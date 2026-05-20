@@ -364,6 +364,43 @@ const zhCN1: TranslationMap = {
   'settings.about.releasesDesc': '在 GitHub 上浏览发布说明和早期版本。',
   'settings.about.openReleases': '打开 GitHub 发布',
   'settings.ai.overview': 'AI 系统概览',
+  'migration.title': '从其他助手导入',
+  'migration.description':
+    '将记忆和笔记从另一个本地助手迁移到此工作区。先点击「预览」查看将要变更的内容，然后点击「应用」复制数据。当前的记忆会先备份。',
+  'migration.vendorLabel': '来源助手',
+  'migration.sourceLabel': '来源工作区路径（可选）',
+  'migration.sourcePlaceholder': '留空可自动检测（例如 ~/.openclaw/workspace）',
+  'migration.sourceHint':
+    '留空时使用该助手的默认位置。如果你已将工作区移到其他位置，请填写明确路径。',
+  'migration.previewAction': '预览',
+  'migration.previewRunning': '正在预览…',
+  'migration.applyAction': '应用导入',
+  'migration.applyRunning': '正在导入…',
+  'migration.applyDisclaimer': '只有对同一来源完成预览后才能应用。导入前会自动备份现有记忆。',
+  'migration.reportTitlePreview': '预览 — 尚未导入任何数据',
+  'migration.reportTitleApplied': '导入完成',
+  'migration.report.source': '来源工作区',
+  'migration.report.target': '目标工作区',
+  'migration.report.fromSqlite': '来自 SQLite (brain.db)',
+  'migration.report.fromMarkdown': '来自 Markdown',
+  'migration.report.imported': '已导入',
+  'migration.report.skippedUnchanged': '已跳过（未变更）',
+  'migration.report.renamedConflicts': '冲突时已重命名',
+  'migration.report.warnings': '警告',
+  'migration.report.previewHint': '尚未导入任何数据。点击「应用导入」开始复制。',
+  'migration.report.appliedHint': '导入的条目已加入你的记忆。如需再次比较，请重新运行预览。',
+  'migration.hermesComingSoonPrefix': 'Hermes 导入器仍在规划中 — 详见 ',
+  'migration.hermesComingSoonSuffix': '。今天可以先用 OpenClaw 迁移；Hermes 将在后续版本中加入。',
+  'migration.hermesLinkText': '#1440',
+  'migration.confirmImport.singular':
+    '将 {count} 条数据导入当前工作区？\n\n来源：{source}\n目标：{target}\n\n导入前会先备份现有记忆。',
+  'migration.confirmImport.plural':
+    '将 {count} 条数据导入当前工作区？\n\n来源：{source}\n目标：{target}\n\n导入前会先备份现有记忆。',
+  // Settings menu: Appearance + Mascot (#2225)
+  'settings.appearance': '外观',
+  'settings.appearanceDesc': '选择浅色、深色或跟随系统主题',
+  'settings.mascot': '吉祥物',
+  'settings.mascotDesc': '选择应用中使用的吉祥物颜色',
 };
 
 export default zhCN1;

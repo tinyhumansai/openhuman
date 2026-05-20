@@ -7,6 +7,7 @@ import { setLocale } from '../store/localeSlice';
 // is recognisable to a native speaker even before the rest of the UI rerenders.
 const LOCALE_OPTIONS: Array<{ value: Locale; flag: string; label: string }> = [
   { value: 'en', flag: '🇬🇧', label: 'English' },
+  { value: 'ko', flag: '🇰🇷', label: '한국어' },
   { value: 'zh-CN', flag: '🇨🇳', label: '中文' },
   { value: 'hi', flag: '🇮🇳', label: 'हिन्दी' },
   { value: 'es', flag: '🇪🇸', label: 'Español' },

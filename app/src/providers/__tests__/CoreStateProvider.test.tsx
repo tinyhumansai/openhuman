@@ -46,6 +46,16 @@ function makeSnapshot(overrides: {
   };
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 function makeJwt(payload: Record<string, unknown>): string {
   const encode = (value: Record<string, unknown>) =>
     window.btoa(JSON.stringify(value)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -229,12 +239,9 @@ describe('CoreStateProvider — identity-change cache clearing', () => {
     await waitFor(() => expect(screen.getByTestId('ready').textContent).toBe('ready'));
   });
 
-  it('does not commit a pending bootstrap refresh after unmount', async () => {
-    let resolveSnapshot!: (snapshot: Snapshot) => void;
-    const pendingSnapshot = new Promise<Snapshot>(resolve => {
-      resolveSnapshot = resolve;
-    });
-    fetchSnapshot.mockReturnValue(pendingSnapshot);
+  it('does not commit a poll snapshot after the provider unmounts (#1934)', async () => {
+    const pendingSnapshot = deferred<Snapshot>();
+    fetchSnapshot.mockReturnValue(pendingSnapshot.promise);
     listTeams.mockResolvedValue([]);
 
     const { unmount } = render(
@@ -243,16 +250,19 @@ describe('CoreStateProvider — identity-change cache clearing', () => {
       </CoreStateProvider>
     );
 
+    expect(screen.getByTestId('ready').textContent).toBe('boot');
+
     unmount();
 
     await act(async () => {
-      resolveSnapshot(makeSnapshot({ userId: null, sessionToken: null }));
-      await pendingSnapshot;
-      await Promise.resolve();
+      pendingSnapshot.resolve(makeSnapshot({ userId: 'late-user', sessionToken: 'late-token' }));
+      await pendingSnapshot.promise;
     });
 
-    expect(getCoreStateSnapshot().isReady).toBe(false);
-    expect(getCoreStateSnapshot().snapshot.auth.userId).toBeNull();
+    const snapshot = getCoreStateSnapshot();
+    expect(snapshot.isReady).toBe(false);
+    expect(snapshot.snapshot.auth.userId).toBeNull();
+    expect(snapshot.snapshot.sessionToken).toBeNull();
   });
 
   it('warns when the initial core state poll fails', async () => {

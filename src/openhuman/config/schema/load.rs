@@ -992,9 +992,19 @@ impl Config {
     /// with a [`HashMapEnv`] (see tests) without requiring the
     /// `TEST_ENV_LOCK` or tainting sibling tests.
     pub(crate) fn apply_env_overlay_with<E: EnvLookup + ?Sized>(&mut self, env: &E) {
-        if let Some(model) = env.get_any(&["OPENHUMAN_MODEL", "MODEL"]) {
-            if !model.is_empty() {
-                self.default_model = Some(model);
+        // Only the namespaced `OPENHUMAN_MODEL` is honoured. The bare `MODEL`
+        // env var used to be accepted as an alias but collides with vendor
+        // asset-tag env vars (e.g. Dell OptiPlex sets `MODEL=7080`), which
+        // silently clobbered the LLM model and 400'd every backend call
+        // (Sentry OPENHUMAN-TAURI-J8).
+        if let Some(model) = env.get("OPENHUMAN_MODEL") {
+            // Trim before checking so `OPENHUMAN_MODEL="   "` (a common
+            // shape from shells that pass through an unset-but-declared
+            // variable) doesn't clobber the configured default with a
+            // non-usable value.
+            let trimmed = model.trim();
+            if !trimmed.is_empty() {
+                self.default_model = Some(trimmed.to_string());
             }
         }
 
@@ -1277,6 +1287,14 @@ impl Config {
                 flag.as_str(),
             ) {
                 self.learning.tool_memory_capture_enabled = enabled;
+            }
+        }
+        if let Some(flag) = env.get("OPENHUMAN_LEARNING_EXPLICIT_PREFERENCES_ENABLED") {
+            let normalized = flag.trim().to_ascii_lowercase();
+            match normalized.as_str() {
+                "1" | "true" | "yes" | "on" => self.learning.explicit_preferences_enabled = true,
+                "0" | "false" | "no" | "off" => self.learning.explicit_preferences_enabled = false,
+                _ => {}
             }
         }
         if let Some(source) = env.get("OPENHUMAN_LEARNING_REFLECTION_SOURCE") {

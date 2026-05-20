@@ -79,6 +79,7 @@ impl AgentBuilder {
             auto_save: None,
             post_turn_hooks: Vec::new(),
             learning_enabled: false,
+            explicit_preferences_enabled: true,
             event_session_id: None,
             event_channel: None,
             agent_definition_name: None,
@@ -203,6 +204,16 @@ impl AgentBuilder {
     /// Enables or disables learning features.
     pub fn learning_enabled(mut self, enabled: bool) -> Self {
         self.learning_enabled = enabled;
+        self
+    }
+
+    /// Enables or disables explicit-preference injection.
+    ///
+    /// When `true` (the default), preferences stored via `remember_preference`
+    /// are fetched from the `user_profile` namespace and injected into the
+    /// system prompt on every turn, independent of `learning_enabled`.
+    pub fn explicit_preferences_enabled(mut self, enabled: bool) -> Self {
+        self.explicit_preferences_enabled = enabled;
         self
     }
 
@@ -494,6 +505,7 @@ impl AgentBuilder {
             last_tree_prefetch_at: None,
             post_turn_hooks: self.post_turn_hooks,
             learning_enabled: self.learning_enabled,
+            explicit_preferences_enabled: self.explicit_preferences_enabled,
             event_session_id: self
                 .event_session_id
                 .unwrap_or_else(|| "standalone".to_string()),
@@ -1002,6 +1014,23 @@ impl Agent {
             );
         }
 
+        // Explicit-preferences injection — independent of the full learning
+        // subsystem.  When `explicit_preferences_enabled` is true (the default)
+        // and the full learning subsystem is NOT already wiring UserProfileSection,
+        // we add it here so pinned preferences written by `remember_preference`
+        // reach every session prompt.  The `fetch_learned_context` gate is
+        // widened by `explicit_preferences_enabled` on the Agent (see
+        // `session/turn.rs`) so the data is actually fetched and populated.
+        if config.learning.explicit_preferences_enabled && !config.learning.enabled {
+            prompt_builder = prompt_builder.add_section(Box::new(
+                crate::openhuman::learning::UserProfileSection::new(memory.clone()),
+            ));
+            log::info!(
+                "[learning] explicit-preference UserProfileSection registered \
+                 (learning.enabled=false, explicit_preferences_enabled=true)"
+            );
+        }
+
         // (#623) Memory context for threads spawned from a subconscious
         // reflection: append the resolved `source_chunks` snapshot from
         // the reflection row as a `ReflectionMemoryContextSection`. The
@@ -1462,6 +1491,7 @@ impl Agent {
             .auto_save(config.memory.auto_save)
             .post_turn_hooks(post_turn_hooks)
             .learning_enabled(config.learning.enabled)
+            .explicit_preferences_enabled(config.learning.explicit_preferences_enabled)
             .agent_definition_name(agent_id.to_string())
             .omit_profile(effective_omit_profile)
             .omit_memory_md(effective_omit_memory_md);

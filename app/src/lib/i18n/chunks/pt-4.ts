@@ -144,12 +144,18 @@ const pt4: TranslationMap = {
   'onboarding.contextGathering.buildingProfile': 'Construindo seu perfil...',
   'onboarding.contextGathering.continueToChat': 'Continuar para o chat',
   'onboarding.contextGathering.errorDesc':
-    'Não conseguimos montar seu perfil completo agora, mas tudo bem — você pode continuar e seu perfil será construído ao longo do tempo.',
+    'Não conseguimos construir seu perfil completo agora, mas tudo bem — você pode continuar e seu perfil será construído com o tempo.',
   'onboarding.contextGathering.title': 'Coleta de Contexto',
   'openhuman.team_list_teams': 'Listar equipes',
   'overlay.ariaAttention': 'Mensagem de atenção',
+  'overlay.ariaCompanion': 'Companion ativo',
   'overlay.ariaOrb': 'Orb do OpenHuman',
   'overlay.ariaVoiceActive': 'Entrada de voz ativa',
+  'overlay.companion.error': 'Erro',
+  'overlay.companion.listening': 'Ouvindo…',
+  'overlay.companion.pointing': 'Apontando…',
+  'overlay.companion.speaking': 'Falando…',
+  'overlay.companion.thinking': 'Pensando…',
   'overlay.orbTitle': 'Arraste para mover · Clique duplo para redefinir posição',
   'pages.settings.account.connections': 'Conexões',
   'pages.settings.account.connectionsDesc': 'Descrição de conexões',
@@ -169,6 +175,9 @@ const pt4: TranslationMap = {
   'pages.settings.aiSection.description':
     'Provedores de modelos de linguagem, Ollama local e voz (STT / TTS).',
   'pages.settings.aiSection.title': 'IA',
+  'pages.settings.features.desktopCompanion': 'Companion Desktop',
+  'pages.settings.features.desktopCompanionDesc':
+    'Assistente de voz com consciência da tela — escuta, vê, fala, aponta',
   'pages.settings.features.messagingChannels': 'Canais de mensagens',
   'pages.settings.features.messagingChannelsDesc': 'Descrição dos canais de mensagens',
   'pages.settings.features.notifications': 'Notificações',
@@ -365,6 +374,9 @@ const pt4: TranslationMap = {
   'settings.billing.subscription.paymentConfirmed': 'Pagamento confirmado',
   'settings.billing.subscription.perMonth': 'Por mês',
   'settings.billing.subscription.popular': 'Popular',
+  'pages.settings.account.migration': 'Importar de outro assistente',
+  'pages.settings.account.migrationDesc':
+    'Migre memória e anotações do OpenClaw (e, em breve, do Hermes) para este espaço de trabalho.',
 };
 
 export default pt4;

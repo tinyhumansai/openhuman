@@ -394,6 +394,48 @@ const fr1: TranslationMap = {
     'Parcourir les notes de version et les builds précédentes sur GitHub.',
   'settings.about.openReleases': 'Ouvrir les versions GitHub',
   'settings.ai.overview': "Vue d'ensemble du système IA",
+  'migration.title': 'Importer depuis un autre assistant',
+  'migration.description':
+    "Migrez la mémoire et les notes d'un autre assistant local vers cet espace de travail. Commencez par un Aperçu pour voir précisément ce qui changera, puis cliquez sur Appliquer pour copier les données. Votre mémoire actuelle est sauvegardée au préalable.",
+  'migration.vendorLabel': 'Source',
+  'migration.sourceLabel': "Chemin de l'espace de travail source (facultatif)",
+  'migration.sourcePlaceholder':
+    'Laisser vide pour détection automatique (p. ex. ~/.openclaw/workspace)',
+  'migration.sourceHint':
+    "Utilise l'emplacement par défaut du fournisseur si vide. Indiquez un chemin explicite si vous avez déplacé l'espace de travail.",
+  'migration.previewAction': 'Aperçu',
+  'migration.previewRunning': 'Aperçu en cours…',
+  'migration.applyAction': "Appliquer l'import",
+  'migration.applyRunning': 'Importation…',
+  'migration.applyDisclaimer':
+    'Appliquer est débloqué après un Aperçu réussi de la même source. La mémoire existante est sauvegardée avant tout import.',
+  'migration.reportTitlePreview': "Aperçu — rien d'importé pour l'instant",
+  'migration.reportTitleApplied': 'Importation terminée',
+  'migration.report.source': 'Espace de travail source',
+  'migration.report.target': 'Espace de travail cible',
+  'migration.report.fromSqlite': 'Depuis SQLite (brain.db)',
+  'migration.report.fromMarkdown': 'Depuis Markdown',
+  'migration.report.imported': 'Importés',
+  'migration.report.skippedUnchanged': 'Ignorés (inchangés)',
+  'migration.report.renamedConflicts': 'Renommés en cas de conflit',
+  'migration.report.warnings': 'Avertissements',
+  'migration.report.previewHint':
+    "Aucune donnée n'a encore été importée. Cliquez sur Appliquer l'import pour la copier.",
+  'migration.report.appliedHint':
+    'Les entrées importées sont maintenant dans votre mémoire. Relancez Aperçu pour comparer à nouveau.',
+  'migration.hermesComingSoonPrefix': "L'importateur Hermes est sur la feuille de route — voir ",
+  'migration.hermesComingSoonSuffix':
+    " pour le contexte. Choisissez OpenClaw pour migrer aujourd'hui ; Hermes arrivera dans une prochaine itération.",
+  'migration.hermesLinkText': '#1440',
+  'migration.confirmImport.singular':
+    "Importer {count} entrée dans l'espace de travail actuel ?\n\nSource : {source}\nCible : {target}\n\nLa mémoire existante sera sauvegardée avant l'import.",
+  'migration.confirmImport.plural':
+    "Importer {count} entrées dans l'espace de travail actuel ?\n\nSource : {source}\nCible : {target}\n\nLa mémoire existante sera sauvegardée avant l'import.",
+  // Settings menu: Appearance + Mascot (#2225) — English stubs; native translations welcome
+  'settings.appearance': 'Appearance',
+  'settings.appearanceDesc': 'Pick light, dark, or match your system theme',
+  'settings.mascot': 'Mascot',
+  'settings.mascotDesc': 'Pick the mascot color used across the app',
 };
 
 export default fr1;

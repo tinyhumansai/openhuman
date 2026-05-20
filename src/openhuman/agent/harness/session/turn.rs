@@ -1292,14 +1292,124 @@ impl Agent {
         self.history.extend(other_messages);
     }
 
+    /// Bound a resumed transcript prefix to the agent history window.
+    ///
+    /// Resume paths may load a long prior transcript directly into
+    /// `cached_transcript_messages` (provider-ready `ChatMessage`s), which
+    /// bypasses `self.history`-based trimming/reduction. Keep at most
+    /// `max_history_messages` entries while preserving the leading system
+    /// message when present.
+    pub(super) fn bound_cached_transcript_messages(
+        &self,
+        messages: Vec<ChatMessage>,
+    ) -> Vec<ChatMessage> {
+        let max = self.config.max_history_messages.max(1);
+        if messages.len() <= max {
+            return messages;
+        }
+
+        if matches!(messages.first(), Some(msg) if msg.role == "system") {
+            let keep_tail = max.saturating_sub(1);
+            let start = messages.len().saturating_sub(keep_tail);
+            let mut bounded = Vec::with_capacity(max);
+            bounded.push(messages[0].clone());
+            if keep_tail > 0 {
+                bounded.extend(messages[start..].iter().cloned());
+            }
+            bounded
+        } else {
+            let start = messages.len().saturating_sub(max);
+            messages[start..].to_vec()
+        }
+    }
+
     /// Pre-fetches learned context data from memory (observations, patterns, user profile).
     ///
     /// This is an async, non-blocking operation that populates the context
     /// for the system prompt.
+    ///
+    /// # Explicit-preferences narrow path
+    ///
+    /// When `learning_enabled` is `false` but `explicit_preferences_enabled`
+    /// is `true`, only the `user_profile` namespace (pinned preferences from
+    /// the `remember_preference` tool) is fetched and returned.  All other
+    /// inference-derived data (observations, patterns, reflections, tree
+    /// summaries) remains empty — the inference stack is not touched.
     pub(super) async fn fetch_learned_context(&self) -> LearnedContextData {
-        if !self.learning_enabled {
+        // Fast path: neither the full learning subsystem nor the explicit
+        // preferences path is active — skip all memory reads.
+        if !self.learning_enabled && !self.explicit_preferences_enabled {
+            tracing::debug!(
+                "[learning] fetch_learned_context: both learning_enabled and \
+                 explicit_preferences_enabled are false — returning empty context"
+            );
             return LearnedContextData::default();
         }
+
+        // Narrow explicit-preferences path: only fetch pinned user_profile
+        // entries; skip all inference-derived data.
+        if !self.learning_enabled && self.explicit_preferences_enabled {
+            tracing::debug!(
+                "[learning] fetch_learned_context: explicit_preferences_enabled=true, \
+                 learning_enabled=false — fetching only pinned user_profile entries"
+            );
+            let profile_entries = self
+                .memory
+                .list(
+                    Some("user_profile"),
+                    // Core category is used by RememberPreferenceTool for pinned entries.
+                    // We list without category filter so we pick up both Core entries
+                    // (pinned) and any Custom("user_profile") entries from the older
+                    // UserProfileHook code path, keeping this backward-compatible.
+                    None,
+                    None,
+                )
+                .await
+                .unwrap_or_default();
+
+            // `.list()` already scopes to the `user_profile` namespace at the
+            // store layer (via the `Some("user_profile")` argument above).  This
+            // `.filter()` is a defensive guard against any future store-layer
+            // change that might weaken that scoping — it is not load-bearing
+            // under the current implementation.
+            if profile_entries.len() > 50 {
+                tracing::warn!(
+                    total = profile_entries.len(),
+                    dropped = profile_entries.len() - 50,
+                    "[learning] user_profile pinned preferences exceed prompt cap of 50; \
+                     {} entries will be dropped from this turn's context",
+                    profile_entries.len() - 50,
+                );
+            }
+            let user_profile: Vec<String> = profile_entries
+                .iter()
+                .filter(|e| {
+                    e.namespace
+                        .as_deref()
+                        .map_or(false, |ns| ns == "user_profile")
+                })
+                .take(50)
+                .map(|e| sanitize_learned_entry(&e.content))
+                .collect();
+
+            tracing::debug!(
+                "[learning] fetch_learned_context: fetched {} pinned user_profile entries",
+                user_profile.len()
+            );
+
+            return LearnedContextData {
+                observations: Vec::new(),
+                patterns: Vec::new(),
+                user_profile,
+                reflections: Vec::new(),
+                tree_root_summaries: Vec::new(),
+            };
+        }
+
+        // Full learning path: fetch all inference-derived data.
+        tracing::debug!(
+            "[learning] fetch_learned_context: learning_enabled=true — fetching full context"
+        );
 
         let obs_entries = self
             .memory
@@ -1652,11 +1762,18 @@ impl Agent {
                             );
                             return;
                         }
-                        log::info!(
-                            "[transcript] loaded {} messages for resume",
-                            session.messages.len()
-                        );
-                        self.cached_transcript_messages = Some(session.messages);
+                        let loaded_count = session.messages.len();
+                        log::info!("[transcript] loaded {} messages for resume", loaded_count);
+                        let bounded = self.bound_cached_transcript_messages(session.messages);
+                        if bounded.len() < loaded_count {
+                            log::warn!(
+                                "[transcript] resume prefix trimmed from {} to {} messages (max_history_messages={})",
+                                loaded_count,
+                                bounded.len(),
+                                self.config.max_history_messages
+                            );
+                        }
+                        self.cached_transcript_messages = Some(bounded);
                     }
                     Err(err) => {
                         log::warn!(

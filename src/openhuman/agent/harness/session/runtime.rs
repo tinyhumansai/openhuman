@@ -295,11 +295,21 @@ impl Agent {
             cached.push(chat);
         }
 
+        let cached_len_before = cached.len();
+        let bounded = self.bound_cached_transcript_messages(cached);
+        if bounded.len() < cached_len_before {
+            log::warn!(
+                "[agent] seed_resume_from_messages — bounded cached transcript {} → {} (max_history_messages={})",
+                cached_len_before,
+                bounded.len(),
+                self.config.max_history_messages
+            );
+        }
         log::info!(
             "[agent] seed_resume_from_messages — primed cached transcript with {} prior messages",
-            cached.len() - 1
+            bounded.len().saturating_sub(1)
         );
-        self.cached_transcript_messages = Some(cached);
+        self.cached_transcript_messages = Some(bounded);
         Ok(())
     }
 

@@ -128,6 +128,19 @@ pub struct LearningConfig {
     /// How often the periodic rebuild loop runs in seconds. Default: 1800 (30 minutes).
     #[serde(default = "default_rebuild_interval_secs")]
     pub rebuild_interval_secs: u64,
+
+    /// Enable explicit user-preference injection into the system prompt.
+    ///
+    /// When `true` (the default), preferences saved via the `remember_preference`
+    /// tool are injected into every session prompt regardless of whether the full
+    /// inference-based learning subsystem (`enabled`) is on.  This is the
+    /// narrow, always-on path for user-authoritative pinned preferences —
+    /// no reflection, no heuristics, no stability engine.
+    ///
+    /// Explicitly set to `false` (or `OPENHUMAN_LEARNING_EXPLICIT_PREFERENCES_ENABLED=0`)
+    /// to suppress all preference injection even for explicitly pinned entries.
+    #[serde(default = "default_true")]
+    pub explicit_preferences_enabled: bool,
 }
 
 fn default_rebuild_interval_secs() -> u64 {
@@ -163,6 +176,7 @@ impl Default for LearningConfig {
             episodic_capture_enabled: default_true(),
             stm_recall_enabled: default_true(),
             unified_compaction_enabled: default_true(),
+            explicit_preferences_enabled: default_true(),
         }
     }
 }
