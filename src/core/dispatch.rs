@@ -124,20 +124,39 @@ fn handle_events_subscribe_token(params: serde_json::Value) -> Result<Invocation
         .and_then(|v| v.as_str())
         .map(|s| s.trim())
         .filter(|s| !s.is_empty())
-        .ok_or_else(|| "missing or empty 'client_id' parameter".to_string())?;
+        .ok_or_else(|| {
+            log::warn!(
+                "[events-bind] reject mint: missing or empty client_id (param_keys={:?})",
+                obj.map(|m| m.keys().collect::<Vec<_>>())
+            );
+            "missing or empty 'client_id' parameter".to_string()
+        })?;
     let ttl = obj
         .and_then(|m| m.get("ttl_secs"))
         .and_then(|v| v.as_u64())
         .map(std::time::Duration::from_secs);
 
-    let issued = crate::core::event_bind_tokens::issue(client_id.to_string(), ttl)
-        .ok_or_else(|| "events bind-token store at capacity; try again shortly".to_string())?;
+    let issued =
+        crate::core::event_bind_tokens::issue(client_id.to_string(), ttl).ok_or_else(|| {
+            log::warn!(
+                "[events-bind] reject mint: store at capacity (client_id_len={} ttl_secs={:?})",
+                client_id.len(),
+                ttl.map(|d| d.as_secs())
+            );
+            "events bind-token store at capacity; try again shortly".to_string()
+        })?;
 
     let ttl_remaining_secs = issued
         .valid_until
         .checked_duration_since(std::time::Instant::now())
         .unwrap_or_default()
         .as_secs();
+
+    log::debug!(
+        "[events-bind] minted token for client_id_len={} ttl_secs={}",
+        client_id.len(),
+        ttl_remaining_secs
+    );
 
     InvocationResult::ok(json!({
         "token": issued.token,

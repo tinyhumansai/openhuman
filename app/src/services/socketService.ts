@@ -171,6 +171,12 @@ class SocketService {
     store.dispatch(setBackend({ value: 'connecting' }));
 
     const backendUrl = await resolveCoreSocketBaseUrl();
+    // If another `connect(token)` raced in while the URL was resolving,
+    // a stale invocation will see `this.token` flipped to the newer JWT
+    // (or a fresh socket already attached) and must bail before its
+    // io(...) call stomps the newer connection. Same guard repeats
+    // after the core-token resolve below.
+    if (this.token !== token || this.socket) return;
     socketLog('Connecting to core socket', { userId: uid, backendUrl });
 
     // Ensure we're not connecting to the wrong URL (Vite dev HMR port guard).
@@ -188,6 +194,7 @@ class SocketService {
     // session JWT rides alongside on the `auth` payload as `session` so a
     // future handler can correlate the connection with the logged-in user.
     const coreToken = await getCoreRpcToken();
+    if (this.token !== token || this.socket) return;
 
     this.socket = createCoreSocket(backendUrl, {
       coreToken,
