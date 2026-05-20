@@ -99,6 +99,19 @@ Requires Docker Desktop or Colima. The repo is bind-mounted so builds persist be
 | `hasAppChrome()` | XCUIElementTypeMenuBar | Window handle check |
 | `dumpAccessibilityTree()` | Accessibility XML | HTML page source |
 
+### Stable test IDs
+
+Prefer stable `data-testid` hooks for UI affordances that E2E specs click or poll. Use the taxonomy `<surface>-<element>-<id?>`, for example:
+
+- `cron-jobs-panel`, `cron-refresh`
+- `cron-job-row-<jobId>`, `cron-job-toggle-<jobId>`, `cron-job-run-<jobId>`, `cron-job-view-runs-<jobId>`, `cron-job-remove-<jobId>`
+- `settings-nav-<routeId>`
+- `skill-row-<skillId>`, `skill-install-<skillId>`, `skill-uninstall-<skillId>`
+- `thread-row-<threadId>`, `new-thread-button`, `send-message-button`
+- `onboarding-next-button`
+
+Use `waitForTestId(testId)` and `clickTestId(testId)` from `element-helpers.ts` when a spec targets one of these hooks. Keep text selectors for user-visible copy assertions, not row/action discovery.
+
 ### Deep link helpers
 
 `app/test/e2e/helpers/deep-link-helpers.ts` handles auth deep links:
