@@ -6,8 +6,11 @@ on:
   workflow_dispatch: # Allow manual trigger
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: uptime-monitor
+  cancel-in-progress: false
+
+permissions:
+  issues: write
 
 jobs:
   check-uptime:
@@ -69,10 +72,14 @@ jobs:
             async function sendWebhook(message) {
               if (webhookUrl) {
                 try {
+                  // Discord uses { content } and Slack uses { text }; detect by URL
+                  const payload = webhookUrl.includes('discord')
+                    ? { content: message }
+                    : { text: message };
                   await fetch(webhookUrl, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ content: message })
+                    body: JSON.stringify(payload)
                   });
                 } catch (e) {
                   console.error("Failed to send webhook", e);
