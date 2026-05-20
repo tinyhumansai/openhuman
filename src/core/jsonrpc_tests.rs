@@ -920,6 +920,18 @@ fn telegram_callback_origin_ok_rejects_non_telegram_referer_without_fetch_metada
     assert!(super::telegram_callback_origin_ok(&headers).is_err());
 }
 
+#[test]
+fn telegram_callback_origin_ok_rejects_localhost_host_prefix_decoy() {
+    // Regression: prefix-matching the referer accepted hostnames like
+    // `http://localhost.attacker.example/...`. With exact-host parsing
+    // these must be rejected even when no fetch-metadata headers are
+    // present.
+    let headers = hdr_map(&[("referer", "http://localhost.attacker.example/cb")]);
+    assert!(super::telegram_callback_origin_ok(&headers).is_err());
+    let headers = hdr_map(&[("referer", "http://127.0.0.1.attacker.example/cb")]);
+    assert!(super::telegram_callback_origin_ok(&headers).is_err());
+}
+
 // --- invoke_method parameter-shape errors ---------------------------------
 
 #[tokio::test]

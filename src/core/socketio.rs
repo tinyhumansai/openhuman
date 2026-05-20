@@ -45,12 +45,18 @@ fn origin_is_allowed(origin: Option<&str>) -> bool {
     if origin == "tauri://localhost" || origin == "https://tauri.localhost" {
         return true;
     }
-    // Strip scheme so we can prefix-match the host:port portion.
-    let host = origin
-        .strip_prefix("http://")
-        .or_else(|| origin.strip_prefix("https://"))
-        .unwrap_or(origin);
-    host.starts_with("localhost") || host.starts_with("127.0.0.1") || host.starts_with("[::1]")
+    // Parse the URL and compare the host EXACTLY against the loopback
+    // allowlist — `starts_with` matching accepted decoys like
+    // `http://localhost.attacker.example` and bypassed the gate.
+    let Ok(parsed) = url::Url::parse(origin) else {
+        return false;
+    };
+    // `url::Url::host_str` returns IPv6 hosts with surrounding brackets,
+    // hostnames bare. Accept both shapes.
+    matches!(
+        parsed.host_str(),
+        Some("localhost" | "127.0.0.1" | "::1" | "[::1]")
+    )
 }
 
 /// True when `socket` finished the handshake with a valid bearer token.
@@ -764,5 +770,24 @@ mod tests {
         assert!(!origin_is_allowed(Some("http://evil.local")));
         assert!(!origin_is_allowed(Some("null")));
         assert!(!origin_is_allowed(Some("")));
+    }
+
+    #[test]
+    fn origin_allowlist_rejects_host_prefix_decoys() {
+        // Regression: `starts_with("localhost")` accepted these; the exact
+        // host match must not.
+        assert!(!origin_is_allowed(Some(
+            "http://localhost.attacker.example"
+        )));
+        assert!(!origin_is_allowed(Some(
+            "http://127.0.0.1.attacker.example"
+        )));
+        assert!(!origin_is_allowed(Some("https://localhost-evil")));
+    }
+
+    #[test]
+    fn origin_allowlist_rejects_unparseable_origin() {
+        assert!(!origin_is_allowed(Some("not a url")));
+        assert!(!origin_is_allowed(Some("javascript:alert(1)")));
     }
 }

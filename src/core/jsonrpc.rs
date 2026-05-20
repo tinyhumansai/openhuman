@@ -477,12 +477,16 @@ fn telegram_callback_origin_ok(headers: &axum::http::HeaderMap) -> Result<(), &'
             return Err("cross-site redirect must originate from telegram");
         }
     } else if let Some(referer) = referer {
-        // No Sec-Fetch-Site: fall back to Referer host check. Accept any
-        // 127.0.0.1/localhost referer (direct nav inside the local app),
-        // accept telegram referer (legit bot redirect), reject everything
-        // else.
-        let local =
-            referer.starts_with("http://127.0.0.1") || referer.starts_with("http://localhost");
+        // No Sec-Fetch-Site: fall back to Referer host check. Accept
+        // loopback referer (direct nav inside the local app) — parsed
+        // exactly so `http://localhost.attacker.example/...` does not
+        // satisfy the gate — and accept telegram referer (legit bot
+        // redirect); reject everything else.
+        let local = url::Url::parse(referer)
+            .ok()
+            .and_then(|u| u.host_str().map(str::to_string))
+            .map(|h| matches!(h.as_str(), "localhost" | "127.0.0.1" | "::1"))
+            .unwrap_or(false);
         if !(local || referer_is_telegram) {
             return Err("Referer must be telegram or local");
         }

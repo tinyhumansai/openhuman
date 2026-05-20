@@ -976,14 +976,29 @@ pub(crate) fn derive_inbound_thread_id(
     // Telegram threads its messages by `thread_ts` for transport routing
     // but should not split memory/history per message — match the
     // `conversation_history_key` carve-out and skip the thread suffix
-    // there.
-    if channel != "telegram" {
+    // there. The socket layer addresses Telegram with raw channel ids
+    // like `tg:123` as well as the literal `telegram` slug, so the
+    // carve-out keys off whichever provider prefix the channel string
+    // exposes, not the full id.
+    if !channel_is_telegram(channel) {
         if let Some(t) = thread_ts.and_then(clean) {
             key.push_str("#thread:");
             key.push_str(&t);
         }
     }
     key
+}
+
+/// True for any inbound channel string that addresses Telegram, whether
+/// the publisher uses the canonical slug (`"telegram"`) or the raw
+/// provider-prefixed form the socket layer emits (`"tg:<chat_id>"`,
+/// `"telegram:<chat_id>"`).
+fn channel_is_telegram(channel: &str) -> bool {
+    if channel == "telegram" || channel == "tg" {
+        return true;
+    }
+    let provider = channel.split(':').next().unwrap_or("");
+    matches!(provider, "telegram" | "tg")
 }
 
 #[cfg(test)]
@@ -1021,6 +1036,31 @@ mod inbound_thread_id_tests {
         let a = derive_inbound_thread_id("telegram", Some("u1"), Some("c1"), Some("100"));
         let b = derive_inbound_thread_id("telegram", Some("u1"), Some("c1"), Some("200"));
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn telegram_chat_id_shape_still_ignores_thread_ts() {
+        // Regression: in production the socket layer addresses Telegram
+        // with raw chat ids like `tg:123` and `telegram:123` (matching
+        // the `<provider>:message` event name shape). The thread_ts
+        // carve-out must recognise both, not only the literal slug.
+        for channel in ["tg:123", "telegram:123", "tg", "telegram"] {
+            let a = derive_inbound_thread_id(channel, Some("u1"), Some("c1"), Some("100"));
+            let b = derive_inbound_thread_id(channel, Some("u1"), Some("c1"), Some("200"));
+            assert_eq!(
+                a, b,
+                "channel '{channel}' should ignore thread_ts (telegram provider)"
+            );
+        }
+    }
+
+    #[test]
+    fn non_telegram_channel_id_shape_still_splits_on_thread_ts() {
+        // Inverse: a `slack:<workspace>` style channel must continue to
+        // honour thread_ts so Slack subthreads stay distinct.
+        let a = derive_inbound_thread_id("slack:T1", Some("u1"), Some("c1"), Some("100"));
+        let b = derive_inbound_thread_id("slack:T1", Some("u1"), Some("c1"), Some("200"));
+        assert_ne!(a, b);
     }
 
     #[test]

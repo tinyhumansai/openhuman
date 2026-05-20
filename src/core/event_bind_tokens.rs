@@ -103,17 +103,20 @@ pub fn consume(client_id: &str, token: &str) -> bool {
         return false;
     };
     purge_expired_locked(&mut store);
-    let entry = match store.remove(token) {
-        Some(entry) => entry,
-        None => {
-            log::debug!("[events-bind] consume: token not found");
-            return false;
-        }
+    // Peek before removing: a wrong `client_id` must NOT consume the token,
+    // or a single guessed-id request can DoS the legitimate subscriber by
+    // racing them to the consume.
+    let Some(entry) = store.get(token) else {
+        log::debug!("[events-bind] consume: token not found");
+        return false;
     };
     if entry.client_id != client_id {
         log::warn!("[events-bind] consume: client_id mismatch (token bound to other id)");
         return false;
     }
+    let entry = store
+        .remove(token)
+        .expect("token was present in the binding check above");
     log::debug!(
         "[events-bind] consume: ok (client_id_len={} ttl_remaining_ms={})",
         entry.client_id.len(),
@@ -152,6 +155,19 @@ mod tests {
     fn issued_token_rejects_wrong_client_id() {
         let issued = issue("cli-test-2", None).expect("issue");
         assert!(!consume("attacker-id", &issued.token));
+    }
+
+    #[test]
+    fn wrong_client_id_does_not_consume_token() {
+        // Mismatched consume must leave the token intact so the legitimate
+        // subscriber can still validate after the failed probe — otherwise
+        // a wrong-id request becomes a one-shot DoS.
+        let issued = issue("cli-test-mismatch", None).expect("issue");
+        assert!(!consume("attacker-id", &issued.token));
+        assert!(
+            consume("cli-test-mismatch", &issued.token),
+            "legitimate consume must still succeed after a mismatched probe"
+        );
     }
 
     #[test]
