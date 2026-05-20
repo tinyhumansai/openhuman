@@ -3,7 +3,7 @@ use crate::openhuman::skills::types::ToolResult;
 use anyhow::Context;
 use base64::Engine;
 use parking_lot::Mutex;
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue, ACCEPT, AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -194,7 +194,8 @@ impl McpHttpClient {
             .apply_auth(
                 self.http
                     .post(&self.endpoint)
-                    .header(CONTENT_TYPE, "application/json"),
+                    .header(CONTENT_TYPE, "application/json")
+                    .header(ACCEPT, "application/json"),
                 true,
             )
             .body(serde_json::to_vec(&body)?);
@@ -286,6 +287,7 @@ impl McpHttpClient {
             .http
             .post(&self.endpoint)
             .header(CONTENT_TYPE, "application/json")
+            .header(ACCEPT, "application/json")
             .body(serde_json::to_vec(&json!({
                 "jsonrpc": "2.0",
                 "id": self.next_id.fetch_add(1, Ordering::Relaxed),
@@ -332,7 +334,8 @@ impl McpHttpClient {
         let session_id = self.state.lock().session_id.clone();
         let mut request = self
             .apply_auth(self.http.get(&self.endpoint), false)
-            .header(HEADER_PROTOCOL_VERSION, protocol_version);
+            .header(HEADER_PROTOCOL_VERSION, protocol_version)
+            .header(ACCEPT, "text/event-stream");
         if let Some(session_id) = session_id {
             request = request.header(HEADER_SESSION_ID, session_id);
         }
@@ -480,6 +483,7 @@ impl McpHttpClient {
         let protocol_version = self.state.lock().negotiated_protocol_version.clone();
         let session_id = self.state.lock().session_id.clone();
         let mut request = self.apply_auth(request, initialize);
+        request = request.header(ACCEPT, "application/json");
         request = request.header(HEADER_METHOD, method);
         if let Some(name) = name {
             request = request.header(HEADER_NAME, name);
@@ -528,7 +532,12 @@ impl McpHttpClient {
     where
         T: for<'de> Deserialize<'de>,
     {
-        let response = self.http.get(url).send().await?;
+        let response = self
+            .http
+            .get(url)
+            .header(ACCEPT, "application/json")
+            .send()
+            .await?;
         let status = response.status();
         let text = response.text().await?;
         if !status.is_success() {
