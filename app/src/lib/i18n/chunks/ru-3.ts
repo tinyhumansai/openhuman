@@ -93,6 +93,8 @@ const ru3: TranslationMap = {
   'subconscious.failed': 'ошибка',
   'subconscious.tickInterval': 'Интервал тика',
   'subconscious.runNow': 'Запустить сейчас',
+  'subconscious.providerUnavailableTitle': 'Подсознание приостановлено',
+  'subconscious.providerSettings': 'Настройки ИИ',
   'subconscious.approvalNeeded': 'Требуется подтверждение',
   'subconscious.requiresApproval': 'Требует подтверждения',
   'subconscious.fixInConnections': 'Исправить в подключениях',

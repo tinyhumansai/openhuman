@@ -92,6 +92,8 @@ const hi3: TranslationMap = {
   'subconscious.failed': 'विफल',
   'subconscious.tickInterval': 'टिक इंटरवल',
   'subconscious.runNow': 'अभी चलाएं',
+  'subconscious.providerUnavailableTitle': 'Subconscious रुका हुआ है',
+  'subconscious.providerSettings': 'AI सेटिंग्स',
   'subconscious.approvalNeeded': 'अनुमति चाहिए',
   'subconscious.requiresApproval': 'अनुमति ज़रूरी है',
   'subconscious.fixInConnections': 'Connections में ठीक करें',

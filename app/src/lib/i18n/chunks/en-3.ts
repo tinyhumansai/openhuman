@@ -92,6 +92,8 @@ const en3: TranslationMap = {
   'subconscious.failed': 'failed',
   'subconscious.tickInterval': 'Tick Interval',
   'subconscious.runNow': 'Run Now',
+  'subconscious.providerUnavailableTitle': 'Subconscious is paused',
+  'subconscious.providerSettings': 'AI settings',
   'subconscious.approvalNeeded': 'Approval Needed',
   'subconscious.requiresApproval': 'Requires approval',
   'subconscious.fixInConnections': 'Fix in Connections',

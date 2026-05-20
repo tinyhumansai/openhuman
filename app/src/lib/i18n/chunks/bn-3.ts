@@ -93,6 +93,8 @@ const bn3: TranslationMap = {
   'subconscious.failed': 'ব্যর্থ',
   'subconscious.tickInterval': 'টিক ইন্টারভাল',
   'subconscious.runNow': 'এখনই চালান',
+  'subconscious.providerUnavailableTitle': 'Subconscious বিরত আছে',
+  'subconscious.providerSettings': 'AI সেটিংস',
   'subconscious.approvalNeeded': 'অনুমোদন প্রয়োজন',
   'subconscious.requiresApproval': 'অনুমোদন প্রয়োজন',
   'subconscious.fixInConnections': 'সংযোগে ঠিক করুন',

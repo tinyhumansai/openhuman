@@ -93,6 +93,8 @@ const id3: TranslationMap = {
   'subconscious.failed': 'gagal',
   'subconscious.tickInterval': 'Interval Tick',
   'subconscious.runNow': 'Jalankan Sekarang',
+  'subconscious.providerUnavailableTitle': 'Subconscious dijeda',
+  'subconscious.providerSettings': 'Pengaturan AI',
   'subconscious.approvalNeeded': 'Persetujuan Diperlukan',
   'subconscious.requiresApproval': 'Memerlukan persetujuan',
   'subconscious.fixInConnections': 'Perbaiki di Koneksi',

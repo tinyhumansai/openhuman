@@ -92,6 +92,8 @@ const ko3: TranslationMap = {
   'subconscious.failed': '실패',
   'subconscious.tickInterval': '틱 간격',
   'subconscious.runNow': '지금 실행',
+  'subconscious.providerUnavailableTitle': 'Subconscious 일시 중지됨',
+  'subconscious.providerSettings': 'AI 설정',
   'subconscious.approvalNeeded': '승인 필요',
   'subconscious.requiresApproval': '승인이 필요함',
   'subconscious.fixInConnections': '연결에서 수정',

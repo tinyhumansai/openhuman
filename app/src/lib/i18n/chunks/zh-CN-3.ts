@@ -90,6 +90,8 @@ const zhCN3: TranslationMap = {
   'subconscious.failed': '失败',
   'subconscious.tickInterval': '滴答间隔',
   'subconscious.runNow': '立即运行',
+  'subconscious.providerUnavailableTitle': '潜意识已暂停',
+  'subconscious.providerSettings': 'AI 设置',
   'subconscious.approvalNeeded': '需要审批',
   'subconscious.requiresApproval': '需要审批',
   'subconscious.fixInConnections': '在连接中修复',

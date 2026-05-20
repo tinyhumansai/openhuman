@@ -91,6 +91,8 @@ const ar3: TranslationMap = {
   'subconscious.failed': 'فشل',
   'subconscious.tickInterval': 'فترة الدورة',
   'subconscious.runNow': 'تشغيل الآن',
+  'subconscious.providerUnavailableTitle': 'تم إيقاف اللاوعي مؤقتًا',
+  'subconscious.providerSettings': 'إعدادات الذكاء الاصطناعي',
   'subconscious.approvalNeeded': 'يلزم الموافقة',
   'subconscious.requiresApproval': 'يتطلب الموافقة',
   'subconscious.fixInConnections': 'إصلاح في الاتصالات',

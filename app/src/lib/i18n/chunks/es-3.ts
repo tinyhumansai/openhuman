@@ -95,6 +95,8 @@ const es3: TranslationMap = {
   'subconscious.failed': 'fallido',
   'subconscious.tickInterval': 'Intervalo de tick',
   'subconscious.runNow': 'Ejecutar ahora',
+  'subconscious.providerUnavailableTitle': 'Subconsciente en pausa',
+  'subconscious.providerSettings': 'Ajustes de IA',
   'subconscious.approvalNeeded': 'Se necesita aprobación',
   'subconscious.requiresApproval': 'Requiere aprobación',
   'subconscious.fixInConnections': 'Corregir en Conexiones',

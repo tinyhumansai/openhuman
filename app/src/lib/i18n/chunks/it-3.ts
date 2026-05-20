@@ -96,6 +96,8 @@ const it3: TranslationMap = {
   'subconscious.failed': 'fallito',
   'subconscious.tickInterval': 'Intervallo di tick',
   'subconscious.runNow': 'Esegui ora',
+  'subconscious.providerUnavailableTitle': 'Subconscio in pausa',
+  'subconscious.providerSettings': 'Impostazioni IA',
   'subconscious.approvalNeeded': 'Approvazione necessaria',
   'subconscious.requiresApproval': 'Richiede approvazione',
   'subconscious.fixInConnections': 'Correggi in Connessioni',
