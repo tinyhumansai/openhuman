@@ -25,7 +25,7 @@ const MAX_RETRY_DELAY_MS = 30000; // 30 seconds
 const AUTO_START_DELAY_MS = 3000; // 3 seconds after app start
 
 export const useDaemonLifecycle = (userId?: string) => {
-  const daemonHealth = useDaemonHealth(userId);
+  const { startDaemon } = useDaemonHealth(userId);
   const daemonState = useDaemonUserState(userId);
 
   const status = daemonState.status;
@@ -38,6 +38,23 @@ export const useDaemonLifecycle = (userId?: string) => {
   const autoStartTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const retryTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isMountedRef = useRef(true);
+  const latestLifecycleRef = useRef({
+    isAutoStartEnabled,
+    status,
+    isRecovering,
+    connectionAttempts,
+    uid,
+    startDaemon,
+  });
+
+  latestLifecycleRef.current = {
+    isAutoStartEnabled,
+    status,
+    isRecovering,
+    connectionAttempts,
+    uid,
+    startDaemon,
+  };
 
   // Calculate exponential backoff delay
   const calculateRetryDelay = useCallback((attempt: number): number => {
@@ -47,6 +64,9 @@ export const useDaemonLifecycle = (userId?: string) => {
 
   // Auto-start daemon if enabled and conditions are met
   const attemptAutoStart = useCallback(async () => {
+    const { isAutoStartEnabled, status, isRecovering, connectionAttempts, uid, startDaemon } =
+      latestLifecycleRef.current;
+
     if (!isTauri() || !isAutoStartEnabled || !isMountedRef.current) {
       return;
     }
@@ -57,7 +77,7 @@ export const useDaemonLifecycle = (userId?: string) => {
 
       try {
         setIsRecovering(uid, true);
-        const result = await daemonHealth.startDaemon();
+        const result = await startDaemon();
 
         if (result?.result && result.result.state === 'Running') {
           console.log('[DaemonLifecycle] Auto-start successful');
@@ -73,10 +93,12 @@ export const useDaemonLifecycle = (userId?: string) => {
         setIsRecovering(uid, false);
       }
     }
-  }, [isAutoStartEnabled, status, isRecovering, connectionAttempts, uid, daemonHealth]);
+  }, []);
 
   // Retry connection with exponential backoff
   const scheduleRetry = useCallback(() => {
+    const { connectionAttempts, status, isRecovering } = latestLifecycleRef.current;
+
     if (!isTauri() || !isMountedRef.current || isRecovering) {
       return;
     }
@@ -105,11 +127,13 @@ export const useDaemonLifecycle = (userId?: string) => {
     retryTimeoutRef.current = setTimeout(async () => {
       if (!isMountedRef.current) return;
 
+      const { uid, startDaemon } = latestLifecycleRef.current;
+
       try {
         setIsRecovering(uid, true);
         incrementConnectionAttempts(uid);
 
-        const result = await daemonHealth.startDaemon();
+        const result = await startDaemon();
 
         if (result?.result && result.result.state === 'Running') {
           console.log('[DaemonLifecycle] Retry successful');
@@ -125,11 +149,13 @@ export const useDaemonLifecycle = (userId?: string) => {
         setIsRecovering(uid, false);
       }
     }, retryDelay);
-  }, [connectionAttempts, status, isRecovering, calculateRetryDelay, uid, daemonHealth]);
+  }, [calculateRetryDelay]);
 
   // Handle visibility change (background/foreground)
   const handleVisibilityChange = useCallback(() => {
     if (!isTauri() || !isMountedRef.current) return;
+
+    const { isAutoStartEnabled, status, isRecovering } = latestLifecycleRef.current;
 
     if (document.visibilityState === 'visible') {
       console.log('[DaemonLifecycle] App became visible - checking daemon status');
@@ -144,12 +170,13 @@ export const useDaemonLifecycle = (userId?: string) => {
         }, 1000);
       }
     }
-  }, [isAutoStartEnabled, status, isRecovering, attemptAutoStart]);
+  }, [attemptAutoStart]);
 
   // Main lifecycle effect
   useEffect(() => {
     if (!isTauri()) return;
 
+    isMountedRef.current = true;
     console.log('[DaemonLifecycle] Setting up daemon lifecycle management');
 
     // Setup auto-start with delay on mount
@@ -181,7 +208,7 @@ export const useDaemonLifecycle = (userId?: string) => {
       // Remove event listeners
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [isAutoStartEnabled, attemptAutoStart, handleVisibilityChange]);
+  }, [isAutoStartEnabled, uid, attemptAutoStart, handleVisibilityChange]);
 
   // Retry effect - triggers when daemon goes into error state or connection fails
   useEffect(() => {
