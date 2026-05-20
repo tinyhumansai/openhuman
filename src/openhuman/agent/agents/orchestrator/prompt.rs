@@ -91,7 +91,10 @@ fn render_delegation_guide(integrations: &[ConnectedIntegration]) -> String {
     }
     let mut out = String::from(
         "## Connected Integrations\n\n\
-         Delegate tasks for these services with `delegate_to_integrations_agent`, passing the toolkit slug as `toolkit`:\n\n",
+         The following services have an active connection. Their tool implementations \
+         live inside the `integrations_agent` sub-agent — NOT in your own tool list. \
+         Delegate with `delegate_to_integrations_agent`, passing the toolkit slug as \
+         `toolkit`:\n\n",
     );
     for ci in connected {
         // Use the same slug canonicalisation as `collect_orchestrator_tools`
@@ -104,6 +107,53 @@ fn render_delegation_guide(integrations: &[ConnectedIntegration]) -> String {
             ci.toolkit, slug, ci.description
         );
     }
+    // CRITICAL behavioural rule. Without this, the orchestrator answers
+    // "can you do X with {toolkit}?" from its training-data priors about
+    // "what gmail/notion/slack usually does", which is consistently a
+    // SUBSET of the real per-toolkit catalogue (no bulk-delete, no
+    // batch-modify, no admin/destructive actions, etc.). The result is a
+    // confident wrong refusal ("nope, I can't delete emails") even when
+    // the action is in the actual tool list. The `integrations_agent`
+    // has the ground-truth tool catalogue (`tools` + `gated_tools`); only
+    // it can answer "can I do X?" honestly. Force-delegate capability
+    // questions, not just task requests.
+    // The cross-chat bullet names the canonical header literal verbatim
+    // so the model knows exactly which block to mistrust. Sourced from
+    // CROSS_CHAT_HEADER (single source of truth) — drift would silently
+    // detune the rule.
+    let cross_chat_header_for_prompt =
+        crate::openhuman::agent::memory_loader::CROSS_CHAT_HEADER.trim_end();
+    let _ = write!(
+        out,
+        "\n### Capability questions about connected toolkits\n\n\
+         Your prior knowledge of \"what a toolkit can do\" is UNRELIABLE — the \
+         real per-toolkit catalogue is wider than the common-knowledge summary \
+         (e.g. Gmail exposes bulk delete, batch modify, thread trash, etc.) and \
+         the user may have enabled scopes that expose further destructive actions. \
+         Therefore:\n\n\
+         - If the user asks **\"can you do X with {{toolkit}}?\"** or \"does \
+         {{toolkit}} support Y?\" for a connected toolkit above, **DO NOT** answer \
+         from priors. **DELEGATE** to `integrations_agent` first and let it \
+         inspect its live tool list (including `gated_tools` behind permission \
+         toggles) before answering.\n\
+         - If the user requests an **action** on a connected toolkit (delete, \
+         move, send, modify, label, etc.), **DELEGATE immediately**. Do not \
+         pre-emptively refuse with \"I can't do that\" — that's a confabulation \
+         unless `integrations_agent` itself has already reported the action as \
+         unavailable.\n\
+         - The only honest \"no\" comes back from a delegation that found the \
+         action neither in the visible `tools` list nor in the `gated_tools` \
+         (permission-toggle) list of the sub-agent.\n\
+         - **Cross-chat context is historical, not authoritative.** If the \
+         `{cross_chat_header_for_prompt}` block contains a past \"I can / can't \
+         do X with {{toolkit}}\" statement, treat it as a snapshot from an \
+         earlier moment. The tool list, connected integrations, and per-toolkit \
+         scope toggles (read / write / admin) can all change between chats — a \
+         past refusal may be stale. Verify against the **current** `## Connected \
+         Integrations` block above and (when in doubt) **DELEGATE** before \
+         quoting any past capability claim. Never echo a stale \"I can't\" \
+         without re-checking.\n\n",
+    );
     tracing::debug!(
         section_len = out.len(),
         "[delegation-guide] section emitted ({} bytes)",
@@ -172,6 +222,7 @@ mod tests {
             toolkit: "gmail".into(),
             description: "Email access.".into(),
             tools: Vec::new(),
+            gated_tools: Vec::new(),
             connected: true,
         }];
         let body = build(&ctx_with(&integrations)).unwrap();
@@ -192,6 +243,7 @@ mod tests {
             toolkit: "gmail".into(),
             description: "Email access.".into(),
             tools: Vec::new(),
+            gated_tools: Vec::new(),
             connected: true,
         }];
         let body = build(&ctx_with(&integrations)).unwrap();
@@ -213,12 +265,14 @@ mod tests {
                 toolkit: "gmail".into(),
                 description: "Email.".into(),
                 tools: Vec::new(),
+                gated_tools: Vec::new(),
                 connected: true,
             },
             ConnectedIntegration {
                 toolkit: "linear".into(),
                 description: "Tracker.".into(),
                 tools: Vec::new(),
+                gated_tools: Vec::new(),
                 connected: false,
             },
         ];
@@ -233,6 +287,7 @@ mod tests {
             toolkit: "linear".into(),
             description: "Tracker.".into(),
             tools: Vec::new(),
+            gated_tools: Vec::new(),
             connected: false,
         }];
         let body = build(&ctx_with(&integrations)).unwrap();

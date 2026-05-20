@@ -1095,6 +1095,48 @@ pub fn is_budget_event(event: &sentry::protocol::Event<'_>) -> bool {
     event_contains_budget_exhausted_message(event)
 }
 
+/// 404 on PATCH/DELETE to a channel-message path is an expected backend state
+/// (user deleted the message provider-side, backend GC'd the relay row). The
+/// primary suppression lives in `authed_json` via `parse_message_path` +
+/// defense-in-depth inline check. This filter is the outermost safety net for
+/// any future call site that bypasses both. Targets OPENHUMAN-TAURI-R7.
+///
+/// Match criteria (all required):
+/// - tag `domain == "backend_api"`
+/// - tag `failure == "non_2xx"`
+/// - tag `status == "404"`
+/// - tag `method == "PATCH"` or `"DELETE"`
+/// - event message or exception value contains both `"/channels/"` and `"/messages/"`
+pub fn is_channel_message_not_found_event(event: &sentry::protocol::Event<'_>) -> bool {
+    let tags = &event.tags;
+    if tags.get("domain").map(String::as_str) != Some("backend_api") {
+        return false;
+    }
+    if tags.get("failure").map(String::as_str) != Some("non_2xx") {
+        return false;
+    }
+    if tags.get("status").map(String::as_str) != Some("404") {
+        return false;
+    }
+    let method = tags.get("method").map(String::as_str).unwrap_or("");
+    if method != "PATCH" && method != "DELETE" {
+        return false;
+    }
+    event_contains_channel_message_path(event)
+}
+
+fn event_contains_channel_message_path(event: &sentry::protocol::Event<'_>) -> bool {
+    let has_pattern = |s: &str| s.contains("/channels/") && s.contains("/messages/");
+    if event.message.as_deref().is_some_and(has_pattern) {
+        return true;
+    }
+    event
+        .exception
+        .values
+        .iter()
+        .any(|exc| exc.value.as_deref().is_some_and(has_pattern))
+}
+
 fn event_contains_budget_exhausted_message(event: &sentry::protocol::Event<'_>) -> bool {
     if event
         .message
@@ -2546,6 +2588,83 @@ mod tests {
         assert!(!is_max_iterations_event(&event_with_message("")));
         assert!(!is_max_iterations_event(&sentry::protocol::Event::default()));
     }
+
+    // ── is_channel_message_not_found_event (TAURI-R7) ────────────────────────
+
+    fn channel_message_404_event(method: &str) -> sentry::protocol::Event<'static> {
+        let mut event = sentry::protocol::Event::default();
+        event.tags.insert("domain".into(), "backend_api".into());
+        event.tags.insert("failure".into(), "non_2xx".into());
+        event.tags.insert("status".into(), "404".into());
+        event.tags.insert("method".into(), method.into());
+        event.message = Some(
+            "PATCH /channels/telegram/messages/1103 failed (404); response_body_len=172"
+                .to_string(),
+        );
+        event
+    }
+
+    #[test]
+    fn channel_message_not_found_filter_matches_patch() {
+        // Canonical TAURI-R7 shape: PATCH 404 on a channel-message path.
+        assert!(is_channel_message_not_found_event(
+            &channel_message_404_event("PATCH")
+        ));
+    }
+
+    #[test]
+    fn channel_message_not_found_filter_matches_delete() {
+        assert!(is_channel_message_not_found_event(
+            &channel_message_404_event("DELETE")
+        ));
+    }
+
+    #[test]
+    fn channel_message_not_found_filter_ignores_get_404() {
+        // GET 404 on a channel-message path is NOT an expected state — must keep Sentry signal.
+        assert!(!is_channel_message_not_found_event(
+            &channel_message_404_event("GET")
+        ));
+    }
+
+    #[test]
+    fn channel_message_not_found_filter_ignores_non_channel_path() {
+        let mut event = channel_message_404_event("PATCH");
+        event.message = Some("PATCH /auth/profile failed (404); response_body_len=42".to_string());
+        assert!(!is_channel_message_not_found_event(&event));
+    }
+
+    #[test]
+    fn channel_message_not_found_filter_ignores_wrong_status() {
+        let mut event = channel_message_404_event("PATCH");
+        event.tags.insert("status".into(), "403".into());
+        assert!(!is_channel_message_not_found_event(&event));
+    }
+
+    #[test]
+    fn channel_message_not_found_filter_ignores_wrong_domain() {
+        let mut event = channel_message_404_event("PATCH");
+        event.tags.insert("domain".into(), "channels".into());
+        assert!(!is_channel_message_not_found_event(&event));
+    }
+
+    #[test]
+    fn channel_message_not_found_filter_matches_exception_path() {
+        // sentry-tracing with attach_stacktrace=true populates exception list.
+        let mut event = sentry::protocol::Event::default();
+        event.tags.insert("domain".into(), "backend_api".into());
+        event.tags.insert("failure".into(), "non_2xx".into());
+        event.tags.insert("status".into(), "404".into());
+        event.tags.insert("method".into(), "PATCH".into());
+        event.exception = vec![sentry::protocol::Exception {
+            value: Some("PATCH /channels/discord/messages/abc failed (404): Not Found".to_string()),
+            ..Default::default()
+        }]
+        .into();
+        assert!(is_channel_message_not_found_event(&event));
+    }
+
+    // ── LoopbackUnavailable (TAURI-R5, TAURI-R6) ─────────────────────────────
 
     /// Verbatim body shape from OPENHUMAN-TAURI-R5 (~2.5k events): the
     /// `integrations.get` site reaches the embedded core's `127.0.0.1:18474`
