@@ -152,7 +152,14 @@ const ru4: TranslationMap = {
   'onboarding.contextGathering.buildingProfile': 'Составление профиля...',
   'onboarding.contextGathering.continueToChat': 'Перейти в чат',
   'onboarding.contextGathering.errorDesc':
-    'Сейчас не удалось построить ваш полный профиль, но это нормально — вы можете продолжить, и ваш профиль будет формироваться со временем.',
+    'Мы не смогли построить ваш полный профиль прямо сейчас, но это нормально — вы можете продолжить, и профиль будет дополняться со временем.',
+  'onboarding.contextGathering.coreAlive': 'Ядро доступно — первый запуск может занять минуту.',
+  'onboarding.contextGathering.coreAliveProbing': 'Проверка соединения с ядром…',
+  'onboarding.contextGathering.coreUnreachable':
+    'Ядро не отвечает. Можно продолжить и попробовать позже.',
+  'onboarding.contextGathering.stillWorkingDesc':
+    'Первый запуск может занять 30–60 секунд, пока мы прогреваем локальную модель и инструменты. Вы можете перейти в чат в любой момент — построение профиля продолжится в фоне.',
+  'onboarding.contextGathering.stillWorkingTitle': 'Профиль ещё составляется…',
   'onboarding.contextGathering.title': 'Сбор контекста',
   'openhuman.team_list_teams': 'Список команд',
   'overlay.ariaAttention': 'Сообщение',

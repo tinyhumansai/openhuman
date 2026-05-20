@@ -472,6 +472,17 @@ impl OpenAiCompatibleProvider {
                     Some(model),
                     status,
                 );
+            } else if super::is_custom_openai_upstream_bad_request_http_400(
+                self.name.as_str(),
+                status,
+                &error,
+            ) {
+                super::log_custom_openai_upstream_bad_request_http_400(
+                    "responses_api",
+                    self.name.as_str(),
+                    Some(model),
+                    status,
+                );
             } else if super::is_provider_access_policy_denied_http_403(status, &error) {
                 super::log_provider_access_policy_denied_http_403(
                     "responses_api",
@@ -822,6 +833,17 @@ impl OpenAiCompatibleProvider {
             );
             if super::is_budget_exhausted_http_400(status, &body) {
                 super::log_budget_exhausted_http_400(
+                    "streaming_chat",
+                    self.name.as_str(),
+                    Some(native_request.model.as_str()),
+                    status,
+                );
+            } else if super::is_custom_openai_upstream_bad_request_http_400(
+                self.name.as_str(),
+                status,
+                &body,
+            ) {
+                super::log_custom_openai_upstream_bad_request_http_400(
                     "streaming_chat",
                     self.name.as_str(),
                     Some(native_request.model.as_str()),
@@ -1308,6 +1330,17 @@ impl Provider for OpenAiCompatibleProvider {
                     Some(model),
                     status,
                 );
+            } else if super::is_custom_openai_upstream_bad_request_http_400(
+                self.name.as_str(),
+                status,
+                &error,
+            ) {
+                super::log_custom_openai_upstream_bad_request_http_400(
+                    "chat_completions",
+                    self.name.as_str(),
+                    Some(model),
+                    status,
+                );
             } else if super::is_provider_access_policy_denied_http_403(status, &error) {
                 super::log_provider_access_policy_denied_http_403(
                     "chat_completions",
@@ -1746,6 +1779,17 @@ impl Provider for OpenAiCompatibleProvider {
                     Some(model),
                     status,
                 );
+            } else if super::is_custom_openai_upstream_bad_request_http_400(
+                self.name.as_str(),
+                status,
+                &error,
+            ) {
+                super::log_custom_openai_upstream_bad_request_http_400(
+                    "native_chat",
+                    self.name.as_str(),
+                    Some(model),
+                    status,
+                );
             } else if super::is_provider_access_policy_denied_http_403(status, &error) {
                 super::log_provider_access_policy_denied_http_403(
                     "native_chat",
@@ -1885,6 +1929,17 @@ impl Provider for OpenAiCompatibleProvider {
                 let message = format!("{}: {}", status, sanitized_error);
                 if super::is_budget_exhausted_http_400(status, &raw_error) {
                     super::log_budget_exhausted_http_400(
+                        "stream_chat",
+                        provider_name.as_str(),
+                        Some(model_owned.as_str()),
+                        status,
+                    );
+                } else if super::is_custom_openai_upstream_bad_request_http_400(
+                    provider_name.as_str(),
+                    status,
+                    &raw_error,
+                ) {
+                    super::log_custom_openai_upstream_bad_request_http_400(
                         "stream_chat",
                         provider_name.as_str(),
                         Some(model_owned.as_str()),

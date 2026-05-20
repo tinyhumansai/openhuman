@@ -1,3 +1,4 @@
+import debug from 'debug';
 import { useEffect, useState } from 'react';
 import { useLocation, useParams } from 'react-router-dom';
 
@@ -5,8 +6,11 @@ import { useT } from '../../../lib/i18n/I18nContext';
 import { useCoreState } from '../../../providers/CoreStateProvider';
 import { teamApi } from '../../../services/api/teamApi';
 import type { TeamMember, TeamRole } from '../../../types/team';
+import { sanitizeError } from '../../../utils/sanitize';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
+
+const log = debug('core-rpc:error');
 
 const ROLES: TeamRole[] = ['ADMIN', 'BILLING_MANAGER', 'MEMBER'];
 
@@ -41,7 +45,15 @@ const TeamMembersPanel = () => {
   useEffect(() => {
     if (!currentTeamId) return;
     setIsLoadingMembers(true);
-    void refreshTeamMembers(currentTeamId).finally(() => setIsLoadingMembers(false));
+    // `.finally()` alone left this as `void promise(...)`, so any rejection
+    // (cold core boot, backend 504, local AbortController timeout) became an
+    // unhandled rejection → OPENHUMAN-REACT-10. Swallow into a logged
+    // breadcrumb; the user can retry by navigating away and back.
+    refreshTeamMembers(currentTeamId)
+      .catch(err => {
+        log('refreshTeamMembers failed in TeamMembersPanel: %O', sanitizeError(err));
+      })
+      .finally(() => setIsLoadingMembers(false));
   }, [currentTeamId, refreshTeamMembers]);
 
   const handleChangeRole = (member: TeamMember, newRole: TeamRole) => {

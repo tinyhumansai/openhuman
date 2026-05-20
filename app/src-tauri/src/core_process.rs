@@ -24,6 +24,7 @@ use std::sync::LazyLock;
 
 use parking_lot::RwLock;
 use tokio::net::TcpStream;
+use tokio::sync::oneshot::error::TryRecvError;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tokio::time::{timeout, Duration};
@@ -49,12 +50,20 @@ pub fn current_rpc_token() -> Option<String> {
     CURRENT_RPC_TOKEN.read().clone()
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PortFallbackNotice {
+    pub preferred_port: u16,
+    pub chosen_port: u16,
+}
+
 #[derive(Clone)]
 pub struct CoreProcessHandle {
-    task: Arc<Mutex<Option<JoinHandle<()>>>>,
+    task: Arc<Mutex<Option<JoinHandle<anyhow::Result<()>>>>>,
     shutdown_token: Arc<Mutex<CancellationToken>>,
     restart_lock: Arc<Mutex<()>>,
-    port: u16,
+    preferred_port: u16,
+    active_port: Arc<RwLock<u16>>,
+    last_port_fallback: Arc<RwLock<Option<PortFallbackNotice>>>,
     /// Bearer token the embedded server validates on every inbound request.
     /// Passed to the embedded server through the `OPENHUMAN_CORE_TOKEN`
     /// process env var (set in `ensure_running` before spawn) and exposed to
@@ -76,7 +85,9 @@ impl CoreProcessHandle {
             task: Arc::new(Mutex::new(None)),
             shutdown_token: Arc::new(Mutex::new(CancellationToken::new())),
             restart_lock: Arc::new(Mutex::new(())),
-            port,
+            preferred_port: port,
+            active_port: Arc::new(RwLock::new(port)),
+            last_port_fallback: Arc::new(RwLock::new(None)),
             rpc_token: Arc::new(rpc_token),
         }
     }
@@ -87,11 +98,15 @@ impl CoreProcessHandle {
     }
 
     pub fn rpc_url(&self) -> String {
-        format!("http://127.0.0.1:{}/rpc", self.port)
+        format!("http://127.0.0.1:{}/rpc", self.port())
     }
 
     pub fn port(&self) -> u16 {
-        self.port
+        *self.active_port.read()
+    }
+
+    pub fn take_last_port_fallback_notice(&self) -> Option<PortFallbackNotice> {
+        self.last_port_fallback.write().take()
     }
 
     /// Acquire the restart lock to serialize overlapping restart requests.
@@ -100,7 +115,7 @@ impl CoreProcessHandle {
     }
 
     async fn is_rpc_port_open(&self) -> bool {
-        is_port_open(self.port).await
+        is_port_open(self.port()).await
     }
 
     pub async fn ensure_running(&self) -> Result<(), String> {
@@ -118,14 +133,14 @@ impl CoreProcessHandle {
                 if !task.is_finished() && self.is_rpc_port_open().await {
                     log::debug!(
                         "[core] ensure_running: embedded task already running on port {} — no-op",
-                        self.port
+                        self.port()
                     );
                     return Ok(());
                 }
             }
         }
 
-        if self.is_rpc_port_open().await {
+        if is_port_open(self.preferred_port).await {
             // Idempotent fast-path: if we already own a running embedded
             // task, the listener on this port is us — not a stale external
             // process. Without this short-circuit, a second `ensure_running`
@@ -143,7 +158,7 @@ impl CoreProcessHandle {
                     if !task.is_finished() {
                         log::debug!(
                             "[core] ensure_running: embedded task already running on port {}, returning Ok (idempotent)",
-                            self.port
+                            self.port()
                         );
                         return Ok(());
                     }
@@ -153,147 +168,212 @@ impl CoreProcessHandle {
             if reuse_existing_listener_enabled() {
                 log::warn!(
                     "[core] OPENHUMAN_CORE_REUSE_EXISTING=1 — attaching to whatever is listening on port {} without identification (legacy behavior)",
-                    self.port
+                    self.preferred_port
                 );
                 return Ok(());
             }
 
-            match identify_listener(self.port).await {
+            match identify_listener(self.preferred_port).await {
                 ListenerKind::OpenHuman => {
                     log::warn!(
                         "[core] found stale OpenHuman listener on port {} — taking over (issue #1130)",
-                        self.port
+                        self.preferred_port
                     );
                     self.takeover_stale_listener().await?;
                     // Fall through to spawn-and-wait below.
                 }
                 ListenerKind::Unknown { reason } => {
-                    let msg = format!(
-                        "Core RPC port {} is in use by something that is not an OpenHuman core ({reason}). Refusing to attach (set OPENHUMAN_CORE_REUSE_EXISTING=1 to override) — quit the other process or set OPENHUMAN_CORE_PORT to a different port and relaunch.",
-                        self.port
-                    );
                     if is_expected_port_clash(&reason) {
-                        log::warn!("[core] {msg}");
-                    } else {
-                        log::error!("[core] {msg}");
-                    }
-                    return Err(msg);
-                }
-            }
-        }
-
-        {
-            let shutdown_token = self.fresh_shutdown_token().await;
-            let mut guard = self.task.lock().await;
-            if guard.is_none() {
-                let port = self.port;
-                // Set OPENHUMAN_CORE_TOKEN as a process-global env var before
-                // spawning the embedded server. Same-process tokio task reads
-                // the same env, matching what a child sidecar would have
-                // received via Command::env.
-                std::env::set_var("OPENHUMAN_CORE_TOKEN", self.rpc_token.as_str());
-
-                // Debug-build only: surface the RPC bearer token at a known
-                // tmpdir path so the e2e test runner (a separate Node process)
-                // can authenticate against the in-process core. Release builds
-                // never write this file. The test harness reads it from
-                // ${tmpdir}/openhuman-e2e-rpc-token.
-                //
-                // Token file is owner-read-write only (mode 0600) on Unix so a
-                // shared dev box doesn't leak the bearer to other local users.
-                #[cfg(debug_assertions)]
-                {
-                    use std::io::Write as _;
-                    let token_path = std::env::temp_dir().join("openhuman-e2e-rpc-token");
-                    let write_result = (|| -> std::io::Result<()> {
-                        let mut options = std::fs::OpenOptions::new();
-                        options.create(true).write(true).truncate(true);
-                        #[cfg(unix)]
-                        {
-                            use std::os::unix::fs::OpenOptionsExt as _;
-                            options.mode(0o600);
-                        }
-                        let mut file = options.open(&token_path)?;
-                        file.write_all(self.rpc_token.as_bytes())?;
-                        file.sync_all()?;
-                        Ok(())
-                    })();
-                    if let Err(err) = write_result {
                         log::warn!(
-                            "[core] failed to write e2e token file at {}: {err}",
-                            token_path.display()
+                            "[core] preferred RPC port {} is occupied by non-OpenHuman listener ({reason}); attempting fallback bind range",
+                            self.preferred_port
                         );
                     } else {
-                        log::debug!(
-                            "[core] wrote e2e token file at {} (debug build only)",
-                            token_path.display()
+                        log::error!(
+                            "[core] preferred RPC port {} occupied by unexpected listener ({reason}); attempting fallback bind range",
+                            self.preferred_port
                         );
                     }
                 }
-                log::info!("[core] spawning embedded in-process core server on port {port}");
-                let task = tokio::spawn(async move {
-                    if let Err(e) = openhuman_core::core::jsonrpc::run_server_embedded(
-                        None,
-                        Some(port),
-                        true,
-                        shutdown_token,
-                    )
-                    .await
-                    {
-                        if is_expected_port_clash(&e.to_string()) {
-                            log::warn!("[core] embedded core server exited with error: {e}");
-                        } else {
-                            log::error!("[core] embedded core server exited with error: {e}");
-                        }
-                    } else {
-                        log::info!("[core] embedded core server exited cleanly");
-                    }
-                });
-                *guard = Some(task);
-                // Publish only after the embedded server has been spawned
-                // with OPENHUMAN_CORE_TOKEN in scope.
-                *CURRENT_RPC_TOKEN.write() = Some(self.rpc_token.to_string());
-                log::debug!("[auth] CURRENT_RPC_TOKEN set after embedded spawn");
             }
         }
 
-        for _ in 0..40 {
-            if self.is_rpc_port_open().await {
-                log::info!("[core] core rpc became ready at {}", self.rpc_url());
-                return Ok(());
-            }
+        for startup_attempt in 0..=1u8 {
+            let mut retry_after_takeover = false;
+            let shutdown_token = self.fresh_shutdown_token().await;
+            let (ready_tx, mut ready_rx) = tokio::sync::oneshot::channel::<
+                openhuman_core::core::jsonrpc::EmbeddedReadySignal,
+            >();
+            let mut received_ready = false;
 
-            let mut guard = self.task.lock().await;
-            if let Some(task) = guard.as_ref() {
-                if task.is_finished() {
-                    let task = guard.take().expect("checked is_some");
-                    drop(guard);
-                    return match task.await {
-                        Ok(_) => {
-                            Err("in-process core server exited before becoming ready".to_string())
+            {
+                let mut guard = self.task.lock().await;
+                if guard.is_none() {
+                    let port = self.preferred_port;
+                    // Set OPENHUMAN_CORE_TOKEN as a process-global env var before
+                    // spawning the embedded server. Same-process tokio task reads
+                    // the same env, matching what a child sidecar would have
+                    // received via Command::env.
+                    std::env::set_var("OPENHUMAN_CORE_TOKEN", self.rpc_token.as_str());
+                    *self.active_port.write() = port;
+                    *self.last_port_fallback.write() = None;
+
+                    // Debug-build only: surface the RPC bearer token at a known
+                    // tmpdir path so the e2e test runner (a separate Node process)
+                    // can authenticate against the in-process core. Release builds
+                    // never write this file. The test harness reads it from
+                    // ${tmpdir}/openhuman-e2e-rpc-token.
+                    //
+                    // Token file is owner-read-write only (mode 0600) on Unix so a
+                    // shared dev box doesn't leak the bearer to other local users.
+                    #[cfg(debug_assertions)]
+                    {
+                        use std::io::Write as _;
+                        let token_path = std::env::temp_dir().join("openhuman-e2e-rpc-token");
+                        let write_result = (|| -> std::io::Result<()> {
+                            let mut options = std::fs::OpenOptions::new();
+                            options.create(true).write(true).truncate(true);
+                            #[cfg(unix)]
+                            {
+                                use std::os::unix::fs::OpenOptionsExt as _;
+                                options.mode(0o600);
+                            }
+                            let mut file = options.open(&token_path)?;
+                            file.write_all(self.rpc_token.as_bytes())?;
+                            file.sync_all()?;
+                            Ok(())
+                        })();
+                        if let Err(err) = write_result {
+                            log::warn!(
+                                "[core] failed to write e2e token file at {}: {err}",
+                                token_path.display()
+                            );
+                        } else {
+                            log::debug!(
+                                "[core] wrote e2e token file at {} (debug build only)",
+                                token_path.display()
+                            );
                         }
-                        Err(err) => Err(format!(
-                            "in-process core server task failed before ready: {err}"
-                        )),
-                    };
+                    }
+                    log::info!(
+                        "[core] spawning embedded in-process core server on preferred port {port}"
+                    );
+                    let task = tokio::spawn(async move {
+                        openhuman_core::core::jsonrpc::run_server_embedded_with_ready(
+                            None,
+                            Some(port),
+                            true,
+                            shutdown_token,
+                            ready_tx,
+                        )
+                        .await
+                    });
+                    *guard = Some(task);
+                    // Publish only after the embedded server has been spawned
+                    // with OPENHUMAN_CORE_TOKEN in scope.
+                    *CURRENT_RPC_TOKEN.write() = Some(self.rpc_token.to_string());
+                    log::debug!("[auth] CURRENT_RPC_TOKEN set after embedded spawn");
                 }
             }
-            tokio::time::sleep(Duration::from_millis(100)).await;
+
+            for _ in 0..40 {
+                if !received_ready {
+                    match ready_rx.try_recv() {
+                        Ok(ready_signal) => {
+                            self.apply_embedded_ready_signal(ready_signal);
+                            received_ready = true;
+                        }
+                        Err(TryRecvError::Empty) => {}
+                        Err(TryRecvError::Closed) => {}
+                    }
+                }
+
+                if received_ready && self.is_rpc_port_open().await {
+                    log::info!("[core] core rpc became ready at {}", self.rpc_url());
+                    return Ok(());
+                }
+
+                let mut guard = self.task.lock().await;
+                if let Some(task) = guard.as_ref() {
+                    if task.is_finished() {
+                        let task = guard.take().expect("checked is_some");
+                        drop(guard);
+                        return match task.await {
+                            Ok(Ok(())) => {
+                                Err("in-process core server exited before becoming ready"
+                                    .to_string())
+                            }
+                            Ok(Err(err)) => {
+                                if let Some(openhuman_core::openhuman::connectivity::rpc::PickListenPortError::WouldTakeOver { preferred, .. }) = err
+                                    .downcast_ref::<openhuman_core::openhuman::connectivity::rpc::PickListenPortError>()
+                                {
+                                    if startup_attempt == 0 {
+                                        log::warn!(
+                                            "[core] preferred port {} requested stale-listener takeover from embedded bind path; retrying once",
+                                            preferred
+                                        );
+                                        self.takeover_stale_listener().await?;
+                                        retry_after_takeover = true;
+                                        break;
+                                    }
+                                }
+                                Err(format!(
+                                    "in-process core server exited before becoming ready: {err}"
+                                ))
+                            }
+                            Err(err) => Err(format!(
+                                "in-process core server task failed before ready: {err}"
+                            )),
+                        };
+                    }
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+
+            if retry_after_takeover {
+                continue;
+            }
+            return Err("core process did not become ready".to_string());
         }
 
         Err("core process did not become ready".to_string())
+    }
+
+    fn apply_embedded_ready_signal(
+        &self,
+        ready: openhuman_core::core::jsonrpc::EmbeddedReadySignal,
+    ) {
+        *self.active_port.write() = ready.port;
+        std::env::set_var("OPENHUMAN_CORE_RPC_URL", self.rpc_url());
+        if let Some(preferred) = ready.fallback_from {
+            let message = format!("port_fallback_engaged: {preferred} -> {}", ready.port);
+            log::warn!("[core] {message}");
+            sentry::add_breadcrumb(sentry::Breadcrumb {
+                category: Some("core.port".to_string()),
+                level: sentry::Level::Warning,
+                message: Some(message),
+                ..Default::default()
+            });
+            *self.last_port_fallback.write() = Some(PortFallbackNotice {
+                preferred_port: preferred,
+                chosen_port: ready.port,
+            });
+        } else {
+            *self.last_port_fallback.write() = None;
+        }
     }
 
     /// Identify the OS pid currently bound to our port and terminate it,
     /// then wait for the port to free. Used when the listener has been
     /// fingerprinted as an OpenHuman core (via `GET /`) so killing it is safe.
     async fn takeover_stale_listener(&self) -> Result<(), String> {
-        let pid = match find_pid_on_port(self.port) {
+        let port = self.preferred_port;
+        let pid = match find_pid_on_port(port) {
             Some(pid) => pid,
             None => {
                 return Err(format!(
                     "could not determine pid bound to port {} — refusing to take over",
-                    self.port
+                    port
                 ));
             }
         };
@@ -308,7 +388,7 @@ impl CoreProcessHandle {
         }
         log::warn!(
             "[core] terminating stale OpenHuman process pid={pid} on port {} (issue #1130)",
-            self.port
+            port
         );
         if let Err(e) = kill_pid_term(pid) {
             return Err(format!("failed to signal stale openhuman pid {pid}: {e}"));
@@ -323,12 +403,12 @@ impl CoreProcessHandle {
         const GRACE_MS: u64 = 750;
         tokio::time::sleep(Duration::from_millis(GRACE_MS)).await;
 
-        if is_port_open(self.port).await {
-            match find_pid_on_port(self.port) {
+        if is_port_open(port).await {
+            match find_pid_on_port(port) {
                 Some(current) if current == pid => {
                     log::warn!(
                         "[core] pid {pid} still bound to port {} after SIGTERM — escalating to SIGKILL",
-                        self.port
+                        port
                     );
                     if let Err(e) = kill_pid_force(pid) {
                         return Err(format!(
@@ -339,7 +419,7 @@ impl CoreProcessHandle {
                 Some(current) => {
                     return Err(format!(
                         "port {} rebounded to pid {current} after terminating pid {pid}; refusing to kill a different process",
-                        self.port
+                        port
                     ));
                 }
                 None => {
@@ -353,11 +433,11 @@ impl CoreProcessHandle {
         const POLL_MS: u64 = 100;
         const MAX_WAIT_MS: u64 = 5_000;
         let mut waited_ms: u64 = GRACE_MS;
-        while is_port_open(self.port).await {
+        while is_port_open(port).await {
             if waited_ms >= MAX_WAIT_MS {
                 return Err(format!(
                     "signaled pid {pid} but port {} remained bound after {MAX_WAIT_MS}ms",
-                    self.port
+                    port
                 ));
             }
             tokio::time::sleep(Duration::from_millis(POLL_MS)).await;
@@ -365,7 +445,7 @@ impl CoreProcessHandle {
         }
         log::info!(
             "[core] stale listener cleared (pid={pid}, port={}) after {waited_ms}ms",
-            self.port
+            port
         );
         Ok(())
     }
@@ -386,21 +466,10 @@ impl CoreProcessHandle {
         };
 
         self.shutdown().await;
-
-        if !had_managed_task && self.is_rpc_port_open().await {
-            let msg = format!(
-                "Core RPC port {} is already in use by another process (OpenHuman did not start it). Quit any `openhuman-core run` in a terminal or set OPENHUMAN_CORE_PORT to a different port, then relaunch the app.",
-                self.port
+        if !had_managed_task {
+            log::debug!(
+                "[core] restart: no managed embedded task was running; ensure_running will resolve ownership/fallback"
             );
-            // Precondition check: by the time we hit this branch we already
-            // know the port is held by something OpenHuman did not spawn, so
-            // the clash is always benign environment state — no need to gate
-            // through `is_expected_port_clash`.
-            log::warn!(
-                "[core] restart: nothing to stop but port {} is in use — another process owns it",
-                self.port
-            );
-            return Err(msg);
         }
 
         const POLL_MS: u64 = 50;
@@ -410,7 +479,7 @@ impl CoreProcessHandle {
             if waited_ms >= MAX_WAIT_MS {
                 return Err(format!(
                     "Core RPC port {} did not become free after stopping the embedded server.",
-                    self.port
+                    self.port()
                 ));
             }
             tokio::time::sleep(Duration::from_millis(POLL_MS)).await;
@@ -472,11 +541,14 @@ impl CoreProcessHandle {
         };
 
         match timeout(Duration::from_secs(5), &mut task).await {
-            Ok(Ok(())) => {
+            Ok(Ok(Ok(()))) => {
                 log::info!("[core] embedded core server task stopped gracefully");
             }
-            Ok(Err(err)) => {
+            Ok(Ok(Err(err))) => {
                 log::warn!("[core] embedded core server task ended during shutdown: {err}");
+            }
+            Ok(Err(err)) => {
+                log::warn!("[core] embedded core server task join failed during shutdown: {err}");
             }
             Err(_) => {
                 log::warn!(

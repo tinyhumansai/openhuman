@@ -908,3 +908,41 @@ async fn invoke_method_core_version_via_tier1_reflects_state() {
         .expect("core.version should succeed");
     assert_eq!(result, json!({ "version": "0.0.1-abc" }));
 }
+
+#[tokio::test]
+async fn test_http_health_handler_returns_correct_status() {
+    use axum::body::to_bytes;
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
+    // Call the handler once and derive both the status and expected status from
+    // the same response — avoids a TOCTOU race where a separate snapshot()
+    // call before/after the handler could observe different component state.
+    let resp = super::health_handler().await.into_response();
+    let status = resp.status();
+
+    let body = to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .expect("failed to read body");
+    let snapshot: serde_json::Value =
+        serde_json::from_slice(&body).expect("failed to deserialize health snapshot");
+
+    let components = snapshot["components"]
+        .as_object()
+        .expect("components should be an object");
+
+    // Derive the expected HTTP status solely from the response body so the
+    // test asserts internal consistency of the handler rather than racing on
+    // live component state.
+    let body_says_ok = components.values().all(|c| {
+        let s = c["status"].as_str().unwrap_or("");
+        s == "ok" || s == "starting"
+    });
+    let expected_status = if body_says_ok {
+        StatusCode::OK
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
+    };
+
+    assert_eq!(status, expected_status);
+}

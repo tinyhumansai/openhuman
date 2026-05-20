@@ -630,6 +630,8 @@ async fn e2e_stm_recall_chain() {
             tool_calls: vec![],
             turn_duration_ms: 100,
             session_id: Some("other-thread".to_string()),
+            agent_id: None,
+            entrypoint: None,
             iteration_count: i + 1,
         };
         archivist.on_turn_complete(&ctx).await.unwrap();

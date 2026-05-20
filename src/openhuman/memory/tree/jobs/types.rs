@@ -270,10 +270,17 @@ pub struct FlushStalePayload {
 }
 
 impl FlushStalePayload {
-    /// Stable dedupe key. `date_iso` scopes one flush per UTC day so the
-    /// scheduler can re-enqueue safely without duplicating work.
-    pub fn dedupe_key(&self, date_iso: &str) -> String {
-        format!("flush_stale:{date_iso}")
+    /// Dedupe key scoped to a 3-hour UTC block (`hour_block = hour / 3`,
+    /// 0..=7) so flush_stale runs up to 8× per day. Without this,
+    /// low-volume sources wait a full day between seal opportunities.
+    ///
+    /// Pure: both `date_iso` and `hour_block` are supplied by the caller
+    /// from a single `Utc::now()` reading, which keeps the key
+    /// deterministic in tests and avoids a 3-hour-boundary race where
+    /// the caller's `today_iso` could disagree with a second
+    /// `Utc::now()` taken inside this function.
+    pub fn dedupe_key(&self, date_iso: &str, hour_block: u32) -> String {
+        format!("flush_stale:{date_iso}-h{hour_block}")
     }
 }
 
@@ -385,12 +392,15 @@ impl NewJob {
         })
     }
 
-    /// Build an [`JobKind::FlushStale`] enqueue request scoped to `date_iso`.
-    pub fn flush_stale(p: &FlushStalePayload, date_iso: &str) -> Result<Self> {
+    /// Build a [`JobKind::FlushStale`] enqueue request scoped to a
+    /// 3-hour UTC block. Callers compute `date_iso` and `hour_block`
+    /// from a single `Utc::now()` reading so the dedupe key is
+    /// boundary-safe; see [`FlushStalePayload::dedupe_key`].
+    pub fn flush_stale(p: &FlushStalePayload, date_iso: &str, hour_block: u32) -> Result<Self> {
         Ok(Self {
             kind: JobKind::FlushStale,
             payload_json: serde_json::to_string(p)?,
-            dedupe_key: Some(p.dedupe_key(date_iso)),
+            dedupe_key: Some(p.dedupe_key(date_iso, hour_block)),
             available_at_ms: None,
             max_attempts: None,
         })
@@ -488,6 +498,20 @@ mod tests {
             },
         };
         assert_ne!(r_leaf.dedupe_key(), r_summary.dedupe_key());
+    }
+
+    #[test]
+    fn flush_stale_dedupe_key_is_pure_and_per_3h_block() {
+        let p = FlushStalePayload::default();
+        // Same (date, block) → same key.
+        assert_eq!(p.dedupe_key("2026-05-19", 2), p.dedupe_key("2026-05-19", 2));
+        // Different block within same day → distinct keys (8 buckets/day).
+        assert_ne!(p.dedupe_key("2026-05-19", 2), p.dedupe_key("2026-05-19", 3));
+        // Different day, same block → distinct keys.
+        assert_ne!(p.dedupe_key("2026-05-19", 2), p.dedupe_key("2026-05-20", 2));
+        // Shape sanity.
+        assert_eq!(p.dedupe_key("2026-05-19", 0), "flush_stale:2026-05-19-h0");
+        assert_eq!(p.dedupe_key("2026-05-19", 7), "flush_stale:2026-05-19-h7");
     }
 
     #[test]

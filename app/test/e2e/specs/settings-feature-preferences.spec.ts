@@ -72,8 +72,7 @@ async function defaultMessagingChannelFromStore(): Promise<string | null> {
 }
 
 describe('Settings - Feature Preferences', () => {
-  before(async function beforeSuite() {
-    this.timeout(90_000);
+  before(async () => {
     await startMockServer();
     await waitForApp();
     await resetApp(USER_ID);
@@ -83,20 +82,19 @@ describe('Settings - Feature Preferences', () => {
     await stopMockServer();
   });
 
-  it('renders the features settings section route', async function () {
-    this.timeout(90_000);
+  it('renders the features settings section route', async () => {
     await navigateViaHash('/settings/features');
 
     await waitForText('Features', 15_000);
-    // i18n uses sentence-case: 'Screen awareness', 'Messaging channels', etc.
+    // Settings uses t('pages.settings.features.screenAwareness') = 'Screen awareness'
     await waitForText('Screen awareness', 15_000);
+    // Settings uses t('pages.settings.features.messagingChannels') = 'Messaging channels'
     await waitForText('Messaging channels', 15_000);
     await waitForText('Notifications', 15_000);
     await waitForText('Tools', 15_000);
   });
 
-  it('persists the default messaging channel through redux state', async function () {
-    this.timeout(90_000);
+  it('persists the default messaging channel through redux state', async () => {
     await navigateViaHash('/settings/messaging');
 
     await waitForText('Default Messaging Channel', 15_000);
@@ -108,8 +106,7 @@ describe('Settings - Feature Preferences', () => {
     });
   });
 
-  it('persists tools preferences to the core app-state snapshot', async function () {
-    this.timeout(90_000);
+  it('persists tools preferences to the core app-state snapshot', async () => {
     const before = await callOpenhumanRpc('openhuman.app_state_snapshot', {});
     expect(before.ok).toBe(true);
     const enabledBefore = before.result?.result?.localState?.onboardingTasks?.enabledTools ?? [];
@@ -131,8 +128,7 @@ describe('Settings - Feature Preferences', () => {
     );
   });
 
-  it('persists notifications DND and category preferences', async function () {
-    this.timeout(90_000);
+  it('persists notifications DND and category preferences', async () => {
     await navigateViaHash('/settings/notifications');
 
     await waitForText('Do Not Disturb', 15_000);
@@ -147,8 +143,7 @@ describe('Settings - Feature Preferences', () => {
     expect(await switchState('Toggle Messages notifications')).toBe('false');
   });
 
-  it('persists mascot color selection', async function () {
-    this.timeout(60_000);
+  it('persists mascot color selection', async () => {
     await navigateViaHash('/settings/mascot');
 
     await waitForText('Color', 15_000);
@@ -159,8 +154,7 @@ describe('Settings - Feature Preferences', () => {
     expect(await mascotColorChecked('burgundy')).toBe('true');
   });
 
-  it('persists the custom mascot voice override on the voice panel', async function () {
-    this.timeout(90_000);
+  it('persists the custom mascot voice override on the voice panel', async () => {
     await navigateViaHash('/settings/voice');
 
     await waitForText('Mascot Voice', 20_000);

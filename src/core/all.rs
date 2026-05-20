@@ -121,6 +121,9 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(crate::openhuman::webview_apis::all_webview_apis_registered_controllers());
     // Agent definition and prompt inspection
     controllers.extend(crate::openhuman::agent::all_agent_registered_controllers());
+    // Local procedural operating experience for agent self-learning
+    controllers
+        .extend(crate::openhuman::agent_experience::all_agent_experience_registered_controllers());
     // System and process health monitoring
     controllers.extend(crate::openhuman::health::all_health_registered_controllers());
     // Diagnostic tools
@@ -277,6 +280,7 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::mcp_clients::all_mcp_clients_controller_schemas());
     schemas.extend(crate::openhuman::webview_apis::all_webview_apis_controller_schemas());
     schemas.extend(crate::openhuman::agent::all_agent_controller_schemas());
+    schemas.extend(crate::openhuman::agent_experience::all_agent_experience_controller_schemas());
     schemas.extend(crate::openhuman::health::all_health_controller_schemas());
     schemas.extend(crate::openhuman::doctor::all_doctor_controller_schemas());
     schemas.extend(crate::openhuman::encryption::all_encryption_controller_schemas());
@@ -374,6 +378,7 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
         "about_app" => Some("Catalog the app's user-facing capabilities and where to find them."),
         "app_state" => Some("Expose core-owned app shell state for frontend polling."),
         "auth" => Some("Manage app session and provider credentials."),
+        "agent_experience" => Some("Local procedural experience capture and retrieval for agents."),
         "autocomplete" => Some("Inline autocomplete engine controls and style settings."),
         "channels" => Some("Channel definitions, connections, and lifecycle management."),
         "composio" => Some(

@@ -45,9 +45,6 @@ function stepLog(message: string, context?: unknown): void {
 
 describe('WhatsApp account integration smoke', () => {
   before(async function beforeSuite() {
-    // Auth + onboarding can take longer than the default 30s per-hook budget.
-    this.timeout(90_000);
-
     if (!supportsExecuteScript()) {
       stepLog('Skipping suite on Mac2 — Accounts rail not mapped for Appium');
       this.skip();
@@ -70,9 +67,8 @@ describe('WhatsApp account integration smoke', () => {
     await stopMockServer();
   });
 
-  it('shows WhatsApp Web as an addable provider in the Add Account modal', async function () {
-    this.timeout(90_000);
-    stepLog('navigating to /chat');
+  it('shows WhatsApp Web as an addable provider in the Add Account modal', async () => {
+    stepLog('navigating to /accounts');
     await navigateViaHash('/chat');
     await waitForText('Add Account', 15_000);
 
@@ -89,7 +85,7 @@ describe('WhatsApp account integration smoke', () => {
 
   it('selecting WhatsApp Web closes the modal and registers an account on the rail', async () => {
     // Set up route + modal independently so this case is runnable in isolation.
-    stepLog('navigating to /chat (independent setup)');
+    stepLog('navigating to /accounts (independent setup)');
     await navigateViaHash('/chat');
     await waitForText('Add Account', 15_000);
     await openAddAccountModal();

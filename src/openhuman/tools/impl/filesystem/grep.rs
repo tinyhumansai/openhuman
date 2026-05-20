@@ -97,11 +97,6 @@ impl Tool for GrepTool {
                 "Rate limit exceeded: too many actions in the last hour",
             ));
         }
-        if !self.security.is_path_allowed(sub_path) {
-            return Ok(ToolResult::error(format!(
-                "Path not allowed by security policy: {sub_path}"
-            )));
-        }
         if !self.security.record_action() {
             return Ok(ToolResult::error(
                 "Rate limit exceeded: action budget exhausted",
@@ -113,17 +108,11 @@ impl Tool for GrepTool {
             Err(e) => return Ok(ToolResult::error(format!("Invalid regex: {e}"))),
         };
 
-        let root = self.security.workspace_dir.join(sub_path);
-        let resolved_root = match tokio::fs::canonicalize(&root).await {
+        // Security check: validate path string, resolve symlinks, confirm workspace containment.
+        let resolved_root = match self.security.validate_path(sub_path).await {
             Ok(p) => p,
-            Err(e) => return Ok(ToolResult::error(format!("Failed to resolve path: {e}"))),
+            Err(msg) => return Ok(ToolResult::error(msg)),
         };
-        if !self.security.is_resolved_path_allowed(&resolved_root) {
-            return Ok(ToolResult::error(format!(
-                "Resolved path escapes workspace: {}",
-                resolved_root.display()
-            )));
-        }
 
         let workspace = self.security.workspace_dir.clone();
         let result = tokio::task::spawn_blocking(move || {

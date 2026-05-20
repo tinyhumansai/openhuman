@@ -32,6 +32,10 @@ use crate::openhuman::memory::tree::tree_source::{
 };
 use crate::openhuman::memory::tree::tree_topic::curator;
 
+/// Default age for L0 flush_stale when the caller doesn't override.
+/// 1 hour means low-volume sources get summaries within a working session.
+const L0_DEFAULT_FLUSH_AGE_SECS: i64 = 60 * 60;
+
 /// Dispatch a claimed job to the matching per-kind handler.
 ///
 /// Existing handlers all return `Ok(JobOutcome::Done)` on success. The
@@ -523,9 +527,12 @@ async fn handle_digest_daily(config: &Config, job: &Job) -> Result<JobOutcome> {
 async fn handle_flush_stale(config: &Config, job: &Job) -> Result<JobOutcome> {
     let payload: FlushStalePayload =
         serde_json::from_str(&job.payload_json).context("parse FlushStale payload")?;
-    let age_secs = payload
-        .max_age_secs
-        .unwrap_or(crate::openhuman::memory::tree::tree_source::types::DEFAULT_FLUSH_AGE_SECS);
+    // When the caller didn't specify a max age, use a short window for L0
+    // so low-volume sources (daily cron, single documents) get timely
+    // summaries instead of waiting 7 days.  The longer general-purpose
+    // default is preserved in types::DEFAULT_FLUSH_AGE_SECS for callers
+    // that set max_age_secs explicitly.
+    let age_secs = payload.max_age_secs.unwrap_or(L0_DEFAULT_FLUSH_AGE_SECS);
     let cutoff = chrono::Utc::now() - chrono::Duration::seconds(age_secs);
     let buffers =
         crate::openhuman::memory::tree::tree_source::store::list_stale_buffers(config, cutoff)?;

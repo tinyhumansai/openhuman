@@ -1493,8 +1493,15 @@ const en: TranslationMap = {
   'onboarding.contextGathering.buildingDesc': 'Gathering context from your connected accounts…',
   'onboarding.contextGathering.buildingProfile': 'Building your profile...',
   'onboarding.contextGathering.continueToChat': 'Continue to chat',
+  'onboarding.contextGathering.coreAlive': 'Core is reachable — first launch can take a minute.',
+  'onboarding.contextGathering.coreAliveProbing': 'Checking core connection…',
+  'onboarding.contextGathering.coreUnreachable':
+    'Core is not responding. You can continue and try again later.',
   'onboarding.contextGathering.errorDesc':
     "Your chat is ready. We'll keep building your full profile in the background, so you can continue now and refine it over time.",
+  'onboarding.contextGathering.stillWorkingDesc':
+    'First launch can take 30–60 seconds while we warm up your local model and tools. You can continue to chat at any time — profile build keeps running in the background.',
+  'onboarding.contextGathering.stillWorkingTitle': 'Still working on your profile…',
   'onboarding.contextGathering.title': 'Context Gathering',
   'openhuman.team_list_teams': 'Team list teams',
   'overlay.ariaAttention': 'Attention message',
@@ -1871,6 +1878,16 @@ const en: TranslationMap = {
   'settings.localModel.status.notFound': 'Not found',
   'settings.localModel.status.notRunning': 'Not running',
   'settings.localModel.status.ollamaBinaryPath': 'Ollama binary path',
+  'localModel.ollamaServer.helperText': 'Example: http://192.168.1.5:11434',
+  'localModel.ollamaServer.label': 'Ollama Server URL',
+  'localModel.ollamaServer.modelCount': 'models',
+  'localModel.ollamaServer.placeholder': 'http://localhost:11434',
+  'localModel.ollamaServer.reachable': 'Reachable',
+  'localModel.ollamaServer.resetButton': 'Reset to default',
+  'localModel.ollamaServer.saveButton': 'Save',
+  'localModel.ollamaServer.testButton': 'Test Connection',
+  'localModel.ollamaServer.unreachable': 'Unreachable',
+  'localModel.ollamaServer.validationError': 'Must be a valid http:// or https:// URL',
   'settings.localModel.status.ollamaDiagnostics': 'Ollama Diagnostics',
   'settings.localModel.status.ollamaNotInstalled': 'Ollama runtime unavailable',
   'settings.localModel.status.ollamaNotInstalledDesc':

@@ -4,7 +4,7 @@
  * Handles storing/retrieving user preferences like RPC URL using
  * localStorage (web) or Tauri store (desktop).
  */
-import { CORE_RPC_URL } from './config';
+import { CORE_RPC_URL, E2E_DEFAULT_CORE_MODE } from './config';
 import { isTauri } from './tauriCommands';
 
 // Storage key for RPC URL preference
@@ -239,10 +239,15 @@ export function clearStoredCoreToken(): void {
 export function getStoredCoreMode(): 'local' | 'cloud' | null {
   try {
     const stored = localStorage.getItem(CORE_MODE_STORAGE_KEY)?.trim();
-    if (stored === 'local' || stored === 'cloud') return stored;
+    if (stored) {
+      if (stored === 'local' || stored === 'cloud') return stored;
+      return null;
+    }
   } catch {
     console.warn('[configPersistence] Unable to access localStorage');
   }
+
+  if (E2E_DEFAULT_CORE_MODE === 'local') return 'local';
   return null;
 }
 

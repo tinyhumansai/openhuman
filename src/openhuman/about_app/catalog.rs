@@ -47,6 +47,12 @@ const GITHUB_RELEASES_METADATA: Option<CapabilityPrivacy> = Some(CapabilityPriva
     destinations: &["GitHub Releases"],
 });
 
+const SEARXNG_RAW_TO_CONFIGURED_INSTANCE: Option<CapabilityPrivacy> = Some(CapabilityPrivacy {
+    leaves_device: true,
+    data_kind: PrivacyDataKind::Raw,
+    destinations: &["Configured SearXNG instance"],
+});
+
 // Direct-mode Composio: the user's API key and tool arguments leave the
 // device — they are sent to backend.composio.dev, not the OpenHuman backend.
 // LOCAL_CREDENTIALS was incorrect here because leaves_device must be true.
@@ -297,6 +303,16 @@ const CAPABILITIES: &[Capability] = &[
         how_to: "Run `openhuman-core mcp` and configure the local MCP client to launch that command.",
         status: CapabilityStatus::Beta,
         privacy: LOCAL_RAW,
+    },
+    Capability {
+        id: "intelligence.searxng_search",
+        name: "SearXNG Search",
+        domain: "intelligence",
+        category: CapabilityCategory::Intelligence,
+        description: "Search a configured self-hosted SearXNG instance from agent and MCP tools, returning normalized title, URL, snippet, and source results.",
+        how_to: "Set `[searxng] enabled = true` and `base_url` in config.toml, or use OPENHUMAN_SEARXNG_* environment variables.",
+        status: CapabilityStatus::Beta,
+        privacy: SEARXNG_RAW_TO_CONFIGURED_INSTANCE,
     },
     Capability {
         id: "intelligence.tool_registry",

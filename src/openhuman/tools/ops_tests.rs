@@ -256,6 +256,8 @@ fn all_tools_registers_generic_mcp_bridge_tools_when_servers_exist() {
             cwd: None,
             description: Some("Example docs MCP".into()),
             enabled: true,
+            allowed_tools: Vec::new(),
+            disallowed_tools: Vec::new(),
             timeout_secs: 30,
             auth: crate::openhuman::config::McpAuthConfig::None,
         });
@@ -924,7 +926,7 @@ fn all_tools_registers_integration_families_when_enabled_and_signed_in() {
 }
 
 #[test]
-fn all_tools_registers_seltz_lsp_and_tool_stats_when_enabled() {
+fn all_tools_registers_optional_search_lsp_and_tool_stats_when_enabled() {
     let tmp = TempDir::new().unwrap();
     let security = Arc::new(SecurityPolicy::default());
     let mem = test_memory(&tmp);
@@ -932,6 +934,7 @@ fn all_tools_registers_seltz_lsp_and_tool_stats_when_enabled() {
     let http = crate::openhuman::config::HttpRequestConfig::default();
     let mut cfg = test_config(&tmp);
     cfg.seltz.enabled = true;
+    cfg.searxng.enabled = true;
     cfg.learning.enabled = true;
     cfg.learning.tool_tracking_enabled = true;
 
@@ -956,7 +959,10 @@ fn all_tools_registers_seltz_lsp_and_tool_stats_when_enabled() {
         &cfg,
     );
     let names = tool_names(&tools);
-    assert_contains_all(&names, &["seltz_search", "lsp", "tool_stats"]);
+    assert_contains_all(
+        &names,
+        &["seltz_search", "searxng_search", "lsp", "tool_stats"],
+    );
 
     unsafe {
         std::env::remove_var(crate::openhuman::tools::implementations::LSP_ENABLED_ENV);

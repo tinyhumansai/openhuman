@@ -255,6 +255,15 @@ pub struct McpServerConfig {
     /// Whether this server should be exposed to the MCP bridge tools.
     #[serde(default = "defaults::default_true")]
     pub enabled: bool,
+    /// Exact remote tool names this server may expose through the generic
+    /// MCP bridge. Empty means all remote tools are allowed unless they
+    /// appear in `disallowed_tools`.
+    #[serde(default)]
+    pub allowed_tools: Vec<String>,
+    /// Exact remote tool names that should always be hidden and blocked.
+    /// This denylist takes precedence over `allowed_tools`.
+    #[serde(default)]
+    pub disallowed_tools: Vec<String>,
     /// Per-request timeout in seconds.
     #[serde(default = "default_mcp_timeout_secs")]
     pub timeout_secs: u64,
@@ -281,6 +290,8 @@ impl Default for McpServerConfig {
             cwd: None,
             description: None,
             enabled: defaults::default_true(),
+            allowed_tools: Vec::new(),
+            disallowed_tools: Vec::new(),
             timeout_secs: default_mcp_timeout_secs(),
             auth: McpAuthConfig::None,
         }
@@ -402,6 +413,54 @@ impl Default for SeltzConfig {
             api_url: None,
             max_results: default_seltz_max_results(),
             timeout_secs: default_seltz_timeout_secs(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct SearxngConfig {
+    /// When `true`, register `searxng_search` as an agent and MCP tool.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Base URL for the user's SearXNG instance.
+    #[serde(default = "default_searxng_base_url")]
+    pub base_url: String,
+    /// Max results per query (1-50, default 10).
+    #[serde(default = "default_searxng_max_results")]
+    pub max_results: usize,
+    /// Language code passed to SearXNG when a call omits `language`.
+    #[serde(default = "default_searxng_language")]
+    pub default_language: String,
+    /// Per-request timeout in seconds (default 10).
+    #[serde(default = "default_searxng_timeout_secs", alias = "timeout_seconds")]
+    pub timeout_secs: u64,
+}
+
+fn default_searxng_base_url() -> String {
+    "http://localhost:8080".into()
+}
+
+fn default_searxng_max_results() -> usize {
+    10
+}
+
+fn default_searxng_language() -> String {
+    "en".into()
+}
+
+fn default_searxng_timeout_secs() -> u64 {
+    10
+}
+
+impl Default for SearxngConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            base_url: default_searxng_base_url(),
+            max_results: default_searxng_max_results(),
+            default_language: default_searxng_language(),
+            timeout_secs: default_searxng_timeout_secs(),
         }
     }
 }

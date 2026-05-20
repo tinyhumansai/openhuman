@@ -34,7 +34,7 @@ pub use schema::{
     MultimodalConfig, ObservabilityConfig, OrchestratorModelConfig, PolymarketClobCredentials,
     PolymarketConfig, ProxyConfig, ProxyScope, ReflectionSource, ReliabilityConfig,
     ResourceLimitsConfig, RuntimeConfig, SandboxBackend, SandboxConfig, SchedulerConfig,
-    SchedulerGateConfig, SchedulerGateMode, ScreenIntelligenceConfig, SecretsConfig,
+    SchedulerGateConfig, SchedulerGateMode, ScreenIntelligenceConfig, SearxngConfig, SecretsConfig,
     SecurityConfig, SlackConfig, StorageConfig, StorageProviderConfig, StorageProviderSection,
     StreamMode, TeamModelConfig, TelegramConfig, UpdateConfig, UpdateRestartStrategy,
     VoiceActivationMode, VoiceServerConfig, WebSearchConfig, WebhookConfig,
