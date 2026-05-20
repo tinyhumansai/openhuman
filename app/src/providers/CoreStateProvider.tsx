@@ -67,7 +67,7 @@ export function coreStatePollFailureWarningMessage(failureCount: number): string
   if (failureCount <= 0) {
     return null;
   }
-  if (failureCount <= MAX_BOOTSTRAP_RETRIES) {
+  if (failureCount === 1) {
     return `[core-state] bootstrap poll failed (attempt ${failureCount}/${MAX_BOOTSTRAP_RETRIES}):`;
   }
   if (failureCount === SUPPRESS_POLL_WARNING_AT) {

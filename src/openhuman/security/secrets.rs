@@ -229,28 +229,82 @@ impl SecretStore {
                 }
                 msg
             })?;
-            let key = hex_decode(hex_key.trim()).context("Secret key file is corrupt")?;
-            anyhow::ensure!(
-                key.len() == KEY_LEN,
-                "Secret key file has wrong length: expected {KEY_LEN} bytes, got {}",
-                key.len()
-            );
+            let key = decode_key_hex(hex_key.trim())?;
             cache_key(&cache_key_path, &key);
             Ok(key)
         } else {
             let key = generate_random_key();
+            let hex_key = hex_encode(&key);
             if let Some(parent) = self.key_path.parent() {
                 fs::create_dir_all(parent)?;
             }
-            fs::write(&self.key_path, hex_encode(&key))
-                .context("Failed to write secret key file")?;
 
-            // Set restrictive permissions
+            // Write key file with restrictive permissions atomically on Unix
+            // to avoid a TOCTOU race where the file is briefly world-readable,
+            // and to avoid clobbering a key another process created first.
+            // See: src/core/auth.rs:write_token_file for the reference pattern.
             #[cfg(unix)]
             {
-                use std::os::unix::fs::PermissionsExt;
-                fs::set_permissions(&self.key_path, fs::Permissions::from_mode(0o600))
-                    .context("Failed to set key file permissions")?;
+                use std::io::Write as _;
+                use std::os::unix::fs::OpenOptionsExt as _;
+                let open_result = fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .mode(0o600)
+                    .open(&self.key_path);
+
+                match open_result {
+                    Ok(mut file) => {
+                        file.write_all(hex_key.as_bytes())
+                            .context("Failed to write secret key file")?;
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                        let existing_key = read_key_file_with_retry(&self.key_path)
+                            .with_context(|| {
+                                format!(
+                                    "Secret key file was created concurrently but could not be read at {}",
+                                    self.key_path.display()
+                                )
+                            })
+                            .and_then(|existing_hex| decode_key_hex(existing_hex.trim()))?;
+                        cache_key(&cache_key_path, &existing_key);
+                        return Ok(existing_key);
+                    }
+                    Err(error) => {
+                        return Err(error).context("Failed to create secret key file");
+                    }
+                }
+            }
+            #[cfg(not(unix))]
+            {
+                use std::io::Write as _;
+
+                let open_result = fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&self.key_path);
+
+                match open_result {
+                    Ok(mut file) => {
+                        file.write_all(hex_key.as_bytes())
+                            .context("Failed to write secret key file")?;
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                        let existing_key = read_key_file_with_retry(&self.key_path)
+                            .with_context(|| {
+                                format!(
+                                    "Secret key file was created concurrently but could not be read at {}",
+                                    self.key_path.display()
+                                )
+                            })
+                            .and_then(|existing_hex| decode_key_hex(existing_hex.trim()))?;
+                        cache_key(&cache_key_path, &existing_key);
+                        return Ok(existing_key);
+                    }
+                    Err(error) => {
+                        return Err(error).context("Failed to create secret key file");
+                    }
+                }
             }
             #[cfg(windows)]
             {
@@ -500,6 +554,16 @@ fn xor_cipher(data: &[u8], key: &[u8]) -> Vec<u8> {
 /// without the fixed version/variant bits that UUID v4 introduces.
 fn generate_random_key() -> Vec<u8> {
     ChaCha20Poly1305::generate_key(&mut OsRng).to_vec()
+}
+
+fn decode_key_hex(hex_key: &str) -> Result<Vec<u8>> {
+    let key = hex_decode(hex_key).context("Secret key file is corrupt")?;
+    anyhow::ensure!(
+        key.len() == KEY_LEN,
+        "Secret key file has wrong length: expected {KEY_LEN} bytes, got {}",
+        key.len()
+    );
+    Ok(key)
 }
 
 /// Hex-encode bytes to a lowercase hex string.

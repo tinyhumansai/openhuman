@@ -441,3 +441,166 @@ async fn upsert_document_metadata_only_rejects_secret_like_key() {
         .expect_err("secret-like key should be rejected");
     assert!(err.contains("cannot contain secrets"));
 }
+
+// ---------------------------------------------------------------------------
+// Personal-identifier (PII) rejection at the namespace/key boundary.
+//
+// Mirrors the secret-like rejection tests above, exercising the
+// `safety::pii::has_likely_pii` early-return branches added to
+// `kv_set_global`, `kv_set_namespace`, `upsert_document`, and
+// `upsert_document_metadata_only`. Each branch returns the
+// `"cannot contain personal identifiers"` error.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn kv_set_global_rejects_pii_like_key() {
+    let tmp = TempDir::new().unwrap();
+    let memory = UnifiedMemory::new(tmp.path(), Arc::new(NoopEmbedding), None).unwrap();
+
+    let err = memory
+        .kv_set_global("ssn-123-45-6789", &json!({"value": "ok"}))
+        .await
+        .expect_err("PII-like global key should be rejected");
+    assert!(
+        err.contains("cannot contain personal identifiers"),
+        "unexpected error: {err}"
+    );
+}
+
+#[tokio::test]
+async fn kv_set_namespace_rejects_pii_like_key() {
+    let tmp = TempDir::new().unwrap();
+    let memory = UnifiedMemory::new(tmp.path(), Arc::new(NoopEmbedding), None).unwrap();
+
+    let err = memory
+        .kv_set_namespace("safe", "ssn-123-45-6789", &json!({"value": "ok"}))
+        .await
+        .expect_err("PII-like key should be rejected");
+    assert!(
+        err.contains("cannot contain personal identifiers"),
+        "unexpected error: {err}"
+    );
+}
+
+#[tokio::test]
+async fn kv_set_namespace_rejects_pii_like_namespace() {
+    let tmp = TempDir::new().unwrap();
+    let memory = UnifiedMemory::new(tmp.path(), Arc::new(NoopEmbedding), None).unwrap();
+
+    let err = memory
+        .kv_set_namespace("user/111.444.777-35", "safe-key", &json!({"value": "ok"}))
+        .await
+        .expect_err("PII-like namespace should be rejected");
+    assert!(
+        err.contains("cannot contain personal identifiers"),
+        "unexpected error: {err}"
+    );
+}
+
+#[tokio::test]
+async fn upsert_document_rejects_pii_like_key() {
+    let tmp = TempDir::new().unwrap();
+    let memory = UnifiedMemory::new(tmp.path(), Arc::new(NoopEmbedding), None).unwrap();
+
+    let err = memory
+        .upsert_document(NamespaceDocumentInput {
+            namespace: "safe".to_string(),
+            key: "cuit-20-11111111-2".to_string(),
+            title: "Title".to_string(),
+            content: "Body".to_string(),
+            source_type: "doc".to_string(),
+            priority: "medium".to_string(),
+            tags: vec![],
+            metadata: json!({}),
+            category: "core".to_string(),
+            session_id: None,
+            document_id: None,
+        })
+        .await
+        .expect_err("PII-like key should be rejected");
+    assert!(
+        err.contains("cannot contain personal identifiers"),
+        "unexpected error: {err}"
+    );
+}
+
+#[tokio::test]
+async fn upsert_document_rejects_pii_like_namespace() {
+    let tmp = TempDir::new().unwrap();
+    let memory = UnifiedMemory::new(tmp.path(), Arc::new(NoopEmbedding), None).unwrap();
+
+    let err = memory
+        .upsert_document(NamespaceDocumentInput {
+            namespace: "cliente-RFC-VECJ880326XK4".to_string(),
+            key: "k1".to_string(),
+            title: "Title".to_string(),
+            content: "Body".to_string(),
+            source_type: "doc".to_string(),
+            priority: "medium".to_string(),
+            tags: vec![],
+            metadata: json!({}),
+            category: "core".to_string(),
+            session_id: None,
+            document_id: None,
+        })
+        .await
+        .expect_err("PII-like namespace should be rejected");
+    assert!(
+        err.contains("cannot contain personal identifiers"),
+        "unexpected error: {err}"
+    );
+}
+
+#[tokio::test]
+async fn upsert_document_metadata_only_rejects_pii_like_key() {
+    let tmp = TempDir::new().unwrap();
+    let memory = UnifiedMemory::new(tmp.path(), Arc::new(NoopEmbedding), None).unwrap();
+
+    let err = memory
+        .upsert_document_metadata_only(NamespaceDocumentInput {
+            namespace: "safe".to_string(),
+            key: "ssn-123-45-6789".to_string(),
+            title: "Title".to_string(),
+            content: "Body".to_string(),
+            source_type: "doc".to_string(),
+            priority: "medium".to_string(),
+            tags: vec![],
+            metadata: json!({}),
+            category: "core".to_string(),
+            session_id: None,
+            document_id: None,
+        })
+        .await
+        .expect_err("PII-like key should be rejected");
+    assert!(
+        err.contains("cannot contain personal identifiers"),
+        "unexpected error: {err}"
+    );
+}
+
+#[tokio::test]
+async fn upsert_document_metadata_only_rejects_pii_like_namespace() {
+    let tmp = TempDir::new().unwrap();
+    let memory = UnifiedMemory::new(tmp.path(), Arc::new(NoopEmbedding), None).unwrap();
+
+    let err = memory
+        .upsert_document_metadata_only(NamespaceDocumentInput {
+            namespace: "user/111.444.777-35".to_string(),
+            key: "safe-key".to_string(),
+            title: "Title".to_string(),
+            content: "Body".to_string(),
+            source_type: "doc".to_string(),
+            priority: "medium".to_string(),
+            tags: vec![],
+            metadata: json!({}),
+            category: "core".to_string(),
+            session_id: None,
+            document_id: None,
+        })
+        .await
+        .expect_err("PII-like namespace should be rejected");
+    assert!(
+        err.contains("cannot contain personal identifiers"),
+        "unexpected error: {err}"
+    );
+}

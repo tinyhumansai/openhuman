@@ -41,26 +41,52 @@ const CONFIG_LOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(
 pub async fn load_config_with_timeout() -> Result<Config, String> {
     match tokio::time::timeout(CONFIG_LOAD_TIMEOUT, Config::load_or_init()).await {
         Ok(Ok(mut config)) => {
-            // [#1123] Normalize legacy configs at load time: existing users who
-            // completed onboarding before the Joyride migration may have
-            // onboarding_completed=true but chat_onboarding_completed=false.
-            // Without this, pick_target_agent_id() still routes them to the
-            // welcome agent on every chat message.
-            if config.onboarding_completed && !config.chat_onboarding_completed {
-                tracing::info!(
-                    "[config] normalizing legacy onboarding state: setting \
-                     chat_onboarding_completed=true (Joyride migration)"
-                );
-                config.chat_onboarding_completed = true;
-                // Best-effort persist — don't fail the load if save errors.
-                if let Err(e) = config.save().await {
-                    tracing::warn!("[config] failed to persist onboarding normalization: {e}");
-                }
-            }
+            normalize_loaded_config(&mut config).await;
             Ok(config)
         }
         Ok(Err(e)) => Err(e.to_string()),
         Err(_) => Err("Config loading timed out".to_string()),
+    }
+}
+
+/// Reloads the config file represented by an existing runtime snapshot.
+///
+/// Use this for long-lived objects that need fresh config values while
+/// staying anchored to their original user/workspace. Unlike
+/// [`load_config_with_timeout`], this does not re-resolve the process-global
+/// `OPENHUMAN_WORKSPACE` env var on every call.
+pub async fn reload_config_snapshot_with_timeout(snapshot: &Config) -> Result<Config, String> {
+    match tokio::time::timeout(
+        CONFIG_LOAD_TIMEOUT,
+        Config::load_from_config_path(&snapshot.config_path, &snapshot.workspace_dir),
+    )
+    .await
+    {
+        Ok(Ok(mut config)) => {
+            normalize_loaded_config(&mut config).await;
+            Ok(config)
+        }
+        Ok(Err(e)) => Err(e.to_string()),
+        Err(_) => Err("Config loading timed out".to_string()),
+    }
+}
+
+async fn normalize_loaded_config(config: &mut Config) {
+    // [#1123] Normalize legacy configs at load time: existing users who
+    // completed onboarding before the Joyride migration may have
+    // onboarding_completed=true but chat_onboarding_completed=false.
+    // Without this, pick_target_agent_id() still routes them to the
+    // welcome agent on every chat message.
+    if config.onboarding_completed && !config.chat_onboarding_completed {
+        tracing::info!(
+            "[config] normalizing legacy onboarding state: setting \
+             chat_onboarding_completed=true (Joyride migration)"
+        );
+        config.chat_onboarding_completed = true;
+        // Best-effort persist — don't fail the load if save errors.
+        if let Err(e) = config.save().await {
+            tracing::warn!("[config] failed to persist onboarding normalization: {e}");
+        }
     }
 }
 
@@ -392,6 +418,9 @@ pub struct RuntimeFlagsOut {
     pub log_prompts: bool,
 }
 
+const BROWSER_ALLOW_ALL_ENV: &str = "OPENHUMAN_BROWSER_ALLOW_ALL";
+const BROWSER_ALLOW_ALL_RPC_ENABLE_ENV: &str = "OPENHUMAN_BROWSER_ALLOW_ALL_RPC_ENABLE";
+
 /// Returns a full configuration snapshot for the UI.
 pub async fn get_config_snapshot(config: &Config) -> Result<RpcOutcome<serde_json::Value>, String> {
     let snapshot = snapshot_config_json(config)?;
@@ -432,11 +461,22 @@ pub async fn apply_model_settings(
         };
     }
     if let Some(model) = update.default_model {
-        config.default_model = if model.trim().is_empty() {
+        let trimmed = model.trim();
+        config.default_model = if trimmed.is_empty() {
             None
         } else {
-            Some(model)
+            Some(trimmed.to_string())
         };
+        if let Some(ref m) = config.default_model {
+            if !crate::openhuman::inference::provider::factory::is_known_openhuman_tier(m) {
+                log::warn!(
+                    "[config][model-settings] default_model '{}' is not a recognized \
+                     OpenHuman backend tier — it will be replaced with the platform \
+                     default at inference time.",
+                    m
+                );
+            }
+        }
     }
     if let Some(temp) = update.default_temperature {
         config.default_temperature = temp;
@@ -895,13 +935,14 @@ pub async fn workspace_onboarding_flag_resolve(
 
 /// Returns the current state of runtime-only flags.
 pub fn get_runtime_flags() -> RpcOutcome<RuntimeFlagsOut> {
-    RpcOutcome::single_log(
-        RuntimeFlagsOut {
-            browser_allow_all: env_flag_enabled("OPENHUMAN_BROWSER_ALLOW_ALL"),
-            log_prompts: env_flag_enabled("OPENHUMAN_LOG_PROMPTS"),
-        },
-        "runtime flags read",
-    )
+    RpcOutcome::single_log(runtime_flags(), "runtime flags read")
+}
+
+fn runtime_flags() -> RuntimeFlagsOut {
+    RuntimeFlagsOut {
+        browser_allow_all: env_flag_enabled(BROWSER_ALLOW_ALL_ENV),
+        log_prompts: env_flag_enabled("OPENHUMAN_LOG_PROMPTS"),
+    }
 }
 
 /// Updates the `OPENHUMAN_BROWSER_ALLOW_ALL` environment flag.
@@ -914,18 +955,32 @@ pub fn get_runtime_flags() -> RpcOutcome<RuntimeFlagsOut> {
 ///
 /// `is_private_host` checks still apply to the resolved IP, so this
 /// flag does not unlock loopback / RFC1918 destinations.
-pub fn set_browser_allow_all(enabled: bool) -> RpcOutcome<RuntimeFlagsOut> {
-    let was_enabled = env_flag_enabled("OPENHUMAN_BROWSER_ALLOW_ALL");
-    if enabled {
-        std::env::set_var("OPENHUMAN_BROWSER_ALLOW_ALL", "1");
-    } else {
-        std::env::remove_var("OPENHUMAN_BROWSER_ALLOW_ALL");
+pub fn set_browser_allow_all(enabled: bool) -> Result<RpcOutcome<RuntimeFlagsOut>, String> {
+    if enabled && !env_flag_enabled(BROWSER_ALLOW_ALL_RPC_ENABLE_ENV) {
+        tracing::warn!(
+            "[SECURITY] refused browser allow-all enable via RPC: \
+             set {BROWSER_ALLOW_ALL_ENV}=1 at startup or explicitly set \
+             {BROWSER_ALLOW_ALL_RPC_ENABLE_ENV}=1 before using the runtime toggle"
+        );
+        return Err(format!(
+            "Refusing to enable {BROWSER_ALLOW_ALL_ENV} via RPC. Start OpenHuman with \
+             {BROWSER_ALLOW_ALL_ENV}=1, or set {BROWSER_ALLOW_ALL_RPC_ENABLE_ENV}=1 for an \
+             explicit operator-approved runtime override."
+        ));
     }
-    let now_enabled = env_flag_enabled("OPENHUMAN_BROWSER_ALLOW_ALL");
-    let flags = RuntimeFlagsOut {
-        browser_allow_all: now_enabled,
-        log_prompts: env_flag_enabled("OPENHUMAN_LOG_PROMPTS"),
-    };
+
+    let was_enabled = env_flag_enabled(BROWSER_ALLOW_ALL_ENV);
+    if enabled {
+        unsafe {
+            std::env::set_var(BROWSER_ALLOW_ALL_ENV, "1");
+        }
+    } else {
+        unsafe {
+            std::env::remove_var(BROWSER_ALLOW_ALL_ENV);
+        }
+    }
+    let flags = runtime_flags();
+    let now_enabled = flags.browser_allow_all;
 
     if was_enabled != now_enabled {
         if now_enabled {
@@ -947,7 +1002,7 @@ pub fn set_browser_allow_all(enabled: bool) -> RpcOutcome<RuntimeFlagsOut> {
     } else {
         "[SECURITY] browser allow-all flag set to disabled"
     };
-    RpcOutcome::single_log(flags, log_msg)
+    Ok(RpcOutcome::single_log(flags, log_msg))
 }
 
 /// Checks if a specific onboarding flag file exists in the workspace.

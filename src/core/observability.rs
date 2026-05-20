@@ -193,13 +193,10 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
 /// Detect **app-session-expired** boundary errors that bubble up from any
 /// backend-touching call site (agent, web channel, cron, integrations).
 ///
-/// Deliberately stricter than the dispatch-site classifier in
-/// [`crate::core::jsonrpc`]: the dispatch-site predicate matches a generic
-/// "401 + unauthorized" pair to trigger token cleanup on *any* 401 (even an
-/// OpenAI / Anthropic BYO-key 401 that means a misconfigured key — see
-/// `providers::ops::api_error`). Replicating that loose match here would
-/// silence BYO-key configuration errors at the agent layer, where they
-/// *are* actionable and should reach Sentry as errors.
+/// This is also the JSON-RPC dispatch-site classifier. Keep it stricter than
+/// a bare "401 + unauthorized" pair: OpenAI / Anthropic BYO-key failures,
+/// Composio scope failures, and channel-provider 401s are actionable scoped
+/// errors, not proof that the user's OpenHuman app session expired.
 ///
 /// The canonical OpenHuman session-expired wire shapes:
 ///
@@ -217,13 +214,9 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
 ///   stored profile is empty (`#1465`-ish onboarding spam) or has been
 ///   cleared by a previous 401 cycle. Both shapes are OpenHuman-specific.
 ///
-/// At the JSON-RPC dispatch boundary the looser classifier in
-/// `crate::core::jsonrpc::is_session_expired_error` keeps its existing
-/// generic "401 + unauthorized" match so token cleanup + `DomainEvent::SessionExpired`
-/// publish still fires for every 401. Adding the demote here therefore does
-/// **not** silence the auto-cleanup teardown — it only stops the duplicate
-/// per-attempt error event that escaped via `report_error_or_expected` from
-/// the agent / web-channel layers (OPENHUMAN-TAURI-26).
+/// At the JSON-RPC dispatch boundary the same strict match controls
+/// `DomainEvent::SessionExpired` publication, so downstream/provider 401s stay
+/// recoverable and do not clear the stored app session.
 pub fn is_session_expired_message(msg: &str) -> bool {
     let lower = msg.to_ascii_lowercase();
     lower.contains("session expired")
@@ -296,15 +289,34 @@ fn is_loopback_unavailable(lower: &str) -> bool {
 /// through [`is_loopback_unavailable`] *before* this matcher so the
 /// boot-window race against the embedded core keeps its own bucket — see
 /// the precedence comment in [`expected_error_kind`].
+///
+/// Three additional substrings cover wire-shape variants observed in
+/// Wave 4 that the original `"dns error"` / status-code matchers miss:
+///
+/// - `"failed to lookup address"` / `"nodename nor servname"` —
+///   `getaddrinfo()` failure renderings on macOS / BSD libc and POSIX
+///   resolvers (`OPENHUMAN-TAURI-44` ~50 events,
+///   `[socket] Connection failed: WebSocket connect: IO error: failed to
+///   lookup address information: nodename nor servname provided, or not
+///   known`).
+/// - `"http error: 200 ok"` — tungstenite's `WsError::Http(200)` render
+///   when a corporate proxy / captive portal intercepts the WebSocket
+///   handshake and returns a plain HTML 200 page (`OPENHUMAN-TAURI-4P`
+///   ~66 events). Tungstenite-only — reqwest renders HTTP 200 as
+///   `"HTTP status server error (200)"`, so this can't collide with the
+///   regular HTTP call path.
 fn is_network_unreachable_message(lower: &str) -> bool {
     lower.contains("error sending request for url")
         || lower.contains("dns error")
+        || lower.contains("failed to lookup address")
+        || lower.contains("nodename nor servname")
         || lower.contains("connection refused")
         || lower.contains("connection reset")
         || lower.contains("network is unreachable")
         || lower.contains("no route to host")
         || lower.contains("tls handshake")
         || lower.contains("certificate verify failed")
+        || lower.contains("http error: 200 ok")
 }
 
 /// Detect transient upstream HTTP failures that have bubbled up out of the
@@ -1095,6 +1107,48 @@ pub fn is_budget_event(event: &sentry::protocol::Event<'_>) -> bool {
     event_contains_budget_exhausted_message(event)
 }
 
+/// 404 on PATCH/DELETE to a channel-message path is an expected backend state
+/// (user deleted the message provider-side, backend GC'd the relay row). The
+/// primary suppression lives in `authed_json` via `parse_message_path` +
+/// defense-in-depth inline check. This filter is the outermost safety net for
+/// any future call site that bypasses both. Targets OPENHUMAN-TAURI-R7.
+///
+/// Match criteria (all required):
+/// - tag `domain == "backend_api"`
+/// - tag `failure == "non_2xx"`
+/// - tag `status == "404"`
+/// - tag `method == "PATCH"` or `"DELETE"`
+/// - event message or exception value contains both `"/channels/"` and `"/messages/"`
+pub fn is_channel_message_not_found_event(event: &sentry::protocol::Event<'_>) -> bool {
+    let tags = &event.tags;
+    if tags.get("domain").map(String::as_str) != Some("backend_api") {
+        return false;
+    }
+    if tags.get("failure").map(String::as_str) != Some("non_2xx") {
+        return false;
+    }
+    if tags.get("status").map(String::as_str) != Some("404") {
+        return false;
+    }
+    let method = tags.get("method").map(String::as_str).unwrap_or("");
+    if method != "PATCH" && method != "DELETE" {
+        return false;
+    }
+    event_contains_channel_message_path(event)
+}
+
+fn event_contains_channel_message_path(event: &sentry::protocol::Event<'_>) -> bool {
+    let has_pattern = |s: &str| s.contains("/channels/") && s.contains("/messages/");
+    if event.message.as_deref().is_some_and(has_pattern) {
+        return true;
+    }
+    event
+        .exception
+        .values
+        .iter()
+        .any(|exc| exc.value.as_deref().is_some_and(has_pattern))
+}
+
 fn event_contains_budget_exhausted_message(event: &sentry::protocol::Event<'_>) -> bool {
     if event
         .message
@@ -1239,6 +1293,51 @@ mod tests {
         );
         assert_eq!(
             expected_error_kind("OpenAI API error (500): internal server error"),
+            None
+        );
+    }
+
+    #[test]
+    fn classifies_wave4_socket_transport_wire_shapes() {
+        // OPENHUMAN-TAURI-44 (~50 events): libc `getaddrinfo()` rendering
+        // without the `dns error` token, wrapped by the socket emit site.
+        // The Wave 4 matcher arms catch the literal resolver phrases that
+        // the original `dns error` substring would miss when reqwest's
+        // wrapper isn't in the chain (e.g. tungstenite IO errors).
+        assert_eq!(
+            expected_error_kind(
+                "[socket] Connection failed (sustained outage after 5 attempts): \
+                 WebSocket connect: IO error: failed to lookup address information: \
+                 nodename nor servname provided, or not known"
+            ),
+            Some(ExpectedErrorKind::NetworkUnreachable)
+        );
+
+        // OPENHUMAN-TAURI-4P (~66 events): tungstenite renders a captive
+        // portal / corporate proxy that intercepts the WS handshake as
+        // `WsError::Http(200)` → `"HTTP error: 200 OK"`. Classify as
+        // network-unreachable since no amount of app-side retry can pierce
+        // an intercepting proxy.
+        assert_eq!(
+            expected_error_kind(
+                "[socket] Connection failed (sustained outage after 5 attempts): \
+                 WebSocket connect: HTTP error: 200 OK"
+            ),
+            Some(ExpectedErrorKind::NetworkUnreachable)
+        );
+    }
+
+    #[test]
+    fn http_200_classifier_does_not_silence_unrelated_log_lines() {
+        // The captive-portal arm anchors on `"http error: 200 ok"` (the
+        // exact tungstenite `WsError::Http(200)` Display rendering).
+        // Adjacent non-WebSocket log lines that mention `"HTTP/1.1 200 OK"`
+        // or `"status: 200 OK"` MUST NOT classify — those are normal-flow
+        // success traces, not failure events. Pin this precedence so a
+        // future refactor doesn't broaden the substring.
+        assert_eq!(expected_error_kind("HTTP/1.1 200 OK"), None);
+        assert_eq!(
+            expected_error_kind("upstream returned status: 200 OK after retry"),
             None
         );
     }
@@ -1995,10 +2094,9 @@ mod tests {
         // to fix in settings. It must reach Sentry as an error and must
         // NOT be classified as session-expired at the agent layer — the
         // strict classifier requires the OpenHuman backend's
-        // "session expired" body to anchor the match. The dispatch-site
-        // classifier (`crate::core::jsonrpc::is_session_expired_error`)
-        // still matches these for the `DomainEvent::SessionExpired`
-        // auto-cleanup path, which clears stale local state defensively.
+        // "session expired" body to anchor the match. The JSON-RPC
+        // dispatch-site classifier uses the same strict rule so these
+        // scoped provider failures never clear the app session either.
         for raw in [
             "OpenAI API error (401 Unauthorized): invalid_api_key",
             "Anthropic API error (401 Unauthorized): authentication_error",
@@ -2546,6 +2644,83 @@ mod tests {
         assert!(!is_max_iterations_event(&event_with_message("")));
         assert!(!is_max_iterations_event(&sentry::protocol::Event::default()));
     }
+
+    // ── is_channel_message_not_found_event (TAURI-R7) ────────────────────────
+
+    fn channel_message_404_event(method: &str) -> sentry::protocol::Event<'static> {
+        let mut event = sentry::protocol::Event::default();
+        event.tags.insert("domain".into(), "backend_api".into());
+        event.tags.insert("failure".into(), "non_2xx".into());
+        event.tags.insert("status".into(), "404".into());
+        event.tags.insert("method".into(), method.into());
+        event.message = Some(
+            "PATCH /channels/telegram/messages/1103 failed (404); response_body_len=172"
+                .to_string(),
+        );
+        event
+    }
+
+    #[test]
+    fn channel_message_not_found_filter_matches_patch() {
+        // Canonical TAURI-R7 shape: PATCH 404 on a channel-message path.
+        assert!(is_channel_message_not_found_event(
+            &channel_message_404_event("PATCH")
+        ));
+    }
+
+    #[test]
+    fn channel_message_not_found_filter_matches_delete() {
+        assert!(is_channel_message_not_found_event(
+            &channel_message_404_event("DELETE")
+        ));
+    }
+
+    #[test]
+    fn channel_message_not_found_filter_ignores_get_404() {
+        // GET 404 on a channel-message path is NOT an expected state — must keep Sentry signal.
+        assert!(!is_channel_message_not_found_event(
+            &channel_message_404_event("GET")
+        ));
+    }
+
+    #[test]
+    fn channel_message_not_found_filter_ignores_non_channel_path() {
+        let mut event = channel_message_404_event("PATCH");
+        event.message = Some("PATCH /auth/profile failed (404); response_body_len=42".to_string());
+        assert!(!is_channel_message_not_found_event(&event));
+    }
+
+    #[test]
+    fn channel_message_not_found_filter_ignores_wrong_status() {
+        let mut event = channel_message_404_event("PATCH");
+        event.tags.insert("status".into(), "403".into());
+        assert!(!is_channel_message_not_found_event(&event));
+    }
+
+    #[test]
+    fn channel_message_not_found_filter_ignores_wrong_domain() {
+        let mut event = channel_message_404_event("PATCH");
+        event.tags.insert("domain".into(), "channels".into());
+        assert!(!is_channel_message_not_found_event(&event));
+    }
+
+    #[test]
+    fn channel_message_not_found_filter_matches_exception_path() {
+        // sentry-tracing with attach_stacktrace=true populates exception list.
+        let mut event = sentry::protocol::Event::default();
+        event.tags.insert("domain".into(), "backend_api".into());
+        event.tags.insert("failure".into(), "non_2xx".into());
+        event.tags.insert("status".into(), "404".into());
+        event.tags.insert("method".into(), "PATCH".into());
+        event.exception = vec![sentry::protocol::Exception {
+            value: Some("PATCH /channels/discord/messages/abc failed (404): Not Found".to_string()),
+            ..Default::default()
+        }]
+        .into();
+        assert!(is_channel_message_not_found_event(&event));
+    }
+
+    // ── LoopbackUnavailable (TAURI-R5, TAURI-R6) ─────────────────────────────
 
     /// Verbatim body shape from OPENHUMAN-TAURI-R5 (~2.5k events): the
     /// `integrations.get` site reaches the embedded core's `127.0.0.1:18474`
