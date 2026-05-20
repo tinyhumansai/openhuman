@@ -55,6 +55,50 @@ fn agent_failure_copy_mentions_retry_reporting_and_discord() {
 }
 
 #[test]
+fn cron_alert_body_rewrites_morning_briefing_failure() {
+    let mut job = test_job("");
+    job.job_type = JobType::Agent;
+    job.name = Some("morning_briefing".into());
+    job.agent_id = Some("morning_briefing".into());
+
+    let body = cron_alert_body(&job, AGENT_JOB_USER_FAILURE_MESSAGE);
+
+    assert_eq!(body, MORNING_BRIEFING_FAILURE_NOTIFICATION);
+    assert!(!body.contains("Something went wrong"));
+    assert!(!body.contains("<openhuman-link"));
+}
+
+#[test]
+fn cron_alert_body_strips_openhuman_link_markup() {
+    let job = test_job("");
+    let body = cron_alert_body(
+        &job,
+        "Read <openhuman-link path=\"settings/notifications\">notification settings</openhuman-link> before tomorrow.",
+    );
+
+    assert_eq!(body, "Read notification settings before tomorrow.");
+    assert!(!body.contains("<openhuman-link"));
+}
+
+#[tokio::test]
+async fn push_cron_alert_deduplicates_repeated_morning_briefing_failures() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp).await;
+    let mut job = test_job("");
+    job.job_type = JobType::Agent;
+    job.name = Some("morning_briefing".into());
+    job.agent_id = Some("morning_briefing".into());
+
+    push_cron_alert(&config, &job, AGENT_JOB_USER_FAILURE_MESSAGE);
+    push_cron_alert(&config, &job, AGENT_JOB_USER_FAILURE_MESSAGE);
+
+    let items =
+        crate::openhuman::notifications::store::list(&config, 10, 0, Some("cron"), None).unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].body, MORNING_BRIEFING_FAILURE_NOTIFICATION);
+}
+
+#[test]
 fn agent_session_target_tag_matches_expected_values() {
     assert_eq!(agent_session_target_tag(&SessionTarget::Main), "main");
     assert_eq!(

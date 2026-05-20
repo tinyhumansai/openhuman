@@ -83,7 +83,11 @@ impl Tool for MemoryTreeTool {
                 },
                 "time_window_days": {
                     "type": "integer",
-                    "description": "query_source/query_global: look-back window in days."
+                    "description": "query_source/query_topic: look-back window in days. query_global also accepts this as a compatibility alias."
+                },
+                "window_days": {
+                    "type": "integer",
+                    "description": "query_global: look-back window in days."
                 },
                 // drill_down params
                 "node_id": {
@@ -195,6 +199,17 @@ mod memory_tree_dispatcher_tests {
         assert!(modes.contains(&"drill_down"));
         assert!(modes.contains(&"fetch_leaves"));
         assert!(modes.contains(&"ingest_document"));
+    }
+
+    #[test]
+    fn memory_tree_schema_exposes_global_window_days() {
+        let schema = MemoryTreeTool.parameters_schema();
+        let properties = schema
+            .get("properties")
+            .and_then(|p| p.as_object())
+            .unwrap();
+        assert!(properties.contains_key("window_days"));
+        assert!(properties.contains_key("time_window_days"));
     }
 
     #[tokio::test]

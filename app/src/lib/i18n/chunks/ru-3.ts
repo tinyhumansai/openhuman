@@ -33,6 +33,14 @@ const ru3: TranslationMap = {
   'workspace.building': 'Построение...',
   'workspace.buildSummaryTrees': 'Построить деревья суммаризации',
   'workspace.viewVault': 'Открыть хранилище',
+  'workspace.openingVaultTitle': 'Opening vault in Obsidian',
+  'workspace.openingVaultMessage':
+    "If Obsidian doesn't open, install it from obsidian.md or use Reveal Folder. Vault path:",
+  'workspace.openVaultFailedTitle': "Couldn't open vault in Obsidian",
+  'workspace.openVaultFailedMessage':
+    'Use Reveal Folder to open the vault directory directly. Vault path:',
+  'workspace.revealVaultFailed': "Couldn't reveal vault folder",
+  'workspace.revealFolder': 'Reveal Folder',
   'workspace.graphLoadFailed': 'Не удалось загрузить граф памяти',
   'workspace.loadingGraph': 'Загрузка графа памяти...',
   'workspace.graphViewMode': 'Режим просмотра графа памяти',

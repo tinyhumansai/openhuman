@@ -128,11 +128,11 @@ impl EmbeddingProvider for OpenAiEmbedding {
                 target: "openai::embed",
                 "[openai] embed error: status={status}, body={text}"
             );
-            let message = format!("Embedding API error {status}: {text}");
-            // Route through the expected-error classifier so user-state
-            // conditions (budget exhausted / insufficient credits, missing
-            // API key, transient upstream HTTP) are demoted to info/warn
-            // breadcrumbs instead of spawning Sentry error events.
+            let message = format!("Embedding API error ({status}): {text}");
+            // Use `report_error_or_expected` so transient upstream HTTP failures
+            // (e.g. 429 Too Many Requests, which the memory_tree job runner
+            // already retries with backoff) log a warning breadcrumb instead of
+            // firing a Sentry error event per attempt.
             crate::core::observability::report_error_or_expected(
                 message.as_str(),
                 "embeddings",

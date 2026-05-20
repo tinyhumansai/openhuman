@@ -84,6 +84,7 @@ pub async fn query_source_rpc(
 /// Request body for `memory_tree_query_global`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct QueryGlobalRequest {
+    #[serde(alias = "time_window_days")]
     pub window_days: u32,
 }
 
@@ -419,6 +420,16 @@ mod tests {
             "log: {}",
             outcome.logs[0]
         );
+    }
+
+    #[test]
+    fn query_global_request_accepts_consolidated_time_window_alias() {
+        let req: QueryGlobalRequest = serde_json::from_value(serde_json::json!({
+            "time_window_days": 7
+        }))
+        .expect("time_window_days alias should deserialize");
+
+        assert_eq!(req.window_days, 7);
     }
 
     // ── query_topic_rpc ───────────────────────────────────────────────

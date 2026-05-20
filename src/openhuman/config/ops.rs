@@ -41,26 +41,52 @@ const CONFIG_LOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(
 pub async fn load_config_with_timeout() -> Result<Config, String> {
     match tokio::time::timeout(CONFIG_LOAD_TIMEOUT, Config::load_or_init()).await {
         Ok(Ok(mut config)) => {
-            // [#1123] Normalize legacy configs at load time: existing users who
-            // completed onboarding before the Joyride migration may have
-            // onboarding_completed=true but chat_onboarding_completed=false.
-            // Without this, pick_target_agent_id() still routes them to the
-            // welcome agent on every chat message.
-            if config.onboarding_completed && !config.chat_onboarding_completed {
-                tracing::info!(
-                    "[config] normalizing legacy onboarding state: setting \
-                     chat_onboarding_completed=true (Joyride migration)"
-                );
-                config.chat_onboarding_completed = true;
-                // Best-effort persist — don't fail the load if save errors.
-                if let Err(e) = config.save().await {
-                    tracing::warn!("[config] failed to persist onboarding normalization: {e}");
-                }
-            }
+            normalize_loaded_config(&mut config).await;
             Ok(config)
         }
         Ok(Err(e)) => Err(e.to_string()),
         Err(_) => Err("Config loading timed out".to_string()),
+    }
+}
+
+/// Reloads the config file represented by an existing runtime snapshot.
+///
+/// Use this for long-lived objects that need fresh config values while
+/// staying anchored to their original user/workspace. Unlike
+/// [`load_config_with_timeout`], this does not re-resolve the process-global
+/// `OPENHUMAN_WORKSPACE` env var on every call.
+pub async fn reload_config_snapshot_with_timeout(snapshot: &Config) -> Result<Config, String> {
+    match tokio::time::timeout(
+        CONFIG_LOAD_TIMEOUT,
+        Config::load_from_config_path(&snapshot.config_path, &snapshot.workspace_dir),
+    )
+    .await
+    {
+        Ok(Ok(mut config)) => {
+            normalize_loaded_config(&mut config).await;
+            Ok(config)
+        }
+        Ok(Err(e)) => Err(e.to_string()),
+        Err(_) => Err("Config loading timed out".to_string()),
+    }
+}
+
+async fn normalize_loaded_config(config: &mut Config) {
+    // [#1123] Normalize legacy configs at load time: existing users who
+    // completed onboarding before the Joyride migration may have
+    // onboarding_completed=true but chat_onboarding_completed=false.
+    // Without this, pick_target_agent_id() still routes them to the
+    // welcome agent on every chat message.
+    if config.onboarding_completed && !config.chat_onboarding_completed {
+        tracing::info!(
+            "[config] normalizing legacy onboarding state: setting \
+             chat_onboarding_completed=true (Joyride migration)"
+        );
+        config.chat_onboarding_completed = true;
+        // Best-effort persist — don't fail the load if save errors.
+        if let Err(e) = config.save().await {
+            tracing::warn!("[config] failed to persist onboarding normalization: {e}");
+        }
     }
 }
 
@@ -432,11 +458,22 @@ pub async fn apply_model_settings(
         };
     }
     if let Some(model) = update.default_model {
-        config.default_model = if model.trim().is_empty() {
+        let trimmed = model.trim();
+        config.default_model = if trimmed.is_empty() {
             None
         } else {
-            Some(model)
+            Some(trimmed.to_string())
         };
+        if let Some(ref m) = config.default_model {
+            if !crate::openhuman::inference::provider::factory::is_known_openhuman_tier(m) {
+                log::warn!(
+                    "[config][model-settings] default_model '{}' is not a recognized \
+                     OpenHuman backend tier — it will be replaced with the platform \
+                     default at inference time.",
+                    m
+                );
+            }
+        }
     }
     if let Some(temp) = update.default_temperature {
         config.default_temperature = temp;

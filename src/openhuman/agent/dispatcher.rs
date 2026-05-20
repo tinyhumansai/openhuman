@@ -48,6 +48,12 @@ pub trait ToolDispatcher: Send + Sync {
     /// Provide instructions for the system prompt on how the model should call tools.
     fn prompt_instructions(&self, tools: &[Box<dyn Tool>]) -> String;
 
+    /// Provide instructions from already-filtered tool specs when a dispatcher
+    /// embeds the tool catalogue in its prompt protocol.
+    fn prompt_instructions_for_specs(&self, _specs: &[ToolSpec]) -> Option<String> {
+        None
+    }
+
     /// Convert internal conversation history into provider-specific messages.
     fn to_provider_messages(&self, history: &[ConversationMessage]) -> Vec<ChatMessage>;
 
@@ -116,26 +122,12 @@ impl ToolDispatcher for XmlToolDispatcher {
     }
 
     fn prompt_instructions(&self, tools: &[Box<dyn Tool>]) -> String {
-        let mut instructions = String::new();
-        instructions.push_str("## Tool Use Protocol\n\n");
-        instructions
-            .push_str("To use a tool, wrap a JSON object in <tool_call></tool_call> tags:\n\n");
-        instructions.push_str(
-            "```\n<tool_call>\n{\"name\": \"tool_name\", \"arguments\": {\"param\": \"value\"}}\n</tool_call>\n```\n\n",
-        );
-        instructions.push_str("### Available Tools\n\n");
+        let specs = Self::tool_specs(tools);
+        Self::prompt_instructions_from_specs(&specs)
+    }
 
-        for tool in tools {
-            let _ = writeln!(
-                instructions,
-                "- **{}**: {}\n  Parameters: `{}`",
-                tool.name(),
-                tool.description(),
-                tool.parameters_schema()
-            );
-        }
-
-        instructions
+    fn prompt_instructions_for_specs(&self, specs: &[ToolSpec]) -> Option<String> {
+        Some(Self::prompt_instructions_from_specs(specs))
     }
 
     fn to_provider_messages(&self, history: &[ConversationMessage]) -> Vec<ChatMessage> {
@@ -162,7 +154,32 @@ impl ToolDispatcher for XmlToolDispatcher {
     }
 
     fn should_send_tool_specs(&self) -> bool {
+        // XML dispatcher embeds tool schemas in prompt text instead of
+        // sending native tool specs through the provider API.
         false
+    }
+}
+
+impl XmlToolDispatcher {
+    pub fn prompt_instructions_from_specs(specs: &[ToolSpec]) -> String {
+        let mut instructions = String::new();
+        instructions.push_str("## Tool Use Protocol\n\n");
+        instructions
+            .push_str("To use a tool, wrap a JSON object in <tool_call></tool_call> tags:\n\n");
+        instructions.push_str(
+            "```\n<tool_call>\n{\"name\": \"tool_name\", \"arguments\": {\"param\": \"value\"}}\n</tool_call>\n```\n\n",
+        );
+        instructions.push_str("### Available Tools\n\n");
+
+        for spec in specs {
+            let _ = writeln!(
+                instructions,
+                "- **{}**: {}\n  Parameters: `{}`",
+                spec.name, spec.description, spec.parameters
+            );
+        }
+
+        instructions
     }
 }
 

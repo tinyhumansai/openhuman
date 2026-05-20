@@ -6,9 +6,11 @@ use tempfile::TempDir;
 
 use crate::openhuman::config::Config;
 
+use super::ops;
+use super::state;
 use super::store;
 use super::sync::supported_extension;
-use super::types::{Vault, VaultFile, VaultFileStatus};
+use super::types::{Vault, VaultFile, VaultFileStatus, VaultSyncState, VaultSyncStatus};
 
 fn make_config(tmp: &TempDir) -> Config {
     let mut config = Config::default();
@@ -127,4 +129,178 @@ fn remove_vault_cascades_files() {
     store::remove_vault(&config, &vault.id).unwrap();
     // Cascade should have wiped vault_files rows for this id.
     assert!(store::list_files(&config, &vault.id).unwrap().is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// state.rs — in-memory sync state registry
+// ---------------------------------------------------------------------------
+
+fn make_state(vault_id: &str, status: VaultSyncStatus) -> VaultSyncState {
+    VaultSyncState {
+        vault_id: vault_id.to_string(),
+        status,
+        scanned: 0,
+        ingested: 0,
+        unchanged: 0,
+        removed: 0,
+        failed: 0,
+        skipped_unsupported: 0,
+        total: 0,
+        started_at_ms: 100,
+        finished_at_ms: None,
+        duration_ms: 0,
+        errors: vec![],
+    }
+}
+
+#[test]
+fn state_get_returns_none_for_unknown() {
+    // Use a unique ID so parallel tests can't collide via the global map.
+    assert!(state::get("__test_unknown_99z__").is_none());
+}
+
+#[test]
+fn state_set_and_get_roundtrip() {
+    let id = "__test_set_1__";
+    state::set(make_state(id, VaultSyncStatus::Completed));
+    let st = state::get(id).unwrap();
+    assert_eq!(st.status, VaultSyncStatus::Completed);
+    assert_eq!(st.vault_id, id);
+}
+
+#[test]
+fn state_start_creates_running_entry() {
+    let id = "__test_start_1__";
+    state::start(id, 12345).unwrap();
+    let st = state::get(id).unwrap();
+    assert_eq!(st.status, VaultSyncStatus::Running);
+    assert_eq!(st.started_at_ms, 12345);
+    assert_eq!(st.ingested, 0);
+}
+
+#[test]
+fn state_start_rejects_duplicate_running() {
+    let id = "__test_start_dup__";
+    state::start(id, 1).unwrap();
+    let err = state::start(id, 2).unwrap_err();
+    assert!(err.contains("already syncing"));
+}
+
+#[test]
+fn state_start_allowed_after_completed() {
+    let id = "__test_start_after_completed__";
+    state::start(id, 1).unwrap();
+    // Mark as completed, then start again — must succeed.
+    state::update_progress(id, |s| s.status = VaultSyncStatus::Completed);
+    state::start(id, 2).unwrap();
+    assert_eq!(state::get(id).unwrap().status, VaultSyncStatus::Running);
+}
+
+#[test]
+fn state_start_allowed_after_failed() {
+    let id = "__test_start_after_failed__";
+    state::start(id, 1).unwrap();
+    state::update_progress(id, |s| s.status = VaultSyncStatus::Failed);
+    state::start(id, 2).unwrap();
+    assert_eq!(state::get(id).unwrap().status, VaultSyncStatus::Running);
+}
+
+#[test]
+fn state_update_progress_mutates_entry() {
+    let id = "__test_update_1__";
+    state::start(id, 1).unwrap();
+    state::update_progress(id, |s| {
+        s.ingested = 7;
+        s.scanned = 10;
+        s.total = 10;
+    });
+    let st = state::get(id).unwrap();
+    assert_eq!(st.ingested, 7);
+    assert_eq!(st.scanned, 10);
+}
+
+#[test]
+fn state_update_progress_noop_on_missing() {
+    // Must not panic when vault_id is absent from the map.
+    state::update_progress("__test_noop_xyz__", |s| {
+        s.ingested = 999; // should never execute
+    });
+}
+
+// ---------------------------------------------------------------------------
+// ops.rs — vault_sync_status RPC operation
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn vault_sync_status_returns_idle_for_unknown_vault() {
+    let outcome = ops::vault_sync_status("__ops_status_unknown__")
+        .await
+        .unwrap();
+    assert_eq!(outcome.value.status, VaultSyncStatus::Idle);
+    assert_eq!(outcome.value.vault_id, "__ops_status_unknown__");
+    assert_eq!(outcome.value.ingested, 0);
+}
+
+#[tokio::test]
+async fn vault_sync_status_returns_state_when_present() {
+    let id = "__ops_status_running__";
+    let mut st = make_state(id, VaultSyncStatus::Running);
+    st.scanned = 10;
+    st.ingested = 5;
+    st.total = 10;
+    state::set(st);
+
+    let outcome = ops::vault_sync_status(id).await.unwrap();
+    assert_eq!(outcome.value.status, VaultSyncStatus::Running);
+    assert_eq!(outcome.value.scanned, 10);
+    assert_eq!(outcome.value.ingested, 5);
+    assert_eq!(outcome.value.total, 10);
+}
+
+#[tokio::test]
+async fn vault_sync_status_returns_completed_state() {
+    let id = "__ops_status_completed__";
+    let mut st = make_state(id, VaultSyncStatus::Completed);
+    st.ingested = 12;
+    st.failed = 1;
+    st.duration_ms = 500;
+    st.errors = vec!["file.txt: too large".to_string()];
+    state::set(st);
+
+    let outcome = ops::vault_sync_status(id).await.unwrap();
+    assert_eq!(outcome.value.status, VaultSyncStatus::Completed);
+    assert_eq!(outcome.value.ingested, 12);
+    assert_eq!(outcome.value.failed, 1);
+    assert_eq!(outcome.value.errors.len(), 1);
+}
+
+#[tokio::test]
+async fn vault_sync_status_rejects_empty_id() {
+    let err = ops::vault_sync_status("").await.unwrap_err();
+    assert!(err.contains("vault_id must not be empty"));
+}
+
+#[tokio::test]
+async fn vault_sync_panic_guard_marks_state_failed_and_allows_retry() {
+    // Simulate the panic-recovery path that the catch_unwind guard in
+    // ops::vault_sync triggers: vault goes Running -> Failed (with a panic
+    // message), then can be restarted.  This verifies the invariant that no
+    // panic can permanently lock the state in `Running`.
+    let id = "__test_panic_guard_recovery__";
+    state::start(id, 1_000).unwrap();
+    assert_eq!(state::get(id).unwrap().status, VaultSyncStatus::Running);
+
+    // Simulate what the Err(_) branch of the catch_unwind match does.
+    state::update_progress(id, |s| {
+        s.status = VaultSyncStatus::Failed;
+        s.errors = vec!["sync task panicked unexpectedly".to_string()];
+    });
+
+    let st = state::get(id).unwrap();
+    assert_eq!(st.status, VaultSyncStatus::Failed);
+    assert!(st.errors[0].contains("panicked"));
+
+    // A subsequent sync attempt must not be blocked by the old Running entry.
+    state::start(id, 2_000).unwrap();
+    assert_eq!(state::get(id).unwrap().status, VaultSyncStatus::Running);
 }
