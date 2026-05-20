@@ -212,20 +212,12 @@ fn resolve_command(
         }
     }
 
-    // Default: use npx for npm-style packages (starts with @), uvx for python
-    if qualified_name.starts_with('@') || !qualified_name.contains('/') {
-        (
-            CommandKind::Node,
-            "npx".to_string(),
-            vec!["-y".to_string(), qualified_name.to_string()],
-        )
-    } else {
-        (
-            CommandKind::Node,
-            "npx".to_string(),
-            vec!["-y".to_string(), qualified_name.to_string()],
-        )
-    }
+    // Default: use npx for all packages when example_config doesn't specify a command.
+    (
+        CommandKind::Node,
+        "npx".to_string(),
+        vec!["-y".to_string(), qualified_name.to_string()],
+    )
 }
 
 // ── uninstall ─────────────────────────────────────────────────────────────────
@@ -542,10 +534,15 @@ async fn invoke_config_assist_agent(
     let status = resp.status();
     let text = resp.text().await.map_err(|e| e.to_string())?;
     if !status.is_success() {
+        let truncated = text
+            .char_indices()
+            .nth(200)
+            .map(|(idx, _)| &text[..idx])
+            .unwrap_or(&text);
         tracing::warn!(
             "[mcp-client] config_assist inference HTTP {}: {}",
             status,
-            &text[..text.len().min(200)]
+            truncated
         );
         return Ok(json!({
             "reply": "I'm currently unable to connect to the AI backend. Please try again shortly.",
