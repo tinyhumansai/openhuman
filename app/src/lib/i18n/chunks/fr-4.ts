@@ -46,6 +46,15 @@ const fr4: TranslationMap = {
   'composio.connect.subdomainInvalid':
     'Saisissez uniquement le sous-domaine court (par ex. "acme"), pas l\'URL complète. Il doit contenir uniquement des lettres, chiffres et tirets.',
   'composio.connect.subdomainRequired': 'Saisis ton sous-domaine Atlassian pour continuer.',
+  'composio.connect.dynamicsOrgNameLabel': "Nom de l'organisation Dynamics 365",
+  'composio.connect.dynamicsOrgNameHint':
+    'Par exemple, "myorg" pour myorg.crm.dynamics.com. Saisis uniquement le nom court de l\'organisation, pas l\'URL complète.',
+  'composio.connect.needsFieldsPrefix': 'Pour connecter',
+  'composio.connect.needsFieldsSuffix':
+    "nous avons besoin d'un peu plus d'informations. Remplis les champs manquants ci-dessous et réessaie.",
+  'composio.connect.requiredFieldEmpty': 'Ce champ est obligatoire.',
+  'composio.connect.wabaIdHint':
+    "Trouve-le via GET /me/businesses puis GET /{business_id}/owned_whatsapp_business_accounts en utilisant ton jeton d'accès Meta.",
   'composio.connect.wabaIdLabel': "Libellé de l'identifiant WABA",
   'composio.connect.wabaIdRequired':
     'Saisis ton identifiant WhatsApp Business Account (WABA ID) pour continuer.',

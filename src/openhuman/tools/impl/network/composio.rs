@@ -554,6 +554,29 @@ impl Tool for ComposioTool {
         ToolCategory::Skill
     }
 
+    fn external_effect(&self) -> bool {
+        // Conservative default for the arg-less path: assume any
+        // composio call is a write so callers that don't reach the
+        // args-aware override still get gated. The harness uses
+        // `external_effect_with_args` (below) which inspects
+        // `action` and lets read-only branches through.
+        true
+    }
+
+    fn external_effect_with_args(&self, args: &serde_json::Value) -> bool {
+        // `action="list"` enumerates available Composio actions —
+        // a read-only catalog call. `action="connect"` only returns
+        // an OAuth URL the user then visits manually; the
+        // subsequent OAuth handoff is its own consent flow so the
+        // tool call itself has no outbound side effect to gate.
+        // `action="execute"` (or anything unknown / missing) is the
+        // write path and routes through the approval gate.
+        match args.get("action").and_then(|v| v.as_str()) {
+            Some("list") | Some("connect") => false,
+            _ => true,
+        }
+    }
+
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
         let action = args
             .get("action")

@@ -204,6 +204,7 @@ pub struct Config {
     //                            build OpenAiCompatibleProvider with Bearer auth
     //   "anthropic:<model>"    → type=anthropic; Bearer auth on the compat endpoint
     //   "openrouter:<model>"   → type=openrouter; Bearer auth
+    //   "orcarouter:<model>"   → type=orcarouter; Bearer auth (e.g. "orcarouter:orcarouter/auto")
     //   "custom:<model>"       → type=custom; Bearer auth
     //   "ollama:<model>"       → local Ollama at config.local_ai.base_url
     //

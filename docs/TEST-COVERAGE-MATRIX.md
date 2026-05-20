@@ -339,7 +339,7 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 | ID     | Feature                               | Layer | Test path(s)                                              | Status | Notes                             |
 | ------ | ------------------------------------- | ----- | --------------------------------------------------------- | ------ | --------------------------------- |
 | 10.2.1 | OAuth / API Token Handling            | WD    | `skill-oauth.spec.ts`                                     | ✅     |                                   |
-| 10.2.2 | Scope Selection (Read/Write/Initiate) | WD    | `gmail-flow.spec.ts`, `skill-oauth.spec.ts`               | 🟡     | Multi-scope matrix not exhaustive |
+| 10.2.2 | Scope Selection (Read/Write/Initiate) | WD    | `gmail-flow.spec.ts`, `skill-oauth.spec.ts`, `composio-triggers-flow.spec.ts` | 🟡     | Multi-scope matrix not exhaustive; Gmail trigger OAuth read scope covered |
 | 10.2.3 | Token Storage & Encryption            | RU    | `src/openhuman/encryption/`, `src/openhuman/credentials/` | ✅     |                                   |
 
 ### 10.3 Message Sync & Ingestion

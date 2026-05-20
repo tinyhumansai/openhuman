@@ -72,6 +72,16 @@ fn cloud_no_providers_falls_back_to_openhuman() {
 }
 
 #[test]
+fn direct_cloud_sentinel_resolves_to_primary_custom_provider() {
+    let mut config = config_with_providers(vec![oh_entry("p_oh"), openai_entry("p_oai", "openai")]);
+    config.primary_cloud = Some("p_oai".to_string());
+
+    let (_, model) =
+        create_chat_provider_from_string("reasoning", "cloud", &config).expect("build");
+    assert_eq!(model, "gpt-4o");
+}
+
+#[test]
 fn openhuman_slug_routes_to_backend() {
     let config = config_with_providers(vec![oh_entry("p_oh")]);
     let (_, model) =
@@ -154,6 +164,39 @@ fn custom_provider_rejects_abstract_tier_without_concrete_default_model() {
         Err(e) => e,
     };
     assert!(err.to_string().contains("abstract tier"));
+}
+
+#[test]
+fn orcarouter_slug_model() {
+    let mut config = Config::default();
+    config.cloud_providers.push(CloudProviderCreds {
+        id: "p_oc".to_string(),
+        slug: "orcarouter".to_string(),
+        label: "OrcaRouter".to_string(),
+        endpoint: "https://api.orcarouter.ai/v1".to_string(),
+        auth_style: AuthStyle::Bearer,
+        default_model: Some("orcarouter/auto".to_string()),
+        ..Default::default()
+    });
+    let (_, model) =
+        create_chat_provider_from_string("agentic", "orcarouter:orcarouter/auto", &config)
+            .expect("orcarouter:<model> must build");
+    assert_eq!(model, "orcarouter/auto");
+}
+
+#[test]
+fn orcarouter_legacy_type_seeds_defaults() {
+    use crate::openhuman::config::schema::cloud_providers::migrate_legacy_fields;
+    let mut entry = CloudProviderCreds {
+        id: "p_oc_legacy".to_string(),
+        legacy_type: Some("orcarouter".to_string()),
+        ..Default::default()
+    };
+    migrate_legacy_fields(&mut entry);
+    assert_eq!(entry.slug, "orcarouter");
+    assert_eq!(entry.label, "OrcaRouter");
+    assert_eq!(entry.endpoint, "https://api.orcarouter.ai/v1");
+    assert_eq!(entry.auth_style, AuthStyle::Bearer);
 }
 
 #[test]
@@ -384,6 +427,71 @@ async fn cloud_provider_with_malformed_endpoint_surfaces_url_error() {
 fn primary_cloud_defaults_to_openhuman_when_no_providers() {
     let config = Config::default();
     assert!(create_chat_provider("reasoning", &config).is_ok());
+}
+
+#[test]
+fn cloud_sentinel_resolves_to_primary_custom_provider() {
+    let mut config = config_with_providers(vec![oh_entry("p_oh"), openai_entry("p_oai", "openai")]);
+    config.primary_cloud = Some("p_oai".to_string());
+
+    assert_eq!(provider_for_role("reasoning", &config), "openai:gpt-4o");
+
+    let (_, model) =
+        create_chat_provider("reasoning", &config).expect("primary custom provider must build");
+    assert_eq!(model, "gpt-4o");
+}
+
+#[test]
+fn legacy_inference_url_custom_provider_wins_over_openhuman_primary_for_unset_role() {
+    let mut custom = openai_entry("p_custom", "custom");
+    custom.endpoint = "https://api.example.com/v1/".to_string();
+    custom.default_model = Some("gpt-4o-mini".to_string());
+
+    let mut config = config_with_providers(vec![oh_entry("p_oh"), custom]);
+    config.primary_cloud = Some("p_oh".to_string());
+    config.inference_url = Some("https://api.example.com/v1".to_string());
+
+    assert_eq!(
+        provider_for_role("reasoning", &config),
+        "custom:gpt-4o-mini"
+    );
+}
+
+#[test]
+fn legacy_inference_url_without_matching_provider_stays_on_openhuman_primary() {
+    let mut other = openai_entry("p_other", "other");
+    other.endpoint = "https://other.example.com/v1".to_string();
+
+    let mut config = config_with_providers(vec![oh_entry("p_oh"), other]);
+    config.primary_cloud = Some("p_oh".to_string());
+    config.inference_url = Some("https://api.example.com/v1".to_string());
+
+    assert_eq!(provider_for_role("reasoning", &config), "openhuman");
+}
+
+#[test]
+fn hosted_endpoint_entry_is_treated_as_openhuman_backend() {
+    let mut hosted = openai_entry("p_hosted", "custom-hosted");
+    hosted.endpoint = "https://staging-api.tinyhumans.ai/openai/v1".to_string();
+    hosted.auth_style = AuthStyle::Bearer;
+
+    let mut config = config_with_providers(vec![hosted]);
+    config.primary_cloud = Some("p_hosted".to_string());
+
+    assert_eq!(provider_for_role("reasoning", &config), "openhuman");
+}
+
+#[test]
+fn explicit_openhuman_route_ignores_legacy_inference_url() {
+    let mut custom = openai_entry("p_custom", "custom");
+    custom.endpoint = "https://api.example.com/v1".to_string();
+
+    let mut config = config_with_providers(vec![oh_entry("p_oh"), custom]);
+    config.primary_cloud = Some("p_oh".to_string());
+    config.inference_url = Some("https://api.example.com/v1".to_string());
+    config.reasoning_provider = Some("openhuman".to_string());
+
+    assert_eq!(provider_for_role("reasoning", &config), "openhuman");
 }
 
 #[test]

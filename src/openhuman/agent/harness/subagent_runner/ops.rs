@@ -1464,17 +1464,52 @@ async fn run_inner_loop(
             {
                 let args = parse_tool_arguments(&call.arguments);
                 let timeout = crate::openhuman::tool_timeout::tool_execution_timeout_duration();
-                match tokio::time::timeout(timeout, tool.execute(args)).await {
-                    Ok(Ok(result)) => {
-                        let raw = result.output();
-                        if result.is_error {
-                            format!("Error: {raw}")
-                        } else {
-                            raw
+                // ── External-effect approval gate (#1339) ─────
+                // Subagents share the same gate as the parent loop;
+                // see `tool_loop.rs` for the rationale.
+                let gate_denial: Option<String> = if tool.external_effect_with_args(&args) {
+                    if let Some(gate) = crate::openhuman::approval::ApprovalGate::try_global() {
+                        let summary =
+                            crate::openhuman::approval::summarize_action(&call.name, &args);
+                        let redacted = crate::openhuman::approval::redact_args(&args);
+                        match gate.intercept(&call.name, &summary, redacted).await {
+                            crate::openhuman::approval::GateOutcome::Allow => None,
+                            crate::openhuman::approval::GateOutcome::Deny { reason } => {
+                                tracing::warn!(
+                                    tool = call.name.as_str(),
+                                    reason = %reason,
+                                    "[subagent_runner] approval gate denied tool call"
+                                );
+                                Some(reason)
+                            }
                         }
+                    } else {
+                        None
                     }
-                    Ok(Err(err)) => format!("Error executing {}: {err}", call.name),
-                    Err(_) => format!("Error: tool '{}' timed out", call.name),
+                } else {
+                    None
+                };
+
+                if let Some(reason) = gate_denial {
+                    // Prefix as Error so the downstream `call_success`
+                    // computation (`!result_text.starts_with("Error")`)
+                    // marks the denial as a failed tool call in
+                    // progress events and tool_result blocks.
+                    // (CodeRabbit review on PR #2149.)
+                    format!("Error: {reason}")
+                } else {
+                    match tokio::time::timeout(timeout, tool.execute(args)).await {
+                        Ok(Ok(result)) => {
+                            let raw = result.output();
+                            if result.is_error {
+                                format!("Error: {raw}")
+                            } else {
+                                raw
+                            }
+                        }
+                        Ok(Err(err)) => format!("Error executing {}: {err}", call.name),
+                        Err(_) => format!("Error: tool '{}' timed out", call.name),
+                    }
                 }
             } else {
                 format!("Unknown tool: {}", call.name)

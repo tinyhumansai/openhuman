@@ -255,6 +255,15 @@ pub struct McpServerConfig {
     /// Whether this server should be exposed to the MCP bridge tools.
     #[serde(default = "defaults::default_true")]
     pub enabled: bool,
+    /// Exact remote tool names this server may expose through the generic
+    /// MCP bridge. Empty means all remote tools are allowed unless they
+    /// appear in `disallowed_tools`.
+    #[serde(default)]
+    pub allowed_tools: Vec<String>,
+    /// Exact remote tool names that should always be hidden and blocked.
+    /// This denylist takes precedence over `allowed_tools`.
+    #[serde(default)]
+    pub disallowed_tools: Vec<String>,
     /// Per-request timeout in seconds.
     #[serde(default = "default_mcp_timeout_secs")]
     pub timeout_secs: u64,
@@ -281,6 +290,8 @@ impl Default for McpServerConfig {
             cwd: None,
             description: None,
             enabled: defaults::default_true(),
+            allowed_tools: Vec::new(),
+            disallowed_tools: Vec::new(),
             timeout_secs: default_mcp_timeout_secs(),
             auth: McpAuthConfig::None,
         }

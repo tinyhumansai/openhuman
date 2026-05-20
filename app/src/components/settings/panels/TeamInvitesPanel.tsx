@@ -1,11 +1,15 @@
+import debug from 'debug';
 import { useEffect, useState } from 'react';
 import { useLocation, useParams } from 'react-router-dom';
 
 import { useT } from '../../../lib/i18n/I18nContext';
 import { useCoreState } from '../../../providers/CoreStateProvider';
 import { teamApi } from '../../../services/api/teamApi';
+import { sanitizeError } from '../../../utils/sanitize';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
+
+const log = debug('core-rpc:error');
 
 const TeamInvitesPanel = () => {
   const { t } = useT();
@@ -34,7 +38,15 @@ const TeamInvitesPanel = () => {
   useEffect(() => {
     if (!currentTeamId) return;
     setIsLoadingInvites(true);
-    void refreshTeamInvites(currentTeamId).finally(() => setIsLoadingInvites(false));
+    // `.finally()` alone left this as `void promise(...)`, so any rejection
+    // (cold core boot, backend 504, local AbortController timeout) became an
+    // unhandled rejection → OPENHUMAN-REACT-12. Swallow into a logged
+    // breadcrumb; the user can retry by navigating away and back.
+    refreshTeamInvites(currentTeamId)
+      .catch(err => {
+        log('refreshTeamInvites failed in TeamInvitesPanel: %O', sanitizeError(err));
+      })
+      .finally(() => setIsLoadingInvites(false));
   }, [currentTeamId, refreshTeamInvites]);
 
   const handleGenerate = async () => {

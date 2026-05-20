@@ -26,6 +26,9 @@ use crate::openhuman::agent::hooks::{self, ToolCallRecord, TurnContext};
 use crate::openhuman::agent::memory_loader::collect_recall_citations;
 use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::agent::tool_policy::{ToolPolicyDecision, ToolPolicyRequest};
+use crate::openhuman::agent_experience::{
+    prepend_experience_block, render_experience_hits, AgentExperienceStore, ExperienceQuery,
+};
 use crate::openhuman::context::prompt::{LearnedContextData, PromptContext, PromptTool};
 use crate::openhuman::context::{ReductionOutcome, ARCHIVIST_EXTRACTION_PROMPT};
 use crate::openhuman::inference::model_context::context_window_for_model;
@@ -397,6 +400,10 @@ impl Agent {
             self.last_memory_context = Some(context.clone());
             format!("{context}{user_message}")
         };
+
+        let enriched = self
+            .inject_agent_experience_context(user_message, enriched)
+            .await;
 
         // ── SKILL.md body injection (#781) ───────────────────────────
         // Match installed SKILL.md skills against the user message and
@@ -838,7 +845,12 @@ impl Agent {
                             assistant_response: final_text.clone(),
                             tool_calls: all_tool_records,
                             turn_duration_ms: turn_started.elapsed().as_millis() as u64,
-                            session_id: None,
+                            session_id: Some(self.event_session_id.clone())
+                                .filter(|session_id| !session_id.trim().is_empty()),
+                            agent_id: Some(self.agent_definition_id.clone())
+                                .filter(|agent_id| !agent_id.trim().is_empty()),
+                            entrypoint: Some(self.event_channel.clone())
+                                .filter(|entrypoint| !entrypoint.trim().is_empty()),
                             iteration_count: iteration + 1,
                         };
                         hooks::fire_hooks(&self.post_turn_hooks, ctx);
@@ -1021,6 +1033,58 @@ impl Agent {
         }
 
         result
+    }
+
+    async fn inject_agent_experience_context(
+        &self,
+        user_message: &str,
+        enriched: String,
+    ) -> String {
+        const MAX_EXPERIENCE_HITS: usize = 3;
+        const MAX_EXPERIENCE_BLOCK_BYTES: usize = 2048;
+
+        if !self.learning_enabled {
+            return enriched;
+        }
+
+        let tools = self
+            .visible_tool_specs
+            .iter()
+            .map(|spec| spec.name.clone())
+            .collect();
+        let store = AgentExperienceStore::new(self.memory.clone());
+        let query = ExperienceQuery {
+            query: user_message.to_string(),
+            tools,
+            tags: Vec::new(),
+            agent_id: Some(self.agent_definition_id.clone()).filter(|id| !id.trim().is_empty()),
+            entrypoint: Some(self.event_channel.clone())
+                .filter(|entrypoint| !entrypoint.trim().is_empty()),
+            max_hits: MAX_EXPERIENCE_HITS,
+        };
+
+        match store.retrieve(query).await {
+            Ok(hits) => {
+                let matched_hits: Vec<_> = hits
+                    .into_iter()
+                    .filter(|hit| !hit.match_reasons.is_empty())
+                    .collect();
+                let block = render_experience_hits(&matched_hits, MAX_EXPERIENCE_BLOCK_BYTES);
+                if block.is_empty() {
+                    return enriched;
+                }
+                log::debug!(
+                    "[agent-experience] injected {} experience hit(s) bytes={}",
+                    matched_hits.len(),
+                    block.len()
+                );
+                prepend_experience_block(&enriched, &block)
+            }
+            Err(err) => {
+                log::warn!("[agent-experience] retrieval failed (non-fatal): {err}");
+                enriched
+            }
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────

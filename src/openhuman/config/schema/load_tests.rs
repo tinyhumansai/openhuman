@@ -1407,6 +1407,92 @@ fn migrate_legacy_inference_url_is_noop_when_inference_url_set() {
     );
 }
 
+#[test]
+fn migrate_cloud_provider_slugs_routes_cloud_to_legacy_custom_when_primary_is_openhuman() {
+    let mut cfg = Config::default();
+    cfg.inference_url = Some("https://api.example.com/v1".into());
+    cfg.primary_cloud = Some("p_oh".into());
+    cfg.memory_provider = Some("cloud".into());
+    cfg.reasoning_provider = Some("openhuman".into());
+    cfg.cloud_providers = vec![
+        crate::openhuman::config::schema::CloudProviderCreds {
+            id: "p_oh".into(),
+            slug: "openhuman".into(),
+            label: "OpenHuman".into(),
+            endpoint: "https://api.openhuman.ai/v1".into(),
+            auth_style: crate::openhuman::config::schema::AuthStyle::OpenhumanJwt,
+            ..Default::default()
+        },
+        crate::openhuman::config::schema::CloudProviderCreds {
+            id: "p_custom".into(),
+            slug: "custom".into(),
+            label: "Custom".into(),
+            endpoint: "https://api.example.com/v1/".into(),
+            auth_style: crate::openhuman::config::schema::AuthStyle::Bearer,
+            default_model: Some("gpt-4o-mini".into()),
+            ..Default::default()
+        },
+    ];
+
+    migrate_cloud_provider_slugs(&mut cfg);
+
+    assert_eq!(cfg.memory_provider.as_deref(), Some("custom:"));
+    assert_eq!(
+        cfg.reasoning_provider.as_deref(),
+        Some("openhuman"),
+        "explicit OpenHuman routing must stay explicit"
+    );
+}
+
+#[test]
+fn migrate_cloud_provider_slugs_keeps_cloud_on_openhuman_without_legacy_custom() {
+    let mut cfg = Config::default();
+    cfg.primary_cloud = Some("p_oh".into());
+    cfg.memory_provider = Some("cloud".into());
+    cfg.cloud_providers = vec![crate::openhuman::config::schema::CloudProviderCreds {
+        id: "p_oh".into(),
+        slug: "openhuman".into(),
+        label: "OpenHuman".into(),
+        endpoint: "https://api.tinyhumans.ai/v1".into(),
+        auth_style: crate::openhuman::config::schema::AuthStyle::OpenhumanJwt,
+        ..Default::default()
+    }];
+
+    migrate_cloud_provider_slugs(&mut cfg);
+
+    assert_eq!(cfg.memory_provider.as_deref(), Some("openhuman"));
+}
+
+#[test]
+fn migrate_cloud_provider_slugs_does_not_pick_unmatched_custom_provider() {
+    let mut cfg = Config::default();
+    cfg.inference_url = Some("https://api.example.com/v1".into());
+    cfg.primary_cloud = Some("p_oh".into());
+    cfg.memory_provider = Some("cloud".into());
+    cfg.cloud_providers = vec![
+        crate::openhuman::config::schema::CloudProviderCreds {
+            id: "p_oh".into(),
+            slug: "openhuman".into(),
+            label: "OpenHuman".into(),
+            endpoint: "https://api.openhuman.ai/v1".into(),
+            auth_style: crate::openhuman::config::schema::AuthStyle::OpenhumanJwt,
+            ..Default::default()
+        },
+        crate::openhuman::config::schema::CloudProviderCreds {
+            id: "p_other".into(),
+            slug: "other".into(),
+            label: "Other".into(),
+            endpoint: "https://other.example.com/v1".into(),
+            auth_style: crate::openhuman::config::schema::AuthStyle::Bearer,
+            ..Default::default()
+        },
+    ];
+
+    migrate_cloud_provider_slugs(&mut cfg);
+
+    assert_eq!(cfg.memory_provider.as_deref(), Some("openhuman"));
+}
+
 /// Regression test for #1900: secrets are encrypted on save and decrypted on load.
 ///
 /// Verifies that:

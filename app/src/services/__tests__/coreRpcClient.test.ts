@@ -327,7 +327,14 @@ describe('coreRpcClient', () => {
 
       await vi.advanceTimersByTimeAsync(CORE_RPC_TIMEOUT_MS + 1);
 
-      await expect(pending).rejects.toThrow(
+      const err = await pending.catch(e => e);
+      // The timeout path must throw a CoreRpcError pre-classified as
+      // `timeout` so the outer catch does not re-wrap a bare `Error` and so
+      // Sentry / call-site `.catch()` can branch on `err.kind`. Regression
+      // guard for OPENHUMAN-REACT-Z/Y (the bare-Error shape pre-fix).
+      expect(err).toBeInstanceOf(CoreRpcError);
+      expect((err as CoreRpcError).kind).toBe('timeout');
+      expect((err as Error).message).toBe(
         `Core RPC openhuman.threads_list timed out after ${CORE_RPC_TIMEOUT_MS}ms`
       );
     } finally {
@@ -519,6 +526,21 @@ describe('classifyRpcError', () => {
     ['client error (Connect) inner: dns', undefined, 'transport'],
     ['operation timed out after 30s', undefined, 'transport'],
     ['ECONNREFUSED 127.0.0.1:7788', undefined, 'transport'],
+    // OPENHUMAN-REACT-15/11/10/12 verbatim from Sentry — local AbortController
+    // timeout, NOT backend transport. Must classify as `timeout`.
+    ['Core RPC openhuman.team_list_teams timed out after 30000ms', undefined, 'timeout'],
+    ['Core RPC openhuman.team_list_members timed out after 30000ms', undefined, 'timeout'],
+    ['Core RPC openhuman.team_list_invites timed out after 30000ms', undefined, 'timeout'],
+    // OPENHUMAN-REACT-Z/Y verbatim (bare-Error shape pre-fix; now CoreRpcError
+    // with same message): still kind=timeout under the new classifier.
+    ['Core RPC openhuman.app_state_snapshot timed out after 30000ms', undefined, 'timeout'],
+    // OPENHUMAN-REACT-13 verbatim — backend-side connect timeout. Body never
+    // hits the `timed out after \d+ms` matcher and stays `transport`.
+    [
+      'backend request GET /teams: error sending request for url (https://api.tinyhumans.ai/teams): client error (Connect): operation timed out',
+      undefined,
+      'transport',
+    ],
     ['some random message', undefined, 'unknown'],
   ] as const)('%s => %s', (message, status, expected) => {
     expect(classifyRpcError(message, status)).toBe(expected);
@@ -536,6 +558,15 @@ describe('classifyRpcError', () => {
     expect(
       classifyRpcError('thread thread-123 not found', undefined, { kind: 'ThreadNotFound' })
     ).toBe('thread_not_found');
+  });
+
+  test('local AbortController timeout precedence wins over generic transport regex', () => {
+    // The `timed out` substring also matches the broader transport arm; the
+    // `timed out after \d+ms` arm MUST run first so callers can distinguish
+    // a local 30s ceiling from a backend `client error (Connect)` timeout.
+    expect(classifyRpcError('Core RPC openhuman.team_list_teams timed out after 30000ms')).toBe(
+      'timeout'
+    );
   });
 });
 

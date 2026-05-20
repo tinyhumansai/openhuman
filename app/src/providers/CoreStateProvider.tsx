@@ -573,7 +573,15 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
   const updateLocalState = useCallback(
     async (params: Parameters<typeof updateCoreLocalState>[0]) => {
       await updateCoreLocalState(params);
-      await refresh();
+      // The follow-up refresh is best-effort cache reconciliation, not part
+      // of the write contract — sibling helpers (setAnalyticsEnabled,
+      // setMeetAutoOrchestratorHandoff, …) already swallow here. An
+      // un-caught `app_state_snapshot` timeout used to bubble out of
+      // `setEncryptionKey` / `setOnboardingTasks` callers as an unhandled
+      // rejection → OPENHUMAN-REACT-Z/Y. The next poll tick will reconcile.
+      await refresh().catch(err => {
+        log('refresh failed after updateLocalState: %O', sanitizeError(err));
+      });
     },
     [refresh]
   );
@@ -594,7 +602,13 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
       // restartApp call here was redundant and skipped the persist purge,
       // letting redux-persist rehydrate the prior user's slices on launch
       // (#900). Restart now happens inside handleIdentityFlip after purge.
-      await refresh();
+      // Swallow refresh failures here so a cold-boot `app_state_snapshot`
+      // timeout post-login doesn't surface as an unhandled rejection
+      // (OPENHUMAN-REACT-Z/Y) — the polling loop reconciles within
+      // `POLL_MS`.
+      await refresh().catch(err => {
+        log('refresh failed after session store: %O', sanitizeError(err));
+      });
       await refreshTeams().catch(err => {
         log('refreshTeams failed after session store: %O', sanitizeError(err));
       });

@@ -17,6 +17,7 @@
 pub mod about_app;
 pub mod accessibility;
 pub mod agent;
+pub mod agent_experience;
 pub mod app_state;
 pub mod approval;
 pub mod audio_toolkit;

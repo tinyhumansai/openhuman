@@ -4,22 +4,26 @@
  * Mirrors the flow, positioning, and portal/backdrop plumbing of
  * `SkillSetupModal` so the two feel identical to the user:
  *
- *   disconnected → "Connect" button → POST composio_authorize →
- *   open connectUrl via tauri-opener → poll listConnections until
- *   the toolkit flips to ACTIVE → "Connected" success screen with
- *   a "Disconnect" action.
+ *   disconnected → collect provider-specific required fields (if any) →
+ *   "Connect" button → POST composio_authorize → open connectUrl via
+ *   tauri-opener → poll listConnections until the toolkit flips to
+ *   ACTIVE → "Connected" success screen with a "Disconnect" action.
  *
- * Jira-specific flow: the Atlassian subdomain is collected upfront (before
- * the authorize call) via an inline input. If Composio returns
- * `ConnectedAccount_MissingRequiredFields` (error code 612) for any toolkit,
- * the modal transitions to a `needs-subdomain` phase so the user can supply
- * the missing field and retry — instead of seeing the raw backend error.
+ * Provider-specific required fields (Jira subdomain, WhatsApp WABA id,
+ * Dynamics 365 org name, …) are declared in the
+ * [`toolkitRequiredFields`] registry rather than hard-coded as per-toolkit
+ * booleans here (#2127). If Composio still returns
+ * `ConnectedAccount_MissingRequiredFields` (error code 612) for any toolkit
+ * — e.g. a new required field landed backend-side before the registry was
+ * updated — the modal transitions to a `needs-fields` recovery phase that
+ * collects the same registry fields and retries, instead of surfacing the
+ * raw backend error.
  *
  * Redundant refetches from the polling hook in `useComposioIntegrations`
  * keep the Skills page badge in sync too, so the card reflects the new
  * state as soon as the modal closes.
  */
-import { type ChangeEvent, useCallback, useEffect, useRef, useState } from 'react';
+import { type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 import {
@@ -37,6 +41,11 @@ import {
 import { useT } from '../../lib/i18n/I18nContext';
 import { openUrl } from '../../utils/openUrl';
 import type { ComposioToolkitMeta } from './toolkitMeta';
+import {
+  getRequiredFieldsForToolkit,
+  type ToolkitRequiredField,
+  validateRequiredFieldValues,
+} from './toolkitRequiredFields';
 import TriggerToggles from './TriggerToggles';
 
 function deriveConnectionLabel(c: ComposioConnection): string | null {
@@ -59,6 +68,10 @@ const COMPOSIO_MISSING_REQUIRED_FIELDS_SLUG = 'ConnectedAccount_MissingRequiredF
  * `<subdomain>.atlassian.net` — alphanumerics and hyphens, 1-63 chars,
  * no leading/trailing hyphens. Rejects full URLs so users are not confused
  * about what to paste.
+ *
+ * Retained for backwards compatibility with consumers that imported the
+ * helper directly. The registry in `toolkitRequiredFields.ts` uses the
+ * same regex via `validateSubdomainLabel`, shared with Dynamics 365.
  */
 export function isValidAtlassianSubdomain(value: string): boolean {
   return /^[a-z0-9][a-z0-9-]{0,61}[a-z0-9]$|^[a-z0-9]$/i.test(value.trim());
@@ -124,7 +137,10 @@ export function sanitizeAuthError(err: unknown): string {
 
 type Phase =
   | 'idle'
-  | 'needs-subdomain'
+  // Recovery phase entered when Composio returns
+  // `ConnectedAccount_MissingRequiredFields` (code 612) — the user is asked
+  // for the same registry fields again so they can retry.
+  | 'needs-fields'
   | 'authorizing'
   | 'waiting'
   | 'connected'
@@ -171,13 +187,15 @@ export default function ComposioConnectModal({
   );
   const [error, setError] = useState<string | null>(null);
   const [connectUrl, setConnectUrl] = useState<string | null>(null);
-  // WhatsApp Business requires a WABA ID before the OAuth flow can start.
-  const [wabaId, setWabaId] = useState('');
-  const needsWabaId = toolkit.slug === 'whatsapp';
-  // Jira requires an Atlassian subdomain (e.g. "acme" for acme.atlassian.net).
-  const [atlassianSubdomain, setAtlassianSubdomain] = useState('');
-  const [subdomainError, setSubdomainError] = useState<string | null>(null);
-  const needsAtlassianSubdomain = toolkit.slug === 'jira';
+
+  // Provider-specific required fields are sourced from the declarative
+  // registry rather than per-toolkit booleans (#2127). New providers
+  // (Dynamics 365 `org_name`, future toolkits, …) only need a registry
+  // entry — no per-toolkit branches inside this component.
+  const requiredFields = useMemo(() => getRequiredFieldsForToolkit(toolkit.slug), [toolkit.slug]);
+  const [fieldValues, setFieldValues] = useState<Record<string, string>>({});
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+
   const [activeConnection, setActiveConnection] = useState<ComposioConnection | undefined>(
     connection
   );
@@ -297,48 +315,36 @@ export default function ComposioConnectModal({
   }, []);
 
   /**
-   * Validate and collect required fields before calling authorize.
-   * For Jira: subdomain must match the expected Atlassian format.
-   * Returns false (and surfaces an inline validation message) when
-   * a required field is missing or malformed.
+   * Validate registry-declared required fields. Populates `fieldErrors`
+   * with per-field i18n keys when any are missing or malformed, and
+   * returns true only when every field is valid.
    */
   const validateRequiredFields = useCallback((): boolean => {
-    if (needsWabaId && !wabaId.trim()) {
-      setError(t('composio.connect.wabaIdRequired'));
-      return false;
-    }
-    if (needsAtlassianSubdomain) {
-      const trimmed = atlassianSubdomain.trim();
-      if (!trimmed) {
-        setSubdomainError(t('composio.connect.subdomainRequired'));
-        return false;
-      }
-      if (!isValidAtlassianSubdomain(trimmed)) {
-        setSubdomainError(t('composio.connect.subdomainInvalid'));
-        return false;
-      }
-    }
-    return true;
-  }, [needsWabaId, wabaId, needsAtlassianSubdomain, atlassianSubdomain]);
+    if (requiredFields.length === 0) return true;
+    const errors = validateRequiredFieldValues(requiredFields, fieldValues);
+    setFieldErrors(errors);
+    return Object.keys(errors).length === 0;
+  }, [requiredFields, fieldValues]);
 
   const handleConnect = useCallback(async () => {
     if (!validateRequiredFields()) return;
 
     setPhase('authorizing');
     setError(null);
-    setSubdomainError(null);
+    setFieldErrors({});
     setConnectUrl(null);
 
     const extraParams: Record<string, string> = {};
-    if (needsWabaId) extraParams.waba_id = wabaId.trim();
-    if (needsAtlassianSubdomain && atlassianSubdomain.trim()) {
-      extraParams.subdomain = atlassianSubdomain.trim();
+    for (const field of requiredFields) {
+      const value = (fieldValues[field.key] ?? '').trim();
+      if (value) extraParams[field.key] = value;
     }
 
     console.debug(
-      '[composio][authorize] → toolkit=%s has_extra_params=%s',
+      '[composio][authorize] → toolkit=%s has_extra_params=%s field_count=%d',
       toolkit.slug,
-      Object.keys(extraParams).length > 0
+      Object.keys(extraParams).length > 0,
+      requiredFields.length
     );
 
     try {
@@ -363,20 +369,20 @@ export default function ComposioConnectModal({
       );
 
       if (isMissingRequiredFieldsError(err)) {
-        // Composio reported a missing required field (code 612). For Atlassian
-        // toolkits, transition to the dedicated needs-subdomain phase so the
-        // user can supply the field and retry. For other toolkits, surface a
-        // sanitized message in the error phase — the needs-subdomain UI
-        // currently only collects an Atlassian subdomain, so showing it for
-        // non-Atlassian toolkits would be misleading and the Retry loop would
-        // never succeed.
+        // Composio reported a missing required field (code 612). When the
+        // registry has any required-field entries for this toolkit, drop
+        // into the `needs-fields` recovery phase so the user can supply the
+        // missing value and retry inline. When the registry does not yet
+        // know about the missing field — e.g. Composio backend just added a
+        // new required field — fall back to a sanitized error message so
+        // the user is not stuck on a recovery form that cannot succeed.
         console.debug(
-          '[composio][authorize] missing-required-fields toolkit=%s needsAtlassianSubdomain=%s',
+          '[composio][authorize] missing-required-fields toolkit=%s registry_field_count=%d',
           toolkit.slug,
-          needsAtlassianSubdomain
+          requiredFields.length
         );
-        if (needsAtlassianSubdomain) {
-          setPhase('needs-subdomain');
+        if (requiredFields.length > 0) {
+          setPhase('needs-fields');
           setError(null);
         } else {
           setPhase('error');
@@ -388,15 +394,7 @@ export default function ComposioConnectModal({
       setPhase('error');
       setError(sanitizeAuthError(err));
     }
-  }, [
-    validateRequiredFields,
-    needsWabaId,
-    wabaId,
-    needsAtlassianSubdomain,
-    atlassianSubdomain,
-    startPolling,
-    toolkit.slug,
-  ]);
+  }, [validateRequiredFields, requiredFields, fieldValues, startPolling, toolkit.slug]);
 
   // Fetch the stored scope pref whenever the modal lands in the
   // 'connected' phase. Re-fetching each time we transition (rather
@@ -561,44 +559,21 @@ export default function ComposioConnectModal({
                   {t('composio.connect.permissionsNoteSuffix')}
                 </p>
               </div>
-              {needsWabaId && (
-                <div className="space-y-1.5">
-                  <label
-                    htmlFor="waba-id-input"
-                    className="block text-xs font-medium text-stone-700 dark:text-neutral-200">
-                    {t('composio.connect.wabaIdLabel')}
-                    <span className="ml-1 text-coral-500">*</span>
-                  </label>
-                  <input
-                    id="waba-id-input"
-                    type="text"
-                    value={wabaId}
-                    onChange={(e: ChangeEvent<HTMLInputElement>) => {
-                      setWabaId(e.target.value);
-                      if (error) setError(null);
-                    }}
-                    placeholder="e.g. 123456789012345"
-                    className="w-full rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 placeholder:text-stone-400 dark:placeholder:text-neutral-500 focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-100"
-                  />
-                  <p className="text-[11px] leading-relaxed text-stone-400 dark:text-neutral-500">
-                    Find it via <span className="font-mono">GET /me/businesses</span> then{' '}
-                    <span className="font-mono">
-                      GET /&#123;business_id&#125;/owned_whatsapp_business_accounts
-                    </span>{' '}
-                    using your Meta access token.
-                  </p>
-                </div>
-              )}
-              {needsAtlassianSubdomain && (
-                <AtlassianSubdomainInput
-                  value={atlassianSubdomain}
-                  error={subdomainError}
-                  onChange={v => {
-                    setAtlassianSubdomain(v);
-                    if (subdomainError) setSubdomainError(null);
-                  }}
-                />
-              )}
+              <RequiredFieldsForm
+                fields={requiredFields}
+                values={fieldValues}
+                errors={fieldErrors}
+                onChange={(key, v) => {
+                  setFieldValues(prev => ({ ...prev, [key]: v }));
+                  if (fieldErrors[key]) {
+                    setFieldErrors(prev => {
+                      const next = { ...prev };
+                      delete next[key];
+                      return next;
+                    });
+                  }
+                }}
+              />
               {error && phase === 'idle' && <p className="text-[11px] text-coral-600">{error}</p>}
               <button
                 type="button"
@@ -609,19 +584,26 @@ export default function ComposioConnectModal({
             </>
           )}
 
-          {phase === 'needs-subdomain' && (
+          {phase === 'needs-fields' && (
             <>
               <p className="text-sm text-stone-600 dark:text-neutral-300">
-                {`${t('composio.connect.needsSubdomain')} ${toolkit.name}, ${t('composio.connect.needsSubdomainSuffix')}`}
+                {`${t('composio.connect.needsFieldsPrefix')} ${toolkit.name} ${t('composio.connect.needsFieldsSuffix')}`}
               </p>
-              <AtlassianSubdomainInput
-                value={atlassianSubdomain}
-                error={subdomainError}
-                onChange={v => {
-                  setAtlassianSubdomain(v);
-                  if (subdomainError) setSubdomainError(null);
+              <RequiredFieldsForm
+                fields={requiredFields}
+                values={fieldValues}
+                errors={fieldErrors}
+                autoFocusFirst
+                onChange={(key, v) => {
+                  setFieldValues(prev => ({ ...prev, [key]: v }));
+                  if (fieldErrors[key]) {
+                    setFieldErrors(prev => {
+                      const next = { ...prev };
+                      delete next[key];
+                      return next;
+                    });
+                  }
                 }}
-                autoFocus
               />
               <button
                 type="button"
@@ -633,7 +615,7 @@ export default function ComposioConnectModal({
                 type="button"
                 onClick={() => {
                   setPhase('idle');
-                  setSubdomainError(null);
+                  setFieldErrors({});
                   setError(null);
                 }}
                 className="w-full rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-stone-600 dark:text-neutral-300 text-xs font-medium py-2 hover:bg-stone-50 dark:hover:bg-neutral-800/60 transition-colors">
@@ -852,67 +834,87 @@ function ScopeToggles({ scopes, savingScope, onToggle, error }: ScopeTogglesProp
   );
 }
 
-// ── Atlassian subdomain input ───────────────────────────────────────
+// ── Generic required-fields form ────────────────────────────────────
 
-interface AtlassianSubdomainInputProps {
-  value: string;
-  error: string | null;
-  onChange: (value: string) => void;
-  /** Autofocus the input on mount (used in the needs-subdomain recovery phase). */
-  autoFocus?: boolean;
+interface RequiredFieldsFormProps {
+  fields: readonly ToolkitRequiredField[];
+  values: Record<string, string>;
+  errors: Record<string, string>;
+  onChange: (key: string, value: string) => void;
+  /** Autofocus the first input on mount (used by the `needs-fields` recovery phase). */
+  autoFocusFirst?: boolean;
 }
 
 /**
- * Reusable inline subdomain collector for Atlassian-hosted toolkits (Jira,
- * Confluence). Validates the short-form subdomain (`acme` for
- * `acme.atlassian.net`) and surfaces an inline validation message when the
- * user types a full URL or an invalid value.
+ * Generic renderer for provider-specific required fields declared in
+ * `toolkitRequiredFields.ts`. Replaces the per-toolkit
+ * `AtlassianSubdomainInput` / `WabaIdInput` blocks (#2127). Each field
+ * shows a label, optional fixed suffix inside the input
+ * (e.g. `.atlassian.net`), an optional hint, and an inline error message
+ * driven by the `errors` map (keyed by field key, value is an i18n key).
  */
-function AtlassianSubdomainInput({
-  value,
-  error,
+function RequiredFieldsForm({
+  fields,
+  values,
+  errors,
   onChange,
-  autoFocus,
-}: AtlassianSubdomainInputProps) {
+  autoFocusFirst,
+}: RequiredFieldsFormProps) {
   const { t } = useT();
+  if (fields.length === 0) return null;
   return (
-    <div className="space-y-1.5">
-      <label
-        htmlFor="atlassian-subdomain-input"
-        className="block text-xs font-medium text-stone-700 dark:text-neutral-200">
-        {t('composio.connect.atlassianSubdomainLabel')}
-        <span className="ml-1 text-coral-500">*</span>
-      </label>
-      <div className="flex items-center rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 focus-within:border-primary-400 focus-within:ring-2 focus-within:ring-primary-100 overflow-hidden">
-        <input
-          id="atlassian-subdomain-input"
-          type="text"
-          value={value}
-          autoFocus={autoFocus}
-          onChange={(e: ChangeEvent<HTMLInputElement>) => onChange(e.target.value)}
-          placeholder="your-subdomain"
-          aria-describedby="atlassian-subdomain-hint"
-          aria-invalid={!!error}
-          className="flex-1 min-w-0 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 placeholder:text-stone-400 dark:placeholder:text-neutral-500 bg-transparent focus:outline-none"
-        />
-        <span className="pr-3 text-xs text-stone-400 dark:text-neutral-500 select-none whitespace-nowrap">
-          .atlassian.net
-        </span>
-      </div>
-      {/* Always render the hint paragraph with the same id so aria-describedby resolves
-          correctly regardless of error state. When there is an error, role="alert"
-          causes screen readers to announce the message immediately. */}
-      {error ? (
-        <p id="atlassian-subdomain-hint" role="alert" className="text-[11px] text-coral-600">
-          {error}
-        </p>
-      ) : (
-        <p
-          id="atlassian-subdomain-hint"
-          className="text-[11px] leading-relaxed text-stone-400 dark:text-neutral-500">
-          {t('composio.connect.atlassianSubdomainHint')}
-        </p>
-      )}
-    </div>
+    <>
+      {fields.map((field, idx) => {
+        const inputId = `composio-required-${field.key}`;
+        const hintId = `${inputId}-hint`;
+        const value = values[field.key] ?? '';
+        const errorKey = errors[field.key];
+        const errorText = errorKey ? t(errorKey) : null;
+        return (
+          <div key={field.key} className="space-y-1.5">
+            <label
+              htmlFor={inputId}
+              className="block text-xs font-medium text-stone-700 dark:text-neutral-200">
+              {t(field.labelKey)}
+              <span className="ml-1 text-coral-500">*</span>
+            </label>
+            <div className="flex items-center rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 focus-within:border-primary-400 focus-within:ring-2 focus-within:ring-primary-100 overflow-hidden">
+              <input
+                id={inputId}
+                data-testid={inputId}
+                type="text"
+                value={value}
+                autoFocus={autoFocusFirst && idx === 0}
+                onChange={(e: ChangeEvent<HTMLInputElement>) => onChange(field.key, e.target.value)}
+                placeholder={field.placeholder}
+                aria-describedby={hintId}
+                aria-invalid={!!errorText}
+                className="flex-1 min-w-0 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 placeholder:text-stone-400 dark:placeholder:text-neutral-500 bg-transparent focus:outline-none"
+              />
+              {field.suffix && (
+                <span className="pr-3 text-xs text-stone-400 dark:text-neutral-500 select-none whitespace-nowrap">
+                  {field.suffix}
+                </span>
+              )}
+            </div>
+            {/* Always render the hint paragraph with the same id so
+                aria-describedby resolves regardless of error state. */}
+            {errorText ? (
+              <p id={hintId} role="alert" className="text-[11px] text-coral-600">
+                {errorText}
+              </p>
+            ) : (
+              field.hintKey && (
+                <p
+                  id={hintId}
+                  className="text-[11px] leading-relaxed text-stone-400 dark:text-neutral-500">
+                  {t(field.hintKey)}
+                </p>
+              )
+            )}
+          </div>
+        );
+      })}
+    </>
   );
 }

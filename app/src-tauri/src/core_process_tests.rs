@@ -57,28 +57,110 @@ fn core_process_handle_new_creates_instance() {
     assert_eq!(handle.rpc_url(), "http://127.0.0.1:9999/rpc");
 }
 
-/// Issue #1130: a non-OpenHuman listener on the RPC port must NOT be
-/// silently attached to. The test binds a bare `TcpListener` (which never
-/// answers HTTP) so the identification probe sees an unknown listener and
-/// `ensure_running` must surface the conflict instead of returning Ok.
 #[test]
-fn ensure_running_refuses_unknown_listener_on_port() {
+fn ready_signal_updates_runtime_port_and_fallback_notice() {
+    let handle = CoreProcessHandle::new(7788);
+    handle.apply_embedded_ready_signal(openhuman_core::core::jsonrpc::EmbeddedReadySignal {
+        port: 7789,
+        fallback_from: Some(7788),
+    });
+    assert_eq!(handle.port(), 7789);
+    assert_eq!(handle.rpc_url(), "http://127.0.0.1:7789/rpc");
+    let notice = handle
+        .take_last_port_fallback_notice()
+        .expect("fallback notice should be present");
+    assert_eq!(notice.preferred_port, 7788);
+    assert_eq!(notice.chosen_port, 7789);
+    assert!(
+        handle.take_last_port_fallback_notice().is_none(),
+        "fallback notice should be consumed once"
+    );
+}
+
+/// Issue #1613: when the preferred port is occupied by a non-OpenHuman
+/// listener, startup should fall back to a nearby port instead of failing.
+#[test]
+fn ensure_running_falls_back_for_unknown_listener_on_port() {
     let _env_lock = env_lock();
     let _unset = EnvGuard::unset("OPENHUMAN_CORE_REUSE_EXISTING");
     let rt = tokio::runtime::Runtime::new().expect("runtime");
-    let result = rt.block_on(async {
+    let (result, chosen_port, notice) = rt.block_on(async {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind test listener");
         let port = listener.local_addr().expect("local addr").port();
         let handle = CoreProcessHandle::new(port);
-        handle.ensure_running().await
+        let result = handle.ensure_running().await;
+        let chosen_port = handle.port();
+        let notice = handle.take_last_port_fallback_notice();
+        handle.shutdown().await;
+        (result, chosen_port, notice)
     });
-    let err = result.expect_err("ensure_running must refuse an unidentified listener");
     assert!(
-        err.contains("not an OpenHuman core") || err.contains("port"),
-        "error should explain the conflict, got: {err}"
+        result.is_ok(),
+        "ensure_running should recover via fallback when preferred port is occupied: {result:?}"
     );
+    assert!(
+        notice.is_some(),
+        "fallback notice should be set when preferred port is occupied"
+    );
+    let notice = notice.expect("notice set");
+    assert_ne!(
+        chosen_port, notice.preferred_port,
+        "fallback must choose a different port"
+    );
+    assert_eq!(
+        chosen_port, notice.chosen_port,
+        "chosen port should match fallback notice payload"
+    );
+}
+
+#[test]
+fn ensure_running_falls_back_to_7789_when_7788_is_busy() {
+    let _env_lock = env_lock();
+    let _unset = EnvGuard::unset("OPENHUMAN_CORE_REUSE_EXISTING");
+    let rt = tokio::runtime::Runtime::new().expect("runtime");
+    rt.block_on(async {
+        let listener = match tokio::net::TcpListener::bind("127.0.0.1:7788").await {
+            Ok(listener) => listener,
+            Err(err) => {
+                eprintln!(
+                    "[core_process tests] skipping fixed-port fallback test; 7788 unavailable: {err}"
+                );
+                return;
+            }
+        };
+
+        let handle = CoreProcessHandle::new(7788);
+        let result = handle.ensure_running().await;
+        assert!(
+            result.is_ok(),
+            "ensure_running should recover by binding a fallback port: {result:?}"
+        );
+        // Accept any port in the configured fallback range 7789..=7798 — a
+        // parallel test or environmental squatter on a single fallback port
+        // shouldn't fail the broader contract that fallback recovery works.
+        let chosen = handle.port();
+        assert!(
+            (7789..=7798).contains(&chosen),
+            "with 7788 occupied, core should bind to a fallback in 7789..=7798, got {chosen}"
+        );
+        let notice = handle
+            .take_last_port_fallback_notice()
+            .expect("fallback notice should be present");
+        assert_eq!(notice.preferred_port, 7788);
+        assert_eq!(
+            notice.chosen_port, chosen,
+            "fallback notice payload should match the bound port"
+        );
+        assert!(
+            (7789..=7798).contains(&notice.chosen_port),
+            "fallback notice chosen_port should be in 7789..=7798, got {}",
+            notice.chosen_port
+        );
+        handle.shutdown().await;
+        drop(listener);
+    });
 }
 
 /// Escape hatch: setting `OPENHUMAN_CORE_REUSE_EXISTING=1` opts back into

@@ -8,11 +8,12 @@
 //!
 //! ```text
 //! "openhuman"                    → OpenHumanBackendProvider; model = config.default_model
+//! "cloud" / missing              → primary_cloud; legacy custom inference_url wins when
+//!                                  primary still points at OpenHuman after migration
 //! "ollama:<model>[@<temp>]"      → local Ollama at config.local_ai.base_url
 //! "<slug>:<model>[@<temp>]"      → cloud_providers entry keyed by slug;
 //!                                  builds OpenAiCompatibleProvider (Bearer) or
 //!                                  Anthropic flavour depending on auth_style.
-//! ""  / missing                  → falls back to "openhuman"
 //! ```
 //!
 //! The optional `@<temp>` suffix pins a per-workload temperature override on
@@ -60,7 +61,11 @@ pub fn auth_key_for_slug(slug: &str) -> String {
 
 /// Return the configured provider string for a named workload role.
 ///
-/// Returns `"openhuman"` when the workload has no explicit override.
+/// Empty / `"cloud"` resolves through `primary_cloud`. For backwards
+/// compatibility, a legacy external `inference_url` takes precedence when
+/// `primary_cloud` still points at OpenHuman because migration 1→2 preserved
+/// the URL as a custom provider entry but older configs did not explicitly set
+/// per-workload routes.
 pub fn provider_for_role(role: &str, config: &Config) -> String {
     let opt = match role {
         "chat" => config.chat_provider.as_deref(),
@@ -81,24 +86,7 @@ pub fn provider_for_role(role: &str, config: &Config) -> String {
     };
     let s = opt.unwrap_or("").trim();
     if s.is_empty() || s == "cloud" {
-        // When no explicit per-workload provider is set, resolve
-        // primary_cloud.  If it points to a non-openhuman entry, route
-        // there so users can use their own LLM provider without having
-        // to set every single workload knob.  (An active app-session
-        // is still required — verified inside
-        // create_chat_provider_from_string.)
-        let primary_slug = config.primary_cloud.as_deref().and_then(|pid| {
-            config
-                .cloud_providers
-                .iter()
-                .find(|e| e.id == pid && e.slug != "openhuman")
-                .map(|e| e.slug.clone())
-        });
-        if let Some(slug) = primary_slug {
-            format!("{slug}:")
-        } else {
-            PROVIDER_OPENHUMAN.to_string()
-        }
+        resolve_primary_cloud_provider_string(config)
     } else {
         s.to_string()
     }
@@ -133,9 +121,10 @@ pub fn create_chat_provider_from_string(
         p
     );
 
-    // Empty / legacy "cloud" sentinel → OpenHuman backend.
+    // Empty / legacy "cloud" sentinel → primary cloud target.
     if p.is_empty() || p == "cloud" {
-        return make_openhuman_backend(config);
+        let resolved = resolve_primary_cloud_provider_string(config);
+        return create_chat_provider_from_string(role, &resolved, config);
     }
 
     if p == PROVIDER_OPENHUMAN {
@@ -281,6 +270,98 @@ fn verify_session_active(config: &Config) -> anyhow::Result<()> {
         anyhow::bail!("SESSION_EXPIRED: no backend session — sign in to use OpenHuman")
     }
     Ok(())
+}
+
+fn resolve_primary_cloud_provider_string(config: &Config) -> String {
+    let primary = config
+        .primary_cloud
+        .as_deref()
+        .and_then(|id| config.cloud_providers.iter().find(|entry| entry.id == id));
+
+    if primary.is_some_and(is_openhuman_cloud_entry) {
+        if let Some(legacy) = legacy_custom_inference_provider_string(config) {
+            return legacy;
+        }
+    }
+
+    if let Some(entry) = primary {
+        return cloud_entry_provider_string(entry, config);
+    }
+
+    legacy_custom_inference_provider_string(config)
+        .unwrap_or_else(|| PROVIDER_OPENHUMAN.to_string())
+}
+
+fn legacy_custom_inference_provider_string(config: &Config) -> Option<String> {
+    let inference_url = config
+        .inference_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|url| !url.is_empty())?;
+
+    if looks_like_openhuman_backend(inference_url) {
+        return None;
+    }
+
+    let normalized_inference = normalize_endpoint_for_compare(inference_url);
+    config
+        .cloud_providers
+        .iter()
+        .find(|entry| {
+            !is_openhuman_cloud_entry(entry)
+                && normalize_endpoint_for_compare(&entry.endpoint) == normalized_inference
+        })
+        .map(|entry| cloud_entry_provider_string(entry, config))
+}
+
+fn cloud_entry_provider_string(
+    entry: &crate::openhuman::config::schema::cloud_providers::CloudProviderCreds,
+    config: &Config,
+) -> String {
+    if is_openhuman_cloud_entry(entry) {
+        return PROVIDER_OPENHUMAN.to_string();
+    }
+
+    let model = entry
+        .default_model
+        .as_deref()
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+        .or_else(|| {
+            config
+                .default_model
+                .as_deref()
+                .map(str::trim)
+                .filter(|model| !model.is_empty())
+        })
+        .unwrap_or(crate::openhuman::config::DEFAULT_MODEL);
+
+    format!("{}:{model}", entry.slug)
+}
+
+fn is_openhuman_cloud_entry(
+    entry: &crate::openhuman::config::schema::cloud_providers::CloudProviderCreds,
+) -> bool {
+    entry.slug == PROVIDER_OPENHUMAN
+        || matches!(entry.auth_style, AuthStyle::OpenhumanJwt)
+        || looks_like_openhuman_backend(&entry.endpoint)
+}
+
+fn normalize_endpoint_for_compare(url: &str) -> String {
+    url.trim().trim_end_matches('/').to_ascii_lowercase()
+}
+
+fn looks_like_openhuman_backend(url: &str) -> bool {
+    let lower = url.trim().to_ascii_lowercase();
+    let without_scheme = lower.split("://").nth(1).unwrap_or(&lower);
+    let authority = without_scheme.split('/').next().unwrap_or("");
+    let host = authority.split('@').next_back().unwrap_or(authority);
+    let host_no_port = host.split(':').next().unwrap_or(host);
+    matches!(
+        host_no_port,
+        "api.openhuman.ai" | "api.tinyhumans.ai" | "staging-api.tinyhumans.ai" | "openhuman"
+    ) || host_no_port.ends_with(".openhuman.ai")
+        || host_no_port.ends_with(".tinyhumans.ai")
 }
 
 /// Parse a `<model>[@<temp>]` tail into `(model, override)`.

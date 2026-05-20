@@ -57,14 +57,7 @@ impl Tool for FileReadTool {
             ));
         }
 
-        // Security check: validate path is within workspace
-        if !self.security.is_path_allowed(path) {
-            return Ok(ToolResult::error(format!(
-                "Path not allowed by security policy: {path}"
-            )));
-        }
-
-        // Record action BEFORE canonicalization so that every non-trivially-rejected
+        // Record action BEFORE validation so that every non-trivially-rejected
         // request consumes rate limit budget. This prevents attackers from probing
         // path existence (via canonicalize errors) without rate limit cost.
         if !self.security.record_action() {
@@ -73,24 +66,11 @@ impl Tool for FileReadTool {
             ));
         }
 
-        let full_path = self.security.workspace_dir.join(path);
-
-        // Resolve path before reading to block symlink escapes.
-        let resolved_path = match tokio::fs::canonicalize(&full_path).await {
+        // Security check: validate path string, resolve symlinks, confirm workspace containment.
+        let resolved_path = match self.security.validate_path(path).await {
             Ok(p) => p,
-            Err(e) => {
-                return Ok(ToolResult::error(format!(
-                    "Failed to resolve file path: {e}"
-                )));
-            }
+            Err(msg) => return Ok(ToolResult::error(msg)),
         };
-
-        if !self.security.is_resolved_path_allowed(&resolved_path) {
-            return Ok(ToolResult::error(format!(
-                "Resolved path escapes workspace: {}",
-                resolved_path.display()
-            )));
-        }
 
         // Check file size AFTER canonicalization to prevent TOCTOU symlink bypass
         match tokio::fs::metadata(&resolved_path).await {

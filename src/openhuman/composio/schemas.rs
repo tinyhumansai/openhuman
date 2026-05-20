@@ -233,7 +233,9 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     ty: TypeSchema::Json,
                     comment: "Optional JSON object of additional auth fields forwarded to Composio \
                               (e.g. {\"waba_id\": \"...\") for toolkits that require them). \
-                              Reserved keys (toolkit, toolkit_version, auth, client_id) are rejected.",
+                              The core may also add toolkit-specific OAuth scope hints such as \
+                              Gmail's oauth_scopes value. Reserved keys (toolkit, toolkit_version, \
+                              auth, client_id) are rejected.",
                     required: false,
                 },
             ],

@@ -256,6 +256,8 @@ fn all_tools_registers_generic_mcp_bridge_tools_when_servers_exist() {
             cwd: None,
             description: Some("Example docs MCP".into()),
             enabled: true,
+            allowed_tools: Vec::new(),
+            disallowed_tools: Vec::new(),
             timeout_secs: 30,
             auth: crate::openhuman::config::McpAuthConfig::None,
         });

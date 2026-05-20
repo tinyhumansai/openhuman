@@ -809,7 +809,7 @@ pub(super) fn redact_url_for_log(raw: &str) -> String {
 /// untouched. Routing fields that already contain a `:` are assumed to be
 /// in the new `<slug>:<model>` form.
 fn migrate_cloud_provider_slugs(config: &mut Config) {
-    use super::cloud_providers::migrate_legacy_fields;
+    use super::cloud_providers::{migrate_legacy_fields, AuthStyle};
 
     // Step 1: migrate every cloud_providers entry in-place.
     for entry in &mut config.cloud_providers {
@@ -826,6 +826,23 @@ fn migrate_cloud_provider_slugs(config: &mut Config) {
         .map(|e| (e.slug.clone(), e.id.clone()))
         .collect();
 
+    let legacy_custom_slug = config
+        .inference_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|url| !url.is_empty() && !looks_like_openhuman_provider_endpoint(url))
+        .and_then(|url| {
+            let normalized = normalize_provider_endpoint(url);
+            config
+                .cloud_providers
+                .iter()
+                .find(|entry| {
+                    !is_openhuman_provider_entry(entry)
+                        && normalize_provider_endpoint(&entry.endpoint) == normalized
+                })
+                .map(|entry| entry.slug.clone())
+        });
+
     // Helper: rewrite a single routing field.
     // Legacy bare strings are: "cloud", "openhuman", "openai", "anthropic",
     // "openrouter", "custom" (no ':').  New strings contain ':'.
@@ -841,7 +858,10 @@ fn migrate_cloud_provider_slugs(config: &mut Config) {
         match raw.as_str() {
             "cloud" => {
                 // "cloud" sentinel: look for the primary or first non-openhuman entry.
-                // If none found, leave as "openhuman".
+                // If a legacy external inference_url exists and primary still points
+                // at OpenHuman, keep routing on that custom provider; that shape was
+                // written by older builds that preserved the endpoint but defaulted
+                // primary_cloud to OpenHuman.
                 let primary_slug = config.primary_cloud.as_deref().and_then(|pid| {
                     config
                         .cloud_providers
@@ -849,18 +869,29 @@ fn migrate_cloud_provider_slugs(config: &mut Config) {
                         .find(|e| e.id == pid)
                         .map(|e| e.slug.clone())
                 });
-                let slug = primary_slug.or_else(|| {
-                    config
-                        .cloud_providers
-                        .iter()
-                        .find(|e| e.slug != "openhuman")
-                        .map(|e| e.slug.clone())
-                });
+                let slug = match primary_slug.as_deref() {
+                    Some("openhuman") => legacy_custom_slug.clone().or(primary_slug),
+                    Some(_) => primary_slug,
+                    None => legacy_custom_slug.clone().or_else(|| {
+                        config
+                            .cloud_providers
+                            .iter()
+                            .find(|entry| !is_openhuman_provider_entry(entry))
+                            .map(|entry| entry.slug.clone())
+                    }),
+                };
                 if let Some(s) = slug {
-                    tracing::info!(
-                        "[config][migrate] rewriting routing 'cloud' → '{s}:' (empty model)"
-                    );
-                    *field = Some(format!("{s}:"));
+                    if s == "openhuman" {
+                        tracing::debug!(
+                            "[config][migrate] rewriting routing 'cloud' → 'openhuman'"
+                        );
+                        *field = Some("openhuman".to_string());
+                    } else {
+                        tracing::info!(
+                            "[config][migrate] rewriting routing 'cloud' → '{s}:' (empty model)"
+                        );
+                        *field = Some(format!("{s}:"));
+                    }
                 } else {
                     tracing::debug!(
                         "[config][migrate] routing 'cloud' with no non-openhuman provider → 'openhuman'"
@@ -897,6 +928,29 @@ fn migrate_cloud_provider_slugs(config: &mut Config) {
     rewrite(&mut config.heartbeat_provider);
     rewrite(&mut config.learning_provider);
     rewrite(&mut config.subconscious_provider);
+
+    fn normalize_provider_endpoint(url: &str) -> String {
+        url.trim().trim_end_matches('/').to_ascii_lowercase()
+    }
+
+    fn looks_like_openhuman_provider_endpoint(url: &str) -> bool {
+        let lower = url.trim().to_ascii_lowercase();
+        let without_scheme = lower.split("://").nth(1).unwrap_or(&lower);
+        let authority = without_scheme.split('/').next().unwrap_or("");
+        let host = authority.split('@').next_back().unwrap_or(authority);
+        let host_no_port = host.split(':').next().unwrap_or(host);
+        matches!(
+            host_no_port,
+            "api.openhuman.ai" | "api.tinyhumans.ai" | "staging-api.tinyhumans.ai" | "openhuman"
+        ) || host_no_port.ends_with(".openhuman.ai")
+            || host_no_port.ends_with(".tinyhumans.ai")
+    }
+
+    fn is_openhuman_provider_entry(entry: &super::cloud_providers::CloudProviderCreds) -> bool {
+        entry.slug == "openhuman"
+            || matches!(entry.auth_style, AuthStyle::OpenhumanJwt)
+            || looks_like_openhuman_provider_endpoint(&entry.endpoint)
+    }
 }
 
 fn migrate_legacy_autocomplete_disabled_apps(config: &mut Config) {

@@ -672,6 +672,43 @@ pub(crate) async fn run_tool_call_loop(
                 }
             }
 
+            // ── External-effect approval gate (#1339) ─────────
+            // Tools whose `external_effect()` returns true route
+            // through the process-global `ApprovalGate` so the UI
+            // can prompt the user before `execute()` runs. The gate
+            // is `None` when supervised mode is disabled or in test
+            // envs — behavior matches the pre-#1339 path.
+            if let Some(tool) = tool_opt {
+                if tool.external_effect_with_args(&call.arguments) {
+                    if let Some(gate) = crate::openhuman::approval::ApprovalGate::try_global() {
+                        let summary = crate::openhuman::approval::summarize_action(
+                            &call.name,
+                            &call.arguments,
+                        );
+                        let redacted = crate::openhuman::approval::redact_args(&call.arguments);
+                        match gate.intercept(&call.name, &summary, redacted).await {
+                            crate::openhuman::approval::GateOutcome::Allow => {}
+                            crate::openhuman::approval::GateOutcome::Deny { reason } => {
+                                tracing::warn!(
+                                    iteration,
+                                    tool = call.name.as_str(),
+                                    reason = %reason,
+                                    "[agent_loop] approval gate denied tool call"
+                                );
+                                emit_failed_completion(&reason).await;
+                                individual_results.push(reason.clone());
+                                let _ = writeln!(
+                                    tool_results,
+                                    "<tool_result name=\"{}\">\n{reason}\n</tool_result>",
+                                    call.name
+                                );
+                                continue;
+                            }
+                        }
+                    }
+                }
+            }
+
             let result = if let Some(tool) = tool_opt {
                 let tool_deadline =
                     crate::openhuman::tool_timeout::tool_execution_timeout_duration();

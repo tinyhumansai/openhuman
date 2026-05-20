@@ -111,6 +111,22 @@ impl Tool for PushoverTool {
         })
     }
 
+    // Intentionally NOT marked external_effect=true in v1.
+    //
+    // `execute()` below already enforces local policy via
+    // `security.can_act()` (read-only autonomy block) and
+    // `security.record_action()` (rate limit). The gate runs
+    // BEFORE `execute()`, so flipping external_effect would prompt
+    // the user even for calls that the policy will immediately
+    // reject — a dead-end approval flow. Leaving this tool at the
+    // trait default (false) means the local policy stays the
+    // single approval surface until the gate learns to consult
+    // policy before parking.
+    //
+    // Follow-up #1339-v3: thread the SecurityPolicy into the gate
+    // pre-check so external_effect can stay true here without
+    // generating ghost approvals.
+
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
         if !self.security.can_act() {
             return Ok(ToolResult::error("Action blocked: autonomy is read-only"));
