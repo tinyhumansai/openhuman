@@ -323,7 +323,7 @@ describe('<ComposioConnectModal> — Jira subdomain collection', () => {
     fireEvent.click(connectButton);
 
     await waitFor(() => {
-      expect(screen.getByText(/Please enter your Atlassian subdomain/i)).toBeInTheDocument();
+      expect(screen.getByText(/This field is required/i)).toBeInTheDocument();
     });
   });
 
@@ -349,7 +349,7 @@ describe('<ComposioConnectModal> — Jira subdomain collection', () => {
     fireEvent.click(connectButton);
 
     await waitFor(() => {
-      expect(screen.getByText(/Please enter your Atlassian subdomain/i)).toBeInTheDocument();
+      expect(screen.getByText(/This field is required/i)).toBeInTheDocument();
     });
 
     // Type to clear the error
@@ -464,6 +464,115 @@ describe('<ComposioConnectModal> — needs-subdomain recovery phase', () => {
       expect(screen.queryByText(/api.tinyhumans.ai/i)).not.toBeInTheDocument();
       // Raw JSON payload should not be shown
       expect(screen.queryByText(/internal server error payload/i)).not.toBeInTheDocument();
+    });
+  });
+});
+
+// ── Dynamics 365 org_name required-field flow (#2127) ──────────────────
+
+describe('<ComposioConnectModal> — Dynamics 365 org_name collection (#2127)', () => {
+  const dynamicsToolkit = composioToolkitMeta('dynamics365');
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('renders the Dynamics 365 Organization Name input in the idle phase', () => {
+    render(<ComposioConnectModal toolkit={dynamicsToolkit} onClose={() => {}} />);
+
+    expect(screen.getByLabelText(/Dynamics 365 Organization Name/i)).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('myorg')).toBeInTheDocument();
+    // Suffix renders inside the input wrapper so users see the .crm.dynamics.com tail.
+    expect(screen.getByText('.crm.dynamics.com')).toBeInTheDocument();
+  });
+
+  it('blocks submission when org name is empty and surfaces the generic required-field error', async () => {
+    render(<ComposioConnectModal toolkit={dynamicsToolkit} onClose={() => {}} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /Connect Dynamics 365/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/This field is required/i)).toBeInTheDocument();
+    });
+    expect(authorize).not.toHaveBeenCalled();
+  });
+
+  it('rejects a full URL with the subdomain-invalid message', async () => {
+    render(<ComposioConnectModal toolkit={dynamicsToolkit} onClose={() => {}} />);
+
+    const input = screen.getByPlaceholderText('myorg');
+    fireEvent.change(input, { target: { value: 'https://myorg.crm.dynamics.com' } });
+    fireEvent.click(screen.getByRole('button', { name: /Connect Dynamics 365/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/short subdomain only/i)).toBeInTheDocument();
+    });
+    expect(authorize).not.toHaveBeenCalled();
+  });
+
+  it('forwards the trimmed org_name as extra_params on successful submit', async () => {
+    vi.mocked(authorize).mockResolvedValue({
+      connectUrl: 'https://hosted.composio.dev/dynamics-token',
+      connectionId: 'ca_dyn_1',
+    });
+    vi.mocked(composioApi.listConnections).mockResolvedValue({ connections: [] });
+
+    render(<ComposioConnectModal toolkit={dynamicsToolkit} onClose={() => {}} />);
+
+    fireEvent.change(screen.getByPlaceholderText('myorg'), { target: { value: '  myorg  ' } });
+    fireEvent.click(screen.getByRole('button', { name: /Connect Dynamics 365/i }));
+
+    await waitFor(() => {
+      expect(authorize).toHaveBeenCalledWith('dynamics365', { org_name: 'myorg' });
+    });
+  });
+
+  it('transitions to the needs-fields recovery phase when Composio returns 612', async () => {
+    vi.mocked(authorize).mockRejectedValueOnce(
+      new Error(
+        'Authorization failed: Backend returned 400: {"error":{"slug":"ConnectedAccount_MissingRequiredFields","code":612}}'
+      )
+    );
+
+    render(<ComposioConnectModal toolkit={dynamicsToolkit} onClose={() => {}} />);
+
+    fireEvent.change(screen.getByPlaceholderText('myorg'), { target: { value: 'myorg' } });
+    fireEvent.click(screen.getByRole('button', { name: /Connect Dynamics 365/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Retry connection/i })).toBeInTheDocument();
+      expect(screen.getByText(/we need a bit more information/i)).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/ConnectedAccount_MissingRequiredFields/i)).not.toBeInTheDocument();
+  });
+});
+
+// ── WhatsApp WABA id parity check — registry refactor must not regress (#2127) ─
+
+describe('<ComposioConnectModal> — WhatsApp WABA id parity (#2127)', () => {
+  const whatsappToolkit = composioToolkitMeta('whatsapp');
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('still renders the WABA id input and forwards waba_id as extra_params', async () => {
+    vi.mocked(authorize).mockResolvedValue({
+      connectUrl: 'https://hosted.composio.dev/wa-token',
+      connectionId: 'ca_wa_1',
+    });
+    vi.mocked(composioApi.listConnections).mockResolvedValue({ connections: [] });
+
+    render(<ComposioConnectModal toolkit={whatsappToolkit} onClose={() => {}} />);
+
+    expect(screen.getByLabelText(/WhatsApp Business Account ID/i)).toBeInTheDocument();
+    fireEvent.change(screen.getByPlaceholderText(/123456789012345/), {
+      target: { value: '999000111222333' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Connect WhatsApp/i }));
+
+    await waitFor(() => {
+      expect(authorize).toHaveBeenCalledWith('whatsapp', { waba_id: '999000111222333' });
     });
   });
 });

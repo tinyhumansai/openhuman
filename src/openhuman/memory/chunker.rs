@@ -48,27 +48,34 @@ pub fn chunk_markdown(text: &str, max_tokens: usize) -> Vec<Chunk> {
 
     for (heading, body) in sections {
         let heading: Option<Rc<str>> = heading.map(Rc::from);
+        let heading_prefix = heading.as_deref().map(|h| {
+            let mut prefix = String::with_capacity(h.len() + 1);
+            prefix.push_str(h);
+            prefix.push('\n');
+            prefix
+        });
 
-        // Combine heading and body to check initial size.
-        let full = if let Some(ref h) = heading {
-            format!("{h}\n{body}")
-        } else {
-            body.clone()
-        };
+        let full_len = body.len() + heading_prefix.as_ref().map_or(0, String::len);
 
-        if full.len() <= max_chars {
+        if full_len <= max_chars {
             // Section fits entirely in one chunk.
+            let content = if let Some(prefix) = heading_prefix.as_deref() {
+                let mut full = String::with_capacity(full_len);
+                full.push_str(prefix);
+                full.push_str(&body);
+                full.trim().to_string()
+            } else {
+                body.trim().to_string()
+            };
             chunks.push(Chunk {
                 index: chunks.len(),
-                content: full.trim().to_string(),
+                content,
                 heading: heading.clone(),
             });
         } else {
             // Step 2: Section is too large; split into paragraphs.
             let paragraphs = split_on_blank_lines(&body);
-            let mut current = heading
-                .as_deref()
-                .map_or_else(String::new, |h| format!("{h}\n"));
+            let mut current = heading_prefix.clone().unwrap_or_default();
 
             for para in paragraphs {
                 // If adding this paragraph exceeds the limit, emit the current chunk.
@@ -79,9 +86,7 @@ pub fn chunk_markdown(text: &str, max_tokens: usize) -> Vec<Chunk> {
                         heading: heading.clone(),
                     });
                     // Reset with the heading for context preservation.
-                    current = heading
-                        .as_deref()
-                        .map_or_else(String::new, |h| format!("{h}\n"));
+                    reset_chunk_buffer(&mut current, heading_prefix.as_deref());
                 }
 
                 if para.len() > max_chars {
@@ -92,9 +97,7 @@ pub fn chunk_markdown(text: &str, max_tokens: usize) -> Vec<Chunk> {
                             content: current.trim().to_string(),
                             heading: heading.clone(),
                         });
-                        current = heading
-                            .as_deref()
-                            .map_or_else(String::new, |h| format!("{h}\n"));
+                        reset_chunk_buffer(&mut current, heading_prefix.as_deref());
                     }
                     for line_chunk in split_on_lines(&para, max_chars) {
                         chunks.push(Chunk {
@@ -128,6 +131,13 @@ pub fn chunk_markdown(text: &str, max_tokens: usize) -> Vec<Chunk> {
     }
 
     chunks
+}
+
+fn reset_chunk_buffer(current: &mut String, heading_prefix: Option<&str>) {
+    current.clear();
+    if let Some(prefix) = heading_prefix {
+        current.push_str(prefix);
+    }
 }
 
 /// Returns `true` if `line` starts with a valid ATX markdown heading

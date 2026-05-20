@@ -47,6 +47,15 @@ const pt4: TranslationMap = {
     'Informe apenas o subdomínio curto (ex.: "acme"), não a URL completa. Deve conter apenas letras, números e hífens.',
   'composio.connect.subdomainRequired':
     'Por favor, insira seu subdomínio Atlassian para continuar.',
+  'composio.connect.dynamicsOrgNameLabel': 'Nome da organização do Dynamics 365',
+  'composio.connect.dynamicsOrgNameHint':
+    'Por exemplo, "myorg" para myorg.crm.dynamics.com. Insira apenas o nome curto da organização, não a URL completa.',
+  'composio.connect.needsFieldsPrefix': 'Para conectar',
+  'composio.connect.needsFieldsSuffix':
+    'precisamos de mais algumas informações. Preencha os campos faltantes abaixo e tente novamente.',
+  'composio.connect.requiredFieldEmpty': 'Este campo é obrigatório.',
+  'composio.connect.wabaIdHint':
+    'Encontre-o via GET /me/businesses depois GET /{business_id}/owned_whatsapp_business_accounts usando seu token de acesso do Meta.',
   'composio.connect.wabaIdLabel': 'Rótulo de ID WABA',
   'composio.connect.wabaIdRequired':
     'Por favor, insira seu ID de Conta Empresarial do WhatsApp (WABA ID) para continuar.',
@@ -145,11 +154,25 @@ const pt4: TranslationMap = {
   'onboarding.contextGathering.continueToChat': 'Continuar para o chat',
   'onboarding.contextGathering.errorDesc':
     'Não conseguimos montar seu perfil completo agora, mas tudo bem — você pode continuar e seu perfil será construído ao longo do tempo.',
+  'onboarding.contextGathering.coreAlive':
+    'Núcleo acessível — a primeira inicialização pode demorar um minuto.',
+  'onboarding.contextGathering.coreAliveProbing': 'Verificando a conexão com o núcleo…',
+  'onboarding.contextGathering.coreUnreachable':
+    'O núcleo não está respondendo. Você pode continuar e tentar novamente mais tarde.',
+  'onboarding.contextGathering.stillWorkingDesc':
+    'A primeira inicialização pode levar 30–60 segundos enquanto preparamos seu modelo local e ferramentas. Você pode continuar para o chat a qualquer momento — a construção do perfil continua em segundo plano.',
+  'onboarding.contextGathering.stillWorkingTitle': 'Ainda construindo seu perfil…',
   'onboarding.contextGathering.title': 'Coleta de Contexto',
   'openhuman.team_list_teams': 'Listar equipes',
   'overlay.ariaAttention': 'Mensagem de atenção',
+  'overlay.ariaCompanion': 'Companion ativo',
   'overlay.ariaOrb': 'Orb do OpenHuman',
   'overlay.ariaVoiceActive': 'Entrada de voz ativa',
+  'overlay.companion.error': 'Erro',
+  'overlay.companion.listening': 'Ouvindo…',
+  'overlay.companion.pointing': 'Apontando…',
+  'overlay.companion.speaking': 'Falando…',
+  'overlay.companion.thinking': 'Pensando…',
   'overlay.orbTitle': 'Arraste para mover · Clique duplo para redefinir posição',
   'pages.settings.account.connections': 'Conexões',
   'pages.settings.account.connectionsDesc': 'Descrição de conexões',
@@ -169,6 +192,9 @@ const pt4: TranslationMap = {
   'pages.settings.aiSection.description':
     'Provedores de modelos de linguagem, Ollama local e voz (STT / TTS).',
   'pages.settings.aiSection.title': 'IA',
+  'pages.settings.features.desktopCompanion': 'Companion Desktop',
+  'pages.settings.features.desktopCompanionDesc':
+    'Assistente de voz com consciência da tela — escuta, vê, fala, aponta',
   'pages.settings.features.messagingChannels': 'Canais de mensagens',
   'pages.settings.features.messagingChannelsDesc': 'Descrição dos canais de mensagens',
   'pages.settings.features.notifications': 'Notificações',
@@ -365,6 +391,9 @@ const pt4: TranslationMap = {
   'settings.billing.subscription.paymentConfirmed': 'Pagamento confirmado',
   'settings.billing.subscription.perMonth': 'Por mês',
   'settings.billing.subscription.popular': 'Popular',
+  'pages.settings.account.migration': 'Importar de outro assistente',
+  'pages.settings.account.migrationDesc':
+    'Migre memória e anotações do OpenClaw (e, em breve, do Hermes) para este espaço de trabalho.',
 };
 
 export default pt4;

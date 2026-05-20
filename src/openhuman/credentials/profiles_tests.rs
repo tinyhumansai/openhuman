@@ -442,6 +442,112 @@ fn acquire_lock_writes_pid_so_future_callers_can_recover() {
     assert!(!lock_path.exists(), "guard must remove lock on drop");
 }
 
+/// Sentry "Timed out waiting for auth profile lock" recovery: a lock
+/// file that has been around for longer than `STALE_LOCK_AGE_MS` is
+/// treated as leaked even if its recorded pid is still alive. This
+/// covers the Windows AV / indexer case where `Drop::drop` on the
+/// previous guard could not unlink the file and orphaned it with the
+/// still-alive owner pid inside.
+#[test]
+fn clear_lock_if_stale_reclaims_lock_older_than_threshold_even_with_live_pid() {
+    let tmp = TempDir::new().unwrap();
+    let store = AuthProfilesStore::new(tmp.path(), false);
+
+    let lock_path = tmp.path().join(LOCK_FILENAME);
+    std::fs::write(&lock_path, format!("pid={}\n", std::process::id())).unwrap();
+    // Backdate the lock-file mtime well past STALE_LOCK_AGE_MS.
+    let aged =
+        std::time::SystemTime::now() - std::time::Duration::from_millis(STALE_LOCK_AGE_MS + 5_000);
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&lock_path)
+        .expect("reopen lock for set_modified")
+        .set_modified(aged)
+        .expect("backdate lock mtime");
+
+    assert!(
+        store.clear_lock_if_stale(),
+        "an aged lock with a live pid must be reclaimed (leaked-by-failed-unlink case)"
+    );
+    assert!(!lock_path.exists(), "stale lock should have been removed");
+}
+
+#[test]
+fn clear_lock_if_stale_reclaims_aged_malformed_lock() {
+    let tmp = TempDir::new().unwrap();
+    let store = AuthProfilesStore::new(tmp.path(), false);
+
+    let lock_path = tmp.path().join(LOCK_FILENAME);
+    std::fs::write(&lock_path, "garbage without a pid line\n").unwrap();
+    let aged =
+        std::time::SystemTime::now() - std::time::Duration::from_millis(STALE_LOCK_AGE_MS + 5_000);
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&lock_path)
+        .expect("reopen lock for set_modified")
+        .set_modified(aged)
+        .expect("backdate lock mtime");
+
+    assert!(
+        store.clear_lock_if_stale(),
+        "an aged malformed lock should be reclaimed"
+    );
+    assert!(!lock_path.exists());
+}
+
+/// Sentry OPENHUMAN-TAURI-H8: when `OpenOptions::create_new` fails with
+/// anything other than `AlreadyExists`, the error surfaced to Sentry
+/// must embed the underlying `io::ErrorKind` and `raw_os_error()` so we
+/// can tell which OS code is firing. Drive the wrapping helper directly
+/// with a synthetic `io::Error` so the test is platform-independent and
+/// doesn't depend on filesystem permissions (CI runs as root and bypasses
+/// `chmod`).
+#[test]
+fn annotate_lock_create_failure_embeds_io_kind_and_os_code() {
+    // Use each platform's native permission-denied code so the test exercises
+    // the OS error that real production failures would carry. Rust does map
+    // `from_raw_os_error(13)` to `PermissionDenied` on Windows too, but real
+    // Windows `create_new` failures surface code 5 (ERROR_ACCESS_DENIED), and
+    // running against the native code catches regressions in
+    // `annotate_lock_create_failure`'s handling of the platform-specific
+    // value.
+    #[cfg(windows)]
+    let raw_code = 5; // ERROR_ACCESS_DENIED
+    #[cfg(not(windows))]
+    let raw_code = 13; // EACCES
+
+    let io_err = std::io::Error::from_raw_os_error(raw_code);
+    let wrapped = annotate_lock_create_failure(anyhow::Error::new(io_err));
+    let msg = format!("{wrapped:?}");
+
+    assert!(
+        msg.contains("Failed to create auth profile lock"),
+        "stable top-level message missing: {msg}"
+    );
+    assert!(
+        msg.contains("kind=Some(PermissionDenied)"),
+        "context must include io::ErrorKind for Sentry diagnosis: {msg}"
+    );
+    assert!(
+        msg.contains(&format!("os_code=Some({raw_code})")),
+        "context must include raw OS code for Sentry diagnosis: {msg}"
+    );
+}
+
+/// If somehow the chained error is not an `io::Error`, the wrapper must
+/// still emit the stable top-level message with explicit `None` markers so
+/// the Sentry fingerprint still splits cleanly (and we know to look
+/// upstream for an io::Error that got dropped).
+#[test]
+fn annotate_lock_create_failure_handles_missing_io_error() {
+    let wrapped = annotate_lock_create_failure(anyhow::anyhow!("synthetic"));
+    let msg = format!("{wrapped:?}");
+
+    assert!(msg.contains("Failed to create auth profile lock"), "{msg}");
+    assert!(msg.contains("kind=None"), "{msg}");
+    assert!(msg.contains("os_code=None"), "{msg}");
+}
+
 #[test]
 fn auth_profile_kind_serde_roundtrip() {
     let json = serde_json::to_string(&AuthProfileKind::OAuth).unwrap();

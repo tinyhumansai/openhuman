@@ -12,9 +12,16 @@ function todaySeconds(): number {
  * later than midnight today are placed on a future cell and NOT counted in
  * the total/peak summary. Use yesterday's epoch-seconds for "should be
  * counted" assertions.
+ *
+ * Anchored to noon (local time) so callers can subtract small offsets (seconds
+ * to a few hours) without crossing the day boundary when the test happens to
+ * run near midnight in CI.
  */
 function yesterdaySeconds(): number {
-  return Math.floor((Date.now() - 24 * 60 * 60 * 1000) / 1000);
+  const noonYesterday = new Date();
+  noonYesterday.setHours(12, 0, 0, 0);
+  noonYesterday.setDate(noonYesterday.getDate() - 1);
+  return Math.floor(noonYesterday.getTime() / 1000);
 }
 
 describe('<MemoryHeatmap />', () => {

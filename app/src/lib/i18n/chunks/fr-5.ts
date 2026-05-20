@@ -169,6 +169,46 @@ const fr5: TranslationMap = {
   'settings.localModel.status.triggering': 'Déclenchement…',
   'settings.localModel.status.unavailable': 'Indisponible',
   'settings.localModel.status.working': 'En cours…',
+  'settings.developerMenu.ai.title': 'Configuration IA',
+  'settings.developerMenu.ai.desc':
+    'Fournisseurs cloud, modèles Ollama locaux et routage par charge de travail',
+  'settings.developerMenu.screenAwareness.title': "Conscience de l'écran",
+  'settings.developerMenu.screenAwareness.desc':
+    "Autorisations de capture d'écran, politique de surveillance et contrôles de session",
+  'settings.developerMenu.messagingChannels.title': 'Canaux de messagerie',
+  'settings.developerMenu.messagingChannels.desc':
+    "Configure les modes d'authentification Telegram/Discord et le routage de canal par défaut",
+  'settings.developerMenu.tools.title': 'Outils',
+  'settings.developerMenu.tools.desc':
+    "Active ou désactive les capacités qu'OpenHuman peut utiliser en ton nom",
+  'settings.developerMenu.agentChat.title': 'Chat agent',
+  'settings.developerMenu.agentChat.desc':
+    'Teste une conversation agent avec des remplacements de modèle et de température',
+  'settings.developerMenu.cronJobs.title': 'Tâches cron',
+  'settings.developerMenu.cronJobs.desc':
+    "Afficher et configurer les tâches planifiées des compétences d'exécution",
+  'settings.developerMenu.localModelDebug.title': 'Débogage du modèle local',
+  'settings.developerMenu.localModelDebug.desc':
+    "Configuration Ollama, téléchargements d'assets, tests de modèle et diagnostics",
+  'settings.developerMenu.webhooks.title': 'Webhooks',
+  'settings.developerMenu.webhooks.desc':
+    "Inspecter les enregistrements de webhooks d'exécution et les journaux de requêtes capturés",
+  'settings.developerMenu.intelligence.title': 'Intelligence',
+  'settings.developerMenu.intelligence.desc':
+    'Espace mémoire, moteur subconscient, rêves et paramètres',
+  'settings.developerMenu.notificationRouting.title': 'Routage des notifications',
+  'settings.developerMenu.notificationRouting.desc':
+    "Score d'importance par IA et escalade de l'orchestrateur pour les alertes d'intégration",
+  'settings.developerMenu.composeioTriggers.title': 'Déclencheurs ComposeIO',
+  'settings.developerMenu.composeioTriggers.desc':
+    "Afficher l'historique et les archives des déclencheurs ComposeIO",
+  'settings.developerMenu.composioRouting.title': 'Routage Composio (mode direct)',
+  'settings.developerMenu.composioRouting.desc':
+    'Utilise ta propre clé API Composio et route les appels directement vers backend.composio.dev',
+  'settings.developerMenu.integrationTriggers.title': "Déclencheurs d'intégration",
+  'settings.developerMenu.integrationTriggers.desc':
+    "Configurer les paramètres de triage IA pour les déclencheurs d'intégration Composio",
+  'settings.appearance.menuDesc': 'Choisis clair, sombre ou le thème du système',
   'settings.mascot.active': 'Actif',
   'settings.mascot.characterDesc': 'Description du personnage',
   'settings.mascot.characterHeading': 'Titre du personnage',
@@ -176,6 +216,8 @@ const fr5: TranslationMap = {
   'settings.mascot.colorHeading': 'Titre de la couleur',
   'settings.mascot.loadingLibrary': 'Chargement de la bibliothèque OpenHuman…',
   'settings.mascot.localDefault': 'OpenHuman local (par défaut)',
+  'settings.mascot.menuTitle': 'Mascotte',
+  'settings.mascot.menuDesc': "Choisis la couleur de la mascotte utilisée dans toute l'application",
   'settings.mascot.noCharacters': "Aucun personnage OpenHuman n'est encore disponible",
   'settings.mascot.noColorVariants': 'Aucune variante de couleur',
   'settings.mascot.voice.current': 'actuel',
@@ -425,6 +467,28 @@ const fr5: TranslationMap = {
   'settings.localModel.status.ollamaDocs': 'Documentation Ollama',
   'settings.localModel.status.thenRetry':
     'pour les instructions de configuration, puis réessayez une fois votre runtime accessible.',
+  'settings.appearance.title': 'Appearance',
+  'settings.appearance.themeHeading': 'Theme',
+  'settings.appearance.themeAria': 'Theme',
+  'settings.appearance.modeLight': 'Light',
+  'settings.appearance.modeLightDesc': 'Bright surfaces, dark text.',
+  'settings.appearance.modeDark': 'Dark',
+  'settings.appearance.modeDarkDesc': 'Dim surfaces, easier on the eyes after dusk.',
+  'settings.appearance.modeSystem': 'Match system',
+  'settings.appearance.modeSystemDesc': 'Follow your OS appearance setting.',
+  'settings.appearance.helperText':
+    'Dark mode switches the entire app — chat, settings, panels — to a dim palette. "Match system" follows your OS appearance and updates live.',
+  'settings.mascot.characterPreview': 'Preview',
+  'settings.mascot.characterStates': 'states',
+  'settings.mascot.characterVisemes': 'visemes',
+  'settings.mascot.colorAria': 'OpenHuman color',
+  'settings.mascot.colorBlack': 'Black',
+  'settings.mascot.colorBurgundy': 'Burgundy',
+  'settings.mascot.colorGreen': 'Green',
+  'settings.mascot.colorNavy': 'Navy',
+  'settings.mascot.colorYellow': 'Yellow',
+  'settings.mascot.libraryUnavailable': 'OpenHuman library unavailable',
+  'settings.mascot.title': 'OpenHuman',
 };
 
 export default fr5;

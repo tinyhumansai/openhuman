@@ -1,4 +1,5 @@
 use super::*;
+use crate::openhuman::config::schema::{StreamMode, TelegramConfig};
 
 #[test]
 fn read_active_user_returns_none_when_no_file() {
@@ -249,6 +250,56 @@ fn apply_env_overrides_web_search_max_results_and_timeout_clamped() {
 }
 
 #[test]
+fn apply_env_overrides_searxng_config() {
+    let _g = env_lock();
+    clear_env(&[
+        "OPENHUMAN_SEARXNG_ENABLED",
+        "SEARXNG_ENABLED",
+        "OPENHUMAN_SEARXNG_BASE_URL",
+        "SEARXNG_BASE_URL",
+        "OPENHUMAN_SEARXNG_MAX_RESULTS",
+        "SEARXNG_MAX_RESULTS",
+        "OPENHUMAN_SEARXNG_DEFAULT_LANGUAGE",
+        "SEARXNG_DEFAULT_LANGUAGE",
+        "OPENHUMAN_SEARXNG_TIMEOUT_SECS",
+        "OPENHUMAN_SEARXNG_TIMEOUT_SECONDS",
+        "SEARXNG_TIMEOUT_SECS",
+        "SEARXNG_TIMEOUT_SECONDS",
+    ]);
+
+    let mut cfg = Config::default();
+    unsafe {
+        std::env::set_var("OPENHUMAN_SEARXNG_ENABLED", "yes");
+        std::env::set_var("OPENHUMAN_SEARXNG_BASE_URL", "http://127.0.0.1:8081");
+        std::env::set_var("OPENHUMAN_SEARXNG_MAX_RESULTS", "25");
+        std::env::set_var("OPENHUMAN_SEARXNG_DEFAULT_LANGUAGE", "zh-CN");
+        std::env::set_var("OPENHUMAN_SEARXNG_TIMEOUT_SECONDS", "12");
+    }
+
+    cfg.apply_env_overrides();
+
+    assert!(cfg.searxng.enabled);
+    assert_eq!(cfg.searxng.base_url, "http://127.0.0.1:8081");
+    assert_eq!(cfg.searxng.max_results, 25);
+    assert_eq!(cfg.searxng.default_language, "zh-CN");
+    assert_eq!(cfg.searxng.timeout_secs, 12);
+    clear_env(&[
+        "OPENHUMAN_SEARXNG_ENABLED",
+        "OPENHUMAN_SEARXNG_BASE_URL",
+        "OPENHUMAN_SEARXNG_MAX_RESULTS",
+        "OPENHUMAN_SEARXNG_DEFAULT_LANGUAGE",
+        "OPENHUMAN_SEARXNG_TIMEOUT_SECONDS",
+    ]);
+}
+
+#[test]
+fn searxng_timeout_seconds_alias_deserializes() {
+    let cfg: crate::openhuman::config::SearxngConfig =
+        toml::from_str(r#"timeout_seconds = 7"#).expect("deserialize searxng config");
+    assert_eq!(cfg.timeout_secs, 7);
+}
+
+#[test]
 fn apply_env_overrides_picks_up_sentry_dsn() {
     let _g = env_lock();
     clear_env(&["OPENHUMAN_CORE_SENTRY_DSN", "OPENHUMAN_SENTRY_DSN"]);
@@ -423,8 +474,9 @@ impl EnvLookup for HashMapEnv {
 }
 
 #[test]
-fn env_overlay_model_prefers_openhuman_over_alias() {
-    // Both set → OPENHUMAN_MODEL wins.
+fn env_overlay_model_only_honours_namespaced_var() {
+    // Both set → OPENHUMAN_MODEL wins; bare MODEL is ignored even when
+    // OPENHUMAN_MODEL is absent.
     let env = HashMapEnv::new()
         .with("OPENHUMAN_MODEL", "specific-v2")
         .with("MODEL", "alias-fallback");
@@ -432,11 +484,30 @@ fn env_overlay_model_prefers_openhuman_over_alias() {
     cfg.apply_env_overlay_with(&env);
     assert_eq!(cfg.default_model.as_deref(), Some("specific-v2"));
 
-    // Only alias set → alias wins.
-    let env = HashMapEnv::new().with("MODEL", "alias-only");
+    // Only bare MODEL set → must NOT clobber default_model. Vendor
+    // asset-tag env vars (e.g. Dell OptiPlex `MODEL=7080`) would otherwise
+    // hijack the LLM model name and 400 every backend call
+    // (Sentry OPENHUMAN-TAURI-J8).
+    let env = HashMapEnv::new().with("MODEL", "7080");
     let mut cfg = Config::default();
+    let original = cfg.default_model.clone();
     cfg.apply_env_overlay_with(&env);
-    assert_eq!(cfg.default_model.as_deref(), Some("alias-only"));
+    assert_eq!(
+        cfg.default_model, original,
+        "bare MODEL env var must not override default_model"
+    );
+
+    // Whitespace-only OPENHUMAN_MODEL must not clobber either. Some
+    // shells/CI runners pass an unset-but-declared env var through as
+    // `"   "`, which `is_empty()` alone wouldn't reject.
+    let env = HashMapEnv::new().with("OPENHUMAN_MODEL", "   ");
+    let mut cfg = Config::default();
+    let original = cfg.default_model.clone();
+    cfg.apply_env_overlay_with(&env);
+    assert_eq!(
+        cfg.default_model, original,
+        "whitespace-only OPENHUMAN_MODEL must not clobber default_model"
+    );
 }
 
 #[test]
@@ -541,6 +612,40 @@ fn env_overlay_web_search_limits_validated() {
     // Bare aliases also accepted when the OPENHUMAN-prefixed variant is absent.
     cfg.apply_env_overlay_with(&HashMapEnv::new().with("WEB_SEARCH_MAX_RESULTS", "4"));
     assert_eq!(cfg.web_search.max_results, 4);
+}
+
+#[test]
+fn env_overlay_searxng_config_validated() {
+    let mut cfg = Config::default();
+
+    cfg.apply_env_overlay_with(
+        &HashMapEnv::new()
+            .with("OPENHUMAN_SEARXNG_ENABLED", "true")
+            .with("OPENHUMAN_SEARXNG_BASE_URL", "http://127.0.0.1:8888")
+            .with("OPENHUMAN_SEARXNG_MAX_RESULTS", "40")
+            .with("OPENHUMAN_SEARXNG_DEFAULT_LANGUAGE", "fr")
+            .with("OPENHUMAN_SEARXNG_TIMEOUT_SECS", "9"),
+    );
+
+    assert!(cfg.searxng.enabled);
+    assert_eq!(cfg.searxng.base_url, "http://127.0.0.1:8888");
+    assert_eq!(cfg.searxng.max_results, 40);
+    assert_eq!(cfg.searxng.default_language, "fr");
+    assert_eq!(cfg.searxng.timeout_secs, 9);
+
+    cfg.apply_env_overlay_with(
+        &HashMapEnv::new()
+            .with("OPENHUMAN_SEARXNG_ENABLED", "no")
+            .with("OPENHUMAN_SEARXNG_MAX_RESULTS", "0")
+            .with("OPENHUMAN_SEARXNG_TIMEOUT_SECS", "0"),
+    );
+
+    assert!(!cfg.searxng.enabled);
+    assert_eq!(cfg.searxng.max_results, 40);
+    assert_eq!(cfg.searxng.timeout_secs, 9);
+
+    cfg.apply_env_overlay_with(&HashMapEnv::new().with("SEARXNG_TIMEOUT_SECONDS", "11"));
+    assert_eq!(cfg.searxng.timeout_secs, 11);
 }
 
 #[test]
@@ -1383,5 +1488,212 @@ fn migrate_legacy_inference_url_is_noop_when_inference_url_set() {
     assert_eq!(
         cfg.inference_url.as_deref(),
         Some("https://existing.example/v1/chat/completions")
+    );
+}
+
+#[test]
+fn migrate_cloud_provider_slugs_routes_cloud_to_legacy_custom_when_primary_is_openhuman() {
+    let mut cfg = Config::default();
+    cfg.inference_url = Some("https://api.example.com/v1".into());
+    cfg.primary_cloud = Some("p_oh".into());
+    cfg.memory_provider = Some("cloud".into());
+    cfg.reasoning_provider = Some("openhuman".into());
+    cfg.cloud_providers = vec![
+        crate::openhuman::config::schema::CloudProviderCreds {
+            id: "p_oh".into(),
+            slug: "openhuman".into(),
+            label: "OpenHuman".into(),
+            endpoint: "https://api.openhuman.ai/v1".into(),
+            auth_style: crate::openhuman::config::schema::AuthStyle::OpenhumanJwt,
+            ..Default::default()
+        },
+        crate::openhuman::config::schema::CloudProviderCreds {
+            id: "p_custom".into(),
+            slug: "custom".into(),
+            label: "Custom".into(),
+            endpoint: "https://api.example.com/v1/".into(),
+            auth_style: crate::openhuman::config::schema::AuthStyle::Bearer,
+            default_model: Some("gpt-4o-mini".into()),
+            ..Default::default()
+        },
+    ];
+
+    migrate_cloud_provider_slugs(&mut cfg);
+
+    assert_eq!(cfg.memory_provider.as_deref(), Some("custom:"));
+    assert_eq!(
+        cfg.reasoning_provider.as_deref(),
+        Some("openhuman"),
+        "explicit OpenHuman routing must stay explicit"
+    );
+}
+
+#[test]
+fn migrate_cloud_provider_slugs_keeps_cloud_on_openhuman_without_legacy_custom() {
+    let mut cfg = Config::default();
+    cfg.primary_cloud = Some("p_oh".into());
+    cfg.memory_provider = Some("cloud".into());
+    cfg.cloud_providers = vec![crate::openhuman::config::schema::CloudProviderCreds {
+        id: "p_oh".into(),
+        slug: "openhuman".into(),
+        label: "OpenHuman".into(),
+        endpoint: "https://api.tinyhumans.ai/v1".into(),
+        auth_style: crate::openhuman::config::schema::AuthStyle::OpenhumanJwt,
+        ..Default::default()
+    }];
+
+    migrate_cloud_provider_slugs(&mut cfg);
+
+    assert_eq!(cfg.memory_provider.as_deref(), Some("openhuman"));
+}
+
+#[test]
+fn migrate_cloud_provider_slugs_does_not_pick_unmatched_custom_provider() {
+    let mut cfg = Config::default();
+    cfg.inference_url = Some("https://api.example.com/v1".into());
+    cfg.primary_cloud = Some("p_oh".into());
+    cfg.memory_provider = Some("cloud".into());
+    cfg.cloud_providers = vec![
+        crate::openhuman::config::schema::CloudProviderCreds {
+            id: "p_oh".into(),
+            slug: "openhuman".into(),
+            label: "OpenHuman".into(),
+            endpoint: "https://api.openhuman.ai/v1".into(),
+            auth_style: crate::openhuman::config::schema::AuthStyle::OpenhumanJwt,
+            ..Default::default()
+        },
+        crate::openhuman::config::schema::CloudProviderCreds {
+            id: "p_other".into(),
+            slug: "other".into(),
+            label: "Other".into(),
+            endpoint: "https://other.example.com/v1".into(),
+            auth_style: crate::openhuman::config::schema::AuthStyle::Bearer,
+            ..Default::default()
+        },
+    ];
+
+    migrate_cloud_provider_slugs(&mut cfg);
+
+    assert_eq!(cfg.memory_provider.as_deref(), Some("openhuman"));
+}
+
+/// Regression test for #1900: secrets are encrypted on save and decrypted on load.
+///
+/// Verifies that:
+/// 1. Channel tokens are NOT stored in plaintext on disk
+/// 2. The backup file (.bak) is encrypted even when overwriting a plaintext config
+/// 3. Loading the config back decrypts secrets correctly
+#[tokio::test]
+async fn config_secrets_encrypted_on_save_decrypted_on_load() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config_path = tmp.path().join("config.toml");
+    let known_secret = "my-telegram-bot-token-abc123";
+
+    // ── Phase 1: Simulate a pre-upgrade plaintext config on disk ──────
+    // Write a raw TOML file containing the secret in plaintext, just like
+    // a user who upgraded from a build before encryption was wired in.
+    // save() requires the workspace dir to exist, so create it first.
+    let workspace_dir = tmp.path().join("workspace");
+    std::fs::create_dir_all(&workspace_dir).unwrap();
+
+    let plaintext_toml = format!(
+        r#"[channels_config.telegram]
+bot_token = "{known_secret}"
+allowed_users = ["@admin"]
+"#
+    );
+    std::fs::write(&config_path, plaintext_toml.as_bytes()).unwrap();
+
+    // Build a Config pointing at the existing plaintext file.
+    // We set a fresh secret to force a changed value — the save path
+    // will encrypt this new value and write it to disk.
+    let mut cfg = Config {
+        config_path: config_path.clone(),
+        workspace_dir,
+        ..Default::default()
+    };
+    cfg.channels_config.telegram = Some(TelegramConfig {
+        bot_token: known_secret.to_string(),
+        allowed_users: vec!["@admin".to_string()],
+        stream_mode: StreamMode::Off,
+        draft_update_interval_ms: 1000,
+        silent_streaming: true,
+        mention_only: false,
+    });
+
+    // ── Phase 2: Save (encrypts + creates backup from old file) ──────
+    cfg.save().await.unwrap();
+
+    // The primary config must NOT contain the plaintext secret.
+    let raw_contents = std::fs::read_to_string(&config_path).expect("config.toml should exist");
+    assert!(
+        !raw_contents.contains(known_secret),
+        "SECURITY BUG: secret '{known_secret}' found in plaintext in config.toml!"
+    );
+
+    // The backup file is created by copying the old on-disk file BEFORE
+    // the atomic replace. Our fix ensures the backup comes from the
+    // encrypted bytes, NOT the plaintext original.
+    let backup_path = config_path.with_extension("toml.bak");
+    assert!(
+        backup_path.exists(),
+        "config.toml.bak should exist after overwriting an existing config"
+    );
+    let backup_contents = std::fs::read_to_string(&backup_path).unwrap();
+    assert!(
+        !backup_contents.contains(known_secret),
+        "SECURITY BUG: secret found in plaintext in config.toml.bak!\n\
+         Backup contents:\n{backup_contents}"
+    );
+
+    // ── Phase 3: Reload — secrets must decrypt back correctly ────────
+    let reloaded = load_or_init_for_workspace(tmp.path()).await;
+    let reloaded_token = reloaded
+        .channels_config
+        .telegram
+        .as_ref()
+        .map(|t| t.bot_token.as_str());
+    assert_eq!(
+        reloaded_token,
+        Some(known_secret),
+        "decrypt path broken: reloaded bot_token '{reloaded_token:?}' \
+         does not match original '{known_secret}'"
+    );
+}
+
+/// Backwards-compatibility regression for #1900: a pre-upgrade `config.toml`
+/// that contains plaintext secrets (written by a build from before encryption
+/// was wired in) must continue to load with `secrets.encrypt = true`. The
+/// load path should hand the raw plaintext to channel code rather than
+/// erroring or returning a ciphertext placeholder. The next `save()` is what
+/// migrates the values to `enc2:` on disk.
+#[tokio::test]
+async fn plaintext_legacy_config_still_loads_with_encryption_enabled() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config_path = tmp.path().join("config.toml");
+    let known_secret = "legacy-plaintext-bot-token-xyz789";
+
+    let plaintext_toml = format!(
+        r#"[secrets]
+encrypt = true
+
+[channels_config.telegram]
+bot_token = "{known_secret}"
+allowed_users = ["@admin"]
+"#
+    );
+    std::fs::write(&config_path, plaintext_toml.as_bytes()).unwrap();
+
+    let reloaded = load_or_init_for_workspace(tmp.path()).await;
+    let reloaded_token = reloaded
+        .channels_config
+        .telegram
+        .as_ref()
+        .map(|t| t.bot_token.as_str());
+    assert_eq!(
+        reloaded_token,
+        Some(known_secret),
+        "backwards-compat broken: legacy plaintext bot_token did not load as cleartext \
+         (got {reloaded_token:?})"
     );
 }

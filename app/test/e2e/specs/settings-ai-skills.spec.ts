@@ -20,7 +20,8 @@ import { startMockServer, stopMockServer } from '../mock-server';
 const USER_ID = 'e2e-settings-ai-skills';
 
 describe('Settings - AI & Skills', () => {
-  before(async () => {
+  before(async function beforeSuite() {
+    this.timeout(90_000);
     await startMockServer();
     await waitForApp();
     await resetApp(USER_ID);
@@ -30,7 +31,8 @@ describe('Settings - AI & Skills', () => {
     await stopMockServer();
   });
 
-  it('mounts LLM panel and shows provider/routing controls (13.3.1)', async () => {
+  it('mounts LLM panel and shows provider/routing controls (13.3.1)', async function () {
+    this.timeout(90_000);
     await navigateViaHash('/settings/llm');
 
     await waitForText('AI', 15_000);

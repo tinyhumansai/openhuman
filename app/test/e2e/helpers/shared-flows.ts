@@ -25,8 +25,8 @@ import { supportsExecuteScript } from './platform';
 /**
  * Open the "Add Account" modal on /accounts.
  *
- * The "Add app" affordance is a button whose only labelled descendants are an
- * SVG plus a tooltip span with `pointer-events: none`. None of the shared
+ * The "Add Account" affordance is a button whose only labelled descendants are
+ * an SVG plus a tooltip span with `pointer-events: none`. None of the shared
  * `clickButton`/`clickText` helpers can target it cleanly because the
  * accessible name lives only on `aria-label`, so this helper reaches for the
  * explicit selector. Tracking a follow-up `clickByAriaLabel` helper.
@@ -34,7 +34,8 @@ import { supportsExecuteScript } from './platform';
 export async function openAddAccountModal(): Promise<void> {
   const opened = await browser.execute(() => {
     const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>('button'));
-    const addBtn = buttons.find(b => b.getAttribute('aria-label') === 'Add app');
+    // The aria-label is sourced from i18n key 'accounts.addAccount' = 'Add Account'.
+    const addBtn = buttons.find(b => b.getAttribute('aria-label') === 'Add Account');
     if (addBtn) {
       addBtn.click();
       return true;
@@ -42,7 +43,7 @@ export async function openAddAccountModal(): Promise<void> {
     return false;
   });
   if (!opened) {
-    throw new Error('Could not locate Add app button on /accounts');
+    throw new Error('Could not locate Add Account button on /accounts');
   }
   await waitForText('Add account', 5_000);
 }
@@ -62,14 +63,11 @@ export async function waitForRequest(log, method, urlFragment, timeout = 15_000)
 }
 
 export async function waitForHomePage(timeout = 15_000) {
-  const candidates = [
-    'Test',
-    'Good morning',
-    'Good afternoon',
-    'Good evening',
-    'Message OpenHuman',
-    'Upgrade to Premium',
-  ];
+  // Home page renders a CTA button with t('home.askAssistant') = 'Ask your assistant anything...'.
+  // Also accept the shorter variant and the navigation bar label as fallbacks.
+  // The old strings ('Good morning', 'Message OpenHuman', 'Upgrade to Premium')
+  // are no longer rendered on the home page.
+  const candidates = ['Ask your assistant anything', 'Ask your assistant'];
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
     for (const text of candidates) {

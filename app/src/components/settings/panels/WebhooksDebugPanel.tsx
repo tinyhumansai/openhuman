@@ -3,7 +3,11 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useBackendUrl } from '../../../hooks/useBackendUrl';
 import { useT } from '../../../lib/i18n/I18nContext';
 import { tunnelsApi } from '../../../services/api/tunnelsApi';
-import { getCoreHttpBaseUrl } from '../../../services/coreRpcClient';
+import {
+  buildWebhookEventsUrl,
+  getCoreHttpBaseUrl,
+  getCoreRpcToken,
+} from '../../../services/coreRpcClient';
 import {
   openhumanWebhooksClearLogs,
   openhumanWebhooksListLogs,
@@ -85,9 +89,20 @@ const WebhooksDebugPanel = () => {
 
     const connect = async () => {
       try {
-        const baseUrl = await getCoreHttpBaseUrl();
+        const [baseUrl, coreRpcToken] = await Promise.all([
+          getCoreHttpBaseUrl(),
+          getCoreRpcToken(),
+        ]);
         if (cancelled) return;
-        eventSource = new EventSource(`${baseUrl}/events/webhooks`);
+
+        const url = buildWebhookEventsUrl(baseUrl, coreRpcToken);
+        if (!url) {
+          // No bearer available — skip rather than open an unauth request
+          // that the server will 401 and EventSource will reconnect to forever.
+          setIsLive(false);
+          return;
+        }
+        eventSource = new EventSource(url);
 
         eventSource.addEventListener('webhooks_debug', event => {
           setIsLive(true);

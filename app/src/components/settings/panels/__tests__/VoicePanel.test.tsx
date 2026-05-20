@@ -332,7 +332,7 @@ describe('VoicePanel', () => {
     expect(screen.getByTestId('whisper-install-state')).toHaveTextContent('Not installed');
   });
 
-  it('disables the Local Whisper STT option when the engine is missing', async () => {
+  it('keeps the Local Whisper STT option selectable when the engine is missing', async () => {
     runtime.whisperStatus = makeInstallStatus('whisper');
     renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
 
@@ -341,8 +341,15 @@ describe('VoicePanel', () => {
       'option[value="whisper"]'
     ) as HTMLOptionElement | null;
     expect(whisperOption).not.toBeNull();
-    expect(whisperOption!.disabled).toBe(true);
+    expect(whisperOption!.disabled).toBe(false);
     expect(whisperOption!.textContent).toMatch(/install required/i);
+
+    fireEvent.change(sttSelect, { target: { value: 'whisper' } });
+    await waitFor(() =>
+      expect(vi.mocked(openhumanVoiceSetProviders)).toHaveBeenCalledWith(
+        expect.objectContaining({ stt_provider: 'whisper' })
+      )
+    );
   });
 
   it('shows a Reinstall label once Whisper is installed', async () => {
@@ -390,7 +397,7 @@ describe('VoicePanel', () => {
     expect(screen.getByTestId('piper-install-state')).toHaveTextContent('Not installed');
   });
 
-  it('disables the Local Piper TTS option when the engine is missing', async () => {
+  it('keeps the Local Piper TTS option selectable when the engine is missing', async () => {
     runtime.piperStatus = makeInstallStatus('piper');
     renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
 
@@ -399,8 +406,15 @@ describe('VoicePanel', () => {
       'option[value="piper"]'
     ) as HTMLOptionElement | null;
     expect(piperOption).not.toBeNull();
-    expect(piperOption!.disabled).toBe(true);
+    expect(piperOption!.disabled).toBe(false);
     expect(piperOption!.textContent).toMatch(/install required/i);
+
+    fireEvent.change(ttsSelect, { target: { value: 'piper' } });
+    await waitFor(() =>
+      expect(vi.mocked(openhumanVoiceSetProviders)).toHaveBeenCalledWith(
+        expect.objectContaining({ tts_provider: 'piper' })
+      )
+    );
   });
 
   it('triggers installPiper when the user clicks Install', async () => {

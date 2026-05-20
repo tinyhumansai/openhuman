@@ -759,6 +759,14 @@ fn core_host() -> String {
         .unwrap_or_else(|| "127.0.0.1".to_string())
 }
 
+/// Metadata sent back to the Tauri host once the embedded core has selected
+/// and bound its listen port.
+#[derive(Debug, Clone)]
+pub struct EmbeddedReadySignal {
+    pub port: u16,
+    pub fallback_from: Option<u16>,
+}
+
 /// Runs the HTTP/JSON-RPC server.
 ///
 /// This function binds to the specified host and port, initializes the router,
@@ -768,7 +776,7 @@ pub async fn run_server(
     port: Option<u16>,
     socketio_enabled: bool,
 ) -> anyhow::Result<()> {
-    run_server_inner(host, port, socketio_enabled, false, None).await
+    run_server_inner(host, port, socketio_enabled, false, None, None).await
 }
 
 /// Like [`run_server`] but marks the instance as embedded.
@@ -778,7 +786,34 @@ pub async fn run_server_embedded(
     socketio_enabled: bool,
     shutdown_token: CancellationToken,
 ) -> anyhow::Result<()> {
-    run_server_inner(host, port, socketio_enabled, true, Some(shutdown_token)).await
+    run_server_inner(
+        host,
+        port,
+        socketio_enabled,
+        true,
+        Some(shutdown_token),
+        None,
+    )
+    .await
+}
+
+/// Embedded entrypoint with an explicit readiness callback.
+pub async fn run_server_embedded_with_ready(
+    host: Option<&str>,
+    port: Option<u16>,
+    socketio_enabled: bool,
+    shutdown_token: CancellationToken,
+    ready_tx: tokio::sync::oneshot::Sender<EmbeddedReadySignal>,
+) -> anyhow::Result<()> {
+    run_server_inner(
+        host,
+        port,
+        socketio_enabled,
+        true,
+        Some(shutdown_token),
+        Some(ready_tx),
+    )
+    .await
 }
 
 /// Internal server entrypoint.
@@ -788,6 +823,7 @@ async fn run_server_inner(
     socketio_enabled: bool,
     embedded_core: bool,
     shutdown_token: Option<CancellationToken>,
+    ready_tx: Option<tokio::sync::oneshot::Sender<EmbeddedReadySignal>>,
 ) -> anyhow::Result<()> {
     // Ensure all controllers are registered before starting.
     let _ = all::all_registered_controllers();
@@ -807,40 +843,48 @@ async fn run_server_inner(
     // gets a live handle. Without this, every periodic sync bails with
     // "[composio:gmail] memory client not ready".
     {
-        // Surface a config-load failure explicitly. Falling silently to
-        // `Config::default()` would hide a serious operator-visible
-        // problem (corrupt toml, permissions, missing OPENHUMAN_WORKSPACE
-        // workspace dir) and the memory client would init against the
-        // wrong workspace — leading to chunk loss / cross-workspace
-        // bleed-over. We log loud, then proceed with default so the
-        // server still comes up; the operator sees the error in stderr
-        // and can fix their config.
-        let cfg = match crate::openhuman::config::Config::load_or_init().await {
-            Ok(c) => c,
+        // A `Config::load_or_init` failure here is operator-visible and
+        // serious (corrupt toml, bad permissions, missing/unwritable
+        // OPENHUMAN_WORKSPACE — common on headless/containerised deploys
+        // with no writable $HOME). Previously we fell back to
+        // `Config::default()` and initialised the memory + whatsapp_data
+        // stores against the *wrong* workspace dir, silently causing chunk
+        // loss / cross-workspace bleed-over while the app looked healthy
+        // (Sentry OPENHUMAN-CORE-48). Instead: skip the workspace-bound
+        // init entirely so memory stays explicitly *uninitialised* —
+        // callers then get a clear "memory client not ready" error rather
+        // than reading/writing the wrong workspace. The server still comes
+        // up; the operator sees the loud error and fixes their config or
+        // sets OPENHUMAN_WORKSPACE to a writable path, then restarts.
+        match crate::openhuman::config::Config::load_or_init().await {
+            Ok(cfg) => {
+                match crate::openhuman::memory::global::init(cfg.workspace_dir.clone()) {
+                    Ok(_) => log::info!(
+                        "[boot] memory::global initialized (workspace={})",
+                        cfg.workspace_dir.display()
+                    ),
+                    Err(e) => log::warn!("[boot] memory::global init failed: {e}"),
+                }
+                // Initialize the WhatsApp data store so scanner ingest calls
+                // can write data without requiring a lazy-init fallback.
+                match crate::openhuman::whatsapp_data::global::init(cfg.workspace_dir.clone()) {
+                    Ok(_) => log::info!(
+                        "[boot] whatsapp_data::global initialized (workspace={})",
+                        cfg.workspace_dir.display()
+                    ),
+                    Err(e) => log::warn!("[boot] whatsapp_data::global init failed: {e}"),
+                }
+            }
             Err(e) => {
                 log::error!(
-                    "[boot] memory::global init: Config::load_or_init failed ({e:#}); \
-                     falling back to default workspace dir — fix your config.toml \
-                     or OPENHUMAN_WORKSPACE before relying on memory persistence"
+                    "[boot] memory::global + whatsapp_data init SKIPPED — \
+                     Config::load_or_init failed ({e:#}). Memory persistence is \
+                     DISABLED for this run; no silent fallback to the default \
+                     workspace (which would cause chunk loss / cross-workspace \
+                     bleed-over). Fix config.toml or set OPENHUMAN_WORKSPACE to a \
+                     writable path, then restart."
                 );
-                Default::default()
             }
-        };
-        match crate::openhuman::memory::global::init(cfg.workspace_dir.clone()) {
-            Ok(_) => log::info!(
-                "[boot] memory::global initialized (workspace={})",
-                cfg.workspace_dir.display()
-            ),
-            Err(e) => log::warn!("[boot] memory::global init failed: {e}"),
-        }
-        // Initialize the WhatsApp data store so scanner ingest calls
-        // can write data without requiring a lazy-init fallback.
-        match crate::openhuman::whatsapp_data::global::init(cfg.workspace_dir.clone()) {
-            Ok(_) => log::info!(
-                "[boot] whatsapp_data::global initialized (workspace={})",
-                cfg.workspace_dir.display()
-            ),
-            Err(e) => log::warn!("[boot] whatsapp_data::global init failed: {e}"),
         }
     }
 
@@ -875,15 +919,57 @@ async fn run_server_inner(
         "[core] Bind resolution: host={resolved_host} (from {host_source}), port={resolved_port} (from {port_source})"
     );
 
-    let port = resolved_port;
+    // Safety check: refuse to bind on a non-loopback address without an
+    // explicit RPC token. Without this, the entire RPC surface (tool
+    // execution, file access, credentials) is unauthenticated and reachable
+    // from the network. See: https://github.com/tinyhumansai/openhuman/issues/1919
+    if crate::openhuman::security::pairing::is_public_bind(&resolved_host) {
+        let has_explicit_token = std::env::var(crate::core::auth::CORE_TOKEN_ENV_VAR)
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .is_some();
+        if !has_explicit_token {
+            log::error!(
+                "[core] ⚠️  SECURITY WARNING: Binding on public address {resolved_host} without \
+                 an explicit OPENHUMAN_CORE_TOKEN. The RPC server will auto-generate a token, \
+                 but external clients will not know it. Set OPENHUMAN_CORE_TOKEN in your \
+                 .env file to secure the RPC endpoint."
+            );
+            eprintln!(
+                "\n\x1b[1;31m[SECURITY]\x1b[0m Binding on {resolved_host} without OPENHUMAN_CORE_TOKEN.\n\
+                 Set OPENHUMAN_CORE_TOKEN in .env to secure the RPC endpoint.\n\
+                 Without it, the auto-generated token is written to {{workspace}}/core.token\n\
+                 but remote clients will not be able to authenticate.\n"
+            );
+        }
+    }
+
+    let preferred_port = resolved_port;
     let host = resolved_host;
-    let bind_addr = format!("{host}:{port}");
-    let listener = tokio::net::TcpListener::bind((host.as_str(), port))
-        .await
-        .map_err(|e| {
-            log::error!("[core] Failed to bind to {bind_addr}: {e}");
-            e
-        })?;
+    let pick = crate::openhuman::connectivity::rpc::pick_listen_port_for_host(
+        host.as_str(),
+        preferred_port,
+    )
+    .await
+    .map_err(|err| {
+        log::error!("[core] Failed to bind to {host}:{preferred_port}: {err}");
+        anyhow::Error::new(err)
+    })?;
+    let listen_port = pick.port;
+    let bind_addr = format!("{host}:{listen_port}");
+    let listener = pick.listener;
+
+    // Synchronize OPENHUMAN_CORE_RPC_URL with the actual bound port so
+    // connectivity::rpc::resolve_listen_port() (used by openhuman.connectivity_diag)
+    // reports the live listener instead of the originally-requested port when
+    // fallback engaged. Embedded path also calls this via apply_embedded_ready_signal,
+    // but the standalone CLI never did before — leaving diag stale on fallback.
+    //
+    // SAFETY: set_var is process-global; this runs once during bind and the
+    // standalone CLI doesn't share its env with concurrent test threads.
+    unsafe {
+        std::env::set_var("OPENHUMAN_CORE_RPC_URL", format!("http://{bind_addr}/rpc"));
+    }
 
     let app = build_core_http_router(socketio_enabled);
 
@@ -899,6 +985,13 @@ async fn run_server_inner(
         log::info!("[rpc:socketio] Socket.IO — ws://{bind_addr}/socket.io/ (same HTTP server)");
     } else {
         log::info!("[rpc:socketio] disabled (--jsonrpc-only)");
+    }
+
+    if let Some(tx) = ready_tx {
+        let _ = tx.send(EmbeddedReadySignal {
+            port: listen_port,
+            fallback_from: pick.fallback_from,
+        });
     }
 
     // Background bootstrap for services — gated on login state.
@@ -1232,6 +1325,47 @@ pub async fn bootstrap_core_runtime(embedded_core: bool) {
         log::warn!(
             "[runtime] AgentDefinitionRegistry::init_global failed: {err} — \
              spawn_subagent will be unavailable until restart"
+        );
+    }
+
+    // --- Approval gate (#1339) ---
+    // Opt-in via `OPENHUMAN_APPROVAL_GATE=1`. When enabled, tool calls
+    // with `external_effect() == true` (composio, pushover, gmail
+    // unsubscribe, proactive external sends, triage React/Escalate)
+    // route through `ApprovalGate::intercept` and park until the UI
+    // dispatches `approval_decide` (or the 10-minute TTL elapses and
+    // the call is denied). Off by default until the React UI
+    // (toast + settings panel) lands — otherwise gated tool calls
+    // would block the agent loop with nothing to release them.
+    if std::env::var("OPENHUMAN_APPROVAL_GATE")
+        .map(|v| matches!(v.trim(), "1" | "true" | "TRUE"))
+        .unwrap_or(false)
+    {
+        let (session_id, ephemeral) = match std::env::var("OPENHUMAN_CORE_TOKEN")
+            .ok()
+            .filter(|s| !s.is_empty())
+        {
+            Some(token) => (token, false),
+            None => (format!("session-{}", uuid::Uuid::new_v4()), true),
+        };
+        if ephemeral {
+            log::debug!(
+                "[runtime] OPENHUMAN_CORE_TOKEN unset; generated ephemeral session_id={session_id} \
+                 for approval gate — `approval_list_pending` is session-agnostic so pending rows \
+                 from prior launches will still be visible, but per-session audit grouping will not \
+                 correlate across restarts"
+            );
+        }
+        let _ =
+            crate::openhuman::approval::ApprovalGate::init_global(cfg.clone(), session_id.clone());
+        log::info!(
+            "[runtime] approval gate installed (OPENHUMAN_APPROVAL_GATE=1, session_id={session_id}) — \
+             external-effect tool calls will block until approval_decide"
+        );
+    } else {
+        log::debug!(
+            "[runtime] approval gate disabled (OPENHUMAN_APPROVAL_GATE unset) — \
+             external-effect tool calls run unsupervised"
         );
     }
 

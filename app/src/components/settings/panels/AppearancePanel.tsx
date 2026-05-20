@@ -1,5 +1,6 @@
 import type { ReactElement } from 'react';
 
+import { useT } from '../../../lib/i18n/I18nContext';
 import { useAppDispatch, useAppSelector } from '../../../store/hooks';
 import { setThemeMode, type ThemeMode } from '../../../store/themeSlice';
 import SettingsHeader from '../components/SettingsHeader';
@@ -45,31 +46,40 @@ const SystemIcon = (
   </svg>
 );
 
-const OPTIONS: ModeOption[] = [
-  { id: 'light', label: 'Light', description: 'Bright surfaces, dark text.', icon: SunIcon },
-  {
-    id: 'dark',
-    label: 'Dark',
-    description: 'Dim surfaces, easier on the eyes after dusk.',
-    icon: MoonIcon,
-  },
-  {
-    id: 'system',
-    label: 'Match system',
-    description: 'Follow your OS appearance setting.',
-    icon: SystemIcon,
-  },
-];
-
 const AppearancePanel = () => {
+  const { t } = useT();
   const { navigateBack, breadcrumbs } = useSettingsNavigation();
   const dispatch = useAppDispatch();
   const mode = useAppSelector(state => state.theme.mode);
 
+  // Build at render time so the labels follow the active locale; `t()` itself
+  // memoises on locale change, so this stays stable across re-renders within a
+  // locale.
+  const OPTIONS: ModeOption[] = [
+    {
+      id: 'light',
+      label: t('settings.appearance.modeLight'),
+      description: t('settings.appearance.modeLightDesc'),
+      icon: SunIcon,
+    },
+    {
+      id: 'dark',
+      label: t('settings.appearance.modeDark'),
+      description: t('settings.appearance.modeDarkDesc'),
+      icon: MoonIcon,
+    },
+    {
+      id: 'system',
+      label: t('settings.appearance.modeSystem'),
+      description: t('settings.appearance.modeSystemDesc'),
+      icon: SystemIcon,
+    },
+  ];
+
   return (
     <div>
       <SettingsHeader
-        title="Appearance"
+        title={t('settings.appearance.title')}
         showBackButton
         onBack={navigateBack}
         breadcrumbs={breadcrumbs}
@@ -78,12 +88,12 @@ const AppearancePanel = () => {
       <div className="p-4 space-y-4">
         <div>
           <h3 className="text-xs font-semibold uppercase tracking-wider text-neutral-400 dark:text-neutral-500 mb-2 px-1">
-            Theme
+            {t('settings.appearance.themeHeading')}
           </h3>
           <div
             className="bg-white dark:bg-neutral-900 rounded-xl border border-neutral-200 dark:border-neutral-800 overflow-hidden"
             role="radiogroup"
-            aria-label="Theme">
+            aria-label={t('settings.appearance.themeAria')}>
             {OPTIONS.map((opt, idx) => {
               const selected = opt.id === mode;
               return (
@@ -136,8 +146,7 @@ const AppearancePanel = () => {
             })}
           </div>
           <p className="text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed px-1 mt-2">
-            Dark mode switches the entire app — chat, settings, panels — to a dim palette. "Match
-            system" follows your OS appearance and updates live.
+            {t('settings.appearance.helperText')}
           </p>
         </div>
       </div>

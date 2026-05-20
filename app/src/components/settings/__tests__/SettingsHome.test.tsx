@@ -5,11 +5,16 @@ import { Provider } from 'react-redux';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { I18nProvider } from '../../../lib/i18n/I18nContext';
+import type { Locale } from '../../../lib/i18n/types';
 import localeReducer from '../../../store/localeSlice';
 import SettingsHome from '../SettingsHome';
 
-function makeTestStore() {
-  return configureStore({ reducer: { locale: localeReducer } });
+function makeTestStore(locale: Locale = 'en') {
+  return configureStore({
+    reducer: { locale: localeReducer },
+    preloadedState: { locale: { current: locale } },
+  });
 }
 
 // --- hoisted mocks ---
@@ -58,12 +63,18 @@ vi.mock('../../walkthrough/AppWalkthrough', () => ({ resetWalkthrough: vi.fn() }
 
 // --- helpers ---
 
-function renderSettingsHome() {
+function renderSettingsHome({ locale = 'en', withI18n = false } = {}) {
+  const content = withI18n ? (
+    <I18nProvider>
+      <SettingsHome />
+    </I18nProvider>
+  ) : (
+    <SettingsHome />
+  );
+
   return render(
-    <Provider store={makeTestStore()}>
-      <MemoryRouter>
-        <SettingsHome />
-      </MemoryRouter>
+    <Provider store={makeTestStore(locale as Locale)}>
+      <MemoryRouter>{content}</MemoryRouter>
     </Provider>
   );
 }
@@ -96,6 +107,15 @@ describe('SettingsHome', () => {
       expect(screen.getByText('Advanced')).toBeInTheDocument();
       expect(screen.getByText('Clear App Data')).toBeInTheDocument();
       expect(screen.getByText('Log out')).toBeInTheDocument();
+    });
+
+    it('localizes Appearance and Mascot menu items', () => {
+      renderSettingsHome({ locale: 'zh-CN', withI18n: true });
+
+      expect(screen.getByText('外观')).toBeInTheDocument();
+      expect(screen.getByText('选择浅色、深色或跟随系统主题')).toBeInTheDocument();
+      expect(screen.getByText('吉祥物')).toBeInTheDocument();
+      expect(screen.getByText('选择应用内使用的吉祥物颜色')).toBeInTheDocument();
     });
 
     it('no longer renders Features / AI / Rewards / Restart Tour / About on the home screen', () => {
