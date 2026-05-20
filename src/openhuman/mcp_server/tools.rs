@@ -28,6 +28,7 @@ const TREE_TOP_ENTITIES_ARGUMENTS: &[&str] = &["kind", "k"];
 const TREE_LIST_SOURCES_ARGUMENTS: &[&str] = &["user_email_hint"];
 const MEMORY_STORE_ARGUMENTS: &[&str] = &["title", "content", "namespace", "tags"];
 const MEMORY_NOTE_ARGUMENTS: &[&str] = &["chunk_id", "note_text"];
+const TREE_TAG_ARGUMENTS: &[&str] = &["chunk_id", "tags"];
 
 #[derive(Debug, Clone)]
 pub struct McpToolSpec {
@@ -207,6 +208,18 @@ fn base_tool_specs() -> Vec<McpToolSpec> {
             rpc_method: Some("openhuman.memory_doc_put"),
             input_schema: memory_note_schema(),
         },
+        McpToolSpec {
+            name: "tree.tag",
+            title: "Tag Memory Chunk",
+            description: "Apply one or more category tags to an existing memory chunk. \
+                          Stored as an upsertable tag-record document linked to the target \
+                          chunk_id, so re-tagging the same chunk replaces the prior tag set \
+                          rather than accumulating duplicate annotations. Differs from \
+                          `memory.note` in that the payload is a categorical label list — \
+                          queryable via the document `tags` field — rather than free-form text.",
+            rpc_method: Some("openhuman.memory_doc_put"),
+            input_schema: tree_tag_schema(),
+        },
     ]
 }
 
@@ -357,6 +370,30 @@ fn memory_note_schema() -> Value {
     })
 }
 
+fn tree_tag_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "chunk_id": {
+                "type": "string",
+                "minLength": 1,
+                "description": "ID of the memory chunk to tag. Use an ID from `memory.search`, `memory.recall`, or `tree.browse` results."
+            },
+            "tags": {
+                "type": "array",
+                "items": {
+                    "type": "string",
+                    "minLength": 1
+                },
+                "minItems": 1,
+                "description": "One or more category labels to attach (e.g. `[\"todo\", \"q3-planning\"]`). Re-tagging the same chunk replaces the prior tag set; supply the complete desired set on each call."
+            }
+        },
+        "required": ["chunk_id", "tags"],
+        "additionalProperties": false
+    })
+}
+
 fn searxng_search_schema() -> Value {
     json!({
         "type": "object",
@@ -453,7 +490,7 @@ pub async fn call_tool(name: &str, arguments: Value) -> Result<Value, ToolCallEr
             enforce_act_policy(spec.name).await?;
             return run_subagent_tool(&params).await;
         }
-        "memory.store" | "memory.note" => {
+        "memory.store" | "memory.note" | "tree.tag" => {
             enforce_write_policy(spec.name).await?;
             validate_controller_params(&spec, &params)?;
             return dispatch_write_tool(spec.name, &params).await;
@@ -679,6 +716,47 @@ fn build_rpc_params(
             params.insert("metadata".to_string(), Value::Object(metadata));
             Ok(params)
         }
+        "tree.tag" => {
+            reject_unexpected_arguments(&args, TREE_TAG_ARGUMENTS)?;
+            let chunk_id = required_non_empty_string(&args, "chunk_id")?;
+            // `required_non_empty_string_array` checks both presence and
+            // that the resulting list isn't empty after trimming — keeps
+            // the LLM honest about supplying at least one label per call.
+            let tags = required_non_empty_string_array(&args, "tags")?;
+            // Deterministic key keyed on `chunk_id` (not on tag content)
+            // so re-tagging the same chunk upserts the prior tag-record
+            // document rather than accumulating duplicate annotations.
+            // This is the structural difference from `memory.note`
+            // (which keys on chunk_id too but is content-additive in
+            // intent; the LLM is expected to call note again to append).
+            let key = format!("mcp-tag-{chunk_id}");
+            let title = format!("Tags for chunk {chunk_id}");
+            let content = format!(
+                "[tag record for chunk_id={chunk_id}]\n\nApplied tags: {}",
+                tags.join(", ")
+            );
+            // Build the tag list as a JSON array once, then share it
+            // between metadata.applied_tags and the top-level `tags`
+            // field. `tags_array.clone()` on the cached Value is the
+            // cheapest path — it clones each tag String once total,
+            // matching what an in-place double-collect would do.
+            let tags_array = Value::Array(tags.into_iter().map(Value::String).collect());
+            let mut metadata = Map::new();
+            metadata.insert("tags_for_chunk_id".to_string(), Value::String(chunk_id));
+            // `applied_tags` mirrors `tags` for callers that consume the
+            // metadata view; the top-level `tags` field below feeds the
+            // document tags index (queryable through `doc_list` etc.).
+            metadata.insert("applied_tags".to_string(), tags_array.clone());
+            let mut params = Map::new();
+            params.insert("namespace".to_string(), Value::String("mcp".to_string()));
+            params.insert("key".to_string(), Value::String(key));
+            params.insert("title".to_string(), Value::String(title));
+            params.insert("content".to_string(), Value::String(content));
+            params.insert("source_type".to_string(), Value::String("mcp".to_string()));
+            params.insert("tags".to_string(), tags_array);
+            params.insert("metadata".to_string(), Value::Object(metadata));
+            Ok(params)
+        }
         _ => Err(ToolCallError::InvalidParams(format!(
             "unknown MCP tool `{tool_name}`"
         ))),
@@ -799,6 +877,28 @@ fn optional_string_array(
         );
     }
     Ok(Some(out))
+}
+
+/// Variant of [`optional_string_array`] that errors when the field is
+/// absent, null, or resolves to an empty list after blank-trim.
+///
+/// Used by tools where supplying an empty `tags: []` is a no-op the
+/// caller almost certainly didn't mean (e.g. `tree.tag`). The MCP layer
+/// rejects it up-front instead of letting it through to the document
+/// RPC where the failure mode is silent.
+fn required_non_empty_string_array(
+    args: &Map<String, Value>,
+    key: &str,
+) -> Result<Vec<String>, ToolCallError> {
+    let trimmed = optional_string_array(args, key)?.ok_or_else(|| {
+        ToolCallError::InvalidParams(format!("missing required argument `{key}`"))
+    })?;
+    if trimmed.is_empty() {
+        return Err(ToolCallError::InvalidParams(format!(
+            "argument `{key}` must contain at least one non-empty string"
+        )));
+    }
+    Ok(trimmed)
 }
 
 fn optional_i64(args: &Map<String, Value>, key: &str) -> Result<Option<i64>, ToolCallError> {
@@ -1264,6 +1364,7 @@ mod tests {
                 "tree.list_sources",
                 "memory.store",
                 "memory.note",
+                "tree.tag",
             ]
         );
     }
@@ -1745,6 +1846,145 @@ mod tests {
         )
         .expect_err("must reject");
         assert!(err.message().contains("unexpected argument `extra`"));
+    }
+
+    // ── tree.tag ──────────────────────────────────────────────────────
+
+    #[test]
+    fn tree_tag_requires_chunk_id_and_tags() {
+        let err = build_rpc_params("tree.tag", json!({})).expect_err("must reject");
+        assert!(
+            err.message()
+                .contains("missing required argument `chunk_id`"),
+            "got: {}",
+            err.message()
+        );
+
+        let err =
+            build_rpc_params("tree.tag", json!({ "chunk_id": "abc" })).expect_err("must reject");
+        assert!(
+            err.message().contains("missing required argument `tags`"),
+            "got: {}",
+            err.message()
+        );
+    }
+
+    #[test]
+    fn tree_tag_rejects_empty_tags_array() {
+        let err = build_rpc_params("tree.tag", json!({ "chunk_id": "abc", "tags": [] }))
+            .expect_err("must reject");
+        assert!(
+            err.message().contains("at least one non-empty string"),
+            "got: {}",
+            err.message()
+        );
+    }
+
+    #[test]
+    fn tree_tag_rejects_all_blank_tags() {
+        // After blank-trim the list is empty — same failure mode as `[]`.
+        let err = build_rpc_params(
+            "tree.tag",
+            json!({ "chunk_id": "abc", "tags": ["   ", ""] }),
+        )
+        .expect_err("must reject");
+        assert!(
+            err.message().contains("at least one non-empty string"),
+            "got: {}",
+            err.message()
+        );
+    }
+
+    #[test]
+    fn tree_tag_rejects_non_string_tags() {
+        // Numeric entries inside `tags` get caught by the string-array helper.
+        let err = build_rpc_params("tree.tag", json!({ "chunk_id": "abc", "tags": ["ok", 42] }))
+            .expect_err("must reject");
+        assert!(
+            err.message()
+                .contains("argument `tags` must contain only strings"),
+            "got: {}",
+            err.message()
+        );
+    }
+
+    #[test]
+    fn tree_tag_builds_tag_record_document() {
+        let params = build_rpc_params(
+            "tree.tag",
+            json!({ "chunk_id": "chunk-42", "tags": ["todo", "q3-planning"] }),
+        )
+        .expect("params");
+
+        // Document key is deterministic on chunk_id only → re-tagging
+        // the same chunk upserts.
+        assert_eq!(params["namespace"], "mcp");
+        assert_eq!(params["key"], "mcp-tag-chunk-42");
+        assert_eq!(params["source_type"], "mcp");
+
+        // Title surfaces the target chunk for human-readable recall.
+        assert!(
+            params["title"]
+                .as_str()
+                .expect("title is a string")
+                .contains("chunk-42"),
+            "title was: {}",
+            params["title"]
+        );
+
+        // Top-level `tags` flows to the document tag index (queryable
+        // via `doc_list` / search filters) — this is the key differentiator
+        // from `memory.note` whose payload is opaque free-form text.
+        assert_eq!(params["tags"], json!(["todo", "q3-planning"]));
+
+        // Metadata carries the back-reference plus a mirrored tag list,
+        // so consumers reading the metadata view don't need to also
+        // join against the top-level `tags` field.
+        let metadata = params["metadata"]
+            .as_object()
+            .expect("metadata is an object");
+        assert_eq!(metadata["tags_for_chunk_id"], "chunk-42");
+        assert_eq!(metadata["applied_tags"], json!(["todo", "q3-planning"]));
+    }
+
+    #[test]
+    fn tree_tag_trims_blanks_but_keeps_real_tags() {
+        // Mixed list — blanks are silently dropped (matches existing
+        // `optional_string_array` behaviour) but the resulting set is
+        // still non-empty so the call succeeds.
+        let params = build_rpc_params(
+            "tree.tag",
+            json!({ "chunk_id": "chunk-7", "tags": ["  important  ", "", "  ", "todo"] }),
+        )
+        .expect("params");
+
+        assert_eq!(params["tags"], json!(["important", "todo"]));
+    }
+
+    #[test]
+    fn tree_tag_rejects_empty_chunk_id() {
+        let err = build_rpc_params("tree.tag", json!({ "chunk_id": "", "tags": ["todo"] }))
+            .expect_err("must reject");
+        assert!(
+            err.message()
+                .contains("argument `chunk_id` must not be empty"),
+            "got: {}",
+            err.message()
+        );
+    }
+
+    #[test]
+    fn tree_tag_rejects_unknown_argument() {
+        let err = build_rpc_params(
+            "tree.tag",
+            json!({ "chunk_id": "abc", "tags": ["t"], "priority": "high" }),
+        )
+        .expect_err("must reject");
+        assert!(
+            err.message().contains("unexpected argument `priority`"),
+            "got: {}",
+            err.message()
+        );
     }
 
     // ── slug_from ─────────────────────────────────────────────────────

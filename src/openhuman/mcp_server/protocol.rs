@@ -356,6 +356,7 @@ mod tests {
             "tree.browse",
             "tree.top_entities",
             "tree.list_sources",
+            "tree.tag",
         ];
         base_names.sort_unstable();
         expected_base_names.sort_unstable();
