@@ -251,8 +251,17 @@ pub fn center_main<R: Runtime>(window: &WebviewWindow<R>) {
         }
     }
 
-    let x = monitor.x + (monitor.width as i32 - clamped_w as i32) / 2;
-    let y = monitor.y + (monitor.height as i32 - clamped_h as i32) / 2;
+    // Pathological-tiny-monitor case: when the work area is smaller
+    // than `MIN_WINDOW_*`, `clamp_size` keeps the size at the minimum
+    // floor, so `clamped_w/h` can still exceed `monitor.width/height`
+    // and the naive center math would push the origin negative
+    // (title bar off the left/top edge). Run the centered origin
+    // through `clamp_to_work_area` so the title bar stays anchored at
+    // the work-area top-left in that case — same fallback `restore_main`
+    // already gets for free.
+    let centered_x = monitor.x + (monitor.width as i32 - clamped_w as i32) / 2;
+    let centered_y = monitor.y + (monitor.height as i32 - clamped_h as i32) / 2;
+    let (x, y, _, _) = clamp_to_work_area(centered_x, centered_y, clamped_w, clamped_h, monitor);
     if let Err(err) = window.set_position(PhysicalPosition::new(x, y)) {
         log::warn!("[window-state] set_position during center failed: {err}");
     }
@@ -291,10 +300,16 @@ fn primary_or_current_work_area<R: Runtime>(window: &WebviewWindow<R>) -> Option
     })
 }
 
-/// Return the work area whose intersection with the saved window rect is
-/// at least `MIN_VISIBLE_OVERLAP_PX` on each axis. When the user undocks
-/// a display the saved coordinates land in nowhere-land and this returns
-/// `None` so the caller can fall back to a fresh centered default.
+/// Return the work area whose intersection with the saved window rect
+/// has the **largest area** while still meeting `MIN_VISIBLE_OVERLAP_PX`
+/// on each axis. When the user undocks a display the saved coordinates
+/// land in nowhere-land and this returns `None` so the caller can fall
+/// back to a fresh centered default.
+///
+/// Picking by largest overlap (rather than the first qualifying monitor)
+/// keeps multi-monitor restores deterministic: a window straddling two
+/// screens lands on the one that actually contained most of it before
+/// the restart, independent of `available_monitors()` ordering.
 fn pick_monitor_for_window(
     x: i32,
     y: i32,
@@ -304,13 +319,24 @@ fn pick_monitor_for_window(
 ) -> Option<WorkArea> {
     let win_right = x.saturating_add(width as i32);
     let win_bottom = y.saturating_add(height as i32);
-    work_areas.iter().copied().find(|wa| {
-        let mon_right = wa.x.saturating_add(wa.width as i32);
-        let mon_bottom = wa.y.saturating_add(wa.height as i32);
-        let overlap_w = (win_right.min(mon_right) - x.max(wa.x)).max(0);
-        let overlap_h = (win_bottom.min(mon_bottom) - y.max(wa.y)).max(0);
-        overlap_w >= MIN_VISIBLE_OVERLAP_PX && overlap_h >= MIN_VISIBLE_OVERLAP_PX
-    })
+    work_areas
+        .iter()
+        .copied()
+        .filter_map(|wa| {
+            let mon_right = wa.x.saturating_add(wa.width as i32);
+            let mon_bottom = wa.y.saturating_add(wa.height as i32);
+            let overlap_w = (win_right.min(mon_right) - x.max(wa.x)).max(0);
+            let overlap_h = (win_bottom.min(mon_bottom) - y.max(wa.y)).max(0);
+            if overlap_w >= MIN_VISIBLE_OVERLAP_PX && overlap_h >= MIN_VISIBLE_OVERLAP_PX {
+                // i64 widening keeps the product safe against
+                // pathological monitor sizes near `i32::MAX`.
+                Some((i64::from(overlap_w) * i64::from(overlap_h), wa))
+            } else {
+                None
+            }
+        })
+        .max_by_key(|(area, _)| *area)
+        .map(|(_, wa)| wa)
 }
 
 /// Clamp width/height into the work area while preserving the
@@ -470,5 +496,46 @@ mod tests {
     fn pick_monitor_handles_empty_list() {
         let m = pick_monitor_for_window(0, 0, 1000, 800, &[]);
         assert!(m.is_none());
+    }
+
+    #[test]
+    fn pick_monitor_prefers_largest_overlap_for_straddling_window() {
+        // Window at (1820, 0) with 1000×700 straddles two horizontally
+        // adjacent monitors: 100×700 = 70 000 px² on the primary,
+        // 900×700 = 630 000 px² on the secondary. Must pick the
+        // secondary regardless of `available_monitors()` ordering.
+        let primary = wa(0, 0, 1920, 1080);
+        let secondary = wa(1920, 0, 1280, 800);
+        // Primary first.
+        let m = pick_monitor_for_window(1820, 0, 1000, 700, &[primary, secondary]).unwrap();
+        assert_eq!((m.x, m.width), (1920, 1280));
+        // Secondary first — same answer.
+        let m = pick_monitor_for_window(1820, 0, 1000, 700, &[secondary, primary]).unwrap();
+        assert_eq!((m.x, m.width), (1920, 1280));
+    }
+
+    #[test]
+    fn center_origin_after_min_floor_stays_in_work_area() {
+        // Repro for the `center_main` edge case: a pathological work
+        // area smaller than `MIN_WINDOW_*` forces the size to stay at
+        // the minimum floor (480×360), which is larger than the work
+        // area itself (e.g. 200×150). The naive centered origin would
+        // be `(200 - 480)/2 = -140` — title bar off-screen. Running
+        // the centered origin through `clamp_to_work_area` must pin it
+        // back to the work-area top-left so the title bar is at least
+        // reachable.
+        let work_area = wa(0, 0, 200, 150);
+        let clamped_w = MIN_WINDOW_WIDTH;
+        let clamped_h = MIN_WINDOW_HEIGHT;
+        let centered_x = work_area.x + (work_area.width as i32 - clamped_w as i32) / 2;
+        let centered_y = work_area.y + (work_area.height as i32 - clamped_h as i32) / 2;
+        assert!(
+            centered_x < work_area.x,
+            "precondition: naive center should land off-screen"
+        );
+        let (x, y, w, h) =
+            clamp_to_work_area(centered_x, centered_y, clamped_w, clamped_h, work_area);
+        assert_eq!((x, y), (work_area.x, work_area.y));
+        assert_eq!((w, h), (clamped_w, clamped_h));
     }
 }
