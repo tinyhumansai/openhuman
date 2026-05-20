@@ -398,16 +398,17 @@ idle machines to cut costs.
 ### Step 1 — Launch the app
 
 ```bash
-fly launch --no-deploy
+fly launch --no-deploy --config .fly/fly.toml
 ```
 
 Fly.io detects the `Dockerfile` automatically. Choose a region close to your
-users and skip the first deploy when prompted. This generates a `fly.toml`.
+users and skip the first deploy when prompted. This generates a config file.
 
-### Step 2 — Configure `fly.toml`
+### Step 2 — Configure `.fly/fly.toml`
 
-Replace the generated `fly.toml` with the following. Substitute `<your-app-name>` with
-the name you chose during `fly launch`:
+The repo ships a template at [`.fly/fly.toml`](../../.fly/fly.toml). Fill in
+`<your-app-name>` and `<your-region>` with the values you chose during
+`fly launch`:
 
 ```toml
 app = '<your-app-name>'
@@ -449,7 +450,7 @@ primary_region = '<your-region>'
 ### Step 3 — Create a persistent volume
 
 ```bash
-fly volumes create openhuman_workspace --size 5 --region <your-region>
+fly volumes create openhuman_workspace --size 5 --region <your-region> --config .fly/fly.toml
 ```
 
 **Mount the workspace on a persistent volume** or data is lost on every
@@ -480,7 +481,7 @@ after any suspected leak.
 ### Step 5 — Deploy
 
 ```bash
-fly deploy
+fly deploy --config .fly/fly.toml
 ```
 
 Verify the core is healthy:
@@ -518,7 +519,7 @@ on:
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'Dockerfile'
-      - 'fly.toml'
+      - '.fly/fly.toml'
       - 'scripts/docker-entrypoint-core.sh'
 jobs:
   deploy:
@@ -528,7 +529,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: superfly/flyctl-actions/setup-flyctl@master
-      - run: flyctl deploy --remote-only
+      - run: flyctl deploy --remote-only --config .fly/fly.toml
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
 ```
@@ -539,10 +540,10 @@ repository secret named `FLY_API_TOKEN`.
 ### Updating
 
 ```bash
-fly deploy
+fly deploy --config .fly/fly.toml
 ```
 
-For version-pinned deployments, update the image tag in `fly.toml` and
+For version-pinned deployments, update the image tag in `.fly/fly.toml` and
 redeploy:
 
 ```toml
@@ -553,7 +554,7 @@ redeploy:
 ### Logs
 
 ```bash
-fly logs
+fly logs --config .fly/fly.toml
 ```
 
 ### Known gotcha — UID mismatch on volumes
@@ -566,10 +567,10 @@ by the old UID and produce `Permission denied (os error 13)` on startup.
 Fix by SSH-ing in and re-owning the workspace:
 
 ```bash
-fly ssh console
+fly ssh console --config .fly/fly.toml
 chown -R openhuman:openhuman /home/openhuman/.openhuman/
 exit
-fly machine restart
+fly machine restart --config .fly/fly.toml
 ```
 
 ---
