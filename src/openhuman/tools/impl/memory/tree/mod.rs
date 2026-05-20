@@ -59,7 +59,7 @@ impl Tool for MemoryTreeTool {
                     "type": "string",
                     "enum": ["search_entities", "query_topic", "query_source",
                              "query_global", "drill_down", "fetch_leaves", "ingest_document"],
-                    "description": "Which retrieval operation to run."
+                    "description": "Which operation to run (retrieval or write)."
                 },
                 // search_entities params
                 "query": {
@@ -145,9 +145,12 @@ impl Tool for MemoryTreeTool {
             "drill_down" => MemoryTreeDrillDownTool.execute(args).await,
             "fetch_leaves" => MemoryTreeFetchLeavesTool.execute(args).await,
             "ingest_document" => MemoryTreeIngestDocumentTool.execute(args).await,
-            other => Err(anyhow::anyhow!(
-                "memory_tree: unknown mode `{other}`. Valid: search_entities, query_topic, query_source, query_global, drill_down, fetch_leaves, ingest_document"
-            )),
+            other => {
+                log::debug!("[tool][memory_tree] unknown_mode mode={other}");
+                Err(anyhow::anyhow!(
+                    "memory_tree: unknown mode `{other}`. Valid: search_entities, query_topic, query_source, query_global, drill_down, fetch_leaves, ingest_document"
+                ))
+            }
         }
     }
 }
@@ -171,7 +174,7 @@ mod memory_tree_dispatcher_tests {
     }
 
     #[test]
-    fn memory_tree_schema_mode_enum_has_all_six_modes() {
+    fn memory_tree_schema_mode_enum_has_all_modes() {
         let schema = MemoryTreeTool.parameters_schema();
         let modes: Vec<&str> = schema
             .get("properties")
@@ -191,6 +194,7 @@ mod memory_tree_dispatcher_tests {
         assert!(modes.contains(&"query_global"));
         assert!(modes.contains(&"drill_down"));
         assert!(modes.contains(&"fetch_leaves"));
+        assert!(modes.contains(&"ingest_document"));
     }
 
     #[tokio::test]

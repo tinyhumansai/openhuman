@@ -46,6 +46,10 @@ impl Tool for MemoryTreeIngestDocumentTool {
                 "source_ref": {
                     "type": "string",
                     "description": "Optional URL or pointer back to the original source."
+                },
+                "owner": {
+                    "type": "string",
+                    "description": "Optional account/user this content belongs to. Used for owner-scoped queries and attribution. Defaults to empty (unowned/agent-global)."
                 }
             },
             "required": ["title", "body", "source_id"]
@@ -69,6 +73,7 @@ impl Tool for MemoryTreeIngestDocumentTool {
             .get("source_id")
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("ingest_document: missing required field `source_id`"))?
+            .trim()
             .to_string();
         let provider = args
             .get("provider")
@@ -79,16 +84,22 @@ impl Tool for MemoryTreeIngestDocumentTool {
             .get("source_ref")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
+        let owner = args
+            .get("owner")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
 
-        if title.trim().is_empty() || body.trim().is_empty() {
+        if title.trim().is_empty() || body.trim().is_empty() || source_id.is_empty() {
             return Ok(ToolResult::error(
-                "ingest_document: title and body must be non-empty".to_string(),
+                "ingest_document: title, body, and source_id must be non-empty".to_string(),
             ));
         }
 
-        let cfg = config_rpc::load_config_with_timeout()
-            .await
-            .map_err(|e| anyhow::anyhow!("ingest_document: load config failed: {e}"))?;
+        let cfg = config_rpc::load_config_with_timeout().await.map_err(|e| {
+            log::debug!("[tool][memory_tree] ingest_document config_load_failed err={e}");
+            anyhow::anyhow!("ingest_document: load config failed: {e}")
+        })?;
 
         let doc = DocumentInput {
             provider,
@@ -100,17 +111,21 @@ impl Tool for MemoryTreeIngestDocumentTool {
 
         let req = rpc::IngestRequest {
             source_kind: SourceKind::Document,
-            source_id: source_id.trim().to_string(),
-            owner: String::new(),
+            source_id: source_id.clone(),
+            owner,
             tags: vec!["agent_ingested".to_string()],
             payload: serde_json::to_value(&doc).map_err(|e| {
+                log::debug!("[tool][memory_tree] ingest_document payload_serialize_failed err={e}");
                 anyhow::anyhow!("ingest_document: failed to serialize payload: {e}")
             })?,
         };
 
-        let outcome = rpc::ingest_rpc(&cfg, req)
-            .await
-            .map_err(|e| anyhow::anyhow!("ingest_document: ingestion failed: {e}"))?;
+        let outcome = rpc::ingest_rpc(&cfg, req).await.map_err(|e| {
+            log::debug!(
+                "[tool][memory_tree] ingest_document rpc_failed source_id={source_id} err={e}"
+            );
+            anyhow::anyhow!("ingest_document: ingestion failed: {e}")
+        })?;
 
         let n = outcome.value.chunks_written;
         log::info!(
