@@ -692,6 +692,18 @@ fn default_polymarket_clob_exchange_contract() -> String {
     "0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E".into()
 }
 
+fn default_kalshi_base_url() -> String {
+    "https://api.elections.kalshi.com/trade-api/v2".into()
+}
+
+fn default_kalshi_timeout_secs() -> u64 {
+    15
+}
+
+fn default_kalshi_enabled() -> bool {
+    true
+}
+
 /// Polymarket CLOB L2 credentials (api_key + HMAC secret + passphrase).
 ///
 /// Single source of truth for both the config TOML surface AND the
@@ -779,6 +791,62 @@ impl Default for PolymarketConfig {
     }
 }
 
+/// Kalshi API credentials for authenticated portfolio and order actions.
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct KalshiCredentials {
+    pub api_key: String,
+    #[serde(default)]
+    pub private_key_pem: String,
+    #[serde(default)]
+    pub secret: String,
+}
+
+impl KalshiCredentials {
+    /// Returns true iff `api_key` is present and at least one signing
+    /// secret is configured (RSA private key PEM or HMAC secret).
+    pub fn is_complete(&self) -> bool {
+        let has_api_key = !self.api_key.trim().is_empty();
+        let has_private_key = !self.private_key_pem.trim().is_empty();
+        let has_secret = !self.secret.trim().is_empty();
+        has_api_key && (has_private_key || has_secret)
+    }
+}
+
+impl std::fmt::Debug for KalshiCredentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("KalshiCredentials")
+            .field("api_key", &"<redacted>")
+            .field("private_key_pem", &"<redacted>")
+            .field("secret", &"<redacted>")
+            .finish()
+    }
+}
+
+/// Kalshi API configuration (public market reads + authenticated writes).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct KalshiConfig {
+    #[serde(default = "default_kalshi_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_kalshi_base_url")]
+    pub base_url: String,
+    #[serde(default = "default_kalshi_timeout_secs")]
+    pub timeout_secs: u64,
+    #[serde(default)]
+    pub credentials: Option<KalshiCredentials>,
+}
+
+impl Default for KalshiConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_kalshi_enabled(),
+            base_url: default_kalshi_base_url(),
+            timeout_secs: default_kalshi_timeout_secs(),
+            credentials: None,
+        }
+    }
+}
+
 /// Agent integration tools that proxy through the backend API.
 ///
 /// The backend URL and auth token are **not** configurable here —
@@ -822,6 +890,10 @@ pub struct IntegrationsConfig {
     /// Polymarket browse + trading APIs (Gamma + CLOB).
     #[serde(default)]
     pub polymarket: PolymarketConfig,
+
+    /// Kalshi market data + trading APIs (trade-api v2).
+    #[serde(default)]
+    pub kalshi: KalshiConfig,
 }
 
 #[cfg(test)]
