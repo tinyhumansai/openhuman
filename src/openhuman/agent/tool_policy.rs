@@ -62,6 +62,23 @@ pub struct ToolPolicyRequest {
     pub agent_definition_id: String,
 }
 
+impl ToolPolicyRequest {
+    pub fn new(
+        tool_name: impl Into<String>,
+        arguments: serde_json::Value,
+        context: ToolCallContext,
+    ) -> Self {
+        Self {
+            tool_name: tool_name.into(),
+            arguments,
+            session_id: context.session_id.clone(),
+            channel: context.channel.clone(),
+            agent_definition_id: context.agent_definition_id.clone(),
+            context,
+        }
+    }
+}
+
 /// Decision returned by a [`ToolPolicy`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ToolPolicyDecision {
@@ -109,16 +126,19 @@ mod tests {
     #[tokio::test]
     async fn allow_all_policy_allows_every_call() {
         let policy = AllowAllToolPolicy;
-        let request = ToolPolicyRequest {
-            tool_name: "echo".into(),
-            arguments: serde_json::json!({ "value": 1 }),
-            context: ToolCallContext::session("session", "chat", "orchestrator", "call-1", 1),
-            session_id: "session".into(),
-            channel: "chat".into(),
-            agent_definition_id: "orchestrator".into(),
-        };
+        let request = ToolPolicyRequest::new(
+            "echo",
+            serde_json::json!({ "value": 1 }),
+            ToolCallContext::session("session", "chat", "orchestrator", "call-1", 1),
+        );
 
         assert_eq!(policy.check(&request).await, ToolPolicyDecision::Allow);
+        assert_eq!(request.session_id, request.context.session_id);
+        assert_eq!(request.channel, request.context.channel);
+        assert_eq!(
+            request.agent_definition_id,
+            request.context.agent_definition_id
+        );
         assert_eq!(request.context.source, ToolCallSource::Session);
         assert_eq!(request.context.call_id, "call-1");
     }

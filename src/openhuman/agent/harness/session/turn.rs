@@ -1154,14 +1154,8 @@ impl Agent {
                 call_id.clone(),
                 (iteration + 1) as u32,
             );
-            let policy_request = ToolPolicyRequest {
-                tool_name: call.name.clone(),
-                arguments: call.arguments.clone(),
-                session_id: context.session_id.clone(),
-                channel: context.channel.clone(),
-                agent_definition_id: context.agent_definition_id.clone(),
-                context,
-            };
+            let policy_request =
+                ToolPolicyRequest::new(call.name.clone(), call.arguments.clone(), context);
             if let ToolPolicyDecision::Deny { reason } =
                 self.tool_policy.check(&policy_request).await
             {
