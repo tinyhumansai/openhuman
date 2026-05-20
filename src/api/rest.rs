@@ -545,6 +545,27 @@ impl BackendOAuthClient {
                     method.as_str(),
                     url.path(),
                 );
+            } else if status_code == 401 {
+                // True OpenHuman backend session-expiry signal. Tag the
+                // bail string with the `SESSION_EXPIRED:` sentinel so the
+                // dispatch-site classifier
+                // (`crate::core::jsonrpc::is_session_expired_error`) only
+                // clears the local token on this boundary, not on
+                // downstream provider / integration 401s. Skip Sentry —
+                // the SessionExpired event subscriber handles the
+                // teardown, and a signed-out user is an expected state.
+                // See #2286.
+                tracing::info!(
+                    domain = "backend_api",
+                    operation = "authed_json",
+                    method = method.as_str(),
+                    path = url.path(),
+                    status = 401,
+                    failure = "session_expired",
+                    "[backend_api] 401 on {} {} — surfacing SESSION_EXPIRED to dispatch classifier",
+                    method.as_str(),
+                    url.path(),
+                );
             } else if is_transient_infra {
                 tracing::warn!(
                     domain = "backend_api",
@@ -574,6 +595,13 @@ impl BackendOAuthClient {
                         ("status", status_str.as_str()),
                         ("failure", "non_2xx"),
                     ],
+                );
+            }
+            if status_code == 401 {
+                anyhow::bail!(
+                    "SESSION_EXPIRED: {} {} failed ({status}): {text}",
+                    method.as_str(),
+                    url.path()
                 );
             }
             anyhow::bail!(

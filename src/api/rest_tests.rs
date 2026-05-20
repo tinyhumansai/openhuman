@@ -328,6 +328,74 @@ async fn authed_json_surfaces_message_not_found_on_404() {
 }
 
 #[tokio::test]
+async fn authed_json_tags_401_with_session_expired_sentinel() {
+    // #2286: real OpenHuman backend 401s must carry the SESSION_EXPIRED:
+    // sentinel so the dispatch-site classifier in
+    // `crate::core::jsonrpc::is_session_expired_error` can sign the user
+    // out — and downstream / integration 401s (which do NOT route through
+    // this client) stay recoverable.
+    let app = Router::new().route(
+        "/auth/profile",
+        get(|| async {
+            (
+                axum::http::StatusCode::UNAUTHORIZED,
+                "{\"error\":\"unauthorized\"}",
+            )
+        }),
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let base_url = format!("http://{addr}");
+    let client = BackendOAuthClient::new(&base_url).unwrap();
+
+    let err = client
+        .authed_json("mock-jwt", Method::GET, "/auth/profile", None)
+        .await
+        .unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.starts_with("SESSION_EXPIRED:"),
+        "401 from backend must be tagged with SESSION_EXPIRED: sentinel, got: {msg}"
+    );
+    assert!(msg.contains("/auth/profile"));
+    assert!(msg.contains("401"));
+}
+
+#[tokio::test]
+async fn authed_json_non_401_failure_is_not_tagged_session_expired() {
+    // #2286 negative: a 500 from the backend must NOT carry the
+    // SESSION_EXPIRED sentinel — that's reserved for the auth boundary
+    // so the classifier can stay narrow.
+    let app = Router::new().route(
+        "/auth/profile",
+        get(|| async { (axum::http::StatusCode::INTERNAL_SERVER_ERROR, "boom") }),
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let base_url = format!("http://{addr}");
+    let client = BackendOAuthClient::new(&base_url).unwrap();
+
+    let err = client
+        .authed_json("mock-jwt", Method::GET, "/auth/profile", None)
+        .await
+        .unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        !msg.contains("SESSION_EXPIRED"),
+        "non-401 failure must not be tagged session-expired, got: {msg}"
+    );
+    assert!(msg.contains("500"));
+}
+
+#[tokio::test]
 async fn authed_json_404_outside_messages_path_still_reports() {
     // 404 on a non-`/channels/<provider>/messages/<id>` path should NOT be
     // demoted to MessageNotFound — it's a real backend bug or routing
