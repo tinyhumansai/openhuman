@@ -242,15 +242,28 @@ impl SecretStore {
             if let Some(parent) = self.key_path.parent() {
                 fs::create_dir_all(parent)?;
             }
-            fs::write(&self.key_path, hex_encode(&key))
-                .context("Failed to write secret key file")?;
 
-            // Set restrictive permissions
+            // Write key file with restrictive permissions atomically on Unix
+            // to avoid a TOCTOU race where the file is briefly world-readable.
+            // See: src/core/auth.rs:write_token_file for the reference pattern.
             #[cfg(unix)]
             {
-                use std::os::unix::fs::PermissionsExt;
-                fs::set_permissions(&self.key_path, fs::Permissions::from_mode(0o600))
-                    .context("Failed to set key file permissions")?;
+                use std::io::Write as _;
+                use std::os::unix::fs::OpenOptionsExt as _;
+                let mut file = fs::OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .truncate(true)
+                    .mode(0o600)
+                    .open(&self.key_path)
+                    .context("Failed to create secret key file")?;
+                file.write_all(hex_encode(&key).as_bytes())
+                    .context("Failed to write secret key file")?;
+            }
+            #[cfg(not(unix))]
+            {
+                fs::write(&self.key_path, hex_encode(&key))
+                    .context("Failed to write secret key file")?;
             }
             #[cfg(windows)]
             {
