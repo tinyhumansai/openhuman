@@ -296,15 +296,34 @@ fn is_loopback_unavailable(lower: &str) -> bool {
 /// through [`is_loopback_unavailable`] *before* this matcher so the
 /// boot-window race against the embedded core keeps its own bucket — see
 /// the precedence comment in [`expected_error_kind`].
+///
+/// Three additional substrings cover wire-shape variants observed in
+/// Wave 4 that the original `"dns error"` / status-code matchers miss:
+///
+/// - `"failed to lookup address"` / `"nodename nor servname"` —
+///   `getaddrinfo()` failure renderings on macOS / BSD libc and POSIX
+///   resolvers (`OPENHUMAN-TAURI-44` ~50 events,
+///   `[socket] Connection failed: WebSocket connect: IO error: failed to
+///   lookup address information: nodename nor servname provided, or not
+///   known`).
+/// - `"http error: 200 ok"` — tungstenite's `WsError::Http(200)` render
+///   when a corporate proxy / captive portal intercepts the WebSocket
+///   handshake and returns a plain HTML 200 page (`OPENHUMAN-TAURI-4P`
+///   ~66 events). Tungstenite-only — reqwest renders HTTP 200 as
+///   `"HTTP status server error (200)"`, so this can't collide with the
+///   regular HTTP call path.
 fn is_network_unreachable_message(lower: &str) -> bool {
     lower.contains("error sending request for url")
         || lower.contains("dns error")
+        || lower.contains("failed to lookup address")
+        || lower.contains("nodename nor servname")
         || lower.contains("connection refused")
         || lower.contains("connection reset")
         || lower.contains("network is unreachable")
         || lower.contains("no route to host")
         || lower.contains("tls handshake")
         || lower.contains("certificate verify failed")
+        || lower.contains("http error: 200 ok")
 }
 
 /// Detect transient upstream HTTP failures that have bubbled up out of the
@@ -1239,6 +1258,51 @@ mod tests {
         );
         assert_eq!(
             expected_error_kind("OpenAI API error (500): internal server error"),
+            None
+        );
+    }
+
+    #[test]
+    fn classifies_wave4_socket_transport_wire_shapes() {
+        // OPENHUMAN-TAURI-44 (~50 events): libc `getaddrinfo()` rendering
+        // without the `dns error` token, wrapped by the socket emit site.
+        // The Wave 4 matcher arms catch the literal resolver phrases that
+        // the original `dns error` substring would miss when reqwest's
+        // wrapper isn't in the chain (e.g. tungstenite IO errors).
+        assert_eq!(
+            expected_error_kind(
+                "[socket] Connection failed (sustained outage after 5 attempts): \
+                 WebSocket connect: IO error: failed to lookup address information: \
+                 nodename nor servname provided, or not known"
+            ),
+            Some(ExpectedErrorKind::NetworkUnreachable)
+        );
+
+        // OPENHUMAN-TAURI-4P (~66 events): tungstenite renders a captive
+        // portal / corporate proxy that intercepts the WS handshake as
+        // `WsError::Http(200)` → `"HTTP error: 200 OK"`. Classify as
+        // network-unreachable since no amount of app-side retry can pierce
+        // an intercepting proxy.
+        assert_eq!(
+            expected_error_kind(
+                "[socket] Connection failed (sustained outage after 5 attempts): \
+                 WebSocket connect: HTTP error: 200 OK"
+            ),
+            Some(ExpectedErrorKind::NetworkUnreachable)
+        );
+    }
+
+    #[test]
+    fn http_200_classifier_does_not_silence_unrelated_log_lines() {
+        // The captive-portal arm anchors on `"http error: 200 ok"` (the
+        // exact tungstenite `WsError::Http(200)` Display rendering).
+        // Adjacent non-WebSocket log lines that mention `"HTTP/1.1 200 OK"`
+        // or `"status: 200 OK"` MUST NOT classify — those are normal-flow
+        // success traces, not failure events. Pin this precedence so a
+        // future refactor doesn't broaden the substring.
+        assert_eq!(expected_error_kind("HTTP/1.1 200 OK"), None);
+        assert_eq!(
+            expected_error_kind("upstream returned status: 200 OK after retry"),
             None
         );
     }
