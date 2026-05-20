@@ -119,6 +119,23 @@ describe('rewardsApi', () => {
     });
   });
 
+  it('preserves backend application errors that contain "timeout" without remapping them', async () => {
+    // A backend response like { success: false, error: 'Session timeout. Please log in again.' }
+    // must reach the caller unchanged — it must NOT be replaced with the generic network-timeout
+    // message, because it carries a real signal from the application layer.
+    const { apiClient } = await import('../../apiClient');
+    vi.mocked(apiClient.get).mockResolvedValueOnce({
+      success: false,
+      data: null,
+      error: 'Session timeout. Please log in again.',
+    });
+
+    await expect(rewardsApi.getMyRewards()).rejects.toMatchObject({
+      success: false,
+      error: 'Session timeout. Please log in again.',
+    });
+  });
+
   it('normalizes /rewards/me timeouts into a recoverable message', async () => {
     const { apiClient } = await import('../../apiClient');
     vi.mocked(apiClient.get).mockRejectedValueOnce({

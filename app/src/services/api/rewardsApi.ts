@@ -150,33 +150,44 @@ export function normalizeRewardsSnapshot(payload: unknown): RewardsSnapshot {
 
 export const rewardsApi = {
   async getMyRewards(): Promise<RewardsSnapshot> {
+    let response: ApiResponse<unknown>;
     try {
-      const response = await apiClient.get<ApiResponse<unknown>>('/rewards/me', {
+      response = await apiClient.get<ApiResponse<unknown>>('/rewards/me', {
         timeout: REWARDS_SNAPSHOT_TIMEOUT_MS,
       });
-      if (!response.success) {
-        throw {
-          success: false,
-          error: response.error ?? response.message ?? 'Unable to load rewards',
-        };
-      }
-
+    } catch (transportError) {
+      // Transport-level failure (network error, timeout, abort) — normalize to
+      // a stable retryable message. String-based timeout heuristics are only
+      // safe here where the error comes from the HTTP layer, not from backend
+      // application logic.
+      const normalized = normalizeRewardsApiError(transportError);
       log(
-        'loaded backend snapshot achievementCount=%d',
-        Array.isArray((response.data as { achievements?: unknown[] })?.achievements)
-          ? (response.data as { achievements: unknown[] }).achievements.length
-          : 0
-      );
-      return normalizeRewardsSnapshot(response.data);
-    } catch (error) {
-      const normalized = normalizeRewardsApiError(error);
-      log(
-        'snapshot failed error=%s code=%s status=%s',
+        'snapshot transport failed error=%s code=%s status=%s',
         normalized.error,
         normalized.code ?? 'none',
         normalized.status ?? 'none'
       );
       throw normalized;
     }
+
+    if (!response.success) {
+      // Backend application error — preserve the exact message so callers see
+      // the real signal (e.g. "Session timeout. Please log in again." must not
+      // be remapped to the generic network-timeout message).
+      const appError: RewardsApiError = {
+        success: false,
+        error: response.error ?? response.message ?? 'Unable to load rewards',
+      };
+      log('snapshot backend error error=%s', appError.error);
+      throw appError;
+    }
+
+    log(
+      'loaded backend snapshot achievementCount=%d',
+      Array.isArray((response.data as { achievements?: unknown[] })?.achievements)
+        ? (response.data as { achievements: unknown[] }).achievements.length
+        : 0
+    );
+    return normalizeRewardsSnapshot(response.data);
   },
 };
