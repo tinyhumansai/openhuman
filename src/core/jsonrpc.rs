@@ -613,12 +613,26 @@ async fn cors_middleware(req: Request, next: Next) -> Response {
 }
 
 /// Injects CORS headers into a response.
+///
+/// The `Access-Control-Allow-Origin` value is read from the
+/// `OPENHUMAN_CORS_ORIGIN` environment variable. When unset (the default for
+/// local / Tauri desktop), the wildcard `*` is used so the embedded webview
+/// can reach the sidecar without restriction. For Docker / cloud deployments
+/// where the server binds to `0.0.0.0`, set the variable to the canonical
+/// frontend origin (e.g. `https://app.example.com`) to prevent cross-origin
+/// abuse.
 fn with_cors_headers(mut response: Response) -> Response {
     let headers = response.headers_mut();
-    headers.insert(
-        header::ACCESS_CONTROL_ALLOW_ORIGIN,
-        HeaderValue::from_static("*"),
-    );
+    let origin = std::env::var("OPENHUMAN_CORS_ORIGIN")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| "*".to_string());
+    // HeaderValue::from_str is fallible for non-visible ASCII; fall back to
+    // wildcard on invalid input so the server never refuses to start over a
+    // typo in the env var.
+    let origin_value = HeaderValue::from_str(&origin)
+        .unwrap_or_else(|_| HeaderValue::from_static("*"));
+    headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, origin_value);
     headers.insert(
         header::ACCESS_CONTROL_ALLOW_METHODS,
         HeaderValue::from_static("GET, POST, OPTIONS"),
