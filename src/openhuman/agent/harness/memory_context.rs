@@ -60,10 +60,7 @@ pub(crate) async fn build_context(
             for entry in &relevant {
                 seen_keys.insert(entry.key.clone());
                 let rendered_content = if is_potentially_untrusted(entry) {
-                    let hint = entry
-                        .namespace
-                        .as_deref()
-                        .unwrap_or("connector");
+                    let hint = entry.namespace.as_deref().unwrap_or("connector");
                     wrap_untrusted_for_agent(&entry.content, hint)
                 } else {
                     entry.content.clone()

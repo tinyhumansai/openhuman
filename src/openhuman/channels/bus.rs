@@ -994,7 +994,10 @@ mod inbound_thread_id_tests {
     fn legacy_channel_only_keeps_old_shape() {
         // Publishers that don't pass sender must still produce a stable
         // key so existing single-DM flows are unchanged.
-        assert_eq!(derive_inbound_thread_id("telegram", None, None, None), "channel:telegram");
+        assert_eq!(
+            derive_inbound_thread_id("telegram", None, None, None),
+            "channel:telegram"
+        );
     }
 
     #[test]

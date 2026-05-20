@@ -213,8 +213,8 @@ pub(super) fn handle_sio_event(
             let reply_target = nonempty(data.get("reply_target"))
                 .or_else(|| nonempty(data.get("chat_id")))
                 .or_else(|| nonempty(data.get("channel_id")));
-            let thread_ts = nonempty(data.get("thread_ts"))
-                .or_else(|| nonempty(data.get("thread_id")));
+            let thread_ts =
+                nonempty(data.get("thread_ts")).or_else(|| nonempty(data.get("thread_id")));
 
             publish_global(DomainEvent::ChannelInboundMessage {
                 event_name: event_name.to_string(),

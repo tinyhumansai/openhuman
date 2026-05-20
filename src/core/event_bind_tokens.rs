@@ -68,9 +68,7 @@ pub struct BindToken {
 /// should surface this as a transient error rather than retrying in a
 /// tight loop.
 pub fn issue(client_id: impl Into<String>, ttl_override: Option<Duration>) -> Option<BindToken> {
-    let ttl = ttl_override
-        .map(|d| d.min(MAX_TTL))
-        .unwrap_or(DEFAULT_TTL);
+    let ttl = ttl_override.map(|d| d.min(MAX_TTL)).unwrap_or(DEFAULT_TTL);
     let client_id = client_id.into();
     let valid_until = Instant::now() + ttl;
     let token = generate_token();
@@ -113,9 +111,7 @@ pub fn consume(client_id: &str, token: &str) -> bool {
         }
     };
     if entry.client_id != client_id {
-        log::warn!(
-            "[events-bind] consume: client_id mismatch (token bound to other id)"
-        );
+        log::warn!("[events-bind] consume: client_id mismatch (token bound to other id)");
         return false;
     }
     log::debug!(
@@ -185,12 +181,9 @@ mod tests {
         // Any caller asking for more than `MAX_TTL` collapses to the cap;
         // confirm the issue path does not panic and the resulting token
         // still validates.
-        let issued = issue("cli-test-clamp", Some(Duration::from_secs(60 * 60 * 24)))
-            .expect("issue");
-        assert!(
-            issued.valid_until
-                <= Instant::now() + MAX_TTL + Duration::from_secs(1)
-        );
+        let issued =
+            issue("cli-test-clamp", Some(Duration::from_secs(60 * 60 * 24))).expect("issue");
+        assert!(issued.valid_until <= Instant::now() + MAX_TTL + Duration::from_secs(1));
         assert!(consume("cli-test-clamp", &issued.token));
     }
 }

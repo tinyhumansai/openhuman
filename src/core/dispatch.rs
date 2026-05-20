@@ -117,27 +117,21 @@ fn try_core_dispatch(
 /// `/events?client_id=<id>&token=<bind>`. The `/events` handler removes
 /// the token from the store on first use, so a leaked URL cannot be
 /// replayed by a second subscriber.
-fn handle_events_subscribe_token(
-    params: serde_json::Value,
-) -> Result<InvocationResult, String> {
+fn handle_events_subscribe_token(params: serde_json::Value) -> Result<InvocationResult, String> {
     let obj = params.as_object();
     let client_id = obj
         .and_then(|m| m.get("client_id"))
         .and_then(|v| v.as_str())
         .map(|s| s.trim())
         .filter(|s| !s.is_empty())
-        .ok_or_else(|| {
-            "missing or empty 'client_id' parameter".to_string()
-        })?;
+        .ok_or_else(|| "missing or empty 'client_id' parameter".to_string())?;
     let ttl = obj
         .and_then(|m| m.get("ttl_secs"))
         .and_then(|v| v.as_u64())
         .map(std::time::Duration::from_secs);
 
     let issued = crate::core::event_bind_tokens::issue(client_id.to_string(), ttl)
-        .ok_or_else(|| {
-            "events bind-token store at capacity; try again shortly".to_string()
-        })?;
+        .ok_or_else(|| "events bind-token store at capacity; try again shortly".to_string())?;
 
     let ttl_remaining_secs = issued
         .valid_until

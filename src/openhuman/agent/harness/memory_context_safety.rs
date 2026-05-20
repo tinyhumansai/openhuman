@@ -69,9 +69,7 @@ pub fn is_potentially_untrusted(entry: &MemoryEntry) -> bool {
         "meeting:",
         "web:",
     ];
-    connector_prefixes
-        .iter()
-        .any(|p| key_lower.starts_with(p))
+    connector_prefixes.iter().any(|p| key_lower.starts_with(p))
 }
 
 fn is_locally_authored_namespace(ns: &str) -> bool {
@@ -79,13 +77,7 @@ fn is_locally_authored_namespace(ns: &str) -> bool {
     // namespaces) is treated as untrusted by default.
     matches!(
         ns,
-        "working"
-            | "agent"
-            | "local"
-            | "core"
-            | "global"
-            | "default"
-            | "user"
+        "working" | "agent" | "local" | "core" | "global" | "default" | "user"
     ) || ns.starts_with("working.")
         || ns.starts_with("agent.")
         || ns.starts_with("tree.")
@@ -104,9 +96,7 @@ fn is_locally_authored_namespace(ns: &str) -> bool {
 pub fn wrap_untrusted_for_agent(content: &str, source_hint: &str) -> String {
     let hint = source_hint.trim();
     let hint = if hint.is_empty() { "external" } else { hint };
-    format!(
-        "<untrusted-source source=\"{hint}\">\n{content}\n</untrusted-source>"
-    )
+    format!("<untrusted-source source=\"{hint}\">\n{content}\n</untrusted-source>")
 }
 
 #[cfg(test)]
@@ -129,7 +119,9 @@ mod tests {
 
     #[test]
     fn locally_authored_namespaces_are_trusted() {
-        for ns in ["working", "agent", "local", "core", "global", "default", "user"] {
+        for ns in [
+            "working", "agent", "local", "core", "global", "default", "user",
+        ] {
             assert!(
                 !is_potentially_untrusted(&entry(Some(ns), "k")),
                 "namespace '{ns}' must be trusted"
