@@ -19,13 +19,24 @@ impl TelegramRemoteSubscriber {
     }
 
     async fn set_busy(&self, reply_target: &str, busy: bool) {
-        if let Err(error) = with_store(&self.workspace_dir, |store| {
-            store.set_busy(reply_target, busy);
-            Ok(())
-        }) {
-            tracing::warn!(
+        let workspace_dir = self.workspace_dir.clone();
+        let reply_target_owned = reply_target.to_string();
+        let join_result = tokio::task::spawn_blocking(move || {
+            with_store(&workspace_dir, |store| {
+                store.set_busy(&reply_target_owned, busy);
+                Ok(())
+            })
+        })
+        .await;
+
+        match join_result {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => tracing::warn!(
                 "{LOG_PREFIX} failed to persist busy={busy} reply_target={reply_target}: {error}"
-            );
+            ),
+            Err(error) => tracing::warn!(
+                "{LOG_PREFIX} join error persisting busy={busy} reply_target={reply_target}: {error}"
+            ),
         }
     }
 }
