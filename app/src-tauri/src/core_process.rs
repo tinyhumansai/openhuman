@@ -276,14 +276,17 @@ impl CoreProcessHandle {
                 }
             }
 
-            // Readiness budget: 100 iterations × 100ms = 10s. The embedded
+            // Readiness budget: 200 iterations × 100ms = 20s. The embedded
             // core's JSON-RPC controller registry has grown over time and
-            // the previous 4s budget started flaking under CI worker load
+            // earlier 4s/10s budgets started flaking under CI worker load
             // (issue: core_process tests intermittently failing with
-            // "core process did not become ready"). 10s is still well
-            // under any user-visible startup expectation and matches the
-            // upper end of observed cold-start times.
-            for _ in 0..100 {
+            // "core process did not become ready"), especially under
+            // cargo-llvm-cov instrumentation where the binary runs ~2x
+            // slower. 20s is still well under any user-visible startup
+            // expectation: in normal runs the ready signal arrives in well
+            // under 1s and the loop exits immediately; the headroom only
+            // matters on heavily loaded instrumented CI workers.
+            for _ in 0..200 {
                 if !received_ready {
                     match ready_rx.try_recv() {
                         Ok(ready_signal) => {
