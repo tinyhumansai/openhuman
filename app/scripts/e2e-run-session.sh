@@ -135,6 +135,7 @@ trap cleanup EXIT
 
 export VITE_BACKEND_URL="http://127.0.0.1:${E2E_MOCK_PORT}"
 export BACKEND_URL="http://127.0.0.1:${E2E_MOCK_PORT}"
+export OPENHUMAN_E2E_MODE="1"
 export APPIUM_PORT
 export CEF_CDP_PORT
 

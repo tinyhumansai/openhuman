@@ -125,6 +125,34 @@ const channelConnectionsSlice = createSlice({
       });
     },
 
+    /**
+     * Cancel any sibling auth modes on the same channel that are still in
+     * the `connecting` state, except the one explicitly started. Fixes #2128
+     * where starting a second OAuth method on a channel left the previous
+     * method's badge pinned at `Connecting` forever. Cancelled rows transition
+     * to `disconnected` (not `error`) so the UI doesn't surface a misleading
+     * failure message — the user explicitly switched methods.
+     */
+    clearOtherPendingForChannel(
+      state,
+      action: PayloadAction<{ channel: ChannelType; exceptAuthMode: ChannelAuthMode }>
+    ) {
+      const { channel, exceptAuthMode } = action.payload;
+      const modes = state.connections[channel];
+      if (!modes) return;
+      for (const mode of Object.keys(modes) as ChannelAuthMode[]) {
+        if (mode === exceptAuthMode) continue;
+        const existing = modes[mode];
+        if (existing?.status !== 'connecting') continue;
+        modes[mode] = touchConnection(existing, {
+          channel,
+          authMode: mode,
+          status: 'disconnected',
+          lastError: undefined,
+        });
+      }
+    },
+
     resetChannelConnectionsState() {
       return initialState;
     },
@@ -140,6 +168,7 @@ export const {
   upsertChannelConnection,
   setChannelConnectionStatus,
   disconnectChannelConnection,
+  clearOtherPendingForChannel,
   resetChannelConnectionsState,
 } = channelConnectionsSlice.actions;
 

@@ -593,23 +593,54 @@ async fn composio_sync_gmail_via_mock_archives_raw_email_and_updates_outcome() {
 
     assert_eq!(outcome.value.toolkit, "gmail");
     assert_eq!(outcome.value.connection_id.as_deref(), Some("c1"));
-    assert_eq!(outcome.value.items_ingested, 1);
-    assert!(outcome.value.summary.contains("persisted 1 new"));
+    // composio_sync is now spawn-and-return: the immediate envelope is a
+    // "started" sentinel, and the actual ingestion runs on a detached
+    // tokio task. items_ingested == 0 / finished_at_ms == 0 / summary
+    // contains "started" are the contract of that sentinel.
+    assert_eq!(
+        outcome.value.items_ingested, 0,
+        "spawn-and-return: items_ingested on the immediate envelope is a 'started' sentinel, not a final count"
+    );
+    assert_eq!(
+        outcome.value.finished_at_ms, 0,
+        "spawn-and-return: finished_at_ms == 0 means 'task spawned, not yet complete'"
+    );
+    assert!(
+        outcome.value.summary.contains("started"),
+        "expected spawn-and-return summary to mention 'started', got: {}",
+        outcome.value.summary
+    );
 
-    let chunks = list_chunks_rpc(
-        &config,
-        ListChunksRequest {
-            source_kind: Some("email".to_string()),
-            source_id: Some("gmail:pilot-at-example-dot-com".to_string()),
-            limit: Some(10),
-            ..Default::default()
-        },
-    )
-    .await
-    .unwrap()
-    .value
-    .chunks;
-    assert_eq!(chunks.len(), 1, "expected one ingested Gmail chunk");
+    // Poll for the spawned ingest task to drain. The mock backend is
+    // local + in-memory, so this normally lands in well under a second.
+    let chunks = {
+        let mut chunks = Vec::new();
+        for _ in 0..50 {
+            chunks = list_chunks_rpc(
+                &config,
+                ListChunksRequest {
+                    source_kind: Some("email".to_string()),
+                    source_id: Some("gmail:pilot-at-example-dot-com".to_string()),
+                    limit: Some(10),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap()
+            .value
+            .chunks;
+            if !chunks.is_empty() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        chunks
+    };
+    assert_eq!(
+        chunks.len(),
+        1,
+        "expected one ingested Gmail chunk after spawned task drains"
+    );
     assert!(
         chunks[0].content.contains("Phoenix launch canary"),
         "chunk content missing mock email subject: {}",
@@ -839,6 +870,7 @@ fn integration(toolkit: &str, connected: bool) -> ConnectedIntegration {
         toolkit: toolkit.to_string(),
         description: String::new(),
         tools: Vec::new(),
+        gated_tools: Vec::new(),
         connected,
     }
 }

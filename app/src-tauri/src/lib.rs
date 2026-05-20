@@ -1656,6 +1656,73 @@ fn check_linux_display_server() {
 #[cfg(not(target_os = "linux"))]
 fn check_linux_display_server() {}
 
+/// Pure predicate: given a candidate `DBUS_SESSION_BUS_ADDRESS` value, decide
+/// whether it points to a transport `zbus` can actually open.
+///
+/// `tauri-plugin-single-instance` on Linux calls
+/// `zbus::blocking::connection::Builder::session().unwrap()` in its `setup()`
+/// closure. When `DBUS_SESSION_BUS_ADDRESS` is missing or set to `disabled`
+/// (the literal string WSL2-without-WSLg sets), zbus returns
+/// `Address("unsupported transport 'disabled'")` and the unwrap blows up the
+/// whole process before any window is created (Sentry OPENHUMAN-TAURI-TM).
+///
+/// We treat an address as reachable only when at least one alternative listed
+/// in the env var uses a transport `zbus` ships with: `unix:`, `tcp:`,
+/// `launchd:`, or `autolaunch:`. Anything else (`disabled`, empty, unknown
+/// scheme) is treated as unreachable so we can skip registering the plugin
+/// instead of crashing.
+#[cfg(any(target_os = "linux", test))]
+fn dbus_address_is_supported(addr: &str) -> bool {
+    addr.split(';').any(|entry| {
+        let entry = entry.trim();
+        if entry.is_empty() {
+            return false;
+        }
+        let transport = entry.split(':').next().unwrap_or("").trim();
+        matches!(transport, "unix" | "tcp" | "launchd" | "autolaunch")
+    })
+}
+
+/// Pure predicate: decide whether the Linux D-Bus session bus is reachable
+/// based on the relevant env vars and (optionally) the existence of the
+/// `$XDG_RUNTIME_DIR/bus` socket.
+///
+/// Used to gate registration of `tauri-plugin-single-instance` on Linux so
+/// WSL2-without-WSLg / minimal-container launches don't crash on the plugin's
+/// `unwrap()` (Sentry OPENHUMAN-TAURI-TM).
+#[cfg(any(target_os = "linux", test))]
+fn linux_dbus_session_reachable(
+    dbus_session_bus_address: Option<&str>,
+    xdg_runtime_bus_socket_exists: bool,
+) -> bool {
+    match dbus_session_bus_address {
+        Some(addr) => dbus_address_is_supported(addr),
+        // When the env var is unset, zbus falls back to autolaunch which on
+        // most distros requires `$XDG_RUNTIME_DIR/bus` to exist. Treat its
+        // absence as "no D-Bus".
+        None => xdg_runtime_bus_socket_exists,
+    }
+}
+
+/// Returns `true` when this process can safely register
+/// `tauri-plugin-single-instance` without tripping the
+/// `Address("unsupported transport 'disabled'")` panic on Linux.
+/// Always `true` on non-Linux platforms.
+#[cfg(target_os = "linux")]
+fn can_register_single_instance_plugin() -> bool {
+    let env_addr = std::env::var("DBUS_SESSION_BUS_ADDRESS").ok();
+    let runtime_bus_present = std::env::var("XDG_RUNTIME_DIR")
+        .ok()
+        .map(|dir| std::path::Path::new(&dir).join("bus").exists())
+        .unwrap_or(false);
+    linux_dbus_session_reachable(env_addr.as_deref(), runtime_bus_present)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn can_register_single_instance_plugin() -> bool {
+    true
+}
+
 type CefCommandLineArg = (&'static str, Option<&'static str>);
 
 /// Returns `true` when the process is running as root (UID 0) on Linux.
@@ -2236,18 +2303,28 @@ pub fn run() {
             }
         });
 
-    let builder = builder
-        // Single-instance guard — MUST be the first plugin registered so the
-        // secondary-process exit path triggers before any other plugin setup
-        // (and before `Builder::build()` reaches `CefRuntime::init`). Without
-        // this, launching a second instance races into CEF init while the
-        // primary still holds the cache lock; `cef::initialize` returns 0 and
-        // the vendored runtime asserts (Sentry OPENHUMAN-TAURI-A — 442 events
-        // across Win10/11 + Linux, all releases). The callback receives the
-        // secondary's argv/cwd; we forward deep-link args and focus the main
-        // window. Deep-link payloads stay handled by `tauri-plugin-deep-link`
-        // — we just need to wake the primary so it observes them.
-        .plugin(tauri_plugin_single_instance::init(
+    // Single-instance guard — MUST be the first plugin registered so the
+    // secondary-process exit path triggers before any other plugin setup
+    // (and before `Builder::build()` reaches `CefRuntime::init`). Without
+    // this, launching a second instance races into CEF init while the
+    // primary still holds the cache lock; `cef::initialize` returns 0 and
+    // the vendored runtime asserts (Sentry OPENHUMAN-TAURI-A — 442 events
+    // across Win10/11 + Linux, all releases). The callback receives the
+    // secondary's argv/cwd; we forward deep-link args and focus the main
+    // window. Deep-link payloads stay handled by `tauri-plugin-deep-link`
+    // — we just need to wake the primary so it observes them.
+    //
+    // On Linux the plugin's `setup()` calls
+    // `zbus::blocking::connection::Builder::session().unwrap()`, which panics
+    // with `Address("unsupported transport 'disabled'")` when the D-Bus
+    // session bus is unreachable (WSL2-without-WSLg, minimal containers, root
+    // launches without `$XDG_RUNTIME_DIR/bus`) — Sentry OPENHUMAN-TAURI-TM.
+    // Probe for a usable session bus first and skip the plugin if absent;
+    // single-instance enforcement is best-effort in those environments
+    // anyway, and a graceful skip is strictly better than crashing at
+    // startup.
+    let builder = if can_register_single_instance_plugin() {
+        builder.plugin(tauri_plugin_single_instance::init(
             |app: &AppHandle<AppRuntime>, args, cwd| {
                 // Don't log raw argv/cwd: deep-link callbacks (OAuth codes,
                 // magic links) can carry auth tokens that would otherwise leak
@@ -2262,6 +2339,17 @@ pub fn run() {
                 }
             },
         ))
+    } else {
+        log::warn!(
+            "[single-instance] D-Bus session bus unreachable (DBUS_SESSION_BUS_ADDRESS={:?}, \
+             XDG_RUNTIME_DIR={:?}); skipping tauri-plugin-single-instance to avoid \
+             OPENHUMAN-TAURI-TM panic. Multiple OpenHuman instances will not be deduplicated.",
+            std::env::var("DBUS_SESSION_BUS_ADDRESS").ok(),
+            std::env::var("XDG_RUNTIME_DIR").ok()
+        );
+        builder
+    };
+    let builder = builder
         // Explicitly disable `open_js_links_on_click`: tauri-plugin-opener
         // defaults to injecting `init-iife.js` into *every* webview — a
         // global click listener that invokes `plugin:opener|open_url` via
@@ -3425,6 +3513,73 @@ mod tests {
     fn linux_non_root_uid_not_detected() {
         assert!(!linux_is_root_uid(1000));
         assert!(!linux_is_root_uid(1));
+    }
+
+    // -------------------------------------------------------------------------
+    // Linux D-Bus session-bus probe (Sentry OPENHUMAN-TAURI-TM)
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn dbus_address_unix_is_supported() {
+        assert!(dbus_address_is_supported("unix:path=/run/user/1000/bus"));
+        assert!(dbus_address_is_supported("unix:abstract=/tmp/dbus-abc"));
+    }
+
+    #[test]
+    fn dbus_address_tcp_and_launchd_supported() {
+        assert!(dbus_address_is_supported("tcp:host=localhost,port=1234"));
+        assert!(dbus_address_is_supported(
+            "launchd:env=DBUS_LAUNCHD_SESSION_BUS_SOCKET"
+        ));
+        assert!(dbus_address_is_supported("autolaunch:"));
+    }
+
+    #[test]
+    fn dbus_address_disabled_is_unsupported() {
+        // The literal value WSL2-without-WSLg sets — root cause of the panic.
+        assert!(!dbus_address_is_supported("disabled"));
+        assert!(!dbus_address_is_supported(""));
+        assert!(!dbus_address_is_supported("   "));
+    }
+
+    #[test]
+    fn dbus_address_unknown_transport_is_unsupported() {
+        assert!(!dbus_address_is_supported("nonce-tcp:host=localhost"));
+        assert!(!dbus_address_is_supported("bogus:"));
+    }
+
+    #[test]
+    fn dbus_address_picks_first_supported_in_list() {
+        // zbus walks the semicolon-separated list and uses the first reachable
+        // transport, so one good entry is enough.
+        assert!(dbus_address_is_supported(
+            "disabled;unix:path=/run/user/1000/bus"
+        ));
+        assert!(dbus_address_is_supported(
+            "bogus:;tcp:host=localhost,port=55"
+        ));
+        assert!(!dbus_address_is_supported("disabled;bogus:"));
+    }
+
+    #[test]
+    fn dbus_reachable_when_env_addr_is_supported() {
+        assert!(linux_dbus_session_reachable(
+            Some("unix:path=/run/user/1000/bus"),
+            false,
+        ));
+    }
+
+    #[test]
+    fn dbus_unreachable_when_env_addr_disabled() {
+        // Even if the socket exists, an explicit `disabled` value means the
+        // session bus is intentionally turned off and zbus will reject it.
+        assert!(!linux_dbus_session_reachable(Some("disabled"), true));
+    }
+
+    #[test]
+    fn dbus_falls_back_to_runtime_socket_when_env_unset() {
+        assert!(linux_dbus_session_reachable(None, true));
+        assert!(!linux_dbus_session_reachable(None, false));
     }
 
     // -------------------------------------------------------------------------

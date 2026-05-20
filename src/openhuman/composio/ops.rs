@@ -1018,28 +1018,79 @@ pub async fn composio_sync(
     tracing::debug!(
         connection_id = %connection_id,
         reason = reason.as_str(),
-        "[composio] rpc sync"
+        "[composio] rpc sync (spawned)"
     );
+    // Validate synchronously — a bad request (unknown connection / no native
+    // provider for toolkit) must surface to the caller via the RPC error
+    // envelope, not silently inside a spawned task.
     let client = resolve_client(config)?;
     let toolkit = resolve_toolkit_for_connection(&client, connection_id).await?;
-
     let provider = get_provider(&toolkit).ok_or_else(|| {
         format!("[composio] no native provider registered for toolkit '{toolkit}'")
     })?;
-
     let _ = client; // see analogous comment above — drop the pre-baked client (#1710).
+
+    // `provider.sync` walks every page of the upstream API and ingests every
+    // message in-band — on a real prod inbox a healthy run can legitimately
+    // exceed the frontend's 30s `composio_sync` RPC `.await` cap (one
+    // healthy periodic tick is already ~100s for 20 pages / 500 messages).
+    // There is no reason for the UI to block on it: per-source progress is
+    // already exposed via the polled `openhuman.memory_sync_status_list` RPC,
+    // which reads `mem_tree_chunks` directly and therefore reflects the
+    // spawned task's per-message ingest in real time. So we spawn the sync
+    // as a background task and return immediately with a "started" envelope.
+    // The periodic scheduler (`composio::periodic`) already runs
+    // `provider.sync` from inside its own `tokio::spawn` loop — same pattern.
     let ctx = ProviderContext {
         config: Arc::new(config.clone()),
         toolkit: toolkit.clone(),
         connection_id: Some(connection_id.to_string()),
     };
+    let started_at_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    let toolkit_for_outcome = toolkit.clone();
+    let connection_id_for_log = connection_id.to_string();
 
-    let outcome = provider.sync(&ctx, reason).await.map_err(|e| {
-        report_composio_op_error("sync", &e);
-        format!("[composio] sync({toolkit}) failed: {e}")
-    })?;
+    tokio::spawn(async move {
+        let toolkit_in_task = ctx.toolkit.clone();
+        match provider.sync(&ctx, reason).await {
+            Ok(out) => {
+                tracing::info!(
+                    toolkit = %toolkit_in_task,
+                    connection_id = %connection_id_for_log,
+                    items_ingested = out.items_ingested,
+                    elapsed_ms = out.elapsed_ms(),
+                    "[composio] background sync ok"
+                );
+            }
+            Err(e) => {
+                report_composio_op_error("sync", &e);
+                tracing::warn!(
+                    toolkit = %toolkit_in_task,
+                    connection_id = %connection_id_for_log,
+                    error = %e,
+                    "[composio] background sync failed"
+                );
+            }
+        }
+    });
 
-    let summary = outcome.summary.clone();
+    let summary = format!("composio: {toolkit_for_outcome} sync started (background)");
+    let outcome = SyncOutcome {
+        toolkit: toolkit_for_outcome,
+        connection_id: Some(connection_id.to_string()),
+        reason: reason.as_str().to_string(),
+        items_ingested: 0,
+        started_at_ms,
+        // Sentinel: still running. Frontend should rely on
+        // `memory_sync_status_list` for progress; `finished_at_ms == 0`
+        // means "spawned, not yet complete".
+        finished_at_ms: 0,
+        summary: summary.clone(),
+        details: serde_json::json!({ "status": "started" }),
+    };
     Ok(RpcOutcome::new(outcome, vec![summary]))
 }
 
@@ -1063,7 +1114,9 @@ fn parse_sync_reason(raw: Option<&str>) -> OpResult<SyncReason> {
 
 // ── Prompt integration discovery ────────────────────────────────────
 
-use crate::openhuman::context::prompt::{ConnectedIntegration, ConnectedIntegrationTool};
+use crate::openhuman::context::prompt::{
+    ConnectedIntegration, ConnectedIntegrationTool, GatedIntegrationTool,
+};
 use std::collections::{HashMap, HashSet};
 use std::sync::{LazyLock, RwLock};
 use std::time::{Duration, Instant};
@@ -1632,38 +1685,84 @@ async fn fetch_connected_integrations_uncached(
         // each other's actions. `GMAIL_SEND_EMAIL` matches `gmail_`,
         // not just `gmail`, so siblings stay in their own buckets.
         let action_prefix = format!("{}_", slug.to_uppercase());
-        let tools: Vec<ConnectedIntegrationTool> = if connected {
-            // Apply the same curated-whitelist + user-scope filter the
-            // meta-tool layer uses, so the integrations_agent prompt
-            // only advertises actions the agent is actually allowed to
-            // call. One pref load per toolkit (not per action).
-            let pref = super::providers::load_user_scope_or_default(slug).await;
-            let filtered: Vec<&super::types::ComposioToolSchema> = tools_by_toolkit
-                .iter()
-                .filter(|t| t.function.name.starts_with(&action_prefix))
-                .filter(|t| super::providers::is_action_visible_with_pref(&t.function.name, &pref))
-                .collect();
-            tracing::debug!(
-                toolkit = %slug,
-                kept = filtered.len(),
-                "[composio][scopes] integrations prompt action set"
-            );
-            filtered
-                .into_iter()
-                .map(|t| ConnectedIntegrationTool {
-                    name: t.function.name.clone(),
-                    description: t.function.description.clone().unwrap_or_default(),
-                    parameters: t.function.parameters.clone(),
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
+        let (tools, gated_tools): (Vec<ConnectedIntegrationTool>, Vec<GatedIntegrationTool>) =
+            if connected {
+                // Apply the same curated-whitelist + user-scope filter the
+                // meta-tool layer uses, so the integrations_agent prompt
+                // only advertises actions the agent is actually allowed to
+                // call. One pref load per toolkit (not per action).
+                //
+                // Actions that the catalog *does* know about but the user's
+                // current scope pref denies are routed into `gated_tools` so
+                // the agent can honestly answer "I have this capability but
+                // it needs the {scope} toggle in Connections → {toolkit}".
+                // The agent cannot flip the scope itself — that's a UI-only
+                // action. Without this gated surface the LLM has no way to
+                // know the gated action exists at all and will tell the user
+                // "I don't support that" — technically correct about its
+                // callable surface, but misleading about the toolkit.
+                let pref = super::providers::load_user_scope_or_default(slug).await;
+                let mut visible: Vec<ConnectedIntegrationTool> = Vec::new();
+                let mut gated: Vec<GatedIntegrationTool> = Vec::new();
+                for t in tools_by_toolkit
+                    .iter()
+                    .filter(|t| t.function.name.starts_with(&action_prefix))
+                {
+                    if super::providers::is_action_visible_with_pref(&t.function.name, &pref) {
+                        visible.push(ConnectedIntegrationTool {
+                            name: t.function.name.clone(),
+                            description: t.function.description.clone().unwrap_or_default(),
+                            parameters: t.function.parameters.clone(),
+                        });
+                    } else if let Some(required_scope) =
+                        super::providers::curated_scope_for(&t.function.name)
+                    {
+                        // Only surface CURATED actions as `gated` — uncurated
+                        // tools (which fall through to `classify_unknown` and
+                        // happen to land outside the user's pref) are not
+                        // first-class user-facing capabilities, and listing
+                        // them would clutter the prompt with internal slugs.
+                        // Deliberately NO `parameters` field: the LLM should
+                        // not be able to construct a call envelope; it can
+                        // only describe + point at the unlock path.
+                        // Ship the unlock path as data — single path today
+                        // (the Connections UI toggle). The agent does NOT
+                        // have a tool to flip scopes; that capability was
+                        // removed because LLM-mediated scope elevation made
+                        // the safety contract depend on model behavior and
+                        // was a soft gate the model could route around. If
+                        // more unlock paths exist in future (per-action
+                        // approval modal, time-boxed elevation, etc.) they
+                        // land here and the prompt renderer picks them up.
+                        let scope_str = required_scope.as_str();
+                        let unlock_paths = vec![format!(
+                            "the user enables it themselves in \
+                             Connections → {slug} → {scope_str}"
+                        )];
+                        gated.push(GatedIntegrationTool {
+                            name: t.function.name.clone(),
+                            description: t.function.description.clone().unwrap_or_default(),
+                            required_scope: scope_str.to_string(),
+                            unlock_paths,
+                        });
+                    }
+                }
+                tracing::debug!(
+                    toolkit = %slug,
+                    visible = visible.len(),
+                    gated = gated.len(),
+                    "[composio][scopes] integrations prompt action set"
+                );
+                (visible, gated)
+            } else {
+                (Vec::new(), Vec::new())
+            };
 
         integrations.push(ConnectedIntegration {
             toolkit: slug.clone(),
             description: toolkit_description(slug).to_string(),
             tools,
+            gated_tools,
             connected,
         });
     }

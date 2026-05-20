@@ -1,10 +1,12 @@
 import { useT } from '../../../../lib/i18n/I18nContext';
 import { formatBytes, statusLabel } from '../../../../utils/localAiHelpers';
+import { validateOllamaUrl } from '../../../../utils/ollamaUrlValidation';
 import type {
   LocalAiDiagnostics,
   LocalAiDownloadsProgress,
   LocalAiStatus,
   ModelContextEligibility,
+  OllamaConnectionTestResult,
   RepairAction,
 } from '../../../../utils/tauriCommands';
 
@@ -68,6 +70,10 @@ interface ModelStatusSectionProps {
   etaText: string;
   statusTone: (state: string) => string;
   runtimeEnabled: boolean;
+  ollamaBaseUrlInput: string;
+  isTestingConnection: boolean;
+  connectionTestResult: OllamaConnectionTestResult | null;
+  isSavingUrl: boolean;
   onRefreshStatus: () => void;
   onTriggerDownload: (force: boolean) => void;
   onSetOllamaPath: () => void;
@@ -76,6 +82,11 @@ interface ModelStatusSectionProps {
   onToggleErrorDetail: () => void;
   onRunDiagnostics: () => void;
   onRepairAction?: (action: RepairAction) => void;
+  onSetOllamaBaseUrlInput: (value: string) => void;
+  onTestConnection: () => void;
+  onSaveOllamaBaseUrl: () => void;
+  onResetOllamaBaseUrl: () => void;
+  savedOllamaBaseUrl: string;
 }
 
 const ModelStatusSection = ({
@@ -99,6 +110,10 @@ const ModelStatusSection = ({
   etaText,
   statusTone,
   runtimeEnabled,
+  ollamaBaseUrlInput,
+  isTestingConnection,
+  connectionTestResult,
+  isSavingUrl,
   onRefreshStatus,
   onTriggerDownload,
   onSetOllamaPath,
@@ -107,6 +122,11 @@ const ModelStatusSection = ({
   onToggleErrorDetail,
   onRunDiagnostics,
   onRepairAction,
+  onSetOllamaBaseUrlInput,
+  onTestConnection,
+  onSaveOllamaBaseUrl,
+  onResetOllamaBaseUrl,
+  savedOllamaBaseUrl,
 }: ModelStatusSectionProps) => {
   const { t } = useT();
   // OpenHuman no longer installs or launches Ollama itself. When the runtime
@@ -127,6 +147,11 @@ const ModelStatusSection = ({
   void onSetOllamaPathInput;
   void onToggleErrorDetail;
   void onRepairAction;
+
+  const urlValidation = validateOllamaUrl(ollamaBaseUrlInput);
+  const urlChanged = ollamaBaseUrlInput !== savedOllamaBaseUrl;
+  const canSave = urlValidation.valid && urlChanged && !isSavingUrl;
+  const canTest = urlValidation.valid && !isTestingConnection;
 
   if (showInstallOllamaCta) {
     return (
@@ -186,6 +211,69 @@ const ModelStatusSection = ({
 
   return (
     <>
+      <section className="space-y-3">
+        <h3 className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
+          {t('localModel.ollamaServer.label')}
+        </h3>
+        <div className="bg-stone-50 dark:bg-neutral-800/60 rounded-lg border border-stone-200 dark:border-neutral-800 p-4 space-y-3">
+          <div className="space-y-1.5">
+            <input
+              type="text"
+              value={ollamaBaseUrlInput}
+              onChange={e => onSetOllamaBaseUrlInput(e.target.value)}
+              placeholder={t('localModel.ollamaServer.placeholder')}
+              className="w-full rounded-md border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-1.5 text-sm text-stone-900 dark:text-neutral-100 placeholder-stone-400 dark:placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-primary-500"
+            />
+            {ollamaBaseUrlInput && !urlValidation.valid && (
+              <p className="text-xs text-red-600 dark:text-red-300">
+                {urlValidation.error ?? t('localModel.ollamaServer.validationError')}
+              </p>
+            )}
+            <p className="text-xs text-stone-400 dark:text-neutral-500">
+              {t('localModel.ollamaServer.helperText')}
+            </p>
+          </div>
+
+          {connectionTestResult !== null && (
+            <div
+              className={`flex items-center gap-2 text-xs ${connectionTestResult.reachable ? 'text-green-600 dark:text-green-300' : 'text-red-600 dark:text-red-300'}`}>
+              <span>{connectionTestResult.reachable ? '✓' : '✗'}</span>
+              <span>
+                {connectionTestResult.reachable
+                  ? `${t('localModel.ollamaServer.reachable')}${typeof connectionTestResult.models_count === 'number' ? ` (${connectionTestResult.models_count} ${t('localModel.ollamaServer.modelCount')})` : ''}`
+                  : `${t('localModel.ollamaServer.unreachable')}${connectionTestResult.error ? `: ${connectionTestResult.error}` : ''}`}
+              </span>
+            </div>
+          )}
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onTestConnection}
+              disabled={!canTest}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md border border-stone-300 dark:border-neutral-700 hover:border-stone-400 disabled:opacity-50 text-stone-700 dark:text-neutral-200">
+              {isTestingConnection && (
+                <span className="h-3 w-3 rounded-full border-2 border-current border-t-transparent animate-spin" />
+              )}
+              {t('localModel.ollamaServer.testButton')}
+            </button>
+            <button
+              type="button"
+              onClick={onSaveOllamaBaseUrl}
+              disabled={!canSave}
+              className="px-3 py-1.5 text-xs rounded-md bg-primary-600 hover:bg-primary-700 disabled:opacity-50 text-white">
+              {t('localModel.ollamaServer.saveButton')}
+            </button>
+            <button
+              type="button"
+              onClick={onResetOllamaBaseUrl}
+              className="text-xs text-stone-400 dark:text-neutral-500 hover:text-stone-600 dark:hover:text-neutral-300 underline">
+              {t('localModel.ollamaServer.resetButton')}
+            </button>
+          </div>
+        </div>
+      </section>
+
       <section className="space-y-3">
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
