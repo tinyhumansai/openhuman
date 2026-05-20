@@ -20,24 +20,24 @@ interface PillSeverity {
 function severityFromPct(pct: number): PillSeverity {
   if (pct >= 0.9) {
     return {
-      bg: 'bg-coral-50',
-      text: 'text-coral-700',
-      ring: 'ring-coral-200',
+      bg: 'bg-coral-50 dark:bg-coral-500/15',
+      text: 'text-coral-700 dark:text-coral-300',
+      ring: 'ring-coral-200 dark:ring-coral-500/30',
       label: `${Math.round(pct * 100)}%`,
     };
   }
   if (pct >= 0.7) {
     return {
-      bg: 'bg-amber-50',
-      text: 'text-amber-700',
-      ring: 'ring-amber-200',
+      bg: 'bg-amber-50 dark:bg-amber-500/15',
+      text: 'text-amber-700 dark:text-amber-300',
+      ring: 'ring-amber-200 dark:ring-amber-500/30',
       label: `${Math.round(pct * 100)}%`,
     };
   }
   return {
-    bg: 'bg-sage-50',
-    text: 'text-sage-700',
-    ring: 'ring-sage-200',
+    bg: 'bg-sage-50 dark:bg-sage-500/15',
+    text: 'text-sage-700 dark:text-sage-300',
+    ring: 'ring-sage-200 dark:ring-sage-500/30',
     label: `${Math.round(pct * 100)}%`,
   };
 }
@@ -45,14 +45,12 @@ function severityFromPct(pct: number): PillSeverity {
 const TokenUsagePill = () => {
   const { t } = useT();
   const sessionTokens = useAppSelector(state => state.chatRuntime.sessionTokenUsage);
-  const { usagePct10h, usagePct7d, isAtLimit, isNearLimit, currentTier, teamUsage } =
-    useUsageState();
+  const { usagePct, isAtLimit, isNearLimit, currentTier, teamUsage } = useUsageState();
 
   const totalTokens = sessionTokens.inputTokens + sessionTokens.outputTokens;
   const showSessionCounter = totalTokens > 0;
 
-  const planPct = Math.max(usagePct10h, usagePct7d);
-  const planSeverity = severityFromPct(planPct);
+  const planSeverity = severityFromPct(usagePct);
   const showPlanPill = teamUsage !== null;
 
   const planTitle = (() => {
@@ -67,7 +65,7 @@ const TokenUsagePill = () => {
     <div className="flex items-center gap-1.5 text-[11px] leading-none">
       {showSessionCounter ? (
         <span
-          className="inline-flex items-center gap-1 rounded-full bg-stone-100 px-2 py-1 font-mono text-stone-600 ring-1 ring-stone-200/60"
+          className="inline-flex items-center gap-1 rounded-full bg-stone-100 dark:bg-neutral-800 px-2 py-1 font-mono text-stone-600 dark:text-neutral-300 ring-1 ring-stone-200/60 dark:ring-neutral-700"
           title={t('token.sessionTokens')
             .replace('{in}', sessionTokens.inputTokens.toLocaleString())
             .replace('{out}', sessionTokens.outputTokens.toLocaleString())

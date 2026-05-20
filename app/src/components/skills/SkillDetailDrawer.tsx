@@ -32,7 +32,7 @@ interface Props {
 
 function scopePillCls(scope: SkillSummary['scope'], legacy: boolean): string {
   if (legacy || scope === 'legacy') {
-    return 'bg-stone-100 text-stone-700 border-stone-200';
+    return 'bg-stone-100 dark:bg-neutral-800 text-stone-700 dark:text-neutral-200 border-stone-200 dark:border-neutral-800';
   }
   switch (scope) {
     case 'user':
@@ -40,7 +40,7 @@ function scopePillCls(scope: SkillSummary['scope'], legacy: boolean): string {
     case 'project':
       return 'bg-amber-50 text-amber-700 border-amber-200';
     default:
-      return 'bg-stone-100 text-stone-700 border-stone-200';
+      return 'bg-stone-100 dark:bg-neutral-800 text-stone-700 dark:text-neutral-200 border-stone-200 dark:border-neutral-800';
   }
 }
 
@@ -117,14 +117,14 @@ export default function SkillDetailDrawer({ skill, onClose }: Props) {
         role="dialog"
         aria-modal="true"
         aria-labelledby="skill-drawer-title"
-        className="relative ml-auto flex h-full w-full max-w-[520px] flex-col bg-white shadow-2xl animate-slide-in-right">
+        className="relative ml-auto flex h-full w-full max-w-[520px] flex-col bg-white dark:bg-neutral-900 shadow-2xl animate-slide-in-right">
         {/* Header */}
-        <div className="flex items-start justify-between gap-3 border-b border-stone-100 px-5 py-4">
+        <div className="flex items-start justify-between gap-3 border-b border-stone-100 dark:border-neutral-800 px-5 py-4">
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
               <h2
                 id="skill-drawer-title"
-                className="truncate text-base font-semibold text-stone-900 font-sans">
+                className="truncate text-base font-semibold text-stone-900 dark:text-neutral-100 font-sans">
                 {skill.name}
               </h2>
               <span
@@ -133,7 +133,7 @@ export default function SkillDetailDrawer({ skill, onClose }: Props) {
               </span>
             </div>
             {skill.version ? (
-              <p className="mt-1 text-xs text-stone-500 font-mono">v{skill.version}</p>
+              <p className="mt-1 text-xs text-stone-500 dark:text-neutral-400 font-mono">v{skill.version}</p>
             ) : null}
           </div>
           <button
@@ -144,7 +144,7 @@ export default function SkillDetailDrawer({ skill, onClose }: Props) {
               onClose();
             }}
             aria-label={t('skills.detail.closeAriaLabel')}
-            className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-stone-400 transition-colors hover:bg-stone-100 hover:text-stone-600 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-1">
+            className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-stone-400 dark:text-neutral-500 transition-colors hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 hover:text-stone-600 dark:hover:text-neutral-300 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-1">
             <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path
                 strokeLinecap="round"
@@ -161,7 +161,7 @@ export default function SkillDetailDrawer({ skill, onClose }: Props) {
           <div className="px-5 py-4 space-y-4">
             {/* Description */}
             {skill.description ? (
-              <p className="text-sm leading-relaxed text-stone-700 font-sans">
+              <p className="text-sm leading-relaxed text-stone-700 dark:text-neutral-200 font-sans">
                 {skill.description}
               </p>
             ) : null}
@@ -170,18 +170,18 @@ export default function SkillDetailDrawer({ skill, onClose }: Props) {
             <dl className="grid grid-cols-[auto,1fr] gap-x-3 gap-y-2 text-xs">
               {skill.author ? (
                 <>
-                  <dt className="font-medium text-stone-500">{t('skills.detail.author')}</dt>
-                  <dd className="text-stone-800">{skill.author}</dd>
+                  <dt className="font-medium text-stone-500 dark:text-neutral-400">{t('skills.detail.author')}</dt>
+                  <dd className="text-stone-800 dark:text-neutral-100">{skill.author}</dd>
                 </>
               ) : null}
               {skill.tags.length > 0 ? (
                 <>
-                  <dt className="font-medium text-stone-500">{t('skills.detail.tags')}</dt>
+                  <dt className="font-medium text-stone-500 dark:text-neutral-400">{t('skills.detail.tags')}</dt>
                   <dd className="flex flex-wrap gap-1">
                     {skill.tags.map(tag => (
                       <span
                         key={tag}
-                        className="inline-flex items-center rounded-md border border-stone-200 bg-stone-50 px-1.5 py-0.5 text-[10px] text-stone-700">
+                        className="inline-flex items-center rounded-md border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 px-1.5 py-0.5 text-[10px] text-stone-700 dark:text-neutral-200">
                         {tag}
                       </span>
                     ))}
@@ -190,7 +190,7 @@ export default function SkillDetailDrawer({ skill, onClose }: Props) {
               ) : null}
               {skill.tools.length > 0 ? (
                 <>
-                  <dt className="font-medium text-stone-500">{t('skills.detail.allowedTools')}</dt>
+                  <dt className="font-medium text-stone-500 dark:text-neutral-400">{t('skills.detail.allowedTools')}</dt>
                   <dd className="flex flex-wrap gap-1">
                     {skill.tools.map(tool => (
                       <span
@@ -204,8 +204,8 @@ export default function SkillDetailDrawer({ skill, onClose }: Props) {
               ) : null}
               {skill.location ? (
                 <>
-                  <dt className="font-medium text-stone-500">{t('skills.detail.location')}</dt>
-                  <dd className="truncate font-mono text-[11px] text-stone-600" title={skill.location}>
+                  <dt className="font-medium text-stone-500 dark:text-neutral-400">{t('skills.detail.location')}</dt>
+                  <dd className="truncate font-mono text-[11px] text-stone-600 dark:text-neutral-300" title={skill.location}>
                     {skill.location}
                   </dd>
                 </>
@@ -228,11 +228,11 @@ export default function SkillDetailDrawer({ skill, onClose }: Props) {
 
             {/* Resources */}
             <div>
-              <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-stone-500">
+              <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-stone-500 dark:text-neutral-400">
                 {t('skills.detail.bundledResources')} ({skill.resources.length})
               </h3>
               {skill.resources.length === 0 ? (
-                <p className="text-xs text-stone-400 italic">{t('skills.detail.noBundledResources')}</p>
+                <p className="text-xs text-stone-400 dark:text-neutral-500 italic">{t('skills.detail.noBundledResources')}</p>
               ) : (
                 <SkillResourceTree
                   resources={skill.resources}

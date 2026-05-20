@@ -128,21 +128,23 @@ export function MemoryHeatmap({ timestamps, loading }: MemoryHeatmapProps) {
 
   if (loading) {
     return (
-      <div className="rounded-xl border border-stone-200 bg-stone-50 p-5">
-        <h3 className="text-sm font-semibold text-stone-900 mb-3">
+      <div className="rounded-xl border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 p-5">
+        <h3 className="text-sm font-semibold text-stone-900 dark:text-neutral-100 mb-3">
           {t('memory.ingestionActivity')}
         </h3>
-        <div className="h-28 rounded-lg bg-stone-200 animate-pulse" />
+        <div className="h-28 rounded-lg bg-stone-200 dark:bg-neutral-800 animate-pulse" />
       </div>
     );
   }
 
   return (
-    <div className="rounded-xl border border-stone-200 bg-stone-50 p-5">
+    <div className="rounded-xl border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 p-5">
       <div className="flex items-center justify-between mb-3">
         <div>
-          <h3 className="text-sm font-semibold text-stone-900">{t('memory.ingestionActivity')}</h3>
-          <p className="text-xs text-stone-500 mt-0.5">
+          <h3 className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
+            {t('memory.ingestionActivity')}
+          </h3>
+          <p className="text-xs text-stone-500 dark:text-neutral-400 mt-0.5">
             {totalEvents} {totalEvents !== 1 ? t('memory.events') : t('memory.event')}{' '}
             {t('memory.overTheLast')} {MONTHS} {t('memory.months')}
             {maxDailyCount > 0 && (
@@ -154,7 +156,7 @@ export function MemoryHeatmap({ timestamps, loading }: MemoryHeatmapProps) {
             )}
           </p>
         </div>
-        <div className="flex items-center gap-1 text-[10px] text-stone-500">
+        <div className="flex items-center gap-1 text-[10px] text-stone-500 dark:text-neutral-400">
           <span>{t('memory.less')}</span>
           {INTENSITY_COLORS.map((color, i) => (
             <div
@@ -240,12 +242,12 @@ export function MemoryHeatmap({ timestamps, loading }: MemoryHeatmapProps) {
       {/* Tooltip */}
       {hoveredCell && (
         <div
-          className="fixed z-50 px-2 py-1 rounded-md bg-white border border-stone-200 text-[11px] text-stone-900 shadow-lg pointer-events-none"
+          className="fixed z-50 px-2 py-1 rounded-md bg-white dark:bg-neutral-900 border border-stone-200 dark:border-neutral-800 text-[11px] text-stone-900 dark:text-neutral-100 shadow-lg pointer-events-none"
           style={{ left: hoveredCell.x, top: hoveredCell.y - 32, transform: 'translateX(-50%)' }}>
           <span className="font-medium">
             {hoveredCell.count} {hoveredCell.count !== 1 ? t('memory.events') : t('memory.event')}
           </span>{' '}
-          <span className="text-stone-400">
+          <span className="text-stone-400 dark:text-neutral-500">
             {t('memory.on')} {formatDate(hoveredCell.date)}
           </span>
         </div>

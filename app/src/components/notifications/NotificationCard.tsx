@@ -33,7 +33,7 @@ function providerBadgeClass(provider: string): string {
     case 'linkedin':
       return 'bg-sky-100 text-sky-700 border-sky-200';
     default:
-      return 'bg-stone-100 text-stone-700 border-stone-200';
+      return 'bg-stone-100 dark:bg-neutral-800 text-stone-700 dark:text-neutral-200 border-stone-200 dark:border-neutral-800';
   }
 }
 
@@ -69,8 +69,8 @@ const NotificationCard = ({ notification: n, onMarkRead, onNavigate, onDismiss }
 
   return (
     <div
-      className={`w-full p-3 border-b border-stone-100 hover:bg-stone-50 transition-colors duration-150 ${
-        isUnread ? 'bg-primary-50/30' : 'bg-white'
+      className={`w-full p-3 border-b border-stone-100 dark:border-neutral-800 hover:bg-stone-50 dark:hover:bg-neutral-800/60 transition-colors duration-150 ${
+        isUnread ? 'bg-primary-50/30' : 'bg-white dark:bg-neutral-900'
       }`}>
       <div className="flex items-start gap-3">
         {/* Unread dot — reserve space so text stays aligned whether read or unread */}
@@ -107,21 +107,27 @@ const NotificationCard = ({ notification: n, onMarkRead, onNavigate, onDismiss }
               </span>
             )}
 
-            <span className="ml-auto text-[11px] text-stone-400 flex-shrink-0">
+            <span className="ml-auto text-[11px] text-stone-400 dark:text-neutral-500 flex-shrink-0">
               {relativeTime(n.received_at)}
             </span>
           </div>
 
           {/* Title */}
-          <p className="text-sm font-medium text-stone-900 truncate">{n.title}</p>
+          <p className="text-sm font-medium text-stone-900 dark:text-neutral-100 truncate">
+            {n.title}
+          </p>
 
           {/* Body preview */}
-          {n.body && <p className="text-xs text-stone-500 mt-0.5 line-clamp-2">{n.body}</p>}
+          {n.body && (
+            <p className="text-xs text-stone-500 dark:text-neutral-400 mt-0.5 line-clamp-2">
+              {n.body}
+            </p>
+          )}
         </button>
         {onDismiss && (
           <button
             onClick={() => onDismiss(n.id)}
-            className="mt-0.5 ml-1 flex-shrink-0 p-0.5 rounded hover:bg-stone-200 text-stone-400 hover:text-stone-600 transition-colors"
+            className="mt-0.5 ml-1 flex-shrink-0 p-0.5 rounded hover:bg-stone-200 dark:hover:bg-neutral-800/60 text-stone-400 dark:text-neutral-500 hover:text-stone-600 dark:hover:text-neutral-300 transition-colors"
             aria-label={t('notifications.card.dismiss')}>
             <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path

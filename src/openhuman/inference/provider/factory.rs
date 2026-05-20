@@ -7,13 +7,16 @@
 //! ## Provider-string grammar
 //!
 //! ```text
-//! "openhuman"        → OpenHumanBackendProvider; model = config.default_model
-//! "ollama:<model>"   → local Ollama at config.local_ai.base_url
-//! "<slug>:<model>"   → cloud_providers entry keyed by slug;
-//!                      builds OpenAiCompatibleProvider (Bearer) or Anthropic
-//!                      flavour depending on auth_style.
-//! ""  / missing      → falls back to "openhuman"
+//! "openhuman"                    → OpenHumanBackendProvider; model = config.default_model
+//! "ollama:<model>[@<temp>]"      → local Ollama at config.local_ai.base_url
+//! "<slug>:<model>[@<temp>]"      → cloud_providers entry keyed by slug;
+//!                                  builds OpenAiCompatibleProvider (Bearer) or
+//!                                  Anthropic flavour depending on auth_style.
+//! ""  / missing                  → falls back to "openhuman"
 //! ```
+//!
+//! The optional `@<temp>` suffix pins a per-workload temperature override on
+//! the built provider. The model id sent upstream never includes the suffix.
 //!
 //! Unknown slugs and missing-creds configurations produce actionable errors.
 
@@ -45,6 +48,7 @@ pub fn auth_key_for_slug(slug: &str) -> String {
 /// Returns `"openhuman"` when the workload has no explicit override.
 pub fn provider_for_role(role: &str, config: &Config) -> String {
     let opt = match role {
+        "chat" => config.chat_provider.as_deref(),
         "reasoning" => config.reasoning_provider.as_deref(),
         "agentic" => config.agentic_provider.as_deref(),
         "coding" => config.coding_provider.as_deref(),
@@ -138,8 +142,9 @@ pub fn create_chat_provider_from_string(
         verify_session_active(config)?;
     }
 
-    if let Some(model) = p.strip_prefix(OLLAMA_PROVIDER_PREFIX) {
-        if model.trim().is_empty() {
+    if let Some(model_with_temp) = p.strip_prefix(OLLAMA_PROVIDER_PREFIX) {
+        let (model, temperature_override) = split_model_and_temperature(model_with_temp);
+        if model.is_empty() {
             anyhow::bail!(
                 "[chat-factory] provider string '{}' for role '{}' has an empty model — \
                  use 'ollama:<model-id>'",
@@ -147,13 +152,13 @@ pub fn create_chat_provider_from_string(
                 role
             );
         }
-        return make_ollama_provider(model.trim(), config);
+        return make_ollama_provider(&model, temperature_override, config);
     }
 
-    // New grammar: "<slug>:<model>"
+    // New grammar: "<slug>:<model>[@<temp>]"
     if let Some(colon_pos) = p.find(':') {
         let slug = p[..colon_pos].trim();
-        let model = p[colon_pos + 1..].trim();
+        let (model, temperature_override) = split_model_and_temperature(&p[colon_pos + 1..]);
 
         if slug.is_empty() {
             anyhow::bail!(
@@ -163,7 +168,7 @@ pub fn create_chat_provider_from_string(
             );
         }
 
-        return make_cloud_provider_by_slug(role, slug, model, config);
+        return make_cloud_provider_by_slug(role, slug, &model, temperature_override, config);
     }
 
     // No colon: might be a bare legacy type string (e.g. "openai"). Try as
@@ -216,7 +221,7 @@ fn make_openhuman_backend(config: &Config) -> anyhow::Result<(Box<dyn Provider>,
     // canonical tier names.
     let model = match model.strip_prefix("hint:") {
         Some("reasoning") => crate::openhuman::config::MODEL_REASONING_V1.to_string(),
-        Some("chat") => crate::openhuman::config::MODEL_REASONING_QUICK_V1.to_string(),
+        Some("chat") => crate::openhuman::config::MODEL_CHAT_V1.to_string(),
         Some("agentic") => crate::openhuman::config::MODEL_AGENTIC_V1.to_string(),
         Some("coding") => crate::openhuman::config::MODEL_CODING_V1.to_string(),
         _ => model,
@@ -263,9 +268,30 @@ fn verify_session_active(config: &Config) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Parse a `<model>[@<temp>]` tail into `(model, override)`.
+///
+/// Tolerates whitespace around the components. Returns `temperature = None`
+/// when the suffix is absent or unparseable — the model text is taken as-is.
+fn split_model_and_temperature(raw: &str) -> (String, Option<f64>) {
+    let trimmed = raw.trim();
+    if let Some(at_pos) = trimmed.rfind('@') {
+        let head = trimmed[..at_pos].trim();
+        let tail = trimmed[at_pos + 1..].trim();
+        if !head.is_empty() {
+            if let Ok(parsed) = tail.parse::<f64>() {
+                if parsed.is_finite() {
+                    return (head.to_string(), Some(parsed));
+                }
+            }
+        }
+    }
+    (trimmed.to_string(), None)
+}
+
 /// Build an Ollama local provider.
 fn make_ollama_provider(
     model: &str,
+    temperature_override: Option<f64>,
     config: &Config,
 ) -> anyhow::Result<(Box<dyn Provider>, String)> {
     let base_url = config
@@ -276,15 +302,17 @@ fn make_ollama_provider(
     // Ollama exposes an OpenAI-compatible endpoint at /v1.
     let endpoint = format!("{}/v1", base_url.trim_end_matches('/'));
     log::info!(
-        "[providers][chat-factory] building ollama provider model={} endpoint_host={}",
+        "[providers][chat-factory] building ollama provider model={} endpoint_host={} temp_override={:?}",
         model,
-        redact_endpoint(&endpoint)
+        redact_endpoint(&endpoint),
+        temperature_override
     );
     let p = make_openai_compatible_provider_with_config(
         &endpoint,
         "",
         CompatAuthStyle::None,
         &config.temperature_unsupported_models,
+        temperature_override,
     )?;
     Ok((p, model.to_string()))
 }
@@ -294,6 +322,7 @@ fn make_cloud_provider_by_slug(
     role: &str,
     slug: &str,
     model: &str,
+    temperature_override: Option<f64>,
     config: &Config,
 ) -> anyhow::Result<(Box<dyn Provider>, String)> {
     let entry = config.cloud_providers.iter().find(|e| e.slug == slug);
@@ -340,6 +369,7 @@ fn make_cloud_provider_by_slug(
                 &key,
                 CompatAuthStyle::Anthropic,
                 unsupported,
+                temperature_override,
             )?;
             Ok((p, effective_model))
         }
@@ -358,6 +388,7 @@ fn make_cloud_provider_by_slug(
                 "",
                 CompatAuthStyle::None,
                 unsupported,
+                temperature_override,
             )?;
             Ok((p, effective_model))
         }
@@ -367,6 +398,7 @@ fn make_cloud_provider_by_slug(
                 &key,
                 CompatAuthStyle::Bearer,
                 unsupported,
+                temperature_override,
             )?;
             Ok((p, effective_model))
         }
@@ -418,16 +450,18 @@ fn make_openai_compatible_provider(
     api_key: &str,
     auth_style: CompatAuthStyle,
 ) -> anyhow::Result<Box<dyn Provider>> {
-    make_openai_compatible_provider_with_config(endpoint, api_key, auth_style, &[])
+    make_openai_compatible_provider_with_config(endpoint, api_key, auth_style, &[], None)
 }
 
-/// Build an `OpenAiCompatibleProvider` with auth style and temperature
-/// suppression list from config.
+/// Build an `OpenAiCompatibleProvider` with auth style, temperature
+/// suppression list from config, and an optional per-workload temperature
+/// override (extracted from the provider string's `@<temp>` suffix).
 fn make_openai_compatible_provider_with_config(
     endpoint: &str,
     api_key: &str,
     auth_style: CompatAuthStyle,
     temperature_unsupported_models: &[String],
+    temperature_override: Option<f64>,
 ) -> anyhow::Result<Box<dyn Provider>> {
     let key = if api_key.trim().is_empty() {
         None
@@ -436,7 +470,8 @@ fn make_openai_compatible_provider_with_config(
     };
     Ok(Box::new(
         OpenAiCompatibleProvider::new("cloud", endpoint, key, auth_style)
-            .with_temperature_unsupported_models(temperature_unsupported_models.to_vec()),
+            .with_temperature_unsupported_models(temperature_unsupported_models.to_vec())
+            .with_temperature_override(temperature_override),
     ))
 }
 

@@ -1202,3 +1202,63 @@ fn parse_provider_tool_call_from_value_guards_malformed_arguments() {
         "malformed arguments string must be normalised to {{}} via the first-path guard"
     );
 }
+
+#[test]
+fn custom_openai_provider_has_no_responses_fallback() {
+    let p = OpenAiCompatibleProvider::new_no_responses_fallback(
+        "custom_openai",
+        "http://localhost:11434/v1",
+        Some("sk-test"),
+        AuthStyle::Bearer,
+    );
+    assert!(
+        !p.supports_responses_fallback,
+        "custom_openai must not attempt the /v1/responses fallback"
+    );
+}
+
+#[test]
+fn enrich_404_message_adds_hint_when_no_fallback() {
+    let p = OpenAiCompatibleProvider::new_no_responses_fallback(
+        "custom_openai",
+        "http://localhost:11434/v1",
+        Some("sk-test"),
+        AuthStyle::Bearer,
+    );
+    let base = "custom_openai API error (404 Not Found): model not found".to_string();
+    let result = p.enrich_404_message(base.clone(), reqwest::StatusCode::NOT_FOUND);
+    assert!(
+        result.starts_with(&base),
+        "must preserve original error prefix: {result}"
+    );
+    assert!(
+        result.contains("check that your endpoint URL is correct"),
+        "must contain user-actionable hint: {result}"
+    );
+
+    // Non-404 status should NOT add the hint
+    let result_200 = p.enrich_404_message(
+        "custom_openai API error (503 Service Unavailable): overloaded".to_string(),
+        reqwest::StatusCode::SERVICE_UNAVAILABLE,
+    );
+    assert!(
+        !result_200.contains("check that your endpoint URL"),
+        "must not add hint for non-404: {result_200}"
+    );
+
+    // Provider with fallback enabled should NOT add the hint even on 404
+    let p2 = OpenAiCompatibleProvider::new(
+        "openai",
+        "https://api.openai.com/v1",
+        Some("sk-real"),
+        AuthStyle::Bearer,
+    );
+    let result_with_fallback = p2.enrich_404_message(
+        "openai API error (404 Not Found): model not found".to_string(),
+        reqwest::StatusCode::NOT_FOUND,
+    );
+    assert_eq!(
+        result_with_fallback, "openai API error (404 Not Found): model not found",
+        "must not add hint when fallback is enabled: {result_with_fallback}"
+    );
+}

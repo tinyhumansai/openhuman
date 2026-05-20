@@ -86,7 +86,8 @@ async function inFlightCount(): Promise<number> {
 }
 
 describe('Chat harness — mid-stream cancel', () => {
-  before(async () => {
+  before(async function beforeSuite() {
+    this.timeout(90_000);
     await startMockServer();
     await waitForApp();
     await resetApp(USER_ID);

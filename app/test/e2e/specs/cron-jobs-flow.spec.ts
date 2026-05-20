@@ -57,50 +57,41 @@ async function waitForAnyText(candidates: string[], timeoutMs = 10_000): Promise
   return null;
 }
 
-/** Click the action button (Pause | Resume | Remove | …) inside the morning_briefing row. */
-async function clickActionForJob(jobName: string, action: string): Promise<boolean> {
+/** Click the action button (Pause | Resume | Remove | …) inside the seeded cron row. */
+async function clickActionForJob(
+  jobId: string,
+  action: 'toggle' | 'run' | 'view-runs' | 'remove'
+): Promise<boolean> {
   return Boolean(
     await browser.execute(
-      (name: string, label: string) => {
-        const rows = Array.from(document.querySelectorAll('div'))
-          .filter(div => /text-sm font-semibold text-stone-900/.test(div.className))
-          .filter(div => (div.textContent ?? '').trim() === name);
-        if (rows.length === 0) return false;
-        // Walk up to the panel row container (sibling-of-sibling structure in CoreJobList).
-        const container = rows[0]?.closest('div.p-4');
-        if (!container) return false;
-        const buttons = Array.from(container.querySelectorAll<HTMLButtonElement>('button'));
-        const btn = buttons.find(b => (b.textContent ?? '').trim() === label);
+      (id: string, actionName: string) => {
+        const btn = document.querySelector<HTMLButtonElement>(
+          `[data-testid="cron-job-${actionName}-${id}"]`
+        );
         if (!btn) return false;
         btn.click();
         return true;
       },
-      jobName,
+      jobId,
       action
     )
   );
 }
 
-/** Poll for the in-row action button label to settle (e.g. "Pause" → "Resume"). */
+/** Poll for the in-row toggle action button label to settle (e.g. "Pause" → "Resume"). */
 async function waitForRowActionLabel(
-  jobName: string,
+  jobId: string,
   expected: string,
   timeoutMs = 10_000
 ): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const current = await browser.execute((name: string) => {
-      const rows = Array.from(document.querySelectorAll('div'))
-        .filter(div => /text-sm font-semibold text-stone-900/.test(div.className))
-        .filter(div => (div.textContent ?? '').trim() === name);
-      const container = rows[0]?.closest('div.p-4');
-      if (!container) return null;
-      const labels = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).map(b =>
-        (b.textContent ?? '').trim()
+    const current = await browser.execute((id: string) => {
+      const btn = document.querySelector<HTMLButtonElement>(
+        `[data-testid="cron-job-toggle-${id}"]`
       );
-      // We care about the toggle button (first one in the row).
-      return labels[0] ?? null;
-    }, jobName);
+      return (btn?.textContent ?? '').trim() || null;
+    }, jobId);
     if (current === expected) return true;
     await browser.pause(400);
   }
@@ -121,7 +112,8 @@ async function openCronJobsPanel(): Promise<void> {
 }
 
 describe('Cron jobs settings panel (real UI flow)', () => {
-  before(async () => {
+  before(async function beforeSuite() {
+    this.timeout(90_000);
     await startMockServer();
     await waitForApp();
     await resetApp(USER_ID);
@@ -132,8 +124,11 @@ describe('Cron jobs settings panel (real UI flow)', () => {
   });
 
   it('completing onboarding lands the user on the home screen', async () => {
+    // The home page renders the CTA button with t('home.askAssistant').
+    // Legacy text like 'Message OpenHuman', 'Good morning', 'Good afternoon',
+    // 'Good evening', and 'Upgrade to Premium' no longer appear on the home page.
     const home = await waitForAnyText(
-      ['Message OpenHuman', 'Good morning', 'Good afternoon', 'Good evening', 'Upgrade to Premium'],
+      ['Ask your assistant anything', 'Ask your assistant'],
       15_000
     );
     expect(home).toBeTruthy();
@@ -156,7 +151,7 @@ describe('Cron jobs settings panel (real UI flow)', () => {
     const startLabel = await waitForRowActionLabel(MORNING_BRIEFING, 'Pause', 5_000);
     expect(startLabel).toBe(true);
 
-    const clicked = await clickActionForJob(MORNING_BRIEFING, 'Pause');
+    const clicked = await clickActionForJob(MORNING_BRIEFING, 'toggle');
     expect(clicked).toBe(true);
 
     const flipped = await waitForRowActionLabel(MORNING_BRIEFING, 'Resume', 10_000);
@@ -170,14 +165,14 @@ describe('Cron jobs settings panel (real UI flow)', () => {
     expect(stillResumed).toBe(true);
 
     // Restore so the next test starts from the enabled state.
-    const restored = await clickActionForJob(MORNING_BRIEFING, 'Resume');
+    const restored = await clickActionForJob(MORNING_BRIEFING, 'toggle');
     expect(restored).toBe(true);
     const back = await waitForRowActionLabel(MORNING_BRIEFING, 'Pause', 10_000);
     expect(back).toBe(true);
   });
 
   it('clicking Remove deletes the job from both the UI and the sidecar', async () => {
-    const clicked = await clickActionForJob(MORNING_BRIEFING, 'Remove');
+    const clicked = await clickActionForJob(MORNING_BRIEFING, 'remove');
     expect(clicked).toBe(true);
 
     // UI assertion first — the row should disappear and the empty state appear.

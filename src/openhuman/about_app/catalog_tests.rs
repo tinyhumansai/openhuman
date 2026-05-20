@@ -103,6 +103,7 @@ fn catalog_includes_additional_user_facing_surfaces() {
         "intelligence.mcp_server",
         "intelligence.searxng_search",
         "intelligence.tool_registry",
+        "conversation.subagent_mascots",
     ] {
         assert!(
             ids.contains(expected),

@@ -16,9 +16,9 @@ interface PillTabBarProps<T extends string> {
 }
 
 export default function PillTabBar<T extends string>({
-  activeClassName = 'border-primary-200 bg-primary-50 text-primary-700',
+  activeClassName = 'border-primary-200 dark:border-primary-500/40 bg-primary-50 dark:bg-primary-500/15 text-primary-700 dark:text-primary-300',
   containerClassName = 'flex gap-2 overflow-x-auto pb-1 scrollbar-hide',
-  inactiveClassName = 'border-stone-200 bg-white text-stone-600 hover:bg-stone-50',
+  inactiveClassName = 'border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-stone-600 dark:text-neutral-300 hover:bg-stone-50 dark:hover:bg-neutral-800/60',
   items,
   onChange,
   renderItem,

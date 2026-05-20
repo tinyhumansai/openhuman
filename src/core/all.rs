@@ -127,6 +127,8 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(crate::openhuman::encryption::all_encryption_registered_controllers());
     // Security policy metadata
     controllers.extend(crate::openhuman::security::all_security_registered_controllers());
+    // Interactive approval workflow (#1339 — gate external-effect tool calls)
+    controllers.extend(crate::openhuman::approval::all_approval_registered_controllers());
     // Background heartbeat loop controls
     controllers.extend(crate::openhuman::heartbeat::all_heartbeat_registered_controllers());
     // Ad-hoc static directory HTTP hosting for local file sharing / previews
@@ -237,6 +239,10 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(crate::openhuman::meet::all_meet_registered_controllers());
     // Live meet-agent loop: STT/LLM/TTS over the open call's audio.
     controllers.extend(crate::openhuman::meet_agent::all_meet_agent_registered_controllers());
+    // Desktop companion — Clicky-style interaction loop.
+    controllers.extend(
+        crate::openhuman::desktop_companion::all_desktop_companion_registered_controllers(),
+    );
     // Structured WhatsApp Web data — agent-facing read-only controllers (list/search).
     // The write-path ingest controller is registered separately in build_internal_only_controllers.
     controllers.extend(crate::openhuman::whatsapp_data::all_whatsapp_data_registered_controllers());
@@ -272,6 +278,7 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::doctor::all_doctor_controller_schemas());
     schemas.extend(crate::openhuman::encryption::all_encryption_controller_schemas());
     schemas.extend(crate::openhuman::security::all_security_controller_schemas());
+    schemas.extend(crate::openhuman::approval::all_approval_controller_schemas());
     schemas.extend(crate::openhuman::heartbeat::all_heartbeat_controller_schemas());
     schemas.extend(crate::openhuman::http_host::all_http_host_controller_schemas());
     schemas.extend(crate::openhuman::cost::all_cost_controller_schemas());
@@ -333,6 +340,8 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::meet::all_meet_controller_schemas());
     // Live meet-agent listening + speaking loop
     schemas.extend(crate::openhuman::meet_agent::all_meet_agent_controller_schemas());
+    // Desktop companion — Clicky-style interaction loop.
+    schemas.extend(crate::openhuman::desktop_companion::all_desktop_companion_controller_schemas());
     // Structured WhatsApp Web data — local SQLite store, agent-queryable
     schemas.extend(crate::openhuman::whatsapp_data::all_whatsapp_data_controller_schemas());
     schemas
@@ -443,6 +452,9 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
         ),
         "whatsapp_data" => Some(
             "Structured WhatsApp conversation and message store — list chats, read messages, and search across WhatsApp Web data.",
+        ),
+        "companion" => Some(
+            "Desktop companion — Clicky-style hotkey-driven interaction loop with STT, LLM, TTS, and visual pointing.",
         ),
         _ => None,
     }

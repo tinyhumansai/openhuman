@@ -7,6 +7,13 @@
 //! Lives in the voice domain because the response is consumed by the
 //! mascot's lipsync pipeline (`useHumanMascot` → `findActiveFrame` →
 //! `oculusVisemeToShape`).
+//!
+//! Approval gate (#1339) classification: **internal**. Reply-speech is
+//! the user's own assistant speaking through the user's own speakers
+//! — there is no outbound side effect visible to a third party.
+//! Coordinate with #1206 voice work: if `reply_speech` is ever wrapped
+//! in a `Tool` impl, the `external_effect()` method MUST stay `false`
+//! (the trait's default) so the approval gate never prompts on TTS.
 
 use log::debug;
 use reqwest::Method;

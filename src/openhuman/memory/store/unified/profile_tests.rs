@@ -604,3 +604,160 @@ fn render_profile_context_groups_by_type() {
         "Preference and Role sections should be at different positions"
     );
 }
+
+#[test]
+fn fresh_db_has_phase3_indexes() {
+    let conn = setup_db();
+    let c = conn.lock();
+    let indexes: Vec<String> = c
+        .prepare(
+            "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'user_profile'",
+        )
+        .unwrap()
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+
+    assert!(
+        indexes.contains(&"idx_profile_state_stability".to_string()),
+        "Missing idx_profile_state_stability; found: {indexes:?}"
+    );
+    assert!(
+        indexes.contains(&"idx_profile_key".to_string()),
+        "Missing idx_profile_key; found: {indexes:?}"
+    );
+    assert!(
+        indexes.contains(&"idx_profile_state_user_stability".to_string()),
+        "Missing idx_profile_state_user_stability; found: {indexes:?}"
+    );
+    assert!(
+        indexes.contains(&"idx_profile_type".to_string()),
+        "Missing idx_profile_type; found: {indexes:?}"
+    );
+}
+
+#[test]
+fn phase3_indexes_applied_to_existing_db() {
+    use super::super::profile::{PHASE3_COLUMNS_SQL, PHASE3_INDEXES_SQL};
+    use rusqlite::Connection;
+
+    let pre_phase3_sql = "
+        CREATE TABLE IF NOT EXISTS user_profile (
+            facet_id TEXT PRIMARY KEY,
+            facet_type TEXT NOT NULL,
+            key TEXT NOT NULL,
+            value TEXT NOT NULL,
+            confidence REAL NOT NULL DEFAULT 0.5,
+            evidence_count INTEGER NOT NULL DEFAULT 1,
+            source_segment_ids TEXT,
+            first_seen_at REAL NOT NULL,
+            last_seen_at REAL NOT NULL,
+            UNIQUE(facet_type, key)
+        );
+        CREATE INDEX IF NOT EXISTS idx_profile_type ON user_profile(facet_type);
+    ";
+    let raw_conn = Connection::open_in_memory().unwrap();
+    raw_conn.execute_batch(pre_phase3_sql).unwrap();
+
+    for sql in PHASE3_COLUMNS_SQL {
+        let _ = raw_conn.execute(sql, []);
+    }
+    for sql in PHASE3_INDEXES_SQL {
+        raw_conn.execute_batch(sql).unwrap();
+    }
+
+    let indexes: Vec<String> = raw_conn
+        .prepare(
+            "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'user_profile'",
+        )
+        .unwrap()
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+
+    assert!(indexes.contains(&"idx_profile_state_stability".to_string()));
+    assert!(indexes.contains(&"idx_profile_key".to_string()));
+    assert!(indexes.contains(&"idx_profile_state_user_stability".to_string()));
+}
+
+#[test]
+fn phase3_indexes_idempotent() {
+    use super::super::profile::PHASE3_INDEXES_SQL;
+    let conn = setup_db();
+    let c = conn.lock();
+    for sql in PHASE3_INDEXES_SQL {
+        c.execute_batch(sql).unwrap();
+    }
+    for sql in PHASE3_INDEXES_SQL {
+        c.execute_batch(sql).unwrap();
+    }
+}
+
+/// Verify that the real `UnifiedMemory::new` bootstrap path applies Phase 3
+/// indexes when opened over a pre-Phase-3 database file (the exact scenario
+/// that caused the original crash in initialization ordering).
+#[test]
+fn unified_memory_new_applies_phase3_indexes_to_existing_db() {
+    use super::super::UnifiedMemory;
+    use crate::openhuman::embeddings::NoopEmbedding;
+    use rusqlite::Connection;
+    use std::sync::Arc;
+
+    let dir = tempfile::tempdir().unwrap();
+    let workspace = dir.path();
+
+    // Seed a pre-Phase-3 database at the path UnifiedMemory::new will open.
+    let memory_dir = workspace.join("memory");
+    std::fs::create_dir_all(&memory_dir).unwrap();
+    let db_path = memory_dir.join("memory.db");
+    {
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS user_profile (
+                facet_id TEXT PRIMARY KEY,
+                facet_type TEXT NOT NULL,
+                key TEXT NOT NULL,
+                value TEXT NOT NULL,
+                confidence REAL NOT NULL DEFAULT 0.5,
+                evidence_count INTEGER NOT NULL DEFAULT 1,
+                source_segment_ids TEXT,
+                first_seen_at REAL NOT NULL,
+                last_seen_at REAL NOT NULL,
+                UNIQUE(facet_type, key)
+            );
+            CREATE INDEX IF NOT EXISTS idx_profile_type ON user_profile(facet_type);",
+        )
+        .unwrap();
+    }
+
+    // Call the real bootstrap path — must not fail on a pre-Phase-3 DB.
+    let mem = UnifiedMemory::new(workspace, Arc::new(NoopEmbedding), None)
+        .expect("UnifiedMemory::new must succeed on a pre-Phase-3 database");
+
+    // The Phase 3 indexes must exist after initialization.
+    let conn = mem.conn.lock();
+    let indexes: Vec<String> = conn
+        .prepare(
+            "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'user_profile'",
+        )
+        .unwrap()
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+
+    assert!(
+        indexes.contains(&"idx_profile_state_stability".to_string()),
+        "Missing idx_profile_state_stability; found: {indexes:?}"
+    );
+    assert!(
+        indexes.contains(&"idx_profile_key".to_string()),
+        "Missing idx_profile_key; found: {indexes:?}"
+    );
+    assert!(
+        indexes.contains(&"idx_profile_state_user_stability".to_string()),
+        "Missing idx_profile_state_user_stability; found: {indexes:?}"
+    );
+}

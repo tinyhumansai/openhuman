@@ -843,6 +843,34 @@ test('SocketProvider connects when token is available', () => {
 
 ***
 
+## Human Mascot Surface
+
+The Human page (`app/src/features/human/HumanPage.tsx`) renders the main
+`YellowMascot` beside the conversation sidebar. The mascot face still comes
+from `useHumanMascot`, which subscribes to chat lifecycle events for thinking,
+speaking, acknowledgement, and error states.
+
+Sub-agent delegation is visualized by `SubMascotLayer`. It does not introduce a
+new socket protocol. Instead, it reads the selected or active thread's
+`chatRuntime.toolTimelineByThread` entries that `ChatRuntimeProvider` already
+builds from `subagent_spawned`, `subagent_completed`, `subagent_failed`,
+`subagent_iteration_start`, `subagent_tool_call`, and `subagent_tool_result`.
+
+Lifecycle mapping:
+
+| Runtime timeline state | Sub-mascot state |
+| ---------------------- | ---------------- |
+| `running`              | Small colored mascot in a thinking face with a short activity bubble |
+| `success`              | Same mascot resolves to a happy face and completion bubble |
+| `error`                | Same mascot resolves to a concerned face and failure bubble |
+
+Activity bubble text is intentionally compact: current child tool call, child
+iteration, the delegation prompt excerpt, or final status. The thread timeline
+remains the authoritative detailed view; sub-mascots are only the glanceable
+orchestration layer around the main mascot.
+
+***
+
 ## Pages & Routing
 
 The application uses HashRouter with protected and public route guards.

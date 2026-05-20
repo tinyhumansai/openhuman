@@ -4,9 +4,11 @@ import { Navigate, Route, Routes } from 'react-router-dom';
 import AboutPanel from '../components/settings/panels/AboutPanel';
 import AgentChatPanel from '../components/settings/panels/AgentChatPanel';
 import AIPanel from '../components/settings/panels/AIPanel';
+import AppearancePanel from '../components/settings/panels/AppearancePanel';
 import AutocompleteDebugPanel from '../components/settings/panels/AutocompleteDebugPanel';
 import AutocompletePanel from '../components/settings/panels/AutocompletePanel';
 import BillingPanel from '../components/settings/panels/BillingPanel';
+import CompanionPanel from '../components/settings/panels/CompanionPanel';
 import ComposioPanel from '../components/settings/panels/ComposioPanel';
 import ComposioTriagePanel from '../components/settings/panels/ComposioTriagePanel';
 import ConnectionsPanel from '../components/settings/panels/ConnectionsPanel';
@@ -17,6 +19,7 @@ import MascotPanel from '../components/settings/panels/MascotPanel';
 import MemoryDataPanel from '../components/settings/panels/MemoryDataPanel';
 import MemoryDebugPanel from '../components/settings/panels/MemoryDebugPanel';
 import MessagingPanel from '../components/settings/panels/MessagingPanel';
+import MigrationPanel from '../components/settings/panels/MigrationPanel';
 import NotificationRoutingPanel from '../components/settings/panels/NotificationRoutingPanel';
 import NotificationsPanel from '../components/settings/panels/NotificationsPanel';
 import PrivacyPanel from '../components/settings/panels/PrivacyPanel';
@@ -79,6 +82,16 @@ const PrivacyIcon = (
     />
   </svg>
 );
+const MigrationIcon = (
+  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth={2}
+      d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4"
+    />
+  </svg>
+);
 const ScreenIcon = (
   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
     <path
@@ -135,6 +148,16 @@ const LlmIcon = (
     />
   </svg>
 );
+const CompanionIcon = (
+  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth={2}
+      d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"
+    />
+  </svg>
+);
 const VoiceIcon = (
   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
     <path
@@ -149,7 +172,7 @@ const VoiceIcon = (
 const WrappedSettingsPage = ({ children }: { children: ReactNode }) => {
   return (
     <div className="p-4 pt-6">
-      <div className="max-w-lg mx-auto bg-white rounded-2xl shadow-soft border border-stone-200 overflow-hidden">
+      <div className="max-w-lg mx-auto bg-white dark:bg-neutral-900 rounded-2xl shadow-soft border border-stone-200 dark:border-neutral-800 overflow-hidden">
         {children}
       </div>
     </div>
@@ -160,7 +183,7 @@ function wrapSettingsPage(element: ReactNode) {
   return (
     <WrappedSettingsPage>
       {element}
-      <div className="border-t border-stone-100 px-4 py-3 text-center text-[11px] text-stone-400">
+      <div className="border-t border-stone-100 dark:border-neutral-800 px-4 py-3 text-center text-[11px] text-stone-400 dark:text-neutral-500">
         Beta build - v{APP_VERSION}
       </div>
     </WrappedSettingsPage>
@@ -199,6 +222,13 @@ const Settings = () => {
       route: 'privacy',
       icon: PrivacyIcon,
     },
+    {
+      id: 'migration',
+      title: t('pages.settings.account.migration'),
+      description: t('pages.settings.account.migrationDesc'),
+      route: 'migration',
+      icon: MigrationIcon,
+    },
   ];
 
   const featuresSettingsItems = [
@@ -230,6 +260,13 @@ const Settings = () => {
       description: t('pages.settings.features.toolsDesc'),
       route: 'tools',
       icon: ToolsIcon,
+    },
+    {
+      id: 'companion',
+      title: t('pages.settings.features.desktopCompanion'),
+      description: t('pages.settings.features.desktopCompanionDesc'),
+      route: 'companion',
+      icon: CompanionIcon,
     },
   ];
 
@@ -302,6 +339,7 @@ const Settings = () => {
         {/* BillingPanel intentionally uses its own wider layout. */}
         <Route path="billing" element={<BillingPanel />} />
         <Route path="privacy" element={wrapSettingsPage(<PrivacyPanel />)} />
+        <Route path="migration" element={wrapSettingsPage(<MigrationPanel />)} />
         {/* Features leaf panels */}
         <Route path="screen-intelligence" element={wrapSettingsPage(<ScreenIntelligencePanel />)} />
         <Route path="autocomplete" element={wrapSettingsPage(<AutocompletePanel />)} />
@@ -309,7 +347,9 @@ const Settings = () => {
         <Route path="messaging" element={wrapSettingsPage(<MessagingPanel />)} />
         <Route path="notifications" element={wrapSettingsPage(<NotificationsPanel />)} />
         <Route path="mascot" element={wrapSettingsPage(<MascotPanel />)} />
+        <Route path="appearance" element={wrapSettingsPage(<AppearancePanel />)} />
         <Route path="tools" element={wrapSettingsPage(<ToolsPanel />)} />
+        <Route path="companion" element={wrapSettingsPage(<CompanionPanel />)} />
         {/* Developer Options */}
         <Route path="developer-options" element={wrapSettingsPage(<DeveloperOptionsPanel />)} />
         <Route

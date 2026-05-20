@@ -5,6 +5,7 @@ import { getCoreStateSnapshot } from '../lib/coreState/store';
 import { SocketIOMCPTransportImpl } from '../lib/mcp';
 import { store } from '../store';
 import { upsertChannelConnection } from '../store/channelConnectionsSlice';
+import { type CompanionStateChangedEvent, setCompanionState } from '../store/companionSlice';
 import { setBackend } from '../store/connectivitySlice';
 import { resetForUser, setSocketIdForUser, setStatusForUser } from '../store/socketSlice';
 import type { ChannelAuthMode, ChannelConnectionStatus, ChannelType } from '../types/channels';
@@ -89,6 +90,35 @@ function normalizeChannelConnectionUpdatePayload(
     capabilities: Array.isArray(capabilities)
       ? capabilities.filter((item): item is string => typeof item === 'string')
       : undefined,
+  };
+}
+
+const COMPANION_STATES: ReadonlySet<string> = new Set([
+  'idle',
+  'listening',
+  'thinking',
+  'speaking',
+  'pointing',
+  'error',
+]);
+
+export function parseCompanionStateChangedEvent(value: unknown): CompanionStateChangedEvent | null {
+  if (!value || typeof value !== 'object') return null;
+  const obj = value as Record<string, unknown>;
+  if (typeof obj.session_id !== 'string') return null;
+  if (typeof obj.state !== 'string' || !COMPANION_STATES.has(obj.state)) return null;
+
+  const previous =
+    typeof obj.previous_state === 'string' && COMPANION_STATES.has(obj.previous_state)
+      ? (obj.previous_state as CompanionStateChangedEvent['previous_state'])
+      : 'idle';
+  const message = typeof obj.message === 'string' ? obj.message : undefined;
+
+  return {
+    session_id: obj.session_id,
+    state: obj.state as CompanionStateChangedEvent['state'],
+    previous_state: previous,
+    message,
   };
 }
 
@@ -287,6 +317,18 @@ class SocketService {
           patch: { status: 'connected', lastError: undefined, capabilities: ['dm'] },
         })
       );
+    });
+
+    // Companion state change events — dispatch into the companion Redux slice
+    // so settings panel and other UI can react to session lifecycle.
+    this.socket.on('companion:state_changed', (data: unknown) => {
+      const event = parseCompanionStateChangedEvent(data);
+      if (!event) {
+        socketWarn('companion:state_changed dropped — invalid payload shape');
+        return;
+      }
+      socketLog('companion:state_changed → %s', event.state);
+      store.dispatch(setCompanionState(event));
     });
 
     this.socket.connect();

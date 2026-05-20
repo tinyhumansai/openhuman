@@ -106,11 +106,11 @@ const ModelDownloadSection = ({
   return (
     <>
       <section className="space-y-3">
-        <h3 className="text-sm font-semibold text-stone-900">
+        <h3 className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
           {t('settings.localModel.download.capabilityAssets')}
         </h3>
-        <div className="bg-stone-50 rounded-lg border border-stone-200 p-4 space-y-3">
-          <div className="text-xs text-stone-500">
+        <div className="bg-stone-50 dark:bg-neutral-800/60 rounded-lg border border-stone-200 dark:border-neutral-800 p-4 space-y-3">
+          <div className="text-xs text-stone-500 dark:text-neutral-400">
             {t('settings.localModel.download.quantizationPref')} {assets?.quantization ?? 'q4'}
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
@@ -121,24 +121,32 @@ const ModelDownloadSection = ({
               { label: 'STT', key: 'stt' as const, item: assets?.stt },
               { label: 'TTS', key: 'tts' as const, item: assets?.tts },
             ].map(({ label, key, item }) => (
-              <div key={String(label)} className="rounded-md border border-stone-200 p-2">
-                <div className="text-stone-500 text-xs uppercase tracking-wide">{label}</div>
-                <div className="text-stone-800 mt-1 break-all">{item?.id ?? 'n/a'}</div>
+              <div
+                key={String(label)}
+                className="rounded-md border border-stone-200 dark:border-neutral-800 p-2">
+                <div className="text-stone-500 dark:text-neutral-400 text-xs uppercase tracking-wide">
+                  {label}
+                </div>
+                <div className="text-stone-800 dark:text-neutral-100 mt-1 break-all">
+                  {item?.id ?? 'n/a'}
+                </div>
                 <div className={`text-xs mt-1 ${statusTone(item?.state ?? 'idle')}`}>
                   {statusLabel(item?.state ?? 'idle')}
                 </div>
                 {item?.path && (
-                  <div className="text-[10px] text-stone-500 mt-1 break-all">{item.path}</div>
+                  <div className="text-[10px] text-stone-500 dark:text-neutral-400 mt-1 break-all">
+                    {item.path}
+                  </div>
                 )}
                 {item?.provider === 'ollama' || item?.provider === 'lm_studio' ? (
-                  <div className="mt-2 text-[10px] text-stone-500">
+                  <div className="mt-2 text-[10px] text-stone-500 dark:text-neutral-400">
                     {t('settings.localModel.download.manageExternal')}
                   </div>
                 ) : (
                   <button
                     onClick={() => onTriggerAssetDownload(key)}
                     disabled={!runtimeEnabled || assetDownloadBusy[key]}
-                    className="mt-2 px-2 py-1 text-[10px] rounded border border-stone-200 hover:border-stone-300 disabled:opacity-60 text-stone-600">
+                    className="mt-2 px-2 py-1 text-[10px] rounded border border-stone-200 dark:border-neutral-800 hover:border-stone-300 dark:border-neutral-700 disabled:opacity-60 text-stone-600 dark:text-neutral-300">
                     {assetDownloadBusy[key]
                       ? t('settings.localModel.download.downloading')
                       : t('common.download')}
@@ -151,18 +159,18 @@ const ModelDownloadSection = ({
       </section>
 
       <section className="space-y-3">
-        <h3 className="text-sm font-semibold text-stone-900">
+        <h3 className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
           {t('settings.localModel.download.testSummarization')}
         </h3>
-        <div className="bg-stone-50 rounded-lg border border-stone-200 p-4 space-y-3">
+        <div className="bg-stone-50 dark:bg-neutral-800/60 rounded-lg border border-stone-200 dark:border-neutral-800 p-4 space-y-3">
           <textarea
             value={summaryInput}
             onChange={e => onSetSummaryInput(e.target.value)}
             placeholder={t('settings.localModel.download.summarizePlaceholder')}
-            className="w-full min-h-28 rounded-md bg-white border border-stone-200 px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 focus:outline-none focus:ring-1 focus:ring-primary-500"
+            className="w-full min-h-28 rounded-md bg-white dark:bg-neutral-900 border border-stone-200 dark:border-neutral-800 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 placeholder:text-stone-400 dark:placeholder:text-neutral-500 dark:text-neutral-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
           />
           <div className="flex items-center justify-between">
-            <div className="text-xs text-stone-500">
+            <div className="text-xs text-stone-500 dark:text-neutral-400">
               Calls `openhuman.inference_summarize` via Rust core
             </div>
             <button
@@ -175,7 +183,7 @@ const ModelDownloadSection = ({
             </button>
           </div>
           {summaryOutput && (
-            <pre className="whitespace-pre-wrap rounded-md bg-stone-50 border border-stone-200 p-3 text-xs text-stone-700">
+            <pre className="whitespace-pre-wrap rounded-md bg-stone-50 dark:bg-neutral-800/60 border border-stone-200 dark:border-neutral-800 p-3 text-xs text-stone-700 dark:text-neutral-200">
               {summaryOutput}
             </pre>
           )}
@@ -183,23 +191,23 @@ const ModelDownloadSection = ({
       </section>
 
       <section className="space-y-3">
-        <h3 className="text-sm font-semibold text-stone-900">
+        <h3 className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
           {t('settings.localModel.download.testCustomPrompt')}
         </h3>
-        <div className="bg-stone-50 rounded-lg border border-stone-200 p-4 space-y-3">
+        <div className="bg-stone-50 dark:bg-neutral-800/60 rounded-lg border border-stone-200 dark:border-neutral-800 p-4 space-y-3">
           <textarea
             value={promptInput}
             onChange={e => onSetPromptInput(e.target.value)}
             placeholder={t('settings.localModel.download.promptPlaceholder')}
-            className="w-full min-h-28 rounded-md bg-white border border-stone-200 px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 focus:outline-none focus:ring-1 focus:ring-primary-500"
+            className="w-full min-h-28 rounded-md bg-white dark:bg-neutral-900 border border-stone-200 dark:border-neutral-800 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 placeholder:text-stone-400 dark:placeholder:text-neutral-500 dark:text-neutral-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
           />
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <label className="flex items-center gap-2 text-xs text-stone-700">
+            <label className="flex items-center gap-2 text-xs text-stone-700 dark:text-neutral-200">
               <input
                 type="checkbox"
                 checked={promptNoThink}
                 onChange={e => onSetPromptNoThink(e.target.checked)}
-                className="h-3.5 w-3.5 rounded border-stone-300 bg-white text-primary-500 focus:ring-primary-500"
+                className="h-3.5 w-3.5 rounded border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-primary-500 focus:ring-primary-500"
               />
               {t('settings.localModel.download.noThinkMode')}
             </label>
@@ -213,18 +221,18 @@ const ModelDownloadSection = ({
             </button>
           </div>
           {isPromptLoading && (
-            <div className="flex items-center gap-2 text-xs text-primary-600">
+            <div className="flex items-center gap-2 text-xs text-primary-600 dark:text-primary-300">
               <div className="h-3 w-3 rounded-full border-2 border-blue-400 border-t-transparent animate-spin" />
               {t('settings.localModel.download.runningPrompt')}
             </div>
           )}
           {promptError && (
-            <div className="rounded-md bg-red-50 border border-red-300 p-3 text-xs text-red-600">
+            <div className="rounded-md bg-red-50 dark:bg-red-500/10 border border-red-300 dark:border-red-500/40 p-3 text-xs text-red-600 dark:text-red-300">
               {promptError}
             </div>
           )}
           {promptOutput && (
-            <pre className="whitespace-pre-wrap rounded-md bg-stone-50 border border-stone-200 p-3 text-xs text-stone-700 max-h-64 overflow-auto">
+            <pre className="whitespace-pre-wrap rounded-md bg-stone-50 dark:bg-neutral-800/60 border border-stone-200 dark:border-neutral-800 p-3 text-xs text-stone-700 dark:text-neutral-200 max-h-64 overflow-auto">
               {promptOutput}
             </pre>
           )}
@@ -232,21 +240,21 @@ const ModelDownloadSection = ({
       </section>
 
       <section className="space-y-3">
-        <h3 className="text-sm font-semibold text-stone-900">
+        <h3 className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
           {t('settings.localModel.download.testVisionPrompt')}
         </h3>
-        <div className="bg-stone-50 rounded-lg border border-stone-200 p-4 space-y-3">
+        <div className="bg-stone-50 dark:bg-neutral-800/60 rounded-lg border border-stone-200 dark:border-neutral-800 p-4 space-y-3">
           <textarea
             value={visionPromptInput}
             onChange={e => onSetVisionPromptInput(e.target.value)}
             placeholder={t('settings.localModel.download.visionPromptPlaceholder')}
-            className="w-full min-h-20 rounded-md bg-white border border-stone-200 px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 focus:outline-none focus:ring-1 focus:ring-primary-400"
+            className="w-full min-h-20 rounded-md bg-white dark:bg-neutral-900 border border-stone-200 dark:border-neutral-800 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 placeholder:text-stone-400 dark:placeholder:text-neutral-500 dark:text-neutral-500 focus:outline-none focus:ring-1 focus:ring-primary-400"
           />
           <textarea
             value={visionImageInput}
             onChange={e => onSetVisionImageInput(e.target.value)}
             placeholder={t('settings.localModel.download.visionImagePlaceholder')}
-            className="w-full min-h-20 rounded-md bg-white border border-stone-200 px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 focus:outline-none focus:ring-1 focus:ring-primary-400"
+            className="w-full min-h-20 rounded-md bg-white dark:bg-neutral-900 border border-stone-200 dark:border-neutral-800 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 placeholder:text-stone-400 dark:placeholder:text-neutral-500 dark:text-neutral-500 focus:outline-none focus:ring-1 focus:ring-primary-400"
           />
           <button
             onClick={onRunVisionTest}
@@ -262,7 +270,7 @@ const ModelDownloadSection = ({
               : t('settings.localModel.download.runVisionTest')}
           </button>
           {visionOutput && (
-            <pre className="whitespace-pre-wrap rounded-md bg-stone-50 border border-stone-200 p-3 text-xs text-stone-700">
+            <pre className="whitespace-pre-wrap rounded-md bg-stone-50 dark:bg-neutral-800/60 border border-stone-200 dark:border-neutral-800 p-3 text-xs text-stone-700 dark:text-neutral-200">
               {visionOutput}
             </pre>
           )}
@@ -270,15 +278,15 @@ const ModelDownloadSection = ({
       </section>
 
       <section className="space-y-3">
-        <h3 className="text-sm font-semibold text-stone-900">
+        <h3 className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
           {t('settings.localModel.download.testEmbeddings')}
         </h3>
-        <div className="bg-stone-50 rounded-lg border border-stone-200 p-4 space-y-3">
+        <div className="bg-stone-50 dark:bg-neutral-800/60 rounded-lg border border-stone-200 dark:border-neutral-800 p-4 space-y-3">
           <textarea
             value={embeddingInput}
             onChange={e => onSetEmbeddingInput(e.target.value)}
             placeholder={t('settings.localModel.download.embeddingPlaceholder')}
-            className="w-full min-h-20 rounded-md bg-white border border-stone-200 px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 focus:outline-none focus:ring-1 focus:ring-primary-400"
+            className="w-full min-h-20 rounded-md bg-white dark:bg-neutral-900 border border-stone-200 dark:border-neutral-800 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 placeholder:text-stone-400 dark:placeholder:text-neutral-500 dark:text-neutral-500 focus:outline-none focus:ring-1 focus:ring-primary-400"
           />
           <button
             onClick={onRunEmbeddingTest}
@@ -289,7 +297,7 @@ const ModelDownloadSection = ({
               : t('settings.localModel.download.runEmbeddingTest')}
           </button>
           {embeddingOutput && (
-            <div className="rounded-md bg-stone-50 border border-stone-200 p-3 text-xs text-stone-700 space-y-1">
+            <div className="rounded-md bg-stone-50 dark:bg-neutral-800/60 border border-stone-200 dark:border-neutral-800 p-3 text-xs text-stone-700 dark:text-neutral-200 space-y-1">
               <div>Model: {embeddingOutput.model_id}</div>
               <div>Dimensions: {embeddingOutput.dimensions}</div>
               <div>Vectors: {embeddingOutput.vectors.length}</div>
@@ -299,15 +307,15 @@ const ModelDownloadSection = ({
       </section>
 
       <section className="space-y-3">
-        <h3 className="text-sm font-semibold text-stone-900">
+        <h3 className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
           {t('settings.localModel.download.testVoiceInput')}
         </h3>
-        <div className="bg-stone-50 rounded-lg border border-stone-200 p-4 space-y-3">
+        <div className="bg-stone-50 dark:bg-neutral-800/60 rounded-lg border border-stone-200 dark:border-neutral-800 p-4 space-y-3">
           <input
             value={audioPathInput}
             onChange={e => onSetAudioPathInput(e.target.value)}
             placeholder={t('settings.localModel.download.audioPathPlaceholder')}
-            className="w-full rounded-md bg-white border border-stone-200 px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 focus:outline-none focus:ring-1 focus:ring-primary-400"
+            className="w-full rounded-md bg-white dark:bg-neutral-900 border border-stone-200 dark:border-neutral-800 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 placeholder:text-stone-400 dark:placeholder:text-neutral-500 dark:text-neutral-500 focus:outline-none focus:ring-1 focus:ring-primary-400"
           />
           <button
             onClick={onRunTranscribeTest}
@@ -318,10 +326,10 @@ const ModelDownloadSection = ({
               : t('settings.localModel.download.runTranscriptionTest')}
           </button>
           {transcribeOutput && (
-            <div className="rounded-md bg-stone-50 border border-stone-200 p-3 text-xs text-stone-700 space-y-2">
+            <div className="rounded-md bg-stone-50 dark:bg-neutral-800/60 border border-stone-200 dark:border-neutral-800 p-3 text-xs text-stone-700 dark:text-neutral-200 space-y-2">
               <div>Model: {transcribeOutput.model_id}</div>
               <div>
-                <span className="text-stone-400">Transcript:</span>
+                <span className="text-stone-400 dark:text-neutral-500">Transcript:</span>
                 <pre className="whitespace-pre-wrap mt-1">{transcribeOutput.text}</pre>
               </div>
             </div>
@@ -330,21 +338,21 @@ const ModelDownloadSection = ({
       </section>
 
       <section className="space-y-3">
-        <h3 className="text-sm font-semibold text-stone-900">
+        <h3 className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
           {t('settings.localModel.download.testVoiceOutput')}
         </h3>
-        <div className="bg-stone-50 rounded-lg border border-stone-200 p-4 space-y-3">
+        <div className="bg-stone-50 dark:bg-neutral-800/60 rounded-lg border border-stone-200 dark:border-neutral-800 p-4 space-y-3">
           <textarea
             value={ttsInput}
             onChange={e => onSetTtsInput(e.target.value)}
             placeholder={t('settings.localModel.download.ttsPlaceholder')}
-            className="w-full min-h-20 rounded-md bg-white border border-stone-200 px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 focus:outline-none focus:ring-1 focus:ring-primary-400"
+            className="w-full min-h-20 rounded-md bg-white dark:bg-neutral-900 border border-stone-200 dark:border-neutral-800 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 placeholder:text-stone-400 dark:placeholder:text-neutral-500 dark:text-neutral-500 focus:outline-none focus:ring-1 focus:ring-primary-400"
           />
           <input
             value={ttsOutputPath}
             onChange={e => onSetTtsOutputPath(e.target.value)}
             placeholder={t('settings.localModel.download.ttsOutputPlaceholder')}
-            className="w-full rounded-md bg-white border border-stone-200 px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 focus:outline-none focus:ring-1 focus:ring-primary-400"
+            className="w-full rounded-md bg-white dark:bg-neutral-900 border border-stone-200 dark:border-neutral-800 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 placeholder:text-stone-400 dark:placeholder:text-neutral-500 dark:text-neutral-500 focus:outline-none focus:ring-1 focus:ring-primary-400"
           />
           <button
             onClick={onRunTtsTest}
@@ -355,7 +363,7 @@ const ModelDownloadSection = ({
               : t('settings.localModel.download.runTtsTest')}
           </button>
           {ttsOutput && (
-            <div className="rounded-md bg-stone-50 border border-stone-200 p-3 text-xs text-stone-700 space-y-1">
+            <div className="rounded-md bg-stone-50 dark:bg-neutral-800/60 border border-stone-200 dark:border-neutral-800 p-3 text-xs text-stone-700 dark:text-neutral-200 space-y-1">
               <div>Voice: {ttsOutput.voice_id}</div>
               <div className="break-all">Output: {ttsOutput.output_path}</div>
             </div>

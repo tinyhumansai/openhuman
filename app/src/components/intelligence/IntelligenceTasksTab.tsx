@@ -118,7 +118,7 @@ export default function IntelligenceTasksTab() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-12 text-stone-400">
+      <div className="flex items-center justify-center py-12 text-stone-400 dark:text-neutral-500">
         <div className="h-4 w-4 animate-spin rounded-full border-2 border-ocean-500 border-t-transparent mr-2" />
         <span className="text-sm">{t('intelligence.tasks.loadingBoards')}</span>
       </div>
@@ -127,7 +127,7 @@ export default function IntelligenceTasksTab() {
 
   if (error) {
     return (
-      <div className="rounded-xl border border-coral-200 bg-coral-50 px-4 py-3 text-sm text-coral-700">
+      <div className="rounded-xl border border-coral-200 dark:border-coral-500/30 bg-coral-50 dark:bg-coral-500/10 px-4 py-3 text-sm text-coral-700 dark:text-coral-300">
         {t('intelligence.tasks.failedToLoad')}: {error}
       </div>
     );
@@ -135,10 +135,12 @@ export default function IntelligenceTasksTab() {
 
   if (boardEntries.length === 0) {
     return (
-      <div className="flex flex-col items-center gap-3 py-12 text-center text-stone-400">
+      <div className="flex flex-col items-center gap-3 py-12 text-center text-stone-400 dark:text-neutral-500">
         <div className="text-3xl">📋</div>
         <p className="text-sm font-medium">{t('intelligence.tasks.empty')}</p>
-        <p className="text-xs text-stone-400">{t('intelligence.tasks.emptyHint')}</p>
+        <p className="text-xs text-stone-400 dark:text-neutral-500">
+          {t('intelligence.tasks.emptyHint')}
+        </p>
       </div>
     );
   }
@@ -151,11 +153,13 @@ export default function IntelligenceTasksTab() {
 
   return (
     <div className="space-y-6">
-      <p className="text-xs text-stone-400">{boardCountLabel}</p>
+      <p className="text-xs text-stone-400 dark:text-neutral-500">{boardCountLabel}</p>
       {boardEntries.map(entry => (
         <section key={entry.threadId} className="space-y-2">
           <div className="flex items-center gap-2">
-            <h3 className="truncate text-sm font-semibold text-stone-700" title={entry.title}>
+            <h3
+              className="truncate text-sm font-semibold text-stone-700 dark:text-neutral-200"
+              title={entry.title}>
               {entry.title}
             </h3>
             {entry.live && (

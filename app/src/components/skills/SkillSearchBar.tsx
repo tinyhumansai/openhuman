@@ -17,7 +17,7 @@ export default function SkillSearchBar({
     <div className="relative">
       <div className="pointer-events-none absolute inset-y-0 left-3 flex items-center">
         <svg
-          className="h-4 w-4 text-stone-400"
+          className="h-4 w-4 text-stone-400 dark:text-neutral-500"
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24">
@@ -34,13 +34,13 @@ export default function SkillSearchBar({
         value={value}
         onChange={e => onChange(e.target.value)}
         placeholder={effectivePlaceholder}
-        className="w-full rounded-xl border border-stone-200 bg-white py-2 pl-9 pr-9 text-sm text-stone-900 placeholder-stone-400 focus:border-primary-300 focus:outline-none focus:ring-1 focus:ring-primary-200"
+        className="w-full rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 py-2 pl-9 pr-9 text-sm text-stone-900 dark:text-neutral-100 placeholder-stone-400 focus:border-primary-300 focus:outline-none focus:ring-1 focus:ring-primary-200"
       />
       {value && (
         <button
           type="button"
           onClick={() => onChange('')}
-          className="absolute inset-y-0 right-3 flex items-center text-stone-400 hover:text-stone-600">
+          className="absolute inset-y-0 right-3 flex items-center text-stone-400 dark:text-neutral-500 hover:text-stone-600 dark:text-neutral-300">
           <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path
               strokeLinecap="round"

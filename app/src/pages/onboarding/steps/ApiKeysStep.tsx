@@ -45,17 +45,21 @@ const ApiKeysStep = ({ onNext, onSkip }: ApiKeysStepProps) => {
   return (
     <div
       data-testid="onboarding-api-keys-step"
-      className="rounded-2xl bg-white p-10 shadow-soft animate-fade-up">
+      className="rounded-2xl bg-white dark:bg-neutral-900 p-10 shadow-soft animate-fade-up">
       <div className="text-center">
-        <h1 className="text-2xl font-display text-stone-900 mb-2 leading-tight">
+        <h1 className="text-2xl font-display text-stone-900 dark:text-neutral-100 mb-2 leading-tight">
           {t('onboarding.apiKeys.title')}
         </h1>
-        <p className="text-stone-500 text-sm leading-relaxed">{t('onboarding.apiKeys.subtitle')}</p>
+        <p className="text-stone-500 dark:text-neutral-400 text-sm leading-relaxed">
+          {t('onboarding.apiKeys.subtitle')}
+        </p>
       </div>
 
       <div className="mt-6 flex flex-col gap-4">
         <div className="flex flex-col gap-1.5">
-          <label htmlFor="onboarding-openai-key" className="text-xs font-medium text-stone-700">
+          <label
+            htmlFor="onboarding-openai-key"
+            className="text-xs font-medium text-stone-700 dark:text-neutral-200">
             {t('onboarding.apiKeys.openaiLabel')}
           </label>
           <input
@@ -70,12 +74,14 @@ const ApiKeysStep = ({ onNext, onSkip }: ApiKeysStepProps) => {
               setOpenai(e.target.value);
               setError(null);
             }}
-            className="rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm text-stone-900 placeholder-stone-400 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+            className="rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 placeholder-stone-400 dark:placeholder-neutral-500 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
           />
         </div>
 
         <div className="flex flex-col gap-1.5">
-          <label htmlFor="onboarding-anthropic-key" className="text-xs font-medium text-stone-700">
+          <label
+            htmlFor="onboarding-anthropic-key"
+            className="text-xs font-medium text-stone-700 dark:text-neutral-200">
             {t('onboarding.apiKeys.anthropicLabel')}
           </label>
           <input
@@ -90,7 +96,7 @@ const ApiKeysStep = ({ onNext, onSkip }: ApiKeysStepProps) => {
               setAnthropic(e.target.value);
               setError(null);
             }}
-            className="rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm text-stone-900 placeholder-stone-400 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+            className="rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 placeholder-stone-400 dark:placeholder-neutral-500 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
           />
         </div>
 
@@ -111,7 +117,7 @@ const ApiKeysStep = ({ onNext, onSkip }: ApiKeysStepProps) => {
           type="button"
           onClick={onSkip}
           disabled={saving}
-          className="text-xs text-stone-500 hover:text-stone-700 underline disabled:opacity-50">
+          className="text-xs text-stone-500 dark:text-neutral-400 hover:text-stone-700 dark:hover:text-neutral-200 dark:text-neutral-200 underline disabled:opacity-50">
           {t('onboarding.apiKeys.skipForNow')}
         </button>
       </div>

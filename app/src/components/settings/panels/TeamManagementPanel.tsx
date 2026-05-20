@@ -98,7 +98,7 @@ const TeamManagementPanel = () => {
           breadcrumbs={breadcrumbs}
         />
         <div className="flex-1 flex items-center justify-center">
-          <p className="text-sm text-stone-500">{t('team.notFound')}</p>
+          <p className="text-sm text-stone-500 dark:text-neutral-400">{t('team.notFound')}</p>
         </div>
       </div>
     );
@@ -114,7 +114,7 @@ const TeamManagementPanel = () => {
           breadcrumbs={breadcrumbs}
         />
         <div className="flex-1 flex items-center justify-center">
-          <p className="text-sm text-stone-500">{t('team.accessDenied')}</p>
+          <p className="text-sm text-stone-500 dark:text-neutral-400">{t('team.accessDenied')}</p>
         </div>
       </div>
     );
@@ -134,16 +134,18 @@ const TeamManagementPanel = () => {
       <div>
         <div className="p-4 space-y-4">
           {/* Team Info */}
-          <div className="rounded-xl border border-stone-200 bg-stone-50 p-4">
+          <div className="rounded-xl border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 p-4">
             <div className="flex items-center gap-3 mb-3">
-              <div className="w-10 h-10 rounded-lg bg-stone-200 flex items-center justify-center">
-                <span className="text-sm font-semibold text-stone-700">
+              <div className="w-10 h-10 rounded-lg bg-stone-200 dark:bg-neutral-800 flex items-center justify-center">
+                <span className="text-sm font-semibold text-stone-700 dark:text-neutral-200">
                   {team.name.charAt(0).toUpperCase()}
                 </span>
               </div>
               <div>
-                <h3 className="text-sm font-semibold text-stone-900">{team.name}</h3>
-                <p className="text-xs text-stone-500">
+                <h3 className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
+                  {team.name}
+                </h3>
+                <p className="text-xs text-stone-500 dark:text-neutral-400">
                   {team.subscription.plan} Plan • Created{' '}
                   {new Date(team.createdAt).toLocaleDateString()}
                 </p>
@@ -153,14 +155,14 @@ const TeamManagementPanel = () => {
 
           {/* Management Options */}
           <div className="space-y-1">
-            <h3 className="text-xs font-medium text-stone-500 uppercase tracking-wider px-1 mb-3">
+            <h3 className="text-xs font-medium text-stone-500 dark:text-neutral-400 uppercase tracking-wider px-1 mb-3">
               Team Management
             </h3>
 
             {/* Members */}
             <button
               onClick={() => navigateToSettings(`team/manage/${teamId}/members`)}
-              className="w-full flex items-center justify-between p-3 rounded-xl border border-stone-200 bg-stone-50 hover:bg-stone-100 transition-all text-left">
+              className="w-full flex items-center justify-between p-3 rounded-xl border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 dark:hover:bg-neutral-800 dark:bg-neutral-800 transition-all text-left">
               <div className="flex items-center gap-3">
                 <svg
                   className="w-5 h-5 text-primary-500"
@@ -175,12 +177,16 @@ const TeamManagementPanel = () => {
                   />
                 </svg>
                 <div>
-                  <div className="font-medium text-sm text-stone-900">Members</div>
-                  <p className="text-xs text-stone-500">Manage team members and roles</p>
+                  <div className="font-medium text-sm text-stone-900 dark:text-neutral-100">
+                    Members
+                  </div>
+                  <p className="text-xs text-stone-500 dark:text-neutral-400">
+                    Manage team members and roles
+                  </p>
                 </div>
               </div>
               <svg
-                className="w-4 h-4 text-stone-500"
+                className="w-4 h-4 text-stone-500 dark:text-neutral-400"
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24">
@@ -196,7 +202,7 @@ const TeamManagementPanel = () => {
             {/* Invites */}
             <button
               onClick={() => navigateToSettings(`team/manage/${teamId}/invites`)}
-              className="w-full flex items-center justify-between p-3 rounded-xl border border-stone-200 bg-stone-50 hover:bg-stone-100 transition-all text-left">
+              className="w-full flex items-center justify-between p-3 rounded-xl border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 dark:hover:bg-neutral-800 dark:bg-neutral-800 transition-all text-left">
               <div className="flex items-center gap-3">
                 <svg
                   className="w-5 h-5 text-primary-500"
@@ -211,12 +217,16 @@ const TeamManagementPanel = () => {
                   />
                 </svg>
                 <div>
-                  <div className="font-medium text-sm text-stone-900">Invites</div>
-                  <p className="text-xs text-stone-500">Generate and manage invite codes</p>
+                  <div className="font-medium text-sm text-stone-900 dark:text-neutral-100">
+                    Invites
+                  </div>
+                  <p className="text-xs text-stone-500 dark:text-neutral-400">
+                    Generate and manage invite codes
+                  </p>
                 </div>
               </div>
               <svg
-                className="w-4 h-4 text-stone-500"
+                className="w-4 h-4 text-stone-500 dark:text-neutral-400"
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24">
@@ -232,7 +242,7 @@ const TeamManagementPanel = () => {
             {/* Edit Team Settings */}
             <button
               onClick={handleEditTeam}
-              className="w-full flex items-center justify-between p-3 rounded-xl border border-stone-200 bg-stone-50 hover:bg-stone-100 transition-all text-left">
+              className="w-full flex items-center justify-between p-3 rounded-xl border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 dark:hover:bg-neutral-800 dark:bg-neutral-800 transition-all text-left">
               <div className="flex items-center gap-3">
                 <svg
                   className="w-5 h-5 text-primary-500"
@@ -247,12 +257,16 @@ const TeamManagementPanel = () => {
                   />
                 </svg>
                 <div>
-                  <div className="font-medium text-sm text-stone-900">Team Settings</div>
-                  <p className="text-xs text-stone-500">Edit team name and settings</p>
+                  <div className="font-medium text-sm text-stone-900 dark:text-neutral-100">
+                    Team Settings
+                  </div>
+                  <p className="text-xs text-stone-500 dark:text-neutral-400">
+                    Edit team name and settings
+                  </p>
                 </div>
               </div>
               <svg
-                className="w-4 h-4 text-stone-500"
+                className="w-4 h-4 text-stone-500 dark:text-neutral-400"
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24">
@@ -285,7 +299,9 @@ const TeamManagementPanel = () => {
                   </svg>
                   <div>
                     <div className="font-medium text-sm text-coral-400">Delete Team</div>
-                    <p className="text-xs text-stone-500">Permanently delete this team</p>
+                    <p className="text-xs text-stone-500 dark:text-neutral-400">
+                      Permanently delete this team
+                    </p>
                   </div>
                 </div>
                 <svg
@@ -307,18 +323,20 @@ const TeamManagementPanel = () => {
           {/* Edit Team Modal */}
           {isEditModalOpen && (
             <div className="fixed inset-0 bg-stone-900/40 flex items-center justify-center z-50 p-4">
-              <div className="bg-white rounded-2xl p-6 w-full max-w-md border border-stone-200">
-                <h3 className="text-sm font-semibold text-stone-900 mb-4">Edit Team Settings</h3>
+              <div className="bg-white dark:bg-neutral-900 rounded-2xl p-6 w-full max-w-md border border-stone-200 dark:border-neutral-800">
+                <h3 className="text-sm font-semibold text-stone-900 dark:text-neutral-100 mb-4">
+                  Edit Team Settings
+                </h3>
 
                 {error && (
                   <div className="rounded-xl bg-coral-500/10 border border-coral-500/20 p-3 mb-4">
-                    <p className="text-xs text-coral-600">{error}</p>
+                    <p className="text-xs text-coral-600 dark:text-coral-300">{error}</p>
                   </div>
                 )}
 
                 <div className="space-y-4">
                   <div>
-                    <label className="block text-sm font-medium text-stone-700 mb-2">
+                    <label className="block text-sm font-medium text-stone-700 dark:text-neutral-200 mb-2">
                       Team Name
                     </label>
                     <input
@@ -326,7 +344,7 @@ const TeamManagementPanel = () => {
                       value={editTeamName}
                       onChange={e => setEditTeamName(e.target.value)}
                       onKeyDown={e => e.key === 'Enter' && handleUpdateTeam()}
-                      className="w-full px-3 py-2 text-sm bg-stone-50 border border-stone-200 rounded-xl text-stone-900 placeholder-stone-400 focus:outline-none focus:border-primary-500/50"
+                      className="w-full px-3 py-2 text-sm bg-stone-50 dark:bg-neutral-800/60 border border-stone-200 dark:border-neutral-800 rounded-xl text-stone-900 dark:text-neutral-100 placeholder-stone-400 dark:placeholder-neutral-500 focus:outline-none focus:border-primary-500/50"
                       placeholder="Enter team name"
                     />
                   </div>
@@ -335,7 +353,7 @@ const TeamManagementPanel = () => {
                     <button
                       onClick={() => setIsEditModalOpen(false)}
                       disabled={isUpdating}
-                      className="flex-1 px-4 py-2 text-sm font-medium rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-700 transition-colors disabled:opacity-50">
+                      className="flex-1 px-4 py-2 text-sm font-medium rounded-xl bg-stone-100 dark:bg-neutral-800 hover:bg-stone-200 dark:bg-neutral-800 text-stone-700 dark:text-neutral-200 transition-colors disabled:opacity-50">
                       Cancel
                     </button>
                     <button
@@ -353,20 +371,25 @@ const TeamManagementPanel = () => {
           {/* Delete Team Modal */}
           {isDeleteModalOpen && (
             <div className="fixed inset-0 bg-stone-900/40 flex items-center justify-center z-50 p-4">
-              <div className="bg-white rounded-2xl p-6 w-full max-w-md border border-stone-200">
-                <h3 className="text-sm font-semibold text-stone-900 mb-4">Delete Team</h3>
+              <div className="bg-white dark:bg-neutral-900 rounded-2xl p-6 w-full max-w-md border border-stone-200 dark:border-neutral-800">
+                <h3 className="text-sm font-semibold text-stone-900 dark:text-neutral-100 mb-4">
+                  Delete Team
+                </h3>
 
                 {error && (
                   <div className="rounded-xl bg-coral-500/10 border border-coral-500/20 p-3 mb-4">
-                    <p className="text-xs text-coral-600">{error}</p>
+                    <p className="text-xs text-coral-600 dark:text-coral-300">{error}</p>
                   </div>
                 )}
 
                 <div className="space-y-4">
-                  <div className="text-sm text-stone-400">
+                  <div className="text-sm text-stone-400 dark:text-neutral-500">
                     <p>
                       Are you sure you want to delete{' '}
-                      <strong className="text-stone-900">{teamEntry?.team.name}</strong>?
+                      <strong className="text-stone-900 dark:text-neutral-100">
+                        {teamEntry?.team.name}
+                      </strong>
+                      ?
                     </p>
                     <p className="mt-2 text-coral-400">
                       This action cannot be undone. All team data will be permanently removed.
@@ -377,7 +400,7 @@ const TeamManagementPanel = () => {
                     <button
                       onClick={() => setIsDeleteModalOpen(false)}
                       disabled={isDeleting}
-                      className="flex-1 px-4 py-2 text-sm font-medium rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-700 transition-colors disabled:opacity-50">
+                      className="flex-1 px-4 py-2 text-sm font-medium rounded-xl bg-stone-100 dark:bg-neutral-800 hover:bg-stone-200 dark:bg-neutral-800 text-stone-700 dark:text-neutral-200 transition-colors disabled:opacity-50">
                       Cancel
                     </button>
                     <button

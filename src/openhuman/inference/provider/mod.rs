@@ -10,6 +10,7 @@ pub mod compatible_dump;
 pub mod compatible_parse;
 pub mod compatible_stream;
 pub mod compatible_types;
+pub mod config_rejection;
 pub mod factory;
 pub mod openhuman_backend;
 pub mod ops;
@@ -27,5 +28,6 @@ pub use traits::{
 };
 
 pub use billing_error::is_budget_exhausted_message;
+pub use config_rejection::is_provider_config_rejection_message;
 pub use factory::{create_chat_provider, provider_for_role};
 pub use ops::*;

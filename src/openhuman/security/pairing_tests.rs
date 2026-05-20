@@ -70,10 +70,29 @@ async fn is_authenticated_with_invalid_token() {
 }
 
 #[test]
-async fn is_authenticated_when_pairing_disabled() {
+async fn empty_token_rejected_when_require_pairing_false() {
     let (guard, _) = PairingGuard::new(false, &[]);
-    assert!(guard.is_authenticated("anything"));
-    assert!(guard.is_authenticated(""));
+    assert!(!guard.is_authenticated(""));
+    assert!(!guard.is_authenticated("   "));
+}
+
+#[test]
+async fn empty_token_rejected_when_require_pairing_true() {
+    let (guard, _) = PairingGuard::new(true, &["zc_valid".into()]);
+    assert!(!guard.is_authenticated(""));
+}
+
+#[test]
+async fn is_authenticated_rejects_unknown_when_pairing_disabled_and_no_tokens() {
+    let (guard, _) = PairingGuard::new(false, &[]);
+    assert!(!guard.is_authenticated("anything"));
+}
+
+#[test]
+async fn is_authenticated_honors_configured_tokens_when_pairing_disabled() {
+    let (guard, _) = PairingGuard::new(false, &["zc_dev".into()]);
+    assert!(guard.is_authenticated("zc_dev"));
+    assert!(!guard.is_authenticated("zc_other"));
 }
 
 #[test]
@@ -144,6 +163,54 @@ async fn zero_zero_is_public() {
 async fn real_ip_is_public() {
     assert!(is_public_bind("192.168.1.100"));
     assert!(is_public_bind("10.0.0.1"));
+}
+
+// ── Core RPC bind token ──────────────────────────────────
+
+#[test]
+async fn public_bind_without_env_token_auto_generates() {
+    let tmp = std::env::temp_dir().join(format!("pairing-bind-test-{}", std::process::id()));
+    std::fs::create_dir_all(&tmp).unwrap();
+    let token = ensure_core_rpc_token_for_bind("0.0.0.0", &tmp, None)
+        .expect("public bind should auto-generate a token")
+        .expect("public bind should return Some(token)");
+    assert_eq!(token.len(), 64);
+    assert!(token.chars().all(|c| c.is_ascii_hexdigit()));
+    let from_disk = std::fs::read_to_string(tmp.join("core.token")).unwrap();
+    assert_eq!(from_disk, token);
+    std::fs::remove_dir_all(&tmp).ok();
+}
+
+#[test]
+async fn public_bind_rejects_explicit_empty_env_token() {
+    let tmp = std::env::temp_dir().join(format!("pairing-bind-empty-{}", std::process::id()));
+    std::fs::create_dir_all(&tmp).unwrap();
+    let err = ensure_core_rpc_token_for_bind("0.0.0.0", &tmp, Some("   "))
+        .expect_err("empty env token on public bind must fail");
+    assert!(matches!(err, CoreBindTokenError::EmptyEnvToken { .. }));
+    std::fs::remove_dir_all(&tmp).ok();
+}
+
+#[test]
+async fn loopback_bind_without_env_token_returns_none() {
+    let tmp = std::env::temp_dir().join(format!("pairing-bind-loopback-{}", std::process::id()));
+    std::fs::create_dir_all(&tmp).unwrap();
+    let token = ensure_core_rpc_token_for_bind("127.0.0.1", &tmp, None).unwrap();
+    assert!(token.is_none());
+    assert!(!tmp.join("core.token").exists());
+    std::fs::remove_dir_all(&tmp).ok();
+}
+
+#[test]
+async fn public_bind_uses_nonempty_env_token_without_writing_file() {
+    let tmp = std::env::temp_dir().join(format!("pairing-bind-env-token-{}", std::process::id()));
+    std::fs::create_dir_all(&tmp).unwrap();
+    let token = ensure_core_rpc_token_for_bind("0.0.0.0", &tmp, Some("  abc123  "))
+        .unwrap()
+        .expect("env token should be returned");
+    assert_eq!(token, "abc123");
+    assert!(!tmp.join("core.token").exists());
+    std::fs::remove_dir_all(&tmp).ok();
 }
 
 // ── constant_time_eq ─────────────────────────────────────

@@ -106,9 +106,11 @@ async fn connect_discord_bot_token_persists_runtime_config() {
         .and_then(toml::Value::as_table)
         .expect("channels_config.discord should be persisted");
 
-    assert_eq!(
-        discord.get("bot_token").and_then(toml::Value::as_str),
-        Some("discord-token-123")
+    // bot_token is encrypted on disk (issue #1900)
+    let token = discord.get("bot_token").and_then(toml::Value::as_str);
+    assert!(
+        token.is_some_and(|t| t.starts_with("enc:") || t.starts_with("enc2:")),
+        "bot_token should be encrypted on disk, got: {token:?}"
     );
     assert_eq!(
         discord.get("guild_id").and_then(toml::Value::as_str),

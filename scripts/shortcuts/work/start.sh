@@ -61,10 +61,15 @@ if [ -z "$repo" ]; then
   repo=$(REVIEW_REPO= resolve_repo)
 fi
 branch_prefix="${WORK_BRANCH_PREFIX:-issue}"
+auto_assign="${WORK_AUTO_ASSIGN:-1}"
 
 echo "[work] fetching issue #$issue from $repo..."
 issue_json=$(gh issue view "$issue" -R "$repo" \
   --json number,title,body,labels,state,url,assignees)
+
+if [ "$auto_assign" = "1" ]; then
+  gh_assign_self_issue "$issue" "$repo"
+fi
 
 state=$(jq -r '.state' <<<"$issue_json")
 if [ "$state" != "OPEN" ]; then
@@ -124,17 +129,25 @@ if [ ! -f "$template" ]; then
 fi
 
 # Use awk for substitution — handles multi-line values (issue body) cleanly.
+# Pass values via the environment (ENVIRON[]) because BSD awk on macOS rejects
+# literal newlines in `-v var=value`, and the issue body routinely has them.
 # Escape backslashes and ampersands so gsub doesn't interpret them in the
 # replacement text.
-prompt=$(awk -v issue="$issue" -v repo="$repo" -v branch="$current_branch" \
-             -v url="$url" -v title="$title" -v labels="$labels_display" \
-             -v body="$body" '
+prompt=$(WORK_ISSUE="$issue" WORK_REPO_NAME="$repo" WORK_BRANCH="$current_branch" \
+         WORK_URL="$url" WORK_TITLE="$title" WORK_LABELS="$labels_display" \
+         WORK_BODY="$body" \
+         awk '
   function esc(s) {
     gsub(/\\/, "\\\\", s); gsub(/&/, "\\\\&", s); return s
   }
   BEGIN {
-    issue=esc(issue); repo=esc(repo); branch=esc(branch);
-    url=esc(url); title=esc(title); labels=esc(labels); body=esc(body);
+    issue=esc(ENVIRON["WORK_ISSUE"]);
+    repo=esc(ENVIRON["WORK_REPO_NAME"]);
+    branch=esc(ENVIRON["WORK_BRANCH"]);
+    url=esc(ENVIRON["WORK_URL"]);
+    title=esc(ENVIRON["WORK_TITLE"]);
+    labels=esc(ENVIRON["WORK_LABELS"]);
+    body=esc(ENVIRON["WORK_BODY"]);
   }
   {
     gsub(/__ISSUE__/, issue);

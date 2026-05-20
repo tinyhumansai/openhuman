@@ -72,7 +72,8 @@ async function defaultMessagingChannelFromStore(): Promise<string | null> {
 }
 
 describe('Settings - Feature Preferences', () => {
-  before(async () => {
+  before(async function beforeSuite() {
+    this.timeout(90_000);
     await startMockServer();
     await waitForApp();
     await resetApp(USER_ID);
@@ -82,17 +83,20 @@ describe('Settings - Feature Preferences', () => {
     await stopMockServer();
   });
 
-  it('renders the features settings section route', async () => {
+  it('renders the features settings section route', async function () {
+    this.timeout(90_000);
     await navigateViaHash('/settings/features');
 
     await waitForText('Features', 15_000);
-    await waitForText('Screen Awareness', 15_000);
-    await waitForText('Messaging Channels', 15_000);
+    // i18n uses sentence-case: 'Screen awareness', 'Messaging channels', etc.
+    await waitForText('Screen awareness', 15_000);
+    await waitForText('Messaging channels', 15_000);
     await waitForText('Notifications', 15_000);
     await waitForText('Tools', 15_000);
   });
 
-  it('persists the default messaging channel through redux state', async () => {
+  it('persists the default messaging channel through redux state', async function () {
+    this.timeout(90_000);
     await navigateViaHash('/settings/messaging');
 
     await waitForText('Default Messaging Channel', 15_000);
@@ -104,7 +108,8 @@ describe('Settings - Feature Preferences', () => {
     });
   });
 
-  it('persists tools preferences to the core app-state snapshot', async () => {
+  it('persists tools preferences to the core app-state snapshot', async function () {
+    this.timeout(90_000);
     const before = await callOpenhumanRpc('openhuman.app_state_snapshot', {});
     expect(before.ok).toBe(true);
     const enabledBefore = before.result?.result?.localState?.onboardingTasks?.enabledTools ?? [];
@@ -126,7 +131,8 @@ describe('Settings - Feature Preferences', () => {
     );
   });
 
-  it('persists notifications DND and category preferences', async () => {
+  it('persists notifications DND and category preferences', async function () {
+    this.timeout(90_000);
     await navigateViaHash('/settings/notifications');
 
     await waitForText('Do Not Disturb', 15_000);
@@ -141,7 +147,8 @@ describe('Settings - Feature Preferences', () => {
     expect(await switchState('Toggle Messages notifications')).toBe('false');
   });
 
-  it('persists mascot color selection', async () => {
+  it('persists mascot color selection', async function () {
+    this.timeout(60_000);
     await navigateViaHash('/settings/mascot');
 
     await waitForText('Color', 15_000);
@@ -152,7 +159,8 @@ describe('Settings - Feature Preferences', () => {
     expect(await mascotColorChecked('burgundy')).toBe('true');
   });
 
-  it('persists the custom mascot voice override on the voice panel', async () => {
+  it('persists the custom mascot voice override on the voice panel', async function () {
+    this.timeout(90_000);
     await navigateViaHash('/settings/voice');
 
     await waitForText('Mascot Voice', 20_000);

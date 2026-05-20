@@ -47,7 +47,7 @@ export function BubbleMarkdown({
   const proseTone =
     tone === 'user'
       ? 'prose-invert prose-p:text-white prose-li:text-white prose-a:text-white prose-code:text-white prose-strong:text-white prose-headings:text-white [&_li::marker]:text-white/85'
-      : 'prose-a:text-primary-500 prose-code:text-primary-700 prose-headings:text-sm [&_li::marker]:text-stone-700';
+      : 'dark:prose-invert prose-a:text-primary-500 prose-code:text-primary-700 dark:prose-code:text-primary-300 prose-headings:text-sm [&_li::marker]:text-stone-700 dark:[&_li::marker]:text-neutral-300';
 
   return (
     <div
@@ -79,7 +79,7 @@ export function BubbleMarkdown({
 
 export function TableCellMarkdown({ content }: { content: string }) {
   return (
-    <div className="prose prose-sm max-w-none text-sm text-stone-700 prose-p:my-0 prose-ul:my-0 prose-ol:my-0 prose-li:my-0 prose-code:text-xs prose-code:text-primary-700 prose-a:text-primary-500 prose-strong:text-stone-900 prose-headings:text-sm prose-headings:font-semibold [&_li::marker]:text-stone-700 [&_ul]:my-0 [&_ol]:my-0 [&_ul]:pl-0 [&_ol]:pl-0 [&_ul]:list-inside [&_ol]:list-inside [&_li]:pl-0 [&_li_p]:inline [&_li_p]:m-0">
+    <div className="prose prose-sm dark:prose-invert max-w-none text-sm text-stone-700 dark:text-neutral-200 prose-p:my-0 prose-ul:my-0 prose-ol:my-0 prose-li:my-0 prose-code:text-xs prose-code:text-primary-700 dark:prose-code:text-primary-300 prose-a:text-primary-500 prose-strong:text-stone-900 dark:prose-strong:text-neutral-100 prose-headings:text-sm prose-headings:font-semibold [&_li::marker]:text-stone-700 dark:[&_li::marker]:text-neutral-300 [&_ul]:my-0 [&_ol]:my-0 [&_ul]:pl-0 [&_ol]:pl-0 [&_ul]:list-inside [&_ol]:list-inside [&_li]:pl-0 [&_li_p]:inline [&_li_p]:m-0">
       <Markdown
         components={{
           a: ({ href, children }) => (
@@ -126,15 +126,15 @@ export function AgentMessageBubble({
   if (table) {
     return (
       <div
-        className={`w-full max-w-full overflow-hidden border border-stone-200 bg-white/90 shadow-sm ${bubbleChrome}`}>
+        className={`w-full max-w-full overflow-hidden border border-stone-200 dark:border-neutral-800 bg-white/90 dark:bg-neutral-900/90 shadow-sm ${bubbleChrome}`}>
         <div className="overflow-x-auto">
-          <table className="w-max min-w-full border-collapse text-left text-sm text-stone-800">
-            <thead className="bg-stone-100/90">
+          <table className="w-max min-w-full border-collapse text-left text-sm text-stone-800 dark:text-neutral-100">
+            <thead className="bg-stone-100 dark:bg-neutral-800/90">
               <tr>
                 {table.headers.map(header => (
                   <th
                     key={header}
-                    className="max-w-[25vw] border-b border-stone-200 px-4 py-2.5 text-xs font-semibold uppercase tracking-[0.08em] text-stone-500">
+                    className="max-w-[25vw] border-b border-stone-200 dark:border-neutral-800 px-4 py-2.5 text-xs font-semibold uppercase tracking-[0.08em] text-stone-500 dark:text-neutral-400">
                     {header}
                   </th>
                 ))}
@@ -144,11 +144,11 @@ export function AgentMessageBubble({
               {table.rows.map((row, rowIndex) => (
                 <tr
                   key={`${rowIndex}:${row.join('|')}`}
-                  className="odd:bg-white even:bg-stone-50/70">
+                  className="odd:bg-white dark:odd:bg-neutral-900 even:bg-stone-50 dark:even:bg-neutral-800/60">
                   {row.map((cell, cellIndex) => (
                     <td
                       key={`${rowIndex}:${cellIndex}:${cell}`}
-                      className="max-w-[25vw] border-t border-stone-200 px-4 py-3 align-top text-sm text-stone-700">
+                      className="max-w-[25vw] border-t border-stone-200 dark:border-neutral-800 px-4 py-3 align-top text-sm text-stone-700 dark:text-neutral-200">
                       <TableCellMarkdown content={cell} />
                     </td>
                   ))}
@@ -164,7 +164,8 @@ export function AgentMessageBubble({
   return (
     <>
       {textContent && (
-        <div className={`bg-stone-200/80 px-4 py-2.5 text-stone-900 ${bubbleChrome}`}>
+        <div
+          className={`bg-stone-200 dark:bg-neutral-800/80 px-4 py-2.5 text-stone-900 dark:text-neutral-100 ${bubbleChrome}`}>
           <BubbleMarkdown content={textContent} />
         </div>
       )}

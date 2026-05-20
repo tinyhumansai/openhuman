@@ -100,7 +100,7 @@ const pt2: TranslationMap = {
   'devOptions.local': 'Local',
   'devOptions.embeddedCoreSidecar': 'Core sidecar incorporado',
   'devOptions.sidecarSpawned': 'Iniciado em processo pelo shell Tauri na abertura do app.',
-  'devOptions.cloud': 'Cloud',
+  'devOptions.cloud': 'Nuvem',
   'devOptions.remoteCoreRpc': 'RPC do core remoto',
   'devOptions.token': 'Token',
   'devOptions.tokenNotSet': 'não definido — RPC retornará 401',
@@ -235,7 +235,7 @@ const pt2: TranslationMap = {
   'composio.triggersStillRecorded':
     'Os gatilhos ainda são registrados no histórico — nenhum turno de LLM é executado.',
   'composio.disableSpecificIntegrations': 'Desativar triagem de IA para integrações específicas',
-  'composio.settingsSaved': 'Settings saved',
+  'composio.settingsSaved': 'Configurações salvas',
   'composio.saveFailed': 'Falha ao salvar. Tente novamente.',
   'cron.title': 'Tarefas Cron',
   'cron.scheduledJobs': 'Tarefas Agendadas',
@@ -263,7 +263,7 @@ const pt2: TranslationMap = {
     'Nenhuma resposta do agente após 2 minutos. Tente novamente ou verifique sua conexão.',
   'chat.filter.all': 'Todos',
   'chat.filter.work': 'Trabalho',
-  'chat.filter.briefing': 'Briefing',
+  'chat.filter.briefing': 'Resumo',
   'chat.filter.notification': 'Notificação',
   'chat.filter.workers': 'Workers',
   'chat.selectThread': 'Selecione uma conversa',
@@ -289,10 +289,10 @@ const pt2: TranslationMap = {
   'chat.topUpToContinue': 'Adicione créditos para continuar.',
   'chat.budgetComplete':
     'Seu orçamento incluído foi esgotado. Adicione créditos ou faça upgrade para continuar.',
-  'chat.rateLimitReached': 'Limite de taxa de 10 horas atingido.',
   'chat.topUp': 'Adicionar Créditos',
-  'chat.fiveHourLimit': 'Limite de 5 horas',
-  'chat.weeklyLimit': 'Limite semanal',
+  'chat.cycle': 'Ciclo',
+  'chat.cycleSpent': 'Gasto neste ciclo',
+  'chat.cycleRemaining': 'Restante',
   'chat.left': 'restante',
   'chat.setup': 'Configurar',
   'chat.switchToText': 'Mudar para texto',
@@ -383,6 +383,40 @@ const pt2: TranslationMap = {
   'insights.relationships': 'Relacionamentos',
   'insights.skills': 'Habilidades',
   'insights.opinions': 'Opiniões',
+  // Developer options menu items (#2225) — English stubs; native translations welcome
+  'devOptions.menuAi': 'AI Configuration',
+  'devOptions.menuAiDesc': 'Cloud providers, local Ollama models, and per-workload routing',
+  'devOptions.menuScreenAware': 'Screen Awareness',
+  'devOptions.menuScreenAwareDesc':
+    'Screen capture permissions, monitoring policy, and session controls',
+  'devOptions.menuMessaging': 'Messaging Channels',
+  'devOptions.menuMessagingDesc':
+    'Configure Telegram/Discord auth modes and default channel routing',
+  'devOptions.menuTools': 'Tools',
+  'devOptions.menuToolsDesc': 'Enable or disable capabilities OpenHuman can use on your behalf',
+  'devOptions.menuAgentChat': 'Agent Chat',
+  'devOptions.menuAgentChatDesc': 'Test agent conversation with model and temperature overrides',
+  'devOptions.menuCronJobs': 'Cron Jobs',
+  'devOptions.menuCronJobsDesc': 'View and configure scheduled jobs for runtime skills',
+  'devOptions.menuLocalModelDebug': 'Local Model Debug',
+  'devOptions.menuLocalModelDebugDesc':
+    'Ollama config, asset downloads, model tests, and diagnostics',
+  'devOptions.menuWebhooksDebug': 'Webhooks',
+  'devOptions.menuWebhooksDebugDesc':
+    'Inspect runtime webhook registrations and captured request logs',
+  'devOptions.menuIntelligence': 'Intelligence',
+  'devOptions.menuIntelligenceDesc': 'Memory workspace, subconscious engine, dreams, and settings',
+  'devOptions.menuNotificationRouting': 'Notification Routing',
+  'devOptions.menuNotificationRoutingDesc':
+    'AI importance scoring and orchestrator escalation for integration alerts',
+  'devOptions.menuComposeIOTriggers': 'ComposeIO Triggers',
+  'devOptions.menuComposeIOTriggersDesc': 'View ComposeIO trigger history and archive',
+  'devOptions.menuComposioRouting': 'Composio Routing (Direct Mode)',
+  'devOptions.menuComposioRoutingDesc':
+    'Bring your own Composio API key and route calls directly to backend.composio.dev',
+  'devOptions.menuComposioTriggers': 'Integration Triggers',
+  'devOptions.menuComposioTriggersDesc':
+    'Configure AI triage settings for Composio integration triggers',
 };
 
 export default pt2;

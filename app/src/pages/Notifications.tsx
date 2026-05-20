@@ -61,7 +61,7 @@ const Notifications = () => {
       {/* Integration notifications — from connected accounts, scored by local AI */}
       <div
         data-testid="integration-notifications-section"
-        className="max-w-2xl mx-auto bg-white rounded-2xl shadow-soft border border-stone-200 overflow-hidden min-h-[200px]">
+        className="max-w-2xl mx-auto bg-white dark:bg-neutral-900 rounded-2xl shadow-soft border border-stone-200 dark:border-neutral-800 overflow-hidden min-h-[200px]">
         <NotificationCenter />
       </div>
 
@@ -69,10 +69,12 @@ const Notifications = () => {
       <div
         data-testid="system-events-section"
         className="max-w-2xl mx-auto bg-white rounded-2xl shadow-soft border border-stone-200 overflow-hidden">
-        <div className="flex items-center justify-between border-b border-stone-100 px-4 py-3">
+        <div className="flex items-center justify-between border-b border-stone-100 dark:border-neutral-800 px-4 py-3">
           <div>
-            <h1 className="text-lg font-semibold text-stone-900">{t('alerts.title')}</h1>
-            <p className="text-xs text-stone-500">
+            <h1 className="text-lg font-semibold text-stone-900 dark:text-neutral-100">
+              {t('alerts.title')}
+            </h1>
+            <p className="text-xs text-stone-500 dark:text-neutral-400">
               {unread > 0 ? `${unread} ${t('alerts.unread')}` : t('alerts.empty')}
             </p>
           </div>
@@ -81,30 +83,34 @@ const Notifications = () => {
               type="button"
               onClick={() => dispatch(markAllRead())}
               disabled={unread === 0}
-              className="text-xs font-medium text-stone-600 hover:text-stone-900 disabled:opacity-40 disabled:cursor-not-allowed">
+              className="text-xs font-medium text-stone-600 dark:text-neutral-400 hover:text-stone-900 dark:hover:text-neutral-100 disabled:opacity-40 disabled:cursor-not-allowed">
               {t('alerts.markAllRead')}
             </button>
             <button
               type="button"
               onClick={() => dispatch(clearAll())}
               disabled={items.length === 0}
-              className="text-xs font-medium text-stone-600 hover:text-stone-900 disabled:opacity-40 disabled:cursor-not-allowed">
+              className="text-xs font-medium text-stone-600 dark:text-neutral-400 hover:text-stone-900 dark:hover:text-neutral-100 disabled:opacity-40 disabled:cursor-not-allowed">
               {t('common.clear')}
             </button>
           </div>
         </div>
 
         {items.length === 0 ? (
-          <div className="px-6 py-16 text-center text-sm text-stone-500">{t('alerts.empty')}</div>
+          <div className="px-6 py-16 text-center text-sm text-stone-500 dark:text-neutral-400">
+            {t('alerts.empty')}
+          </div>
         ) : (
-          <ul className="divide-y divide-stone-100">
+          <ul className="divide-y divide-stone-100 dark:divide-neutral-800">
             {items.map(item => (
               <li key={item.id} data-testid="notification-item">
                 <button
                   type="button"
                   onClick={() => handleClick(item)}
-                  className={`w-full text-left px-4 py-3 hover:bg-stone-50 transition-colors ${
-                    item.read ? 'bg-white' : 'bg-primary-50/30'
+                  className={`w-full text-left px-4 py-3 hover:bg-stone-50 dark:hover:bg-neutral-800/60 transition-colors ${
+                    item.read
+                      ? 'bg-white dark:bg-neutral-900'
+                      : 'bg-primary-50/30 dark:bg-primary-900/20'
                   }`}>
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0 flex-1">
@@ -115,16 +121,18 @@ const Notifications = () => {
                             aria-label={t('alerts.unread')}
                           />
                         )}
-                        <span className="text-xs uppercase tracking-wide text-stone-400">
+                        <span className="text-xs uppercase tracking-wide text-stone-400 dark:text-neutral-500">
                           {categoryLabel(item.category)}
                         </span>
                       </div>
-                      <p className="mt-1 text-sm font-semibold text-stone-900 truncate">
+                      <p className="mt-1 text-sm font-semibold text-stone-900 dark:text-neutral-100 truncate">
                         {item.title}
                       </p>
-                      <p className="mt-0.5 text-sm text-stone-600 line-clamp-2">{item.body}</p>
+                      <p className="mt-0.5 text-sm text-stone-600 dark:text-neutral-300 line-clamp-2">
+                        {item.body}
+                      </p>
                     </div>
-                    <span className="text-[11px] text-stone-400 whitespace-nowrap">
+                    <span className="text-[11px] text-stone-400 dark:text-neutral-500 whitespace-nowrap">
                       {formatTime(item.timestamp, t)}
                     </span>
                   </div>

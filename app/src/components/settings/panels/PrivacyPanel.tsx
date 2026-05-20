@@ -19,11 +19,15 @@ interface AnnotatedCapability extends Capability {
 }
 
 const KIND_BADGE_CLASS: Record<PrivacyDataKind, string> = {
-  raw: 'bg-sage-50 text-sage-700 border-sage-200',
-  derived: 'bg-amber-50 text-amber-700 border-amber-200',
-  credentials: 'bg-stone-100 text-stone-700 border-stone-200',
-  diagnostics: 'bg-primary-50 text-primary-700 border-primary-200',
-  metadata: 'bg-stone-50 text-stone-600 border-stone-200',
+  raw: 'bg-sage-50 dark:bg-sage-500/10 text-sage-700 dark:text-sage-300 border-sage-200 dark:border-sage-500/30',
+  derived:
+    'bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-500/30',
+  credentials:
+    'bg-stone-100 dark:bg-neutral-800 text-stone-700 dark:text-neutral-200 border-stone-200 dark:border-neutral-800',
+  diagnostics:
+    'bg-primary-50 dark:bg-primary-500/10 text-primary-700 dark:text-primary-300 border-primary-200 dark:border-primary-500/30',
+  metadata:
+    'bg-stone-50 dark:bg-neutral-800/60 text-stone-600 dark:text-neutral-300 border-stone-200 dark:border-neutral-800',
 };
 
 function kindLabel(kind: PrivacyDataKind, t: (key: string) => string): string {
@@ -105,33 +109,43 @@ const PrivacyPanel = () => {
         <div className="p-4 space-y-4">
           {/* What leaves my computer */}
           <div>
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-stone-400 mb-3 px-1">
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-stone-400 dark:text-neutral-500 mb-3 px-1">
               {t('privacy.whatLeavesComputer')}
             </h3>
-            <div className="bg-white rounded-xl border border-stone-200 overflow-hidden">
+            <div className="bg-white dark:bg-neutral-900 rounded-xl border border-stone-200 dark:border-neutral-800 overflow-hidden">
               {loadState === 'loading' && (
-                <p className="p-4 text-xs text-stone-500">{t('privacy.loading')}</p>
+                <p className="p-4 text-xs text-stone-500 dark:text-neutral-400">
+                  {t('privacy.loading')}
+                </p>
               )}
               {loadState === 'error' && (
-                <p className="p-4 text-xs text-stone-500" data-testid="privacy-load-error">
+                <p
+                  className="p-4 text-xs text-stone-500 dark:text-neutral-400"
+                  data-testid="privacy-load-error">
                   {t('privacy.loadError')}
                 </p>
               )}
               {loadState === 'ready' && capabilities.length === 0 && (
-                <p className="p-4 text-xs text-stone-500">{t('privacy.noCapabilities')}</p>
+                <p className="p-4 text-xs text-stone-500 dark:text-neutral-400">
+                  {t('privacy.noCapabilities')}
+                </p>
               )}
               {loadState === 'ready' && capabilities.length > 0 && (
-                <ul className="divide-y divide-stone-100" data-testid="privacy-capability-list">
+                <ul
+                  className="divide-y divide-stone-100 dark:divide-neutral-800"
+                  data-testid="privacy-capability-list">
                   {capabilities.map(cap => (
                     <li key={cap.id} className="p-4" data-testid={`privacy-row-${cap.id}`}>
                       <div className="flex items-start justify-between gap-3">
                         <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium text-stone-900">{cap.name}</p>
-                          <p className="text-xs text-stone-500 mt-1 leading-relaxed">
+                          <p className="text-sm font-medium text-stone-900 dark:text-neutral-100">
+                            {cap.name}
+                          </p>
+                          <p className="text-xs text-stone-500 dark:text-neutral-400 mt-1 leading-relaxed">
                             {cap.description}
                           </p>
                           {cap.privacy.destinations.length > 0 && (
-                            <p className="text-xs text-stone-400 mt-1">
+                            <p className="text-xs text-stone-400 dark:text-neutral-500 mt-1">
                               {t('privacy.sentTo')}: {cap.privacy.destinations.join(', ')}
                             </p>
                           )}
@@ -141,7 +155,7 @@ const PrivacyPanel = () => {
                             className={`text-[10px] uppercase tracking-wider px-2 py-0.5 rounded border ${KIND_BADGE_CLASS[cap.privacy.data_kind]}`}>
                             {kindLabel(cap.privacy.data_kind, t)}
                           </span>
-                          <span className="text-[10px] text-stone-500">
+                          <span className="text-[10px] text-stone-500 dark:text-neutral-400">
                             {cap.privacy.leaves_device
                               ? t('privacy.leavesDevice')
                               : t('privacy.staysLocal')}
@@ -157,16 +171,16 @@ const PrivacyPanel = () => {
 
           {/* Analytics Section */}
           <div>
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-stone-400 mb-3 px-1">
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-stone-400 dark:text-neutral-500 mb-3 px-1">
               {t('privacy.anonymizedAnalytics')}
             </h3>
-            <div className="bg-white rounded-xl border border-stone-200 overflow-hidden">
+            <div className="bg-white dark:bg-neutral-900 rounded-xl border border-stone-200 dark:border-neutral-800 overflow-hidden">
               <div className="flex items-center justify-between p-4">
                 <div className="flex-1 mr-4">
-                  <p className="text-sm font-medium text-stone-900">
+                  <p className="text-sm font-medium text-stone-900 dark:text-neutral-100">
                     {t('privacy.shareAnonymizedData')}
                   </p>
-                  <p className="text-xs text-stone-500 mt-1 leading-relaxed">
+                  <p className="text-xs text-stone-500 dark:text-neutral-400 mt-1 leading-relaxed">
                     {t('privacy.shareAnonymizedDataDesc')}
                   </p>
                 </div>
@@ -175,12 +189,12 @@ const PrivacyPanel = () => {
                   onClick={handleToggleAnalytics}
                   data-testid="privacy-analytics-toggle"
                   className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-                    analyticsEnabled ? 'bg-primary-500' : 'bg-stone-600'
+                    analyticsEnabled ? 'bg-primary-500' : 'bg-stone-600 dark:bg-neutral-600'
                   }`}
                   role="switch"
                   aria-checked={analyticsEnabled}>
                   <span
-                    className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                    className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white dark:bg-neutral-900 shadow ring-0 transition duration-200 ease-in-out ${
                       analyticsEnabled ? 'translate-x-5' : 'translate-x-0'
                     }`}
                   />
@@ -191,16 +205,16 @@ const PrivacyPanel = () => {
 
           {/* Meeting Follow-ups Section (#1299) */}
           <div>
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-stone-400 mb-3 px-1">
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-stone-400 dark:text-neutral-500 mb-3 px-1">
               {t('privacy.meetingFollowUps')}
             </h3>
-            <div className="bg-white rounded-xl border border-stone-200 overflow-hidden">
+            <div className="bg-white dark:bg-neutral-900 rounded-xl border border-stone-200 dark:border-neutral-800 overflow-hidden">
               <div className="flex items-center justify-between p-4">
                 <div className="flex-1 mr-4">
-                  <p className="text-sm font-medium text-stone-900">
+                  <p className="text-sm font-medium text-stone-900 dark:text-neutral-100">
                     {t('privacy.autoHandoffMeet')}
                   </p>
-                  <p className="text-xs text-stone-500 mt-1 leading-relaxed">
+                  <p className="text-xs text-stone-500 dark:text-neutral-400 mt-1 leading-relaxed">
                     {t('privacy.autoHandoffMeetDesc')}
                   </p>
                 </div>
@@ -209,12 +223,12 @@ const PrivacyPanel = () => {
                   onClick={handleToggleMeetAutoHandoff}
                   aria-label="Auto-handoff Google Meet transcripts to the orchestrator"
                   className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-                    meetAutoHandoff ? 'bg-primary-500' : 'bg-stone-600'
+                    meetAutoHandoff ? 'bg-primary-500' : 'bg-stone-600 dark:bg-neutral-600'
                   }`}
                   role="switch"
                   aria-checked={meetAutoHandoff}>
                   <span
-                    className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                    className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white dark:bg-neutral-900 shadow ring-0 transition duration-200 ease-in-out ${
                       meetAutoHandoff ? 'translate-x-5' : 'translate-x-0'
                     }`}
                   />
@@ -224,10 +238,10 @@ const PrivacyPanel = () => {
           </div>
 
           {/* Info Box */}
-          <div className="p-4 bg-stone-50 rounded-xl border border-stone-200">
+          <div className="p-4 bg-stone-50 dark:bg-neutral-800/60 rounded-xl border border-stone-200 dark:border-neutral-800">
             <div className="flex items-start space-x-3">
               <svg
-                className="w-5 h-5 text-stone-400 mt-0.5 flex-shrink-0"
+                className="w-5 h-5 text-stone-400 dark:text-neutral-500 mt-0.5 flex-shrink-0"
                 fill="currentColor"
                 viewBox="0 0 20 20">
                 <path
@@ -237,7 +251,7 @@ const PrivacyPanel = () => {
                 />
               </svg>
               <div>
-                <p className="text-xs text-stone-500 leading-relaxed">
+                <p className="text-xs text-stone-500 dark:text-neutral-400 leading-relaxed">
                   {t('privacy.analyticsDisclaimer')}
                   All analytics and bug reports are fully anonymized. When enabled, we collect crash
                   information and device type (via Sentry), plus anonymous usage analytics such as

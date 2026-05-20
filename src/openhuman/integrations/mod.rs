@@ -13,6 +13,7 @@ pub mod parallel;
 pub mod searxng;
 pub mod seltz;
 pub mod stock_prices;
+pub mod tinyfish;
 pub mod twilio;
 pub mod types;
 
@@ -29,6 +30,7 @@ pub use stock_prices::{
     StockCommodityTool, StockCryptoSeriesTool, StockExchangeRateTool, StockOptionsTool,
     StockQuoteTool,
 };
+pub use tinyfish::{TinyFishAgentRunTool, TinyFishFetchTool, TinyFishSearchTool};
 pub use twilio::TwilioCallTool;
 pub use types::{
     BackendResponse, IntegrationPricing, IntegrationPricingEntry, PricingIntegrations, ToolScope,
@@ -69,6 +71,7 @@ mod tests {
         assert!(pricing.integrations.twilio.is_none());
         assert!(pricing.integrations.google_places.is_none());
         assert!(pricing.integrations.parallel.is_none());
+        assert!(pricing.integrations.tinyfish.is_none());
     }
 
     #[test]

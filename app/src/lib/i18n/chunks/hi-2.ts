@@ -170,7 +170,7 @@ const hi2: TranslationMap = {
   'voice.title': 'वॉइस डिक्टेशन',
   'voice.settings': 'वॉइस सेटिंग्स',
   'voice.settingsDesc': 'डिक्टेट करने और एक्टिव फील्ड में टेक्स्ट डालने के लिए hotkey दबाकर रखें।',
-  'voice.hotkey': 'Hotkey',
+  'voice.hotkey': 'हॉटकी',
   'voice.activationMode': 'एक्टिवेशन मोड',
   'voice.tapToToggle': 'टॉगल के लिए टैप करें',
   'voice.writingStyle': 'राइटिंग स्टाइल',
@@ -230,9 +230,9 @@ const hi2: TranslationMap = {
   'composio.triggersStillRecorded':
     'ट्रिगर हिस्ट्री में रिकॉर्ड होते रहते हैं — कोई LLM टर्न नहीं चलता।',
   'composio.disableSpecificIntegrations': 'खास इंटीग्रेशन के लिए AI triage बंद करें',
-  'composio.settingsSaved': 'Settings saved',
+  'composio.settingsSaved': 'सेटिंग्स सहेजी गईं',
   'composio.saveFailed': 'सेव नहीं हो पाया। दोबारा कोशिश करें।',
-  'cron.title': 'Cron Jobs',
+  'cron.title': 'क्रॉन जॉब्स',
   'cron.scheduledJobs': 'शेड्यूल्ड जॉब्स',
   'cron.manageCronJobs': 'कोर शेड्यूलर से cron jobs मैनेज करें।',
   'cron.refreshCronJobs': 'Cron Jobs रिफ्रेश करें',
@@ -283,10 +283,10 @@ const hi2: TranslationMap = {
   'chat.resets': 'रीसेट होता है',
   'chat.topUpToContinue': 'जारी रखने के लिए टॉप अप करें।',
   'chat.budgetComplete': 'आपका बजट पूरा हो गया। जारी रखने के लिए क्रेडिट जोड़ें या अपग्रेड करें।',
-  'chat.rateLimitReached': '10-घंटे की रेट लिमिट पहुँच गई।',
   'chat.topUp': 'टॉप अप करें',
-  'chat.fiveHourLimit': '5-घंटे की सीमा',
-  'chat.weeklyLimit': 'साप्ताहिक सीमा',
+  'chat.cycle': 'चक्र',
+  'chat.cycleSpent': 'इस चक्र में खर्च',
+  'chat.cycleRemaining': 'शेष',
   'chat.left': 'बचा हुआ',
   'chat.setup': 'सेट अप करें',
   'chat.switchToText': 'टेक्स्ट पर स्विच करें',
@@ -342,7 +342,7 @@ const hi2: TranslationMap = {
   'token.usageLimitReached': 'उपयोग सीमा पहुँच गई',
   'token.approachingLimit': 'सीमा के करीब',
   'token.planClickForDetails': 'प्लान - डिटेल्स के लिए क्लिक करें',
-  'token.sessionTokens': 'In: {in} | Out: {out} | Turns: {turns}',
+  'token.sessionTokens': 'इन: {in} | आउट: {out} | टर्न: {turns}',
   'token.limit': 'सीमा पहुँच गई',
   'catalog.noCapabilityBinding': 'कोई कैपेबिलिटी बाइंडिंग नहीं',
   'catalog.downloadFailed': 'डाउनलोड विफल',
@@ -377,6 +377,40 @@ const hi2: TranslationMap = {
   'insights.relationships': 'रिश्ते',
   'insights.skills': 'स्किल्स',
   'insights.opinions': 'राय',
+  // Developer options menu items (#2225) — English stubs; native translations welcome
+  'devOptions.menuAi': 'AI Configuration',
+  'devOptions.menuAiDesc': 'Cloud providers, local Ollama models, and per-workload routing',
+  'devOptions.menuScreenAware': 'Screen Awareness',
+  'devOptions.menuScreenAwareDesc':
+    'Screen capture permissions, monitoring policy, and session controls',
+  'devOptions.menuMessaging': 'Messaging Channels',
+  'devOptions.menuMessagingDesc':
+    'Configure Telegram/Discord auth modes and default channel routing',
+  'devOptions.menuTools': 'Tools',
+  'devOptions.menuToolsDesc': 'Enable or disable capabilities OpenHuman can use on your behalf',
+  'devOptions.menuAgentChat': 'Agent Chat',
+  'devOptions.menuAgentChatDesc': 'Test agent conversation with model and temperature overrides',
+  'devOptions.menuCronJobs': 'Cron Jobs',
+  'devOptions.menuCronJobsDesc': 'View and configure scheduled jobs for runtime skills',
+  'devOptions.menuLocalModelDebug': 'Local Model Debug',
+  'devOptions.menuLocalModelDebugDesc':
+    'Ollama config, asset downloads, model tests, and diagnostics',
+  'devOptions.menuWebhooksDebug': 'Webhooks',
+  'devOptions.menuWebhooksDebugDesc':
+    'Inspect runtime webhook registrations and captured request logs',
+  'devOptions.menuIntelligence': 'Intelligence',
+  'devOptions.menuIntelligenceDesc': 'Memory workspace, subconscious engine, dreams, and settings',
+  'devOptions.menuNotificationRouting': 'Notification Routing',
+  'devOptions.menuNotificationRoutingDesc':
+    'AI importance scoring and orchestrator escalation for integration alerts',
+  'devOptions.menuComposeIOTriggers': 'ComposeIO Triggers',
+  'devOptions.menuComposeIOTriggersDesc': 'View ComposeIO trigger history and archive',
+  'devOptions.menuComposioRouting': 'Composio Routing (Direct Mode)',
+  'devOptions.menuComposioRoutingDesc':
+    'Bring your own Composio API key and route calls directly to backend.composio.dev',
+  'devOptions.menuComposioTriggers': 'Integration Triggers',
+  'devOptions.menuComposioTriggersDesc':
+    'Configure AI triage settings for Composio integration triggers',
 };
 
 export default hi2;

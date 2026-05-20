@@ -38,6 +38,7 @@ const TEST_CONTENT = 'OpenHuman memory roundtrip canary fact #773';
 
 describe('Memory subsystem round-trip', () => {
   before(async function beforeSuite() {
+    this.timeout(90_000);
     if (!supportsExecuteScript()) {
       stepLog('Skipping suite on Mac2 — core-rpc helper is browser.execute-bound');
       this.skip();
