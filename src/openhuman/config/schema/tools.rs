@@ -419,6 +419,54 @@ impl Default for SeltzConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
+pub struct SearxngConfig {
+    /// When `true`, register `searxng_search` as an agent and MCP tool.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Base URL for the user's SearXNG instance.
+    #[serde(default = "default_searxng_base_url")]
+    pub base_url: String,
+    /// Max results per query (1-50, default 10).
+    #[serde(default = "default_searxng_max_results")]
+    pub max_results: usize,
+    /// Language code passed to SearXNG when a call omits `language`.
+    #[serde(default = "default_searxng_language")]
+    pub default_language: String,
+    /// Per-request timeout in seconds (default 10).
+    #[serde(default = "default_searxng_timeout_secs", alias = "timeout_seconds")]
+    pub timeout_secs: u64,
+}
+
+fn default_searxng_base_url() -> String {
+    "http://localhost:8080".into()
+}
+
+fn default_searxng_max_results() -> usize {
+    10
+}
+
+fn default_searxng_language() -> String {
+    "en".into()
+}
+
+fn default_searxng_timeout_secs() -> u64 {
+    10
+}
+
+impl Default for SearxngConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            base_url: default_searxng_base_url(),
+            max_results: default_searxng_max_results(),
+            default_language: default_searxng_language(),
+            timeout_secs: default_searxng_timeout_secs(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
 pub struct WebSearchConfig {
     #[serde(default = "default_web_search_max_results")]
     pub max_results: usize,

@@ -5,11 +5,22 @@ import { renderWithProviders } from '../../../../test/test-utils';
 import ContextGatheringStep from '../ContextGatheringStep';
 
 const callCoreRpc = vi.hoisted(() => vi.fn());
-vi.mock('../../../../services/coreRpcClient', () => ({ callCoreRpc }));
+const getCoreRpcUrl = vi.hoisted(() => vi.fn(async () => 'http://127.0.0.1:7788/rpc'));
+const testCoreRpcConnection = vi.hoisted(() =>
+  vi.fn(async () => ({ ok: true, status: 200 }) as Response)
+);
+vi.mock('../../../../services/coreRpcClient', () => ({
+  callCoreRpc,
+  getCoreRpcUrl,
+  testCoreRpcConnection,
+}));
 
 describe('ContextGatheringStep', () => {
   beforeEach(() => {
     callCoreRpc.mockReset();
+    getCoreRpcUrl.mockClear();
+    testCoreRpcConnection.mockClear();
+    testCoreRpcConnection.mockResolvedValue({ ok: true, status: 200 } as Response);
   });
 
   it('no-Gmail branch: auto-navigates without any RPC', async () => {
@@ -276,5 +287,229 @@ describe('ContextGatheringStep', () => {
 
     // fireEvent not needed — onNext is available via the button but user can also
     // just verify the friendly message is shown
+  });
+
+  // --------------------------------------------------------------------------
+  // #2156 — slow-but-alive snapshot / save_profile path
+  // --------------------------------------------------------------------------
+  describe('staged still-working UI (#2156)', () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('passes a 90s timeoutMs override on learning_save_profile so slow first launches finish', async () => {
+      const onNext = vi.fn().mockResolvedValue(undefined);
+      callCoreRpc.mockImplementation(async (req: { method: string }) => {
+        if (req.method === 'openhuman.tools_composio_execute') {
+          return {
+            successful: true,
+            data: { messages: [{ messageText: 'https://www.linkedin.com/in/jane-doe' }] },
+          };
+        }
+        if (req.method === 'openhuman.learning_save_profile') {
+          return { path: '/tmp/PROFILE.md', bytes: 1 };
+        }
+        throw new Error(`unexpected RPC ${req.method}`);
+      });
+
+      renderWithProviders(
+        <ContextGatheringStep connectedSources={['composio:gmail']} onNext={onNext} />
+      );
+
+      await waitFor(() => expect(onNext).toHaveBeenCalled(), { timeout: 5000 });
+
+      const saveCall = callCoreRpc.mock.calls.find(
+        (c: Array<{ method: string; timeoutMs?: number }>) =>
+          c[0].method === 'openhuman.learning_save_profile'
+      );
+      expect(saveCall![0].timeoutMs).toBeGreaterThan(30_000);
+      expect(saveCall![0].timeoutMs).toBeLessThanOrEqual(10 * 60 * 1_000);
+    });
+
+    it('swaps to the still-working copy after 30s while the pipeline is still pending', async () => {
+      vi.useFakeTimers();
+      let resolveGmail!: (v: unknown) => void;
+      callCoreRpc.mockImplementation(
+        () =>
+          new Promise(res => {
+            resolveGmail = res;
+          })
+      );
+
+      renderWithProviders(
+        <ContextGatheringStep connectedSources={['composio:gmail']} onNext={vi.fn()} />
+      );
+
+      // Initial copy — fast happy path.
+      expect(screen.getByTestId('context-gathering-title').textContent).toMatch(
+        /building your profile/i
+      );
+      expect(screen.queryByTestId('core-alive-indicator')).not.toBeInTheDocument();
+
+      // Cross the 30s threshold.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_500);
+      });
+
+      expect(screen.getByTestId('context-gathering-title').textContent).toMatch(/still working/i);
+      // Indicator appears so users see whether core is alive or unreachable.
+      expect(screen.getByTestId('core-alive-indicator')).toBeInTheDocument();
+
+      await act(async () => {
+        resolveGmail({ successful: true, data: { messages: [] } });
+      });
+    });
+
+    it('reports the core as alive when core.ping returns ok', async () => {
+      // Fake timers must be active before render so the 30s still-working
+      // setTimeout registers against the fake clock.
+      vi.useFakeTimers();
+      let resolveGmail!: (v: unknown) => void;
+      callCoreRpc.mockImplementation(
+        () =>
+          new Promise(res => {
+            resolveGmail = res;
+          })
+      );
+
+      renderWithProviders(
+        <ContextGatheringStep connectedSources={['composio:gmail']} onNext={vi.fn()} />
+      );
+
+      // Drive the still-working transition under fake timers, then flip
+      // back to real timers so waitFor can poll the React commit for the
+      // resolved indicator state (waitFor doesn't observe fake-time
+      // microtasks reliably).
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_500);
+      });
+      vi.useRealTimers();
+
+      const indicator = await screen.findByTestId('core-alive-indicator');
+      await waitFor(() => {
+        expect(indicator.getAttribute('data-alive-state')).toBe('alive');
+      });
+      expect(testCoreRpcConnection).toHaveBeenCalled();
+      expect(indicator.textContent ?? '').toMatch(/core is reachable/i);
+
+      await act(async () => {
+        resolveGmail({ successful: true, data: { messages: [] } });
+      });
+    });
+
+    it('treats HTTP 401 as alive (auth not ready yet, core is up)', async () => {
+      vi.useFakeTimers();
+      testCoreRpcConnection.mockResolvedValue({ ok: false, status: 401 } as Response);
+
+      let resolveGmail!: (v: unknown) => void;
+      callCoreRpc.mockImplementation(
+        () =>
+          new Promise(res => {
+            resolveGmail = res;
+          })
+      );
+
+      renderWithProviders(
+        <ContextGatheringStep connectedSources={['composio:gmail']} onNext={vi.fn()} />
+      );
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_500);
+      });
+      vi.useRealTimers();
+
+      const indicator = await screen.findByTestId('core-alive-indicator');
+      await waitFor(() => {
+        expect(indicator.getAttribute('data-alive-state')).toBe('alive');
+      });
+
+      await act(async () => {
+        resolveGmail({ successful: true, data: { messages: [] } });
+      });
+    });
+
+    it('passes an AbortSignal so a TCP black-hole probe cannot hang forever', async () => {
+      vi.useFakeTimers();
+      // Hang the probe indefinitely so the only way it can resolve is via
+      // the controller-driven abort path. Capture whether the signal was
+      // forwarded.
+      testCoreRpcConnection.mockImplementation(
+        ((_url: string, _token?: string, init?: { signal?: AbortSignal }) =>
+          new Promise<Response>((_, reject) => {
+            init?.signal?.addEventListener('abort', () =>
+              reject(new DOMException('aborted', 'AbortError'))
+            );
+          })) as never
+      );
+
+      let resolveGmail!: (v: unknown) => void;
+      callCoreRpc.mockImplementation(
+        () =>
+          new Promise(res => {
+            resolveGmail = res;
+          })
+      );
+
+      renderWithProviders(
+        <ContextGatheringStep connectedSources={['composio:gmail']} onNext={vi.fn()} />
+      );
+
+      // Enter still-working state.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_500);
+      });
+      // Drive the per-probe 3s timeout to fire the abort.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3_500);
+      });
+      vi.useRealTimers();
+
+      expect(testCoreRpcConnection).toHaveBeenCalled();
+      const lastCall = testCoreRpcConnection.mock.calls[
+        testCoreRpcConnection.mock.calls.length - 1
+      ] as unknown as [string, string | undefined, { signal?: AbortSignal } | undefined];
+      expect(lastCall[2]?.signal).toBeInstanceOf(AbortSignal);
+
+      const indicator = await screen.findByTestId('core-alive-indicator');
+      await waitFor(() => {
+        expect(indicator.getAttribute('data-alive-state')).toBe('unreachable');
+      });
+
+      await act(async () => {
+        resolveGmail({ successful: true, data: { messages: [] } });
+      });
+    });
+
+    it('reports unreachable when core.ping rejects', async () => {
+      vi.useFakeTimers();
+      testCoreRpcConnection.mockRejectedValue(new Error('ECONNREFUSED'));
+
+      let resolveGmail!: (v: unknown) => void;
+      callCoreRpc.mockImplementation(
+        () =>
+          new Promise(res => {
+            resolveGmail = res;
+          })
+      );
+
+      renderWithProviders(
+        <ContextGatheringStep connectedSources={['composio:gmail']} onNext={vi.fn()} />
+      );
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_500);
+      });
+      vi.useRealTimers();
+
+      const indicator = await screen.findByTestId('core-alive-indicator');
+      await waitFor(() => {
+        expect(indicator.getAttribute('data-alive-state')).toBe('unreachable');
+      });
+      expect(indicator.textContent ?? '').toMatch(/core is not responding/i);
+
+      await act(async () => {
+        resolveGmail({ successful: true, data: { messages: [] } });
+      });
+    });
   });
 });

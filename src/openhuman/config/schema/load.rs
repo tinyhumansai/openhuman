@@ -1290,6 +1290,48 @@ impl Config {
             }
         }
 
+        // SearXNG self-hosted search. Unlike Seltz, this needs no API key;
+        // keep it opt-in because it reaches a user-controlled HTTP endpoint.
+        if let Some(flag) = env.get_any(&["OPENHUMAN_SEARXNG_ENABLED", "SEARXNG_ENABLED"]) {
+            if let Some(enabled) = parse_env_bool("OPENHUMAN_SEARXNG_ENABLED", &flag) {
+                self.searxng.enabled = enabled;
+            }
+        }
+        if let Some(url) = env.get_any(&["OPENHUMAN_SEARXNG_BASE_URL", "SEARXNG_BASE_URL"]) {
+            let url = url.trim();
+            if !url.is_empty() {
+                self.searxng.base_url = url.to_string();
+            }
+        }
+        if let Some(max) = env.get_any(&["OPENHUMAN_SEARXNG_MAX_RESULTS", "SEARXNG_MAX_RESULTS"]) {
+            if let Ok(n) = max.parse::<usize>() {
+                if (1..=50).contains(&n) {
+                    self.searxng.max_results = n;
+                }
+            }
+        }
+        if let Some(language) = env.get_any(&[
+            "OPENHUMAN_SEARXNG_DEFAULT_LANGUAGE",
+            "SEARXNG_DEFAULT_LANGUAGE",
+        ]) {
+            let language = language.trim();
+            if !language.is_empty() {
+                self.searxng.default_language = language.to_string();
+            }
+        }
+        if let Some(timeout_secs) = env.get_any(&[
+            "OPENHUMAN_SEARXNG_TIMEOUT_SECS",
+            "OPENHUMAN_SEARXNG_TIMEOUT_SECONDS",
+            "SEARXNG_TIMEOUT_SECS",
+            "SEARXNG_TIMEOUT_SECONDS",
+        ]) {
+            if let Ok(timeout_secs) = timeout_secs.parse::<u64>() {
+                if timeout_secs > 0 {
+                    self.searxng.timeout_secs = timeout_secs;
+                }
+            }
+        }
+
         // `OPENHUMAN_WEB_SEARCH_ENABLED` is intentionally ignored —
         // web search is unconditionally registered in the tool set.
         // Only the result/timeout budget knobs remain environment-configurable.

@@ -1493,8 +1493,15 @@ const en: TranslationMap = {
   'onboarding.contextGathering.buildingDesc': 'Gathering context from your connected accounts…',
   'onboarding.contextGathering.buildingProfile': 'Building your profile...',
   'onboarding.contextGathering.continueToChat': 'Continue to chat',
+  'onboarding.contextGathering.coreAlive': 'Core is reachable — first launch can take a minute.',
+  'onboarding.contextGathering.coreAliveProbing': 'Checking core connection…',
+  'onboarding.contextGathering.coreUnreachable':
+    'Core is not responding. You can continue and try again later.',
   'onboarding.contextGathering.errorDesc':
     "Your chat is ready. We'll keep building your full profile in the background, so you can continue now and refine it over time.",
+  'onboarding.contextGathering.stillWorkingDesc':
+    'First launch can take 30–60 seconds while we warm up your local model and tools. You can continue to chat at any time — profile build keeps running in the background.',
+  'onboarding.contextGathering.stillWorkingTitle': 'Still working on your profile…',
   'onboarding.contextGathering.title': 'Context Gathering',
   'openhuman.team_list_teams': 'Team list teams',
   'overlay.ariaAttention': 'Attention message',

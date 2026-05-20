@@ -398,6 +398,7 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 | 11.1.3 | Analyze Trigger            | WD    | `app/test/e2e/specs/insights-dashboard.spec.ts` mounts the route (this PR); explicit analyze-handler invocation TBD | 🟡     | Route mounts and search/filter UI assert — full analyze trigger flow tracked as follow-up |
 | 11.1.4 | MCP stdio server           | RU    | `src/openhuman/mcp_server/`                                                                                         | ✅     | Read-only initialize/tools/list/tools/call plus stdio framing; binary smoke in PR validation |
 | 11.1.5 | Global tool registry       | RI    | `src/openhuman/tool_registry/`, `tests/json_rpc_e2e.rs`                                                             | ✅     | Read-only MCP/controller discovery with routes, schemas, version, allowed agents, and health |
+| 11.1.6 | SearXNG MCP search         | RU    | `src/openhuman/integrations/searxng.rs`, `src/openhuman/mcp_server/tools.rs`, `src/openhuman/tools/schemas.rs`      | ✅     | Self-hosted search config, normalized results, MCP argument validation, and mocked HTTP execution |
 
 ### 11.2 Insights Dashboard
 

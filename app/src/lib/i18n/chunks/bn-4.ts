@@ -152,7 +152,14 @@ const bn4: TranslationMap = {
   'onboarding.contextGathering.buildingProfile': 'আপনার প্রোফাইল তৈরি হচ্ছে...',
   'onboarding.contextGathering.continueToChat': 'চ্যাটে চালিয়ে যান',
   'onboarding.contextGathering.errorDesc':
-    'আমরা এই মুহূর্তে আপনার সম্পূর্ণ প্রোফাইল তৈরি করতে পারিনি, কিন্তু সমস্যা নেই — আপনি চালিয়ে যেতে পারেন, আপনার প্রোফাইল সময়ের সাথে তৈরি হতে থাকবে।',
+    'আমরা এখনই আপনার পূর্ণ প্রোফাইল তৈরি করতে পারিনি, কিন্তু সমস্যা নেই — আপনি চালিয়ে যেতে পারেন এবং আপনার প্রোফাইল সময়ের সাথে তৈরি হবে।',
+  'onboarding.contextGathering.coreAlive': 'কোর সংযোগযোগ্য — প্রথম লঞ্চ এক মিনিট সময় নিতে পারে।',
+  'onboarding.contextGathering.coreAliveProbing': 'কোর সংযোগ যাচাই করা হচ্ছে…',
+  'onboarding.contextGathering.coreUnreachable':
+    'কোর সাড়া দিচ্ছে না। আপনি চালিয়ে যেতে পারেন এবং পরে আবার চেষ্টা করতে পারেন।',
+  'onboarding.contextGathering.stillWorkingDesc':
+    'আমরা আপনার লোকাল মডেল এবং টুলস প্রস্তুত করছি, প্রথম লঞ্চ ৩০–৬০ সেকেন্ড সময় নিতে পারে। আপনি যেকোনো সময় চ্যাটে যেতে পারেন — প্রোফাইল তৈরি ব্যাকগ্রাউন্ডে চলতে থাকবে।',
+  'onboarding.contextGathering.stillWorkingTitle': 'এখনও আপনার প্রোফাইলে কাজ চলছে…',
   'onboarding.contextGathering.title': 'কন্টেক্সট সংগ্রহ',
   'openhuman.team_list_teams': 'টিম তালিকা',
   'overlay.ariaAttention': 'মনোযোগের বার্তা',

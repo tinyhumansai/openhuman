@@ -176,6 +176,9 @@ pub struct Config {
     pub seltz: SeltzConfig,
 
     #[serde(default)]
+    pub searxng: SearxngConfig,
+
+    #[serde(default)]
     pub web_search: WebSearchConfig,
 
     #[serde(default)]
@@ -549,6 +552,7 @@ impl Default for Config {
             mcp_client: McpClientConfig::default(),
             multimodal: MultimodalConfig::default(),
             seltz: SeltzConfig::default(),
+            searxng: SearxngConfig::default(),
             web_search: WebSearchConfig::default(),
             proxy: ProxyConfig::default(),
             cost: CostConfig::default(),

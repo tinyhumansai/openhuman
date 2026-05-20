@@ -250,6 +250,56 @@ fn apply_env_overrides_web_search_max_results_and_timeout_clamped() {
 }
 
 #[test]
+fn apply_env_overrides_searxng_config() {
+    let _g = env_lock();
+    clear_env(&[
+        "OPENHUMAN_SEARXNG_ENABLED",
+        "SEARXNG_ENABLED",
+        "OPENHUMAN_SEARXNG_BASE_URL",
+        "SEARXNG_BASE_URL",
+        "OPENHUMAN_SEARXNG_MAX_RESULTS",
+        "SEARXNG_MAX_RESULTS",
+        "OPENHUMAN_SEARXNG_DEFAULT_LANGUAGE",
+        "SEARXNG_DEFAULT_LANGUAGE",
+        "OPENHUMAN_SEARXNG_TIMEOUT_SECS",
+        "OPENHUMAN_SEARXNG_TIMEOUT_SECONDS",
+        "SEARXNG_TIMEOUT_SECS",
+        "SEARXNG_TIMEOUT_SECONDS",
+    ]);
+
+    let mut cfg = Config::default();
+    unsafe {
+        std::env::set_var("OPENHUMAN_SEARXNG_ENABLED", "yes");
+        std::env::set_var("OPENHUMAN_SEARXNG_BASE_URL", "http://127.0.0.1:8081");
+        std::env::set_var("OPENHUMAN_SEARXNG_MAX_RESULTS", "25");
+        std::env::set_var("OPENHUMAN_SEARXNG_DEFAULT_LANGUAGE", "zh-CN");
+        std::env::set_var("OPENHUMAN_SEARXNG_TIMEOUT_SECONDS", "12");
+    }
+
+    cfg.apply_env_overrides();
+
+    assert!(cfg.searxng.enabled);
+    assert_eq!(cfg.searxng.base_url, "http://127.0.0.1:8081");
+    assert_eq!(cfg.searxng.max_results, 25);
+    assert_eq!(cfg.searxng.default_language, "zh-CN");
+    assert_eq!(cfg.searxng.timeout_secs, 12);
+    clear_env(&[
+        "OPENHUMAN_SEARXNG_ENABLED",
+        "OPENHUMAN_SEARXNG_BASE_URL",
+        "OPENHUMAN_SEARXNG_MAX_RESULTS",
+        "OPENHUMAN_SEARXNG_DEFAULT_LANGUAGE",
+        "OPENHUMAN_SEARXNG_TIMEOUT_SECONDS",
+    ]);
+}
+
+#[test]
+fn searxng_timeout_seconds_alias_deserializes() {
+    let cfg: crate::openhuman::config::SearxngConfig =
+        toml::from_str(r#"timeout_seconds = 7"#).expect("deserialize searxng config");
+    assert_eq!(cfg.timeout_secs, 7);
+}
+
+#[test]
 fn apply_env_overrides_picks_up_sentry_dsn() {
     let _g = env_lock();
     clear_env(&["OPENHUMAN_CORE_SENTRY_DSN", "OPENHUMAN_SENTRY_DSN"]);
@@ -562,6 +612,40 @@ fn env_overlay_web_search_limits_validated() {
     // Bare aliases also accepted when the OPENHUMAN-prefixed variant is absent.
     cfg.apply_env_overlay_with(&HashMapEnv::new().with("WEB_SEARCH_MAX_RESULTS", "4"));
     assert_eq!(cfg.web_search.max_results, 4);
+}
+
+#[test]
+fn env_overlay_searxng_config_validated() {
+    let mut cfg = Config::default();
+
+    cfg.apply_env_overlay_with(
+        &HashMapEnv::new()
+            .with("OPENHUMAN_SEARXNG_ENABLED", "true")
+            .with("OPENHUMAN_SEARXNG_BASE_URL", "http://127.0.0.1:8888")
+            .with("OPENHUMAN_SEARXNG_MAX_RESULTS", "40")
+            .with("OPENHUMAN_SEARXNG_DEFAULT_LANGUAGE", "fr")
+            .with("OPENHUMAN_SEARXNG_TIMEOUT_SECS", "9"),
+    );
+
+    assert!(cfg.searxng.enabled);
+    assert_eq!(cfg.searxng.base_url, "http://127.0.0.1:8888");
+    assert_eq!(cfg.searxng.max_results, 40);
+    assert_eq!(cfg.searxng.default_language, "fr");
+    assert_eq!(cfg.searxng.timeout_secs, 9);
+
+    cfg.apply_env_overlay_with(
+        &HashMapEnv::new()
+            .with("OPENHUMAN_SEARXNG_ENABLED", "no")
+            .with("OPENHUMAN_SEARXNG_MAX_RESULTS", "0")
+            .with("OPENHUMAN_SEARXNG_TIMEOUT_SECS", "0"),
+    );
+
+    assert!(!cfg.searxng.enabled);
+    assert_eq!(cfg.searxng.max_results, 40);
+    assert_eq!(cfg.searxng.timeout_secs, 9);
+
+    cfg.apply_env_overlay_with(&HashMapEnv::new().with("SEARXNG_TIMEOUT_SECONDS", "11"));
+    assert_eq!(cfg.searxng.timeout_secs, 11);
 }
 
 #[test]

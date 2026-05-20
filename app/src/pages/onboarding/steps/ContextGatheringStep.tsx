@@ -15,8 +15,29 @@
 import { useEffect, useRef, useState } from 'react';
 
 import { useT } from '../../../lib/i18n/I18nContext';
-import { callCoreRpc } from '../../../services/coreRpcClient';
+import { callCoreRpc, getCoreRpcUrl, testCoreRpcConnection } from '../../../services/coreRpcClient';
 import OnboardingNextButton from '../components/OnboardingNextButton';
+
+/**
+ * Threshold after which the building-profile UI swaps to the "still working"
+ * staged copy (#2156). Real first-launch completions on slow M-series Macs
+ * can take 30–40s, so users would otherwise see what looks like a stall at
+ * the global RPC timeout boundary.
+ */
+const STILL_WORKING_THRESHOLD_MS = 30_000;
+
+/** How often we probe `core.ping` after entering the still-working state. */
+const ALIVE_PROBE_INTERVAL_MS = 5_000;
+
+/**
+ * Per-probe network budget. `testCoreRpcConnection` uses raw `fetch()` with
+ * no built-in timeout, so we have to bound the probe ourselves — otherwise a
+ * TCP black-hole (firewall drop, suspended laptop wake) lets the first probe
+ * hang forever and the single-flight guard blocks every subsequent tick.
+ */
+const PROBE_TIMEOUT_MS = 3_000;
+
+type AliveState = 'unknown' | 'probing' | 'alive' | 'unreachable';
 
 interface ContextGatheringStepProps {
   connectedSources: string[];
@@ -138,10 +159,20 @@ async function findLinkedInUrlViaComposio(): Promise<string | null> {
   return null;
 }
 
+/**
+ * First-launch profile compression on slow hardware (#2156) can run past the
+ * global 30s RPC timeout while the core LLM compressor finishes. Use a
+ * longer-but-still-bounded budget so users with a slow-but-alive core are
+ * not parked on the post-login fallback when the call would otherwise
+ * succeed. Real failures still abort within `SAVE_PROFILE_TIMEOUT_MS`.
+ */
+const SAVE_PROFILE_TIMEOUT_MS = 90_000;
+
 async function saveProfile(markdown: string): Promise<void> {
   await callCoreRpc<unknown>({
     method: 'openhuman.learning_save_profile',
     params: { markdown, summarize: true },
+    timeoutMs: SAVE_PROFILE_TIMEOUT_MS,
   });
 }
 
@@ -158,6 +189,10 @@ const ContextGatheringStep = ({
   );
   const [finished, setFinished] = useState(false);
   const [hasError, setHasError] = useState(false);
+  // Staged "still working" mode kicks in after STILL_WORKING_THRESHOLD_MS so
+  // a slow-but-alive first launch no longer looks like a stall (#2156).
+  const [stillWorking, setStillWorking] = useState(false);
+  const [aliveState, setAliveState] = useState<AliveState>('unknown');
   const backgroundClickedRef = useRef(false);
   const ranRef = useRef(false);
 
@@ -271,6 +306,66 @@ const ContextGatheringStep = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Staged "still working" trigger (#2156). After STILL_WORKING_THRESHOLD_MS
+  // of pipeline runtime, swap to the calmer copy and start probing
+  // `core.ping` so we can tell users whether the core is slow-but-alive vs
+  // truly unreachable. Cleared on finish/error so completed runs never flip
+  // to the slow-path UI retroactively.
+  useEffect(() => {
+    if (finished || !hasGmail || hasError) return;
+    const timer = window.setTimeout(() => {
+      setStillWorking(true);
+    }, STILL_WORKING_THRESHOLD_MS);
+    return () => window.clearTimeout(timer);
+  }, [finished, hasGmail, hasError]);
+
+  // Periodic alive probe while in still-working state. `core.ping` resolves
+  // quickly even when the busy snapshot RPC is holding the worker, so a
+  // green ping during a slow snapshot is exactly the alive-but-slow signal
+  // users need to see. On cold start the bearer token may not be resolved
+  // yet (IPC race) and the probe will come back 401 — that means auth is
+  // still warming up, not that the core is down, so we treat 401 as `alive`.
+  useEffect(() => {
+    if (!stillWorking || finished || hasError) return;
+    let cancelled = false;
+    // Single-flight guard so a slow probe never gets shadowed by the next
+    // 5s tick. Each probe also bounds itself with its own AbortController
+    // (PROBE_TIMEOUT_MS) so a TCP-black-hole core (firewall, suspended
+    // laptop) cannot leave us with a permanently in-flight fetch and a
+    // permanently blocked guard — that would re-create exactly the
+    // "Checking core connection…" forever failure mode this UI exists to
+    // fix.
+    let inFlight = false;
+
+    const probe = async () => {
+      if (cancelled || inFlight) return;
+      inFlight = true;
+      setAliveState(prev => (prev === 'unknown' ? 'probing' : prev));
+      const controller = new AbortController();
+      const timer = window.setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
+      try {
+        const url = await getCoreRpcUrl();
+        const response = await testCoreRpcConnection(url, undefined, { signal: controller.signal });
+        if (!cancelled) {
+          // 401 = auth not ready yet (cold-start IPC race), not a dead core.
+          setAliveState(response.ok || response.status === 401 ? 'alive' : 'unreachable');
+        }
+      } catch {
+        if (!cancelled) setAliveState('unreachable');
+      } finally {
+        window.clearTimeout(timer);
+        inFlight = false;
+      }
+    };
+
+    void probe();
+    const interval = window.setInterval(probe, ALIVE_PROBE_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [stillWorking, finished, hasError]);
+
   // Auto-navigate on successful completion (skip if user already clicked background link)
   useEffect(() => {
     if (finished && !hasError && !backgroundClickedRef.current) {
@@ -305,6 +400,24 @@ const ContextGatheringStep = ({
     );
   }
 
+  // The slow-path UI must vanish as soon as the pipeline resolves, even
+  // during the 800ms auto-advance window — otherwise a slow-success user
+  // sees "still working…" copy after the work has actually finished.
+  const showStillWorking = stillWorking && !finished && !hasError;
+  const titleKey = showStillWorking
+    ? 'onboarding.contextGathering.stillWorkingTitle'
+    : 'onboarding.contextGathering.buildingProfile';
+  const descKey = showStillWorking
+    ? 'onboarding.contextGathering.stillWorkingDesc'
+    : 'onboarding.contextGathering.buildingDesc';
+
+  const aliveLabelKey: Record<AliveState, string> = {
+    unknown: 'onboarding.contextGathering.coreAliveProbing',
+    probing: 'onboarding.contextGathering.coreAliveProbing',
+    alive: 'onboarding.contextGathering.coreAlive',
+    unreachable: 'onboarding.contextGathering.coreUnreachable',
+  };
+
   return (
     <div className="rounded-2xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-8 shadow-soft animate-fade-up">
       <div className="flex flex-col items-center justify-center gap-6 py-8">
@@ -312,11 +425,15 @@ const ContextGatheringStep = ({
         <div className="w-20 h-20 rounded-full bg-gradient-to-r from-stone-300 via-stone-100 to-stone-300 bg-[length:200%_100%] animate-shimmer" />
 
         {/* Title */}
-        <h1 className="text-xl font-bold text-stone-900 dark:text-neutral-100 animate-pulse">
-          {t('onboarding.contextGathering.buildingProfile')}
+        <h1
+          className="text-xl font-bold text-stone-900 dark:text-neutral-100 animate-pulse"
+          data-testid="context-gathering-title">
+          {t(titleKey)}
         </h1>
-        <p className="text-sm text-stone-500 dark:text-neutral-400 leading-relaxed">
-          {t('onboarding.contextGathering.buildingDesc')}
+        <p
+          className="text-sm text-stone-500 dark:text-neutral-400 leading-relaxed text-center max-w-sm"
+          data-testid="context-gathering-desc">
+          {t(descKey)}
         </p>
 
         {/* Skeleton bars */}
@@ -325,6 +442,28 @@ const ContextGatheringStep = ({
           <div className="h-3 w-3/4 rounded-full bg-gradient-to-r from-stone-300 via-stone-100 to-stone-300 bg-[length:200%_100%] animate-shimmer [animation-delay:150ms]" />
           <div className="h-3 w-1/2 rounded-full bg-gradient-to-r from-stone-300 via-stone-100 to-stone-300 bg-[length:200%_100%] animate-shimmer [animation-delay:300ms]" />
         </div>
+
+        {/* Alive indicator — only while still-working state is active AND
+            the pipeline hasn't finished/errored. Avoids flashing the probe
+            during the 800ms auto-advance window after a slow success. */}
+        {showStillWorking && (
+          <div
+            className="flex items-center gap-2 text-xs text-stone-500 dark:text-neutral-400"
+            data-testid="core-alive-indicator"
+            data-alive-state={aliveState}>
+            <span
+              className={`inline-block h-2 w-2 rounded-full ${
+                aliveState === 'alive'
+                  ? 'bg-emerald-500'
+                  : aliveState === 'unreachable'
+                    ? 'bg-red-500'
+                    : 'bg-stone-300 dark:bg-neutral-600 animate-pulse'
+              }`}
+              aria-hidden="true"
+            />
+            <span>{t(aliveLabelKey[aliveState])}</span>
+          </div>
+        )}
 
         {hasGmail && !finished && (
           <OnboardingNextButton

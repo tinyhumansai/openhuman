@@ -153,6 +153,14 @@ const hi4: TranslationMap = {
   'onboarding.contextGathering.continueToChat': 'चैट पर जाएं',
   'onboarding.contextGathering.errorDesc':
     'हम अभी आपकी पूरी प्रोफ़ाइल नहीं बना सके, लेकिन कोई बात नहीं — आप जारी रख सकते हैं और आपकी प्रोफ़ाइल समय के साथ बनती जाएगी।',
+  'onboarding.contextGathering.coreAlive':
+    'कोर पहुँच योग्य है — पहली बार लॉन्च करने में एक मिनट लग सकता है।',
+  'onboarding.contextGathering.coreAliveProbing': 'कोर कनेक्शन की जाँच की जा रही है…',
+  'onboarding.contextGathering.coreUnreachable':
+    'कोर प्रतिक्रिया नहीं दे रहा है। आप जारी रख सकते हैं और बाद में पुनः प्रयास कर सकते हैं।',
+  'onboarding.contextGathering.stillWorkingDesc':
+    'हम आपके स्थानीय मॉडल और टूल्स को तैयार कर रहे हैं, पहली बार लॉन्च करने में 30–60 सेकंड लग सकते हैं। आप कभी भी चैट पर जा सकते हैं — प्रोफ़ाइल पृष्ठभूमि में बनती रहेगी।',
+  'onboarding.contextGathering.stillWorkingTitle': 'आपकी प्रोफ़ाइल पर अब भी काम चल रहा है…',
   'onboarding.contextGathering.title': 'कॉन्टेक्स्ट गैदरिंग',
   'openhuman.team_list_teams': 'टीम सूची टीमें',
   'overlay.ariaAttention': 'ध्यान संदेश',
