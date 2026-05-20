@@ -114,7 +114,7 @@ Why these matter:
 - `build-essential` / `base-devel`, `cmake`, `pkg-config` / `pkgconf`: native builds used by transitive Rust dependencies.
 - `clang`, `libclang-dev`: bindgen / C and C++ compilation paths used by native crates.
 - `libssl-dev` / `openssl`: OpenSSL headers needed by some networking dependencies.
-- `libasound2-dev` / `alsa-lib`, `libxi-dev` / `libxi`, `libxtst-dev` / `libxtst`, `libxdo-dev` / `xdotool`, `libudev-dev` / `libevdev`: required by audio/input/device crates pulled into the core build.
+- `libasound2-dev` / `alsa-lib`, `libxi-dev` / `libxi`, `libxtst-dev` / `libxtst`, `libxdo-dev` / `xdotool`, `libudev-dev` (included in Arch `systemd-libs`), `libevdev`: required by audio/input/device crates pulled into the core build.
 
 ### `whisper-rs` + `clang` note
 

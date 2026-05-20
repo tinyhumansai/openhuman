@@ -35,7 +35,7 @@ rustup component add rustfmt clippy --toolchain 1.93.0
 Arch Linux quick start:
 
 ```bash
-sudo pacman -S --needed nodejs npm rustup cmake base-devel clang \
+sudo pacman -S --needed nodejs npm rustup cmake base-devel clang openssl \
   alsa-lib xdotool libxtst libxi libevdev gtk3 webkit2gtk-4.1 \
   libayatana-appindicator librsvg patchelf nss nspr at-spi2-core \
   libcups libdrm libxkbcommon libxcomposite libxdamage libxfixes \
