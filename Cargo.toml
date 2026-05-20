@@ -57,6 +57,7 @@ rand = "0.10"
 dirs = "5"
 sha2 = "0.10"
 hmac = "0.12"
+rsa = { version = "0.9", features = ["pem", "sha2"] }
 # Archive extraction for the Node.js runtime bootstrap. Unix Node
 # distributions ship as .tar.xz, Windows as .zip. `xz2` with `static`
 # bundles liblzma so we don't need it as a system dependency.

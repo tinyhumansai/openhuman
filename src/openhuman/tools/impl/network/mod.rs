@@ -4,6 +4,7 @@ mod curl;
 mod gitbooks;
 mod gmail_unsubscribe;
 mod http_request;
+mod kalshi_auth;
 mod mcp;
 mod polymarket;
 mod polymarket_orders;
