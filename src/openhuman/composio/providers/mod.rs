@@ -45,6 +45,7 @@ pub mod catalogs_google;
 pub mod catalogs_messaging;
 pub mod catalogs_productivity;
 pub mod catalogs_social_media;
+pub mod clickup;
 pub mod github;
 pub mod gmail;
 pub mod notion;
