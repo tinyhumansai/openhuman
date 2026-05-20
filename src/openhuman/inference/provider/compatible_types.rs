@@ -28,7 +28,7 @@ pub(crate) struct Message {
     pub(crate) content: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub(crate) struct NativeChatRequest {
     pub(crate) model: String,
     pub(crate) messages: Vec<NativeMessage>,
@@ -63,12 +63,12 @@ pub(crate) struct NativeChatRequest {
 /// OpenAI-spec `stream_options` payload (sent on the wire). Distinct from
 /// `crate::openhuman::inference::provider::traits::StreamOptions`, which is the
 /// caller-side knob set on `ChatRequest` to toggle agent streaming.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub(crate) struct OpenAiStreamOptions {
     pub(crate) include_usage: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub(crate) struct NativeMessage {
     pub(crate) role: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -206,7 +206,7 @@ impl ResponseMessage {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub(crate) struct ToolCall {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) id: Option<String>,
@@ -215,7 +215,7 @@ pub(crate) struct ToolCall {
     pub(crate) function: Option<Function>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub(crate) struct Function {
     pub(crate) name: Option<String>,
     pub(crate) arguments: Option<serde_json::Value>,

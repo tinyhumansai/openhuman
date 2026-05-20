@@ -343,6 +343,7 @@ pub fn spawn_web_channel_bridge(io: SocketIo) {
     let io_notify = io.clone();
     let io_transcription = io.clone();
     let io_auth = io.clone();
+    let io_companion = io.clone();
 
     // 2. Dictation hotkey events → broadcast to all connected clients.
     tokio::spawn(async move {
@@ -517,6 +518,38 @@ pub fn spawn_web_channel_bridge(io: SocketIo) {
             let _ = io_transcription.emit("dictation:transcription", &payload);
         }
         log::debug!("[socketio] transcription bridge stopped");
+    });
+
+    // 7. Companion state change events → broadcast to all clients so the
+    //    overlay and settings panel can react to session lifecycle and
+    //    state transitions (Idle → Listening → Thinking → Speaking → …).
+    tokio::spawn(async move {
+        let mut rx = crate::openhuman::desktop_companion::bus::subscribe_state_changed();
+        loop {
+            let event = match rx.recv().await {
+                Ok(event) => event,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                    log::warn!(
+                        "[socketio] dropped {} companion state_changed events due to lag",
+                        skipped
+                    );
+                    continue;
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            };
+
+            if let Ok(payload) = serde_json::to_value(&event) {
+                log::debug!(
+                    "[socketio] broadcast companion:state_changed session={} {} -> {}",
+                    event.session_id,
+                    event.previous_state,
+                    event.state,
+                );
+                let _ = io_companion.emit("companion:state_changed", &payload);
+                let _ = io_companion.emit("companion_state_changed", &payload);
+            }
+        }
+        log::debug!("[socketio] companion state bridge stopped");
     });
 }
 

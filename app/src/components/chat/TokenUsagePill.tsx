@@ -45,14 +45,12 @@ function severityFromPct(pct: number): PillSeverity {
 const TokenUsagePill = () => {
   const { t } = useT();
   const sessionTokens = useAppSelector(state => state.chatRuntime.sessionTokenUsage);
-  const { usagePct10h, usagePct7d, isAtLimit, isNearLimit, currentTier, teamUsage } =
-    useUsageState();
+  const { usagePct, isAtLimit, isNearLimit, currentTier, teamUsage } = useUsageState();
 
   const totalTokens = sessionTokens.inputTokens + sessionTokens.outputTokens;
   const showSessionCounter = totalTokens > 0;
 
-  const planPct = Math.max(usagePct10h, usagePct7d);
-  const planSeverity = severityFromPct(planPct);
+  const planSeverity = severityFromPct(usagePct);
   const showPlanPill = teamUsage !== null;
 
   const planTitle = (() => {

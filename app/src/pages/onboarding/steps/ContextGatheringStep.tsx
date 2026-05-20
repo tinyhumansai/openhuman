@@ -291,13 +291,15 @@ const ContextGatheringStep = ({
           <h1 className="text-xl font-bold text-stone-900 dark:text-neutral-100">
             {t('onboarding.contextGathering.title')}
           </h1>
-          <p className="text-sm text-stone-600 dark:text-neutral-300 text-center max-w-xs leading-relaxed">
-            {t('onboarding.contextGathering.errorDesc')}
-          </p>
-          <OnboardingNextButton
-            label={t('onboarding.contextGathering.continueToChat')}
-            onClick={continueToChat}
-          />
+          <div className="w-full max-w-sm rounded-xl border border-primary-100 bg-primary-50/80 p-4 dark:border-primary-900/50 dark:bg-primary-950/30">
+            <p className="text-sm text-stone-700 dark:text-neutral-200 text-center leading-relaxed mb-4">
+              {t('onboarding.contextGathering.errorDesc')}
+            </p>
+            <OnboardingNextButton
+              label={t('onboarding.contextGathering.continueToChat')}
+              onClick={continueToChat}
+            />
+          </div>
         </div>
       </div>
     );

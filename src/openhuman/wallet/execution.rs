@@ -1010,6 +1010,12 @@ mod tests {
 
     #[test]
     fn quote_store_round_trips_and_expires() {
+        // Must hold TEST_LOCK before clobbering the process-wide quote store,
+        // otherwise this races the async execute_prepared_* tests that store
+        // a quote and then await — `reset_quote_store_for_tests()` here can
+        // wipe their quote between store + await, surfacing as
+        // "quote 'q_retry' not found" in CI (intermittent).
+        let _guard = TEST_LOCK.lock();
         reset_quote_store_for_tests();
         let now = now_ms();
         let mut q = PreparedTransaction {

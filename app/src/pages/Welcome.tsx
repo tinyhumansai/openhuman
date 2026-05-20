@@ -13,6 +13,8 @@ import { useDeepLinkAuthState } from '../store/deepLinkAuthState';
 import { useAppDispatch } from '../store/hooks';
 import { clearAllAppData } from '../utils/clearAllAppData';
 import { clearStoredCoreMode, clearStoredCoreToken, storeRpcUrl } from '../utils/configPersistence';
+import { PRIVACY_POLICY_URL, TERMS_OF_USE_URL } from '../utils/links';
+import { openUrl } from '../utils/openUrl';
 
 const log = createDebug('app:welcome');
 
@@ -128,6 +130,33 @@ const Welcome = () => {
                     />
                   ))}
               </div>
+              <p className="mt-5 text-center text-[11px] leading-5 text-stone-500 dark:text-neutral-500">
+                By continuing, you agree to the{' '}
+                <a
+                  href={TERMS_OF_USE_URL}
+                  target="_blank"
+                  rel="noreferrer"
+                  onClick={event => {
+                    event.preventDefault();
+                    void openUrl(TERMS_OF_USE_URL);
+                  }}
+                  className="font-medium text-stone-700 underline underline-offset-2 hover:text-stone-900 dark:text-neutral-300 dark:hover:text-neutral-100">
+                  Terms
+                </a>{' '}
+                and{' '}
+                <a
+                  href={PRIVACY_POLICY_URL}
+                  target="_blank"
+                  rel="noreferrer"
+                  onClick={event => {
+                    event.preventDefault();
+                    void openUrl(PRIVACY_POLICY_URL);
+                  }}
+                  className="font-medium text-stone-700 underline underline-offset-2 hover:text-stone-900 dark:text-neutral-300 dark:hover:text-neutral-100">
+                  Privacy Policy
+                </a>
+                .
+              </p>
             </>
           )}
         </div>

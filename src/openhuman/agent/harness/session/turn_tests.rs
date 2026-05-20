@@ -3,12 +3,14 @@ use crate::core::event_bus::{global, init_global, DomainEvent};
 use crate::openhuman::agent::dispatcher::XmlToolDispatcher;
 use crate::openhuman::agent::hooks::{PostTurnHook, TurnContext};
 use crate::openhuman::agent::memory_loader::MemoryLoader;
+use crate::openhuman::agent::tool_policy::{ToolPolicy, ToolPolicyDecision, ToolPolicyRequest};
 use crate::openhuman::inference::provider::{ChatRequest, ChatResponse, Provider};
 use crate::openhuman::memory::Memory;
 use crate::openhuman::tools::Tool;
 use crate::openhuman::tools::ToolResult;
 use async_trait::async_trait;
 use std::collections::HashSet;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::sync::Mutex as AsyncMutex;
 use tokio::sync::Notify;
@@ -103,6 +105,47 @@ impl Tool for EchoTool {
 
     async fn execute(&self, _args: serde_json::Value) -> Result<ToolResult> {
         Ok(ToolResult::success("echo-output"))
+    }
+}
+
+struct CountingTool {
+    calls: Arc<AtomicUsize>,
+}
+
+#[async_trait]
+impl Tool for CountingTool {
+    fn name(&self) -> &str {
+        "counting"
+    }
+
+    fn description(&self) -> &str {
+        "counting"
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({"type":"object"})
+    }
+
+    async fn execute(&self, _args: serde_json::Value) -> Result<ToolResult> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        Ok(ToolResult::success("counting-output"))
+    }
+}
+
+struct DenyCountingPolicy;
+
+#[async_trait]
+impl ToolPolicy for DenyCountingPolicy {
+    fn name(&self) -> &str {
+        "deny_counting"
+    }
+
+    async fn check(&self, request: &ToolPolicyRequest) -> ToolPolicyDecision {
+        assert_eq!(request.tool_name, "counting");
+        assert_eq!(request.session_id, "turn-test-session");
+        assert_eq!(request.channel, "turn-test-channel");
+        assert_eq!(request.agent_definition_id, "main");
+        ToolPolicyDecision::deny("locked by test policy")
     }
 }
 
@@ -289,6 +332,34 @@ async fn transcript_roundtrip_work() {
 }
 
 #[tokio::test]
+async fn transcript_resume_is_bounded_by_max_history_messages() {
+    let mut writer = make_agent(None);
+    let mut messages = vec![ChatMessage::system("sys")];
+    for idx in 0..8 {
+        messages.push(ChatMessage::user(format!("u{idx}")));
+        messages.push(ChatMessage::assistant(format!("a{idx}")));
+    }
+    writer.persist_session_transcript(&messages, 0, 0, 0, 0.0, None);
+
+    let mut resumed = make_agent(None);
+    resumed.workspace_dir = writer.workspace_dir.clone();
+    resumed.agent_definition_name = writer.agent_definition_name.clone();
+    resumed.config.max_history_messages = 5;
+    resumed.try_load_session_transcript();
+
+    let cached = resumed
+        .cached_transcript_messages
+        .as_ref()
+        .expect("resume cache should be populated");
+    assert_eq!(cached.len(), 5);
+    assert_eq!(cached[0].role, "system");
+    assert_eq!(cached[1].content, "u6");
+    assert_eq!(cached[2].content, "a6");
+    assert_eq!(cached[3].content, "u7");
+    assert_eq!(cached[4].content, "a7");
+}
+
+#[tokio::test]
 async fn execute_tool_call_blocks_invisible_tool_and_emits_events() {
     let _ = init_global(64);
     let events = Arc::new(AsyncMutex::new(Vec::<DomainEvent>::new()));
@@ -347,6 +418,46 @@ async fn execute_tool_call_reports_unknown_tool() {
     assert!(!result.success);
     assert!(result.output.contains("Unknown tool: missing"));
     assert_eq!(record.name, "missing");
+    assert!(!record.success);
+}
+
+#[tokio::test]
+async fn execute_tool_call_denies_by_policy_before_tool_runs() {
+    let workspace = tempfile::TempDir::new().expect("temp workspace");
+    let workspace_path = workspace.path().to_path_buf();
+    std::mem::forget(workspace);
+    let memory_cfg = crate::openhuman::config::MemoryConfig {
+        backend: "none".into(),
+        ..crate::openhuman::config::MemoryConfig::default()
+    };
+    let mem: Arc<dyn Memory> =
+        Arc::from(crate::openhuman::memory::create_memory(&memory_cfg, &workspace_path).unwrap());
+    let calls = Arc::new(AtomicUsize::new(0));
+
+    let agent = Agent::builder()
+        .provider(Box::new(DummyProvider))
+        .tools(vec![Box::new(CountingTool {
+            calls: Arc::clone(&calls),
+        })])
+        .memory(mem)
+        .tool_dispatcher(Box::new(XmlToolDispatcher))
+        .workspace_dir(workspace_path)
+        .event_context("turn-test-session", "turn-test-channel")
+        .tool_policy(Arc::new(DenyCountingPolicy))
+        .build()
+        .unwrap();
+    let call = ParsedToolCall {
+        name: "counting".into(),
+        arguments: serde_json::json!({ "value": 1 }),
+        tool_call_id: Some("policy-1".into()),
+    };
+
+    let (result, record) = agent.execute_tool_call(&call, 0).await;
+    assert!(!result.success);
+    assert!(result.output.contains("denied by policy 'deny_counting'"));
+    assert!(result.output.contains("locked by test policy"));
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    assert_eq!(record.name, "counting");
     assert!(!record.success);
 }
 
@@ -543,4 +654,176 @@ async fn execute_tool_call_applies_inline_result_budget() {
     assert!(result.success);
     assert!(result.output.contains("truncated by tool_result_budget"));
     assert!(record.output_summary.starts_with("long: ok ("));
+}
+
+// ── Explicit-preferences narrow path ──────────────────────────────────────────
+//
+// These tests verify that `fetch_learned_context` correctly handles the three
+// flag combinations:
+//  1. both flags off   → empty context
+//  2. explicit_preferences_enabled=true, learning_enabled=false
+//     → only pinned user_profile entries returned, no inference data
+//  3. learning_enabled=true  → full path (existing tests cover this; we only
+//     verify that explicit entries are included as well)
+//
+// We use the real `UnifiedMemory` backend (sqlite) so the list/store round-trip
+// is exercised end-to-end without mocking the memory layer.
+
+fn make_agent_with_memory(
+    memory: Arc<dyn Memory>,
+    workspace_dir: std::path::PathBuf,
+    learning_enabled: bool,
+    explicit_preferences_enabled: bool,
+) -> Agent {
+    Agent::builder()
+        .provider(Box::new(DummyProvider))
+        .tools(vec![])
+        .memory(memory)
+        .tool_dispatcher(Box::new(XmlToolDispatcher))
+        .workspace_dir(workspace_dir)
+        .event_context("pref-test-session", "pref-test-channel")
+        .learning_enabled(learning_enabled)
+        .explicit_preferences_enabled(explicit_preferences_enabled)
+        .build()
+        .unwrap()
+}
+
+fn make_real_memory(workspace: &std::path::Path) -> Arc<dyn Memory> {
+    use crate::openhuman::embeddings::NoopEmbedding;
+    use crate::openhuman::memory::UnifiedMemory;
+    Arc::new(UnifiedMemory::new(workspace, Arc::new(NoopEmbedding), None).unwrap())
+}
+
+#[tokio::test]
+async fn fetch_learned_context_returns_empty_when_both_flags_off() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let mem = make_real_memory(tmp.path());
+
+    // Store a pinned preference so we can verify it is NOT returned.
+    mem.store(
+        "user_profile",
+        "pinned/tooling/package_manager",
+        "[pinned] (class=tooling) package_manager: pnpm",
+        crate::openhuman::memory::MemoryCategory::Core,
+        None,
+    )
+    .await
+    .unwrap();
+
+    let agent = make_agent_with_memory(
+        mem,
+        tmp.path().to_path_buf(),
+        false, // learning_enabled
+        false, // explicit_preferences_enabled
+    );
+
+    let learned = agent.fetch_learned_context().await;
+
+    assert!(
+        learned.user_profile.is_empty(),
+        "both flags off: user_profile must be empty, got {:?}",
+        learned.user_profile
+    );
+    assert!(learned.observations.is_empty());
+    assert!(learned.patterns.is_empty());
+    assert!(learned.reflections.is_empty());
+}
+
+#[tokio::test]
+async fn fetch_learned_context_returns_pinned_prefs_when_explicit_flag_on_learning_off() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let mem = make_real_memory(tmp.path());
+
+    // Store two pinned preferences via the same key format RememberPreferenceTool uses.
+    mem.store(
+        "user_profile",
+        "pinned/tooling/package_manager",
+        "[pinned] (class=tooling) package_manager: pnpm",
+        crate::openhuman::memory::MemoryCategory::Core,
+        None,
+    )
+    .await
+    .unwrap();
+    mem.store(
+        "user_profile",
+        "pinned/style/verbosity",
+        "[pinned] (class=style) verbosity: terse",
+        crate::openhuman::memory::MemoryCategory::Core,
+        None,
+    )
+    .await
+    .unwrap();
+
+    let agent = make_agent_with_memory(
+        mem,
+        tmp.path().to_path_buf(),
+        false, // learning_enabled — full inference stack OFF
+        true,  // explicit_preferences_enabled — narrow path ON
+    );
+
+    let learned = agent.fetch_learned_context().await;
+
+    assert_eq!(
+        learned.user_profile.len(),
+        2,
+        "explicit flag on, learning off: expected 2 pinned preferences, got: {:?}",
+        learned.user_profile
+    );
+    assert!(
+        learned
+            .user_profile
+            .iter()
+            .any(|s| s.contains("package_manager")),
+        "package_manager preference must appear in user_profile: {:?}",
+        learned.user_profile
+    );
+    assert!(
+        learned.user_profile.iter().any(|s| s.contains("verbosity")),
+        "verbosity preference must appear in user_profile: {:?}",
+        learned.user_profile
+    );
+    // Inference-derived data must remain empty — the stack was NOT engaged.
+    assert!(
+        learned.observations.is_empty(),
+        "observations must be empty when learning_enabled=false"
+    );
+    assert!(
+        learned.patterns.is_empty(),
+        "patterns must be empty when learning_enabled=false"
+    );
+    assert!(
+        learned.reflections.is_empty(),
+        "reflections must be empty when learning_enabled=false"
+    );
+}
+
+#[tokio::test]
+async fn fetch_learned_context_explicit_flag_off_learning_off_returns_empty_even_with_stored_prefs()
+{
+    let tmp = tempfile::TempDir::new().unwrap();
+    let mem = make_real_memory(tmp.path());
+
+    mem.store(
+        "user_profile",
+        "pinned/style/tone",
+        "[pinned] (class=style) tone: formal",
+        crate::openhuman::memory::MemoryCategory::Core,
+        None,
+    )
+    .await
+    .unwrap();
+
+    let agent = make_agent_with_memory(
+        mem,
+        tmp.path().to_path_buf(),
+        false, // learning_enabled
+        false, // explicit_preferences_enabled — both off
+    );
+
+    let learned = agent.fetch_learned_context().await;
+    assert!(
+        learned.user_profile.is_empty(),
+        "both flags off: user_profile must be empty even when prefs exist, got: {:?}",
+        learned.user_profile
+    );
 }

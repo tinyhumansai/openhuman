@@ -374,6 +374,45 @@ const ar1: TranslationMap = {
   'settings.about.releasesDesc': 'تصفح ملاحظات الإصدار والإصدارات السابقة على GitHub.',
   'settings.about.openReleases': 'فتح إصدارات GitHub',
   'settings.ai.overview': 'نظرة عامة على نظام الذكاء الاصطناعي',
+  'migration.title': 'استيراد من مساعد آخر',
+  'migration.description':
+    'انقل الذاكرة والملاحظات من مساعد محلي آخر إلى مساحة العمل هذه. ابدأ بـ«معاينة» لرؤية ما سيتغير، ثم اضغط «تطبيق» لنسخ البيانات. يتم نسخ ذاكرتك الحالية احتياطيًا أولًا.',
+  'migration.vendorLabel': 'المصدر',
+  'migration.sourceLabel': 'مسار مساحة العمل المصدر (اختياري)',
+  'migration.sourcePlaceholder': 'اتركه فارغًا للاكتشاف التلقائي (مثال: ~/.openclaw/workspace)',
+  'migration.sourceHint':
+    'يستخدم الموقع الافتراضي للمصدر عند تركه فارغًا. حدد مسارًا صريحًا إذا نقلت مساحة العمل إلى مكان آخر.',
+  'migration.previewAction': 'معاينة',
+  'migration.previewRunning': 'جاري المعاينة…',
+  'migration.applyAction': 'تطبيق الاستيراد',
+  'migration.applyRunning': 'جاري الاستيراد…',
+  'migration.applyDisclaimer':
+    'يُفتح التطبيق فقط بعد معاينة ناجحة لنفس المصدر. يتم نسخ الذاكرة الحالية احتياطيًا قبل أي استيراد.',
+  'migration.reportTitlePreview': 'معاينة — لم يُستورد شيء بعد',
+  'migration.reportTitleApplied': 'اكتمل الاستيراد',
+  'migration.report.source': 'مساحة العمل المصدر',
+  'migration.report.target': 'مساحة العمل الهدف',
+  'migration.report.fromSqlite': 'من SQLite (brain.db)',
+  'migration.report.fromMarkdown': 'من Markdown',
+  'migration.report.imported': 'مُستورد',
+  'migration.report.skippedUnchanged': 'تم تخطّيه (دون تغيير)',
+  'migration.report.renamedConflicts': 'تمت إعادة التسمية عند التعارض',
+  'migration.report.warnings': 'تحذيرات',
+  'migration.report.previewHint': 'لم تُستورد أي بيانات بعد. اضغط «تطبيق الاستيراد» للنسخ.',
+  'migration.report.appliedHint':
+    'العناصر المستوردة أصبحت الآن في ذاكرتك. أعد تشغيل «المعاينة» للمقارنة مرة أخرى.',
+  'migration.hermesComingSoonPrefix': 'مستورد Hermes ضمن خارطة الطريق — راجع ',
+  'migration.hermesComingSoonSuffix': ' للسياق. استخدم OpenClaw للترحيل اليوم؛ سيصل Hermes لاحقًا.',
+  'migration.hermesLinkText': '#1440',
+  'migration.confirmImport.singular':
+    'استيراد {count} عنصر إلى مساحة العمل الحالية؟\n\nالمصدر: {source}\nالهدف: {target}\n\nسيتم نسخ الذاكرة الحالية احتياطيًا قبل بدء الاستيراد.',
+  'migration.confirmImport.plural':
+    'استيراد {count} عنصر إلى مساحة العمل الحالية؟\n\nالمصدر: {source}\nالهدف: {target}\n\nسيتم نسخ الذاكرة الحالية احتياطيًا قبل بدء الاستيراد.',
+  // Settings menu: Appearance + Mascot (#2225) — English stubs; native translations welcome
+  'settings.appearance': 'Appearance',
+  'settings.appearanceDesc': 'Pick light, dark, or match your system theme',
+  'settings.mascot': 'Mascot',
+  'settings.mascotDesc': 'Pick the mascot color used across the app',
 };
 
 export default ar1;

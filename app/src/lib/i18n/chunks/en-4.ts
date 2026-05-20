@@ -143,12 +143,18 @@ const en4: TranslationMap = {
   'onboarding.contextGathering.buildingProfile': 'Building your profile...',
   'onboarding.contextGathering.continueToChat': 'Continue to chat',
   'onboarding.contextGathering.errorDesc':
-    "We couldn't build your full profile right now, but that's okay — you can continue and your profile will build over time.",
+    "Your chat is ready. We'll keep building your full profile in the background, so you can continue now and refine it over time.",
   'onboarding.contextGathering.title': 'Context Gathering',
   'openhuman.team_list_teams': 'Team list teams',
   'overlay.ariaAttention': 'Attention message',
+  'overlay.ariaCompanion': 'Companion active',
   'overlay.ariaOrb': 'OpenHuman overlay',
   'overlay.ariaVoiceActive': 'Voice input active',
+  'overlay.companion.error': 'Error',
+  'overlay.companion.listening': 'Listening…',
+  'overlay.companion.pointing': 'Pointing…',
+  'overlay.companion.speaking': 'Speaking…',
+  'overlay.companion.thinking': 'Thinking…',
   'overlay.orbTitle': 'Drag to move · Double-click to reset position',
   'pages.settings.account.connections': 'Connections',
   'pages.settings.account.connectionsDesc': 'Review and manage linked account connections',
@@ -159,6 +165,9 @@ const en4: TranslationMap = {
     'Manage your BIP39 recovery phrase for encryption and wallet access',
   'pages.settings.account.team': 'Team',
   'pages.settings.account.teamDesc': 'Manage your team, members, and invites',
+  'pages.settings.account.migration': 'Import from another assistant',
+  'pages.settings.account.migrationDesc':
+    'Migrate memory and notes from OpenClaw (or, soon, Hermes) into this workspace.',
   'pages.settings.accountSection.description':
     'Recovery phrase, team, connections, and privacy settings.',
   'pages.settings.accountSection.title': 'Account',
@@ -169,6 +178,9 @@ const en4: TranslationMap = {
   'pages.settings.aiSection.description':
     'Language model providers, local Ollama, and voice (STT / TTS).',
   'pages.settings.aiSection.title': 'AI',
+  'pages.settings.features.desktopCompanion': 'Desktop Companion',
+  'pages.settings.features.desktopCompanionDesc':
+    'Voice assistant with screen awareness — listens, sees, speaks, points',
   'pages.settings.features.messagingChannels': 'Messaging channels',
   'pages.settings.features.messagingChannelsDesc': 'Messaging channels desc',
   'pages.settings.features.notifications': 'Notifications',

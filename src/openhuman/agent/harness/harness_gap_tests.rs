@@ -11,9 +11,11 @@
 //!    fallback formats).
 //! 6. `DateTimeSection` produces an ISO-8601-like timestamp with a timezone token.
 //! 7. `parse_tool_timeout_secs` default and boundary cases.
+//! 8. Spawn-depth gate (`SpawnDepthExceeded`) is covered in
+//!    `subagent_runner/ops_tests.rs` because it lives at the `run_subagent`
+//!    boundary.
 //!
 //! Items that have NO underlying code and therefore cannot be tested:
-//! - Spawn-depth gate (SpawnDepthExceeded) — no depth counter or variant exists.
 //! - Follow-up resolution ("yes"/"no" disambiguation) — not implemented.
 //! - Silence timer (SilenceTimeout, 600 s) — not implemented.
 //! - `<invoke tool=…>` XML attribute form — the parser does not parse attributes;

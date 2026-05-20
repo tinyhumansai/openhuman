@@ -774,7 +774,90 @@ impl SecurityPolicy {
             }
         }
 
+        // Symlink-safe check (#1927). The string-level checks above can be
+        // bypassed by creating a symlink inside the workspace that points to
+        // a forbidden tree (e.g. `evil -> /etc/shadow`). Canonicalize the
+        // path and re-validate `workspace_only` containment + forbidden_paths
+        // against the resolved location.
+        if let Some(canonical) = self.try_canonicalize_under_workspace(path) {
+            let workspace_root = self
+                .workspace_dir
+                .canonicalize()
+                .unwrap_or_else(|_| self.workspace_dir.clone());
+            if self.workspace_only && !canonical.starts_with(&workspace_root) {
+                log::trace!(
+                    "[security:policy] path blocked: symlink escapes workspace (requested={}, resolved={}, workspace={})",
+                    path,
+                    canonical.display(),
+                    workspace_root.display()
+                );
+                return false;
+            }
+            // If the resolved path stays inside the workspace, trust the
+            // workspace boundary over forbidden_paths — otherwise a workspace
+            // that lives under e.g. `/tmp` (common in tests and sandboxes)
+            // would block every legitimate access. forbidden_paths is meant
+            // to catch escapes *outside* the workspace, which the workspace
+            // containment check above already validates.
+            let inside_workspace = canonical.starts_with(&workspace_root);
+            if !inside_workspace {
+                for forbidden in &self.forbidden_paths {
+                    let forbidden_expanded = if let Some(stripped) = forbidden.strip_prefix("~/") {
+                        std::env::var("HOME")
+                            .ok()
+                            .map(|h| PathBuf::from(h).join(stripped))
+                            .unwrap_or_else(|| PathBuf::from(forbidden))
+                    } else {
+                        PathBuf::from(forbidden)
+                    };
+                    let forbidden_canonical = forbidden_expanded
+                        .canonicalize()
+                        .unwrap_or(forbidden_expanded);
+                    if canonical.starts_with(&forbidden_canonical) {
+                        log::trace!(
+                        "[security:policy] path blocked: symlink resolves to forbidden tree (requested={}, resolved={}, forbidden={})",
+                        path,
+                        canonical.display(),
+                        forbidden_canonical.display()
+                    );
+                        return false;
+                    }
+                }
+            }
+        }
+
         true
+    }
+
+    /// Resolve a user-supplied path under the workspace, canonicalizing it
+    /// (or its parent) when present on disk. Used by [`Self::is_path_allowed`]
+    /// to defend against symlink-based escapes that pass the string-level
+    /// checks. Returns `None` only when neither the path nor its parent can
+    /// be resolved on disk — in that case the caller falls back to the
+    /// string-level checks alone (which is the safe default for fresh paths
+    /// whose entire chain does not yet exist).
+    fn try_canonicalize_under_workspace(&self, path: &str) -> Option<PathBuf> {
+        let expanded = if let Some(stripped) = path.strip_prefix("~/") {
+            std::env::var("HOME")
+                .ok()
+                .map(|h| PathBuf::from(h).join(stripped))?
+        } else {
+            PathBuf::from(path)
+        };
+        let absolute = if expanded.is_absolute() {
+            expanded
+        } else {
+            self.workspace_dir.join(&expanded)
+        };
+        if let Ok(canonical) = absolute.canonicalize() {
+            return Some(canonical);
+        }
+        // Path itself does not exist (e.g. a write-to-new-file call). Try
+        // canonicalizing the parent + appending the basename so we still
+        // catch parent chains that resolve via symlink to a forbidden tree.
+        let parent = absolute.parent()?;
+        let name = absolute.file_name()?;
+        parent.canonicalize().ok().map(|p| p.join(name))
     }
 
     /// Validate that a resolved path is still inside the workspace.

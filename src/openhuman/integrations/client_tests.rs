@@ -376,3 +376,37 @@ async fn jira_generic_400_classifies_as_backend_user_error() {
         "Jira generic 400 must classify as BackendUserError; got: {msg}"
     );
 }
+
+// ── Unit: `sanitize_backend_url` (issue #2075) ────────────────────
+
+#[test]
+fn sanitize_backend_url_strips_inference_path() {
+    // Regression: a misconfigured `BACKEND_URL` baked into the build
+    // (`https://api.tinyhumans.ai/openai/v1/chat/completions`) used to
+    // become every integration call's prefix, producing 404s such as
+    // `…/openai/v1/chat/completions/agent-integrations/composio/connections`.
+    let cleaned = sanitize_backend_url("https://api.tinyhumans.ai/openai/v1/chat/completions");
+    assert_eq!(cleaned, "https://api.tinyhumans.ai");
+}
+
+#[test]
+fn sanitize_backend_url_idempotent_on_clean_root() {
+    let cleaned = sanitize_backend_url("https://api.tinyhumans.ai");
+    assert_eq!(cleaned, "https://api.tinyhumans.ai");
+}
+
+#[test]
+fn sanitize_backend_url_preserves_empty_input() {
+    // Empty / unparseable input must round-trip unchanged so we don't
+    // overwrite a caller's explicit "no backend" sentinel.
+    assert_eq!(sanitize_backend_url(""), "");
+}
+
+#[test]
+fn integration_client_new_strips_inference_path_from_backend_url() {
+    let client = IntegrationClient::new(
+        "https://api.tinyhumans.ai/openai/v1/chat/completions".to_string(),
+        "token".to_string(),
+    );
+    assert_eq!(client.backend_url, "https://api.tinyhumans.ai");
+}

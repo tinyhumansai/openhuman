@@ -142,12 +142,18 @@ const ar4: TranslationMap = {
   'onboarding.contextGathering.buildingProfile': 'جارٍ بناء ملفك الشخصي...',
   'onboarding.contextGathering.continueToChat': 'المتابعة إلى المحادثة',
   'onboarding.contextGathering.errorDesc':
-    'تعذّر إنشاء ملفك الكامل الآن، لكن لا بأس — يمكنك المتابعة وسيُبنى ملفك مع الوقت.',
+    'لم نتمكّن من بناء ملفك الشخصي بالكامل الآن، لكن لا بأس — يمكنك المتابعة وسيكتمل ملفك تدريجيًا مع مرور الوقت.',
   'onboarding.contextGathering.title': 'جمع السياق',
   'openhuman.team_list_teams': 'قائمة الفرق',
   'overlay.ariaAttention': 'رسالة انتباه',
+  'overlay.ariaCompanion': 'الرفيق نشط',
   'overlay.ariaOrb': 'تراكب OpenHuman',
   'overlay.ariaVoiceActive': 'إدخال الصوت نشط',
+  'overlay.companion.error': 'خطأ',
+  'overlay.companion.listening': 'يستمع…',
+  'overlay.companion.pointing': 'يشير…',
+  'overlay.companion.speaking': 'يتحدث…',
+  'overlay.companion.thinking': 'يفكر…',
   'overlay.orbTitle': 'اسحب للتحريك · انقر مرتين لإعادة الضبط',
   'pages.settings.account.connections': 'الاتصالات',
   'pages.settings.account.connectionsDesc': 'وصف الاتصالات',
@@ -166,6 +172,9 @@ const ar4: TranslationMap = {
   'pages.settings.ai.voiceDesc': 'وصف الصوت',
   'pages.settings.aiSection.description': 'مزودو نماذج اللغة وOllama المحلي والصوت (STT / TTS).',
   'pages.settings.aiSection.title': 'الذكاء الاصطناعي',
+  'pages.settings.features.desktopCompanion': 'الرفيق المكتبي',
+  'pages.settings.features.desktopCompanionDesc':
+    'مساعد صوتي يدرك الشاشة — يستمع ويرى ويتحدث ويشير',
   'pages.settings.features.messagingChannels': 'قنوات المراسلة',
   'pages.settings.features.messagingChannelsDesc': 'وصف قنوات المراسلة',
   'pages.settings.features.notifications': 'الإشعارات',
@@ -361,6 +370,9 @@ const ar4: TranslationMap = {
   'settings.billing.subscription.paymentConfirmed': 'تم تأكيد الدفع',
   'settings.billing.subscription.perMonth': 'في الشهر',
   'settings.billing.subscription.popular': 'شائع',
+  'pages.settings.account.migration': 'استيراد من مساعد آخر',
+  'pages.settings.account.migrationDesc':
+    'انقل الذاكرة والملاحظات من OpenClaw (وقريبًا Hermes) إلى مساحة العمل هذه.',
 };
 
 export default ar4;

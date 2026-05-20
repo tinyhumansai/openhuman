@@ -1,0 +1,46 @@
+---
+# Guards the app/src-tauri/vendor/tauri-cef submodule pin.
+#
+# Why this exists: the pin carries the Linux AppImage glibc-core / NSS
+# library exclusion fixes (#1996 "exclude glibc libraries", #2032
+# "exclude bundled NSS libs"). PR #2110 (a branding/icons change,
+# commit 983f2971) silently reverted the pin from e22ec719 back to
+# f75bc21f, re-bundling libm.so.6 and re-introducing the Ubuntu 24.x
+# launch crash (#2154 / #2088). This job fails loudly if the committed
+# gitlink no longer matches the SHA recorded in
+# .github/tauri-cef-expected-sha, so an accidental revert can't merge.
+#
+# Intentionally bumping tauri-cef? Update .github/tauri-cef-expected-sha
+# in the same PR and this guard passes.
+name: tauri-cef Pin Guard
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify-pin:
+    name: Verify tauri-cef submodule pin
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Assert tauri-cef pin matches expected SHA
+        run: |
+          set -euo pipefail
+          EXPECTED="$(tr -d '[:space:]' < .github/tauri-cef-expected-sha)"
+          ACTUAL="$(git ls-tree HEAD app/src-tauri/vendor/tauri-cef | awk '{print $3}')"
+          echo "expected=$EXPECTED"
+          echo "actual=$ACTUAL"
+          if [ "$EXPECTED" != "$ACTUAL" ]; then
+            echo "::error file=app/src-tauri/vendor/tauri-cef::tauri-cef pinned to $ACTUAL but .github/tauri-cef-expected-sha expects $EXPECTED"
+            echo "This pin carries the Linux AppImage glibc/NSS exclusion fixes (#1996, #2032, #2154/#2088)."
+            echo "A non-Linux PR (branding/icons #2110, commit 983f2971) silently reverted it once before."
+            echo "If you are INTENTIONALLY bumping tauri-cef, update .github/tauri-cef-expected-sha in the same PR."
+            exit 1
+          fi
+          echo "tauri-cef pin OK ($ACTUAL)"

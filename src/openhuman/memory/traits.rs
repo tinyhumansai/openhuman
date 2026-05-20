@@ -5,7 +5,10 @@
 //! types used for representing and organizing memories.
 
 use async_trait::async_trait;
+use parking_lot::Mutex;
+use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 /// Represents a single stored memory entry with associated metadata.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -151,6 +154,17 @@ pub trait Memory: Send + Sync {
 
     /// Performs a health check on the underlying storage system.
     async fn health_check(&self) -> bool;
+
+    /// Return the shared SQLite connection when the backend is `UnifiedMemory`.
+    ///
+    /// Used by subsystems (e.g. `ArchivistHook`) that need direct SQLite
+    /// access for FTS5 / segment writes without going through the async
+    /// `Memory` trait.
+    ///
+    /// Default: `None`. Only `UnifiedMemory` overrides this.
+    fn sqlite_conn(&self) -> Option<Arc<Mutex<Connection>>> {
+        None
+    }
 }
 
 #[cfg(test)]

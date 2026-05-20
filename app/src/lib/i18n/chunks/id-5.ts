@@ -165,6 +165,44 @@ const id5: TranslationMap = {
   'settings.localModel.status.triggering': 'Memicu...',
   'settings.localModel.status.unavailable': 'Tidak tersedia',
   'settings.localModel.status.working': 'Memproses...',
+  'settings.developerMenu.ai.title': 'Konfigurasi AI',
+  'settings.developerMenu.ai.desc':
+    'Penyedia cloud, model Ollama lokal, dan routing per beban kerja',
+  'settings.developerMenu.screenAwareness.title': 'Kesadaran Layar',
+  'settings.developerMenu.screenAwareness.desc':
+    'Izin tangkapan layar, kebijakan pemantauan, dan kontrol sesi',
+  'settings.developerMenu.messagingChannels.title': 'Kanal Pesan',
+  'settings.developerMenu.messagingChannels.desc':
+    'Atur mode autentikasi Telegram/Discord dan routing kanal default',
+  'settings.developerMenu.tools.title': 'Alat',
+  'settings.developerMenu.tools.desc':
+    'Aktifkan atau nonaktifkan kemampuan yang bisa digunakan OpenHuman atas nama Anda',
+  'settings.developerMenu.agentChat.title': 'Chat Agen',
+  'settings.developerMenu.agentChat.desc':
+    'Uji percakapan agen dengan override model dan temperatur',
+  'settings.developerMenu.cronJobs.title': 'Pekerjaan Cron',
+  'settings.developerMenu.cronJobs.desc': 'Lihat dan atur pekerjaan terjadwal untuk skill runtime',
+  'settings.developerMenu.localModelDebug.title': 'Debug Model Lokal',
+  'settings.developerMenu.localModelDebug.desc':
+    'Konfigurasi Ollama, unduhan aset, pengujian model, dan diagnostik',
+  'settings.developerMenu.webhooks.title': 'Webhook',
+  'settings.developerMenu.webhooks.desc':
+    'Periksa pendaftaran webhook runtime dan log permintaan yang tertangkap',
+  'settings.developerMenu.intelligence.title': 'Kecerdasan',
+  'settings.developerMenu.intelligence.desc':
+    'Ruang kerja memori, mesin bawah sadar, mimpi, dan pengaturan',
+  'settings.developerMenu.notificationRouting.title': 'Routing Notifikasi',
+  'settings.developerMenu.notificationRouting.desc':
+    'Penilaian kepentingan AI dan eskalasi orkestrator untuk peringatan integrasi',
+  'settings.developerMenu.composeioTriggers.title': 'Pemicu ComposeIO',
+  'settings.developerMenu.composeioTriggers.desc': 'Lihat riwayat pemicu ComposeIO dan arsip',
+  'settings.developerMenu.composioRouting.title': 'Routing Composio (Mode Langsung)',
+  'settings.developerMenu.composioRouting.desc':
+    'Gunakan kunci API Composio Anda sendiri dan rutekan panggilan langsung ke backend.composio.dev',
+  'settings.developerMenu.integrationTriggers.title': 'Pemicu Integrasi',
+  'settings.developerMenu.integrationTriggers.desc':
+    'Atur pengaturan triase AI untuk pemicu integrasi Composio',
+  'settings.appearance.menuDesc': 'Pilih terang, gelap, atau ikuti tema sistem',
   'settings.mascot.active': 'Aktif',
   'settings.mascot.characterDesc': 'Deskripsi karakter',
   'settings.mascot.characterHeading': 'Judul karakter',
@@ -172,6 +210,8 @@ const id5: TranslationMap = {
   'settings.mascot.colorHeading': 'Judul warna',
   'settings.mascot.loadingLibrary': 'Memuat perpustakaan OpenHuman...',
   'settings.mascot.localDefault': 'OpenHuman Lokal (default)',
+  'settings.mascot.menuTitle': 'Maskot',
+  'settings.mascot.menuDesc': 'Pilih warna maskot yang digunakan di seluruh aplikasi',
   'settings.mascot.noCharacters': 'Belum ada karakter OpenHuman yang tersedia',
   'settings.mascot.noColorVariants': 'Tidak ada varian warna',
   'settings.mascot.voice.current': 'saat ini',
@@ -420,6 +460,28 @@ const id5: TranslationMap = {
   'settings.localModel.status.ollamaDocs': 'Dokumentasi Ollama',
   'settings.localModel.status.thenRetry':
     'untuk instruksi pengaturan, lalu coba lagi setelah runtime Anda dapat dijangkau.',
+  'settings.appearance.title': 'Appearance',
+  'settings.appearance.themeHeading': 'Theme',
+  'settings.appearance.themeAria': 'Theme',
+  'settings.appearance.modeLight': 'Light',
+  'settings.appearance.modeLightDesc': 'Bright surfaces, dark text.',
+  'settings.appearance.modeDark': 'Dark',
+  'settings.appearance.modeDarkDesc': 'Dim surfaces, easier on the eyes after dusk.',
+  'settings.appearance.modeSystem': 'Match system',
+  'settings.appearance.modeSystemDesc': 'Follow your OS appearance setting.',
+  'settings.appearance.helperText':
+    'Dark mode switches the entire app — chat, settings, panels — to a dim palette. "Match system" follows your OS appearance and updates live.',
+  'settings.mascot.characterPreview': 'Preview',
+  'settings.mascot.characterStates': 'states',
+  'settings.mascot.characterVisemes': 'visemes',
+  'settings.mascot.colorAria': 'OpenHuman color',
+  'settings.mascot.colorBlack': 'Black',
+  'settings.mascot.colorBurgundy': 'Burgundy',
+  'settings.mascot.colorGreen': 'Green',
+  'settings.mascot.colorNavy': 'Navy',
+  'settings.mascot.colorYellow': 'Yellow',
+  'settings.mascot.libraryUnavailable': 'OpenHuman library unavailable',
+  'settings.mascot.title': 'OpenHuman',
 };
 
 export default id5;
