@@ -1,3 +1,4 @@
+use super::kalshi_auth::sign_kalshi_headers;
 use crate::openhuman::config::{KalshiConfig, KalshiCredentials};
 use crate::openhuman::security::SecurityPolicy;
 use crate::openhuman::tools::traits::{Tool, ToolCategory, ToolResult};
@@ -18,10 +19,10 @@ const MAX_ERROR_BODY_CHARS: usize = 240;
 
 pub struct KalshiTool {
     base_url: String,
+    signing_path_prefix: String,
     http: Client,
     security: Arc<SecurityPolicy>,
     timeout: Duration,
-    #[allow(dead_code)]
     credentials: Option<KalshiCredentials>,
 }
 
@@ -63,6 +64,20 @@ enum KalshiRequest {
         #[serde(default)]
         depth: Option<u64>,
     },
+    GetPositions,
+    GetBalance,
+    GetOpenOrders {
+        #[serde(default)]
+        limit: Option<u64>,
+        #[serde(default)]
+        cursor: Option<String>,
+    },
+    GetFills {
+        #[serde(default)]
+        limit: Option<u64>,
+        #[serde(default)]
+        cursor: Option<String>,
+    },
 }
 
 impl KalshiTool {
@@ -86,6 +101,7 @@ impl KalshiTool {
 
         Self {
             base_url: normalize_base_url(&config.base_url, "https://api.elections.kalshi.com/trade-api/v2"),
+            signing_path_prefix: signing_path_prefix(&config.base_url),
             http,
             security,
             timeout,
@@ -193,7 +209,64 @@ impl KalshiTool {
                     "data": data,
                 }))
             }
+            KalshiRequest::GetPositions => {
+                let data = self
+                    .get_signed_json("/portfolio/positions", &[])
+                    .await?;
+                Ok(json!({
+                    "action": "get_positions",
+                    "source": "kalshi",
+                    "data": data,
+                }))
+            }
+            KalshiRequest::GetBalance => {
+                let data = self.get_signed_json("/portfolio/balance", &[]).await?;
+                Ok(json!({
+                    "action": "get_balance",
+                    "source": "kalshi",
+                    "data": data,
+                }))
+            }
+            KalshiRequest::GetOpenOrders { limit, cursor } => {
+                let mut query = vec![("status".to_string(), "resting".to_string())];
+                push_optional_u64(&mut query, "limit", limit);
+                push_optional_string(&mut query, "cursor", non_empty(cursor.as_deref()));
+                let data = self
+                    .get_signed_json("/portfolio/orders", &query)
+                    .await?;
+                Ok(json!({
+                    "action": "get_open_orders",
+                    "source": "kalshi",
+                    "data": data,
+                }))
+            }
+            KalshiRequest::GetFills { limit, cursor } => {
+                let mut query = Vec::new();
+                push_optional_u64(&mut query, "limit", limit);
+                push_optional_string(&mut query, "cursor", non_empty(cursor.as_deref()));
+                let data = self.get_signed_json("/portfolio/fills", &query).await?;
+                Ok(json!({
+                    "action": "get_fills",
+                    "source": "kalshi",
+                    "data": data,
+                }))
+            }
         }
+    }
+
+    async fn get_signed_json(&self, path: &str, query: &[(String, String)]) -> Result<Value> {
+        let credentials = self.require_credentials()?;
+        ensure_https(&self.base_url)?;
+        let signed_path = format!("{}{}", self.signing_path_prefix, path);
+        let headers = sign_kalshi_headers(credentials, "GET", &signed_path, None)?;
+        self.get_json(path, query, Some(headers)).await
+    }
+
+    fn require_credentials(&self) -> Result<&KalshiCredentials> {
+        self.credentials
+            .as_ref()
+            .filter(|creds| creds.is_complete())
+            .ok_or_else(|| anyhow::anyhow!("Kalshi credentials are required for this action"))
     }
 
     async fn get_json(
@@ -328,7 +401,11 @@ impl Tool for KalshiTool {
                         "get_market",
                         "list_events",
                         "get_event",
-                        "get_orderbook"
+                        "get_orderbook",
+                        "get_positions",
+                        "get_balance",
+                        "get_open_orders",
+                        "get_fills"
                     ]
                 },
                 "ticker": {
@@ -370,6 +447,10 @@ impl Tool for KalshiTool {
                     "type": "integer",
                     "minimum": 1,
                     "description": "Orderbook depth for get_orderbook."
+                },
+                "credentials": {
+                    "type": "object",
+                    "description": "Configured in integrations.kalshi.credentials for authenticated portfolio reads/writes."
                 }
             },
             "required": ["action"]
@@ -415,6 +496,18 @@ fn normalize_base_url(raw: &str, fallback: &str) -> String {
     trimmed.trim_end_matches('/').to_string()
 }
 
+fn signing_path_prefix(raw_base_url: &str) -> String {
+    let normalized = normalize_base_url(raw_base_url, "https://api.elections.kalshi.com/trade-api/v2");
+    let Ok(parsed) = url::Url::parse(&normalized) else {
+        return String::new();
+    };
+    let path = parsed.path().trim_end_matches('/');
+    match path {
+        "" | "/" => String::new(),
+        other => other.to_string(),
+    }
+}
+
 fn non_empty(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|v| !v.is_empty())
 }
@@ -438,4 +531,20 @@ fn summarize_error_body(body: &str) -> String {
     } else {
         crate::openhuman::util::truncate_with_ellipsis(&compact, MAX_ERROR_BODY_CHARS)
     }
+}
+
+fn ensure_https(url: &str) -> Result<()> {
+    if url.starts_with("https://") {
+        return Ok(());
+    }
+    if url.starts_with("http://127.0.0.1")
+        || url.starts_with("http://[::1]")
+        || url.starts_with("http://localhost")
+    {
+        return Ok(());
+    }
+    anyhow::bail!(
+        "Refusing to transmit Kalshi credentials over non-HTTPS URL: \
+         URL scheme must be https (loopback http allowed for local mock)"
+    )
 }
