@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { normalizeRewardsSnapshot, rewardsApi } from '../rewardsApi';
+import { normalizeRewardsApiError, normalizeRewardsSnapshot, rewardsApi } from '../rewardsApi';
 
 vi.mock('../../apiClient', () => ({ apiClient: { get: vi.fn() } }));
 
@@ -116,6 +116,35 @@ describe('rewardsApi', () => {
 
     await expect(rewardsApi.getMyRewards()).rejects.toMatchObject({
       error: 'Rewards service unavailable',
+    });
+  });
+
+  it('normalizes /rewards/me timeouts into a recoverable message', async () => {
+    const { apiClient } = await import('../../apiClient');
+    vi.mocked(apiClient.get).mockRejectedValueOnce({
+      success: false,
+      error: 'Request timed out after 15s',
+    });
+
+    await expect(rewardsApi.getMyRewards()).rejects.toMatchObject({
+      success: false,
+      error: 'Rewards sync timed out. Check your connection and try again.',
+    });
+  });
+});
+
+describe('normalizeRewardsApiError', () => {
+  it('keeps useful backend errors intact', () => {
+    expect(normalizeRewardsApiError({ error: 'Rewards service unavailable' })).toEqual({
+      success: false,
+      error: 'Rewards service unavailable',
+    });
+  });
+
+  it('maps abort-style timeout errors to a stable retry message', () => {
+    expect(normalizeRewardsApiError(new DOMException('Aborted', 'AbortError'))).toEqual({
+      success: false,
+      error: 'Rewards sync timed out. Check your connection and try again.',
     });
   });
 });
