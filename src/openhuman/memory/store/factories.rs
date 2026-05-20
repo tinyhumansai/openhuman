@@ -457,12 +457,22 @@ fn create_memory_full(
 
 /// Create a memory instance specifically for migration purposes.
 ///
-/// NOTE: This is currently disabled for the unified namespace memory core.
+/// The unified namespace memory core has a single workspace-scoped
+/// store, so migration writes into the same `UnifiedMemory` instance the
+/// rest of the app reads from — there is no separate "migration
+/// backend". This helper delegates to [`create_memory`] so the
+/// migration importer (`migrate_openclaw_memory`) gets a real, writable
+/// memory handle and the Apply path can actually run end-to-end.
+///
+/// Prior to #1440 this function unconditionally bailed with "memory
+/// migration is disabled for the unified namespace memory core", which
+/// left the OpenClaw importer broken even though the rest of the
+/// pipeline (source discovery, dry-run report, backup) worked.
 pub fn create_memory_for_migration(
-    _backend: &str,
-    _workspace_dir: &Path,
+    config: &MemoryConfig,
+    workspace_dir: &Path,
 ) -> anyhow::Result<Box<dyn Memory>> {
-    anyhow::bail!("memory migration is disabled for the unified namespace memory core")
+    create_memory(config, workspace_dir)
 }
 
 #[cfg(test)]
@@ -619,16 +629,19 @@ mod tests {
     }
 
     #[test]
-    fn create_memory_for_migration_always_errors() {
+    fn create_memory_for_migration_returns_writable_memory_on_unified_core() {
+        // Regression for #1440: prior to that PR this factory unconditionally
+        // bailed with "memory migration is disabled for the unified namespace
+        // memory core", which broke the OpenClaw importer's Apply path even
+        // though the dry-run / preview path worked. Now it delegates to
+        // `create_memory` so the migration importer gets a real workspace-
+        // scoped memory handle. Box<dyn Memory> doesn't impl Debug, so we
+        // match instead of unwrap.
         let tmp = tempfile::tempdir().unwrap();
-        // Box<dyn Memory> doesn't impl Debug, so we can't use .unwrap_err().
-        // Use match instead.
-        match create_memory_for_migration("any", tmp.path()) {
-            Ok(_) => panic!("expected error"),
-            Err(e) => assert!(
-                e.to_string().contains("migration is disabled"),
-                "unexpected error: {e}"
-            ),
+        let cfg = MemoryConfig::default();
+        match create_memory_for_migration(&cfg, tmp.path()) {
+            Ok(_) => {}
+            Err(e) => panic!("expected Ok for unified namespace core, got: {e}"),
         }
     }
 

@@ -15,6 +15,7 @@
 pub mod device;
 pub mod http;
 pub mod local;
+pub mod model_context;
 pub mod model_ids;
 pub mod ops;
 pub mod parse;
@@ -36,6 +37,7 @@ pub use schemas::{
 pub use device::DeviceProfile;
 pub use local::all_local_ai_controller_schemas;
 pub use local::all_local_ai_registered_controllers;
+pub use model_context::context_window_for_model;
 pub use presets::{ModelPreset, ModelTier, VisionMode};
 pub use sentiment::SentimentResult;
 pub use types::{

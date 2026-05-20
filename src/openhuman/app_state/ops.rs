@@ -14,11 +14,13 @@ use serde_json::Value;
 use tempfile::NamedTempFile;
 
 use crate::api::config::effective_backend_api_url;
-use crate::api::jwt::{bearer_authorization_value, get_session_token};
+use crate::api::jwt::bearer_authorization_value;
 use crate::openhuman::autocomplete::AutocompleteStatus;
 use crate::openhuman::config::rpc as config_rpc;
 use crate::openhuman::config::Config;
-use crate::openhuman::credentials::session_support::build_session_state;
+use crate::openhuman::credentials::session_support::{
+    load_app_session_profile, session_state_from_profile, session_token_from_profile,
+};
 use crate::openhuman::inference::LocalAiStatus;
 use crate::openhuman::screen_intelligence::AccessibilityStatus;
 use crate::openhuman::service::{ServiceState, ServiceStatus};
@@ -446,8 +448,16 @@ async fn build_runtime_snapshot(config: &Config) -> RuntimeSnapshot {
 
 pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
     let config = config_rpc::load_config_with_timeout().await?;
-    let mut auth = build_session_state(&config)?;
-    let session_token = get_session_token(&config)?;
+    // Load the `app-session` auth profile exactly once and derive both
+    // the session-state view and the raw token from it. The previous
+    // implementation called `build_session_state` + `get_session_token`
+    // separately, which acquired the auth-profile file lock twice per
+    // snapshot. On Windows this doubled the surface area for the
+    // "Timed out waiting for auth profile lock" failure reported in
+    // Sentry against `openhuman.app_state_snapshot`.
+    let session_profile = load_app_session_profile(&config)?;
+    let mut auth = session_state_from_profile(session_profile.as_ref());
+    let session_token = session_token_from_profile(session_profile.as_ref());
     let stored_user = sanitize_snapshot_user(auth.user.clone());
     let current_user = if let Some(token) = session_token.clone().filter(|t| !t.trim().is_empty()) {
         match fetch_current_user_cached(&config, &token).await {

@@ -144,6 +144,64 @@ pub(crate) struct OllamaModelTag {
     pub modified_at: Option<String>,
 }
 
+/// Request body for Ollama `POST /api/show`.
+#[derive(Debug, Serialize)]
+pub(crate) struct OllamaShowRequest {
+    /// Model tag (e.g. `bge-m3:latest`). `model` is the current Ollama
+    /// field; older servers also accept the legacy `name`, which `model`
+    /// is forward-compatible with.
+    pub model: String,
+}
+
+/// Subset of Ollama `POST /api/show` we consume.
+///
+/// `model_info` is an open key/value map whose keys are architecture-scoped
+/// (e.g. `llama.context_length`, `bert.embedding_length`). The prefix is
+/// whatever `general.architecture` reports, so the context-length key is
+/// resolved dynamically rather than hard-coded per model family.
+#[derive(Debug, Default, Deserialize)]
+pub(crate) struct OllamaShowResponse {
+    #[serde(default)]
+    pub model_info: serde_json::Map<String, serde_json::Value>,
+    // Present in the Ollama API response; retained to document the wire shape, not yet consumed.
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub capabilities: Vec<String>,
+}
+
+impl OllamaShowResponse {
+    /// Native context window (tokens) advertised by the model's GGUF
+    /// metadata, or `None` when the server did not report it.
+    pub(crate) fn context_length(&self) -> Option<u64> {
+        context_length_from_model_info(&self.model_info)
+    }
+}
+
+/// Extract `<arch>.context_length` from an Ollama `model_info` map.
+///
+/// Resolution order:
+/// 1. `general.architecture` → `{arch}.context_length` (documented shape).
+/// 2. Fallback: the first key ending in `.context_length` — covers servers
+///    that omit `general.architecture` or use an unexpected prefix.
+pub(crate) fn context_length_from_model_info(
+    info: &serde_json::Map<String, serde_json::Value>,
+) -> Option<u64> {
+    fn as_u64(v: &serde_json::Value) -> Option<u64> {
+        v.as_u64()
+            .or_else(|| v.as_i64().filter(|n| *n >= 0).map(|n| n as u64))
+            .or_else(|| v.as_f64().filter(|n| *n >= 0.0).map(|n| n as u64))
+    }
+    if let Some(arch) = info.get("general.architecture").and_then(|v| v.as_str()) {
+        if let Some(value) = info.get(&format!("{arch}.context_length")).and_then(as_u64) {
+            return Some(value);
+        }
+    }
+    info.iter()
+        .filter(|(key, _)| key.ends_with(".context_length"))
+        .filter_map(|(_, value)| as_u64(value))
+        .max()
+}
+
 #[derive(Debug, Serialize)]
 pub(crate) struct OllamaGenerateRequest {
     pub model: String,
@@ -280,6 +338,74 @@ mod tests {
 
         assert_eq!(progress.aggregate_downloaded(), 80);
         assert_eq!(progress.aggregate_total(), Some(120));
+    }
+
+    // ── /api/show context-length extraction ──────────────────────────
+
+    fn show_response(json: serde_json::Value) -> OllamaShowResponse {
+        serde_json::from_value(json).expect("OllamaShowResponse")
+    }
+
+    #[test]
+    fn context_length_uses_general_architecture_prefix() {
+        let resp = show_response(serde_json::json!({
+            "model_info": {
+                "general.architecture": "bert",
+                "bert.context_length": 8192,
+                "bert.embedding_length": 1024
+            }
+        }));
+        assert_eq!(resp.context_length(), Some(8192));
+    }
+
+    #[test]
+    fn context_length_falls_back_when_architecture_missing() {
+        let resp = show_response(serde_json::json!({
+            "model_info": { "llama.context_length": 4096 }
+        }));
+        assert_eq!(resp.context_length(), Some(4096));
+    }
+
+    #[test]
+    fn context_length_handles_float_and_string_encodings() {
+        // Some servers serialize the metadata number as a float.
+        let float = show_response(serde_json::json!({
+            "model_info": { "general.architecture": "qwen2", "qwen2.context_length": 32768.0 }
+        }));
+        assert_eq!(float.context_length(), Some(32768));
+
+        // Non-numeric / missing → None (caller treats as Unknown, not a hard fail).
+        let missing = show_response(serde_json::json!({ "model_info": {} }));
+        assert_eq!(missing.context_length(), None);
+        let absent_field = show_response(serde_json::json!({}));
+        assert_eq!(absent_field.context_length(), None);
+    }
+
+    #[test]
+    fn context_length_prefers_architecture_key_over_unrelated_match() {
+        let resp = show_response(serde_json::json!({
+            "model_info": {
+                "general.architecture": "llama",
+                "llama.context_length": 8192,
+                "clip.context_length": 77
+            }
+        }));
+        assert_eq!(resp.context_length(), Some(8192));
+    }
+
+    #[test]
+    fn context_length_fallback_returns_max_not_first() {
+        // Without `general.architecture`, the fallback must pick the *largest*
+        // `.context_length` value, not the first one encountered. Multimodal
+        // models can carry a low secondary value (e.g. `clip.context_length:77`)
+        // which, if chosen first, would incorrectly mark the model below minimum.
+        let resp = show_response(serde_json::json!({
+            "model_info": {
+                "clip.context_length": 77,
+                "llama.context_length": 32768
+            }
+        }));
+        assert_eq!(resp.context_length(), Some(32768));
     }
 
     // ── ollama_base_url env-override behaviour ───────────────────────

@@ -46,6 +46,15 @@ const id4: TranslationMap = {
   'composio.connect.subdomainInvalid':
     'Masukkan hanya subdomain pendek (mis. "acme"), bukan URL lengkap. Hanya boleh berisi huruf, angka, dan tanda hubung.',
   'composio.connect.subdomainRequired': 'Masukkan subdomain Atlassian Anda untuk melanjutkan.',
+  'composio.connect.dynamicsOrgNameLabel': 'Nama Organisasi Dynamics 365',
+  'composio.connect.dynamicsOrgNameHint':
+    'Misalnya, "myorg" untuk myorg.crm.dynamics.com. Masukkan nama organisasi pendek saja, bukan URL lengkap.',
+  'composio.connect.needsFieldsPrefix': 'Untuk menghubungkan',
+  'composio.connect.needsFieldsSuffix':
+    'kami memerlukan informasi tambahan. Isi bidang yang hilang di bawah dan coba lagi.',
+  'composio.connect.requiredFieldEmpty': 'Bidang ini wajib diisi.',
+  'composio.connect.wabaIdHint':
+    'Temukan melalui GET /me/businesses lalu GET /{business_id}/owned_whatsapp_business_accounts menggunakan token akses Meta Anda.',
   'composio.connect.wabaIdLabel': 'Label ID WABA',
   'composio.connect.wabaIdRequired':
     'Masukkan ID Akun Bisnis WhatsApp (WABA ID) Anda untuk melanjutkan.',
@@ -143,12 +152,18 @@ const id4: TranslationMap = {
   'onboarding.contextGathering.buildingProfile': 'Membangun profil Anda...',
   'onboarding.contextGathering.continueToChat': 'Lanjutkan ke chat',
   'onboarding.contextGathering.errorDesc':
-    'Kami tidak bisa membangun profil lengkap Anda sekarang, tapi tidak apa-apa — Anda bisa lanjut dan profil Anda akan terbentuk seiring waktu.',
+    'Kami belum bisa membangun profil lengkap Anda sekarang, tetapi tidak apa-apa — Anda bisa melanjutkan dan profil Anda akan terbangun seiring waktu.',
   'onboarding.contextGathering.title': 'Pengumpulan Konteks',
   'openhuman.team_list_teams': 'Daftar tim',
   'overlay.ariaAttention': 'Pesan perhatian',
+  'overlay.ariaCompanion': 'Pendamping aktif',
   'overlay.ariaOrb': 'Overlay OpenHuman',
   'overlay.ariaVoiceActive': 'Input suara aktif',
+  'overlay.companion.error': 'Kesalahan',
+  'overlay.companion.listening': 'Mendengarkan…',
+  'overlay.companion.pointing': 'Menunjuk…',
+  'overlay.companion.speaking': 'Berbicara…',
+  'overlay.companion.thinking': 'Berpikir…',
   'overlay.orbTitle': 'Seret untuk memindahkan · Klik dua kali untuk mereset posisi',
   'pages.settings.account.connections': 'Koneksi',
   'pages.settings.account.connectionsDesc': 'Deskripsi koneksi',
@@ -168,6 +183,9 @@ const id4: TranslationMap = {
   'pages.settings.aiSection.description':
     'Penyedia model bahasa, Ollama lokal, dan suara (STT / TTS).',
   'pages.settings.aiSection.title': 'AI',
+  'pages.settings.features.desktopCompanion': 'Pendamping Desktop',
+  'pages.settings.features.desktopCompanionDesc':
+    'Asisten suara dengan kesadaran layar — mendengar, melihat, berbicara, menunjuk',
   'pages.settings.features.messagingChannels': 'Kanal pesan',
   'pages.settings.features.messagingChannelsDesc': 'Deskripsi kanal pesan',
   'pages.settings.features.notifications': 'Notifikasi',
@@ -364,6 +382,9 @@ const id4: TranslationMap = {
   'settings.billing.subscription.paymentConfirmed': 'Pembayaran dikonfirmasi',
   'settings.billing.subscription.perMonth': 'Per bulan',
   'settings.billing.subscription.popular': 'Populer',
+  'pages.settings.account.migration': 'Impor dari asisten lain',
+  'pages.settings.account.migrationDesc':
+    'Migrasikan memori dan catatan dari OpenClaw (dan, segera, Hermes) ke ruang kerja ini.',
 };
 
 export default id4;

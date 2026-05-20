@@ -85,8 +85,11 @@ export const config: Options.Testrunner & Record<string, unknown> = {
   reporters: ['spec'],
   mochaOpts: {
     ui: 'bdd',
-    // Billing/settings flows poll on real timers; keep the generous budget.
-    timeout: 120_000,
+    // Cap individual `it` budget at 30s so broken specs fail fast instead
+    // of burning the prior 2-minute ceiling on every hung `waitForX`.
+    // Genuinely-slow flows (billing polling) should use scoped
+    // `this.timeout(60_000)` inside the specific `it` that needs it.
+    timeout: 30_000,
   },
   autoCompileOpts: { tsNodeOpts: { project: tsconfigE2ePath } },
   /**

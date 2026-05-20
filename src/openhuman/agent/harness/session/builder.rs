@@ -79,6 +79,7 @@ impl AgentBuilder {
             auto_save: None,
             post_turn_hooks: Vec::new(),
             learning_enabled: false,
+            explicit_preferences_enabled: true,
             event_session_id: None,
             event_channel: None,
             agent_definition_name: None,
@@ -86,6 +87,7 @@ impl AgentBuilder {
             omit_profile: None,
             omit_memory_md: None,
             payload_summarizer: None,
+            tool_policy: None,
             archivist_hook: None,
             unified_compaction_enabled: true,
         }
@@ -206,6 +208,16 @@ impl AgentBuilder {
         self
     }
 
+    /// Enables or disables explicit-preference injection.
+    ///
+    /// When `true` (the default), preferences stored via `remember_preference`
+    /// are fetched from the `user_profile` namespace and injected into the
+    /// system prompt on every turn, independent of `learning_enabled`.
+    pub fn explicit_preferences_enabled(mut self, enabled: bool) -> Self {
+        self.explicit_preferences_enabled = enabled;
+        self
+    }
+
     /// Sets the event-bus `session_id` and `channel` used to tag
     /// `DomainEvent`s emitted by this agent.
     ///
@@ -312,6 +324,18 @@ impl AgentBuilder {
         >,
     ) -> Self {
         self.payload_summarizer = Some(summarizer);
+        self
+    }
+
+    /// Installs pre-execution policy middleware for tool calls.
+    ///
+    /// The default policy allows all calls. Custom policies can deny a call
+    /// before `Tool::execute_with_options` runs.
+    pub fn tool_policy(
+        mut self,
+        policy: Arc<dyn crate::openhuman::agent::tool_policy::ToolPolicy>,
+    ) -> Self {
+        self.tool_policy = Some(policy);
         self
     }
 
@@ -494,6 +518,7 @@ impl AgentBuilder {
             last_tree_prefetch_at: None,
             post_turn_hooks: self.post_turn_hooks,
             learning_enabled: self.learning_enabled,
+            explicit_preferences_enabled: self.explicit_preferences_enabled,
             event_session_id: self
                 .event_session_id
                 .unwrap_or_else(|| "standalone".to_string()),
@@ -541,6 +566,9 @@ impl AgentBuilder {
             omit_profile: self.omit_profile.unwrap_or(true),
             omit_memory_md: self.omit_memory_md.unwrap_or(true),
             payload_summarizer: self.payload_summarizer,
+            tool_policy: self.tool_policy.unwrap_or_else(|| {
+                Arc::new(crate::openhuman::agent::tool_policy::AllowAllToolPolicy)
+            }),
             last_seen_integrations_hash: 0,
             archivist_hook: self.archivist_hook,
             synthesized_tool_names: std::collections::HashSet::new(),
@@ -999,6 +1027,23 @@ impl Agent {
             // gate it on retrieval-tool visibility — see below.
             log::info!(
                 "[learning] prompt sections registered (user_reflections, learned_context, user_profile)"
+            );
+        }
+
+        // Explicit-preferences injection — independent of the full learning
+        // subsystem.  When `explicit_preferences_enabled` is true (the default)
+        // and the full learning subsystem is NOT already wiring UserProfileSection,
+        // we add it here so pinned preferences written by `remember_preference`
+        // reach every session prompt.  The `fetch_learned_context` gate is
+        // widened by `explicit_preferences_enabled` on the Agent (see
+        // `session/turn.rs`) so the data is actually fetched and populated.
+        if config.learning.explicit_preferences_enabled && !config.learning.enabled {
+            prompt_builder = prompt_builder.add_section(Box::new(
+                crate::openhuman::learning::UserProfileSection::new(memory.clone()),
+            ));
+            log::info!(
+                "[learning] explicit-preference UserProfileSection registered \
+                 (learning.enabled=false, explicit_preferences_enabled=true)"
             );
         }
 
@@ -1462,6 +1507,7 @@ impl Agent {
             .auto_save(config.memory.auto_save)
             .post_turn_hooks(post_turn_hooks)
             .learning_enabled(config.learning.enabled)
+            .explicit_preferences_enabled(config.learning.explicit_preferences_enabled)
             .agent_definition_name(agent_id.to_string())
             .omit_profile(effective_omit_profile)
             .omit_memory_md(effective_omit_memory_md);

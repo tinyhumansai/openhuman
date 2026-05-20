@@ -24,7 +24,9 @@ use super::tool_prep::{
 };
 use super::types::{SubagentMode, SubagentRunError, SubagentRunOptions, SubagentRunOutcome};
 use crate::openhuman::agent::harness::definition::{AgentDefinition, PromptSource};
-use crate::openhuman::agent::harness::with_current_sandbox_mode;
+use crate::openhuman::agent::harness::{
+    current_spawn_depth, with_current_sandbox_mode, with_spawn_depth, MAX_SPAWN_DEPTH,
+};
 use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::context::prompt::{
     render_subagent_system_prompt, PromptContext, PromptTool, SubagentRenderOptions,
@@ -227,10 +229,29 @@ pub async fn run_subagent(
         .clone()
         .unwrap_or_else(|| format!("sub-{}", uuid::Uuid::new_v4()));
     let started = Instant::now();
+    let current_depth = current_spawn_depth();
+    let attempted_depth = current_depth.saturating_add(1);
+
+    if attempted_depth > MAX_SPAWN_DEPTH {
+        tracing::warn!(
+            agent_id = %definition.id,
+            task_id = %task_id,
+            current_depth,
+            attempted_depth,
+            max_depth = MAX_SPAWN_DEPTH,
+            "[subagent_runner] spawn depth exceeded"
+        );
+        return Err(SubagentRunError::SpawnDepthExceeded {
+            attempted_depth,
+            max_depth: MAX_SPAWN_DEPTH,
+        });
+    }
 
     tracing::info!(
         agent_id = %definition.id,
         task_id = %task_id,
+        spawn_depth = attempted_depth,
+        max_spawn_depth = MAX_SPAWN_DEPTH,
         prompt_chars = task_prompt.chars().count(),
         skill_filter = ?options.skill_filter_override.as_deref().or(definition.skill_filter.as_deref()),
         "[subagent_runner] dispatching"
@@ -241,8 +262,24 @@ pub async fn run_subagent(
     // want to gate on it (e.g. `composio_execute` rejecting
     // Write/Admin slugs under `ReadOnly`) read it via
     // `current_sandbox_mode()`; tools that don't care just ignore it.
-    let mut outcome = with_current_sandbox_mode(definition.sandbox_mode, async {
-        run_typed_mode(definition, task_prompt, &options, &parent, &task_id).await
+    // Box-pin the inner future so the large `run_typed_mode` state machine
+    // lives on the heap. Two stacked `task_local::scope` wrappers
+    // (`with_spawn_depth` + `with_current_sandbox_mode`) plus the deeply
+    // nested provider/tool loop inside `run_typed_mode` are otherwise large
+    // enough — under `cargo-llvm-cov` instrumentation in particular — to
+    // overflow tokio's 2 MiB per-thread test stack. See #2234 CI failure.
+    let mut outcome = with_spawn_depth(attempted_depth, async {
+        with_current_sandbox_mode(definition.sandbox_mode, async {
+            Box::pin(run_typed_mode(
+                definition,
+                task_prompt,
+                &options,
+                &parent,
+                &task_id,
+            ))
+            .await
+        })
+        .await
     })
     .await?;
 
@@ -274,6 +311,7 @@ pub async fn run_subagent(
     tracing::info!(
         agent_id = %definition.id,
         task_id = %task_id,
+        spawn_depth = attempted_depth,
         elapsed_ms = outcome.elapsed.as_millis() as u64,
         iterations = outcome.iterations,
         output_chars = outcome.output.chars().count(),
@@ -1426,17 +1464,52 @@ async fn run_inner_loop(
             {
                 let args = parse_tool_arguments(&call.arguments);
                 let timeout = crate::openhuman::tool_timeout::tool_execution_timeout_duration();
-                match tokio::time::timeout(timeout, tool.execute(args)).await {
-                    Ok(Ok(result)) => {
-                        let raw = result.output();
-                        if result.is_error {
-                            format!("Error: {raw}")
-                        } else {
-                            raw
+                // ── External-effect approval gate (#1339) ─────
+                // Subagents share the same gate as the parent loop;
+                // see `tool_loop.rs` for the rationale.
+                let gate_denial: Option<String> = if tool.external_effect_with_args(&args) {
+                    if let Some(gate) = crate::openhuman::approval::ApprovalGate::try_global() {
+                        let summary =
+                            crate::openhuman::approval::summarize_action(&call.name, &args);
+                        let redacted = crate::openhuman::approval::redact_args(&args);
+                        match gate.intercept(&call.name, &summary, redacted).await {
+                            crate::openhuman::approval::GateOutcome::Allow => None,
+                            crate::openhuman::approval::GateOutcome::Deny { reason } => {
+                                tracing::warn!(
+                                    tool = call.name.as_str(),
+                                    reason = %reason,
+                                    "[subagent_runner] approval gate denied tool call"
+                                );
+                                Some(reason)
+                            }
                         }
+                    } else {
+                        None
                     }
-                    Ok(Err(err)) => format!("Error executing {}: {err}", call.name),
-                    Err(_) => format!("Error: tool '{}' timed out", call.name),
+                } else {
+                    None
+                };
+
+                if let Some(reason) = gate_denial {
+                    // Prefix as Error so the downstream `call_success`
+                    // computation (`!result_text.starts_with("Error")`)
+                    // marks the denial as a failed tool call in
+                    // progress events and tool_result blocks.
+                    // (CodeRabbit review on PR #2149.)
+                    format!("Error: {reason}")
+                } else {
+                    match tokio::time::timeout(timeout, tool.execute(args)).await {
+                        Ok(Ok(result)) => {
+                            let raw = result.output();
+                            if result.is_error {
+                                format!("Error: {raw}")
+                            } else {
+                                raw
+                            }
+                        }
+                        Ok(Err(err)) => format!("Error executing {}: {err}", call.name),
+                        Err(_) => format!("Error: tool '{}' timed out", call.name),
+                    }
                 }
             } else {
                 format!("Unknown tool: {}", call.name)

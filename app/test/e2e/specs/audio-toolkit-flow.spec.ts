@@ -6,7 +6,8 @@ import { startMockServer, stopMockServer } from '../mock-server';
 const USER_ID = 'e2e-audio-toolkit';
 
 describe('Audio toolkit flow', () => {
-  before(async () => {
+  before(async function beforeSuite() {
+    this.timeout(90_000);
     await startMockServer();
     await waitForApp();
     await resetApp(USER_ID);

@@ -268,26 +268,28 @@ describe.skip('Telegram Integration Flows', () => {
   // -------------------------------------------------------------------------
 
   describe('7.1 Account Linking', () => {
-    it('7.1.1 — /start Command Handling: "Message OpenHuman" button exists on Home', async () => {
+    it('7.1.1 — /start Command Handling: home screen CTA exists on Home', async () => {
       // Ensure we're on Home
       await navigateToHome();
 
-      // Verify "Message OpenHuman" button is present — this is the /start entry point
-      const hasButton = await textExists('Message OpenHuman');
+      // Verify the home page CTA renders — t('home.askAssistant') = 'Ask your assistant anything...'.
+      // The old 'Message OpenHuman' button was retired when the Home page was redesigned.
+      const hasButton =
+        (await textExists('Ask your assistant anything')) ||
+        (await textExists('Ask your assistant'));
       if (!hasButton) {
         const tree = await dumpAccessibilityTree();
         console.log(`${LOG_PREFIX} 7.1.1: Home page tree:\n`, tree.slice(0, 6000));
       }
       expect(hasButton).toBe(true);
-      console.log(`${LOG_PREFIX} 7.1.1: "Message OpenHuman" button found on Home page`);
+      console.log(`${LOG_PREFIX} 7.1.1: Home page CTA found`);
 
       // Verify Telegram skill or related content is somewhere in the app
-      // (Telegram drives the "Message OpenHuman" integration)
       const hasTelegram = await findTelegramInUI();
       if (!hasTelegram) {
         console.log(
           `${LOG_PREFIX} 7.1.1: Telegram skill not visible in UI — V8 runtime may not ` +
-            `have discovered it. The "Message OpenHuman" button still confirms /start entry point.`
+            `have discovered it.`
         );
       }
 
@@ -539,36 +541,34 @@ describe.skip('Telegram Integration Flows', () => {
         return;
       }
 
-      // Telegram is visible — verify the "Message OpenHuman" button exists
-      // (the bot interaction button requires write access to Telegram)
+      // Telegram is visible — verify the home screen CTA is present
+      // (the home CTA is the entry point for agent interactions)
       await navigateToHome();
-      const hasMessageButton = await textExists('Message OpenHuman');
+      const hasMessageButton =
+        (await textExists('Ask your assistant anything')) ||
+        (await textExists('Ask your assistant'));
       expect(hasMessageButton).toBe(true);
-      console.log(
-        `${LOG_PREFIX} 7.2.2: "Message OpenHuman" button present — write-capable tools accessible`
-      );
+      console.log(`${LOG_PREFIX} 7.2.2: Home CTA present — write-capable tools accessible`);
 
       console.log(`${LOG_PREFIX} 7.2.2 PASSED`);
     });
 
-    it('7.2.3 — Initiate Action Enforcement: "Message OpenHuman" accessible for auth users', async () => {
+    it('7.2.3 — Initiate Action Enforcement: home screen CTA accessible for auth users', async () => {
       resetMockBehavior();
       await reAuthAndGoHome('e2e-telegram-initiate-token');
 
       // Ensure we're on Home
       await navigateToHome();
 
-      // Verify the "Message OpenHuman" button exists and is clickable
-      const hasButton = await textExists('Message OpenHuman');
+      // Verify the home page CTA button exists — t('home.askAssistant').
+      // The old 'Message OpenHuman' button was retired in the Home page redesign.
+      const hasButton =
+        (await textExists('Ask your assistant anything')) ||
+        (await textExists('Ask your assistant'));
       expect(hasButton).toBe(true);
-      console.log(`${LOG_PREFIX} 7.2.3: "Message OpenHuman" button is present for auth user`);
+      console.log(`${LOG_PREFIX} 7.2.3: Home page CTA is present for auth user`);
 
-      // The button should be interactable — it's the entry point for initiating Telegram actions
-      const buttonEl = await waitForText('Message OpenHuman', 10_000);
-      const isExisting = await buttonEl.isExisting();
-      expect(isExisting).toBe(true);
-
-      console.log(`${LOG_PREFIX} 7.2.3: "Message OpenHuman" is accessible for authenticated user`);
+      console.log(`${LOG_PREFIX} 7.2.3: Home CTA is accessible for authenticated user`);
       console.log(`${LOG_PREFIX} 7.2.3 PASSED`);
     });
   });
@@ -578,53 +578,31 @@ describe.skip('Telegram Integration Flows', () => {
   // -------------------------------------------------------------------------
 
   describe('7.3 Command Processing', () => {
-    it('7.3.1 — Valid Command: "Message OpenHuman" button is clickable', async () => {
+    it('7.3.1 — Valid Command: home screen CTA is clickable and navigates to chat', async () => {
       resetMockBehavior();
       await reAuthAndGoHome('e2e-telegram-cmd-valid-token');
       await navigateToHome();
 
-      // Verify the button exists
-      const hasButton = await textExists('Message OpenHuman');
+      // Verify the home page CTA button exists — t('home.askAssistant').
+      // The old 'Message OpenHuman' button was retired in the Home page redesign.
+      const hasButton =
+        (await textExists('Ask your assistant anything')) ||
+        (await textExists('Ask your assistant'));
       expect(hasButton).toBe(true);
 
       clearRequestLog();
 
-      // Click "Message OpenHuman" — this triggers the Telegram bot interaction
-      // In production, this opens the Telegram bot URL
-      // In testing, we verify the button is clickable without errors
-      const el = await waitForText('Message OpenHuman', 10_000);
-      const loc = await el.getLocation();
-      const sz = await el.getSize();
-      const centerX = Math.round(loc.x + sz.width / 2);
-      const centerY = Math.round(loc.y + sz.height / 2);
+      // Click the home CTA — this navigates to /chat in the current app
+      const ctaEl = await waitForText('Ask your assistant', 10_000);
+      if (ctaEl) {
+        await ctaEl.click();
+        await browser.pause(2_000);
+      }
+      console.log(`${LOG_PREFIX} 7.3.1: Clicked home CTA button`);
 
-      await browser.performActions([
-        {
-          type: 'pointer',
-          id: 'mouse1',
-          parameters: { pointerType: 'mouse' },
-          actions: [
-            { type: 'pointerMove', duration: 10, x: centerX, y: centerY },
-            { type: 'pointerDown', button: 0 },
-            { type: 'pause', duration: 50 },
-            { type: 'pointerUp', button: 0 },
-          ],
-        },
-      ]);
-      await browser.releaseActions();
-      console.log(`${LOG_PREFIX} 7.3.1: Clicked "Message OpenHuman" button`);
-      await browser.pause(2_000);
-
-      // After clicking, the button should remain on the page (it opens an external URL)
-      // or navigate away — either is valid behavior
-      const stillHasButton = await textExists('Message OpenHuman');
-      const isOnHome = await waitForHomePage(5_000);
-      // The button click either opens external URL (button still there) or navigates
-      // Both outcomes are valid — just ensure no crash occurred
-      console.log(
-        `${LOG_PREFIX} 7.3.1: After click — button still visible: ${stillHasButton}, ` +
-          `home detected: ${!!isOnHome}`
-      );
+      // After clicking, either on /chat or still on /home — both are valid
+      const hash = await browser.execute(() => window.location.hash);
+      console.log(`${LOG_PREFIX} 7.3.1: After click — hash: ${hash}`);
 
       // Navigate back to Home for cleanup
       await navigateToHome();

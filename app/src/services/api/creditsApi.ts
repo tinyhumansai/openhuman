@@ -21,23 +21,62 @@ export interface CreditBalance {
   teamTopupUsd: number;
 }
 
+export interface TeamUsagePlanSummary {
+  plan: string;
+  name: string;
+  marginPercent: number;
+  payAsYouGoMarginPercent: number;
+  discountVsPayAsYouGoPercent: number;
+}
+
+export interface TeamUsageDailyPoint {
+  date: string;
+  inferenceUsd: number;
+  integrationsUsd: number;
+  totalUsd: number;
+}
+
+export interface TeamUsageModelRow {
+  model: string;
+  provider: string;
+  spentUsd: number;
+  calls: number;
+}
+
+export interface TeamUsageIntegrationRow {
+  provider: string;
+  action: string;
+  spentUsd: number;
+  calls: number;
+}
+
+export interface TeamUsageInsights {
+  period: { startDate: string; endDate: string };
+  totals: {
+    inferenceUsd: number;
+    integrationsUsd: number;
+    totalUsd: number;
+    inferenceCalls: number;
+    integrationCalls: number;
+  };
+  dailySeries: TeamUsageDailyPoint[];
+  topModels: TeamUsageModelRow[];
+  topIntegrations: TeamUsageIntegrationRow[];
+}
+
+/**
+ * Cycle budget snapshot returned by `GET /teams/me/usage`. Backend PR #790
+ * dropped rate-limit fields (5-hour window, daily caps); enforcement is now
+ * purely budget-based via `BalanceService.canAfford`.
+ */
 export interface TeamUsage {
   remainingUsd: number;
   cycleBudgetUsd: number;
-  /** Amount spent in the current 5-hour fixed window (USD) */
-  cycleLimit5hr: number;
-  /** Amount spent in the current 7-day cycle (USD) */
-  cycleLimit7day: number;
-  /** Max USD allowed in the 5-hour window for the current subscription tier */
-  fiveHourCapUsd: number;
-  /** ISO timestamp when the 5-hour window resets (null if window is empty) */
-  fiveHourResetsAt: string | null;
-  /** ISO timestamp when the current weekly cycle started */
+  cycleSpentUsd: number;
   cycleStartDate: string;
-  /** ISO timestamp when the current weekly cycle ends */
   cycleEndsAt: string;
-  /** When true, cycle limits are not enforced for this user (test/internal accounts) */
-  bypassCycleLimit?: boolean;
+  plan: TeamUsagePlanSummary;
+  insights: TeamUsageInsights;
 }
 
 export interface TopUpResult {
@@ -249,32 +288,94 @@ function normalizeCreditBalance(payload: unknown): CreditBalance {
   };
 }
 
-export function normalizeTeamUsage(payload: unknown): TeamUsage {
-  const raw = (payload && typeof payload === 'object' ? payload : {}) as Record<string, unknown>;
+function normalizePlanSummary(raw: unknown): TeamUsagePlanSummary {
+  const r = asRecord(raw) ?? {};
   return {
-    remainingUsd: normalizeUsd(raw.remainingUsd ?? raw.remaining_usd),
-    cycleBudgetUsd: normalizeUsd(raw.cycleBudgetUsd ?? raw.cycle_budget_usd),
-    cycleLimit5hr: normalizeUsd(
-      raw.cycleLimit5hr ?? raw.fiveHourSpendUsd ?? raw.five_hour_spend_usd
-    ),
-    cycleLimit7day: normalizeUsd(raw.cycleLimit7day ?? raw.cycle_limit_7day),
-    fiveHourCapUsd: normalizeUsd(raw.fiveHourCapUsd ?? raw.five_hour_cap_usd),
-    fiveHourResetsAt: asStringOrNull(raw.fiveHourResetsAt ?? raw.five_hour_resets_at),
-    cycleStartDate:
-      typeof raw.cycleStartDate === 'string'
-        ? raw.cycleStartDate
-        : typeof raw.cycle_start_date === 'string'
-          ? raw.cycle_start_date
-          : new Date().toISOString(),
-    cycleEndsAt:
-      typeof raw.cycleEndsAt === 'string'
-        ? raw.cycleEndsAt
-        : typeof raw.cycle_ends_at === 'string'
-          ? raw.cycle_ends_at
-          : new Date().toISOString(),
-    bypassCycleLimit: Boolean(
-      raw.bypassCycleLimit ?? raw.bypassRateLimit ?? raw.bypass_cycle_limit
-    ),
+    plan: typeof r.plan === 'string' ? r.plan : 'FREE',
+    name: typeof r.name === 'string' ? r.name : '',
+    marginPercent: normalizeUsd(r.marginPercent),
+    payAsYouGoMarginPercent: normalizeUsd(r.payAsYouGoMarginPercent),
+    discountVsPayAsYouGoPercent: normalizeUsd(r.discountVsPayAsYouGoPercent),
+  };
+}
+
+function normalizeDailyPoint(raw: unknown): TeamUsageDailyPoint {
+  const r = asRecord(raw) ?? {};
+  return {
+    date: typeof r.date === 'string' ? r.date : '',
+    inferenceUsd: normalizeUsd(r.inferenceUsd),
+    integrationsUsd: normalizeUsd(r.integrationsUsd),
+    totalUsd: normalizeUsd(r.totalUsd),
+  };
+}
+
+function normalizeModelRow(raw: unknown): TeamUsageModelRow {
+  const r = asRecord(raw) ?? {};
+  return {
+    model: typeof r.model === 'string' ? r.model : '',
+    provider: typeof r.provider === 'string' ? r.provider : '',
+    spentUsd: normalizeUsd(r.spentUsd),
+    calls: Math.round(Number(r.calls) || 0),
+  };
+}
+
+function normalizeIntegrationRow(raw: unknown): TeamUsageIntegrationRow {
+  const r = asRecord(raw) ?? {};
+  return {
+    provider: typeof r.provider === 'string' ? r.provider : '',
+    action: typeof r.action === 'string' ? r.action : '',
+    spentUsd: normalizeUsd(r.spentUsd),
+    calls: Math.round(Number(r.calls) || 0),
+  };
+}
+
+function normalizeInsights(
+  raw: unknown,
+  fallbackStart: string,
+  fallbackEnd: string
+): TeamUsageInsights {
+  const r = asRecord(raw) ?? {};
+  const period = asRecord(r.period) ?? {};
+  const totals = asRecord(r.totals) ?? {};
+  const dailySeries = Array.isArray(r.dailySeries) ? r.dailySeries.map(normalizeDailyPoint) : [];
+  const topModels = Array.isArray(r.topModels) ? r.topModels.map(normalizeModelRow) : [];
+  const topIntegrations = Array.isArray(r.topIntegrations)
+    ? r.topIntegrations.map(normalizeIntegrationRow)
+    : [];
+  return {
+    period: {
+      startDate: typeof period.startDate === 'string' ? period.startDate : fallbackStart,
+      endDate: typeof period.endDate === 'string' ? period.endDate : fallbackEnd,
+    },
+    totals: {
+      inferenceUsd: normalizeUsd(totals.inferenceUsd),
+      integrationsUsd: normalizeUsd(totals.integrationsUsd),
+      totalUsd: normalizeUsd(totals.totalUsd),
+      inferenceCalls: Math.round(Number(totals.inferenceCalls) || 0),
+      integrationCalls: Math.round(Number(totals.integrationCalls) || 0),
+    },
+    dailySeries,
+    topModels,
+    topIntegrations,
+  };
+}
+
+export function normalizeTeamUsage(payload: unknown): TeamUsage {
+  const raw = (
+    payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {}
+  ) as Record<string, unknown>;
+  const cycleStartDate =
+    typeof raw.cycleStartDate === 'string' ? raw.cycleStartDate : new Date().toISOString();
+  const cycleEndsAt =
+    typeof raw.cycleEndsAt === 'string' ? raw.cycleEndsAt : new Date().toISOString();
+  return {
+    remainingUsd: normalizeUsd(raw.remainingUsd),
+    cycleBudgetUsd: normalizeUsd(raw.cycleBudgetUsd),
+    cycleSpentUsd: normalizeUsd(raw.cycleSpentUsd),
+    cycleStartDate,
+    cycleEndsAt,
+    plan: normalizePlanSummary(raw.plan),
+    insights: normalizeInsights(raw.insights, cycleStartDate, cycleEndsAt),
   };
 }
 

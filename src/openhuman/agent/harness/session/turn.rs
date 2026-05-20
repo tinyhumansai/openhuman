@@ -25,8 +25,10 @@ use crate::openhuman::agent::harness;
 use crate::openhuman::agent::hooks::{self, ToolCallRecord, TurnContext};
 use crate::openhuman::agent::memory_loader::collect_recall_citations;
 use crate::openhuman::agent::progress::AgentProgress;
+use crate::openhuman::agent::tool_policy::{ToolPolicyDecision, ToolPolicyRequest};
 use crate::openhuman::context::prompt::{LearnedContextData, PromptContext, PromptTool};
 use crate::openhuman::context::{ReductionOutcome, ARCHIVIST_EXTRACTION_PROMPT};
+use crate::openhuman::inference::model_context::context_window_for_model;
 use crate::openhuman::inference::provider::{
     ChatMessage, ChatRequest, ConversationMessage, ProviderDelta,
 };
@@ -34,6 +36,10 @@ use crate::openhuman::memory::MemoryCategory;
 use crate::openhuman::tools::traits::ToolCallOptions;
 use crate::openhuman::tools::Tool;
 use crate::openhuman::util::truncate_with_ellipsis;
+
+use crate::openhuman::agent::harness::token_budget::{
+    trim_chat_messages_to_budget, trim_conversation_history_to_budget,
+};
 use anyhow::Result;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
@@ -489,6 +495,21 @@ impl Agent {
                     self.history.len()
                 );
 
+                if let Some(context_window) = context_window_for_model(&effective_model) {
+                    let budget_outcome =
+                        trim_conversation_history_to_budget(&mut self.history, context_window);
+                    if budget_outcome.trimmed {
+                        log::warn!(
+                            "[agent_loop] pre-dispatch history trimmed model={} context_window={} original_tokens={} final_tokens={} messages_removed={}",
+                            effective_model,
+                            context_window,
+                            budget_outcome.original_tokens,
+                            budget_outcome.final_tokens,
+                            budget_outcome.messages_removed
+                        );
+                    }
+                }
+
                 // Global context management: run the reduction chain
                 // before every provider hit. Cheap when the guard is
                 // healthy; executes the summarizer LLM call
@@ -558,7 +579,8 @@ impl Agent {
                 // a resumed session to provide a byte-identical prefix for
                 // KV cache reuse. After `.take()` the cache is consumed;
                 // subsequent iterations rebuild from history normally.
-                let messages = if let Some(mut cached) = self.cached_transcript_messages.take() {
+                let mut messages = if let Some(mut cached) = self.cached_transcript_messages.take()
+                {
                     // Append only the delta (new user message) from the
                     // end of the current history.
                     let new_tail = self.tool_dispatcher.to_provider_messages(
@@ -574,6 +596,21 @@ impl Agent {
                 } else {
                     self.tool_dispatcher.to_provider_messages(&self.history)
                 };
+                if let Some(context_window) = context_window_for_model(&effective_model) {
+                    let budget_outcome =
+                        trim_chat_messages_to_budget(&mut messages, context_window);
+                    if budget_outcome.trimmed {
+                        log::warn!(
+                            "[agent_loop] pre-dispatch provider messages trimmed model={} context_window={} original_tokens={} final_tokens={} messages_removed={}",
+                            effective_model,
+                            context_window,
+                            budget_outcome.original_tokens,
+                            budget_outcome.final_tokens,
+                            budget_outcome.messages_removed
+                        );
+                    }
+                }
+
                 last_provider_messages = Some(messages.clone());
 
                 log::info!(
@@ -1044,76 +1081,102 @@ impl Agent {
                 false,
             )
         } else if let Some(tool) = self.tools.iter().find(|t| t.name() == call.name) {
-            // Per-call options: ask the tool for markdown output when the
-            // context manager is configured to prefer it. Tools that
-            // implement `execute_with_options` will populate
-            // `markdown_formatted`; others fall through to the default
-            // implementation which forwards to `execute`.
-            let prefer_markdown = self.context.prefer_markdown_tool_output();
-            let options = ToolCallOptions { prefer_markdown };
-            let outcome = tool
-                .execute_with_options(call.arguments.clone(), options)
-                .await;
-            match outcome {
-                Ok(r) => {
-                    if !r.is_error {
-                        let mut output = r.output_for_llm(prefer_markdown);
-                        if prefer_markdown && r.markdown_formatted.is_some() {
-                            log::debug!(
-                                "[agent_loop] tool={} returned markdown payload bytes={}",
-                                call.name,
-                                output.len()
-                            );
-                        }
-                        // Issue #574 — if a payload summarizer is wired
-                        // in (orchestrator session only) and the output
-                        // exceeds the configured threshold, hand it to
-                        // the summarizer sub-agent before it enters
-                        // history. On any failure or below-threshold
-                        // payload, leave `output` untouched and let the
-                        // existing tool_result_budget_bytes truncation
-                        // pipeline handle it downstream.
-                        if let Some(ps) = self.payload_summarizer.as_ref() {
-                            log::debug!(
-                                "[agent_loop] payload_summarizer intercepting tool={} bytes={}",
-                                call.name,
-                                output.len()
-                            );
-                            match ps.maybe_summarize(&call.name, None, &output).await {
-                                Ok(Some(payload)) => {
-                                    log::info!(
-                                        "[agent_loop] payload_summarizer compressed tool={} {}->{} bytes",
-                                        call.name,
-                                        payload.original_bytes,
-                                        payload.summary_bytes
-                                    );
-                                    output = payload.summary;
-                                }
-                                Ok(None) => {
-                                    log::debug!(
-                                        "[agent_loop] payload_summarizer pass-through tool={} bytes={}",
-                                        call.name,
-                                        output.len()
-                                    );
-                                }
-                                Err(e) => {
-                                    log::warn!(
-                                        "[agent_loop] payload_summarizer error tool={} err={} (passing raw payload through)",
-                                        call.name,
-                                        e
-                                    );
+            let policy_request = ToolPolicyRequest {
+                tool_name: call.name.clone(),
+                arguments: call.arguments.clone(),
+                session_id: self.event_session_id().to_string(),
+                channel: self.event_channel().to_string(),
+                agent_definition_id: self.agent_definition_id.to_string(),
+            };
+            if let ToolPolicyDecision::Deny { reason } =
+                self.tool_policy.check(&policy_request).await
+            {
+                tracing::debug!(
+                    tool = call.name.as_str(),
+                    policy = self.tool_policy.name(),
+                    reason = %reason,
+                    "[agent_loop] tool denied by policy"
+                );
+                (
+                    format!(
+                        "Tool '{}' denied by policy '{}': {reason}",
+                        call.name,
+                        self.tool_policy.name()
+                    ),
+                    false,
+                )
+            } else {
+                // Per-call options: ask the tool for markdown output when the
+                // context manager is configured to prefer it. Tools that
+                // implement `execute_with_options` will populate
+                // `markdown_formatted`; others fall through to the default
+                // implementation which forwards to `execute`.
+                let prefer_markdown = self.context.prefer_markdown_tool_output();
+                let options = ToolCallOptions { prefer_markdown };
+                let outcome = tool
+                    .execute_with_options(call.arguments.clone(), options)
+                    .await;
+                match outcome {
+                    Ok(r) => {
+                        if !r.is_error {
+                            let mut output = r.output_for_llm(prefer_markdown);
+                            if prefer_markdown && r.markdown_formatted.is_some() {
+                                log::debug!(
+                                    "[agent_loop] tool={} returned markdown payload bytes={}",
+                                    call.name,
+                                    output.len()
+                                );
+                            }
+                            // Issue #574 — if a payload summarizer is wired
+                            // in (orchestrator session only) and the output
+                            // exceeds the configured threshold, hand it to
+                            // the summarizer sub-agent before it enters
+                            // history. On any failure or below-threshold
+                            // payload, leave `output` untouched and let the
+                            // existing tool_result_budget_bytes truncation
+                            // pipeline handle it downstream.
+                            if let Some(ps) = self.payload_summarizer.as_ref() {
+                                log::debug!(
+                                    "[agent_loop] payload_summarizer intercepting tool={} bytes={}",
+                                    call.name,
+                                    output.len()
+                                );
+                                match ps.maybe_summarize(&call.name, None, &output).await {
+                                    Ok(Some(payload)) => {
+                                        log::info!(
+                                            "[agent_loop] payload_summarizer compressed tool={} {}->{} bytes",
+                                            call.name,
+                                            payload.original_bytes,
+                                            payload.summary_bytes
+                                        );
+                                        output = payload.summary;
+                                    }
+                                    Ok(None) => {
+                                        log::debug!(
+                                            "[agent_loop] payload_summarizer pass-through tool={} bytes={}",
+                                            call.name,
+                                            output.len()
+                                        );
+                                    }
+                                    Err(e) => {
+                                        log::warn!(
+                                            "[agent_loop] payload_summarizer error tool={} err={} (passing raw payload through)",
+                                            call.name,
+                                            e
+                                        );
+                                    }
                                 }
                             }
+                            (output, true)
+                        } else {
+                            (
+                                format!("Error: {}", r.output_for_llm(prefer_markdown)),
+                                false,
+                            )
                         }
-                        (output, true)
-                    } else {
-                        (
-                            format!("Error: {}", r.output_for_llm(prefer_markdown)),
-                            false,
-                        )
                     }
+                    Err(e) => (format!("Error executing {}: {e}", call.name), false),
                 }
-                Err(e) => (format!("Error executing {}: {e}", call.name), false),
             }
         } else {
             (format!("Unknown tool: {}", call.name), false)
@@ -1292,14 +1355,124 @@ impl Agent {
         self.history.extend(other_messages);
     }
 
+    /// Bound a resumed transcript prefix to the agent history window.
+    ///
+    /// Resume paths may load a long prior transcript directly into
+    /// `cached_transcript_messages` (provider-ready `ChatMessage`s), which
+    /// bypasses `self.history`-based trimming/reduction. Keep at most
+    /// `max_history_messages` entries while preserving the leading system
+    /// message when present.
+    pub(super) fn bound_cached_transcript_messages(
+        &self,
+        messages: Vec<ChatMessage>,
+    ) -> Vec<ChatMessage> {
+        let max = self.config.max_history_messages.max(1);
+        if messages.len() <= max {
+            return messages;
+        }
+
+        if matches!(messages.first(), Some(msg) if msg.role == "system") {
+            let keep_tail = max.saturating_sub(1);
+            let start = messages.len().saturating_sub(keep_tail);
+            let mut bounded = Vec::with_capacity(max);
+            bounded.push(messages[0].clone());
+            if keep_tail > 0 {
+                bounded.extend(messages[start..].iter().cloned());
+            }
+            bounded
+        } else {
+            let start = messages.len().saturating_sub(max);
+            messages[start..].to_vec()
+        }
+    }
+
     /// Pre-fetches learned context data from memory (observations, patterns, user profile).
     ///
     /// This is an async, non-blocking operation that populates the context
     /// for the system prompt.
+    ///
+    /// # Explicit-preferences narrow path
+    ///
+    /// When `learning_enabled` is `false` but `explicit_preferences_enabled`
+    /// is `true`, only the `user_profile` namespace (pinned preferences from
+    /// the `remember_preference` tool) is fetched and returned.  All other
+    /// inference-derived data (observations, patterns, reflections, tree
+    /// summaries) remains empty — the inference stack is not touched.
     pub(super) async fn fetch_learned_context(&self) -> LearnedContextData {
-        if !self.learning_enabled {
+        // Fast path: neither the full learning subsystem nor the explicit
+        // preferences path is active — skip all memory reads.
+        if !self.learning_enabled && !self.explicit_preferences_enabled {
+            tracing::debug!(
+                "[learning] fetch_learned_context: both learning_enabled and \
+                 explicit_preferences_enabled are false — returning empty context"
+            );
             return LearnedContextData::default();
         }
+
+        // Narrow explicit-preferences path: only fetch pinned user_profile
+        // entries; skip all inference-derived data.
+        if !self.learning_enabled && self.explicit_preferences_enabled {
+            tracing::debug!(
+                "[learning] fetch_learned_context: explicit_preferences_enabled=true, \
+                 learning_enabled=false — fetching only pinned user_profile entries"
+            );
+            let profile_entries = self
+                .memory
+                .list(
+                    Some("user_profile"),
+                    // Core category is used by RememberPreferenceTool for pinned entries.
+                    // We list without category filter so we pick up both Core entries
+                    // (pinned) and any Custom("user_profile") entries from the older
+                    // UserProfileHook code path, keeping this backward-compatible.
+                    None,
+                    None,
+                )
+                .await
+                .unwrap_or_default();
+
+            // `.list()` already scopes to the `user_profile` namespace at the
+            // store layer (via the `Some("user_profile")` argument above).  This
+            // `.filter()` is a defensive guard against any future store-layer
+            // change that might weaken that scoping — it is not load-bearing
+            // under the current implementation.
+            if profile_entries.len() > 50 {
+                tracing::warn!(
+                    total = profile_entries.len(),
+                    dropped = profile_entries.len() - 50,
+                    "[learning] user_profile pinned preferences exceed prompt cap of 50; \
+                     {} entries will be dropped from this turn's context",
+                    profile_entries.len() - 50,
+                );
+            }
+            let user_profile: Vec<String> = profile_entries
+                .iter()
+                .filter(|e| {
+                    e.namespace
+                        .as_deref()
+                        .map_or(false, |ns| ns == "user_profile")
+                })
+                .take(50)
+                .map(|e| sanitize_learned_entry(&e.content))
+                .collect();
+
+            tracing::debug!(
+                "[learning] fetch_learned_context: fetched {} pinned user_profile entries",
+                user_profile.len()
+            );
+
+            return LearnedContextData {
+                observations: Vec::new(),
+                patterns: Vec::new(),
+                user_profile,
+                reflections: Vec::new(),
+                tree_root_summaries: Vec::new(),
+            };
+        }
+
+        // Full learning path: fetch all inference-derived data.
+        tracing::debug!(
+            "[learning] fetch_learned_context: learning_enabled=true — fetching full context"
+        );
 
         let obs_entries = self
             .memory
@@ -1652,11 +1825,18 @@ impl Agent {
                             );
                             return;
                         }
-                        log::info!(
-                            "[transcript] loaded {} messages for resume",
-                            session.messages.len()
-                        );
-                        self.cached_transcript_messages = Some(session.messages);
+                        let loaded_count = session.messages.len();
+                        log::info!("[transcript] loaded {} messages for resume", loaded_count);
+                        let bounded = self.bound_cached_transcript_messages(session.messages);
+                        if bounded.len() < loaded_count {
+                            log::warn!(
+                                "[transcript] resume prefix trimmed from {} to {} messages (max_history_messages={})",
+                                loaded_count,
+                                bounded.len(),
+                                self.config.max_history_messages
+                            );
+                        }
+                        self.cached_transcript_messages = Some(bounded);
                     }
                     Err(err) => {
                         log::warn!(

@@ -164,6 +164,45 @@ const bn5: TranslationMap = {
   'settings.localModel.status.triggering': 'ট্রিগার হচ্ছে...',
   'settings.localModel.status.unavailable': 'পাওয়া যাচ্ছে না',
   'settings.localModel.status.working': 'কাজ হচ্ছে...',
+  'settings.developerMenu.ai.title': 'AI কনফিগারেশন',
+  'settings.developerMenu.ai.desc':
+    'ক্লাউড প্রদানকারী, স্থানীয় Ollama মডেল এবং প্রতি-ওয়ার্কলোড রাউটিং',
+  'settings.developerMenu.screenAwareness.title': 'স্ক্রিন সচেতনতা',
+  'settings.developerMenu.screenAwareness.desc':
+    'স্ক্রিন ক্যাপচার অনুমতি, মনিটরিং নীতি এবং সেশন নিয়ন্ত্রণ',
+  'settings.developerMenu.messagingChannels.title': 'মেসেজিং চ্যানেল',
+  'settings.developerMenu.messagingChannels.desc':
+    'Telegram/Discord অথেন্টিকেশন মোড এবং ডিফল্ট চ্যানেল রাউটিং কনফিগার করুন',
+  'settings.developerMenu.tools.title': 'টুলস',
+  'settings.developerMenu.tools.desc':
+    'OpenHuman আপনার পক্ষ থেকে যে সক্ষমতাগুলি ব্যবহার করতে পারে সেগুলি চালু বা বন্ধ করুন',
+  'settings.developerMenu.agentChat.title': 'এজেন্ট চ্যাট',
+  'settings.developerMenu.agentChat.desc':
+    'মডেল এবং টেম্পারেচার ওভাররাইডসহ এজেন্ট কথোপকথন পরীক্ষা করুন',
+  'settings.developerMenu.cronJobs.title': 'Cron জব',
+  'settings.developerMenu.cronJobs.desc':
+    'রানটাইম স্কিলের জন্য নির্ধারিত জব দেখুন এবং কনফিগার করুন',
+  'settings.developerMenu.localModelDebug.title': 'লোকাল মডেল ডিবাগ',
+  'settings.developerMenu.localModelDebug.desc':
+    'Ollama কনফিগারেশন, অ্যাসেট ডাউনলোড, মডেল টেস্ট এবং ডায়াগনস্টিক্স',
+  'settings.developerMenu.webhooks.title': 'ওয়েবহুক',
+  'settings.developerMenu.webhooks.desc':
+    'রানটাইম ওয়েবহুক রেজিস্ট্রেশন এবং ধরা পড়া রিকোয়েস্ট লগ পরিদর্শন করুন',
+  'settings.developerMenu.intelligence.title': 'ইন্টেলিজেন্স',
+  'settings.developerMenu.intelligence.desc':
+    'মেমরি ওয়ার্কস্পেস, সাবকনশাস ইঞ্জিন, ড্রিমস এবং সেটিংস',
+  'settings.developerMenu.notificationRouting.title': 'নোটিফিকেশন রাউটিং',
+  'settings.developerMenu.notificationRouting.desc':
+    'ইন্টিগ্রেশন অ্যালার্টের জন্য AI গুরুত্ব স্কোরিং এবং অর্কেস্ট্রেটর এসকেলেশন',
+  'settings.developerMenu.composeioTriggers.title': 'ComposeIO ট্রিগার',
+  'settings.developerMenu.composeioTriggers.desc': 'ComposeIO ট্রিগার ইতিহাস এবং আর্কাইভ দেখুন',
+  'settings.developerMenu.composioRouting.title': 'Composio রাউটিং (ডাইরেক্ট মোড)',
+  'settings.developerMenu.composioRouting.desc':
+    'আপনার নিজস্ব Composio API কী ব্যবহার করুন এবং কল সরাসরি backend.composio.dev-এ রাউট করুন',
+  'settings.developerMenu.integrationTriggers.title': 'ইন্টিগ্রেশন ট্রিগার',
+  'settings.developerMenu.integrationTriggers.desc':
+    'Composio ইন্টিগ্রেশন ট্রিগারের জন্য AI ট্রায়াজ সেটিংস কনফিগার করুন',
+  'settings.appearance.menuDesc': 'লাইট, ডার্ক বা সিস্টেম থিমের সাথে মিল বেছে নিন',
   'settings.mascot.active': 'সক্রিয়',
   'settings.mascot.characterDesc': 'চরিত্রের বিবরণ',
   'settings.mascot.characterHeading': 'চরিত্রের শিরোনাম',
@@ -171,6 +210,8 @@ const bn5: TranslationMap = {
   'settings.mascot.colorHeading': 'রঙের শিরোনাম',
   'settings.mascot.loadingLibrary': 'OpenHuman লাইব্রেরি লোড হচ্ছে…',
   'settings.mascot.localDefault': 'লোকাল OpenHuman (ডিফল্ট)',
+  'settings.mascot.menuTitle': 'মাসকট',
+  'settings.mascot.menuDesc': 'অ্যাপ জুড়ে ব্যবহৃত মাসকটের রঙ বেছে নিন',
   'settings.mascot.noCharacters': 'কোনো OpenHuman ক্যারেক্টার এখনও উপলব্ধ নেই',
   'settings.mascot.noColorVariants': 'কোনো রঙের ভেরিয়েন্ট নেই',
   'settings.mascot.voice.current': 'বর্তমান',

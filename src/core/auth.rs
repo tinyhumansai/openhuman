@@ -22,9 +22,14 @@
 //! - `GET /auth/telegram` — external browser callback (carries its own token)
 //! - `GET /schema`        — read-only schema discovery
 //! - `GET /events`        — SSE stream; browser `EventSource` cannot set headers
-//! - `GET /events/webhooks` — webhook SSE; same browser constraint
 //! - `GET /ws/dictation`  — WebSocket upgrade; browser WS API cannot set headers
 //! - `OPTIONS *`          — CORS preflight (handled by outer CORS middleware)
+//!
+//! Endpoints that accept the bearer either via header **or** `?token=…` query
+//! param (see [`QUERY_TOKEN_PATHS`]):
+//! - `GET /events/webhooks` — webhook SSE; browser `EventSource` cannot set
+//!   headers, so the FE forwards the bearer as a query param. Validated
+//!   against the same in-process RPC token — no separate secret.
 //!
 //! Only `POST /rpc` carries executable commands and requires the bearer token.
 
@@ -55,9 +60,23 @@ const PUBLIC_PATHS: &[&str] = &[
     "/auth/telegram",
     "/schema",
     "/events",
-    "/events/webhooks",
     "/ws/dictation",
 ];
+
+/// Paths that may authenticate via `?token=…` in the URL when no
+/// `Authorization` header is present.
+///
+/// Browser `EventSource` cannot attach custom headers, so an SSE route that
+/// returns sensitive data (webhook deliveries, registration changes) is
+/// otherwise indistinguishable from a public endpoint — any local process on
+/// `127.0.0.1` can subscribe. Allowing the bearer in the query string lets
+/// the FE attach it explicitly while keeping a single token of truth
+/// (validated by [`bearer_matches`] against the same in-process RPC token).
+///
+/// Add new entries here only for SSE / WebSocket routes whose clients cannot
+/// send headers and that carry per-user data. The follow-up approvals stream
+/// (#1339) is the next planned addition.
+const QUERY_TOKEN_PATHS: &[&str] = &["/events/webhooks"];
 
 /// The environment variable the Tauri shell sets before spawning the core.
 ///
@@ -148,30 +167,67 @@ pub async fn rpc_auth_middleware(req: axum::extract::Request, next: Next) -> Res
             .into_response();
     };
 
-    let bearer = req
+    let header_token = req
         .headers()
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
         .unwrap_or("");
 
-    if bearer
-        .strip_prefix("Bearer ")
-        .is_some_and(|token| token == expected)
-    {
-        log::trace!("[auth] authorized request to {path}");
-        next.run(req).await
-    } else {
-        log::warn!("[auth] unauthorized request to {path} — missing or wrong bearer token");
-        (
-            StatusCode::UNAUTHORIZED,
-            Json(json!({
-                "ok": false,
-                "error": "unauthorized",
-                "message": "Missing or invalid Authorization header. Supply 'Authorization: Bearer <token>'."
-            })),
-        )
-            .into_response()
+    if bearer_matches(header_token, expected) {
+        log::trace!("[auth] authorized request to {path} (header)");
+        return next.run(req).await;
     }
+
+    // Header path failed — fall back to `?token=…` for SSE/WS routes whose
+    // browser clients cannot set headers. The query token is validated
+    // against the same in-process RPC bearer (single source of truth), so
+    // this is not a separate credential — only a transport workaround.
+    if QUERY_TOKEN_PATHS.contains(&path.as_str()) {
+        if let Some(query_token) = extract_query_token(req.uri().query()) {
+            if bearer_matches(&query_token, expected) {
+                log::trace!("[auth] authorized request to {path} (query token)");
+                return next.run(req).await;
+            }
+        }
+    }
+
+    log::warn!("[auth] unauthorized request to {path} — missing or wrong bearer token");
+    (
+        StatusCode::UNAUTHORIZED,
+        Json(json!({
+            "ok": false,
+            "error": "unauthorized",
+            "message": "Missing or invalid Authorization header. Supply 'Authorization: Bearer <token>'."
+        })),
+    )
+        .into_response()
+}
+
+/// Single source of truth for token comparison. Hex tokens of fixed length
+/// make the comparison non-secret-shaped, but we still pin a deliberate
+/// helper so adding constant-time semantics later is a one-line change.
+fn bearer_matches(supplied: &str, expected: &str) -> bool {
+    !supplied.is_empty() && supplied == expected
+}
+
+/// Pull the first `token` query parameter out of a URL query string.
+///
+/// Returns `None` when the query is absent, the key is missing, or the
+/// value is empty after trimming. URL decoding is delegated to
+/// [`url::form_urlencoded`] so percent-encoded tokens decode the same way
+/// they were encoded by the FE via `encodeURIComponent`.
+fn extract_query_token(query: Option<&str>) -> Option<String> {
+    let query = query?;
+    for (key, value) in url::form_urlencoded::parse(query.as_bytes()) {
+        if key == "token" {
+            let value = value.trim().to_string();
+            if !value.is_empty() {
+                return Some(value);
+            }
+        }
+    }
+    None
 }
 
 /// Generate a 256-bit cryptographically-random token as a lowercase hex string.
@@ -238,6 +294,58 @@ mod tests {
         let back = std::fs::read_to_string(&path).unwrap();
         assert_eq!(back, token);
         std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn bearer_matches_rejects_empty_supplied() {
+        let expected = "cafebabe";
+        assert!(!bearer_matches("", expected));
+    }
+
+    #[test]
+    fn bearer_matches_rejects_mismatch() {
+        assert!(!bearer_matches("deadbeef", "cafebabe"));
+    }
+
+    #[test]
+    fn bearer_matches_accepts_exact() {
+        assert!(bearer_matches("cafebabe", "cafebabe"));
+    }
+
+    #[test]
+    fn extract_query_token_returns_none_on_missing_query() {
+        assert_eq!(extract_query_token(None), None);
+    }
+
+    #[test]
+    fn extract_query_token_returns_none_when_key_absent() {
+        assert_eq!(extract_query_token(Some("other=1&foo=bar")), None);
+    }
+
+    #[test]
+    fn extract_query_token_returns_none_on_empty_value() {
+        assert_eq!(extract_query_token(Some("token=")), None);
+        assert_eq!(extract_query_token(Some("token=%20%20")), None);
+    }
+
+    #[test]
+    fn extract_query_token_returns_first_value_on_duplicate_keys() {
+        // Last-wins vs first-wins is a question the FE never hits; pin
+        // first-wins so any future ambiguity is documented.
+        assert_eq!(
+            extract_query_token(Some("token=alpha&token=beta")),
+            Some("alpha".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_query_token_url_decodes_value() {
+        // `encodeURIComponent` on the FE may percent-encode a hex token
+        // accidentally (it shouldn't, but defensive); confirm round-trip.
+        assert_eq!(
+            extract_query_token(Some("token=cafe%2Dbabe")),
+            Some("cafe-babe".to_string())
+        );
     }
 
     #[cfg(unix)]

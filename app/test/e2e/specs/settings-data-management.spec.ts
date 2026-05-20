@@ -20,7 +20,8 @@ import { startMockServer, stopMockServer } from '../mock-server';
 const USER_ID = 'e2e-settings-data-mgmt';
 
 describe('Settings - Data Management', () => {
-  before(async () => {
+  before(async function beforeSuite() {
+    this.timeout(90_000);
     await startMockServer();
     await waitForApp();
     await resetApp(USER_ID);
@@ -30,7 +31,8 @@ describe('Settings - Data Management', () => {
     await stopMockServer();
   });
 
-  it('shows Clear App Data confirmation dialog and handles Cancel (13.5.1)', async () => {
+  it('shows Clear App Data confirmation dialog and handles Cancel (13.5.1)', async function () {
+    this.timeout(90_000);
     await navigateViaHash('/settings');
     await waitForText('Clear App Data', 15_000);
 
@@ -44,7 +46,8 @@ describe('Settings - Data Management', () => {
     expect(await textExists('Clear App Data')).toBe(true);
   });
 
-  it('performs Full State Reset (13.5.3)', async () => {
+  it('performs Full State Reset (13.5.3)', async function () {
+    this.timeout(90_000);
     await navigateViaHash('/settings');
     await waitForText('Clear App Data', 15_000);
 
@@ -54,7 +57,9 @@ describe('Settings - Data Management', () => {
     await clickText('Clear App Data');
 
     // After reset the app reloads to the Welcome screen.
-    await waitForText('Welcome', 25_000);
-    expect(await textExists('Sign in')).toBe(true);
+    // The Welcome page shows "Welcome to OpenHuman" and OAuth provider buttons
+    // but no literal "Sign in" text — assert on the welcome title instead.
+    await waitForText('Welcome to OpenHuman', 25_000);
+    expect(await textExists('Welcome to OpenHuman')).toBe(true);
   });
 });

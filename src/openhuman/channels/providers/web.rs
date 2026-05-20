@@ -287,6 +287,23 @@ fn classify_inference_error(err: &str) -> (&'static str, String) {
                 err,
             ),
         )
+    } else if crate::openhuman::inference::provider::is_provider_config_rejection_message(err) {
+        // #2079 / #2076 / #2202: an OpenHuman abstract tier alias leaked to
+        // a custom provider, a stale model pin, or a model-specific
+        // temperature constraint. Checked BEFORE the generic
+        // model-unavailable arm so config-rejection bodies that also
+        // contain "model"/"does not exist"/"does not have access" get the
+        // specific "Settings → LLM" remediation instead of the generic
+        // copy. Shared predicate keeps this in lockstep with the
+        // Sentry-demotion classifier.
+        (
+            "model_unavailable",
+            with_provider_detail(
+                "Your AI provider rejected the request's model or temperature setting. \
+                 Check your model and routing in Settings → LLM.",
+                err,
+            ),
+        )
     } else if lower.contains("model")
         && (lower.contains("not found")
             || lower.contains("unavailable")

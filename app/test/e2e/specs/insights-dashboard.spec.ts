@@ -33,6 +33,7 @@ function stepLog(message: string, context?: unknown): void {
 
 describe('Insights dashboard smoke', () => {
   before(async function beforeSuite() {
+    this.timeout(90_000);
     if (!supportsExecuteScript()) {
       stepLog('Skipping suite on Mac2 — Intelligence sidebar not mapped');
       this.skip();
@@ -64,40 +65,39 @@ describe('Insights dashboard smoke', () => {
     expect(await textExists('Memory')).toBe(true);
   });
 
-  it('renders the actionable-items search input (11.2.3) and accepts a query', async () => {
-    // The Memory tab mounts an `<input id="actionable-search">` — assert by id
-    // so the test cannot false-pass on an unrelated input elsewhere on the page.
-    // Real keystroke synthesis via the React onChange path is intentional:
-    // there is no shared helper for typing into arbitrary inputs (only
-    // clickButton / clickText / clickToggle), and `browser.keys()` is unreliable
-    // on tauri-driver, so we follow the established pattern from
-    // `command-palette.spec.ts` (event synthesis via `browser.execute`).
-    stepLog('typing into #actionable-search');
-    const typed = await browser.execute(() => {
-      const target = document.querySelector<HTMLInputElement>('#actionable-search');
-      if (!target) return false;
-      target.focus();
-      const setter = Object.getOwnPropertyDescriptor(
-        window.HTMLInputElement.prototype,
-        'value'
-      )?.set;
-      setter?.call(target, 'roundtrip canary');
-      target.dispatchEvent(new Event('input', { bubbles: true }));
-      return target.value === 'roundtrip canary';
+  it('renders the memory workspace actions panel (11.2.3 — Build Summary Trees button)', async () => {
+    // The Memory tab now mounts `MemoryWorkspace` (replaced the old
+    // `IntelligenceMemoryTab` actionable-items pipeline). Assert the
+    // workspace container and the "Build Summary Trees" action button are
+    // present — this is the primary interactive element on the Memory surface.
+    stepLog('asserting memory-workspace and memory-build-trees are present');
+    const workspacePresent = await browser.execute(() => {
+      const workspace = document.querySelector('[data-testid="memory-workspace"]');
+      return workspace !== null;
     });
-    expect(typed).toBe(true);
+    stepLog('memory-workspace present', { workspacePresent });
+    expect(workspacePresent).toBe(true);
+
+    const buildButtonPresent = await browser.execute(() => {
+      const btn = document.querySelector('[data-testid="memory-build-trees"]');
+      return btn !== null;
+    });
+    stepLog('memory-build-trees button present', { buildButtonPresent });
+    expect(buildButtonPresent).toBe(true);
   });
 
-  it('renders the actionable-source select (11.2.2) with the All Sources option', async () => {
-    // 11.2.2 source filtering is a `<select id="actionable-source">` element
-    // (not provider chips). Asserting on the id + the canonical first option
-    // proves the filter UI mounted without false-positives on stray buttons.
-    const filterPresent = await browser.execute(() => {
-      const select = document.querySelector<HTMLSelectElement>('#actionable-source');
-      if (!select) return false;
-      const allOption = Array.from(select.options).find(o => o.value === 'all');
-      return Boolean(allOption && /all sources/i.test(allOption.textContent || ''));
+  it('renders the memory action controls (11.2.2 — Reset Memory + Reset Memory Tree)', async () => {
+    // 11.2.2 is now the MemoryWorkspace action bar. The filter pipeline
+    // (`#actionable-source` select) was removed when the Memory tab
+    // migrated to `MemoryWorkspace`. We assert the two wipe/reset
+    // control buttons are present — they are always rendered (not gated
+    // on graph load state) and unambiguously identify the controls panel.
+    const actionsPresent = await browser.execute(() => {
+      const wipe = document.querySelector('[data-testid="memory-wipe-all"]');
+      const reset = document.querySelector('[data-testid="memory-reset-tree"]');
+      return wipe !== null && reset !== null;
     });
-    expect(filterPresent).toBe(true);
+    stepLog('memory action buttons present', { actionsPresent });
+    expect(actionsPresent).toBe(true);
   });
 });

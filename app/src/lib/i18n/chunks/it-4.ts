@@ -46,6 +46,15 @@ const it4: TranslationMap = {
   'composio.connect.subdomainInvalid':
     'Inserisci solo il sottodominio breve (es. "acme"), non l\'URL completo. Deve contenere solo lettere, numeri e trattini.',
   'composio.connect.subdomainRequired': 'Inserisci il tuo sottodominio Atlassian per continuare.',
+  'composio.connect.dynamicsOrgNameLabel': "Nome dell'organizzazione Dynamics 365",
+  'composio.connect.dynamicsOrgNameHint':
+    'Per esempio, "myorg" per myorg.crm.dynamics.com. Inserisci solo il nome breve dell\'organizzazione, non l\'URL completo.',
+  'composio.connect.needsFieldsPrefix': 'Per connettere',
+  'composio.connect.needsFieldsSuffix':
+    'ci servono altre informazioni. Compila i campi mancanti qui sotto e riprova.',
+  'composio.connect.requiredFieldEmpty': 'Questo campo è obbligatorio.',
+  'composio.connect.wabaIdHint':
+    'Trovalo tramite GET /me/businesses poi GET /{business_id}/owned_whatsapp_business_accounts usando il tuo token di accesso Meta.',
   'composio.connect.wabaIdLabel': 'Etichetta WABA ID',
   'composio.connect.wabaIdRequired':
     'Inserisci il tuo ID WhatsApp Business Account (WABA ID) per continuare.',
@@ -147,8 +156,14 @@ const it4: TranslationMap = {
   'onboarding.contextGathering.title': 'Raccolta del contesto',
   'openhuman.team_list_teams': 'Elenco team',
   'overlay.ariaAttention': 'Messaggio di attenzione',
+  'overlay.ariaCompanion': 'Companion attivo',
   'overlay.ariaOrb': 'Overlay OpenHuman',
   'overlay.ariaVoiceActive': 'Input vocale attivo',
+  'overlay.companion.error': 'Errore',
+  'overlay.companion.listening': 'In ascolto…',
+  'overlay.companion.pointing': 'Sta puntando…',
+  'overlay.companion.speaking': 'Sta parlando…',
+  'overlay.companion.thinking': 'Sta pensando…',
   'overlay.orbTitle': 'Trascina per spostare · Doppio clic per ripristinare la posizione',
   'pages.settings.account.connections': 'Connessioni',
   'pages.settings.account.connectionsDesc': 'Descrizione connessioni',
@@ -168,6 +183,9 @@ const it4: TranslationMap = {
   'pages.settings.aiSection.description':
     'Provider di modelli linguistici, Ollama locale e voce (STT / TTS).',
   'pages.settings.aiSection.title': 'AI',
+  'pages.settings.features.desktopCompanion': 'Companion Desktop',
+  'pages.settings.features.desktopCompanionDesc':
+    'Assistente vocale con consapevolezza dello schermo — ascolta, vede, parla, indica',
   'pages.settings.features.messagingChannels': 'Canali di messaggistica',
   'pages.settings.features.messagingChannelsDesc': 'Descrizione canali di messaggistica',
   'pages.settings.features.notifications': 'Notifiche',
@@ -365,6 +383,9 @@ const it4: TranslationMap = {
   'settings.billing.subscription.paymentConfirmed': 'Pagamento confermato',
   'settings.billing.subscription.perMonth': 'Al mese',
   'settings.billing.subscription.popular': 'Popolare',
+  'pages.settings.account.migration': 'Importa da un altro assistente',
+  'pages.settings.account.migrationDesc':
+    'Migra memoria e note da OpenClaw (e presto Hermes) in questo spazio di lavoro.',
 };
 
 export default it4;

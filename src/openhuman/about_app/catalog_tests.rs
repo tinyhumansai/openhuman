@@ -102,6 +102,7 @@ fn catalog_includes_additional_user_facing_surfaces() {
         "meet_agent.live_loop",
         "intelligence.mcp_server",
         "intelligence.tool_registry",
+        "conversation.subagent_mascots",
     ] {
         assert!(
             ids.contains(expected),

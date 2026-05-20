@@ -24,6 +24,8 @@ pub struct PricingIntegrations {
     pub google_places: Option<IntegrationPricingEntry>,
     #[serde(default)]
     pub parallel: Option<IntegrationPricingEntry>,
+    #[serde(default)]
+    pub tinyfish: Option<IntegrationPricingEntry>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

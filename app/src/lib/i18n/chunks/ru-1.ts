@@ -382,6 +382,48 @@ const ru1: TranslationMap = {
   'settings.about.releasesDesc': 'Просмотр заметок к релизам и предыдущих сборок на GitHub.',
   'settings.about.openReleases': 'Открыть релизы на GitHub',
   'settings.ai.overview': 'Обзор AI-системы',
+  'migration.title': 'Импорт из другого ассистента',
+  'migration.description':
+    'Перенесите память и заметки из другого локального ассистента в это рабочее пространство. Сначала запустите «Предпросмотр», чтобы увидеть, что изменится, затем нажмите «Применить», чтобы скопировать данные. Текущая память сохраняется в резервную копию первой.',
+  'migration.vendorLabel': 'Источник',
+  'migration.sourceLabel': 'Путь к исходному рабочему пространству (необязательно)',
+  'migration.sourcePlaceholder':
+    'Оставьте пустым для автоопределения (например, ~/.openclaw/workspace)',
+  'migration.sourceHint':
+    'Если пусто, используется стандартное расположение источника. Укажите явный путь, если вы перенесли рабочее пространство.',
+  'migration.previewAction': 'Предпросмотр',
+  'migration.previewRunning': 'Предпросмотр…',
+  'migration.applyAction': 'Применить импорт',
+  'migration.applyRunning': 'Импорт…',
+  'migration.applyDisclaimer':
+    '«Применить» разблокируется только после успешного предпросмотра того же источника. Существующая память сохраняется перед любым импортом.',
+  'migration.reportTitlePreview': 'Предпросмотр — ничего ещё не импортировано',
+  'migration.reportTitleApplied': 'Импорт завершён',
+  'migration.report.source': 'Исходное пространство',
+  'migration.report.target': 'Целевое пространство',
+  'migration.report.fromSqlite': 'Из SQLite (brain.db)',
+  'migration.report.fromMarkdown': 'Из Markdown',
+  'migration.report.imported': 'Импортировано',
+  'migration.report.skippedUnchanged': 'Пропущено (без изменений)',
+  'migration.report.renamedConflicts': 'Переименовано при конфликте',
+  'migration.report.warnings': 'Предупреждения',
+  'migration.report.previewHint':
+    'Данные ещё не импортированы. Нажмите «Применить импорт», чтобы скопировать.',
+  'migration.report.appliedHint':
+    'Импортированные записи теперь в вашей памяти. Запустите «Предпросмотр» снова для сравнения.',
+  'migration.hermesComingSoonPrefix': 'Импортёр Hermes в дорожной карте — см. ',
+  'migration.hermesComingSoonSuffix':
+    ' для контекста. Сегодня используйте OpenClaw для переноса; Hermes появится позже.',
+  'migration.hermesLinkText': '#1440',
+  'migration.confirmImport.singular':
+    'Импортировать {count} запись в текущее рабочее пространство?\n\nИсточник: {source}\nЦель: {target}\n\nПеред импортом будет сохранена резервная копия памяти.',
+  'migration.confirmImport.plural':
+    'Импортировать {count} записей в текущее рабочее пространство?\n\nИсточник: {source}\nЦель: {target}\n\nПеред импортом будет сохранена резервная копия памяти.',
+  // Settings menu: Appearance + Mascot (#2225) — English stubs; native translations welcome
+  'settings.appearance': 'Appearance',
+  'settings.appearanceDesc': 'Pick light, dark, or match your system theme',
+  'settings.mascot': 'Mascot',
+  'settings.mascotDesc': 'Pick the mascot color used across the app',
 };
 
 export default ru1;

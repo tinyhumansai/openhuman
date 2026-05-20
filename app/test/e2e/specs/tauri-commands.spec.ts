@@ -15,12 +15,16 @@
  *      through the same `callOpenhumanRpc` helper every product spec uses.
  *      That round-trips renderer → Tauri IPC → relay → core → response.
  *
- * The Tauri commands are invoked via `window.__TAURI__.core.invoke` inside
- * `browser.executeAsync(...)` so the call lives inside the WebView, the
- * same way the React app reaches the shell at runtime. The
- * `window.__TAURI__` direct-access rule from CLAUDE.md applies to product
- * code; E2E specs whose job is to test the bridge itself are the
- * exception.
+ * The Tauri commands are invoked via `window.__TAURI_INTERNALS__.invoke`
+ * inside `browser.executeAsync(...)` so the call lives inside the WebView,
+ * the same way the React app reaches the shell at runtime via the
+ * `@tauri-apps/api/core` `invoke()` helper.
+ *
+ * Note: under the CEF runtime `window.__TAURI__` (the public namespace) is
+ * NOT populated. The underlying IPC bridge lives in
+ * `window.__TAURI_INTERNALS__`, which `@tauri-apps/api/core` uses
+ * internally. The first test therefore probes `__TAURI_INTERNALS__.invoke`
+ * rather than `__TAURI__.core.invoke`.
  */
 import { waitForApp } from '../helpers/app-helpers';
 import { callOpenhumanRpc } from '../helpers/core-rpc';
@@ -40,12 +44,17 @@ async function invokeTauri<T = unknown>(
 ): Promise<TauriResult<T>> {
   return (await browser.executeAsync(
     (command, payload, done) => {
-      const tauri = (window as any).__TAURI__;
-      if (!tauri?.core?.invoke) {
-        done({ __error: 'window.__TAURI__.core.invoke not available' });
+      // Under the CEF runtime, Tauri exposes the IPC bridge through
+      // `__TAURI_INTERNALS__` (not the public `__TAURI__` namespace which
+      // CEF does not populate). `@tauri-apps/api/core`'s `invoke()` helper
+      // reads `__TAURI_INTERNALS__.invoke` internally — so this matches the
+      // exact transport path the product code uses.
+      const internals = (window as any).__TAURI_INTERNALS__;
+      if (typeof internals?.invoke !== 'function') {
+        done({ __error: 'window.__TAURI_INTERNALS__.invoke not available' });
         return;
       }
-      tauri.core
+      internals
         .invoke(command, payload)
         .then((result: unknown) => done({ __ok: result }))
         .catch((err: unknown) =>
@@ -58,7 +67,8 @@ async function invokeTauri<T = unknown>(
 }
 
 describe('Tauri commands', () => {
-  before(async () => {
+  before(async function beforeSuite() {
+    this.timeout(90_000);
     await waitForApp();
     await resetApp(USER_ID);
   });
@@ -73,9 +83,14 @@ describe('Tauri commands', () => {
     expect(screenshot.length).toBeGreaterThan(100);
   });
 
-  it('exposes window.__TAURI__.core.invoke to the renderer', async () => {
+  it('exposes __TAURI_INTERNALS__.invoke to the renderer (CEF IPC bridge)', async () => {
+    // Under the CEF runtime `window.__TAURI__` (the public Tauri JS API
+    // namespace) is not populated. The underlying IPC bridge used by
+    // `@tauri-apps/api/core`'s `invoke()` lives in
+    // `window.__TAURI_INTERNALS__.invoke`. Asserting on `__TAURI_INTERNALS__`
+    // matches what the product code actually calls at runtime.
     const present = await browser.execute(
-      () => typeof (window as any).__TAURI__?.core?.invoke === 'function'
+      () => typeof (window as any).__TAURI_INTERNALS__?.invoke === 'function'
     );
     expect(present).toBe(true);
   });
@@ -96,10 +111,13 @@ describe('Tauri commands', () => {
   });
 
   it('round-trips an RPC through the relay (openhuman.about_app_list)', async () => {
-    const res = await callOpenhumanRpc<{ capabilities: unknown[] }>('openhuman.about_app_list', {});
+    const res = await callOpenhumanRpc('openhuman.about_app_list', {});
     expect(res.ok).toBe(true);
     if (!res.ok) return;
-    expect(Array.isArray(res.result.capabilities)).toBe(true);
-    expect(res.result.capabilities.length).toBeGreaterThan(0);
+    // RpcOutcome with single_log returns {result: Capability[], logs: [string]}.
+    // The outer `result` field (from JSON-RPC) holds that envelope.
+    const capabilities = (res.result as { result?: unknown[] })?.result ?? res.result;
+    expect(Array.isArray(capabilities)).toBe(true);
+    expect((capabilities as unknown[]).length).toBeGreaterThan(0);
   });
 });

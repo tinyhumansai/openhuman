@@ -124,12 +124,29 @@ const baseHeartbeatSettings = {
 const baseUsage = {
   remainingUsd: 1.5,
   cycleBudgetUsd: 10,
-  cycleLimit5hr: 0.12,
-  cycleLimit7day: 8.5,
-  fiveHourCapUsd: 1,
-  fiveHourResetsAt: '2026-05-17T08:00:00.000Z',
+  cycleSpentUsd: 8.5,
   cycleStartDate: '2026-05-14T00:00:00.000Z',
   cycleEndsAt: '2026-05-21T00:00:00.000Z',
+  plan: {
+    plan: 'BASIC',
+    name: 'Basic',
+    marginPercent: 25,
+    payAsYouGoMarginPercent: 50,
+    discountVsPayAsYouGoPercent: 50,
+  },
+  insights: {
+    period: { startDate: '2026-05-14T00:00:00.000Z', endDate: '2026-05-21T00:00:00.000Z' },
+    totals: {
+      inferenceUsd: 6,
+      integrationsUsd: 2.5,
+      totalUsd: 8.5,
+      inferenceCalls: 120,
+      integrationCalls: 6,
+    },
+    dailySeries: [],
+    topModels: [],
+    topIntegrations: [],
+  },
 };
 
 const baseTransactions = [
@@ -586,7 +603,7 @@ describe('AIPanel', () => {
 
     expect(screen.getByText('Week budget')).toBeInTheDocument();
     expect(screen.getByText('$10.0000')).toBeInTheDocument();
-    expect(screen.getByText('Week remaining')).toBeInTheDocument();
+    expect(screen.getByText('Cycle remaining')).toBeInTheDocument();
     expect(screen.getByText('$1.5000')).toBeInTheDocument();
     expect(screen.getByText('Avg spend row')).toBeInTheDocument();
     expect(screen.getByText('Bg API reads')).toBeInTheDocument();

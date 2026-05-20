@@ -440,6 +440,17 @@ mod tests {
         );
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn is_transient_fs_error_classifies_windows_delete_pending() {
+        let io_err = std::io::Error::from_raw_os_error(303);
+        let err = anyhow::Error::new(io_err);
+        assert!(
+            is_transient_fs_error(&err),
+            "ERROR_DELETE_PENDING (303) must be transient on Windows"
+        );
+    }
+
     /// A chained io::Error with `ErrorKind::NotFound` is not a transient
     /// locking error — we should not retry it.
     #[test]
@@ -617,8 +628,18 @@ pub fn is_transient_fs_error(err: &anyhow::Error) -> bool {
                 // 5: ERROR_ACCESS_DENIED
                 // 32: ERROR_SHARING_VIOLATION
                 // 33: ERROR_LOCK_VIOLATION
+                // 303: ERROR_DELETE_PENDING — the previous owner's
+                //      `Drop::drop` issued `fs::remove_file` and Windows
+                //      acknowledged it, but the file is still in the
+                //      "delete pending" limbo because AV/indexer holds a
+                //      handle. A retry-with-backoff resolves it as soon as
+                //      the holder closes its handle. Sentry OPENHUMAN-TAURI-H8
+                //      bails at `elapsed_ms ≈ 2` against
+                //      `openhuman.team_get_usage` because this code was not
+                //      previously classified as transient and `create_new`
+                //      returned a `kind = Other` io::Error on the first try.
                 // 1224: ERROR_USER_MAPPED_FILE
-                return code == 5 || code == 32 || code == 33 || code == 1224;
+                return code == 5 || code == 32 || code == 33 || code == 303 || code == 1224;
             }
         }
         #[cfg(not(windows))]

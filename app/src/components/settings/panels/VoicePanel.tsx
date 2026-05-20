@@ -416,8 +416,9 @@ const VoicePanel = ({ embedded = false }: VoicePanelProps = {}) => {
               </h3>
               <p className="text-xs text-stone-500 dark:text-neutral-400 mt-1">
                 Choose where transcription and synthesis run. Use the Install locally buttons to
-                download the binaries and models into your workspace — no manual{' '}
-                <code>WHISPER_BIN</code> or <code>PIPER_BIN</code> setup required.
+                download the binaries and models into your workspace. Local providers can be saved
+                before the install finishes — no manual <code>WHISPER_BIN</code> or{' '}
+                <code>PIPER_BIN</code> setup required.
               </p>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -433,7 +434,7 @@ const VoicePanel = ({ embedded = false }: VoicePanelProps = {}) => {
                   onChange={e => onSttProviderChange(e.target.value as 'cloud' | 'whisper')}
                   className="w-full rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 focus:outline-none focus:ring-1 focus:ring-primary-400">
                   <option value="cloud">Cloud (Whisper proxy)</option>
-                  <option value="whisper" disabled={!whisperReady}>
+                  <option value="whisper">
                     Local Whisper{whisperReady ? '' : ' (install required)'}
                   </option>
                 </select>
@@ -523,7 +524,7 @@ const VoicePanel = ({ embedded = false }: VoicePanelProps = {}) => {
                   onChange={e => onTtsProviderChange(e.target.value as 'cloud' | 'piper')}
                   className="w-full rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 focus:outline-none focus:ring-1 focus:ring-primary-400">
                   <option value="cloud">Cloud (ElevenLabs proxy)</option>
-                  <option value="piper" disabled={!piperReady}>
+                  <option value="piper">
                     Local Piper{piperReady ? '' : ' (install required)'}
                   </option>
                 </select>
