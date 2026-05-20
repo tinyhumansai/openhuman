@@ -1,16 +1,18 @@
 use super::kalshi_auth::sign_kalshi_headers;
 use crate::openhuman::config::{KalshiConfig, KalshiCredentials};
+use crate::openhuman::security::policy::ToolOperation;
 use crate::openhuman::security::SecurityPolicy;
 use crate::openhuman::tools::traits::{Tool, ToolCategory, ToolResult};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use reqwest::header::HeaderMap;
+use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
 use reqwest::{Client, StatusCode};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
+use uuid::Uuid;
 
 const MAX_RETRY_ATTEMPTS: usize = 3;
 const RETRY_BACKOFF_MS: u64 = 500;
@@ -77,6 +79,23 @@ enum KalshiRequest {
         limit: Option<u64>,
         #[serde(default)]
         cursor: Option<String>,
+    },
+    PlaceOrder {
+        ticker: String,
+        side: String,
+        order_action: String,
+        count: u64,
+        #[serde(rename = "type")]
+        order_type: String,
+        #[serde(default)]
+        yes_price: Option<u64>,
+        #[serde(default)]
+        no_price: Option<u64>,
+        #[serde(default)]
+        expiration_ts: Option<u64>,
+    },
+    CancelOrder {
+        order_id: String,
     },
 }
 
@@ -251,6 +270,80 @@ impl KalshiTool {
                     "data": data,
                 }))
             }
+            KalshiRequest::PlaceOrder {
+                ticker,
+                side,
+                order_action,
+                count,
+                order_type,
+                yes_price,
+                no_price,
+                expiration_ts,
+            } => {
+                self.security
+                    .enforce_tool_operation(ToolOperation::Act, "kalshi.place_order")
+                    .map_err(anyhow::Error::msg)?;
+
+                let ticker = non_empty(Some(ticker.as_str()))
+                    .ok_or_else(|| anyhow::anyhow!("'ticker' cannot be empty"))?;
+                let side = normalize_yes_no(&side)?;
+                let order_action = normalize_buy_sell(&order_action)?;
+                let order_type = normalize_order_type(&order_type)?;
+                if count == 0 {
+                    anyhow::bail!("'count' must be greater than zero");
+                }
+
+                let yes_price = validate_price_cents("yes_price", yes_price)?;
+                let no_price = validate_price_cents("no_price", no_price)?;
+                if order_type == "limit" && yes_price.is_none() && no_price.is_none() {
+                    anyhow::bail!("limit orders require at least one of 'yes_price' or 'no_price'");
+                }
+
+                let client_order_id = Uuid::new_v4().to_string();
+                let mut body = json!({
+                    "ticker": ticker,
+                    "client_order_id": client_order_id,
+                    "side": side,
+                    "action": order_action,
+                    "count": count,
+                    "type": order_type,
+                });
+                if let Value::Object(ref mut map) = body {
+                    if let Some(value) = yes_price {
+                        map.insert("yes_price".to_string(), Value::from(value));
+                    }
+                    if let Some(value) = no_price {
+                        map.insert("no_price".to_string(), Value::from(value));
+                    }
+                    if let Some(value) = expiration_ts {
+                        map.insert("expiration_ts".to_string(), Value::from(value));
+                    }
+                }
+
+                let data = self.post_signed_json("/portfolio/orders", body).await?;
+                Ok(json!({
+                    "action": "place_order",
+                    "source": "kalshi",
+                    "client_order_id": client_order_id,
+                    "data": data,
+                }))
+            }
+            KalshiRequest::CancelOrder { order_id } => {
+                self.security
+                    .enforce_tool_operation(ToolOperation::Act, "kalshi.cancel_order")
+                    .map_err(anyhow::Error::msg)?;
+
+                let order_id = non_empty(Some(order_id.as_str()))
+                    .ok_or_else(|| anyhow::anyhow!("'order_id' cannot be empty"))?;
+                let path = format!("/portfolio/orders/{order_id}");
+                let data = self.delete_signed_json(&path).await?;
+                Ok(json!({
+                    "action": "cancel_order",
+                    "source": "kalshi",
+                    "order_id": order_id,
+                    "data": data,
+                }))
+            }
         }
     }
 
@@ -269,6 +362,24 @@ impl KalshiTool {
             .ok_or_else(|| anyhow::anyhow!("Kalshi credentials are required for this action"))
     }
 
+    async fn post_signed_json(&self, path: &str, body: Value) -> Result<Value> {
+        let credentials = self.require_credentials()?;
+        ensure_https(&self.base_url)?;
+        let body_raw = serde_json::to_string(&body).context("Failed to serialize Kalshi body")?;
+        let signed_path = format!("{}{}", self.signing_path_prefix, path);
+        let mut headers = sign_kalshi_headers(credentials, "POST", &signed_path, Some(&body_raw))?;
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        self.post_json_raw(path, Some(headers), body_raw).await
+    }
+
+    async fn delete_signed_json(&self, path: &str) -> Result<Value> {
+        let credentials = self.require_credentials()?;
+        ensure_https(&self.base_url)?;
+        let signed_path = format!("{}{}", self.signing_path_prefix, path);
+        let headers = sign_kalshi_headers(credentials, "DELETE", &signed_path, None)?;
+        self.delete_json(path, Some(headers)).await
+    }
+
     async fn get_json(
         &self,
         path: &str,
@@ -276,6 +387,21 @@ impl KalshiTool {
         headers: Option<HeaderMap>,
     ) -> Result<Value> {
         self.send_with_retry(reqwest::Method::GET, path, query, headers, None)
+            .await
+    }
+
+    async fn post_json_raw(
+        &self,
+        path: &str,
+        headers: Option<HeaderMap>,
+        body_raw: String,
+    ) -> Result<Value> {
+        self.send_with_retry(reqwest::Method::POST, path, &[], headers, Some(body_raw))
+            .await
+    }
+
+    async fn delete_json(&self, path: &str, headers: Option<HeaderMap>) -> Result<Value> {
+        self.send_with_retry(reqwest::Method::DELETE, path, &[], headers, None)
             .await
     }
 
@@ -405,7 +531,9 @@ impl Tool for KalshiTool {
                         "get_positions",
                         "get_balance",
                         "get_open_orders",
-                        "get_fills"
+                        "get_fills",
+                        "place_order",
+                        "cancel_order"
                     ]
                 },
                 "ticker": {
@@ -448,9 +576,46 @@ impl Tool for KalshiTool {
                     "minimum": 1,
                     "description": "Orderbook depth for get_orderbook."
                 },
-                "credentials": {
-                    "type": "object",
-                    "description": "Configured in integrations.kalshi.credentials for authenticated portfolio reads/writes."
+                "side": {
+                    "type": "string",
+                    "enum": ["yes", "no", "YES", "NO"],
+                    "description": "Order side for place_order."
+                },
+                "order_action": {
+                    "type": "string",
+                    "enum": ["buy", "sell", "BUY", "SELL"],
+                    "description": "Order action for place_order."
+                },
+                "type": {
+                    "type": "string",
+                    "enum": ["limit", "market", "LIMIT", "MARKET"],
+                    "description": "Order type for place_order."
+                },
+                "count": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Contract count for place_order."
+                },
+                "yes_price": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 99,
+                    "description": "YES price in cents for place_order."
+                },
+                "no_price": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 99,
+                    "description": "NO price in cents for place_order."
+                },
+                "expiration_ts": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Optional expiration timestamp in UNIX seconds."
+                },
+                "order_id": {
+                    "type": "string",
+                    "description": "Order id for cancel_order."
                 }
             },
             "required": ["action"]
@@ -462,7 +627,10 @@ impl Tool for KalshiTool {
     }
 
     fn is_concurrency_safe(&self, _args: &Value) -> bool {
-        true
+        match _args.get("action").and_then(Value::as_str) {
+            Some("place_order") | Some("cancel_order") => false,
+            _ => true,
+        }
     }
 
     async fn execute(&self, args: Value) -> Result<ToolResult> {
@@ -531,6 +699,40 @@ fn summarize_error_body(body: &str) -> String {
     } else {
         crate::openhuman::util::truncate_with_ellipsis(&compact, MAX_ERROR_BODY_CHARS)
     }
+}
+
+fn normalize_yes_no(value: &str) -> Result<&'static str> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "yes" => Ok("yes"),
+        "no" => Ok("no"),
+        _ => anyhow::bail!("Invalid 'side'. Expected one of: yes, no"),
+    }
+}
+
+fn normalize_buy_sell(value: &str) -> Result<&'static str> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "buy" => Ok("buy"),
+        "sell" => Ok("sell"),
+        _ => anyhow::bail!("Invalid 'action'. Expected one of: buy, sell"),
+    }
+}
+
+fn normalize_order_type(value: &str) -> Result<&'static str> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "limit" => Ok("limit"),
+        "market" => Ok("market"),
+        _ => anyhow::bail!("Invalid 'type'. Expected one of: limit, market"),
+    }
+}
+
+fn validate_price_cents(field: &str, value: Option<u64>) -> Result<Option<u64>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    if !(1..=99).contains(&value) {
+        anyhow::bail!("'{field}' must be in the range 1..=99 cents");
+    }
+    Ok(Some(value))
 }
 
 fn ensure_https(url: &str) -> Result<()> {
