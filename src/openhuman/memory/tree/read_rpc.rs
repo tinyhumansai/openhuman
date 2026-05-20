@@ -1575,8 +1575,9 @@ pub struct FlushNowResponse {
 /// depending on `memory_tree.llm_backend`), and persists the new L1+
 /// summaries — i.e. the tree gets built using the user's chosen AI.
 ///
-/// Idempotent: the dedupe key is `flush_stale:<UTC date>`, so spamming
-/// the button doesn't queue duplicates.
+/// Idempotent: the dedupe key is `flush_stale:<UTC date>-h<block>`
+/// where `<block>` is the current 3-hour UTC block (0..=7), so
+/// spamming the button within the same window doesn't queue duplicates.
 pub async fn flush_now_rpc(config: &Config) -> Result<RpcOutcome<FlushNowResponse>, String> {
     use crate::openhuman::memory::tree::jobs::store as jobs_store;
     use crate::openhuman::memory::tree::jobs::types::{FlushStalePayload, NewJob};
@@ -1593,8 +1594,11 @@ pub async fn flush_now_rpc(config: &Config) -> Result<RpcOutcome<FlushNowRespons
         let payload = FlushStalePayload {
             max_age_secs: Some(0),
         };
-        let date_iso = chrono::Utc::now().format("%Y-%m-%d").to_string();
-        let job = NewJob::flush_stale(&payload, &date_iso).context("build flush_stale NewJob")?;
+        let now = chrono::Utc::now();
+        let date_iso = now.format("%Y-%m-%d").to_string();
+        let hour_block = chrono::Timelike::hour(&now) / 3;
+        let job = NewJob::flush_stale(&payload, &date_iso, hour_block)
+            .context("build flush_stale NewJob")?;
         let enqueued = jobs_store::enqueue(&cfg, &job)
             .context("enqueue flush_stale job")?
             .is_some();

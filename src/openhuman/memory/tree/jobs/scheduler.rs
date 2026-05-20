@@ -6,7 +6,7 @@
 use std::time::Duration;
 
 use anyhow::Result;
-use chrono::{Datelike, Duration as ChronoDuration, NaiveDate, TimeZone, Utc};
+use chrono::{Datelike, Duration as ChronoDuration, NaiveDate, TimeZone, Timelike, Utc};
 
 use crate::openhuman::config::Config;
 use crate::openhuman::memory::tree::jobs::store;
@@ -46,8 +46,13 @@ pub fn start(config: Config) {
 }
 
 fn enqueue_flush_stale(config: &Config) {
-    let today_iso = Utc::now().date_naive().format("%Y-%m-%d").to_string();
-    match NewJob::flush_stale(&FlushStalePayload::default(), &today_iso) {
+    // Take a single `Utc::now()` reading and derive both the date and
+    // 3-hour block from it so the dedupe key can't disagree with itself
+    // across a 3-hour boundary.
+    let now = Utc::now();
+    let today_iso = now.date_naive().format("%Y-%m-%d").to_string();
+    let hour_block = now.hour() / 3;
+    match NewJob::flush_stale(&FlushStalePayload::default(), &today_iso, hour_block) {
         Ok(new_job) => {
             match store::enqueue(config, &new_job) {
                 Ok(Some(_)) => {
@@ -82,9 +87,10 @@ fn enqueue_daily_jobs(config: &Config) -> anyhow::Result<()> {
     }
 
     let today_iso = now.date_naive().format("%Y-%m-%d").to_string();
+    let hour_block = now.hour() / 3;
     if store::enqueue(
         config,
-        &NewJob::flush_stale(&FlushStalePayload::default(), &today_iso)?,
+        &NewJob::flush_stale(&FlushStalePayload::default(), &today_iso, hour_block)?,
     )?
     .is_some()
     {
