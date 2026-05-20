@@ -54,6 +54,11 @@ pub async fn approval_list_recent_decisions(
         "[approval] list_recent_decisions returned {} row(s)",
         rows.len()
     );
+    tracing::debug!(
+        rows = rows.len(),
+        limit = limit,
+        "[rpc:approval_list_recent_decisions] exit"
+    );
     Ok(RpcOutcome::single_log(rows, log))
 }
 

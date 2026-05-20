@@ -18,7 +18,7 @@
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use rusqlite::{params, Connection};
+use rusqlite::{params, types::Type, Connection};
 
 use crate::openhuman::config::Config;
 
@@ -225,18 +225,40 @@ fn row_to_audit_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<ApprovalAudit
     let expires_opt: Option<String> = row.get(6)?;
     let decided_str: String = row.get(7)?;
     let decision_str: String = row.get(8)?;
-    let decision = ApprovalDecision::from_str(&decision_str).unwrap_or(ApprovalDecision::Deny);
+    let decision = ApprovalDecision::from_str(&decision_str).ok_or_else(|| {
+        invalid_text_column(8, format!("unknown approval decision `{decision_str}`"))
+    })?;
     Ok(ApprovalAuditEntry {
         request_id: row.get(0)?,
         tool_name: row.get(1)?,
         action_summary: row.get(2)?,
         args_redacted,
         session_id: row.get(4)?,
-        created_at: parse_rfc3339(&created_str),
-        expires_at: expires_opt.as_deref().map(parse_rfc3339),
-        decided_at: parse_rfc3339(&decided_str),
+        created_at: parse_audit_rfc3339(5, &created_str)?,
+        expires_at: expires_opt
+            .as_deref()
+            .map(|value| parse_audit_rfc3339(6, value))
+            .transpose()?,
+        decided_at: parse_audit_rfc3339(7, &decided_str)?,
         decision,
     })
+}
+
+fn parse_audit_rfc3339(column: usize, input: &str) -> rusqlite::Result<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(input)
+        .map(|t| t.with_timezone(&Utc))
+        .map_err(|err| rusqlite::Error::FromSqlConversionFailure(column, Type::Text, Box::new(err)))
+}
+
+fn invalid_text_column(column: usize, message: String) -> rusqlite::Error {
+    rusqlite::Error::FromSqlConversionFailure(
+        column,
+        Type::Text,
+        Box::new(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            message,
+        )),
+    )
 }
 
 fn row_to_pending(row: &rusqlite::Row<'_>) -> rusqlite::Result<PendingApproval> {
@@ -403,5 +425,57 @@ mod tests {
         let rows = list_recent_decisions(&config, 0).unwrap();
 
         assert_eq!(rows.len(), 1);
+    }
+
+    #[test]
+    fn list_recent_decisions_rejects_unknown_decision_values() {
+        let (config, _dir) = test_config();
+        insert_pending(&config, &sample("corrupt-decision", "sess-A")).unwrap();
+        with_connection(&config, |conn| {
+            conn.execute(
+                "UPDATE pending_approvals
+                 SET decided_at = ?1, decision = ?2
+                 WHERE request_id = ?3",
+                params![Utc::now().to_rfc3339(), "maybe", "corrupt-decision"],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+
+        let err = list_recent_decisions(&config, 10).unwrap_err();
+
+        assert!(
+            err.to_string().contains("Invalid column type")
+                || err.to_string().contains("unknown approval decision"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn list_recent_decisions_rejects_invalid_audit_timestamps() {
+        let (config, _dir) = test_config();
+        insert_pending(&config, &sample("corrupt-time", "sess-A")).unwrap();
+        with_connection(&config, |conn| {
+            conn.execute(
+                "UPDATE pending_approvals
+                 SET decided_at = ?1, decision = ?2
+                 WHERE request_id = ?3",
+                params![
+                    "not-a-date",
+                    ApprovalDecision::Deny.as_str(),
+                    "corrupt-time"
+                ],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+
+        let err = list_recent_decisions(&config, 10).unwrap_err();
+
+        assert!(
+            err.to_string().contains("Invalid column type")
+                || err.to_string().contains("premature end of input"),
+            "unexpected error: {err}"
+        );
     }
 }
