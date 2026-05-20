@@ -81,6 +81,7 @@ pub fn drop_reply_chain(s: &str) -> String {
             || lower.contains("--------- original message")
             || lower.contains("--- forwarded by");
         if is_preamble {
+            debug_assert!(s.is_char_boundary(offset));
             return s[..offset].trim_end().to_string();
         }
 
@@ -96,6 +97,7 @@ pub fn drop_reply_chain(s: &str) -> String {
             }
             if quoted_run_len >= 3 {
                 let cut = quoted_run_start.unwrap_or(offset);
+                debug_assert!(s.is_char_boundary(cut));
                 return s[..cut].trim_end().to_string();
             }
         } else if !trimmed.is_empty() {
@@ -118,6 +120,7 @@ pub fn drop_footer_noise(s: &str) -> String {
     for line in s.split_inclusive('\n') {
         let lower = line.to_ascii_lowercase();
         if FOOTER_TRIGGERS.iter().any(|t| lower.contains(t)) {
+            debug_assert!(s.is_char_boundary(offset));
             return s[..offset].trim_end().to_string();
         }
         offset += line.len();
@@ -187,6 +190,8 @@ pub fn extract_email(from: &str) -> Option<String> {
     let s = from.trim();
     if let (Some(start), Some(end)) = (s.rfind('<'), s.rfind('>')) {
         if start < end {
+            debug_assert!(s.is_char_boundary(start + 1));
+            debug_assert!(s.is_char_boundary(end));
             let inner = s[start + 1..end].trim();
             if inner.contains('@') {
                 return Some(inner.to_string());
@@ -378,5 +383,29 @@ mod tests {
         assert!(parse_message_date(&json!({})).is_none());
         assert!(parse_message_date(&json!({"date": ""})).is_none());
         assert!(parse_message_date(&json!({"date": "   "})).is_none());
+    }
+
+    #[test]
+    fn drop_reply_chain_handles_zwnj_in_body() {
+        // U+200C ZERO WIDTH NON-JOINER appears in Persian/Arabic text inside
+        // the real content. It must be preserved through reply-chain stripping
+        // when it does not appear in a reply-preamble line.
+        let zwnj = "\u{200c}";
+        let body = format!(
+            "سلام{}دوست عزیز، لطفاً بررسی کنید.\n\nOn Mon, Apr 22, 2026, Alice wrote:\n> old content",
+            zwnj
+        );
+
+        let cleaned = drop_reply_chain(&body);
+
+        // Reply chain must be stripped.
+        assert!(!cleaned.contains("old content"));
+        // The ZWNJ in the real body must survive.
+        assert!(
+            cleaned.contains(zwnj),
+            "ZWNJ was incorrectly removed from real content"
+        );
+        // Result must be valid UTF-8 (no panic from slicing at the boundary).
+        assert!(std::str::from_utf8(cleaned.as_bytes()).is_ok());
     }
 }

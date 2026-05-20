@@ -1093,4 +1093,5 @@ async fn pricing_for_config_short_circuits_in_direct_mode() {
     assert!(pricing.integrations.twilio.is_none());
     assert!(pricing.integrations.google_places.is_none());
     assert!(pricing.integrations.parallel.is_none());
+    assert!(pricing.integrations.tinyfish.is_none());
 }

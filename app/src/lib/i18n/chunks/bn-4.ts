@@ -143,12 +143,18 @@ const bn4: TranslationMap = {
   'onboarding.contextGathering.buildingProfile': 'আপনার প্রোফাইল তৈরি হচ্ছে...',
   'onboarding.contextGathering.continueToChat': 'চ্যাটে চালিয়ে যান',
   'onboarding.contextGathering.errorDesc':
-    'আমরা এখনই আপনার পূর্ণ প্রোফাইল তৈরি করতে পারিনি, কিন্তু সমস্যা নেই — আপনি চালিয়ে যেতে পারেন এবং আপনার প্রোফাইল সময়ের সাথে তৈরি হবে।',
+    'আমরা এই মুহূর্তে আপনার সম্পূর্ণ প্রোফাইল তৈরি করতে পারিনি, কিন্তু সমস্যা নেই — আপনি চালিয়ে যেতে পারেন, আপনার প্রোফাইল সময়ের সাথে তৈরি হতে থাকবে।',
   'onboarding.contextGathering.title': 'কন্টেক্সট সংগ্রহ',
   'openhuman.team_list_teams': 'টিম তালিকা',
   'overlay.ariaAttention': 'মনোযোগের বার্তা',
+  'overlay.ariaCompanion': 'কম্প্যানিয়ন সক্রিয়',
   'overlay.ariaOrb': 'OpenHuman ওভারলে',
   'overlay.ariaVoiceActive': 'ভয়েস ইনপুট সক্রিয়',
+  'overlay.companion.error': 'ত্রুটি',
+  'overlay.companion.listening': 'শুনছে…',
+  'overlay.companion.pointing': 'নির্দেশ করছে…',
+  'overlay.companion.speaking': 'বলছে…',
+  'overlay.companion.thinking': 'ভাবছে…',
   'overlay.orbTitle': 'সরাতে টেনে আনুন · পজিশন রিসেট করতে ডাবল-ক্লিক করুন',
   'pages.settings.account.connections': 'সংযোগ',
   'pages.settings.account.connectionsDesc': 'সংযোগের বিবরণ',
@@ -167,6 +173,9 @@ const bn4: TranslationMap = {
   'pages.settings.aiSection.description':
     'ল্যাঙ্গুয়েজ মডেল প্রোভাইডার, লোকাল Ollama, এবং ভয়েস (STT / TTS)।',
   'pages.settings.aiSection.title': 'AI',
+  'pages.settings.features.desktopCompanion': 'ডেস্কটপ কম্প্যানিয়ন',
+  'pages.settings.features.desktopCompanionDesc':
+    'স্ক্রিন সচেতনতা সহ ভয়েস সহকারী — শোনে, দেখে, কথা বলে, নির্দেশ করে',
   'pages.settings.features.messagingChannels': 'মেসেজিং চ্যানেল',
   'pages.settings.features.messagingChannelsDesc': 'মেসেজিং চ্যানেলের বিবরণ',
   'pages.settings.features.notifications': 'বিজ্ঞপ্তি',
@@ -363,6 +372,9 @@ const bn4: TranslationMap = {
   'settings.billing.subscription.paymentConfirmed': 'পেমেন্ট নিশ্চিত',
   'settings.billing.subscription.perMonth': 'প্রতি মাসে',
   'settings.billing.subscription.popular': 'জনপ্রিয়',
+  'pages.settings.account.migration': 'অন্য সহকারী থেকে আমদানি করুন',
+  'pages.settings.account.migrationDesc':
+    'OpenClaw (এবং শীঘ্রই Hermes) থেকে মেমরি ও নোট এই ওয়ার্কস্পেসে স্থানান্তর করুন।',
 };
 
 export default bn4;

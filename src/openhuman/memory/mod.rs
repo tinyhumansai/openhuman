@@ -13,6 +13,7 @@ pub mod ops;
 pub mod rpc_models;
 pub mod safety;
 pub mod schemas;
+pub mod stm_recall;
 pub mod store;
 pub mod sync_status;
 pub mod tool_memory;

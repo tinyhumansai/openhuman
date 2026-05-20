@@ -19,9 +19,12 @@ import {
   type ProviderRef as ApiProviderRef,
   clearCloudProviderKey,
   type CloudProviderView,
+  flushCloudProviders,
+  listProviderModels,
   loadAISettings,
   loadLocalProviderSnapshot,
   type LocalProviderSnapshot,
+  type ModelInfo,
   saveAISettings,
   setCloudProviderKey,
 } from '../../../services/api/aiSettingsApi';
@@ -30,7 +33,10 @@ import {
   type CreditTransaction,
   type TeamUsage,
 } from '../../../services/api/creditsApi';
-import type { AuthStyle } from '../../../utils/tauriCommands/config';
+import {
+  type AuthStyle,
+  openhumanUpdateLocalAiSettings,
+} from '../../../utils/tauriCommands/config';
 import {
   type HeartbeatPlannerSummary,
   type HeartbeatSettings,
@@ -39,8 +45,10 @@ import {
   openhumanHeartbeatSettingsSet,
   openhumanHeartbeatTickNow,
 } from '../../../utils/tauriCommands/heartbeat';
+import { ConfirmationModal } from '../../intelligence/ConfirmationModal';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
+import { useReembedBackfillModal } from './useReembedBackfillModal';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -60,6 +68,7 @@ type OllamaState = 'disabled' | 'missing' | 'stopped' | 'starting' | 'running' |
 type OllamaModel = { id: string; sizeBytes: number; family: string };
 
 type WorkloadId =
+  | 'chat'
   | 'reasoning'
   | 'agentic'
   | 'coding'
@@ -73,8 +82,8 @@ type WorkloadGroup = 'chat' | 'background';
 
 type ProviderRef =
   | { kind: 'openhuman' }
-  | { kind: 'cloud'; providerSlug: string; model: string }
-  | { kind: 'local'; model: string };
+  | { kind: 'cloud'; providerSlug: string; model: string; temperature?: number | null }
+  | { kind: 'local'; model: string; temperature?: number | null };
 
 type Workload = { id: WorkloadId; group: WorkloadGroup; label: string; description: string };
 
@@ -110,6 +119,7 @@ const BUILTIN_PROVIDER_META: Record<string, { tone: string; label: string }> = {
 };
 
 const WORKLOADS: Workload[] = [
+  { id: 'chat', group: 'chat', label: 'Chat', description: 'Direct conversational back-and-forth' },
   {
     id: 'reasoning',
     group: 'chat',
@@ -173,6 +183,7 @@ const WORKLOADS: Workload[] = [
 type AISettings = { cloudProviders: CloudProvider[]; routing: RoutingMap };
 
 const EMPTY_ROUTING: RoutingMap = {
+  chat: { kind: 'openhuman' },
   reasoning: { kind: 'openhuman' },
   agentic: { kind: 'openhuman' },
   coding: { kind: 'openhuman' },
@@ -217,6 +228,7 @@ function toPanelRoutingFromApi(api: ApiAISettings): { panel: AISettings } {
   // ApiProviderRef and ProviderRef share the same shape — pass through directly.
   const liftRef = (r: ApiProviderRef): ProviderRef => r;
   const routing: RoutingMap = {
+    chat: liftRef(api.routing.chat),
     reasoning: liftRef(api.routing.reasoning),
     agentic: liftRef(api.routing.agentic),
     coding: liftRef(api.routing.coding),
@@ -240,6 +252,7 @@ function toApiSettings(panel: AISettings): ApiAISettings {
       has_api_key: p.maskedKey.startsWith('••••'),
     })),
     routing: {
+      chat: panel.routing.chat,
       reasoning: panel.routing.reasoning,
       agentic: panel.routing.agentic,
       coding: panel.routing.coding,
@@ -275,26 +288,96 @@ function useAISettings() {
   }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void reload();
   }, [reload]);
 
+  // Eagerly persist user-configured cloud providers whenever they diverge from
+  // the saved snapshot so listProviderModels can resolve by slug immediately
+  // after a provider is added, before the global Save.
+  //
+  // Reserved slugs ("openhuman", "cloud", "pid") are built-ins that Rust
+  // rejects as custom providers — filter them out before flushing. `ollama`
+  // and `lmstudio` are NOT filtered: the AI panel needs an `ollama` entry on
+  // disk for the model dropdown probe (`list_configured_models` looks up by
+  // slug). Chat routing is unaffected because the factory's `ollama:<model>`
+  // prefix branch fires before the `<slug>:<model>` cloud-provider lookup.
+  useEffect(() => {
+    if (loading) return;
+    const userProviders = draft.cloudProviders.filter(
+      p => !['', 'cloud', 'openhuman', 'pid'].includes(p.slug)
+    );
+    const savedUserProviders = saved.cloudProviders.filter(
+      p => !['', 'cloud', 'openhuman', 'pid'].includes(p.slug)
+    );
+    if (JSON.stringify(userProviders) === JSON.stringify(savedUserProviders)) return;
+    const wire = userProviders.map(p => ({
+      id: p.id,
+      slug: p.slug,
+      label: p.label,
+      endpoint: p.endpoint,
+      auth_style: p.authStyle,
+    }));
+    flushCloudProviders(wire).catch(err =>
+      console.warn('[ai-settings] eager cloud_providers flush failed:', err)
+    );
+  }, [draft.cloudProviders, loading, saved.cloudProviders]);
+
   const isDirty = JSON.stringify(saved) !== JSON.stringify(draft);
 
-  const save = useCallback(async () => {
-    try {
+  const persist = useCallback(
+    async (nextDraft: AISettings) => {
       const prevApi = toApiSettings(saved);
-      const nextApi = toApiSettings(draft);
+      const nextApi = toApiSettings(nextDraft);
       await saveAISettings(prevApi, nextApi);
-      setSaved(draft);
+      setSaved(nextDraft);
+      setDraft(nextDraft);
+      setError('');
+    },
+    [saved]
+  );
+
+  // Returns true only when persistence actually succeeded, so callers
+  // (e.g. the #1574 re-embed-status check) don't act on a failed save.
+  const save = useCallback(async (): Promise<boolean> => {
+    try {
+      // Defensive verification at global-Save time. Each provider that is new
+      // or whose endpoint changed since the last saved snapshot is re-probed
+      // through `openhuman.inference_list_models`. The chip / editor dialogs
+      // already probe at add-time; this is a belt-and-suspenders check that
+      // catches stale entries (endpoint flipped externally, daemon went
+      // unreachable between add-time and save-time, etc.) before they reach
+      // the saved config and start routing chat traffic to a dead host.
+      //
+      // OpenHuman is exempt (session JWT, no /models endpoint to hit).
+      const savedById = new Map(saved.cloudProviders.map(p => [p.id, p]));
+      const toProbe = draft.cloudProviders.filter(p => {
+        if (p.slug === 'openhuman') return false;
+        const prior = savedById.get(p.id);
+        return !prior || prior.endpoint !== p.endpoint;
+      });
+      for (const p of toProbe) {
+        try {
+          await listProviderModels(p.slug);
+        } catch (probeErr) {
+          const msg = probeErr instanceof Error ? probeErr.message : String(probeErr);
+          setError(`Could not reach ${p.label}: ${msg}. Settings were not saved.`);
+          return false;
+        }
+      }
+
+      await persist(draft);
+      return true;
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to save AI settings';
       setError(message);
+      return false;
     }
-  }, [saved, draft]);
+  }, [saved, draft, persist]);
 
   const discard = useCallback(() => setDraft(saved), [saved]);
 
-  return { saved, draft, setDraft, isDirty, save, discard, loading, error, reload };
+  return { saved, draft, setDraft, isDirty, save, persist, discard, loading, error, reload };
 }
 
 function useOllamaStatus() {
@@ -315,6 +398,7 @@ function useOllamaStatus() {
   }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void refresh();
     const id = window.setInterval(() => void refresh(), 5000);
     return () => window.clearInterval(id);
@@ -424,28 +508,41 @@ const ProviderToggleChip = ({
   );
 };
 
-// Minimal API-key dialog — shown when the user flips a provider toggle ON.
-// No endpoint / model fields; default endpoint is derived from the slug and
-// the model is left empty (the routing dialog picks the model per workload).
+// Connect-provider dialog — shown when the user flips a provider toggle ON.
+//
+// Two modes:
+//   - apiKey: cloud providers (OpenAI, Anthropic, …). Collects a secret.
+//   - endpoint: local runtimes (Ollama, LM Studio). Collects an HTTP URL
+//     (and optionally an API key for OpenAI-compatible self-hosted setups).
+//
+// The parent decides how to persist: cloud → auth-profiles, local → both
+// the cloud_providers entry's `endpoint` (so /models discovery works) and
+// `local_ai.base_url` (so the Rust factory's Ollama branch routes to it).
 const ProviderKeyDialog = ({
   slug,
   label,
+  isLocalRuntime,
   onCancel,
   onSubmit,
 }: {
   slug: string;
   label: string;
+  /** When true, render an "Endpoint URL" field instead of API key. */
+  isLocalRuntime: boolean;
   onCancel: () => void;
-  onSubmit: (apiKey: string) => Promise<void> | void;
+  /** Returns the entered value. For local runtimes this is the endpoint URL;
+   *  for cloud providers it's the API key. */
+  onSubmit: (value: string) => Promise<void> | void;
 }) => {
   const { t } = useT();
-  const [apiKey, setApiKey] = useState('');
+  const [value, setValue] = useState<string>(isLocalRuntime ? defaultEndpointFor(slug) : '');
   const [phase, setPhase] = useState<'idle' | 'saving'>('idle');
   const [error, setError] = useState<string | null>(null);
   const busy = phase !== 'idle';
 
-  const placeholder =
-    slug === 'openai'
+  const placeholder = isLocalRuntime
+    ? defaultEndpointFor(slug) || 'http://localhost:11434/v1'
+    : slug === 'openai'
       ? 'sk-...'
       : slug === 'anthropic'
         ? 'sk-ant-...'
@@ -453,10 +550,19 @@ const ProviderKeyDialog = ({
           ? 'sk-or-...'
           : 'your-api-key';
 
+  const fieldLabel = isLocalRuntime ? 'Endpoint URL' : t('settings.ai.apiKeyFieldLabel');
+  const helper = isLocalRuntime
+    ? `Where ${label} is reachable. Default is localhost; point this at a remote host (e.g. http://10.0.0.4:11434/v1) to use a shared instance.`
+    : t('settings.ai.apiKeyStoredEncrypted');
+
   const handleSave = async () => {
-    const trimmed = apiKey.trim();
+    const trimmed = value.trim();
     if (!trimmed) {
-      setError(t('settings.ai.apiKeyRequired'));
+      setError(isLocalRuntime ? 'Endpoint URL is required' : t('settings.ai.apiKeyRequired'));
+      return;
+    }
+    if (isLocalRuntime && !/^https?:\/\//i.test(trimmed)) {
+      setError('Endpoint must start with http:// or https://');
       return;
     }
     setError(null);
@@ -479,20 +585,18 @@ const ProviderKeyDialog = ({
       <div className="w-full max-w-md rounded-2xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-6 shadow-soft">
         <div className="mb-4">
           <h3 className="text-base font-semibold text-stone-900 dark:text-neutral-100">{`${t('settings.ai.connectProvider')} ${label}`}</h3>
-          <p className="mt-0.5 text-xs text-stone-500 dark:text-neutral-400">
-            {t('settings.ai.apiKeyStoredEncrypted')}
-          </p>
+          <p className="mt-0.5 text-xs text-stone-500 dark:text-neutral-400">{helper}</p>
         </div>
 
         <div className="flex flex-col gap-1.5">
           <label
             htmlFor="provider-key-input"
             className="text-xs font-medium text-stone-700 dark:text-neutral-200">
-            {t('settings.ai.apiKeyFieldLabel')}
+            {fieldLabel}
           </label>
           <input
             id="provider-key-input"
-            type="text"
+            type={isLocalRuntime ? 'url' : 'text'}
             autoComplete="off"
             autoCorrect="off"
             autoCapitalize="off"
@@ -500,14 +604,14 @@ const ProviderKeyDialog = ({
             data-form-type="other"
             data-lpignore="true"
             data-1p-ignore="true"
-            value={apiKey}
+            value={value}
             placeholder={placeholder}
             disabled={busy}
             onChange={e => {
-              setApiKey(e.target.value);
+              setValue(e.target.value);
               setError(null);
             }}
-            className="rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 placeholder-stone-400 dark:placeholder-neutral-500 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 disabled:opacity-60"
+            className={`rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 placeholder-stone-400 dark:placeholder-neutral-500 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 disabled:opacity-60 ${isLocalRuntime ? 'font-mono' : ''}`}
           />
           {error ? (
             <p className="text-xs font-medium text-red-600 dark:text-red-300">{error}</p>
@@ -768,6 +872,7 @@ const BackgroundLoopControls = ({
   }, [commitSettings]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void refresh();
   }, [refresh]);
 
@@ -1177,18 +1282,18 @@ const BackgroundLoopControls = ({
               detail={`resets ${formatDateTime(usage?.cycleEndsAt)}`}
             />
             <MetricTile
-              label="Week remaining"
+              label="Cycle remaining"
               value={usage ? formatUsd(usage.remainingUsd) : 'n/a'}
-              detail={usage ? `${formatUsd(usage.cycleLimit7day)} used` : undefined}
+              detail={usage ? `${formatUsd(usage.cycleSpentUsd)} used` : undefined}
             />
             <MetricTile
-              label="5h window"
-              value={
+              label="Cycle total spend"
+              value={usage ? formatUsd(usage.insights.totals.totalUsd) : 'n/a'}
+              detail={
                 usage
-                  ? `${formatUsd(usage.cycleLimit5hr)} / ${formatUsd(usage.fiveHourCapUsd)}`
-                  : 'n/a'
+                  ? `inference ${formatUsd(usage.insights.totals.inferenceUsd)} + integrations ${formatUsd(usage.insights.totals.integrationsUsd)}`
+                  : undefined
               }
-              detail={`resets ${formatDateTime(usage?.fiveHourResetsAt)}`}
             />
             <MetricTile
               label="Avg spend row"
@@ -1484,6 +1589,10 @@ interface CustomRoutingDialogProps {
 
 type CustomDialogSource = { kind: 'cloud'; providerSlug: string } | { kind: 'local' };
 
+function humanizeModelId(id: string): string {
+  return id.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
 const CustomRoutingDialog = ({
   workload,
   initial,
@@ -1519,18 +1628,75 @@ const CustomRoutingDialog = ({
     }
     return localModels[0]?.id ?? '';
   });
+  const [cloudModels, setCloudModels] = useState<ModelInfo[]>([]);
+  const [cloudModelsLoading, setCloudModelsLoading] = useState(false);
+  const [cloudModelsError, setCloudModelsError] = useState<string | null>(null);
+  const [modelsKey, setModelsKey] = useState(0);
+  // Optional temperature override for this workload. `null` = use provider/global default;
+  // a finite number means "send `temperature: X` upstream for this workload only".
+  const [temperature, setTemperature] = useState<number | null>(
+    initial.kind === 'cloud' || initial.kind === 'local' ? (initial.temperature ?? null) : null
+  );
 
   const selectedCloud =
     source?.kind === 'cloud' ? customCloud.find(c => c.slug === source.providerSlug) : undefined;
+
+  // Fetch available models whenever the selected cloud provider changes.
+  const selectedSlug = source?.kind === 'cloud' ? source.providerSlug : null;
+  useEffect(() => {
+    if (!selectedSlug) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setCloudModels([]);
+      setCloudModelsError(null);
+      return;
+    }
+    const provider = customCloud.find(c => c.slug === selectedSlug);
+    if (!provider) {
+      setCloudModels([]);
+      setCloudModelsError(null);
+      return;
+    }
+    let active = true;
+    setCloudModelsLoading(true);
+    setCloudModels([]);
+    setCloudModelsError(null);
+    console.debug('[ai-settings] fetching models for provider', provider.slug);
+    listProviderModels(provider.slug)
+      .then(ms => {
+        if (!active) return;
+        console.debug('[ai-settings] fetched', ms.length, 'models for', provider.slug);
+        setCloudModels(ms);
+        setCloudModelsLoading(false);
+      })
+      .catch((err: unknown) => {
+        if (!active) return;
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error('[ai-settings] listProviderModels failed for', provider.slug, ':', msg);
+        setCloudModelsError(msg);
+        setCloudModelsLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+    // customCloud is stable for the dialog's lifetime (prop doesn't change mid-open)
+    // modelsKey is the manual retry trigger
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedSlug, modelsKey]);
 
   const canSave = source !== null && model.trim().length > 0;
 
   const handleSave = () => {
     if (!source || !canSave) return;
+    const temp = temperature == null || !Number.isFinite(temperature) ? null : temperature;
     if (source.kind === 'cloud') {
-      onSubmit({ kind: 'cloud', providerSlug: source.providerSlug, model: model.trim() });
+      onSubmit({
+        kind: 'cloud',
+        providerSlug: source.providerSlug,
+        model: model.trim(),
+        temperature: temp,
+      });
     } else {
-      onSubmit({ kind: 'local', model: model.trim() });
+      onSubmit({ kind: 'local', model: model.trim(), temperature: temp });
     }
   };
 
@@ -1619,6 +1785,52 @@ const CustomRoutingDialog = ({
                     </option>
                   ))}
                 </select>
+              ) : cloudModelsLoading ? (
+                <select
+                  disabled
+                  className="rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-400 dark:text-neutral-500 opacity-60 cursor-wait">
+                  <option>Loading models…</option>
+                </select>
+              ) : cloudModelsError ? (
+                <div className="space-y-1.5">
+                  <div className="rounded-lg border border-red-200 dark:border-red-500/30 bg-red-50 dark:bg-red-500/10 px-3 py-2 text-xs text-red-700 dark:text-red-300 font-mono break-all">
+                    {cloudModelsError}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setModelsKey(k => k + 1)}
+                      className="text-xs text-primary-600 dark:text-primary-400 hover:underline">
+                      Retry
+                    </button>
+                    <span className="text-xs text-stone-400 dark:text-neutral-500">
+                      or enter model id manually:
+                    </span>
+                  </div>
+                  <input
+                    type="text"
+                    value={model}
+                    onChange={e => setModel(e.target.value)}
+                    placeholder={selectedCloud ? `${selectedCloud.slug} model id` : 'model-id'}
+                    className="w-full rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm font-mono text-stone-900 dark:text-neutral-100 placeholder-stone-400 dark:placeholder-neutral-500 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+                  />
+                </div>
+              ) : cloudModels.length > 0 ? (
+                <select
+                  value={model}
+                  onChange={e => setModel(e.target.value)}
+                  className="rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500">
+                  {!model && <option value="">Select a model…</option>}
+                  {/* Keep existing value selectable even if the provider no longer lists it */}
+                  {model && !cloudModels.some(m => m.id === model) && (
+                    <option value={model}>{model}</option>
+                  )}
+                  {cloudModels.map(m => (
+                    <option key={m.id} value={m.id}>
+                      {humanizeModelId(m.id)} — {m.id}
+                    </option>
+                  ))}
+                </select>
               ) : (
                 <input
                   type="text"
@@ -1628,6 +1840,57 @@ const CustomRoutingDialog = ({
                   className="rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm font-mono text-stone-900 dark:text-neutral-100 placeholder-stone-400 dark:placeholder-neutral-500 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
                 />
               )}
+            </div>
+
+            {/* Temperature override (optional). When unchecked, the workload
+                inherits the provider/global default temperature. */}
+            <div className="flex flex-col gap-1.5">
+              <label className="flex items-center justify-between gap-2 text-xs font-medium text-stone-700 dark:text-neutral-200">
+                <span className="inline-flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={temperature != null}
+                    onChange={e => setTemperature(e.target.checked ? 0.7 : null)}
+                    className="h-3.5 w-3.5 rounded border-stone-300 dark:border-neutral-700 text-primary-500 focus:ring-primary-500"
+                  />
+                  Temperature override
+                </span>
+                {temperature != null && (
+                  <span className="font-mono text-[11px] text-stone-500 dark:text-neutral-400">
+                    {temperature.toFixed(2)}
+                  </span>
+                )}
+              </label>
+              {temperature != null && (
+                <div className="flex items-center gap-2">
+                  <input
+                    type="range"
+                    aria-label="Temperature override (slider)"
+                    min={0}
+                    max={2}
+                    step={0.05}
+                    value={temperature}
+                    onChange={e => setTemperature(Number(e.target.value))}
+                    className="flex-1 accent-primary-500"
+                  />
+                  <input
+                    type="number"
+                    aria-label="Temperature override (value)"
+                    min={0}
+                    max={2}
+                    step={0.05}
+                    value={temperature}
+                    onChange={e => {
+                      const v = Number(e.target.value);
+                      if (Number.isFinite(v)) setTemperature(Math.max(0, Math.min(2, v)));
+                    }}
+                    className="w-16 rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 py-1 text-xs font-mono text-stone-900 dark:text-neutral-100 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+                  />
+                </div>
+              )}
+              <p className="text-[11px] text-stone-400 dark:text-neutral-500">
+                Lower = more deterministic. Leave unchecked to use the provider default.
+              </p>
             </div>
           </div>
         )}
@@ -1715,8 +1978,11 @@ interface AIPanelProps {
 const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
   const { t } = useT();
   const { navigateBack, breadcrumbs } = useSettingsNavigation();
-  const { saved, draft, setDraft, isDirty, save, discard, loading, error, reload } =
+  const { saved, draft, setDraft, isDirty, save, persist, discard, loading, error, reload } =
     useAISettings();
+  // #1574 §4b: advisory re-embed modal, driven by the backend status RPC.
+  // Logic lives in a unit-testable hook (see useReembedBackfillModal).
+  const { reembed, handleSave, dismissReembed } = useReembedBackfillModal(save);
   const ollama = useOllamaStatus();
   const installed = useInstalledModels(ollama.snapshot);
   const [editing, setEditing] = useState<CloudProvider | 'new' | null>(null);
@@ -1742,12 +2008,12 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
       const a = saved.routing[w.id];
       const b = draft.routing[w.id];
       if (JSON.stringify(a) !== JSON.stringify(b)) {
-        const describe = (r: ProviderRef) =>
-          r.kind === 'openhuman'
-            ? 'openhuman'
-            : r.kind === 'cloud'
-              ? `${r.providerSlug}:${r.model}`
-              : `local:${r.model}`;
+        const describe = (r: ProviderRef) => {
+          if (r.kind === 'openhuman') return 'openhuman';
+          const tempSuffix = r.temperature != null ? `@${r.temperature.toFixed(2)}` : '';
+          if (r.kind === 'cloud') return `${r.providerSlug}:${r.model}${tempSuffix}`;
+          return `local:${r.model}${tempSuffix}`;
+        };
         out.push(`${w.label} → ${describe(b)}`);
       }
     }
@@ -1963,10 +2229,26 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
         <SaveBar
           diffSummary={diffSummary}
           changeCount={diffSummary.length}
-          onSave={() => void save()}
+          onSave={() => void handleSave()}
           onDiscard={discard}
         />
       )}
+
+      <ConfirmationModal
+        modal={{
+          isOpen: reembed.open,
+          title: 'Re-indexing memory',
+          message:
+            `Embeddings are being reprocessed. ${reembed.pending} memory item(s) ` +
+            `are being re-embedded under the current model — semantic recall is ` +
+            `reduced until this finishes. Keyword search keeps working, and ` +
+            `re-embedding continues in the background if you close this.`,
+          confirmText: 'OK',
+          onConfirm: dismissReembed,
+          onCancel: dismissReembed,
+        }}
+        onClose={dismissReembed}
+      />
 
       {editing && (
         <CloudProviderEditor
@@ -1987,18 +2269,54 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
                 id,
                 maskedKey: maskKeyLabel(apiKey ? true : next.maskedKey.startsWith('••••')),
               };
-              // Persist the credential BEFORE mutating draft, so a key-write
-              // failure doesn't leave the config referencing a provider with
-              // no stored key.
+
+              // Snapshot the prior persisted cloud_providers list so we can
+              // restore it if the live probe fails.
+              const priorWireProviders = saved.cloudProviders.map(p => ({
+                id: p.id,
+                slug: p.slug,
+                label: p.label,
+                endpoint: p.endpoint,
+                auth_style: p.authStyle,
+              }));
+
+              // Persist the credential BEFORE the probe so the factory has it
+              // available. Let setCloudProviderKey throw — the editor's
+              // button-click handler catches and surfaces the error inline.
               if (apiKey && upserted.slug !== 'openhuman') {
+                await setCloudProviderKey(upserted.slug, apiKey);
+              }
+
+              // Live verification — flush the new cloud_providers list and
+              // call `/models` through the Rust controller. Skip for the
+              // OpenHuman backend (session JWT, no probe-able endpoint).
+              if (upserted.slug !== 'openhuman') {
+                const list =
+                  editing === 'new'
+                    ? [...draft.cloudProviders, upserted]
+                    : draft.cloudProviders.map(p => (p.id === editing.id ? upserted : p));
+                const nextWireProviders = list
+                  .filter(p => !['', 'cloud', 'openhuman', 'pid'].includes(p.slug))
+                  .map(p => ({
+                    id: p.id,
+                    slug: p.slug,
+                    label: p.label,
+                    endpoint: p.endpoint,
+                    auth_style: p.authStyle,
+                  }));
+                await flushCloudProviders(nextWireProviders);
                 try {
-                  await setCloudProviderKey(upserted.slug, apiKey);
-                } catch (err) {
-                  const msg = err instanceof Error ? err.message : String(err);
-                  console.warn('[ai-settings] setCloudProviderKey failed', msg);
-                  return;
+                  await listProviderModels(upserted.slug);
+                } catch (probeErr) {
+                  await flushCloudProviders(priorWireProviders).catch(() => {});
+                  if (apiKey) {
+                    await clearCloudProviderKey(upserted.slug).catch(() => {});
+                  }
+                  const msg = probeErr instanceof Error ? probeErr.message : String(probeErr);
+                  throw new Error(`Could not reach ${upserted.label}: ${msg}`);
                 }
               }
+
               const list =
                 editing === 'new'
                   ? [...draft.cloudProviders, upserted]
@@ -2033,8 +2351,12 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
               localModels={installed}
               ollamaRunning={ollama.state === 'running'}
               onClose={() => setCustomDialogFor(null)}
-              onSubmit={next => {
-                updateRouting(customDialogFor, next);
+              onSubmit={async next => {
+                const nextDraft = {
+                  ...draft,
+                  routing: { ...draft.routing, [customDialogFor]: next },
+                };
+                await persist(nextDraft);
                 setCustomDialogFor(null);
               }}
             />
@@ -2045,40 +2367,114 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
         <ProviderKeyDialog
           slug={keyDialogFor}
           label={pendingLocalLabel ?? BUILTIN_PROVIDER_META[keyDialogFor]?.label ?? keyDialogFor}
+          isLocalRuntime={Boolean(pendingLocalLabel)}
           onCancel={() => {
             setKeyDialogFor(null);
             setPendingLocalLabel(null);
           }}
-          onSubmit={async apiKey => {
+          onSubmit={async value => {
             const slug = keyDialogFor;
             const localLabel = pendingLocalLabel;
+            const isLocalRuntime = Boolean(localLabel);
             setBusyAction(
               `toggle-${localLabel ? localLabel.toLowerCase().replace(/\s/g, '') : slug}`
             );
             try {
-              // For LM Studio / Ollama the dialog's "API key" field is
-              // actually the local endpoint URL, so persist it as endpoint
-              // and skip the credential save (no remote key to store).
-              const isLocalRuntime = Boolean(localLabel);
+              const trimmed = value.trim();
+              // Normalize local-runtime endpoints so the cloud_providers entry
+              // always carries the OpenAI-compatible `/v1` path that the
+              // `list_configured_models` probe expects. Without this,
+              // `http://host:11434` would pass validation, be stored verbatim,
+              // and silently fail model discovery until the user manually
+              // appended `/v1` — confusing because the UI would still mark the
+              // provider connected (caught in review).
+              const endpoint = isLocalRuntime
+                ? (() => {
+                    const url = new URL(trimmed); // throws on malformed → caught above
+                    if (!/^https?:$/.test(url.protocol)) {
+                      throw new Error('Endpoint must start with http:// or https://');
+                    }
+                    if (url.pathname === '' || url.pathname === '/') {
+                      url.pathname = '/v1';
+                    }
+                    return url.toString().replace(/\/$/, '');
+                  })()
+                : defaultEndpointFor(slug);
               const upserted: CloudProvider = {
                 id: `p_${slug}_${Math.random().toString(36).slice(2, 7)}`,
                 slug,
                 label: localLabel ?? BUILTIN_PROVIDER_META[slug]?.label ?? slug,
-                endpoint: isLocalRuntime ? apiKey.trim() : defaultEndpointFor(slug),
+                endpoint,
                 authStyle: authStyleForSlug(slug),
                 maskedKey: maskKeyLabel(true),
               };
-              // Persist the credential BEFORE mutating draft, so a key-write
-              // failure can't leave config + secrets out of sync.
+
+              // Snapshot the prior persisted cloud_providers list so we can
+              // roll back to it if the live probe fails. `saved` reflects what
+              // is currently on disk (the eager-flush effect keeps it in sync
+              // with `draft`), so this is the right baseline to restore to.
+              const priorWireProviders = saved.cloudProviders.map(p => ({
+                id: p.id,
+                slug: p.slug,
+                label: p.label,
+                endpoint: p.endpoint,
+                auth_style: p.authStyle,
+              }));
+
+              // Persist the credential / endpoint BEFORE the probe, so the
+              // factory has everything it needs to actually answer it. Each
+              // step short-circuits and surfaces its own error via throw —
+              // ProviderKeyDialog.handleSave catches and keeps the dialog open
+              // so the user can fix the value and retry.
               if (!isLocalRuntime && slug !== 'openhuman') {
+                await setCloudProviderKey(slug, trimmed);
+              } else if (isLocalRuntime && slug === 'ollama') {
+                // The Rust Ollama branch reads `config.local_ai.base_url`
+                // (not `cloud_providers[].endpoint`) when building the chat
+                // provider — persist it eagerly so chat routing actually hits
+                // the user-chosen host. Strip a trailing `/v1` since
+                // `make_ollama_provider` appends `/v1` itself.
+                const baseUrl = endpoint.replace(/\/v1\/?$/, '');
+                await openhumanUpdateLocalAiSettings({
+                  base_url: baseUrl,
+                  provider: 'ollama',
+                  runtime_enabled: true,
+                  opt_in_confirmed: true,
+                });
+              }
+
+              // Live verification: flush the new cloud_providers list to disk
+              // and call `/models` through the Rust controller. A reachable
+              // endpoint + valid auth header is the strongest check we can
+              // make without burning tokens. Skip the probe for the
+              // OpenHuman backend (session JWT, no /models endpoint to hit).
+              if (slug !== 'openhuman') {
+                const nextWireProviders = [
+                  ...priorWireProviders.filter(p => p.slug !== slug),
+                  {
+                    id: upserted.id,
+                    slug: upserted.slug,
+                    label: upserted.label,
+                    endpoint: upserted.endpoint,
+                    auth_style: upserted.authStyle,
+                  },
+                ];
+                await flushCloudProviders(nextWireProviders);
                 try {
-                  await setCloudProviderKey(slug, apiKey);
-                } catch (err) {
-                  const msg = err instanceof Error ? err.message : String(err);
-                  console.warn('[ai-settings] setCloudProviderKey failed', msg);
-                  return;
+                  await listProviderModels(slug);
+                } catch (probeErr) {
+                  // Roll back so the UI / on-disk state never reflects a
+                  // provider we couldn't actually reach. The user sees the
+                  // error in the dialog and the chip stays in the OFF state.
+                  await flushCloudProviders(priorWireProviders).catch(() => {});
+                  if (!isLocalRuntime && slug !== 'openhuman') {
+                    await clearCloudProviderKey(slug).catch(() => {});
+                  }
+                  const msg = probeErr instanceof Error ? probeErr.message : String(probeErr);
+                  throw new Error(`Could not reach ${upserted.label}: ${msg}`);
                 }
               }
+
               setDraft({ ...draft, cloudProviders: [...draft.cloudProviders, upserted] });
               setKeyDialogFor(null);
               setPendingLocalLabel(null);
@@ -2123,6 +2519,7 @@ const CloudProviderEditor = ({
   const [endpoint, setEndpoint] = useState(initial?.endpoint ?? defaultEndpointFor(defaultSlug));
   const [apiKey, setApiKey] = useState('');
   const [saving, setSaving] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const isOpenHuman = slug === 'openhuman';
   const hasExistingKey = (initial?.maskedKey ?? '').startsWith('••••');
 
@@ -2210,6 +2607,11 @@ const CloudProviderEditor = ({
               />
             </div>
           )}
+          {submitError && (
+            <div className="rounded-md border border-red-200 dark:border-red-500/30 bg-red-50 dark:bg-red-500/10 px-3 py-2 text-xs text-red-700 dark:text-red-300 break-words">
+              {submitError}
+            </div>
+          )}
         </div>
         <div className="flex items-center justify-end gap-2 border-t border-stone-200 dark:border-neutral-800 px-4 py-3">
           <button
@@ -2221,6 +2623,7 @@ const CloudProviderEditor = ({
           <button
             onClick={async () => {
               setSaving(true);
+              setSubmitError(null);
               try {
                 await onSubmit(
                   {
@@ -2233,6 +2636,11 @@ const CloudProviderEditor = ({
                   },
                   apiKey.trim()
                 );
+              } catch (err) {
+                // Caller throws when the live /models probe rejects — surface
+                // the failure inline and keep the dialog open so the user can
+                // fix the key/URL and retry.
+                setSubmitError(err instanceof Error ? err.message : String(err));
               } finally {
                 setSaving(false);
               }
@@ -2261,6 +2669,13 @@ function defaultEndpointFor(slug: string): string {
       return 'https://api.anthropic.com/v1';
     case 'openrouter':
       return 'https://openrouter.ai/api/v1';
+    case 'ollama':
+      // Ollama exposes an OpenAI-compatible endpoint at /v1; the bare host is
+      // also accepted by the Rust factory (it appends /v1 internally for chat).
+      // For the /models probe we want the OpenAI-compat path.
+      return 'http://localhost:11434/v1';
+    case 'lmstudio':
+      return 'http://localhost:1234/v1';
     default:
       return '';
   }

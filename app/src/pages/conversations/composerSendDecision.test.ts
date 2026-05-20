@@ -130,19 +130,17 @@ describe('shouldSendComposerKeyDown', () => {
 });
 
 describe('getComposerBlockedSendFeedback', () => {
-  it('returns modal and error feedback for usage-limit blocking', () => {
+  it('returns error feedback for usage-limit blocking', () => {
     expect(getComposerBlockedSendFeedback('usage_limit_reached')).toEqual({
-      showLimitModal: true,
       error: {
         code: 'usage_limit_reached',
-        message: 'Usage limit reached. Upgrade or wait for reset.',
+        message: 'Included budget exhausted. Top up credits or upgrade to continue.',
       },
     });
   });
 
   it('returns send error feedback for socket-disconnected blocking', () => {
     expect(getComposerBlockedSendFeedback('socket_disconnected')).toEqual({
-      showLimitModal: false,
       error: {
         code: 'socket_disconnected',
         message:
