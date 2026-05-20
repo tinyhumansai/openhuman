@@ -12,6 +12,8 @@
  */
 import { io, type ManagerOptions, type Socket, type SocketOptions } from 'socket.io-client';
 
+import { getCoreRpcToken } from './coreRpcClient';
+
 export interface CoreSocketOptions {
   /**
    * Per-process core bearer (from `getCoreRpcToken()`). When `null` the
@@ -46,4 +48,38 @@ const DEFAULT_OPTIONS: Partial<ManagerOptions & SocketOptions> = {
 export function createCoreSocket(baseUrl: string, opts: CoreSocketOptions): Socket {
   const auth = { token: opts.coreToken ?? '', ...(opts.authExtras ?? {}) };
   return io(baseUrl, { ...DEFAULT_OPTIONS, ...(opts.overrides ?? {}), auth });
+}
+
+export interface ConnectCoreSocketOptions {
+  /** Resolves the Socket.IO base URL (no trailing `/rpc`). */
+  getBaseUrl: () => Promise<string>;
+  /**
+   * Caller's disposal flag. Awaited points (`getBaseUrl`, `getCoreRpcToken`)
+   * check this and short-circuit so the React effect can race a teardown
+   * without leaking a connection.
+   */
+  isDisposed?: () => boolean;
+  authExtras?: Record<string, unknown>;
+  overrides?: Partial<ManagerOptions & SocketOptions>;
+}
+
+/**
+ * Resolve the base URL + core bearer, then hand off to `createCoreSocket`.
+ *
+ * Returns `null` if the caller's `isDisposed` flag flips during an await
+ * point — the caller does not need to also wrap the call in a disposed
+ * check. Keeps the per-callsite plumbing to a single line so the only
+ * thing the call sites need to test is "did the helper get invoked".
+ */
+export async function connectCoreSocket(opts: ConnectCoreSocketOptions): Promise<Socket | null> {
+  const isDisposed = opts.isDisposed ?? (() => false);
+  const baseUrl = await opts.getBaseUrl();
+  if (isDisposed()) return null;
+  const coreToken = await getCoreRpcToken();
+  if (isDisposed()) return null;
+  return createCoreSocket(baseUrl, {
+    coreToken,
+    authExtras: opts.authExtras,
+    overrides: opts.overrides,
+  });
 }

@@ -35,8 +35,8 @@ import { type Socket } from 'socket.io-client';
 
 import RotatingTetrahedronCanvas from '../components/RotatingTetrahedronCanvas';
 import { useT } from '../lib/i18n/I18nContext';
-import { callCoreRpc, getCoreHttpBaseUrl, getCoreRpcToken } from '../services/coreRpcClient';
-import { createCoreSocket } from '../services/coreSocket';
+import { callCoreRpc, getCoreHttpBaseUrl } from '../services/coreRpcClient';
+import { connectCoreSocket } from '../services/coreSocket';
 
 const OVERLAY_IDLE_WIDTH = 50;
 const OVERLAY_IDLE_HEIGHT = 50;
@@ -351,13 +351,12 @@ export default function OverlayApp() {
 
     const connect = async () => {
       try {
-        const baseUrl = await resolveCoreSocketUrl();
-        if (disposed) return;
-        const coreToken = await getCoreRpcToken();
-        if (disposed) return;
-
-        console.debug(`[overlay] connecting to core socket at ${baseUrl}`);
-        socket = createCoreSocket(baseUrl, { coreToken });
+        console.debug('[overlay] connecting to core socket');
+        socket = await connectCoreSocket({
+          getBaseUrl: resolveCoreSocketUrl,
+          isDisposed: () => disposed,
+        });
+        if (!socket) return;
 
         socket.on('connect', () => {
           console.debug('[overlay] socket connected', socket?.id);
