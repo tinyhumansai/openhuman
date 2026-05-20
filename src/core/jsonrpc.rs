@@ -752,44 +752,68 @@ struct EventsQuery {
 
 /// Handler for the main events SSE endpoint.
 ///
-/// Validates the supplied bind token against the per-subscription store,
-/// then streams real-time events filtered by `client_id`. The token is
-/// consumed on validation so a leaked URL cannot be replayed.
-async fn events_handler(Query(query): Query<EventsQuery>) -> Response {
-    let supplied_token = query
-        .token
-        .as_deref()
+/// Accepts either of two credentials:
+/// 1. `Authorization: Bearer <core token>` — used by CLI tooling, the
+///    Tauri shell via `core_rpc_relay`, and the in-tree e2e suite that
+///    can set HTTP headers directly. Validated against the same
+///    per-process bearer the rest of `/rpc` uses.
+/// 2. `?token=<bind>` minted via the `core.events_subscribe_token` RPC
+///    — used by browser `EventSource`, which cannot attach custom
+///    headers. The token is bound to a specific `client_id` and is
+///    consumed on validation so a leaked URL cannot be replayed.
+///
+/// Both paths converge on the same broadcast stream filtered by
+/// `client_id`.
+async fn events_handler(
+    headers: axum::http::HeaderMap,
+    Query(query): Query<EventsQuery>,
+) -> Response {
+    let bearer = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
         .map(str::trim)
         .filter(|s| !s.is_empty());
-    let Some(supplied_token) = supplied_token else {
-        log::warn!(
-            "[events] reject subscribe: missing bind token (client_id_len={})",
-            query.client_id.len()
-        );
-        return (
-            StatusCode::UNAUTHORIZED,
-            Json(json!({
-                "ok": false,
-                "error": "unauthorized",
-                "message": "Missing 'token' query parameter. Mint one with the `core.events_subscribe_token` RPC."
-            })),
-        )
-            .into_response();
-    };
-    if !crate::core::event_bind_tokens::consume(&query.client_id, supplied_token) {
-        log::warn!(
-            "[events] reject subscribe: bind token invalid or expired (client_id_len={})",
-            query.client_id.len()
-        );
-        return (
-            StatusCode::UNAUTHORIZED,
-            Json(json!({
-                "ok": false,
-                "error": "unauthorized",
-                "message": "Bind token is unknown, expired, or bound to a different client_id."
-            })),
-        )
-            .into_response();
+    let bearer_ok = bearer
+        .map(crate::core::auth::verify_bearer_token)
+        .unwrap_or(false);
+
+    if !bearer_ok {
+        let supplied_token = query
+            .token
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        let Some(supplied_token) = supplied_token else {
+            log::warn!(
+                "[events] reject subscribe: missing bind token + missing bearer (client_id_len={})",
+                query.client_id.len()
+            );
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(json!({
+                    "ok": false,
+                    "error": "unauthorized",
+                    "message": "Missing credentials. Supply 'Authorization: Bearer <core>' or mint a bind token with the `core.events_subscribe_token` RPC and pass it as ?token="
+                })),
+            )
+                .into_response();
+        };
+        if !crate::core::event_bind_tokens::consume(&query.client_id, supplied_token) {
+            log::warn!(
+                "[events] reject subscribe: bind token invalid or expired (client_id_len={})",
+                query.client_id.len()
+            );
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(json!({
+                    "ok": false,
+                    "error": "unauthorized",
+                    "message": "Bind token is unknown, expired, or bound to a different client_id."
+                })),
+            )
+                .into_response();
+        }
     }
 
     let client_id = query.client_id;
