@@ -175,9 +175,19 @@ pub(crate) async fn run_one_tick() -> Result<(), String> {
             .list_connections()
             .await
             .map_err(|e| format!("list_connections (backend): {e}"))?,
-        ComposioClientKind::Direct(direct) => direct_list_connections(direct)
-            .await
-            .map_err(|e| format!("list_connections (direct): {e:#}"))?,
+        ComposioClientKind::Direct(direct) => {
+            direct_list_connections(direct).await.map_err(|e| {
+                // [#1166 / Sentry TAURI-RUST-X9] The server-side periodic
+                // tick re-renders the same v3 `/connected_accounts` 401
+                // shape that `ops::composio_list_connections` emits, so
+                // route it through the observability classifier too.
+                // Without this, the tick-side 401s leak as unclassified
+                // Sentry events even when the UI poll's identical failure
+                // is correctly classified.
+                super::ops::report_composio_op_error("list_connections", &e);
+                format!("list_connections (direct): {e:#}")
+            })?
+        }
     };
 
     let sync_map = last_sync_map();

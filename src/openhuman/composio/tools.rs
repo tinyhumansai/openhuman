@@ -504,6 +504,13 @@ impl Tool for ComposioListConnectionsTool {
             Ok(ComposioClientKind::Direct(direct)) => {
                 tracing::debug!("[composio-direct] list_connections.execute: direct variant");
                 direct_list_connections(&direct).await.map_err(|e| {
+                    // [#1166 / Sentry TAURI-RUST-X9] Symmetric error
+                    // routing with `ops.rs::composio_list_connections`.
+                    // The agent-tool path can also fire 401s when a
+                    // direct-mode user has a bad API key — without this
+                    // hook the failure escapes the classifier and lands
+                    // as an unclassified Sentry event.
+                    super::ops::report_composio_op_error("list_connections", &e);
                     anyhow::anyhow!("composio_list_connections (direct) failed: {e}")
                 })?
             }
