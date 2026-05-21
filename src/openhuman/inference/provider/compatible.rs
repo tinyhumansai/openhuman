@@ -490,6 +490,13 @@ impl OpenAiCompatibleProvider {
                     Some(model),
                     status,
                 );
+            } else if super::is_provider_config_rejection_http(status, self.name.as_str(), &error) {
+                super::log_provider_config_rejection(
+                    "responses_api",
+                    self.name.as_str(),
+                    Some(model),
+                    status,
+                );
             } else if super::should_report_provider_http_failure(status) {
                 crate::core::observability::report_error(
                     message.as_str(),
@@ -851,6 +858,13 @@ impl OpenAiCompatibleProvider {
                 );
             } else if super::is_provider_access_policy_denied_http_403(status, &body) {
                 super::log_provider_access_policy_denied_http_403(
+                    "streaming_chat",
+                    self.name.as_str(),
+                    Some(native_request.model.as_str()),
+                    status,
+                );
+            } else if super::is_provider_config_rejection_http(status, self.name.as_str(), &body) {
+                super::log_provider_config_rejection(
                     "streaming_chat",
                     self.name.as_str(),
                     Some(native_request.model.as_str()),
@@ -1348,6 +1362,13 @@ impl Provider for OpenAiCompatibleProvider {
                     Some(model),
                     status,
                 );
+            } else if super::is_provider_config_rejection_http(status, self.name.as_str(), &error) {
+                super::log_provider_config_rejection(
+                    "chat_completions",
+                    self.name.as_str(),
+                    Some(model),
+                    status,
+                );
             } else if super::should_report_provider_http_failure(status) {
                 crate::core::observability::report_error(
                     message.as_str(),
@@ -1797,6 +1818,13 @@ impl Provider for OpenAiCompatibleProvider {
                     Some(model),
                     status,
                 );
+            } else if super::is_provider_config_rejection_http(status, self.name.as_str(), &error) {
+                super::log_provider_config_rejection(
+                    "native_chat",
+                    self.name.as_str(),
+                    Some(model),
+                    status,
+                );
             } else if super::should_report_provider_http_failure(status) {
                 crate::core::observability::report_error(
                     message.as_str(),
@@ -1947,6 +1975,17 @@ impl Provider for OpenAiCompatibleProvider {
                     );
                 } else if super::is_provider_access_policy_denied_http_403(status, &raw_error) {
                     super::log_provider_access_policy_denied_http_403(
+                        "stream_chat",
+                        provider_name.as_str(),
+                        Some(model_owned.as_str()),
+                        status,
+                    );
+                } else if super::is_provider_config_rejection_http(
+                    status,
+                    provider_name.as_str(),
+                    &raw_error,
+                ) {
+                    super::log_provider_config_rejection(
                         "stream_chat",
                         provider_name.as_str(),
                         Some(model_owned.as_str()),
