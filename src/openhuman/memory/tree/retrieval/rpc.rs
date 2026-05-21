@@ -84,6 +84,7 @@ pub async fn query_source_rpc(
 /// Request body for `memory_tree_query_global`.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct QueryGlobalRequest {
+    #[serde(alias = "window_days")]
     pub time_window_days: u32,
 }
 
