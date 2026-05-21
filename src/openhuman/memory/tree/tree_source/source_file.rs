@@ -32,7 +32,7 @@ use chrono::{DateTime, Utc};
 
 use crate::openhuman::config::Config;
 use crate::openhuman::memory::tree::content_store::raw::raw_source_dir;
-use crate::openhuman::memory::tree::tree_source::types::Tree;
+use crate::openhuman::memory::tree::tree_source::types::{Tree, TreeKind, TreeStatus};
 
 /// Filename of the per-source registry mirror inside `raw/<source_slug>/`.
 pub const SOURCE_FILE_NAME: &str = "_source.md";

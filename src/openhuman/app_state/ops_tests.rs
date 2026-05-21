@@ -199,33 +199,35 @@ fn runtime_snapshot_cache_hit_within_ttl() {
     let _reset = SnapshotCacheResetGuard;
 
     let dummy = build_dummy_runtime_snapshot();
+    let fetched_at = Instant::now();
     *RUNTIME_SNAPSHOT_CACHE.lock() = Some(CachedRuntimeSnapshot {
         snapshot: dummy.clone(),
-        fetched_at: Instant::now(),
+        fetched_at,
     });
 
-    let cache = RUNTIME_SNAPSHOT_CACHE.lock();
-    let entry = cache.as_ref().expect("cache should have entry");
+    // Read fields under lock, then assert outside to minimise lock hold time
+    // and avoid contention with other tests writing to the same global.
+    let (elapsed, phase) = {
+        let cache = RUNTIME_SNAPSHOT_CACHE.lock();
+        let entry = cache.as_ref().expect("cache should have entry");
+        (entry.fetched_at.elapsed(), entry.snapshot.autocomplete.phase.clone())
+    };
     assert!(
-        entry.fetched_at.elapsed() < RUNTIME_SNAPSHOT_TTL,
+        elapsed < RUNTIME_SNAPSHOT_TTL,
         "fresh entry should be within TTL"
     );
-    assert_eq!(entry.snapshot.autocomplete.phase, dummy.autocomplete.phase);
+    assert_eq!(phase, dummy.autocomplete.phase);
 }
 
+// This test verifies pure Instant arithmetic — no global cache state needed.
+// Using the global cache here would race with cache_hit_within_ttl when tests
+// run in parallel, causing a flaky "stale entry should be past TTL" failure.
 #[test]
 fn runtime_snapshot_cache_miss_after_ttl() {
-    let _reset = SnapshotCacheResetGuard;
-
-    *RUNTIME_SNAPSHOT_CACHE.lock() = Some(CachedRuntimeSnapshot {
-        snapshot: build_dummy_runtime_snapshot(),
-        fetched_at: Instant::now() - (RUNTIME_SNAPSHOT_TTL + Duration::from_millis(100)),
-    });
-
-    let cache = RUNTIME_SNAPSHOT_CACHE.lock();
-    let entry = cache.as_ref().expect("cache should have entry");
+    let stale_age = RUNTIME_SNAPSHOT_TTL + Duration::from_millis(100);
+    let fetched_at = Instant::now() - stale_age;
     assert!(
-        entry.fetched_at.elapsed() >= RUNTIME_SNAPSHOT_TTL,
+        fetched_at.elapsed() >= RUNTIME_SNAPSHOT_TTL,
         "stale entry should be past TTL"
     );
 }
