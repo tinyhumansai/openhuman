@@ -50,7 +50,7 @@ OpenHuman 作为原生应用构建而非 Web 包装器，有三个原因：
 ┌──────────────────────────────────────────────────┐
 │ React frontend - screens, navigation │
 └──────────────────────────────────────────────────┘
-```
+```text
 
 Shell 是载体（负责窗口化、进程生命周期、IPC）。所有产品逻辑都在 Rust core 中。React 前端通过 JSON-RPC 与 core 通信。参见[架构](../developing/architecture/)获取完整图景。
 
