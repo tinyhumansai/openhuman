@@ -122,7 +122,7 @@ impl McpTransport for McpStdioClient {
             // performing the write, so a fast reply from the server isn't dropped
             // by the reader before we're waiting for it.
             send_request_and_wait(id, msg.clone(), &pending, async {
-                writer.send(&msg).await.map_err(|e| anyhow::anyhow!("{e}")
+                writer.send(&msg).await.map_err(|e| anyhow::anyhow!("{e}"))
             })
             .await
         };
@@ -150,7 +150,7 @@ impl McpTransport for McpStdioClient {
             let pending = proc.reader.pending.clone();
             let writer = &mut proc.writer;
             send_request_and_wait(id, msg.clone(), &pending, async {
-                writer.send(&msg).await.map_err(|e| anyhow::anyhow!("{e}")
+                writer.send(&msg).await.map_err(|e| anyhow::anyhow!("{e}"))
             })
             .await
         }?;
@@ -179,7 +179,7 @@ impl McpTransport for McpStdioClient {
         let pending = proc.reader.pending.clone();
         let writer = &mut proc.writer;
         send_request_and_wait(id, msg.clone(), &pending, async {
-            writer.send(&msg).await.map_err(|e| anyhow::anyhow!("{e}")
+            writer.send(&msg).await.map_err(|e| anyhow::anyhow!("{e}"))
         })
         .await
     }
