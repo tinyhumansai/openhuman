@@ -534,7 +534,7 @@ impl HotkeyListenerKind {
 fn start_hotkey_listener(
     hotkey_str: &str,
     mode: hotkey::ActivationMode,
-    server_cancel: &CancellationToken,
+    _server_cancel: &CancellationToken,
 ) -> Result<
     (
         HotkeyListenerKind,
@@ -545,7 +545,7 @@ fn start_hotkey_listener(
     #[cfg(target_os = "macos")]
     {
         if hotkey_str.trim().eq_ignore_ascii_case("fn") {
-            return start_globe_hotkey_listener(mode, server_cancel);
+            return start_globe_hotkey_listener(mode, _server_cancel);
         }
     }
 

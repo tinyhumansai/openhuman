@@ -7,7 +7,7 @@
 use std::thread;
 use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 
 /// Per-connection busy handler window (issue #2077).
 pub const BUSY_TIMEOUT: Duration = Duration::from_millis(5000);

@@ -32,7 +32,7 @@ struct Provider {
 
 /// Providers the welcome agent cares about. Keep this list aligned
 /// with the webview accounts system in `app/src-tauri/src/webview_accounts/`.
-pub(crate) const PROVIDERS: &[Provider] = &[
+pub(self) const PROVIDERS: &[Provider] = &[
     Provider {
         key: "gmail",
         host_suffix: ".google.com",

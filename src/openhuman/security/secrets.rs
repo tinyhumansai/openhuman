@@ -214,6 +214,7 @@ impl SecretStore {
             };
 
             let hex_key = read_result.with_context(|| {
+                #[allow(unused_mut)]
                 let mut msg = format!(
                     "Failed to read secret key file at {}",
                     self.key_path.display()

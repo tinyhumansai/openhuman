@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 #[cfg(unix)]
-use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
+use std::os::unix::fs::OpenOptionsExt as _;
 
 /// Environment variable for the core JSON-RPC bearer token (see `crate::core::auth`).
 pub const CORE_TOKEN_ENV_VAR: &str = "OPENHUMAN_CORE_TOKEN";

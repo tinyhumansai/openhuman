@@ -196,7 +196,7 @@ impl McpHttpClient {
                 self.http
                     .post(&self.endpoint)
                     .header(CONTENT_TYPE, "application/json")
-                    .header(ACCEPT, "application/json"),
+                    .header(ACCEPT, MCP_HTTP_ACCEPT),
                 true,
             )
             .body(serde_json::to_vec(&body)?);
@@ -486,7 +486,7 @@ impl McpHttpClient {
         let protocol_version = self.state.lock().negotiated_protocol_version.clone();
         let session_id = self.state.lock().session_id.clone();
         let mut request = self.apply_auth(request, initialize);
-        request = request.header(ACCEPT, "application/json");
+        request = request.header(ACCEPT, MCP_HTTP_ACCEPT);
         request = request.header(HEADER_METHOD, method);
         if let Some(name) = name {
             request = request.header(HEADER_NAME, name);
