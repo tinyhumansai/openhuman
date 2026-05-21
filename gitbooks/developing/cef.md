@@ -101,6 +101,23 @@ Legacy injection should shrink, never grow. New providers go straight onto the C
 
 A hidden CEF webview (`cef-prewarm`) boots the browser on app launch so the first child webview spawns instantly when the user clicks. It's torn down before `cef::shutdown()` to avoid races during quit. See `app/src-tauri/src/lib.rs` around the prewarm + close lifecycle.
 
+## Windows startup triage
+
+CEF initializes before the onboarding UI can recover from renderer failures. If
+Windows users report a silent exit, a permanent "Connecting..." spinner, or a
+`tauri-runtime-cef` assertion before the first interactive window appears, ask
+for these details in the issue:
+
+* Windows edition and full build number, especially for Insider builds.
+* OpenHuman version and installer type (`.msi` or `.exe`).
+* Whether `%LOCALAPPDATA%\com.openhuman.app` was moved aside before retrying.
+* Startup log lines from `[startup]`, `[cef-profile]`, and `[cef-startup]`.
+* Any panic text that names `tauri-runtime-cef/src/lib.rs`.
+
+For Windows Insider builds, also confirm whether the same installer launches on
+the current stable Windows release. That separates a profile/cache problem from
+an OS/runtime compatibility regression in CEF startup.
+
 ## Plugin audit
 
 Anything new added to `app/src-tauri/src/lib.rs` must be audited for `js_init_script` calls. `tauri-plugin-opener` ships an init script (`init-iife.js`) by default that adds a global click listener; we configure it with `.open_js_links_on_click(false)` so it doesn't run inside third-party webviews. `tauri-plugin-notification`'s init script was likewise dropped from the vendored copy.
