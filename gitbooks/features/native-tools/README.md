@@ -25,7 +25,7 @@ A plugin-only model means tools live in different processes, behind RPC, with th
 
 | Family | What it covers |
 | ------ | -------------- |
-| [Web Search](web-search.md) | Search the live web without bringing your own API key. |
+| [Web Search](web-search.md) | Search the live web via the managed proxy, or opt into self-hosted SearXNG. |
 | [Web Scraper](web-scraper.md) | Pull clean text out of any URL - articles, docs, READMEs. |
 | [Coder](coder.md) | Read/write/edit/patch files, glob, grep, git, lint, test. |
 | [Browser & Computer Control](browser-and-computer.md) | Open URLs, screenshot, click, type, move the mouse. |
