@@ -832,6 +832,27 @@ mod tests {
         );
     }
 
+    /// Routing: the orchestrator must list `markets_agent` in its
+    /// `subagents` so a `delegate_do_prediction_markets` tool is
+    /// synthesised at agent-build time. Without this entry the
+    /// orchestrator can't route Polymarket / Kalshi requests to the
+    /// specialist and they fall back into the generalist tools_agent
+    /// wildcard.
+    #[test]
+    fn orchestrator_subagents_include_markets_agent() {
+        use crate::openhuman::agent::harness::definition::SubagentEntry;
+        let def = find("orchestrator");
+        let listed = def.subagents.iter().any(|e| match e {
+            SubagentEntry::AgentId(id) => id == "markets_agent",
+            _ => false,
+        });
+        assert!(
+            listed,
+            "orchestrator.subagents must list `markets_agent` so the \
+             routing layer can synthesise `delegate_do_prediction_markets`"
+        );
+    }
+
     #[test]
     fn orchestrator_subagents_include_skill_creator() {
         use crate::openhuman::agent::harness::definition::SubagentEntry;
