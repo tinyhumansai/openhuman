@@ -56,8 +56,7 @@ for f in gitbooks/**/*.zh-CN.md; do
         echo "   [dry-run] would fix: $f"
       else
         # 替换 sidecar 相关描述为更准确的说法
-        perl -i -pe 's/[Ss]idecar[^s]*(sidecar)?//g' "$f"
-        perl -i -pe 's/\bsidecar\b//g' "$f"
+        perl -i -pe 's/\bsidecar\b/in-process core/gi' "$f"
         echo "   fixed: $f"
       fi
     fi
