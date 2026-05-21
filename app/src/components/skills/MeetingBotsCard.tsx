@@ -282,10 +282,10 @@ export function MeetingBotsModal({ onClose, onToast }: ModalProps) {
                 disabled={submitting || isComingSoon || !meetUrl.trim()}
                 className="rounded-xl bg-primary-500 px-4 py-2 text-sm font-semibold text-white hover:bg-primary-600 disabled:cursor-not-allowed disabled:bg-stone-200 dark:disabled:bg-neutral-700 disabled:text-stone-400 dark:disabled:text-neutral-500">
                 {isComingSoon
-                  ? `${selected.label} ${t('skills.meetingBots.comingSoon')}`
+                  ? t('skills.meetingBots.comingSoon').replace('{label}', selected.label)
                   : submitting
                     ? t('skills.meetingBots.starting')
-                    : `${t('skills.meetingBots.sendTo')} ${selected.label}`}
+                    : t('skills.meetingBots.sendTo').replace('{label}', selected.label)}
               </button>
             </div>
           </form>
