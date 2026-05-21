@@ -216,6 +216,84 @@ fn load_drops_profiles_whose_decryption_fails_under_rotated_key() {
     assert!(!loaded2.profiles.contains_key(&profile_id));
 }
 
+/// A persisted profile whose `kind` string is something the current code
+/// doesn't recognise (e.g. legacy "OAuth" written before the kebab-case
+/// rename, or "api_key" written by an older code path) must not poison
+/// the whole load — otherwise *every* profile becomes unreadable and the
+/// user is locked out of all sessions. Drop just the bad entry, matching
+/// the decrypt-failure recovery pattern.
+#[test]
+fn load_drops_profiles_with_unrecognized_kind_instead_of_failing_load() {
+    let tmp = TempDir::new().unwrap();
+    let store = AuthProfilesStore::new(tmp.path(), false);
+
+    // Seed one valid profile so we can verify the rest of the store survives.
+    let good = AuthProfile::new_token("openai", "good", "tok-good".into());
+    let good_id = good.id.clone();
+    store.upsert_profile(good, true).unwrap();
+
+    // Inject two profiles with kinds the current parser rejects:
+    //   - "api_key": observed in Sentry issue #123 (370 events over 14d)
+    //   - "OAuth"  : observed in Sentry issue #2605 (258 events) — the
+    //                pre-kebab-case serialized form
+    let path = store.path().to_path_buf();
+    let mut data: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    data["profiles"]["legacy:apikey"] = serde_json::json!({
+        "provider": "legacy",
+        "profile_name": "apikey",
+        "kind": "api_key",
+        "token": "raw-token",
+        "metadata": {},
+        "created_at": "2025-01-01T00:00:00Z",
+        "updated_at": "2025-01-01T00:00:00Z",
+    });
+    data["profiles"]["legacy:oauth"] = serde_json::json!({
+        "provider": "legacy",
+        "profile_name": "oauth",
+        "kind": "OAuth",
+        "access_token": "raw-access",
+        "metadata": {},
+        "created_at": "2025-01-01T00:00:00Z",
+        "updated_at": "2025-01-01T00:00:00Z",
+    });
+    data["active_profiles"]["legacy"] = serde_json::Value::String("legacy:apikey".to_string());
+    std::fs::write(&path, serde_json::to_string_pretty(&data).unwrap()).unwrap();
+
+    // The load must succeed — the only failure mode prior to the fix was
+    // bailing the entire load on the first unrecognized kind.
+    let loaded = store
+        .load()
+        .expect("load must succeed by dropping profiles with unrecognized kinds");
+
+    assert!(
+        loaded.profiles.contains_key(&good_id),
+        "the valid profile must survive"
+    );
+    assert!(
+        !loaded.profiles.contains_key("legacy:apikey"),
+        "profile with kind=api_key must be dropped"
+    );
+    assert!(
+        !loaded.profiles.contains_key("legacy:oauth"),
+        "profile with kind=OAuth (legacy casing) must be dropped"
+    );
+    assert!(
+        !loaded
+            .active_profiles
+            .values()
+            .any(|v| v == "legacy:apikey"),
+        "active_profiles pointer to a dropped profile must be cleared"
+    );
+
+    // Subsequent load: file was rewritten without the bad profiles.
+    let reread: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert!(reread["profiles"].get("legacy:apikey").is_none());
+    assert!(reread["profiles"].get("legacy:oauth").is_none());
+    assert!(reread["profiles"].get(&good_id).is_some());
+}
+
 #[test]
 fn remove_nonexistent_profile_returns_false() {
     let tmp = TempDir::new().unwrap();

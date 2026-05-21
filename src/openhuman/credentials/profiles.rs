@@ -316,7 +316,27 @@ impl AuthProfilesStore {
                 migrated = true;
             }
 
-            let kind = parse_profile_kind(&p.kind)?;
+            let kind = match parse_profile_kind(&p.kind) {
+                Ok(k) => k,
+                Err(e) => {
+                    // A single profile with an unrecognized `kind` (e.g. a legacy value
+                    // like "OAuth" written before the kebab-case rename, or "api_key"
+                    // written by an older code path) must not poison the whole store —
+                    // otherwise every reader fails the entire load and the user is
+                    // locked out of *all* their auth profiles. Drop just this entry,
+                    // matching the decrypt-failure recovery pattern above; the next
+                    // login re-encodes the kind correctly.
+                    log::warn!(
+                        "[auth] dropping profile with unrecognized kind={:?} provider={}: {e}. \
+                         This usually means the profile was written by an older version of \
+                         OpenHuman. Re-authenticate to restore the session.",
+                        p.kind,
+                        p.provider
+                    );
+                    dropped_ids.push(id.clone());
+                    continue;
+                }
+            };
             let token_set = match kind {
                 AuthProfileKind::OAuth => {
                     let access = access_token.ok_or_else(|| {
