@@ -95,13 +95,14 @@ fn native_provider_sync_interval(toolkit: &str) -> Option<u64> {
         "notion" => Some(notion::NotionProvider::new().sync_interval_secs()),
         "slack" => Some(slack::SlackProvider::new().sync_interval_secs()),
         "clickup" => Some(clickup::ClickUpProvider::new().sync_interval_secs()),
+        "github" => Some(github::GitHubProvider::new().sync_interval_secs()),
         _ => None,
     }
     .flatten()
 }
 
 fn has_native_provider(toolkit: &str) -> bool {
-    matches!(toolkit, "gmail" | "notion" | "slack" | "clickup")
+    matches!(toolkit, "gmail" | "notion" | "slack" | "clickup" | "github")
 }
 
 /// Static overview of the Composio integrations supported by this core build.
@@ -352,6 +353,35 @@ mod tests {
         assert!(clickup.periodic_sync);
         assert_eq!(clickup.sync_interval_secs, Some(30 * 60));
         assert!(clickup.memory_ingest);
+    }
+
+    #[test]
+    fn capability_matrix_includes_github_as_native_memory_provider() {
+        // Per-issue #2408 registration: GitHub graduated from
+        // catalog-only (`github/mod.rs` predates this PR with the
+        // "no native ComposioProvider implementation yet" disclaimer)
+        // to a full native provider. This test locks in all four
+        // registration touchpoints (CAPABILITY_TOOLKITS,
+        // has_native_provider, native_provider_sync_interval,
+        // catalog_for_toolkit) so a future change can't silently
+        // degrade GitHub back to catalog-only without the test
+        // failing loud.
+        let matrix = capability_matrix();
+        let github = matrix
+            .iter()
+            .find(|entry| entry.toolkit == "github")
+            .expect("github capability row");
+        assert!(github.native_provider, "github must be native");
+        assert!(github.curated_tools, "github must have a curated catalog");
+        assert!(
+            github.curated_tool_count > 0,
+            "github catalog must be non-empty"
+        );
+        assert!(github.user_profile);
+        assert!(github.initial_sync);
+        assert!(github.periodic_sync);
+        assert_eq!(github.sync_interval_secs, Some(30 * 60));
+        assert!(github.memory_ingest);
     }
 
     #[test]
