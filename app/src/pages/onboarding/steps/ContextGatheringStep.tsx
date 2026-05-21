@@ -190,6 +190,7 @@ const ContextGatheringStep = ({
   );
   const [finished, setFinished] = useState(false);
   const [hasError, setHasError] = useState(false);
+  const [isCompleting, setIsCompleting] = useState(false);
   // Staged "still working" mode kicks in after STILL_WORKING_THRESHOLD_MS so
   // a slow-but-alive first launch no longer looks like a stall (#2156).
   const [stillWorking, setStillWorking] = useState(false);
@@ -283,13 +284,24 @@ const ContextGatheringStep = ({
   }
 
   const continueToChat = () => {
+    if (isCompleting) return;
     backgroundClickedRef.current = true;
     console.debug('[onboarding:context] user continued before pipeline completion', {
       finished,
       hasError,
       stages: stageStatusesRef.current,
     });
-    void onNext();
+    setIsCompleting(true);
+    void Promise.resolve(onNext())
+      .catch(e => {
+        console.warn('[onboarding:context] continue-to-chat failed', e);
+        Sentry.captureException(e, {
+          tags: { flow: 'onboarding-complete', step: 'continue-to-chat' },
+        });
+        setHasError(true);
+        setFinished(true);
+      })
+      .finally(() => setIsCompleting(false));
   };
 
   // Auto-start pipeline on mount
@@ -401,6 +413,8 @@ const ContextGatheringStep = ({
             <OnboardingNextButton
               label={t('onboarding.contextGathering.continueToChat')}
               onClick={continueToChat}
+              loading={isCompleting}
+              loadingLabel={t('common.loading')}
             />
           </div>
         </div>
@@ -477,6 +491,8 @@ const ContextGatheringStep = ({
           <OnboardingNextButton
             label={t('onboarding.contextGathering.continueToChat')}
             onClick={continueToChat}
+            loading={isCompleting}
+            loadingLabel={t('common.loading')}
           />
         )}
       </div>

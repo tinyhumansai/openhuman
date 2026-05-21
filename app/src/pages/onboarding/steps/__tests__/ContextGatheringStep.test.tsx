@@ -170,6 +170,34 @@ describe('ContextGatheringStep', () => {
       });
     });
 
+    it('shows an error card and captures Sentry when manual continue fails', async () => {
+      let resolveGmail!: (v: unknown) => void;
+      callCoreRpc.mockImplementation(
+        () =>
+          new Promise(res => {
+            resolveGmail = res;
+          })
+      );
+      const failure = new Error('app_state_snapshot timed out');
+      const onNext = vi.fn().mockRejectedValue(failure);
+
+      renderWithProviders(
+        <ContextGatheringStep connectedSources={['composio:gmail']} onNext={onNext} />
+      );
+
+      fireEvent.click(screen.getByRole('button', { name: /continue to chat/i }));
+
+      await waitFor(() => expect(captureException).toHaveBeenCalledTimes(1));
+      const [thrown, ctx] = captureException.mock.calls[0];
+      expect(thrown).toBe(failure);
+      expect(ctx).toEqual({ tags: { flow: 'onboarding-complete', step: 'continue-to-chat' } });
+      expect(screen.getByText(/your chat is ready/i)).toBeInTheDocument();
+
+      await act(async () => {
+        resolveGmail({ successful: true, data: { messages: [] } });
+      });
+    });
+
     it('hides the manual continue button if the pipeline finishes quickly', async () => {
       callCoreRpc.mockResolvedValue({ successful: true, data: { messages: [] } });
 
