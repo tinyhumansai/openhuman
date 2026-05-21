@@ -1,9 +1,3 @@
-# CodeGraph index (generated, not tracked)
-.codegraph/
-
-# Generated architecture docs
-docs/codegraph-architecture.md
-
 # Workflow docs (local only)
 workflow
 create_issue
@@ -106,3 +100,6 @@ app/test/e2e/.cache/
 .cache/cargo-install/
 test-map.md
 .test-gap-analysis.md
+
+# AI assistant progress tracking
+.kimi/
