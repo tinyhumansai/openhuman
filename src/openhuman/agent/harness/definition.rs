@@ -180,10 +180,88 @@ pub struct AgentDefinition {
     #[serde(default)]
     pub delegate_name: Option<String>,
 
+    // ── spawn hierarchy ────────────────────────────────────────────────
+    /// Tier this archetype occupies in the spawn hierarchy
+    /// (`chat` → `reasoning` → `worker`). Drives loader-time validation
+    /// of [`AgentDefinition::subagents`] and runtime depth gating in the
+    /// sub-agent runner. Defaults to [`AgentTier::Worker`] so existing
+    /// specialists fit the "leaf" role without per-file edits.
+    ///
+    /// **Hierarchy contract** (enforced by
+    /// [`super::super::agents::loader`] at registry build time):
+    ///
+    /// * `Chat` MUST NOT list another `Chat` agent in `subagents`. The
+    ///   user-facing fast tier is a leaf in its own dimension — it
+    ///   hands off to `Reasoning` or `Worker`, never to itself.
+    /// * `Reasoning` MUST NOT list another `Reasoning` agent in
+    ///   `subagents`. Reasoning composes downward into `Worker`s.
+    /// * `Worker` MUST NOT list any subagents. Workers execute; they
+    ///   do not orchestrate.
+    /// * `{ skills = "*" }` entries expand to the generic
+    ///   `integrations_agent` (a `Worker`) so they are always allowed.
+    ///
+    /// Combined with the harness's `MAX_SPAWN_DEPTH = 3` task-local
+    /// gate, this means any execution chain bottoms out within three
+    /// hops: `chat → reasoning → worker` (or `chat → worker` for the
+    /// fast path).
+    #[serde(default)]
+    pub agent_tier: AgentTier,
+
     // ── source bookkeeping ──────────────────────────────────────────────
     /// Tracks where the definition was loaded from (Builtin vs. File).
     #[serde(skip)]
     pub source: DefinitionSource,
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Agent tier (spawn hierarchy)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Role an agent plays in the spawn hierarchy.
+///
+/// See [`AgentDefinition::agent_tier`] for the full contract. In short:
+///
+/// ```text
+/// Chat (fast, UX-focused)
+///   └─► Reasoning (slow, deep-thinking)
+///         └─► Worker (leaf executors)
+///   └─► Worker (direct fast-path delegation)
+/// ```
+///
+/// `Chat` and `Reasoning` are forbidden from spawning their own tier;
+/// `Worker` is forbidden from spawning anything. Total depth is capped
+/// at three hops by the harness regardless of tier (defence in depth
+/// against custom TOMLs that drop the tier annotation).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentTier {
+    /// User-facing fast-tier agent (e.g. the Orchestrator on the
+    /// `chat` model hint). Optimised for TTFT, not for long-horizon
+    /// reasoning. May delegate to `Reasoning` or `Worker`; must NOT
+    /// delegate to another `Chat` agent.
+    Chat,
+    /// Deep-thinking agent on a `reasoning-v1`-style model (e.g. the
+    /// Planner). Decomposes long-running tasks and delegates execution
+    /// to one or more `Worker`s. Must NOT delegate to another
+    /// `Reasoning` agent.
+    Reasoning,
+    /// Leaf executor — researchers, code executors, critics, archivists,
+    /// integration specialists, etc. Workers do the actual work and must
+    /// NOT spawn further subagents (a `Worker` with a non-empty
+    /// `subagents` list is rejected by the loader).
+    #[default]
+    Worker,
+}
+
+impl AgentTier {
+    /// Human-readable tier name used in error messages.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Chat => "chat",
+            Self::Reasoning => "reasoning",
+            Self::Worker => "worker",
+        }
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -489,6 +567,21 @@ impl AgentDefinitionRegistry {
             );
             reg.insert(def);
         }
+
+        // Re-validate the tier hierarchy after custom overrides are
+        // merged in — a workspace TOML can legally replace a built-in
+        // (same id) and is held to the same spawn-hierarchy contract
+        // as the bundled set. See
+        // [`super::super::agents::loader::validate_tier_hierarchy`].
+        let snapshot: Vec<AgentDefinition> = reg.list().into_iter().cloned().collect();
+        super::super::agents::validate_tier_hierarchy(&snapshot).map_err(|e| {
+            anyhow::anyhow!(
+                "agent registry rejected after merging workspace overrides from {}: {}",
+                workspace.display(),
+                e
+            )
+        })?;
+
         Ok(reg)
     }
 

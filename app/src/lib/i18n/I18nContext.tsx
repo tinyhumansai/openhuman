@@ -1,8 +1,17 @@
-import { createContext, type ReactNode, useCallback, useContext, useMemo } from 'react';
+import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo } from 'react';
 
 import { useAppSelector } from '../../store/hooks';
+import ar from './ar';
+import bn from './bn';
 import en from './en';
+import es from './es';
+import fr from './fr';
+import hi from './hi';
 import id from './id';
+import it from './it';
+import ko from './ko';
+import pt from './pt';
+import ru from './ru';
 import type { Locale } from './types';
 import zhCN from './zh-CN';
 
@@ -11,7 +20,23 @@ interface I18nContextValue {
   locale: Locale;
 }
 
-const translations: Record<Locale, Record<string, string>> = { en, id, 'zh-CN': zhCN };
+const translations: Record<Locale, Record<string, string>> = {
+  en,
+  ko,
+  'zh-CN': zhCN,
+  hi,
+  es,
+  ar,
+  fr,
+  bn,
+  pt,
+  ru,
+  id,
+  it,
+};
+
+// Locales rendered right-to-left.
+const RTL_LOCALES: ReadonlySet<Locale> = new Set<Locale>(['ar']);
 
 // Resolve the effective English map at call time. `en` may be wrapped in
 // `{ default: { ... } }` by CJS/ESM interop in test runners, or tree-shaken
@@ -40,6 +65,15 @@ const I18nContext = createContext<I18nContextValue>({
 
 export function I18nProvider({ children }: { children: ReactNode }) {
   const locale = useAppSelector(state => state.locale.current);
+
+  // Mirror locale + direction onto <html> so global CSS, browser hyphenation,
+  // form controls, scrollbars, etc. pick up the active language.
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const root = document.documentElement;
+    root.lang = locale;
+    root.dir = RTL_LOCALES.has(locale) ? 'rtl' : 'ltr';
+  }, [locale]);
 
   const t = useCallback(
     (key: string): string => {

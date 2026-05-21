@@ -99,8 +99,16 @@ impl Default for CloudProviderCreds {
 
 /// Reserved slugs that may not be used for user-configured providers.
 /// These are sentinels in the factory's routing grammar.
+///
+/// `ollama` is deliberately NOT reserved: the AI settings panel registers an
+/// `ollama` `cloud_providers` entry so `list_configured_models` can resolve
+/// the user's chosen base_url for the model dropdown. The factory's chat
+/// routing is unaffected — the `ollama:<model>` prefix branch in
+/// `factory::create_chat_provider_from_string` fires before the
+/// `<slug>:<model>` cloud-provider lookup, so a synthetic `ollama` entry
+/// never reaches `make_cloud_provider_by_slug`.
 pub fn is_slug_reserved(s: &str) -> bool {
-    matches!(s.trim(), "" | "cloud" | "openhuman" | "ollama" | "pid")
+    matches!(s.trim(), "" | "cloud" | "openhuman" | "pid")
 }
 
 /// Apply legacy field migration in-place.
@@ -166,6 +174,7 @@ fn legacy_label_for(type_str: &str) -> &'static str {
         "openai" => "OpenAI",
         "anthropic" => "Anthropic",
         "openrouter" => "OpenRouter",
+        "orcarouter" => "OrcaRouter",
         "custom" => "Custom",
         _ => "Custom",
     }
@@ -178,6 +187,7 @@ fn legacy_default_endpoint(type_str: &str) -> &'static str {
         "openai" => "https://api.openai.com/v1",
         "anthropic" => "https://api.anthropic.com/v1",
         "openrouter" => "https://openrouter.ai/api/v1",
+        "orcarouter" => "https://api.orcarouter.ai/v1",
         _ => "",
     }
 }
@@ -235,6 +245,7 @@ pub enum CloudProviderType {
     Openai,
     Anthropic,
     Openrouter,
+    Orcarouter,
     Custom,
 }
 
@@ -246,6 +257,7 @@ impl CloudProviderType {
             Self::Openai => "https://api.openai.com/v1",
             Self::Anthropic => "https://api.anthropic.com/v1",
             Self::Openrouter => "https://openrouter.ai/api/v1",
+            Self::Orcarouter => "https://api.orcarouter.ai/v1",
             Self::Custom => "",
         }
     }
@@ -257,6 +269,7 @@ impl CloudProviderType {
             Self::Openai => "OpenAI",
             Self::Anthropic => "Anthropic",
             Self::Openrouter => "OpenRouter",
+            Self::Orcarouter => "OrcaRouter",
             Self::Custom => "Custom",
         }
     }
@@ -268,6 +281,7 @@ impl CloudProviderType {
             Self::Openai => "openai",
             Self::Anthropic => "anthropic",
             Self::Openrouter => "openrouter",
+            Self::Orcarouter => "orcarouter",
             Self::Custom => "custom",
         }
     }
@@ -279,5 +293,35 @@ impl CloudProviderType {
             Self::Anthropic => AuthStyle::Anthropic,
             _ => AuthStyle::Bearer,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_slug_reserved;
+
+    #[test]
+    fn reserved_slugs() {
+        for s in ["", " ", "cloud", "openhuman", "pid"] {
+            assert!(is_slug_reserved(s), "{s:?} must stay reserved");
+        }
+    }
+
+    // Regression: `ollama` was previously reserved, which made the AI settings
+    // panel unable to persist an `ollama` cloud_providers entry — so the
+    // model-list dropdown failed with "no cloud provider with id or slug
+    // 'ollama' found". The factory's chat routing is unaffected by this
+    // change because the `ollama:<model>` prefix branch fires before any
+    // cloud_providers lookup.
+    #[test]
+    fn ollama_and_lmstudio_are_not_reserved() {
+        assert!(
+            !is_slug_reserved("ollama"),
+            "ollama must be usable as a cloud_providers slug for the /models probe"
+        );
+        assert!(
+            !is_slug_reserved("lmstudio"),
+            "lmstudio is a free-form OpenAI-compatible slug"
+        );
     }
 }

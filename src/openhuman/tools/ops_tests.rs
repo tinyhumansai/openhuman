@@ -1,6 +1,7 @@
 use super::*;
 use crate::openhuman::config::{BrowserConfig, Config, MemoryConfig};
 use crate::openhuman::credentials::{AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME};
+use crate::openhuman::security::AuditLogger;
 use tempfile::TempDir;
 
 #[path = "../integrations/test_support.rs"]
@@ -53,6 +54,7 @@ fn integration_test_config(tmp: &TempDir, backend_url: &str) -> Config {
     cfg.integrations.apify.enabled = true;
     cfg.integrations.google_places.enabled = true;
     cfg.integrations.parallel.enabled = true;
+    cfg.integrations.tinyfish.enabled = true;
     cfg.integrations.stock_prices.enabled = true;
     cfg.integrations.twilio.enabled = true;
     cfg
@@ -66,6 +68,7 @@ fn integration_tools_for_config(tmp: &TempDir, cfg: &Config) -> Vec<Box<dyn Tool
     all_tools(
         Arc::new(cfg.clone()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -117,6 +120,7 @@ fn all_tools_includes_spawn_subagent() {
     let tools = all_tools(
         Arc::new(Config::default()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -153,6 +157,7 @@ fn all_tools_includes_spawn_parallel_agents() {
     let tools = all_tools(
         Arc::new(Config::default()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -189,6 +194,7 @@ fn all_tools_always_registers_curl() {
     let tools = all_tools(
         Arc::new(cfg.clone()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -221,6 +227,7 @@ fn all_tools_registers_gitbooks_when_enabled() {
     let tools = all_tools(
         Arc::new(cfg.clone()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -255,6 +262,8 @@ fn all_tools_registers_generic_mcp_bridge_tools_when_servers_exist() {
             cwd: None,
             description: Some("Example docs MCP".into()),
             enabled: true,
+            allowed_tools: Vec::new(),
+            disallowed_tools: Vec::new(),
             timeout_secs: 30,
             auth: crate::openhuman::config::McpAuthConfig::None,
         });
@@ -285,6 +294,7 @@ fn all_tools_skips_gitbooks_when_disabled() {
     let tools = all_tools(
         Arc::new(cfg.clone()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -324,6 +334,7 @@ fn all_tools_includes_complete_onboarding() {
     let tools = all_tools(
         Arc::new(Config::default()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -360,6 +371,7 @@ fn all_tools_includes_current_time() {
     let tools = all_tools(
         Arc::new(Config::default()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -389,6 +401,7 @@ fn all_tools_default_registry_contains_expected_baseline_surface() {
     let tools = all_tools(
         Arc::new(Config::default()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -466,6 +479,7 @@ fn all_tools_default_registry_has_no_duplicate_tool_names() {
     let tools = all_tools(
         Arc::new(Config::default()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -505,6 +519,7 @@ fn all_tools_excludes_browser_when_disabled() {
     let tools = all_tools(
         Arc::new(Config::default()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -542,6 +557,7 @@ fn all_tools_includes_browser_when_enabled() {
     let tools = all_tools(
         Arc::new(Config::default()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -669,6 +685,7 @@ fn all_tools_includes_delegate_when_agents_configured() {
     let tools = all_tools(
         Arc::new(Config::default()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -698,6 +715,7 @@ fn all_tools_excludes_delegate_when_no_agents() {
     let tools = all_tools(
         Arc::new(Config::default()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -731,6 +749,7 @@ fn all_tools_registers_node_exec_when_node_enabled() {
     let tools = all_tools(
         Arc::new(Config::default()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -768,6 +787,7 @@ fn all_tools_excludes_node_exec_when_node_disabled() {
     let tools = all_tools(
         Arc::new(Config::default()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -805,6 +825,7 @@ fn all_tools_excludes_computer_control_when_disabled() {
     let tools = all_tools(
         Arc::new(Config::default()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -842,6 +863,7 @@ fn all_tools_includes_computer_control_when_enabled() {
     let tools = all_tools(
         Arc::new(Config::default()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -872,6 +894,7 @@ fn all_tools_registers_integration_families_when_enabled_and_signed_in() {
     cfg.integrations.apify.enabled = true;
     cfg.integrations.google_places.enabled = true;
     cfg.integrations.parallel.enabled = true;
+    cfg.integrations.tinyfish.enabled = true;
     cfg.integrations.stock_prices.enabled = true;
     cfg.integrations.twilio.enabled = true;
     cfg.composio.enabled = true;
@@ -880,6 +903,7 @@ fn all_tools_registers_integration_families_when_enabled_and_signed_in() {
     let tools = all_tools(
         Arc::new(cfg.clone()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -903,6 +927,9 @@ fn all_tools_registers_integration_families_when_enabled_and_signed_in() {
             "parallel_research",
             "parallel_enrich",
             "parallel_dataset",
+            "tinyfish_search",
+            "tinyfish_fetch",
+            "tinyfish_agent_run",
             "stock_quote",
             "stock_exchange_rate",
             "stock_options",
@@ -919,7 +946,7 @@ fn all_tools_registers_integration_families_when_enabled_and_signed_in() {
 }
 
 #[test]
-fn all_tools_registers_seltz_lsp_and_tool_stats_when_enabled() {
+fn all_tools_registers_optional_search_lsp_and_tool_stats_when_enabled() {
     let tmp = TempDir::new().unwrap();
     let security = Arc::new(SecurityPolicy::default());
     let mem = test_memory(&tmp);
@@ -927,6 +954,7 @@ fn all_tools_registers_seltz_lsp_and_tool_stats_when_enabled() {
     let http = crate::openhuman::config::HttpRequestConfig::default();
     let mut cfg = test_config(&tmp);
     cfg.seltz.enabled = true;
+    cfg.searxng.enabled = true;
     cfg.learning.enabled = true;
     cfg.learning.tool_tracking_enabled = true;
 
@@ -943,6 +971,7 @@ fn all_tools_registers_seltz_lsp_and_tool_stats_when_enabled() {
     let tools = all_tools(
         Arc::new(cfg.clone()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -951,7 +980,10 @@ fn all_tools_registers_seltz_lsp_and_tool_stats_when_enabled() {
         &cfg,
     );
     let names = tool_names(&tools);
-    assert_contains_all(&names, &["seltz_search", "lsp", "tool_stats"]);
+    assert_contains_all(
+        &names,
+        &["seltz_search", "searxng_search", "lsp", "tool_stats"],
+    );
 
     unsafe {
         std::env::remove_var(crate::openhuman::tools::implementations::LSP_ENABLED_ENV);
@@ -1159,6 +1191,77 @@ async fn all_tools_executes_parallel_and_web_search_family_against_fake_backend(
     );
     assert_eq!(requests[2].body["fullContent"], serde_json::json!(true));
     assert_eq!(requests[6].body["matchLimit"], serde_json::json!(25));
+}
+
+#[tokio::test]
+async fn all_tools_executes_tinyfish_family_against_fake_backend() {
+    let backend = integration_test_support::spawn_fake_integration_backend().await;
+    let tmp = TempDir::new().unwrap();
+    let cfg = integration_test_config(&tmp, &backend.base_url);
+    store_test_session_token(&cfg);
+    let tools = integration_tools_for_config(&tmp, &cfg);
+
+    let search = find_tool(&tools, "tinyfish_search")
+        .execute(serde_json::json!({
+            "query": "web automation",
+            "location": "US",
+            "language": "en",
+            "page": 2,
+            "include_thumbnail": true
+        }))
+        .await
+        .expect("tinyfish_search execute");
+    assert!(search
+        .output()
+        .contains("TinyFish returned 1 search result(s)"));
+    assert!(search
+        .output()
+        .contains("TinyFish result for web automation"));
+
+    let fetch = find_tool(&tools, "tinyfish_fetch")
+        .execute(serde_json::json!({
+            "urls": ["https://example.com/a"],
+            "format": "markdown",
+            "links": true,
+            "image_links": true
+        }))
+        .await
+        .expect("tinyfish_fetch execute");
+    assert!(fetch.output().contains("TinyFish fetched 1 page(s)"));
+    assert!(fetch
+        .output()
+        .contains("TinyFish content for https://example.com/a"));
+
+    let run = find_tool(&tools, "tinyfish_agent_run")
+        .execute(serde_json::json!({
+            "url": "https://example.com/shop",
+            "goal": "Extract product names. Return JSON.",
+            "browser_profile": "stealth",
+            "proxy_country_code": "US",
+            "output_schema": { "type": "object" }
+        }))
+        .await
+        .expect("tinyfish_agent_run execute");
+    assert!(run.output().contains("TinyFish automation finished."));
+    assert!(run.output().contains("run_tinyfish_fake"));
+    assert!(run.output().contains("\"ok\":true"));
+
+    let requests = backend.requests();
+    let paths: Vec<&str> = requests.iter().map(|req| req.path.as_str()).collect();
+    assert_eq!(
+        paths,
+        vec![
+            "/agent-integrations/tinyfish/search",
+            "/agent-integrations/tinyfish/fetch",
+            "/agent-integrations/tinyfish/agent/run",
+        ]
+    );
+    assert_eq!(requests[0].body["location"], serde_json::json!("US"));
+    assert_eq!(requests[1].body["links"], serde_json::json!(true));
+    assert_eq!(
+        requests[2].body["proxy_config"]["country_code"],
+        serde_json::json!("US")
+    );
 }
 
 #[tokio::test]

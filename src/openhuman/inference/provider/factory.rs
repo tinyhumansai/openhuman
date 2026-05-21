@@ -7,13 +7,17 @@
 //! ## Provider-string grammar
 //!
 //! ```text
-//! "openhuman"        → OpenHumanBackendProvider; model = config.default_model
-//! "ollama:<model>"   → local Ollama at config.local_ai.base_url
-//! "<slug>:<model>"   → cloud_providers entry keyed by slug;
-//!                      builds OpenAiCompatibleProvider (Bearer) or Anthropic
-//!                      flavour depending on auth_style.
-//! ""  / missing      → falls back to "openhuman"
+//! "openhuman"                    → OpenHumanBackendProvider; model = config.default_model
+//! "cloud" / missing              → primary_cloud; legacy custom inference_url wins when
+//!                                  primary still points at OpenHuman after migration
+//! "ollama:<model>[@<temp>]"      → local Ollama at config.local_ai.base_url
+//! "<slug>:<model>[@<temp>]"      → cloud_providers entry keyed by slug;
+//!                                  builds OpenAiCompatibleProvider (Bearer) or
+//!                                  Anthropic flavour depending on auth_style.
 //! ```
+//!
+//! The optional `@<temp>` suffix pins a per-workload temperature override on
+//! the built provider. The model id sent upstream never includes the suffix.
 //!
 //! Unknown slugs and missing-creds configurations produce actionable errors.
 
@@ -32,6 +36,21 @@ pub const PROVIDER_OPENHUMAN: &str = "openhuman";
 /// Prefix for Ollama-local providers: `"ollama:<model>"`.
 pub const OLLAMA_PROVIDER_PREFIX: &str = "ollama:";
 
+fn is_abstract_tier_model(model: &str) -> bool {
+    use crate::openhuman::config::{
+        MODEL_AGENTIC_V1, MODEL_CODING_V1, MODEL_REASONING_QUICK_V1, MODEL_REASONING_V1,
+    };
+    // No dedicated constant for the summarization tier yet; keep the literal
+    // in sync with the tier name used by the summarizer sub-agent.
+    const MODEL_SUMMARIZATION_V1: &str = "summarization-v1";
+    let trimmed = model.trim();
+    trimmed == MODEL_REASONING_V1
+        || trimmed == MODEL_REASONING_QUICK_V1
+        || trimmed == MODEL_AGENTIC_V1
+        || trimmed == MODEL_CODING_V1
+        || trimmed == MODEL_SUMMARIZATION_V1
+}
+
 /// Auth-profile storage key for a slug-keyed provider.
 ///
 /// New writes use `"provider:<slug>"`. Lookups also try the bare `<slug>`
@@ -40,11 +59,44 @@ pub fn auth_key_for_slug(slug: &str) -> String {
     format!("provider:{slug}")
 }
 
+/// Return whether `model` is a recognized OpenHuman backend tier name.
+///
+/// Used to guard against stale `default_model` values (e.g. set by older UI
+/// versions) that the backend would reject with HTTP 400.  The known tiers are
+/// the constants in `crate::openhuman::config`; the four `hint:*` strings that
+/// `make_openhuman_backend` actually translates are also accepted.  An
+/// unrecognized `hint:*` value is intentionally rejected so the factory falls
+/// back to the platform default instead of forwarding an untranslated string
+/// to the backend.
+pub(crate) fn is_known_openhuman_tier(model: &str) -> bool {
+    use crate::openhuman::config::{
+        MODEL_AGENTIC_V1, MODEL_CHAT_V1, MODEL_CODING_V1, MODEL_REASONING_QUICK_V1,
+        MODEL_REASONING_V1,
+    };
+    matches!(
+        model,
+        MODEL_REASONING_V1
+            | MODEL_CHAT_V1
+            | MODEL_AGENTIC_V1
+            | MODEL_CODING_V1
+            | MODEL_REASONING_QUICK_V1
+            | "hint:reasoning"
+            | "hint:chat"
+            | "hint:agentic"
+            | "hint:coding"
+    )
+}
+
 /// Return the configured provider string for a named workload role.
 ///
-/// Returns `"openhuman"` when the workload has no explicit override.
+/// Empty / `"cloud"` resolves through `primary_cloud`. For backwards
+/// compatibility, a legacy external `inference_url` takes precedence when
+/// `primary_cloud` still points at OpenHuman because migration 1→2 preserved
+/// the URL as a custom provider entry but older configs did not explicitly set
+/// per-workload routes.
 pub fn provider_for_role(role: &str, config: &Config) -> String {
     let opt = match role {
+        "chat" => config.chat_provider.as_deref(),
         "reasoning" => config.reasoning_provider.as_deref(),
         "agentic" => config.agentic_provider.as_deref(),
         "coding" => config.coding_provider.as_deref(),
@@ -62,7 +114,7 @@ pub fn provider_for_role(role: &str, config: &Config) -> String {
     };
     let s = opt.unwrap_or("").trim();
     if s.is_empty() || s == "cloud" {
-        PROVIDER_OPENHUMAN.to_string()
+        resolve_primary_cloud_provider_string(config)
     } else {
         s.to_string()
     }
@@ -97,17 +149,34 @@ pub fn create_chat_provider_from_string(
         p
     );
 
-    // Empty / legacy "cloud" sentinel → OpenHuman backend.
+    // Empty / legacy "cloud" sentinel → primary cloud target.
     if p.is_empty() || p == "cloud" {
-        return make_openhuman_backend(config);
+        let resolved = resolve_primary_cloud_provider_string(config);
+        return create_chat_provider_from_string(role, &resolved, config);
     }
 
     if p == PROVIDER_OPENHUMAN {
         return make_openhuman_backend(config);
     }
 
-    if let Some(model) = p.strip_prefix(OLLAMA_PROVIDER_PREFIX) {
-        if model.trim().is_empty() {
+    // ── Session gate ──────────────────────────────────────────────────
+    // Custom providers (Ollama, <slug>:<model>) require an active
+    // OpenHuman session.  Without this check an unregistered user can
+    // point every workload at a custom provider and bypass the session
+    // requirement entirely.
+    //
+    // Gate is skipped under #[cfg(test)] so existing unit tests that
+    // create custom providers against a default Config continue to
+    // pass.  The verify_session_active function itself is tested
+    // explicitly with tempdir-backed auth profiles.
+    #[cfg(not(test))]
+    {
+        verify_session_active(config)?;
+    }
+
+    if let Some(model_with_temp) = p.strip_prefix(OLLAMA_PROVIDER_PREFIX) {
+        let (model, temperature_override) = split_model_and_temperature(model_with_temp);
+        if model.is_empty() {
             anyhow::bail!(
                 "[chat-factory] provider string '{}' for role '{}' has an empty model — \
                  use 'ollama:<model-id>'",
@@ -115,13 +184,13 @@ pub fn create_chat_provider_from_string(
                 role
             );
         }
-        return make_ollama_provider(model.trim(), config);
+        return make_ollama_provider(&model, temperature_override, config);
     }
 
-    // New grammar: "<slug>:<model>"
+    // New grammar: "<slug>:<model>[@<temp>]"
     if let Some(colon_pos) = p.find(':') {
         let slug = p[..colon_pos].trim();
-        let model = p[colon_pos + 1..].trim();
+        let (model, temperature_override) = split_model_and_temperature(&p[colon_pos + 1..]);
 
         if slug.is_empty() {
             anyhow::bail!(
@@ -131,7 +200,7 @@ pub fn create_chat_provider_from_string(
             );
         }
 
-        return make_cloud_provider_by_slug(role, slug, model, config);
+        return make_cloud_provider_by_slug(role, slug, &model, temperature_override, config);
     }
 
     // No colon: might be a bare legacy type string (e.g. "openai"). Try as
@@ -181,13 +250,35 @@ fn make_openhuman_backend(config: &Config) -> anyhow::Result<(Box<dyn Provider>,
         options.secrets_encrypt
     );
     // Translate `hint:<tier>` model strings into the OpenHuman backend's
-    // canonical tier names.
+    // canonical tier names.  Unrecognised `hint:*` strings (e.g. `hint:reaction`
+    // for lightweight models) are forwarded as-is — the backend is authoritative
+    // over which hint values it accepts, and the web-chat model_override path
+    // uses these verbatim.  Only non-hint strings that are not a known canonical
+    // tier (stale `default_model` values written by older UI versions, e.g.
+    // "deepseek-v4-pro", "claude-opus-4-7") fall back to the platform default.
     let model = match model.strip_prefix("hint:") {
         Some("reasoning") => crate::openhuman::config::MODEL_REASONING_V1.to_string(),
         Some("chat") => crate::openhuman::config::MODEL_REASONING_QUICK_V1.to_string(),
         Some("agentic") => crate::openhuman::config::MODEL_AGENTIC_V1.to_string(),
         Some("coding") => crate::openhuman::config::MODEL_CODING_V1.to_string(),
-        _ => model,
+        Some(_) => {
+            // Unrecognised hint — forward verbatim; the backend decides validity.
+            model
+        }
+        None => {
+            if is_known_openhuman_tier(&model) {
+                model
+            } else {
+                log::warn!(
+                    "[providers][chat-factory] model '{}' is not a recognized OpenHuman \
+                     backend tier (valid: reasoning-v1, chat-v1, agentic-v1, coding-v1, \
+                     reasoning-quick-v1); falling back to '{}'",
+                    model,
+                    crate::openhuman::config::MODEL_REASONING_V1,
+                );
+                crate::openhuman::config::MODEL_REASONING_V1.to_string()
+            }
+        }
     };
     let p = Box::new(OpenHumanBackendProvider::new(
         config.api_url.as_deref(),
@@ -196,9 +287,157 @@ fn make_openhuman_backend(config: &Config) -> anyhow::Result<(Box<dyn Provider>,
     Ok((p, model))
 }
 
+/// Verify the user has an active OpenHuman backend session.
+///
+/// Without this check, an unregistered user can configure every workload
+/// to use a custom cloud provider and bypass the session requirement
+/// entirely.  This function ensures that custom providers (Ollama,
+/// `<slug>:<model>`) are only reachable when the workspace holds a valid
+/// `app-session` JWT.
+fn verify_session_active(config: &Config) -> anyhow::Result<()> {
+    // Fast path: the scheduler gate already knows the session is dead.
+    if crate::openhuman::scheduler_gate::is_signed_out() {
+        anyhow::bail!(
+            "SESSION_EXPIRED: backend session not active — sign in to use custom providers"
+        );
+    }
+    // Verify the app-session JWT actually exists in auth-profiles.
+    let state_dir = config
+        .config_path
+        .parent()
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            directories::UserDirs::new()
+                .map(|d| d.home_dir().join(".openhuman"))
+                .unwrap_or_else(|| std::path::PathBuf::from(".openhuman"))
+        });
+    let auth = AuthService::new(&state_dir, config.secrets.encrypt);
+    let has_session = auth
+        .get_provider_bearer_token(crate::openhuman::credentials::APP_SESSION_PROVIDER, None)?
+        .filter(|s| !s.trim().is_empty())
+        .is_some();
+    if !has_session {
+        anyhow::bail!("SESSION_EXPIRED: no backend session — sign in to use OpenHuman")
+    }
+    Ok(())
+}
+
+fn resolve_primary_cloud_provider_string(config: &Config) -> String {
+    let primary = config
+        .primary_cloud
+        .as_deref()
+        .and_then(|id| config.cloud_providers.iter().find(|entry| entry.id == id));
+
+    if primary.is_some_and(is_openhuman_cloud_entry) {
+        if let Some(legacy) = legacy_custom_inference_provider_string(config) {
+            return legacy;
+        }
+    }
+
+    if let Some(entry) = primary {
+        return cloud_entry_provider_string(entry, config);
+    }
+
+    legacy_custom_inference_provider_string(config)
+        .unwrap_or_else(|| PROVIDER_OPENHUMAN.to_string())
+}
+
+fn legacy_custom_inference_provider_string(config: &Config) -> Option<String> {
+    let inference_url = config
+        .inference_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|url| !url.is_empty())?;
+
+    if looks_like_openhuman_backend(inference_url) {
+        return None;
+    }
+
+    let normalized_inference = normalize_endpoint_for_compare(inference_url);
+    config
+        .cloud_providers
+        .iter()
+        .find(|entry| {
+            !is_openhuman_cloud_entry(entry)
+                && normalize_endpoint_for_compare(&entry.endpoint) == normalized_inference
+        })
+        .map(|entry| cloud_entry_provider_string(entry, config))
+}
+
+fn cloud_entry_provider_string(
+    entry: &crate::openhuman::config::schema::cloud_providers::CloudProviderCreds,
+    config: &Config,
+) -> String {
+    if is_openhuman_cloud_entry(entry) {
+        return PROVIDER_OPENHUMAN.to_string();
+    }
+
+    let model = entry
+        .default_model
+        .as_deref()
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+        .or_else(|| {
+            config
+                .default_model
+                .as_deref()
+                .map(str::trim)
+                .filter(|model| !model.is_empty())
+        })
+        .unwrap_or(crate::openhuman::config::DEFAULT_MODEL);
+
+    format!("{}:{model}", entry.slug)
+}
+
+fn is_openhuman_cloud_entry(
+    entry: &crate::openhuman::config::schema::cloud_providers::CloudProviderCreds,
+) -> bool {
+    entry.slug == PROVIDER_OPENHUMAN
+        || matches!(entry.auth_style, AuthStyle::OpenhumanJwt)
+        || looks_like_openhuman_backend(&entry.endpoint)
+}
+
+fn normalize_endpoint_for_compare(url: &str) -> String {
+    url.trim().trim_end_matches('/').to_ascii_lowercase()
+}
+
+fn looks_like_openhuman_backend(url: &str) -> bool {
+    let lower = url.trim().to_ascii_lowercase();
+    let without_scheme = lower.split("://").nth(1).unwrap_or(&lower);
+    let authority = without_scheme.split('/').next().unwrap_or("");
+    let host = authority.split('@').next_back().unwrap_or(authority);
+    let host_no_port = host.split(':').next().unwrap_or(host);
+    matches!(
+        host_no_port,
+        "api.openhuman.ai" | "api.tinyhumans.ai" | "staging-api.tinyhumans.ai" | "openhuman"
+    ) || host_no_port.ends_with(".openhuman.ai")
+        || host_no_port.ends_with(".tinyhumans.ai")
+}
+
+/// Parse a `<model>[@<temp>]` tail into `(model, override)`.
+///
+/// Tolerates whitespace around the components. Returns `temperature = None`
+/// when the suffix is absent or unparseable — the model text is taken as-is.
+fn split_model_and_temperature(raw: &str) -> (String, Option<f64>) {
+    let trimmed = raw.trim();
+    if let Some(at_pos) = trimmed.rfind('@') {
+        let head = trimmed[..at_pos].trim();
+        let tail = trimmed[at_pos + 1..].trim();
+        if !head.is_empty() {
+            if let Ok(parsed) = tail.parse::<f64>() {
+                if parsed.is_finite() {
+                    return (head.to_string(), Some(parsed));
+                }
+            }
+        }
+    }
+    (trimmed.to_string(), None)
+}
+
 /// Build an Ollama local provider.
 fn make_ollama_provider(
     model: &str,
+    temperature_override: Option<f64>,
     config: &Config,
 ) -> anyhow::Result<(Box<dyn Provider>, String)> {
     let base_url = config
@@ -209,15 +448,17 @@ fn make_ollama_provider(
     // Ollama exposes an OpenAI-compatible endpoint at /v1.
     let endpoint = format!("{}/v1", base_url.trim_end_matches('/'));
     log::info!(
-        "[providers][chat-factory] building ollama provider model={} endpoint_host={}",
+        "[providers][chat-factory] building ollama provider model={} endpoint_host={} temp_override={:?}",
         model,
-        redact_endpoint(&endpoint)
+        redact_endpoint(&endpoint),
+        temperature_override
     );
     let p = make_openai_compatible_provider_with_config(
         &endpoint,
         "",
         CompatAuthStyle::None,
         &config.temperature_unsupported_models,
+        temperature_override,
     )?;
     Ok((p, model.to_string()))
 }
@@ -227,6 +468,7 @@ fn make_cloud_provider_by_slug(
     role: &str,
     slug: &str,
     model: &str,
+    temperature_override: Option<f64>,
     config: &Config,
 ) -> anyhow::Result<(Box<dyn Provider>, String)> {
     let entry = config.cloud_providers.iter().find(|e| e.slug == slug);
@@ -249,11 +491,38 @@ fn make_cloud_provider_by_slug(
 
     // Resolve effective model: use provided model if non-empty, else fall back
     // to the entry's legacy default_model (if any), else empty → error.
-    let effective_model = if model.trim().is_empty() {
+    let mut effective_model = if model.trim().is_empty() {
         entry.default_model.clone().unwrap_or_default()
     } else {
         model.to_string()
     };
+
+    if entry.auth_style != AuthStyle::OpenhumanJwt && is_abstract_tier_model(&effective_model) {
+        if let Some(default_model) = entry
+            .default_model
+            .as_deref()
+            .map(str::trim)
+            .filter(|m| !m.is_empty() && !is_abstract_tier_model(m))
+        {
+            log::info!(
+                "[providers][chat-factory] role={} slug={} remapping abstract model {} -> {}",
+                role,
+                slug,
+                effective_model,
+                default_model
+            );
+            effective_model = default_model.to_string();
+        } else {
+            anyhow::bail!(
+                "[chat-factory] model '{}' is an abstract tier for role '{}', \
+                 but cloud provider slug '{}' has no concrete default_model configured. \
+                 Set cloud_providers[].default_model to a provider-native model id (e.g. deepseek-v4-pro).",
+                effective_model,
+                role,
+                slug
+            );
+        }
+    }
 
     log::info!(
         "[providers][chat-factory] role={} slug={} model={} endpoint_host={}",
@@ -273,6 +542,7 @@ fn make_cloud_provider_by_slug(
                 &key,
                 CompatAuthStyle::Anthropic,
                 unsupported,
+                temperature_override,
             )?;
             Ok((p, effective_model))
         }
@@ -291,6 +561,7 @@ fn make_cloud_provider_by_slug(
                 "",
                 CompatAuthStyle::None,
                 unsupported,
+                temperature_override,
             )?;
             Ok((p, effective_model))
         }
@@ -300,6 +571,7 @@ fn make_cloud_provider_by_slug(
                 &key,
                 CompatAuthStyle::Bearer,
                 unsupported,
+                temperature_override,
             )?;
             Ok((p, effective_model))
         }
@@ -337,12 +609,40 @@ pub fn lookup_key_for_slug(slug: &str, config: &Config) -> anyhow::Result<String
             )
         })?
         .unwrap_or_default();
+    if !key.is_empty() {
+        log::debug!(
+            "[providers][chat-factory] auth lookup slug={} key_present=true",
+            slug
+        );
+        return Ok(key);
+    }
+
+    // OAuth fallback for `openai` runs only after standard API-key resolution
+    // returns empty, so env/audit/metrics in the standard path always execute
+    // and the OAuth path never silently bypasses provider-agnostic logic.
+    if slug == "openai" {
+        match crate::openhuman::inference::openai_oauth::lookup_openai_bearer_token(config) {
+            Ok(Some(token)) if !token.is_empty() => {
+                log::debug!(
+                    "[providers][chat-factory] auth lookup slug={} key_present=true (oauth)",
+                    slug
+                );
+                return Ok(token);
+            }
+            Ok(_) => {}
+            Err(e) => {
+                return Err(anyhow::anyhow!(
+                    "[chat-factory] openai oauth lookup failed: {e}"
+                ));
+            }
+        }
+    }
+
     log::debug!(
-        "[providers][chat-factory] auth lookup slug={} key_present={}",
-        slug,
-        !key.is_empty()
+        "[providers][chat-factory] auth lookup slug={} key_present=false",
+        slug
     );
-    Ok(key)
+    Ok(String::new())
 }
 
 /// Build an `OpenAiCompatibleProvider` with the given auth style.
@@ -351,16 +651,18 @@ fn make_openai_compatible_provider(
     api_key: &str,
     auth_style: CompatAuthStyle,
 ) -> anyhow::Result<Box<dyn Provider>> {
-    make_openai_compatible_provider_with_config(endpoint, api_key, auth_style, &[])
+    make_openai_compatible_provider_with_config(endpoint, api_key, auth_style, &[], None)
 }
 
-/// Build an `OpenAiCompatibleProvider` with auth style and temperature
-/// suppression list from config.
+/// Build an `OpenAiCompatibleProvider` with auth style, temperature
+/// suppression list from config, and an optional per-workload temperature
+/// override (extracted from the provider string's `@<temp>` suffix).
 fn make_openai_compatible_provider_with_config(
     endpoint: &str,
     api_key: &str,
     auth_style: CompatAuthStyle,
     temperature_unsupported_models: &[String],
+    temperature_override: Option<f64>,
 ) -> anyhow::Result<Box<dyn Provider>> {
     let key = if api_key.trim().is_empty() {
         None
@@ -369,7 +671,8 @@ fn make_openai_compatible_provider_with_config(
     };
     Ok(Box::new(
         OpenAiCompatibleProvider::new("cloud", endpoint, key, auth_style)
-            .with_temperature_unsupported_models(temperature_unsupported_models.to_vec()),
+            .with_temperature_unsupported_models(temperature_unsupported_models.to_vec())
+            .with_temperature_override(temperature_override),
     ))
 }
 

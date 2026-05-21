@@ -37,6 +37,22 @@ CREATE INDEX IF NOT EXISTS idx_segments_namespace
 
 CREATE INDEX IF NOT EXISTS idx_segments_status
     ON conversation_segments(status, session_id);
+
+-- Per-model segment embeddings for #1574. The legacy
+-- `conversation_segments.embedding` column stays in place during staged
+-- migration; this table lets provider/model switches become query-time
+-- filters instead of destructive rewrites.
+CREATE TABLE IF NOT EXISTS segment_embeddings (
+    segment_id       TEXT NOT NULL REFERENCES conversation_segments(segment_id) ON DELETE CASCADE,
+    model_signature  TEXT NOT NULL,
+    vector           BLOB NOT NULL,
+    dim              INTEGER NOT NULL,
+    created_at       REAL NOT NULL,
+    PRIMARY KEY (segment_id, model_signature)
+);
+
+CREATE INDEX IF NOT EXISTS idx_segment_embeddings_model
+    ON segment_embeddings(model_signature);
 "#;
 
 /// Segment status lifecycle: open → closed → summarised.
@@ -256,6 +272,55 @@ pub fn segment_set_embedding(
         params![segment_id, bytes, now],
     )?;
     Ok(())
+}
+
+/// Store a segment embedding for a specific provider/model/dimension signature.
+///
+/// This writes only the per-model table introduced for #1574. The legacy
+/// `conversation_segments.embedding` column remains available for dual-read
+/// fallback while query paths migrate.
+pub fn segment_embedding_upsert(
+    conn: &Arc<Mutex<Connection>>,
+    segment_id: &str,
+    model_signature: &str,
+    embedding: &[f32],
+    created_at: f64,
+) -> anyhow::Result<()> {
+    let bytes = vec_to_bytes(embedding);
+    let dim = i64::try_from(embedding.len())?;
+    let conn = conn.lock();
+    conn.execute(
+        "INSERT INTO segment_embeddings (segment_id, model_signature, vector, dim, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5)
+         ON CONFLICT(segment_id, model_signature) DO UPDATE SET
+            vector = excluded.vector,
+            dim = excluded.dim,
+            created_at = excluded.created_at",
+        params![segment_id, model_signature, bytes, dim, created_at],
+    )?;
+    Ok(())
+}
+
+/// Fetch a segment embedding for exactly one provider/model/dimension signature.
+pub fn segment_embedding_get(
+    conn: &Arc<Mutex<Connection>>,
+    segment_id: &str,
+    model_signature: &str,
+) -> anyhow::Result<Option<Vec<f32>>> {
+    let conn = conn.lock();
+    let row: Option<(Vec<u8>, i64)> = conn
+        .query_row(
+            "SELECT vector, dim
+               FROM segment_embeddings
+              WHERE segment_id = ?1 AND model_signature = ?2",
+            params![segment_id, model_signature],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?;
+    match row {
+        None => Ok(None),
+        Some((bytes, dim)) => decode_embedding_row(&bytes, dim),
+    }
 }
 
 /// Store topic keywords for the segment.
@@ -500,6 +565,26 @@ fn bytes_to_vec(bytes: &[u8]) -> Vec<f32> {
         .chunks_exact(4)
         .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
         .collect()
+}
+
+fn decode_embedding_row(bytes: &[u8], dim: i64) -> anyhow::Result<Option<Vec<f32>>> {
+    if dim < 0 {
+        anyhow::bail!("segment embedding has negative dimension {dim}");
+    }
+    if !bytes.len().is_multiple_of(4) {
+        anyhow::bail!(
+            "segment embedding blob length {} not a multiple of 4",
+            bytes.len()
+        );
+    }
+    let floats = bytes_to_vec(bytes);
+    if floats.len() != dim as usize {
+        anyhow::bail!(
+            "segment embedding dimension mismatch: dim column says {dim}, blob contains {} floats",
+            floats.len()
+        );
+    }
+    Ok(Some(floats))
 }
 
 #[cfg(test)]

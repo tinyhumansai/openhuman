@@ -245,7 +245,11 @@ impl Summarizer for ProviderSummarizer {
 /// head length. Returns 0 when the adjustment would consume the entire
 /// history, meaning there is nothing we can safely summarize without
 /// breaking the API invariant.
-fn snap_split_forward(history: &[ConversationMessage], proposed_head: usize) -> usize {
+///
+/// Exported as `pub(super)` so sibling modules (e.g.
+/// `segment_recap_summarizer`) can reuse the same invariant instead of
+/// maintaining a separate copy.
+pub(super) fn snap_split_forward(history: &[ConversationMessage], proposed_head: usize) -> usize {
     let mut head = proposed_head.min(history.len());
     // If the message immediately *before* the split is an
     // AssistantToolCalls and the message *at* the split is its

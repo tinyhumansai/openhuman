@@ -22,15 +22,28 @@ import { MascotFrameProducer } from './features/meet/MascotFrameProducer';
 import { I18nProvider } from './lib/i18n/I18nContext';
 // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
 // import { isWelcomeLocked } from './lib/coreState/store';
-import { startNativeNotificationsService } from './lib/nativeNotifications';
-import { startWebviewNotificationsService } from './lib/webviewNotifications';
+import {
+  startNativeNotificationsService,
+  stopNativeNotificationsService,
+} from './lib/nativeNotifications';
+import {
+  startWebviewNotificationsService,
+  stopWebviewNotificationsService,
+} from './lib/webviewNotifications';
 import ChatRuntimeProvider from './providers/ChatRuntimeProvider';
 import CoreStateProvider, { useCoreState } from './providers/CoreStateProvider';
 import SocketProvider from './providers/SocketProvider';
+import ThemeProvider from './providers/ThemeProvider';
 import { trackPageView } from './services/analytics';
-import { startCoreHealthMonitor } from './services/coreHealthMonitor';
-import { startInternetStatusListener } from './services/internetStatusListener';
-import { startWebviewAccountService } from './services/webviewAccountService';
+import { startCoreHealthMonitor, stopCoreHealthMonitor } from './services/coreHealthMonitor';
+import {
+  startInternetStatusListener,
+  stopInternetStatusListener,
+} from './services/internetStatusListener';
+import {
+  startWebviewAccountService,
+  stopWebviewAccountService,
+} from './services/webviewAccountService';
 import { persistor, store } from './store';
 // [#1123] useAppDispatch commented out — welcome-agent onboarding replaced by Joyride walkthrough
 import { useAppSelector } from './store/hooks';
@@ -51,6 +64,18 @@ startNativeNotificationsService();
 startInternetStatusListener();
 startCoreHealthMonitor();
 
+export function stopBootServicesForHmr(): void {
+  stopWebviewAccountService();
+  stopWebviewNotificationsService();
+  stopNativeNotificationsService();
+  stopInternetStatusListener();
+  stopCoreHealthMonitor();
+}
+
+if (import.meta.hot) {
+  import.meta.hot.dispose(stopBootServicesForHmr);
+}
+
 function App() {
   return (
     <Sentry.ErrorBoundary
@@ -59,26 +84,28 @@ function App() {
       )}>
       <Provider store={store}>
         <PersistGate loading={<PersistRehydrationScreen />} persistor={persistor}>
-          <I18nProvider>
-            <BootCheckGate>
-              <CoreStateProvider>
-                <SocketProvider>
-                  <ChatRuntimeProvider>
-                    <Router>
-                      <CommandProvider>
-                        <ServiceBlockingGate>
-                          <AppShell />
-                          <DictationHotkeyManager />
-                          <LocalAIDownloadSnackbar />
-                          <AppUpdatePrompt />
-                        </ServiceBlockingGate>
-                      </CommandProvider>
-                    </Router>
-                  </ChatRuntimeProvider>
-                </SocketProvider>
-              </CoreStateProvider>
-            </BootCheckGate>
-          </I18nProvider>
+          <ThemeProvider>
+            <I18nProvider>
+              <BootCheckGate>
+                <CoreStateProvider>
+                  <SocketProvider>
+                    <ChatRuntimeProvider>
+                      <Router>
+                        <CommandProvider>
+                          <ServiceBlockingGate>
+                            <AppShell />
+                            <DictationHotkeyManager />
+                            <LocalAIDownloadSnackbar />
+                            <AppUpdatePrompt />
+                          </ServiceBlockingGate>
+                        </CommandProvider>
+                      </Router>
+                    </ChatRuntimeProvider>
+                  </SocketProvider>
+                </CoreStateProvider>
+              </BootCheckGate>
+            </I18nProvider>
+          </ThemeProvider>
         </PersistGate>
       </Provider>
     </Sentry.ErrorBoundary>

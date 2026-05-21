@@ -1,10 +1,13 @@
 import debug from 'debug';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { useOAuthConnectionListener } from '../../hooks/useOAuthConnectionListener';
 import { AUTH_MODE_LABELS } from '../../lib/channels/definitions';
+import { useT } from '../../lib/i18n/I18nContext';
 import { channelConnectionsApi } from '../../services/api/channelConnectionsApi';
 import { callCoreRpc } from '../../services/coreRpcClient';
 import {
+  clearOtherPendingForChannel,
   disconnectChannelConnection,
   setChannelConnectionStatus,
   upsertChannelConnection,
@@ -22,16 +25,18 @@ import ChannelFieldInput from './ChannelFieldInput';
 import ChannelStatusBadge from './ChannelStatusBadge';
 
 const log = debug('channels:telegram');
-const MANAGED_DM_CONNECTING_MESSAGE = 'Open Telegram and message the bot to complete setup.';
-const MANAGED_DM_TIMEOUT_MESSAGE = 'Managed DM verification timed out. Try connecting again.';
 
 interface TelegramConfigProps {
   definition: ChannelDefinition;
 }
 
 const TelegramConfig = ({ definition }: TelegramConfigProps) => {
+  const { t } = useT();
   const dispatch = useAppDispatch();
   const channelConnections = useAppSelector(state => state.channelConnections);
+
+  const MANAGED_DM_CONNECTING_MESSAGE = t('channels.telegram.managedDmConnecting');
+  const MANAGED_DM_TIMEOUT_MESSAGE = t('channels.telegram.managedDmTimeout');
 
   const [busyKeys, setBusyKeys] = useState<Record<string, boolean>>({});
   const [fieldValues, setFieldValues] = useState<Record<string, Record<string, string>>>({});
@@ -71,6 +76,12 @@ const TelegramConfig = ({ definition }: TelegramConfigProps) => {
       managedDmPollControllers.current = {};
     };
   }, []);
+
+  // Bridge OAuth deep-link completions into Redux. Previously absent on the
+  // Telegram panel, so OAuth attempts that succeeded in the browser would
+  // never clear the `connecting` badge here. Fixes the Telegram half of
+  // #2128 and inherits the shared error-transition behavior.
+  useOAuthConnectionListener({ channel: 'telegram', authMode: 'oauth' });
 
   const startManagedDmPolling = useCallback(
     (key: string, linkToken: string) => {
@@ -146,13 +157,24 @@ const TelegramConfig = ({ definition }: TelegramConfigProps) => {
         }
       })();
     },
-    [dispatch, stopManagedDmPolling]
+    [dispatch, stopManagedDmPolling, MANAGED_DM_TIMEOUT_MESSAGE]
   );
 
   const handleConnect = useCallback(
     (spec: AuthModeSpec) => {
       const key = `telegram:${spec.mode}`;
       void runBusy(key, async () => {
+        // Abort sibling managed-dm polls before clearing their slice rows;
+        // a still-running poll could otherwise complete after the clear and
+        // dispatch the sibling back to connected/error, leaking the prior
+        // attempt into state. (CodeRabbit on PR #2256.) Only managed_dm
+        // polls today, so stop that one explicitly.
+        const managedDmKey = 'telegram:managed_dm';
+        if (key !== managedDmKey) stopManagedDmPolling(managedDmKey);
+
+        // Cancel any sibling auth mode still mid-`connecting` so the panel
+        // doesn't pin multiple methods simultaneously (#2128).
+        dispatch(clearOtherPendingForChannel({ channel: 'telegram', exceptAuthMode: spec.mode }));
         dispatch(
           setChannelConnectionStatus({
             channel: 'telegram',
@@ -262,7 +284,7 @@ const TelegramConfig = ({ definition }: TelegramConfigProps) => {
           } catch (restartErr) {
             const msg = restartErr instanceof Error ? restartErr.message : String(restartErr);
             log('core restart failed: %s', msg);
-            setError('Channel saved. Restart the app to activate it.');
+            setError(t('channels.telegram.savedRestartRequired'));
           }
         } else {
           dispatch(
@@ -275,7 +297,15 @@ const TelegramConfig = ({ definition }: TelegramConfigProps) => {
         }
       });
     },
-    [dispatch, fieldValues, runBusy, startManagedDmPolling]
+    [
+      dispatch,
+      fieldValues,
+      runBusy,
+      startManagedDmPolling,
+      stopManagedDmPolling,
+      MANAGED_DM_CONNECTING_MESSAGE,
+      t,
+    ]
   );
 
   const handleDisconnect = useCallback(
@@ -294,7 +324,7 @@ const TelegramConfig = ({ definition }: TelegramConfigProps) => {
   return (
     <div className="space-y-3">
       {error && (
-        <div className="rounded-lg border border-coral-200 bg-coral-50 px-4 py-3 text-sm text-coral-700">
+        <div className="rounded-lg border border-coral-200 dark:border-coral-500/30 bg-coral-50 dark:bg-coral-500/10 px-4 py-3 text-sm text-coral-700 dark:text-coral-300">
           {error}
         </div>
       )}
@@ -305,13 +335,17 @@ const TelegramConfig = ({ definition }: TelegramConfigProps) => {
         const status: ChannelConnectionStatus = connection?.status ?? 'disconnected';
 
         return (
-          <div key={spec.mode} className="rounded-lg border border-stone-200 bg-stone-50 p-3">
+          <div
+            key={spec.mode}
+            className="rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 p-3">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <p className="text-sm font-medium text-stone-900">
+                <p className="text-sm font-medium text-stone-900 dark:text-neutral-100">
                   {AUTH_MODE_LABELS[spec.mode] ?? spec.mode}
                 </p>
-                <p className="text-xs text-stone-500 mt-1">{spec.description}</p>
+                <p className="text-xs text-stone-500 dark:text-neutral-400 mt-1">
+                  {spec.description}
+                </p>
                 {connection?.lastError && (
                   <p className="text-xs text-coral-600 mt-1">{connection.lastError}</p>
                 )}
@@ -339,14 +373,16 @@ const TelegramConfig = ({ definition }: TelegramConfigProps) => {
                 disabled={busyKeys[compositeKey]}
                 onClick={() => handleConnect(spec)}
                 className="rounded-lg bg-primary-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-600 disabled:opacity-50">
-                {status === 'connected' ? 'Reconnect' : 'Connect'}
+                {status === 'connected'
+                  ? t('channels.telegram.reconnect')
+                  : t('channels.telegram.connect')}
               </button>
               <button
                 type="button"
                 disabled={busyKeys[compositeKey] || status === 'disconnected'}
                 onClick={() => handleDisconnect(spec.mode)}
-                className="rounded-lg border border-stone-200 px-3 py-1.5 text-xs font-medium text-stone-600 hover:border-stone-300 disabled:opacity-50">
-                Disconnect
+                className="rounded-lg border border-stone-200 dark:border-neutral-800 px-3 py-1.5 text-xs font-medium text-stone-600 dark:text-neutral-300 hover:border-stone-300 dark:hover:border-neutral-700 disabled:opacity-50">
+                {t('accounts.disconnect')}
               </button>
             </div>
           </div>

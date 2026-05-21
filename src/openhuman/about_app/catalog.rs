@@ -47,6 +47,12 @@ const GITHUB_RELEASES_METADATA: Option<CapabilityPrivacy> = Some(CapabilityPriva
     destinations: &["GitHub Releases"],
 });
 
+const SEARXNG_RAW_TO_CONFIGURED_INSTANCE: Option<CapabilityPrivacy> = Some(CapabilityPrivacy {
+    leaves_device: true,
+    data_kind: PrivacyDataKind::Raw,
+    destinations: &["Configured SearXNG instance"],
+});
+
 // Direct-mode Composio: the user's API key and tool arguments leave the
 // device — they are sent to backend.composio.dev, not the OpenHuman backend.
 // LOCAL_CREDENTIALS was incorrect here because leaves_device must be true.
@@ -54,6 +60,18 @@ const COMPOSIO_DIRECT_CREDENTIALS: Option<CapabilityPrivacy> = Some(CapabilityPr
     leaves_device: true,
     data_kind: PrivacyDataKind::Credentials,
     destinations: &["Composio (backend.composio.dev)"],
+});
+
+const POLYMARKET_MARKET_DATA: Option<CapabilityPrivacy> = Some(CapabilityPrivacy {
+    leaves_device: true,
+    data_kind: PrivacyDataKind::Metadata,
+    destinations: &["Polymarket Gamma API", "Polymarket CLOB API"],
+});
+
+const POLYMARKET_TRADING_DATA: Option<CapabilityPrivacy> = Some(CapabilityPrivacy {
+    leaves_device: true,
+    data_kind: PrivacyDataKind::Derived,
+    destinations: &["Polymarket CLOB API"],
 });
 
 const CAPABILITIES: &[Capability] = &[
@@ -144,6 +162,16 @@ const CAPABILITIES: &[Capability] = &[
         category: CapabilityCategory::Conversation,
         description: "Show the sequence of tool calls and actions used to answer a request.",
         how_to: "Conversations > Tool timeline",
+        status: CapabilityStatus::Beta,
+        privacy: None,
+    },
+    Capability {
+        id: "conversation.subagent_mascots",
+        name: "Subagent Mascots",
+        domain: "conversation",
+        category: CapabilityCategory::Conversation,
+        description: "Show delegated sub-agents as colored companion mascots with compact activity bubbles and running, completed, or failed states.",
+        how_to: "Human > ask the assistant to delegate work to sub-agents",
         status: CapabilityStatus::Beta,
         privacy: None,
     },
@@ -277,6 +305,26 @@ const CAPABILITIES: &[Capability] = &[
         privacy: LOCAL_RAW,
     },
     Capability {
+        id: "intelligence.searxng_search",
+        name: "SearXNG Search",
+        domain: "intelligence",
+        category: CapabilityCategory::Intelligence,
+        description: "Search a configured self-hosted SearXNG instance from agent and MCP tools, returning normalized title, URL, snippet, and source results.",
+        how_to: "Set `[searxng] enabled = true` and `base_url` in config.toml, or use OPENHUMAN_SEARXNG_* environment variables.",
+        status: CapabilityStatus::Beta,
+        privacy: SEARXNG_RAW_TO_CONFIGURED_INSTANCE,
+    },
+    Capability {
+        id: "intelligence.tool_registry",
+        name: "Tool Registry",
+        domain: "intelligence",
+        category: CapabilityCategory::Intelligence,
+        description: "Discover OpenHuman's MCP stdio tools and controller-backed tools from one local registry, including versions, routes, input/output schemas, allowed agents, and health state.",
+        how_to: "Call openhuman.tool_registry_list over core JSON-RPC, or openhuman.tool_registry_get with a tool_id such as memory.search.",
+        status: CapabilityStatus::Beta,
+        privacy: LOCAL_RAW,
+    },
+    Capability {
         id: "intelligence.orchestrator_worker_thread",
         name: "Worker Thread Delegation",
         domain: "intelligence",
@@ -293,6 +341,16 @@ const CAPABILITIES: &[Capability] = &[
         category: CapabilityCategory::Intelligence,
         description: "Backfill the last 6 days of Slack history into the memory tree and keep it up to date by flushing each closed 6-hour UTC bucket. Driven by an authenticated Slack connection (OAuth via Composio).",
         how_to: "Settings > Messaging Channels > Slack",
+        status: CapabilityStatus::Beta,
+        privacy: LOCAL_RAW,
+    },
+    Capability {
+        id: "intelligence.clickup_memory_ingest",
+        name: "ClickUp Memory Ingestion",
+        domain: "intelligence",
+        category: CapabilityCategory::Intelligence,
+        description: "Incrementally sync ClickUp tasks assigned to the authenticated user into the Memory Tree on a 30-minute cadence, with an initial backfill on first connect. Only tasks the user is directly assigned to are ingested. Driven by an authenticated ClickUp connection (OAuth via Composio).",
+        how_to: "Settings > Connections > ClickUp",
         status: CapabilityStatus::Beta,
         privacy: LOCAL_RAW,
     },
@@ -385,6 +443,17 @@ const CAPABILITIES: &[Capability] = &[
         how_to: "Conversations > Ask the assistant to run an Apify actor",
         status: CapabilityStatus::Beta,
         privacy: None,
+    },
+    Capability {
+        id: "skills.tinyfish_web_automation",
+        name: "TinyFish Web Automation",
+        domain: "skills",
+        category: CapabilityCategory::Skills,
+        description:
+            "Search the web, render JavaScript-heavy pages, and run goal-based browser automations through TinyFish.",
+        how_to: "Conversations > Ask the assistant to search, fetch, or automate a website with TinyFish",
+        status: CapabilityStatus::Beta,
+        privacy: DERIVED_TO_BACKEND,
     },
     Capability {
         id: "skills.toggle_enabled",
@@ -494,6 +563,26 @@ const CAPABILITIES: &[Capability] = &[
         privacy: None,
     },
     Capability {
+        id: "skills.polymarket_readonly",
+        name: "Polymarket Read-Only Browse",
+        domain: "skills",
+        category: CapabilityCategory::Skills,
+        description: "Browse Polymarket markets, events, orderbooks, and prices via Gamma + CLOB APIs.",
+        how_to: "Conversations > ask the assistant to browse Polymarket (tool: polymarket).",
+        status: CapabilityStatus::Beta,
+        privacy: POLYMARKET_MARKET_DATA,
+    },
+    Capability {
+        id: "skills.polymarket_trading",
+        name: "Polymarket Trading",
+        domain: "skills",
+        category: CapabilityCategory::Skills,
+        description: "Place and cancel Polymarket limit orders with EIP-712 signing, authenticated account reads, and explicit approval for writes.",
+        how_to: "Conversations > ask the assistant to trade on Polymarket (tool: polymarket; set `approved=true` for write actions).",
+        status: CapabilityStatus::Beta,
+        privacy: POLYMARKET_TRADING_DATA,
+    },
+    Capability {
         id: "local_ai.download_model",
         name: "Download Local Models",
         domain: "local_ai",
@@ -520,6 +609,16 @@ const CAPABILITIES: &[Capability] = &[
         category: CapabilityCategory::LocalAI,
         description: "Inspect asset status and download specific chat, vision, embedding, STT, or TTS assets.",
         how_to: "Settings > Local AI Model > Advanced > Capability Assets",
+        status: CapabilityStatus::Beta,
+        privacy: None,
+    },
+    Capability {
+        id: "local_ai.model_context_check",
+        name: "Model Context Requirement Check",
+        domain: "local_ai",
+        category: CapabilityCategory::LocalAI,
+        description: "Diagnostics report each installed Ollama model's native context window and reject any model below the minimum the memory layer requires (so short-context models can't silently truncate and corrupt recall).",
+        how_to: "Settings > Local AI Model > Run Diagnostics",
         status: CapabilityStatus::Beta,
         privacy: None,
     },
@@ -1102,6 +1201,30 @@ const CAPABILITIES: &[Capability] = &[
         how_to: "Settings > Developer Options > Apply Update, or confirm an in-chat update prompt from the orchestrator.",
         status: CapabilityStatus::Beta,
         privacy: GITHUB_RELEASES_METADATA,
+    },
+    // ── Desktop Companion ────────────────────────────────────────────
+    Capability {
+        id: "companion.session",
+        name: "Desktop Companion Session",
+        domain: "desktop_companion",
+        category: CapabilityCategory::ScreenIntelligence,
+        description: "Start a Clicky-style companion session that ties hotkey activation, \
+                      microphone capture, screen context, LLM reasoning, speech synthesis, \
+                      and visual pointing into a single interaction loop.",
+        how_to: "Settings > Companion, or activate via the configured hotkey.",
+        status: CapabilityStatus::Beta,
+        privacy: DERIVED_TO_BACKEND,
+    },
+    Capability {
+        id: "companion.pointing",
+        name: "Visual Pointing",
+        domain: "desktop_companion",
+        category: CapabilityCategory::ScreenIntelligence,
+        description: "The companion LLM can embed [POINT:x,y:label:screenN] tags to \
+                      visually point at UI elements on screen via the overlay.",
+        how_to: "Automatic during companion sessions when the LLM identifies a UI target.",
+        status: CapabilityStatus::Beta,
+        privacy: None,
     },
 ];
 

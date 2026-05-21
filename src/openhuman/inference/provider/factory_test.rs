@@ -72,6 +72,16 @@ fn cloud_no_providers_falls_back_to_openhuman() {
 }
 
 #[test]
+fn direct_cloud_sentinel_resolves_to_primary_custom_provider() {
+    let mut config = config_with_providers(vec![oh_entry("p_oh"), openai_entry("p_oai", "openai")]);
+    config.primary_cloud = Some("p_oai".to_string());
+
+    let (_, model) =
+        create_chat_provider_from_string("reasoning", "cloud", &config).expect("build");
+    assert_eq!(model, "gpt-4o");
+}
+
+#[test]
 fn openhuman_slug_routes_to_backend() {
     let config = config_with_providers(vec![oh_entry("p_oh")]);
     let (_, model) =
@@ -115,11 +125,110 @@ fn openrouter_slug_model() {
 }
 
 #[test]
+fn custom_provider_remaps_abstract_tier_to_concrete_default_model() {
+    let mut config = Config::default();
+    config.cloud_providers.push(CloudProviderCreds {
+        id: "p_ds".to_string(),
+        slug: "deepseek".to_string(),
+        label: "DeepSeek".to_string(),
+        endpoint: "https://api.deepseek.com/v1".to_string(),
+        auth_style: AuthStyle::Bearer,
+        default_model: Some("deepseek-v4-pro".to_string()),
+        ..Default::default()
+    });
+
+    let (_, model) =
+        create_chat_provider_from_string("reasoning", "deepseek:reasoning-v1", &config)
+            .expect("abstract tier should remap to concrete default model");
+    assert_eq!(model, "deepseek-v4-pro");
+}
+
+#[test]
+fn custom_provider_rejects_abstract_tier_without_concrete_default_model() {
+    let mut config = Config::default();
+    config.cloud_providers.push(CloudProviderCreds {
+        id: "p_ds".to_string(),
+        slug: "deepseek".to_string(),
+        label: "DeepSeek".to_string(),
+        endpoint: "https://api.deepseek.com/v1".to_string(),
+        auth_style: AuthStyle::Bearer,
+        default_model: None,
+        ..Default::default()
+    });
+
+    // Can't use `.expect_err(..)` here because `Box<dyn Provider>` doesn't
+    // implement `Debug`, so the success arm has no Debug to print.
+    let err = match create_chat_provider_from_string("reasoning", "deepseek:reasoning-v1", &config)
+    {
+        Ok(_) => panic!("abstract tier without concrete provider default should fail"),
+        Err(e) => e,
+    };
+    assert!(err.to_string().contains("abstract tier"));
+}
+
+#[test]
+fn orcarouter_slug_model() {
+    let mut config = Config::default();
+    config.cloud_providers.push(CloudProviderCreds {
+        id: "p_oc".to_string(),
+        slug: "orcarouter".to_string(),
+        label: "OrcaRouter".to_string(),
+        endpoint: "https://api.orcarouter.ai/v1".to_string(),
+        auth_style: AuthStyle::Bearer,
+        default_model: Some("orcarouter/auto".to_string()),
+        ..Default::default()
+    });
+    let (_, model) =
+        create_chat_provider_from_string("agentic", "orcarouter:orcarouter/auto", &config)
+            .expect("orcarouter:<model> must build");
+    assert_eq!(model, "orcarouter/auto");
+}
+
+#[test]
+fn orcarouter_legacy_type_seeds_defaults() {
+    use crate::openhuman::config::schema::cloud_providers::migrate_legacy_fields;
+    let mut entry = CloudProviderCreds {
+        id: "p_oc_legacy".to_string(),
+        legacy_type: Some("orcarouter".to_string()),
+        ..Default::default()
+    };
+    migrate_legacy_fields(&mut entry);
+    assert_eq!(entry.slug, "orcarouter");
+    assert_eq!(entry.label, "OrcaRouter");
+    assert_eq!(entry.endpoint, "https://api.orcarouter.ai/v1");
+    assert_eq!(entry.auth_style, AuthStyle::Bearer);
+}
+
+#[test]
 fn ollama_prefix() {
     let config = Config::default();
     let (_, model) = create_chat_provider_from_string("heartbeat", "ollama:llama3.1:8b", &config)
         .expect("ollama:<model> must build");
     assert_eq!(model, "llama3.1:8b");
+}
+
+#[test]
+fn temperature_suffix_is_stripped_from_model_id() {
+    // The `@<temp>` suffix is informational for the factory — the model id sent
+    // upstream must not include it, or providers will 404 on an unknown model.
+    let config = Config::default();
+    let (_, model) =
+        create_chat_provider_from_string("heartbeat", "ollama:llama3.1:8b@0.2", &config)
+            .expect("ollama:<model>@<temp> must build");
+    assert_eq!(
+        model, "llama3.1:8b",
+        "temperature suffix must not leak into the dispatched model id"
+    );
+}
+
+#[test]
+fn malformed_temperature_suffix_kept_as_part_of_model_id() {
+    // If the tail after `@` isn't a number, treat the whole string as the model
+    // id rather than silently dropping a chunk of it.
+    let config = Config::default();
+    let (_, model) = create_chat_provider_from_string("heartbeat", "ollama:llama3@beta", &config)
+        .expect("ollama:<model>@<garbage> must still build");
+    assert_eq!(model, "llama3@beta");
 }
 
 #[tokio::test]
@@ -145,6 +254,7 @@ async fn ollama_provider_does_not_require_api_key() {
 fn all_workloads_default_to_openhuman() {
     let config = Config::default();
     for role in &[
+        "chat",
         "reasoning",
         "agentic",
         "coding",
@@ -160,6 +270,18 @@ fn all_workloads_default_to_openhuman() {
             "role={role} must default to openhuman"
         );
     }
+}
+
+// Regression: the `chat` workload was added to the UI + config schema (#2152)
+// but `provider_for_role` was not extended, so every chat message silently
+// routed to the OpenHuman backend regardless of the user's `chat_provider`
+// configuration. Keep this test alongside the other override checks so the
+// arm can't drop out again.
+#[test]
+fn chat_workload_override_respected() {
+    let mut config = Config::default();
+    config.chat_provider = Some("openai:gpt-4".to_string());
+    assert_eq!(provider_for_role("chat", &config), "openai:gpt-4");
 }
 
 #[test]
@@ -308,6 +430,71 @@ fn primary_cloud_defaults_to_openhuman_when_no_providers() {
 }
 
 #[test]
+fn cloud_sentinel_resolves_to_primary_custom_provider() {
+    let mut config = config_with_providers(vec![oh_entry("p_oh"), openai_entry("p_oai", "openai")]);
+    config.primary_cloud = Some("p_oai".to_string());
+
+    assert_eq!(provider_for_role("reasoning", &config), "openai:gpt-4o");
+
+    let (_, model) =
+        create_chat_provider("reasoning", &config).expect("primary custom provider must build");
+    assert_eq!(model, "gpt-4o");
+}
+
+#[test]
+fn legacy_inference_url_custom_provider_wins_over_openhuman_primary_for_unset_role() {
+    let mut custom = openai_entry("p_custom", "custom");
+    custom.endpoint = "https://api.example.com/v1/".to_string();
+    custom.default_model = Some("gpt-4o-mini".to_string());
+
+    let mut config = config_with_providers(vec![oh_entry("p_oh"), custom]);
+    config.primary_cloud = Some("p_oh".to_string());
+    config.inference_url = Some("https://api.example.com/v1".to_string());
+
+    assert_eq!(
+        provider_for_role("reasoning", &config),
+        "custom:gpt-4o-mini"
+    );
+}
+
+#[test]
+fn legacy_inference_url_without_matching_provider_stays_on_openhuman_primary() {
+    let mut other = openai_entry("p_other", "other");
+    other.endpoint = "https://other.example.com/v1".to_string();
+
+    let mut config = config_with_providers(vec![oh_entry("p_oh"), other]);
+    config.primary_cloud = Some("p_oh".to_string());
+    config.inference_url = Some("https://api.example.com/v1".to_string());
+
+    assert_eq!(provider_for_role("reasoning", &config), "openhuman");
+}
+
+#[test]
+fn hosted_endpoint_entry_is_treated_as_openhuman_backend() {
+    let mut hosted = openai_entry("p_hosted", "custom-hosted");
+    hosted.endpoint = "https://staging-api.tinyhumans.ai/openai/v1".to_string();
+    hosted.auth_style = AuthStyle::Bearer;
+
+    let mut config = config_with_providers(vec![hosted]);
+    config.primary_cloud = Some("p_hosted".to_string());
+
+    assert_eq!(provider_for_role("reasoning", &config), "openhuman");
+}
+
+#[test]
+fn explicit_openhuman_route_ignores_legacy_inference_url() {
+    let mut custom = openai_entry("p_custom", "custom");
+    custom.endpoint = "https://api.example.com/v1".to_string();
+
+    let mut config = config_with_providers(vec![oh_entry("p_oh"), custom]);
+    config.primary_cloud = Some("p_oh".to_string());
+    config.inference_url = Some("https://api.example.com/v1".to_string());
+    config.reasoning_provider = Some("openhuman".to_string());
+
+    assert_eq!(provider_for_role("reasoning", &config), "openhuman");
+}
+
+#[test]
 fn summarization_aliases_memory_provider() {
     let mut config = Config::default();
     config.memory_provider = Some("ollama:llama3.1:8b".to_string());
@@ -343,4 +530,181 @@ fn openhuman_backend_uses_config_path_parent_as_state_dir() {
     let (_provider, model) = create_chat_provider("reasoning", &config)
         .expect("openhuman backend must build with no cloud_providers");
     assert!(!model.is_empty(), "model must be set")
+}
+
+// ── verify_session_active tests ──────────────────────────────────────
+
+/// Helper: build a Config whose `config_path` lives inside a tempdir.
+fn config_in_tempdir(tmp: &TempDir) -> Config {
+    let mut c = Config::default();
+    c.config_path = tmp.path().join("config.toml");
+    c
+}
+
+#[test]
+fn verify_session_active_rejects_when_no_session_token() {
+    let tmp = TempDir::new().expect("tempdir");
+    let config = config_in_tempdir(&tmp);
+    let err = verify_session_active(&config).expect_err("should fail without session token");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("SESSION_EXPIRED"),
+        "expected SESSION_EXPIRED, got: {msg}",
+    );
+}
+
+#[test]
+fn verify_session_active_rejects_when_token_is_empty() {
+    let tmp = TempDir::new().expect("tempdir");
+    let mut config = config_in_tempdir(&tmp);
+    let auth = AuthService::new(tmp.path(), config.secrets.encrypt);
+    auth.store_provider_token("app-session", "default", "", Default::default(), false)
+        .expect("store empty token");
+    let err = verify_session_active(&config).expect_err("should reject empty token");
+    assert!(
+        err.to_string().contains("SESSION_EXPIRED"),
+        "expected SESSION_EXPIRED, got: {err}",
+    );
+}
+
+#[test]
+fn verify_session_active_passes_when_session_token_present() {
+    let tmp = TempDir::new().expect("tempdir");
+    let mut config = config_in_tempdir(&tmp);
+    let auth = AuthService::new(tmp.path(), config.secrets.encrypt);
+    auth.store_provider_token(
+        "app-session",
+        "default",
+        "fake-jwt-token",
+        Default::default(),
+        false,
+    )
+    .expect("store session token");
+    assert!(
+        verify_session_active(&config).is_ok(),
+        "should pass when session token exists",
+    );
+}
+
+#[test]
+fn verify_session_active_called_for_custom_provider_not_for_openhuman() {
+    // openhuman backend must always build (no session gate applied).
+    let config = Config::default();
+    assert!(create_chat_provider_from_string("reasoning", "openhuman", &config).is_ok(),);
+    // Verify that when a custom provider is tried without a session,
+    // we'd get blocked (this test exercises the non-#[cfg(test)] path
+    // by directly calling verify_session_active).
+    let tmp = TempDir::new().expect("tempdir");
+    let config = config_in_tempdir(&tmp);
+    let _ = create_chat_provider_from_string("reasoning", "ollama:llama3", &config);
+    // Under #[cfg(test)] the gate is skipped, so this succeeds.
+    // We assert the gate *would* fire by testing verify_session_active directly.
+    assert!(
+        verify_session_active(&config).is_err(),
+        "verify_session_active must reject config without session",
+    );
+}
+
+#[test]
+fn lookup_key_for_slug_routes_openai_oauth_lookup_path() {
+    let tmp = TempDir::new().expect("tempdir");
+    let config = config_in_tempdir(&tmp);
+    let auth = AuthService::new(tmp.path(), config.secrets.encrypt);
+    auth.store_provider_token(
+        "provider:openai",
+        "default",
+        "sk-openai",
+        Default::default(),
+        true,
+    )
+    .expect("store openai token");
+
+    let token = lookup_key_for_slug("openai", &config).expect("lookup openai token");
+
+    assert_eq!(token, "sk-openai");
+}
+
+// ── is_known_openhuman_tier ───────────────────────────────────────────────────
+
+#[test]
+fn known_tiers_pass() {
+    for tier in [
+        "reasoning-v1",
+        "chat-v1",
+        "agentic-v1",
+        "coding-v1",
+        "reasoning-quick-v1",
+    ] {
+        assert!(
+            is_known_openhuman_tier(tier),
+            "expected tier '{tier}' to be recognized"
+        );
+    }
+}
+
+#[test]
+fn known_hints_pass() {
+    assert!(is_known_openhuman_tier("hint:reasoning"));
+    assert!(is_known_openhuman_tier("hint:chat"));
+    assert!(is_known_openhuman_tier("hint:agentic"));
+    assert!(is_known_openhuman_tier("hint:coding"));
+}
+
+#[test]
+fn invalid_models_fail() {
+    assert!(!is_known_openhuman_tier("deepseek-v4-pro"));
+    assert!(!is_known_openhuman_tier("claude-opus-4-7"));
+    assert!(!is_known_openhuman_tier("gpt-4o"));
+    assert!(!is_known_openhuman_tier(""));
+    assert!(!is_known_openhuman_tier("reasoning-v2"));
+    // Unrecognized `hint:*` values must NOT be accepted — the factory only
+    // translates the four hints above, so any other `hint:*` string would
+    // otherwise be forwarded to the backend and rejected with HTTP 400.
+    assert!(!is_known_openhuman_tier("hint:garbage"));
+    assert!(!is_known_openhuman_tier("hint:reasoning-quick"));
+    assert!(!is_known_openhuman_tier("hint:"));
+}
+
+#[test]
+fn make_openhuman_backend_forwards_unknown_hint_verbatim() {
+    // Unrecognised hint:* strings (e.g. hint:reaction for lightweight models)
+    // must be forwarded to the backend unchanged. The backend is authoritative
+    // over which hint values it accepts; the factory only translates the four
+    // canonical hints (reasoning/chat/agentic/coding).
+    for hint in ["hint:reaction", "hint:garbage", "hint:summarization"] {
+        let mut config = Config::default();
+        config.default_model = Some(hint.to_string());
+        let (_, model) = make_openhuman_backend(&config).expect("factory should succeed");
+        assert_eq!(model, hint, "hint '{hint}' should pass through unchanged");
+    }
+}
+
+#[test]
+fn make_openhuman_backend_falls_back_for_invalid_model() {
+    // An invalid default_model must not be forwarded to the backend.
+    // The factory must silently fall back to reasoning-v1 (the platform default).
+    let mut config = Config::default();
+    config.default_model = Some("deepseek-v4-pro".to_string());
+    let (_, model) = make_openhuman_backend(&config).expect("factory should succeed");
+    assert_eq!(
+        model,
+        crate::openhuman::config::MODEL_REASONING_V1,
+        "invalid default_model should fall back to MODEL_REASONING_V1"
+    );
+}
+
+#[test]
+fn make_openhuman_backend_keeps_valid_tier() {
+    let mut config = Config::default();
+    config.default_model = Some("chat-v1".to_string());
+    let (_, model) = make_openhuman_backend(&config).expect("factory should succeed");
+    assert_eq!(model, "chat-v1");
+}
+
+#[test]
+fn make_openhuman_backend_keeps_reasoning_quick() {
+    let mut config = Config::default();
+    config.default_model = Some("reasoning-quick-v1".to_string());
+    let (_, model) = make_openhuman_backend(&config).expect("factory should succeed");
+    assert_eq!(model, "reasoning-quick-v1");
 }

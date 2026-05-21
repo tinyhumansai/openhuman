@@ -42,9 +42,9 @@ pub async fn list_configured_models(
     let entry = config
         .cloud_providers
         .iter()
-        .find(|e| e.id == provider_id)
+        .find(|e| e.id == provider_id || e.slug == provider_id)
         .cloned()
-        .ok_or_else(|| format!("no cloud provider with id '{}' found", provider_id))?;
+        .ok_or_else(|| format!("no cloud provider with id or slug '{}' found", provider_id))?;
 
     let base = entry.endpoint.trim_end_matches('/');
     let models_url = format!("{}/models", base);
@@ -58,6 +58,7 @@ pub async fn list_configured_models(
     let api_key =
         crate::openhuman::inference::provider::factory::lookup_key_for_slug(&entry.slug, &config)
             .unwrap_or_default();
+    let api_key = api_key.trim().to_string();
 
     let client = crate::openhuman::config::build_runtime_proxy_client_with_timeouts(
         "providers.list_models",
@@ -65,9 +66,13 @@ pub async fn list_configured_models(
         10,
     );
 
+    use crate::openhuman::config::schema::cloud_providers::AuthStyle;
+    if is_openrouter_provider(&entry) {
+        validate_openrouter_api_key(&client, base, &api_key).await?;
+    }
+
     let mut request = client.get(&models_url);
 
-    use crate::openhuman::config::schema::cloud_providers::AuthStyle;
     request = match entry.auth_style {
         AuthStyle::Bearer => {
             if !api_key.is_empty() {
@@ -115,11 +120,40 @@ pub async fn list_configured_models(
         .await
         .map_err(|e| format!("[providers][list_models] failed to parse JSON: {}", e))?;
 
-    let data = body
-        .get("data")
-        .and_then(|d| d.as_array())
-        .cloned()
-        .unwrap_or_default();
+    // OpenAI-compatible servers occasionally return HTTP 200 with an error
+    // payload instead of a 4xx (LM Studio does this for unknown paths like
+    // `/v11/models` — body `{"error":"Unexpected endpoint or method..."}`).
+    // Treat any top-level `error` field as a failure so the AI-panel probe
+    // doesn't silently accept a typo'd endpoint.
+    if let Some(err_field) = body.get("error") {
+        let msg = err_field
+            .as_str()
+            .map(|s| s.to_string())
+            .or_else(|| {
+                err_field
+                    .get("message")
+                    .and_then(|m| m.as_str())
+                    .map(|s| s.to_string())
+            })
+            .unwrap_or_else(|| err_field.to_string());
+        let sanitized = sanitize_api_error(&msg);
+        return Err(format!("provider returned error payload: {}", sanitized));
+    }
+
+    // A valid `/models` response has a top-level `data` array (per the
+    // OpenAI API contract). Missing it means the endpoint isn't
+    // `/models`-compatible — the user almost certainly typed the wrong
+    // path. Fail loudly so the AI-panel probe surfaces the mistake.
+    let Some(data) = body.get("data").and_then(|d| d.as_array()).cloned() else {
+        let keys = body
+            .as_object()
+            .map(|o| o.keys().cloned().collect::<Vec<_>>().join(", "))
+            .unwrap_or_else(|| "<non-object>".to_string());
+        return Err(format!(
+            "provider response missing `data` array — endpoint is not OpenAI-compatible (got keys: {})",
+            keys
+        ));
+    };
 
     let models: Vec<ModelInfo> = data
         .iter()
@@ -151,6 +185,81 @@ pub async fn list_configured_models(
         serde_json::json!({ "models": models }),
         vec![format!("fetched {} models", models.len())],
     ))
+}
+
+fn is_openrouter_provider(
+    entry: &crate::openhuman::config::schema::cloud_providers::CloudProviderCreds,
+) -> bool {
+    if entry.slug.eq_ignore_ascii_case("openrouter") {
+        return true;
+    }
+
+    reqwest::Url::parse(&entry.endpoint)
+        .ok()
+        .and_then(|url| url.host_str().map(|host| host.to_ascii_lowercase()))
+        .is_some_and(|host| host == "openrouter.ai" || host.ends_with(".openrouter.ai"))
+}
+
+async fn validate_openrouter_api_key(
+    client: &reqwest::Client,
+    base: &str,
+    api_key: &str,
+) -> Result<(), String> {
+    if api_key.is_empty() {
+        return Err("OpenRouter API key is required before enabling the provider".to_string());
+    }
+
+    let key_url = format!("{}/key", base);
+    log::debug!("[providers][list_models] validating OpenRouter API key");
+    let response = client
+        .get(&key_url)
+        .header("Authorization", format!("Bearer {api_key}"))
+        .send()
+        .await
+        .map_err(|e| format!("[providers][list_models] OpenRouter key validation failed: {e}"))?;
+
+    let status = response.status();
+    let text = response.text().await.unwrap_or_default();
+    if !status.is_success() {
+        let sanitized = sanitize_api_error(&text);
+        let truncated = crate::openhuman::util::truncate_with_ellipsis(&sanitized, 300);
+        log::debug!(
+            "[providers][list_models] OpenRouter key validation failed status={} body={}",
+            status.as_u16(),
+            truncated
+        );
+        return Err(format!(
+            "OpenRouter key validation returned {}: {}",
+            status.as_u16(),
+            truncated
+        ));
+    }
+
+    if let Ok(body) = serde_json::from_str::<serde_json::Value>(&text) {
+        if let Some(err_field) = body.get("error") {
+            let msg = err_field
+                .as_str()
+                .map(|s| s.to_string())
+                .or_else(|| {
+                    err_field
+                        .get("message")
+                        .and_then(|m| m.as_str())
+                        .map(|s| s.to_string())
+                })
+                .unwrap_or_else(|| err_field.to_string());
+            let sanitized = sanitize_api_error(&msg);
+            log::debug!(
+                "[providers][list_models] OpenRouter key validation returned error payload={}",
+                sanitized
+            );
+            return Err(format!(
+                "OpenRouter key validation returned error payload: {}",
+                sanitized
+            ));
+        }
+    }
+
+    Ok(())
 }
 
 impl Default for ProviderRuntimeOptions {
@@ -272,6 +381,43 @@ pub(super) fn is_budget_exhausted_http_400(status: reqwest::StatusCode, body: &s
     status == reqwest::StatusCode::BAD_REQUEST && super::is_budget_exhausted_message(body)
 }
 
+/// Whether a custom OpenAI-compatible proxy returned the known generic
+/// upstream 400 envelope:
+/// `{"error":{"message":"Bad request to upstream provider","type":"upstream_error","status":400}}`.
+///
+/// This shape is deterministic provider/user-state (endpoint-model mismatch,
+/// unsupported schema, provider-side validation) and does not provide
+/// actionable signal for OpenHuman Sentry triage.
+pub(super) fn is_custom_openai_upstream_bad_request_http_400(
+    provider: &str,
+    status: reqwest::StatusCode,
+    body: &str,
+) -> bool {
+    if provider != "custom_openai" || status != reqwest::StatusCode::BAD_REQUEST {
+        return false;
+    }
+    let lower = body.to_ascii_lowercase();
+    lower.contains("bad request to upstream provider") && lower.contains("upstream_error")
+}
+
+/// Whether a provider non-2xx response is a deterministic provider-policy
+/// denial (not a product bug) that should be demoted from Sentry.
+///
+/// Canonical example: Kimi's coding endpoint rejects non-agent clients with
+/// HTTP 403 + `access_terminated_error` and a message like:
+/// "currently only available for Coding Agents …".
+pub(super) fn is_provider_access_policy_denied_http_403(
+    status: reqwest::StatusCode,
+    body: &str,
+) -> bool {
+    if status != reqwest::StatusCode::FORBIDDEN {
+        return false;
+    }
+    let lower = body.to_ascii_lowercase();
+    lower.contains("access_terminated_error")
+        || lower.contains("currently only available for coding agents")
+}
+
 pub(super) fn log_budget_exhausted_http_400(
     operation: &str,
     provider: &str,
@@ -287,6 +433,84 @@ pub(super) fn log_budget_exhausted_http_400(
         failure = "non_2xx",
         kind = "budget",
         "[llm_provider] {operation} budget-exhausted 400 — not reporting to Sentry"
+    );
+}
+
+pub(super) fn log_custom_openai_upstream_bad_request_http_400(
+    operation: &str,
+    provider: &str,
+    model: Option<&str>,
+    status: reqwest::StatusCode,
+) {
+    tracing::info!(
+        domain = "llm_provider",
+        operation = operation,
+        provider = provider,
+        model = model.unwrap_or(""),
+        status = status.as_u16(),
+        failure = "non_2xx",
+        kind = "provider_user_state",
+        reason = "custom_openai_upstream_bad_request",
+        "[llm_provider] {operation} custom_openai upstream 400 — not reporting to Sentry"
+    );
+}
+
+pub(super) fn log_provider_access_policy_denied_http_403(
+    operation: &str,
+    provider: &str,
+    model: Option<&str>,
+    status: reqwest::StatusCode,
+) {
+    tracing::info!(
+        domain = "llm_provider",
+        operation = operation,
+        provider = provider,
+        model = model.unwrap_or(""),
+        status = status.as_u16(),
+        failure = "non_2xx",
+        kind = "provider_access_policy",
+        "[llm_provider] {operation} provider access-policy 403 — not reporting to Sentry"
+    );
+}
+
+/// Whether a provider non-2xx response is a deterministic
+/// **configuration-rejection** user-state error (unknown model id,
+/// abstract tier leaked to a custom provider, model-specific temperature
+/// constraint) that should be demoted from Sentry to an info log.
+///
+/// Provider-aware (inverted polarity vs. the 401/403 backend rule): the
+/// same body from the OpenHuman **backend** stays Sentry-actionable —
+/// that would mean we sent our own backend a bad request (a regression,
+/// e.g. #2079). Only client errors from a *custom / third-party*
+/// provider are user-config state. Restricted to the observed shapes
+/// (400 invalid-param / unknown-model, 404 model-does-not-exist, 422
+/// unprocessable); 408/429 are transient and handled separately.
+pub(super) fn is_provider_config_rejection_http(
+    status: reqwest::StatusCode,
+    provider: &str,
+    body: &str,
+) -> bool {
+    matches!(status.as_u16(), 400 | 404 | 422)
+        && provider != openhuman_backend::PROVIDER_LABEL
+        && super::is_provider_config_rejection_message(body)
+}
+
+pub(super) fn log_provider_config_rejection(
+    operation: &str,
+    provider: &str,
+    model: Option<&str>,
+    status: reqwest::StatusCode,
+) {
+    tracing::info!(
+        domain = "llm_provider",
+        operation = operation,
+        provider = provider,
+        model = model.unwrap_or(""),
+        status = status.as_u16(),
+        failure = "non_2xx",
+        kind = "provider_config_rejection",
+        "[llm_provider] {operation} provider config-rejection ({status}) — \
+         user model/param configuration, not reporting to Sentry"
     );
 }
 
@@ -308,6 +532,12 @@ pub(super) fn log_budget_exhausted_http_400(
 ///   override, halting downstream LLM work. 401/403 from **other** providers
 ///   (OpenAI, Anthropic, …) still go to Sentry — those mean a misconfigured
 ///   API key, which is actionable.
+/// - **Provider config-rejection** (4xx unknown-model / abstract-tier /
+///   model-specific temperature) from a **non-backend** provider — the
+///   user pointed a custom provider at a model/param it doesn't accept.
+///   Deterministic user-config state, surfaced in the UI; demoted to an
+///   info log (#2079 / #2076 / #2202). See
+///   [`is_provider_config_rejection_http`].
 pub async fn api_error(provider: &str, response: reqwest::Response) -> anyhow::Error {
     let status = response.status();
     let status_str = status.as_u16().to_string();
@@ -321,6 +551,10 @@ pub async fn api_error(provider: &str, response: reqwest::Response) -> anyhow::E
     let is_auth_failure = matches!(status.as_u16(), 401 | 403);
     let is_backend = provider == openhuman_backend::PROVIDER_LABEL;
     let is_budget_exhausted_user_state = is_budget_exhausted_http_400(status, &body);
+    let is_custom_openai_upstream_bad_request =
+        is_custom_openai_upstream_bad_request_http_400(provider, status, &body);
+    let is_provider_access_policy_denied = is_provider_access_policy_denied_http_403(status, &body);
+    let is_provider_config_rejection = is_provider_config_rejection_http(status, provider, &body);
 
     if is_auth_failure && is_backend {
         tracing::warn!(
@@ -343,6 +577,12 @@ pub async fn api_error(provider: &str, response: reqwest::Response) -> anyhow::E
         );
     } else if is_budget_exhausted_user_state {
         log_budget_exhausted_http_400("api_error", provider, None, status);
+    } else if is_custom_openai_upstream_bad_request {
+        log_custom_openai_upstream_bad_request_http_400("api_error", provider, None, status);
+    } else if is_provider_access_policy_denied {
+        log_provider_access_policy_denied_http_403("api_error", provider, None, status);
+    } else if is_provider_config_rejection {
+        log_provider_config_rejection("api_error", provider, None, status);
     } else if should_report_provider_http_failure(status) {
         crate::core::observability::report_error(
             message.as_str(),
@@ -384,7 +624,7 @@ pub fn create_backend_inference_provider(
             key.len()
         );
         Ok(Box::new(
-            crate::openhuman::inference::provider::compatible::OpenAiCompatibleProvider::new(
+            crate::openhuman::inference::provider::compatible::OpenAiCompatibleProvider::new_no_responses_fallback(
                 "custom_openai",
                 url,
                 Some(key),
@@ -506,6 +746,10 @@ pub fn create_routed_provider_with_options(
                 router::Route {
                     provider_name: INFERENCE_BACKEND_ID.to_string(),
                     model: r.model.clone(),
+                    context_window:
+                        crate::openhuman::inference::model_context::context_window_for_model(
+                            &r.model,
+                        ),
                 },
             )
         })
@@ -587,6 +831,10 @@ pub fn create_intelligent_routing_provider(
                     router::Route {
                         provider_name: INFERENCE_BACKEND_ID.to_string(),
                         model: r.model.clone(),
+                        context_window:
+                            crate::openhuman::inference::model_context::context_window_for_model(
+                                &r.model,
+                            ),
                     },
                 )
             })
@@ -598,7 +846,12 @@ pub fn create_intelligent_routing_provider(
         ))
     };
 
-    let provider = crate::openhuman::routing::new_provider(remote, &config.local_ai, default_model);
+    let provider = crate::openhuman::routing::new_provider(
+        remote,
+        &config.local_ai,
+        default_model,
+        &config.temperature_unsupported_models,
+    );
     Ok(Box::new(provider))
 }
 
@@ -650,6 +903,308 @@ pub fn canonical_china_provider_name(_name: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::openhuman::config::schema::cloud_providers::{AuthStyle, CloudProviderCreds};
+    use crate::openhuman::config::Config;
+    use crate::openhuman::credentials::AuthService;
+    use axum::{
+        extract::State,
+        http::{HeaderMap, StatusCode},
+        response::{IntoResponse, Response},
+        routing::get,
+        Json, Router,
+    };
+    use std::collections::HashMap;
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering as AtomicOrdering},
+        Arc, Mutex,
+    };
+    use tempfile::TempDir;
+
+    #[derive(Clone)]
+    struct ModelProbeState {
+        key_status: StatusCode,
+        key_calls: Arc<AtomicUsize>,
+        model_calls: Arc<AtomicUsize>,
+        key_authorization: Arc<Mutex<Vec<Option<String>>>>,
+        model_authorization: Arc<Mutex<Vec<Option<String>>>>,
+    }
+
+    struct WorkspaceEnvGuard {
+        prev: Option<std::ffi::OsString>,
+        _lock: std::sync::MutexGuard<'static, ()>,
+    }
+
+    impl Drop for WorkspaceEnvGuard {
+        fn drop(&mut self) {
+            unsafe {
+                match self.prev.take() {
+                    Some(value) => std::env::set_var("OPENHUMAN_WORKSPACE", value),
+                    None => std::env::remove_var("OPENHUMAN_WORKSPACE"),
+                }
+            }
+        }
+    }
+
+    fn set_workspace_env(path: &std::path::Path) -> WorkspaceEnvGuard {
+        let lock = crate::openhuman::config::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let prev = std::env::var_os("OPENHUMAN_WORKSPACE");
+        unsafe {
+            std::env::set_var("OPENHUMAN_WORKSPACE", path);
+        }
+        WorkspaceEnvGuard { prev, _lock: lock }
+    }
+
+    async fn openrouter_key_handler(
+        State(state): State<ModelProbeState>,
+        headers: HeaderMap,
+    ) -> Response {
+        state.key_calls.fetch_add(1, AtomicOrdering::SeqCst);
+        state
+            .key_authorization
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(authorization_header(&headers));
+        if state.key_status.is_success() {
+            Json(serde_json::json!({
+                "data": {
+                    "label": "test-key",
+                    "usage": 0
+                }
+            }))
+            .into_response()
+        } else {
+            (
+                state.key_status,
+                Json(serde_json::json!({
+                    "error": {
+                        "message": "No auth credentials found"
+                    }
+                })),
+            )
+                .into_response()
+        }
+    }
+
+    async fn models_handler(State(state): State<ModelProbeState>, headers: HeaderMap) -> Response {
+        state.model_calls.fetch_add(1, AtomicOrdering::SeqCst);
+        state
+            .model_authorization
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(authorization_header(&headers));
+        Json(serde_json::json!({
+            "data": [{
+                "id": "openrouter/test-model",
+                "owned_by": "openrouter",
+                "context_length": 128000
+            }]
+        }))
+        .into_response()
+    }
+
+    fn authorization_header(headers: &HeaderMap) -> Option<String> {
+        headers
+            .get("authorization")
+            .and_then(|value| value.to_str().ok())
+            .map(|value| value.to_string())
+    }
+
+    async fn spawn_openrouter_probe_server(key_status: StatusCode) -> (String, ModelProbeState) {
+        let state = ModelProbeState {
+            key_status,
+            key_calls: Arc::new(AtomicUsize::new(0)),
+            model_calls: Arc::new(AtomicUsize::new(0)),
+            key_authorization: Arc::new(Mutex::new(Vec::new())),
+            model_authorization: Arc::new(Mutex::new(Vec::new())),
+        };
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("local_addr");
+        let app = Router::new()
+            .route("/key", get(openrouter_key_handler))
+            .route("/models", get(models_handler))
+            .with_state(state.clone());
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve");
+        });
+        (format!("http://{addr}"), state)
+    }
+
+    async fn configure_openrouter_workspace(
+        tmp: &TempDir,
+        endpoint: String,
+        token: &str,
+    ) -> Config {
+        let mut config = Config {
+            config_path: tmp.path().join("config.toml"),
+            workspace_dir: tmp.path().join("workspace"),
+            ..Config::default()
+        };
+        config.secrets.encrypt = false;
+        config.cloud_providers.push(CloudProviderCreds {
+            id: "p_openrouter_test".to_string(),
+            slug: "openrouter".to_string(),
+            label: "OpenRouter".to_string(),
+            endpoint,
+            auth_style: AuthStyle::Bearer,
+            legacy_type: None,
+            default_model: None,
+        });
+        config.save().await.expect("save config");
+
+        let auth = AuthService::from_config(&config);
+        auth.store_provider_token(
+            &crate::openhuman::inference::provider::factory::auth_key_for_slug("openrouter"),
+            "default",
+            token,
+            HashMap::new(),
+            true,
+        )
+        .expect("store provider key");
+        config
+    }
+
+    #[test]
+    fn list_configured_models_accepts_slug() {
+        // list_configured_models should find a provider by slug when the caller
+        // passes a slug instead of the opaque random id. This lets the frontend
+        // call the RPC before the provider config has been persisted (where only
+        // the slug is stable).
+        use crate::openhuman::config::schema::cloud_providers::{AuthStyle, CloudProviderCreds};
+        use crate::openhuman::config::Config;
+
+        let mut config = Config::default();
+        config.cloud_providers.push(CloudProviderCreds {
+            id: "p_openai_xyz99".to_string(),
+            slug: "openai".to_string(),
+            label: "OpenAI".to_string(),
+            endpoint: "https://api.openai.com/v1".to_string(),
+            auth_style: AuthStyle::Bearer,
+            legacy_type: None,
+            default_model: None,
+        });
+
+        // The find predicate must match on slug.
+        let found_by_slug = config
+            .cloud_providers
+            .iter()
+            .find(|e| e.id == "openai" || e.slug == "openai");
+        assert!(
+            found_by_slug.is_some(),
+            "slug lookup must find the provider"
+        );
+        assert_eq!(found_by_slug.unwrap().id, "p_openai_xyz99");
+
+        // The find predicate must still match on id.
+        let found_by_id = config
+            .cloud_providers
+            .iter()
+            .find(|e| e.id == "p_openai_xyz99" || e.slug == "p_openai_xyz99");
+        assert!(found_by_id.is_some(), "id lookup must still work");
+    }
+
+    #[test]
+    fn openrouter_detection_matches_builtin_slug_or_host() {
+        let provider = |slug: &str, endpoint: &str| CloudProviderCreds {
+            id: format!("p_{slug}"),
+            slug: slug.to_string(),
+            label: slug.to_string(),
+            endpoint: endpoint.to_string(),
+            auth_style: AuthStyle::Bearer,
+            legacy_type: None,
+            default_model: None,
+        };
+
+        assert!(is_openrouter_provider(&provider(
+            "openrouter",
+            "http://127.0.0.1:1234"
+        )));
+        assert!(is_openrouter_provider(&provider(
+            "custom-router",
+            "https://openrouter.ai/api/v1"
+        )));
+        assert!(is_openrouter_provider(&provider(
+            "custom-router",
+            "https://oauth.openrouter.ai/api/v1"
+        )));
+        assert!(!is_openrouter_provider(&provider(
+            "custom-openai",
+            "https://api.openai.com/v1"
+        )));
+    }
+
+    #[tokio::test]
+    async fn openrouter_invalid_key_fails_before_models_catalog_probe() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let _env = set_workspace_env(tmp.path());
+        let (endpoint, state) = spawn_openrouter_probe_server(StatusCode::UNAUTHORIZED).await;
+        configure_openrouter_workspace(&tmp, endpoint, "bad-openrouter-key").await;
+
+        let err = list_configured_models("openrouter")
+            .await
+            .expect_err("invalid OpenRouter key must fail");
+
+        assert!(
+            err.contains("OpenRouter key validation returned 401"),
+            "unexpected error: {err}"
+        );
+        assert_eq!(state.key_calls.load(AtomicOrdering::SeqCst), 1);
+        assert_eq!(
+            state.model_calls.load(AtomicOrdering::SeqCst),
+            0,
+            "invalid OpenRouter credentials must not fall through to /models"
+        );
+    }
+
+    #[tokio::test]
+    async fn openrouter_valid_key_allows_models_catalog_probe() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let _env = set_workspace_env(tmp.path());
+        let (endpoint, state) = spawn_openrouter_probe_server(StatusCode::OK).await;
+        configure_openrouter_workspace(&tmp, endpoint, "valid-openrouter-key").await;
+
+        let outcome = list_configured_models("openrouter")
+            .await
+            .expect("valid OpenRouter key should list models");
+
+        assert_eq!(state.key_calls.load(AtomicOrdering::SeqCst), 1);
+        assert_eq!(state.model_calls.load(AtomicOrdering::SeqCst), 1);
+        assert_eq!(outcome.value["models"][0]["id"], "openrouter/test-model");
+    }
+
+    #[tokio::test]
+    async fn openrouter_key_is_trimmed_for_validation_and_catalog_probe() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let _env = set_workspace_env(tmp.path());
+        let (endpoint, state) = spawn_openrouter_probe_server(StatusCode::OK).await;
+        configure_openrouter_workspace(&tmp, endpoint, "  valid-openrouter-key\r\n").await;
+
+        list_configured_models("openrouter")
+            .await
+            .expect("trimmed OpenRouter key should list models");
+
+        let key_authorization = state
+            .key_authorization
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        let model_authorization = state
+            .model_authorization
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        assert_eq!(
+            key_authorization,
+            vec![Some("Bearer valid-openrouter-key".to_string())]
+        );
+        assert_eq!(
+            model_authorization,
+            vec![Some("Bearer valid-openrouter-key".to_string())]
+        );
+    }
 
     #[test]
     fn factory_backend() {
@@ -752,6 +1307,125 @@ mod tests {
                 reqwest::StatusCode::BAD_REQUEST,
                 "",
             ));
+        }
+    }
+
+    mod provider_access_policy_suppression {
+        use super::*;
+
+        const ACCESS_TERMINATED_BODY: &str =
+            "{\"error\":{\"message\":\"Kimi For Coding is currently only available for Coding Agents.\",\"type\":\"access_terminated_error\"}}";
+
+        #[test]
+        fn access_terminated_403_is_suppressed() {
+            assert!(is_provider_access_policy_denied_http_403(
+                reqwest::StatusCode::FORBIDDEN,
+                ACCESS_TERMINATED_BODY,
+            ));
+        }
+
+        #[test]
+        fn access_terminated_non_403_is_not_suppressed() {
+            assert!(!is_provider_access_policy_denied_http_403(
+                reqwest::StatusCode::BAD_REQUEST,
+                ACCESS_TERMINATED_BODY,
+            ));
+        }
+
+        #[test]
+        fn unrelated_403_is_not_suppressed() {
+            assert!(!is_provider_access_policy_denied_http_403(
+                reqwest::StatusCode::FORBIDDEN,
+                "{\"error\":{\"message\":\"forbidden\"}}",
+            ));
+        }
+    }
+
+    // Exercises the real `is_provider_config_rejection_http` decision used
+    // by `api_error`, including the inverted provider-aware polarity.
+    mod provider_config_rejection_suppression {
+        use super::*;
+
+        // The exact #2079 Sentry body shape.
+        const TIER_LEAK_BODY: &str =
+            "The supported API model names are deepseek-v4-pro or deepseek-v4-flash, \
+             but you passed reasoning-v1.";
+        // #2076 Moonshot Kimi K2 temperature constraint.
+        const TEMP_BODY: &str = "invalid temperature: only 1 is allowed for this model";
+
+        #[test]
+        fn custom_provider_4xx_config_rejection_is_suppressed() {
+            assert!(is_provider_config_rejection_http(
+                reqwest::StatusCode::BAD_REQUEST,
+                "custom_openai",
+                TIER_LEAK_BODY,
+            ));
+            assert!(is_provider_config_rejection_http(
+                reqwest::StatusCode::BAD_REQUEST,
+                "custom_openai",
+                TEMP_BODY,
+            ));
+            // 404 "model does not exist" is the same user-config class.
+            assert!(is_provider_config_rejection_http(
+                reqwest::StatusCode::NOT_FOUND,
+                "custom_openai",
+                "The model `gpt-5.5` does not exist or you do not have access to it.",
+            ));
+        }
+
+        #[test]
+        fn openhuman_backend_same_body_is_not_suppressed() {
+            // Inverted polarity: a model-rejection from our OWN backend
+            // means we sent it a bad request — a real regression that must
+            // still reach Sentry. (Mirror of the 401/403 backend rule.)
+            assert!(!is_provider_config_rejection_http(
+                reqwest::StatusCode::BAD_REQUEST,
+                openhuman_backend::PROVIDER_LABEL,
+                TIER_LEAK_BODY,
+            ));
+        }
+
+        #[test]
+        fn server_error_is_not_suppressed() {
+            // A 5xx is a server bug, not user-config — keep reporting.
+            assert!(!is_provider_config_rejection_http(
+                reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+                "custom_openai",
+                TIER_LEAK_BODY,
+            ));
+        }
+
+        #[test]
+        fn transient_429_is_not_suppressed_here() {
+            // 429 is transient; handled by should_report_provider_http_failure,
+            // not this classifier (must not be swallowed as user-config).
+            assert!(!is_provider_config_rejection_http(
+                reqwest::StatusCode::TOO_MANY_REQUESTS,
+                "custom_openai",
+                TIER_LEAK_BODY,
+            ));
+        }
+
+        #[test]
+        fn unrelated_4xx_body_is_not_suppressed() {
+            assert!(!is_provider_config_rejection_http(
+                reqwest::StatusCode::BAD_REQUEST,
+                "custom_openai",
+                "Bad request: missing required field 'messages'",
+            ));
+        }
+
+        #[test]
+        fn log_helper_runs_without_panicking() {
+            // Covers the demotion log path taken by `api_error` when a
+            // custom provider rejects the user's model/param config. No
+            // tracing subscriber in unit tests, so this is a pure smoke.
+            log_provider_config_rejection(
+                "api_error",
+                "custom_openai",
+                Some("reasoning-v1"),
+                reqwest::StatusCode::BAD_REQUEST,
+            );
         }
     }
 

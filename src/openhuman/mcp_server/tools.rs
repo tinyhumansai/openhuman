@@ -5,11 +5,13 @@ use crate::openhuman::agent::harness::AgentDefinitionRegistry;
 use crate::openhuman::agent::Agent;
 use crate::openhuman::config::rpc as config_rpc;
 use crate::openhuman::inference::provider::traits::build_tool_instructions_text;
+use crate::openhuman::integrations::searxng::MAX_RESULTS as SEARXNG_MAX_RESULTS;
 use crate::openhuman::security::{SecurityPolicy, ToolOperation};
 
 const DEFAULT_LIMIT: u64 = 10;
 const MAX_LIMIT: u64 = 50;
 const QUERY_ARGUMENTS: &[&str] = &["query", "k"];
+const SEARXNG_SEARCH_ARGUMENTS: &[&str] = &["query", "categories", "language", "max_results"];
 const TREE_READ_CHUNK_ARGUMENTS: &[&str] = &["chunk_id"];
 const SUBAGENT_RUN_ARGUMENTS: &[&str] = &["agent_id", "prompt"];
 const TREE_BROWSE_ARGUMENTS: &[&str] = &[
@@ -32,6 +34,13 @@ pub struct McpToolSpec {
     pub description: &'static str,
     pub rpc_method: Option<&'static str>,
     pub input_schema: Value,
+    /// MCP `ToolAnnotations` per the 2025-03-26+ spec — `readOnlyHint`,
+    /// `destructiveHint`, `idempotentHint`, `openWorldHint`. Hints, not
+    /// guarantees; clients use them to surface accurate safety affordances
+    /// (e.g. Claude Desktop's "this tool can take destructive actions"
+    /// confirmation gate). Per spec, destructive/idempotent are meaningful
+    /// only when `readOnlyHint == false`, so read-only tools omit them.
+    pub annotations: Value,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -72,6 +81,12 @@ impl ToolCallError {
 }
 
 pub fn tool_specs() -> Vec<McpToolSpec> {
+    let mut specs = base_tool_specs();
+    specs.push(searxng_tool_spec());
+    specs
+}
+
+fn base_tool_specs() -> Vec<McpToolSpec> {
     vec![
         McpToolSpec {
             name: "core.list_tools",
@@ -79,6 +94,7 @@ pub fn tool_specs() -> Vec<McpToolSpec> {
             description: "List the live core agent tool catalog that OpenHuman exposes to its orchestrator session.",
             rpc_method: None,
             input_schema: no_args_schema(),
+            annotations: read_only_local_annotations(),
         },
         McpToolSpec {
             name: "core.tool_instructions",
@@ -86,6 +102,7 @@ pub fn tool_specs() -> Vec<McpToolSpec> {
             description: "Emit the markdown tool-use instructions block that OpenHuman injects into prompt-guided agents.",
             rpc_method: None,
             input_schema: no_args_schema(),
+            annotations: read_only_local_annotations(),
         },
         McpToolSpec {
             name: "agent.list_subagents",
@@ -93,6 +110,7 @@ pub fn tool_specs() -> Vec<McpToolSpec> {
             description: "List registered sub-agent definitions that the core can dispatch for specialized work.",
             rpc_method: None,
             input_schema: no_args_schema(),
+            annotations: read_only_local_annotations(),
         },
         McpToolSpec {
             name: "agent.run_subagent",
@@ -114,6 +132,17 @@ pub fn tool_specs() -> Vec<McpToolSpec> {
                 "required": ["agent_id", "prompt"],
                 "additionalProperties": false
             }),
+            // Sub-agent execution is the one Act-policy surface on the MCP
+            // server today (see `enforce_act_policy` dispatch in `call_tool`).
+            // Sub-agents can call further tools, so destructive/openWorld are
+            // both true; running the same agent twice is not a no-op so
+            // idempotent is false.
+            annotations: json!({
+                "readOnlyHint": false,
+                "destructiveHint": true,
+                "idempotentHint": false,
+                "openWorldHint": true
+            }),
         },
         McpToolSpec {
             name: "memory.search",
@@ -121,6 +150,7 @@ pub fn tool_specs() -> Vec<McpToolSpec> {
             description: "Keyword-search OpenHuman's local memory tree and return matching chunks ordered by recency.",
             rpc_method: Some("openhuman.memory_tree_search"),
             input_schema: query_schema("Substring to match against stored memory chunks."),
+            annotations: read_only_local_annotations(),
         },
         McpToolSpec {
             name: "memory.recall",
@@ -128,6 +158,7 @@ pub fn tool_specs() -> Vec<McpToolSpec> {
             description: "Semantically recall local memory-tree chunks relevant to a natural-language query.",
             rpc_method: Some("openhuman.memory_tree_recall"),
             input_schema: query_schema("Natural-language query to embed and rerank against memory summaries."),
+            annotations: read_only_local_annotations(),
         },
         McpToolSpec {
             name: "tree.read_chunk",
@@ -145,6 +176,7 @@ pub fn tool_specs() -> Vec<McpToolSpec> {
                 "required": ["chunk_id"],
                 "additionalProperties": false
             }),
+            annotations: read_only_local_annotations(),
         },
         McpToolSpec {
             name: "tree.browse",
@@ -157,6 +189,7 @@ pub fn tool_specs() -> Vec<McpToolSpec> {
                           pagination.",
             rpc_method: Some("openhuman.memory_tree_list_chunks"),
             input_schema: tree_browse_schema(),
+            annotations: read_only_local_annotations(),
         },
         McpToolSpec {
             name: "tree.top_entities",
@@ -167,6 +200,7 @@ pub fn tool_specs() -> Vec<McpToolSpec> {
                           or `memory.search`. Returns entities ordered by reference count.",
             rpc_method: Some("openhuman.memory_tree_top_entities"),
             input_schema: tree_top_entities_schema(),
+            annotations: read_only_local_annotations(),
         },
         McpToolSpec {
             name: "tree.list_sources",
@@ -178,8 +212,40 @@ pub fn tool_specs() -> Vec<McpToolSpec> {
                           `tree.browse`.",
             rpc_method: Some("openhuman.memory_tree_list_sources"),
             input_schema: tree_list_sources_schema(),
+            annotations: read_only_local_annotations(),
         },
     ]
+}
+
+/// Annotation preset for the read-only, closed-world tools that just read
+/// OpenHuman's local memory tree or agent registry. The MCP spec defaults are
+/// `readOnlyHint: false` / `openWorldHint: true`, so both fields must be set
+/// explicitly to communicate the actual shape to clients. Destructive and
+/// idempotent hints are deliberately omitted — per the spec they are
+/// meaningful only when `readOnlyHint == false`.
+fn read_only_local_annotations() -> Value {
+    json!({
+        "readOnlyHint": true,
+        "openWorldHint": false
+    })
+}
+
+fn searxng_tool_spec() -> McpToolSpec {
+    McpToolSpec {
+        name: "searxng_search",
+        title: "SearXNG Search",
+        description: "Search the configured self-hosted SearXNG instance and return normalized title, URL, snippet, and source results. Requires searxng.enabled=true in OpenHuman config.",
+        rpc_method: Some("openhuman.tools_searxng_search"),
+        input_schema: searxng_search_schema(),
+        // SearXNG queries an external (self-hosted but network-reachable)
+        // search engine: read-only (no state mutation), open-world (results
+        // come from outside OpenHuman). Per spec, destructive/idempotent
+        // hints are meaningful only when readOnlyHint=false, so omit them.
+        annotations: json!({
+            "readOnlyHint": true,
+            "openWorldHint": true
+        }),
+    }
 }
 
 fn tree_browse_schema() -> Value {
@@ -269,8 +335,62 @@ fn tree_list_sources_schema() -> Value {
     })
 }
 
-pub fn list_tools_result() -> Value {
-    let tools = tool_specs()
+fn searxng_search_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Search query string."
+            },
+            "categories": {
+                "type": "array",
+                "items": {
+                    "type": "string",
+                    "enum": ["web", "general", "news", "images"]
+                },
+                "description": "Optional SearXNG categories. `web` maps to SearXNG `general`."
+            },
+            "language": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Optional language code, e.g. `en`, `zh-CN`, or `fr`."
+            },
+            "max_results": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": SEARXNG_MAX_RESULTS,
+                "description": format!("Maximum results to return. Defaults to searxng.max_results; capped at {SEARXNG_MAX_RESULTS}.")
+            }
+        },
+        "required": ["query"],
+        "additionalProperties": false
+    })
+}
+
+pub async fn list_tools_result() -> Value {
+    match config_rpc::load_config_with_timeout().await {
+        Ok(config) => list_tools_result_for_config(&config),
+        Err(err) => {
+            log::warn!(
+                "[mcp_server] tools/list config load failed; omitting config-gated tools: {err}"
+            );
+            list_tools_result_from_specs(base_tool_specs())
+        }
+    }
+}
+
+fn list_tools_result_for_config(config: &crate::openhuman::config::Config) -> Value {
+    let mut specs = base_tool_specs();
+    if config.searxng.enabled {
+        specs.push(searxng_tool_spec());
+    }
+    list_tools_result_from_specs(specs)
+}
+
+fn list_tools_result_from_specs(specs: Vec<McpToolSpec>) -> Value {
+    let tools = specs
         .into_iter()
         .map(|tool| {
             json!({
@@ -278,6 +398,7 @@ pub fn list_tools_result() -> Value {
                 "title": tool.title,
                 "description": tool.description,
                 "inputSchema": tool.input_schema,
+                "annotations": tool.annotations,
             })
         })
         .collect::<Vec<_>>();
@@ -414,6 +535,24 @@ fn build_rpc_params(
                 ("query".to_string(), Value::String(query)),
                 ("k".to_string(), Value::from(limit)),
             ]))
+        }
+        "searxng_search" => {
+            reject_unexpected_arguments(&args, SEARXNG_SEARCH_ARGUMENTS)?;
+            let query = required_non_empty_string(&args, "query")?;
+            let mut params = Map::new();
+            params.insert("query".to_string(), Value::String(query));
+            if let Some(categories) = optional_string_array(&args, "categories")? {
+                crate::openhuman::integrations::searxng::normalize_categories(categories.clone())
+                    .map_err(|err| ToolCallError::InvalidParams(err.to_string()))?;
+                params.insert("categories".to_string(), Value::from(categories));
+            }
+            if let Some(language) = optional_non_empty_string(&args, "language")? {
+                params.insert("language".to_string(), Value::String(language));
+            }
+            if let Some(max_results) = optional_max_results(&args, "max_results")? {
+                params.insert("max_results".to_string(), Value::from(max_results));
+            }
+            Ok(params)
         }
         "tree.read_chunk" => {
             reject_unexpected_arguments(&args, TREE_READ_CHUNK_ARGUMENTS)?;
@@ -646,6 +785,34 @@ fn optional_limit(args: &Map<String, Value>) -> Result<u64, ToolCallError> {
         )));
     }
     Ok(limit)
+}
+
+fn optional_max_results(
+    args: &Map<String, Value>,
+    key: &str,
+) -> Result<Option<u64>, ToolCallError> {
+    let Some(value) = args.get(key) else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    let Some(limit) = value.as_u64() else {
+        return Err(ToolCallError::InvalidParams(format!(
+            "argument `{key}` must be a positive integer"
+        )));
+    };
+    if limit == 0 {
+        return Err(ToolCallError::InvalidParams(format!(
+            "argument `{key}` must be greater than zero"
+        )));
+    }
+    if limit > SEARXNG_MAX_RESULTS as u64 {
+        return Err(ToolCallError::InvalidParams(format!(
+            "argument `{key}` must not exceed {SEARXNG_MAX_RESULTS} (got {limit})"
+        )));
+    }
+    Ok(Some(limit))
 }
 
 fn validate_controller_params(
@@ -885,8 +1052,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn list_tools_exposes_first_level_mcp_surface() {
-        let result = list_tools_result();
+    fn list_tools_exposes_base_mcp_surface_when_searxng_disabled() {
+        let config = crate::openhuman::config::Config::default();
+        let result = list_tools_result_for_config(&config);
         let names = result["tools"]
             .as_array()
             .expect("tools array")
@@ -909,6 +1077,118 @@ mod tests {
                 "tree.list_sources",
             ]
         );
+    }
+
+    #[test]
+    fn list_tools_emits_annotations_for_every_tool() {
+        // Exercise the searxng-enabled config so the annotation contract covers
+        // every shipping tool, not just the base set.
+        let mut config = crate::openhuman::config::Config::default();
+        config.searxng.enabled = true;
+        let result = list_tools_result_for_config(&config);
+        let tools = result["tools"].as_array().expect("tools array");
+        for tool in tools {
+            let name = tool["name"].as_str().expect("tool name");
+            assert!(
+                tool.get("annotations")
+                    .map(Value::is_object)
+                    .unwrap_or(false),
+                "tool `{name}` is missing a serialized `annotations` object",
+            );
+        }
+    }
+
+    #[test]
+    fn read_only_tools_are_marked_read_only_and_closed_world() {
+        // Every tool except the act-capable ones reads local OpenHuman state
+        // (memory tree / agent registry) or queries an external read-only
+        // search engine. Per MCP spec defaults these would be
+        // `readOnlyHint: false` and `openWorldHint: true`, so we MUST set
+        // `readOnlyHint` explicitly to communicate accurate safety affordances
+        // to clients. (`searxng_search` is read-only but openWorld, so it
+        // verifies the read-only axis here and is exempt from the
+        // openWorld=false check below.)
+        let act_tool_names = ["agent.run_subagent"];
+        let open_world_read_only = ["searxng_search"];
+        for spec in tool_specs() {
+            if act_tool_names.contains(&spec.name) {
+                continue;
+            }
+            let annotations = &spec.annotations;
+            assert_eq!(
+                annotations.get("readOnlyHint").and_then(Value::as_bool),
+                Some(true),
+                "expected `{}` to advertise readOnlyHint=true",
+                spec.name
+            );
+            let expected_open_world = open_world_read_only.contains(&spec.name);
+            assert_eq!(
+                annotations.get("openWorldHint").and_then(Value::as_bool),
+                Some(expected_open_world),
+                "expected `{}` to advertise openWorldHint={}",
+                spec.name,
+                expected_open_world
+            );
+            // Per spec these are meaningful only when readOnlyHint == false.
+            // Emitting them on a read-only tool would be misleading.
+            assert!(
+                annotations.get("destructiveHint").is_none(),
+                "read-only tool `{}` should not emit destructiveHint",
+                spec.name
+            );
+            assert!(
+                annotations.get("idempotentHint").is_none(),
+                "read-only tool `{}` should not emit idempotentHint",
+                spec.name
+            );
+        }
+    }
+
+    #[test]
+    fn run_subagent_annotations_signal_act_semantics() {
+        let spec = tool_specs()
+            .into_iter()
+            .find(|spec| spec.name == "agent.run_subagent")
+            .expect("agent.run_subagent must be registered");
+        assert_eq!(
+            spec.annotations
+                .get("readOnlyHint")
+                .and_then(Value::as_bool),
+            Some(false)
+        );
+        assert_eq!(
+            spec.annotations
+                .get("destructiveHint")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            spec.annotations
+                .get("idempotentHint")
+                .and_then(Value::as_bool),
+            Some(false)
+        );
+        assert_eq!(
+            spec.annotations
+                .get("openWorldHint")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn list_tools_includes_searxng_when_enabled() {
+        let mut config = crate::openhuman::config::Config::default();
+        config.searxng.enabled = true;
+        let result = list_tools_result_for_config(&config);
+        let names = result["tools"]
+            .as_array()
+            .expect("tools array")
+            .iter()
+            .map(|tool| tool["name"].as_str().expect("tool name"))
+            .collect::<Vec<_>>();
+
+        assert!(names.contains(&"searxng_search"));
     }
 
     #[test]
@@ -975,6 +1255,53 @@ mod tests {
 
         assert_eq!(params["query"], "phoenix migration");
         assert_eq!(params["k"], DEFAULT_LIMIT);
+    }
+
+    #[test]
+    fn searxng_search_params_accept_optional_fields() {
+        let params = build_rpc_params(
+            "searxng_search",
+            json!({
+                "query": " rust async ",
+                "categories": ["web", "news"],
+                "language": " en ",
+                "max_results": 12
+            }),
+        )
+        .expect("params");
+
+        assert_eq!(params["query"], "rust async");
+        assert_eq!(params["categories"], json!(["web", "news"]));
+        assert_eq!(params["language"], "en");
+        assert_eq!(params["max_results"], 12);
+    }
+
+    #[test]
+    fn searxng_search_rejects_unknown_category() {
+        let err = build_rpc_params(
+            "searxng_search",
+            json!({
+                "query": "rust",
+                "categories": ["videos"]
+            }),
+        )
+        .expect_err("must reject");
+
+        assert!(err.message().contains("unsupported SearXNG category"));
+    }
+
+    #[test]
+    fn searxng_search_rejects_max_results_above_max() {
+        let err = build_rpc_params(
+            "searxng_search",
+            json!({
+                "query": "rust",
+                "max_results": SEARXNG_MAX_RESULTS + 1
+            }),
+        )
+        .expect_err("must reject");
+
+        assert!(err.message().contains("must not exceed"));
     }
 
     #[test]

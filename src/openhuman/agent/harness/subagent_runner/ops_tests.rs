@@ -26,6 +26,7 @@ fn make_def_named_tools(names: &[&str]) -> AgentDefinition {
         background: false,
         subagents: vec![],
         delegate_name: None,
+        agent_tier: crate::openhuman::agent::harness::definition::AgentTier::Worker,
         source: crate::openhuman::agent::harness::definition::DefinitionSource::Builtin,
     }
 }
@@ -597,6 +598,62 @@ async fn runner_errors_outside_parent_context() {
 }
 
 #[tokio::test]
+async fn runner_allows_spawn_at_max_depth() {
+    let provider = ScriptedProvider::new(vec![text_response("ok")]);
+    let parent = make_parent(provider.clone(), vec![]);
+    let def = make_def_named_tools(&[]);
+
+    let outcome = with_parent_context(parent, async {
+        with_spawn_depth(MAX_SPAWN_DEPTH - 1, async {
+            run_subagent(&def, "x", SubagentRunOptions::default()).await
+        })
+        .await
+    })
+    .await
+    .expect("runner should allow the configured maximum depth");
+
+    assert_eq!(outcome.output, "ok");
+    assert_eq!(provider.captured.lock().len(), 1);
+    assert_eq!(
+        current_spawn_depth(),
+        0,
+        "depth task-local must not leak after the run"
+    );
+}
+
+#[tokio::test]
+async fn runner_rejects_spawn_beyond_max_depth() {
+    let provider = ScriptedProvider::new(vec![text_response("should not be called")]);
+    let parent = make_parent(provider.clone(), vec![]);
+    let def = make_def_named_tools(&[]);
+
+    let result = with_parent_context(parent, async {
+        with_spawn_depth(MAX_SPAWN_DEPTH, async {
+            run_subagent(&def, "x", SubagentRunOptions::default()).await
+        })
+        .await
+    })
+    .await;
+
+    assert!(matches!(
+        result,
+        Err(SubagentRunError::SpawnDepthExceeded {
+            attempted_depth,
+            max_depth
+        }) if attempted_depth == MAX_SPAWN_DEPTH + 1 && max_depth == MAX_SPAWN_DEPTH
+    ));
+    assert!(
+        provider.captured.lock().is_empty(),
+        "depth rejection must happen before provider dispatch"
+    );
+    assert_eq!(
+        current_spawn_depth(),
+        0,
+        "depth task-local must not leak after rejection"
+    );
+}
+
+#[tokio::test]
 async fn typed_mode_model_override_pins_exact_model_for_spawn() {
     let provider = ScriptedProvider::new(vec![text_response("ok")]);
     let parent = make_parent(provider.clone(), vec![]);
@@ -906,11 +963,12 @@ fn resolve_subagent_provider_hint_with_config_routes_via_factory() {
     // `{workload}-v1` synthesis.
     use crate::openhuman::config::Config;
     let mut config = Config::default();
-    // Route `agentic` to OpenHuman backend explicitly. The backend
-    // returns the configured default_model, which we set to a known
-    // string so the assertion is meaningful.
+    // Route `agentic` to OpenHuman backend explicitly. The backend returns
+    // the configured default_model. Use `coding-v1` — a recognized tier
+    // that the factory validation accepts and that differs from the old
+    // `agentic-v1` synthesis, making the assertion meaningful.
     config.agentic_provider = Some("openhuman".to_string());
-    config.default_model = Some("agentic-specific-model".to_string());
+    config.default_model = Some("coding-v1".to_string());
 
     let parent: Arc<dyn Provider> = ScriptedProvider::new(vec![]);
     let (_resolved_provider, resolved_model) = super::resolve_subagent_provider(
@@ -923,7 +981,7 @@ fn resolve_subagent_provider_hint_with_config_routes_via_factory() {
         None,
     );
     assert_eq!(
-        resolved_model, "agentic-specific-model",
+        resolved_model, "coding-v1",
         "Hint must use the factory-resolved exact model, not synthesise `agentic-v1` \
          and not fall back to parent's model"
     );

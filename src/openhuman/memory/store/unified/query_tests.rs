@@ -86,6 +86,46 @@ async fn query_namespace_uses_graph_signal_for_document_ranking() {
 }
 
 #[tokio::test]
+async fn query_scores_relation_entities_found_in_document_content() {
+    let tmp = TempDir::new().unwrap();
+    let memory = UnifiedMemory::new(tmp.path(), Arc::new(NoopEmbedding), None).unwrap();
+
+    memory
+        .upsert_document(NamespaceDocumentInput {
+            namespace: "team".to_string(),
+            key: "atlas-background".to_string(),
+            title: "Atlas background".to_string(),
+            content: "Alice coordinates the Atlas rollout notes.".to_string(),
+            source_type: "doc".to_string(),
+            priority: "high".to_string(),
+            tags: vec!["project".to_string()],
+            metadata: json!({}),
+            category: "core".to_string(),
+            session_id: None,
+            document_id: None,
+        })
+        .await
+        .unwrap();
+
+    memory
+        .graph_upsert_namespace("team", "Alice", "owns", "Atlas", &json!({}))
+        .await
+        .unwrap();
+
+    let hits = memory
+        .query_namespace_hits("team", "who owns atlas", 5)
+        .await
+        .unwrap();
+    let hit = hits
+        .iter()
+        .find(|hit| hit.key == "atlas-background")
+        .expect("document content should receive graph relevance");
+
+    assert!(hit.score_breakdown.graph_relevance > 0.0);
+    assert!(!hit.supporting_relations.is_empty());
+}
+
+#[tokio::test]
 async fn recall_namespace_memories_includes_namespace_kv() {
     let tmp = TempDir::new().unwrap();
     let memory = UnifiedMemory::new(tmp.path(), Arc::new(NoopEmbedding), None).unwrap();

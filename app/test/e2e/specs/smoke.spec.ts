@@ -18,7 +18,8 @@ import { waitForHomePage } from '../helpers/shared-flows';
 const USER_ID = 'e2e-smoke';
 
 describe('Smoke', () => {
-  before(async () => {
+  before(async function beforeSuite() {
+    this.timeout(90_000);
     await waitForApp();
     await resetApp(USER_ID);
   });

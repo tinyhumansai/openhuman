@@ -6,8 +6,8 @@ set -euo pipefail
 # Source the existing review lib for repo resolution
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$here/../.." && pwd)"
-# shellcheck source=../review/lib.sh
-source "$repo_root/scripts/review/lib.sh"
+# shellcheck source=../shortcuts/review/lib.sh
+source "$repo_root/scripts/shortcuts/review/lib.sh"
 
 # Worktree utilities
 worktree_dir_for_issue() {

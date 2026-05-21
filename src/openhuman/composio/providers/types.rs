@@ -225,6 +225,16 @@ impl ProviderContext {
     /// Memory client handle if the global memory singleton is ready.
     /// Used by providers that want to persist sync snapshots.
     pub fn memory_client(&self) -> Option<crate::openhuman::memory::MemoryClientRef> {
+        #[cfg(test)]
+        {
+            return crate::openhuman::memory::MemoryClient::from_workspace_dir(
+                self.config.workspace_dir.clone(),
+            )
+            .ok()
+            .map(std::sync::Arc::new);
+        }
+
+        #[cfg(not(test))]
         crate::openhuman::memory::global::client_if_ready()
     }
 }

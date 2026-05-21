@@ -1,4 +1,4 @@
-use super::url_guard::{normalize_allowed_domains, validate_url};
+use super::url_guard::{normalize_allowed_domains, validate_url_with_dns_check};
 use crate::openhuman::security::SecurityPolicy;
 use crate::openhuman::tools::traits::{Tool, ToolResult};
 use async_trait::async_trait;
@@ -30,8 +30,8 @@ impl HttpRequestTool {
         }
     }
 
-    fn validate_url(&self, raw_url: &str) -> anyhow::Result<String> {
-        validate_url(raw_url, &self.allowed_domains)
+    async fn validate_url(&self, raw_url: &str) -> anyhow::Result<String> {
+        validate_url_with_dns_check(raw_url, &self.allowed_domains).await
     }
 
     fn validate_method(&self, method: &str) -> anyhow::Result<reqwest::Method> {
@@ -176,7 +176,7 @@ impl Tool for HttpRequestTool {
             return Ok(ToolResult::error("Action blocked: rate limit exceeded"));
         }
 
-        let url = match self.validate_url(url) {
+        let url = match self.validate_url(url).await {
             Ok(v) => v,
             Err(e) => return Ok(ToolResult::error(e.to_string())),
         };

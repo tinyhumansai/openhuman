@@ -85,6 +85,49 @@ pub async fn apply_decision(run: TriageRun, envelope: &TriggerEnvelope) -> anyho
                 "[triage::escalation] dispatching sub-agent"
             );
 
+            // ── External-effect approval gate (#1339) ─────────
+            // React / Escalate fire a sub-agent that may call
+            // external-effect tools on the user's behalf. Catching
+            // here as well as at tool-loop level lets the user
+            // decline the whole escalation up-front instead of one
+            // tool call at a time. The per-tool gate further down
+            // still applies — defense in depth, not duplication
+            // (each gate is short-circuited by the session
+            // allowlist after the first approval).
+            if let Some(gate) = crate::openhuman::approval::ApprovalGate::try_global() {
+                let summary = format!(
+                    "triage::{} target={} prompt_chars={}",
+                    action_str,
+                    target,
+                    prompt.chars().count()
+                );
+                let redacted = serde_json::json!({
+                    "action": action_str,
+                    "target_agent": target,
+                    "external_id": envelope.external_id,
+                    "label": envelope.display_label,
+                    "prompt_chars": prompt.chars().count(),
+                });
+                let tool_key = format!("triage.{}", run.decision.action.as_str());
+                match gate.intercept(&tool_key, &summary, redacted).await {
+                    crate::openhuman::approval::GateOutcome::Allow => {}
+                    crate::openhuman::approval::GateOutcome::Deny { reason } => {
+                        tracing::warn!(
+                            action = %action_str,
+                            target_agent = %target,
+                            external_id = %envelope.external_id,
+                            reason = %reason,
+                            "[triage::escalation] approval gate denied dispatch"
+                        );
+                        events::publish_failed(
+                            envelope,
+                            &format!("approval denied for `{target}`: {reason}"),
+                        );
+                        return Ok(());
+                    }
+                }
+            }
+
             match dispatch_target_agent(target, prompt).await {
                 Ok(output) => {
                     tracing::info!(

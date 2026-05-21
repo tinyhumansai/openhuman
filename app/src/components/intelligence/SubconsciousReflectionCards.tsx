@@ -173,7 +173,9 @@ export default function SubconsciousReflectionCards({
 
   if (loading) {
     return (
-      <div data-testid="reflection-cards-loading" className="text-xs text-stone-400 py-2">
+      <div
+        data-testid="reflection-cards-loading"
+        className="text-xs text-stone-400 dark:text-neutral-500 py-2">
         {t('reflections.loading')}
       </div>
     );
@@ -181,7 +183,9 @@ export default function SubconsciousReflectionCards({
 
   if (visible.length === 0 && !error) {
     return (
-      <div data-testid="reflection-cards-empty" className="text-xs text-stone-400 py-3">
+      <div
+        data-testid="reflection-cards-empty"
+        className="text-xs text-stone-400 dark:text-neutral-500 py-3">
         {t('reflections.empty')}
       </div>
     );
@@ -195,15 +199,17 @@ export default function SubconsciousReflectionCards({
   return (
     <div data-testid="reflection-cards" className="flex flex-col h-full min-h-0 overflow-hidden">
       <div className="shrink-0 pb-3">
-        <h3 className="text-sm font-semibold text-stone-900 flex items-center gap-2">
+        <h3 className="text-sm font-semibold text-stone-900 dark:text-neutral-100 flex items-center gap-2">
           <span className="w-2 h-2 rounded-full bg-primary-400" />
           {t('reflections.title')}
-          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-primary-50 text-primary-700">
+          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-primary-50 dark:bg-primary-500/15 text-primary-700 dark:text-primary-300">
             {visible.length}
           </span>
         </h3>
         {error && (
-          <div data-testid="reflection-cards-error" className="text-xs text-coral-600 mt-2">
+          <div
+            data-testid="reflection-cards-error"
+            className="text-xs text-coral-600 dark:text-coral-300 mt-2">
             {error}
           </div>
         )}
@@ -229,23 +235,25 @@ export default function SubconsciousReflectionCards({
           <div
             key={r.id}
             data-testid={`reflection-card-${r.id}`}
-            className="bg-white border border-stone-200 rounded-xl p-4">
+            className="bg-white dark:bg-neutral-900 border border-stone-200 dark:border-neutral-800 rounded-xl p-4">
             <div className="flex items-start justify-between gap-3">
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 mb-1">
-                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-stone-100 text-stone-600">
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-stone-100 dark:bg-neutral-800 text-stone-600 dark:text-neutral-300">
                     {kindLabel(r.kind, t)}
                   </span>
                   <span
                     data-testid={`reflection-timestamp-${r.id}`}
-                    className="text-[10px] text-stone-400"
+                    className="text-[10px] text-stone-400 dark:text-neutral-500"
                     title={formatAbsoluteTime(r.created_at)}>
                     {formatRelativeTime(r.created_at, t)}
                   </span>
                 </div>
-                <p className="text-sm text-stone-900 whitespace-pre-line break-words">{r.body}</p>
+                <p className="text-sm text-stone-900 dark:text-neutral-100 whitespace-pre-line break-words">
+                  {r.body}
+                </p>
                 {r.proposed_action && (
-                  <p className="text-xs text-stone-500 mt-2">
+                  <p className="text-xs text-stone-500 dark:text-neutral-400 mt-2">
                     <em>{t('reflections.proposedAction')}:</em> {r.proposed_action}
                   </p>
                 )}
@@ -262,7 +270,7 @@ export default function SubconsciousReflectionCards({
                 <button
                   data-testid={`reflection-dismiss-${r.id}`}
                   onClick={() => void handleDismiss(r.id)}
-                  className="px-3 py-1.5 text-xs bg-stone-100 hover:bg-stone-200 text-stone-600 rounded-lg transition-colors">
+                  className="px-3 py-1.5 text-xs bg-stone-100 dark:bg-neutral-800 hover:bg-stone-200  text-stone-600 dark:text-neutral-300 rounded-lg transition-colors">
                   {t('reflections.dismiss')}
                 </button>
               </div>

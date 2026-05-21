@@ -181,9 +181,22 @@ export const LATEST_APP_DOWNLOAD_URL =
 export const SENTRY_SMOKE_TEST = import.meta.env.VITE_SENTRY_SMOKE_TEST === 'true';
 
 /**
- * ElevenLabs voice ID used for the mascot's reply speech. Picked to sound
- * like a friendly cartoon character rather than a human narrator. Override
- * with `VITE_MASCOT_VOICE_ID` to A/B alternative voices without a code change.
+ * ElevenLabs voice ID used for the mascot's reply speech. `JBFqnCBsd6RMkjVDRZzb`
+ * is "George" — a warm multilingual voice that pairs cleanly with the
+ * `eleven_multilingual_v2` model (`MASCOT_VOICE_MODEL_ID` below) so the
+ * mascot can speak any locale we ship without a voice swap. Override with
+ * `VITE_MASCOT_VOICE_ID` to A/B alternatives without a code change.
  */
 export const MASCOT_VOICE_ID =
-  (import.meta.env.VITE_MASCOT_VOICE_ID as string | undefined)?.trim() || 'ljX1ZrXuDIIRVcmiVSyR';
+  (import.meta.env.VITE_MASCOT_VOICE_ID as string | undefined)?.trim() || 'JBFqnCBsd6RMkjVDRZzb';
+
+/**
+ * ElevenLabs model used for mascot reply speech. `eleven_multilingual_v2`
+ * speaks every locale we ship; the older `eleven_monolingual_v1` would
+ * choke on non-Latin scripts. Override with `VITE_MASCOT_VOICE_MODEL_ID`
+ * to pin a different model (e.g. `eleven_turbo_v2_5` for lower latency
+ * at the cost of accent fidelity).
+ */
+export const MASCOT_VOICE_MODEL_ID =
+  (import.meta.env.VITE_MASCOT_VOICE_MODEL_ID as string | undefined)?.trim() ||
+  'eleven_multilingual_v2';

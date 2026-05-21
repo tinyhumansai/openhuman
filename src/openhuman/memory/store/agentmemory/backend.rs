@@ -100,9 +100,18 @@ impl Memory for AgentMemoryBackend {
         opts: RecallOpts<'_>,
     ) -> Result<Vec<MemoryEntry>> {
         log::debug!(
-            "[memory::agentmemory] recall query={query:?} limit={limit} namespace={:?} category={:?} session={:?} min_score={:?}",
-            opts.namespace, opts.category, opts.session_id, opts.min_score,
+            "[memory::agentmemory] recall query={query:?} limit={limit} namespace={:?} category={:?} session={:?} min_score={:?} cross_session={}",
+            opts.namespace, opts.category, opts.session_id, opts.min_score, opts.cross_session,
         );
+        // Cross-session recall (#1505) is a no-op for the agentmemory
+        // backend today: the smart-search endpoint already searches
+        // across the workspace's project namespace. The same-user/
+        // cross-chat continuity path for cloud-backed memory continues
+        // to flow through the conversational transcript ingestion
+        // pipeline (`learning::transcript_ingest`) which writes durable
+        // facts under the `conversation_memory` namespace and is picked
+        // up by the existing `[Prior conversations]` block.
+        let _ = opts.cross_session;
         let project = opts.namespace.map(|s| {
             if s.is_empty() {
                 DEFAULT_PROJECT.to_string()

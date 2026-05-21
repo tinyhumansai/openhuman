@@ -7,7 +7,7 @@
 //! - Tier B (local LLM): runs on segment close if local AI is enabled.
 
 use parking_lot::Mutex;
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -62,6 +62,21 @@ CREATE TRIGGER IF NOT EXISTS event_au AFTER UPDATE ON event_log BEGIN
     INSERT INTO event_fts(rowid, content, subject, event_type)
     VALUES (new.rowid, new.content, new.subject, new.event_type);
 END;
+
+-- Per-(event, embedding model) vectors (#1574). The legacy event_log.embedding
+-- column stays available during the dual-write migration; this table records
+-- vector-space provenance for safe provider/model switches.
+CREATE TABLE IF NOT EXISTS event_embeddings (
+    event_id        TEXT NOT NULL REFERENCES event_log(event_id) ON DELETE CASCADE,
+    model_signature TEXT NOT NULL,
+    vector          BLOB NOT NULL,
+    dim             INTEGER NOT NULL,
+    created_at      REAL NOT NULL,
+    PRIMARY KEY (event_id, model_signature)
+);
+
+CREATE INDEX IF NOT EXISTS idx_event_embeddings_model
+    ON event_embeddings(model_signature);
 "#;
 
 /// Event types extracted from conversations.
@@ -151,6 +166,54 @@ pub fn event_insert(conn: &Arc<Mutex<Connection>>, event: &EventRecord) -> anyho
         event.segment_id
     );
     Ok(())
+}
+
+/// Store an event embedding for a specific provider/model/dimension signature.
+///
+/// This writes only the per-model table introduced for #1574. The legacy
+/// `event_log.embedding` column remains available for dual-read fallback.
+pub fn event_embedding_upsert(
+    conn: &Arc<Mutex<Connection>>,
+    event_id: &str,
+    model_signature: &str,
+    embedding: &[f32],
+    created_at: f64,
+) -> anyhow::Result<()> {
+    let bytes = vec_to_bytes(embedding);
+    let dim = i64::try_from(embedding.len())?;
+    let conn = conn.lock();
+    conn.execute(
+        "INSERT INTO event_embeddings (event_id, model_signature, vector, dim, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5)
+         ON CONFLICT(event_id, model_signature) DO UPDATE SET
+            vector = excluded.vector,
+            dim = excluded.dim,
+            created_at = excluded.created_at",
+        params![event_id, model_signature, bytes, dim, created_at],
+    )?;
+    Ok(())
+}
+
+/// Fetch an event embedding for exactly one provider/model/dimension signature.
+pub fn event_embedding_get(
+    conn: &Arc<Mutex<Connection>>,
+    event_id: &str,
+    model_signature: &str,
+) -> anyhow::Result<Option<Vec<f32>>> {
+    let conn = conn.lock();
+    let row: Option<(Vec<u8>, i64)> = conn
+        .query_row(
+            "SELECT vector, dim
+               FROM event_embeddings
+              WHERE event_id = ?1 AND model_signature = ?2",
+            params![event_id, model_signature],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?;
+    match row {
+        None => Ok(None),
+        Some((bytes, dim)) => decode_embedding_row(&bytes, dim),
+    }
 }
 
 /// Search events via FTS5, scoped to a namespace.
@@ -396,6 +459,26 @@ fn bytes_to_vec(bytes: &[u8]) -> Vec<f32> {
         .chunks_exact(4)
         .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
         .collect()
+}
+
+fn decode_embedding_row(bytes: &[u8], dim: i64) -> anyhow::Result<Option<Vec<f32>>> {
+    if dim < 0 {
+        anyhow::bail!("event embedding has negative dimension {dim}");
+    }
+    if !bytes.len().is_multiple_of(4) {
+        anyhow::bail!(
+            "event embedding blob length {} not a multiple of 4",
+            bytes.len()
+        );
+    }
+    let vector = bytes_to_vec(bytes);
+    if vector.len() != dim as usize {
+        anyhow::bail!(
+            "event embedding dimension mismatch: dim column says {dim}, blob contains {} floats",
+            vector.len()
+        );
+    }
+    Ok(Some(vector))
 }
 
 #[cfg(test)]

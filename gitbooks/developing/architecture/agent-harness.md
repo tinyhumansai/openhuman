@@ -167,6 +167,42 @@ When the orchestrator calls `spawn_subagent` (or one of the `delegate_*` conveni
 
 For tasks that don't need to block the orchestrator's turn, `spawn_worker_thread` runs the sub-agent in the background and the orchestrator continues immediately.
 
+### Spawn hierarchy and tiers
+
+Not every agent is allowed to spawn every other agent. The harness models a three-tier hierarchy that mirrors the cost / latency / depth-of-thought split between models:
+
+```text
+Chat        (fast, UX-focused — e.g. orchestrator on `chat` hint)
+  │
+  ├─► Worker      ◄─── fast path: one delegation, leaf does the work
+  │
+  └─► Reasoning   (slow, deep-thinking — e.g. planner on `reasoning` hint)
+        │
+        └─► Worker  ◄─── deep path: reasoning decomposes, workers execute
+```
+
+Each `AgentDefinition` carries an `agent_tier` field (`chat` / `reasoning` / `worker`, default `worker`). The contract:
+
+| Tier         | May spawn         | Must NOT spawn               | Typical members                                          |
+| ------------ | ----------------- | ---------------------------- | -------------------------------------------------------- |
+| `chat`       | `reasoning`, `worker` | another `chat`               | `orchestrator`                                           |
+| `reasoning`  | `worker`          | another `reasoning`, any `chat` | `planner` (today the canonical one)                     |
+| `worker`     | nothing[^1]       | anything                     | researcher, code_executor, critic, archivist, tool_maker, integrations_agent, … |
+
+[^1]: Skill-wildcard entries (`{ skills = "*" }`) are exempt because they collapse to a single `delegate_to_integrations_agent` tool whose target is a worker — they're a fan-out delegation surface, not a recursive spawn.
+
+**Why the rules.**
+- *Chat → chat is meaningless.* The chat tier exists for snappy UX. A chat agent spawning another chat agent just doubles TTFT and burns tokens without buying any new capability.
+- *Reasoning → reasoning blows up depth.* The reasoning tier is expensive. Chains of reasoning agents tend to re-decompose the same problem and create runaway hierarchies.
+- *Worker → anything mixes execution and orchestration.* Workers are leaves so the parent always sees one compact result, not a transcript of nested delegations.
+
+**Enforcement.** Two layers:
+
+1. **Loader-time (static).** [`agents::loader::validate_tier_hierarchy`](../../../src/openhuman/agent/agents/loader.rs) runs over the merged registry (built-ins + workspace TOMLs) and refuses to boot a registry that lists a same-tier or worker-with-subagents entry. Built-in archetypes are checked at compile-test time; user-shipped TOMLs are checked at workspace load.
+2. **Runtime depth gate (dynamic).** Independent of tier, the sub-agent runner caps total spawn chain depth at `MAX_SPAWN_DEPTH = 3` via a task-local counter incremented across `run_subagent`, surfaced as a `SpawnDepthExceeded` agent error. This makes a user-shipped TOML that drops the tier annotation still unable to recurse past three hops.
+
+> **Status:** the loader-time tier check, `agent_tier` field, and runtime depth-counter task-local are live. Depth is bounded by both the static loader contract and the runtime `MAX_SPAWN_DEPTH = 3` guard.
+
 ### Toolkit-specific specialists
 
 For Composio toolkits with hundreds of actions (GitHub alone has 500+), loading every action into the sub-agent's tool set balloons prompt size. The harness ranks the toolkit's actions against the parent-refined task prompt with a cheap CPU-only filter (verb detection, token overlap, verb-alignment boost) and only loads the top-ranked subset into the sub-agent. No model call, pure heuristic - fast and explainable.

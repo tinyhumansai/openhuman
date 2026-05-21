@@ -160,8 +160,9 @@ pub async fn rpc_handler(State(state): State<AppState>, Json(req): Json<RpcReque
 /// Invokes a JSON-RPC method by name.
 ///
 /// This is a high-level wrapper around [`invoke_method_inner`] that adds
-/// automatic session management logic. If a call fails with a 401 Unauthorized
-/// error from the backend, it will automatically clear the local session.
+/// automatic session management logic. If a call fails with a confirmed
+/// OpenHuman session-expired error, it will automatically clear the local
+/// session.
 ///
 /// # Arguments
 ///
@@ -171,27 +172,34 @@ pub async fn rpc_handler(State(state): State<AppState>, Json(req): Json<RpcReque
 pub async fn invoke_method(state: AppState, method: &str, params: Value) -> Result<Value, String> {
     let result = invoke_method_inner(state, method, params).await;
 
-    // Session auto-cleanup: if the backend says we're unauthorized, publish
-    // a `SessionExpired` event. The credentials subscriber clears the stored
-    // token, flips the scheduler-gate signed-out override so background
-    // workers stand down, and (eventually) pushes a sign-out to the UI.
-    // Centralising via the event bus means 401 detection from any path
-    // (this one, `llm_provider.api_error`, …) gets the same teardown.
+    // Session auto-cleanup: if the OpenHuman auth session is explicitly
+    // expired, publish a `SessionExpired` event. The credentials subscriber
+    // clears the stored token, flips the scheduler-gate signed-out override
+    // so background workers stand down, and (eventually) pushes a sign-out to
+    // the UI. Generic downstream/provider 401s must stay recoverable errors;
+    // otherwise a scoped integration failure can log the user out.
     if let Err(ref msg) = result {
+        let sanitized_reason = crate::openhuman::inference::provider::ops::sanitize_api_error(msg);
         if is_session_expired_error(msg) {
             log::warn!(
-                "[jsonrpc] backend returned 401 for method '{}' — publishing SessionExpired",
-                method
+                "[jsonrpc] confirmed session expiry for method '{}' — publishing SessionExpired: {}",
+                method,
+                sanitized_reason
             );
             // Scrub before publishing — subscribers log `reason`, and the
             // upstream error string could include API keys / tokens from
-            // pasted-through provider replies. `sanitize_api_error` runs
-            // `scrub_secret_patterns` and truncates.
+            // pasted-through provider replies.
             crate::core::event_bus::publish_global(
                 crate::core::event_bus::DomainEvent::SessionExpired {
                     source: format!("jsonrpc.invoke_method:{method}"),
-                    reason: crate::openhuman::inference::provider::ops::sanitize_api_error(msg),
+                    reason: sanitized_reason,
                 },
+            );
+        } else if is_unconfirmed_unauthorized_error(msg) {
+            log::warn!(
+                "[jsonrpc] unauthorized error for method '{}' did not match OpenHuman session expiry — leaving session intact: {}",
+                method,
+                sanitized_reason
             );
         }
     }
@@ -201,18 +209,12 @@ pub async fn invoke_method(state: AppState, method: &str, params: Value) -> Resu
 
 /// Helper to determine if an error message indicates an expired or invalid session.
 ///
-/// Deliberately **looser** than
-/// [`crate::core::observability::is_session_expired_message`]: this
-/// dispatch-site predicate also matches the generic `"401 + unauthorized"` /
-/// `"invalid token"` pair so token cleanup +
-/// `DomainEvent::SessionExpired` publish fire on *any* 401, including
-/// BYO-key provider failures (which clear the stale local token even if
-/// the user mis-configured an OpenAI / Anthropic key). The strict
-/// classifier in `observability` is for the agent / web-channel
-/// `report_error_or_expected` call sites, where matching too loosely would
-/// silence actionable BYO-key configuration errors (OPENHUMAN-TAURI-26
-/// rationale: the agent-layer demote must NOT also swallow generic
-/// provider 401s).
+/// Uses the same strict classifier as observability so only explicit
+/// OpenHuman auth-session failures clear the app session. A generic
+/// `"401 Unauthorized"` or `"invalid token"` can come from BYO-key
+/// providers, Composio, channels, or other scoped downstream calls; those
+/// must surface as recoverable errors rather than publishing
+/// `DomainEvent::SessionExpired`.
 ///
 /// "No backend session token" is also treated as a session-expired signal: the
 /// auth profile is missing entirely (the user was never signed in, or their
@@ -228,12 +230,15 @@ pub async fn invoke_method(state: AppState, method: &str, params: Value) -> Resu
 /// no JWT in the store. This is the same auth-boundary condition, just surfaced
 /// as a local guard rather than a backend response.
 fn is_session_expired_error(msg: &str) -> bool {
-    let lower = msg.to_lowercase();
-    (lower.contains("401") && lower.contains("unauthorized"))
-        || lower.contains("invalid token")
-        || lower.contains("no backend session token")
-        || lower.contains("session jwt required")
-        || msg.contains("SESSION_EXPIRED")
+    crate::core::observability::is_session_expired_message(msg)
+}
+
+/// Detect auth-looking failures that are not specific enough to clear the
+/// OpenHuman session. This is only for diagnostics; it must not feed the
+/// `SessionExpired` publish path.
+fn is_unconfirmed_unauthorized_error(msg: &str) -> bool {
+    let lower = msg.to_ascii_lowercase();
+    (lower.contains("401") && lower.contains("unauthorized")) || lower.contains("invalid token")
 }
 
 /// Returns `true` when the error message comes from JSON-RPC params validation
@@ -602,23 +607,107 @@ async fn http_request_log_middleware(req: Request, next: Next) -> Response {
     response
 }
 
+/// Environment variable for additional comma-separated origins to allow.
+/// Intended for debug harnesses and E2E setups that don't run on loopback —
+/// e.g. `OPENHUMAN_CORE_ALLOWED_ORIGINS=https://e2e.internal,http://my-debugger:8080`.
+const ALLOWED_ORIGINS_ENV: &str = "OPENHUMAN_CORE_ALLOWED_ORIGINS";
+
+/// Decides whether a browser `Origin` header value is allowed to make
+/// authenticated cross-origin requests against the local RPC server.
+///
+/// The RPC server only ever serves three legitimate consumers:
+///   1. The bundled Tauri v2 webview — `tauri://localhost` on macOS/Linux and
+///      `http(s)://tauri.localhost` on Windows.
+///   2. The Vite dev server during `pnpm dev` — any port on loopback hosts.
+///   3. Operator-controlled debug harnesses opted in via
+///      `OPENHUMAN_CORE_ALLOWED_ORIGINS`.
+///
+/// Anything else (a random web page that has somehow obtained the bearer
+/// token via leaked logs / screenshots / a compromised third-party origin
+/// loaded in a CEF child webview) must be refused — the bearer token alone
+/// is not enough authorization without an origin binding.
+pub(super) fn is_origin_allowed(origin: &str) -> bool {
+    let extra_origins = std::env::var(ALLOWED_ORIGINS_ENV).ok();
+    is_origin_allowed_with_extra(origin, extra_origins.as_deref())
+}
+
+pub(super) fn is_origin_allowed_with_extra(origin: &str, extra_origins: Option<&str>) -> bool {
+    // Tauri v2 webview origins. Windows uses an HTTP(S) custom host; macOS
+    // and Linux use the `tauri://` scheme. We accept both for portability.
+    if matches!(
+        origin,
+        "tauri://localhost" | "http://tauri.localhost" | "https://tauri.localhost"
+    ) {
+        return true;
+    }
+
+    // Loopback origins on any port (Vite dev server, E2E driver, CLI tools).
+    if let Some(rest) = origin.strip_prefix("http://") {
+        let authority = rest.split('/').next().unwrap_or("");
+        let host = if let Some(stripped) = authority.strip_prefix('[') {
+            // IPv6 literal: `[::1]:1420` → `::1`
+            stripped.split(']').next().unwrap_or("")
+        } else {
+            authority.split(':').next().unwrap_or("")
+        };
+        if matches!(host, "127.0.0.1" | "localhost" | "::1") {
+            return true;
+        }
+    }
+
+    // Env override: comma-separated exact matches.
+    if let Some(extra) = extra_origins {
+        for candidate in extra.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+            if candidate == origin {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
 /// Middleware for handling Cross-Origin Resource Sharing (CORS).
+///
+/// Reads the request's `Origin` header before invoking the inner handler so
+/// the same value can be echoed back (when allowed) on the response.
 async fn cors_middleware(req: Request, next: Next) -> Response {
+    let origin = req
+        .headers()
+        .get(header::ORIGIN)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned);
+
     if req.method() == Method::OPTIONS {
-        return with_cors_headers(StatusCode::NO_CONTENT.into_response());
+        return with_cors_headers(StatusCode::NO_CONTENT.into_response(), origin.as_deref());
     }
 
     let response = next.run(req).await;
-    with_cors_headers(response)
+    with_cors_headers(response, origin.as_deref())
 }
 
 /// Injects CORS headers into a response.
-fn with_cors_headers(mut response: Response) -> Response {
+///
+/// If the request carried an `Origin` header and that origin is on the
+/// allowlist, the value is echoed back in `Access-Control-Allow-Origin` and
+/// `Vary: Origin` is set so intermediate caches keep per-origin responses
+/// distinct. Disallowed origins receive no `Access-Control-Allow-Origin`
+/// header at all — the browser will then refuse to surface the response to
+/// the calling JS. Non-browser callers (no `Origin` header) are unaffected.
+pub(super) fn with_cors_headers(mut response: Response, origin: Option<&str>) -> Response {
     let headers = response.headers_mut();
-    headers.insert(
-        header::ACCESS_CONTROL_ALLOW_ORIGIN,
-        HeaderValue::from_static("*"),
-    );
+    headers.append(header::VARY, HeaderValue::from_static("Origin"));
+
+    if let Some(o) = origin {
+        if is_origin_allowed(o) {
+            if let Ok(val) = HeaderValue::from_str(o) {
+                headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, val);
+            }
+        } else {
+            tracing::warn!("[cors] rejected disallowed origin: {}", o);
+        }
+    }
+
     headers.insert(
         header::ACCESS_CONTROL_ALLOW_METHODS,
         HeaderValue::from_static("GET, POST, OPTIONS"),
@@ -636,7 +725,34 @@ fn with_cors_headers(mut response: Response) -> Response {
 
 /// Handler for the health check endpoint.
 async fn health_handler() -> impl IntoResponse {
-    (StatusCode::OK, Json(json!({ "ok": true })))
+    let snapshot = crate::openhuman::health::snapshot();
+    let unhealthy: Vec<&str> = snapshot
+        .components
+        .iter()
+        .filter_map(|(name, c)| {
+            if c.status == "ok" || c.status == "starting" {
+                None
+            } else {
+                Some(name.as_str())
+            }
+        })
+        .collect();
+    let is_ok = unhealthy.is_empty();
+
+    let status = if is_ok {
+        StatusCode::OK
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
+    };
+
+    tracing::debug!(
+        "[health] status={} components={} unhealthy={:?}",
+        status.as_u16(),
+        snapshot.components.len(),
+        unhealthy
+    );
+
+    (status, Json(snapshot))
 }
 
 /// Handler for the schema discovery endpoint.
@@ -747,6 +863,14 @@ fn core_host() -> String {
         .unwrap_or_else(|| "127.0.0.1".to_string())
 }
 
+/// Metadata sent back to the Tauri host once the embedded core has selected
+/// and bound its listen port.
+#[derive(Debug, Clone)]
+pub struct EmbeddedReadySignal {
+    pub port: u16,
+    pub fallback_from: Option<u16>,
+}
+
 /// Runs the HTTP/JSON-RPC server.
 ///
 /// This function binds to the specified host and port, initializes the router,
@@ -756,7 +880,7 @@ pub async fn run_server(
     port: Option<u16>,
     socketio_enabled: bool,
 ) -> anyhow::Result<()> {
-    run_server_inner(host, port, socketio_enabled, false, None).await
+    run_server_inner(host, port, socketio_enabled, false, None, None).await
 }
 
 /// Like [`run_server`] but marks the instance as embedded.
@@ -766,7 +890,34 @@ pub async fn run_server_embedded(
     socketio_enabled: bool,
     shutdown_token: CancellationToken,
 ) -> anyhow::Result<()> {
-    run_server_inner(host, port, socketio_enabled, true, Some(shutdown_token)).await
+    run_server_inner(
+        host,
+        port,
+        socketio_enabled,
+        true,
+        Some(shutdown_token),
+        None,
+    )
+    .await
+}
+
+/// Embedded entrypoint with an explicit readiness callback.
+pub async fn run_server_embedded_with_ready(
+    host: Option<&str>,
+    port: Option<u16>,
+    socketio_enabled: bool,
+    shutdown_token: CancellationToken,
+    ready_tx: tokio::sync::oneshot::Sender<EmbeddedReadySignal>,
+) -> anyhow::Result<()> {
+    run_server_inner(
+        host,
+        port,
+        socketio_enabled,
+        true,
+        Some(shutdown_token),
+        Some(ready_tx),
+    )
+    .await
 }
 
 /// Internal server entrypoint.
@@ -776,6 +927,7 @@ async fn run_server_inner(
     socketio_enabled: bool,
     embedded_core: bool,
     shutdown_token: Option<CancellationToken>,
+    ready_tx: Option<tokio::sync::oneshot::Sender<EmbeddedReadySignal>>,
 ) -> anyhow::Result<()> {
     // Ensure all controllers are registered before starting.
     let _ = all::all_registered_controllers();
@@ -795,40 +947,48 @@ async fn run_server_inner(
     // gets a live handle. Without this, every periodic sync bails with
     // "[composio:gmail] memory client not ready".
     {
-        // Surface a config-load failure explicitly. Falling silently to
-        // `Config::default()` would hide a serious operator-visible
-        // problem (corrupt toml, permissions, missing OPENHUMAN_WORKSPACE
-        // workspace dir) and the memory client would init against the
-        // wrong workspace — leading to chunk loss / cross-workspace
-        // bleed-over. We log loud, then proceed with default so the
-        // server still comes up; the operator sees the error in stderr
-        // and can fix their config.
-        let cfg = match crate::openhuman::config::Config::load_or_init().await {
-            Ok(c) => c,
+        // A `Config::load_or_init` failure here is operator-visible and
+        // serious (corrupt toml, bad permissions, missing/unwritable
+        // OPENHUMAN_WORKSPACE — common on headless/containerised deploys
+        // with no writable $HOME). Previously we fell back to
+        // `Config::default()` and initialised the memory + whatsapp_data
+        // stores against the *wrong* workspace dir, silently causing chunk
+        // loss / cross-workspace bleed-over while the app looked healthy
+        // (Sentry OPENHUMAN-CORE-48). Instead: skip the workspace-bound
+        // init entirely so memory stays explicitly *uninitialised* —
+        // callers then get a clear "memory client not ready" error rather
+        // than reading/writing the wrong workspace. The server still comes
+        // up; the operator sees the loud error and fixes their config or
+        // sets OPENHUMAN_WORKSPACE to a writable path, then restarts.
+        match crate::openhuman::config::Config::load_or_init().await {
+            Ok(cfg) => {
+                match crate::openhuman::memory::global::init(cfg.workspace_dir.clone()) {
+                    Ok(_) => log::info!(
+                        "[boot] memory::global initialized (workspace={})",
+                        cfg.workspace_dir.display()
+                    ),
+                    Err(e) => log::warn!("[boot] memory::global init failed: {e}"),
+                }
+                // Initialize the WhatsApp data store so scanner ingest calls
+                // can write data without requiring a lazy-init fallback.
+                match crate::openhuman::whatsapp_data::global::init(cfg.workspace_dir.clone()) {
+                    Ok(_) => log::info!(
+                        "[boot] whatsapp_data::global initialized (workspace={})",
+                        cfg.workspace_dir.display()
+                    ),
+                    Err(e) => log::warn!("[boot] whatsapp_data::global init failed: {e}"),
+                }
+            }
             Err(e) => {
                 log::error!(
-                    "[boot] memory::global init: Config::load_or_init failed ({e:#}); \
-                     falling back to default workspace dir — fix your config.toml \
-                     or OPENHUMAN_WORKSPACE before relying on memory persistence"
+                    "[boot] memory::global + whatsapp_data init SKIPPED — \
+                     Config::load_or_init failed ({e:#}). Memory persistence is \
+                     DISABLED for this run; no silent fallback to the default \
+                     workspace (which would cause chunk loss / cross-workspace \
+                     bleed-over). Fix config.toml or set OPENHUMAN_WORKSPACE to a \
+                     writable path, then restart."
                 );
-                Default::default()
             }
-        };
-        match crate::openhuman::memory::global::init(cfg.workspace_dir.clone()) {
-            Ok(_) => log::info!(
-                "[boot] memory::global initialized (workspace={})",
-                cfg.workspace_dir.display()
-            ),
-            Err(e) => log::warn!("[boot] memory::global init failed: {e}"),
-        }
-        // Initialize the WhatsApp data store so scanner ingest calls
-        // can write data without requiring a lazy-init fallback.
-        match crate::openhuman::whatsapp_data::global::init(cfg.workspace_dir.clone()) {
-            Ok(_) => log::info!(
-                "[boot] whatsapp_data::global initialized (workspace={})",
-                cfg.workspace_dir.display()
-            ),
-            Err(e) => log::warn!("[boot] whatsapp_data::global init failed: {e}"),
         }
     }
 
@@ -863,15 +1023,57 @@ async fn run_server_inner(
         "[core] Bind resolution: host={resolved_host} (from {host_source}), port={resolved_port} (from {port_source})"
     );
 
-    let port = resolved_port;
+    // Safety check: refuse to bind on a non-loopback address without an
+    // explicit RPC token. Without this, the entire RPC surface (tool
+    // execution, file access, credentials) is unauthenticated and reachable
+    // from the network. See: https://github.com/tinyhumansai/openhuman/issues/1919
+    if crate::openhuman::security::pairing::is_public_bind(&resolved_host) {
+        let has_explicit_token = std::env::var(crate::core::auth::CORE_TOKEN_ENV_VAR)
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .is_some();
+        if !has_explicit_token {
+            log::error!(
+                "[core] ⚠️  SECURITY WARNING: Binding on public address {resolved_host} without \
+                 an explicit OPENHUMAN_CORE_TOKEN. The RPC server will auto-generate a token, \
+                 but external clients will not know it. Set OPENHUMAN_CORE_TOKEN in your \
+                 .env file to secure the RPC endpoint."
+            );
+            eprintln!(
+                "\n\x1b[1;31m[SECURITY]\x1b[0m Binding on {resolved_host} without OPENHUMAN_CORE_TOKEN.\n\
+                 Set OPENHUMAN_CORE_TOKEN in .env to secure the RPC endpoint.\n\
+                 Without it, the auto-generated token is written to {{workspace}}/core.token\n\
+                 but remote clients will not be able to authenticate.\n"
+            );
+        }
+    }
+
+    let preferred_port = resolved_port;
     let host = resolved_host;
-    let bind_addr = format!("{host}:{port}");
-    let listener = tokio::net::TcpListener::bind((host.as_str(), port))
-        .await
-        .map_err(|e| {
-            log::error!("[core] Failed to bind to {bind_addr}: {e}");
-            e
-        })?;
+    let pick = crate::openhuman::connectivity::rpc::pick_listen_port_for_host(
+        host.as_str(),
+        preferred_port,
+    )
+    .await
+    .map_err(|err| {
+        log::error!("[core] Failed to bind to {host}:{preferred_port}: {err}");
+        anyhow::Error::new(err)
+    })?;
+    let listen_port = pick.port;
+    let bind_addr = format!("{host}:{listen_port}");
+    let listener = pick.listener;
+
+    // Synchronize OPENHUMAN_CORE_RPC_URL with the actual bound port so
+    // connectivity::rpc::resolve_listen_port() (used by openhuman.connectivity_diag)
+    // reports the live listener instead of the originally-requested port when
+    // fallback engaged. Embedded path also calls this via apply_embedded_ready_signal,
+    // but the standalone CLI never did before — leaving diag stale on fallback.
+    //
+    // SAFETY: set_var is process-global; this runs once during bind and the
+    // standalone CLI doesn't share its env with concurrent test threads.
+    unsafe {
+        std::env::set_var("OPENHUMAN_CORE_RPC_URL", format!("http://{bind_addr}/rpc"));
+    }
 
     let app = build_core_http_router(socketio_enabled);
 
@@ -887,6 +1089,13 @@ async fn run_server_inner(
         log::info!("[rpc:socketio] Socket.IO — ws://{bind_addr}/socket.io/ (same HTTP server)");
     } else {
         log::info!("[rpc:socketio] disabled (--jsonrpc-only)");
+    }
+
+    if let Some(tx) = ready_tx {
+        let _ = tx.send(EmbeddedReadySignal {
+            port: listen_port,
+            fallback_from: pick.fallback_from,
+        });
     }
 
     // Background bootstrap for services — gated on login state.
@@ -1223,6 +1432,47 @@ pub async fn bootstrap_core_runtime(embedded_core: bool) {
         );
     }
 
+    // --- Approval gate (#1339) ---
+    // Opt-in via `OPENHUMAN_APPROVAL_GATE=1`. When enabled, tool calls
+    // with `external_effect() == true` (composio, pushover, gmail
+    // unsubscribe, proactive external sends, triage React/Escalate)
+    // route through `ApprovalGate::intercept` and park until the UI
+    // dispatches `approval_decide` (or the 10-minute TTL elapses and
+    // the call is denied). Off by default until the React UI
+    // (toast + settings panel) lands — otherwise gated tool calls
+    // would block the agent loop with nothing to release them.
+    if std::env::var("OPENHUMAN_APPROVAL_GATE")
+        .map(|v| matches!(v.trim(), "1" | "true" | "TRUE"))
+        .unwrap_or(false)
+    {
+        let (session_id, ephemeral) = match std::env::var("OPENHUMAN_CORE_TOKEN")
+            .ok()
+            .filter(|s| !s.is_empty())
+        {
+            Some(token) => (token, false),
+            None => (format!("session-{}", uuid::Uuid::new_v4()), true),
+        };
+        if ephemeral {
+            log::debug!(
+                "[runtime] OPENHUMAN_CORE_TOKEN unset; generated ephemeral session_id={session_id} \
+                 for approval gate — `approval_list_pending` is session-agnostic so pending rows \
+                 from prior launches will still be visible, but per-session audit grouping will not \
+                 correlate across restarts"
+            );
+        }
+        let _ =
+            crate::openhuman::approval::ApprovalGate::init_global(cfg.clone(), session_id.clone());
+        log::info!(
+            "[runtime] approval gate installed (OPENHUMAN_APPROVAL_GATE=1, session_id={session_id}) — \
+             external-effect tool calls will block until approval_decide"
+        );
+    } else {
+        log::debug!(
+            "[runtime] approval gate disabled (OPENHUMAN_APPROVAL_GATE unset) — \
+             external-effect tool calls run unsupervised"
+        );
+    }
+
     // --- Session storage layout migration -------------------------------
     // One-shot move from `session_raw/{DDMMYYYY}/` (≤ 0.53.4) to the new
     // flat `session_raw/{stem}.jsonl` layout, plus DDMMYYYY → YYYY_MM_DD
@@ -1347,3 +1597,7 @@ fn build_http_schema_dump() -> HttpSchemaDump {
 #[cfg(test)]
 #[path = "jsonrpc_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "jsonrpc_cors_tests.rs"]
+mod cors_tests;

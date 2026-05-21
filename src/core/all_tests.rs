@@ -110,6 +110,7 @@ fn namespace_description_known_namespaces() {
     assert!(namespace_description("config").is_some());
     assert!(namespace_description("health").is_some());
     assert!(namespace_description("security").is_some());
+    assert!(namespace_description("tool_registry").is_some());
     assert!(namespace_description("voice").is_some());
     assert!(namespace_description("webhooks").is_some());
     assert!(namespace_description("notification").is_some());

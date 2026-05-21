@@ -19,6 +19,8 @@ use super::types::{
     EscalationPriority, EvaluationResponse, SubconsciousStatus, SubconsciousTask, TaskEvaluation,
     TaskRecurrence, TaskSource, TickDecision, TickResult,
 };
+use crate::openhuman::config::Config;
+use crate::openhuman::credentials::{AuthService, APP_SESSION_PROVIDER};
 use crate::openhuman::memory::tree::chat::{
     build_chat_provider, ChatConsumer, ChatPrompt, ChatProvider,
 };
@@ -48,6 +50,7 @@ struct EngineState {
     last_tick_at: f64,
     total_ticks: u64,
     consecutive_failures: u64,
+    provider_unavailable_reason: Option<String>,
     seeded: bool,
 }
 
@@ -107,6 +110,7 @@ impl SubconsciousEngine {
                 last_tick_at,
                 total_ticks: 0,
                 consecutive_failures: 0,
+                provider_unavailable_reason: None,
                 seeded,
             }),
             tick_generation: AtomicU64::new(0),
@@ -193,6 +197,39 @@ impl SubconsciousEngine {
 
         debug!("[subconscious] {} due tasks", due_tasks.len());
 
+        let config_for_report = match Config::load_or_init().await {
+            Ok(c) => c,
+            Err(e) => {
+                warn!("[subconscious] config load for situation report failed: {e}");
+                let reason = format!("Config unavailable: {e}");
+                state.provider_unavailable_reason = Some(reason);
+                state.consecutive_failures += 1;
+                state.total_ticks += 1;
+                return Ok(TickResult {
+                    tick_at,
+                    evaluations: vec![],
+                    executed: 0,
+                    escalated: 0,
+                    duration_ms: started.elapsed().as_millis() as u64,
+                });
+            }
+        };
+
+        if let Some(reason) = subconscious_provider_unavailable_reason(&config_for_report) {
+            info!("[subconscious] provider unavailable, skipping tick: {reason}");
+            state.provider_unavailable_reason = Some(reason);
+            state.consecutive_failures += 1;
+            state.total_ticks += 1;
+            return Ok(TickResult {
+                tick_at,
+                evaluations: vec![],
+                executed: 0,
+                escalated: 0,
+                duration_ms: started.elapsed().as_millis() as u64,
+            });
+        }
+        state.provider_unavailable_reason = None;
+
         // 2. Insert in_progress log entries for each due task
         let log_ids: HashMap<String, String> =
             store::with_connection(&self.workspace_dir, |conn| {
@@ -221,17 +258,6 @@ impl SubconsciousEngine {
             })?;
 
         // 3. Build situation report — memory-tree-derived sections (#623).
-        let config_for_report = match crate::openhuman::config::Config::load_or_init().await {
-            Ok(c) => c,
-            Err(e) => {
-                warn!("[subconscious] config load for situation report failed: {e}");
-                // Without config we cannot read memory_tree tables — but we
-                // can still build the env+tasks+reflections sections by
-                // passing a default config. The signal sections will report
-                // themselves as unavailable.
-                crate::openhuman::config::Config::default()
-            }
-        };
         // Fetch last 8 reflections for anti-double-emit context.
         let recent_reflections = super::store::with_connection(&self.workspace_dir, |conn| {
             super::reflection_store::list_recent(conn, 8, None)
@@ -257,7 +283,7 @@ impl SubconsciousEngine {
 
         // 5. Evaluate tasks + emit reflections via cloud chat (#623).
         let (evaluations, reflection_drafts) = self
-            .evaluate_tasks_and_reflections(&due_tasks, &report, &identity)
+            .evaluate_tasks_and_reflections(&config_for_report, &due_tasks, &report, &identity)
             .await;
 
         // Check if we were superseded by a newer tick
@@ -388,6 +414,8 @@ impl SubconsciousEngine {
 
         SubconsciousStatus {
             enabled: self.enabled,
+            provider_available: state.provider_unavailable_reason.is_none(),
+            provider_unavailable_reason: state.provider_unavailable_reason.clone(),
             interval_minutes: self.interval_minutes,
             last_tick_at: if state.last_tick_at > 0.0 {
                 Some(state.last_tick_at)
@@ -504,60 +532,40 @@ impl SubconsciousEngine {
         }
     }
 
-    /// Run the per-tick LLM call. Routes to cloud `summarization-v1` via
-    /// the memory_tree chat provider (#623). On failure returns
+    /// Run the per-tick LLM call. Routes via `subconscious_provider`
+    /// while reusing the memory-tree chat provider plumbing (#623). On failure returns
     /// `(empty_evaluations, empty_drafts)` so `last_tick_at` is NOT
     /// advanced — the next tick re-fetches from the same point.
     async fn evaluate_tasks_and_reflections(
         &self,
+        config: &Config,
         tasks: &[SubconsciousTask],
         report: &str,
         identity: &str,
     ) -> (Vec<TaskEvaluation>, Vec<ReflectionDraft>) {
         let prompt_text = prompt::build_evaluation_prompt(tasks, report, identity);
 
-        let config = match crate::openhuman::config::Config::load_or_init().await {
-            Ok(c) => c,
+        // Build the chat provider. The subconscious tick uses
+        // `ChatConsumer::Summarise` because the per-tick payload is
+        // closer in shape to a structured-summary call than a per-chunk
+        // entity extraction.
+        let provider: Arc<dyn ChatProvider> = match build_subconscious_chat_provider(config) {
+            Ok(p) => p,
             Err(e) => {
-                warn!("[subconscious] config load failed: {e}");
+                warn!("[subconscious] chat provider init failed: {e}");
                 return (
                     tasks
                         .iter()
                         .map(|t| TaskEvaluation {
                             task_id: t.id.clone(),
                             decision: TickDecision::Noop,
-                            reason: format!("Evaluation failed: config load: {e}"),
+                            reason: format!("Evaluation failed: provider init: {e}"),
                         })
                         .collect(),
                     vec![],
                 );
             }
         };
-
-        // Build the cloud chat provider. The subconscious tick uses
-        // `ChatConsumer::Summarise` because the per-tick payload is
-        // closer in shape to a structured-summary call than a per-chunk
-        // entity extraction. No local fallback (per #623): if cloud is
-        // unreachable, return empty results so the tick is treated as a
-        // skip rather than a malformed advance.
-        let provider: Arc<dyn ChatProvider> =
-            match build_chat_provider(&config, ChatConsumer::Summarise) {
-                Ok(p) => p,
-                Err(e) => {
-                    warn!("[subconscious] cloud chat provider init failed: {e}");
-                    return (
-                        tasks
-                            .iter()
-                            .map(|t| TaskEvaluation {
-                                task_id: t.id.clone(),
-                                decision: TickDecision::Noop,
-                                reason: format!("Evaluation failed: provider init: {e}"),
-                            })
-                            .collect(),
-                        vec![],
-                    );
-                }
-            };
 
         let chat_prompt = ChatPrompt {
             system: prompt_text,
@@ -778,6 +786,91 @@ impl SubconsciousEngine {
             let _ = store::update_task_run_times(conn, &task.id, tick_at, Some(next));
         }
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum SubconsciousProviderRoute {
+    LocalOllama { endpoint_set: bool, model: String },
+    OpenHumanCloud,
+    Other(String),
+}
+
+pub(crate) fn subconscious_provider_unavailable_reason(config: &Config) -> Option<String> {
+    match resolve_subconscious_route(config) {
+        SubconsciousProviderRoute::LocalOllama {
+            endpoint_set: true, ..
+        } => None,
+        SubconsciousProviderRoute::LocalOllama {
+            endpoint_set: false,
+            ..
+        } => Some(
+            "Configure the Ollama summarizer endpoint for Subconscious in Settings > AI."
+                .to_string(),
+        ),
+        SubconsciousProviderRoute::OpenHumanCloud => {
+            if crate::openhuman::scheduler_gate::is_signed_out() {
+                return Some(
+                    "Sign in to use the OpenHuman cloud Subconscious provider.".to_string(),
+                );
+            }
+
+            let state_dir = config
+                .config_path
+                .parent()
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| config.workspace_dir.clone());
+            let auth = AuthService::new(&state_dir, config.secrets.encrypt);
+            match auth.get_provider_bearer_token(APP_SESSION_PROVIDER, None) {
+                Ok(Some(token)) if !token.trim().is_empty() => None,
+                Ok(_) => Some(
+                    "Sign in or configure a local Subconscious provider in Settings > AI."
+                        .to_string(),
+                ),
+                Err(e) => Some(format!("Unable to read the OpenHuman session: {e}")),
+            }
+        }
+        SubconsciousProviderRoute::Other(_) => None,
+    }
+}
+
+fn resolve_subconscious_route(config: &Config) -> SubconsciousProviderRoute {
+    if let Some(model) = config.workload_local_model("subconscious") {
+        let endpoint_set = config
+            .memory_tree
+            .llm_summariser_endpoint
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|s| !s.is_empty());
+        return SubconsciousProviderRoute::LocalOllama {
+            endpoint_set,
+            model,
+        };
+    }
+
+    let raw = config
+        .subconscious_provider
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("cloud");
+    let is_openhuman_cloud = raw.eq_ignore_ascii_case("cloud")
+        || raw.eq_ignore_ascii_case("openhuman")
+        || raw.to_ascii_lowercase().starts_with("openhuman:");
+    if is_openhuman_cloud {
+        SubconsciousProviderRoute::OpenHumanCloud
+    } else {
+        SubconsciousProviderRoute::Other(raw.to_string())
+    }
+}
+
+fn build_subconscious_chat_provider(config: &Config) -> Result<Arc<dyn ChatProvider>> {
+    let mut routed = config.clone();
+    routed.memory_provider = match resolve_subconscious_route(config) {
+        SubconsciousProviderRoute::LocalOllama { model, .. } => Some(format!("ollama:{model}")),
+        SubconsciousProviderRoute::OpenHumanCloud => Some("cloud".to_string()),
+        SubconsciousProviderRoute::Other(provider) => Some(provider),
+    };
+    build_chat_provider(&routed, ChatConsumer::Summarise)
 }
 
 /// Parse the per-tick LLM response into evaluations + reflection drafts.

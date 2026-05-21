@@ -34,6 +34,7 @@
 
 mod descriptions;
 pub(crate) mod helpers;
+mod scope_lookup;
 pub mod tool_scope;
 mod traits;
 mod types;
@@ -45,6 +46,7 @@ pub mod catalogs_google;
 pub mod catalogs_messaging;
 pub mod catalogs_productivity;
 pub mod catalogs_social_media;
+pub mod clickup;
 pub mod github;
 pub mod gmail;
 pub mod notion;
@@ -53,6 +55,85 @@ pub mod profile_md;
 pub mod registry;
 pub mod slack;
 pub mod sync_state;
+
+use crate::openhuman::composio::types::ComposioCapability;
+
+const CAPABILITY_TOOLKITS: &[&str] = &[
+    "gmail",
+    "notion",
+    "slack",
+    "clickup",
+    "github",
+    "discord",
+    "googlecalendar",
+    "googledrive",
+    "googledocs",
+    "googlesheets",
+    "outlook",
+    "microsoft_teams",
+    "linear",
+    "jira",
+    "trello",
+    "asana",
+    "dropbox",
+    "twitter",
+    "spotify",
+    "telegram",
+    "whatsapp",
+    "shopify",
+    "stripe",
+    "hubspot",
+    "salesforce",
+    "airtable",
+    "figma",
+    "youtube",
+];
+
+fn native_provider_sync_interval(toolkit: &str) -> Option<u64> {
+    match toolkit {
+        "gmail" => Some(gmail::GmailProvider::new().sync_interval_secs()),
+        "notion" => Some(notion::NotionProvider::new().sync_interval_secs()),
+        "slack" => Some(slack::SlackProvider::new().sync_interval_secs()),
+        "clickup" => Some(clickup::ClickUpProvider::new().sync_interval_secs()),
+        _ => None,
+    }
+    .flatten()
+}
+
+fn has_native_provider(toolkit: &str) -> bool {
+    matches!(toolkit, "gmail" | "notion" | "slack" | "clickup")
+}
+
+/// Static overview of the Composio integrations supported by this core build.
+///
+/// This deliberately does not consult the live Composio backend/direct tenant:
+/// it is an observability surface for OpenHuman's own capability tiers. Use
+/// `composio_list_toolkits` / `composio_list_connections` when callers need
+/// the currently signed-in user's allowlist or OAuth state.
+pub fn capability_matrix() -> Vec<ComposioCapability> {
+    CAPABILITY_TOOLKITS
+        .iter()
+        .map(|toolkit| {
+            let native_provider = has_native_provider(toolkit);
+            let catalog = catalog_for_toolkit(toolkit);
+            let sync_interval_secs = native_provider_sync_interval(toolkit);
+            ComposioCapability {
+                toolkit: (*toolkit).to_string(),
+                description: toolkit_description(toolkit).to_string(),
+                native_provider,
+                curated_tools: catalog.is_some(),
+                curated_tool_count: catalog.map_or(0, <[CuratedTool]>::len),
+                tool_execution: catalog.is_some(),
+                user_profile: native_provider,
+                initial_sync: native_provider,
+                periodic_sync: sync_interval_secs.is_some(),
+                sync_interval_secs,
+                trigger_webhooks: native_provider,
+                memory_ingest: native_provider,
+            }
+        })
+        .collect()
+}
 
 /// Static toolkit → curated catalog map.
 ///
@@ -114,6 +195,7 @@ pub fn catalog_for_toolkit(toolkit: &str) -> Option<&'static [CuratedTool]> {
         "jira" => Some(catalogs::JIRA_CURATED),
         "trello" => Some(catalogs::TRELLO_CURATED),
         "asana" => Some(catalogs::ASANA_CURATED),
+        "clickup" => Some(clickup::CLICKUP_CURATED),
         "dropbox" => Some(catalogs::DROPBOX_CURATED),
         "twitter" => Some(catalogs::TWITTER_CURATED),
         "spotify" => Some(catalogs::SPOTIFY_CURATED),
@@ -135,6 +217,7 @@ pub(crate) use helpers::pick_str;
 pub use registry::{
     all_providers, get_provider, init_default_providers, register_provider, ProviderArc,
 };
+pub use scope_lookup::{curated_scope_for, toolkit_has_scope};
 pub use tool_scope::{classify_unknown, find_curated, toolkit_from_slug, CuratedTool, ToolScope};
 pub use traits::ComposioProvider;
 pub use types::{ProviderContext, ProviderUserProfile, SyncOutcome, SyncReason};
@@ -204,6 +287,71 @@ mod tests {
         assert_eq!(s, "\"connection_created\"");
         let back: SyncReason = serde_json::from_str(&s).unwrap();
         assert_eq!(back, SyncReason::ConnectionCreated);
+    }
+
+    // Note: `toolkit_has_scope` tests now live in `scope_lookup.rs`
+    // alongside the implementation.
+
+    #[test]
+    fn capability_matrix_distinguishes_native_from_catalog_only_toolkits() {
+        let matrix = capability_matrix();
+
+        let gmail = matrix
+            .iter()
+            .find(|entry| entry.toolkit == "gmail")
+            .expect("gmail capability row");
+        assert!(gmail.native_provider);
+        assert!(gmail.curated_tools);
+        assert!(gmail.curated_tool_count > 0);
+        assert!(gmail.user_profile);
+        assert!(gmail.initial_sync);
+        assert!(gmail.periodic_sync);
+        assert_eq!(gmail.sync_interval_secs, Some(15 * 60));
+        assert!(gmail.trigger_webhooks);
+        assert!(gmail.memory_ingest);
+
+        let google_calendar = matrix
+            .iter()
+            .find(|entry| entry.toolkit == "googlecalendar")
+            .expect("googlecalendar capability row");
+        assert!(!google_calendar.native_provider);
+        assert!(google_calendar.curated_tools);
+        assert!(google_calendar.curated_tool_count > 0);
+        assert!(google_calendar.tool_execution);
+        assert!(!google_calendar.user_profile);
+        assert!(!google_calendar.initial_sync);
+        assert!(!google_calendar.periodic_sync);
+        assert_eq!(google_calendar.sync_interval_secs, None);
+        assert!(!google_calendar.memory_ingest);
+    }
+
+    #[test]
+    fn capability_matrix_includes_clickup_as_native_memory_provider() {
+        // Locks in the per-issue #2288 registration: a ClickUp row must
+        // appear in the capability matrix with the same native-provider
+        // flags Gmail/Notion/Slack already carry (`memory_ingest`,
+        // `periodic_sync`, non-zero `sync_interval_secs`). If a future
+        // change drops one of the four registration touchpoints
+        // (CAPABILITY_TOOLKITS, has_native_provider,
+        // native_provider_sync_interval, catalog_for_toolkit) this test
+        // fails loud rather than silently degrading the provider to
+        // catalog-only status.
+        let matrix = capability_matrix();
+        let clickup = matrix
+            .iter()
+            .find(|entry| entry.toolkit == "clickup")
+            .expect("clickup capability row");
+        assert!(clickup.native_provider, "clickup must be native");
+        assert!(clickup.curated_tools, "clickup must have a curated catalog");
+        assert!(
+            clickup.curated_tool_count > 0,
+            "clickup catalog must be non-empty"
+        );
+        assert!(clickup.user_profile);
+        assert!(clickup.initial_sync);
+        assert!(clickup.periodic_sync);
+        assert_eq!(clickup.sync_interval_secs, Some(30 * 60));
+        assert!(clickup.memory_ingest);
     }
 
     #[test]

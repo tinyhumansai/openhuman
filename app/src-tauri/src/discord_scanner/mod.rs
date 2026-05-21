@@ -10,30 +10,29 @@
 //!      `Network.webSocketCreated`, `Network.webSocketFrameSent` /
 //!      `Network.webSocketFrameReceived` event for that session
 //!   4. Filters to `discord.com/api/...` HTTP traffic and gateway WS frames,
-//!      forwards each match as a `webview:event` envelope (same shape the
-//!      WhatsApp / Slack scanners emit) with `provider: "discord"` and
-//!      `kind: "ingest"`
+//!      then turns gateway message events into per-channel transcript updates
+//!      that are emitted to the UI and written straight into core memory.
 //!
-//! V1 is observation-only: outbound HTTP request bodies (`request.postData`)
-//! and full WebSocket frames are captured directly off the CDP event stream
-//! with no follow-up calls. Inbound HTTP response bodies require a separate
-//! `Network.getResponseBody` round-trip per request and are skipped here —
-//! see TODO at `dispatch_event` for the upgrade path. Discord's gateway is
-//! the source of truth for live messages anyway, so V1 covers the live-feed
-//! use case without the extra round-trip cost.
+//! V1 parses live gateway events only. Outbound HTTP request bodies
+//! (`request.postData`) are observed for debugging, but transcript ingest is
+//! driven by `MESSAGE_CREATE` / `MESSAGE_UPDATE` frames from the gateway.
+//! Inbound HTTP response bodies still require a `Network.getResponseBody`
+//! round-trip and are left as a future backfill upgrade.
 //!
 //! NOTE: only built with the `cef` feature — wry has no remote-debugging
 //! port and never gets compiled in.
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
+use chrono::{DateTime, Utc};
 use futures_util::{SinkExt, StreamExt};
 use parking_lot::Mutex;
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Runtime};
 use tokio::sync::oneshot;
+use tokio::sync::watch;
 use tokio::task::AbortHandle;
 use tokio::time::sleep;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
@@ -45,6 +44,7 @@ use crate::cdp::{CDP_HOST, CDP_PORT};
 /// How long to wait between reconnect attempts when the CDP WebSocket drops
 /// or the page target disappears (e.g. Discord refresh, navigation).
 const RECONNECT_BACKOFF: Duration = Duration::from_secs(3);
+const MAX_CHANNEL_MESSAGES: usize = 400;
 
 /// CDP target descriptor (subset of `Target.TargetInfo`).
 #[derive(Debug, Clone)]
@@ -52,6 +52,230 @@ struct CdpTarget {
     id: String,
     kind: String,
     url: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct DiscordPersistMessage {
+    id: String,
+    author: String,
+    author_id: String,
+    body: String,
+    timestamp_ms: i64,
+    source_ref: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct DiscordChannelSnapshot {
+    channel_id: String,
+    channel_name: String,
+    guild_id: Option<String>,
+    messages: Vec<DiscordPersistMessage>,
+}
+
+#[derive(Default)]
+struct DiscordChannelState {
+    name: Option<String>,
+    guild_id: Option<String>,
+    messages: Vec<DiscordPersistMessage>,
+}
+
+#[derive(Default)]
+struct MemoryUpsertRegistry {
+    workers: Mutex<HashMap<String, watch::Sender<Value>>>,
+}
+
+#[derive(Default)]
+struct DiscordIngestState {
+    channels: HashMap<String, DiscordChannelState>,
+}
+
+static MEMORY_UPSERT_REGISTRY: OnceLock<MemoryUpsertRegistry> = OnceLock::new();
+
+impl DiscordIngestState {
+    fn apply_gateway_payload(&mut self, payload: &str) -> Vec<DiscordChannelSnapshot> {
+        let event: Value = match serde_json::from_str(payload) {
+            Ok(v) => v,
+            Err(_) => return Vec::new(),
+        };
+        if event.get("op").and_then(|v| v.as_i64()) != Some(0) {
+            return Vec::new();
+        }
+        let kind = event.get("t").and_then(|v| v.as_str()).unwrap_or("");
+        let data = event.get("d").cloned().unwrap_or(Value::Null);
+        match kind {
+            "READY" => {
+                if let Some(channels) = data.get("private_channels").and_then(|v| v.as_array()) {
+                    for channel in channels {
+                        self.apply_channel_meta(channel, None);
+                    }
+                }
+                Vec::new()
+            }
+            "GUILD_CREATE" => {
+                let guild_id = data
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .map(ToOwned::to_owned);
+                if let Some(channels) = data.get("channels").and_then(|v| v.as_array()) {
+                    for channel in channels {
+                        self.apply_channel_meta(channel, guild_id.clone());
+                    }
+                }
+                if let Some(threads) = data.get("threads").and_then(|v| v.as_array()) {
+                    for thread in threads {
+                        self.apply_channel_meta(thread, guild_id.clone());
+                    }
+                }
+                Vec::new()
+            }
+            "CHANNEL_CREATE" | "CHANNEL_UPDATE" | "THREAD_CREATE" | "THREAD_UPDATE" => {
+                let channel_id = data
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .map(ToOwned::to_owned);
+                self.apply_channel_meta(
+                    &data,
+                    data.get("guild_id")
+                        .and_then(|v| v.as_str())
+                        .map(ToOwned::to_owned),
+                );
+                channel_id
+                    .and_then(|id| self.snapshot_for_channel(&id))
+                    .into_iter()
+                    .collect()
+            }
+            "MESSAGE_CREATE" => self.apply_message_event(&data, false).into_iter().collect(),
+            "MESSAGE_UPDATE" => self.apply_message_event(&data, true).into_iter().collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    fn apply_channel_meta(&mut self, value: &Value, fallback_guild_id: Option<String>) {
+        let Some(channel_id) = value.get("id").and_then(|v| v.as_str()) else {
+            return;
+        };
+        let state = self.channels.entry(channel_id.to_string()).or_default();
+        if let Some(name) = channel_label(value) {
+            state.name = Some(name);
+        }
+        if state.guild_id.is_none() {
+            state.guild_id = value
+                .get("guild_id")
+                .and_then(|v| v.as_str())
+                .map(ToOwned::to_owned)
+                .or(fallback_guild_id);
+        }
+    }
+
+    fn apply_message_event(
+        &mut self,
+        value: &Value,
+        is_update: bool,
+    ) -> Option<DiscordChannelSnapshot> {
+        let channel_id = value
+            .get("channel_id")
+            .and_then(|v| v.as_str())?
+            .to_string();
+        let message_id = value.get("id").and_then(|v| v.as_str())?.to_string();
+        let body = discord_message_body(value);
+        let timestamp_ms = value
+            .get("timestamp")
+            .and_then(|v| v.as_str())
+            .and_then(parse_discord_timestamp_ms)
+            .unwrap_or_else(chrono_now_millis);
+        let guild_id = value
+            .get("guild_id")
+            .and_then(|v| v.as_str())
+            .map(ToOwned::to_owned);
+        let author_id = value
+            .get("author")
+            .and_then(|v| v.get("id"))
+            .and_then(|v| v.as_str())
+            .map(ToOwned::to_owned);
+        let author = discord_author_label(value);
+        let source_ref = discord_message_permalink(value, &channel_id, &message_id);
+
+        let state = self.channels.entry(channel_id.clone()).or_default();
+        if let Some(name) = channel_label(value) {
+            state.name = Some(name);
+        }
+        if state.guild_id.is_none() {
+            state.guild_id = guild_id;
+        }
+
+        if let Some(existing) = state.messages.iter_mut().find(|m| m.id == message_id) {
+            if discord_message_body_should_replace(value) {
+                if let Some(next_body) = body {
+                    existing.body = next_body;
+                }
+            } else if !is_update && body.is_none() {
+                return None;
+            } else if body.is_none() && discord_message_body_fields_present(value) {
+                log::warn!(
+                    "[discord][{}] message update omitted transcript body fields for id={}",
+                    channel_id,
+                    message_id
+                );
+            }
+            if let Some(next_author_id) = author_id {
+                existing.author_id = next_author_id;
+                if !author.is_empty() && author != "?" {
+                    existing.author = author;
+                }
+            }
+            if value.get("timestamp").is_some() {
+                existing.timestamp_ms = timestamp_ms;
+            }
+            existing.source_ref = source_ref;
+        } else {
+            let next = DiscordPersistMessage {
+                id: message_id.clone(),
+                author: if author.is_empty() {
+                    "?".to_string()
+                } else {
+                    author
+                },
+                author_id: author_id.unwrap_or_default(),
+                body: body?,
+                timestamp_ms,
+                source_ref,
+            };
+            state.messages.push(next);
+        }
+        state
+            .messages
+            .sort_by_key(|m| (m.timestamp_ms, m.id.clone()));
+        if state.messages.len() > MAX_CHANNEL_MESSAGES {
+            let drop_n = state.messages.len() - MAX_CHANNEL_MESSAGES;
+            state.messages.drain(0..drop_n);
+        }
+
+        Some(DiscordChannelSnapshot {
+            channel_id: channel_id.clone(),
+            channel_name: state
+                .name
+                .clone()
+                .unwrap_or_else(|| format!("channel-{channel_id}")),
+            guild_id: state.guild_id.clone(),
+            messages: state.messages.clone(),
+        })
+    }
+
+    fn snapshot_for_channel(&self, channel_id: &str) -> Option<DiscordChannelSnapshot> {
+        let state = self.channels.get(channel_id)?;
+        if state.messages.is_empty() {
+            return None;
+        }
+        Some(DiscordChannelSnapshot {
+            channel_id: channel_id.to_string(),
+            channel_name: state
+                .name
+                .clone()
+                .unwrap_or_else(|| format!("channel-{channel_id}")),
+            guild_id: state.guild_id.clone(),
+            messages: state.messages.clone(),
+        })
+    }
 }
 
 /// Spawn the per-account MITM task. Idempotent at call site — caller guards
@@ -305,6 +529,7 @@ impl CdpConn {
         session_id: &str,
     ) -> Result<(), String> {
         log::info!("[discord][{}] event pump started", account_id);
+        let mut ingest_state = DiscordIngestState::default();
         loop {
             // No timeout here — Discord's gateway sends heartbeats every
             // ~41s, but a fully idle channel can sit silent for minutes.
@@ -354,7 +579,7 @@ impl CdpConn {
                 continue;
             }
             let params = v.get("params").cloned().unwrap_or(Value::Null);
-            dispatch_event(app, account_id, method, &params);
+            dispatch_event(app, account_id, method, &params, &mut ingest_state);
         }
     }
 }
@@ -373,7 +598,13 @@ impl CdpConn {
 ///
 /// Everything else (image loads, css, telemetry pings, voice WS, ...) is
 /// dropped silently to keep noise out of the event stream.
-fn dispatch_event<R: Runtime>(app: &AppHandle<R>, account_id: &str, method: &str, params: &Value) {
+fn dispatch_event<R: Runtime>(
+    app: &AppHandle<R>,
+    account_id: &str,
+    method: &str,
+    params: &Value,
+    ingest_state: &mut DiscordIngestState,
+) {
     match method {
         "Network.requestWillBeSent" => {
             let url = params
@@ -408,19 +639,6 @@ fn dispatch_event<R: Runtime>(app: &AppHandle<R>, account_id: &str, method: &str
                 request_id,
                 post_data.as_ref().map(|s| s.len()).unwrap_or(0)
             );
-            emit(
-                app,
-                account_id,
-                "ingest",
-                json!({
-                    "provider": "discord",
-                    "source": "cdp-http-request",
-                    "request_id": request_id,
-                    "url": url,
-                    "method": req_method,
-                    "request_body": post_data,
-                }),
-            );
         }
         "Network.responseReceived" => {
             let url = params
@@ -452,24 +670,8 @@ fn dispatch_event<R: Runtime>(app: &AppHandle<R>, account_id: &str, method: &str
                 status,
                 mime
             );
-            // V1.5 TODO: schedule a `Network.getResponseBody` call here
-            // (via the pending-table machinery in CdpConn) to attach the
-            // response body. For now we emit meta so React can correlate
-            // with the requestWillBeSent event by request_id.
-            emit(
-                app,
-                account_id,
-                "ingest",
-                json!({
-                    "provider": "discord",
-                    "source": "cdp-http-response",
-                    "request_id": request_id,
-                    "url": url,
-                    "status": status,
-                    "mime_type": mime,
-                    "response_body": Value::Null,
-                }),
-            );
+            // TODO: fetch response bodies with `Network.getResponseBody` if
+            // we need backfill beyond what the live gateway stream gives us.
         }
         "Network.webSocketCreated" => {
             let url = params.get("url").and_then(|v| v.as_str()).unwrap_or("");
@@ -537,24 +739,11 @@ fn dispatch_event<R: Runtime>(app: &AppHandle<R>, account_id: &str, method: &str
                 payload.len(),
                 mask
             );
-            emit(
-                app,
-                account_id,
-                "ingest",
-                json!({
-                    "provider": "discord",
-                    "source": "cdp-ws",
-                    "request_id": request_id,
-                    "direction": direction,
-                    "opcode": opcode,
-                    // `payloadData` is text for opcode 1, base64 for opcode 2
-                    // (binary). Discord defaults to JSON over text frames; if
-                    // the user enables zlib/zstd compression we'll see
-                    // base64'd binary here and the consumer needs to decode.
-                    "payload_data": payload,
-                    "mask": mask,
-                }),
-            );
+            if direction == "received" && opcode == 1 {
+                for snapshot in ingest_state.apply_gateway_payload(&payload) {
+                    emit_channel_transcript(app, account_id, snapshot);
+                }
+            }
         }
         _ => {} // ignore everything else
     }
@@ -595,6 +784,419 @@ fn chrono_now_millis() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0)
+}
+
+fn parse_discord_timestamp_ms(raw: &str) -> Option<i64> {
+    DateTime::parse_from_rfc3339(raw)
+        .ok()
+        .map(|ts| ts.with_timezone(&Utc).timestamp_millis())
+}
+
+fn discord_author_label(value: &Value) -> String {
+    value
+        .get("member")
+        .and_then(|v| v.get("nick"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            value
+                .get("author")
+                .and_then(|v| v.get("global_name"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+        })
+        .or_else(|| {
+            value
+                .get("author")
+                .and_then(|v| v.get("username"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+        })
+        .or_else(|| {
+            value
+                .get("author")
+                .and_then(|v| v.get("id"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+        })
+        .unwrap_or("?")
+        .to_string()
+}
+
+fn discord_message_body(value: &Value) -> Option<String> {
+    let content = value
+        .get("content")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if !content.is_empty() {
+        return Some(content);
+    }
+
+    let attachment_names = value
+        .get("attachments")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|item| item.get("filename").and_then(|v| v.as_str()))
+                .filter(|name| !name.is_empty())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if !attachment_names.is_empty() {
+        return Some(format!("[attachments] {}", attachment_names.join(", ")));
+    }
+
+    let embed_titles = value
+        .get("embeds")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|item| {
+                    item.get("title")
+                        .and_then(|v| v.as_str())
+                        .or_else(|| item.get("description").and_then(|v| v.as_str()))
+                })
+                .filter(|text| !text.is_empty())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if !embed_titles.is_empty() {
+        return Some(format!("[embed] {}", embed_titles.join(" | ")));
+    }
+
+    None
+}
+
+fn discord_message_body_fields_present(value: &Value) -> bool {
+    value.get("content").is_some()
+        || value.get("attachments").is_some()
+        || value.get("embeds").is_some()
+}
+
+fn discord_message_body_should_replace(value: &Value) -> bool {
+    value.get("content").is_some() || value.get("attachments").is_some()
+}
+
+fn channel_label(value: &Value) -> Option<String> {
+    let direct = value
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim();
+    if !direct.is_empty() {
+        return Some(direct.to_string());
+    }
+    let recipients = value
+        .get("recipients")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|user| {
+                    user.get("global_name")
+                        .and_then(|v| v.as_str())
+                        .or_else(|| user.get("username").and_then(|v| v.as_str()))
+                })
+                .filter(|name| !name.is_empty())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if recipients.is_empty() {
+        None
+    } else {
+        Some(recipients.join(", "))
+    }
+}
+
+fn discord_message_permalink(value: &Value, channel_id: &str, message_id: &str) -> String {
+    let guild_or_me = value
+        .get("guild_id")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("@me");
+    format!("https://discord.com/channels/{guild_or_me}/{channel_id}/{message_id}")
+}
+
+fn discord_memory_payload(snapshot: &DiscordChannelSnapshot) -> Value {
+    let messages = snapshot
+        .messages
+        .iter()
+        .map(|message| {
+            json!({
+                "id": message.id,
+                "sender": message.author,
+                "sender_id": message.author_id,
+                "body": message.body,
+                "date": message.timestamp_ms.div_euclid(1000),
+                "source_ref": message.source_ref,
+            })
+        })
+        .collect::<Vec<_>>();
+    json!({
+        "provider": "discord",
+        "source": "cdp-gateway-chat",
+        "channelId": snapshot.channel_id,
+        "channelName": snapshot.channel_name,
+        "guildId": snapshot.guild_id,
+        "messages": messages,
+    })
+}
+
+fn seconds_to_ymd(secs: i64) -> String {
+    let days = secs.div_euclid(86_400);
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = (if mp < 10 { mp + 3 } else { mp - 9 }) as u32;
+    let y_real = (if m <= 2 { y + 1 } else { y }) as i32;
+    format!("{:04}-{:02}-{:02}", y_real, m, d)
+}
+
+async fn post_memory_doc_ingest(account_id: &str, ingest: &Value) -> Result<(), String> {
+    let channel_id = ingest
+        .get("channelId")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
+    let channel_name = ingest
+        .get("channelName")
+        .and_then(|v| v.as_str())
+        .unwrap_or(channel_id);
+    let guild_id = ingest
+        .get("guildId")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
+    let empty: Vec<Value> = Vec::new();
+    let messages = ingest
+        .get("messages")
+        .and_then(|v| v.as_array())
+        .unwrap_or(&empty);
+    if channel_id.is_empty() || messages.is_empty() {
+        return Ok(());
+    }
+
+    let mut sorted: Vec<&Value> = messages.iter().collect();
+    sorted.sort_by_key(|m| {
+        (
+            m.get("date").and_then(|v| v.as_i64()).unwrap_or(0),
+            m.get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+        )
+    });
+
+    let first_ts = sorted
+        .first()
+        .and_then(|m| m.get("date"))
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+    let last_ts = sorted
+        .last()
+        .and_then(|m| m.get("date"))
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+    let transcript = sorted
+        .iter()
+        .map(|m| {
+            let ts = m.get("date").and_then(|v| v.as_i64()).unwrap_or(0);
+            let stamp = if ts > 0 {
+                let day = seconds_to_ymd(ts);
+                let secs_of_day = ts.rem_euclid(86_400) as u32;
+                format!(
+                    "{} {:02}:{:02}Z",
+                    day,
+                    secs_of_day / 3600,
+                    (secs_of_day / 60) % 60
+                )
+            } else {
+                "?".to_string()
+            };
+            let who = m
+                .get("sender")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .unwrap_or("?");
+            let body = m
+                .get("body")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .replace(['\r', '\n'], " ");
+            format!("[{stamp}] {who}: {body}")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let first_day = if first_ts > 0 {
+        seconds_to_ymd(first_ts)
+    } else {
+        String::new()
+    };
+    let last_day = if last_ts > 0 {
+        seconds_to_ymd(last_ts)
+    } else {
+        String::new()
+    };
+    let header = format!(
+        "# Discord — {channel}\nchannel_id: {channel_id}\nguild_id: {guild_id}\naccount_id: {account_id}\nmessages: {count}\nrange: {first_day} → {last_day}\n\n",
+        channel = channel_name,
+        channel_id = channel_id,
+        guild_id = if guild_id.is_empty() { "@me" } else { guild_id },
+        account_id = account_id,
+        count = sorted.len(),
+        first_day = first_day,
+        last_day = last_day,
+    );
+    let doc_key = discord_channel_doc_key(guild_id, channel_id);
+    let params = json!({
+        "namespace": format!("discord-web:{account_id}"),
+        "key": doc_key,
+        "title": format!("Discord · {channel_name}"),
+        "content": format!("{header}{transcript}"),
+        "source_type": "discord-web",
+        "priority": "medium",
+        "tags": ["discord", "channel-transcript"],
+        "metadata": {
+            "provider": "discord",
+            "account_id": account_id,
+            "channel_id": channel_id,
+            "channel_name": channel_name,
+            "guild_id": guild_id,
+            "first_day": first_day,
+            "last_day": last_day,
+            "message_count": sorted.len(),
+        },
+        "category": "core",
+    });
+    let body = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "openhuman.memory_doc_ingest",
+        "params": params,
+    });
+    let url = crate::core_rpc::core_rpc_url_value();
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .build()
+        .map_err(|e| format!("http client: {e}"))?;
+    let req = crate::core_rpc::apply_auth(client.post(&url))
+        .map_err(|e| format!("prepare {url}: {e}"))?;
+    let resp = req
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("POST {url}: {e}"))?;
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("{status}: {body}"));
+    }
+    let v: Value = resp.json().await.map_err(|e| format!("decode: {e}"))?;
+    if let Some(err) = v.get("error") {
+        return Err(format!("rpc error: {err}"));
+    }
+    log::info!(
+        "[discord][{}] memory upsert ok channel={} key={} msgs={} range={}→{}",
+        account_id,
+        channel_id,
+        discord_channel_doc_key(guild_id, channel_id),
+        sorted.len(),
+        first_day,
+        last_day,
+    );
+    Ok(())
+}
+
+fn discord_channel_doc_key(guild_id: &str, channel_id: &str) -> String {
+    if guild_id.is_empty() {
+        format!("@me:{channel_id}")
+    } else {
+        format!("{guild_id}:{channel_id}")
+    }
+}
+
+fn queue_memory_doc_ingest(account_id: String, payload: Value) {
+    let worker_key = memory_worker_key(&account_id, &payload);
+    let registry = MEMORY_UPSERT_REGISTRY.get_or_init(MemoryUpsertRegistry::default);
+    let sender = {
+        let mut workers = registry.workers.lock();
+        if let Some(existing) = workers.get(&worker_key) {
+            existing.clone()
+        } else {
+            let (tx, mut rx) = watch::channel(payload.clone());
+            let worker_key_for_task = worker_key.clone();
+            let account_id_for_task = account_id.clone();
+            tokio::spawn(async move {
+                let mut first = true;
+                loop {
+                    if !first && rx.changed().await.is_err() {
+                        break;
+                    }
+                    first = false;
+                    let next_payload = rx.borrow().clone();
+                    if let Err(e) =
+                        post_memory_doc_ingest(&account_id_for_task, &next_payload).await
+                    {
+                        log::warn!(
+                            "[discord][{}] memory write failed worker={} err={}",
+                            account_id_for_task,
+                            worker_key_for_task,
+                            e
+                        );
+                    }
+                }
+            });
+            workers.insert(worker_key.clone(), tx.clone());
+            tx
+        }
+    };
+    if let Err(e) = sender.send(payload) {
+        log::warn!(
+            "[discord][{}] memory ingest queue send failed worker={} err={}",
+            account_id,
+            worker_key,
+            e
+        );
+    }
+}
+
+fn memory_worker_key(account_id: &str, payload: &Value) -> String {
+    let channel_id = payload
+        .get("channelId")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
+    let guild_id = payload
+        .get("guildId")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
+    format!(
+        "{account_id}:{}",
+        discord_channel_doc_key(guild_id, channel_id)
+    )
+}
+
+fn emit_channel_transcript<R: Runtime>(
+    app: &AppHandle<R>,
+    account_id: &str,
+    snapshot: DiscordChannelSnapshot,
+) {
+    let payload = discord_memory_payload(&snapshot);
+    let envelope = json!({
+        "account_id": account_id,
+        "provider": "discord",
+        "kind": "discord_memory_ingest",
+        "payload": payload.clone(),
+        "ts": chrono_now_millis(),
+    });
+    if let Err(e) = app.emit("webview:event", &envelope) {
+        log::warn!("[discord][{}] memory ingest emit failed: {}", account_id, e);
+    }
+    queue_memory_doc_ingest(account_id.to_string(), payload);
 }
 
 // ---------- DOM chat-list poll ----------------------------------------------
@@ -722,6 +1324,233 @@ impl ScannerRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gateway_guild_create_and_message_create_build_channel_snapshot() {
+        let mut state = DiscordIngestState::default();
+        state.apply_gateway_payload(
+            r#"{
+                "op":0,
+                "t":"GUILD_CREATE",
+                "d":{
+                    "id":"guild-1",
+                    "channels":[{"id":"chan-1","name":"general"}],
+                    "threads":[]
+                }
+            }"#,
+        );
+
+        let snapshots = state.apply_gateway_payload(
+            r#"{
+                "op":0,
+                "t":"MESSAGE_CREATE",
+                "d":{
+                    "id":"msg-1",
+                    "channel_id":"chan-1",
+                    "guild_id":"guild-1",
+                    "content":"hello discord",
+                    "timestamp":"2026-05-17T12:34:56.000Z",
+                    "author":{"id":"user-1","username":"alice","global_name":"Alice"},
+                    "member":{"nick":"Ali"}
+                }
+            }"#,
+        );
+
+        assert_eq!(snapshots.len(), 1);
+        let snapshot = &snapshots[0];
+        assert_eq!(snapshot.channel_id, "chan-1");
+        assert_eq!(snapshot.channel_name, "general");
+        assert_eq!(snapshot.guild_id.as_deref(), Some("guild-1"));
+        assert_eq!(snapshot.messages.len(), 1);
+        assert_eq!(snapshot.messages[0].author, "Ali");
+        assert_eq!(snapshot.messages[0].body, "hello discord");
+        assert_eq!(
+            snapshot.messages[0].source_ref,
+            "https://discord.com/channels/guild-1/chan-1/msg-1"
+        );
+    }
+
+    #[test]
+    fn channel_create_dm_recipients_become_channel_name() {
+        let mut state = DiscordIngestState::default();
+        let snapshots = state.apply_gateway_payload(
+            r#"{
+                "op":0,
+                "t":"CHANNEL_CREATE",
+                "d":{
+                    "id":"dm-1",
+                    "type":1,
+                    "recipients":[
+                        {"id":"u1","username":"alice"},
+                        {"id":"u2","global_name":"Bob Builder"}
+                    ]
+                }
+            }"#,
+        );
+
+        assert!(snapshots.is_empty());
+        let channel = state.channels.get("dm-1").expect("dm channel cached");
+        assert_eq!(channel.name.as_deref(), Some("alice, Bob Builder"));
+    }
+
+    #[test]
+    fn channel_update_emits_snapshot_when_messages_are_already_cached() {
+        let mut state = DiscordIngestState::default();
+        let _ = state.apply_gateway_payload(
+            r#"{
+                "op":0,
+                "t":"MESSAGE_CREATE",
+                "d":{
+                    "id":"msg-1",
+                    "channel_id":"chan-1",
+                    "guild_id":"guild-1",
+                    "content":"hello",
+                    "timestamp":"2026-05-17T12:34:56.000Z",
+                    "author":{"id":"user-1","username":"alice"}
+                }
+            }"#,
+        );
+
+        let snapshots = state.apply_gateway_payload(
+            r#"{
+                "op":0,
+                "t":"CHANNEL_UPDATE",
+                "d":{
+                    "id":"chan-1",
+                    "guild_id":"guild-1",
+                    "name":"renamed-general"
+                }
+            }"#,
+        );
+
+        assert_eq!(snapshots.len(), 1);
+        assert_eq!(snapshots[0].channel_name, "renamed-general");
+        assert_eq!(snapshots[0].messages.len(), 1);
+    }
+
+    #[test]
+    fn message_update_replaces_existing_message_body() {
+        let mut state = DiscordIngestState::default();
+        let _ = state.apply_gateway_payload(
+            r#"{
+                "op":0,
+                "t":"MESSAGE_CREATE",
+                "d":{
+                    "id":"msg-1",
+                    "channel_id":"chan-1",
+                    "content":"before",
+                    "timestamp":"2026-05-17T12:34:56.000Z",
+                    "author":{"id":"user-1","username":"alice"}
+                }
+            }"#,
+        );
+
+        let snapshots = state.apply_gateway_payload(
+            r#"{
+                "op":0,
+                "t":"MESSAGE_UPDATE",
+                "d":{
+                    "id":"msg-1",
+                    "channel_id":"chan-1",
+                    "content":"after",
+                    "timestamp":"2026-05-17T12:34:56.000Z",
+                    "author":{"id":"user-1","username":"alice"}
+                }
+            }"#,
+        );
+
+        assert_eq!(snapshots.len(), 1);
+        assert_eq!(snapshots[0].messages.len(), 1);
+        assert_eq!(snapshots[0].messages[0].body, "after");
+    }
+
+    #[test]
+    fn message_update_preserves_missing_fields_from_cached_message() {
+        let mut state = DiscordIngestState::default();
+        let _ = state.apply_gateway_payload(
+            r#"{
+                "op":0,
+                "t":"MESSAGE_CREATE",
+                "d":{
+                    "id":"msg-1",
+                    "channel_id":"chan-1",
+                    "guild_id":"guild-1",
+                    "content":"before",
+                    "timestamp":"2026-05-17T12:34:56.000Z",
+                    "author":{"id":"user-1","username":"alice"}
+                }
+            }"#,
+        );
+
+        let snapshots = state.apply_gateway_payload(
+            r#"{
+                "op":0,
+                "t":"MESSAGE_UPDATE",
+                "d":{
+                    "id":"msg-1",
+                    "channel_id":"chan-1",
+                    "guild_id":"guild-1",
+                    "edited_timestamp":"2026-05-17T12:35:56.000Z"
+                }
+            }"#,
+        );
+
+        assert_eq!(snapshots.len(), 1);
+        let message = &snapshots[0].messages[0];
+        assert_eq!(message.body, "before");
+        assert_eq!(message.author, "alice");
+        assert_eq!(message.author_id, "user-1");
+        assert_eq!(
+            message.timestamp_ms,
+            parse_discord_timestamp_ms("2026-05-17T12:34:56.000Z").unwrap()
+        );
+    }
+
+    #[test]
+    fn message_update_with_embed_only_keeps_existing_body_text() {
+        let mut state = DiscordIngestState::default();
+        let _ = state.apply_gateway_payload(
+            r#"{
+                "op":0,
+                "t":"MESSAGE_CREATE",
+                "d":{
+                    "id":"msg-1",
+                    "channel_id":"chan-1",
+                    "content":"before",
+                    "timestamp":"2026-05-17T12:34:56.000Z",
+                    "author":{"id":"user-1","username":"alice"}
+                }
+            }"#,
+        );
+
+        let snapshots = state.apply_gateway_payload(
+            r#"{
+                "op":0,
+                "t":"MESSAGE_UPDATE",
+                "d":{
+                    "id":"msg-1",
+                    "channel_id":"chan-1",
+                    "embeds":[{"title":"preview card"}]
+                }
+            }"#,
+        );
+
+        assert_eq!(snapshots.len(), 1);
+        assert_eq!(snapshots[0].messages[0].body, "before");
+    }
+
+    #[test]
+    fn discord_channel_doc_key_scopes_same_channel_name_by_guild() {
+        assert_eq!(
+            discord_channel_doc_key("guild-1", "chan-1"),
+            "guild-1:chan-1"
+        );
+        assert_eq!(
+            discord_channel_doc_key("guild-2", "chan-1"),
+            "guild-2:chan-1"
+        );
+        assert_eq!(discord_channel_doc_key("", "chan-1"), "@me:chan-1");
+    }
 
     fn insert_pending_tasks(
         registry: &ScannerRegistry,

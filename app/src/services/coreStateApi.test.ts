@@ -67,13 +67,21 @@ describe('coreStateApi.fetchCoreAppSnapshot', () => {
     mockCallCoreRpc.mockReset();
   });
 
-  it('calls the correct RPC method', async () => {
+  it('calls the correct RPC method with the slow-snapshot timeout override (#2156)', async () => {
     mockCallCoreRpc.mockResolvedValueOnce({ result: makeSnapshotResult() });
 
-    const { fetchCoreAppSnapshot } = await import('./coreStateApi');
+    const { fetchCoreAppSnapshot, SNAPSHOT_TIMEOUT_MS } = await import('./coreStateApi');
     await fetchCoreAppSnapshot();
 
-    expect(mockCallCoreRpc).toHaveBeenCalledWith({ method: 'openhuman.app_state_snapshot' });
+    // The first-launch snapshot legitimately runs past the global 30s default
+    // on slow M-series machines; verify the longer-but-still-bounded budget
+    // is threaded through to callCoreRpc instead of relying on the default.
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.app_state_snapshot',
+      timeoutMs: SNAPSHOT_TIMEOUT_MS,
+    });
+    expect(SNAPSHOT_TIMEOUT_MS).toBeGreaterThan(30_000);
+    expect(SNAPSHOT_TIMEOUT_MS).toBeLessThanOrEqual(10 * 60 * 1_000);
   });
 
   it('returns the inner result from the RPC envelope', async () => {

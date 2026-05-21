@@ -1,11 +1,12 @@
 import { useUsageState } from '../../hooks/useUsageState';
+import { useT } from '../../lib/i18n/I18nContext';
 import { BILLING_DASHBOARD_URL } from '../../utils/links';
 import { openUrl } from '../../utils/openUrl';
 import UpsellBanner from './UpsellBanner';
 
 export default function GlobalUpsellBanner() {
-  const { teamUsage, isLoading, isAtLimit, isNearLimit, isFreeTier, usagePct10h, usagePct7d } =
-    useUsageState();
+  const { t } = useT();
+  const { teamUsage, isLoading, isAtLimit, isNearLimit, isFreeTier, usagePct } = useUsageState();
 
   if (isLoading || !teamUsage) return null;
 
@@ -14,9 +15,9 @@ export default function GlobalUpsellBanner() {
       <div className="relative z-20">
         <UpsellBanner
           variant="upgrade"
-          title="You've reached your usage limit"
-          message="Upgrade your plan or top up credits to continue"
-          ctaLabel="Upgrade"
+          title={t('upsell.global.limitTitle')}
+          message={t('upsell.global.limitMessage')}
+          ctaLabel={t('chat.upgrade')}
           rounded={false}
           onCtaClick={() => {
             void openUrl(BILLING_DASHBOARD_URL);
@@ -27,14 +28,14 @@ export default function GlobalUpsellBanner() {
   }
 
   if (isNearLimit && isFreeTier) {
-    const pct = Math.round(Math.max(usagePct10h, usagePct7d) * 100);
+    const pct = Math.round(usagePct * 100);
     return (
       <div className="relative z-20">
         <UpsellBanner
           variant="warning"
-          title="Approaching usage limit"
-          message={`You've used ${pct}% of your usage limit. Upgrade for higher limits.`}
-          ctaLabel="Upgrade"
+          title={t('upsell.global.nearLimitTitle')}
+          message={t('upsell.global.nearLimitMessage').replace('{pct}', String(pct))}
+          ctaLabel={t('chat.upgrade')}
           rounded={false}
           onCtaClick={() => {
             void openUrl(BILLING_DASHBOARD_URL);

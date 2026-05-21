@@ -5,7 +5,7 @@ use std::path::Path;
 
 use super::ops_discover::{discover_skills_inner, is_workspace_trusted};
 use super::ops_types::{
-    Skill, SkillFrontmatter, SkillScope, MAX_DESCRIPTION_LEN, MAX_NAME_LEN, RESOURCE_DIRS, SKILL_MD,
+    Skill, SkillScope, MAX_DESCRIPTION_LEN, MAX_NAME_LEN, RESOURCE_DIRS, SKILL_MD,
 };
 
 /// Input for [`create_skill`]. Mirrors the `skills.create` JSON-RPC payload.

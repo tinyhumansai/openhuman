@@ -223,20 +223,22 @@ const RecoveryPhrasePanel = () => {
                 </svg>
               </div>
               <p className="text-sm font-medium text-sage-500">{t('mnemonic.phraseSaved')}</p>
-              <p className="text-xs text-stone-500">{t('mnemonic.walletReady')}</p>
+              <p className="text-xs text-stone-500 dark:text-neutral-400">
+                {t('mnemonic.walletReady')}
+              </p>
             </div>
           ) : (
             <>
               {mode === 'generate' ? (
                 <>
                   <div className="mb-4 space-y-3">
-                    <p className="text-sm text-stone-600 leading-relaxed">
+                    <p className="text-sm text-stone-600 dark:text-neutral-300 leading-relaxed">
                       {t('mnemonic.writeDownWords')} {MNEMONIC_GENERATE_WORD_COUNT}{' '}
                       {t('mnemonic.wordsInOrder')}
                     </p>
-                    <div className="flex items-start gap-2.5 p-3 rounded-xl bg-amber-50 border border-amber-200/70">
+                    <div className="flex items-start gap-2.5 p-3 rounded-xl bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30">
                       <svg
-                        className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5"
+                        className="w-4 h-4 text-amber-600 dark:text-amber-300 flex-shrink-0 mt-0.5"
                         fill="none"
                         viewBox="0 0 24 24"
                         stroke="currentColor"
@@ -247,19 +249,19 @@ const RecoveryPhrasePanel = () => {
                           d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"
                         />
                       </svg>
-                      <p className="text-xs text-amber-800 leading-relaxed">
+                      <p className="text-xs text-amber-800 dark:text-amber-200 leading-relaxed">
                         {t('mnemonic.cannotRecover')}
                       </p>
                     </div>
                   </div>
 
-                  <div className="bg-stone-50 rounded-2xl p-4 mb-4 border border-stone-200">
+                  <div className="bg-stone-50 dark:bg-neutral-800/60 rounded-2xl p-4 mb-4 border border-stone-200 dark:border-neutral-800">
                     <div className="grid grid-cols-3 gap-2">
                       {words.map((word, index) => (
                         <div
                           key={index}
-                          className="flex items-center gap-2 bg-white rounded-lg px-3 py-2 text-sm border border-stone-200">
-                          <span className="text-stone-500 font-mono text-xs w-5 text-right">
+                          className="flex items-center gap-2 bg-white dark:bg-neutral-900 rounded-lg px-3 py-2 text-sm border border-stone-200 dark:border-neutral-800">
+                          <span className="text-stone-500 dark:text-neutral-400 font-mono text-xs w-5 text-right">
                             {index + 1}.
                           </span>
                           <span className="font-mono font-medium">{word}</span>
@@ -270,7 +272,7 @@ const RecoveryPhrasePanel = () => {
 
                   <button
                     onClick={handleCopy}
-                    className="w-full flex items-center justify-center gap-2 border border-stone-200 hover:border-stone-300 font-medium py-2.5 text-sm rounded-xl text-stone-700 transition-all duration-200 mb-3">
+                    className="w-full flex items-center justify-center gap-2 border border-stone-200 dark:border-neutral-800 hover:border-stone-300 dark:border-neutral-700 dark:hover:border-neutral-700 font-medium py-2.5 text-sm rounded-xl text-stone-700 dark:text-neutral-200 transition-all duration-200 mb-3">
                     {copied ? (
                       <>
                         <svg
@@ -304,7 +306,7 @@ const RecoveryPhrasePanel = () => {
 
                   <button
                     onClick={() => switchMode('import')}
-                    className="w-full text-center text-sm text-primary-400 hover:text-primary-600 transition-colors mb-3">
+                    className="w-full text-center text-sm text-primary-400 hover:text-primary-600 dark:text-primary-300 transition-colors mb-3">
                     {t('mnemonic.alreadyHavePhrase')}
                   </button>
 
@@ -315,19 +317,23 @@ const RecoveryPhrasePanel = () => {
                       onChange={e => setConfirmed(e.target.checked)}
                       className="mt-0.5 w-4 h-4 rounded border-stone-500 text-primary-500 focus:ring-primary-500"
                     />
-                    <span className="text-sm text-stone-700">{t('mnemonic.consentSaved')}</span>
+                    <span className="text-sm text-stone-700 dark:text-neutral-200">
+                      {t('mnemonic.consentSaved')}
+                    </span>
                   </label>
                 </>
               ) : (
                 <>
                   <div className="mb-4">
-                    <p className="text-sm text-stone-600 leading-relaxed">
+                    <p className="text-sm text-stone-600 dark:text-neutral-300 leading-relaxed">
                       {t('mnemonic.enterPhraseToRestore')}
                     </p>
                   </div>
 
                   <div className="flex items-center gap-2 mb-3">
-                    <span className="text-xs text-stone-500">{t('mnemonic.words')}:</span>
+                    <span className="text-xs text-stone-500 dark:text-neutral-400">
+                      {t('mnemonic.words')}:
+                    </span>
                     {BIP39_IMPORT_LENGTHS.map(len => (
                       <button
                         key={len}
@@ -335,19 +341,19 @@ const RecoveryPhrasePanel = () => {
                         onClick={() => handleWordCountChange(len)}
                         className={`px-2.5 py-1 text-xs font-medium rounded-lg transition-colors ${
                           selectedWordCount === len
-                            ? 'bg-primary-500/20 border-primary-500/40 text-primary-600 border'
-                            : 'border border-stone-200 text-stone-500 hover:border-stone-300'
+                            ? 'bg-primary-500/20 border-primary-500/40 text-primary-600 dark:text-primary-300 border'
+                            : 'border border-stone-200 dark:border-neutral-800 text-stone-500 dark:text-neutral-400 hover:border-stone-300 dark:border-neutral-700'
                         }`}>
                         {len}
                       </button>
                     ))}
                   </div>
 
-                  <div className="bg-stone-50 rounded-2xl p-4 mb-4 border border-stone-200">
+                  <div className="bg-stone-50 dark:bg-neutral-800/60 rounded-2xl p-4 mb-4 border border-stone-200 dark:border-neutral-800">
                     <div className="grid grid-cols-3 gap-2">
                       {importWords.map((word, index) => (
                         <div key={index} className="flex items-center gap-1.5">
-                          <span className="text-stone-500 font-mono text-xs w-5 text-right shrink-0">
+                          <span className="text-stone-500 dark:text-neutral-400 font-mono text-xs w-5 text-right shrink-0">
                             {index + 1}.
                           </span>
                           <input
@@ -361,12 +367,12 @@ const RecoveryPhrasePanel = () => {
                             onKeyDown={e => handleImportKeyDown(index, e)}
                             autoComplete="off"
                             spellCheck={false}
-                            className={`w-full font-mono text-sm font-medium px-2 py-1.5 rounded-lg border bg-white text-stone-900 outline-none transition-colors ${
+                            className={`w-full font-mono text-sm font-medium px-2 py-1.5 rounded-lg border bg-white dark:bg-neutral-900 text-stone-900 dark:text-neutral-100 outline-none transition-colors ${
                               importValid === false && word.trim()
-                                ? 'border-coral-400 focus:border-coral-300'
+                                ? 'border-coral-400 focus:border-coral-300 dark:border-coral-500/40'
                                 : importValid === true
-                                  ? 'border-sage-400 focus:border-sage-300'
-                                  : 'border-stone-200 focus:border-primary-400'
+                                  ? 'border-sage-400 focus:border-sage-300 dark:border-sage-500/40'
+                                  : 'border-stone-200 dark:border-neutral-800 focus:border-primary-400'
                             }`}
                           />
                         </div>
@@ -390,7 +396,7 @@ const RecoveryPhrasePanel = () => {
 
                   <button
                     onClick={() => switchMode('generate')}
-                    className="w-full text-center text-sm text-primary-400 hover:text-primary-600 transition-colors mb-3">
+                    className="w-full text-center text-sm text-primary-400 hover:text-primary-600 dark:text-primary-300 transition-colors mb-3">
                     {t('mnemonic.generateNewPhrase')}
                   </button>
                 </>
@@ -399,7 +405,7 @@ const RecoveryPhrasePanel = () => {
               {error && (
                 <div
                   role="alert"
-                  className="flex items-start gap-2.5 p-3 mb-3 rounded-xl bg-coral-50 border border-coral-200/70">
+                  className="flex items-start gap-2.5 p-3 mb-3 rounded-xl bg-coral-50 dark:bg-coral-500/10 border border-coral-200 dark:border-coral-500/30">
                   <svg
                     className="w-4 h-4 text-coral-500 flex-shrink-0 mt-0.5"
                     fill="none"
@@ -412,7 +418,9 @@ const RecoveryPhrasePanel = () => {
                       d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"
                     />
                   </svg>
-                  <p className="text-xs text-coral-700 leading-relaxed">{error}</p>
+                  <p className="text-xs text-coral-700 dark:text-coral-300 leading-relaxed">
+                    {error}
+                  </p>
                 </div>
               )}
 

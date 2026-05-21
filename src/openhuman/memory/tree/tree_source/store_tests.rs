@@ -74,7 +74,7 @@ fn summary_insert_and_fetch() {
     let node = sample_summary("sum-1", "tree-1", 1);
     with_connection(&cfg, |conn| {
         let tx = conn.unchecked_transaction()?;
-        insert_summary_tx(&tx, &node, None)?;
+        insert_summary_tx(&tx, &node, None, "test")?;
         tx.commit()?;
         Ok(())
     })
@@ -93,13 +93,75 @@ fn summary_insert_is_idempotent_on_id() {
     let node = sample_summary("sum-1", "tree-1", 1);
     with_connection(&cfg, |conn| {
         let tx = conn.unchecked_transaction()?;
-        insert_summary_tx(&tx, &node, None)?;
-        insert_summary_tx(&tx, &node, None)?;
+        insert_summary_tx(&tx, &node, None, "test")?;
+        insert_summary_tx(&tx, &node, None, "test")?;
         tx.commit()?;
         Ok(())
     })
     .unwrap();
     assert_eq!(count_summaries(&cfg, "tree-1").unwrap(), 1);
+}
+
+#[test]
+fn summary_embeddings_are_scoped_by_model_signature() {
+    let (_tmp, cfg) = test_config();
+    insert_tree(&cfg, &sample_tree("tree-1", "slack:#eng")).unwrap();
+    let node = sample_summary("sum-embed", "tree-1", 1);
+    with_connection(&cfg, |conn| {
+        let tx = conn.unchecked_transaction()?;
+        insert_summary_tx(&tx, &node, None, "test")?;
+        tx.commit()?;
+        Ok(())
+    })
+    .unwrap();
+
+    set_summary_embedding_for_signature(
+        &cfg,
+        "sum-embed",
+        "openai/text-embedding-3-small@1536",
+        &[0.1, 0.2],
+    )
+    .unwrap();
+    set_summary_embedding_for_signature(&cfg, "sum-embed", "local/bge-small@384", &[0.3, 0.4, 0.5])
+        .unwrap();
+
+    assert_eq!(
+        get_summary_embedding_for_signature(
+            &cfg,
+            "sum-embed",
+            "openai/text-embedding-3-small@1536",
+        )
+        .unwrap(),
+        Some(vec![0.1, 0.2])
+    );
+    assert_eq!(
+        get_summary_embedding_for_signature(&cfg, "sum-embed", "local/bge-small@384").unwrap(),
+        Some(vec![0.3, 0.4, 0.5])
+    );
+    assert!(
+        get_summary_embedding_for_signature(&cfg, "sum-embed", "missing/model@1")
+            .unwrap()
+            .is_none()
+    );
+
+    // #1574 cutover: the public `get_summary_embedding` now reads the sidecar
+    // at the *active* signature (not the legacy column). Nothing is written
+    // there yet → absent; never a cross-space read of the rows above.
+    assert!(get_summary_embedding(&cfg, "sum-embed").unwrap().is_none());
+
+    // The public setter targets the active signature and round-trips through
+    // the public getter — proves the cutover wiring end to end.
+    set_summary_embedding(&cfg, "sum-embed", &[0.7, 0.8]).unwrap();
+    assert_eq!(
+        get_summary_embedding(&cfg, "sum-embed").unwrap(),
+        Some(vec![0.7, 0.8])
+    );
+
+    // ...and the earlier per-signature rows remain independently scoped.
+    assert_eq!(
+        get_summary_embedding_for_signature(&cfg, "sum-embed", "local/bge-small@384").unwrap(),
+        Some(vec![0.3, 0.4, 0.5])
+    );
 }
 
 #[test]

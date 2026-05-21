@@ -18,10 +18,19 @@ function snapshot(): void {
 
 export function startInternetStatusListener(): void {
   if (started) return;
-  started = true;
   if (typeof window === 'undefined') return;
+  started = true;
 
   snapshot();
   window.addEventListener('online', snapshot);
   window.addEventListener('offline', snapshot);
+}
+
+export function stopInternetStatusListener(): void {
+  if (!started) return;
+  if (typeof window !== 'undefined') {
+    window.removeEventListener('online', snapshot);
+    window.removeEventListener('offline', snapshot);
+  }
+  started = false;
 }

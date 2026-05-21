@@ -58,7 +58,7 @@ impl EventHandler for ChannelInboundSubscriber {
             crate::openhuman::channels::providers::web::subscribe_web_channel_events();
 
         let request_id = match crate::openhuman::channels::providers::web::start_chat(
-            &client_id, &thread_id, message, None, None, None,
+            &client_id, &thread_id, message, None, None, None, None,
         )
         .await
         {

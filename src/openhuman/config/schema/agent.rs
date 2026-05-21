@@ -197,8 +197,11 @@ pub struct AgentConfig {
     pub memory_window: Option<MemoryContextWindow>,
     /// Per-channel maximum permission level for tool execution.
     /// Keys are channel names (e.g., "telegram", "discord", "web", "cli").
-    /// Values are permission levels: "none", "readonly", "write", "execute", "dangerous".
-    /// Channels not listed default to "readonly".
+    /// Values are permission levels: "none", "readonly" (or "read_only"),
+    /// "write", "execute", "dangerous".
+    /// When this map is empty, the agent preserves the legacy unrestricted
+    /// channel surface. Once configured, channels not listed here default to
+    /// "readonly".
     #[serde(default)]
     pub channel_permissions: std::collections::HashMap<String, String>,
 

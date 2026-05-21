@@ -1010,6 +1010,12 @@ mod tests {
 
     #[test]
     fn quote_store_round_trips_and_expires() {
+        // Must hold TEST_LOCK before clobbering the process-wide quote store,
+        // otherwise this races the async execute_prepared_* tests that store
+        // a quote and then await — `reset_quote_store_for_tests()` here can
+        // wipe their quote between store + await, surfacing as
+        // "quote 'q_retry' not found" in CI (intermittent).
+        let _guard = TEST_LOCK.lock();
         reset_quote_store_for_tests();
         let now = now_ms();
         let mut q = PreparedTransaction {
@@ -1107,6 +1113,9 @@ mod tests {
     #[tokio::test]
     async fn prepare_transfer_rejects_unknown_asset_symbol() {
         let _guard = TEST_LOCK.lock();
+        let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         reset_quote_store_for_tests();
         let temp = TempDir::new().unwrap();
         setup_wallet(&temp).await.unwrap();
@@ -1137,6 +1146,9 @@ mod tests {
     #[tokio::test]
     async fn execute_prepared_broadcasts_native_evm_transaction() {
         let _guard = TEST_LOCK.lock();
+        let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         reset_quote_store_for_tests();
         let temp = TempDir::new().unwrap();
         setup_wallet(&temp).await.unwrap();
@@ -1173,6 +1185,9 @@ mod tests {
     #[tokio::test]
     async fn execute_prepared_broadcasts_erc20_transfer_using_default_token_catalog() {
         let _guard = TEST_LOCK.lock();
+        let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         reset_quote_store_for_tests();
         let temp = TempDir::new().unwrap();
         setup_wallet(&temp).await.unwrap();

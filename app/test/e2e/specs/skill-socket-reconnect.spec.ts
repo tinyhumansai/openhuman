@@ -32,8 +32,8 @@ describe('Socket reconnect skill sync smoke', () => {
       home = await waitForHomePage(15_000);
     }
 
-    const ok =
-      home || (await textExists('Message OpenHuman')) || (await textExists('Upgrade to Premium'));
+    // waitForHomePage already checks current Home.tsx text ('Ask your assistant anything' etc.)
+    const ok = home || (await textExists('Ask your assistant anything'));
     expect(ok).toBeTruthy();
   });
 });

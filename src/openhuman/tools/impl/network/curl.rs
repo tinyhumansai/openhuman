@@ -6,7 +6,7 @@
 //! `http_request.allowed_domains` so there is one allowlist to reason
 //! about.
 
-use super::url_guard::{normalize_allowed_domains, validate_url};
+use super::url_guard::{normalize_allowed_domains, validate_url_with_dns_check};
 use crate::openhuman::security::SecurityPolicy;
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
 use async_trait::async_trait;
@@ -85,8 +85,8 @@ impl CurlTool {
         Ok(resolved)
     }
 
-    fn validate_url(&self, raw_url: &str) -> anyhow::Result<String> {
-        validate_url(raw_url, &self.allowed_domains)
+    async fn validate_url(&self, raw_url: &str) -> anyhow::Result<String> {
+        validate_url_with_dns_check(raw_url, &self.allowed_domains).await
     }
 
     fn default_filename_from_url(url: &str) -> String {
@@ -170,7 +170,7 @@ impl Tool for CurlTool {
             return Ok(ToolResult::error("Action blocked: rate limit exceeded"));
         }
 
-        let url = match self.validate_url(url) {
+        let url = match self.validate_url(url).await {
             Ok(v) => v,
             Err(e) => {
                 tracing::debug!(target: "[curl]", url = %url, reason = %e, "url validation failed");
@@ -464,6 +464,18 @@ mod tests {
         let t = tool(&tmp, vec!["example.com"]);
         assert!(t.resolve_dest("").is_err());
         assert!(t.resolve_dest("   ").is_err());
+    }
+
+    #[tokio::test]
+    async fn validate_url_rejects_disallowed_domain() {
+        let tmp = TempDir::new().unwrap();
+        let t = tool(&tmp, vec!["example.com"]);
+        let err = t
+            .validate_url("https://evil.test/archive.tar.gz")
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("allowed_domains"));
     }
 
     #[test]

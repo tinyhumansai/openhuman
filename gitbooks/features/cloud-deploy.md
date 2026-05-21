@@ -1,5 +1,5 @@
 ---
-description: Hosting the headless openhuman-core in the cloud - DigitalOcean App Platform or Docker Compose on any VPS.
+description: Hosting the headless openhuman-core in the cloud - DigitalOcean App Platform, Fly.io, or Docker Compose on any VPS.
 icon: cloud
 ---
 
@@ -13,11 +13,12 @@ separately is useful for:
 - Internal testers without local Rust toolchains
 - Long-running cron jobs / webhooks that should outlive a laptop session
 
-This guide covers three deploy paths, easiest first:
+This guide covers four deploy paths, easiest first:
 
 1. [DigitalOcean App Platform: one-click](#1-digitalocean-app-platform-one-click)
 2. [DigitalOcean App Platform: manual via doctl](#2-digitalocean-app-platform-manual-via-doctl)
 3. [Any VPS via Docker Compose](#3-any-vps-via-docker-compose)
+4. [Fly.io](#4-flyio)
 
 What gets deployed in every path: a single container running
 `openhuman-core serve` on port `7788`. Public hosts should sit behind the
@@ -354,6 +355,232 @@ rejected by the app picker; use HTTPS for any publicly reachable core.
 
 ---
 
+## Named-volume ownership and the Docker entrypoint
+
+Docker creates named volumes owned `root:root` by default. Because the core
+runs as the non-root `openhuman` user (UID 10001), the first write after the
+banner — `init_rpc_token → write_token_file` into `$OPENHUMAN_WORKSPACE` —
+would raise `Permission denied (os error 13)` if nothing fixes the ownership
+first.
+
+The image ships a dedicated entrypoint at
+`/usr/local/bin/docker-entrypoint-core.sh` that:
+
+1. Starts as `root`.
+2. Runs `mkdir -p` + `chown openhuman:openhuman` on both `$OPENHUMAN_WORKSPACE`
+   and `$HOME/.openhuman` (the directory `core.token` is written to when
+   `OPENHUMAN_CORE_TOKEN` is unset).
+3. Calls `exec gosu openhuman openhuman-core "$@"` to drop privileges and
+   hand off to the binary.
+
+This is **idempotent**: on a freshly-created volume the chown heals the
+root-owned directory; on a volume that was already healed the chown is a
+no-op. No manual `docker volume rm` is required when upgrading from images
+predating this fix.
+
+The entrypoint is named `docker-entrypoint-core.sh` and wired **only** into
+the root `Dockerfile`. The E2E image (`e2e/docker-entrypoint.sh`) is
+unaffected.
+
+---
+
+## 4. Fly.io
+
+[Fly.io](https://fly.io) is a good fit for `openhuman-core`: it handles TLS
+automatically, supports persistent volumes on all tiers, and can auto-stop
+idle machines to cut costs.
+
+### Prerequisites
+
+- [flyctl](https://fly.io/docs/flyctl/install/) installed and authenticated (`fly auth login`)
+- A Fly.io account
+
+### Step 1 — Launch the app
+
+```bash
+fly launch --no-deploy --config .fly/fly.toml
+```
+
+Fly.io detects the `Dockerfile` automatically. Choose a region close to your
+users and skip the first deploy when prompted. This generates a config file.
+
+### Step 2 — Configure `.fly/fly.toml`
+
+The repo ships a template at [`.fly/fly.toml`](../../.fly/fly.toml). Fill in
+`<your-app-name>` and `<your-region>` with the values you chose during
+`fly launch`:
+
+```toml
+app = '<your-app-name>'
+primary_region = '<your-region>'
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  OPENHUMAN_CORE_HOST = "0.0.0.0"
+  OPENHUMAN_CORE_PORT = "7788"
+  OPENHUMAN_WORKSPACE = "/home/openhuman/.openhuman"
+  RUST_LOG = "info"
+
+[[mounts]]
+  source = "openhuman_workspace"
+  destination = "/home/openhuman/.openhuman"
+
+[http_service]
+  internal_port = 7788
+  force_https = true
+  auto_stop_machines = 'stop'
+  auto_start_machines = true
+  # min_machines_running = 0 fully stops the machine when idle (cheapest), but
+  # the first request after idle pays a cold-start penalty (container boot +
+  # Rust binary init — several seconds). Set to 1 to keep one machine warm.
+  min_machines_running = 0
+  processes = ['app']
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "10s"
+    method = "GET"
+    path = "/health"
+
+[[vm]]
+  memory = '1gb'
+  cpus = 1
+```
+
+### Step 3 — Create a persistent volume
+
+```bash
+fly volumes create openhuman_workspace --size 5 --region <your-region> --config .fly/fly.toml
+```
+
+**Mount the workspace on a persistent volume** or data is lost on every
+redeploy.
+
+### Step 4 — Set secrets
+
+```bash
+# Required
+fly secrets set OPENHUMAN_CORE_TOKEN="$(openssl rand -hex 32)"
+fly secrets set BACKEND_URL="https://api.tinyhumans.ai"
+fly secrets set OPENHUMAN_APP_ENV="production"
+
+# Recommended for any publicly-reachable deployment:
+fly secrets set OPENHUMAN_AUTO_UPDATE_RPC_MUTATIONS_ENABLED="false"
+fly secrets set OPENHUMAN_AUTO_UPDATE_RESTART_STRATEGY="supervisor"
+
+# Optional — error reporting and analytics:
+fly secrets set OPENHUMAN_CORE_SENTRY_DSN="https://<key>@o<org>.ingest.sentry.io/<project>"
+fly secrets set OPENHUMAN_ANALYTICS_ENABLED="true"
+```
+
+Save the value of `OPENHUMAN_CORE_TOKEN` — you will need it to connect the
+desktop app later. **Anyone with this token can drive the core**; treat it
+like a password and rotate it with `fly secrets set OPENHUMAN_CORE_TOKEN="$(openssl rand -hex 32)"`
+after any suspected leak.
+
+### Step 5 — Deploy
+
+```bash
+fly deploy --config .fly/fly.toml
+```
+
+Verify the core is healthy:
+
+```bash
+curl -fsS https://<your-app-name>.fly.dev/health
+```
+
+### Step 6 — Point the desktop app at the hosted core
+
+In `app/.env.local`:
+
+```bash
+OPENHUMAN_CORE_RUN_MODE=external
+OPENHUMAN_CORE_RPC_URL=https://<your-app-name>.fly.dev/rpc
+OPENHUMAN_CORE_TOKEN=<the token you set in Step 4>
+```
+
+Or use the **first-run picker** in the desktop app (Core RPC URL + token
+fields with a **Test connection** button) to configure without editing files.
+
+### Continuous deployment
+
+To redeploy automatically on every push to `main`, add a workflow file at
+`.github/workflows/fly-deploy.yml`:
+
+```yaml
+name: Fly Deploy
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'Dockerfile'
+      - '.fly/fly.toml'
+      - 'scripts/docker-entrypoint-core.sh'
+jobs:
+  deploy:
+    name: Deploy openhuman-core
+    runs-on: ubuntu-latest
+    concurrency: deploy-group
+    steps:
+      - uses: actions/checkout@v4
+      # Pin the Fly action to a tagged release (or a full commit SHA) rather
+      # than `@master` — tracking a moving branch trusts every future commit
+      # pushed there, including any made by a compromised maintainer account.
+      - uses: superfly/flyctl-actions/setup-flyctl@1.5
+      - run: flyctl deploy --remote-only --config .fly/fly.toml
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+```
+
+Generate a deploy token with `fly tokens create deploy` and add it as a
+repository secret named `FLY_API_TOKEN`.
+
+### Updating
+
+```bash
+fly deploy --config .fly/fly.toml
+```
+
+For version-pinned deployments, update the image tag in `.fly/fly.toml` and
+redeploy:
+
+```toml
+[build]
+  image = "ghcr.io/tinyhumansai/openhuman-core:v1.2.4"
+```
+
+### Logs
+
+```bash
+fly logs --config .fly/fly.toml
+```
+
+### Known gotcha — UID mismatch on volumes
+
+If you switch between building from `Dockerfile` (which creates the
+`openhuman` user at UID 10001) and pulling the pre-built GHCR image (which
+uses UID 1000), files already written to the persistent volume will be owned
+by the old UID and produce `Permission denied (os error 13)` on startup.
+
+Fix by SSH-ing in and re-owning the workspace:
+
+```bash
+fly ssh console --config .fly/fly.toml
+chown -R openhuman:openhuman /home/openhuman/.openhuman/
+exit
+fly machine restart --config .fly/fly.toml
+```
+
+---
+
 ## Smoke test
 
 The repo ships [`.github/workflows/deploy-smoke.yml`](../../.github/workflows/deploy-smoke.yml),
@@ -361,14 +588,34 @@ which runs on every PR that touches the deploy artifacts. It builds the
 Docker image, boots it, and polls `/health`, so a regression in the cloud
 deploy path fails CI before it lands on `main`.
 
+The workflow contains two jobs:
+
+- **`docker-image`** — sets `OPENHUMAN_CORE_TOKEN` and mounts no volume.
+  Protects the DigitalOcean App Platform path (`.do/app.yaml`) where the
+  token is always pre-set and no persistent volume is used.
+- **`docker-volume-permissions`** — omits `OPENHUMAN_CORE_TOKEN` and mounts
+  a fresh anonymous volume at `/home/openhuman/.openhuman`. Reproduces the
+  exact failure mode of issue #2065 and asserts that `/health` returns 200
+  and that `Permission denied (os error 13)` is absent from the logs.
+
 To run the same check locally:
 
 ```bash
 docker build -t openhuman-core:smoke .
+
+# Token-set path (App Platform):
 docker run -d --name oh-smoke -p 7788:7788 \
   -e OPENHUMAN_CORE_TOKEN=smoke-test-token \
   openhuman-core:smoke
-# Wait ~15s for the binary to come up, then:
 curl -fsS http://localhost:7788/health
 docker rm -f oh-smoke
+
+# Fresh-volume / no-token path (Docker Compose, VPS):
+docker volume create oh-vol-test
+docker run -d --name oh-vol-smoke -p 7789:7788 \
+  -v oh-vol-test:/home/openhuman/.openhuman \
+  openhuman-core:smoke
+curl -fsS http://localhost:7789/health
+docker rm -f oh-vol-smoke
+docker volume rm oh-vol-test
 ```

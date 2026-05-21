@@ -69,8 +69,8 @@ describe('WhatsApp account integration smoke', () => {
 
   it('shows WhatsApp Web as an addable provider in the Add Account modal', async () => {
     stepLog('navigating to /accounts');
-    await navigateViaHash('/accounts');
-    await waitForText('Add app', 15_000);
+    await navigateViaHash('/chat');
+    await waitForText('Add Account', 15_000);
 
     stepLog('opening Add Account modal');
     await openAddAccountModal();
@@ -86,8 +86,8 @@ describe('WhatsApp account integration smoke', () => {
   it('selecting WhatsApp Web closes the modal and registers an account on the rail', async () => {
     // Set up route + modal independently so this case is runnable in isolation.
     stepLog('navigating to /accounts (independent setup)');
-    await navigateViaHash('/accounts');
-    await waitForText('Add app', 15_000);
+    await navigateViaHash('/chat');
+    await waitForText('Add Account', 15_000);
     await openAddAccountModal();
     await waitForText('WhatsApp Web', 10_000);
 

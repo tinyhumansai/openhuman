@@ -24,16 +24,15 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
-    color: #171717;
+    color: var(--color-text-primary);
   }
 
   body {
-    @apply text-stone-900;
     @apply font-sans;
     line-height: 1.6;
 
-    background: #f5f5f5;
-    color: #171717;
+    background: var(--color-background);
+    color: var(--color-text-primary);
     position: absolute;
     top: 0;
     left: 0;
@@ -178,6 +177,14 @@
     background-position: 0 0;
   }
 
+  :root.dark .app-dotted-canvas {
+    background-image: radial-gradient(
+      circle at center,
+      rgba(255, 255, 255, 0.08) 1px,
+      transparent 1px
+    );
+  }
+
   /* Input components with consistent styling */
   .input-primary {
     @apply w-full px-4 py-3 rounded-lg;
@@ -245,6 +252,64 @@
   .price-neutral {
     @apply text-market-neutral font-mono font-medium;
   }
+
+  /* ============================================
+     Dark-mode overrides for @apply'd component classes
+     ============================================ */
+  :root.dark .card,
+  :root.dark .card-hover {
+    background-color: theme('colors.neutral.900');
+    border-color: theme('colors.neutral.800');
+    color: theme('colors.neutral.100');
+  }
+
+  :root.dark .input-primary {
+    background-color: theme('colors.neutral.900');
+    border-color: theme('colors.neutral.700');
+    color: theme('colors.neutral.100');
+  }
+
+  :root.dark .input-primary::placeholder {
+    color: theme('colors.neutral.500');
+  }
+
+  :root.dark .status-online {
+    background-color: rgba(52, 199, 89, 0.15);
+    color: theme('colors.sage.300');
+  }
+
+  :root.dark .status-offline {
+    background-color: theme('colors.neutral.800');
+    color: theme('colors.neutral.300');
+  }
+
+  :root.dark .status-warning {
+    background-color: rgba(232, 167, 40, 0.15);
+    color: theme('colors.amber.300');
+  }
+
+  :root.dark .nav-item {
+    color: theme('colors.neutral.400');
+  }
+
+  :root.dark .nav-item:hover {
+    color: theme('colors.neutral.100');
+    background-color: theme('colors.neutral.800');
+  }
+
+  :root.dark .nav-item-active {
+    background-color: theme('colors.neutral.800');
+    color: theme('colors.neutral.100');
+  }
+
+  :root.dark .message-received {
+    background-color: theme('colors.neutral.800');
+    color: theme('colors.neutral.100');
+  }
+
+  :root.dark .loading-pulse {
+    background-color: theme('colors.neutral.800');
+  }
 }
 
 /* Utility layer - Custom utilities */
@@ -292,6 +357,12 @@
     background: rgba(255, 255, 255, 0.8);
     border: 1px solid rgba(0, 0, 0, 0.06);
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  }
+
+  :root.dark .glass {
+    background: rgba(23, 23, 23, 0.7);
+    border-color: rgba(255, 255, 255, 0.08);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
   }
 
   /* Animation utilities */
@@ -370,6 +441,10 @@
     backdrop-filter: blur(8px);
   }
 
+  :root.dark .skills-table-header {
+    background: rgba(23, 23, 23, 0.9);
+  }
+
   /* Gradient fade overlay at bottom */
   .skills-table-container::after {
     content: '';
@@ -381,6 +456,10 @@
     background: linear-gradient(to bottom, transparent, rgba(245, 245, 245, 0.9));
     pointer-events: none;
     z-index: 10;
+  }
+
+  :root.dark .skills-table-container::after {
+    background: linear-gradient(to bottom, transparent, rgba(10, 10, 10, 0.9));
   }
 
   /* Hover overlay */

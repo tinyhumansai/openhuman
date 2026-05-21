@@ -46,10 +46,11 @@ describe('Skill execution (UI + core RPC)', () => {
   });
 
   it('lands the user on a logged-in shell', async () => {
+    // Home.tsx renders t('home.askAssistant') as the stable CTA button.
+    // 'Good morning' / 'Message OpenHuman' / 'Upgrade to Premium' are no longer rendered.
     const atHome =
-      (await textExists('Message OpenHuman')) ||
-      (await textExists('Good morning')) ||
-      (await textExists('Upgrade to Premium'));
+      (await textExists('Ask your assistant anything')) ||
+      (await textExists('Your device is connected'));
     expect(atHome).toBe(true);
   });
 
@@ -58,7 +59,17 @@ describe('Skill execution (UI + core RPC)', () => {
     expect(ping.ok).toBe(true);
   });
 
-  it('runs start → list_tools → call_tool → stop for the seeded echo skill', async () => {
+  // RC-7 PRODUCT GAP: The QuickJS/rquickjs skill execution runtime was removed
+  // (see CLAUDE.md — "Skills runtime removed"). The six RPC methods below no
+  // longer exist in the Rust registry:
+  //   openhuman.skills_start / skills_list_tools / skills_call_tool /
+  //   skills_stop / skills_set_setup_complete / skills_status
+  //
+  // Calling them returns a JSON-RPC "method not found" error, so these tests
+  // always fail rather than verifying any real behaviour. They are skipped
+  // here so the suite doesn't silently misreport status. Restore + un-skip
+  // when a replacement skill-execution runtime is shipped.
+  it.skip('(RC-7 — skills runtime removed) start → list_tools → call_tool → stop', async () => {
     const start = await callOpenhumanRpc('openhuman.skills_start', {
       skill_id: E2E_RUNTIME_SKILL_ID,
     });
@@ -99,7 +110,7 @@ describe('Skill execution (UI + core RPC)', () => {
     expect(stop.result?.success === true).toBe(true);
   });
 
-  it('persists setup_complete via skills_set_setup_complete (OAuth path)', async () => {
+  it.skip('(RC-7 — skills runtime removed) setup_complete via skills_set_setup_complete', async () => {
     try {
       const set = await callOpenhumanRpc('openhuman.skills_set_setup_complete', {
         skill_id: E2E_RUNTIME_SKILL_ID,

@@ -14,6 +14,7 @@
 //     BackendProviderPanel / LocalModelPanel / VoicePanel.
 import { useEffect, useRef, useState } from 'react';
 
+import { useT } from '../../../lib/i18n/I18nContext';
 import {
   type ComposioModeStatus,
   openhumanComposioClearApiKey,
@@ -32,6 +33,7 @@ interface ComposioPanelProps {
 }
 
 const ComposioPanel = ({ embedded = false }: ComposioPanelProps = {}) => {
+  const { t } = useT();
   const { navigateBack, breadcrumbs } = useSettingsNavigation();
 
   const [mode, setMode] = useState<Mode>('backend');
@@ -202,7 +204,9 @@ const ComposioPanel = ({ embedded = false }: ComposioPanelProps = {}) => {
           />
         )}
         <div className={embedded ? '' : 'p-4'}>
-          <p className="text-sm text-stone-500">Loading…</p>
+          <p className="text-sm text-stone-500 dark:text-neutral-400">
+            {t('settings.composio.loading')}
+          </p>
         </div>
       </div>
     );
@@ -220,57 +224,56 @@ const ComposioPanel = ({ embedded = false }: ComposioPanelProps = {}) => {
       )}
 
       <div className={embedded ? 'space-y-5' : 'p-4 space-y-5'}>
-        <p className="text-sm text-stone-500">
-          Composio powers integrations with Gmail, Notion, Slack, GitHub, and 1000+ other apps. By
-          default OpenHuman manages it for you, so you don&apos;t need to bring an API key. If you
-          prefer to use your own Composio account directly, switch to{' '}
-          <span className="font-medium">Direct</span> mode and paste your key below.
+        <p className="text-sm text-stone-500 dark:text-neutral-400">
+          {t('settings.composio.intro')}
         </p>
 
         {/* Mode toggle */}
-        <div className="rounded-2xl border border-stone-200 bg-stone-50/60 p-4 space-y-3">
+        <div className="rounded-2xl border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 p-4 space-y-3">
           <fieldset>
-            <legend className="text-sm font-medium text-stone-900 mb-2">Routing mode</legend>
+            <legend className="text-sm font-medium text-stone-900 dark:text-neutral-100 mb-2">
+              {t('settings.composio.routingMode')}
+            </legend>
             <div className="space-y-2">
-              <label className="flex items-start gap-3 cursor-pointer">
+              <label
+                className="flex items-start gap-3 cursor-pointer"
+                onClick={() => setMode('backend')}>
                 <input
                   type="radio"
                   name="composio-mode"
                   value="backend"
                   checked={mode === 'backend'}
                   onChange={() => setMode('backend')}
-                  aria-label="Managed (OpenHuman handles it for you)"
+                  aria-label={t('settings.composio.modeManaged')}
                   className="mt-1"
                 />
                 <div className="text-left">
-                  <span className="text-sm font-medium text-stone-900">
-                    Managed (OpenHuman handles it for you)
+                  <span className="text-sm font-medium text-stone-900 dark:text-neutral-100">
+                    {t('settings.composio.modeManaged')}
                   </span>
-                  <p className="text-xs text-stone-500 mt-0.5">
-                    Default. OpenHuman manages the Composio connection for you. Trigger webhooks
-                    (real-time Gmail / Slack events) work out of the box.
+                  <p className="text-xs text-stone-500 dark:text-neutral-400 mt-0.5">
+                    {t('settings.composio.modeManagedDesc')}
                   </p>
                 </div>
               </label>
-              <label className="flex items-start gap-3 cursor-pointer">
+              <label
+                className="flex items-start gap-3 cursor-pointer"
+                onClick={() => setMode('direct')}>
                 <input
                   type="radio"
                   name="composio-mode"
                   value="direct"
                   checked={mode === 'direct'}
                   onChange={() => setMode('direct')}
-                  aria-label="Direct (bring your own API key)"
+                  aria-label={t('settings.composio.modeDirect')}
                   className="mt-1"
                 />
                 <div className="text-left">
-                  <span className="text-sm font-medium text-stone-900">
-                    Direct (bring your own API key)
+                  <span className="text-sm font-medium text-stone-900 dark:text-neutral-100">
+                    {t('settings.composio.modeDirect')}
                   </span>
-                  <p className="text-xs text-stone-500 mt-0.5">
-                    Calls go to <span className="font-mono">backend.composio.dev</span> directly.
-                    Sovereign / offline-friendly. Tool execution works synchronously; real-time
-                    trigger webhooks are <span className="font-medium">not yet routed</span> in
-                    direct mode (follow-up issue).
+                  <p className="text-xs text-stone-500 dark:text-neutral-400 mt-0.5">
+                    {t('settings.composio.modeDirectDesc')}
                   </p>
                 </div>
               </label>
@@ -281,12 +284,13 @@ const ComposioPanel = ({ embedded = false }: ComposioPanelProps = {}) => {
         {/* API key field — only when Direct is selected */}
         {mode === 'direct' && (
           <div className="space-y-2">
-            <label className="block text-sm font-medium text-stone-800" htmlFor="composio-api-key">
-              Composio API key
+            <label
+              className="block text-sm font-medium text-stone-800 dark:text-neutral-100"
+              htmlFor="composio-api-key">
+              {t('settings.composio.apiKeyLabel')}
             </label>
-            <p className="text-xs text-stone-500">
-              Find your key at <span className="font-mono">app.composio.dev/api-keys</span>. The key
-              is stored encrypted on this device and is never sent to OpenHuman.
+            <p className="text-xs text-stone-500 dark:text-neutral-400">
+              {t('settings.composio.apiKeyDesc')}
             </p>
             <input
               id="composio-api-key"
@@ -296,14 +300,14 @@ const ComposioPanel = ({ embedded = false }: ComposioPanelProps = {}) => {
               onChange={e => setApiKey(e.target.value)}
               placeholder={
                 apiKeyStored
-                  ? '••••••••••••  (key stored — paste a new key to replace)'
+                  ? t('settings.composio.apiKeyStoredPlaceholder')
                   : 'ck_live_xxxxxxxxxxxxxxxx'
               }
-              className="w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm font-mono text-stone-900 placeholder-stone-400 focus:border-primary-400 focus:outline-none focus:ring-1 focus:ring-primary-400"
+              className="w-full rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 text-sm font-mono text-stone-900 dark:text-neutral-100 placeholder-stone-400 dark:placeholder-neutral-500 focus:border-primary-400 focus:outline-none focus:ring-1 focus:ring-primary-400"
             />
             {apiKeyStored && (
-              <p className="text-xs text-green-600">
-                A Composio API key is currently stored on this device.
+              <p className="text-xs text-green-600 dark:text-green-300">
+                {t('settings.composio.apiKeyStored')}
               </p>
             )}
           </div>
@@ -319,26 +323,17 @@ const ComposioPanel = ({ embedded = false }: ComposioPanelProps = {}) => {
           <div
             role="alertdialog"
             aria-labelledby="composio-confirm-title"
-            className="rounded-2xl border border-amber-200 bg-amber-50/80 p-4 space-y-3">
+            className="rounded-2xl border border-amber-200 dark:border-amber-500/30 bg-amber-50/80 p-4 space-y-3">
             <p id="composio-confirm-title" className="text-sm font-medium text-amber-900">
-              ⚠️ Switching to Direct mode
+              {t('settings.composio.confirmTitle')}
             </p>
             <div className="text-xs text-amber-900 space-y-2">
-              <p>
-                Your existing integrations (Gmail, Slack, GitHub, etc. linked through OpenHuman){' '}
-                <span className="font-semibold">won&apos;t be visible</span> — they live in the
-                OpenHuman-managed Composio tenant.
-              </p>
-              <p>You&apos;ll need:</p>
+              <p>{t('settings.composio.confirmWarning')}</p>
+              <p>{t('settings.composio.confirmNeedItems')}</p>
               <ol className="list-decimal list-inside space-y-0.5 ml-2">
-                <li>
-                  An account at <span className="font-mono">app.composio.dev</span> with an API key
-                </li>
-                <li>To re-link each integration through your personal Composio account</li>
-                <li>
-                  Note: Composio triggers (real-time webhooks) don&apos;t fire in Direct mode yet —
-                  only synchronous tool calls
-                </li>
+                <li>{t('settings.composio.confirmItem1')}</li>
+                <li>{t('settings.composio.confirmItem2')}</li>
+                <li>{t('settings.composio.confirmItem3')}</li>
               </ol>
             </div>
             <div className="flex gap-2 pt-1">
@@ -346,15 +341,15 @@ const ComposioPanel = ({ embedded = false }: ComposioPanelProps = {}) => {
                 type="button"
                 onClick={handleCancelTransition}
                 disabled={saving}
-                className="flex-1 py-2 rounded-xl border border-stone-300 bg-white text-stone-800 text-sm font-medium hover:bg-stone-50 transition-colors disabled:opacity-50">
-                Cancel
+                className="flex-1 py-2 rounded-xl border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-stone-800 dark:text-neutral-100 text-sm font-medium hover:bg-stone-50 dark:hover:bg-neutral-800/60 dark:bg-neutral-800/60 dark:hover:bg-neutral-800/60 transition-colors disabled:opacity-50">
+                {t('common.cancel')}
               </button>
               <button
                 type="button"
                 onClick={handleConfirmTransition}
                 disabled={saving}
                 className="flex-1 py-2 rounded-xl bg-amber-600 text-white text-sm font-medium hover:bg-amber-500 transition-colors disabled:opacity-50">
-                {saving ? 'Switching…' : 'I understand, switch to Direct'}
+                {saving ? t('settings.composio.switching') : t('settings.composio.confirmSwitch')}
               </button>
             </div>
           </div>
@@ -364,19 +359,23 @@ const ComposioPanel = ({ embedded = false }: ComposioPanelProps = {}) => {
             onClick={handleSave}
             disabled={saving}
             className="w-full py-2 rounded-xl bg-primary-600 text-white text-sm font-medium hover:bg-primary-500 transition-colors disabled:opacity-50">
-            {saving ? 'Saving…' : 'Save'}
+            {saving ? t('settings.composio.saving') : t('common.save')}
           </button>
         )}
 
         {saveStatus === 'saved' && (
-          <p className="text-xs text-center text-green-600">Settings saved</p>
+          <p className="text-xs text-center text-green-600 dark:text-green-300">
+            {t('composio.settingsSaved')}
+          </p>
         )}
         {saveStatus === 'cleared' && (
-          <p className="text-xs text-center text-green-600">Switched to Backend mode</p>
+          <p className="text-xs text-center text-green-600 dark:text-green-300">
+            {t('settings.composio.clearedToBackend')}
+          </p>
         )}
         {saveStatus === 'error' && (
           <p className="text-xs text-center text-red-500">
-            Failed to save. Direct mode requires a non-empty API key.
+            {t('settings.composio.saveErrorNoKey')}
           </p>
         )}
       </div>

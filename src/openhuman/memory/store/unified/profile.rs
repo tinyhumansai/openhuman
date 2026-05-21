@@ -44,6 +44,15 @@ CREATE TABLE IF NOT EXISTS user_profile (
 
 CREATE INDEX IF NOT EXISTS idx_profile_type
     ON user_profile(facet_type);
+
+CREATE INDEX IF NOT EXISTS idx_profile_state_stability
+    ON user_profile(state, stability DESC);
+
+CREATE INDEX IF NOT EXISTS idx_profile_key
+    ON user_profile(key);
+
+CREATE INDEX IF NOT EXISTS idx_profile_state_user_stability
+    ON user_profile(state, user_state, stability);
 "#;
 
 /// Phase 3 ALTER TABLE statements for adding new columns to existing databases.
@@ -57,6 +66,17 @@ pub const PHASE3_COLUMNS_SQL: &[&str] = &[
     "ALTER TABLE user_profile ADD COLUMN evidence_refs_json TEXT",
     "ALTER TABLE user_profile ADD COLUMN class TEXT",
     "ALTER TABLE user_profile ADD COLUMN cue_families_json TEXT",
+];
+
+/// Phase 3 index definitions for idempotent restoration on existing databases.
+///
+/// New installs get these via `PROFILE_INIT_SQL`. Existing databases (where the
+/// indexes were removed in #1616) need them applied after `PHASE3_COLUMNS_SQL`
+/// has ensured the columns exist.
+pub const PHASE3_INDEXES_SQL: &[&str] = &[
+    "CREATE INDEX IF NOT EXISTS idx_profile_state_stability ON user_profile(state, stability DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_profile_key ON user_profile(key)",
+    "CREATE INDEX IF NOT EXISTS idx_profile_state_user_stability ON user_profile(state, user_state, stability)",
 ];
 
 /// Idempotent schema migration for existing databases.

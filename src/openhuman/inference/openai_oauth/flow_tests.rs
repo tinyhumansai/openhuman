@@ -1,0 +1,465 @@
+use super::flow::{build_authorize_url, exchange_authorization_code, parse_callback_input};
+use super::store::persist_openai_oauth_token;
+use super::{
+    complete_openai_oauth, disconnect_openai_oauth, openai_oauth_status, start_openai_oauth,
+};
+use crate::openhuman::config::Config;
+use crate::openhuman::credentials::profiles::{
+    AuthProfile, AuthProfileKind, AuthProfilesStore, TokenSet,
+};
+use crate::openhuman::inference::openai_oauth::lookup_openai_bearer_token;
+use crate::openhuman::inference::openai_oauth::store::{
+    OPENAI_OAUTH_PROFILE_NAME, OPENAI_PROVIDER_KEY,
+};
+use crate::openhuman::inference::provider::factory::lookup_key_for_slug;
+use chrono::{Duration, Utc};
+use motosan_ai_oauth::{OAuthConfig, StateStrategy, TokenBodyFormat};
+use tempfile::tempdir;
+use wiremock::matchers::{method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
+
+fn test_config(tmp: &tempfile::TempDir) -> Config {
+    Config {
+        config_path: tmp.path().join("config.toml"),
+        ..Config::default()
+    }
+}
+
+fn runtime() -> tokio::runtime::Runtime {
+    tokio::runtime::Runtime::new().unwrap()
+}
+
+fn unsigned_jwt(payload: serde_json::Value) -> String {
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+
+    let header = URL_SAFE_NO_PAD.encode(r#"{"alg":"none"}"#);
+    let payload = URL_SAFE_NO_PAD.encode(payload.to_string());
+    format!("{header}.{payload}.")
+}
+
+fn test_oauth_config(token_url: &'static str) -> OAuthConfig {
+    OAuthConfig {
+        client_id: "client-id",
+        client_secret: Some("client-secret"),
+        auth_url: "https://auth.example.test/oauth/authorize",
+        token_url,
+        scopes: &["scope-a", "scope-b"],
+        redirect_port: Some(1455),
+        callback_path: "/auth/callback",
+        redirect_uri_host: "127.0.0.1",
+        token_body: TokenBodyFormat::Form,
+        extra_auth_params: &[("prompt", "consent")],
+        state_strategy: StateStrategy::Random,
+    }
+}
+
+#[test]
+fn start_openai_oauth_returns_authorize_url() {
+    let tmp = tempdir().unwrap();
+    let config = test_config(&tmp);
+
+    let start = start_openai_oauth(&config).unwrap();
+    assert!(start.auth_url.contains("auth.openai.com"));
+    assert!(start.auth_url.contains("code_challenge="));
+    assert_eq!(start.redirect_uri, "http://127.0.0.1:1455/auth/callback");
+    assert!(!start.state.is_empty());
+    assert!(!openai_oauth_status(&config).unwrap().connected);
+}
+
+#[test]
+fn build_authorize_url_includes_codex_pkce_and_extra_params() {
+    let url = build_authorize_url(
+        &test_oauth_config("https://token.example.test/oauth/token"),
+        "challenge-123",
+        "state-123",
+        "http://127.0.0.1:1455/auth/callback",
+    );
+    let parsed = reqwest::Url::parse(&url).unwrap();
+    let pairs = parsed
+        .query_pairs()
+        .into_owned()
+        .collect::<std::collections::BTreeMap<_, _>>();
+
+    assert_eq!(
+        pairs.get("client_id").map(String::as_str),
+        Some("client-id")
+    );
+    assert_eq!(pairs.get("response_type").map(String::as_str), Some("code"));
+    assert_eq!(
+        pairs.get("scope").map(String::as_str),
+        Some("scope-a scope-b")
+    );
+    assert_eq!(pairs.get("state").map(String::as_str), Some("state-123"));
+    assert_eq!(
+        pairs.get("code_challenge").map(String::as_str),
+        Some("challenge-123")
+    );
+    assert_eq!(
+        pairs.get("code_challenge_method").map(String::as_str),
+        Some("S256")
+    );
+    assert_eq!(pairs.get("prompt").map(String::as_str), Some("consent"));
+}
+
+#[test]
+fn parse_callback_input_accepts_full_redirect_url() {
+    let url = "http://127.0.0.1:1455/auth/callback?code=abc&state=xyz";
+    let (code, state) = parse_callback_input(url).unwrap();
+    assert_eq!(code, "abc");
+    assert_eq!(state, "xyz");
+}
+
+#[test]
+fn parse_callback_input_accepts_raw_query_string() {
+    let (code, state) = parse_callback_input("code=abc%20123&state=xyz").unwrap();
+    assert_eq!(code, "abc 123");
+    assert_eq!(state, "xyz");
+}
+
+#[test]
+fn parse_callback_input_rejects_missing_code() {
+    let err = parse_callback_input("http://127.0.0.1:1455/auth/callback?state=xyz").unwrap_err();
+    assert!(err.contains("code"));
+}
+
+#[test]
+fn parse_callback_input_rejects_blank_invalid_and_missing_state() {
+    let blank = parse_callback_input("   ").unwrap_err();
+    assert!(blank.contains("required"));
+
+    let invalid = parse_callback_input("not-a-callback").unwrap_err();
+    assert!(invalid.contains("invalid"));
+
+    let missing_state =
+        parse_callback_input("http://127.0.0.1:1455/auth/callback?code=abc").unwrap_err();
+    assert!(missing_state.contains("state"));
+}
+
+#[test]
+fn complete_openai_oauth_rejects_missing_pending_session() {
+    let tmp = tempdir().unwrap();
+    let config = test_config(&tmp);
+    let err = runtime()
+        .block_on(complete_openai_oauth(
+            &config,
+            "http://127.0.0.1:1455/auth/callback?code=fake&state=state",
+        ))
+        .unwrap_err();
+    assert!(err.contains("no pending OAuth session"));
+}
+
+#[test]
+fn complete_openai_oauth_rejects_expired_pending_session() {
+    let tmp = tempdir().unwrap();
+    let config = test_config(&tmp);
+    std::fs::write(
+        tmp.path().join("openai-oauth-pending.json"),
+        serde_json::json!({
+            "state": "state",
+            "verifier": "verifier",
+            "redirect_uri": "http://127.0.0.1:1455/auth/callback",
+            "created_at": 1_u64,
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let err = runtime()
+        .block_on(complete_openai_oauth(
+            &config,
+            "http://127.0.0.1:1455/auth/callback?code=fake&state=state",
+        ))
+        .unwrap_err();
+    assert!(err.contains("no pending OAuth session"));
+    assert!(!tmp.path().join("openai-oauth-pending.json").exists());
+}
+
+#[test]
+fn complete_openai_oauth_rejects_state_mismatch() {
+    let tmp = tempdir().unwrap();
+    let config = test_config(&tmp);
+    let start = start_openai_oauth(&config).unwrap();
+    let callback = format!(
+        "http://127.0.0.1:1455/auth/callback?code=fake&state=not-{}",
+        start.state
+    );
+    let err = runtime()
+        .block_on(complete_openai_oauth(&config, &callback))
+        .unwrap_err();
+    assert!(err.contains("state mismatch"));
+}
+
+#[tokio::test]
+async fn exchange_authorization_code_parses_successful_token_response() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "access_token": "access-token",
+            "refresh_token": "refresh-token",
+            "id_token": "id-token",
+            "expires_in": 3600,
+        })))
+        .mount(&server)
+        .await;
+    let token_url: &'static str = Box::leak(format!("{}/token", server.uri()).into_boxed_str());
+
+    let token = exchange_authorization_code(
+        &test_oauth_config(token_url),
+        "code-123",
+        "verifier-123",
+        "http://127.0.0.1:1455/auth/callback",
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(token.access_token, "access-token");
+    assert_eq!(token.refresh_token, "refresh-token");
+    assert_eq!(token.id_token.as_deref(), Some("id-token"));
+    assert_eq!(token.expires_in, 3600);
+    assert!(token.issued_at > 0);
+}
+
+#[tokio::test]
+async fn exchange_authorization_code_reports_http_errors() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/token"))
+        .respond_with(ResponseTemplate::new(400).set_body_string("bad auth code"))
+        .mount(&server)
+        .await;
+    let token_url: &'static str = Box::leak(format!("{}/token", server.uri()).into_boxed_str());
+
+    let err = exchange_authorization_code(
+        &test_oauth_config(token_url),
+        "code-123",
+        "verifier-123",
+        "http://127.0.0.1:1455/auth/callback",
+    )
+    .await
+    .unwrap_err();
+
+    assert!(err.contains("HTTP 400"));
+    assert!(err.contains("bad auth code"));
+}
+
+#[test]
+fn persist_openai_oauth_token_stores_oauth_profile_with_metadata() {
+    let tmp = tempdir().unwrap();
+    let config = test_config(&tmp);
+    let access_token = unsigned_jwt(serde_json::json!({ "sub": "acct_123" }));
+    let token = motosan_ai_oauth::Token {
+        access_token: access_token.clone(),
+        refresh_token: "refresh-token".into(),
+        id_token: Some("id-token".into()),
+        expires_in: 3600,
+        issued_at: 123,
+    };
+
+    let profile = persist_openai_oauth_token(&config, &token).unwrap();
+    assert_eq!(profile.kind, AuthProfileKind::OAuth);
+    assert_eq!(
+        profile.metadata.get("account_id").map(String::as_str),
+        Some("acct_123")
+    );
+    assert_eq!(
+        profile
+            .token_set
+            .as_ref()
+            .map(|set| set.access_token.as_str()),
+        Some(access_token.as_str())
+    );
+    assert_eq!(
+        profile
+            .token_set
+            .as_ref()
+            .and_then(|set| set.refresh_token.as_deref()),
+        Some("refresh-token")
+    );
+    assert!(profile
+        .token_set
+        .as_ref()
+        .and_then(|set| set.expires_at)
+        .is_some());
+
+    let data = AuthProfilesStore::new(tmp.path(), false).load().unwrap();
+    let stored = data.profiles.get(&profile.id).unwrap();
+    assert_eq!(stored.id, profile.id);
+}
+
+#[test]
+fn openai_oauth_status_reports_token_profile_as_disconnected() {
+    let tmp = tempdir().unwrap();
+    let config = test_config(&tmp);
+    let store = AuthProfilesStore::new(tmp.path(), false);
+    store
+        .upsert_profile(
+            AuthProfile::new_token(
+                OPENAI_PROVIDER_KEY,
+                OPENAI_OAUTH_PROFILE_NAME,
+                "sk-token-profile".to_string(),
+            ),
+            true,
+        )
+        .unwrap();
+
+    let status = openai_oauth_status(&config).unwrap();
+    assert!(!status.connected);
+    assert_eq!(status.auth_method.as_deref(), Some("token"));
+    assert!(status.profile_id.is_some());
+}
+
+#[test]
+fn lookup_key_for_slug_prefers_api_key_over_oauth_for_openai() {
+    let tmp = tempdir().unwrap();
+    let config = test_config(&tmp);
+    let store = AuthProfilesStore::new(tmp.path(), false);
+
+    let oauth_profile = AuthProfile::new_oauth(
+        OPENAI_PROVIDER_KEY,
+        OPENAI_OAUTH_PROFILE_NAME,
+        TokenSet {
+            access_token: "oauth-access".into(),
+            refresh_token: Some("refresh".into()),
+            id_token: None,
+            expires_at: Some(Utc::now() + Duration::hours(1)),
+            token_type: Some("Bearer".into()),
+            scope: None,
+        },
+    );
+    store.upsert_profile(oauth_profile, true).unwrap();
+
+    let api_profile =
+        AuthProfile::new_token("provider:openai", "default", "sk-api-key".to_string());
+    store.upsert_profile(api_profile, true).unwrap();
+
+    // The standard `lookup_key_for_slug` path resolves the API key first; the
+    // OAuth fallback only fires when no API key is present.
+    let token = lookup_key_for_slug("openai", &config).unwrap();
+    assert_eq!(token, "sk-api-key");
+}
+
+#[test]
+fn lookup_openai_bearer_token_uses_oauth_when_api_key_missing() {
+    let tmp = tempdir().unwrap();
+    let config = test_config(&tmp);
+    let store = AuthProfilesStore::new(tmp.path(), false);
+    let oauth_profile = AuthProfile::new_oauth(
+        OPENAI_PROVIDER_KEY,
+        OPENAI_OAUTH_PROFILE_NAME,
+        TokenSet {
+            access_token: "oauth-access".into(),
+            refresh_token: Some("refresh".into()),
+            id_token: None,
+            expires_at: Some(Utc::now() + Duration::hours(1)),
+            token_type: Some("Bearer".into()),
+            scope: None,
+        },
+    );
+    store.upsert_profile(oauth_profile, true).unwrap();
+
+    let token = lookup_openai_bearer_token(&config).unwrap();
+    assert_eq!(token.as_deref(), Some("oauth-access"));
+}
+
+#[test]
+fn lookup_key_for_slug_uses_legacy_openai_api_key_when_new_style_is_empty() {
+    let tmp = tempdir().unwrap();
+    let config = test_config(&tmp);
+    let store = AuthProfilesStore::new(tmp.path(), false);
+    let oauth_profile = AuthProfile::new_oauth(
+        OPENAI_PROVIDER_KEY,
+        OPENAI_OAUTH_PROFILE_NAME,
+        TokenSet {
+            access_token: "   ".into(),
+            refresh_token: None,
+            id_token: None,
+            expires_at: Some(Utc::now() + Duration::hours(1)),
+            token_type: Some("Bearer".into()),
+            scope: None,
+        },
+    );
+    store.upsert_profile(oauth_profile, true).unwrap();
+    store
+        .upsert_profile(
+            AuthProfile::new_token("openai", "default", "sk-legacy-key".to_string()),
+            true,
+        )
+        .unwrap();
+
+    // Legacy bare-slug key resolves through the standard path's legacy
+    // fallback, ahead of the OAuth fallback.
+    let token = lookup_key_for_slug("openai", &config).unwrap();
+    assert_eq!(token, "sk-legacy-key");
+}
+
+#[test]
+fn lookup_openai_bearer_token_keeps_expired_token_when_refresh_fails_without_runtime() {
+    let tmp = tempdir().unwrap();
+    let config = test_config(&tmp);
+    let store = AuthProfilesStore::new(tmp.path(), false);
+    let oauth_profile = AuthProfile::new_oauth(
+        OPENAI_PROVIDER_KEY,
+        OPENAI_OAUTH_PROFILE_NAME,
+        TokenSet {
+            access_token: "expired-access".into(),
+            refresh_token: Some("refresh".into()),
+            id_token: None,
+            expires_at: Some(Utc::now() - Duration::minutes(5)),
+            token_type: Some("Bearer".into()),
+            scope: None,
+        },
+    );
+    store.upsert_profile(oauth_profile, true).unwrap();
+
+    let token = lookup_openai_bearer_token(&config).unwrap();
+    assert_eq!(token.as_deref(), Some("expired-access"));
+}
+
+#[test]
+fn lookup_openai_bearer_token_returns_none_without_profiles_or_access_token() {
+    let tmp = tempdir().unwrap();
+    let config = test_config(&tmp);
+    assert_eq!(lookup_openai_bearer_token(&config).unwrap(), None);
+
+    let store = AuthProfilesStore::new(tmp.path(), false);
+    let empty_oauth_profile = AuthProfile::new_oauth(
+        OPENAI_PROVIDER_KEY,
+        OPENAI_OAUTH_PROFILE_NAME,
+        TokenSet {
+            access_token: "   ".into(),
+            refresh_token: None,
+            id_token: None,
+            expires_at: Some(Utc::now() - Duration::hours(1)),
+            token_type: Some("Bearer".into()),
+            scope: None,
+        },
+    );
+    store.upsert_profile(empty_oauth_profile, true).unwrap();
+
+    assert_eq!(lookup_openai_bearer_token(&config).unwrap(), None);
+}
+
+#[test]
+fn disconnect_openai_oauth_clears_profile() {
+    let tmp = tempdir().unwrap();
+    let config = test_config(&tmp);
+    let store = AuthProfilesStore::new(tmp.path(), false);
+    let profile = AuthProfile::new_oauth(
+        OPENAI_PROVIDER_KEY,
+        OPENAI_OAUTH_PROFILE_NAME,
+        TokenSet {
+            access_token: "oauth-access".into(),
+            refresh_token: None,
+            id_token: None,
+            expires_at: None,
+            token_type: Some("Bearer".into()),
+            scope: None,
+        },
+    );
+    store.upsert_profile(profile, true).unwrap();
+    assert!(openai_oauth_status(&config).unwrap().connected);
+
+    disconnect_openai_oauth(&config).unwrap();
+    assert!(!openai_oauth_status(&config).unwrap().connected);
+}

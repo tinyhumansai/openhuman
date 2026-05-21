@@ -34,7 +34,8 @@ import { supportsExecuteScript } from './platform';
 export async function openAddAccountModal(): Promise<void> {
   const opened = await browser.execute(() => {
     const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>('button'));
-    const addBtn = buttons.find(b => b.getAttribute('aria-label') === 'Add app');
+    // aria-label is t('accounts.addAccount') = 'Add Account'
+    const addBtn = buttons.find(b => b.getAttribute('aria-label') === 'Add Account');
     if (addBtn) {
       addBtn.click();
       return true;
@@ -42,7 +43,7 @@ export async function openAddAccountModal(): Promise<void> {
     return false;
   });
   if (!opened) {
-    throw new Error('Could not locate Add app button on /accounts');
+    throw new Error('Could not locate Add Account button on /chat');
   }
   await waitForText('Add account', 5_000);
 }
@@ -62,14 +63,10 @@ export async function waitForRequest(log, method, urlFragment, timeout = 15_000)
 }
 
 export async function waitForHomePage(timeout = 15_000) {
-  const candidates = [
-    'Test',
-    'Good morning',
-    'Good afternoon',
-    'Good evening',
-    'Message OpenHuman',
-    'Upgrade to Premium',
-  ];
+  // Home page (Home.tsx) renders t('home.askAssistant') = 'Ask your assistant anything...'
+  // as a stable CTA button. The animated typewriter heading ('Welcome, <name> 👋' etc.)
+  // and old strings ('Good morning', 'Message OpenHuman', 'Upgrade to Premium') are gone.
+  const candidates = ['Ask your assistant anything', 'Your device is connected'];
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
     for (const text of candidates) {
@@ -110,25 +107,98 @@ export async function clickFirstMatch(candidates, timeout = 5_000) {
 const HASH_TO_SIDEBAR_LABEL = {
   '/skills': 'Skills',
   '/home': 'Home',
-  '/conversations': 'Conversations',
+  '/chat': 'Chat',
   '/notifications': 'Alerts',
   '/settings': 'Settings',
   '/settings/intelligence': 'Intelligence',
 };
 
+function normalizeHash(value) {
+  const raw = String(value || '');
+  const withPrefix = raw.startsWith('#') ? raw : `#${raw}`;
+  return withPrefix.replace(/\/$/, '');
+}
+
+function routeReadySelector(hash) {
+  const path = normalizeHash(hash).replace(/^#/, '');
+  const selectors = {
+    '/notifications': '[data-testid="integration-notifications-section"]',
+    '/settings/cron-jobs': '[data-testid="cron-jobs-panel"]',
+    '/settings/privacy': '[data-testid="settings-privacy-panel"]',
+    '/settings/migration': '[data-testid="migration-form"]',
+    '/settings/voice': '[data-testid="voice-providers-section"]',
+    '/settings/memory-data': '[data-testid="memory-workspace"]',
+    '/settings/intelligence': '[data-testid="memory-workspace"]',
+  };
+  return selectors[path] || null;
+}
+
+async function routeSignature() {
+  return browser.execute(() => {
+    const root = document.getElementById('root');
+    return (root?.innerText || root?.textContent || '').trim().slice(0, 500);
+  });
+}
+
+async function waitForHashRouteReady(hash, options = {}) {
+  const { timeout = 10_000, previousSignature = '', allowSameSignature = false } = options;
+  const expected = normalizeHash(hash);
+  const readySelector = routeReadySelector(hash);
+  await browser.waitUntil(
+    async () =>
+      Boolean(
+        await browser.execute(
+          ({ target, selector, before, allowSame }) => {
+            if (document.readyState !== 'complete') return false;
+            const current = window.location.hash.replace(/\/$/, '');
+            if (current !== target) return false;
+            const root = document.getElementById('root');
+            if (!root) return false;
+            if (selector && root.querySelector(selector)) return true;
+
+            const signature = (root.innerText || root.textContent || '').trim().slice(0, 500);
+            if (!signature) return false;
+            return allowSame || signature !== before;
+          },
+          {
+            target: expected,
+            selector: readySelector,
+            before: previousSignature,
+            allowSame: allowSameSignature,
+          }
+        )
+      ),
+    {
+      timeout,
+      interval: 250,
+      timeoutMsg: `hash route ${expected} did not become ready within ${timeout}ms`,
+    }
+  );
+}
+
 export async function navigateViaHash(hash) {
   const normalized = String(hash).replace(/\/$/, '') || hash;
 
   if (supportsExecuteScript()) {
+    const beforeHash = normalizeHash(await browser.execute(() => window.location.hash));
+    const beforeSignature = await routeSignature();
+    const targetHash = normalizeHash(hash);
     try {
       await browser.execute(h => {
         window.location.hash = h;
       }, hash);
-      await browser.pause(2_000);
+      await waitForHashRouteReady(hash, {
+        previousSignature: beforeSignature,
+        allowSameSignature: beforeHash === targetHash,
+      });
       const currentHash = await browser.execute(() => window.location.hash);
       console.log(`[E2E] Navigated to ${hash} (current: ${currentHash})`);
     } catch (err) {
       console.log(`[E2E] Hash navigation to ${hash} failed:`, err);
+      const detail = err instanceof Error ? err.message : String(err);
+      const wrapped = new Error(`[E2E] Hash navigation to ${hash} failed: ${detail}`);
+      wrapped.cause = err;
+      throw wrapped;
     }
     return;
   }
@@ -282,7 +352,7 @@ export async function navigateToIntelligence() {
 }
 
 export async function navigateToConversations() {
-  await navigateViaHash('/conversations');
+  await navigateViaHash('/chat');
 }
 
 export async function navigateToNotifications() {
@@ -381,6 +451,29 @@ export async function dismissBootCheckGateIfVisible(timeoutMs = 12_000): Promise
   return everSeen;
 }
 
+async function waitForPostOnboardingHome(logPrefix, timeout = 20_000) {
+  if (supportsExecuteScript()) {
+    await browser.waitUntil(
+      async () =>
+        Boolean(await browser.execute(() => window.location.hash.replace(/\/$/, '') === '#/home')),
+      {
+        timeout: Math.min(timeout, 10_000),
+        interval: 300,
+        timeoutMsg: 'onboarding completed but hash did not settle on #/home',
+      }
+    );
+  }
+
+  const homeText = await waitForHomePage(timeout);
+  if (!homeText) {
+    const tree = await dumpAccessibilityTree();
+    console.log(`${logPrefix} Home page not ready after onboarding. Tree:\n`, tree.slice(0, 4000));
+    throw new Error('Onboarding dismissed but Home page did not become ready');
+  }
+
+  console.log(`${logPrefix} Post-onboarding Home page confirmed: found "${homeText}"`);
+}
+
 /**
  * Walk through onboarding by advancing the `data-testid="onboarding-next-button"`
  * until it unmounts. The button is rendered on every step (see
@@ -451,6 +544,7 @@ export async function walkOnboarding(logPrefix = '[E2E]', maxSteps = 12): Promis
 
     if (status === 'gone') {
       console.log(`${logPrefix} Onboarding dismissed after ${step} step(s)`);
+      await waitForPostOnboardingHome(logPrefix);
       return;
     }
     if (status === 'gone-but-onboarding-hash') {

@@ -438,7 +438,7 @@ export function MicComposer({
           value={selectedDeviceId}
           onChange={e => setSelectedDeviceId(e.target.value)}
           disabled={state !== 'idle' || devices.length <= 1}
-          className="text-xs text-stone-600 bg-stone-100 border border-stone-200 rounded px-2 py-1 max-w-[220px] truncate disabled:opacity-50">
+          className="text-xs text-stone-600 dark:text-neutral-300 bg-stone-100 dark:bg-neutral-800 border border-stone-200 dark:border-neutral-700 rounded px-2 py-1 max-w-[220px] truncate disabled:opacity-50">
           {devices.map(d => (
             <option key={d.deviceId} value={d.deviceId}>
               {d.label}
@@ -489,7 +489,7 @@ export function MicComposer({
             </svg>
           )}
         </button>
-        <span className="text-xs text-stone-500 select-none">{label}</span>
+        <span className="text-xs text-stone-500 dark:text-neutral-400 select-none">{label}</span>
       </div>
     </div>
   );

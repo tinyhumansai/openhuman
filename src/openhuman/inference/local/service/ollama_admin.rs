@@ -7,8 +7,12 @@ use crate::openhuman::inference::local::install::{
     find_system_ollama_binary, run_ollama_install_script,
 };
 use crate::openhuman::inference::local::lm_studio::lm_studio_base_url;
+use crate::openhuman::inference::local::model_requirements::{
+    evaluate_context, ContextEligibility, MIN_CONTEXT_TOKENS,
+};
 use crate::openhuman::inference::local::ollama::{
-    ollama_base_url, OllamaModelTag, OllamaPullEvent, OllamaPullProgress, OllamaPullRequest,
+    ollama_base_url, ollama_base_url_from_config, validate_ollama_url, OllamaModelTag,
+    OllamaPullEvent, OllamaPullProgress, OllamaPullRequest, OllamaShowRequest, OllamaShowResponse,
     OllamaTagsResponse,
 };
 use crate::openhuman::inference::local::process_util::apply_no_window;
@@ -27,10 +31,11 @@ fn lm_studio_models_error_means_unreachable(error: &str) -> bool {
 impl LocalAiService {
     pub(in crate::openhuman::inference::local::service) async fn ensure_ollama_server(
         &self,
-        _config: &Config,
+        config: &Config,
     ) -> Result<(), String> {
-        if self.ollama_healthy().await {
-            if self.ollama_runner_ok().await {
+        let base_url = ollama_base_url_from_config(config);
+        if self.ollama_healthy_at(&base_url).await {
+            if self.ollama_runner_ok_at(&base_url).await {
                 return Ok(());
             }
             log::warn!("[local_ai] Ollama server responds but runner is broken");
@@ -39,7 +44,6 @@ impl LocalAiService {
                     .to_string(),
             );
         }
-        let base_url = ollama_base_url();
         Err(format!(
             "OpenHuman no longer starts or installs Ollama automatically. Start your inference runtime yourself and make sure it is reachable at {base_url}."
         ))
@@ -71,7 +75,8 @@ impl LocalAiService {
             spawn_marker::clear_marker(config);
             return;
         }
-        if !self.ollama_healthy().await {
+        let base_url = ollama_base_url_from_config(config);
+        if !self.ollama_healthy_at(&base_url).await {
             // PID is alive but :11434 isn't healthy — either Ollama is
             // mid-boot or the recorded PID was reused for an unrelated
             // process. Leave the marker; either the daemon will come up
@@ -101,7 +106,8 @@ impl LocalAiService {
         config: &Config,
         ollama_cmd: &Path,
     ) -> Result<(), String> {
-        if self.ollama_healthy().await {
+        let base_url = ollama_base_url_from_config(config);
+        if self.ollama_healthy_at(&base_url).await {
             // A daemon is already up — adopt it. We did NOT spawn it (or any
             // prior spawn was already reclaimed in `reclaim_orphan_if_ours`),
             // so `owned_ollama` stays `None` and the daemon survives openhuman
@@ -191,7 +197,7 @@ impl LocalAiService {
         }
 
         for _ in 0..20 {
-            if self.ollama_healthy().await {
+            if self.ollama_healthy_at(&base_url).await {
                 // Daemon is up. Take ownership so we can kill it on exit and
                 // write the spawn marker so a crashed openhuman can reclaim
                 // this PID on next launch instead of orphaning it forever.
@@ -475,14 +481,29 @@ impl LocalAiService {
         Ok(())
     }
 
-    pub(in crate::openhuman::inference::local::service) async fn ollama_healthy(&self) -> bool {
+    /// Check Ollama health against the given base URL.
+    pub(in crate::openhuman::inference::local::service) async fn ollama_healthy_at(
+        &self,
+        base_url: &str,
+    ) -> bool {
+        tracing::debug!(
+            target: "local_ai::ollama_admin",
+            %base_url,
+            "[local_ai:ollama_admin] ollama_healthy_at: checking"
+        );
         self.http
-            .get(format!("{}/api/tags", ollama_base_url()))
+            .get(format!("{base_url}/api/tags"))
             .timeout(std::time::Duration::from_secs(2))
             .send()
             .await
             .map(|r| r.status().is_success())
             .unwrap_or(false)
+    }
+
+    /// Backward-compat wrapper — resolves the URL from env vars only (no config).
+    /// Prefer [`ollama_healthy_at`] when a `Config` is available.
+    pub(in crate::openhuman::inference::local::service) async fn ollama_healthy(&self) -> bool {
+        self.ollama_healthy_at(&ollama_base_url()).await
     }
 
     /// Filesystem-only precondition: is *any* Ollama binary discoverable?
@@ -825,8 +846,8 @@ impl LocalAiService {
             return self.lm_studio_diagnostics(config).await;
         }
 
-        let base_url = ollama_base_url();
-        let healthy = self.ollama_healthy().await;
+        let base_url = ollama_base_url_from_config(config);
+        let healthy = self.ollama_healthy_at(&base_url).await;
 
         log::debug!(
             "[local_ai] diagnostics: entry base_url={} healthy={}",
@@ -835,7 +856,7 @@ impl LocalAiService {
         );
 
         let (models, tags_error) = if healthy {
-            match self.list_models().await {
+            match self.list_models_at(&base_url).await {
                 Ok(models) => (models, None),
                 Err(e) => (vec![], Some(e)),
             }
@@ -858,6 +879,56 @@ impl LocalAiService {
         let chat_found = has(&expected_chat);
         let embedding_found = has(&expected_embedding);
         let vision_found = has(&expected_vision);
+
+        // Per-model native context window vs the memory-layer minimum.
+        // `/api/show` is one bounded round-trip per installed model,
+        // fetched concurrently and only on this diagnostics path.
+        let model_eligibilities: Vec<ContextEligibility> = if healthy {
+            futures_util::future::join_all(models.iter().map(|m| self.fetch_model_context(&m.name)))
+                .await
+                .into_iter()
+                .map(evaluate_context)
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        let installed_models: Vec<serde_json::Value> = models
+            .iter()
+            .enumerate()
+            .map(|(i, m)| {
+                let eligibility = model_eligibilities.get(i).cloned();
+                let context_length = match eligibility.as_ref() {
+                    Some(ContextEligibility::Ok { context_length })
+                    | Some(ContextEligibility::BelowMinimum { context_length, .. }) => {
+                        Some(*context_length)
+                    }
+                    _ => None,
+                };
+                serde_json::json!({
+                    "name": m.name,
+                    "size": m.size,
+                    "modified_at": m.modified_at,
+                    "context_length": context_length,
+                    "eligibility": eligibility,
+                })
+            })
+            .collect();
+
+        // Resolve the eligibility of an expected (active) model by tag prefix.
+        let eligibility_for = |target: &str| -> Option<ContextEligibility> {
+            let t = target.to_ascii_lowercase();
+            models
+                .iter()
+                .zip(model_eligibilities.iter())
+                .find(|(m, _)| {
+                    let n = m.name.to_ascii_lowercase();
+                    n == t || n.starts_with(&(t.clone() + ":"))
+                })
+                .map(|(_, e)| e.clone())
+        };
+        let chat_eligibility = eligibility_for(&expected_chat);
+        let embedding_eligibility = eligibility_for(&expected_embedding);
 
         let binary_path = self.resolve_binary_path(config);
 
@@ -894,6 +965,32 @@ impl LocalAiService {
         if let Some(ref e) = tags_error {
             issues.push(format!("Failed to list models: {e}"));
         }
+        // Reject installed-but-too-small active models: a context window
+        // below the memory-layer minimum silently truncates chunks /
+        // summaries and corrupts recall.
+        if let Some(ContextEligibility::BelowMinimum {
+            context_length,
+            required,
+        }) = embedding_eligibility.as_ref()
+        {
+            issues.push(format!(
+                "Embedding model `{}` has a {}-token context window; the memory layer \
+                 requires at least {}. Choose an embedding model with a larger context \
+                 (e.g. bge-m3).",
+                expected_embedding, context_length, required
+            ));
+        }
+        if let Some(ContextEligibility::BelowMinimum {
+            context_length,
+            required,
+        }) = chat_eligibility.as_ref()
+        {
+            issues.push(format!(
+                "Chat model `{}` has a {}-token context window; the memory layer \
+                 requires at least {}.",
+                expected_chat, context_length, required
+            ));
+        }
 
         log::debug!(
             "[local_ai] diagnostics: healthy={} models={} issues={} repair_actions={}",
@@ -907,13 +1004,18 @@ impl LocalAiService {
             "ollama_running": healthy,
             "ollama_base_url": base_url,
             "ollama_binary_path": binary_path,
-            "installed_models": models,
+            "installed_models": installed_models,
+            "context_requirement": {
+                "min_context_tokens": MIN_CONTEXT_TOKENS,
+            },
             "vision_mode": presets::vision_mode_for_config(&config.local_ai),
             "expected": {
                 "chat_model": expected_chat,
                 "chat_found": chat_found,
+                "chat_eligibility": chat_eligibility,
                 "embedding_model": expected_embedding,
                 "embedding_found": embedding_found,
+                "embedding_eligibility": embedding_eligibility,
                 "vision_model": expected_vision,
                 "vision_found": vision_found,
             },
@@ -923,8 +1025,7 @@ impl LocalAiService {
         }))
     }
 
-    async fn list_models(&self) -> Result<Vec<OllamaModelTag>, String> {
-        let base = ollama_base_url();
+    async fn list_models_at(&self, base: &str) -> Result<Vec<OllamaModelTag>, String> {
         let url = format!("{base}/api/tags");
         tracing::debug!(
             target: "local_ai::ollama_admin",
@@ -1003,6 +1104,60 @@ impl LocalAiService {
         );
 
         Ok(payload.models)
+    }
+
+    /// Fetch a model's native context window via Ollama `POST /api/show`.
+    ///
+    /// Returns `None` on any failure (unreachable, non-2xx, parse error, or
+    /// the metadata key is absent) — the caller maps that to an `Unknown`
+    /// eligibility verdict rather than a hard rejection. One bounded HTTP
+    /// round-trip per model; only ever invoked from the diagnostics path.
+    async fn fetch_model_context(&self, model: &str) -> Option<u64> {
+        let url = format!("{}/api/show", ollama_base_url());
+        let resp = self
+            .http
+            .post(&url)
+            .json(&OllamaShowRequest {
+                model: model.to_string(),
+            })
+            .timeout(std::time::Duration::from_secs(5))
+            .send()
+            .await
+            .inspect_err(|e| {
+                tracing::debug!(
+                    target: "local_ai::ollama_admin",
+                    %url, model, error = %e,
+                    "[local_ai:ollama_admin] fetch_model_context: request failed"
+                );
+            })
+            .ok()?;
+        let status = resp.status();
+        if !status.is_success() {
+            tracing::debug!(
+                target: "local_ai::ollama_admin",
+                %url, model, %status,
+                "[local_ai:ollama_admin] fetch_model_context: non-success response"
+            );
+            return None;
+        }
+        let parsed: OllamaShowResponse = resp
+            .json()
+            .await
+            .inspect_err(|e| {
+                tracing::debug!(
+                    target: "local_ai::ollama_admin",
+                    %url, model, error = %e,
+                    "[local_ai:ollama_admin] fetch_model_context: JSON parse failed"
+                );
+            })
+            .ok()?;
+        let ctx = parsed.context_length();
+        tracing::debug!(
+            target: "local_ai::ollama_admin",
+            model, context_length = ?ctx,
+            "[local_ai:ollama_admin] fetch_model_context: resolved"
+        );
+        ctx
     }
 
     async fn lm_studio_diagnostics(&self, config: &Config) -> Result<serde_json::Value, String> {
@@ -1143,12 +1298,11 @@ impl LocalAiService {
             .map(|p| p.display().to_string())
     }
 
-    /// Quick check that the Ollama runner can actually exec models.
-    /// Sends a tiny generate request and checks for a 500 "fork/exec" error.
-    async fn ollama_runner_ok(&self) -> bool {
+    /// Quick check that the Ollama runner can actually exec models against the given URL.
+    async fn ollama_runner_ok_at(&self, base_url: &str) -> bool {
         let resp = self
             .http
-            .post(format!("{}/api/tags", ollama_base_url()))
+            .post(format!("{base_url}/api/tags"))
             .timeout(std::time::Duration::from_secs(3))
             .send()
             .await;
@@ -1158,7 +1312,7 @@ impl LocalAiService {
                 // Do a lightweight pull-status check (won't download, just checks).
                 let check = self
                     .http
-                    .post(format!("{}/api/show", ollama_base_url()))
+                    .post(format!("{base_url}/api/show"))
                     .json(&serde_json::json!({"name": "___nonexistent_probe___"}))
                     .timeout(std::time::Duration::from_secs(3))
                     .send()
@@ -1234,6 +1388,10 @@ impl LocalAiService {
         &self,
         model: &str,
     ) -> Result<bool, String> {
+        self.has_model_at(&ollama_base_url(), model).await
+    }
+
+    async fn has_model_at(&self, base_url: &str, model: &str) -> Result<bool, String> {
         // Issue the /api/tags GET directly. We previously short-circuited via
         // ollama_healthy(), but that doubled the number of /api/tags round-trips
         // on healthy polls (one probe + one tags fetch). With three has_model()
@@ -1242,10 +1400,10 @@ impl LocalAiService {
         // reqwest client (set in bootstrap.rs) bounds the cost when the server
         // is down — the connect failure surfaces as Err, same as ollama_healthy()
         // would have surfaced as `false`.
-        log::debug!("[local_ai] has_model: checking for model `{model}`");
+        log::debug!("[local_ai] has_model_at: checking for model `{model}` at {base_url}");
         let response = self
             .http
-            .get(format!("{}/api/tags", ollama_base_url()))
+            .get(format!("{base_url}/api/tags"))
             // Per-request timeout matches list_models (5s). The shared client's
             // connect_timeout only bounds the TCP handshake; without this a
             // hung server (accepted connection, no response body) would block
@@ -1278,6 +1436,64 @@ impl LocalAiService {
             let name = m.name.to_ascii_lowercase();
             name == target || name.starts_with(&(target.clone() + ":"))
         }))
+    }
+}
+
+/// Test connectivity to a user-supplied Ollama URL.
+///
+/// Validates the URL via [`validate_ollama_url`], then issues a GET to
+/// `{normalized_url}/api/tags` with a 3-second timeout.
+/// Returns a JSON object with `reachable`, optional `error`, and
+/// `models_count` when reachable.
+pub(crate) async fn test_ollama_connection(url: &str) -> Result<serde_json::Value, String> {
+    let normalized = validate_ollama_url(url)?;
+    log::debug!("[local_ai] test_ollama_connection: testing url={normalized}");
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(3))
+        .build()
+        .map_err(|e| format!("failed to build HTTP client: {e}"))?;
+
+    match client.get(format!("{normalized}/api/tags")).send().await {
+        Ok(resp) if resp.status().is_success() => {
+            let models_count = resp
+                .json::<OllamaTagsResponse>()
+                .await
+                .map(|t| t.models.len())
+                .unwrap_or(0);
+            log::debug!(
+                "[local_ai] test_ollama_connection: reachable url={normalized} models={models_count}"
+            );
+            Ok(serde_json::json!({
+                "reachable": true,
+                "error": null,
+                "models_count": models_count,
+            }))
+        }
+        Ok(resp) => {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            let err = format!("server responded with status {status}: {}", body.trim());
+            log::debug!(
+                "[local_ai] test_ollama_connection: unreachable url={normalized} err={err}"
+            );
+            Ok(serde_json::json!({
+                "reachable": false,
+                "error": err,
+                "models_count": null,
+            }))
+        }
+        Err(e) => {
+            let err = e.to_string();
+            log::debug!(
+                "[local_ai] test_ollama_connection: connection failed url={normalized} err={err}"
+            );
+            Ok(serde_json::json!({
+                "reachable": false,
+                "error": err,
+                "models_count": null,
+            }))
+        }
     }
 }
 
