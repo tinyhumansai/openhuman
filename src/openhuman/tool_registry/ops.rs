@@ -338,6 +338,7 @@ fn looks_write_capable(tool_id: &str) -> bool {
         lower == *marker
             || lower.contains(&format!(".{marker}"))
             || lower.contains(&format!("_{marker}"))
+            || lower.contains(&format!("{marker}."))
             || lower.contains(&format!("{marker}_"))
     })
 }
@@ -361,6 +362,8 @@ fn policy_surface_ids() -> Vec<String> {
 
 fn is_policy_surface(tool_id: &str) -> bool {
     POLICY_SURFACES.contains(&tool_id)
+        || tool_id.starts_with("security.")
+        || tool_id.starts_with("approval.")
 }
 
 fn title_from_function(function: &str) -> String {
@@ -439,6 +442,22 @@ mod tests {
             .possible_write_surfaces
             .iter()
             .any(|tool_id| tool_id == "tools.composio_execute"));
+    }
+
+    #[test]
+    fn looks_write_capable_detects_action_prefixes_and_suffixes() {
+        assert!(looks_write_capable("user.create"));
+        assert!(looks_write_capable("create.user"));
+        assert!(looks_write_capable("tools.composio_execute"));
+        assert!(!looks_write_capable("tools.search"));
+    }
+
+    #[test]
+    fn is_policy_surface_includes_policy_namespaces() {
+        assert!(is_policy_surface("security.audit_status"));
+        assert!(is_policy_surface("approval.request"));
+        assert!(is_policy_surface("tool_registry.diagnostics"));
+        assert!(!is_policy_surface("tools.web_search"));
     }
 
     #[test]
