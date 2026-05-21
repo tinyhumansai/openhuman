@@ -459,6 +459,27 @@ pub enum DomainEvent {
         turn_count: usize,
     },
 
+    // ── MCP Clients ─────────────────────────────────────────────────────
+    /// A new MCP server was installed from the Smithery registry.
+    McpServerInstalled {
+        server_id: String,
+        qualified_name: String,
+    },
+    /// An MCP server subprocess connected and completed the initialize handshake.
+    McpServerConnected { server_id: String, tool_count: u32 },
+    /// An MCP server subprocess was disconnected or terminated.
+    McpServerDisconnected {
+        server_id: String,
+        reason: Option<String>,
+    },
+    /// An MCP client tool was invoked.
+    McpClientToolExecuted {
+        server_id: String,
+        tool_name: String,
+        success: bool,
+        elapsed_ms: u64,
+    },
+
     // ── System lifecycle ────────────────────────────────────────────────
     /// A system component started up.
     SystemStartup { component: String },
@@ -569,6 +590,11 @@ impl DomainEvent {
             Self::SessionExpired { .. } => "auth",
 
             Self::ApprovalRequested { .. } | Self::ApprovalDecided { .. } => "approval",
+
+            Self::McpServerInstalled { .. }
+            | Self::McpServerConnected { .. }
+            | Self::McpServerDisconnected { .. }
+            | Self::McpClientToolExecuted { .. } => "mcp_client",
         }
     }
 }

@@ -28,7 +28,13 @@
  */
 import { waitForApp } from '../helpers/app-helpers';
 import { callOpenhumanRpc } from '../helpers/core-rpc';
-import { clickButton, textExists, waitForText } from '../helpers/element-helpers';
+import {
+  clickNativeButton,
+  clickTestId,
+  textExists,
+  waitForTestId,
+  waitForText,
+} from '../helpers/element-helpers';
 import { resetApp } from '../helpers/reset-app';
 import { navigateToSettings, navigateViaHash } from '../helpers/shared-flows';
 import { startMockServer, stopMockServer } from '../mock-server';
@@ -57,51 +63,93 @@ async function waitForAnyText(candidates: string[], timeoutMs = 10_000): Promise
   return null;
 }
 
-/** Click the action button (Pause | Resume | Remove | …) inside the morning_briefing row. */
-async function clickActionForJob(jobName: string, action: string): Promise<boolean> {
-  return Boolean(
-    await browser.execute(
-      (name: string, label: string) => {
-        const rows = Array.from(document.querySelectorAll('div'))
-          .filter(div => /text-sm font-semibold text-stone-900/.test(div.className))
-          .filter(div => (div.textContent ?? '').trim() === name);
-        if (rows.length === 0) return false;
-        // Walk up to the panel row container (sibling-of-sibling structure in CoreJobList).
-        const container = rows[0]?.closest('div.p-4');
-        if (!container) return false;
-        const buttons = Array.from(container.querySelectorAll<HTMLButtonElement>('button'));
-        const btn = buttons.find(b => (b.textContent ?? '').trim() === label);
-        if (!btn) return false;
-        btn.click();
-        return true;
-      },
-      jobName,
-      action
-    )
-  );
+function cronActionTestId(jobId: string, action: string): string | null {
+  switch (action) {
+    case 'Pause':
+    case 'Resume':
+      return `cron-job-toggle-${jobId}`;
+    case 'Run Now':
+      return `cron-job-run-${jobId}`;
+    case 'View Runs':
+      return `cron-job-view-runs-${jobId}`;
+    case 'Remove':
+      return `cron-job-remove-${jobId}`;
+    default:
+      return null;
+  }
+}
+
+async function waitForCronPanel(timeoutMs = 5_000): Promise<void> {
+  try {
+    await waitForTestId('cron-jobs-panel', timeoutMs);
+  } catch (error) {
+    stepLog('cron panel test id unavailable, falling back to visible panel text', error);
+    await waitForText('Scheduled Jobs', timeoutMs);
+  }
+}
+
+async function waitForCronRow(jobId: string, timeoutMs = 10_000): Promise<void> {
+  try {
+    await waitForTestId(`cron-job-row-${jobId}`, timeoutMs);
+  } catch (error) {
+    stepLog(`cron row test id unavailable for ${jobId}, falling back to visible text`, error);
+    await waitForText(jobId, timeoutMs);
+  }
+}
+
+async function clickCronRefresh(): Promise<void> {
+  try {
+    await clickTestId('cron-refresh');
+  } catch (error) {
+    stepLog('cron refresh test id unavailable, falling back to button text', error);
+    await clickNativeButton('Refresh Cron Jobs');
+  }
+}
+
+/** Click the action button (Pause | Resume | Remove | …) inside a cron row. */
+async function clickActionForJob(jobId: string, action: string): Promise<boolean> {
+  const testId = cronActionTestId(jobId, action);
+  if (!testId) return false;
+  try {
+    await clickTestId(testId, 5_000);
+    return true;
+  } catch (error) {
+    stepLog(`test-id click failed for ${action} on ${jobId}, falling back to button text`, error);
+  }
+  try {
+    await clickNativeButton(action, 5_000);
+    return true;
+  } catch (error) {
+    stepLog(`failed to click ${action} for ${jobId}`, error);
+    return false;
+  }
 }
 
 /** Poll for the in-row action button label to settle (e.g. "Pause" → "Resume"). */
 async function waitForRowActionLabel(
-  jobName: string,
+  jobId: string,
   expected: string,
   timeoutMs = 10_000
 ): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
+  const testId = `cron-job-toggle-${jobId}`;
+  try {
+    await waitForTestId(testId, Math.min(timeoutMs, 5_000));
+  } catch (error) {
+    stepLog(`toggle test id not found for ${jobId}, falling back to visible label`, error);
+    try {
+      await waitForText(expected, Math.min(timeoutMs, 5_000));
+    } catch {
+      return false;
+    }
+  }
   while (Date.now() < deadline) {
-    const current = await browser.execute((name: string) => {
-      const rows = Array.from(document.querySelectorAll('div'))
-        .filter(div => /text-sm font-semibold text-stone-900/.test(div.className))
-        .filter(div => (div.textContent ?? '').trim() === name);
-      const container = rows[0]?.closest('div.p-4');
-      if (!container) return null;
-      const labels = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).map(b =>
-        (b.textContent ?? '').trim()
-      );
-      // We care about the toggle button (first one in the row).
-      return labels[0] ?? null;
-    }, jobName);
+    const current = await browser.execute((id: string) => {
+      const button = document.querySelector(`[data-testid="${id}"]`);
+      return button?.textContent?.trim() ?? null;
+    }, testId);
     if (current === expected) return true;
+    if (await textExists(expected)) return true;
     await browser.pause(400);
   }
   return false;
@@ -118,6 +166,7 @@ async function openCronJobsPanel(): Promise<void> {
   await navigateViaHash('/settings/cron-jobs');
   await waitForText('Cron Jobs', 10_000);
   await waitForText('Scheduled Jobs', 5_000);
+  await waitForCronPanel(5_000);
 }
 
 describe('Cron jobs settings panel (real UI flow)', () => {
@@ -144,11 +193,13 @@ describe('Cron jobs settings panel (real UI flow)', () => {
   it('the seeded morning_briefing job appears in the Cron Jobs panel', async () => {
     await openCronJobsPanel();
     // The seed runs in a detached spawn_blocking task — poll for the row.
-    const present = await waitForAnyText([MORNING_BRIEFING], 20_000);
-    if (!present) {
+    try {
+      await waitForCronRow(MORNING_BRIEFING, 20_000);
+    } catch {
       stepLog('morning_briefing row never rendered — clicking Refresh and retrying');
-      await clickButton('Refresh Cron Jobs');
+      await clickCronRefresh();
       await browser.pause(1_500);
+      await waitForCronRow(MORNING_BRIEFING, 10_000);
     }
     expect(await textExists(MORNING_BRIEFING)).toBe(true);
     expect(await textExists('Enabled')).toBe(true);
@@ -166,7 +217,7 @@ describe('Cron jobs settings panel (real UI flow)', () => {
     expect(await textExists('Paused')).toBe(true);
 
     // Real UI persistence proof: refresh re-reads from the sidecar.
-    await clickButton('Refresh Cron Jobs');
+    await clickCronRefresh();
     await browser.pause(1_500);
     const stillResumed = await waitForRowActionLabel(MORNING_BRIEFING, 'Resume', 8_000);
     expect(stillResumed).toBe(true);

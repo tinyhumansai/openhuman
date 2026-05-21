@@ -1,6 +1,6 @@
 [package]
 name = "openhuman"
-version = "0.54.3"
+version = "0.54.4"
 edition = "2021"
 description = "OpenHuman core business logic and RPC server"
 autobins = false
@@ -93,6 +93,7 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["f
 tracing-appender = "0.2"
 prometheus = { version = "0.14", default-features = false }
 urlencoding = "2.1"
+motosan-ai-oauth = { version = "0.2", features = ["codex"] }
 thiserror = "2.0"
 ring = "0.17"
 prost = { version = "0.14", default-features = false }
@@ -114,7 +115,7 @@ webpki-roots = "1.0.6"
 sysinfo = { version = "0.33", default-features = false, features = ["system"] }
 clap = { version = "4.5", features = ["derive"] }
 clap_complete = "4.5"
-lettre = { version = "0.11.19", default-features = false, features = ["builder", "smtp-transport", "rustls-tls"] }
+lettre = { version = "0.11.22", default-features = false, features = ["builder", "smtp-transport", "rustls-tls"] }
 mail-parser = "0.11.2"
 async-imap = { version = "0.11", features = ["runtime-tokio"], default-features = false }
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio", "query", "ws", "macros"] }

@@ -417,5 +417,23 @@ describe('configPersistence', () => {
       clearStoredCoreMode();
       expect(getStoredCoreMode()).toBeNull();
     });
+
+    it('falls back to the E2E default local mode when no marker has been written', async () => {
+      vi.resetModules();
+      vi.doMock('../config', () => ({
+        CORE_RPC_URL: 'http://127.0.0.1:7788/rpc',
+        E2E_DEFAULT_CORE_MODE: 'local',
+      }));
+
+      try {
+        localStorage.removeItem(MODE_STORAGE_KEY);
+        const mod = await import('../configPersistence');
+
+        expect(mod.getStoredCoreMode()).toBe('local');
+      } finally {
+        vi.doUnmock('../config');
+        vi.resetModules();
+      }
+    });
   });
 });

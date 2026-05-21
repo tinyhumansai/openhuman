@@ -77,6 +77,165 @@ ensure_appimagetool() {
   APPIMAGETOOL_BIN="$tool"
 }
 
+appimage_loader_name() {
+  local target_arch="${APPIMAGE_TARGET_ARCH:-${MATRIX_TARGET:-$(uname -m)}}"
+  case "$target_arch" in
+    x86_64*|amd64*)
+      echo "ld-linux-x86-64.so.2"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+host_dynamic_loader() {
+  local loader_name="$1"
+  local candidates=()
+  case "$loader_name" in
+    ld-linux-x86-64.so.2)
+      candidates=(
+        "/lib64/$loader_name"
+        "/lib/x86_64-linux-gnu/$loader_name"
+        "/usr/lib64/$loader_name"
+        "/usr/lib/$loader_name"
+      )
+      ;;
+    ld-linux-aarch64.so.1)
+      candidates=(
+        "/lib/$loader_name"
+        "/lib/aarch64-linux-gnu/$loader_name"
+        "/usr/lib/aarch64-linux-gnu/$loader_name"
+      )
+      ;;
+  esac
+
+  local candidate
+  for candidate in "${candidates[@]}"; do
+    if [ -f "$candidate" ]; then
+      echo "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+is_executable_elf() {
+  local candidate
+  candidate="$1"
+  [ -f "$candidate" ] || return 1
+  [ -x "$candidate" ] || return 1
+  [ "$(LC_ALL=C head -c 4 "$candidate" 2>/dev/null || true)" = $'\177ELF' ]
+}
+
+emit_entry_if_elf() {
+  local candidate="$1"
+  if is_executable_elf "$candidate"; then
+    printf '%s\0' "$candidate"
+  fi
+}
+
+emit_desktop_exec_candidate() {
+  local appdir="$1"
+  local command="$2"
+  local candidate
+
+  [ -n "$command" ] || return 0
+  case "$command" in
+    /*)
+      emit_entry_if_elf "$appdir$command"
+      ;;
+    */*)
+      emit_entry_if_elf "$appdir/$command"
+      ;;
+    *)
+      for candidate in "$appdir/$command" "$appdir/bin/$command" "$appdir/usr/bin/$command"; do
+        emit_entry_if_elf "$candidate"
+      done
+      ;;
+  esac
+}
+
+discover_appimage_entry_binaries() {
+  local appdir="$1"
+  local desktop line exec_line command root candidate
+
+  emit_entry_if_elf "$appdir/AppRun"
+  emit_entry_if_elf "$appdir/sharun"
+
+  while IFS= read -r -d '' desktop; do
+    while IFS= read -r line || [ -n "$line" ]; do
+      case "$line" in
+        Exec=*)
+          exec_line="${line#Exec=}"
+          case "$exec_line" in
+            \"*\")
+              command="${exec_line#\"}"
+              command="${command%%\"*}"
+              ;;
+            \'*\')
+              command="${exec_line#\'}"
+              command="${command%%\'*}"
+              ;;
+            *)
+              command="${exec_line%%[[:space:]]*}"
+              ;;
+          esac
+          emit_desktop_exec_candidate "$appdir" "$command"
+          ;;
+      esac
+    done < "$desktop"
+  done < <(find "$appdir" -maxdepth 1 -type f -name '*.desktop' -print0)
+
+  for root in "$appdir" "$appdir/bin" "$appdir/usr/bin"; do
+    [ -d "$root" ] || continue
+    while IFS= read -r -d '' candidate; do
+      emit_entry_if_elf "$candidate"
+    done < <(find "$root" -maxdepth 1 -type f -perm /111 -print0)
+  done
+}
+
+uses_sharun_launcher() {
+  local appdir="$1"
+  local candidate
+  while IFS= read -r -d '' candidate; do
+    if grep -a -q "Interpreter not found!" "$candidate" 2>/dev/null; then
+      return 0
+    fi
+  done < <(discover_appimage_entry_binaries "$appdir")
+  return 1
+}
+
+ensure_sharun_interpreter() {
+  local appdir="$1"
+  if ! uses_sharun_launcher "$appdir"; then
+    return 1
+  fi
+
+  local loader_name
+  if ! loader_name="$(appimage_loader_name)"; then
+    echo "[strip-libs] ERROR: AppImage uses sharun but architecture is unsupported; cannot determine required loader" >&2
+    exit 1
+  fi
+
+  local target="$appdir/lib/$loader_name"
+  if [ -e "$target" ]; then
+    return 1
+  fi
+
+  local source
+  if ! source="$(host_dynamic_loader "$loader_name")"; then
+    echo "[strip-libs] ERROR: AppImage uses sharun but host loader $loader_name was not found; refusing to ship an AppImage that exits with 'Interpreter not found!'" >&2
+    exit 1
+  fi
+
+  mkdir -p "$appdir/lib"
+  cp -L "$source" "$target"
+  chmod 755 "$target"
+  echo "[strip-libs]   bundling sharun interpreter ${target#"$appdir"/} from $source"
+  return 0
+}
+
 strip_one_appimage() {
   local img="$1"
   local original
@@ -98,6 +257,7 @@ strip_one_appimage() {
 
   local appdir="$workdir/squashfs-root"
   local removed=0
+  local added_loader=0
   local lib_roots=()
   for candidate in \
     "$appdir/usr/lib" \
@@ -111,26 +271,28 @@ strip_one_appimage() {
 
   if [ "${#lib_roots[@]}" -eq 0 ]; then
     echo "[strip-libs] WARNING: no known lib roots inside $original — layout changed?" >&2
-    rm -rf "$workdir"
-    return
-  fi
-
-  for root in "${lib_roots[@]}"; do
-    for pattern in "${EXCLUDE_PATTERNS[@]}"; do
-      while IFS= read -r -d '' f; do
-        echo "[strip-libs]   removing ${f#"$appdir"/}"
-        rm -f "$f"
-        removed=$((removed + 1))
-      done < <(find "$root" -maxdepth 1 -name "$pattern" -print0)
+  else
+    for root in "${lib_roots[@]}"; do
+      for pattern in "${EXCLUDE_PATTERNS[@]}"; do
+        while IFS= read -r -d '' f; do
+          echo "[strip-libs]   removing ${f#"$appdir"/}"
+          rm -f "$f"
+          removed=$((removed + 1))
+        done < <(find "$root" -maxdepth 1 -name "$pattern" -print0)
+      done
     done
-  done
+  fi
 
-  if [ "$removed" -eq 0 ]; then
-    echo "[strip-libs] No graphics libs found in $original — leaving unchanged."
+  if ensure_sharun_interpreter "$appdir"; then
+    added_loader=1
+  fi
+
+  if [ "$removed" -eq 0 ] && [ "$added_loader" -eq 0 ]; then
+    echo "[strip-libs] No graphics libs or missing sharun interpreter found in $original; leaving unchanged."
     rm -rf "$workdir"
     return
   fi
-  echo "[strip-libs] Removed $removed file(s); repacking AppImage."
+  echo "[strip-libs] Removed $removed file(s), added $added_loader loader file(s); repacking AppImage."
 
   local rebuilt="$workdir/$name"
   (
@@ -140,7 +302,7 @@ strip_one_appimage() {
   )
   mv "$rebuilt" "$original"
   rm -rf "$workdir"
-  STRIPPED_PATHS+=("$original")
+  MODIFIED_PATHS+=("$original")
 }
 
 resign_artifact() {
@@ -167,7 +329,7 @@ main() {
   fi
   ensure_appimagetool
   shopt -s nullglob
-  STRIPPED_PATHS=()
+  MODIFIED_PATHS=()
   local found_any=0
   for root in "$@"; do
     [ -d "$root/appimage" ] || continue
@@ -184,7 +346,7 @@ main() {
   # Re-sign each modified .AppImage and rebuild its updater tarball + sig.
   # The updater tarball is just a gzipped tar of the .AppImage (Tauri convention),
   # so its contents are stale the moment we mutate the AppImage.
-  for original in "${STRIPPED_PATHS[@]:-}"; do
+  for original in "${MODIFIED_PATHS[@]:-}"; do
     [ -n "$original" ] || continue
     resign_artifact "$original"
 

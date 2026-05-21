@@ -34,6 +34,13 @@ pub struct McpToolSpec {
     pub description: &'static str,
     pub rpc_method: Option<&'static str>,
     pub input_schema: Value,
+    /// MCP `ToolAnnotations` per the 2025-03-26+ spec — `readOnlyHint`,
+    /// `destructiveHint`, `idempotentHint`, `openWorldHint`. Hints, not
+    /// guarantees; clients use them to surface accurate safety affordances
+    /// (e.g. Claude Desktop's "this tool can take destructive actions"
+    /// confirmation gate). Per spec, destructive/idempotent are meaningful
+    /// only when `readOnlyHint == false`, so read-only tools omit them.
+    pub annotations: Value,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -87,6 +94,7 @@ fn base_tool_specs() -> Vec<McpToolSpec> {
             description: "List the live core agent tool catalog that OpenHuman exposes to its orchestrator session.",
             rpc_method: None,
             input_schema: no_args_schema(),
+            annotations: read_only_local_annotations(),
         },
         McpToolSpec {
             name: "core.tool_instructions",
@@ -94,6 +102,7 @@ fn base_tool_specs() -> Vec<McpToolSpec> {
             description: "Emit the markdown tool-use instructions block that OpenHuman injects into prompt-guided agents.",
             rpc_method: None,
             input_schema: no_args_schema(),
+            annotations: read_only_local_annotations(),
         },
         McpToolSpec {
             name: "agent.list_subagents",
@@ -101,6 +110,7 @@ fn base_tool_specs() -> Vec<McpToolSpec> {
             description: "List registered sub-agent definitions that the core can dispatch for specialized work.",
             rpc_method: None,
             input_schema: no_args_schema(),
+            annotations: read_only_local_annotations(),
         },
         McpToolSpec {
             name: "agent.run_subagent",
@@ -122,6 +132,17 @@ fn base_tool_specs() -> Vec<McpToolSpec> {
                 "required": ["agent_id", "prompt"],
                 "additionalProperties": false
             }),
+            // Sub-agent execution is the one Act-policy surface on the MCP
+            // server today (see `enforce_act_policy` dispatch in `call_tool`).
+            // Sub-agents can call further tools, so destructive/openWorld are
+            // both true; running the same agent twice is not a no-op so
+            // idempotent is false.
+            annotations: json!({
+                "readOnlyHint": false,
+                "destructiveHint": true,
+                "idempotentHint": false,
+                "openWorldHint": true
+            }),
         },
         McpToolSpec {
             name: "memory.search",
@@ -129,6 +150,7 @@ fn base_tool_specs() -> Vec<McpToolSpec> {
             description: "Keyword-search OpenHuman's local memory tree and return matching chunks ordered by recency.",
             rpc_method: Some("openhuman.memory_tree_search"),
             input_schema: query_schema("Substring to match against stored memory chunks."),
+            annotations: read_only_local_annotations(),
         },
         McpToolSpec {
             name: "memory.recall",
@@ -136,6 +158,7 @@ fn base_tool_specs() -> Vec<McpToolSpec> {
             description: "Semantically recall local memory-tree chunks relevant to a natural-language query.",
             rpc_method: Some("openhuman.memory_tree_recall"),
             input_schema: query_schema("Natural-language query to embed and rerank against memory summaries."),
+            annotations: read_only_local_annotations(),
         },
         McpToolSpec {
             name: "tree.read_chunk",
@@ -153,6 +176,7 @@ fn base_tool_specs() -> Vec<McpToolSpec> {
                 "required": ["chunk_id"],
                 "additionalProperties": false
             }),
+            annotations: read_only_local_annotations(),
         },
         McpToolSpec {
             name: "tree.browse",
@@ -165,6 +189,7 @@ fn base_tool_specs() -> Vec<McpToolSpec> {
                           pagination.",
             rpc_method: Some("openhuman.memory_tree_list_chunks"),
             input_schema: tree_browse_schema(),
+            annotations: read_only_local_annotations(),
         },
         McpToolSpec {
             name: "tree.top_entities",
@@ -175,6 +200,7 @@ fn base_tool_specs() -> Vec<McpToolSpec> {
                           or `memory.search`. Returns entities ordered by reference count.",
             rpc_method: Some("openhuman.memory_tree_top_entities"),
             input_schema: tree_top_entities_schema(),
+            annotations: read_only_local_annotations(),
         },
         McpToolSpec {
             name: "tree.list_sources",
@@ -186,8 +212,22 @@ fn base_tool_specs() -> Vec<McpToolSpec> {
                           `tree.browse`.",
             rpc_method: Some("openhuman.memory_tree_list_sources"),
             input_schema: tree_list_sources_schema(),
+            annotations: read_only_local_annotations(),
         },
     ]
+}
+
+/// Annotation preset for the read-only, closed-world tools that just read
+/// OpenHuman's local memory tree or agent registry. The MCP spec defaults are
+/// `readOnlyHint: false` / `openWorldHint: true`, so both fields must be set
+/// explicitly to communicate the actual shape to clients. Destructive and
+/// idempotent hints are deliberately omitted — per the spec they are
+/// meaningful only when `readOnlyHint == false`.
+fn read_only_local_annotations() -> Value {
+    json!({
+        "readOnlyHint": true,
+        "openWorldHint": false
+    })
 }
 
 fn searxng_tool_spec() -> McpToolSpec {
@@ -197,6 +237,14 @@ fn searxng_tool_spec() -> McpToolSpec {
         description: "Search the configured self-hosted SearXNG instance and return normalized title, URL, snippet, and source results. Requires searxng.enabled=true in OpenHuman config.",
         rpc_method: Some("openhuman.tools_searxng_search"),
         input_schema: searxng_search_schema(),
+        // SearXNG queries an external (self-hosted but network-reachable)
+        // search engine: read-only (no state mutation), open-world (results
+        // come from outside OpenHuman). Per spec, destructive/idempotent
+        // hints are meaningful only when readOnlyHint=false, so omit them.
+        annotations: json!({
+            "readOnlyHint": true,
+            "openWorldHint": true
+        }),
     }
 }
 
@@ -350,6 +398,7 @@ fn list_tools_result_from_specs(specs: Vec<McpToolSpec>) -> Value {
                 "title": tool.title,
                 "description": tool.description,
                 "inputSchema": tool.input_schema,
+                "annotations": tool.annotations,
             })
         })
         .collect::<Vec<_>>();
@@ -1027,6 +1076,103 @@ mod tests {
                 "tree.top_entities",
                 "tree.list_sources",
             ]
+        );
+    }
+
+    #[test]
+    fn list_tools_emits_annotations_for_every_tool() {
+        // Exercise the searxng-enabled config so the annotation contract covers
+        // every shipping tool, not just the base set.
+        let mut config = crate::openhuman::config::Config::default();
+        config.searxng.enabled = true;
+        let result = list_tools_result_for_config(&config);
+        let tools = result["tools"].as_array().expect("tools array");
+        for tool in tools {
+            let name = tool["name"].as_str().expect("tool name");
+            assert!(
+                tool.get("annotations")
+                    .map(Value::is_object)
+                    .unwrap_or(false),
+                "tool `{name}` is missing a serialized `annotations` object",
+            );
+        }
+    }
+
+    #[test]
+    fn read_only_tools_are_marked_read_only_and_closed_world() {
+        // Every tool except the act-capable ones reads local OpenHuman state
+        // (memory tree / agent registry) or queries an external read-only
+        // search engine. Per MCP spec defaults these would be
+        // `readOnlyHint: false` and `openWorldHint: true`, so we MUST set
+        // `readOnlyHint` explicitly to communicate accurate safety affordances
+        // to clients. (`searxng_search` is read-only but openWorld, so it
+        // verifies the read-only axis here and is exempt from the
+        // openWorld=false check below.)
+        let act_tool_names = ["agent.run_subagent"];
+        let open_world_read_only = ["searxng_search"];
+        for spec in tool_specs() {
+            if act_tool_names.contains(&spec.name) {
+                continue;
+            }
+            let annotations = &spec.annotations;
+            assert_eq!(
+                annotations.get("readOnlyHint").and_then(Value::as_bool),
+                Some(true),
+                "expected `{}` to advertise readOnlyHint=true",
+                spec.name
+            );
+            let expected_open_world = open_world_read_only.contains(&spec.name);
+            assert_eq!(
+                annotations.get("openWorldHint").and_then(Value::as_bool),
+                Some(expected_open_world),
+                "expected `{}` to advertise openWorldHint={}",
+                spec.name,
+                expected_open_world
+            );
+            // Per spec these are meaningful only when readOnlyHint == false.
+            // Emitting them on a read-only tool would be misleading.
+            assert!(
+                annotations.get("destructiveHint").is_none(),
+                "read-only tool `{}` should not emit destructiveHint",
+                spec.name
+            );
+            assert!(
+                annotations.get("idempotentHint").is_none(),
+                "read-only tool `{}` should not emit idempotentHint",
+                spec.name
+            );
+        }
+    }
+
+    #[test]
+    fn run_subagent_annotations_signal_act_semantics() {
+        let spec = tool_specs()
+            .into_iter()
+            .find(|spec| spec.name == "agent.run_subagent")
+            .expect("agent.run_subagent must be registered");
+        assert_eq!(
+            spec.annotations
+                .get("readOnlyHint")
+                .and_then(Value::as_bool),
+            Some(false)
+        );
+        assert_eq!(
+            spec.annotations
+                .get("destructiveHint")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            spec.annotations
+                .get("idempotentHint")
+                .and_then(Value::as_bool),
+            Some(false)
+        );
+        assert_eq!(
+            spec.annotations
+                .get("openWorldHint")
+                .and_then(Value::as_bool),
+            Some(true)
         );
     }
 

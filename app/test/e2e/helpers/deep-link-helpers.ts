@@ -81,6 +81,15 @@ function supportsWebDriverScriptExecute(): boolean {
   return false;
 }
 
+function isAuthDeepLink(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'openhuman:' && parsed.hostname === 'auth';
+  } catch {
+    return false;
+  }
+}
+
 /**
  * When WebDriver can execute JS in the app WebView, dispatch the same URLs as the
  * deep-link plugin via `window.__simulateDeepLink` (see desktopDeepLinkListener).
@@ -199,6 +208,12 @@ export async function triggerDeepLink(url: string): Promise<void> {
     appPath: appPath ?? '(none)',
     platform: process.platform,
   });
+
+  if (isAuthDeepLink(url)) {
+    await dismissBootCheckGateIfVisibleInline().catch(err => {
+      deepLinkDebug('pre-auth deep-link BootCheckGate dismiss failed (continuing):', err);
+    });
+  }
 
   if (typeof browser !== 'undefined') {
     // Strategy 1: WebView simulate — the only reliable path on the unified

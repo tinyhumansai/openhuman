@@ -33,6 +33,14 @@ const ko3: TranslationMap = {
   'workspace.building': '빌드 중...',
   'workspace.buildSummaryTrees': '요약 트리 빌드',
   'workspace.viewVault': '볼트 보기',
+  'workspace.openingVaultTitle': 'Opening vault in Obsidian',
+  'workspace.openingVaultMessage':
+    "If Obsidian doesn't open, install it from obsidian.md or use Reveal Folder. Vault path:",
+  'workspace.openVaultFailedTitle': "Couldn't open vault in Obsidian",
+  'workspace.openVaultFailedMessage':
+    'Use Reveal Folder to open the vault directory directly. Vault path:',
+  'workspace.revealVaultFailed': "Couldn't reveal vault folder",
+  'workspace.revealFolder': 'Reveal Folder',
   'workspace.graphLoadFailed': '메모리 그래프를 불러오지 못했습니다',
   'workspace.loadingGraph': '메모리 그래프를 불러오는 중...',
   'workspace.graphViewMode': '메모리 그래프 보기 모드',
@@ -92,6 +100,8 @@ const ko3: TranslationMap = {
   'subconscious.failed': '실패',
   'subconscious.tickInterval': '틱 간격',
   'subconscious.runNow': '지금 실행',
+  'subconscious.providerUnavailableTitle': 'Subconscious 일시 중지됨',
+  'subconscious.providerSettings': 'AI 설정',
   'subconscious.approvalNeeded': '승인 필요',
   'subconscious.requiresApproval': '승인이 필요함',
   'subconscious.fixInConnections': '연결에서 수정',

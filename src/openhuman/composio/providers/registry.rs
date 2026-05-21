@@ -78,6 +78,7 @@ pub fn all_providers() -> Vec<ProviderArc> {
 ///
 /// Idempotent: re-running just re-registers (no-op in practice).
 pub fn init_default_providers() {
+    register_provider(Arc::new(super::clickup::ClickUpProvider::new()));
     register_provider(Arc::new(super::gmail::GmailProvider::new()));
     register_provider(Arc::new(super::notion::NotionProvider::new()));
     register_provider(Arc::new(super::slack::SlackProvider::new()));
