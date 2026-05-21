@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { listConnections as listComposioConnections } from '../../../../lib/composio/composioApi';
 import {
+  listProviderModels,
   loadAISettings,
   loadLocalProviderSnapshot,
   saveAISettings,
@@ -34,8 +35,8 @@ vi.mock('../../../../services/api/aiSettingsApi', () => ({
   loadAISettings: vi.fn(),
   saveAISettings: vi.fn(),
   loadLocalProviderSnapshot: vi.fn(),
-  setCloudProviderKey: vi.fn(),
-  clearCloudProviderKey: vi.fn(),
+  setCloudProviderKey: vi.fn().mockResolvedValue(undefined),
+  clearCloudProviderKey: vi.fn().mockResolvedValue(undefined),
   serializeProviderRef: vi.fn((r: { kind: string; providerSlug?: string; model?: string }) =>
     r.kind === 'openhuman'
       ? 'openhuman'
@@ -338,6 +339,38 @@ describe('AIPanel', () => {
     );
     // The input for the API key should be visible.
     expect(screen.getByLabelText(/API key/i)).toBeInTheDocument();
+  });
+
+  it('keeps long provider setup errors contained with raw detail behind details', async () => {
+    vi.mocked(loadAISettings).mockResolvedValue({ ...baseSettings, cloudProviders: [] });
+    const oversizedTail = `${'x'.repeat(1400)} tail_marker`;
+    vi.mocked(listProviderModels).mockRejectedValueOnce(
+      new Error(
+        `Backend returned 401 Unauthorized for POST https://api.example.com/v1/models: {"error":{"message":"invalid_api_key_invalid_api_key_invalid_api_key_invalid_api_key_invalid_api_key","code":"invalid_api_key"}} ${oversizedTail}`
+      )
+    );
+
+    renderWithProviders(<AIPanel />);
+
+    fireEvent.click(await screen.findByRole('switch', { name: /Connect OpenAI/i }));
+    const dialog = await screen.findByRole('dialog', { name: /Connect OpenAI/i });
+    fireEvent.change(within(dialog).getByLabelText(/API key/i), {
+      target: { value: 'sk-bad-key' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Save$/i }));
+
+    const alert = await within(dialog).findByRole('alert');
+    expect(alert).toHaveTextContent(/Could not reach OpenAI\./i);
+    expect(alert).not.toHaveTextContent('invalid_api_key');
+    const detailsSummary = within(dialog).getByText('Details');
+    const details = detailsSummary.closest('details');
+    expect(details).not.toBeNull();
+    const detailsElement = details as HTMLDetailsElement;
+    expect(detailsElement.open).toBe(false);
+    fireEvent.click(detailsSummary);
+    expect(detailsElement.open).toBe(true);
+    expect(within(dialog).getByText(/invalid_api_key_invalid_api_key/)).toBeInTheDocument();
+    expect(within(dialog).queryByText(/tail_marker/)).not.toBeInTheDocument();
   });
 
   it('clicking the Custom chip (when disabled) opens the CloudProviderEditor, not the key dialog', async () => {

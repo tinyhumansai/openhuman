@@ -200,6 +200,37 @@ const EMPTY_ROUTING: RoutingMap = {
 
 const EMPTY_SETTINGS: AISettings = { cloudProviders: [], routing: EMPTY_ROUTING };
 
+type ProviderSetupError = { summary: string; detail?: string };
+
+const MAX_PROVIDER_SETUP_DETAIL_LENGTH = 1000;
+
+function formatProviderSetupError(err: unknown): ProviderSetupError {
+  const raw = err instanceof Error ? err.message : String(err ?? '');
+  const fallback = 'Provider setup failed. Check the provider settings and try again.';
+  const trimmedRaw = raw.trim();
+  if (!trimmedRaw) return { summary: fallback };
+
+  const withoutUrls = trimmedRaw.replace(/https?:\/\/[^\s"]+/g, '<endpoint>');
+  const jsonStart = withoutUrls.search(/\s(?:\[|\{)/);
+  const clipped = jsonStart === -1 ? withoutUrls : withoutUrls.slice(0, jsonStart);
+  let summary = clipped
+    .replace(/^Error:\s*/i, '')
+    .replace(/^Could not reach ([^:]+):\s*/i, 'Could not reach $1. ')
+    .trim();
+
+  if (!summary) summary = fallback;
+  if (summary.length > 220) {
+    summary = `${summary.slice(0, 217).trimEnd()}...`;
+  }
+
+  const clippedDetail =
+    trimmedRaw.length > MAX_PROVIDER_SETUP_DETAIL_LENGTH
+      ? `${trimmedRaw.slice(0, MAX_PROVIDER_SETUP_DETAIL_LENGTH - 3).trimEnd()}...`
+      : trimmedRaw;
+  const detail = clippedDetail !== summary ? clippedDetail : undefined;
+  return { summary, detail };
+}
+
 function maskKeyLabel(hasKey: boolean): string {
   return hasKey ? '•••• configured' : 'Not configured';
 }
@@ -541,7 +572,7 @@ const ProviderKeyDialog = ({
   const { t } = useT();
   const [value, setValue] = useState<string>(isLocalRuntime ? defaultEndpointFor(slug) : '');
   const [phase, setPhase] = useState<'idle' | 'saving'>('idle');
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<ProviderSetupError | null>(null);
   const busy = phase !== 'idle';
 
   const placeholder = isLocalRuntime
@@ -564,11 +595,13 @@ const ProviderKeyDialog = ({
   const handleSave = async () => {
     const trimmed = value.trim();
     if (!trimmed) {
-      setError(isLocalRuntime ? 'Endpoint URL is required' : t('settings.ai.apiKeyRequired'));
+      setError({
+        summary: isLocalRuntime ? 'Endpoint URL is required' : t('settings.ai.apiKeyRequired'),
+      });
       return;
     }
     if (isLocalRuntime && !/^https?:\/\//i.test(trimmed)) {
-      setError('Endpoint must start with http:// or https://');
+      setError({ summary: 'Endpoint must start with http:// or https://' });
       return;
     }
     setError(null);
@@ -577,7 +610,7 @@ const ProviderKeyDialog = ({
     try {
       await onSubmit(trimmed);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(formatProviderSetupError(err));
       setPhase('idle');
     }
   };
@@ -619,9 +652,7 @@ const ProviderKeyDialog = ({
             }}
             className={`rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 placeholder-stone-400 dark:placeholder-neutral-500 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 disabled:opacity-60 ${isLocalRuntime ? 'font-mono' : ''}`}
           />
-          {error ? (
-            <p className="text-xs font-medium text-red-600 dark:text-red-300">{error}</p>
-          ) : null}
+          {error ? <ProviderSetupErrorMessage error={error} /> : null}
         </div>
 
         <div className="mt-6 flex justify-end gap-2">
@@ -646,6 +677,26 @@ const ProviderKeyDialog = ({
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+function ProviderSetupErrorMessage({ error }: { error: ProviderSetupError }) {
+  return (
+    <div className="min-w-0 rounded-md border border-red-200 dark:border-red-500/30 bg-red-50 dark:bg-red-500/10 px-3 py-2 text-xs text-red-700 dark:text-red-300">
+      <p role="alert" className="font-medium leading-relaxed break-words [overflow-wrap:anywhere]">
+        {error.summary}
+      </p>
+      {error.detail && (
+        <details className="mt-2">
+          <summary className="cursor-pointer select-none text-[11px] font-medium text-red-700 dark:text-red-200">
+            Details
+          </summary>
+          <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-words rounded bg-white/70 dark:bg-neutral-950/40 p-2 font-mono text-[11px] leading-relaxed [overflow-wrap:anywhere]">
+            {error.detail}
+          </pre>
+        </details>
+      )}
+    </div>
+  );
+}
+
 // Background loop controls + usage diagnostics
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -2529,7 +2580,7 @@ const CloudProviderEditor = ({
   const [endpoint, setEndpoint] = useState(initial?.endpoint ?? defaultEndpointFor(defaultSlug));
   const [apiKey, setApiKey] = useState('');
   const [saving, setSaving] = useState(false);
-  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [submitError, setSubmitError] = useState<ProviderSetupError | null>(null);
   const isOpenHuman = slug === 'openhuman';
   const hasExistingKey = (initial?.maskedKey ?? '').startsWith('••••');
 
@@ -2617,11 +2668,7 @@ const CloudProviderEditor = ({
               />
             </div>
           )}
-          {submitError && (
-            <div className="rounded-md border border-red-200 dark:border-red-500/30 bg-red-50 dark:bg-red-500/10 px-3 py-2 text-xs text-red-700 dark:text-red-300 break-words">
-              {submitError}
-            </div>
-          )}
+          {submitError && <ProviderSetupErrorMessage error={submitError} />}
         </div>
         <div className="flex items-center justify-end gap-2 border-t border-stone-200 dark:border-neutral-800 px-4 py-3">
           <button
@@ -2650,7 +2697,7 @@ const CloudProviderEditor = ({
                 // Caller throws when the live /models probe rejects — surface
                 // the failure inline and keep the dialog open so the user can
                 // fix the key/URL and retry.
-                setSubmitError(err instanceof Error ? err.message : String(err));
+                setSubmitError(formatProviderSetupError(err));
               } finally {
                 setSaving(false);
               }
