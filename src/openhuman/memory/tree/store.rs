@@ -1690,7 +1690,10 @@ pub fn clear_chunk_reembed_skipped(
 ///
 /// Returns the total number of rows removed across both tombstone tables.
 /// Idempotent when no tombstones exist for the signature.
-pub fn clear_reembed_skipped_for_signature(config: &Config, model_signature: &str) -> Result<usize> {
+pub fn clear_reembed_skipped_for_signature(
+    config: &Config,
+    model_signature: &str,
+) -> Result<usize> {
     let model_signature = validate_reembed_skip_key("model_signature", model_signature)?;
     with_connection(config, |conn| {
         let chunk_deleted = conn.execute(
@@ -1710,7 +1713,7 @@ pub fn clear_reembed_skipped_for_signature(config: &Config, model_signature: &st
 /// chars). Rejects NUL bytes so SQLite bindings cannot be truncated.
 const REEMBED_SKIP_KEY_MAX_LEN: usize = 2048;
 
-pub(crate) fn validate_reembed_skip_key(label: &str, value: &str) -> Result<&str> {
+pub(crate) fn validate_reembed_skip_key<'a>(label: &str, value: &'a str) -> Result<&'a str> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
         anyhow::bail!("{label} must be non-empty");
