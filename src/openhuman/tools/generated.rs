@@ -59,9 +59,10 @@ pub struct GeneratedTool {
 
 impl GeneratedTool {
     pub fn new(
-        definition: GeneratedToolDefinition,
+        mut definition: GeneratedToolDefinition,
         adapter: Arc<dyn GeneratedToolAdapter>,
     ) -> anyhow::Result<Self> {
+        normalize_definition(&mut definition);
         if let Err(err) = validate_definition(&definition) {
             log::debug!(
                 "[generated_tools] definition validation failed tool_name={} error={err}",
@@ -136,6 +137,12 @@ pub fn generated_tools_from_definitions(
                 .map(|tool| Box::new(tool) as Box<dyn Tool>)
         })
         .collect()
+}
+
+fn normalize_definition(definition: &mut GeneratedToolDefinition) {
+    definition.name = definition.name.trim().to_string();
+    definition.description = definition.description.trim().to_string();
+    definition.adapter_id = definition.adapter_id.trim().to_string();
 }
 
 fn validate_definition(definition: &GeneratedToolDefinition) -> anyhow::Result<()> {
@@ -247,5 +254,19 @@ mod tests {
             Ok(_) => panic!("blank adapter_id should fail"),
             Err(err) => assert!(err.to_string().contains("adapter_id must be non-empty")),
         }
+    }
+
+    #[test]
+    fn generated_tool_normalizes_definition_fields() {
+        let mut definition = sample_definition();
+        definition.name = " send_update ".into();
+        definition.description = " Send a scoped update. ".into();
+        definition.adapter_id = " echo-adapter ".into();
+
+        let tool = GeneratedTool::new(definition, Arc::new(EchoAdapter)).unwrap();
+
+        assert_eq!(tool.name(), "send_update");
+        assert_eq!(tool.description(), "Send a scoped update.");
+        assert_eq!(tool.definition().adapter_id, "echo-adapter");
     }
 }
