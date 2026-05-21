@@ -25,7 +25,9 @@ use crate::openhuman::agent::harness;
 use crate::openhuman::agent::hooks::{self, ToolCallRecord, TurnContext};
 use crate::openhuman::agent::memory_loader::collect_recall_citations;
 use crate::openhuman::agent::progress::AgentProgress;
-use crate::openhuman::agent::tool_policy::{ToolPolicyDecision, ToolPolicyRequest};
+use crate::openhuman::agent::tool_policy::{
+    ToolCallContext, ToolPolicyDecision, ToolPolicyRequest,
+};
 use crate::openhuman::agent_experience::{
     prepend_experience_block, render_experience_hits, AgentExperienceStore, ExperienceQuery,
 };
@@ -1163,13 +1165,15 @@ impl Agent {
                     false,
                 )
             } else {
-                let policy_request = ToolPolicyRequest {
-                    tool_name: call.name.clone(),
-                    arguments: call.arguments.clone(),
-                    session_id: self.event_session_id().to_string(),
-                    channel: self.event_channel().to_string(),
-                    agent_definition_id: self.agent_definition_id.to_string(),
-                };
+                let context = ToolCallContext::session(
+                    self.event_session_id(),
+                    self.event_channel(),
+                    self.agent_definition_id.to_string(),
+                    call_id.clone(),
+                    (iteration + 1) as u32,
+                );
+                let policy_request =
+                    ToolPolicyRequest::new(call.name.clone(), call.arguments.clone(), context);
                 if let ToolPolicyDecision::Deny { reason } =
                     self.tool_policy.check(&policy_request).await
                 {
