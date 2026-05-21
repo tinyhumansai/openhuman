@@ -19,7 +19,7 @@ A plugin-only model means tools live in different processes, behind RPC, with th
 * Consistent error handling.
 * Zero install friction.
 * All output passes through [Smart Token Compression](../token-compression.md) for free.
-* Predictable security boundary - filesystem tools respect workspace scoping, network tools go through the OpenHuman proxy.
+* Predictable security boundary - filesystem tools respect workspace scoping, and network tools use the managed OpenHuman proxy by default unless you opt into a self-hosted path such as SearXNG.
 
 ## The toolbelt
 
