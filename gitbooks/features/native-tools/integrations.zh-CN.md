@@ -5,7 +5,7 @@ icon: plug
 
 # 第三方集成
 
-OpenHuman 的智能体可以通过单一代理工具表面调用 [118+ 第三方服务](../integrations/README.zh-CN.md)——Gmail、Notion、GitHub、Slack、Stripe、日历，以及长长的尾部的服务。
+OpenHuman 的智能体可以通过单一代理工具接口调用 [118+ 第三方服务](../integrations/README.zh-CN.md)——Gmail、Notion、GitHub、Slack、Stripe、日历，以及长长的尾部的服务。
 
 ## 它在智能体看来如何
 

@@ -19,7 +19,7 @@ icon: sitemap
 | `skill_delegation` | 交接给工作区中安装的[技能](../integrations/README.zh-CN.md#skills)。 |
 | `ask_clarification` | 暂停并向用户提出精确问题，而不是猜测。 |
 | `plan_exit` | 退出规划阶段并开始执行。 |
-| `check_onboarding_status` / `complete_onboarding` | 门控行为于用户是否完成入门。 |
+| `check_onboarding_status` / `complete_onboarding` | 根据用户是否完成入门进行门控。 |
 
 ## 为什么这些是工具，不是隐式行为
 

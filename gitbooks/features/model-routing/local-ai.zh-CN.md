@@ -9,13 +9,13 @@ icon: microchip
 
 OpenHuman 可以为以下工作负载在你机器上运行本地模型：当本地保留数据最为重要时：**记忆嵌入向量、摘要树构建和后台推理循环**。它是**自愿开启**的，默认**关闭**。
 
-这是一个刻意的范围界定。之前的设计尝试将聊天、视觉、STT 和 TTS 全部放在 Gemma 3 的设备上，结果是沉重、硬件敏感的占用，与产品其余部分所需的东西冲突。如今，本地最有价值的东西（循环、低延迟、隐私敏感的内存工作）走本地；最有价值于前沿模型的东西（默认聊天、推理、视觉）走云端。
+这是一个刻意的范围界定。之前的设计尝试将聊天、视觉、STT 和 TTS 全部放在 Gemma 3 的设备上，结果是对硬件较敏感的资源占用，与产品其余部分所需的东西冲突。如今，本地最有价值的东西（循环、低延迟、隐私敏感的内存工作）走本地；最有价值于前沿模型的东西（默认聊天、推理、视觉）走云端。
 
 ## 开启后什么在本地运行
 
 | 工作负载 | 默认模型 | 实现 |
 | ------------------------- | --------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| **记忆嵌入向量** | `all-minilm:latest` | `src/openhuman/embeddings/ollama.rs`——用于[记忆树](../obsidian-wiki/memory-tree.md)向量搜索。 |
+| **记忆嵌入向量** | `all-minilm:latest` | `src/openhuman/embeddings/ollama.rs`——用于[记忆树](../obsidian-wiki/memory-tree.zh-CN.md)向量搜索。 |
 | **摘要树构建** | `gemma3:1b-it-qat`（可配置） | `src/openhuman/tree_summarizer/ops.rs`——记忆树的源/主题/全局摘要构建器。 |
 | **心跳循环** | 小型聊天模型 | `src/openhuman/heartbeat/`——周期性后台反思。 |
 | **学习 / 反思** | 小型聊天模型 | `src/openhuman/learning/reflection.rs`——巩固所学内容的通过。 |
@@ -27,13 +27,13 @@ OpenHuman 可以为以下工作负载在你机器上运行本地模型：当本�
 
 | 工作负载 | 为什么走云端 |
 | ------------------ | --------------------------------------------------------------------------------------------------- |
-| **聊天（默认）** | 前沿推理质量。通过[模型路由器](README.md)在单一订阅下路由。 |
+| **聊天（默认）** | 前沿推理质量。通过[模型路由器](README.zh-CN.md)在单一订阅下路由。 |
 | **视觉** | 同上。 |
 | **STT** | 后端代理转录（`src/openhuman/voice/cloud_transcribe.rs`）。 |
-| **TTS** | 底层托管[文字转语音](../native-tools/voice.md)（`reply_speech.rs`）。 |
+| **TTS** | 底层托管[文字转语音](../native-tools/voice.zh-CN.md)（`reply_speech.rs`）。 |
 | **网络搜索** | 后端代理（你的机器上没有 API key）。 |
 
-对于**轻量级或中等聊天 hint**（`hint:reaction`、`hint:classify`、`hint:format`、`hint:sentiment`、`hint:summarize`、`hint:medium`、`hint:tool_lite`），当本地 AI 开启且 Ollama 可达时，[路由器](README.md)会优先使用本地 provider。重型 hint（`hint:reasoning`、`hint:agentic`、`hint:coding`）走云端。
+对于**轻量级或中等聊天 hint**（`hint:reaction`、`hint:classify`、`hint:format`、`hint:sentiment`、`hint:summarize`、`hint:medium`、`hint:tool_lite`），当本地 AI 开启且 Ollama 可达时，[路由器](README.zh-CN.md)会优先使用本地 provider。重型 hint（`hint:reasoning`、`hint:agentic`、`hint:coding`）走云端。
 
 ## 工作原理
 
@@ -94,6 +94,6 @@ OpenHuman 处理其余：生命周期（`src/openhuman/local_ai/service/`）、A
 
 ## 另见
 
-* [记忆树](../obsidian-wiki/memory-tree.md)。本地嵌入向量 + 摘要 powering 什么。
-* [自动模型路由](README.md)。轻量聊天 hint 如何优先使用本地 provider。
-* [隐私与安全](../privacy-and-security.md)。当你 opt-in 时什么移至端侧。
+* [记忆树](../obsidian-wiki/memory-tree.zh-CN.md)。本地嵌入向量 + 摘要 powering 什么。
+* [自动模型路由](README.zh-CN.md)。轻量聊天 hint 如何优先使用本地 provider。
+* [隐私与安全](../privacy-and-security.zh-CN.md)。当你 opt-in 时什么移至端侧。
