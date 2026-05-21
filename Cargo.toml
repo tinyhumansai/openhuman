@@ -76,7 +76,9 @@ async-trait = "0.1"
 chacha20poly1305 = "0.10"
 hex = "0.4"
 tokio-util = { version = "0.7", features = ["rt", "io"] }
-tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+# tokio-tungstenite is declared per-target below so the TLS backend
+# (native-tls on Windows, rustls on macOS / Linux) matches the reqwest
+# backend selected at each TLS call site.
 futures = "0.3"
 rusqlite = { version = "0.37", features = ["bundled"] }
 chrono = { version = "0.4", features = ["serde"] }
@@ -157,6 +159,17 @@ whatsapp-rust = { version = "0.5", optional = true, default-features = false, fe
 whatsapp-rust-tokio-transport = { version = "0.5", optional = true, default-features = false }
 whatsapp-rust-ureq-http-client = { version = "0.5", optional = true }
 wacore = { version = "0.5", optional = true, default-features = false }
+
+[target.'cfg(windows)'.dependencies]
+# Windows: tokio-tungstenite uses native-tls (schannel) so wss://
+# connections honor the Windows cert store, including corporate CAs
+# installed by AV / TLS-inspection proxies. See run-dev-win.sh notes.
+tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect", "handshake", "native-tls"] }
+
+[target.'cfg(not(windows))'.dependencies]
+# macOS / Linux: keep rustls + Mozilla webpki-roots — the historical
+# default. Avoids pulling OpenSSL as a runtime dep on Linux.
+tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect", "handshake", "rustls-tls-webpki-roots"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 whisper-rs = { version = "0.16", features = ["metal"] }

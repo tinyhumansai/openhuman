@@ -278,8 +278,8 @@ impl OpenAiCompatibleProvider {
                 headers.insert(USER_AGENT, value);
             }
 
-            let builder = Client::builder()
-                .use_rustls_tls()
+            // Platform-appropriate TLS backend — see [`crate::openhuman::tls`].
+            let builder = crate::openhuman::tls::tls_client_builder()
                 .timeout(std::time::Duration::from_secs(120))
                 .connect_timeout(std::time::Duration::from_secs(10))
                 .default_headers(headers);
@@ -290,12 +290,14 @@ impl OpenAiCompatibleProvider {
 
             return builder.build().unwrap_or_else(|error| {
                 tracing::warn!("Failed to build proxied timeout client with user-agent: {error}");
-                Client::new()
+                crate::openhuman::tls::tls_client_builder()
+                    .build()
+                    .unwrap_or_default()
             });
         }
 
-        let builder = Client::builder()
-            .use_rustls_tls()
+        // Platform-appropriate TLS backend — see [`crate::openhuman::tls`].
+        let builder = crate::openhuman::tls::tls_client_builder()
             .timeout(std::time::Duration::from_secs(120))
             .connect_timeout(std::time::Duration::from_secs(10));
         let builder = crate::openhuman::config::apply_runtime_proxy_to_builder(
@@ -304,7 +306,9 @@ impl OpenAiCompatibleProvider {
         );
         builder.build().unwrap_or_else(|error| {
             tracing::warn!("Failed to build proxied timeout client: {error}");
-            Client::new()
+            crate::openhuman::tls::tls_client_builder()
+                .build()
+                .unwrap_or_default()
         })
     }
 

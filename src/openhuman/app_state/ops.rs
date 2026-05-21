@@ -263,8 +263,8 @@ fn save_stored_app_state(config: &Config, state: &StoredAppState) -> Result<(), 
 }
 
 fn build_client() -> Result<Client, String> {
-    Client::builder()
-        .use_rustls_tls()
+    // Platform-appropriate TLS backend — see [`crate::openhuman::tls`].
+    crate::openhuman::tls::tls_client_builder()
         .http1_only()
         .timeout(Duration::from_secs(30))
         .connect_timeout(Duration::from_secs(10))
