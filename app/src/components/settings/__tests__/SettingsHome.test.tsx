@@ -107,6 +107,8 @@ describe('SettingsHome', () => {
       expect(screen.getByText('Advanced')).toBeInTheDocument();
       expect(screen.getByText('Clear App Data')).toBeInTheDocument();
       expect(screen.getByText('Log out')).toBeInTheDocument();
+      expect(screen.getByTestId('settings-nav-account')).toBeInTheDocument();
+      expect(screen.getByTestId('settings-nav-notifications')).toBeInTheDocument();
     });
 
     it('localizes Appearance and Mascot menu items', () => {

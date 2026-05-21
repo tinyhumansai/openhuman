@@ -1244,6 +1244,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
             </h2>
             {/* [#1123] welcomeLocked guard removed — always show new thread button */}
             <button
+              data-testid="new-thread-sidebar-button"
               onClick={() => void handleCreateNewThread()}
               className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 dark:hover:bg-neutral-800/60 text-stone-500 dark:text-neutral-400 hover:text-stone-700 dark:hover:text-neutral-200 dark:text-neutral-200 dark:hover:text-neutral-200 transition-colors"
               title={t('chat.newThread')}>
@@ -1279,6 +1280,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
               sortedThreads.map(thread => (
                 <div
                   key={thread.id}
+                  data-testid={`thread-row-${thread.id}`}
                   role="button"
                   tabIndex={0}
                   onClick={() => {
@@ -1433,6 +1435,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
               </div>
               <TokenUsagePill />
               <button
+                data-testid="new-thread-button"
                 onClick={() => void handleCreateNewThread()}
                 className="px-2.5 py-1 rounded-lg text-xs font-medium text-primary-600 hover:bg-primary-50 transition-colors"
                 title={t('chat.newThreadShortcut')}>
@@ -2027,6 +2030,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                 {/* Voice input mic hidden per #717 (inputMode='voice' path retained). */}
               </div>
               <button
+                data-testid="send-message-button"
                 aria-label={t('chat.send')}
                 title={t('chat.send')}
                 onClick={() => {
