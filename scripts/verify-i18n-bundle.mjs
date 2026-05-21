@@ -46,13 +46,13 @@ const requiredMarkers = [
   },
   {
     label: "Simplified Chinese picker label",
-    needles: ["\u4e2d\u6587", "\\u4e2d\\u6587"],
+    needles: ["\u7b80\u4f53\u4e2d\u6587", "\\u7b80\\u4f53\\u4e2d\\u6587"],
   },
 ];
 
-if (!existsSync(distDir)) {
+if (!existsSync(distDir) || !statSync(distDir).isDirectory()) {
   console.error(
-    `verify-i18n-bundle: dist directory does not exist: ${distDir}`,
+    `verify-i18n-bundle: dist directory does not exist or is not a directory: ${distDir}`,
   );
   process.exit(1);
 }
