@@ -19,6 +19,23 @@ OpenHuman is a native desktop application, not a browser extension, not an Elect
 | **Windows** | x64, ARM64           | `.msi` installer           |
 | **Linux**   | x64                  | AppImage, `.deb`           |
 
+### Linux AppImage notes
+
+The Linux AppImage is built for x64 desktops and is the default asset selected
+by the curl installer. On newer distributions, especially builds that tighten
+unprivileged user namespaces or AppArmor defaults, AppImage startup can fail
+before OpenHuman reaches its own crash reporter. Known symptoms include:
+
+- `unshare: write failed /proc/self/uid_map: Operation not permitted`
+- `Interpreter not found!`
+- `cannot execute binary file`
+
+When that happens, prefer the `.deb` package on Debian/Ubuntu systems. For
+Fedora, openSUSE, and other non-Debian distributions, include the distro
+version, kernel version, GPU/driver stack, and the exact AppImage filename when
+reporting the issue so maintainers can distinguish host restrictions from a
+badly packaged AppImage runtime.
+
 ***
 
 ## Why native matters
