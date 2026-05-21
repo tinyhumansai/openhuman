@@ -292,6 +292,23 @@ describe('<ComposioConnectModal>', () => {
         );
       });
     });
+
+    it('shows the waiting state even when the OS browser opener rejects', async () => {
+      vi.mocked(composioApi.authorize).mockResolvedValue({
+        connectUrl: 'https://hosted.composio.dev/test-token',
+        connectionId: '',
+      });
+      vi.mocked(composioApi.listConnections).mockResolvedValue({ connections: [] });
+      vi.mocked(openUrlModule.openUrl).mockRejectedValueOnce(new Error('opener unavailable'));
+
+      render(<ComposioConnectModal toolkit={mockToolkit} onClose={() => {}} />);
+
+      fireEvent.click(screen.getByRole('button', { name: /Connect Gmail/ }));
+
+      expect(await screen.findByRole('button', { name: /Reopen browser/i })).toBeInTheDocument();
+      expect(screen.getByText(/Waiting for Gmail/i)).toBeInTheDocument();
+      expect(screen.queryByText(/Something went wrong/i)).not.toBeInTheDocument();
+    });
   });
 });
 
