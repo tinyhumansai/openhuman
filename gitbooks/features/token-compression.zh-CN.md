@@ -7,7 +7,7 @@ icon: file-zipper
 
 # 智能 Token 压缩
 
-LLM Token 价格不菲，而冗长的工具输出是消耗大多数 Token 的地方。繁忙仓库中的 `git status`、一次 `cargo build` 日志、一条 600 条消息的邮件主题，或者针对真实集群的 `docker ps -a`，这些都可能将上下文窗口撑大到几乎没有信息收益。
+LLM Token 价格不菲，而冗长的工具输出是消耗大多数 Token 的地方。繁忙仓库里的 `git status`、一次 `cargo build` 日志、一个 600 条消息的邮件串，或者针对真实集群的 `docker ps -a`，这些都可能把上下文窗口撑得很大，却几乎不带多少有效信息。
 
 OpenHuman 搭载 **TokenJuice**，这是 [vincentkoc/tokenjuice](https://github.com/vincentkoc/tokenjuice) 的移植版本，直接集成到工具执行路径中。在任何工具结果到达模型之前，TokenJuice 会将输出通过一层规则叠加进行处理，去除噪音、保留信号。
 
@@ -21,13 +21,13 @@ OpenHuman 搭载 **TokenJuice**，这是 [vincentkoc/tokenjuice](https://github.
 
 ## 为什么这和记忆有关
 
-TokenJuice 是使[自动拉取](obsidian-wiki/auto-fetch.md)在经济上可行的原因。当 Gmail provider 同步一页 200 条消息时，TokenJuice 在每个规范化的邮件进入构建摘要的模型**之前**就将其压缩。GitHub diff、Slack 频道转储以及其他任何高流量来源同理。
+TokenJuice 是使[自动拉取](obsidian-wiki/auto-fetch.zh-CN.md)在经济上可行的原因。当 Gmail provider 同步一页 200 条消息时，TokenJuice 在每个规范化的邮件进入构建摘要的模型**之前**就将其压缩。GitHub diff、Slack 频道转储以及其他任何高流量来源同理。
 
 具体来说：通过前沿模型摄入你最近六个月的邮件费用从数百美元降到个位数美元。
 
 ## 它在流水线中的位置
 
-```
+```text
 工具调用结果
       │
       ▼
@@ -41,11 +41,11 @@ LLM 上下文
 
 ## 检查和覆盖
 
-* 在 `~/.config/tokenjuice/rules/` 中放入一个 JSON 文件来全局添加或覆盖规则。
+* 在 `~/.config/tokenjuice/rules/` 中放入一个 JSON 文件来全局添加或覆写规则。
 * 在仓库内的 `.tokenjuice/rules/` 中放入一个来做同样的项目级设置。
 * 使用 `RUST_LOG=openhuman_core::openhuman::tokenjuice=debug` 启动 core，可以查看匹配了什么以及多少输出被裁剪了。
 
 ## 另见
 
-* [原生工具](native-tools/README.md)。大多数重型工具输出都经过 TokenJuice。
-* [记忆树](obsidian-wiki/memory-tree.md)。压缩输出的下游消费者。
+* [原生工具](native-tools/README.zh-CN.md)。大多数重型工具输出都经过 TokenJuice。
+* [记忆树](obsidian-wiki/memory-tree.zh-CN.md)。压缩输出的下游消费者。

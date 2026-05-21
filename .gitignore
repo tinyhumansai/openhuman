@@ -1,3 +1,9 @@
+# CodeGraph index (generated, not tracked)
+.codegraph/
+
+# Generated architecture docs
+docs/codegraph-architecture.md
+
 # Workflow docs (local only)
 workflow
 create_issue

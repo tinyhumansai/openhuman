@@ -7,7 +7,7 @@ icon: layer-plus
 
 # 平台与可用性
 
-OpenHuman 是一个原生桌面应用，不是浏览器扩展，也不是 Electron 包装器。基于 **React + Tauri v2** 构建，搭配 **Rust core**，它体积小、启动快、不碍事。
+OpenHuman 是一个原生桌面应用，不是浏览器扩展，也不是 Electron 包装器。基于 **React + Tauri v2** 构建，搭载 **Rust core**，它体积小、启动快、不干扰你的工作流。
 
 ***
 
@@ -35,13 +35,13 @@ OpenHuman 作为原生应用构建而非 Web 包装器，有三个原因：
 
 ## 架构概览
 
-```
+```text
 ┌──────────────────────────────────────────────────┐
 │ Tauri shell - windowing, OS integration │
 └──────────────────────────────────────────────────┘
  │ JSON-RPC ↕
 ┌──────────────────────────────────────────────────┐
-│ Rust core (`openhuman` sidecar) │
+│ Rust core（进程内 `openhuman` core）│
 │ • Memory Tree, integrations, auto-fetch │
 │ • Model router, TokenJuice, native tools │
 │ • Voice (STT in, TTS out, Meet agent) │
@@ -52,7 +52,7 @@ OpenHuman 作为原生应用构建而非 Web 包装器，有三个原因：
 └──────────────────────────────────────────────────┘
 ```
 
-Shell 是运输工具（窗口化、进程生命周期、IPC）。所有产品逻辑都在 Rust core 中。React 前端通过 JSON-RPC 与 core 通信。参见[架构](../developing/architecture/)获取完整图景。
+Shell 是载体（负责窗口化、进程生命周期、IPC）。所有产品逻辑都在 Rust core 中。React 前端通过 JSON-RPC 与 core 通信。参见[架构](../developing/architecture/)获取完整图景。
 
 ***
 
@@ -66,10 +66,10 @@ Shell 是运输工具（窗口化、进程生命周期、IPC）。所有产品�
 
 你的本地状态保存在设备上。偏好设置、设置和连接的源配置在离线时仍然可用。本地记忆树完全可访问，你可以浏览 [Obsidian 存储库](obsidian-wiki/)，在无网络连接的情况下阅读你现有的笔记。
 
-自动拉取和实时 LLM 调用需要网络连接。网络恢复时，下一个 20 分钟 tick 会从上次停止的地方继续。
+自动拉取和实时 LLM 调用需要网络连接。网络恢复时，下一个 20 分钟触发周期会从上次停止的地方继续。
 
 ***
 
 ## 自动更新
 
-桌面 shell 通过 Tauri 的更新插件自动更新，针对 GitHub Releases 上发布的一份清单。OpenHuman core sidecar 打包在同一 bundle 中，所以 shell 更新会同时升级两者。
+桌面 shell 通过 Tauri 的更新插件自动更新，针对 GitHub Releases 上发布的一份清单。进程内 OpenHuman core 打包在同一 bundle 中，所以 shell 更新会同时升级两者。

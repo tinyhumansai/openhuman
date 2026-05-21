@@ -25,7 +25,7 @@ OpenHuman 支持 **macOS、Windows 和 Linux** 桌面端。建议 4 GB 以上内
 
 ## 1. 下载并安装
 
-从 [http://tinyhumans.ai/openhuman](http://tinyhumans.ai/openhuman) 或通过你平台的软件包管理器获取 OpenHuman 桌面应用。安装后打开应用。
+从 [https://tinyhumans.ai/openhuman](https://tinyhumans.ai/openhuman) 或通过你平台的软件包管理器获取 OpenHuman 桌面应用。安装后打开应用。
 
 ## 2. 登录
 
@@ -37,7 +37,7 @@ OpenHuman 支持 **macOS、Windows 和 Linux** 桌面端。建议 4 GB 以上内
 
 ## 3. 发出你的第一个请求
 
-一旦 Gmail 被摄入（首次自动拉取 tick 在二十分钟内发生），可以尝试以下提示：
+一旦 Gmail 完成摄入（首次自动拉取会在二十分钟内触发），可以尝试以下提示：
 
 **简报**
 
@@ -66,7 +66,7 @@ OpenHuman 自动为每个任务选择合适的模型。参见[自动模型路由
 现在智能体有了记忆和一个模型，产品的其余部分就是给它更多发挥空间：
 
 * [**会议智能体**](../features/mascot/meeting-agents.md) —— 放入一个 Google Meet 链接，吉祥物作为真实参与者加入：它倾听、将笔记记入记忆树、在通话中说话，并实时使用工具。
-* [**从集成自动拉取**](../features/obsidian-wiki/auto-fetch.md) —— 从**设置**中连接更多源；每二十分钟调度器将新数据拉入你的树。
+* [**从集成自动拉取**](../features/obsidian-wiki/auto-fetch.zh-CN.md) —— 从**设置**中连接更多源；每二十分钟调度器将新数据拉入你的树。
 * [**原生语音**](../features/native-tools/voice.md) —— 按键说话输入和 TTS 回复，这样你可以和 OpenHuman 对话而不是打字。
 * [**潜意识循环**](../features/subconscious.md) —— 让你离开时吉祥物继续处理待办任务。
 

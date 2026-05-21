@@ -29,5 +29,5 @@ icon: display
 
 ## 另见
 
-* [网页抓取](web-scraper.md) —— 当你只需要文章而非整个页面时。
+* [网页抓取](web-scraper.zh-CN.md) —— 当你只需要文章而非整个页面时。
 * [Chromium Embedded Framework](../../developing/cef.md) —— 运行时浏览器层。
