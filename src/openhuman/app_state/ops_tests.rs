@@ -210,7 +210,10 @@ fn runtime_snapshot_cache_hit_within_ttl() {
     let (elapsed, phase) = {
         let cache = RUNTIME_SNAPSHOT_CACHE.lock();
         let entry = cache.as_ref().expect("cache should have entry");
-        (entry.fetched_at.elapsed(), entry.snapshot.autocomplete.phase.clone())
+        (
+            entry.fetched_at.elapsed(),
+            entry.snapshot.autocomplete.phase.clone(),
+        )
     };
     assert!(
         elapsed < RUNTIME_SNAPSHOT_TTL,
