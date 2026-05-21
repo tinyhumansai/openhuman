@@ -933,6 +933,98 @@ fn escape_html_is_noop_for_safe_text() {
     assert_eq!(escape_html(""), "");
 }
 
+// --- telegram callback fetch-metadata gate --------------------------------
+
+fn hdr_map(pairs: &[(&str, &str)]) -> axum::http::HeaderMap {
+    let mut m = axum::http::HeaderMap::new();
+    for (k, v) in pairs {
+        m.insert(
+            axum::http::HeaderName::from_bytes(k.as_bytes()).unwrap(),
+            axum::http::HeaderValue::from_str(v).unwrap(),
+        );
+    }
+    m
+}
+
+#[test]
+fn telegram_callback_origin_ok_accepts_no_metadata_headers() {
+    // Older browsers and CLI clients (curl) send neither Sec-Fetch-* nor
+    // Origin/Referer. The legacy flow has to keep working — reject only
+    // when there is evidence of a cross-site embedded context.
+    let headers = hdr_map(&[]);
+    assert!(super::telegram_callback_origin_ok(&headers).is_ok());
+}
+
+#[test]
+fn telegram_callback_origin_ok_accepts_legit_top_nav_from_telegram() {
+    let headers = hdr_map(&[
+        ("sec-fetch-mode", "navigate"),
+        ("sec-fetch-dest", "document"),
+        ("sec-fetch-site", "cross-site"),
+        ("referer", "https://t.me/some_bot"),
+    ]);
+    assert!(super::telegram_callback_origin_ok(&headers).is_ok());
+}
+
+#[test]
+fn telegram_callback_origin_ok_accepts_same_origin_local_nav() {
+    let headers = hdr_map(&[
+        ("sec-fetch-mode", "navigate"),
+        ("sec-fetch-dest", "document"),
+        ("sec-fetch-site", "same-origin"),
+    ]);
+    assert!(super::telegram_callback_origin_ok(&headers).is_ok());
+}
+
+#[test]
+fn telegram_callback_origin_ok_rejects_image_embed() {
+    let headers = hdr_map(&[
+        ("sec-fetch-mode", "no-cors"),
+        ("sec-fetch-dest", "image"),
+        ("sec-fetch-site", "cross-site"),
+    ]);
+    assert!(super::telegram_callback_origin_ok(&headers).is_err());
+}
+
+#[test]
+fn telegram_callback_origin_ok_rejects_iframe_embed() {
+    let headers = hdr_map(&[
+        ("sec-fetch-mode", "navigate"),
+        ("sec-fetch-dest", "iframe"),
+        ("sec-fetch-site", "cross-site"),
+    ]);
+    assert!(super::telegram_callback_origin_ok(&headers).is_err());
+}
+
+#[test]
+fn telegram_callback_origin_ok_rejects_cross_site_from_non_telegram() {
+    let headers = hdr_map(&[
+        ("sec-fetch-mode", "navigate"),
+        ("sec-fetch-dest", "document"),
+        ("sec-fetch-site", "cross-site"),
+        ("referer", "https://attacker.example/page"),
+    ]);
+    assert!(super::telegram_callback_origin_ok(&headers).is_err());
+}
+
+#[test]
+fn telegram_callback_origin_ok_rejects_non_telegram_referer_without_fetch_metadata() {
+    let headers = hdr_map(&[("referer", "https://attacker.example/post")]);
+    assert!(super::telegram_callback_origin_ok(&headers).is_err());
+}
+
+#[test]
+fn telegram_callback_origin_ok_rejects_localhost_host_prefix_decoy() {
+    // Regression: prefix-matching the referer accepted hostnames like
+    // `http://localhost.attacker.example/...`. With exact-host parsing
+    // these must be rejected even when no fetch-metadata headers are
+    // present.
+    let headers = hdr_map(&[("referer", "http://localhost.attacker.example/cb")]);
+    assert!(super::telegram_callback_origin_ok(&headers).is_err());
+    let headers = hdr_map(&[("referer", "http://127.0.0.1.attacker.example/cb")]);
+    assert!(super::telegram_callback_origin_ok(&headers).is_err());
+}
+
 // --- invoke_method parameter-shape errors ---------------------------------
 
 #[tokio::test]

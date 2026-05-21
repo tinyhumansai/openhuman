@@ -1,8 +1,80 @@
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::json;
-use socketioxide::extract::{Data, SocketRef};
+use socketioxide::extract::{Data, SocketRef, TryData};
 use socketioxide::SocketIo;
+
+/// Marker stored in [`SocketRef::extensions`] once a connection has presented a
+/// bearer token that matches the active per-process RPC token.
+///
+/// Event handlers consult this before forwarding attacker-controllable input
+/// into the JSON-RPC dispatcher or the web-chat orchestrator: an unauthenticated
+/// socket that never picked up the marker is allowed to receive broadcast-style
+/// events (read-only) but cannot trigger executable work.
+#[derive(Clone, Copy, Debug)]
+struct AuthedConnection;
+
+/// Connection-time payload the client passes via Socket.IO's `auth` field.
+///
+/// Browsers do not let `EventSource` / `WebSocket` clients attach custom
+/// headers, so the handshake `auth` map is the only header-equivalent slot
+/// available for our per-process bearer. The socket-IO Node/JS clients all
+/// surface `io(url, { auth: { token: "<hex>" } })` for this.
+#[derive(Debug, Default, Deserialize)]
+struct HandshakeAuth {
+    #[serde(default)]
+    token: Option<String>,
+}
+
+/// Origins the local core trusts at the Socket.IO handshake.
+///
+/// `tauri://localhost` is the production app webview; `http://localhost:*`
+/// and `http://127.0.0.1:*` cover the Vite dev server (`pnpm dev:app`)
+/// and standalone CLI tooling that opens browser pages against the local
+/// listener. A missing `Origin` header is treated as a native (non-browser)
+/// client and accepted — only the cross-origin browser-page case is the
+/// targeted bad actor here.
+fn origin_is_allowed(origin: Option<&str>) -> bool {
+    let Some(origin) = origin else {
+        return true; // native clients (CLI, Tauri shell) — no Origin header
+    };
+    let origin = origin.trim();
+    if origin.is_empty() || origin == "null" {
+        return false;
+    }
+    if origin == "tauri://localhost" || origin == "https://tauri.localhost" {
+        return true;
+    }
+    // Parse the URL and compare the host EXACTLY against the loopback
+    // allowlist — `starts_with` matching accepted decoys like
+    // `http://localhost.attacker.example` and bypassed the gate.
+    let Ok(parsed) = url::Url::parse(origin) else {
+        return false;
+    };
+    // `url::Url::host_str` returns IPv6 hosts with surrounding brackets,
+    // hostnames bare. Accept both shapes.
+    matches!(
+        parsed.host_str(),
+        Some("localhost" | "127.0.0.1" | "::1" | "[::1]")
+    )
+}
+
+/// True when `socket` finished the handshake with a valid bearer token.
+fn socket_is_authed(socket: &SocketRef) -> bool {
+    socket.extensions.get::<AuthedConnection>().is_some()
+}
+
+/// Best-effort disconnect. Called when we discover an unauthenticated socket
+/// inside an event handler — the connect path already disconnects the bad
+/// origins / wrong tokens, so this is purely a defense-in-depth path.
+fn drop_unauthed(socket: &SocketRef, reason: &'static str) {
+    log::warn!(
+        "[socketio] dropping unauthenticated socket id={} reason={}",
+        socket.id,
+        reason
+    );
+    let _ = socket.clone().disconnect();
+}
 
 /// Standard event payload for the web channel transport.
 ///
@@ -181,129 +253,179 @@ pub fn attach_socketio() -> (socketioxide::layer::SocketIoLayer, SocketIo) {
         io.config().engine_config.req_path
     );
 
-    io.ns("/", |socket: SocketRef| {
-        let client_id = socket.id.to_string();
-        log::info!("[socketio] client connected id={client_id}");
-        // Join a room named after the client ID for targeted event delivery.
-        join_room_logged(&socket, &client_id, &client_id);
-        // Also auto-join the "system" room so every connected client
-        // receives broadcast-style events that aren't tied to a
-        // specific chat thread. Today this covers proactive messages
-        // (welcome agent, morning briefing, cron-driven announcements)
-        // which `channels::proactive::ProactiveMessageSubscriber`
-        // emits with `client_id = "system"` — see `emit_web_channel_event`.
-        // If this join fails the welcome message silently disappears,
-        // so we log both success and failure for diagnosability.
-        join_room_logged(&socket, "system", &client_id);
-        let ready_payload = json!({ "sid": client_id });
-        log::debug!("[socketio] emit event=ready to_client={}", socket.id);
-        let _ = socket.emit("ready", &ready_payload);
+    io.ns(
+        "/",
+        |socket: SocketRef, TryData(handshake): TryData<HandshakeAuth>| {
+            let client_id = socket.id.to_string();
 
-        // Handler for JSON-RPC over WebSocket.
-        socket.on(
-            "rpc:request",
-            |socket: SocketRef, Data(payload): Data<SocketRpcRequest>| async move {
-                let client_id = socket.id.to_string();
-                log::info!(
-                    "[socketio] rpc:request method={} id={} client={}",
-                    payload.method,
-                    payload.id,
+            // Reject cross-origin browser pages before the handshake completes.
+            // Native clients (Tauri shell, CLI) do not set an `Origin` header and
+            // are accepted; only browser pages from origins outside the local
+            // app surface are dropped here. See `origin_is_allowed`.
+            let origin = socket
+                .req_parts()
+                .headers
+                .get(axum::http::header::ORIGIN)
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string());
+            if !origin_is_allowed(origin.as_deref()) {
+                log::warn!(
+                    "[socketio] rejecting connect: bad origin {:?} client={}",
+                    origin,
                     client_id
                 );
+                let _ = socket.clone().disconnect();
+                return;
+            }
 
-                // Invoke the method through the same logic used by the HTTP RPC endpoint.
-                let response = match crate::core::jsonrpc::invoke_method(
-                    crate::core::jsonrpc::default_state(),
-                    payload.method.as_str(),
-                    payload.params,
-                )
-                .await
-                {
-                    Ok(result) => (
-                        "rpc:response",
-                        json!({ "id": payload.id, "result": result }),
-                    ),
-                    Err(message) => (
-                        "rpc:error",
-                        json!({
-                            "id": payload.id,
-                            "error": { "code": -32000, "message": message }
-                        }),
-                    ),
-                };
+            // Verify the handshake bearer matches the per-process RPC token.
+            // `TryData` lets us treat a missing/malformed `auth` payload as a
+            // soft failure (no panic) and reject the connect cleanly.
+            let supplied = handshake.ok().and_then(|h| h.token).unwrap_or_default();
+            if !crate::core::auth::verify_bearer_token(&supplied) {
+                log::warn!(
+                    "[socketio] rejecting connect: missing or invalid bearer client={}",
+                    client_id
+                );
+                let _ = socket.clone().disconnect();
+                return;
+            }
+            socket.extensions.insert(AuthedConnection);
 
-                let _ = socket.emit(response.0, &response.1);
-            },
-        );
+            log::info!("[socketio] client connected id={client_id} (authenticated)");
+            // Join a room named after the client ID for targeted event delivery.
+            join_room_logged(&socket, &client_id, &client_id);
+            // Also auto-join the "system" room so every connected client
+            // receives broadcast-style events that aren't tied to a
+            // specific chat thread. Today this covers proactive messages
+            // (welcome agent, morning briefing, cron-driven announcements)
+            // which `channels::proactive::ProactiveMessageSubscriber`
+            // emits with `client_id = "system"` — see `emit_web_channel_event`.
+            // If this join fails the welcome message silently disappears,
+            // so we log both success and failure for diagnosability.
+            join_room_logged(&socket, "system", &client_id);
+            let ready_payload = json!({ "sid": client_id });
+            log::debug!("[socketio] emit event=ready to_client={}", socket.id);
+            let _ = socket.emit("ready", &ready_payload);
 
-        // Handler for starting a chat turn.
-        socket.on(
-            "chat:start",
-            |socket: SocketRef, Data(payload): Data<ChatStartPayload>| async move {
-                let client_id = socket.id.to_string();
-                let thread_id = payload.thread_id.clone();
-                let model_override = payload.model_override.or(payload.model);
-                log::debug!(
+            // Handler for JSON-RPC over WebSocket.
+            socket.on(
+                "rpc:request",
+                |socket: SocketRef, Data(payload): Data<SocketRpcRequest>| async move {
+                    if !socket_is_authed(&socket) {
+                        drop_unauthed(&socket, "rpc:request from unauthenticated socket");
+                        return;
+                    }
+                    let client_id = socket.id.to_string();
+                    log::info!(
+                        "[socketio] rpc:request method={} id={} client={}",
+                        payload.method,
+                        payload.id,
+                        client_id
+                    );
+
+                    // Invoke the method through the same logic used by the HTTP RPC endpoint.
+                    let response = match crate::core::jsonrpc::invoke_method(
+                        crate::core::jsonrpc::default_state(),
+                        payload.method.as_str(),
+                        payload.params,
+                    )
+                    .await
+                    {
+                        Ok(result) => (
+                            "rpc:response",
+                            json!({ "id": payload.id, "result": result }),
+                        ),
+                        Err(message) => (
+                            "rpc:error",
+                            json!({
+                                "id": payload.id,
+                                "error": { "code": -32000, "message": message }
+                            }),
+                        ),
+                    };
+
+                    let _ = socket.emit(response.0, &response.1);
+                },
+            );
+
+            // Handler for starting a chat turn.
+            socket.on(
+                "chat:start",
+                |socket: SocketRef, Data(payload): Data<ChatStartPayload>| async move {
+                    if !socket_is_authed(&socket) {
+                        drop_unauthed(&socket, "chat:start from unauthenticated socket");
+                        return;
+                    }
+                    let client_id = socket.id.to_string();
+                    let thread_id = payload.thread_id.clone();
+                    let model_override = payload.model_override.or(payload.model);
+                    log::debug!(
                     "[socketio] recv event=chat:start client_id={} thread_id={} message_bytes={}",
                     client_id,
                     thread_id,
                     payload.message.len()
                 );
 
-                // Trigger the web channel's chat logic.
-                match crate::openhuman::channels::providers::web::start_chat(
-                    &client_id,
-                    &payload.thread_id,
-                    &payload.message,
-                    model_override,
-                    payload.temperature,
-                    payload.profile_id,
-                    payload.locale,
-                )
-                .await
-                {
-                    Ok(request_id) => {
-                        let accepted_payload = json!({
-                            "event": "chat_accepted",
-                            "client_id": client_id,
-                            "thread_id": thread_id,
-                            "request_id": request_id,
-                        });
-                        emit_with_aliases(&socket, "chat_accepted", &accepted_payload);
+                    // Trigger the web channel's chat logic.
+                    match crate::openhuman::channels::providers::web::start_chat(
+                        &client_id,
+                        &payload.thread_id,
+                        &payload.message,
+                        model_override,
+                        payload.temperature,
+                        payload.profile_id,
+                        payload.locale,
+                    )
+                    .await
+                    {
+                        Ok(request_id) => {
+                            let accepted_payload = json!({
+                                "event": "chat_accepted",
+                                "client_id": client_id,
+                                "thread_id": thread_id,
+                                "request_id": request_id,
+                            });
+                            emit_with_aliases(&socket, "chat_accepted", &accepted_payload);
+                        }
+                        Err(error) => {
+                            let error_payload = json!({
+                                "event": "chat_error",
+                                "client_id": client_id,
+                                "thread_id": thread_id,
+                                "request_id": "",
+                                "message": error,
+                                "error_type": "inference",
+                            });
+                            emit_with_aliases(&socket, "chat_error", &error_payload);
+                        }
                     }
-                    Err(error) => {
-                        let error_payload = json!({
-                            "event": "chat_error",
-                            "client_id": client_id,
-                            "thread_id": thread_id,
-                            "request_id": "",
-                            "message": error,
-                            "error_type": "inference",
-                        });
-                        emit_with_aliases(&socket, "chat_error", &error_payload);
-                    }
-                }
-            },
-        );
+                },
+            );
 
-        // Handler for cancelling an active chat turn.
-        socket.on(
-            "chat:cancel",
-            |socket: SocketRef, Data(payload): Data<ChatCancelPayload>| async move {
-                let client_id = socket.id.to_string();
-                log::debug!(
-                    "[socketio] recv event=chat:cancel client_id={} thread_id={}",
-                    client_id,
-                    payload.thread_id
-                );
-                let _ = crate::openhuman::channels::providers::web::cancel_chat(
-                    &client_id,
-                    &payload.thread_id,
-                )
-                .await;
-            },
-        );
-    });
+            // Handler for cancelling an active chat turn.
+            socket.on(
+                "chat:cancel",
+                |socket: SocketRef, Data(payload): Data<ChatCancelPayload>| async move {
+                    if !socket_is_authed(&socket) {
+                        drop_unauthed(&socket, "chat:cancel from unauthenticated socket");
+                        return;
+                    }
+                    let client_id = socket.id.to_string();
+                    log::debug!(
+                        "[socketio] recv event=chat:cancel client_id={} thread_id={}",
+                        client_id,
+                        payload.thread_id
+                    );
+                    let _ = crate::openhuman::channels::providers::web::cancel_chat(
+                        &client_id,
+                        &payload.thread_id,
+                    )
+                    .await;
+                },
+            );
+        },
+    );
 
     (layer, io)
 }
@@ -615,12 +737,57 @@ fn emit_room_with_aliases(io: &SocketIo, room: &str, name: &str, payload: &serde
 
 #[cfg(test)]
 mod tests {
-    use super::event_alias;
+    use super::{event_alias, origin_is_allowed};
 
     #[test]
     fn event_alias_translates_between_delimiters() {
         assert_eq!(event_alias("chat_done").as_deref(), Some("chat:done"));
         assert_eq!(event_alias("chat:error").as_deref(), Some("chat_error"));
         assert_eq!(event_alias("ready"), None);
+    }
+
+    #[test]
+    fn origin_allowlist_accepts_native_clients() {
+        assert!(origin_is_allowed(None));
+    }
+
+    #[test]
+    fn origin_allowlist_accepts_tauri_localhost() {
+        assert!(origin_is_allowed(Some("tauri://localhost")));
+        assert!(origin_is_allowed(Some("https://tauri.localhost")));
+    }
+
+    #[test]
+    fn origin_allowlist_accepts_local_dev_server() {
+        assert!(origin_is_allowed(Some("http://localhost:1420")));
+        assert!(origin_is_allowed(Some("http://127.0.0.1:1420")));
+        assert!(origin_is_allowed(Some("http://[::1]:1420")));
+    }
+
+    #[test]
+    fn origin_allowlist_rejects_cross_origin_browser_pages() {
+        assert!(!origin_is_allowed(Some("https://attacker.example")));
+        assert!(!origin_is_allowed(Some("http://evil.local")));
+        assert!(!origin_is_allowed(Some("null")));
+        assert!(!origin_is_allowed(Some("")));
+    }
+
+    #[test]
+    fn origin_allowlist_rejects_host_prefix_decoys() {
+        // Regression: `starts_with("localhost")` accepted these; the exact
+        // host match must not.
+        assert!(!origin_is_allowed(Some(
+            "http://localhost.attacker.example"
+        )));
+        assert!(!origin_is_allowed(Some(
+            "http://127.0.0.1.attacker.example"
+        )));
+        assert!(!origin_is_allowed(Some("https://localhost-evil")));
+    }
+
+    #[test]
+    fn origin_allowlist_rejects_unparseable_origin() {
+        assert!(!origin_is_allowed(Some("not a url")));
+        assert!(!origin_is_allowed(Some("javascript:alert(1)")));
     }
 }
