@@ -121,6 +121,12 @@ struct InferenceApplyPresetParams {
     tier: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct InferenceOpenAiOAuthCompleteParams {
+    #[serde(alias = "callbackUrl")]
+    callback_url: String,
+}
+
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
     vec![
         schemas("status"),
@@ -132,6 +138,10 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("presets"),
         schemas("apply_preset"),
         schemas("diagnostics"),
+        schemas("openai_oauth_start"),
+        schemas("openai_oauth_complete"),
+        schemas("openai_oauth_status"),
+        schemas("openai_oauth_disconnect"),
         schemas("summarize"),
         schemas("prompt"),
         schemas("vision_prompt"),
@@ -179,6 +189,22 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("diagnostics"),
             handler: handle_inference_diagnostics,
+        },
+        RegisteredController {
+            schema: schemas("openai_oauth_start"),
+            handler: handle_inference_openai_oauth_start,
+        },
+        RegisteredController {
+            schema: schemas("openai_oauth_complete"),
+            handler: handle_inference_openai_oauth_complete,
+        },
+        RegisteredController {
+            schema: schemas("openai_oauth_status"),
+            handler: handle_inference_openai_oauth_status,
+        },
+        RegisteredController {
+            schema: schemas("openai_oauth_disconnect"),
+            handler: handle_inference_openai_oauth_disconnect,
         },
         RegisteredController {
             schema: schemas("summarize"),
@@ -312,6 +338,37 @@ pub fn schemas(function: &str) -> ControllerSchema {
                  mirror it for the active models. Models below the floor are rejected \
                  via `issues`.",
             )],
+        },
+        "openai_oauth_start" => ControllerSchema {
+            namespace: "inference",
+            function: "openai_oauth_start",
+            description: "Begin ChatGPT/Codex OAuth (PKCE) for the openai cloud provider.",
+            inputs: vec![],
+            outputs: vec![json_output("result", "OAuth start payload with authUrl.")],
+        },
+        "openai_oauth_complete" => ControllerSchema {
+            namespace: "inference",
+            function: "openai_oauth_complete",
+            description: "Complete ChatGPT/Codex OAuth using the browser callback URL.",
+            inputs: vec![required_string(
+                "callback_url",
+                "Redirect URL after sign-in (http://127.0.0.1:1455/auth/callback?...).",
+            )],
+            outputs: vec![json_output("result", "OAuth completion payload.")],
+        },
+        "openai_oauth_status" => ControllerSchema {
+            namespace: "inference",
+            function: "openai_oauth_status",
+            description: "Whether ChatGPT OAuth credentials are stored for openai.",
+            inputs: vec![],
+            outputs: vec![json_output("status", "OAuth connection status.")],
+        },
+        "openai_oauth_disconnect" => ControllerSchema {
+            namespace: "inference",
+            function: "openai_oauth_disconnect",
+            description: "Remove stored ChatGPT OAuth credentials.",
+            inputs: vec![],
+            outputs: vec![json_output("result", "Disconnect result.")],
         },
         "summarize" => ControllerSchema {
             namespace: "inference",
@@ -610,6 +667,41 @@ fn handle_inference_apply_preset(params: Map<String, Value>) -> ControllerFuture
     Box::pin(async move {
         let request = deserialize_params::<InferenceApplyPresetParams>(params)?;
         to_json(crate::openhuman::inference::rpc::inference_apply_preset(&request.tier).await?)
+    })
+}
+
+fn handle_inference_openai_oauth_start(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        to_json(crate::openhuman::inference::rpc::inference_openai_oauth_start(&config).await?)
+    })
+}
+
+fn handle_inference_openai_oauth_complete(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let payload = deserialize_params::<InferenceOpenAiOAuthCompleteParams>(params)?;
+        to_json(
+            crate::openhuman::inference::rpc::inference_openai_oauth_complete(
+                &config,
+                payload.callback_url.trim(),
+            )
+            .await?,
+        )
+    })
+}
+
+fn handle_inference_openai_oauth_status(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        to_json(crate::openhuman::inference::rpc::inference_openai_oauth_status(&config).await?)
+    })
+}
+
+fn handle_inference_openai_oauth_disconnect(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        to_json(crate::openhuman::inference::rpc::inference_openai_oauth_disconnect(&config).await?)
     })
 }
 

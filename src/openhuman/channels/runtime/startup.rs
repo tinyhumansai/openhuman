@@ -180,6 +180,16 @@ pub async fn start_channels(config: Config) -> Result<()> {
         &config.autonomy,
         &config.workspace_dir,
     ));
+    // Phase 1 of #1401: audit logger is wired with defaults so emission paths
+    // are exercised at runtime. A follow-up promotes `SecurityConfig` (and
+    // therefore the `audit` knob) onto the runtime `Config` schema so users
+    // can override `enabled`, `log_path`, and `max_size_mb` via TOML. The
+    // logger is workspace-scoped and shared, so concurrent sessions append to
+    // one `audit.log` without racing on rotation.
+    let audit = crate::openhuman::security::get_or_create_workspace_audit_logger(
+        crate::openhuman::config::AuditConfig::default(),
+        config.workspace_dir.clone(),
+    )?;
     let model = config
         .default_model
         .clone()
@@ -199,6 +209,7 @@ pub async fn start_channels(config: Config) -> Result<()> {
         Arc::new(config.clone()),
         &security,
         runtime,
+        audit,
         Arc::clone(&mem),
         &config.browser,
         &config.http_request,

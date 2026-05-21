@@ -54,6 +54,28 @@ impl EnvLookup for ProcessEnv {
     }
 }
 
+/// Process env lookup that preserves every override except
+/// `OPENHUMAN_WORKSPACE`.
+struct ProcessEnvWithoutWorkspace;
+
+impl EnvLookup for ProcessEnvWithoutWorkspace {
+    fn get(&self, key: &str) -> Option<String> {
+        if key == "OPENHUMAN_WORKSPACE" {
+            None
+        } else {
+            ProcessEnv.get(key)
+        }
+    }
+
+    fn contains(&self, key: &str) -> bool {
+        if key == "OPENHUMAN_WORKSPACE" {
+            false
+        } else {
+            ProcessEnv.contains(key)
+        }
+    }
+}
+
 fn default_config_and_workspace_dirs() -> Result<(PathBuf, PathBuf)> {
     let config_dir = default_config_dir()?;
     Ok((config_dir.clone(), config_dir.join("workspace")))
@@ -1196,6 +1218,52 @@ impl Config {
         config.workspace_dir = workspace_dir;
         config.apply_env_overrides();
         decrypt_config_secrets(&mut config, &openhuman_dir)?;
+        Ok(config)
+    }
+
+    /// Reload a config from an already-resolved `config.toml` path.
+    ///
+    /// This is for long-lived runtime objects that hold a `Config`
+    /// snapshot and need to observe updates written back to the same
+    /// file. It deliberately bypasses only `OPENHUMAN_WORKSPACE`
+    /// resolution: the caller has already been scoped to a user/workspace,
+    /// and following the process-global workspace env var again can cross
+    /// streams with unrelated tests or runtime tasks that temporarily
+    /// repoint it. Other process env overrides still apply.
+    pub async fn load_from_config_path(config_path: &Path, workspace_dir: &Path) -> Result<Self> {
+        let config_path = config_path.to_path_buf();
+        let workspace_dir = workspace_dir.to_path_buf();
+
+        if !config_path.exists() {
+            let mut config = Config {
+                config_path,
+                workspace_dir,
+                ..Default::default()
+            };
+            config.apply_env_overrides_from(&ProcessEnvWithoutWorkspace);
+            return Ok(config);
+        }
+
+        let raw = fs::read_to_string(&config_path)
+            .await
+            .with_context(|| format!("reading config.toml from {}", config_path.display()))?;
+        let (mut config, config_was_corrupted) =
+            parse_config_with_recovery(&config_path, &raw).await;
+        config.config_path = config_path;
+        config.workspace_dir = workspace_dir;
+        migrate_legacy_autocomplete_disabled_apps(&mut config);
+        migrate_legacy_inference_url(&mut config);
+        migrate_cloud_provider_slugs(&mut config);
+        config.apply_env_overrides_from(&ProcessEnvWithoutWorkspace);
+
+        if config_was_corrupted {
+            tracing::warn!(
+                path = %config.config_path.display(),
+                "[config] Snapshot reload recovered a corrupted config; skipping persistence"
+            );
+        }
+
+        crate::openhuman::migrations::run_pending(&mut config).await;
         Ok(config)
     }
 

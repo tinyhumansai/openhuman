@@ -26,11 +26,11 @@ For the full contributor reference, see [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 OpenHuman is a desktop AI assistant app. The codebase has three main parts:
 
-| Part | Tech | What it does |
-|------|------|-------------|
-| `app/` | React + TypeScript | The UI — what you see and click |
-| `app/src-tauri/` | Rust + Tauri | Wraps the UI into a desktop app |
-| `src/` | Rust | The backend brain — logic, memory, RPC |
+| Part             | Tech               | What it does                           |
+| ---------------- | ------------------ | -------------------------------------- |
+| `app/`           | React + TypeScript | The UI — what you see and click        |
+| `app/src-tauri/` | Rust + Tauri       | Wraps the UI into a desktop app        |
+| `src/`           | Rust               | The backend brain — logic, memory, RPC |
 
 **As a beginner**, focus on `app/src/` (React/TypeScript). You don't need to touch Rust to make meaningful contributions.
 
@@ -138,6 +138,106 @@ When the installer opens, select **Desktop development with C++**. Make sure it 
 
 </details>
 
+<details>
+<summary><strong>Linux (Arch) setup</strong></summary>
+
+Install Node.js 24+, pnpm, Rust, and the native build dependencies:
+
+```bash
+# Node.js and npm (Arch ships current Node)
+sudo pacman -S --needed nodejs npm
+
+# pnpm (JavaScript package manager)
+npm install -g pnpm@10.10.0
+
+# Rust via rustup
+sudo pacman -S --needed rustup
+rustup toolchain install 1.93.0 --profile minimal
+rustup component add rustfmt clippy --toolchain 1.93.0
+
+# Build tools required by native Rust crates (whisper-rs, cpal, enigo, etc.)
+sudo pacman -S --needed base-devel cmake pkgconf clang openssl \
+  alsa-lib xdotool libxtst libxi libevdev
+```
+
+For desktop (Tauri/CEF) builds, also install:
+
+```bash
+sudo pacman -S --needed gtk3 webkit2gtk-4.1 libayatana-appindicator \
+  librsvg patchelf nss nspr at-spi2-core libcups libdrm \
+  libxkbcommon libxcomposite libxdamage libxfixes libxrandr \
+  mesa pango cairo libxshmfence
+```
+
+Verify everything is installed:
+
+```bash
+node --version     # should be v24.x.x or higher
+pnpm --version     # should be 10.10.0
+rustc --version    # should be 1.93.0
+cmake --version    # any recent version
+```
+
+> **Node version warning**: The project requires Node 24+. If your Arch `nodejs` package is older, install `nvm` and run `nvm install 24 && nvm use 24`.
+
+</details>
+
+<details>
+<summary><strong>Linux (Ubuntu/Debian) setup</strong></summary>
+
+Install Node.js 24+ via [NodeSource](https://github.com/nodesource/distributions) or `nvm`:
+
+```bash
+# Using nvm (recommended)
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
+nvm install 24
+nvm use 24
+
+# pnpm
+npm install -g pnpm@10.10.0
+```
+
+Install Rust:
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+rustup toolchain install 1.93.0 --profile minimal
+rustup component add rustfmt clippy --toolchain 1.93.0
+```
+
+Install native build dependencies:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y \
+  build-essential cmake pkg-config clang libssl-dev libclang-dev \
+  libasound2-dev libxi-dev libxtst-dev libxdo-dev libudev-dev \
+  libstdc++-14-dev
+```
+
+For desktop (Tauri/CEF) builds, also install:
+
+```bash
+sudo apt-get install -y \
+  libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
+  patchelf libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
+  libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
+  libgbm1 libpango-1.0-0 libcairo2 libatspi2.0-0 libxshmfence1 libu2f-udev
+```
+
+Verify everything is installed:
+
+```bash
+node --version     # should be v24.x.x or higher
+pnpm --version     # should be 10.10.0
+rustc --version    # should be 1.93.0
+cmake --version    # any recent version
+```
+
+> **Node version warning**: The project requires Node 24+. If you see `Unsupported engine: wanted >=24.0.0`, run `nvm install 24 && nvm use 24`.
+
+</details>
+
 ---
 
 ## Step 2 — Fork and clone the repo
@@ -223,12 +323,12 @@ For your first contribution, `pnpm dev` is all you need.
 
 ### Recommended first areas for beginners
 
-| Area | Where it lives | Skills needed |
-|------|---------------|---------------|
-| UI components | `app/src/` | React, TypeScript |
-| Styles / design | `app/src/`, `app/tailwind.config.js` | CSS, Tailwind |
-| Documentation | `*.md` files, `gitbooks/` | Writing |
-| Bug fixes (frontend) | `app/src/` | React, TypeScript |
+| Area                 | Where it lives                       | Skills needed     |
+| -------------------- | ------------------------------------ | ----------------- |
+| UI components        | `app/src/`                           | React, TypeScript |
+| Styles / design      | `app/src/`, `app/tailwind.config.js` | CSS, Tailwind     |
+| Documentation        | `*.md` files, `gitbooks/`            | Writing           |
+| Bug fixes (frontend) | `app/src/`                           | React, TypeScript |
 
 **Avoid for now**: anything in `src/` (Rust core) or `app/src-tauri/` (Tauri shell) until you're comfortable with the codebase.
 

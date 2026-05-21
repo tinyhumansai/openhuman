@@ -32,7 +32,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::process_kill::{kill_pid_force, kill_pid_term};
 
-const EMBEDDED_CORE_READY_WAIT_ATTEMPTS: u16 = 120;
+const EMBEDDED_CORE_READY_WAIT_ATTEMPTS: u16 = 200;
 
 /// Generate a 256-bit cryptographically-random bearer token as a hex string.
 ///
@@ -278,9 +278,14 @@ impl CoreProcessHandle {
                 }
             }
 
-            // CI coverage/test containers can take longer than a normal GUI boot
-            // to bring the embedded core listener up, especially after a fallback
-            // bind. Keep polling while still surfacing early task failures above.
+            // Readiness budget: 200 iterations x 100ms = 20s. The embedded
+            // core's JSON-RPC controller registry has grown over time and
+            // earlier 4s/10s budgets started flaking under CI worker load
+            // (issue: core_process tests intermittently failing with
+            // "core process did not become ready"), especially under
+            // cargo-llvm-cov instrumentation where the binary runs ~2x
+            // slower. Normal runs still exit the loop as soon as the ready
+            // signal arrives and the listener is open.
             for _ in 0..EMBEDDED_CORE_READY_WAIT_ATTEMPTS {
                 if !received_ready {
                     match ready_rx.try_recv() {
