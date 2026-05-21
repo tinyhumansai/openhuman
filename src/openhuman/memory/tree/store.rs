@@ -1647,6 +1647,8 @@ pub fn mark_chunk_reembed_skipped(
     model_signature: &str,
     reason: &str,
 ) -> Result<()> {
+    let chunk_id = validate_reembed_skip_key("chunk_id", chunk_id)?;
+    let model_signature = validate_reembed_skip_key("model_signature", model_signature)?;
     with_connection(config, |conn| {
         let now_ms = Utc::now().timestamp_millis();
         conn.execute(
@@ -1660,6 +1662,66 @@ pub fn mark_chunk_reembed_skipped(
         )?;
         Ok(())
     })
+}
+
+/// Remove a single chunk tombstone so re-embed backfill can retry the row.
+///
+/// Idempotent: deleting a missing `(chunk_id, model_signature)` pair is a
+/// no-op. Intended for operator recovery after environmental failures (moved
+/// workspace, restored body files, fixed embedder config) — see #2358.
+pub fn clear_chunk_reembed_skipped(
+    config: &Config,
+    chunk_id: &str,
+    model_signature: &str,
+) -> Result<()> {
+    let chunk_id = validate_reembed_skip_key("chunk_id", chunk_id)?;
+    let model_signature = validate_reembed_skip_key("model_signature", model_signature)?;
+    with_connection(config, |conn| {
+        conn.execute(
+            "DELETE FROM mem_tree_chunk_reembed_skipped
+              WHERE chunk_id = ?1 AND model_signature = ?2",
+            rusqlite::params![chunk_id, model_signature],
+        )?;
+        Ok(())
+    })
+}
+
+/// Clear all chunk and summary tombstones for a model signature.
+///
+/// Returns the total number of rows removed across both tombstone tables.
+/// Idempotent when no tombstones exist for the signature.
+pub fn clear_reembed_skipped_for_signature(config: &Config, model_signature: &str) -> Result<usize> {
+    let model_signature = validate_reembed_skip_key("model_signature", model_signature)?;
+    with_connection(config, |conn| {
+        let chunk_deleted = conn.execute(
+            "DELETE FROM mem_tree_chunk_reembed_skipped WHERE model_signature = ?1",
+            rusqlite::params![model_signature],
+        )?;
+        let summary_deleted = conn.execute(
+            "DELETE FROM mem_tree_summary_reembed_skipped WHERE model_signature = ?1",
+            rusqlite::params![model_signature],
+        )?;
+        Ok(chunk_deleted + summary_deleted)
+    })
+}
+
+/// Bounds attacker-controlled ids/signatures passed to reembed-skipped admin
+/// helpers without affecting legitimate rows (typical ids are well under 512
+/// chars). Rejects NUL bytes so SQLite bindings cannot be truncated.
+const REEMBED_SKIP_KEY_MAX_LEN: usize = 2048;
+
+pub(crate) fn validate_reembed_skip_key(label: &str, value: &str) -> Result<&str> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        anyhow::bail!("{label} must be non-empty");
+    }
+    if trimmed.len() > REEMBED_SKIP_KEY_MAX_LEN {
+        anyhow::bail!("{label} exceeds maximum length ({REEMBED_SKIP_KEY_MAX_LEN})");
+    }
+    if trimmed.as_bytes().contains(&0) {
+        anyhow::bail!("{label} must not contain NUL bytes");
+    }
+    Ok(trimmed)
 }
 
 /// Transaction-scoped variant of [`set_chunk_embedding_for_signature`].
