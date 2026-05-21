@@ -2420,28 +2420,44 @@ pub fn run() {
             #[cfg(target_os = "linux")]
             {
                 // `tauri-plugin-deep-link::register_all` on Linux shells out
-                // to `xdg-mime` (and `update-desktop-database` / `xdg-icon-resource`)
-                // to install MIME-type associations for our custom URL
-                // schemes. On Linux installs that ship without xdg-utils —
-                // WSL2 without a desktop env, headless servers, minimal
-                // containers (OPENHUMAN-TAURI-AS: WSL2 user in BR) — the
-                // tool isn't on PATH and the plugin fires
-                // `log::error!("Failed to run OS command \`xdg-mime\`…")`
+                // to `xdg-mime`, `update-desktop-database`, and
+                // `xdg-icon-resource` in sequence to install MIME-type
+                // associations for our custom URL schemes. On Linux installs
+                // that ship without one or more of those binaries — WSL2
+                // without a desktop env, headless servers, minimal
+                // containers (OPENHUMAN-TAURI-AS: WSL2 user in BR;
+                // OPENHUMAN-TAURI-5V: same shape but `xdg-mime` was
+                // installed while `update-desktop-database` was missing) —
+                // the plugin fires
+                // `log::error!("Failed to run OS command \`<name>\`…")`
                 // *internally* before returning the Err. That internal
                 // error log is scooped up by `sentry-tracing` into a Sentry
                 // event even though our `if let Err` arm below already
-                // demotes the user-visible failure to a warn. Skip the
-                // plugin call entirely when xdg-mime isn't available so
-                // the internal log never fires — registration only matters
-                // on systems with a desktop environment, where xdg-utils
-                // is part of the desktop install anyway.
-                if path_has_executable("xdg-mime") {
+                // demotes the user-visible failure to a warn.
+                //
+                // Pre-flight every binary the plugin will shell out to and
+                // skip `register_all` entirely if any of them is missing —
+                // partial registration can't succeed because the plugin
+                // runs all three in sequence inside `register_all`, so the
+                // first missing binary kills the whole flow. Registration
+                // only matters on systems with a desktop environment,
+                // where xdg-utils ships as a single package.
+                const XDG_BINARIES: &[&str] =
+                    &["xdg-mime", "update-desktop-database", "xdg-icon-resource"];
+                let missing: Vec<&str> = XDG_BINARIES
+                    .iter()
+                    .copied()
+                    .filter(|name| !path_has_executable(name))
+                    .collect();
+                if missing.is_empty() {
                     if let Err(err) = app.deep_link().register_all() {
                         log::warn!("[deep-link] register_all failed (non-fatal): {err}");
                     }
                 } else {
                     log::warn!(
-                        "[deep-link] skipping register_all — xdg-mime not on PATH (xdg-utils not installed; deep-link MIME registration unavailable on this host)"
+                        "[deep-link] skipping register_all — xdg-utils binaries missing on PATH: {} \
+                         (xdg-utils not installed; deep-link MIME registration unavailable on this host)",
+                        missing.join(", ")
                     );
                 }
             }
@@ -3977,6 +3993,46 @@ mod tests {
         assert!(
             !path_has_executable("xdg-mime"),
             "unset $PATH must yield false (skip register_all on the missing-xdg-utils branch)"
+        );
+
+        match original {
+            Some(v) => std::env::set_var("PATH", v),
+            None => std::env::remove_var("PATH"),
+        }
+    }
+
+    /// Regression guard for OPENHUMAN-TAURI-5V: a Linux host with `xdg-mime`
+    /// installed but `update-desktop-database` missing must classify as
+    /// "skip register_all" — the pre-#5V code only checked `xdg-mime` and
+    /// would have entered the plugin call, which then fires the noisy
+    /// `Failed to run OS command \`update-desktop-database\`` internal log
+    /// that escapes to Sentry. The Wave-4 fix pre-flights every xdg-utils
+    /// binary the plugin shells out to; this test pins that contract by
+    /// checking each binary lookup independently with a `$PATH` that
+    /// contains only `xdg-mime`.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn path_has_executable_returns_false_for_partial_xdg_utils_install() {
+        let _g = ENV_LOCK.lock().unwrap();
+        let original = std::env::var_os("PATH");
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        // Only `xdg-mime` exists; `update-desktop-database` and
+        // `xdg-icon-resource` are deliberately absent.
+        std::fs::write(dir.path().join("xdg-mime"), b"#!/bin/sh\n").expect("write stub");
+        std::env::set_var("PATH", dir.path());
+
+        assert!(
+            path_has_executable("xdg-mime"),
+            "xdg-mime stub must be discoverable in the partial-install $PATH"
+        );
+        assert!(
+            !path_has_executable("update-desktop-database"),
+            "partial xdg-utils install must NOT report update-desktop-database present (OPENHUMAN-TAURI-5V)"
+        );
+        assert!(
+            !path_has_executable("xdg-icon-resource"),
+            "partial xdg-utils install must NOT report xdg-icon-resource present"
         );
 
         match original {
