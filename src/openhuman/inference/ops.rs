@@ -310,6 +310,79 @@ pub async fn inference_apply_preset(tier: &str) -> Result<RpcOutcome<Value>, Str
     ))
 }
 
+pub async fn inference_openai_oauth_start(config: &Config) -> Result<RpcOutcome<Value>, String> {
+    debug!("{LOG_PREFIX} openai_oauth_start:start");
+    let result =
+        crate::openhuman::inference::openai_oauth::start_openai_oauth(config).map(|start| {
+            RpcOutcome::single_log(
+                json!({
+                    "authUrl": start.auth_url,
+                    "state": start.state,
+                    "redirectUri": start.redirect_uri,
+                }),
+                "openai oauth authorize url ready",
+            )
+        });
+    match &result {
+        Ok(_) => debug!("{LOG_PREFIX} openai_oauth_start:ok"),
+        Err(err) => error!(error = %err, "{LOG_PREFIX} openai_oauth_start:error"),
+    }
+    result
+}
+
+pub async fn inference_openai_oauth_complete(
+    config: &Config,
+    callback_url: &str,
+) -> Result<RpcOutcome<Value>, String> {
+    debug!(
+        callback_len = callback_url.len(),
+        "{LOG_PREFIX} openai_oauth_complete:start"
+    );
+    let result =
+        crate::openhuman::inference::openai_oauth::complete_openai_oauth(config, callback_url)
+            .await
+            .map(|payload| RpcOutcome::single_log(payload, "openai oauth connected"));
+    match &result {
+        Ok(_) => debug!("{LOG_PREFIX} openai_oauth_complete:ok"),
+        Err(err) => error!(error = %err, "{LOG_PREFIX} openai_oauth_complete:error"),
+    }
+    result
+}
+
+pub async fn inference_openai_oauth_status(config: &Config) -> Result<RpcOutcome<Value>, String> {
+    debug!("{LOG_PREFIX} openai_oauth_status:start");
+    let result =
+        crate::openhuman::inference::openai_oauth::openai_oauth_status(config).map(|status| {
+            RpcOutcome::single_log(
+                json!({
+                    "connected": status.connected,
+                    "profileId": status.profile_id,
+                    "expiresAt": status.expires_at,
+                    "authMethod": status.auth_method,
+                }),
+                "openai oauth status",
+            )
+        });
+    match &result {
+        Ok(_) => debug!("{LOG_PREFIX} openai_oauth_status:ok"),
+        Err(err) => error!(error = %err, "{LOG_PREFIX} openai_oauth_status:error"),
+    }
+    result
+}
+
+pub async fn inference_openai_oauth_disconnect(
+    config: &Config,
+) -> Result<RpcOutcome<Value>, String> {
+    debug!("{LOG_PREFIX} openai_oauth_disconnect:start");
+    let result = crate::openhuman::inference::openai_oauth::disconnect_openai_oauth(config)
+        .map(|payload| RpcOutcome::single_log(payload, "openai oauth disconnected"));
+    match &result {
+        Ok(_) => debug!("{LOG_PREFIX} openai_oauth_disconnect:ok"),
+        Err(err) => error!(error = %err, "{LOG_PREFIX} openai_oauth_disconnect:error"),
+    }
+    result
+}
+
 pub async fn inference_diagnostics(config: &Config) -> Result<RpcOutcome<Value>, String> {
     debug!("{LOG_PREFIX} diagnostics:start");
     let service = local_runtime::global(config);

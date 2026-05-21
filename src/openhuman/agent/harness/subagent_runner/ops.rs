@@ -682,6 +682,12 @@ async fn run_typed_mode(
                     toolkit: cached_integration.toolkit.clone(),
                     description: cached_integration.description.clone(),
                     tools: fresh_actions,
+                    // Inherit the cached gated set: this spawn path only
+                    // refreshes the *visible* (callable) actions from the
+                    // backend; the gated/unlock-hint surface is computed
+                    // by `fetch_connected_integrations_uncached` against
+                    // the user pref and doesn't change per-spawn.
+                    gated_tools: cached_integration.gated_tools.clone(),
                     connected: cached_integration.connected,
                 };
                 let integration = &integration;

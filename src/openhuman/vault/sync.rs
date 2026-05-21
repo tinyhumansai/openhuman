@@ -4,12 +4,14 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use chrono::Utc;
+use futures::StreamExt;
 use sha2::{Digest, Sha256};
 use walkdir::WalkDir;
 
 use crate::openhuman::config::Config;
 use crate::openhuman::memory::ops::{doc_delete, doc_ingest, DeleteDocParams, IngestDocParams};
 
+use super::state;
 use super::store;
 use super::types::{Vault, VaultFile, VaultFileStatus, VaultSyncReport};
 
@@ -31,6 +33,13 @@ const BUILTIN_EXCLUDE_DIRS: &[&str] = &[
 
 /// Max single-file size we read into memory for ingestion (5 MiB).
 const MAX_FILE_BYTES: u64 = 5 * 1024 * 1024;
+
+/// Number of files to ingest concurrently.
+///
+/// Bounded to avoid overwhelming the embedding API while still parallelising
+/// the dominant network cost.  Matches the codebase's existing `buffer_unordered`
+/// patterns (see `extract_tool.rs` and `cron/scheduler.rs`).
+const SYNC_CONCURRENCY: usize = 4;
 
 /// File extensions we currently extract as plain UTF-8.
 pub fn supported_extension(ext: &str) -> bool {
@@ -71,6 +80,103 @@ pub fn supported_extension(ext: &str) -> bool {
             | "hpp"
             | "log"
     )
+}
+
+/// A file that survived discovery and needs content read + ingestion.
+struct FileToProcess {
+    rel_path: String,
+    title: String,
+    path: PathBuf,
+    mtime_ms: i64,
+    bytes: u64,
+    ext: String,
+    /// Content hash from the previous successful sync, for secondary dedup.
+    prev_hash: Option<String>,
+    /// Document ID to update on re-ingest (keeps embedding lineage stable).
+    existing_doc_id: Option<String>,
+    /// Memory namespace (`vault:<id>`).
+    namespace: String,
+    /// Vault id for tags and state updates.
+    vault_id: String,
+}
+
+/// Outcome of attempting to ingest one file.
+enum IngestFileResult {
+    Ingested {
+        rel_path: String,
+        document_id: String,
+        hash: String,
+        mtime_ms: i64,
+        bytes: u64,
+    },
+    /// Content was read but the hash matched the previous ingest — skip ledger write.
+    Unchanged {
+        rel_path: String,
+    },
+    Failed {
+        rel_path: String,
+        error: String,
+    },
+}
+
+/// Read `file.path`, hash it, and call `doc_ingest` if the content changed.
+///
+/// This runs inside `buffer_unordered` so multiple files are in flight at once.
+async fn process_file(file: FileToProcess) -> IngestFileResult {
+    let content = match tokio::fs::read_to_string(&file.path).await {
+        Ok(c) => c,
+        Err(err) => {
+            return IngestFileResult::Failed {
+                rel_path: file.rel_path,
+                error: format!("read failed: {err}"),
+            };
+        }
+    };
+    let hash = sha256_hex(&content);
+
+    // Secondary dedup: content didn't change even if mtime did (e.g. `touch`).
+    if file.prev_hash.as_deref() == Some(hash.as_str()) {
+        return IngestFileResult::Unchanged {
+            rel_path: file.rel_path,
+        };
+    }
+
+    let ingest_params = IngestDocParams {
+        namespace: file.namespace,
+        key: file.rel_path.clone(),
+        title: file.title,
+        content,
+        source_type: "vault".to_string(),
+        priority: "medium".to_string(),
+        tags: vec![
+            format!("vault:{}", file.vault_id),
+            format!("ext:{}", file.ext),
+        ],
+        metadata: serde_json::json!({
+            "vault_id": file.vault_id,
+            "rel_path": file.rel_path,
+            "mtime_ms": file.mtime_ms,
+            "bytes": file.bytes,
+        }),
+        category: "user".to_string(),
+        session_id: None,
+        document_id: file.existing_doc_id,
+        config: None,
+    };
+
+    match doc_ingest(ingest_params).await {
+        Ok(outcome) => IngestFileResult::Ingested {
+            rel_path: file.rel_path,
+            document_id: outcome.value.document_id,
+            hash,
+            mtime_ms: file.mtime_ms,
+            bytes: file.bytes,
+        },
+        Err(err) => IngestFileResult::Failed {
+            rel_path: file.rel_path,
+            error: err,
+        },
+    }
 }
 
 /// Walk `vault.root_path`, ingest new/changed files into memory, delete docs
@@ -117,7 +223,7 @@ pub async fn sync_vault(config: &Config, vault: &Vault) -> VaultSyncReport {
         .collect();
 
     log::debug!(
-        "[vault] sync_vault: entry id={} root={:?} ledger_rows={} includes={} excludes={}",
+        "[vault] sync: entry id={} root={:?} ledger_rows={} includes={} excludes={}",
         vault.id,
         vault.root_path,
         existing.len(),
@@ -140,11 +246,14 @@ pub async fn sync_vault(config: &Config, vault: &Vault) -> VaultSyncReport {
                 .unwrap_or(true)
         });
 
+    // ── Phase 1: Discovery (sequential, no content reads) ───────────────────
+    let mut candidates: Vec<FileToProcess> = Vec::new();
+
     for entry in walker {
         let entry = match entry {
             Ok(e) => e,
             Err(err) => {
-                log::debug!("[vault] sync_vault: walk error err={err}");
+                log::debug!("[vault] sync: walk error err={err}");
                 report.errors.push(format!("walk error: {err}"));
                 continue;
             }
@@ -182,7 +291,7 @@ pub async fn sync_vault(config: &Config, vault: &Vault) -> VaultSyncReport {
             .to_string();
         if !supported_extension(&ext) {
             report.skipped_unsupported += 1;
-            seen.insert(rel_path.clone()); // keep ledger entries pruned
+            seen.insert(rel_path.clone());
             continue;
         }
 
@@ -199,9 +308,8 @@ pub async fn sync_vault(config: &Config, vault: &Vault) -> VaultSyncReport {
         if metadata.len() > MAX_FILE_BYTES {
             report.skipped_unsupported += 1;
             report.errors.push(format!(
-                "{rel_path}: skipped — {} bytes exceeds {}",
-                metadata.len(),
-                MAX_FILE_BYTES
+                "{rel_path}: skipped — {} bytes exceeds {MAX_FILE_BYTES}",
+                metadata.len()
             ));
             seen.insert(rel_path.clone());
             continue;
@@ -214,92 +322,108 @@ pub async fn sync_vault(config: &Config, vault: &Vault) -> VaultSyncReport {
             .map(|d| d.as_millis() as i64)
             .unwrap_or(0);
 
-        let content = match std::fs::read_to_string(path) {
-            Ok(c) => c,
-            Err(err) => {
-                report.failed += 1;
-                report
-                    .errors
-                    .push(format!("{rel_path}: read failed: {err}"));
-                continue;
-            }
-        };
-        let hash = sha256_hex(&content);
-
         seen.insert(rel_path.clone());
 
-        // Dedup: if hash and mtime unchanged, skip ingest.
+        // Fast-path mtime dedup: if both mtime and previous hash matched we can
+        // skip content reads entirely.  The concurrent phase does a secondary
+        // hash-based check for files whose mtime changed but content didn't.
         if let Some(prev) = by_path.get(&rel_path) {
-            if prev.status == VaultFileStatus::Ok
-                && prev.content_hash == hash
-                && prev.mtime_ms == mtime_ms
-            {
+            if prev.status == VaultFileStatus::Ok && prev.mtime_ms == mtime_ms {
                 report.unchanged += 1;
                 continue;
             }
         }
 
-        let key = rel_path.clone();
         let title = path
             .file_name()
             .and_then(|s| s.to_str())
             .unwrap_or(&rel_path)
             .to_string();
-        let ingest_params = IngestDocParams {
-            namespace: vault.namespace.clone(),
-            key,
-            title,
-            content,
-            source_type: "vault".to_string(),
-            priority: "medium".to_string(),
-            tags: vec![format!("vault:{}", vault.id), format!("ext:{ext}")],
-            metadata: serde_json::json!({
-                "vault_id": vault.id,
-                "rel_path": rel_path,
-                "mtime_ms": mtime_ms,
-                "bytes": metadata.len(),
-            }),
-            category: "user".to_string(),
-            session_id: None,
-            document_id: by_path.get(&rel_path).map(|p| p.document_id.clone()),
-            config: None,
-        };
+        let prev = by_path.get(&rel_path);
 
-        match doc_ingest(ingest_params).await {
-            Ok(outcome) => {
-                let document_id = outcome.value.document_id.clone();
+        candidates.push(FileToProcess {
+            rel_path,
+            title,
+            path: path.to_path_buf(),
+            mtime_ms,
+            bytes: metadata.len(),
+            ext,
+            prev_hash: prev.map(|p| p.content_hash.clone()),
+            existing_doc_id: prev.map(|p| p.document_id.clone()),
+            namespace: vault.namespace.clone(),
+            vault_id: vault.id.clone(),
+        });
+    }
+
+    log::debug!(
+        "[vault] sync: discovery done id={} scanned={} unchanged={} to_ingest={}",
+        vault.id,
+        report.scanned,
+        report.unchanged,
+        candidates.len(),
+    );
+
+    // Update shared state with total count so the frontend can show progress.
+    state::update_progress(&vault.id, |s| {
+        s.scanned = report.scanned;
+        s.unchanged = report.unchanged;
+        s.total = candidates.len() as u64;
+    });
+
+    // ── Phase 2: Concurrent ingestion ────────────────────────────────────────
+    let results: Vec<IngestFileResult> = futures::stream::iter(candidates)
+        .map(process_file)
+        .buffer_unordered(SYNC_CONCURRENCY)
+        .collect()
+        .await;
+
+    // ── Phase 3: Process results (sequential ledger writes) ──────────────────
+    for result in results {
+        match result {
+            IngestFileResult::Ingested {
+                rel_path,
+                document_id,
+                hash,
+                mtime_ms,
+                bytes,
+            } => {
                 let file = VaultFile {
                     vault_id: vault.id.clone(),
                     rel_path: rel_path.clone(),
                     document_id,
                     content_hash: hash,
                     mtime_ms,
-                    bytes: metadata.len(),
+                    bytes,
                     ingested_at: Utc::now(),
                     status: VaultFileStatus::Ok,
                 };
                 if let Err(err) = store::upsert_file(config, &file) {
-                    log::debug!(
-                        "[vault] sync_vault: ledger write failed path={rel_path} err={err}"
-                    );
+                    log::debug!("[vault] sync: ledger write failed path={rel_path} err={err}");
                     report
                         .errors
                         .push(format!("{rel_path}: ledger write failed: {err}"));
                 }
-                log::trace!("[vault] sync_vault: ingested path={rel_path}");
+                log::trace!("[vault] sync: ingested path={rel_path}");
                 report.ingested += 1;
+                state::update_progress(&vault.id, |s| s.ingested += 1);
             }
-            Err(err) => {
-                log::debug!("[vault] sync_vault: ingest failed path={rel_path} err={err}");
+            IngestFileResult::Unchanged { rel_path } => {
+                // Hash matched even though mtime changed — still a no-op.
+                log::trace!("[vault] sync: hash-unchanged path={rel_path}");
+                report.unchanged += 1;
+            }
+            IngestFileResult::Failed { rel_path, error } => {
+                log::debug!("[vault] sync: ingest failed path={rel_path} err={error}");
                 report.failed += 1;
                 report
                     .errors
-                    .push(format!("{rel_path}: ingest failed: {err}"));
+                    .push(format!("{rel_path}: ingest failed: {error}"));
+                state::update_progress(&vault.id, |s| s.failed += 1);
             }
         }
     }
 
-    // Anything in ledger we didn't see this pass is gone — delete it.
+    // ── Phase 4: Deletions ────────────────────────────────────────────────────
     for (path, prev) in by_path.iter() {
         if seen.contains(path) {
             continue;
@@ -310,28 +434,29 @@ pub async fn sync_vault(config: &Config, vault: &Vault) -> VaultSyncReport {
         })
         .await
         {
-            log::debug!("[vault] sync_vault: doc delete failed path={path} err={err}");
+            log::debug!("[vault] sync: doc delete failed path={path} err={err}");
             report
                 .errors
                 .push(format!("{path}: doc delete failed: {err}"));
             continue;
         }
         if let Err(err) = store::delete_file(config, &vault.id, path) {
-            log::debug!("[vault] sync_vault: ledger delete failed path={path} err={err}");
+            log::debug!("[vault] sync: ledger delete failed path={path} err={err}");
             report
                 .errors
                 .push(format!("{path}: ledger delete failed: {err}"));
             continue;
         }
         report.removed += 1;
+        state::update_progress(&vault.id, |s| s.removed += 1);
     }
 
     if let Err(err) = store::touch_last_synced(config, &vault.id, Utc::now()) {
-        log::debug!("[vault] sync_vault: touch_last_synced failed err={err}");
+        log::debug!("[vault] sync: touch_last_synced failed err={err}");
     }
     report.duration_ms = (Utc::now() - started).num_milliseconds();
     log::debug!(
-        "[vault] sync_vault: exit id={} scanned={} ingested={} unchanged={} removed={} failed={} skipped={} duration_ms={}",
+        "[vault] sync: exit id={} scanned={} ingested={} unchanged={} removed={} failed={} skipped={} duration_ms={}",
         vault.id,
         report.scanned,
         report.ingested,

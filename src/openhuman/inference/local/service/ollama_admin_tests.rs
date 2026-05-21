@@ -149,6 +149,68 @@ async fn ensure_ollama_server_requires_external_runtime_when_unreachable() {
 }
 
 #[tokio::test]
+async fn test_ollama_connection_returns_reachable_with_model_count() {
+    let _guard = crate::openhuman::inference::inference_test_guard();
+
+    let app = Router::new().route(
+        "/api/tags",
+        get(|| async {
+            Json(json!({
+                "models": [
+                    {"name": "llama3:latest", "modified_at": "", "size": 1u64, "digest": "d"},
+                    {"name": "mistral:7b", "modified_at": "", "size": 2u64, "digest": "d"}
+                ]
+            }))
+        }),
+    );
+    let base = spawn_mock(app).await;
+
+    let result = super::test_ollama_connection(&base).await.unwrap();
+    assert_eq!(result["reachable"], true);
+    assert_eq!(result["models_count"], 2);
+    assert!(result["error"].is_null());
+}
+
+#[tokio::test]
+async fn test_ollama_connection_returns_unreachable_on_server_error() {
+    let _guard = crate::openhuman::inference::inference_test_guard();
+
+    let app = Router::new().route(
+        "/api/tags",
+        get(|| async { (axum::http::StatusCode::INTERNAL_SERVER_ERROR, "boom") }),
+    );
+    let base = spawn_mock(app).await;
+
+    let result = super::test_ollama_connection(&base).await.unwrap();
+    assert_eq!(result["reachable"], false);
+    assert!(!result["error"].as_str().unwrap_or("").is_empty());
+}
+
+#[tokio::test]
+async fn test_ollama_connection_returns_unreachable_on_connect_failure() {
+    let _guard = crate::openhuman::inference::inference_test_guard();
+
+    let result = super::test_ollama_connection("http://127.0.0.1:1")
+        .await
+        .unwrap();
+    assert_eq!(result["reachable"], false);
+    assert!(!result["error"].as_str().unwrap_or("").is_empty());
+}
+
+#[tokio::test]
+async fn test_ollama_connection_rejects_invalid_url() {
+    let _guard = crate::openhuman::inference::inference_test_guard();
+
+    let err = super::test_ollama_connection("not-a-url")
+        .await
+        .unwrap_err();
+    assert!(
+        !err.is_empty(),
+        "expected validation error, got empty string"
+    );
+}
+
+#[tokio::test]
 async fn ensure_ollama_server_reports_broken_external_runner_without_restart_attempt() {
     let _guard = crate::openhuman::inference::inference_test_guard();
 
@@ -458,7 +520,7 @@ async fn list_models_returns_parsed_payload() {
 
     let config = Config::default();
     let service = LocalAiService::new(&config);
-    let models = service.list_models().await.expect("list_models");
+    let models = service.list_models_at(&base).await.expect("list_models");
     assert_eq!(models.len(), 2);
     assert_eq!(models[0].name, "a:latest");
     assert_eq!(models[1].name, "b:v2");
@@ -482,7 +544,7 @@ async fn list_models_errors_on_non_success() {
 
     let config = Config::default();
     let service = LocalAiService::new(&config);
-    let err = service.list_models().await.unwrap_err();
+    let err = service.list_models_at(&base).await.unwrap_err();
     assert!(err.contains("503") || err.contains("tags failed"));
     unsafe {
         std::env::remove_var("OPENHUMAN_OLLAMA_BASE_URL");

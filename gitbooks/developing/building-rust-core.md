@@ -88,7 +88,9 @@ After Xcode CLT is installed, the core should build with the cargo commands abov
 
 ### Core-only package set
 
-Install these packages before running `cargo` on a fresh Ubuntu/Debian machine:
+Install these packages before running `cargo` on a fresh Linux machine.
+
+**Ubuntu / Debian:**
 
 ```bash
 sudo apt-get update
@@ -98,12 +100,21 @@ sudo apt-get install -y \
   libstdc++-14-dev
 ```
 
+**Arch Linux:**
+
+```bash
+sudo pacman -S --needed base-devel cmake pkgconf clang openssl \
+  alsa-lib libxi libxtst xdotool libevdev
+```
+
+> On Arch, `clang` includes `libclang` and `base-devel` includes `gcc` (providing `libstdc++`), so separate `-dev` packages are not needed.
+
 Why these matter:
 
-- `build-essential`, `cmake`, `pkg-config`: native builds used by transitive Rust dependencies.
+- `build-essential` / `base-devel`, `cmake`, `pkg-config` / `pkgconf`: native builds used by transitive Rust dependencies.
 - `clang`, `libclang-dev`: bindgen / C and C++ compilation paths used by native crates.
-- `libssl-dev`: OpenSSL headers needed by some networking dependencies.
-- `libasound2-dev`, `libxi-dev`, `libxtst-dev`, `libxdo-dev`, `libudev-dev`: required by audio/input/device crates pulled into the core build.
+- `libssl-dev` / `openssl`: OpenSSL headers needed by some networking dependencies.
+- `libasound2-dev` / `alsa-lib`, `libxi-dev` / `libxi`, `libxtst-dev` / `libxtst`, `libxdo-dev` / `xdotool`, `libudev-dev` (included in Arch `systemd-libs`), `libevdev`: required by audio/input/device crates pulled into the core build.
 
 ### `whisper-rs` + `clang` note
 
@@ -118,14 +129,17 @@ This is why the docs call out `libstdc++-14-dev`: `clang` may pick GCC 14 C++ he
 If your distro layout still leaves `libstdc++.so` unresolved for the build, use the same workaround documented in [`AGENTS.md`](../../AGENTS.md):
 
 ```bash
+# Ubuntu/Debian — adjust the GCC version as needed
 sudo ln -sf /usr/lib/gcc/x86_64-linux-gnu/13/libstdc++.so /usr/lib/x86_64-linux-gnu/libstdc++.so
 ```
 
-Adjust the GCC version in that path if your machine installs a different one.
+Arch Linux typically does not need this workaround because `gcc-libs` places `libstdc++.so` on the default library search path.
 
 ### Linux desktop/Tauri package set
 
-If you are building the desktop shell instead of the core-only crate, install the broader Ubuntu dependency set mirrored from [`.github/workflows/build-desktop.yml`](../../.github/workflows/build-desktop.yml):
+If you are building the desktop shell instead of the core-only crate, install the broader dependency set.
+
+**Ubuntu / Debian** (mirrored from [`.github/workflows/build-desktop.yml`](../../.github/workflows/build-desktop.yml)):
 
 ```bash
 sudo apt-get update
@@ -138,7 +152,16 @@ sudo apt-get install -y \
   libgbm1 libpango-1.0-0 libcairo2 libatspi2.0-0 libxshmfence1 libu2f-udev
 ```
 
-Use that desktop list only when you need `app/src-tauri/`; for root-crate work, the smaller core-only list above is the relevant baseline.
+**Arch Linux:**
+
+```bash
+sudo pacman -S --needed gtk3 webkit2gtk-4.1 libayatana-appindicator \
+  librsvg patchelf nss nspr at-spi2-core libcups libdrm \
+  libxkbcommon libxcomposite libxdamage libxfixes libxrandr \
+  mesa pango cairo libxshmfence
+```
+
+Use the desktop lists only when you need `app/src-tauri/`; for root-crate work, the smaller core-only list above is the relevant baseline.
 
 ## 6. Windows prerequisites
 

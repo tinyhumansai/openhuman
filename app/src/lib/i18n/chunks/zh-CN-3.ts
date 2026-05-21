@@ -33,6 +33,14 @@ const zhCN3: TranslationMap = {
   'workspace.building': '构建中...',
   'workspace.buildSummaryTrees': '构建摘要树',
   'workspace.viewVault': '查看存储库',
+  'workspace.openingVaultTitle': 'Opening vault in Obsidian',
+  'workspace.openingVaultMessage':
+    "If Obsidian doesn't open, install it from obsidian.md or use Reveal Folder. Vault path:",
+  'workspace.openVaultFailedTitle': "Couldn't open vault in Obsidian",
+  'workspace.openVaultFailedMessage':
+    'Use Reveal Folder to open the vault directory directly. Vault path:',
+  'workspace.revealVaultFailed': "Couldn't reveal vault folder",
+  'workspace.revealFolder': 'Reveal Folder',
   'workspace.graphLoadFailed': '无法加载记忆图谱',
   'workspace.loadingGraph': '正在加载记忆图谱...',
   'workspace.graphViewMode': '记忆图谱视图模式',
@@ -90,6 +98,8 @@ const zhCN3: TranslationMap = {
   'subconscious.failed': '失败',
   'subconscious.tickInterval': '滴答间隔',
   'subconscious.runNow': '立即运行',
+  'subconscious.providerUnavailableTitle': '潜意识已暂停',
+  'subconscious.providerSettings': 'AI 设置',
   'subconscious.approvalNeeded': '需要审批',
   'subconscious.requiresApproval': '需要审批',
   'subconscious.fixInConnections': '在连接中修复',

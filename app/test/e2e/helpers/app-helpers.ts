@@ -19,7 +19,7 @@ import { isTauriDriver } from './platform';
  * we usually just need to give the React root a beat to mount. Specs that
  * need a stricter guarantee should call `waitForAppReady` directly.
  *
- * Also dismisses the first-run `BootCheckGate` "Choose core mode" modal
+ * Also dismisses the first-run `BootCheckGate` "Select a Runtime" modal
  * if it's up — every spec needs the real app behind it, and the picker
  * intercepts every click / deep-link otherwise. (The picker only renders
  * when persisted `coreMode.kind === 'unset'`; on a fresh CEF profile —
@@ -45,8 +45,14 @@ export async function waitForApp(): Promise<void> {
   await dismissBootCheckGate();
 }
 
+// Heading text rendered by the BootCheckGate picker phase. These are the
+// English values for `bootCheck.chooseCoreMode` and `bootCheck.connectToCore`
+// in `app/src/lib/i18n/en.ts` — the desktop CEF build renders the first one.
+// Kept in sync with that source; if the i18n strings change, update here too.
+const BOOT_CHECK_GATE_PICKER_HEADING_REGEX = /Select a Runtime|Connect to Your Runtime/;
+
 /**
- * Dismiss the `BootCheckGate` first-run "Choose core mode" picker if it is
+ * Dismiss the `BootCheckGate` first-run "Select a Runtime" picker if it is
  * currently rendered. No-op if the picker is absent (subsequent invocations
  * within a session, or builds where coreMode is already persisted).
  *
@@ -54,7 +60,10 @@ export async function waitForApp(): Promise<void> {
  * intercepts every click in the WebView. Without dismissing it, every
  * mega-flow sub-test would deep-link an app the user can't actually
  * interact with, no `/consume` request would ever fire, and the first
- * `waitForMockRequest` would time out.
+ * `waitForMockRequest` would time out. The OAuth auth-readiness gate added
+ * in #2247 also blocks `consume_login_token` until `openhuman_core_mode` is
+ * persisted, which only happens after the user (or this helper) confirms
+ * the picker.
  *
  * "Local" is pre-selected on desktop builds, so a single Continue click is
  * enough — no need to fill cloud URL/token.
@@ -65,19 +74,25 @@ export async function dismissBootCheckGate(timeout: number = 5_000): Promise<voi
   while (Date.now() < deadline) {
     let onPicker = false;
     try {
-      onPicker = await browser.execute(() => {
+      onPicker = await browser.execute(picker => {
+        const re = new RegExp(picker);
         const headings = Array.from(document.querySelectorAll('h2'));
-        return headings.some(h =>
-          /Choose core mode|Connect to your core/.test(h.textContent ?? '')
-        );
-      });
+        return headings.some(h => re.test(h.textContent ?? ''));
+      }, BOOT_CHECK_GATE_PICKER_HEADING_REGEX.source);
     } catch {
       // session not yet ready — keep polling
       await browser.pause(200);
       continue;
     }
 
-    if (!onPicker) return;
+    if (!onPicker) {
+      // Picker not visible right now. It may still be mid-mount (BootCheckGate
+      // renders inside the provider chain so its first paint can land a beat
+      // after `#root` first gains children), so keep polling until the
+      // deadline rather than declaring "no picker" on the first sample.
+      await browser.pause(200);
+      continue;
+    }
 
     let clicked = false;
     try {
@@ -97,11 +112,12 @@ export async function dismissBootCheckGate(timeout: number = 5_000): Promise<voi
       const dismissDeadline = Date.now() + 5_000;
       while (Date.now() < dismissDeadline) {
         try {
-          const stillThere = await browser.execute(() =>
-            Array.from(document.querySelectorAll('h2')).some(h =>
-              /Choose core mode|Connect to your core/.test(h.textContent ?? '')
-            )
-          );
+          const stillThere = await browser.execute(picker => {
+            const re = new RegExp(picker);
+            return Array.from(document.querySelectorAll('h2')).some(h =>
+              re.test(h.textContent ?? '')
+            );
+          }, BOOT_CHECK_GATE_PICKER_HEADING_REGEX.source);
           if (!stillThere) return;
         } catch {
           // ignore

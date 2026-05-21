@@ -12,6 +12,7 @@
  * External calls still go through core (auth, proxy, billing). Only the
  * stage-by-stage orchestration lives in the renderer.
  */
+import * as Sentry from '@sentry/react';
 import { useEffect, useRef, useState } from 'react';
 
 import { useT } from '../../../lib/i18n/I18nContext';
@@ -372,6 +373,13 @@ const ContextGatheringStep = ({
       const t = setTimeout(() => {
         void Promise.resolve(onNext()).catch(e => {
           console.warn('[onboarding:context] auto-advance failed', e);
+          // Mirrors the manual click capture in ContextPage so the auto-
+          // advance failure mode is not a Sentry blind spot (#2081). The
+          // step tag distinguishes it from `continue-to-chat` clicks in
+          // the dashboard.
+          Sentry.captureException(e, {
+            tags: { flow: 'onboarding-complete', step: 'auto-advance' },
+          });
           setHasError(true);
         });
       }, 800);

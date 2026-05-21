@@ -15,15 +15,32 @@
 //!   Moonshot Kimi K2)
 //! - `"The model \`gpt-5.5\` does not exist or you do not have access to
 //!   it."` / `"model_not_found"` (stale model pin)
+//! - `"This model is not available in your region."` (R1 — region-blocked
+//!   model on a custom cloud provider)
+//! - `"ModelNotAllowed"` (R4 — Doubao/ChatGLM model-allowlist enforcement)
+//! - `"invalid_authentication_error"` (YC — user pasted a malformed /
+//!   revoked API key into the provider config)
+//! - `"This request requires more credits"` (S5 — OpenRouter `402` when
+//!   the user's account is out of credits)
+//! - `"Invalid model name passed in model="` (Y0 — litellm-style proxy
+//!   rejecting a model id pre-routing)
+//! - `"No active credentials for provider:"` (JN / KB — user hasn't
+//!   plugged in their API key for the selected provider yet)
+//! - `"litellm.BadRequestError"` (JK — litellm github_copilot proxy 400
+//!   from a user OAuth/scope gap)
+//! - `"not_found_error"` (J2 / J5 / J4 — litellm-compatible envelope
+//!   `type` field carrying "model 'X' not found")
 //!
 //! These are **deterministic user-configuration state**, not bugs the
 //! maintainers can act on: the user pointed OpenHuman at a custom
-//! provider with a model / temperature that provider does not accept. The
-//! remediation is "fix the model or routing in Settings", which the UI
-//! surfaces. Yet every agent turn produces a fresh Sentry event
-//! (OPENHUMAN-TAURI-WJ / -QW / -HB / -NH — 88 + 146 + 39 events). This is
-//! the same class as budget-exhaustion ([`super::billing_error`]) and
-//! must be demoted from Sentry to an info log the same way.
+//! provider with a model / temperature / region / credential that
+//! provider does not accept. The remediation is "fix the model, key, or
+//! routing in Settings", which the UI surfaces. Yet every agent turn
+//! produces a fresh Sentry event (OPENHUMAN-TAURI-WJ / -QW / -HB / -NH /
+//! -R1 / -R4 / -YC / -S5 / -Y0 / -JN / -KB / -JK / -J2 / -J5 / -J4 —
+//! ~250 additional events on top of the Wave 1-3 IDs). This is the
+//! same class as budget-exhaustion ([`super::billing_error`]) and must
+//! be demoted from Sentry to an info log the same way.
 //!
 //! ## Provider-aware polarity (important)
 //!
@@ -72,6 +89,53 @@ pub fn is_provider_config_rejection_message(body: &str) -> bool {
         // Our own actionable error once a proper tier→model resolution
         // is in place (keeps this classifier stable across that fix).
         "is an abstract tier",
+        // OPENHUMAN-TAURI-R1 — custom_openai upstream 403 with body
+        // `{"error":{"message":"This model is not available in your region.","code":403}}`.
+        // User picked a model the provider blocks for their account's
+        // region. Sentry has no remediation; user must switch model.
+        "not available in your region",
+        // OPENHUMAN-TAURI-R4 — Doubao / ChatGLM-style model allowlist
+        // enforcement. Body: `{"reason":"ModelNotAllowed",...}`. Match
+        // lowercased — the provider sends the camelCase token as a
+        // sentinel `reason` value.
+        "modelnotallowed",
+        // OPENHUMAN-TAURI-YC — user-supplied custom_openai API key was
+        // rejected by upstream with the OpenAI-compatible
+        // `{"error":{"type":"invalid_authentication_error",...}}`
+        // envelope. Anchored on the type token (stable across providers
+        // that emit this OpenAI-compatible body).
+        "invalid_authentication_error",
+        // OPENHUMAN-TAURI-S5 — OpenRouter 402 when the user is out of
+        // credits. Body always carries "requires more credits, or fewer
+        // max_tokens"; pin to the unique-enough credits phrase. (The
+        // separate `billing_error` classifier handles our own
+        // OpenHuman-backend balance gate; this catches the third-party
+        // OpenRouter shape that re-emits via `agent.run_single`.)
+        "requires more credits",
+        // OPENHUMAN-TAURI-Y0 — litellm-style proxy rejected the model
+        // id pre-routing with `Invalid model name passed in model=…`.
+        // Anchored on the `passed in model=` suffix so a stray "invalid
+        // model name" log line elsewhere does not classify.
+        "invalid model name passed in model=",
+        // OPENHUMAN-TAURI-JN / -KB — custom provider proxy that fronts
+        // multiple upstream APIs surfaces a "you haven't configured the
+        // upstream provider yet" 401/404 as `{"error":{"message":"No
+        // active credentials for provider: openai",...}}`. The
+        // remediation is "add the upstream API key in Settings".
+        "no active credentials for provider",
+        // OPENHUMAN-TAURI-JK — litellm github_copilot proxy 400 driven
+        // by the user's missing / expired Copilot OAuth scope. The body
+        // always starts with the `litellm.BadRequestError:` envelope.
+        // Anchor to that prefix-shaped substring so we don't catch
+        // unrelated 400s that merely mention litellm in passing.
+        "litellm.badrequesterror",
+        // OPENHUMAN-TAURI-J2 / -J5 / -J4 — litellm-compatible
+        // envelope with `"type":"not_found_error"` carrying "model 'X'
+        // not found". Distinct from the existing `model_not_found`
+        // phrase: that's the `code` field used by OpenAI-native bodies;
+        // this is the `type` field used by litellm/Anthropic-style
+        // envelopes for the same class of user-state error.
+        "not_found_error",
     ];
 
     let lower = body.to_ascii_lowercase();
@@ -98,6 +162,63 @@ mod tests {
             assert!(
                 is_provider_config_rejection_message(body),
                 "{body:?} must classify as a provider config-rejection user-state"
+            );
+        }
+    }
+
+    #[test]
+    fn detects_wave4_sentry_bodies() {
+        // Real wire bodies pulled from the OPENHUMAN-TAURI-* Sentry
+        // events the Wave 4 phrases drop.
+        for (sentry_id, body) in [
+            (
+                "R1",
+                r#"custom_openai API error (403 Forbidden): {"error":{"message":"This model is not available in your region.","code":403}}"#,
+            ),
+            (
+                "R4",
+                r#"custom_openai API error (403 Forbidden): {"code":403,"reason":"ModelNotAllowed","message":"模型不允许访问","metadata":{"request_id":"2026051706431574423265420620337"}}"#,
+            ),
+            (
+                "YC",
+                r#"custom_openai API error (401 Unauthorized): {"error":{"message":"Invalid Authentication","type":"invalid_authentication_error"}}"#,
+            ),
+            (
+                "S5",
+                r#"custom_openai API error (402 Payment Required): {"error":{"message":"This request requires more credits, or fewer max_tokens. You requested up to 65536 tokens, but can only afford 597.","type":"insufficient_credits"}}"#,
+            ),
+            (
+                "Y0",
+                r#"custom_openai API error (400 Bad Request): {"error":{"message":"{'error': '/chat/completions: Invalid model name passed in model=reasoning-v1. Call `/v1/models` to view available models for your key.'}","type":"None"}}"#,
+            ),
+            (
+                "JN",
+                r#"custom_openai Responses API error: {"error":{"message":"No active credentials for provider: openai","type":"invalid_request_error","code":"model_not_found"}}"#,
+            ),
+            (
+                "KB",
+                r#"OpenHuman API error (404 Not Found): {"error":{"message":"No active credentials for provider: openai","type":"invalid_request_error","code":"model_not_found"}}"#,
+            ),
+            (
+                "JK",
+                r#"custom_openai API error (400 Bad Request): {"error":{"message":"litellm.BadRequestError: Github_copilotException - Bad Request. Received Model Group=github_copilot/claude-haiku-4.5\nAvailable Model Group Fallbacks=None","type":null}}"#,
+            ),
+            (
+                "J2",
+                r#"custom_openai Responses API error: {"error":{"message":"model 'llama3.3' not found","type":"not_found_error","param":null,"code":null}}"#,
+            ),
+            (
+                "J5",
+                r#"custom_openai API error (404 Not Found): {"error":{"message":"model 'llama3.3' not found","type":"not_found_error","param":null,"code":null}}"#,
+            ),
+            (
+                "J4",
+                r#"custom_openai streaming API error (404 Not Found): {"error":{"message":"model 'llama3.3' not found","type":"not_found_error","param":null,"code":null}}"#,
+            ),
+        ] {
+            assert!(
+                is_provider_config_rejection_message(body),
+                "OPENHUMAN-TAURI-{sentry_id} body must classify as provider config-rejection: {body:?}"
             );
         }
     }

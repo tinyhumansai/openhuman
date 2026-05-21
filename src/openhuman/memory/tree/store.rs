@@ -117,6 +117,30 @@ CREATE TABLE IF NOT EXISTS mem_tree_chunk_embeddings (
 CREATE INDEX IF NOT EXISTS idx_mem_tree_chunk_embeddings_model
     ON mem_tree_chunk_embeddings(model_signature);
 
+-- #1574 §6 reembed-backfill terminal-skip tombstone.
+--
+-- A row here means: 'this (chunk, signature) pair was attempted and failed
+-- terminally (body file missing on disk, embed returned wrong dim, embedder
+-- erred unrecoverably) — DO NOT re-enqueue it on the next backfill batch.'
+--
+-- Without this table, the reembed worklist's `NOT EXISTS embeddings` predicate
+-- keeps re-selecting any chunk that failed read/embed (since no sidecar row
+-- was ever written), and `handle_reembed_backfill` loops on the same rows
+-- forever — observed in the wild as 16 orphan chunk_ids generating ~128k
+-- 'body read failed; skipping' warns across ~8k batch defers. The handler
+-- now writes a row here on terminal failure, and the worklist excludes them.
+-- Idempotent: the table is created here, and `chrono::Utc` is already imported.
+CREATE TABLE IF NOT EXISTS mem_tree_chunk_reembed_skipped (
+    chunk_id               TEXT NOT NULL REFERENCES mem_tree_chunks(id) ON DELETE CASCADE,
+    model_signature        TEXT NOT NULL,
+    reason                 TEXT NOT NULL,
+    skipped_at_ms          INTEGER NOT NULL,
+    PRIMARY KEY (chunk_id, model_signature)
+);
+
+CREATE INDEX IF NOT EXISTS idx_mem_tree_chunk_reembed_skipped_model
+    ON mem_tree_chunk_reembed_skipped(model_signature);
+
 -- Phase 2 (#708): per-chunk score rationale for admission debugging.
 CREATE TABLE IF NOT EXISTS mem_tree_score (
     chunk_id               TEXT PRIMARY KEY,
@@ -223,6 +247,20 @@ CREATE TABLE IF NOT EXISTS mem_tree_summary_embeddings (
 
 CREATE INDEX IF NOT EXISTS idx_mem_tree_summary_embeddings_model
     ON mem_tree_summary_embeddings(model_signature);
+
+-- #1574 §6 reembed-backfill terminal-skip tombstone (summary side). Mirrors
+-- `mem_tree_chunk_reembed_skipped` for the summary worklist. See that table's
+-- comment for the full rationale.
+CREATE TABLE IF NOT EXISTS mem_tree_summary_reembed_skipped (
+    summary_id             TEXT NOT NULL REFERENCES mem_tree_summaries(id) ON DELETE CASCADE,
+    model_signature        TEXT NOT NULL,
+    reason                 TEXT NOT NULL,
+    skipped_at_ms          INTEGER NOT NULL,
+    PRIMARY KEY (summary_id, model_signature)
+);
+
+CREATE INDEX IF NOT EXISTS idx_mem_tree_summary_reembed_skipped_model
+    ON mem_tree_summary_reembed_skipped(model_signature);
 
 -- `mem_tree_buffers` holds the unsealed frontier per (tree, level). One row
 -- per active level per tree; deleted when the buffer seals (clears) in the
@@ -1265,14 +1303,25 @@ fn migrate_legacy_embeddings_to_sidecar(conn: &Connection, config: &Config) -> R
     // table for unrelated callers/tests. Enqueued atomically with the
     // migration; dedupe key = signature, so exactly one chain per space.
     let has_uncovered: bool = tx.query_row(
+        // The `NOT EXISTS … reembed_skipped` clauses match the worklist in
+        // `handle_reembed_backfill`: terminally-failed rows (body missing,
+        // embed wrong dim / err) are sentinel-marked there and must NOT count
+        // as "uncovered" here, otherwise this migration probe keeps reporting
+        // "uncovered" → keeps enqueueing the backfill chain on every DB open →
+        // infinite re-arming (#1574 §6 runaway-loop fix).
         "SELECT EXISTS(
              SELECT 1 FROM mem_tree_chunks c
               WHERE NOT EXISTS (SELECT 1 FROM mem_tree_chunk_embeddings e
-                                 WHERE e.chunk_id = c.id AND e.model_signature = ?1))
+                                 WHERE e.chunk_id = c.id AND e.model_signature = ?1)
+                AND NOT EXISTS (SELECT 1 FROM mem_tree_chunk_reembed_skipped sk
+                                 WHERE sk.chunk_id = c.id AND sk.model_signature = ?1))
            OR EXISTS(
              SELECT 1 FROM mem_tree_summaries s
-              WHERE s.deleted = 0 AND NOT EXISTS (SELECT 1 FROM mem_tree_summary_embeddings e
-                                 WHERE e.summary_id = s.id AND e.model_signature = ?1))",
+              WHERE s.deleted = 0
+                AND NOT EXISTS (SELECT 1 FROM mem_tree_summary_embeddings e
+                                 WHERE e.summary_id = s.id AND e.model_signature = ?1)
+                AND NOT EXISTS (SELECT 1 FROM mem_tree_summary_reembed_skipped sk
+                                 WHERE sk.summary_id = s.id AND sk.model_signature = ?1))",
         rusqlite::params![sig],
         |r| r.get(0),
     )?;
@@ -1534,6 +1583,36 @@ pub fn set_chunk_embedding_for_signature(
 ) -> Result<()> {
     with_connection(config, |conn| {
         upsert_chunk_embedding_conn(conn, chunk_id, model_signature, embedding)
+    })
+}
+
+/// Persistently record that `(chunk_id, signature)` cannot be re-embedded.
+///
+/// Called by `handle_reembed_backfill` when the per-chunk body file is
+/// missing on disk (orphan) or the embedder rejects the row terminally
+/// (wrong dim / unrecoverable embed error). Inserting a row here causes
+/// the next backfill batch's worklist query to exclude this chunk via the
+/// `NOT EXISTS … mem_tree_chunk_reembed_skipped …` predicate, so the
+/// runaway "skipping" loop terminates instead of revisiting the same row
+/// every 5 s forever (#1574 §6 fix).
+pub fn mark_chunk_reembed_skipped(
+    config: &Config,
+    chunk_id: &str,
+    model_signature: &str,
+    reason: &str,
+) -> Result<()> {
+    with_connection(config, |conn| {
+        let now_ms = Utc::now().timestamp_millis();
+        conn.execute(
+            "INSERT INTO mem_tree_chunk_reembed_skipped
+                 (chunk_id, model_signature, reason, skipped_at_ms)
+                 VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(chunk_id, model_signature) DO UPDATE SET
+                    reason = excluded.reason,
+                    skipped_at_ms = excluded.skipped_at_ms",
+            rusqlite::params![chunk_id, model_signature, reason, now_ms],
+        )?;
+        Ok(())
     })
 }
 

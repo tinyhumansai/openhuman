@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 
+import NotificationBody from '../components/notifications/NotificationBody';
 import NotificationCenter from '../components/notifications/NotificationCenter';
 import { useT } from '../lib/i18n/I18nContext';
 import { resolveSystemRoute } from '../lib/notificationRouter';
@@ -104,9 +105,24 @@ const Notifications = () => {
           <ul className="divide-y divide-stone-100 dark:divide-neutral-800">
             {items.map(item => (
               <li key={item.id} data-testid="notification-item">
-                <button
-                  type="button"
+                {/* `role="button"` instead of a real `<button>` — the row body
+                    contains `NotificationLinkPill` (also a `<button>`), and
+                    nested interactive elements break keyboard / screen-reader
+                    behaviour (HTML spec disallows it). */}
+                <div
+                  role="button"
+                  tabIndex={0}
                   onClick={() => handleClick(item)}
+                  onKeyDown={e => {
+                    // Ignore bubbled keydown from inner controls (e.g. the
+                    // link pill). Without this, pressing Enter/Space on a
+                    // focused pill would also activate the row.
+                    if (e.target !== e.currentTarget) return;
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      handleClick(item);
+                    }
+                  }}
                   className={`w-full text-left px-4 py-3 hover:bg-stone-50 dark:hover:bg-neutral-800/60 transition-colors ${
                     item.read
                       ? 'bg-white dark:bg-neutral-900'
@@ -128,15 +144,17 @@ const Notifications = () => {
                       <p className="mt-1 text-sm font-semibold text-stone-900 dark:text-neutral-100 truncate">
                         {item.title}
                       </p>
-                      <p className="mt-0.5 text-sm text-stone-600 dark:text-neutral-300 line-clamp-2">
-                        {item.body}
+                      <p
+                        data-testid="notification-item-body"
+                        className="mt-0.5 text-sm text-stone-600 dark:text-neutral-300 line-clamp-2">
+                        <NotificationBody body={item.body} />
                       </p>
                     </div>
                     <span className="text-[11px] text-stone-400 dark:text-neutral-500 whitespace-nowrap">
                       {formatTime(item.timestamp, t)}
                     </span>
                   </div>
-                </button>
+                </div>
               </li>
             ))}
           </ul>

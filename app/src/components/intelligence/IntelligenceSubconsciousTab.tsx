@@ -59,6 +59,10 @@ export default function IntelligenceSubconsciousTab({
   const { t } = useT();
   const navigate = useNavigate();
   const dispatch = useDispatch();
+  const providerUnavailable = status?.provider_available === false;
+  const providerUnavailableReason = providerUnavailable
+    ? (status?.provider_unavailable_reason ?? t('subconscious.providerUnavailableTitle'))
+    : null;
 
   // Reflection "Act" callback — sets the freshly-spawned thread as the
   // selected one and navigates the user to the chat surface so they
@@ -239,7 +243,8 @@ export default function IntelligenceSubconsciousTab({
           </div>
           <button
             onClick={() => void handleRunTick()}
-            disabled={triggering}
+            disabled={triggering || providerUnavailable}
+            title={providerUnavailable ? t('subconscious.providerUnavailableTitle') : undefined}
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-stone-50 dark:bg-neutral-800/60 hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 disabled:opacity-40 border border-stone-200 dark:border-neutral-800 rounded-lg text-stone-600 dark:text-neutral-300 transition-colors">
             {triggering ? (
               <div className="w-3 h-3 border border-stone-400 border-t-transparent rounded-full animate-spin" />
@@ -257,6 +262,27 @@ export default function IntelligenceSubconsciousTab({
           </button>
         </div>
       </div>
+
+      {providerUnavailable && (
+        <div className="rounded-lg border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 p-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-amber-800 dark:text-amber-200">
+                {t('subconscious.providerUnavailableTitle')}
+              </p>
+              <p className="mt-1 text-xs text-amber-700 dark:text-amber-300 break-words">
+                {providerUnavailableReason}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => navigate('/settings/llm')}
+              className="flex-shrink-0 rounded-md bg-amber-600 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-amber-700 transition-colors">
+              {t('subconscious.providerSettings')}
+            </button>
+          </div>
+        </div>
+      )}
 
       <SubconsciousReflectionCards
         onNavigateToThread={handleNavigateToReflectionThread}
