@@ -518,6 +518,42 @@ fn is_provider_user_state_message(lower: &str) -> bool {
         return true;
     }
 
+    // TAURI-RUST-X9 (#1166): direct-mode composio call against the user's
+    // personal Composio v3 tenant rejected with a 401 because the stored
+    // API key is invalid / revoked / has the wrong prefix. The canonical
+    // wire shape rendered by
+    // `src/openhuman/composio/tools/impl/network/composio.rs::response_error`
+    // and the various direct-mode op wrappers is:
+    //
+    //   `[composio-direct] list_connections failed: Composio v3
+    //    connected_accounts failed: HTTP 401: Invalid API key: ak_…`
+    //
+    // The "Invalid API key" body is rendered for every direct-mode
+    // endpoint (list_connections / list_tools / authorize / etc.), so we
+    // gate on the **`[composio-direct]` prefix** + either of the two
+    // anchors that prove the failure came from the v3 auth wall:
+    //   - `HTTP 401`  (the status the v3 wall returns)
+    //   - `Invalid API key`  (the body Composio puts in the JSON)
+    //
+    // Requiring the `[composio-direct]` prefix keeps this from
+    // accidentally swallowing unrelated bugs — backend-mode 401s from
+    // `integrations/composio/*` still carry the `Backend returned 401`
+    // shape (handled by the failure-tag flow with `status="401"`),
+    // not the `HTTP 401: Invalid API key` shape.
+    //
+    // Remediation is purely user-state: the user must rotate / re-enter
+    // their Composio key via Settings → Composio → Direct mode. Sentry
+    // has no actionable signal — the UI surfaces the "Invalid API key"
+    // toast and the polling layer already retries every 5 s.
+    //
+    // Drops Sentry TAURI-RUST-X9 (~15.7 k events / ~22 h, single user,
+    // release openhuman@0.54.0+c25fc8e5fd3e).
+    if lower.contains("[composio-direct]")
+        && (lower.contains("http 401") || lower.contains("invalid api key"))
+    {
+        return true;
+    }
+
     false
 }
 
