@@ -28,7 +28,7 @@ icon: arrows-rotate
     +--> 如果间隔已过 -> provider.sync()
             |
             +--> 成功 -> record_sync_success(ts)
-```text
+```
 
 这里有几个关键点：
 

@@ -35,7 +35,7 @@ TokenJuice（分类 → 匹配规则 → 压缩）
       │
       ▼
 LLM 上下文
-```text
+```
 
 实现：`src/openhuman/tokenjuice/`（`classify.rs`、`reduce.rs`、`rules/compiler.rs`、`tool_integration.rs`）。
 
