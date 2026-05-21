@@ -326,6 +326,14 @@ fn classify_inference_error(err: &str) -> (&'static str, String) {
                 err,
             ),
         )
+    } else if lower.contains("402")
+        || lower.contains("payment required")
+        || lower.contains("insufficient balance")
+    {
+        (
+            "budget_exhausted",
+            with_provider_detail("Insufficient credits. Please top up to continue.", err),
+        )
     } else if crate::openhuman::agent::error::is_max_iterations_error(err) {
         (
             "max_iterations",
@@ -353,6 +361,22 @@ fn classify_inference_error(err: &str) -> (&'static str, String) {
                 err,
             ),
         )
+    } else if lower.contains("error sending request")
+        || lower.contains("failed to connect")
+        || lower.contains("connection refused")
+        || lower.contains("connection reset")
+        || lower.contains("connection aborted")
+        || lower.contains("dns")
+        || lower.contains("network error")
+        || lower.contains("transport error")
+    {
+        (
+            "network",
+            with_provider_detail(
+                "Could not reach the AI provider. Check your connection and try again.",
+                err,
+            ),
+        )
     } else if lower.contains("401") || lower.contains("unauthorized") || lower.contains("api key") {
         (
             "auth_error",
@@ -360,14 +384,6 @@ fn classify_inference_error(err: &str) -> (&'static str, String) {
                 "There's an authentication issue with the AI provider. Please check your API key in settings.",
                 err,
             ),
-        )
-    } else if lower.contains("402")
-        || lower.contains("payment required")
-        || lower.contains("insufficient balance")
-    {
-        (
-            "budget_exhausted",
-            with_provider_detail("Insufficient credits. Please top up to continue.", err),
         )
     } else if lower.contains("500")
         || lower.contains("internal server")
@@ -429,6 +445,27 @@ fn classify_inference_error(err: &str) -> (&'static str, String) {
             "inference",
             with_provider_detail(generic_inference_error_user_message(), err),
         )
+    }
+}
+
+/// Transient provider failures can leave the in-memory agent/session in a
+/// provider-specific retry state, so retries should rebuild from transcript.
+fn should_clear_cached_session_after_error(error_type: &str) -> bool {
+    matches!(
+        error_type,
+        "rate_limited" | "timeout" | "network" | "provider_error"
+    )
+}
+
+/// Returns the transient error type that should prevent the current `Agent`
+/// from being cached for the next turn.
+fn session_reset_error_type(result: &Result<WebChatTaskResult, String>) -> Option<&'static str> {
+    match result {
+        Ok(_) => None,
+        Err(err) => {
+            let (error_type, _) = classify_inference_error(err);
+            should_clear_cached_session_after_error(error_type).then_some(error_type)
+        }
     }
 }
 
@@ -544,7 +581,6 @@ pub async fn start_chat(
     let thread_id_task = thread_id.clone();
     let request_id_task = request_id.clone();
     let map_key_task = map_key.clone();
-
     let user_message = message.clone();
     let handle = tokio::spawn(async move {
         let result = run_chat_task(
@@ -970,7 +1006,13 @@ async fn run_chat_task(
     // Clear the sender so it doesn't hold the channel open across sessions.
     agent.set_on_progress(None);
 
-    {
+    if let Some(error_type) = session_reset_error_type(&result) {
+        log::debug!(
+            "[web-channel] discarded cached session after transient error map_key={} error_type={}",
+            map_key,
+            error_type
+        );
+    } else {
         let mut sessions = THREAD_SESSIONS.lock().await;
         sessions.insert(
             map_key,

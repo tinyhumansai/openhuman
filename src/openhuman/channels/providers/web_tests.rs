@@ -4,23 +4,18 @@ use super::{
     extract_provider_error_detail, generic_inference_error_user_message,
     inference_budget_exceeded_user_message, is_inference_budget_exceeded_error, json_output,
     key_for, locale_reply_directive, normalize_model_override, optional_f64, optional_string,
-    provider_role_for_model_override, required_string, schemas,
-    set_test_forced_run_chat_task_error, start_chat, subscribe_web_channel_events,
+    provider_role_for_model_override, required_string, schemas, session_reset_error_type,
+    set_test_forced_run_chat_task_error, should_clear_cached_session_after_error, start_chat,
+    subscribe_web_channel_events, WebChatTaskResult,
 };
 use crate::core::TypeSchema;
+use once_cell::sync::Lazy;
+use tokio::sync::Mutex as AsyncMutex;
 use tokio::time::{timeout, Duration};
 
-/// Ensures the test-only forced run_chat_task failure toggle is always reset,
-/// even if the test panics before reaching explicit cleanup code.
-struct TestForcedRunChatTaskErrorGuard;
-
-impl Drop for TestForcedRunChatTaskErrorGuard {
-    fn drop(&mut self) {
-        tokio::spawn(async {
-            set_test_forced_run_chat_task_error(None).await;
-        });
-    }
-}
+/// Serializes tests that install a one-shot forced run_chat_task failure.
+/// The toggle is process-global and consumed by the next spawned chat task.
+static FORCED_RUN_CHAT_TASK_ERROR_LOCK: Lazy<AsyncMutex<()>> = Lazy::new(|| AsyncMutex::new(()));
 
 #[tokio::test]
 async fn start_chat_validates_required_fields() {
@@ -76,12 +71,13 @@ async fn cancel_chat_validates_required_fields() {
 }
 
 #[tokio::test]
-async fn start_chat_emits_sanitized_chat_error_on_inference_failure() {
+async fn start_chat_emits_sanitized_chat_error_on_transport_failure() {
+    let _forced_error_lock = FORCED_RUN_CHAT_TASK_ERROR_LOCK.lock().await;
+    set_test_forced_run_chat_task_error(None).await;
     set_test_forced_run_chat_task_error(Some(
         "error sending request for url (https://internal-api.example.invalid/openai/v1/chat/completions)",
     ))
     .await;
-    let _forced_error_guard = TestForcedRunChatTaskErrorGuard;
 
     let mut rx = subscribe_web_channel_events();
     let request_id = start_chat(
@@ -96,7 +92,7 @@ async fn start_chat_emits_sanitized_chat_error_on_inference_failure() {
     .await
     .expect("start_chat should accept valid request");
 
-    let expected = generic_inference_error_user_message().to_string();
+    let expected = "Could not reach the AI provider. Check your connection and try again.";
     let recv = timeout(Duration::from_secs(20), async move {
         loop {
             let event = rx.recv().await.expect("event stream should stay open");
@@ -113,11 +109,61 @@ async fn start_chat_emits_sanitized_chat_error_on_inference_failure() {
     .expect("expected chat_error event for started chat request");
 
     let message = recv.message.unwrap_or_default();
+    assert_eq!(recv.error_type.as_deref(), Some("network"));
     assert_eq!(message, expected);
     assert!(
         !message.contains("error sending request for url"),
         "chat error payload must not expose raw transport details"
     );
+    set_test_forced_run_chat_task_error(None).await;
+}
+
+#[tokio::test]
+async fn start_chat_emits_rate_limit_chat_error_event() {
+    let _forced_error_lock = FORCED_RUN_CHAT_TASK_ERROR_LOCK.lock().await;
+    set_test_forced_run_chat_task_error(None).await;
+    set_test_forced_run_chat_task_error(Some("HTTP 429 Too Many Requests: rate limit exceeded"))
+        .await;
+
+    let mut rx = subscribe_web_channel_events();
+    let request_id = start_chat(
+        "rate-limit-client",
+        "rate-limit-thread",
+        "Please check the current score.",
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .expect("start_chat should accept valid request");
+
+    let recv = timeout(Duration::from_secs(20), async move {
+        loop {
+            let event = rx.recv().await.expect("event stream should stay open");
+            if event.event != "chat_error" {
+                continue;
+            }
+            if event.request_id != request_id {
+                continue;
+            }
+            return event;
+        }
+    })
+    .await
+    .expect("expected chat_error event for started chat request");
+
+    assert_eq!(recv.error_type.as_deref(), Some("rate_limited"));
+    let message = recv.message.unwrap_or_default();
+    assert!(
+        message.contains("transient upstream limit"),
+        "rate-limit copy should explain the provider-side throttle: {message}"
+    );
+    assert!(
+        message.contains("retry in this thread"),
+        "rate-limit copy should tell users the thread is still usable: {message}"
+    );
+    set_test_forced_run_chat_task_error(None).await;
 }
 
 #[test]
@@ -138,6 +184,96 @@ fn budget_exceeded_copy_mentions_top_up() {
     let message = inference_budget_exceeded_user_message();
     assert!(message.contains("top up"));
     assert!(message.contains("credits"));
+}
+
+#[test]
+fn classify_inference_error_treats_429_balance_as_budget_not_rate_limit() {
+    let raw = r#"custom_openai API error (429 Too Many Requests): {"error":{"message":"insufficient balance","code":723}}"#;
+    let (category, message) = classify_inference_error(raw);
+    assert_eq!(category, "budget_exhausted");
+    assert!(message.contains("top up"));
+    assert!(
+        !message.contains("being rate-limited"),
+        "balance errors must not look like transient throttles: {message}"
+    );
+}
+
+#[test]
+fn classify_inference_error_maps_transport_failures_to_network() {
+    let raw =
+        "error sending request for url (https://api.example.com/v1/chat): failed to connect: dns error";
+    let (category, message) = classify_inference_error(raw);
+    assert_eq!(category, "network");
+    assert!(message.contains("Could not reach the AI provider"));
+}
+
+#[test]
+fn transient_errors_clear_cached_web_session() {
+    for error_type in ["rate_limited", "timeout", "network", "provider_error"] {
+        assert!(
+            should_clear_cached_session_after_error(error_type),
+            "{error_type} should force a fresh session on retry"
+        );
+    }
+
+    for error_type in [
+        "budget_exhausted",
+        "auth_error",
+        "model_unavailable",
+        "context_overflow",
+        "inference",
+    ] {
+        assert!(
+            !should_clear_cached_session_after_error(error_type),
+            "{error_type} should not be treated as transient session poison"
+        );
+    }
+}
+
+#[test]
+fn transient_chat_errors_skip_cached_web_session_storage() {
+    for (raw, expected_type) in [
+        (
+            "HTTP 429 Too Many Requests: rate limit exceeded",
+            "rate_limited",
+        ),
+        ("request timed out while waiting for provider", "timeout"),
+        (
+            "error sending request for url (https://api.example.com): failed to connect",
+            "network",
+        ),
+        (
+            "provider returned HTTP 503 Service Unavailable",
+            "provider_error",
+        ),
+    ] {
+        let result = Err(raw.to_string());
+        assert_eq!(
+            session_reset_error_type(&result),
+            Some(expected_type),
+            "{raw} should skip cache storage"
+        );
+    }
+
+    for raw in [
+        "OpenHuman API error (402 Payment Required): Budget exceeded",
+        "OpenAI API error (401 Unauthorized): invalid api key",
+        "custom_openai API error (404 Not Found): model does not exist",
+        "unexpected inference parser error",
+    ] {
+        let result = Err(raw.to_string());
+        assert_eq!(
+            session_reset_error_type(&result),
+            None,
+            "{raw} should remain cacheable"
+        );
+    }
+
+    let result = Ok(WebChatTaskResult {
+        full_response: "ok".to_string(),
+        citations: Vec::new(),
+    });
+    assert_eq!(session_reset_error_type(&result), None);
 }
 
 #[test]
