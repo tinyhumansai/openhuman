@@ -14,6 +14,7 @@
   * [agentmemory backend](features/obsidian-wiki/agentmemory-backend.md)
   * [Auto-fetch from Integrations](features/obsidian-wiki/auto-fetch.md)
 * [Third-party Integrations (118+)](features/integrations/README.md)
+  * [Nipmod package archive](features/integrations/nipmod.md)
   * [Triggers](features/integrations/triggers.md)
 * [Smart Token Compression](features/token-compression.md)
 * [Automatic Model Routing](features/model-routing/README.md)
