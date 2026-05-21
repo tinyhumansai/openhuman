@@ -36,7 +36,9 @@ Each of these is an explicit opt-in. Turning on local AI does not silently route
 | **TTS**        | Hosted [text-to-speech](../native-tools/voice.md) under the hood (`reply_speech.rs`).          |
 | **Web search** | Backend proxy (no API key on your machine).                                                    |
 
-For **lightweight or medium chat hints** (`hint:reaction`, `hint:classify`, `hint:format`, `hint:sentiment`, `hint:summarize`, `hint:medium`, `hint:tool_lite`), the [router](README.md) can prefer the local provider only when `local_ai.runtime_enabled = true` and the configured local provider is reachable. Heavy hints (`hint:reasoning`, `hint:agentic`, `hint:coding`) stay cloud unless the matching workload provider field is explicitly configured locally.
+For **lightweight or medium chat hints** (`hint:reaction`, `hint:classify`, `hint:format`, `hint:sentiment`, `hint:summarize`, `hint:medium`, `hint:tool_lite`), the [router](README.md) can prefer the local provider only when `local_ai.runtime_enabled = true` and the configured local provider is reachable.
+
+Heavy hints (`hint:reasoning`, `hint:agentic`, `hint:coding`) stay cloud by default unless the matching workload provider field is explicitly configured locally.
 
 ## How it works
 
@@ -79,15 +81,24 @@ On current configs, the `*_provider` fields are the source of truth for workload
 
 The legacy `local_ai.usage.*` booleans are kept for presets and migration compatibility; they do not override the unified provider fields after migration. For deterministic routing, either set the workload provider field explicitly, or leave it unset / set it to `cloud` to force the default cloud route. The same provider-string pattern is used by `agentic_provider`, `coding_provider`, `memory_provider`, `embeddings_provider`, `heartbeat_provider`, `learning_provider`, and `subconscious_provider`.
 
+### Legacy flag behavior
+
+The `local_ai.usage.*` booleans are consulted only during preset application and initial migration. After that, `Config::workload_local_model(...)` treats the matching `*_provider` field as the definitive routing control:
+
+- `embeddings_provider = "ollama:all-minilm"` routes embeddings on-device even if `local_ai.usage.embeddings = false`.
+- An unset, blank, or `cloud` `embeddings_provider` keeps embeddings on the cloud/default route even if `local_ai.usage.embeddings = true`.
+
+Prefer setting the `*_provider` fields directly when editing configuration by hand.
+
 In the desktop app, **Settings → AI & Skills → Local AI** exposes presets, pick one ("embeddings only", "memory + reflection", "everything local") and the right combination of flags is set for you. Status (Ollama reachability, model availability, per-subsystem enablement) is surfaced live via `openhuman.local_ai_status`.
 
 ## When to turn it on
 
 Local AI is worth turning on if any of these are true:
 
-- You ingest large volumes of email / chat and want **embeddings to never leave the machine**.
-- You want **summary-tree building** to work offline.
-- You're privacy-sensitive about background reflection ("subconscious") loops.
+- Keep embeddings local when ingesting large volumes of email / chat.
+- Enable **summary-tree building** to work offline.
+- Keep background reflection ("subconscious") loops on-device for privacy-sensitive work.
 
 It is **not** worth turning on if you only have a few sources connected, the cloud path is faster and the privacy benefit is small. There is also a hardware cost: Ollama and a small Gemma model want a few GB of RAM and pull a few GB of weights.
 
