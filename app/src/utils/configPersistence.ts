@@ -85,7 +85,7 @@ export function storeRpcUrl(url: string): void {
   try {
     if (url && url.trim().length > 0) {
       localStorage.setItem(RPC_URL_STORAGE_KEY, url.trim());
-      console.debug('[configPersistence] Stored RPC URL:', { url: url.trim() });
+      console.debug('[configPersistence] Stored RPC URL:', url.trim());
     } else {
       // Allow clearing the stored URL to reset to default
       localStorage.removeItem(RPC_URL_STORAGE_KEY);
