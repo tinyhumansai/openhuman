@@ -4,6 +4,7 @@ import { Provider } from 'react-redux';
 import { describe, expect, it } from 'vitest';
 
 import localeReducer, { setLocale } from '../../../store/localeSlice';
+import de from '../de';
 import en from '../en';
 import { I18nProvider, useT } from '../I18nContext';
 import type { Locale, TranslationMap } from '../types';
@@ -58,10 +59,28 @@ describe('I18nProvider', () => {
     expect(screen.getByTestId('missing-key')).toHaveTextContent('this.key.does.not.exist');
   });
 
+  it('serves German translations from the registered locale map', () => {
+    renderWithLocale('de');
+
+    expect(screen.getByTestId('locale')).toHaveTextContent('de');
+    expect(screen.getByText('Sprache')).toBeInTheDocument();
+    expect(screen.getByText('App-Daten löschen')).toBeInTheDocument();
+    expect(screen.getByText('Beenden')).toBeInTheDocument();
+  });
+
   it('keeps the Simplified Chinese locale complete against English keys', () => {
     const englishKeys = Object.keys(unwrapTranslationMap(en));
     const simplifiedChinese = unwrapTranslationMap(zhCN);
     const missingKeys = englishKeys.filter(key => !(key in simplifiedChinese));
+
+    expect(englishKeys.length).toBeGreaterThan(0);
+    expect(missingKeys).toEqual([]);
+  });
+
+  it('keeps the German locale complete against English keys', () => {
+    const englishKeys = Object.keys(unwrapTranslationMap(en));
+    const german = unwrapTranslationMap(de);
+    const missingKeys = englishKeys.filter(key => !(key in german));
 
     expect(englishKeys.length).toBeGreaterThan(0);
     expect(missingKeys).toEqual([]);

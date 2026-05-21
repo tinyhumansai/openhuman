@@ -35,6 +35,7 @@ const LOCALE_HEADERS: Record<string, string> = {
   fr: "French (Français)",
   bn: "Bengali (বাংলা)",
   pt: "Portuguese (Português)",
+  de: "German (Deutsch)",
   ru: "Russian (Русский)",
   id: "Indonesian (Bahasa Indonesia)",
   it: "Italian (Italiano)",
