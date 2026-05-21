@@ -200,15 +200,15 @@ fn runtime_snapshot_cache_hit_within_ttl() {
 
     let dummy = build_dummy_runtime_snapshot();
     let fetched_at = Instant::now();
-    *RUNTIME_SNAPSHOT_CACHE.lock() = Some(CachedRuntimeSnapshot {
-        snapshot: dummy.clone(),
-        fetched_at,
-    });
 
-    // Read fields under lock, then assert outside to minimise lock hold time
-    // and avoid contention with other tests writing to the same global.
+    // Hold the lock for the entire write-then-read sequence so no concurrent
+    // test can overwrite RUNTIME_SNAPSHOT_CACHE between the write and the read.
     let (elapsed, phase) = {
-        let cache = RUNTIME_SNAPSHOT_CACHE.lock();
+        let mut cache = RUNTIME_SNAPSHOT_CACHE.lock();
+        *cache = Some(CachedRuntimeSnapshot {
+            snapshot: dummy.clone(),
+            fetched_at,
+        });
         let entry = cache.as_ref().expect("cache should have entry");
         (
             entry.fetched_at.elapsed(),
