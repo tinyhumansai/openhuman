@@ -32,6 +32,21 @@ vi.mock('./Mascot', () => ({
 
 vi.mock('./useHumanMascot', () => ({ useHumanMascot: () => ({ face: 'idle', visemes: [] }) }));
 
+// Stub the meeting-bots modal — the real component imports apiClient and a
+// network-aware service singleton. The HumanPage tests only care that the pill
+// toggles the modal open, not the modal's submit machinery (that lives in
+// MeetingBotsCard.test.tsx).
+vi.mock('../../components/skills/MeetingBotsCard', () => ({
+  default: () => null,
+  MeetingBotsModal: ({ onClose }: { onClose: () => void }) => (
+    <div role="dialog" data-testid="meeting-bots-modal-stub">
+      <button type="button" onClick={onClose}>
+        Close
+      </button>
+    </div>
+  ),
+}));
+
 const SPEAK_REPLIES_KEY = 'human.speakReplies';
 
 function buildMinimalStore() {
@@ -100,6 +115,15 @@ describe('HumanPage — speak-replies localStorage persistence', () => {
 
     expect(localStorage.getItem(SPEAK_REPLIES_KEY)).toBe('1');
     expect(checkbox).toBeChecked();
+  });
+
+  it('opens the meeting-bots modal when the join-meeting pill is clicked', async () => {
+    renderHumanPage();
+    expect(screen.queryByTestId('meeting-bots-modal-stub')).not.toBeInTheDocument();
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('human-join-meeting-pill'));
+    });
+    expect(screen.getByTestId('meeting-bots-modal-stub')).toBeInTheDocument();
   });
 
   it('renders sub-mascots for the selected thread subagent timeline', () => {
