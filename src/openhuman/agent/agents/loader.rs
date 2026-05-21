@@ -853,6 +853,26 @@ mod tests {
         );
     }
 
+    /// `tools_agent` must explicitly disallow `polymarket` and `kalshi`
+    /// so the prediction-market venues route ONLY through
+    /// `markets_agent` (`delegate_do_prediction_markets`). Without this
+    /// the wildcard inventory would also surface them as raw tools to
+    /// the generalist, bypassing the venue-aware approval-gate prompt.
+    #[test]
+    fn tools_agent_disallows_prediction_market_tools() {
+        let def = find("tools_agent");
+        assert!(
+            def.disallowed_tools.iter().any(|t| t == "polymarket"),
+            "tools_agent.disallowed_tools must contain `polymarket` so the \
+             venue routes through markets_agent exclusively"
+        );
+        assert!(
+            def.disallowed_tools.iter().any(|t| t == "kalshi"),
+            "tools_agent.disallowed_tools must contain `kalshi` so the \
+             venue routes through markets_agent exclusively"
+        );
+    }
+
     #[test]
     fn orchestrator_subagents_include_skill_creator() {
         use crate::openhuman::agent::harness::definition::SubagentEntry;
