@@ -83,7 +83,7 @@ agent_model = "qwen/qwen3-coder"
 Resolution order:
 
 1. Inline `model` on `spawn_subagent` or an archetype delegation call.
-2. `[orchestrator].model` or `[teams.<agent_id>]` / built-in aliases such as `[teams.research]` and `[teams.code]`.
+2. `[orchestrator].model` or `[teams.<team>]` / built-in aliases such as `[teams.research]` and `[teams.code]`.
 3. The archetype's own model hint and the normal route table.
 
 For `[teams.*]`, `lead_model` applies to agents that can delegate and `agent_model` applies to leaf workers. If only one is set, the harness falls back to it for both roles.
