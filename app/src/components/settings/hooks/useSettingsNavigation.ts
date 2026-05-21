@@ -36,7 +36,8 @@ export type SettingsRoute =
   | 'intelligence'
   | 'webhooks-triggers'
   | 'composio-triggers'
-  | 'composio-routing';
+  | 'composio-routing'
+  | 'mcp-server';
 
 export interface BreadcrumbItem {
   label: string;
@@ -113,6 +114,7 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
     if (path.includes('/settings/notifications')) return 'notifications';
     if (path.includes('/settings/mascot')) return 'mascot';
     if (path.includes('/settings/appearance')) return 'appearance';
+    if (path.includes('/settings/mcp-server')) return 'mcp-server';
     return 'home';
   };
 
@@ -219,6 +221,7 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
       case 'composio-triggers':
       case 'composio-routing':
       case 'notification-routing':
+      case 'mcp-server':
         return [settingsCrumb, developerCrumb];
 
       // Developer options section page

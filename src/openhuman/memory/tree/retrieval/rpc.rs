@@ -423,6 +423,16 @@ mod tests {
         );
     }
 
+    #[test]
+    fn query_global_request_accepts_legacy_window_days_alias() {
+        let req: QueryGlobalRequest = serde_json::from_value(serde_json::json!({
+            "window_days": 7
+        }))
+        .expect("legacy window_days alias should deserialize");
+
+        assert_eq!(req.time_window_days, 7);
+    }
+
     // ── query_topic_rpc ───────────────────────────────────────────────
 
     #[tokio::test]

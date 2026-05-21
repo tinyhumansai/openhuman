@@ -1,6 +1,9 @@
 use super::*;
 use tempfile::TempDir;
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
 // ── SecretStore basics ─────────────────────────────────────
 
 #[test]
@@ -64,6 +67,22 @@ async fn key_file_created_on_first_encrypt() {
         key_hex.len(),
         KEY_LEN * 2,
         "Key should be {KEY_LEN} bytes hex-encoded"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn key_file_is_created_with_owner_only_permissions() {
+    let tmp = TempDir::new().unwrap();
+    let store = SecretStore::new(tmp.path(), true);
+
+    store.encrypt("test").unwrap();
+
+    let metadata = std::fs::metadata(&store.key_path).unwrap();
+    assert_eq!(
+        metadata.permissions().mode() & 0o777,
+        0o600,
+        "Key file must be owner-readable and owner-writable only"
     );
 }
 

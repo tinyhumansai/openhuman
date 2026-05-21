@@ -33,6 +33,14 @@ const bn3: TranslationMap = {
   'workspace.building': 'নির্মাণ হচ্ছে...',
   'workspace.buildSummaryTrees': 'সারসংক্ষেপ ট্রি তৈরি করুন',
   'workspace.viewVault': 'ভল্ট দেখুন',
+  'workspace.openingVaultTitle': 'Opening vault in Obsidian',
+  'workspace.openingVaultMessage':
+    "If Obsidian doesn't open, install it from obsidian.md or use Reveal Folder. Vault path:",
+  'workspace.openVaultFailedTitle': "Couldn't open vault in Obsidian",
+  'workspace.openVaultFailedMessage':
+    'Use Reveal Folder to open the vault directory directly. Vault path:',
+  'workspace.revealVaultFailed': "Couldn't reveal vault folder",
+  'workspace.revealFolder': 'Reveal Folder',
   'workspace.graphLoadFailed': 'মেমোরি গ্রাফ লোড করতে ব্যর্থ',
   'workspace.loadingGraph': 'মেমোরি গ্রাফ লোড হচ্ছে...',
   'workspace.graphViewMode': 'মেমোরি গ্রাফ ভিউ মোড',
@@ -93,6 +101,8 @@ const bn3: TranslationMap = {
   'subconscious.failed': 'ব্যর্থ',
   'subconscious.tickInterval': 'টিক ইন্টারভাল',
   'subconscious.runNow': 'এখনই চালান',
+  'subconscious.providerUnavailableTitle': 'Subconscious বিরত আছে',
+  'subconscious.providerSettings': 'AI সেটিংস',
   'subconscious.approvalNeeded': 'অনুমোদন প্রয়োজন',
   'subconscious.requiresApproval': 'অনুমোদন প্রয়োজন',
   'subconscious.fixInConnections': 'সংযোগে ঠিক করুন',

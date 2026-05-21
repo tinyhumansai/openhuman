@@ -16,12 +16,62 @@ use tokio::time::{self, Duration};
 const MIN_POLL_SECONDS: u64 = 5;
 const SHELL_JOB_TIMEOUT_SECS: u64 = 120;
 const AGENT_JOB_USER_FAILURE_MESSAGE: &str = "Something went wrong. Please try again.\nThis error has been reported. You can also report it on Discord.\n<openhuman-link path=\"community/discord\">Report on Discord</openhuman-link>";
+const MORNING_BRIEFING_AGENT_ID: &str = "morning_briefing";
+const MORNING_BRIEFING_FAILURE_NOTIFICATION: &str = "Morning briefing could not run. Check your AI provider, API key, and connected apps, then run it again from Settings > Cron Jobs.";
 
 fn agent_session_target_tag(target: &SessionTarget) -> &'static str {
     match target {
         SessionTarget::Main => "main",
         SessionTarget::Isolated => "isolated",
     }
+}
+
+fn is_morning_briefing_job(job: &CronJob) -> bool {
+    job.name.as_deref() == Some(MORNING_BRIEFING_AGENT_ID)
+        || job.agent_id.as_deref() == Some(MORNING_BRIEFING_AGENT_ID)
+}
+
+fn strip_openhuman_link_markup(input: &str) -> String {
+    const OPEN_TAG: &str = "<openhuman-link";
+    const CLOSE_TAG: &str = "</openhuman-link>";
+
+    let mut output = String::with_capacity(input.len());
+    let mut rest = input;
+
+    while let Some(start) = rest.find(OPEN_TAG) {
+        output.push_str(&rest[..start]);
+        let tag_and_after = &rest[start..];
+
+        let Some(open_end) = tag_and_after.find('>') else {
+            output.push_str(tag_and_after);
+            return output;
+        };
+        let label_and_after = &tag_and_after[open_end + 1..];
+
+        let Some(close_start) = label_and_after.find(CLOSE_TAG) else {
+            output.push_str(tag_and_after);
+            return output;
+        };
+
+        output.push_str(&label_and_after[..close_start]);
+        rest = &label_and_after[close_start + CLOSE_TAG.len()..];
+    }
+
+    output.push_str(rest);
+    output
+}
+
+fn cron_alert_body(job: &CronJob, output: &str) -> String {
+    let trimmed = output.trim();
+    if matches!(job.job_type, JobType::Agent)
+        && trimmed == AGENT_JOB_USER_FAILURE_MESSAGE
+        && is_morning_briefing_job(job)
+    {
+        return MORNING_BRIEFING_FAILURE_NOTIFICATION.to_string();
+    }
+
+    let body = strip_openhuman_link_markup(output);
+    crate::openhuman::util::truncate_with_ellipsis(&body, 512)
 }
 
 pub async fn run(config: Config) -> Result<()> {
@@ -490,14 +540,14 @@ fn push_cron_alert(config: &Config, job: &CronJob, output: &str) {
     use crate::openhuman::notifications::types::{IntegrationNotification, NotificationStatus};
 
     let name = job.name.as_deref().unwrap_or("Cron job");
-    let truncated = crate::openhuman::util::truncate_with_ellipsis(output, 512);
+    let body = cron_alert_body(job, output);
 
     let notification = IntegrationNotification {
         id: uuid::Uuid::new_v4().to_string(),
         provider: "cron".to_string(),
         account_id: Some(job.id.clone()),
         title: name.to_string(),
-        body: truncated,
+        body,
         raw_payload: serde_json::json!({
             "job_id": job.id,
             "job_name": job.name,
@@ -511,17 +561,26 @@ fn push_cron_alert(config: &Config, job: &CronJob, output: &str) {
         scored_at: Some(Utc::now()),
     };
 
-    if let Err(e) = notif_store::insert(config, &notification) {
-        tracing::warn!(
-            job_id = %job.id,
-            error = %e,
-            "[cron] failed to push notification alert"
-        );
-    } else {
-        tracing::debug!(
-            job_id = %job.id,
-            "[cron] pushed notification alert to alerts tab"
-        );
+    match notif_store::insert_if_not_recent(config, &notification) {
+        Ok(true) => {
+            tracing::debug!(
+                job_id = %job.id,
+                "[cron] pushed notification alert to alerts tab"
+            );
+        }
+        Ok(false) => {
+            tracing::debug!(
+                job_id = %job.id,
+                "[cron] skipped duplicate notification alert"
+            );
+        }
+        Err(e) => {
+            tracing::warn!(
+                job_id = %job.id,
+                error = %e,
+                "[cron] failed to push notification alert"
+            );
+        }
     }
 }
 

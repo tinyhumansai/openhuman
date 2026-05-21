@@ -4,6 +4,7 @@ Quick reference for anyone starting with Claude on this project. Updated by the 
 
 ## Fixes & Gotchas
 
+- **macOS close button does not dismiss window (issue #2049)** — `WebviewWindow::hide()` routes through CEF's `WindowMessage::Hide` → `cef::Window::hide()` which does NOT propagate to the visible NSWindow frame. Fix: use `AppHandle::hide()` which calls `[NSApp hide:]` via `set_application_visibility(false)`. This is macOS-only (`#[cfg(target_os = "macos")]`); the `CloseRequested` handler is in `app/src-tauri/src/lib.rs` around line 2809. PR #2118.
 - **ServiceBlockingGate CORS errors** — The gate calls `openhumanServiceStatus()` and `openhumanAgentServerStatus()` at startup. These used `callCoreRpc()` which falls back to raw `fetch()` when socket isn't connected yet, causing CORS errors. Fix: route through `invoke('core_rpc_relay')` instead (Tauri IPC, no CORS).
 - **Socket not connected at startup** — `SocketProvider` only connects when a Redux `auth.token` is set. At fresh launch (no token), socket is null, so any `callCoreRpc()` call falls back to `fetch()`. Always use `invoke('core_rpc_relay')` for local sidecar RPC calls.
 - **`openhuman.agent_server_status` doesn't exist** — This RPC method is not registered in the core. The gate checks it but it always errors. The gate passes if either service is Running OR agent server is running OR core is reachable.
@@ -25,6 +26,13 @@ Quick reference for anyone starting with Claude on this project. Updated by the 
 - **Always read CLAUDE.md first** before any issue work
 - **Ask user when in doubt** — never assume scope or approach
 - **PRs target upstream** — `tinyhumansai/openhuman` main branch, not fork
+- **GraphQL project board can return empty** — `gh project item-list` on board #2 sometimes returns no items even when issues exist. Fall back to `gh issue list --repo tinyhumansai/openhuman` directly.
+- **jq regex: use POSIX classes, not `\s`** — jq's `test()` uses ONIG regex; `\s` is not supported. Use `[[:space:]]` for whitespace matching in `gh pr list --json ... --jq` pipelines.
+- **PR conflict check: `Closes #N` syntax not always used** — `gh pr list --jq "select(.body | test('Closes #N'))"` misses PRs that mention an issue thematically without a closing keyword. Also search PR title + body for the raw issue number (`#N`) with broader matching to catch related open PRs before claiming an issue is unassigned.
+- **`pnpm debug unit` path is relative to `app/src/`** — Pass `providers/__tests__/Foo.test.tsx`, not `app/src/providers/__tests__/Foo.test.tsx`.
+- **Prettier must run after codecrusher adds test cases** — New test blocks often fail `format:check`. Run `pnpm --filter openhuman-app format` before committing when test files are touched.
+- **Check for existing PRs before implementing** — When the workflow picks an issue, search open PRs for the issue number and related keywords before starting work. A contributor may have already shipped the fix (e.g. PR #2101 for issue #2075).
+- **Project board `gh project item-list` paginates closed items first** — The first 100 items returned are often CLOSED. Must `--limit 500` or paginate to find open/unassigned work. Fall back to `gh issue list --repo tinyhumansai/openhuman --state open` for reliability.
 
 ## Local AI Presets
 
@@ -33,6 +41,8 @@ Quick reference for anyone starting with Claude on this project. Updated by the 
 - **`OPENHUMAN_LOCAL_AI_TIER` env var** overrides the selected tier at config load time (in `load.rs`).
 - **Frontend tier selector** is in `LocalModelPanel.tsx` under Settings > Local AI Model. Uses `coreRpcClient` to call 3 RPC methods: `local_ai_device_profile`, `local_ai_presets`, `local_ai_apply_preset`.
 - **Default config maps to Medium tier** (`gemma3:4b-it-qat`). If someone changes `model_ids.rs` defaults, they should keep `presets.rs` in sync.
+- **`ollama_base_url()` previously ignored `config.local_ai.base_url`** — It only read env vars. Fixed in feat/ollama-external-server-url by adding `ollama_base_url_from_config(config)`. Any new Ollama URL resolution must go through the config-aware helper, not the env-only one.
+- **`LocalModelDebugPanel.tsx` must seed URL from config on mount** — Previously initialized `ollamaBaseUrlInput` to the hardcoded default and only loaded the persisted URL when diagnostics ran. Fix: `useEffect` on mount calls `openhumanGetConfig()` and sets state from `config.local_ai.base_url`. Pattern to follow for any settings field backed by Rust config.
 
 ## Core process (in-process, no sidecar)
 
@@ -68,6 +78,7 @@ Quick reference for anyone starting with Claude on this project. Updated by the 
 - **Auth session tokens are NOT in Redux persist** — They live entirely in the Rust sidecar, fetched via `fetchCoreAppSnapshot()` RPC. `PersistGate` only gates non-auth state (AI config, threads, channel connections). `CoreStateProvider` bootstrap is the critical auth path.
 - **`CoreStateProvider` premature `isBootstrapping: false` causes blank Settings** — If the initial RPC call fails (sidecar still starting), the old error handler set `isBootstrapping: false` immediately, causing `ProtectedRoute` to redirect to `/` before the 3s poll could recover. Fix (issue #413): keep `isBootstrapping: true` on initial failure, let the poll retry, give up after 5 attempts (~15s).
 - **`CoreStateProvider` is consumed by ~25 components** — Changes to its state shape or bootstrap behavior affect routes, socket, onboarding, nav, settings, and hooks. Treat it as a high-blast-radius file.
+- **`bootstrapFailCountRef` retry counter bug (issue #2158)** — The ref is a cumulative lifetime counter; logging it against `MAX_BOOTSTRAP_RETRIES` (5) as denominator produced impossible `attempt 11/5`. Fix: distinguish bootstrap phase ("attempt X/5") from continuous-poll phase (separate message, 10s backoff). Reset the counter to 0 on any successful snapshot fetch.
 - **Settings is a full route, not a modal** — `/settings/*` uses nested `<Routes>` in `Settings.tsx`. The `.claude/rules/15-settings-modal-system.md` doc describing a portal/modal approach is outdated. A catch-all `<Route path="*">` redirects unmatched sub-paths to `/settings`.
 - **`PersistGate loading={null}` causes flash** — Changed to `loading={<RouteLoadingScreen />}` (issue #413). `RouteLoadingScreen` accepts an optional `label` prop (defaults to "Initializing OpenHuman...") and can be rendered with no props.
 
@@ -110,6 +121,11 @@ Quick reference for anyone starting with Claude on this project. Updated by the 
 - **UnifiedSkillCard** — All skill types (built-in, channels, 3rd party) use `UnifiedSkillCard` from `app/src/components/skills/SkillCard.tsx`. Secondary actions use an overflow menu. `data-testid` attributes (`skill-sync-button-*`, `skill-debug-button-*`) must be preserved.
 - **SkillSearchBar + SkillCategoryFilter** — New components in `app/src/components/skills/` for search and category filtering on the Skills page.
 
+## Composio Backend URL Bug (Issue #2075, PR #2101)
+
+- **`effective_backend_api_url` env-fallback branch skipped normalization** — In `src/api/config.rs`, the override branch normalized via `normalize_backend_api_base_url` but the env-fallback branch (`OPENHUMAN_BACKEND_API_URL`) did not, so scheme-less URLs like `api.example.com` were used raw. Fix: normalize the env-fallback branch too (3-layer defense: config → env-fallback → `IntegrationClient::new`).
+- **`normalize_backend_api_base_url` and `redact_url_for_log` are `pub(crate)`** — Available for reuse across `src/api/` after PR #2101 merge.
+
 ## Composio Identity (Issue #691)
 
 - **`ProviderUserProfile.profile_url`** — New optional field on the struct in `src/openhuman/composio/providers/types.rs`. Providers should populate it when available from upstream profile payloads.
@@ -149,6 +165,11 @@ Quick reference for anyone starting with Claude on this project. Updated by the 
 - **`pnpm typecheck` script was renamed** — Check `app/package.json` for the current name; as of issue #830 work, use `pnpm workspace openhuman-app compile` for tsc checks.
 - **PR #745 (command palette) merged without its deps** — `@radix-ui/react-dialog`, `cmdk`, and `@testing-library/user-event` are missing from `package.json`. Install them if tsc fails after syncing main.
 - **Pre-push hooks fail on upstream lint warnings** — ESLint warns on `setState` in effects and unused `eslint-disable` directives inherited from upstream. Use `--no-verify` only when the lint errors are pre-existing upstream issues, not new code.
+- **`pnpm tauri icon <source.png>` generates all platform icons at once** — Produces `.icns`, `.ico`, all PNG sizes, Windows Store tiles, and iOS/Android sets. Use this instead of manual `sips`/ImageMagick resizing.
+- **`tauri-cef` submodule update can fix missing Tauri runtime modules** — e.g. updating to f75bc21f5 added the missing `tauri_runtime_cef::audio` module that was causing pre-push hook compile failures on the Tauri shell. When the shell fails to compile with a missing module error, check if the submodule needs updating.
+- **`git add` must run from repo root** — Staging paths like `app/public/...` with `git add` from inside `app/` won't match. Always run `git add` from `/Users/megamind/tinyhuman/openhuman-claude`.
+- **Brand kit assets live at `app/public/brand/`** — Copied there during session work; original source is in `~/Downloads/Brand kit/`. Not auto-synced; re-copy manually if Downloads content changes.
+- **`pnpm test:coverage` ENOENT on `coverage/.tmp/coverage-0.json`** — Race condition in coverage file collection; flaky, not reproducible every run. Use `pnpm debug unit` instead — runs Vitest without coverage, faster and reliable for iteration.
 
 ## Mascot Native Window (macOS)
 
@@ -188,3 +209,51 @@ Quick reference for anyone starting with Claude on this project. Updated by the 
 - **`pnpm core:stage`** — no-op (sidecar removed in PR #1061). Use `pnpm dev:app` for full Tauri+core dev.
 - **Kill stuck processes** — `lsof -i :7788` then `kill <PID>`. Useful when `dev:app` reports a stale listener and you want to force a fresh boot rather than relying on the handle's auto-recovery.
 - **Skills runtime removed** — the QuickJS / `rquickjs` runtime is gone; `src/openhuman/skills/` is metadata-only ("Legacy skill metadata helpers retained after QuickJS runtime removal"). Skill execution surfaces are being rebuilt; don't assume a `.skill` can run end-to-end without checking the current code.
+
+## Rust Testing Patterns
+
+- **Memory tree tests filter** — `cargo test -p openhuman -- "memory::tree"` runs the memory tree unit tests (602 tests); full module paths are `openhuman::memory::tree::ingest::tests::*` and `openhuman::memory::tree::canonicalize::email_clean::tests::*`.
+- **`cargo fmt --all`** — Required after codecrusher generates Rust; it doesn't always produce perfectly formatted output and CI will reject unformatted code.
+- **PR quality scripts are soft checks** — `scripts/check-pr-checklist.mjs` and `scripts/check-coverage-matrix.mjs` exit cleanly with summary lines; CI treats them as advisory, not blocking.
+- **`ceil_char_boundary`** — Safe string slicing utility at `src/openhuman/util.rs`; use this throughout the codebase instead of raw byte-index slicing to avoid UTF-8 panics.
+- **Global static cache tests need a reset guard** — When testing code that reads/writes a `Lazy<Mutex<Option<...>>>` global cache, use a `struct CacheResetGuard; impl Drop for CacheResetGuard { fn drop(&mut self) { *CACHE.lock() = None; } }` pattern so each test starts clean. See `SnapshotCacheResetGuard` / `CacheResetGuard` in `ops_tests.rs`.
+- **Test assertions must match the actual dummy value** — When a builder (e.g. `build_dummy_runtime_snapshot()`) wraps `degraded_runtime_snapshot()`, assert against `dummy.field` rather than a hardcoded string (e.g. `"idle"` vs the actual `"degraded"`) to verify round-trip correctness without false mismatches.
+- **`composio::action_tool::tests::mode_toggle_between_calls_is_observed` is flaky in full suite** — Fails intermittently due to shared global composio session state; passes in isolation. Pre-existing; not caused by snapshot perf work.
+
+## App State Snapshot (Issue #2155 — first-launch perf)
+
+- **`build_runtime_snapshot` was serial, now parallel** — The four subsystems (screen intelligence, local AI, autocomplete, service status) in `src/openhuman/app_state/ops.rs` ran sequentially. Fixed with `tokio::join!`. Also added a 2s TTL cache (`RUNTIME_SNAPSHOT_CACHE`) so repeated polls within the TTL skip recomputation.
+- **`service::status` is sync — must use `spawn_blocking`** — `crate::openhuman::service::status(config)` may shell out to `launchctl`. Wrap it in `tokio::task::spawn_blocking` when called from an async context.
+- **`autocomplete::global_engine().status()` calls `Config::load_or_init()` internally** — Avoid this inside snapshot code. Use the new `status_with_config(config)` method which accepts an already-loaded config.
+- **Per-stage snapshot timeouts** — `AUTH_FETCH_TIMEOUT = 5s` and `RUNTIME_SNAPSHOT_TIMEOUT = 10s` are constants in `ops.rs`; they sum to 15s, well under the 30s frontend RPC timeout.
+## Project Board & Issue Queries
+
+- **Project #2 paginates at 100 items** — Board has 627+ items. Use GraphQL cursor pagination to find all open P0 issues; a single query only returns the first 100.
+- **jq regex `\s+` causes parse errors** — Use plain `test("#NNNN")` to check if a PR/issue body references an issue number. `\s+` in jq regex triggers parse errors.
+- **Most open P0s are security or Linux AppImage GLIBC issues** — When triaging P0s, filter for those categories first.
+- **Project #2 shows only closed items on the board view** — Use `gh issue list --repo tinyhumansai/openhuman --state open --assignee ""` to find unassigned open issues instead of querying the project board.
+- **Check linked PRs via timeline API, not body regex** — `gh api repos/tinyhumansai/openhuman/issues/$N/timeline --paginate | jq '[.[] | select(.event == "cross-referenced" and .source.issue.state == "open")] | length'` is more reliable than searching issue body text for PR references.
+
+## Git Submodules
+
+- **`tauri-cef` and `tauri-plugin-notification` are git submodules** — When upstream/main updates them, fix with `git submodule update --remote --checkout`, not by manually patching the vendored crate.
+
+## Pre-existing Test Failures
+
+- **`composio::action_tool::tests::factory_routes_through_direct_when_mode_is_direct` fails in `cargo test -p openhuman`** — Pre-existing failure unrelated to WhatsApp or any recent branch work. Do not attempt to fix unless explicitly tasked. Also intermittently flaky when run as part of the full suite — see "Pre-existing Flaky Tests" section.
+
+## Workflow Gate (must not skip)
+
+- **Steps 4–6 of `workflow/00-full-workflow.md` are mandatory before committing** — Step 4: architectobot verify. Step 5: full checks (`pnpm test:coverage`, `pnpm build`, `bash scripts/install.sh --dry-run`, PR quality scripts). Step 6: memory-keeper. Skipping any of these violates the workflow contract.
+- **Encode architectobot answers in the codecrusher prompt** — When the architectobot plan includes clarifying questions and the user approves specific answers, embed those decisions as explicit constraints in the codecrusher prompt so the agent doesn't re-ask.
+
+## Security Policy
+
+- **Path validation entry point** — `src/openhuman/security/policy.rs` exposes `validate_path` / `validate_parent_path`. All file I/O path validation must go through this API. `is_path_string_allowed()` is a string-only first pass, not sufficient on its own.
+- **validate_parent_path before create_dir_all** — For write operations, `validate_parent_path` MUST be called before any `create_dir_all` call. Calling it after allows symlink attacks to create directories outside the workspace before the security check fires (Issue #1927).
+- **Tool callers must use `validate_path` / `validate_parent_path`** — All tool implementations under `src/openhuman/tools/impl/filesystem/` must use these functions, not the legacy `is_path_allowed` / `is_resolved_path_allowed`.
+- **Security policy test filter** — Run only security policy tests with: `cargo test -p openhuman -- "security::policy"`. Runs the 100 tests in `src/openhuman/security/policy_tests.rs` cleanly.
+
+## Pre-existing Flaky Tests
+
+- **`composio::action_tool` and `agent::harness::session::turn` intermittent failures** — These tests fail randomly when run as part of the full suite (likely shared state or timing), but pass individually. Not related to security/policy changes. Do not treat as blockers for security-module PRs.

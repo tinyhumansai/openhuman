@@ -1,11 +1,13 @@
 import debug from 'debug';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { useOAuthConnectionListener } from '../../hooks/useOAuthConnectionListener';
 import { AUTH_MODE_LABELS } from '../../lib/channels/definitions';
 import { useT } from '../../lib/i18n/I18nContext';
 import { channelConnectionsApi } from '../../services/api/channelConnectionsApi';
 import { callCoreRpc } from '../../services/coreRpcClient';
 import {
+  clearOtherPendingForChannel,
   disconnectChannelConnection,
   setChannelConnectionStatus,
   upsertChannelConnection,
@@ -74,6 +76,12 @@ const TelegramConfig = ({ definition }: TelegramConfigProps) => {
       managedDmPollControllers.current = {};
     };
   }, []);
+
+  // Bridge OAuth deep-link completions into Redux. Previously absent on the
+  // Telegram panel, so OAuth attempts that succeeded in the browser would
+  // never clear the `connecting` badge here. Fixes the Telegram half of
+  // #2128 and inherits the shared error-transition behavior.
+  useOAuthConnectionListener({ channel: 'telegram', authMode: 'oauth' });
 
   const startManagedDmPolling = useCallback(
     (key: string, linkToken: string) => {
@@ -156,6 +164,17 @@ const TelegramConfig = ({ definition }: TelegramConfigProps) => {
     (spec: AuthModeSpec) => {
       const key = `telegram:${spec.mode}`;
       void runBusy(key, async () => {
+        // Abort sibling managed-dm polls before clearing their slice rows;
+        // a still-running poll could otherwise complete after the clear and
+        // dispatch the sibling back to connected/error, leaking the prior
+        // attempt into state. (CodeRabbit on PR #2256.) Only managed_dm
+        // polls today, so stop that one explicitly.
+        const managedDmKey = 'telegram:managed_dm';
+        if (key !== managedDmKey) stopManagedDmPolling(managedDmKey);
+
+        // Cancel any sibling auth mode still mid-`connecting` so the panel
+        // doesn't pin multiple methods simultaneously (#2128).
+        dispatch(clearOtherPendingForChannel({ channel: 'telegram', exceptAuthMode: spec.mode }));
         dispatch(
           setChannelConnectionStatus({
             channel: 'telegram',
@@ -278,7 +297,15 @@ const TelegramConfig = ({ definition }: TelegramConfigProps) => {
         }
       });
     },
-    [dispatch, fieldValues, runBusy, startManagedDmPolling, MANAGED_DM_CONNECTING_MESSAGE, t]
+    [
+      dispatch,
+      fieldValues,
+      runBusy,
+      startManagedDmPolling,
+      stopManagedDmPolling,
+      MANAGED_DM_CONNECTING_MESSAGE,
+      t,
+    ]
   );
 
   const handleDisconnect = useCallback(

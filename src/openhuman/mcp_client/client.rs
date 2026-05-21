@@ -21,6 +21,7 @@ const HEADER_PROTOCOL_VERSION: &str = "MCP-Protocol-Version";
 const HEADER_SESSION_ID: &str = "Mcp-Session-Id";
 const HEADER_METHOD: &str = "Mcp-Method";
 const HEADER_NAME: &str = "Mcp-Name";
+const MCP_HTTP_ACCEPT: &str = "application/json, text/event-stream";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct McpRemoteTool {
@@ -384,7 +385,8 @@ impl McpHttpClient {
         let request = self
             .http
             .post(&self.endpoint)
-            .header(CONTENT_TYPE, "application/json");
+            .header(CONTENT_TYPE, "application/json")
+            .header(ACCEPT, MCP_HTTP_ACCEPT);
         let request = self.apply_standard_headers(request, false, method, None, &[]);
         let response = request.body(serde_json::to_vec(&body)?).send().await?;
         let status = response.status();
@@ -434,7 +436,8 @@ impl McpHttpClient {
         let request = self
             .http
             .post(&self.endpoint)
-            .header(CONTENT_TYPE, "application/json");
+            .header(CONTENT_TYPE, "application/json")
+            .header(ACCEPT, MCP_HTTP_ACCEPT);
         let request = if options.initialize {
             self.apply_auth(request, true)
         } else {
@@ -852,12 +855,27 @@ mod tests {
         call_count: Arc<AtomicUsize>,
     }
 
+    fn has_streamable_http_accept(headers: &AxumHeaderMap) -> bool {
+        headers
+            .get(ACCEPT)
+            .and_then(|value| value.to_str().ok())
+            .map(|value| value.contains("application/json") && value.contains("text/event-stream"))
+            .unwrap_or(false)
+    }
+
     async fn mcp_handler(
         State(state): State<TestState>,
         headers: AxumHeaderMap,
         method: Method,
         Json(body): Json<Value>,
     ) -> Response {
+        if method == Method::POST && !has_streamable_http_accept(&headers) {
+            return (
+                StatusCode::NOT_ACCEPTABLE,
+                "missing MCP Accept header".to_string(),
+            )
+                .into_response();
+        }
         let rpc_method = body.get("method").and_then(Value::as_str).unwrap_or("");
         if method == Method::POST && rpc_method == "initialize" {
             state.init_count.fetch_add(1, AtomicOrdering::SeqCst);
@@ -952,6 +970,18 @@ mod tests {
     }
 
     async fn events_handler(headers: AxumHeaderMap) -> Response {
+        if headers
+            .get(ACCEPT)
+            .and_then(|v| v.to_str().ok())
+            .filter(|value| value.contains("text/event-stream"))
+            .is_none()
+        {
+            return (
+                StatusCode::NOT_ACCEPTABLE,
+                "missing SSE Accept header".to_string(),
+            )
+                .into_response();
+        }
         if headers.get(HEADER_SESSION_ID).is_none() {
             return (StatusCode::BAD_REQUEST, "no session".to_string()).into_response();
         }
@@ -987,6 +1017,13 @@ mod tests {
         headers: AxumHeaderMap,
         Json(body): Json<Value>,
     ) -> Response {
+        if !has_streamable_http_accept(&headers) {
+            return (
+                StatusCode::NOT_ACCEPTABLE,
+                "missing MCP Accept header".to_string(),
+            )
+                .into_response();
+        }
         let rpc_method = body.get("method").and_then(Value::as_str).unwrap_or("");
         if rpc_method == "initialize" {
             state.init_count.fetch_add(1, AtomicOrdering::SeqCst);
