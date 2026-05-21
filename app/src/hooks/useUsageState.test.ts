@@ -114,7 +114,7 @@ describe('useUsageState', () => {
     mockLoadAISettings.mockResolvedValue(ALL_OPENHUMAN_AI_SETTINGS);
   });
 
-  it('does not treat free users with zero recurring budget as exhausted', async () => {
+  it('does not show the completed-budget message for free users with zero recurring budget', async () => {
     const { useUsageState } = await import('./useUsageState');
     mockGetCurrentPlan.mockResolvedValue(freePlan());
     mockGetTeamUsage.mockResolvedValue(buildUsage());
@@ -127,7 +127,7 @@ describe('useUsageState', () => {
 
     expect(result.current.isFreeTier).toBe(true);
     expect(result.current.isBudgetExhausted).toBe(false);
-    expect(result.current.shouldShowBudgetCompletedMessage).toBe(true);
+    expect(result.current.shouldShowBudgetCompletedMessage).toBe(false);
     expect(result.current.isAtLimit).toBe(false);
     expect(result.current.usagePct).toBe(0);
   });
