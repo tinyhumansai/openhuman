@@ -16,7 +16,7 @@
 </p>
  
 <p align="center">
- <strong>OpenHuman is your Personal AI super intelligence. Private, Simple and extremely powerful.</strong>
+ <strong>OpenHuman is the Personal AI super intelligence. Private, Simple and extremely powerful.</strong>
 </p>
 
 
