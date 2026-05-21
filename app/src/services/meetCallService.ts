@@ -114,7 +114,7 @@ export interface MascotJoinMeetingResult {
  * without leaking the underlying paid-plan rule.
  */
 export const SERVER_OVERLOADED_MESSAGE =
-  'OpenHuman is under heavy load right now. Please try again in a few minutes.';
+  'Mascot streaming capacity is exhausted. Please try again later.';
 
 export interface MascotJoinMeetingError {
   /** User-safe error text. Falls back to a generic message. */
