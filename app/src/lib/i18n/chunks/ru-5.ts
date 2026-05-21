@@ -207,6 +207,7 @@ const ru5: TranslationMap = {
   'settings.mascot.active': 'Активно',
   'settings.mascot.characterDesc': 'Описание персонажа',
   'settings.mascot.characterHeading': 'Персонаж',
+  // TODO: translate custom GIF mascot strings.
   'settings.mascot.customGifError':
     'Enter an HTTPS .gif URL, loopback HTTP .gif URL, file:// .gif URL, or local .gif path.',
   'settings.mascot.customGifHeading': 'Custom GIF avatar',

@@ -210,6 +210,7 @@ const es5: TranslationMap = {
   'settings.mascot.active': 'Activo',
   'settings.mascot.characterDesc': 'Descripción del personaje',
   'settings.mascot.characterHeading': 'Encabezado del personaje',
+  // TODO: translate custom GIF mascot strings.
   'settings.mascot.customGifError':
     'Enter an HTTPS .gif URL, loopback HTTP .gif URL, file:// .gif URL, or local .gif path.',
   'settings.mascot.customGifHeading': 'Custom GIF avatar',

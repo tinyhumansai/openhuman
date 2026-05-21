@@ -168,9 +168,9 @@ const ko5: TranslationMap = {
   'settings.mascot.characterDesc': '캐릭터 설명',
   'settings.mascot.characterHeading': '캐릭터 제목',
   'settings.mascot.customGifError':
-    'Enter an HTTPS .gif URL, loopback HTTP .gif URL, file:// .gif URL, or local .gif path.',
-  'settings.mascot.customGifHeading': 'Custom GIF avatar',
-  'settings.mascot.customGifLabel': 'Custom GIF avatar URL',
+    'HTTPS .gif URL, loopback HTTP .gif URL, file:// .gif URL 또는 로컬 .gif 경로를 입력하세요.',
+  'settings.mascot.customGifHeading': '사용자 지정 GIF 아바타',
+  'settings.mascot.customGifLabel': '사용자 지정 GIF 아바타 URL',
   'settings.mascot.colorDesc': '색상 설명',
   'settings.mascot.colorHeading': '색상 제목',
   'settings.mascot.loadingLibrary': 'OpenHuman 라이브러리 불러오는 중…',
