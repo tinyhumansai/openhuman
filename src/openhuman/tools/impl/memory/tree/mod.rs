@@ -145,7 +145,11 @@ impl Tool for MemoryTreeTool {
             "search_entities" => MemoryTreeSearchEntitiesTool.execute(args).await,
             "query_topic" => MemoryTreeQueryTopicTool.execute(args).await,
             "query_source" => MemoryTreeQuerySourceTool.execute(args).await,
-            "query_global" => MemoryTreeQueryGlobalTool.execute(args).await,
+            "query_global" => {
+                MemoryTreeQueryGlobalTool
+                    .execute(translate_query_global_args(args))
+                    .await
+            }
             "drill_down" => MemoryTreeDrillDownTool.execute(args).await,
             "fetch_leaves" => MemoryTreeFetchLeavesTool.execute(args).await,
             "ingest_document" => MemoryTreeIngestDocumentTool.execute(args).await,
@@ -157,6 +161,32 @@ impl Tool for MemoryTreeTool {
             }
         }
     }
+}
+
+/// Rename the consolidated tool's `time_window_days` field to `window_days`
+/// before dispatching to [`MemoryTreeQueryGlobalTool`].
+///
+/// The consolidated `parameters_schema()` exposes one shared
+/// `time_window_days` field for both `query_source` and `query_global` (the
+/// `query_source` backend uses that exact name). The `query_global` backend
+/// — `QueryGlobalRequest { window_days: u32 }` in `memory/tree/retrieval/rpc.rs`
+/// — was never aligned with that schema, so any call following the
+/// consolidated contract failed with `missing field 'window_days'`.
+///
+/// Translating in the dispatch keeps the LLM-facing schema stable and
+/// leaves the standalone [`MemoryTreeQueryGlobalTool`] (which advertises
+/// `window_days` natively) untouched. An explicit `window_days` always
+/// wins so callers can opt into the underlying contract if they ever
+/// want to.
+fn translate_query_global_args(mut args: serde_json::Value) -> serde_json::Value {
+    if let Some(obj) = args.as_object_mut() {
+        if !obj.contains_key("window_days") {
+            if let Some(value) = obj.remove("time_window_days") {
+                obj.insert("window_days".to_string(), value);
+            }
+        }
+    }
+    args
 }
 
 #[cfg(test)]
@@ -229,5 +259,66 @@ mod memory_tree_dispatcher_tests {
     async fn memory_tree_missing_mode_returns_error() {
         let result = MemoryTreeTool.execute(json!({})).await;
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn translate_query_global_args_renames_time_window_days_to_window_days() {
+        // Per-issue #2252: the consolidated schema advertises `time_window_days`
+        // but `QueryGlobalRequest` deserializes from `window_days`. The
+        // translation closes that gap inside the dispatch.
+        let translated = translate_query_global_args(json!({
+            "mode": "query_global",
+            "time_window_days": 7,
+        }));
+        assert_eq!(
+            translated,
+            json!({
+                "mode": "query_global",
+                "window_days": 7,
+            }),
+        );
+    }
+
+    #[test]
+    fn translate_query_global_args_passes_through_window_days_when_already_set() {
+        // The standalone `MemoryTreeQueryGlobalTool` schema advertises
+        // `window_days` natively — callers using that path should reach the
+        // backend unchanged.
+        let translated = translate_query_global_args(json!({
+            "mode": "query_global",
+            "window_days": 30,
+        }));
+        assert_eq!(translated["window_days"], 30);
+        assert!(translated.get("time_window_days").is_none());
+    }
+
+    #[test]
+    fn translate_query_global_args_prefers_explicit_window_days_over_time_window_days() {
+        // If a caller somehow supplies both, the underlying contract wins
+        // (`window_days` is what the deserializer reads). Without this,
+        // a future caller migrating to `window_days` while leaving a stale
+        // `time_window_days` in the payload would silently lose their
+        // explicit choice to the legacy alias.
+        let translated = translate_query_global_args(json!({
+            "mode": "query_global",
+            "window_days": 30,
+            "time_window_days": 7,
+        }));
+        assert_eq!(translated["window_days"], 30);
+    }
+
+    #[test]
+    fn translate_query_global_args_leaves_payload_untouched_when_neither_field_present() {
+        // The underlying tool surfaces its own missing-field error in this
+        // case; the translator should not invent a value.
+        let translated = translate_query_global_args(json!({
+            "mode": "query_global",
+        }));
+        assert_eq!(
+            translated,
+            json!({
+                "mode": "query_global",
+            }),
+        );
     }
 }

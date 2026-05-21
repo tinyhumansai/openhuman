@@ -84,8 +84,8 @@ pub async fn query_source_rpc(
 /// Request body for `memory_tree_query_global`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct QueryGlobalRequest {
-    #[serde(alias = "time_window_days")]
-    pub window_days: u32,
+    #[serde(alias = "window_days")]
+    pub time_window_days: u32,
 }
 
 /// JSON-RPC handler body for `memory_tree_query_global`.
@@ -93,7 +93,7 @@ pub async fn query_global_rpc(
     config: &Config,
     req: QueryGlobalRequest,
 ) -> Result<RpcOutcome<QueryResponse>, String> {
-    let resp = query_global(config, req.window_days)
+    let resp = query_global(config, req.time_window_days)
         .await
         .map_err(|e| format!("query_global: {e}"))?;
     let n = resp.hits.len();
@@ -411,7 +411,9 @@ mod tests {
     #[tokio::test]
     async fn query_global_rpc_returns_response_for_valid_window() {
         let (_tmp, cfg) = test_config();
-        let req = QueryGlobalRequest { window_days: 7 };
+        let req = QueryGlobalRequest {
+            time_window_days: 7,
+        };
         let outcome = query_global_rpc(&cfg, req).await.unwrap();
         assert!(outcome.value.hits.is_empty());
         assert_eq!(outcome.logs.len(), 1);
@@ -423,13 +425,13 @@ mod tests {
     }
 
     #[test]
-    fn query_global_request_accepts_consolidated_time_window_alias() {
+    fn query_global_request_accepts_legacy_window_days_alias() {
         let req: QueryGlobalRequest = serde_json::from_value(serde_json::json!({
-            "time_window_days": 7
+            "window_days": 7
         }))
-        .expect("time_window_days alias should deserialize");
+        .expect("legacy window_days alias should deserialize");
 
-        assert_eq!(req.window_days, 7);
+        assert_eq!(req.time_window_days, 7);
     }
 
     // ── query_topic_rpc ───────────────────────────────────────────────

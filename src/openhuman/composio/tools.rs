@@ -24,6 +24,7 @@
 //! the right slug and supply valid arguments without a separate round
 //! trip.
 
+use std::collections::{BTreeSet, HashSet};
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -122,7 +123,7 @@ async fn evaluate_tool_visibility(slug: &str) -> ToolDecision {
 /// is direct against entries the caller has already lowercased.
 fn retain_connected_tools(
     resp: &mut super::types::ComposioToolsResponse,
-    connected: &std::collections::HashSet<String>,
+    connected: &HashSet<String>,
 ) -> usize {
     let before = resp.tools.len();
     resp.tools.retain(|t| {
@@ -131,6 +132,55 @@ fn retain_connected_tools(
             .unwrap_or(false)
     });
     before - resp.tools.len()
+}
+
+fn normalized_scope_toolkits(
+    requested: Option<&[String]>,
+    connected: Option<&HashSet<String>>,
+) -> Vec<String> {
+    let mut out = BTreeSet::new();
+    if let Some(requested) = requested {
+        for toolkit in requested {
+            let normalized = toolkit.trim().to_ascii_lowercase();
+            if !normalized.is_empty() {
+                out.insert(normalized);
+            }
+        }
+    } else if let Some(connected) = connected {
+        out.extend(connected.iter().filter(|t| !t.is_empty()).cloned());
+    }
+    out.into_iter().collect()
+}
+
+fn uncatalogued_toolkits(toolkits: &[String]) -> Vec<String> {
+    toolkits
+        .iter()
+        .filter(|toolkit| {
+            get_provider(toolkit)
+                .and_then(|provider| provider.curated_tools())
+                .or_else(|| catalog_for_toolkit(toolkit))
+                .is_none()
+        })
+        .cloned()
+        .collect()
+}
+
+fn empty_uncurated_toolkits_message(toolkits: &[String]) -> Option<String> {
+    let unsupported = uncatalogued_toolkits(toolkits);
+    if unsupported.is_empty() {
+        return None;
+    }
+    let names = unsupported
+        .iter()
+        .map(|toolkit| format!("`{toolkit}`"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(format!(
+        "composio_list_tools: no agent-ready actions are available for toolkit(s) {names}. \
+         These integrations can be connected, but OpenHuman does not yet ship curated agent \
+         tool catalogs for them. Use a supported toolkit such as Google Drive or Google Sheets \
+         for now, or try again after catalog support lands."
+    ))
 }
 
 /// Filter a freshly-fetched [`super::types::ComposioToolsResponse`] in
@@ -736,6 +786,7 @@ impl Tool for ComposioListToolsTool {
         match client.list_tools(toolkits.as_deref()).await {
             Ok(mut resp) => {
                 filter_list_tools_response(&mut resp).await;
+                let mut connected_toolkits: Option<HashSet<String>> = None;
 
                 if !include_unconnected {
                     // Restrict to toolkits with an ACTIVE / CONNECTED
@@ -744,7 +795,7 @@ impl Tool for ComposioListToolsTool {
                     // prompt's Delegation Guide stay in sync.
                     match client.list_connections().await {
                         Ok(conns) => {
-                            let connected: std::collections::HashSet<String> = conns
+                            let connected: HashSet<String> = conns
                                 .connections
                                 .iter()
                                 .filter(|c| c.is_active())
@@ -758,6 +809,7 @@ impl Tool for ComposioListToolsTool {
                                 kept = resp.tools.len(),
                                 "[composio] list_tools restricted to connected toolkits"
                             );
+                            connected_toolkits = Some(connected);
                         }
                         Err(e) => {
                             // Soft-fail: surface the issue to the agent
@@ -769,6 +821,18 @@ impl Tool for ComposioListToolsTool {
                                  include_unconnected=true to skip this check): {e}"
                             )));
                         }
+                    }
+                }
+
+                if resp.tools.is_empty() {
+                    let scoped_toolkits =
+                        normalized_scope_toolkits(toolkits.as_deref(), connected_toolkits.as_ref());
+                    if let Some(message) = empty_uncurated_toolkits_message(&scoped_toolkits) {
+                        tracing::debug!(
+                            toolkits = ?scoped_toolkits,
+                            "[composio] list_tools empty for uncurated toolkit scope"
+                        );
+                        return Ok(ToolResult::error(message));
                     }
                 }
 

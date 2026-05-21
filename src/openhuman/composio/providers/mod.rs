@@ -46,6 +46,7 @@ pub mod catalogs_google;
 pub mod catalogs_messaging;
 pub mod catalogs_productivity;
 pub mod catalogs_social_media;
+pub mod clickup;
 pub mod github;
 pub mod gmail;
 pub mod notion;
@@ -61,6 +62,7 @@ const CAPABILITY_TOOLKITS: &[&str] = &[
     "gmail",
     "notion",
     "slack",
+    "clickup",
     "github",
     "discord",
     "googlecalendar",
@@ -92,13 +94,14 @@ fn native_provider_sync_interval(toolkit: &str) -> Option<u64> {
         "gmail" => Some(gmail::GmailProvider::new().sync_interval_secs()),
         "notion" => Some(notion::NotionProvider::new().sync_interval_secs()),
         "slack" => Some(slack::SlackProvider::new().sync_interval_secs()),
+        "clickup" => Some(clickup::ClickUpProvider::new().sync_interval_secs()),
         _ => None,
     }
     .flatten()
 }
 
 fn has_native_provider(toolkit: &str) -> bool {
-    matches!(toolkit, "gmail" | "notion" | "slack")
+    matches!(toolkit, "gmail" | "notion" | "slack" | "clickup")
 }
 
 /// Static overview of the Composio integrations supported by this core build.
@@ -192,6 +195,7 @@ pub fn catalog_for_toolkit(toolkit: &str) -> Option<&'static [CuratedTool]> {
         "jira" => Some(catalogs::JIRA_CURATED),
         "trello" => Some(catalogs::TRELLO_CURATED),
         "asana" => Some(catalogs::ASANA_CURATED),
+        "clickup" => Some(clickup::CLICKUP_CURATED),
         "dropbox" => Some(catalogs::DROPBOX_CURATED),
         "twitter" => Some(catalogs::TWITTER_CURATED),
         "spotify" => Some(catalogs::SPOTIFY_CURATED),
@@ -319,6 +323,35 @@ mod tests {
         assert!(!google_calendar.periodic_sync);
         assert_eq!(google_calendar.sync_interval_secs, None);
         assert!(!google_calendar.memory_ingest);
+    }
+
+    #[test]
+    fn capability_matrix_includes_clickup_as_native_memory_provider() {
+        // Locks in the per-issue #2288 registration: a ClickUp row must
+        // appear in the capability matrix with the same native-provider
+        // flags Gmail/Notion/Slack already carry (`memory_ingest`,
+        // `periodic_sync`, non-zero `sync_interval_secs`). If a future
+        // change drops one of the four registration touchpoints
+        // (CAPABILITY_TOOLKITS, has_native_provider,
+        // native_provider_sync_interval, catalog_for_toolkit) this test
+        // fails loud rather than silently degrading the provider to
+        // catalog-only status.
+        let matrix = capability_matrix();
+        let clickup = matrix
+            .iter()
+            .find(|entry| entry.toolkit == "clickup")
+            .expect("clickup capability row");
+        assert!(clickup.native_provider, "clickup must be native");
+        assert!(clickup.curated_tools, "clickup must have a curated catalog");
+        assert!(
+            clickup.curated_tool_count > 0,
+            "clickup catalog must be non-empty"
+        );
+        assert!(clickup.user_profile);
+        assert!(clickup.initial_sync);
+        assert!(clickup.periodic_sync);
+        assert_eq!(clickup.sync_interval_secs, Some(30 * 60));
+        assert!(clickup.memory_ingest);
     }
 
     #[test]

@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Static import — follows project no-dynamic-import rule for test files.
@@ -32,9 +32,9 @@ describe('McpCatalogBrowser', () => {
 
     const input = screen.getByPlaceholderText('Search Smithery catalog...');
 
-    // Advance past the initial debounce and flush async work.
+    // Advance past the initial debounce
     await act(async () => {
-      await vi.runAllTimersAsync();
+      vi.advanceTimersByTime(300);
     });
     mockRegistrySearch.mockClear();
 
@@ -44,9 +44,9 @@ describe('McpCatalogBrowser', () => {
     // Before debounce fires, no new call
     expect(mockRegistrySearch).not.toHaveBeenCalled();
 
-    // Advance past the 250ms debounce and flush.
+    // Advance past the 250ms debounce
     await act(async () => {
-      await vi.runAllTimersAsync();
+      vi.advanceTimersByTime(300);
     });
 
     expect(mockRegistrySearch).toHaveBeenCalledWith({ query: 'github', page: 1, page_size: 20 });
@@ -65,12 +65,15 @@ describe('McpCatalogBrowser', () => {
     mockRegistrySearch.mockResolvedValue({ servers, page: 1, total_pages: 1 });
     render(<McpCatalogBrowser onSelectInstall={() => {}} />);
 
-    // Advance past the 250ms debounce and flush all pending async work.
     await act(async () => {
-      await vi.runAllTimersAsync();
+      await vi.advanceTimersByTimeAsync(300);
     });
+    // waitFor polls via real setTimeout; switch back so it isn't deadlocked by fake timers.
+    vi.useRealTimers();
 
-    expect(screen.getByText('File Server')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText('File Server')).toBeInTheDocument();
+    });
     expect(screen.getByText('Reads files')).toBeInTheDocument();
   });
 
@@ -81,10 +84,11 @@ describe('McpCatalogBrowser', () => {
     render(<McpCatalogBrowser onSelectInstall={onSelectInstall} />);
 
     await act(async () => {
-      await vi.runAllTimersAsync();
+      await vi.advanceTimersByTimeAsync(300);
     });
+    vi.useRealTimers();
 
-    expect(screen.getByText('File Server')).toBeInTheDocument();
+    await waitFor(() => screen.getByText('File Server'));
 
     fireEvent.click(screen.getByRole('button', { name: 'Install' }));
     expect(onSelectInstall).toHaveBeenCalledWith('acme/file-server');
@@ -96,9 +100,11 @@ describe('McpCatalogBrowser', () => {
     render(<McpCatalogBrowser onSelectInstall={() => {}} />);
 
     await act(async () => {
-      await vi.runAllTimersAsync();
+      await vi.advanceTimersByTimeAsync(300);
     });
+    vi.useRealTimers();
 
+    await waitFor(() => screen.getByText('Load more'));
     expect(screen.getByRole('button', { name: 'Load more' })).toBeInTheDocument();
   });
 
@@ -107,9 +113,10 @@ describe('McpCatalogBrowser', () => {
     render(<McpCatalogBrowser onSelectInstall={() => {}} />);
 
     await act(async () => {
-      await vi.runAllTimersAsync();
+      await vi.advanceTimersByTimeAsync(300);
     });
+    vi.useRealTimers();
 
-    expect(screen.getByText('Network error')).toBeInTheDocument();
+    await waitFor(() => screen.getByText('Network error'));
   });
 });

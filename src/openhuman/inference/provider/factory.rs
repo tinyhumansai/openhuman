@@ -609,12 +609,40 @@ pub fn lookup_key_for_slug(slug: &str, config: &Config) -> anyhow::Result<String
             )
         })?
         .unwrap_or_default();
+    if !key.is_empty() {
+        log::debug!(
+            "[providers][chat-factory] auth lookup slug={} key_present=true",
+            slug
+        );
+        return Ok(key);
+    }
+
+    // OAuth fallback for `openai` runs only after standard API-key resolution
+    // returns empty, so env/audit/metrics in the standard path always execute
+    // and the OAuth path never silently bypasses provider-agnostic logic.
+    if slug == "openai" {
+        match crate::openhuman::inference::openai_oauth::lookup_openai_bearer_token(config) {
+            Ok(Some(token)) if !token.is_empty() => {
+                log::debug!(
+                    "[providers][chat-factory] auth lookup slug={} key_present=true (oauth)",
+                    slug
+                );
+                return Ok(token);
+            }
+            Ok(_) => {}
+            Err(e) => {
+                return Err(anyhow::anyhow!(
+                    "[chat-factory] openai oauth lookup failed: {e}"
+                ));
+            }
+        }
+    }
+
     log::debug!(
-        "[providers][chat-factory] auth lookup slug={} key_present={}",
-        slug,
-        !key.is_empty()
+        "[providers][chat-factory] auth lookup slug={} key_present=false",
+        slug
     );
-    Ok(key)
+    Ok(String::new())
 }
 
 /// Build an `OpenAiCompatibleProvider` with the given auth style.

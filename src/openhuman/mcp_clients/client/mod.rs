@@ -117,10 +117,12 @@ impl McpTransport for McpStdioClient {
         let result = {
             let mut proc = self.process.lock().await;
             let pending = proc.reader.pending.clone();
-            let write_result = proc.writer.send(&msg).await;
-            // Wrap the write in a future for send_request_and_wait
-            send_request_and_wait(id, msg.clone(), &pending, async move {
-                write_result.map_err(|e| anyhow::anyhow!("{e}"))
+            let writer = &mut proc.writer;
+            // Register the pending waiter (inside send_request_and_wait) BEFORE
+            // performing the write, so a fast reply from the server isn't dropped
+            // by the reader before we're waiting for it.
+            send_request_and_wait(id, msg.clone(), &pending, async {
+                writer.send(&msg).await.map_err(|e| anyhow::anyhow!("{e}")
             })
             .await
         };
@@ -146,9 +148,9 @@ impl McpTransport for McpStdioClient {
         let result = {
             let mut proc = self.process.lock().await;
             let pending = proc.reader.pending.clone();
-            let write_result = proc.writer.send(&msg).await;
-            send_request_and_wait(id, msg.clone(), &pending, async move {
-                write_result.map_err(|e| anyhow::anyhow!("{e}"))
+            let writer = &mut proc.writer;
+            send_request_and_wait(id, msg.clone(), &pending, async {
+                writer.send(&msg).await.map_err(|e| anyhow::anyhow!("{e}")
             })
             .await
         }?;
@@ -175,9 +177,9 @@ impl McpTransport for McpStdioClient {
 
         let mut proc = self.process.lock().await;
         let pending = proc.reader.pending.clone();
-        let write_result = proc.writer.send(&msg).await;
-        send_request_and_wait(id, msg.clone(), &pending, async move {
-            write_result.map_err(|e| anyhow::anyhow!("{e}"))
+        let writer = &mut proc.writer;
+        send_request_and_wait(id, msg.clone(), &pending, async {
+            writer.send(&msg).await.map_err(|e| anyhow::anyhow!("{e}")
         })
         .await
     }

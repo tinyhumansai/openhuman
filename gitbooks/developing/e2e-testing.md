@@ -99,6 +99,19 @@ Requires Docker Desktop or Colima. The repo is bind-mounted so builds persist be
 | `hasAppChrome()` | XCUIElementTypeMenuBar | Window handle check |
 | `dumpAccessibilityTree()` | Accessibility XML | HTML page source |
 
+### Stable test IDs
+
+Prefer stable `data-testid` hooks for UI affordances that E2E specs click or poll. Use the taxonomy `<surface>-<element>-<id?>`, for example:
+
+- `cron-jobs-panel`, `cron-refresh`
+- `cron-job-row-<jobId>`, `cron-job-toggle-<jobId>`, `cron-job-run-<jobId>`, `cron-job-view-runs-<jobId>`, `cron-job-remove-<jobId>`
+- `settings-nav-<routeId>`
+- `skill-row-<skillId>`, `skill-install-<skillId>`, `skill-uninstall-<skillId>`
+- `thread-row-<threadId>`, `new-thread-button`, `send-message-button`
+- `onboarding-next-button`
+
+Use `waitForTestId(testId)` and `clickTestId(testId)` from `element-helpers.ts` when a spec targets one of these hooks. Keep text selectors for user-visible copy assertions, not row/action discovery.
+
 ### Deep link helpers
 
 `app/test/e2e/helpers/deep-link-helpers.ts` handles auth deep links:
@@ -113,6 +126,10 @@ Requires Docker Desktop or Colima. The repo is bind-mounted so builds persist be
 3. **Use `hasAppChrome()`** instead of checking for `XCUIElementTypeMenuBar`
 4. **Use `waitForWebView()`** instead of checking for `XCUIElementTypeWebView`
 5. For macOS-only tests, use `process.platform` guards or separate spec files
+6. Use `navigateViaHash(route)` for hash routes; it waits for the hash,
+   `document.readyState`, and a mounted React root before returning. After
+   onboarding, `walkOnboarding()` also waits for `#/home` plus a Home-page
+   marker before specs navigate elsewhere.
 
 ---
 
@@ -125,6 +142,7 @@ Requires Docker Desktop or Colima. The repo is bind-mounted so builds persist be
 | `E2E_MOCK_PORT` | `18473` | Mock backend server port |
 | `OPENHUMAN_WORKSPACE` | (temp dir) | App workspace directory |
 | `OPENHUMAN_SERVICE_MOCK` | `0` | Enable service mock mode |
+| `OPENHUMAN_E2E_MODE` | unset | Enables destructive test-support RPCs; the E2E runner sets this to `1` |
 | `OPENHUMAN_E2E_AUTH_BYPASS` | unset | Enable JWT bypass auth |
 | `DEBUG_E2E_DEEPLINK` | (verbose) | Set to `0` to silence deep link logs |
 | `E2E_FORCE_CARGO_CLEAN` | unset | Force cargo clean before E2E build |

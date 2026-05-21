@@ -5,7 +5,7 @@
  * `install` on submit.
  */
 import debug from 'debug';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { mcpClientsApi } from '../../../services/api/mcpClientsApi';
 import type { InstalledServer, SmitheryServerDetail } from './types';
@@ -31,14 +31,25 @@ const InstallDialog = ({ qualifiedName, prefillEnv, onSuccess, onCancel }: Insta
   const [installing, setInstalling] = useState(false);
   const [installError, setInstallError] = useState<string | null>(null);
 
+  // Track the latest qualifiedName seen by the effect to guard against stale
+  // async responses when qualifiedName changes or the component unmounts.
+  const latestQualifiedNameRef = useRef(qualifiedName);
+
   // Fetch server detail on mount or when qualifiedName changes.
   useEffect(() => {
+    latestQualifiedNameRef.current = qualifiedName;
     setLoadingDetail(true);
     setDetailError(null);
     log('fetching detail for %s', qualifiedName);
+    const requestedName = qualifiedName;
     mcpClientsApi
       .registryGet(qualifiedName)
       .then(d => {
+        // Discard response if a newer request has already been issued.
+        if (latestQualifiedNameRef.current !== requestedName) {
+          log('discarding stale detail response for %s', requestedName);
+          return;
+        }
         setDetail(d);
         // Pre-fill env values from prop (suggested by config assistant) or empty.
         const initial: Record<string, string> = {};
@@ -49,11 +60,16 @@ const InstallDialog = ({ qualifiedName, prefillEnv, onSuccess, onCancel }: Insta
         log('detail loaded, required_env_keys=%o', d.required_env_keys);
       })
       .catch(err => {
+        if (latestQualifiedNameRef.current !== requestedName) return;
         const msg = err instanceof Error ? err.message : 'Failed to load server details';
         log('detail error: %s', msg);
         setDetailError(msg);
       })
-      .finally(() => setLoadingDetail(false));
+      .finally(() => {
+        if (latestQualifiedNameRef.current === requestedName) {
+          setLoadingDetail(false);
+        }
+      });
   }, [qualifiedName, prefillEnv]);
 
   const toggleShowEnv = useCallback((key: string) => {

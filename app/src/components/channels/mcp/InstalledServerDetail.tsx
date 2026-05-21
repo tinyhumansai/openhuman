@@ -59,6 +59,7 @@ const InstalledServerDetail = ({
     void runBusy(async () => {
       log('disconnecting server_id=%s', server.server_id);
       await mcpClientsApi.disconnect(server.server_id);
+      // Clear stale tool list so it doesn't show after disconnection.
       setTools([]);
       log('disconnected');
     });
@@ -206,10 +207,10 @@ const InstalledServerDetail = ({
         </div>
       )}
 
-      {/* Tool list */}
+      {/* Tool list — only show when connected so stale tools don't linger */}
       <div className="space-y-1">
         <p className="text-xs font-medium text-stone-600 dark:text-neutral-400">Tools</p>
-        <McpToolList tools={tools} />
+        <McpToolList tools={status === 'connected' ? tools : []} />
       </div>
 
       {/* Config assistant */}

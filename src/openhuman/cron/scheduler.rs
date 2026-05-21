@@ -1,4 +1,5 @@
 use crate::core::event_bus::{publish_global, DomainEvent};
+use crate::openhuman::agent::error::AgentError;
 use crate::openhuman::config::Config;
 use crate::openhuman::cron::{
     due_jobs, next_run_for_schedule, record_last_run, record_run, remove_job, reschedule_after_run,
@@ -16,12 +17,119 @@ use tokio::time::{self, Duration};
 const MIN_POLL_SECONDS: u64 = 5;
 const SHELL_JOB_TIMEOUT_SECS: u64 = 120;
 const AGENT_JOB_USER_FAILURE_MESSAGE: &str = "Something went wrong. Please try again.\nThis error has been reported. You can also report it on Discord.\n<openhuman-link path=\"community/discord\">Report on Discord</openhuman-link>";
+const MORNING_BRIEFING_AGENT_ID: &str = "morning_briefing";
+const MORNING_BRIEFING_FAILURE_NOTIFICATION: &str = "Morning briefing could not run. Check your AI provider, API key, and connected apps, then run it again from Settings > Cron Jobs.";
+
+/// Map a typed [`AgentError`] to a canned, user-facing message for cron-job
+/// failure notifications.
+///
+/// **Contract (load-bearing — see `scheduler_tests::classifier_does_not_leak_error_content`):**
+/// this function returns only static `&'static str` constants. It MUST NEVER
+/// interpolate any field of `err` into its output (no `format!`, no
+/// `err.to_string()`, no `Debug`/`Display`). `last_agent_error` carries stack
+/// traces, provider URLs with query tokens, partial response bodies and
+/// occasionally user input — routing any of that into a user-visible
+/// notification would be a data-exposure regression.
+///
+/// Variants for which we have no concrete user action (e.g.
+/// [`AgentError::ToolExecutionError`], [`AgentError::Other`]) fall back to
+/// [`AGENT_JOB_USER_FAILURE_MESSAGE`], preserving today's behaviour.
+fn agent_error_to_user_message(err: &AgentError) -> &'static str {
+    match err {
+        AgentError::ProviderError { retryable: true, .. } => {
+            "The model provider is temporarily unavailable. The next run will retry automatically."
+        }
+        AgentError::ProviderError { retryable: false, .. } => {
+            "The model provider rejected the request. Check your provider credentials in Settings \u{2192} AI \u{2192} LLM."
+        }
+        AgentError::ContextLimitExceeded { .. } => {
+            "The conversation grew too long for the model. Start a new session or pick a model with a larger context window."
+        }
+        AgentError::CostBudgetExceeded { .. } => {
+            "You've reached the daily cost budget for this agent. Raise it in Settings \u{2192} Billing or wait for the next budget window."
+        }
+        AgentError::MaxIterationsExceeded { .. } => {
+            "The agent stopped after too many tool iterations. Raise the iteration cap in Settings \u{2192} AI \u{2192} LLM or simplify the task."
+        }
+        AgentError::CompactionFailed { .. } => {
+            "Automatic history compaction failed. The next run will start with a fresh context."
+        }
+        AgentError::PermissionDenied { .. } => {
+            "The agent needs a tool that isn't allowed on this channel. Adjust the permissions in Settings."
+        }
+        // ToolExecutionError and Other have no actionable canned message —
+        // their error bodies are too freeform to summarise safely without
+        // interpolating contents. Fall back to the generic copy.
+        AgentError::ToolExecutionError { .. } | AgentError::Other(_) => {
+            AGENT_JOB_USER_FAILURE_MESSAGE
+        }
+    }
+}
+
+/// Classify an [`anyhow::Error`] returned by the agent runtime into a canned
+/// user-facing message. If the underlying error is a typed [`AgentError`],
+/// route through [`agent_error_to_user_message`]; otherwise fall back to the
+/// generic message.
+fn classify_agent_anyhow_for_user(err: &anyhow::Error) -> &'static str {
+    match err.downcast_ref::<AgentError>() {
+        Some(agent_err) => agent_error_to_user_message(agent_err),
+        None => AGENT_JOB_USER_FAILURE_MESSAGE,
+    }
+}
 
 fn agent_session_target_tag(target: &SessionTarget) -> &'static str {
     match target {
         SessionTarget::Main => "main",
         SessionTarget::Isolated => "isolated",
     }
+}
+
+fn is_morning_briefing_job(job: &CronJob) -> bool {
+    job.name.as_deref() == Some(MORNING_BRIEFING_AGENT_ID)
+        || job.agent_id.as_deref() == Some(MORNING_BRIEFING_AGENT_ID)
+}
+
+fn strip_openhuman_link_markup(input: &str) -> String {
+    const OPEN_TAG: &str = "<openhuman-link";
+    const CLOSE_TAG: &str = "</openhuman-link>";
+
+    let mut output = String::with_capacity(input.len());
+    let mut rest = input;
+
+    while let Some(start) = rest.find(OPEN_TAG) {
+        output.push_str(&rest[..start]);
+        let tag_and_after = &rest[start..];
+
+        let Some(open_end) = tag_and_after.find('>') else {
+            output.push_str(tag_and_after);
+            return output;
+        };
+        let label_and_after = &tag_and_after[open_end + 1..];
+
+        let Some(close_start) = label_and_after.find(CLOSE_TAG) else {
+            output.push_str(tag_and_after);
+            return output;
+        };
+
+        output.push_str(&label_and_after[..close_start]);
+        rest = &label_and_after[close_start + CLOSE_TAG.len()..];
+    }
+
+    output.push_str(rest);
+    output
+}
+
+fn cron_alert_body(job: &CronJob, output: &str) -> String {
+    let trimmed = output.trim();
+    if matches!(job.job_type, JobType::Agent)
+        && trimmed == AGENT_JOB_USER_FAILURE_MESSAGE
+        && is_morning_briefing_job(job)
+    {
+        return MORNING_BRIEFING_FAILURE_NOTIFICATION.to_string();
+    }
+
+    let body = strip_openhuman_link_markup(output);
+    crate::openhuman::util::truncate_with_ellipsis(&body, 512)
 }
 
 pub async fn run(config: Config) -> Result<()> {
@@ -328,11 +436,17 @@ async fn run_agent_job(config: &Config, job: &CronJob) -> (bool, String, Option<
             },
             None,
         ),
-        Err(e) => (
-            false,
-            AGENT_JOB_USER_FAILURE_MESSAGE.to_string(),
-            Some(e.to_string()),
-        ),
+        Err(e) => {
+            // Classify into a canned user-facing message *before* logging
+            // anything that touches `e`. The classifier output is a
+            // `&'static str` — it never contains any data derived from `e`.
+            // The raw error is preserved as `last_agent_error` for the
+            // observability pipeline (`report_error`), where stack traces
+            // and provider URLs are appropriate; it must NOT reach the
+            // user-visible notification body.
+            let user_message = classify_agent_anyhow_for_user(&e);
+            (false, user_message.to_string(), Some(e.to_string()))
+        }
     }
 }
 
@@ -490,14 +604,14 @@ fn push_cron_alert(config: &Config, job: &CronJob, output: &str) {
     use crate::openhuman::notifications::types::{IntegrationNotification, NotificationStatus};
 
     let name = job.name.as_deref().unwrap_or("Cron job");
-    let truncated = crate::openhuman::util::truncate_with_ellipsis(output, 512);
+    let body = cron_alert_body(job, output);
 
     let notification = IntegrationNotification {
         id: uuid::Uuid::new_v4().to_string(),
         provider: "cron".to_string(),
         account_id: Some(job.id.clone()),
         title: name.to_string(),
-        body: truncated,
+        body,
         raw_payload: serde_json::json!({
             "job_id": job.id,
             "job_name": job.name,
@@ -511,17 +625,26 @@ fn push_cron_alert(config: &Config, job: &CronJob, output: &str) {
         scored_at: Some(Utc::now()),
     };
 
-    if let Err(e) = notif_store::insert(config, &notification) {
-        tracing::warn!(
-            job_id = %job.id,
-            error = %e,
-            "[cron] failed to push notification alert"
-        );
-    } else {
-        tracing::debug!(
-            job_id = %job.id,
-            "[cron] pushed notification alert to alerts tab"
-        );
+    match notif_store::insert_if_not_recent(config, &notification) {
+        Ok(true) => {
+            tracing::debug!(
+                job_id = %job.id,
+                "[cron] pushed notification alert to alerts tab"
+            );
+        }
+        Ok(false) => {
+            tracing::debug!(
+                job_id = %job.id,
+                "[cron] skipped duplicate notification alert"
+            );
+        }
+        Err(e) => {
+            tracing::warn!(
+                job_id = %job.id,
+                error = %e,
+                "[cron] failed to push notification alert"
+            );
+        }
     }
 }
 

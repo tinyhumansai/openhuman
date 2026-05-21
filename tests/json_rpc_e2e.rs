@@ -6345,7 +6345,8 @@ async fn mcp_clients_lifecycle() {
     )
     .await;
     let list1_result = assert_no_jsonrpc_error(&list1, "mcp_clients_installed_list (initial)");
-    // RpcOutcome wraps in {"result": {...}, "logs": [...]} when logs are present.
+    // Handlers wrap their value in `{ "result": value, "logs": [...] }` when logs are
+    // emitted (see RpcOutcome::into_cli_compatible_json); unwrap that envelope here.
     let list1_body = list1_result.get("result").unwrap_or(list1_result);
     let installed = list1_body
         .get("installed")

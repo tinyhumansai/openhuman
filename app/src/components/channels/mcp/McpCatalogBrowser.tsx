@@ -25,27 +25,39 @@ const McpCatalogBrowser = ({ onSelectInstall }: McpCatalogBrowserProps) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Monotonically-increasing counter used to discard stale registrySearch
+  // responses when a newer request has already been issued.
+  const requestSeqRef = useRef(0);
 
   const fetchPage = useCallback(async (searchQuery: string, pageNum: number, append: boolean) => {
+    const seq = ++requestSeqRef.current;
     setLoading(true);
     setError(null);
-    log('fetching page=%d query=%s', pageNum, searchQuery);
+    log('fetching page=%d query=%s seq=%d', pageNum, searchQuery, seq);
     try {
       const result = await mcpClientsApi.registrySearch({
         query: searchQuery || undefined,
         page: pageNum,
         page_size: PAGE_SIZE,
       });
+      // Discard if a newer request has already been dispatched.
+      if (seq !== requestSeqRef.current) {
+        log('discarding stale response seq=%d (latest=%d)', seq, requestSeqRef.current);
+        return;
+      }
       setTotalPages(result.total_pages);
       setPage(result.page);
       setServers(prev => (append ? [...prev, ...result.servers] : result.servers));
       log('loaded %d servers (append=%s)', result.servers.length, append);
     } catch (err) {
+      if (seq !== requestSeqRef.current) return;
       const msg = err instanceof Error ? err.message : 'Failed to load catalog';
       log('catalog fetch error: %s', msg);
       setError(msg);
     } finally {
-      setLoading(false);
+      if (seq === requestSeqRef.current) {
+        setLoading(false);
+      }
     }
   }, []);
 
@@ -69,6 +81,7 @@ const McpCatalogBrowser = ({ onSelectInstall }: McpCatalogBrowserProps) => {
       <div className="flex items-center gap-2">
         <input
           type="search"
+          aria-label="Search Smithery catalog"
           placeholder="Search Smithery catalog..."
           value={query}
           onChange={e => setQuery(e.target.value)}

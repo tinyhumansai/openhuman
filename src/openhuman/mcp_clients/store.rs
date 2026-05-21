@@ -190,11 +190,18 @@ fn map_server_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<InstalledServer> 
     let env_keys_json: String = row.get(8)?;
     let config_json: Option<String> = row.get(9)?;
 
-    let args: Vec<String> = serde_json::from_str(&args_json).unwrap_or_default();
-    let env_keys: Vec<String> = serde_json::from_str(&env_keys_json).unwrap_or_default();
-    let config: Option<Value> = config_json
-        .as_deref()
-        .and_then(|s| serde_json::from_str(s).ok());
+    let args: Vec<String> = serde_json::from_str(&args_json).map_err(|e| {
+        rusqlite::Error::FromSqlConversionFailure(7, rusqlite::types::Type::Text, Box::new(e))
+    })?;
+    let env_keys: Vec<String> = serde_json::from_str(&env_keys_json).map_err(|e| {
+        rusqlite::Error::FromSqlConversionFailure(8, rusqlite::types::Type::Text, Box::new(e))
+    })?;
+    let config: Option<Value> = match config_json.as_deref() {
+        None => None,
+        Some(s) => Some(serde_json::from_str(s).map_err(|e| {
+            rusqlite::Error::FromSqlConversionFailure(9, rusqlite::types::Type::Text, Box::new(e))
+        })?),
+    };
 
     Ok(InstalledServer {
         server_id: row.get(0)?,
@@ -229,12 +236,20 @@ pub fn set_env_values_conn(
     server_id: &str,
     env: &std::collections::HashMap<String, String>,
 ) -> Result<()> {
+    // Delete all existing env rows for this server first so that keys removed
+    // from the new map don't linger.  The upsert below re-inserts the current set.
+    conn.execute(
+        "DELETE FROM mcp_client_env WHERE server_id = ?1",
+        params![server_id],
+    )
+    .context("Failed to clear previous mcp_client_env rows")?;
+
     for (key, value) in env {
         conn.execute(
-            "INSERT OR REPLACE INTO mcp_client_env (server_id, key, value) VALUES (?1, ?2, ?3)",
+            "INSERT INTO mcp_client_env (server_id, key, value) VALUES (?1, ?2, ?3)",
             params![server_id, key, value],
         )
-        .context("Failed to upsert mcp_client_env")?;
+        .context("Failed to insert mcp_client_env")?;
     }
     Ok(())
 }

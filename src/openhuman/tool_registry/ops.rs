@@ -118,10 +118,18 @@ fn insert_registry_entry(
     source: &str,
 ) {
     let key = entry.tool_id.clone();
-    assert!(
-        entries.insert(key.clone(), entry).is_none(),
-        "duplicate tool_id in registry: {key} from {source}"
-    );
+    if entries.contains_key(&key) {
+        // Duplicate tool IDs can arrive from external MCP servers that reuse
+        // well-known names.  First-write-wins: log and skip the duplicate
+        // rather than panicking or silently overwriting in production.
+        log::warn!(
+            "[tool_registry] duplicate tool_id={} from source={}; skipping",
+            key,
+            source
+        );
+        return;
+    }
+    entries.insert(key, entry);
 }
 
 fn mcp_tool_entry(spec: McpToolSpec) -> ToolRegistryEntry {
@@ -338,14 +346,13 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "duplicate tool_id in registry")]
-    fn insert_registry_entry_panics_on_duplicate_tool_id() {
+    fn insert_registry_entry_skips_duplicate_tool_id() {
         let mut entries = BTreeMap::new();
-        let entry = ToolRegistryEntry {
+        let first_entry = ToolRegistryEntry {
             tool_id: "duplicate.tool".to_string(),
             name: "duplicate.tool".to_string(),
-            title: "Duplicate Tool".to_string(),
-            description: "Test duplicate entry.".to_string(),
+            title: "First Entry".to_string(),
+            description: "First description.".to_string(),
             version: REGISTRY_ENTRY_VERSION.to_string(),
             transport: ToolRegistryTransport::JsonRpc,
             route: json!({}),
@@ -356,9 +363,18 @@ mod tests {
             enabled: true,
             health: ToolRegistryHealth::Available,
         };
+        let second_entry = ToolRegistryEntry {
+            title: "Second Entry".to_string(),
+            description: "Second description.".to_string(),
+            ..first_entry.clone()
+        };
 
-        insert_registry_entry(&mut entries, entry.clone(), "first");
-        insert_registry_entry(&mut entries, entry, "second");
+        insert_registry_entry(&mut entries, first_entry, "first");
+        // Should not panic; first entry is kept, second is silently dropped.
+        insert_registry_entry(&mut entries, second_entry, "second");
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries["duplicate.tool"].title, "First Entry");
     }
 
     #[test]

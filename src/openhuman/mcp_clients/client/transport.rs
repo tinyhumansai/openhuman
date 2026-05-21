@@ -56,6 +56,9 @@ impl TransportReader {
     }
 
     /// Spawn a background task that drains `stdout` and resolves waiters.
+    ///
+    /// When the reader exits (EOF or error), all pending waiters are flushed
+    /// with an error so they do not leak and wait until their own timeout fires.
     pub fn spawn_reader(&self, stdout: ChildStdout, server_id: String) {
         let pending = Arc::clone(&self.pending);
         tokio::spawn(async move {
@@ -65,10 +68,11 @@ impl TransportReader {
                 if line.trim().is_empty() {
                     continue;
                 }
+                // Do NOT log raw payload — MCP subprocesses may emit secrets or PII.
                 tracing::trace!(
-                    "[mcp-client] server_id={} stdout: {}",
+                    "[mcp-client] server_id={} received stdout line (len={})",
                     server_id,
-                    &line[..line.len().min(512)]
+                    line.len()
                 );
                 let parsed: Value = match serde_json::from_str(&line) {
                     Ok(v) => v,
@@ -99,10 +103,23 @@ impl TransportReader {
                 "[mcp-client] stdout reader exiting for server_id={}",
                 server_id
             );
+            // Flush all pending waiters with an error so they don't leak until timeout.
+            let mut map = pending.lock().await;
+            for (id, tx) in map.drain() {
+                tracing::debug!(
+                    "[mcp-client] server_id={} flushing pending waiter id={}",
+                    server_id,
+                    id
+                );
+                let _ = tx.send(Err("MCP server stdout closed unexpectedly".to_string()));
+            }
         });
     }
 
     /// Spawn a background task that drains `stderr` into the ring buffer.
+    ///
+    /// Raw stderr content is NOT logged — MCP subprocesses may emit secrets or
+    /// PII. Only the line length is traced for diagnostics.
     pub fn spawn_stderr_reader(&self, stderr: tokio::process::ChildStderr, server_id: String) {
         let ring = Arc::clone(&self.stderr_ring);
         tokio::spawn(async move {
@@ -111,9 +128,9 @@ impl TransportReader {
             let mut lines = reader.lines();
             while let Ok(Some(line)) = lines.next_line().await {
                 tracing::trace!(
-                    "[mcp-client] server_id={} stderr: {}",
+                    "[mcp-client] server_id={} received stderr line (len={})",
                     server_id,
-                    &line[..line.len().min(256)]
+                    line.len()
                 );
                 let mut buf = ring.write().await;
                 if buf.len() >= STDERR_RING_SIZE {

@@ -212,7 +212,8 @@ fn resolve_command(
         }
     }
 
-    // Default: use npx for all packages when example_config doesn't specify a command.
+    // Default: npx for all packages — both npm-scoped (@org/pkg) and
+    // plain smithery-style (owner/name) are launched the same way.
     (
         CommandKind::Node,
         "npx".to_string(),
@@ -534,15 +535,12 @@ async fn invoke_config_assist_agent(
     let status = resp.status();
     let text = resp.text().await.map_err(|e| e.to_string())?;
     if !status.is_success() {
-        let truncated = text
-            .char_indices()
-            .nth(200)
-            .map(|(idx, _)| &text[..idx])
-            .unwrap_or(&text);
+        // Truncate at a Unicode-safe char boundary rather than a raw byte index.
+        let preview: String = text.chars().take(200).collect();
         tracing::warn!(
             "[mcp-client] config_assist inference HTTP {}: {}",
             status,
-            truncated
+            preview
         );
         return Ok(json!({
             "reply": "I'm currently unable to connect to the AI backend. Please try again shortly.",

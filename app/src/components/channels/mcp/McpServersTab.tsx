@@ -36,6 +36,8 @@ const McpServersTab = () => {
     try {
       const installed = await mcpClientsApi.installedList();
       setServers(installed);
+      // Clear any previous error on successful reload.
+      setLoadError(null);
       log('loaded %d installed servers', installed.length);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to load installed servers';
@@ -54,9 +56,9 @@ const McpServersTab = () => {
     }
   }, []);
 
-  // Initial load
+  // Initial load — `loading` starts as `true` so no synchronous setState
+  // before the async work is needed; just kick off the loads and clear on done.
   useEffect(() => {
-    setLoading(true);
     Promise.all([loadInstalled(), fetchStatuses()]).finally(() => setLoading(false));
   }, [loadInstalled, fetchStatuses]);
 

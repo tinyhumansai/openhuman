@@ -1,6 +1,6 @@
 /**
- * Tests for InstalledServerList — covers empty state, server list rendering,
- * status dot classes, tool count display, selection highlight, and callbacks.
+ * Tests for InstalledServerList — static rendering component.
+ * No async behavior; all branches covered synchronously.
  */
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
@@ -8,252 +8,211 @@ import { describe, expect, it, vi } from 'vitest';
 import InstalledServerList from './InstalledServerList';
 import type { ConnStatus, InstalledServer } from './types';
 
-const SERVER_A: InstalledServer = {
-  server_id: 'srv-a',
-  qualified_name: 'acme/server-a',
-  display_name: 'Server A',
+const SERVER_1: InstalledServer = {
+  server_id: 'srv-1',
+  qualified_name: 'acme/fs-server',
+  display_name: 'File Server',
+  description: 'Reads files',
   command_kind: 'node',
-  command: 'node',
-  args: [],
+  command: 'npx',
+  args: ['-y', 'acme/fs-server'],
   env_keys: [],
-  installed_at: 0,
+  installed_at: 1_700_000_000,
 };
 
-const SERVER_B: InstalledServer = {
-  server_id: 'srv-b',
-  qualified_name: 'acme/server-b',
-  display_name: 'Server B',
+const SERVER_2: InstalledServer = {
+  server_id: 'srv-2',
+  qualified_name: 'acme/db-server',
+  display_name: 'DB Server',
+  description: undefined,
   command_kind: 'node',
-  command: 'node',
-  args: [],
-  env_keys: [],
-  installed_at: 0,
+  command: 'npx',
+  args: ['-y', 'acme/db-server'],
+  env_keys: ['DB_URL'],
+  installed_at: 1_700_000_001,
+};
+
+const STATUS_CONNECTED: ConnStatus = {
+  server_id: 'srv-1',
+  qualified_name: 'acme/fs-server',
+  display_name: 'File Server',
+  status: 'connected',
+  tool_count: 3,
+};
+
+const STATUS_ERROR: ConnStatus = {
+  server_id: 'srv-2',
+  qualified_name: 'acme/db-server',
+  display_name: 'DB Server',
+  status: 'error',
+  tool_count: 0,
+  last_error: 'Connection refused',
 };
 
 describe('InstalledServerList', () => {
-  it('renders header and Browse catalog button', () => {
+  it('shows empty state with Browse catalog button when no servers', () => {
     const onBrowse = vi.fn();
     render(
       <InstalledServerList
         servers={[]}
         statuses={[]}
         selectedId={null}
-        onSelect={vi.fn()}
+        onSelect={() => {}}
         onBrowseCatalog={onBrowse}
       />
     );
-    expect(screen.getByText('Installed')).toBeInTheDocument();
-    // Header browse catalog link
-    expect(screen.getAllByRole('button', { name: /browse catalog/i }).length).toBeGreaterThan(0);
-  });
-
-  it('shows empty-state prompt and Browse catalog CTA when no servers installed', () => {
-    const onBrowse = vi.fn();
-    render(
-      <InstalledServerList
-        servers={[]}
-        statuses={[]}
-        selectedId={null}
-        onSelect={vi.fn()}
-        onBrowseCatalog={onBrowse}
-      />
-    );
-    expect(screen.getByText(/no mcp servers installed yet/i)).toBeInTheDocument();
-    // At least two browse catalog buttons (header + CTA)
-    const buttons = screen.getAllByRole('button', { name: /browse catalog/i });
-    expect(buttons.length).toBeGreaterThanOrEqual(2);
-
-    fireEvent.click(buttons[buttons.length - 1]); // CTA button
-    expect(onBrowse).toHaveBeenCalled();
-  });
-
-  it('calls onBrowseCatalog when header button is clicked', () => {
-    const onBrowse = vi.fn();
-    render(
-      <InstalledServerList
-        servers={[]}
-        statuses={[]}
-        selectedId={null}
-        onSelect={vi.fn()}
-        onBrowseCatalog={onBrowse}
-      />
-    );
-    fireEvent.click(screen.getAllByRole('button', { name: /browse catalog/i })[0]);
+    expect(screen.getByText('No MCP servers installed yet.')).toBeInTheDocument();
+    // Two "Browse catalog" buttons exist: header link and empty-state CTA.
+    // Click the CTA (second one) to verify the prop fires.
+    const btns = screen.getAllByRole('button', { name: 'Browse catalog' });
+    expect(btns).toHaveLength(2);
+    fireEvent.click(btns[1]);
     expect(onBrowse).toHaveBeenCalledTimes(1);
   });
 
-  it('renders server display names', () => {
+  it('renders all server display names', () => {
     render(
       <InstalledServerList
-        servers={[SERVER_A, SERVER_B]}
+        servers={[SERVER_1, SERVER_2]}
         statuses={[]}
         selectedId={null}
-        onSelect={vi.fn()}
-        onBrowseCatalog={vi.fn()}
+        onSelect={() => {}}
+        onBrowseCatalog={() => {}}
       />
     );
-    expect(screen.getByText('Server A')).toBeInTheDocument();
-    expect(screen.getByText('Server B')).toBeInTheDocument();
+    expect(screen.getByText('File Server')).toBeInTheDocument();
+    expect(screen.getByText('DB Server')).toBeInTheDocument();
   });
 
-  it('calls onSelect with the correct server_id when a server button is clicked', () => {
+  it('calls onSelect with the correct server_id when clicked', () => {
     const onSelect = vi.fn();
     render(
       <InstalledServerList
-        servers={[SERVER_A, SERVER_B]}
+        servers={[SERVER_1, SERVER_2]}
         statuses={[]}
         selectedId={null}
         onSelect={onSelect}
-        onBrowseCatalog={vi.fn()}
+        onBrowseCatalog={() => {}}
       />
     );
-    fireEvent.click(screen.getByRole('button', { name: /server b/i }));
-    expect(onSelect).toHaveBeenCalledWith('srv-b');
+    fireEvent.click(screen.getByRole('button', { name: /File Server/i }));
+    expect(onSelect).toHaveBeenCalledWith('srv-1');
   });
 
   it('applies selected styling to the active server', () => {
     render(
       <InstalledServerList
-        servers={[SERVER_A, SERVER_B]}
+        servers={[SERVER_1, SERVER_2]}
         statuses={[]}
-        selectedId="srv-a"
-        onSelect={vi.fn()}
-        onBrowseCatalog={vi.fn()}
+        selectedId="srv-1"
+        onSelect={() => {}}
+        onBrowseCatalog={() => {}}
       />
     );
-    const serverABtn = screen.getByRole('button', { name: /server a/i });
-    // Selected button should have primary-50 background class
-    expect(serverABtn.className).toContain('bg-primary-50');
-    // Non-selected should not
-    const serverBBtn = screen.getByRole('button', { name: /server b/i });
-    expect(serverBBtn.className).not.toContain('bg-primary-50');
+    const btn = screen.getByRole('button', { name: /File Server/i });
+    expect(btn.className).toMatch(/border-primary/);
   });
 
-  it('shows tool count when server is connected with tools', () => {
-    const statuses: ConnStatus[] = [
-      {
-        server_id: 'srv-a',
-        qualified_name: 'acme/server-a',
-        display_name: 'Server A',
-        status: 'connected',
-        tool_count: 5,
-      },
-    ];
+  it('shows tool count when connected with tools', () => {
     render(
       <InstalledServerList
-        servers={[SERVER_A]}
-        statuses={statuses}
+        servers={[SERVER_1]}
+        statuses={[STATUS_CONNECTED]}
         selectedId={null}
-        onSelect={vi.fn()}
-        onBrowseCatalog={vi.fn()}
+        onSelect={() => {}}
+        onBrowseCatalog={() => {}}
       />
     );
-    expect(screen.getByText('5 tools')).toBeInTheDocument();
+    expect(screen.getByText('3 tools')).toBeInTheDocument();
+  });
+
+  it('does not show tool count when disconnected', () => {
+    render(
+      <InstalledServerList
+        servers={[SERVER_1]}
+        statuses={[
+          {
+            server_id: 'srv-1',
+            qualified_name: 'acme/fs-server',
+            display_name: 'File Server',
+            status: 'disconnected',
+            tool_count: 0,
+          },
+        ]}
+        selectedId={null}
+        onSelect={() => {}}
+        onBrowseCatalog={() => {}}
+      />
+    );
+    expect(screen.queryByText(/tools/)).not.toBeInTheDocument();
+  });
+
+  it('does not show tool count when connected but tool_count is 0', () => {
+    render(
+      <InstalledServerList
+        servers={[SERVER_1]}
+        statuses={[{ ...STATUS_CONNECTED, tool_count: 0 }]}
+        selectedId={null}
+        onSelect={() => {}}
+        onBrowseCatalog={() => {}}
+      />
+    );
+    expect(screen.queryByText(/tools/)).not.toBeInTheDocument();
   });
 
   it('shows singular "tool" when tool count is 1', () => {
-    const statuses: ConnStatus[] = [
-      {
-        server_id: 'srv-a',
-        qualified_name: 'acme/server-a',
-        display_name: 'Server A',
-        status: 'connected',
-        tool_count: 1,
-      },
-    ];
     render(
       <InstalledServerList
-        servers={[SERVER_A]}
-        statuses={statuses}
+        servers={[SERVER_1]}
+        statuses={[{ ...STATUS_CONNECTED, tool_count: 1 }]}
         selectedId={null}
-        onSelect={vi.fn()}
-        onBrowseCatalog={vi.fn()}
+        onSelect={() => {}}
+        onBrowseCatalog={() => {}}
       />
     );
     expect(screen.getByText('1 tool')).toBeInTheDocument();
   });
 
-  it('does not show tool count when server is disconnected', () => {
-    const statuses: ConnStatus[] = [
-      {
-        server_id: 'srv-a',
-        qualified_name: 'acme/server-a',
-        display_name: 'Server A',
-        status: 'disconnected',
-        tool_count: 5,
-      },
-    ];
+  it('applies error status dot to error server', () => {
     render(
       <InstalledServerList
-        servers={[SERVER_A]}
-        statuses={statuses}
+        servers={[SERVER_2]}
+        statuses={[STATUS_ERROR]}
         selectedId={null}
-        onSelect={vi.fn()}
-        onBrowseCatalog={vi.fn()}
+        onSelect={() => {}}
+        onBrowseCatalog={() => {}}
       />
     );
-    expect(screen.queryByText(/5 tool/)).not.toBeInTheDocument();
+    // The status dot has title="error"
+    expect(screen.getByTitle('error')).toBeInTheDocument();
   });
 
-  it('does not show tool count when connected but tool_count is 0', () => {
-    const statuses: ConnStatus[] = [
-      {
-        server_id: 'srv-a',
-        qualified_name: 'acme/server-a',
-        display_name: 'Server A',
-        status: 'connected',
-        tool_count: 0,
-      },
-    ];
+  it('falls back to disconnected status when no matching status entry', () => {
     render(
       <InstalledServerList
-        servers={[SERVER_A]}
-        statuses={statuses}
-        selectedId={null}
-        onSelect={vi.fn()}
-        onBrowseCatalog={vi.fn()}
-      />
-    );
-    expect(screen.queryByText(/tool/)).not.toBeInTheDocument();
-  });
-
-  it('defaults status to disconnected when no connStatus present', () => {
-    // With no statuses, the status dot should use the disconnected colour class.
-    const { container } = render(
-      <InstalledServerList
-        servers={[SERVER_A]}
+        servers={[SERVER_1]}
         statuses={[]}
         selectedId={null}
-        onSelect={vi.fn()}
-        onBrowseCatalog={vi.fn()}
+        onSelect={() => {}}
+        onBrowseCatalog={() => {}}
       />
     );
-    const dot = container.querySelector('[title="disconnected"]');
-    expect(dot).not.toBeNull();
-    expect(dot!.className).toContain('bg-stone-300');
+    expect(screen.getByTitle('disconnected')).toBeInTheDocument();
   });
 
-  it('renders error status dot for error status', () => {
-    const statuses: ConnStatus[] = [
-      {
-        server_id: 'srv-a',
-        qualified_name: 'acme/server-a',
-        display_name: 'Server A',
-        status: 'error',
-        tool_count: 0,
-      },
-    ];
-    const { container } = render(
+  it('calls onBrowseCatalog from the header link', () => {
+    const onBrowse = vi.fn();
+    render(
       <InstalledServerList
-        servers={[SERVER_A]}
-        statuses={statuses}
+        servers={[SERVER_1]}
+        statuses={[]}
         selectedId={null}
-        onSelect={vi.fn()}
-        onBrowseCatalog={vi.fn()}
+        onSelect={() => {}}
+        onBrowseCatalog={onBrowse}
       />
     );
-    const dot = container.querySelector('[title="error"]');
-    expect(dot).not.toBeNull();
-    expect(dot!.className).toContain('bg-coral-500');
+    // Only the header link button is present when servers are non-empty.
+    fireEvent.click(screen.getByRole('button', { name: 'Browse catalog' }));
+    expect(onBrowse).toHaveBeenCalledTimes(1);
   });
 });

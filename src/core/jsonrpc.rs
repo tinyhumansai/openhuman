@@ -160,8 +160,9 @@ pub async fn rpc_handler(State(state): State<AppState>, Json(req): Json<RpcReque
 /// Invokes a JSON-RPC method by name.
 ///
 /// This is a high-level wrapper around [`invoke_method_inner`] that adds
-/// automatic session management logic. If a call fails with a 401 Unauthorized
-/// error from the backend, it will automatically clear the local session.
+/// automatic session management logic. If a call fails with a confirmed
+/// OpenHuman session-expired error, it will automatically clear the local
+/// session.
 ///
 /// # Arguments
 ///
@@ -171,27 +172,34 @@ pub async fn rpc_handler(State(state): State<AppState>, Json(req): Json<RpcReque
 pub async fn invoke_method(state: AppState, method: &str, params: Value) -> Result<Value, String> {
     let result = invoke_method_inner(state, method, params).await;
 
-    // Session auto-cleanup: if the backend says we're unauthorized, publish
-    // a `SessionExpired` event. The credentials subscriber clears the stored
-    // token, flips the scheduler-gate signed-out override so background
-    // workers stand down, and (eventually) pushes a sign-out to the UI.
-    // Centralising via the event bus means 401 detection from any path
-    // (this one, `llm_provider.api_error`, …) gets the same teardown.
+    // Session auto-cleanup: if the OpenHuman auth session is explicitly
+    // expired, publish a `SessionExpired` event. The credentials subscriber
+    // clears the stored token, flips the scheduler-gate signed-out override
+    // so background workers stand down, and (eventually) pushes a sign-out to
+    // the UI. Generic downstream/provider 401s must stay recoverable errors;
+    // otherwise a scoped integration failure can log the user out.
     if let Err(ref msg) = result {
+        let sanitized_reason = crate::openhuman::inference::provider::ops::sanitize_api_error(msg);
         if is_session_expired_error(msg) {
             log::warn!(
-                "[jsonrpc] backend returned 401 for method '{}' — publishing SessionExpired",
-                method
+                "[jsonrpc] confirmed session expiry for method='{}' — publishing SessionExpired: {}",
+                method,
+                sanitized_reason
             );
             // Scrub before publishing — subscribers log `reason`, and the
             // upstream error string could include API keys / tokens from
-            // pasted-through provider replies. `sanitize_api_error` runs
-            // `scrub_secret_patterns` and truncates.
+            // pasted-through provider replies.
             crate::core::event_bus::publish_global(
                 crate::core::event_bus::DomainEvent::SessionExpired {
                     source: format!("jsonrpc.invoke_method:{method}"),
-                    reason: crate::openhuman::inference::provider::ops::sanitize_api_error(msg),
+                    reason: sanitized_reason,
                 },
+            );
+        } else if is_unconfirmed_unauthorized_error(msg) {
+            log::info!(
+                "[jsonrpc] unconfirmed unauthorized error for method='{}' (not session expiry) — leaving session intact: {}",
+                method,
+                sanitized_reason
             );
         }
     }
@@ -199,41 +207,79 @@ pub async fn invoke_method(state: AppState, method: &str, params: Value) -> Resu
     result
 }
 
-/// Helper to determine if an error message indicates an expired or invalid session.
+/// Helper to determine if an error message indicates an expired or invalid
+/// OpenHuman backend session.
 ///
-/// Deliberately **looser** than
-/// [`crate::core::observability::is_session_expired_message`]: this
-/// dispatch-site predicate also matches the generic `"401 + unauthorized"` /
-/// `"invalid token"` pair so token cleanup +
-/// `DomainEvent::SessionExpired` publish fire on *any* 401, including
-/// BYO-key provider failures (which clear the stale local token even if
-/// the user mis-configured an OpenAI / Anthropic key). The strict
-/// classifier in `observability` is for the agent / web-channel
-/// `report_error_or_expected` call sites, where matching too loosely would
-/// silence actionable BYO-key configuration errors (OPENHUMAN-TAURI-26
-/// rationale: the agent-layer demote must NOT also swallow generic
-/// provider 401s).
+/// **Narrower than the previous implementation** (fixed in issue #2286):
 ///
-/// "No backend session token" is also treated as a session-expired signal: the
-/// auth profile is missing entirely (the user was never signed in, or their
-/// stored profile was wiped between login and the next RPC). The frontend may
-/// still believe it holds a session token from an optimistic post-login patch,
-/// so we want the same auto-cleanup + UI-level re-auth path to fire instead of
-/// repeatedly reporting this as a hard error to Sentry. See #1465-ish: users
-/// stuck on the onboarding `SkillsStep` would spam `composio_list_connections`
-/// failures every 5 s without ever being bounced back to the login screen.
+/// The old predicate matched ANY `"401 + unauthorized"` pattern, which caused
+/// downstream provider 401s (Discord bot token failures, BYO-key OpenAI /
+/// Anthropic failures, Composio direct-mode errors) to clear the user's session
+/// and log them out. The fix distinguishes between:
 ///
-/// "session JWT required" covers the case where a prior 401 already cleared the
-/// token and the very next RPC call (e.g. `channels_telegram_login_start`) finds
-/// no JWT in the store. This is the same auth-boundary condition, just surfaced
-/// as a local guard rather than a backend response.
+/// - **OpenHuman backend 401s** (`authed_json` in `src/api/rest.rs`): formatted
+///   as `"{METHOD} /path failed (401 Unauthorized): {body}"`, e.g.
+///   `"GET /teams failed (401 Unauthorized): {"success":false}"`. These always
+///   start with an HTTP method verb followed by a space and a forward slash.
+/// - **Provider / downstream 401s** (`api_error` in
+///   `src/openhuman/inference/provider/ops.rs`): formatted as
+///   `"{ProviderName} API error (401 Unauthorized): {body}"` or
+///   `"Discord API error: ... (401): Unauthorized"`. These start with a
+///   provider name, NOT an HTTP method verb.
+///
+/// **What still triggers session expiry:**
+/// - `"Session expired"` — explicit body text from the OpenHuman backend.
+/// - `"no backend session token"` — pre-flight guard; auth profile is missing.
+/// - `"session jwt required"` — local guard; JWT already cleared by a prior 401.
+/// - `"SESSION_EXPIRED"` — scheduler-gate sentinel (exact case).
+/// - HTTP-method-prefixed 401s (`GET /`, `POST /`, etc.) — backend path format.
+///
+/// **What no longer triggers session expiry (fixed in #2286):**
+/// - Provider-prefixed 401s (`"Discord API error: ..."`, `"OpenAI API error ..."`)
+/// - `"invalid token"` — too broad; also matches Discord / OAuth provider tokens.
+///
+/// Note: for inference-path OpenHuman backend 401s, `api_error` (in
+/// `inference/provider/ops.rs` lines 479–497) ALREADY publishes `SessionExpired`
+/// directly, so there is no regression if this predicate misses them — the
+/// subscriber is idempotent and a harmless double-publish would still be correct.
 fn is_session_expired_error(msg: &str) -> bool {
-    let lower = msg.to_lowercase();
-    (lower.contains("401") && lower.contains("unauthorized"))
-        || lower.contains("invalid token")
-        || lower.contains("no backend session token")
-        || lower.contains("session jwt required")
-        || msg.contains("SESSION_EXPIRED")
+    // Explicit session-expired markers from the OpenHuman backend / local
+    // guards — delegated to the shared observability classifier so both the
+    // Sentry expected-error pipeline and the JSON-RPC publish boundary stay
+    // in lock-step.
+    if crate::core::observability::is_session_expired_message(msg) {
+        return true;
+    }
+    // OpenHuman backend path 401s via `authed_json`:
+    // format is "{METHOD} /path failed (401 Unauthorized): {body}"
+    // The HTTP-method prefix distinguishes these from provider-prefixed errors.
+    // HEAD and OPTIONS are intentionally excluded — `authed_json` only issues
+    // the five listed verbs (GET/POST/PUT/DELETE/PATCH) for REST JSON endpoints.
+    let lower = msg.to_ascii_lowercase();
+    if (lower.contains("401") && lower.contains("unauthorized"))
+        && (msg.starts_with("GET /")
+            || msg.starts_with("POST /")
+            || msg.starts_with("PUT /")
+            || msg.starts_with("DELETE /")
+            || msg.starts_with("PATCH /"))
+    {
+        return true;
+    }
+    false
+}
+
+/// Detect auth-looking failures that are not specific enough to clear the
+/// OpenHuman session. This is only for diagnostics; it must not feed the
+/// `SessionExpired` publish path.
+///
+/// Matches a generic `401 Unauthorized` OR a bare `"invalid token"` string,
+/// either of which can come from BYO-key providers, Composio, channels, or
+/// other scoped downstream calls. Used exclusively for diagnostic logging
+/// at the `invoke_method` call site so provider auth failures are visible
+/// in the logs without being misclassified as session expiry.
+fn is_unconfirmed_unauthorized_error(msg: &str) -> bool {
+    let lower = msg.to_ascii_lowercase();
+    (lower.contains("401") && lower.contains("unauthorized")) || lower.contains("invalid token")
 }
 
 /// Returns `true` when the error message comes from JSON-RPC params validation
@@ -622,6 +668,11 @@ const ALLOWED_ORIGINS_ENV: &str = "OPENHUMAN_CORE_ALLOWED_ORIGINS";
 /// loaded in a CEF child webview) must be refused — the bearer token alone
 /// is not enough authorization without an origin binding.
 pub(super) fn is_origin_allowed(origin: &str) -> bool {
+    let extra_origins = std::env::var(ALLOWED_ORIGINS_ENV).ok();
+    is_origin_allowed_with_extra(origin, extra_origins.as_deref())
+}
+
+pub(super) fn is_origin_allowed_with_extra(origin: &str, extra_origins: Option<&str>) -> bool {
     // Tauri v2 webview origins. Windows uses an HTTP(S) custom host; macOS
     // and Linux use the `tauri://` scheme. We accept both for portability.
     if matches!(
@@ -646,7 +697,7 @@ pub(super) fn is_origin_allowed(origin: &str) -> bool {
     }
 
     // Env override: comma-separated exact matches.
-    if let Ok(extra) = std::env::var(ALLOWED_ORIGINS_ENV) {
+    if let Some(extra) = extra_origins {
         for candidate in extra.split(',').map(str::trim).filter(|s| !s.is_empty()) {
             if candidate == origin {
                 return true;
@@ -686,7 +737,7 @@ async fn cors_middleware(req: Request, next: Next) -> Response {
 /// the calling JS. Non-browser callers (no `Origin` header) are unaffected.
 pub(super) fn with_cors_headers(mut response: Response, origin: Option<&str>) -> Response {
     let headers = response.headers_mut();
-    headers.insert(header::VARY, HeaderValue::from_static("Origin"));
+    headers.append(header::VARY, HeaderValue::from_static("Origin"));
 
     if let Some(o) = origin {
         if is_origin_allowed(o) {

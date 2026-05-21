@@ -605,6 +605,25 @@ fn verify_session_active_called_for_custom_provider_not_for_openhuman() {
     );
 }
 
+#[test]
+fn lookup_key_for_slug_routes_openai_oauth_lookup_path() {
+    let tmp = TempDir::new().expect("tempdir");
+    let config = config_in_tempdir(&tmp);
+    let auth = AuthService::new(tmp.path(), config.secrets.encrypt);
+    auth.store_provider_token(
+        "provider:openai",
+        "default",
+        "sk-openai",
+        Default::default(),
+        true,
+    )
+    .expect("store openai token");
+
+    let token = lookup_key_for_slug("openai", &config).expect("lookup openai token");
+
+    assert_eq!(token, "sk-openai");
+}
+
 // ── is_known_openhuman_tier ───────────────────────────────────────────────────
 
 #[test]

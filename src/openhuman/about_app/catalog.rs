@@ -345,6 +345,16 @@ const CAPABILITIES: &[Capability] = &[
         privacy: LOCAL_RAW,
     },
     Capability {
+        id: "intelligence.clickup_memory_ingest",
+        name: "ClickUp Memory Ingestion",
+        domain: "intelligence",
+        category: CapabilityCategory::Intelligence,
+        description: "Incrementally sync ClickUp tasks assigned to the authenticated user into the Memory Tree on a 30-minute cadence, with an initial backfill on first connect. Only tasks the user is directly assigned to are ingested. Driven by an authenticated ClickUp connection (OAuth via Composio).",
+        how_to: "Settings > Connections > ClickUp",
+        status: CapabilityStatus::Beta,
+        privacy: LOCAL_RAW,
+    },
+    Capability {
         id: "intelligence.notifications_dismiss",
         name: "Dismiss Notifications",
         domain: "intelligence",

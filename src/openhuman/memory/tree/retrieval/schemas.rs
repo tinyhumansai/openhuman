@@ -152,7 +152,7 @@ pub fn schemas(function: &str) -> ControllerSchema {
                  `tree_global::recap`; the returned hit carries `child_ids` pointing \
                  at the folded per-day summary ids for drill-down.",
             inputs: vec![FieldSchema {
-                name: "window_days",
+                name: "time_window_days",
                 ty: TypeSchema::U64,
                 comment: "Lookback window in days (e.g. 7 for weekly recap).",
                 required: true,

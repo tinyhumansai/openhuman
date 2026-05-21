@@ -93,6 +93,7 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["f
 tracing-appender = "0.2"
 prometheus = { version = "0.14", default-features = false }
 urlencoding = "2.1"
+motosan-ai-oauth = { version = "0.2", features = ["codex"] }
 thiserror = "2.0"
 ring = "0.17"
 prost = { version = "0.14", default-features = false }
