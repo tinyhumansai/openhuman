@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import MeetingBotsCard from '../MeetingBotsCard';
+import MeetingBotsCard, { MeetingBotsModal } from '../MeetingBotsCard';
 
 const joinMock = vi.fn();
 
@@ -125,5 +125,15 @@ describe('MeetingBotsCard', () => {
     fireEvent.click(screen.getByRole('button', { name: /Zoom/ }));
     const submit = screen.getByRole('button', { name: /coming soon/i });
     expect(submit).toBeDisabled();
+  });
+
+  // MeetingBotsModal is exported standalone so HumanPage (and any future
+  // surface) can open the same join flow without the banner chrome.
+  it('exposes MeetingBotsModal as a standalone export usable without the banner', () => {
+    const onClose = vi.fn();
+    render(<MeetingBotsModal onClose={onClose} />);
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });

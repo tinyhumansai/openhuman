@@ -115,7 +115,7 @@ interface ModalProps {
   onToast?: (toast: Toast) => void;
 }
 
-function MeetingBotsModal({ onClose, onToast }: ModalProps) {
+export function MeetingBotsModal({ onClose, onToast }: ModalProps) {
   const { t } = useT();
   const [platform, setPlatform] = useState<MascotMeetPlatform>('gmeet');
   const [meetUrl, setMeetUrl] = useState('');
