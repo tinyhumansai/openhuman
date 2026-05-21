@@ -228,6 +228,7 @@ impl ComposioProvider for LinearProvider {
         for page_num in 0..MAX_PAGES_PER_SYNC {
             if state.budget_exhausted() {
                 tracing::info!(
+                    connection_id = %connection_id,
                     page = page_num,
                     "[composio:linear] budget exhausted mid-sync, stopping pagination"
                 );
@@ -249,12 +250,24 @@ impl ComposioProvider for LinearProvider {
                 args["after"] = json!(cursor);
             }
 
-            let resp = ctx
-                .execute(ACTION_LIST_ISSUES, Some(args))
-                .await
-                .map_err(|e| {
-                    format!("[composio:linear] {ACTION_LIST_ISSUES} page {page_num}: {e:#}")
-                })?;
+            // Transport-level failure (network, timeout, deserialise error)
+            // must persist the request counters / synced markers accumulated
+            // earlier in this sync pass — otherwise a flap in the middle of
+            // pagination silently rolls back budget accounting and the next
+            // sync would burn through the daily cap re-fetching pages we
+            // already drained. The successful-response branch below already
+            // does this (line "let _ = state.save(&memory).await" before the
+            // Err return); this match mirrors that discipline at the
+            // `ctx.execute` boundary too.
+            let resp = match ctx.execute(ACTION_LIST_ISSUES, Some(args)).await {
+                Ok(resp) => resp,
+                Err(e) => {
+                    let _ = state.save(&memory).await;
+                    return Err(format!(
+                        "[composio:linear] {ACTION_LIST_ISSUES} page {page_num}: {e:#}"
+                    ));
+                }
+            };
 
             state.record_requests(1);
 
@@ -274,6 +287,7 @@ impl ComposioProvider for LinearProvider {
 
             if issues.is_empty() {
                 tracing::debug!(
+                    connection_id = %connection_id,
                     page = page_num,
                     "[composio:linear] empty page, stopping pagination"
                 );
@@ -289,7 +303,10 @@ impl ComposioProvider for LinearProvider {
                         ISSUE_ID_PATHS,
                     )
                 else {
-                    tracing::debug!("[composio:linear] issue missing id, skipping");
+                    tracing::debug!(
+                        connection_id = %connection_id,
+                        "[composio:linear] issue missing id, skipping"
+                    );
                     continue;
                 };
 
@@ -353,6 +370,7 @@ impl ComposioProvider for LinearProvider {
                     }
                     Err(e) => {
                         tracing::warn!(
+                            connection_id = %connection_id,
                             issue_id = %issue_id,
                             error = %e,
                             "[composio:linear] failed to persist issue (continuing)"
@@ -363,6 +381,7 @@ impl ComposioProvider for LinearProvider {
 
             if hit_cursor_boundary {
                 tracing::debug!(
+                    connection_id = %connection_id,
                     page = page_num,
                     "[composio:linear] reached cursor boundary, stopping pagination"
                 );
@@ -374,7 +393,11 @@ impl ComposioProvider for LinearProvider {
             // returns `None` when there's no next page.
             next_cursor = sync::extract_pagination_end_cursor(&resp.data);
             if next_cursor.is_none() {
-                tracing::debug!(page = page_num, "[composio:linear] no next cursor, done");
+                tracing::debug!(
+                    connection_id = %connection_id,
+                    page = page_num,
+                    "[composio:linear] no next cursor, done"
+                );
                 break;
             }
         }

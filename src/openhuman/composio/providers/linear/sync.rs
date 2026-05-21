@@ -96,17 +96,19 @@ pub(crate) fn extract_issue_updated(issue: &Value) -> Option<String> {
 /// payloads. The id is returned as a string because
 /// `LINEAR_LIST_LINEAR_ISSUES` accepts the `assignee` filter as either
 /// a string or `{ id: { eq: "..." } }`.
+///
+/// Only explicit viewer/user paths are probed — generic top-level
+/// `id` / `data.id` fallbacks were intentionally removed. This value
+/// drives the assignee filter for the whole sync, so picking up a
+/// non-viewer identifier (e.g. the first item id in a list response
+/// that Composio collapsed) would silently scope the sync to the
+/// wrong user and leak issues from another teammate. Stricter is
+/// safer; if Composio surfaces the viewer at a new shape we can add
+/// it explicitly here.
 pub(crate) fn extract_viewer_id(data: &Value) -> Option<String> {
     pick_str(
         data,
-        &[
-            "viewer.id",
-            "data.viewer.id",
-            "user.id",
-            "data.user.id",
-            "id",
-            "data.id",
-        ],
+        &["viewer.id", "data.viewer.id", "user.id", "data.user.id"],
     )
 }
 

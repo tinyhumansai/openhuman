@@ -7,8 +7,7 @@
 //! new shape:
 //!
 //! - `provider.rs` — `impl ComposioProvider for LinearProvider`
-//! - `sync.rs`     — payload-shape helpers (results extraction, title,
-//!                   cursor, user-id, workspace identifiers)
+//! - `sync.rs`     — payload-shape helpers (results / title / cursor / viewer-id)
 //! - `tools.rs`    — `LINEAR_CURATED` whitelist of Composio actions
 //! - `tests.rs`    — unit tests for the helpers + trait metadata
 //!
