@@ -48,7 +48,7 @@ OpenHuman is a desktop AI assistant with a **Rust core** running in-process insi
 
 Typed pub/sub + in-process typed request/response:
 
-```
+```text
 publish_global(DomainEvent)           → fire-and-forget broadcast
 register_native_global(method, handler) → one-to-one typed dispatch
 request_native_global(method, req)   → call and wait for response
@@ -128,7 +128,7 @@ request_native_global(method, req)   → call and wait for response
 
 ### Agent Turn (primary AI interaction)
 
-```
+```text
 External message → channels/runtime/dispatch.rs
   → request_native_global("agent.run_turn", AgentTurnRequest)
   → agent/bus.rs: run_tool_call_loop()
@@ -139,7 +139,7 @@ External message → channels/runtime/dispatch.rs
 
 ### Memory Recall
 
-```
+```text
 Tool call: memory.recall → memory/stm_recall/recall.rs: stm_recall()
   → MemoryRecalled event on event bus
   → consumed by skill/mcp_client subscribers
@@ -147,7 +147,7 @@ Tool call: memory.recall → memory/stm_recall/recall.rs: stm_recall()
 
 ### Credential Setup
 
-```
+```text
 Frontend settings → core RPC (JSON-RPC over HTTP + Basic Auth)
   → credentials domain → encryption domain
   → stored to auth-profiles.json
@@ -191,7 +191,7 @@ Frontend settings → core RPC (JSON-RPC over HTTP + Basic Auth)
 
 JSON-RPC methods follow `domain_operation` pattern:
 
-```
+```text
 memory_recall_memories
 memory_recall_context
 thread_turn_state_lifecycle
@@ -201,7 +201,7 @@ tool_registry_lists_and_gets_entries
 
 Native (event bus) methods:
 
-```
+```text
 agent.run_turn          → agent/bus.rs
 memory.sync             → memory/bus.rs
 ```
