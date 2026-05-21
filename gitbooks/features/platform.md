@@ -56,6 +56,21 @@ The shell is a delivery vehicle (windowing, process lifecycle, IPC). All product
 
 ***
 
+## Remote/headless usage
+
+Linux servers can host the Rust core without a desktop session. The production
+shape is a remote `openhuman-core` JSON-RPC service plus a local desktop client
+configured with that core URL and bearer token.
+
+A private browser UI is possible for development/preview by serving the Vite
+frontend and pointing it at the remote core, but it is not a full replacement
+for the desktop shell. Native deep links, tray controls, OS keychain access, CEF
+account scanners, and screen/window integrations still require the Tauri app.
+See [Cloud Deploy](cloud-deploy.md#remote-ui-choices) for the current remote UI
+setup.
+
+***
+
 ## Real-time communication
 
 The desktop app maintains a persistent connection to the OpenHuman backend. Responses stream as they are generated; outputs appear progressively, not after a hang. If the network drops, the app reconnects automatically with progressive backoff.
