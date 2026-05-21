@@ -488,6 +488,29 @@ if [[ -z "$PNPM_EXE" ]]; then
   exit 1
 fi
 echo "[run-dev-win] pnpm resolved to: $PNPM_EXE"
+
+# `cargo tauri dev` runs its beforeDevCommand (`pnpm run dev`) via a native
+# `cmd /S /C` that resolves bare `pnpm` off PATH. This script otherwise only
+# ever calls pnpm by absolute path, so its dir was never on PATH and Tauri
+# dies with "'pnpm' is not recognized". Prepend the resolved pnpm's dir — it
+# ships pnpm.CMD alongside the bash shim, which cmd.exe uses.
+# Split the dirname computation out of the export so a `dirname` failure
+# surfaces with a non-zero exit (SC2155) instead of being swallowed by the
+# enclosing `export`. `dirname` on a validated absolute path is reliable
+# in practice, but the strict-mode posture is worth the extra line.
+PNPM_DIR="$(dirname "$PNPM_EXE")"
+# `dirname` returns `.` for a bare filename (e.g. if PNPM_EXE somehow
+# resolved to just "pnpm" without a path component). Prepending `.` would
+# inject the current working directory into PATH on a Windows dev machine
+# — a privilege-escalation-flavoured surprise. Skip the prepend in that
+# case (and on the also-degenerate empty result); the absolute-path call
+# sites elsewhere in this script still work.
+if [[ -n "$PNPM_DIR" && "$PNPM_DIR" != "." ]]; then
+  export PATH="$PNPM_DIR:$PATH"
+  echo "[run-dev-win] pnpm dir prepended to PATH: $PNPM_DIR"
+else
+  echo "[run-dev-win] pnpm dir not prepended to PATH (PNPM_EXE has no path component: $PNPM_EXE)"
+fi
 echo "[run-dev-win] node on bash PATH:    $(command -v node 2>/dev/null || echo '<not found>')"
 echo "[run-dev-win] node.exe on bash PATH: $(command -v node.exe 2>/dev/null || echo '<not found>')"
 
@@ -575,6 +598,25 @@ else
   echo "[run-dev-win] WARNING: invalid OPENHUMAN_DEV_PORT='$raw_dev_port'; falling back to 1420" >&2
   DEV_PORT=1420
 fi
+
+# Tauri spawns beforeDevCommand (`pnpm run dev`) via a native `cmd /S /C`
+# inheriting THIS process's env. By here PATH has the full system PATH stacked
+# several times over (vcvars rebuild + Git-Bash /etc/profile re-runs + pnpm
+# .bin layering); the MSYS→Windows conversion overflows the process
+# environment-block limit, so the child inherits an EMPTY PATH and Tauri dies
+# with "'pnpm' is not recognized" (even `where` is gone). Collapse PATH to
+# first-seen entries (clean POSIX `/c/...` entries, so ':' split is safe).
+_dedup_seen=":"
+_dedup_new=""
+IFS=':' read -ra _dedup_parts <<< "$PATH"
+for _dp in "${_dedup_parts[@]}"; do
+  [[ -z "$_dp" ]] && continue
+  case "$_dedup_seen" in *":$_dp:"*) continue ;; esac
+  _dedup_seen="${_dedup_seen}${_dp}:"
+  _dedup_new="${_dedup_new:+$_dedup_new:}$_dp"
+done
+export PATH="$_dedup_new"
+echo "[run-dev-win] PATH de-duplicated: ${#_dedup_parts[@]} → $(awk -v RS=: 'END{print NR}' <<< "$_dedup_new") entries"
 
 if (( DEV_PORT != 1420 )); then
   echo "[run-dev-win] OPENHUMAN_DEV_PORT=$DEV_PORT — overriding tauri devUrl"
