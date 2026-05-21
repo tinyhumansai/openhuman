@@ -462,8 +462,7 @@ const zhCN5: TranslationMap = {
   'settings.mcpServer.toolsSectionDesc':
     '运行 openhuman-core mcp 时通过 MCP stdio 服务器暴露的工具',
   'settings.mcpServer.configSectionTitle': '客户端配置',
-  'settings.mcpServer.configSectionDesc':
-    '选择你的 MCP 客户端以生成对应的配置代码片段',
+  'settings.mcpServer.configSectionDesc': '选择你的 MCP 客户端以生成对应的配置代码片段',
   'settings.mcpServer.copySnippet': '复制到剪贴板',
   'settings.mcpServer.copied': '已复制！',
   'settings.mcpServer.openConfigFile': '打开配置文件',

@@ -37,8 +37,7 @@ const zhCN3: TranslationMap = {
   'workspace.openingVaultMessage':
     '如果 Obsidian 没有打开，请从 obsidian.md 安装或使用"显示文件夹"。保险库路径：',
   'workspace.openVaultFailedTitle': '无法在 Obsidian 中打开保险库',
-  'workspace.openVaultFailedMessage':
-    '使用"显示文件夹"直接打开保险库目录。保险库路径：',
+  'workspace.openVaultFailedMessage': '使用"显示文件夹"直接打开保险库目录。保险库路径：',
   'workspace.revealVaultFailed': '无法显示保险库文件夹',
   'workspace.revealFolder': '显示文件夹',
   'workspace.graphLoadFailed': '无法加载记忆图谱',
