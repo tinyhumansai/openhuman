@@ -137,6 +137,63 @@ fn render_connected_integrations(integrations: &[ConnectedIntegration]) -> Strin
     for ci in connected {
         let _ = writeln!(out, "- **{}** — {}", ci.toolkit, ci.description);
     }
+
+    // Surface pref-gated tools so the agent can honestly say "I have this
+    // capability but it needs the {scope} toggle in Connections → {toolkit}".
+    // The agent CANNOT call these directly (no parameters schema is exposed)
+    // and CANNOT flip the gating scope itself — there is no agent-callable
+    // scope-elevate tool. The user must toggle the scope in the Connections
+    // UI; after the next prompt rebuild the action graduates into the
+    // callable list above. The per-row `unlock paths` rendered below carry
+    // the exact UI hint the agent should show.
+    let mut has_gated = false;
+    let mut connected_with_gated = 0usize;
+    for ci in integrations.iter().filter(|ci| ci.connected) {
+        if !ci.gated_tools.is_empty() {
+            has_gated = true;
+            connected_with_gated += 1;
+        }
+    }
+    tracing::debug!(
+        total_integrations = integrations.len(),
+        has_gated,
+        connected_with_gated,
+        "[integrations-prompt] gated-tools scan complete"
+    );
+    if has_gated {
+        out.push_str(
+            "\n### Additional capabilities behind a permission toggle\n\n\
+             These actions exist in the toolkit but are NOT currently in your callable \
+             tool list — the user has not granted the required scope. Do NOT pretend \
+             they're unavailable. When the user asks for one (or you'd otherwise need \
+             it), tell them what the action does and present ALL of its `unlock paths` \
+             listed below so the user can choose how to enable it. Never drop a path or \
+             rewrite it into your own framing.\n\n",
+        );
+        for ci in integrations
+            .iter()
+            .filter(|ci| ci.connected && !ci.gated_tools.is_empty())
+        {
+            let _ = writeln!(out, "- **{}**:", ci.toolkit);
+            for gt in &ci.gated_tools {
+                let desc = if gt.description.is_empty() {
+                    "(no description)".to_string()
+                } else {
+                    gt.description.clone()
+                };
+                let _ = writeln!(
+                    out,
+                    "  - `{}` — {} (requires `{}` scope)",
+                    gt.name, desc, gt.required_scope
+                );
+                for path in &gt.unlock_paths {
+                    let _ = writeln!(out, "    - unlock path: {path}");
+                }
+            }
+        }
+        out.push('\n');
+    }
+
     out
 }
 
@@ -187,6 +244,7 @@ mod tests {
             toolkit: "gmail".into(),
             description: "Email access.".into(),
             tools: Vec::new(),
+            gated_tools: Vec::new(),
             connected: true,
         }];
         let body = build(&ctx_with(&integrations, &[])).unwrap();
@@ -205,6 +263,7 @@ mod tests {
             toolkit: "notion".into(),
             description: "Pages.".into(),
             tools: Vec::new(),
+            gated_tools: Vec::new(),
             connected: false,
         }];
         let body = build(&ctx_with(&integrations, &[])).unwrap();

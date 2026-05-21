@@ -1,11 +1,11 @@
 use crate::openhuman::agent::host_runtime::RuntimeAdapter;
 use crate::openhuman::javascript::NodeBootstrap;
-use crate::openhuman::security::SecurityPolicy;
+use crate::openhuman::security::{AuditLogger, CommandExecutionLog, SecurityPolicy};
 use crate::openhuman::tools::traits::{Tool, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Maximum shell command execution time before kill.
 const SHELL_TIMEOUT_SECS: u64 = 60;
@@ -21,6 +21,7 @@ const SAFE_ENV_VARS: &[&str] = &[
 pub struct ShellTool {
     security: Arc<SecurityPolicy>,
     runtime: Arc<dyn RuntimeAdapter>,
+    audit: Arc<AuditLogger>,
     /// Optional managed Node.js bootstrap. When provided **and** a prior
     /// `NodeBootstrap::resolve()` has already succeeded, every shell invocation
     /// transparently prepends the managed `bin/` dir to `PATH` — so skills
@@ -31,10 +32,15 @@ pub struct ShellTool {
 }
 
 impl ShellTool {
-    pub fn new(security: Arc<SecurityPolicy>, runtime: Arc<dyn RuntimeAdapter>) -> Self {
+    pub fn new(
+        security: Arc<SecurityPolicy>,
+        runtime: Arc<dyn RuntimeAdapter>,
+        audit: Arc<AuditLogger>,
+    ) -> Self {
         Self {
             security,
             runtime,
+            audit,
             node_bootstrap: None,
         }
     }
@@ -45,12 +51,43 @@ impl ShellTool {
     pub fn with_node_bootstrap(
         security: Arc<SecurityPolicy>,
         runtime: Arc<dyn RuntimeAdapter>,
+        audit: Arc<AuditLogger>,
         bootstrap: Arc<NodeBootstrap>,
     ) -> Self {
         Self {
             security,
             runtime,
+            audit,
             node_bootstrap: Some(bootstrap),
+        }
+    }
+
+    /// Emit a single `CommandExecution` audit event. A write failure is logged
+    /// as a structured warning but not propagated — audit must never block or
+    /// fail a tool call, yet a silently broken audit trail must not go
+    /// unnoticed.
+    fn emit_audit(
+        &self,
+        command: &str,
+        approved: bool,
+        allowed: bool,
+        success: bool,
+        duration_ms: u64,
+    ) {
+        if let Err(error) = self.audit.log_command_event(CommandExecutionLog {
+            channel: "tool:shell",
+            command,
+            risk_level: "unknown",
+            approved,
+            allowed,
+            success,
+            duration_ms,
+        }) {
+            tracing::warn!(
+                error = %error,
+                channel = "tool:shell",
+                "[shell] failed to persist command execution audit event"
+            );
         }
     }
 }
@@ -102,23 +139,35 @@ impl Tool for ShellTool {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
+        let start = Instant::now();
+        let (allowed, result) = self.run_with_security(command, approved).await;
+        let duration_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
+        self.emit_audit(command, approved, allowed, !result.is_error, duration_ms);
+        Ok(result)
+    }
+}
+
+impl ShellTool {
+    /// Run the command through the security policy and runtime. Returns
+    /// `(allowed, result)` where `allowed=false` means the policy or rate
+    /// limiter blocked execution before the command was launched.
+    async fn run_with_security(&self, command: &str, approved: bool) -> (bool, ToolResult) {
         if self.security.is_rate_limited() {
-            return Ok(ToolResult::error(
-                "Rate limit exceeded: too many actions in the last hour",
-            ));
+            return (
+                false,
+                ToolResult::error("Rate limit exceeded: too many actions in the last hour"),
+            );
         }
 
-        match self.security.validate_command_execution(command, approved) {
-            Ok(_) => {}
-            Err(reason) => {
-                return Ok(ToolResult::error(reason));
-            }
+        if let Err(reason) = self.security.validate_command_execution(command, approved) {
+            return (false, ToolResult::error(reason));
         }
 
         if !self.security.record_action() {
-            return Ok(ToolResult::error(
-                "Rate limit exceeded: action budget exhausted",
-            ));
+            return (
+                false,
+                ToolResult::error("Rate limit exceeded: action budget exhausted"),
+            );
         }
 
         // Execute with timeout to prevent hanging commands.
@@ -130,9 +179,10 @@ impl Tool for ShellTool {
         {
             Ok(cmd) => cmd,
             Err(e) => {
-                return Ok(ToolResult::error(format!(
-                    "Failed to build runtime command: {e}"
-                )));
+                return (
+                    true,
+                    ToolResult::error(format!("Failed to build runtime command: {e}")),
+                );
             }
         };
         cmd.env_clear();
@@ -168,7 +218,7 @@ impl Tool for ShellTool {
         let result =
             tokio::time::timeout(Duration::from_secs(SHELL_TIMEOUT_SECS), cmd.output()).await;
 
-        match result {
+        let tool_result = match result {
             Ok(Ok(output)) => {
                 let mut stdout = String::from_utf8_lossy(&output.stdout).to_string();
                 let mut stderr = String::from_utf8_lossy(&output.stderr).to_string();
@@ -191,21 +241,22 @@ impl Tool for ShellTool {
 
                 if output.status.success() {
                     if stderr.is_empty() {
-                        Ok(ToolResult::success(stdout))
+                        ToolResult::success(stdout)
                     } else {
                         // Successful exit but stderr present — attach stderr as output suffix
-                        Ok(ToolResult::success(format!("{stdout}\n[stderr]\n{stderr}")))
+                        ToolResult::success(format!("{stdout}\n[stderr]\n{stderr}"))
                     }
                 } else {
                     let err_msg = if stderr.is_empty() { stdout } else { stderr };
-                    Ok(ToolResult::error(err_msg))
+                    ToolResult::error(err_msg)
                 }
             }
-            Ok(Err(e)) => Ok(ToolResult::error(format!("Failed to execute command: {e}"))),
-            Err(_) => Ok(ToolResult::error(format!(
+            Ok(Err(e)) => ToolResult::error(format!("Failed to execute command: {e}")),
+            Err(_) => ToolResult::error(format!(
                 "Command timed out after {SHELL_TIMEOUT_SECS}s and was killed"
-            ))),
-        }
+            )),
+        };
+        (true, tool_result)
     }
 }
 
@@ -227,21 +278,99 @@ mod tests {
         Arc::new(NativeRuntime::new())
     }
 
+    fn test_audit() -> Arc<AuditLogger> {
+        AuditLogger::disabled()
+    }
+
+    fn audit_with_tempdir() -> (Arc<AuditLogger>, tempfile::TempDir) {
+        use crate::openhuman::config::AuditConfig;
+        let tmp = tempfile::tempdir().expect("create tempdir");
+        let logger = AuditLogger::new(
+            AuditConfig {
+                enabled: true,
+                log_path: "audit.log".into(),
+                max_size_mb: 10,
+            },
+            tmp.path().to_path_buf(),
+        )
+        .expect("create audit logger");
+        (Arc::new(logger), tmp)
+    }
+
+    #[cfg(not(windows))]
+    #[tokio::test]
+    async fn shell_emits_audit_line_on_success() {
+        use crate::openhuman::security::AuditEvent;
+        let (audit, tmp) = audit_with_tempdir();
+        let tool = ShellTool::new(
+            test_security(AutonomyLevel::Supervised),
+            test_runtime(),
+            audit,
+        );
+        let _ = tool
+            .execute(json!({"command": "echo hello"}))
+            .await
+            .unwrap();
+        let log = std::fs::read_to_string(tmp.path().join("audit.log"))
+            .expect("audit log file should exist");
+        assert!(!log.is_empty(), "audit log should not be empty");
+        let parsed: AuditEvent = serde_json::from_str(log.trim()).expect("audit event JSON parses");
+        let action = parsed.action.expect("action present");
+        assert_eq!(action.command, Some("echo hello".to_string()));
+        assert!(action.allowed, "allowed command should set allowed=true");
+        let result = parsed.result.expect("result present");
+        assert!(result.success, "echo hello should succeed");
+        let actor = parsed.actor.expect("actor present");
+        assert_eq!(actor.channel, "tool:shell");
+    }
+
+    #[tokio::test]
+    async fn shell_emits_audit_line_on_denial() {
+        use crate::openhuman::security::AuditEvent;
+        let (audit, tmp) = audit_with_tempdir();
+        let tool = ShellTool::new(
+            test_security(AutonomyLevel::ReadOnly),
+            test_runtime(),
+            audit,
+        );
+        let _ = tool.execute(json!({"command": "ls"})).await.unwrap();
+        let log = std::fs::read_to_string(tmp.path().join("audit.log"))
+            .expect("audit log file should exist");
+        let parsed: AuditEvent = serde_json::from_str(log.trim()).expect("audit event JSON parses");
+        let action = parsed.action.expect("action present");
+        assert!(
+            !action.allowed,
+            "denied command should set allowed=false on the audit event"
+        );
+    }
+
     #[test]
     fn shell_tool_name() {
-        let tool = ShellTool::new(test_security(AutonomyLevel::Supervised), test_runtime());
+        let tool = ShellTool::new(
+            test_security(AutonomyLevel::Supervised),
+            test_runtime(),
+            test_audit(),
+        );
         assert_eq!(tool.name(), "shell");
     }
 
     #[test]
     fn shell_tool_description() {
-        let tool = ShellTool::new(test_security(AutonomyLevel::Supervised), test_runtime());
+        let tool = ShellTool::new(
+            test_security(AutonomyLevel::Supervised),
+            test_runtime(),
+            test_audit(),
+        );
         assert!(!tool.description().is_empty());
     }
 
     #[test]
     fn shell_tool_schema_has_command() {
-        let tool = ShellTool::new(test_security(AutonomyLevel::Supervised), test_runtime());
+        let tool = ShellTool::new(
+            test_security(AutonomyLevel::Supervised),
+            test_runtime(),
+            test_audit(),
+        );
         let schema = tool.parameters_schema();
         assert!(schema["properties"]["command"].is_object());
         assert!(schema["required"]
@@ -254,7 +383,11 @@ mod tests {
     #[cfg(not(windows))]
     #[tokio::test]
     async fn shell_executes_allowed_command() {
-        let tool = ShellTool::new(test_security(AutonomyLevel::Supervised), test_runtime());
+        let tool = ShellTool::new(
+            test_security(AutonomyLevel::Supervised),
+            test_runtime(),
+            test_audit(),
+        );
         let result = tool
             .execute(json!({"command": "echo hello"}))
             .await
@@ -266,7 +399,11 @@ mod tests {
 
     #[tokio::test]
     async fn shell_blocks_disallowed_command() {
-        let tool = ShellTool::new(test_security(AutonomyLevel::Supervised), test_runtime());
+        let tool = ShellTool::new(
+            test_security(AutonomyLevel::Supervised),
+            test_runtime(),
+            test_audit(),
+        );
         let result = tool.execute(json!({"command": "rm -rf /"})).await.unwrap();
         assert!(result.is_error);
         let error = result.output();
@@ -275,7 +412,11 @@ mod tests {
 
     #[tokio::test]
     async fn shell_blocks_readonly() {
-        let tool = ShellTool::new(test_security(AutonomyLevel::ReadOnly), test_runtime());
+        let tool = ShellTool::new(
+            test_security(AutonomyLevel::ReadOnly),
+            test_runtime(),
+            test_audit(),
+        );
         let result = tool.execute(json!({"command": "ls"})).await.unwrap();
         assert!(result.is_error);
         assert!(&result.output().contains("not allowed"));
@@ -283,7 +424,11 @@ mod tests {
 
     #[tokio::test]
     async fn shell_missing_command_param() {
-        let tool = ShellTool::new(test_security(AutonomyLevel::Supervised), test_runtime());
+        let tool = ShellTool::new(
+            test_security(AutonomyLevel::Supervised),
+            test_runtime(),
+            test_audit(),
+        );
         let result = tool.execute(json!({})).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("command"));
@@ -291,14 +436,22 @@ mod tests {
 
     #[tokio::test]
     async fn shell_wrong_type_param() {
-        let tool = ShellTool::new(test_security(AutonomyLevel::Supervised), test_runtime());
+        let tool = ShellTool::new(
+            test_security(AutonomyLevel::Supervised),
+            test_runtime(),
+            test_audit(),
+        );
         let result = tool.execute(json!({"command": 123})).await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
     async fn shell_captures_exit_code() {
-        let tool = ShellTool::new(test_security(AutonomyLevel::Supervised), test_runtime());
+        let tool = ShellTool::new(
+            test_security(AutonomyLevel::Supervised),
+            test_runtime(),
+            test_audit(),
+        );
         let result = tool
             .execute(json!({"command": "ls /nonexistent_dir_xyz"}))
             .await
@@ -344,7 +497,7 @@ mod tests {
     async fn shell_does_not_leak_api_key() {
         let _g1 = EnvGuard::set("API_KEY", "sk-test-secret-12345");
 
-        let tool = ShellTool::new(test_security_with_env_cmd(), test_runtime());
+        let tool = ShellTool::new(test_security_with_env_cmd(), test_runtime(), test_audit());
         let result = tool
             .execute(json!({"command": "echo $API_KEY"}))
             .await
@@ -359,7 +512,7 @@ mod tests {
     #[cfg(not(windows))]
     #[tokio::test]
     async fn shell_preserves_path_and_home() {
-        let tool = ShellTool::new(test_security_with_env_cmd(), test_runtime());
+        let tool = ShellTool::new(test_security_with_env_cmd(), test_runtime(), test_audit());
 
         let result = tool
             .execute(json!({"command": "echo $HOME"}))
@@ -392,7 +545,7 @@ mod tests {
             ..SecurityPolicy::default()
         });
 
-        let tool = ShellTool::new(security.clone(), test_runtime());
+        let tool = ShellTool::new(security.clone(), test_runtime(), test_audit());
         let command = if cfg!(windows) {
             "mkdir openhuman_shell_approval_test"
         } else {
@@ -471,7 +624,7 @@ mod tests {
             workspace_dir: std::env::temp_dir(),
             ..SecurityPolicy::default()
         });
-        let tool = ShellTool::new(security, test_runtime());
+        let tool = ShellTool::new(security, test_runtime(), test_audit());
         let result = tool.execute(json!({"command": "echo test"})).await.unwrap();
         assert!(result.is_error);
         assert!(result.output().contains("Rate limit"));

@@ -495,6 +495,18 @@ fn clear_lock_if_stale_reclaims_aged_malformed_lock() {
     assert!(!lock_path.exists());
 }
 
+#[test]
+fn lock_timeout_allows_fresh_leaked_locks_to_age_into_stale_reclaim() {
+    assert!(
+        LOCK_TIMEOUT_MS > STALE_LOCK_AGE_MS,
+        "lock timeout must outlive stale-lock age so a fresh leaked lock can be reclaimed"
+    );
+    assert!(
+        LOCK_TIMEOUT_MS - STALE_LOCK_AGE_MS >= 1_000,
+        "timeout should leave at least one periodic stale recheck after the threshold"
+    );
+}
+
 /// Sentry OPENHUMAN-TAURI-H8: when `OpenOptions::create_new` fails with
 /// anything other than `AlreadyExists`, the error surfaced to Sentry
 /// must embed the underlying `io::ErrorKind` and `raw_os_error()` so we

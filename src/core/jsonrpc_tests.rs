@@ -7,7 +7,8 @@ use tokio_util::sync::CancellationToken;
 
 use super::{
     build_http_schema_dump, default_state, escape_html, invoke_method, is_param_validation_error,
-    is_session_expired_error, params_to_object, parse_json_params, rpc_handler, type_name,
+    is_session_expired_error, is_unconfirmed_unauthorized_error, params_to_object,
+    parse_json_params, rpc_handler, type_name,
 };
 
 struct EnvVarGuard {
@@ -564,26 +565,118 @@ fn parse_json_params_reports_error_message() {
 }
 
 #[test]
-fn is_session_expired_error_matches_401_unauthorized() {
+fn is_session_expired_error_matches_backend_path_401() {
+    // Issue #2286: only OpenHuman backend path 401s (HTTP-method prefix) should
+    // match, not generic 401/Unauthorized strings.
     assert!(is_session_expired_error(
-        "backend returned 401 Unauthorized"
+        "GET /teams failed (401 Unauthorized): {\"success\":false}"
     ));
-    assert!(is_session_expired_error("401 UNAUTHORIZED"));
-    assert!(is_session_expired_error("got 401 and unauthorized body"));
+    assert!(is_session_expired_error(
+        "POST /auth/token failed (401 Unauthorized): session expired"
+    ));
+    assert!(is_session_expired_error(
+        "DELETE /sessions/abc failed (401 Unauthorized): unauthorized"
+    ));
 }
 
 #[test]
-fn is_session_expired_error_requires_both_401_and_unauthorized() {
+fn is_session_expired_error_does_not_match_generic_401_unauthorized() {
+    // Generic 401+unauthorized strings without HTTP-method prefix must NOT match.
+    assert!(!is_session_expired_error(
+        "backend returned 401 Unauthorized"
+    ));
+    assert!(!is_session_expired_error("401 UNAUTHORIZED"));
+    assert!(!is_session_expired_error("got 401 and unauthorized body"));
+}
+
+#[test]
+fn unconfirmed_unauthorized_error_matches_generic_401_for_diagnostics_only() {
+    // Generic 401+unauthorized text feeds the diagnostic-only branch — never
+    // SessionExpired publication.
+    assert!(is_unconfirmed_unauthorized_error(
+        "backend returned 401 Unauthorized"
+    ));
+    assert!(is_unconfirmed_unauthorized_error("401 UNAUTHORIZED"));
+    assert!(is_unconfirmed_unauthorized_error(
+        "got 401 and unauthorized body"
+    ));
+}
+
+#[test]
+fn is_session_expired_error_does_not_match_partial_auth_text() {
     // 401 alone is not sufficient — could be HTTP/3.01 nonsense or
-    // unrelated text. We require the string "unauthorized" too.
+    // unrelated text. We require the string "unauthorized" too, plus an
+    // HTTP-method prefix for the 401 path.
     assert!(!is_session_expired_error("server returned 401"));
     assert!(!is_session_expired_error("unauthorized without code"));
 }
 
 #[test]
-fn is_session_expired_error_matches_invalid_token_case_insensitive() {
-    assert!(is_session_expired_error("Invalid Token"));
-    assert!(is_session_expired_error("got an invalid token here"));
+fn is_session_expired_error_matches_openhuman_backend_path_401() {
+    // OpenHuman backend calls via authed_json use the format:
+    // "{METHOD} /path failed (401 Unauthorized): {body}"
+    assert!(is_session_expired_error(
+        "GET /teams failed (401 Unauthorized): {\"success\":false}"
+    ));
+    assert!(is_session_expired_error(
+        "POST /auth/token failed (401 Unauthorized): session expired"
+    ));
+    assert!(is_session_expired_error(
+        "GET /teams/me/usage failed (401 Unauthorized): unauthorized"
+    ));
+    assert!(is_session_expired_error(
+        "PUT /profile failed (401 Unauthorized): token expired"
+    ));
+    assert!(is_session_expired_error(
+        "PATCH /settings failed (401 Unauthorized): unauthorized"
+    ));
+}
+
+#[test]
+fn is_session_expired_error_does_not_match_discord_api_error() {
+    // Issue #2286: Discord bot token 401 must not clear the user session.
+    assert!(!is_session_expired_error(
+        "Discord API error: Discord list guilds failed (401): Unauthorized"
+    ));
+    assert!(!is_session_expired_error(
+        "Discord API error: Discord get bot user failed (401): bad token"
+    ));
+}
+
+#[test]
+fn is_session_expired_error_does_not_match_byo_key_provider_401() {
+    // BYO-key provider 401 should not clear the user session.
+    assert!(!is_session_expired_error(
+        "OpenAI API error (401 Unauthorized): invalid api key"
+    ));
+    assert!(!is_session_expired_error(
+        "Anthropic API error (401 Unauthorized): authentication error"
+    ));
+    assert!(!is_session_expired_error(
+        "Composio v3 API error: HTTP 401: Unauthorized"
+    ));
+}
+
+#[test]
+fn is_session_expired_error_does_not_match_invalid_token_case_insensitive() {
+    // "invalid token" is no longer a session-expiry trigger (issue #2286):
+    // it was too broad and caught Discord/OAuth provider token errors. It is
+    // still surfaced via the diagnostic-only `is_unconfirmed_unauthorized_error`.
+    assert!(!is_session_expired_error("Invalid Token"));
+    assert!(!is_session_expired_error("got an invalid token here"));
+    assert!(is_unconfirmed_unauthorized_error("Invalid Token"));
+    assert!(is_unconfirmed_unauthorized_error(
+        "got an invalid token here"
+    ));
+}
+
+#[test]
+fn is_session_expired_error_matches_openhuman_session_expired_body() {
+    // Even without an HTTP-method prefix, an explicit "Session expired" body
+    // text triggers session expiry via the shared observability classifier.
+    assert!(is_session_expired_error(
+        r#"OpenHuman API error (401 Unauthorized): {"success":false,"error":"Session expired. Please log in again."}"#
+    ));
 }
 
 #[test]
@@ -907,4 +1000,42 @@ async fn invoke_method_core_version_via_tier1_reflects_state() {
         .await
         .expect("core.version should succeed");
     assert_eq!(result, json!({ "version": "0.0.1-abc" }));
+}
+
+#[tokio::test]
+async fn test_http_health_handler_returns_correct_status() {
+    use axum::body::to_bytes;
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
+    // Call the handler once and derive both the status and expected status from
+    // the same response — avoids a TOCTOU race where a separate snapshot()
+    // call before/after the handler could observe different component state.
+    let resp = super::health_handler().await.into_response();
+    let status = resp.status();
+
+    let body = to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .expect("failed to read body");
+    let snapshot: serde_json::Value =
+        serde_json::from_slice(&body).expect("failed to deserialize health snapshot");
+
+    let components = snapshot["components"]
+        .as_object()
+        .expect("components should be an object");
+
+    // Derive the expected HTTP status solely from the response body so the
+    // test asserts internal consistency of the handler rather than racing on
+    // live component state.
+    let body_says_ok = components.values().all(|c| {
+        let s = c["status"].as_str().unwrap_or("");
+        s == "ok" || s == "starting"
+    });
+    let expected_status = if body_says_ok {
+        StatusCode::OK
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
+    };
+
+    assert_eq!(status, expected_status);
 }

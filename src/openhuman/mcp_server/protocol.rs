@@ -1,6 +1,6 @@
 use serde_json::{json, Map, Value};
 
-use super::tools;
+use super::{session::McpSession, tools};
 
 const LATEST_PROTOCOL_VERSION: &str = "2025-11-25";
 const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &[
@@ -11,6 +11,14 @@ const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &[
 ];
 
 pub async fn handle_json_line(line: &str) -> Option<String> {
+    let mut session = McpSession::default();
+    handle_json_line_with_session(line, &mut session).await
+}
+
+pub(crate) async fn handle_json_line_with_session(
+    line: &str,
+    session: &mut McpSession,
+) -> Option<String> {
     let value = match serde_json::from_str::<Value>(line) {
         Ok(value) => value,
         Err(err) => {
@@ -27,7 +35,7 @@ pub async fn handle_json_line(line: &str) -> Option<String> {
         }
     };
 
-    let responses = handle_json_value(value).await;
+    let responses = handle_json_value_with_session(value, session).await;
     if responses.is_empty() {
         None
     } else if responses.len() == 1 {
@@ -44,6 +52,14 @@ pub async fn handle_json_line(line: &str) -> Option<String> {
 }
 
 pub async fn handle_json_value(value: Value) -> Vec<Value> {
+    let mut session = McpSession::default();
+    handle_json_value_with_session(value, &mut session).await
+}
+
+pub(crate) async fn handle_json_value_with_session(
+    value: Value,
+    session: &mut McpSession,
+) -> Vec<Value> {
     match value {
         Value::Array(items) if items.is_empty() => {
             vec![error_response(
@@ -56,20 +72,20 @@ pub async fn handle_json_value(value: Value) -> Vec<Value> {
         Value::Array(items) => {
             let mut responses = Vec::new();
             for item in items {
-                if let Some(response) = handle_single_message(item).await {
+                if let Some(response) = handle_single_message(item, session).await {
                     responses.push(response);
                 }
             }
             responses
         }
-        other => handle_single_message(other)
+        other => handle_single_message(other, session)
             .await
             .into_iter()
             .collect::<Vec<_>>(),
     }
 }
 
-async fn handle_single_message(value: Value) -> Option<Value> {
+async fn handle_single_message(value: Value, session: &mut McpSession) -> Option<Value> {
     let Some(object) = value.as_object() else {
         return Some(error_response(
             Value::Null,
@@ -114,7 +130,7 @@ async fn handle_single_message(value: Value) -> Option<Value> {
     };
 
     let params = object.get("params").cloned().unwrap_or(Value::Null);
-    Some(handle_request(id, method, params).await)
+    Some(handle_request(id, method, params, session).await)
 }
 
 fn handle_notification(object: &Map<String, Value>) {
@@ -135,23 +151,36 @@ fn handle_notification(object: &Map<String, Value>) {
     }
 }
 
-async fn handle_request(id: Value, method: &str, params: Value) -> Value {
+async fn handle_request(id: Value, method: &str, params: Value, session: &mut McpSession) -> Value {
+    let request_id = id.to_string();
     match method {
-        "initialize" => success_response(id, initialize_result(params)),
+        "initialize" => {
+            session.observe_initialize_params(&params);
+            log::debug!(
+                "[mcp_server] initialize request id={} client_source_type={}",
+                request_id,
+                session.source_type()
+            );
+            success_response(id, initialize_result(params))
+        }
         "ping" => success_response(id, json!({})),
         "tools/list" => success_response(id, tools::list_tools_result().await),
         "tools/call" => match parse_tool_call_params(params) {
             Ok((name, arguments)) => {
                 log::debug!(
-                    "[mcp_server] tools/call request tool={} arg_keys={:?}",
+                    "[mcp_server] tools/call request id={} tool={} client_source_type={} arg_keys={:?}",
+                    request_id,
                     name,
+                    session.source_type(),
                     object_keys(&arguments)
                 );
                 match tools::call_tool(&name, arguments).await {
                     Ok(result) => {
                         log::debug!(
-                            "[mcp_server] tools/call response tool={} is_error={}",
+                            "[mcp_server] tools/call response id={} tool={} client_source_type={} is_error={}",
+                            request_id,
                             name,
+                            session.source_type(),
                             result
                                 .get("isError")
                                 .and_then(Value::as_bool)
@@ -166,8 +195,10 @@ async fn handle_request(id: Value, method: &str, params: Value) -> Value {
                         // (`Internal`) surface as `-32603` so clients don't
                         // mis-attribute them to the caller's arguments.
                         log::debug!(
-                            "[mcp_server] tools/call rejected tool={} code={} error={}",
+                            "[mcp_server] tools/call rejected id={} tool={} client_source_type={} code={} error={}",
+                            request_id,
                             name,
+                            session.source_type(),
                             err.code(),
                             err.message()
                         );
@@ -181,7 +212,11 @@ async fn handle_request(id: Value, method: &str, params: Value) -> Value {
                 }
             }
             Err(message) => {
-                log::debug!("[mcp_server] tools/call params rejected error={message}");
+                log::debug!(
+                    "[mcp_server] tools/call params rejected id={} client_source_type={} error={message}",
+                    request_id,
+                    session.source_type()
+                );
                 error_response(id, -32602, "Invalid params", Some(json!(message)))
             }
         },
@@ -288,6 +323,12 @@ mod tests {
         responses.remove(0)
     }
 
+    async fn request_with_session(value: Value, session: &mut McpSession) -> Value {
+        let mut responses = handle_json_value_with_session(value, session).await;
+        assert_eq!(responses.len(), 1, "expected one response");
+        responses.remove(0)
+    }
+
     #[tokio::test]
     async fn initialize_echoes_supported_protocol_and_tools_capability() {
         let response = request(json!({
@@ -321,6 +362,177 @@ mod tests {
             response["result"]["protocolVersion"],
             LATEST_PROTOCOL_VERSION
         );
+    }
+
+    #[test]
+    fn normalize_client_name_accepts_ascii_client_names() {
+        for (raw, expected) in [
+            ("Claude Desktop", Some("claude-desktop")),
+            ("Cursor", Some("cursor")),
+            ("Windsurf", Some("windsurf")),
+            ("  Zed: Nightly  ", Some("zed-nightly")),
+            ("会议记录", None),
+        ] {
+            assert_eq!(
+                McpSession::normalize_client_name(raw).as_deref(),
+                expected,
+                "raw client name: {raw:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn initialize_captures_client_info_source_type_for_session() {
+        let mut session = McpSession::default();
+        let response = request_with_session(
+            json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {},
+                    "clientInfo": {"name": "Claude Desktop", "version": "0"}
+                }
+            }),
+            &mut session,
+        )
+        .await;
+
+        assert_eq!(response["result"]["protocolVersion"], "2025-06-18");
+        assert_eq!(session.source_type(), "mcp:claude-desktop");
+    }
+
+    #[tokio::test]
+    async fn initialize_keeps_bare_mcp_source_type_when_client_name_is_blank() {
+        let mut session = McpSession::default();
+        let _ = request_with_session(
+            json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {},
+                    "clientInfo": {"name": "   ", "version": "0"}
+                }
+            }),
+            &mut session,
+        )
+        .await;
+
+        assert_eq!(session.source_type(), "mcp");
+    }
+
+    #[tokio::test]
+    async fn initialize_keeps_bare_mcp_source_type_when_client_info_is_missing() {
+        let mut session = McpSession::default();
+        let _ = request_with_session(
+            json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {}
+                }
+            }),
+            &mut session,
+        )
+        .await;
+
+        assert_eq!(session.source_type(), "mcp");
+    }
+
+    #[tokio::test]
+    async fn initialize_keeps_bare_mcp_source_type_when_client_name_is_empty() {
+        let mut session = McpSession::default();
+        let _ = request_with_session(
+            json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {},
+                    "clientInfo": {"name": "", "version": "0"}
+                }
+            }),
+            &mut session,
+        )
+        .await;
+
+        assert_eq!(session.source_type(), "mcp");
+    }
+
+    #[tokio::test]
+    async fn initialize_does_not_clear_existing_source_type_when_later_name_is_missing() {
+        let mut session = McpSession::default();
+        let _ = request_with_session(
+            json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {},
+                    "clientInfo": {"name": "Claude Desktop", "version": "0"}
+                }
+            }),
+            &mut session,
+        )
+        .await;
+
+        let _ = request_with_session(
+            json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {}
+                }
+            }),
+            &mut session,
+        )
+        .await;
+
+        assert_eq!(session.source_type(), "mcp:claude-desktop");
+    }
+
+    #[tokio::test]
+    async fn initialize_freezes_bare_source_type_when_first_client_info_is_missing() {
+        let mut session = McpSession::default();
+        let _ = request_with_session(
+            json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {}
+                }
+            }),
+            &mut session,
+        )
+        .await;
+
+        let _ = request_with_session(
+            json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {},
+                    "clientInfo": {"name": "Claude Desktop", "version": "0"}
+                }
+            }),
+            &mut session,
+        )
+        .await;
+
+        assert_eq!(session.source_type(), "mcp");
     }
 
     #[tokio::test]

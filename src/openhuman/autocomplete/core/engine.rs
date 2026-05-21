@@ -98,6 +98,10 @@ impl AutocompleteEngine {
         let config = Config::load_or_init()
             .await
             .unwrap_or_else(|_| Config::default());
+        self.status_with_config(&config).await
+    }
+
+    pub async fn status_with_config(&self, config: &Config) -> AutocompleteStatus {
         let state = self.inner.lock().await;
 
         AutocompleteStatus {
@@ -106,7 +110,7 @@ impl AutocompleteEngine {
             running: state.running,
             phase: state.phase.clone(),
             debounce_ms: state.debounce_ms,
-            model_id: config.local_ai.chat_model_id,
+            model_id: config.local_ai.chat_model_id.clone(),
             app_name: state.app_name.clone(),
             last_error: state.last_error.clone(),
             updated_at_ms: state.updated_at_ms,
