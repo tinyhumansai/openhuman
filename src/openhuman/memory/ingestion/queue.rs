@@ -91,11 +91,14 @@ impl IngestionQueue {
                 // Channel is at capacity — log loudly so observability can
                 // surface the drop, then undo the enqueue bump so the queue
                 // depth gauge does not drift upward forever under sustained
-                // overflow.
+                // overflow. Include the stable `document_id` so the warn
+                // line is the breadcrumb back to the upserted document
+                // whose graph-extraction follow-up was skipped.
                 self.state.dequeue();
                 log::warn!(
-                    "[memory:ingestion_queue] dropping job: queue at capacity ({} pending) namespace={} title={}",
+                    "[memory:ingestion_queue] dropping job: queue at capacity ({} pending) doc_id={} namespace={} title={}",
                     self.tx.max_capacity(),
+                    dropped.document_id,
                     dropped.document.namespace,
                     dropped.document.title,
                 );
@@ -107,7 +110,8 @@ impl IngestionQueue {
                 // means the entire pipeline is dead, not just over-pressure.
                 self.state.dequeue();
                 log::warn!(
-                    "[memory:ingestion_queue] dropping job: worker channel closed (shutdown?) namespace={} title={}",
+                    "[memory:ingestion_queue] dropping job: worker channel closed (shutdown?) doc_id={} namespace={} title={}",
+                    dropped.document_id,
                     dropped.document.namespace,
                     dropped.document.title,
                 );
@@ -153,11 +157,21 @@ pub fn start_worker_with_state(
 /// Start a worker with an explicit channel capacity. Exposed so unit tests
 /// can drive the at-capacity drop path deterministically without faking a
 /// slow worker.
+///
+/// # Panics
+///
+/// Panics if `capacity == 0`. `tokio::sync::mpsc::channel` itself panics on
+/// a zero buffer, but the message is cryptic; the explicit guard here turns
+/// the misuse into a clear, grep-friendly assertion at the call site.
 pub fn start_worker_with_capacity(
     memory: Arc<UnifiedMemory>,
     state: IngestionState,
     capacity: usize,
 ) -> IngestionQueue {
+    assert!(
+        capacity > 0,
+        "ingestion queue capacity must be greater than zero"
+    );
     let (tx, rx) = mpsc::channel::<IngestionJob>(capacity);
 
     tokio::spawn(ingestion_worker(memory, rx, state.clone()));
@@ -369,5 +383,24 @@ mod tests {
             DEFAULT_QUEUE_CAPACITY <= 8 * 1024,
             "default capacity is the memory ceiling under sustained overflow — keep it tight"
         );
+    }
+
+    /// Zero capacity would otherwise panic from inside
+    /// `tokio::sync::mpsc::channel` with a cryptic Tokio-internal message
+    /// (`mpsc bounded channel requires buffer > 0`) — the explicit guard in
+    /// [`start_worker_with_capacity`] turns that into a clear, grep-friendly
+    /// assertion at the call site so misuse fails fast with an actionable
+    /// message instead of looking like a Tokio bug.
+    #[tokio::test]
+    #[should_panic(expected = "ingestion queue capacity must be greater than zero")]
+    async fn start_worker_rejects_zero_capacity() {
+        use crate::openhuman::embeddings::NoopEmbedding;
+        use tempfile::TempDir;
+        let tmp = TempDir::new().unwrap();
+        let memory = UnifiedMemory::new(tmp.path(), Arc::new(NoopEmbedding), None).unwrap();
+        // Panic must surface from our own assert, not from the Tokio
+        // channel constructor on the line after — that's the contract this
+        // test pins.
+        let _ = start_worker_with_capacity(Arc::new(memory), IngestionState::new(), 0);
     }
 }
