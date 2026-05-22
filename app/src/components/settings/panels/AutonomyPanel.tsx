@@ -94,7 +94,8 @@ const AutonomyPanel = () => {
           </label>
           <p className="text-xs text-stone-600 dark:text-neutral-400 mt-1">
             Maximum tool actions an agent can run per rolling hour. New value applies to your next
-            chat — running sessions keep their current limit.
+            chat. Cron jobs and channel listeners keep their current limit until you restart
+            OpenHuman.
           </p>
 
           <div className="mt-3 flex items-center gap-2">
