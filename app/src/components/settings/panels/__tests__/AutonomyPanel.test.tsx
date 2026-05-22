@@ -77,6 +77,18 @@ describe('AutonomyPanel', () => {
     expect(screen.getByRole('button', { name: /^Save$/ })).toBeDisabled();
   });
 
+  // Note: '12abc' is omitted because <input type="number"> filters non-numeric
+  // characters before React sees the change event — there's no way the panel
+  // can receive that input through normal UI flow.
+  test.each(['1.5', '1e2', '-5', '0.0'])('rejects non-integer input %s', async value => {
+    mockGet.mockResolvedValue({ result: { max_actions_per_hour: 20 }, logs: [] });
+    renderWithProviders(<AutonomyPanel />, { initialEntries: ['/settings/autonomy'] });
+    const input = await screen.findByDisplayValue('20');
+    fireEvent.change(input, { target: { value } });
+    await screen.findByText(/Must be an integer between 1 and 10,000/i);
+    expect(screen.getByRole('button', { name: /^Save$/ })).toBeDisabled();
+  });
+
   test('surfaces RPC errors and reverts to the last committed value', async () => {
     mockGet.mockResolvedValue({ result: { max_actions_per_hour: 50 }, logs: [] });
     mockUpdate.mockRejectedValue(new Error('disk full'));

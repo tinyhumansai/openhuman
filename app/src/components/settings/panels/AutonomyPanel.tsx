@@ -50,8 +50,10 @@ const AutonomyPanel = () => {
     };
   }, []);
 
-  const parsed = Number.parseInt(draft, 10);
-  const isValid = Number.isInteger(parsed) && parsed >= MIN && parsed <= MAX;
+  const trimmed = draft.trim();
+  const parsed = Number(trimmed);
+  const isValid =
+    /^\d+$/.test(trimmed) && Number.isInteger(parsed) && parsed >= MIN && parsed <= MAX;
   const isChanged = committed !== null && parsed !== committed;
   const canSave = isValid && isChanged && status.kind !== 'saving';
 
