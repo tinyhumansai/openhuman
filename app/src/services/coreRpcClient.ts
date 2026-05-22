@@ -3,7 +3,8 @@ import debug from 'debug';
 
 import { dispatchLocalAiMethod } from '../lib/ai/localCoreAiMemory';
 import { CORE_RPC_TIMEOUT_MS, CORE_RPC_URL } from '../utils/config';
-import { getStoredCoreToken, peekStoredRpcUrl } from '../utils/configPersistence';
+import { getStoredCoreToken, normalizeRpcUrl, peekStoredRpcUrl } from '../utils/configPersistence';
+import { redactRpcUrlForLog } from '../utils/redactRpcUrlForLog';
 import { sanitizeError } from '../utils/sanitize';
 import { isTauri as coreIsTauri } from '../utils/tauriCommands/common';
 import { normalizeRpcMethod } from './rpcMethods';
@@ -278,7 +279,7 @@ export async function getCoreRpcUrl(): Promise<string> {
     // null when nothing is stored, which lets us distinguish "user hasn't
     // chosen yet" from "user chose a value identical to the default".
     const storedUrl = peekStoredRpcUrl();
-    resolvedCoreRpcUrl = storedUrl ?? CORE_RPC_URL;
+    resolvedCoreRpcUrl = normalizeRpcUrl(storedUrl ?? CORE_RPC_URL);
     return resolvedCoreRpcUrl;
   }
 
@@ -296,8 +297,8 @@ export async function getCoreRpcUrl(): Promise<string> {
       // cloud mode where no local sidecar is running.
       const storedUrl = peekStoredRpcUrl();
       if (storedUrl) {
-        resolvedCoreRpcUrl = storedUrl;
-        return storedUrl;
+        resolvedCoreRpcUrl = normalizeRpcUrl(storedUrl);
+        return resolvedCoreRpcUrl;
       }
 
       const url = await invoke<string>('core_rpc_url');
@@ -307,16 +308,16 @@ export async function getCoreRpcUrl(): Promise<string> {
           fallback: CORE_RPC_URL,
         });
       }
-      resolvedCoreRpcUrl = trimmed || CORE_RPC_URL;
+      resolvedCoreRpcUrl = normalizeRpcUrl(trimmed || CORE_RPC_URL);
       return resolvedCoreRpcUrl || CORE_RPC_URL;
     } catch (err) {
       // Tauri invoke failed — fall back to stored URL if any, then the
       // build-time default. Keep the underlying invoke failure visible so
       // port mismatches and shell misconfiguration are diagnosable.
       const storedUrl = peekStoredRpcUrl();
-      resolvedCoreRpcUrl = storedUrl ?? CORE_RPC_URL;
+      resolvedCoreRpcUrl = normalizeRpcUrl(storedUrl ?? CORE_RPC_URL);
       coreRpcError('core_rpc_url invoke failed; using fallback RPC URL', {
-        fallback: resolvedCoreRpcUrl,
+        fallback: redactRpcUrlForLog(resolvedCoreRpcUrl),
         usedStoredUrl: Boolean(storedUrl),
         error: sanitizeError(err),
       });
@@ -397,12 +398,13 @@ export async function testCoreRpcConnection(
   tokenOverride?: string,
   init?: { signal?: AbortSignal }
 ): Promise<Response> {
+  const rpcUrl = normalizeRpcUrl(url);
   const token = tokenOverride?.trim() || (await getCoreRpcToken());
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (token) {
     headers.Authorization = `Bearer ${token}`;
   }
-  return fetch(url, {
+  return fetch(rpcUrl, {
     method: 'POST',
     headers,
     body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'core.ping', params: {} }),
