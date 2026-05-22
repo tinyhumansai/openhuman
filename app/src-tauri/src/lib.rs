@@ -408,6 +408,33 @@ struct ResolvedDataPaths {
     active_workspace_marker_path: std::path::PathBuf,
 }
 
+fn is_windows_file_lock_raw_os_error(raw_os_error: Option<i32>) -> bool {
+    matches!(raw_os_error, Some(32 | 33))
+}
+
+fn is_windows_file_lock_error(error: &std::io::Error) -> bool {
+    cfg!(windows) && is_windows_file_lock_raw_os_error(error.raw_os_error())
+}
+
+fn reset_local_data_delete_error(
+    label: &str,
+    path: &std::path::Path,
+    error: &std::io::Error,
+) -> String {
+    if is_windows_file_lock_error(error) {
+        log::warn!(
+            "[core] reset_local_data: Windows file lock blocked removal of {label} at {}: {error}",
+            path.display()
+        );
+        return format!(
+            "Failed to remove {label} at {} because it is locked by another OpenHuman window or process. Close all OpenHuman windows and try again. ({error})",
+            path.display()
+        );
+    }
+
+    format!("Failed to remove {label} at {}: {error}", path.display())
+}
+
 /// Call the core's `config_get_data_paths` RPC and parse the response.
 async fn fetch_data_paths() -> Result<ResolvedDataPaths, String> {
     let url = crate::core_rpc::core_rpc_url_value();
@@ -475,10 +502,7 @@ async fn remove_path_if_exists(path: &std::path::Path, label: &str) -> Result<()
             );
             Ok(())
         }
-        Err(e) => Err(format!(
-            "Failed to remove {label} at {}: {e}",
-            path.display()
-        )),
+        Err(e) => Err(reset_local_data_delete_error(label, path, &e)),
     }
 }
 
@@ -499,10 +523,7 @@ async fn remove_dir_if_exists(path: &std::path::Path, label: &str) -> Result<(),
             );
             Ok(())
         }
-        Err(e) => Err(format!(
-            "Failed to remove {label} at {}: {e}",
-            path.display()
-        )),
+        Err(e) => Err(reset_local_data_delete_error(label, path, &e)),
     }
 }
 
@@ -3441,6 +3462,41 @@ mod tests {
             Some(v) => std::env::set_var("OPENHUMAN_CORE_RPC_URL", v),
             None => std::env::remove_var("OPENHUMAN_CORE_RPC_URL"),
         }
+    }
+
+    #[test]
+    fn reset_local_data_windows_file_lock_error_codes_are_recognized() {
+        assert!(is_windows_file_lock_raw_os_error(Some(32)));
+        assert!(is_windows_file_lock_raw_os_error(Some(33)));
+        assert!(!is_windows_file_lock_raw_os_error(Some(5)));
+        assert!(!is_windows_file_lock_raw_os_error(None));
+    }
+
+    #[test]
+    fn reset_local_data_delete_error_keeps_generic_message_for_other_errors() {
+        let err = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+        let msg = reset_local_data_delete_error(
+            "current openhuman dir",
+            std::path::Path::new("/tmp/openhuman"),
+            &err,
+        );
+
+        assert!(msg.starts_with("Failed to remove current openhuman dir at /tmp/openhuman:"));
+        assert!(!msg.contains("Close all OpenHuman windows and try again"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn reset_local_data_delete_error_explains_windows_file_locks() {
+        let err = std::io::Error::from_raw_os_error(32);
+        let msg = reset_local_data_delete_error(
+            "current openhuman dir",
+            std::path::Path::new("C:\\Users\\me\\.openhuman"),
+            &err,
+        );
+
+        assert!(msg.contains("locked by another OpenHuman window or process"));
+        assert!(msg.contains("Close all OpenHuman windows and try again"));
     }
 
     /// Tests for setup_tray conditional compilation
