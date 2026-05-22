@@ -457,6 +457,8 @@ const zhCN5: TranslationMap = {
   'settings.mascot.title': 'OpenHuman',
   'settings.developerMenu.mcpServer.title': 'MCP 服务器',
   'settings.developerMenu.mcpServer.desc': '配置外部 MCP 客户端以连接到 OpenHuman',
+  'settings.developerMenu.autonomy.title': 'Agent autonomy',
+  'settings.developerMenu.autonomy.desc': 'Tool action rate limits and safety thresholds.',
   'settings.mcpServer.title': 'MCP 服务器',
   'settings.mcpServer.toolsSectionTitle': '可用工具',
   'settings.mcpServer.toolsSectionDesc':

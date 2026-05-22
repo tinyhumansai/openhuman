@@ -476,6 +476,8 @@ const ar5: TranslationMap = {
   'settings.mascot.title': 'OpenHuman',
   'settings.developerMenu.mcpServer.title': 'MCP Server',
   'settings.developerMenu.mcpServer.desc': 'Configure external MCP clients to connect to OpenHuman',
+  'settings.developerMenu.autonomy.title': 'Agent autonomy',
+  'settings.developerMenu.autonomy.desc': 'Tool action rate limits and safety thresholds.',
   'settings.mcpServer.title': 'MCP Server',
   'settings.mcpServer.toolsSectionTitle': 'Available Tools',
   'settings.mcpServer.toolsSectionDesc':
