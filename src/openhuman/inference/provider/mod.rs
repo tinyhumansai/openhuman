@@ -29,5 +29,5 @@ pub use traits::{
 
 pub use billing_error::is_budget_exhausted_message;
 pub use config_rejection::is_provider_config_rejection_message;
-pub use factory::{create_chat_provider, provider_for_role};
+pub use factory::{create_chat_provider, provider_for_role, BYOK_INCOMPLETE_SENTINEL};
 pub use ops::*;

@@ -1281,6 +1281,19 @@ const CAPABILITIES: &[Capability] = &[
         status: CapabilityStatus::Beta,
         privacy: None,
     },
+    Capability {
+        id: "intelligence.remember_preferences",
+        name: "Remember Preferences",
+        domain: "memory",
+        category: CapabilityCategory::Intelligence,
+        description: "Remember preferences you state in chat and apply them automatically — \
+                      general preferences shape every reply (tone, language, standing habits); \
+                      situational ones surface only when relevant to your current message.",
+        how_to: "State a preference in chat, e.g. \"always reply in British English\" or \
+                 \"when writing Rust, prefer Result over unwrap\".",
+        status: CapabilityStatus::Stable,
+        privacy: LOCAL_RAW,
+    },
 ];
 
 static VALIDATED: OnceLock<()> = OnceLock::new();
