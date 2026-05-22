@@ -591,11 +591,11 @@ pub fn schemas(function: &str) -> ControllerSchema {
         "set_browser_allow_all" => ControllerSchema {
             namespace: "config",
             function: "set_browser_allow_all",
-            description: "Set OPENHUMAN_BROWSER_ALLOW_ALL runtime flag.",
+            description: "Disable browser allow-all mode, or enable it only when operator opt-in is present.",
             inputs: vec![FieldSchema {
                 name: "enabled",
                 ty: TypeSchema::Bool,
-                comment: "Whether to enable browser allow-all mode.",
+                comment: "Whether to enable browser allow-all mode. Runtime enable is refused unless OPENHUMAN_BROWSER_ALLOW_ALL_RPC_ENABLE=1.",
                 required: true,
             }],
             outputs: vec![FieldSchema {
@@ -1067,7 +1067,7 @@ fn handle_resolve_api_url(_params: Map<String, Value>) -> ControllerFuture {
 fn handle_set_browser_allow_all(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let payload = deserialize_params::<SetBrowserAllowAllParams>(params)?;
-        to_json(config_rpc::set_browser_allow_all(payload.enabled))
+        to_json(config_rpc::set_browser_allow_all(payload.enabled)?)
     })
 }
 

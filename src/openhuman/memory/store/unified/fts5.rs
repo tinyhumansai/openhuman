@@ -114,13 +114,14 @@ pub fn episodic_insert(conn: &Arc<Mutex<Connection>>, entry: &EpisodicEntry) -> 
         );
     if report.changed() {
         tracing::warn!(
-            "[memory:safety] episodic insert sanitized session_chars={} role_chars={} text_redactions={} key_redactions={} blocked_secret_hits={} depth_redactions={}",
+            "[memory:safety] episodic insert sanitized session_chars={} role_chars={} text_redactions={} key_redactions={} blocked_secret_hits={} depth_redactions={} pii_redactions={}",
             entry.session_id.chars().count(),
             entry.role.chars().count(),
             report.text_redactions,
             report.key_redactions,
             report.blocked_secret_hits,
-            report.depth_redactions
+            report.depth_redactions,
+            report.pii_redactions
         );
     }
 

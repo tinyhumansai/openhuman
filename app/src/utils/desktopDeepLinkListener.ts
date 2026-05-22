@@ -2,15 +2,20 @@ import * as Sentry from '@sentry/react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { getCurrent, onOpenUrl } from '@tauri-apps/plugin-deep-link';
 
-import { getCoreStateSnapshot, patchCoreStateSnapshot } from '../lib/coreState/store';
+import { patchCoreStateSnapshot } from '../lib/coreState/store';
 import { consumeLoginToken } from '../services/api/authApi';
+import { clearCoreRpcTokenCache, clearCoreRpcUrlCache } from '../services/coreRpcClient';
 import {
   beginDeepLinkAuthProcessing,
   completeDeepLinkAuthProcessing,
   failDeepLinkAuthProcessing,
 } from '../store/deepLinkAuthState';
 import { BILLING_DASHBOARD_URL } from './links';
-import { evaluateOAuthAppVersionGate } from './oauthAppVersionGate';
+import {
+  evaluateOAuthAppVersionGate,
+  oauthAuthReadinessUserMessage,
+  waitForOAuthAuthReadiness,
+} from './oauthAppVersionGate';
 import { openUrl } from './openUrl';
 import { storeSession } from './tauriCommands';
 import { isTauri as coreIsTauri } from './tauriCommands/common';
@@ -71,23 +76,9 @@ const focusMainWindow = async () => {
   }
 };
 
-const waitForAuthReadiness = async (maxAttempts = 10, delayMs = 150) => {
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    const coreState = getCoreStateSnapshot();
-    if (!coreState.isBootstrapping || coreState.snapshot.sessionToken) {
-      console.log('[DeepLink][auth] app ready', {
-        attempt,
-        hasToken: Boolean(coreState.snapshot.sessionToken),
-        authBootstrapComplete: !coreState.isBootstrapping,
-      });
-      return;
-    }
-    await new Promise(resolve => setTimeout(resolve, delayMs));
-  }
-  console.warn('[DeepLink][auth] readiness timeout; continuing');
-};
-
 const applySessionToken = async (sessionToken: string): Promise<void> => {
+  clearCoreRpcUrlCache();
+  clearCoreRpcTokenCache();
   await storeSession(sessionToken, {});
   patchCoreStateSnapshot({ snapshot: { sessionToken } });
   window.dispatchEvent(new CustomEvent(SESSION_TOKEN_UPDATED_EVENT, { detail: { sessionToken } }));
@@ -109,7 +100,13 @@ const handleAuthDeepLink = async (parsed: URL) => {
 
   try {
     await focusMainWindow();
-    await waitForAuthReadiness();
+
+    const readiness = await waitForOAuthAuthReadiness();
+    if (!readiness.ready) {
+      console.warn('[DeepLink][auth] OAuth readiness gate blocked login', readiness);
+      failDeepLinkAuthProcessing(oauthAuthReadinessUserMessage(readiness.reason));
+      return;
+    }
 
     const sessionToken = key === 'auth' ? token : await consumeLoginToken(token);
     await applySessionToken(sessionToken);
@@ -334,7 +331,9 @@ export const setupDesktopDeepLinkListener = async () => {
       // window.__simulateDeepLink('openhuman://oauth/success?integrationId=69cafd0b103bd070232d3223&provider=notion')
       // window.__simulateDeepLink('openhuman://oauth/success?integrationId=69cafd0b103bd070232d3223&skillId=discord')
       const win = window as Window & { __simulateDeepLink?: (url: string) => Promise<void> };
-      win.__simulateDeepLink = (url: string) => handleDeepLinkUrls([url]);
+      win.__simulateDeepLink = async (url: string) => {
+        void handleDeepLinkUrls([url]);
+      };
     }
   } catch (err) {
     console.error('[DeepLink] Setup failed:', err);

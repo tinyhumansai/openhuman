@@ -94,6 +94,14 @@ impl EmbeddingProvider for OpenAiEmbedding {
             return Ok(Vec::new());
         }
 
+        // Proactively gate the outbound request against the per-endpoint rate
+        // budget so cloud backends (OpenHuman/Voyage, OpenAI, custom remote
+        // endpoints) stay under their account quota instead of tripping 429s.
+        // This is the single chokepoint every cloud embed funnels through —
+        // the `cloud` provider delegates here, and `openai`/`custom:` use it
+        // directly. Loopback endpoints are exempt (see `rate_limit`).
+        super::rate_limit::acquire_embedding_slot(&self.base_url).await;
+
         let url = self.embeddings_url();
 
         tracing::debug!(
@@ -128,11 +136,11 @@ impl EmbeddingProvider for OpenAiEmbedding {
                 target: "openai::embed",
                 "[openai] embed error: status={status}, body={text}"
             );
-            let message = format!("Embedding API error {status}: {text}");
-            // Route through the expected-error classifier so user-state
-            // conditions (budget exhausted / insufficient credits, missing
-            // API key, transient upstream HTTP) are demoted to info/warn
-            // breadcrumbs instead of spawning Sentry error events.
+            let message = format!("Embedding API error ({status}): {text}");
+            // Use `report_error_or_expected` so transient upstream HTTP failures
+            // (e.g. 429 Too Many Requests, which the memory_tree job runner
+            // already retries with backoff) log a warning breadcrumb instead of
+            // firing a Sentry error event per attempt.
             crate::core::observability::report_error_or_expected(
                 message.as_str(),
                 "embeddings",

@@ -1,3 +1,4 @@
+use super::memory_context_safety::{is_potentially_untrusted, wrap_untrusted_for_agent};
 use crate::openhuman::memory::Memory;
 use crate::openhuman::util::provenance_tag;
 use std::collections::HashSet;
@@ -58,7 +59,13 @@ pub(crate) async fn build_context(
             context.push_str("[Memory context]\n");
             for entry in &relevant {
                 seen_keys.insert(entry.key.clone());
-                let _ = writeln!(context, "- {}: {}", entry.key, entry.content);
+                let rendered_content = if is_potentially_untrusted(entry) {
+                    let hint = entry.namespace.as_deref().unwrap_or("connector");
+                    wrap_untrusted_for_agent(&entry.content, hint)
+                } else {
+                    entry.content.clone()
+                };
+                let _ = writeln!(context, "- {}: {}", entry.key, rendered_content);
             }
             context.push('\n');
         }
@@ -135,7 +142,12 @@ pub(crate) async fn build_context(
         );
 
         if !cross.is_empty() {
-            context.push_str("[Cross-chat context]\n");
+            // Use the canonical CROSS_CHAT_HEADER from `memory_loader` so
+            // this fallback recall path emits the same literal as the
+            // primary JSONL path, and the orchestrator prompt's
+            // "Capability questions" section that names this header stays
+            // in sync. See CROSS_CHAT_HEADER's doc for the rationale.
+            context.push_str(crate::openhuman::agent::memory_loader::CROSS_CHAT_HEADER);
             for entry in &cross {
                 let prov = entry
                     .session_id
@@ -351,7 +363,7 @@ mod tests {
 
         let context = build_context(&mem, "what database should I use?", 0.4).await;
         assert!(
-            context.contains("[Cross-chat context]"),
+            context.contains(crate::openhuman::agent::memory_loader::CROSS_CHAT_HEADER.trim_end()),
             "expected cross-chat header, got:\n{context}"
         );
         assert!(
@@ -417,7 +429,7 @@ mod tests {
         let mem = MockMemory::new(Vec::new(), Vec::new(), false);
         let context = build_context(&mem, "Postgres", 0.4).await;
         assert!(
-            !context.contains("[Cross-chat context]"),
+            !context.contains(crate::openhuman::agent::memory_loader::CROSS_CHAT_HEADER.trim_end()),
             "no cross-chat hits must produce no header, got:\n{context}"
         );
     }

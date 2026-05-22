@@ -15,6 +15,7 @@ const LOCALE_OPTIONS: Array<{ value: Locale; flag: string; label: string }> = [
   { value: 'fr', flag: '🇫🇷', label: 'Français' },
   { value: 'bn', flag: '🇧🇩', label: 'বাংলা' },
   { value: 'pt', flag: '🇵🇹', label: 'Português' },
+  { value: 'de', flag: '🇩🇪', label: 'Deutsch' },
   { value: 'ru', flag: '🇷🇺', label: 'Русский' },
   { value: 'id', flag: '🇮🇩', label: 'Bahasa Indonesia' },
   { value: 'it', flag: '🇮🇹', label: 'Italiano' },

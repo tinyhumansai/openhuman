@@ -666,6 +666,14 @@ describe('classifyRpcError', () => {
       undefined,
       'transport',
     ],
+    // Issue #2286: downstream provider 401s must NOT clear the user session.
+    [
+      'Discord API error: Discord list guilds failed (401): Unauthorized',
+      undefined,
+      'provider_auth',
+    ],
+    ['OpenAI API error (401 Unauthorized): invalid api key', undefined, 'provider_auth'],
+    ['Anthropic API error (401 Unauthorized): auth error', undefined, 'provider_auth'],
     ['some random message', undefined, 'unknown'],
   ] as const)('%s => %s', (message, status, expected) => {
     expect(classifyRpcError(message, status)).toBe(expected);

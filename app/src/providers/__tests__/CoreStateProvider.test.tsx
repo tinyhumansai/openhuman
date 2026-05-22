@@ -685,14 +685,13 @@ describe('CoreStateProvider — identity-change cache clearing', () => {
 });
 
 describe('coreStatePollFailureWarningMessage', () => {
-  it('logs bounded bootstrap failures and one suppression notice', () => {
+  it('warns once during bootstrap and once when warnings are suppressed', () => {
     expect(coreStatePollFailureWarningMessage(0)).toBeNull();
     expect(coreStatePollFailureWarningMessage(1)).toBe(
       '[core-state] bootstrap poll failed (attempt 1/5):'
     );
-    expect(coreStatePollFailureWarningMessage(5)).toBe(
-      '[core-state] bootstrap poll failed (attempt 5/5):'
-    );
+    expect(coreStatePollFailureWarningMessage(2)).toBeNull();
+    expect(coreStatePollFailureWarningMessage(5)).toBeNull();
     expect(coreStatePollFailureWarningMessage(6)).toBe(
       '[core-state] bootstrap budget exhausted; continuing with backoff. Suppressing further warnings until recovery:'
     );

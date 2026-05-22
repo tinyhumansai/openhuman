@@ -15,12 +15,16 @@
 //! | `composio_list_tools`         | Discover available action slugs + their JSON schemas        |
 //! | `composio_execute`            | Run a Composio action with `{tool, arguments}`              |
 //!
+//! Scope elevation (read/write/admin) is deliberately NOT an agent tool;
+//! the user must toggle it themselves in the Connections UI.
+//!
 //! The agent loop is expected to chain `composio_list_tools` →
 //! `composio_execute` when it needs to use a new action. The full schema
 //! is returned in `composio_list_tools`'s output so the model can pick
 //! the right slug and supply valid arguments without a separate round
 //! trip.
 
+use std::collections::{BTreeSet, HashSet};
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -119,7 +123,7 @@ async fn evaluate_tool_visibility(slug: &str) -> ToolDecision {
 /// is direct against entries the caller has already lowercased.
 fn retain_connected_tools(
     resp: &mut super::types::ComposioToolsResponse,
-    connected: &std::collections::HashSet<String>,
+    connected: &HashSet<String>,
 ) -> usize {
     let before = resp.tools.len();
     resp.tools.retain(|t| {
@@ -128,6 +132,55 @@ fn retain_connected_tools(
             .unwrap_or(false)
     });
     before - resp.tools.len()
+}
+
+fn normalized_scope_toolkits(
+    requested: Option<&[String]>,
+    connected: Option<&HashSet<String>>,
+) -> Vec<String> {
+    let mut out = BTreeSet::new();
+    if let Some(requested) = requested {
+        for toolkit in requested {
+            let normalized = toolkit.trim().to_ascii_lowercase();
+            if !normalized.is_empty() {
+                out.insert(normalized);
+            }
+        }
+    } else if let Some(connected) = connected {
+        out.extend(connected.iter().filter(|t| !t.is_empty()).cloned());
+    }
+    out.into_iter().collect()
+}
+
+fn uncatalogued_toolkits(toolkits: &[String]) -> Vec<String> {
+    toolkits
+        .iter()
+        .filter(|toolkit| {
+            get_provider(toolkit)
+                .and_then(|provider| provider.curated_tools())
+                .or_else(|| catalog_for_toolkit(toolkit))
+                .is_none()
+        })
+        .cloned()
+        .collect()
+}
+
+fn empty_uncurated_toolkits_message(toolkits: &[String]) -> Option<String> {
+    let unsupported = uncatalogued_toolkits(toolkits);
+    if unsupported.is_empty() {
+        return None;
+    }
+    let names = unsupported
+        .iter()
+        .map(|toolkit| format!("`{toolkit}`"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(format!(
+        "composio_list_tools: no agent-ready actions are available for toolkit(s) {names}. \
+         These integrations can be connected, but OpenHuman does not yet ship curated agent \
+         tool catalogs for them. Use a supported toolkit such as Google Drive or Google Sheets \
+         for now, or try again after catalog support lands."
+    ))
 }
 
 /// Filter a freshly-fetched [`super::types::ComposioToolsResponse`] in
@@ -264,15 +317,24 @@ fn render_tools_markdown(resp: &super::types::ComposioToolsResponse) -> String {
 // translation contract.
 
 /// Format a user-facing error message for a scope-blocked execution.
+///
+/// Embeds the unlock path in the error itself so the agent reads the
+/// instruction straight off the tool response — same policy-in-data
+/// approach as the `gated_tools` surface. Only ONE path: the user
+/// toggles the scope in the Connections UI. The agent has no tool to
+/// flip scopes (see the note above the removed `ComposioEnableScopeTool`
+/// for why) — it can only describe the gate and point at the UI.
 fn scope_error_message(slug: &str, scope: ToolScope, pref: UserScopePref) -> String {
+    let toolkit = toolkit_from_slug(slug).unwrap_or_default();
+    let scope_str = scope.as_str();
     format!(
-        "composio_execute: action `{slug}` is classified `{}` and is disabled in your \
-         current scope preferences (read={}, write={}, admin={}). Update the toolkit's \
-         scope preference (composio_set_user_scopes) to enable this category.",
-        scope.as_str(),
-        pref.read,
-        pref.write,
-        pref.admin,
+        "composio_execute: action `{slug}` is classified `{scope_str}` and is \
+         disabled in the user's current scope preferences for `{toolkit}` \
+         (read={}, write={}, admin={}). Tell the user this action requires the \
+         `{scope_str}` scope and they can enable it themselves in \
+         **Connections → {toolkit} → {scope_str}**. Do not claim you can flip \
+         it — you cannot.",
+        pref.read, pref.write, pref.admin,
     )
 }
 
@@ -324,18 +386,19 @@ impl Tool for ComposioListToolkitsTool {
         // the backend tinyhumans tenant (#1710).
         // [#1710 Wave 4] Reload config fresh per execute so a mid-session
         // `composio.mode` toggle takes effect at the very next tool call.
-        // The Arc<Config> snapshot held by `self` was taken at agent-init
-        // time and is otherwise stale relative to subsequent set_api_key /
-        // clear_api_key RPCs.
-        let live_config = match config_rpc::load_config_with_timeout().await {
-            Ok(c) => c,
-            Err(e) => {
-                tracing::warn!(error = %e, "[composio] tool: load_config failed");
-                return Ok(ToolResult::error(format!(
-                    "composio: failed to load live config: {e}"
-                )));
-            }
-        };
+        // Anchor the reload to this tool's original config path rather
+        // than re-resolving process-global `OPENHUMAN_WORKSPACE`; the
+        // tool is scoped to the user/workspace it was created for.
+        let live_config =
+            match config_rpc::reload_config_snapshot_with_timeout(self.config.as_ref()).await {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::warn!(error = %e, "[composio] tool: load_config failed");
+                    return Ok(ToolResult::error(format!(
+                        "composio: failed to load live config: {e}"
+                    )));
+                }
+            };
         let client = match create_composio_client(&live_config) {
             Ok(ComposioClientKind::Backend(client)) => {
                 tracing::debug!("[composio] list_toolkits.execute: backend variant");
@@ -415,10 +478,14 @@ impl Tool for ComposioListConnectionsTool {
         // were linked and prompt unnecessary re-authorization (#1710).
         // [#1710 Wave 4] Reload config fresh per execute so a mid-session
         // `composio.mode` toggle takes effect at the very next tool call.
-        // The Arc<Config> snapshot held by `self` was taken at agent-init
-        // time and is otherwise stale relative to subsequent set_api_key /
-        // clear_api_key RPCs.
-        let live_config = match config_rpc::load_config_with_timeout().await {
+        // Anchor the reload to this tool's original config path rather
+        // than re-resolving process-global `OPENHUMAN_WORKSPACE`; the
+        // tool is scoped to the user/workspace it was created for.
+        let live_config = match config_rpc::reload_config_snapshot_with_timeout(
+            self.config.as_ref(),
+        )
+        .await
+        {
             Ok(c) => c,
             Err(e) => {
                 tracing::warn!(error = %e, "[composio] list_connections.execute: load_config failed");
@@ -527,18 +594,19 @@ impl Tool for ComposioAuthorizeTool {
         // silently routing through the wrong tenant.
         // [#1710 Wave 4] Reload config fresh per execute so a mid-session
         // `composio.mode` toggle takes effect at the very next tool call.
-        // The Arc<Config> snapshot held by `self` was taken at agent-init
-        // time and is otherwise stale relative to subsequent set_api_key /
-        // clear_api_key RPCs.
-        let live_config = match config_rpc::load_config_with_timeout().await {
-            Ok(c) => c,
-            Err(e) => {
-                tracing::warn!(error = %e, "[composio] tool: load_config failed");
-                return Ok(ToolResult::error(format!(
-                    "composio: failed to load live config: {e}"
-                )));
-            }
-        };
+        // Anchor the reload to this tool's original config path rather
+        // than re-resolving process-global `OPENHUMAN_WORKSPACE`; the
+        // tool is scoped to the user/workspace it was created for.
+        let live_config =
+            match config_rpc::reload_config_snapshot_with_timeout(self.config.as_ref()).await {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::warn!(error = %e, "[composio] tool: load_config failed");
+                    return Ok(ToolResult::error(format!(
+                        "composio: failed to load live config: {e}"
+                    )));
+                }
+            };
         let client = match create_composio_client(&live_config) {
             Ok(ComposioClientKind::Backend(client)) => {
                 tracing::debug!("[composio] authorize.execute: backend variant");
@@ -674,18 +742,19 @@ impl Tool for ComposioListToolsTool {
         // path — is exactly the bug we're closing (#1710).
         // [#1710 Wave 4] Reload config fresh per execute so a mid-session
         // `composio.mode` toggle takes effect at the very next tool call.
-        // The Arc<Config> snapshot held by `self` was taken at agent-init
-        // time and is otherwise stale relative to subsequent set_api_key /
-        // clear_api_key RPCs.
-        let live_config = match config_rpc::load_config_with_timeout().await {
-            Ok(c) => c,
-            Err(e) => {
-                tracing::warn!(error = %e, "[composio] tool: load_config failed");
-                return Ok(ToolResult::error(format!(
-                    "composio: failed to load live config: {e}"
-                )));
-            }
-        };
+        // Anchor the reload to this tool's original config path rather
+        // than re-resolving process-global `OPENHUMAN_WORKSPACE`; the
+        // tool is scoped to the user/workspace it was created for.
+        let live_config =
+            match config_rpc::reload_config_snapshot_with_timeout(self.config.as_ref()).await {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::warn!(error = %e, "[composio] tool: load_config failed");
+                    return Ok(ToolResult::error(format!(
+                        "composio: failed to load live config: {e}"
+                    )));
+                }
+            };
         let client = match create_composio_client(&live_config) {
             Ok(ComposioClientKind::Backend(client)) => {
                 tracing::debug!("[composio] list_tools.execute: backend variant");
@@ -717,6 +786,7 @@ impl Tool for ComposioListToolsTool {
         match client.list_tools(toolkits.as_deref()).await {
             Ok(mut resp) => {
                 filter_list_tools_response(&mut resp).await;
+                let mut connected_toolkits: Option<HashSet<String>> = None;
 
                 if !include_unconnected {
                     // Restrict to toolkits with an ACTIVE / CONNECTED
@@ -725,7 +795,7 @@ impl Tool for ComposioListToolsTool {
                     // prompt's Delegation Guide stay in sync.
                     match client.list_connections().await {
                         Ok(conns) => {
-                            let connected: std::collections::HashSet<String> = conns
+                            let connected: HashSet<String> = conns
                                 .connections
                                 .iter()
                                 .filter(|c| c.is_active())
@@ -739,6 +809,7 @@ impl Tool for ComposioListToolsTool {
                                 kept = resp.tools.len(),
                                 "[composio] list_tools restricted to connected toolkits"
                             );
+                            connected_toolkits = Some(connected);
                         }
                         Err(e) => {
                             // Soft-fail: surface the issue to the agent
@@ -750,6 +821,18 @@ impl Tool for ComposioListToolsTool {
                                  include_unconnected=true to skip this check): {e}"
                             )));
                         }
+                    }
+                }
+
+                if resp.tools.is_empty() {
+                    let scoped_toolkits =
+                        normalized_scope_toolkits(toolkits.as_deref(), connected_toolkits.as_ref());
+                    if let Some(message) = empty_uncurated_toolkits_message(&scoped_toolkits) {
+                        tracing::debug!(
+                            toolkits = ?scoped_toolkits,
+                            "[composio] list_tools empty for uncurated toolkit scope"
+                        );
+                        return Ok(ToolResult::error(message));
                     }
                 }
 
@@ -849,7 +932,33 @@ impl Tool for ComposioExecuteTool {
             ));
         }
         let arguments = args.get("arguments").cloned();
-        tracing::debug!(tool = %tool, "[composio] tool execute.execute");
+        let connection_id = args
+            .get("connection_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        // INFO-level entry log — visible without bumping log level. Logs
+        // ARG KEYS only by default so traces don't leak email bodies / PII;
+        // the full arg JSON goes through a paired DEBUG log below for deep
+        // debugging. Together these let `grep "[composio][execute]"` show
+        // the full agent→backend audit trail at default verbosity.
+        let arg_keys: Vec<&str> = arguments
+            .as_ref()
+            .and_then(|v| v.as_object())
+            .map(|obj| obj.keys().map(|k| k.as_str()).collect())
+            .unwrap_or_default();
+        tracing::info!(
+            tool = %tool,
+            connection_id = %connection_id,
+            arg_keys = ?arg_keys,
+            "[composio][execute] >> dispatch"
+        );
+        if let Some(ref args_json) = arguments {
+            tracing::debug!(
+                tool = %tool,
+                args = %args_json,
+                "[composio][execute] >> full args (DEBUG)"
+            );
+        }
 
         // Agent-level sandbox gate (issue #685) — applies on top of the
         // user's scope preference below. When the currently-executing
@@ -929,10 +1038,14 @@ impl Tool for ComposioExecuteTool {
         // of mode — silently breaking direct mode for tool execution.
         // [#1710 Wave 4] Reload config fresh per execute so a mid-session
         // `composio.mode` toggle takes effect at the very next tool call.
-        // The Arc<Config> snapshot held by `self` was taken at agent-init
-        // time and is otherwise stale relative to subsequent set_api_key /
-        // clear_api_key RPCs.
-        let live_config = match config_rpc::load_config_with_timeout().await {
+        // Anchor the reload to this tool's original config path rather
+        // than re-resolving process-global `OPENHUMAN_WORKSPACE`; the
+        // tool is scoped to the user/workspace it was created for.
+        let live_config = match config_rpc::reload_config_snapshot_with_timeout(
+            self.config.as_ref(),
+        )
+        .await
+        {
             Ok(c) => c,
             Err(e) => {
                 tracing::warn!(error = %e, "[composio] tool execute.execute: load_config failed");
@@ -962,6 +1075,19 @@ impl Tool for ComposioExecuteTool {
         let elapsed_ms = started.elapsed().as_millis() as u64;
         match res {
             Ok(resp) => {
+                tracing::info!(
+                    tool = %tool,
+                    successful = resp.successful,
+                    error = ?resp.error,
+                    elapsed_ms,
+                    cost_usd = resp.cost_usd,
+                    "[composio][execute] << result"
+                );
+                tracing::debug!(
+                    tool = %tool,
+                    response = ?resp,
+                    "[composio][execute] << full response (DEBUG)"
+                );
                 crate::core::event_bus::publish_global(
                     crate::core::event_bus::DomainEvent::ComposioActionExecuted {
                         tool: tool.clone(),
@@ -992,6 +1118,12 @@ impl Tool for ComposioExecuteTool {
                 Ok(ToolResult::success(body))
             }
             Err(e) => {
+                tracing::warn!(
+                    tool = %tool,
+                    error = %e,
+                    elapsed_ms,
+                    "[composio][execute] << dispatch error"
+                );
                 crate::core::event_bus::publish_global(
                     crate::core::event_bus::DomainEvent::ComposioActionExecuted {
                         tool: tool.clone(),
@@ -1006,6 +1138,21 @@ impl Tool for ComposioExecuteTool {
         }
     }
 }
+
+// NOTE: A `composio_enable_scope` agent-callable meta-tool used to live
+// here. It was removed deliberately: scope elevation is a
+// security-sensitive, cross-session state change that unlocks
+// destructive actions, and putting that flip behind LLM-mediated
+// "user consent" both (a) made the safety contract depend on model
+// behavior — the weakest place for it — and (b) was a soft gate the
+// model could route around (e.g. trash-via-label). The user must
+// toggle scopes themselves in **Connections → {toolkit} → {scope}
+// row**; the agent only describes the gated capability and points at
+// that UI path.
+//
+// Two surfaces name this policy; keep them in sync:
+//   - `GatedIntegrationTool.unlock_paths` populated in `composio::ops`
+//   - `scope_error_message` returned from `composio_execute` blocks
 
 // ── Bulk registration helper ────────────────────────────────────────
 
@@ -1040,6 +1187,9 @@ pub fn all_composio_agent_tools(config: &crate::openhuman::config::Config) -> Ve
         Box::new(ComposioAuthorizeTool::new(config_arc.clone())),
         Box::new(ComposioListToolsTool::new(config_arc.clone())),
         Box::new(ComposioExecuteTool::new(config_arc)),
+        // Pref-elevation is intentionally NOT an agent-callable tool;
+        // the user must flip it themselves in the Connections UI.
+        // See the long comment above the (removed) ComposioEnableScopeTool.
     ];
     tracing::debug!(count = tools.len(), "[composio] agent tools registered");
     tools

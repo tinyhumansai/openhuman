@@ -14,7 +14,7 @@ impl Tool for MemoryTreeQueryGlobalTool {
     }
 
     fn description(&self) -> &str {
-        "Return the cross-source global digest for the last `window_days`. \
+        "Return the cross-source global digest for the last `time_window_days`. \
          The 7-day digest is also pre-loaded into the session context at \
          start, so only call this for a different window (e.g. 30 days, \
          1 day) or to refresh after new ingest."
@@ -24,13 +24,13 @@ impl Tool for MemoryTreeQueryGlobalTool {
         json!({
             "type": "object",
             "properties": {
-                "window_days": {
+                "time_window_days": {
                     "type": "integer",
                     "minimum": 1,
                     "description": "Lookback window in days (e.g. 7 for weekly recap)."
                 }
             },
-            "required": ["window_days"]
+            "required": ["time_window_days"]
         })
     }
 
@@ -41,7 +41,7 @@ impl Tool for MemoryTreeQueryGlobalTool {
         let cfg = config_rpc::load_config_with_timeout()
             .await
             .map_err(|e| anyhow::anyhow!("memory_tree_query_global: load config failed: {e}"))?;
-        let resp = retrieval::query_global(&cfg, req.window_days).await?;
+        let resp = retrieval::query_global(&cfg, req.time_window_days).await?;
         log::debug!(
             "[tool][memory_tree] query_global returning hits={} total={}",
             resp.hits.len(),

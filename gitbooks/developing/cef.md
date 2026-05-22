@@ -101,6 +101,26 @@ Legacy injection should shrink, never grow. New providers go straight onto the C
 
 A hidden CEF webview (`cef-prewarm`) boots the browser on app launch so the first child webview spawns instantly when the user clicks. It's torn down before `cef::shutdown()` to avoid races during quit. See `app/src-tauri/src/lib.rs` around the prewarm + close lifecycle.
 
+## Linux shell fallback for CEF startup crashes
+
+On some Linux desktops, especially NVIDIA proprietary driver setups under Wayland/XWayland, the Tauri/CEF shell can fail during native window configuration before the React app becomes usable. One known symptom is an X11 `BadWindow` error after CEF reports the main browser context.
+
+When the core itself is healthy, you can keep developing by running the core and frontend separately:
+
+```bash
+cargo build --bin openhuman-core
+./target/debug/openhuman-core run --port 7788
+```
+
+In another terminal:
+
+```bash
+cd app
+pnpm dev
+```
+
+Open the Vite URL in a regular browser, choose **Advanced** / remote core mode, set the RPC URL to `http://127.0.0.1:7788/rpc`, and use the bearer token written by the core. This bypasses native-only features such as tray, auto-update, and embedded provider webviews, but keeps the agent, memory, skills, and RPC surface available for debugging.
+
 ## Plugin audit
 
 Anything new added to `app/src-tauri/src/lib.rs` must be audited for `js_init_script` calls. `tauri-plugin-opener` ships an init script (`init-iife.js`) by default that adds a global click listener; we configure it with `.open_js_links_on_click(false)` so it doesn't run inside third-party webviews. `tauri-plugin-notification`'s init script was likewise dropped from the vendored copy.

@@ -1,8 +1,8 @@
 use crate::openhuman::agent::multimodal;
 use crate::openhuman::config::Config;
 use crate::openhuman::inference::local::ollama::{
-    ollama_base_url, OllamaEmbedRequest, OllamaEmbedResponse, OllamaGenerateOptions,
-    OllamaGenerateRequest,
+    ollama_base_url_from_config, redact_ollama_base_url, OllamaEmbedRequest, OllamaEmbedResponse,
+    OllamaGenerateOptions, OllamaGenerateRequest,
 };
 use crate::openhuman::inference::model_ids;
 use crate::openhuman::inference::presets::{self, VisionMode};
@@ -65,7 +65,7 @@ impl LocalAiService {
             }),
         };
 
-        let base = ollama_base_url();
+        let base = ollama_base_url_from_config(config);
         let url = format!("{base}/api/generate");
         let body_bytes = serde_json::to_vec(&body).map(|v| v.len()).unwrap_or(0);
         tracing::debug!(
@@ -156,9 +156,14 @@ impl LocalAiService {
         // user's laptop when stacked with other Ollama work. Gate it.
         let _gate_permit = crate::openhuman::scheduler_gate::wait_for_capacity().await;
 
+        let embed_base = ollama_base_url_from_config(config);
+        log::debug!(
+            "[local_ai:embed] embed: using base_url={}",
+            redact_ollama_base_url(&embed_base)
+        );
         let response = self
             .http
-            .post(format!("{}/api/embed", ollama_base_url()))
+            .post(format!("{embed_base}/api/embed"))
             .json(&OllamaEmbedRequest {
                 model: embedding_model.clone(),
                 input: items.clone(),

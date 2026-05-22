@@ -5,7 +5,7 @@ use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader
 use crate::core::logging::CliLogDefault;
 
 use super::http::{run_http, HttpServerConfig};
-use super::protocol;
+use super::{protocol, session::McpSession};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum McpTransport {
@@ -124,13 +124,15 @@ where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
+    let mut session = McpSession::default();
     let mut lines = BufReader::new(reader).lines();
     while let Some(line) = lines.next_line().await? {
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
         }
-        if let Some(response) = protocol::handle_json_line(trimmed).await {
+        if let Some(response) = protocol::handle_json_line_with_session(trimmed, &mut session).await
+        {
             writer.write_all(response.as_bytes()).await?;
             writer.write_all(b"\n").await?;
             writer.flush().await?;

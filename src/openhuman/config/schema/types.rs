@@ -9,10 +9,11 @@ use std::path::PathBuf;
 /// Standard model identifiers matching the backend model registry.
 pub const MODEL_AGENTIC_V1: &str = "agentic-v1";
 pub const MODEL_REASONING_V1: &str = "reasoning-v1";
-/// Conversational tier — the orchestrator (user-facing chat agent) rides on
-/// this by default. Backend maps it to Kimi K2.6 Turbo on Fireworks (128k
-/// context, `supportsThinking: false`) — tuned for time-to-first-token so
-/// chat responses feel snappy.
+/// Conversational tier (deprecated — retired from the backend strict model
+/// registry in migration 2→3). Do not use for new sessions; the backend now
+/// returns 400 for threads that send `chat-v1`. Retained here only for
+/// migration code that needs to identify and replace the old model identifier.
+/// Use [`MODEL_REASONING_QUICK_V1`] or [`DEFAULT_MODEL`] instead.
 pub const MODEL_CHAT_V1: &str = "chat-v1";
 /// Low-latency chat tier. Backend maps this to Kimi K2.6 Turbo on
 /// Fireworks (128k context, `supportsThinking: false`) — tuned for
@@ -25,16 +26,14 @@ pub const MODEL_REASONING_QUICK_V1: &str = "reasoning-quick-v1";
 pub const MODEL_CODING_V1: &str = "coding-v1";
 /// Default model used when no explicit model is configured.
 ///
-/// The orchestrator (user-facing chat agent) reads the user's message and
-/// either replies directly or delegates to a sub-agent via `spawn_subagent`.
-/// We route it through the `chat` workload (`hint:chat`) so the user-facing
-/// `chat_provider` setting in Settings → LLM → Routing actually drives the
-/// main chat turn — and so the orchestrator gets the low-latency `chat` tier
-/// by default (backend maps `hint:chat` to Kimi K2.6 Turbo, tuned for
-/// time-to-first-token; see backend PR #760). Sub-agents that actually
-/// execute tool calls explicitly ride on `hint:agentic`/`hint:coding` via
-/// their `ModelSpec::Hint(...)` declarations — see `builtin_definitions.rs`.
-pub const DEFAULT_MODEL: &str = MODEL_CHAT_V1;
+/// Set to `reasoning-quick-v1` (Kimi K2.6 Turbo on Fireworks — low-latency,
+/// 128k context, tuned for time-to-first-token). `chat-v1` was the previous
+/// value here but was retired from the backend strict model registry; new
+/// session threads that sent `chat-v1` received a 400 error. Existing threads
+/// had it silently remapped to `reasoning-v1` by the backend, but sub-agent
+/// spawns (new threads) failed. Migration 2 → 3 (`retire_chat_v1_model`)
+/// upgrades any persisted `config.toml` that still holds `chat-v1`.
+pub const DEFAULT_MODEL: &str = MODEL_REASONING_QUICK_V1;
 
 /// Top-level configuration (config.toml root).
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

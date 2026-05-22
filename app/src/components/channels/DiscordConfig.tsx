@@ -1,11 +1,13 @@
 import debug from 'debug';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { useOAuthConnectionListener } from '../../hooks/useOAuthConnectionListener';
 import { AUTH_MODE_LABELS } from '../../lib/channels/definitions';
 import { useT } from '../../lib/i18n/I18nContext';
 import { channelConnectionsApi } from '../../services/api/channelConnectionsApi';
 import { callCoreRpc } from '../../services/coreRpcClient';
 import {
+  clearOtherPendingForChannel,
   disconnectChannelConnection,
   setChannelConnectionStatus,
   upsertChannelConnection,
@@ -70,27 +72,11 @@ const DiscordConfig = ({ definition }: DiscordConfigProps) => {
     };
   }, []);
 
-  useEffect(() => {
-    const handleOauthSuccess = (event: Event) => {
-      const customEvent = event as CustomEvent<{ toolkit?: string }>;
-      const toolkit = customEvent.detail?.toolkit?.toLowerCase();
-      if (toolkit !== 'discord') return;
-
-      log('discord oauth success deep link received');
-      dispatch(
-        upsertChannelConnection({
-          channel: 'discord',
-          authMode: 'oauth',
-          patch: { status: 'connected', lastError: undefined, capabilities: ['read', 'write'] },
-        })
-      );
-    };
-
-    window.addEventListener('oauth:success', handleOauthSuccess);
-    return () => {
-      window.removeEventListener('oauth:success', handleOauthSuccess);
-    };
-  }, [dispatch]);
+  // Centralised OAuth deep-link bridge — also handles `oauth:error` so failed
+  // sign-ins transition out of `connecting` instead of pinning the badge. See
+  // useOAuthConnectionListener.ts for the per-channel matching contract. Fixes
+  // the Discord half of #2128.
+  useOAuthConnectionListener({ channel: 'discord', authMode: 'oauth' });
 
   const startLinkPolling = useCallback(
     (token: string) => {
@@ -153,6 +139,16 @@ const DiscordConfig = ({ definition }: DiscordConfigProps) => {
     (spec: AuthModeSpec) => {
       const key = `discord:${spec.mode}`;
       void runBusy(key, async () => {
+        // Cancel any in-flight managed-link poll before clearing sibling
+        // state. Without this, a stale poll completion could later dispatch
+        // `managed_dm` back to connected/error, reviving a flow the user
+        // just switched away from. (CodeRabbit on PR #2256.)
+        pollAbort.current?.abort();
+        setLinkToken(null);
+
+        // Drop any sibling auth mode that's still mid-`connecting` so the
+        // panel doesn't show two methods pinned simultaneously (#2128).
+        dispatch(clearOtherPendingForChannel({ channel: 'discord', exceptAuthMode: spec.mode }));
         dispatch(
           setChannelConnectionStatus({
             channel: 'discord',

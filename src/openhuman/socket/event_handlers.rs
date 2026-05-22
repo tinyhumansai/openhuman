@@ -196,10 +196,33 @@ pub(super) fn handle_sio_event(
                 return;
             }
 
+            // Lift sender / reply_target / thread_ts off the raw payload so
+            // the agent loop can derive per-sender conversation keys
+            // instead of collapsing every inbound message in a shared
+            // channel onto the same `channel:<name>` thread (which lets
+            // one participant resume another's cached agent session).
+            let nonempty = |v: Option<&serde_json::Value>| -> Option<String> {
+                v.and_then(|x| x.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+            };
+            let sender = nonempty(data.get("sender"))
+                .or_else(|| nonempty(data.get("from")))
+                .or_else(|| nonempty(data.get("user_id")));
+            let reply_target = nonempty(data.get("reply_target"))
+                .or_else(|| nonempty(data.get("chat_id")))
+                .or_else(|| nonempty(data.get("channel_id")));
+            let thread_ts =
+                nonempty(data.get("thread_ts")).or_else(|| nonempty(data.get("thread_id")));
+
             publish_global(DomainEvent::ChannelInboundMessage {
                 event_name: event_name.to_string(),
                 channel,
                 message,
+                sender,
+                reply_target,
+                thread_ts,
                 raw_data: data,
             });
         }
