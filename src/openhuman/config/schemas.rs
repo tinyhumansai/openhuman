@@ -122,6 +122,11 @@ struct MeetSettingsUpdate {
 }
 
 #[derive(Debug, Deserialize)]
+struct AutonomySettingsUpdate {
+    max_actions_per_hour: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
 struct LocalAiSettingsUpdate {
     runtime_enabled: Option<bool>,
     /// MVP opt-in marker. Tied to `runtime_enabled` from the unified AI
@@ -206,6 +211,8 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("get_analytics_settings"),
         schemas("update_meet_settings"),
         schemas("get_meet_settings"),
+        schemas("update_autonomy_settings"),
+        schemas("get_autonomy_settings"),
         schemas("agent_server_status"),
         schemas("reset_local_data"),
         schemas("get_data_paths"),
@@ -689,6 +696,31 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 name: "auto_orchestrator_handoff",
                 ty: TypeSchema::Bool,
                 comment: "Whether the orchestrator handoff fires on Meet call end.",
+                required: true,
+            }],
+        },
+        "update_autonomy_settings" => ControllerSchema {
+            namespace: "config",
+            function: "update_autonomy_settings",
+            description:
+                "Update agent autonomy policy settings (currently the per-hour tool action ceiling).",
+            inputs: vec![FieldSchema {
+                name: "max_actions_per_hour",
+                ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
+                comment: "Maximum tool actions an agent may run per rolling hour (1-10000).",
+                required: false,
+            }],
+            outputs: vec![json_output("snapshot", "Updated config snapshot.")],
+        },
+        "get_autonomy_settings" => ControllerSchema {
+            namespace: "config",
+            function: "get_autonomy_settings",
+            description: "Read current agent autonomy policy settings.",
+            inputs: vec![],
+            outputs: vec![FieldSchema {
+                name: "max_actions_per_hour",
+                ty: TypeSchema::U64,
+                comment: "Current maximum tool actions per rolling hour.",
                 required: true,
             }],
         },
