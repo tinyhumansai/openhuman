@@ -694,6 +694,36 @@ fn is_session_expired_error_does_not_match_unrelated_errors() {
 }
 
 #[test]
+fn is_session_expired_error_skips_discord_rewrap_for_2285() {
+    // Cross-module regression guard for #2285: the Discord domain
+    // controller intentionally formats its upstream-auth failures so
+    // they do NOT match this dispatch-time classifier. If anyone
+    // changes the wording on either side back into a string that
+    // contains both "401" and "unauthorized", a connected-Discord
+    // card click would once again log the user out of OpenHuman.
+    //
+    // We pin the exact substrings the Discord rewrap was designed
+    // to avoid, plus the canonical post-rewrap message body, so
+    // either-side drift fails loudly.
+    let canonical_rewrap = "Discord API error: Discord list_guilds: bot token was rejected \
+         (upstream HTTP four-oh-one). Open Settings → Channels → Discord \
+         and rotate / reconnect the bot token.";
+    assert!(
+        !is_session_expired_error(canonical_rewrap),
+        "Discord rewrap must NOT trip the session-expired classifier: {canonical_rewrap}"
+    );
+    // Defensive: also pin the 403 variant. Same rewrap path, same
+    // requirement — neither '403' nor 'forbidden' is part of the
+    // session classifier today, but locking the message in keeps a
+    // future regression visible.
+    let canonical_rewrap_403 =
+        "Discord API error: Discord list_channels: bot token lacks required Discord permissions \
+         (upstream HTTP four-oh-three). Open Settings → Channels → Discord \
+         and rotate / reconnect the bot token.";
+    assert!(!is_session_expired_error(canonical_rewrap_403));
+}
+
+#[test]
 fn is_param_validation_error_matches_the_three_validator_shapes() {
     // Regression guard for OPENHUMAN-TAURI-20: pre-#1467 cores rejected
     // `api_key` because it wasn't in the schema yet. The error string
