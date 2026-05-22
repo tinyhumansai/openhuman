@@ -4,8 +4,15 @@
  * Handles storing/retrieving user preferences like RPC URL using
  * localStorage (web) or Tauri store (desktop).
  */
+import debug from 'debug';
+
 import { CORE_RPC_URL, E2E_DEFAULT_CORE_MODE } from './config';
+import { redactRpcUrlForLog } from './redactRpcUrlForLog';
 import { isTauri } from './tauriCommands';
+
+export { redactRpcUrlForLog } from './redactRpcUrlForLog';
+
+const log = debug('config-persistence');
 
 // Storage key for RPC URL preference
 const RPC_URL_STORAGE_KEY = 'openhuman_core_rpc_url';
@@ -86,7 +93,7 @@ export function storeRpcUrl(url: string): void {
     if (url && url.trim().length > 0) {
       const normalized = normalizeRpcUrl(url);
       localStorage.setItem(RPC_URL_STORAGE_KEY, normalized);
-      console.debug('[configPersistence] Stored RPC URL:', { url: normalized });
+      log('Stored RPC URL: %s', redactRpcUrlForLog(normalized));
     } else {
       // Allow clearing the stored URL to reset to default
       localStorage.removeItem(RPC_URL_STORAGE_KEY);
@@ -182,16 +189,34 @@ export function isAllowedCloudRpcUrl(url: string): boolean {
  * @returns The normalized URL
  */
 export function normalizeRpcUrl(url: string): string {
-  const normalized = url.trim().replace(/\/+$/, '');
+  const trimmed = url.trim();
   try {
-    const parsed = new URL(normalized);
-    if (parsed.pathname === '/' || parsed.pathname === '') {
-      return `${parsed.origin}/rpc${parsed.search}${parsed.hash}`;
-    }
+    // Parse before trimming path slashes so query/hash values such as ?next=/
+    // or #/ stay byte-for-byte intact.
+    new URL(trimmed);
+
+    const suffixStart = firstUrlSuffixIndex(trimmed);
+    const base = suffixStart === -1 ? trimmed : trimmed.slice(0, suffixStart);
+    const suffix = suffixStart === -1 ? '' : trimmed.slice(suffixStart);
+    const pathStart = base.indexOf('/', base.indexOf('://') + 3);
+    const origin = pathStart === -1 ? base : base.slice(0, pathStart);
+    const path = pathStart === -1 ? '' : base.slice(pathStart);
+    const pathWithoutTrailingSlashes = path.replace(/\/+$/, '');
+    const normalizedPath = pathWithoutTrailingSlashes || '/rpc';
+
+    return `${origin}${normalizedPath}${suffix}`;
   } catch {
     // Validation reports malformed URLs. Keep this helper side-effect free.
   }
-  return normalized;
+  return trimmed.replace(/\/+$/, '');
+}
+
+function firstUrlSuffixIndex(url: string): number {
+  const searchIndex = url.indexOf('?');
+  const hashIndex = url.indexOf('#');
+  if (searchIndex === -1) return hashIndex;
+  if (hashIndex === -1) return searchIndex;
+  return Math.min(searchIndex, hashIndex);
 }
 
 /**

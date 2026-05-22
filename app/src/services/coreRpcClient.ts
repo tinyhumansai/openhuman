@@ -4,6 +4,7 @@ import debug from 'debug';
 import { dispatchLocalAiMethod } from '../lib/ai/localCoreAiMemory';
 import { CORE_RPC_TIMEOUT_MS, CORE_RPC_URL } from '../utils/config';
 import { getStoredCoreToken, normalizeRpcUrl, peekStoredRpcUrl } from '../utils/configPersistence';
+import { redactRpcUrlForLog } from '../utils/redactRpcUrlForLog';
 import { sanitizeError } from '../utils/sanitize';
 import { isTauri as coreIsTauri } from '../utils/tauriCommands/common';
 import { normalizeRpcMethod } from './rpcMethods';
@@ -316,7 +317,7 @@ export async function getCoreRpcUrl(): Promise<string> {
       const storedUrl = peekStoredRpcUrl();
       resolvedCoreRpcUrl = normalizeRpcUrl(storedUrl ?? CORE_RPC_URL);
       coreRpcError('core_rpc_url invoke failed; using fallback RPC URL', {
-        fallback: resolvedCoreRpcUrl,
+        fallback: redactRpcUrlForLog(resolvedCoreRpcUrl),
         usedStoredUrl: Boolean(storedUrl),
         error: sanitizeError(err),
       });

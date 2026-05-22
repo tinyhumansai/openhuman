@@ -17,6 +17,7 @@ import {
   isValidRpcUrl,
   normalizeRpcUrl,
   peekStoredRpcUrl,
+  redactRpcUrlForLog,
   storeCoreMode,
   storeCoreToken,
   storeRpcUrl,
@@ -151,6 +152,28 @@ describe('configPersistence', () => {
 
     it('preserves URL without trailing slash', () => {
       expect(normalizeRpcUrl('http://localhost:7788/rpc')).toBe('http://localhost:7788/rpc');
+    });
+
+    it('preserves query and hash values when normalizing paths', () => {
+      expect(normalizeRpcUrl('https://host.example?next=/')).toBe(
+        'https://host.example/rpc?next=/'
+      );
+      expect(normalizeRpcUrl('https://host.example/#/')).toBe('https://host.example/rpc#/');
+      expect(normalizeRpcUrl('https://host.example/rpc/?next=/#/')).toBe(
+        'https://host.example/rpc?next=/#/'
+      );
+    });
+  });
+
+  describe('redactRpcUrlForLog', () => {
+    it('removes credentials, query, and hash values before logging', () => {
+      expect(redactRpcUrlForLog('https://user:pass@host.example/rpc?token=secret#/token')).toBe(
+        'https://host.example/rpc'
+      );
+    });
+
+    it('returns a sentinel for malformed URLs', () => {
+      expect(redactRpcUrlForLog('not a url')).toBe('[invalid-url]');
     });
   });
 
