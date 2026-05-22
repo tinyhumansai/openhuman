@@ -33,6 +33,13 @@ const waitForOAuthAuthReadiness = vi.hoisted(() =>
   vi.fn().mockResolvedValue({ ready: true as const })
 );
 
+const coreRpcCache = vi.hoisted(() => ({
+  clearCoreRpcUrlCache: vi.fn(),
+  clearCoreRpcTokenCache: vi.fn(),
+}));
+
+vi.mock('../../services/coreRpcClient', () => coreRpcCache);
+
 vi.mock('../oauthAppVersionGate', async importOriginal => {
   const actual = await importOriginal<typeof import('../oauthAppVersionGate')>();
   return {
@@ -59,6 +66,8 @@ describe('desktopDeepLinkListener', () => {
     waitForOAuthAuthReadiness.mockResolvedValue({ ready: true });
     vi.mocked(storeSession).mockReset();
     vi.mocked(storeSession).mockResolvedValue(undefined);
+    coreRpcCache.clearCoreRpcUrlCache.mockClear();
+    coreRpcCache.clearCoreRpcTokenCache.mockClear();
     windowControls.show.mockClear();
     windowControls.unminimize.mockClear();
     windowControls.setFocus.mockClear();
@@ -172,6 +181,8 @@ describe('desktopDeepLinkListener', () => {
     await waitForAuthSettled();
 
     expect(storeSession).toHaveBeenCalledWith('abc', {});
+    expect(coreRpcCache.clearCoreRpcUrlCache).toHaveBeenCalledTimes(1);
+    expect(coreRpcCache.clearCoreRpcTokenCache).toHaveBeenCalledTimes(1);
     expect(getDeepLinkAuthState().isProcessing).toBe(false);
   });
 
