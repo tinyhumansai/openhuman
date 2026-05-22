@@ -78,10 +78,11 @@ fn build_backend_reqwest_client() -> Result<Client> {
         );
     }
 
-    // Force rustls for consistent cross-platform TLS behavior.
-    Client::builder()
+    // Platform-appropriate TLS backend: Windows → schannel (honors the OS
+    // cert store, required for corporate TLS-inspection proxies); macOS /
+    // Linux → rustls. See [`crate::openhuman::tls::tls_client_builder`].
+    crate::openhuman::tls::tls_client_builder()
         .default_headers(default_headers)
-        .use_rustls_tls()
         .http1_only()
         .timeout(Duration::from_secs(120))
         .connect_timeout(Duration::from_secs(15))

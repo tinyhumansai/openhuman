@@ -4,6 +4,7 @@ import { getCurrent, onOpenUrl } from '@tauri-apps/plugin-deep-link';
 
 import { patchCoreStateSnapshot } from '../lib/coreState/store';
 import { consumeLoginToken } from '../services/api/authApi';
+import { clearCoreRpcTokenCache, clearCoreRpcUrlCache } from '../services/coreRpcClient';
 import {
   beginDeepLinkAuthProcessing,
   completeDeepLinkAuthProcessing,
@@ -76,6 +77,8 @@ const focusMainWindow = async () => {
 };
 
 const applySessionToken = async (sessionToken: string): Promise<void> => {
+  clearCoreRpcUrlCache();
+  clearCoreRpcTokenCache();
   await storeSession(sessionToken, {});
   patchCoreStateSnapshot({ snapshot: { sessionToken } });
   window.dispatchEvent(new CustomEvent(SESSION_TOKEN_UPDATED_EVENT, { detail: { sessionToken } }));

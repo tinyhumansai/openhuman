@@ -326,6 +326,44 @@ pub async fn run_subagent(
 // Typed mode — narrow prompt, filtered tools, cheaper model
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Deduplicate assembled tool specs by name, keeping the first occurrence.
+///
+/// The sub-agent's `filtered_specs` is a `Vec` assembled from
+/// `parent.all_tool_specs` indices plus dynamic tools, so a delegation tool can
+/// shadow a same-named skill/integration tool (common for the wide-set
+/// `tools_agent`), leaving two specs with the same name. Strict providers reject
+/// such a request with `400 "Tool names must be unique."` The main-agent path
+/// dedups via [`session::builder::dedup_visible_tool_specs`]; this separate
+/// sub-agent assembly must do the same.
+///
+/// First occurrence wins so registration-order semantics are preserved (tool
+/// dispatch still resolves by name). Dropped duplicates are logged at `debug`
+/// (diagnostic instrumentation, per the repo Rust logging guideline).
+///
+/// Extracted as a free function so the regression suite can exercise the dedup
+/// without standing up the full `run_typed_mode` plumbing.
+fn dedup_tool_specs_by_name(agent_id: &str, specs: Vec<ToolSpec>) -> Vec<ToolSpec> {
+    let mut seen: HashSet<String> = HashSet::with_capacity(specs.len());
+    let mut deduped: Vec<ToolSpec> = Vec::with_capacity(specs.len());
+    let mut dropped: Vec<String> = Vec::new();
+    for spec in specs {
+        if seen.insert(spec.name.clone()) {
+            deduped.push(spec);
+        } else {
+            dropped.push(spec.name);
+        }
+    }
+    if !dropped.is_empty() {
+        tracing::debug!(
+            agent_id = %agent_id,
+            "[subagent_runner] dropped {} duplicate tool spec(s) before sending to provider: {:?}",
+            dropped.len(),
+            dropped
+        );
+    }
+    deduped
+}
+
 /// Execute a sub-agent in "Typed" mode.
 ///
 /// This mode builds a brand-new, minimized system prompt specifically for the
@@ -838,6 +876,10 @@ async fn run_typed_mode(
         filtered_specs.push(tool.spec());
         allowed_names.insert(tool.name().to_string());
     }
+
+    // Dedup by tool name before the specs reach the provider (see
+    // `dedup_tool_specs_by_name` for why duplicates appear here).
+    let filtered_specs = dedup_tool_specs_by_name(&definition.id, filtered_specs);
 
     tracing::debug!(
         agent_id = %definition.id,
@@ -1679,6 +1721,10 @@ pub(crate) fn user_is_signed_in_to_composio(config: &crate::openhuman::config::C
 #[cfg(test)]
 #[path = "ops_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "ops_dedup_tests.rs"]
+mod dedup_tests;
 
 #[cfg(test)]
 #[path = "ops_truncation_tests.rs"]

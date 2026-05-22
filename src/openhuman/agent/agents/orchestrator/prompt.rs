@@ -251,6 +251,16 @@ mod tests {
     }
 
     #[test]
+    fn build_does_not_route_scope_errors_as_disconnected() {
+        let body = build(&ctx_with(&[])).unwrap();
+        assert!(body.contains("[composio:error:insufficient_scope]"));
+        assert!(body.contains("missing required permissions"));
+        assert!(body.contains("connection exists but needs additional permissions"));
+        assert!(body.contains("Settings"));
+        assert!(body.contains("Connections"));
+    }
+
+    #[test]
     fn delegation_guide_uses_compact_collapsed_format() {
         let integrations = vec![ConnectedIntegration {
             toolkit: "gmail".into(),

@@ -151,18 +151,72 @@ async fn list_bot_guilds_parses_discord_response() {
 }
 
 #[tokio::test]
-async fn list_bot_guilds_errors_on_non_success_status() {
+async fn list_bot_guilds_rewraps_401_so_global_session_cascade_does_not_fire() {
+    // Upstream returns 401 with the canonical Discord auth-error body.
+    // BEFORE #2285 the error string flowed up to JSON-RPC as
+    // "Discord list guilds failed (401 Unauthorized): {\"message\":
+    // \"401: Unauthorized\",\"code\":0}" — that pair tripped
+    // `jsonrpc::is_session_expired_error` ("401" + "unauthorized")
+    // and logged the user out of OpenHuman over a *Discord*
+    // credentials problem.
+    //
+    // After the fix the user-facing message:
+    //   - does NOT contain "401" or "unauthorized" as substrings
+    //     (so `is_session_expired_error` returns false), AND
+    //   - names the endpoint + the actionable Settings → Channels →
+    //     Discord remediation path.
     let app = Router::new().route(
         "/users/@me/guilds",
-        get(|| async { (StatusCode::UNAUTHORIZED, "bad token") }),
+        get(|| async {
+            (
+                StatusCode::UNAUTHORIZED,
+                r#"{"message":"401: Unauthorized","code":0}"#,
+            )
+        }),
     );
     let base = spawn_mock(app).await;
     let err = list_bot_guilds_at_base(&base, "t")
         .await
         .unwrap_err()
         .to_string();
-    assert!(err.contains("list guilds failed"));
-    assert!(err.contains("401"));
+    let lower = err.to_ascii_lowercase();
+    assert!(
+        !lower.contains("401"),
+        "must NOT contain '401' substring: {err}"
+    );
+    assert!(
+        !lower.contains("unauthorized"),
+        "must NOT contain 'unauthorized' substring: {err}"
+    );
+    assert!(
+        err.contains("list_guilds"),
+        "endpoint identifier preserved for triage: {err}"
+    );
+    assert!(
+        err.contains("Settings → Channels → Discord"),
+        "remediation path present: {err}"
+    );
+}
+
+#[tokio::test]
+async fn list_bot_guilds_5xx_still_carries_raw_status() {
+    // Non-auth errors fall through to the legacy verbose format —
+    // those don't match `is_session_expired_error` even verbatim, so
+    // surfacing the raw status code helps the user / triage.
+    let app = Router::new().route(
+        "/users/@me/guilds",
+        get(|| async { (StatusCode::INTERNAL_SERVER_ERROR, "discord melting") }),
+    );
+    let base = spawn_mock(app).await;
+    let err = list_bot_guilds_at_base(&base, "t")
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains("500"),
+        "5xx must surface verbatim status: {err}"
+    );
+    assert!(err.contains("list_guilds"));
 }
 
 #[tokio::test]
@@ -188,18 +242,36 @@ async fn list_guild_channels_filters_text_channels_and_sorts_by_position() {
 }
 
 #[tokio::test]
-async fn list_guild_channels_errors_on_non_success_status() {
+async fn list_guild_channels_rewraps_403_with_remediation_and_no_session_keywords() {
+    // 403 follows the same rewrap path as 401 (#2285) — both can
+    // happen on a stale/disabled bot token AND both share enough
+    // substrings with `is_session_expired_error` to be a problem if
+    // raw upstream text reaches the JSON-RPC layer. The user-facing
+    // message must use the safer wording.
     let app = Router::new().route(
         "/guilds/{guild_id}/channels",
-        get(|| async { (StatusCode::FORBIDDEN, "nope") }),
+        get(|| async {
+            (
+                StatusCode::FORBIDDEN,
+                r#"{"message":"Missing Access","code":50001}"#,
+            )
+        }),
     );
     let base = spawn_mock(app).await;
     let err = list_guild_channels_at_base(&base, "t", "g1")
         .await
         .unwrap_err()
         .to_string();
-    assert!(err.contains("list channels failed"));
-    assert!(err.contains("403"));
+    let lower = err.to_ascii_lowercase();
+    assert!(!lower.contains("403"), "raw 403 must not leak: {err}");
+    assert!(
+        err.contains("list_channels"),
+        "endpoint identifier preserved: {err}"
+    );
+    assert!(
+        err.contains("Settings → Channels → Discord"),
+        "remediation path present: {err}"
+    );
 }
 
 #[tokio::test]
@@ -363,6 +435,17 @@ async fn check_channel_permissions_errors_on_member_lookup_failure() {
         .await
         .unwrap_err()
         .to_string();
-    assert!(err.contains("member info failed"));
-    assert!(err.contains("401"));
+    // Endpoint identifier preserved in the rewrap (#2285), and the
+    // 401 path keeps the substrings "401"/"unauthorized" out of the
+    // user-facing message so the JSON-RPC session-expired classifier
+    // ignores it.
+    assert!(err.contains("get_member_info"));
+    assert!(
+        !err.to_ascii_lowercase().contains("401"),
+        "rewrapped message must not contain '401': {err}"
+    );
+    assert!(
+        !err.to_ascii_lowercase().contains("unauthorized"),
+        "rewrapped message must not contain 'unauthorized': {err}"
+    );
 }

@@ -258,6 +258,16 @@ mod tests {
     }
 
     #[test]
+    fn build_distinguishes_scope_errors_from_disconnected_auth() {
+        let body = build(&ctx_with(&[], &[])).unwrap();
+        assert!(body.contains("[composio:error:insufficient_scope]"));
+        assert!(body.contains("Scope errors are not disconnections"));
+        assert!(body.contains("Never say the toolkit is disconnected"));
+        assert!(body.contains("Settings"));
+        assert!(body.contains("Connections"));
+    }
+
+    #[test]
     fn build_skips_unconnected_integrations() {
         let integrations = vec![ConnectedIntegration {
             toolkit: "notion".into(),

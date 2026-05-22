@@ -1,5 +1,5 @@
 import debug from 'debug';
-import { io, Socket } from 'socket.io-client';
+import { type Socket } from 'socket.io-client';
 
 import { getCoreStateSnapshot } from '../lib/coreState/store';
 import { SocketIOMCPTransportImpl } from '../lib/mcp';
@@ -11,7 +11,8 @@ import { resetForUser, setSocketIdForUser, setStatusForUser } from '../store/soc
 import type { ChannelAuthMode, ChannelConnectionStatus, ChannelType } from '../types/channels';
 import { IS_DEV } from '../utils/config';
 import { createSafeLogData, sanitizeError } from '../utils/sanitize';
-import { getCoreRpcUrl } from './coreRpcClient';
+import { getCoreRpcToken, getCoreRpcUrl } from './coreRpcClient';
+import { createCoreSocket } from './coreSocket';
 
 // Socket service logger using debug package
 // Enable logging by setting DEBUG=socket* in environment or localStorage
@@ -170,6 +171,12 @@ class SocketService {
     store.dispatch(setBackend({ value: 'connecting' }));
 
     const backendUrl = await resolveCoreSocketBaseUrl();
+    // If another `connect(token)` raced in while the URL was resolving,
+    // a stale invocation will see `this.token` flipped to the newer JWT
+    // (or a fresh socket already attached) and must bail before its
+    // io(...) call stomps the newer connection. Same guard repeats
+    // after the core-token resolve below.
+    if (this.token !== token || this.socket) return;
     socketLog('Connecting to core socket', { userId: uid, backendUrl });
 
     // Ensure we're not connecting to the wrong URL (Vite dev HMR port guard).
@@ -182,20 +189,24 @@ class SocketService {
       return;
     }
 
-    const socketOptions = {
-      auth: { token },
-      path: '/socket.io/',
-      transports: ['websocket', 'polling'] as ('websocket' | 'polling')[],
-      reconnection: true,
-      reconnectionDelay: 1000,
-      reconnectionAttempts: 5,
-      forceNew: true,
-      timeout: 2000,
-      upgrade: true,
-      query: {},
-    };
+    // The local core's Socket.IO handshake validates the per-process bearer
+    // exposed via `core_rpc_token` (Tauri IPC) / the cloud-mode picker. The
+    // session JWT rides alongside on the `auth` payload as `session` so a
+    // future handler can correlate the connection with the logged-in user.
+    const coreToken = await getCoreRpcToken();
+    if (this.token !== token || this.socket) return;
 
-    this.socket = io(backendUrl, socketOptions);
+    this.socket = createCoreSocket(backendUrl, {
+      coreToken,
+      authExtras: { session: token },
+      overrides: {
+        reconnectionDelay: 1000,
+        reconnectionAttempts: 5,
+        timeout: 2000,
+        upgrade: true,
+        query: {},
+      },
+    });
 
     // Flush any listeners that were registered before the socket existed.
     if (this.pendingListeners.length > 0) {

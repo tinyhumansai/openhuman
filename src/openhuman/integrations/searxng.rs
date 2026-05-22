@@ -23,8 +23,8 @@ fn shared_http_client() -> reqwest::Client {
     SHARED_HTTP_CLIENT
         .get_or_init(|| {
             tracing::debug!("[searxng] initializing shared HTTP client");
-            reqwest::Client::builder()
-                .use_rustls_tls()
+            // Platform-appropriate TLS backend — see [`crate::openhuman::tls`].
+            crate::openhuman::tls::tls_client_builder()
                 .build()
                 .expect("failed to build shared SearXNG HTTP client")
         })
