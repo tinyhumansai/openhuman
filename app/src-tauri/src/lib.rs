@@ -8,6 +8,8 @@ mod cef_profile;
 mod companion_commands;
 mod core_process;
 mod core_rpc;
+#[cfg(target_os = "windows")]
+mod deep_link_ipc_windows;
 mod dictation_hotkeys;
 mod discord_scanner;
 mod fake_camera;
@@ -408,6 +410,33 @@ struct ResolvedDataPaths {
     active_workspace_marker_path: std::path::PathBuf,
 }
 
+fn is_windows_file_lock_raw_os_error(raw_os_error: Option<i32>) -> bool {
+    matches!(raw_os_error, Some(32 | 33))
+}
+
+fn is_windows_file_lock_error(error: &std::io::Error) -> bool {
+    cfg!(windows) && is_windows_file_lock_raw_os_error(error.raw_os_error())
+}
+
+fn reset_local_data_delete_error(
+    label: &str,
+    path: &std::path::Path,
+    error: &std::io::Error,
+) -> String {
+    if is_windows_file_lock_error(error) {
+        log::warn!(
+            "[core] reset_local_data: Windows file lock blocked removal of {label} at {}: {error}",
+            path.display()
+        );
+        return format!(
+            "Failed to remove {label} at {} because it is locked by another OpenHuman window or process. Close all OpenHuman windows and try again. ({error})",
+            path.display()
+        );
+    }
+
+    format!("Failed to remove {label} at {}: {error}", path.display())
+}
+
 /// Call the core's `config_get_data_paths` RPC and parse the response.
 async fn fetch_data_paths() -> Result<ResolvedDataPaths, String> {
     let url = crate::core_rpc::core_rpc_url_value();
@@ -475,10 +504,7 @@ async fn remove_path_if_exists(path: &std::path::Path, label: &str) -> Result<()
             );
             Ok(())
         }
-        Err(e) => Err(format!(
-            "Failed to remove {label} at {}: {e}",
-            path.display()
-        )),
+        Err(e) => Err(reset_local_data_delete_error(label, path, &e)),
     }
 }
 
@@ -499,10 +525,7 @@ async fn remove_dir_if_exists(path: &std::path::Path, label: &str) -> Result<(),
             );
             Ok(())
         }
-        Err(e) => Err(format!(
-            "Failed to remove {label} at {}: {e}",
-            path.display()
-        )),
+        Err(e) => Err(reset_local_data_delete_error(label, path, &e)),
     }
 }
 
@@ -1169,6 +1192,59 @@ fn set_main_window_hidden(hide: bool) {
     );
 }
 
+/// Look up the main `WebviewWindow`, optionally waiting briefly on Windows
+/// for the Tauri runtime to re-track the window after SW_SHOW.
+///
+/// Why this exists (OPENHUMAN-TAURI-3A): on Windows the close button routes
+/// through [`set_main_window_hidden`] which uses raw-HWND `SW_HIDE`. CEF
+/// treats the hidden host as gone and the Tauri runtime drops its
+/// `WebviewWindow` record for `"main"` until the next event-loop tick after
+/// SW_SHOW restores visibility. A tray "Show window" callback that runs
+/// `set_main_window_hidden(false)` and then immediately calls
+/// `app.get_webview_window("main")` can race the re-track step and observe
+/// `None` even though the OS window is visible — Sentry sees a
+/// `[tray] failed to show main window from menu: main window not found`
+/// warn even though, from the user's perspective, the window came back.
+///
+/// Bounded retry budget: up to 5 lookups with 10 ms between attempts (≤ 50 ms
+/// worst case). The tray menu is closed during this window, so the small
+/// blocking delay is invisible. After the budget expires the original
+/// error path still triggers, preserving the signal if the runtime never
+/// re-tracks (which would indicate a real lifecycle bug, not a race).
+///
+/// Non-Windows platforms use a single lookup — the close-to-tray flow that
+/// produces the race is Windows-specific (the macOS close button routes
+/// through `app.hide()` per PR #2049, and Linux/X11 keeps the
+/// `WebviewWindow` record across `WM_DELETE_WINDOW` handling).
+fn get_main_webview_window_with_retry(
+    app: &AppHandle<AppRuntime>,
+) -> Option<tauri::WebviewWindow<AppRuntime>> {
+    #[cfg(target_os = "windows")]
+    {
+        const ATTEMPTS: usize = 5;
+        const BACKOFF: std::time::Duration = std::time::Duration::from_millis(10);
+        for attempt in 0..ATTEMPTS {
+            if let Some(window) = app.get_webview_window("main") {
+                if attempt > 0 {
+                    log::debug!(
+                        "[show_main_window] runtime re-tracked main window after {} retries",
+                        attempt
+                    );
+                }
+                return Some(window);
+            }
+            if attempt + 1 < ATTEMPTS {
+                std::thread::sleep(BACKOFF);
+            }
+        }
+        None
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        app.get_webview_window("main")
+    }
+}
+
 fn show_main_window(app: &AppHandle<AppRuntime>) -> Result<(), String> {
     // On Windows: surface the OS top-level Chrome_WidgetWin_1 frame BEFORE
     // any Tauri lookups. After our close handler's SW_HIDE the runtime
@@ -1177,7 +1253,10 @@ fn show_main_window(app: &AppHandle<AppRuntime>) -> Result<(), String> {
     // and the early `?` below would abort before SW_SHOW fires (#1607).
     // EnumWindows + SW_SHOW operates directly on the OS HWND that
     // survived independently, and the runtime re-tracks the window once
-    // it's visible again.
+    // it's visible again — but re-tracking lands on the next event-loop
+    // tick, not synchronously with SW_SHOW. `get_main_webview_window_with_retry`
+    // bounds the wait to ~50 ms total so the tray callback can pick up the
+    // re-tracked window without re-emitting OPENHUMAN-TAURI-3A.
     #[cfg(target_os = "windows")]
     {
         set_main_window_hidden(false);
@@ -1186,8 +1265,7 @@ fn show_main_window(app: &AppHandle<AppRuntime>) -> Result<(), String> {
             let _ = webview.set_focus();
         }
     }
-    let window = app
-        .get_webview_window("main")
+    let window = get_main_webview_window_with_retry(app)
         .ok_or_else(|| "main window not found".to_string())?;
     window
         .show()
@@ -2080,11 +2158,10 @@ pub fn run() {
     //
     // Fix: acquire a named Win32 mutex at the very top of `run()` — before
     // any CEF or builder work — so any secondary instance sees
-    // `ERROR_ALREADY_EXISTS` and exits immediately. The mutex name uses
-    // a `-cef-init` suffix distinct from the plugin's own `-sim` mutex so
-    // the two guards don't interfere; the plugin still handles WM_COPYDATA
-    // forwarding for graceful "focus primary" behaviour once the app is
-    // fully initialised.
+    // `ERROR_ALREADY_EXISTS` and exits immediately. If the secondary was
+    // launched for an `openhuman://` OAuth callback, forward that URL to the
+    // primary through our pre-CEF pipe before exiting; the Tauri deep-link
+    // plugin cannot run on this early secondary path.
     //
     // The RAII guard holds the mutex handle for the lifetime of `run()`.
     // Windows releases all process handles automatically on exit, so
@@ -2103,9 +2180,17 @@ pub fn run() {
 
         if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
             // Another instance is already past this point — exit before we
-            // touch CEF at all. The plugin's WM_COPYDATA path won't run
-            // here (it needs an AppHandle from setup()), but the primary
-            // is already showing its window so the user experience is fine.
+            // touch CEF at all. Forward deep links first so OAuth callbacks
+            // are not dropped by this early pre-plugin exit.
+            match deep_link_ipc_windows::try_forward_deep_links() {
+                deep_link_ipc_windows::ForwardResult::Forwarded
+                | deep_link_ipc_windows::ForwardResult::NoUrls => {}
+                deep_link_ipc_windows::ForwardResult::NoPrimary => {
+                    log::warn!(
+                        "[single-instance] secondary had deep-link argv but could not reach primary pipe"
+                    );
+                }
+            }
             if !handle.is_null() {
                 unsafe { CloseHandle(handle) };
             }
@@ -2126,6 +2211,9 @@ pub fn run() {
         }
         OwnedMutex(handle as isize)
     };
+
+    #[cfg(windows)]
+    let _deep_link_pipe_guard = deep_link_ipc_windows::bind_and_listen();
 
     // CEF cache-lock preflight (macOS only): if another OpenHuman instance
     // is already holding the CEF user-data-dir, the vendored
@@ -2416,32 +2504,49 @@ pub fn run() {
                 if let Err(err) = app.deep_link().register_all() {
                     log::warn!("[deep-link] register_all failed (non-fatal): {err}");
                 }
+                deep_link_ipc_windows::drain_pending_urls(app.app_handle());
             }
             #[cfg(target_os = "linux")]
             {
                 // `tauri-plugin-deep-link::register_all` on Linux shells out
-                // to `xdg-mime` (and `update-desktop-database` / `xdg-icon-resource`)
-                // to install MIME-type associations for our custom URL
-                // schemes. On Linux installs that ship without xdg-utils —
-                // WSL2 without a desktop env, headless servers, minimal
-                // containers (OPENHUMAN-TAURI-AS: WSL2 user in BR) — the
-                // tool isn't on PATH and the plugin fires
-                // `log::error!("Failed to run OS command \`xdg-mime\`…")`
+                // to `xdg-mime`, `update-desktop-database`, and
+                // `xdg-icon-resource` in sequence to install MIME-type
+                // associations for our custom URL schemes. On Linux installs
+                // that ship without one or more of those binaries — WSL2
+                // without a desktop env, headless servers, minimal
+                // containers (OPENHUMAN-TAURI-AS: WSL2 user in BR;
+                // OPENHUMAN-TAURI-5V: same shape but `xdg-mime` was
+                // installed while `update-desktop-database` was missing) —
+                // the plugin fires
+                // `log::error!("Failed to run OS command \`<name>\`…")`
                 // *internally* before returning the Err. That internal
                 // error log is scooped up by `sentry-tracing` into a Sentry
                 // event even though our `if let Err` arm below already
-                // demotes the user-visible failure to a warn. Skip the
-                // plugin call entirely when xdg-mime isn't available so
-                // the internal log never fires — registration only matters
-                // on systems with a desktop environment, where xdg-utils
-                // is part of the desktop install anyway.
-                if path_has_executable("xdg-mime") {
+                // demotes the user-visible failure to a warn.
+                //
+                // Pre-flight every binary the plugin will shell out to and
+                // skip `register_all` entirely if any of them is missing —
+                // partial registration can't succeed because the plugin
+                // runs all three in sequence inside `register_all`, so the
+                // first missing binary kills the whole flow. Registration
+                // only matters on systems with a desktop environment,
+                // where xdg-utils ships as a single package.
+                const XDG_BINARIES: &[&str] =
+                    &["xdg-mime", "update-desktop-database", "xdg-icon-resource"];
+                let missing: Vec<&str> = XDG_BINARIES
+                    .iter()
+                    .copied()
+                    .filter(|name| !path_has_executable(name))
+                    .collect();
+                if missing.is_empty() {
                     if let Err(err) = app.deep_link().register_all() {
                         log::warn!("[deep-link] register_all failed (non-fatal): {err}");
                     }
                 } else {
                     log::warn!(
-                        "[deep-link] skipping register_all — xdg-mime not on PATH (xdg-utils not installed; deep-link MIME registration unavailable on this host)"
+                        "[deep-link] skipping register_all — xdg-utils binaries missing on PATH: {} \
+                         (xdg-utils not installed; deep-link MIME registration unavailable on this host)",
+                        missing.join(", ")
                     );
                 }
             }
@@ -3372,6 +3477,41 @@ mod tests {
         }
     }
 
+    #[test]
+    fn reset_local_data_windows_file_lock_error_codes_are_recognized() {
+        assert!(is_windows_file_lock_raw_os_error(Some(32)));
+        assert!(is_windows_file_lock_raw_os_error(Some(33)));
+        assert!(!is_windows_file_lock_raw_os_error(Some(5)));
+        assert!(!is_windows_file_lock_raw_os_error(None));
+    }
+
+    #[test]
+    fn reset_local_data_delete_error_keeps_generic_message_for_other_errors() {
+        let err = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+        let msg = reset_local_data_delete_error(
+            "current openhuman dir",
+            std::path::Path::new("/tmp/openhuman"),
+            &err,
+        );
+
+        assert!(msg.starts_with("Failed to remove current openhuman dir at /tmp/openhuman:"));
+        assert!(!msg.contains("Close all OpenHuman windows and try again"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn reset_local_data_delete_error_explains_windows_file_locks() {
+        let err = std::io::Error::from_raw_os_error(32);
+        let msg = reset_local_data_delete_error(
+            "current openhuman dir",
+            std::path::Path::new("C:\\Users\\me\\.openhuman"),
+            &err,
+        );
+
+        assert!(msg.contains("locked by another OpenHuman window or process"));
+        assert!(msg.contains("Close all OpenHuman windows and try again"));
+    }
+
     /// Tests for setup_tray conditional compilation
     /// The PR adds two versions of setup_tray():
     /// 1. No-op for linux + cef: logs warning and returns Ok(())
@@ -3977,6 +4117,46 @@ mod tests {
         assert!(
             !path_has_executable("xdg-mime"),
             "unset $PATH must yield false (skip register_all on the missing-xdg-utils branch)"
+        );
+
+        match original {
+            Some(v) => std::env::set_var("PATH", v),
+            None => std::env::remove_var("PATH"),
+        }
+    }
+
+    /// Regression guard for OPENHUMAN-TAURI-5V: a Linux host with `xdg-mime`
+    /// installed but `update-desktop-database` missing must classify as
+    /// "skip register_all" — the pre-#5V code only checked `xdg-mime` and
+    /// would have entered the plugin call, which then fires the noisy
+    /// `Failed to run OS command \`update-desktop-database\`` internal log
+    /// that escapes to Sentry. The Wave-4 fix pre-flights every xdg-utils
+    /// binary the plugin shells out to; this test pins that contract by
+    /// checking each binary lookup independently with a `$PATH` that
+    /// contains only `xdg-mime`.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn path_has_executable_returns_false_for_partial_xdg_utils_install() {
+        let _g = ENV_LOCK.lock().unwrap();
+        let original = std::env::var_os("PATH");
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        // Only `xdg-mime` exists; `update-desktop-database` and
+        // `xdg-icon-resource` are deliberately absent.
+        std::fs::write(dir.path().join("xdg-mime"), b"#!/bin/sh\n").expect("write stub");
+        std::env::set_var("PATH", dir.path());
+
+        assert!(
+            path_has_executable("xdg-mime"),
+            "xdg-mime stub must be discoverable in the partial-install $PATH"
+        );
+        assert!(
+            !path_has_executable("update-desktop-database"),
+            "partial xdg-utils install must NOT report update-desktop-database present (OPENHUMAN-TAURI-5V)"
+        );
+        assert!(
+            !path_has_executable("xdg-icon-resource"),
+            "partial xdg-utils install must NOT report xdg-icon-resource present"
         );
 
         match original {

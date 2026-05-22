@@ -242,6 +242,33 @@ fn agent_builder_falls_back_to_main_when_definition_name_unset() {
     );
 }
 
+#[test]
+fn set_connected_integrations_marks_session_initialized_and_updates_hash() {
+    let mut agent = build_minimal_agent_with_definition_name(Some("orchestrator"));
+    assert!(
+        !agent.connected_integrations_initialized,
+        "fresh builder-built agents should start with placeholder integration state"
+    );
+
+    agent.set_connected_integrations(vec![
+        crate::openhuman::context::prompt::ConnectedIntegration {
+            toolkit: "gmail".into(),
+            description: "Email".into(),
+            tools: vec![],
+            gated_tools: vec![],
+            connected: true,
+        },
+    ]);
+
+    assert!(agent.connected_integrations_initialized);
+    assert_eq!(agent.connected_integrations().len(), 1);
+    assert_eq!(agent.connected_integrations()[0].toolkit, "gmail");
+    assert_eq!(
+        agent.last_seen_integrations_hash,
+        crate::openhuman::composio::connected_set_hash(agent.connected_integrations())
+    );
+}
+
 #[tokio::test]
 async fn turn_without_tools_returns_text() {
     let workspace = tempfile::TempDir::new().expect("temp workspace");

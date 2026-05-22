@@ -38,6 +38,13 @@ describe('TelegramConfig', () => {
     expect(screen.getByText('Login with OpenHuman')).toBeInTheDocument();
   });
 
+  it('documents Telegram remote-control commands', () => {
+    renderWithProviders(<TelegramConfig definition={telegramDef} />);
+    expect(screen.getByText('Remote control (Telegram)')).toBeInTheDocument();
+    expect(screen.getByText(/send \/status, \/sessions, \/new, or \/help/i)).toBeInTheDocument();
+    expect(screen.getByText(/Model routing still uses \/model and \/models/i)).toBeInTheDocument();
+  });
+
   it('shows credential fields for bot_token mode', () => {
     renderWithProviders(<TelegramConfig definition={telegramDef} />);
     expect(screen.getByPlaceholderText(/ABC-DEF1234/)).toBeInTheDocument();

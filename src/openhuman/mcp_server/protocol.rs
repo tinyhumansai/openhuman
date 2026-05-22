@@ -2,7 +2,7 @@ use serde_json::{json, Map, Value};
 
 use super::{session::McpSession, tools};
 
-const LATEST_PROTOCOL_VERSION: &str = "2025-11-25";
+pub const LATEST_PROTOCOL_VERSION: &str = "2025-11-25";
 const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &[
     "2024-11-05",
     "2025-03-26",

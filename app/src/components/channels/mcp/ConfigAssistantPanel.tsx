@@ -71,6 +71,8 @@ const ConfigAssistantPanel = ({
       const msg = err instanceof Error ? err.message : 'Failed to get response';
       log('config_assist error: %s', msg);
       setError(msg);
+      setMessages(messages);
+      setInput(text);
     } finally {
       setSending(false);
     }

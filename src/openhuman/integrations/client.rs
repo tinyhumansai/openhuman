@@ -92,16 +92,11 @@ impl IntegrationClient {
         // to fix up the input so the regression is observable in logs.
         let backend_url = sanitize_backend_url(&backend_url);
 
-        // Match the TLS config used by `BackendOAuthClient` in
-        // `src/api/rest.rs`: force rustls + HTTP/1.1 so we get the same
-        // consistent cross-platform behaviour every other backend-proxied
-        // domain (billing, team, webhooks, referral, …) already relies
-        // on. The default builder picks up native-tls on macOS, which
-        // has historically failed on staging TLS handshakes while
-        // rustls succeeds — so the integrations client was the odd one
-        // out with raw "error sending request" failures.
-        let http_client = reqwest::Client::builder()
-            .use_rustls_tls()
+        // Platform-appropriate TLS backend — see [`crate::openhuman::tls`].
+        // Windows uses schannel (native-tls) to honor the OS cert store;
+        // macOS / Linux keep rustls which avoids the OpenSSL runtime dep and
+        // has historically been more reliable on staging TLS handshakes.
+        let http_client = crate::openhuman::tls::tls_client_builder()
             .http1_only()
             .timeout(Duration::from_secs(60))
             .connect_timeout(Duration::from_secs(15))
