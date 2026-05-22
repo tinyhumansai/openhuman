@@ -92,10 +92,22 @@ pub enum DomainEvent {
 
     // ── Channels ────────────────────────────────────────────────────────
     /// An inbound channel message from the transport layer, ready for processing.
+    ///
+    /// `sender`, `reply_target`, and `thread_ts` are carried alongside
+    /// `channel` so the agent loop can derive per-sender conversation keys
+    /// the same way `channels::context::conversation_history_key` does for
+    /// other inbound paths — keying on `channel` alone collapses distinct
+    /// senders inside a shared channel into one cached session.
     ChannelInboundMessage {
         event_name: String,
         channel: String,
         message: String,
+        #[doc = "Originating user/account id within the channel. `None` for legacy publishers that don't surface it."]
+        sender: Option<String>,
+        #[doc = "Direct-message peer or group thread the reply should go to. `None` when the channel does not distinguish."]
+        reply_target: Option<String>,
+        #[doc = "Slack/Discord thread anchor when the message is in-thread. `None` for top-level messages."]
+        thread_ts: Option<String>,
         raw_data: serde_json::Value,
     },
     /// A message was received on a channel.

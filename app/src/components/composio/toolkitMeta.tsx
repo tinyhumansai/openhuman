@@ -322,6 +322,16 @@ export const KNOWN_COMPOSIO_TOOLKITS = Object.freeze(
   MANAGED_COMPOSIO_TOOLKITS.map(entry => entry.slug)
 );
 
+function descriptionForToolkit(key: string, name: string, category: SkillCategory): string {
+  if (key === 'instagram') {
+    return (
+      'Connect Instagram Business or Creator accounts (personal accounts are not supported). ' +
+      'If Meta shows “Too Many Requests” (HTTP 429), wait a few minutes before retrying.'
+    );
+  }
+  return defaultDescription(name, category);
+}
+
 export function composioToolkitMeta(slug: string): ComposioToolkitMeta {
   const key = canonicalizeComposioToolkitSlug(slug);
   const name = MANAGED_TOOLKIT_NAME_BY_SLUG.get(key) ?? prettifyUnknownSlug(key);
@@ -329,7 +339,7 @@ export function composioToolkitMeta(slug: string): ComposioToolkitMeta {
   return {
     slug: key,
     name,
-    description: defaultDescription(name, category),
+    description: descriptionForToolkit(key, name, category),
     category,
     icon: <ComposioLogoBadge slug={key} name={name} />,
     logoUrl: composioLogoUrl(key),

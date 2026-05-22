@@ -18,11 +18,11 @@
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use rusqlite::{params, Connection};
+use rusqlite::{params, types::Type, Connection};
 
 use crate::openhuman::config::Config;
 
-use super::types::{ApprovalDecision, PendingApproval};
+use super::types::{ApprovalAuditEntry, ApprovalDecision, PendingApproval};
 
 /// SQL schema applied on every `with_connection` call.
 const SCHEMA: &str = "
@@ -177,6 +177,31 @@ pub fn decide(
     })
 }
 
+/// List recently decided approval rows for durable audit views.
+pub fn list_recent_decisions(config: &Config, limit: usize) -> Result<Vec<ApprovalAuditEntry>> {
+    let limit = limit.clamp(1, 500);
+    with_connection(config, |conn| {
+        let mut stmt = conn
+            .prepare(
+                "SELECT request_id, tool_name, action_summary, args_redacted,
+                        session_id, created_at, expires_at, decided_at, decision
+                 FROM pending_approvals
+                 WHERE decided_at IS NOT NULL AND decision IS NOT NULL
+                 ORDER BY decided_at DESC
+                 LIMIT ?1",
+            )
+            .context("[approval::store] prepare list_recent_decisions")?;
+        let rows = stmt
+            .query_map(params![limit as i64], |row| Ok(row_to_audit_entry(row)))
+            .context("[approval::store] query list_recent_decisions")?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row.context("[approval::store] audit row decode")??);
+        }
+        Ok(out)
+    })
+}
+
 /// Drop all rows owned by `session_id` — called when the gate detects
 /// a session changeover so stale parked rows do not accumulate.
 pub fn purge_session(config: &Config, session_id: &str) -> Result<usize> {
@@ -190,6 +215,50 @@ pub fn purge_session(config: &Config, session_id: &str) -> Result<usize> {
             .context("[approval::store] purge_session")?;
         Ok(removed)
     })
+}
+
+fn row_to_audit_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<ApprovalAuditEntry> {
+    let args_str: String = row.get(3)?;
+    let args_redacted: serde_json::Value = serde_json::from_str(&args_str)
+        .unwrap_or_else(|_| serde_json::json!({ "_error": "args_redacted not valid JSON" }));
+    let created_str: String = row.get(5)?;
+    let expires_opt: Option<String> = row.get(6)?;
+    let decided_str: String = row.get(7)?;
+    let decision_str: String = row.get(8)?;
+    let decision = ApprovalDecision::from_str(&decision_str).ok_or_else(|| {
+        invalid_text_column(8, format!("unknown approval decision `{decision_str}`"))
+    })?;
+    Ok(ApprovalAuditEntry {
+        request_id: row.get(0)?,
+        tool_name: row.get(1)?,
+        action_summary: row.get(2)?,
+        args_redacted,
+        session_id: row.get(4)?,
+        created_at: parse_audit_rfc3339(5, &created_str)?,
+        expires_at: expires_opt
+            .as_deref()
+            .map(|value| parse_audit_rfc3339(6, value))
+            .transpose()?,
+        decided_at: parse_audit_rfc3339(7, &decided_str)?,
+        decision,
+    })
+}
+
+fn parse_audit_rfc3339(column: usize, input: &str) -> rusqlite::Result<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(input)
+        .map(|t| t.with_timezone(&Utc))
+        .map_err(|err| rusqlite::Error::FromSqlConversionFailure(column, Type::Text, Box::new(err)))
+}
+
+fn invalid_text_column(column: usize, message: String) -> rusqlite::Error {
+    rusqlite::Error::FromSqlConversionFailure(
+        column,
+        Type::Text,
+        Box::new(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            message,
+        )),
+    )
 }
 
 fn row_to_pending(row: &rusqlite::Row<'_>) -> rusqlite::Result<PendingApproval> {
@@ -320,5 +389,93 @@ mod tests {
         let rows = list_pending(&config).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].request_id, "survives");
+    }
+
+    #[test]
+    fn list_recent_decisions_returns_durable_audit_rows() {
+        let (config, _dir) = test_config();
+        insert_pending(&config, &sample("approved", "sess-A")).unwrap();
+        insert_pending(&config, &sample("denied", "sess-B")).unwrap();
+        decide(&config, "approved", ApprovalDecision::ApproveOnce).unwrap();
+        decide(&config, "denied", ApprovalDecision::Deny).unwrap();
+
+        let rows = list_recent_decisions(&config, 10).unwrap();
+
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().any(|row| {
+            row.request_id == "approved" && row.decision == ApprovalDecision::ApproveOnce
+        }));
+        assert!(rows
+            .iter()
+            .any(|row| row.request_id == "denied" && row.decision == ApprovalDecision::Deny));
+        assert!(
+            rows.iter().all(|row| !row.tool_name.is_empty()),
+            "audit rows should retain tool metadata"
+        );
+    }
+
+    #[test]
+    fn list_recent_decisions_clamps_zero_limit_to_one() {
+        let (config, _dir) = test_config();
+        insert_pending(&config, &sample("one", "sess-A")).unwrap();
+        insert_pending(&config, &sample("two", "sess-A")).unwrap();
+        decide(&config, "one", ApprovalDecision::ApproveOnce).unwrap();
+        decide(&config, "two", ApprovalDecision::Deny).unwrap();
+
+        let rows = list_recent_decisions(&config, 0).unwrap();
+
+        assert_eq!(rows.len(), 1);
+    }
+
+    #[test]
+    fn list_recent_decisions_rejects_unknown_decision_values() {
+        let (config, _dir) = test_config();
+        insert_pending(&config, &sample("corrupt-decision", "sess-A")).unwrap();
+        with_connection(&config, |conn| {
+            conn.execute(
+                "UPDATE pending_approvals
+                 SET decided_at = ?1, decision = ?2
+                 WHERE request_id = ?3",
+                params![Utc::now().to_rfc3339(), "maybe", "corrupt-decision"],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+
+        let err = list_recent_decisions(&config, 10).unwrap_err();
+
+        assert!(
+            err.to_string().contains("Invalid column type")
+                || err.to_string().contains("unknown approval decision"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn list_recent_decisions_rejects_invalid_audit_timestamps() {
+        let (config, _dir) = test_config();
+        insert_pending(&config, &sample("corrupt-time", "sess-A")).unwrap();
+        with_connection(&config, |conn| {
+            conn.execute(
+                "UPDATE pending_approvals
+                 SET decided_at = ?1, decision = ?2
+                 WHERE request_id = ?3",
+                params![
+                    "not-a-date",
+                    ApprovalDecision::Deny.as_str(),
+                    "corrupt-time"
+                ],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+
+        let err = list_recent_decisions(&config, 10).unwrap_err();
+
+        assert!(
+            err.to_string().contains("Invalid column type")
+                || err.to_string().contains("premature end of input"),
+            "unexpected error: {err}"
+        );
     }
 }

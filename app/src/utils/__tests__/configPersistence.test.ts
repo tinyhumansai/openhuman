@@ -17,6 +17,7 @@ import {
   isValidRpcUrl,
   normalizeRpcUrl,
   peekStoredRpcUrl,
+  redactRpcUrlForLog,
   storeCoreMode,
   storeCoreToken,
   storeRpcUrl,
@@ -142,7 +143,7 @@ describe('configPersistence', () => {
 
     it('removes trailing slashes', () => {
       expect(normalizeRpcUrl('http://localhost:7788/rpc/')).toBe('http://localhost:7788/rpc');
-      expect(normalizeRpcUrl('http://localhost:7788/')).toBe('http://localhost:7788');
+      expect(normalizeRpcUrl('http://localhost:7788/')).toBe('http://localhost:7788/rpc');
     });
 
     it('handles multiple trailing slashes', () => {
@@ -151,6 +152,28 @@ describe('configPersistence', () => {
 
     it('preserves URL without trailing slash', () => {
       expect(normalizeRpcUrl('http://localhost:7788/rpc')).toBe('http://localhost:7788/rpc');
+    });
+
+    it('preserves query and hash values when normalizing paths', () => {
+      expect(normalizeRpcUrl('https://host.example?next=/')).toBe(
+        'https://host.example/rpc?next=/'
+      );
+      expect(normalizeRpcUrl('https://host.example/#/')).toBe('https://host.example/rpc#/');
+      expect(normalizeRpcUrl('https://host.example/rpc/?next=/#/')).toBe(
+        'https://host.example/rpc?next=/#/'
+      );
+    });
+  });
+
+  describe('redactRpcUrlForLog', () => {
+    it('removes credentials, query, and hash values before logging', () => {
+      expect(redactRpcUrlForLog('https://user:pass@host.example/rpc?token=secret#/token')).toBe(
+        'https://host.example/rpc'
+      );
+    });
+
+    it('returns a sentinel for malformed URLs', () => {
+      expect(redactRpcUrlForLog('not a url')).toBe('[invalid-url]');
     });
   });
 
@@ -258,8 +281,11 @@ describe('configPersistence', () => {
   });
 
   describe('normalizeRpcUrl — edge cases', () => {
-    it('does not add /rpc suffix when missing (normalizeRpcUrl only strips, not appends)', () => {
-      expect(normalizeRpcUrl('http://127.0.0.1:7788')).toBe('http://127.0.0.1:7788');
+    it('adds /rpc suffix when given a core base URL', () => {
+      expect(normalizeRpcUrl('http://127.0.0.1:7788')).toBe('http://127.0.0.1:7788/rpc');
+      expect(normalizeRpcUrl('https://example.trycloudflare.com/')).toBe(
+        'https://example.trycloudflare.com/rpc'
+      );
     });
 
     it('does not double-add /rpc — leaves existing /rpc alone', () => {
@@ -285,6 +311,19 @@ describe('configPersistence', () => {
   });
 
   describe('storeRpcUrl + getStoredRpcUrl — round-trip', () => {
+    it('stores normalized base core URLs as RPC endpoints', () => {
+      storeRpcUrl('https://remote.example.com');
+      expect(localStorage.getItem(STORAGE_KEY)).toBe('https://remote.example.com/rpc');
+      expect(getStoredRpcUrl()).toBe('https://remote.example.com/rpc');
+      expect(peekStoredRpcUrl()).toBe('https://remote.example.com/rpc');
+    });
+
+    it('normalizes previously persisted base core URLs on read', () => {
+      localStorage.setItem(STORAGE_KEY, 'https://old.example.com/');
+      expect(getStoredRpcUrl()).toBe('https://old.example.com/rpc');
+      expect(peekStoredRpcUrl()).toBe('https://old.example.com/rpc');
+    });
+
     it('round-trips an HTTPS URL', () => {
       storeRpcUrl('https://remote.example.com/rpc');
       expect(getStoredRpcUrl()).toBe('https://remote.example.com/rpc');

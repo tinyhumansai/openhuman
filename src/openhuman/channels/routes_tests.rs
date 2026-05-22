@@ -1,7 +1,9 @@
 use super::*;
+use crate::core::event_bus::{DomainEvent, EventHandler};
 use crate::openhuman::channels::context::{
     ChannelRuntimeContext, ProviderCacheMap, RouteSelectionMap,
 };
+use crate::openhuman::channels::telegram::{TelegramRemoteCommand, TelegramRemoteSubscriber};
 use crate::openhuman::channels::traits::ChannelMessage;
 use crate::openhuman::inference::provider::{ChatMessage, Provider};
 use crate::openhuman::memory::{Memory, MemoryCategory, MemoryEntry};
@@ -177,7 +179,20 @@ fn runtime_command_parsing_and_provider_support_are_channel_scoped() {
         parse_runtime_command("telegram", "/model"),
         Some(ChannelRuntimeCommand::ShowModel)
     );
+    assert_eq!(
+        parse_runtime_command("telegram", "/status@OpenHumanBot"),
+        Some(ChannelRuntimeCommand::TelegramRemote(
+            TelegramRemoteCommand::Status
+        ))
+    );
+    assert_eq!(
+        parse_runtime_command("telegram", "/help"),
+        Some(ChannelRuntimeCommand::TelegramRemote(
+            TelegramRemoteCommand::Help
+        ))
+    );
     assert_eq!(parse_runtime_command("slack", "/models"), None);
+    assert_eq!(parse_runtime_command("discord", "/status"), None);
     assert_eq!(parse_runtime_command("telegram", "hello"), None);
 }
 
@@ -357,4 +372,201 @@ async fn handle_runtime_command_set_model_clears_sender_history_and_persists_rou
     let sent = channel_impl.sent.lock().unwrap();
     assert_eq!(sent.len(), 1);
     assert!(sent[0].content.contains("Model switched to `gpt-5-mini`"));
+}
+
+#[tokio::test]
+async fn handle_runtime_command_telegram_status_replies_without_agent() {
+    let ctx = runtime_context(PathBuf::from("/tmp"));
+    let channel_impl = Arc::new(RecordingChannel::default());
+    let channel: Arc<dyn Channel> = channel_impl.clone();
+    let msg = ChannelMessage {
+        id: "1".into(),
+        sender: "alice".into(),
+        reply_target: "chat-remote".into(),
+        content: "/status".into(),
+        channel: "telegram".into(),
+        timestamp: 0,
+        thread_ts: Some("42".into()),
+    };
+
+    let handled = handle_runtime_command_if_needed(&ctx, &msg, Some(&channel)).await;
+    assert!(handled);
+
+    let sent = channel_impl.sent.lock().unwrap();
+    assert_eq!(sent.len(), 1);
+    assert!(sent[0].content.contains("**Status**"));
+    assert!(sent[0].content.contains("Provider:"));
+}
+
+#[tokio::test]
+async fn handle_runtime_command_without_target_channel_still_consumes_command() {
+    let ctx = runtime_context(PathBuf::from("/tmp"));
+    let msg = ChannelMessage {
+        id: "1".into(),
+        sender: "alice".into(),
+        reply_target: "chat-remote".into(),
+        content: "/help".into(),
+        channel: "telegram".into(),
+        timestamp: 0,
+        thread_ts: None,
+    };
+
+    let handled = handle_runtime_command_if_needed(&ctx, &msg, None).await;
+    assert!(handled);
+}
+
+#[tokio::test]
+async fn handle_runtime_command_telegram_help_replies_with_remote_command_list() {
+    let ctx = runtime_context(PathBuf::from("/tmp"));
+    let channel_impl = Arc::new(RecordingChannel::default());
+    let channel: Arc<dyn Channel> = channel_impl.clone();
+    let msg = ChannelMessage {
+        id: "1".into(),
+        sender: "alice".into(),
+        reply_target: "chat-remote".into(),
+        content: "/help".into(),
+        channel: "telegram".into(),
+        timestamp: 0,
+        thread_ts: Some("42".into()),
+    };
+
+    let handled = handle_runtime_command_if_needed(&ctx, &msg, Some(&channel)).await;
+    assert!(handled);
+
+    let sent = channel_impl.sent.lock().unwrap();
+    assert_eq!(sent.len(), 1);
+    assert!(sent[0]
+        .content
+        .contains("OpenHuman Telegram remote control (phase 1):"));
+    assert!(sent[0].content.contains("`/status`"));
+    assert!(sent[0].content.contains("`/sessions`"));
+    assert!(sent[0].content.contains("`/new`"));
+    assert!(sent[0]
+        .content
+        .contains("Model routing: `/model`, `/models`"));
+}
+
+#[tokio::test]
+async fn handle_runtime_command_telegram_sessions_reports_empty_store() {
+    let tempdir = tempfile::tempdir().unwrap();
+    let ctx = runtime_context(tempdir.path().to_path_buf());
+    let channel_impl = Arc::new(RecordingChannel::default());
+    let channel: Arc<dyn Channel> = channel_impl.clone();
+    let msg = ChannelMessage {
+        id: "1".into(),
+        sender: "alice".into(),
+        reply_target: "chat-remote".into(),
+        content: "/sessions".into(),
+        channel: "telegram".into(),
+        timestamp: 0,
+        thread_ts: Some("42".into()),
+    };
+
+    let handled = handle_runtime_command_if_needed(&ctx, &msg, Some(&channel)).await;
+    assert!(handled);
+
+    let sent = channel_impl.sent.lock().unwrap();
+    assert_eq!(sent.len(), 1);
+    assert!(sent[0]
+        .content
+        .contains("No conversation threads yet. Send `/new` to create one."));
+    assert_eq!(sent[0].thread_ts.as_deref(), Some("42"));
+}
+
+#[tokio::test]
+async fn handle_runtime_command_telegram_new_status_and_sessions_round_trip() {
+    let tempdir = tempfile::tempdir().unwrap();
+    let ctx = runtime_context(tempdir.path().to_path_buf());
+    let channel_impl = Arc::new(RecordingChannel::default());
+    let channel: Arc<dyn Channel> = channel_impl.clone();
+    let sender_key = "telegram_alice_chat-remote";
+
+    ctx.conversation_histories.lock().unwrap().insert(
+        sender_key.to_string(),
+        vec![ChatMessage::user("old history")],
+    );
+
+    let new_msg = ChannelMessage {
+        id: "1".into(),
+        sender: "alice".into(),
+        reply_target: "chat-remote".into(),
+        content: "/new".into(),
+        channel: "telegram".into(),
+        timestamp: 0,
+        thread_ts: Some("42".into()),
+    };
+    assert!(handle_runtime_command_if_needed(&ctx, &new_msg, Some(&channel)).await);
+    assert!(ctx
+        .conversation_histories
+        .lock()
+        .unwrap()
+        .get(sender_key)
+        .is_none());
+
+    ctx.conversation_histories
+        .lock()
+        .unwrap()
+        .insert(sender_key.to_string(), vec![ChatMessage::user("after new")]);
+    set_route_selection(
+        &ctx,
+        sender_key,
+        ChannelRouteSelection {
+            provider: "anthropic".into(),
+            model: "claude-3".into(),
+        },
+    );
+
+    let subscriber = TelegramRemoteSubscriber::new(tempdir.path().to_path_buf());
+    subscriber
+        .handle(&DomainEvent::ChannelMessageReceived {
+            channel: "telegram".into(),
+            message_id: "2".into(),
+            sender: "alice".into(),
+            reply_target: "chat-remote".into(),
+            content: "work".into(),
+            thread_ts: Some("42".into()),
+        })
+        .await;
+
+    let status_msg = ChannelMessage {
+        id: "3".into(),
+        sender: "alice".into(),
+        reply_target: "chat-remote".into(),
+        content: "/status".into(),
+        channel: "telegram".into(),
+        timestamp: 0,
+        thread_ts: Some("42".into()),
+    };
+    assert!(handle_runtime_command_if_needed(&ctx, &status_msg, Some(&channel)).await);
+
+    let sessions_msg = ChannelMessage {
+        id: "4".into(),
+        sender: "alice".into(),
+        reply_target: "chat-remote".into(),
+        content: "/sessions".into(),
+        channel: "telegram".into(),
+        timestamp: 0,
+        thread_ts: Some("42".into()),
+    };
+    assert!(handle_runtime_command_if_needed(&ctx, &sessions_msg, Some(&channel)).await);
+
+    let sent = channel_impl.sent.lock().unwrap();
+    assert_eq!(sent.len(), 3);
+    assert!(sent[0].content.contains("Started new session"));
+    assert!(sent[0]
+        .content
+        .contains("In-memory channel history cleared for this chat."));
+
+    assert!(sent[1].content.contains("**Status**"));
+    assert!(sent[1].content.contains("Thread: `Telegram"));
+    assert!(sent[1].content.contains("Provider: `anthropic`"));
+    assert!(sent[1].content.contains("Model: `claude-3`"));
+    assert!(sent[1].content.contains("In-memory turns: 1"));
+    assert!(sent[1].content.contains("Turn: in progress"));
+
+    assert!(sent[2].content.contains("**Recent sessions**"));
+    assert!(sent[2].content.contains("→ `Telegram"));
+    assert!(sent
+        .iter()
+        .all(|message| message.thread_ts.as_deref() == Some("42")));
 }

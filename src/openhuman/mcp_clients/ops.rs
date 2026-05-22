@@ -69,9 +69,25 @@ pub async fn mcp_clients_registry_get(
         .await
         .map_err(|e| e.to_string())?;
 
+    // Augment the response with required_env_keys derived from the connection
+    // config_schema so the frontend install dialog can build its input form.
+    let required_env_keys = collect_required_env_keys(&detail);
+    let mut server_value =
+        serde_json::to_value(&detail).map_err(|e| format!("serialization error: {e}"))?;
+    if let Some(obj) = server_value.as_object_mut() {
+        obj.insert(
+            "required_env_keys".to_string(),
+            serde_json::to_value(&required_env_keys).unwrap_or_else(|_| Value::Array(Vec::new())),
+        );
+    }
+
     Ok(RpcOutcome::new(
-        json!({ "server": detail }),
-        vec![format!("registry_get ok: {}", qualified_name.trim())],
+        json!({ "server": server_value }),
+        vec![format!(
+            "registry_get ok: {} env_keys={}",
+            qualified_name.trim(),
+            required_env_keys.len()
+        )],
     ))
 }
 

@@ -299,8 +299,8 @@ const CAPABILITIES: &[Capability] = &[
         name: "MCP Server",
         domain: "intelligence",
         category: CapabilityCategory::Intelligence,
-        description: "Expose a curated, read-only memory-tree tool surface over stdio MCP for local MCP-compatible clients.",
-        how_to: "Run `openhuman-core mcp` and configure the local MCP client to launch that command.",
+        description: "Expose a curated OpenHuman tool surface over stdio MCP or Streamable HTTP/SSE for MCP-compatible clients.",
+        how_to: "Run `openhuman-core mcp` (stdio) or `openhuman-core mcp --transport http --port 9300` for remote clients.",
         status: CapabilityStatus::Beta,
         privacy: LOCAL_RAW,
     },
@@ -918,6 +918,17 @@ const CAPABILITIES: &[Capability] = &[
         privacy: None,
     },
     Capability {
+        id: "channels.telegram_remote_control",
+        name: "Telegram Remote Control",
+        domain: "channels",
+        category: CapabilityCategory::Channels,
+        description:
+            "Operate OpenHuman from Telegram with slash commands: /status, /sessions, /new, and /help.",
+        how_to: "Settings > Messaging Channels > Telegram (connect), then message the bot",
+        status: CapabilityStatus::Beta,
+        privacy: None,
+    },
+    Capability {
         id: "channels.disconnect_platform",
         name: "Disconnect Messaging Platforms",
         domain: "channels",
@@ -1269,6 +1280,19 @@ const CAPABILITIES: &[Capability] = &[
         how_to: "Automatic during companion sessions when the LLM identifies a UI target.",
         status: CapabilityStatus::Beta,
         privacy: None,
+    },
+    Capability {
+        id: "intelligence.remember_preferences",
+        name: "Remember Preferences",
+        domain: "memory",
+        category: CapabilityCategory::Intelligence,
+        description: "Remember preferences you state in chat and apply them automatically — \
+                      general preferences shape every reply (tone, language, standing habits); \
+                      situational ones surface only when relevant to your current message.",
+        how_to: "State a preference in chat, e.g. \"always reply in British English\" or \
+                 \"when writing Rust, prefer Result over unwrap\".",
+        status: CapabilityStatus::Stable,
+        privacy: LOCAL_RAW,
     },
 ];
 

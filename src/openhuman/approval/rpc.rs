@@ -8,7 +8,7 @@ use anyhow::anyhow;
 use crate::rpc::RpcOutcome;
 
 use super::gate::ApprovalGate;
-use super::types::{ApprovalDecision, PendingApproval};
+use super::types::{ApprovalAuditEntry, ApprovalDecision, PendingApproval};
 
 /// List rows still awaiting a user decision in the current session.
 ///
@@ -30,6 +30,35 @@ pub async fn approval_list_pending() -> anyhow::Result<RpcOutcome<Vec<PendingApp
     };
     tracing::debug!(rows = rows.len(), "[rpc:approval_list_pending] exit");
     let log = format!("[approval] list_pending returned {} row(s)", rows.len());
+    Ok(RpcOutcome::single_log(rows, log))
+}
+
+/// List recently decided approval rows for audit/diagnostic surfaces.
+pub async fn approval_list_recent_decisions(
+    limit: Option<usize>,
+) -> anyhow::Result<RpcOutcome<Vec<ApprovalAuditEntry>>> {
+    tracing::debug!("[rpc:approval_list_recent_decisions] entry");
+    let Some(gate) = ApprovalGate::try_global() else {
+        tracing::debug!("[rpc:approval_list_recent_decisions] gate not installed, returning empty");
+        return Ok(RpcOutcome::new(Vec::new(), vec![]));
+    };
+    let limit = limit.unwrap_or(50);
+    let rows = match gate.list_recent_decisions(limit) {
+        Ok(rows) => rows,
+        Err(err) => {
+            tracing::error!(error = %err, "[rpc:approval_list_recent_decisions] store error");
+            return Err(err);
+        }
+    };
+    let log = format!(
+        "[approval] list_recent_decisions returned {} row(s)",
+        rows.len()
+    );
+    tracing::debug!(
+        rows = rows.len(),
+        limit = limit,
+        "[rpc:approval_list_recent_decisions] exit"
+    );
     Ok(RpcOutcome::single_log(rows, log))
 }
 

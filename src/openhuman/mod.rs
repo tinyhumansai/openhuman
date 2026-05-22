@@ -74,6 +74,7 @@ pub mod team;
 pub mod test_support;
 pub mod text_input;
 pub mod threads;
+pub mod tls;
 pub mod todos;
 pub mod tokenjuice;
 pub mod tool_registry;
