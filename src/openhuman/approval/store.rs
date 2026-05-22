@@ -21,6 +21,7 @@ use chrono::{DateTime, Utc};
 use rusqlite::{params, types::Type, Connection};
 
 use crate::openhuman::config::Config;
+use crate::openhuman::memory::safety::sanitize_text;
 
 use super::types::{ApprovalAuditEntry, ApprovalDecision, ExecutionOutcome, PendingApproval};
 
@@ -253,19 +254,22 @@ pub fn record_execution(
 ) -> Result<bool> {
     with_connection(config, |conn| {
         let now = Utc::now().to_rfc3339();
-        // Cap the error blurb so an upstream crash dump can't fill
-        // the audit log. The agent already sees the full error in
-        // its own tool-result envelope. Keep the ellipsis-marked
-        // truncation within the 512-character cap (CodeRabbit
-        // review on #2367): when the input would overflow, take
-        // 511 chars and append the marker so the stored value is
-        // exactly 512 chars including the ellipsis.
-        let trimmed_error = error.map(|e| {
-            if e.chars().count() > 512 {
-                let head: String = e.chars().take(511).collect();
+        // Sanitize before truncation so the durable audit row can't
+        // leak bearer tokens, API keys, private-key blocks, OAuth
+        // params, emails, or other PII the upstream tool might have
+        // echoed back into its error message (PR #2367 review).
+        // Truncate-first would split a secret mid-string and dodge
+        // the redaction regexes — sanitize, then cap. Cap is 512
+        // chars inclusive of the ellipsis marker; the agent already
+        // sees the full error in its own tool-result envelope so
+        // nothing observable depends on the stored copy.
+        let trimmed_error = error.map(|raw| {
+            let sanitized = sanitize_text(raw).value;
+            if sanitized.chars().count() > 512 {
+                let head: String = sanitized.chars().take(511).collect();
                 format!("{head}…")
             } else {
-                e.to_string()
+                sanitized
             }
         });
         // `executed_at IS NULL` makes the terminal audit row
@@ -589,6 +593,36 @@ mod tests {
             stored.chars().count()
         );
         assert!(stored.ends_with('…'));
+    }
+
+    #[test]
+    fn record_execution_redacts_secrets_in_error_message() {
+        // PR #2367 review: upstream tool errors regularly echo back
+        // the offending request including auth headers. The audit
+        // row must persist the sanitized form so a leaked bearer
+        // or API key never lands in the durable log.
+        let (config, _dir) = test_config();
+        insert_pending(&config, &sample("req-secret", "sess-A")).unwrap();
+        decide(&config, "req-secret", ApprovalDecision::ApproveOnce).unwrap();
+
+        let raw = "upstream 401: Authorization: Bearer sk-live-abcdef1234567890abcdef1234567890 \
+             returned by sk-proj-FAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE";
+        record_execution(&config, "req-secret", ExecutionOutcome::Failure, Some(raw)).unwrap();
+
+        let (_, _, error) = read_execution_row(&config, "req-secret");
+        let stored = error.expect("error stored");
+        assert!(
+            !stored.contains("sk-live-abcdef1234567890abcdef1234567890"),
+            "raw bearer token must not be persisted: {stored}"
+        );
+        assert!(
+            !stored.contains("sk-proj-FAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE"),
+            "raw provider key must not be persisted: {stored}"
+        );
+        assert!(
+            stored.contains("[REDACTED]"),
+            "sanitizer must leave a redaction marker so audit reviewers see something was scrubbed: {stored}"
+        );
     }
 
     #[test]
