@@ -132,7 +132,7 @@ Webhook 永远不会被原始地到达你的机器。后端持有 OAuth token �
 
 ## 另见
 
-* [第三方集成](README.md)，触发器来源的服务目录。
+* [第三方集成](README.zh-CN.md)，触发器来源的服务目录。
 * [从集成自动拉取](../obsidian-wiki/auto-fetch.zh-CN.md)，轮询对应部分，定期将源数据摄入记忆树。
-* [潜意识循环](../subconscious.md)，使用触发器上下文和记忆提前规划的背景循环。
-* [会议智能体](../mascot/meeting-agents.md)，升级触发器可以落地的地方之一（日历事件有 Meet 链接）。
+* [潜意识循环](../subconscious.zh-CN.md)，使用触发器上下文和记忆提前规划的背景循环。
+* [会议智能体](../mascot/meeting-agents.zh-CN.md)，升级触发器可以落地的地方之一（日历事件有 Meet 链接）。
