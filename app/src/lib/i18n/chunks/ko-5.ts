@@ -404,7 +404,7 @@ const ko5: TranslationMap = {
   'composio.reconnect': '다시 연결',
   'composio.previewBadge': 'Preview',
   'composio.previewTooltip':
-    'Agent integration coming soon — you can connect, but the agent can’t use this toolkit yet',
+    'Agent integration coming soon — you can connect, but the agent can’t use this toolkit yet.',
   'composio.directModeRequiresKey':
     '저장에 실패했습니다. Direct 모드에는 비어 있지 않은 API 키가 필요합니다.',
   'composio.notYetRouted': '아직 라우팅되지 않음',

@@ -446,7 +446,7 @@ const es5: TranslationMap = {
   'composio.reconnect': 'Reconectar',
   'composio.previewBadge': 'Preview',
   'composio.previewTooltip':
-    'Agent integration coming soon — you can connect, but the agent can’t use this toolkit yet',
+    'Agent integration coming soon — you can connect, but the agent can’t use this toolkit yet.',
   'composio.directModeRequiresKey':
     'Error al guardar. El modo Directo requiere una clave API no vacía.',
   'composio.notYetRouted': 'aún sin enrutar',

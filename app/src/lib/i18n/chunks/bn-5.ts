@@ -442,7 +442,7 @@ const bn5: TranslationMap = {
   'composio.reconnect': 'পুনঃসংযোগ',
   'composio.previewBadge': 'Preview',
   'composio.previewTooltip':
-    'Agent integration coming soon — you can connect, but the agent can’t use this toolkit yet',
+    'Agent integration coming soon — you can connect, but the agent can’t use this toolkit yet.',
   'composio.directModeRequiresKey': 'সংরক্ষণ ব্যর্থ। Direct মোডের জন্য একটি API key প্রয়োজন।',
   'composio.notYetRouted': 'এখনও রুট করা হয়নি',
   'composio.triggers.loading': 'লোড হচ্ছে…',

@@ -447,7 +447,7 @@ const it5: TranslationMap = {
   'composio.reconnect': 'Riconnetti',
   'composio.previewBadge': 'Preview',
   'composio.previewTooltip':
-    'Agent integration coming soon — you can connect, but the agent can’t use this toolkit yet',
+    'Agent integration coming soon — you can connect, but the agent can’t use this toolkit yet.',
   'composio.directModeRequiresKey':
     'Salvataggio fallito. La modalità Diretta richiede una chiave API non vuota.',
   'composio.notYetRouted': 'non ancora instradato',

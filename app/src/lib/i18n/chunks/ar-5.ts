@@ -435,7 +435,7 @@ const ar5: TranslationMap = {
   'composio.reconnect': 'إعادة الاتصال',
   'composio.previewBadge': 'Preview',
   'composio.previewTooltip':
-    'Agent integration coming soon — you can connect, but the agent can’t use this toolkit yet',
+    'Agent integration coming soon — you can connect, but the agent can’t use this toolkit yet.',
   'composio.directModeRequiresKey': 'فشل الحفظ. الوضع المباشر يتطلب مفتاح API غير فارغ.',
   'composio.notYetRouted': 'لم يتم توجيهه بعد',
   'composio.triggers.loading': 'جارٍ التحميل…',

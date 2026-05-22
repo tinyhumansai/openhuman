@@ -1190,7 +1190,7 @@ const en: TranslationMap = {
   'composio.envVarOverrides': 'is set, it overrides this setting.',
   'composio.previewBadge': 'Preview',
   'composio.previewTooltip':
-    'Agent integration coming soon — you can connect, but the agent can’t use this toolkit yet',
+    'Agent integration coming soon — you can connect, but the agent can’t use this toolkit yet.',
 
   // Memory: day-of-week labels for heatmap
   'memory.day.sun': 'Sun',

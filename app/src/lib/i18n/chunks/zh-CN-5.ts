@@ -418,7 +418,7 @@ const zhCN5: TranslationMap = {
   'composio.reconnect': '重新连接',
   'composio.previewBadge': 'Preview',
   'composio.previewTooltip':
-    'Agent integration coming soon — you can connect, but the agent can’t use this toolkit yet',
+    'Agent integration coming soon — you can connect, but the agent can’t use this toolkit yet.',
   'composio.directModeRequiresKey': '保存失败。直连模式需要非空的 API 密钥。',
   'composio.notYetRouted': '尚未路由',
   'composio.triggers.loading': '加载中…',

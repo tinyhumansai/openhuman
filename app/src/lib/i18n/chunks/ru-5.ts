@@ -444,7 +444,7 @@ const ru5: TranslationMap = {
   'composio.reconnect': 'Переподключить',
   'composio.previewBadge': 'Preview',
   'composio.previewTooltip':
-    'Agent integration coming soon — you can connect, but the agent can’t use this toolkit yet',
+    'Agent integration coming soon — you can connect, but the agent can’t use this toolkit yet.',
   'composio.directModeRequiresKey': 'Не удалось сохранить. Прямой режим требует непустой API-ключ.',
   'composio.notYetRouted': 'пока не маршрутизируется',
   'composio.triggers.loading': 'Загрузка…',

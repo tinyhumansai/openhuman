@@ -450,7 +450,7 @@ const fr5: TranslationMap = {
   'composio.reconnect': 'Reconnecter',
   'composio.previewBadge': 'Preview',
   'composio.previewTooltip':
-    'Agent integration coming soon — you can connect, but the agent can’t use this toolkit yet',
+    'Agent integration coming soon — you can connect, but the agent can’t use this toolkit yet.',
   'composio.directModeRequiresKey':
     "Échec de l'enregistrement. Le mode Direct nécessite une clé API non vide.",
   'composio.notYetRouted': 'pas encore routé',
