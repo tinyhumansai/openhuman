@@ -6478,7 +6478,6 @@ async fn json_rpc_config_autonomy_settings_roundtrip() {
         json!({}),
     )
     .await;
-    eprintln!("initial response envelope: {initial}");
     let initial_outer = assert_no_jsonrpc_error(&initial, "get_autonomy_settings initial");
     // assert_no_jsonrpc_error already strips the JSON-RPC envelope; one more hop
     // strips the into_cli_compatible_json wrapper to reach the payload fields.
@@ -6500,7 +6499,6 @@ async fn json_rpc_config_autonomy_settings_roundtrip() {
         json!({ "max_actions_per_hour": 250 }),
     )
     .await;
-    eprintln!("update response envelope: {update}");
     assert_no_jsonrpc_error(&update, "update_autonomy_settings");
 
     // GET again → expect 250.
@@ -6511,7 +6509,6 @@ async fn json_rpc_config_autonomy_settings_roundtrip() {
         json!({}),
     )
     .await;
-    eprintln!("after response envelope: {after}");
     let after_outer = assert_no_jsonrpc_error(&after, "get_autonomy_settings after");
     let after_value = after_outer
         .get("result")
@@ -6531,12 +6528,11 @@ async fn json_rpc_config_autonomy_settings_roundtrip() {
         json!({ "max_actions_per_hour": 99999 }),
     )
     .await;
-    eprintln!("bad response envelope: {bad}");
-    let err_message = bad
-        .get("error")
-        .and_then(|e| e.get("message"))
+    let bad_err = assert_jsonrpc_error(&bad, "update_autonomy_settings bad value");
+    let err_message = bad_err
+        .get("message")
         .and_then(Value::as_str)
-        .unwrap_or_else(|| panic!("expected JSON-RPC error, got: {bad}"));
+        .unwrap_or_else(|| panic!("error object missing message: {bad_err}"));
     assert!(
         err_message.contains("between 1 and 10000"),
         "expected validation error in: {err_message}"
