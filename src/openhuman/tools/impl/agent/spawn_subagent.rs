@@ -362,6 +362,12 @@ impl Tool for SpawnSubagentTool {
                             // message — which Settings UI contradicted (it
                             // shows the connection as initiated/expired), so
                             // users concluded the agent was confused.
+                            tracing::debug!(
+                                target: "spawn_subagent",
+                                toolkit = %ci.toolkit,
+                                non_active_status = ?ci.non_active_status,
+                                "[spawn_subagent] integrations_agent gate: toolkit not connected — emitting status-specific message"
+                            );
                             let message = describe_unconnected_state(
                                 &ci.toolkit,
                                 ci.non_active_status.as_deref(),
@@ -683,12 +689,19 @@ pub(crate) fn describe_unconnected_state(toolkit: &str, status: Option<&str>) ->
              them to reconnect '{toolkit}' at Settings → Connections → '{toolkit}' \
              before retrying the original request."
         ),
-        Some("FAILED") | Some("ERROR") => format!(
-            "Integration '{toolkit}' has a previous OAuth attempt in a FAILED state. \
-             Do NOT retry this spawn. Tell the user the connection failed and ask them \
-             to reconnect '{toolkit}' at Settings → Connections → '{toolkit}' before \
-             retrying the original request."
-        ),
+        Some("FAILED") | Some("ERROR") => {
+            // Quote the actual upstream label (FAILED / ERROR) instead of
+            // hard-coding "FAILED" — triage cross-references backend logs
+            // and a misquoted `ERROR` row showing up as "FAILED" wastes
+            // their time. graycyrus review on #2373.
+            let raw = trimmed.unwrap_or("");
+            format!(
+                "Integration '{toolkit}' has a previous OAuth attempt in a `{raw}` state. \
+                 Do NOT retry this spawn. Tell the user the connection failed and ask them \
+                 to reconnect '{toolkit}' at Settings → Connections → '{toolkit}' before \
+                 retrying the original request."
+            )
+        }
         Some(_) => {
             // Quote the *original* upstream status, not its uppercased
             // form — preserves "DeauthRequired" / "needs_relink"-style
@@ -1010,12 +1023,30 @@ mod tests {
     fn describe_unconnected_state_failed_and_error_route_to_reconnect() {
         for status in ["FAILED", "ERROR"] {
             let msg = describe_unconnected_state("gmail", Some(status));
+            let expected = format!("`{status}` state");
             assert!(
-                msg.contains("FAILED state"),
-                "{status} must classify as failed: {msg}"
+                msg.contains(&expected),
+                "{status} must be quoted verbatim, not collapsed to a single label: {msg}"
             );
             assert!(msg.contains("reconnect 'gmail'"));
         }
+    }
+
+    #[test]
+    fn describe_unconnected_state_failed_and_error_preserve_original_casing() {
+        // Mixed-case wire values must round-trip through the FAILED /
+        // ERROR branch with their original casing intact — that's the
+        // whole point of graycyrus' review feedback.
+        let lower_failed = describe_unconnected_state("gmail", Some("failed"));
+        assert!(
+            lower_failed.contains("`failed` state"),
+            "lowercase `failed` must be quoted verbatim: {lower_failed}"
+        );
+        let mixed_error = describe_unconnected_state("gmail", Some("Error"));
+        assert!(
+            mixed_error.contains("`Error` state"),
+            "mixed-case `Error` must be quoted verbatim: {mixed_error}"
+        );
     }
 
     #[test]

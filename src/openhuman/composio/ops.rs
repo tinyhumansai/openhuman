@@ -1702,15 +1702,50 @@ async fn fetch_connected_integrations_uncached(
                 continue;
             }
             let p = priority(&conn.status);
-            map.entry(slug)
+            map.entry(slug.clone())
                 .and_modify(|cur| {
                     if p > cur.0 {
+                        tracing::debug!(
+                            target: "composio",
+                            toolkit = %slug,
+                            previous_status = %cur.1,
+                            previous_priority = cur.0,
+                            new_status = %conn.status,
+                            new_priority = p,
+                            "[composio] non_active_status_by_slug: upgraded most-informative status"
+                        );
                         *cur = (p, conn.status.clone());
+                    } else {
+                        tracing::trace!(
+                            target: "composio",
+                            toolkit = %slug,
+                            kept_status = %cur.1,
+                            kept_priority = cur.0,
+                            candidate_status = %conn.status,
+                            candidate_priority = p,
+                            "[composio] non_active_status_by_slug: kept higher-priority status"
+                        );
                     }
                 })
-                .or_insert_with(|| (p, conn.status.clone()));
+                .or_insert_with(|| {
+                    tracing::debug!(
+                        target: "composio",
+                        toolkit = %slug,
+                        status = %conn.status,
+                        priority = p,
+                        "[composio] non_active_status_by_slug: first non-active row"
+                    );
+                    (p, conn.status.clone())
+                });
         }
-        map.into_iter().map(|(k, (_, v))| (k, v)).collect()
+        let final_map: std::collections::HashMap<String, String> =
+            map.into_iter().map(|(k, (_, v))| (k, v)).collect();
+        tracing::debug!(
+            target: "composio",
+            entries = final_map.len(),
+            "[composio] non_active_status_by_slug: final map"
+        );
+        final_map
     };
 
     // Deduplicate the allowlist so a backend that returns duplicates
@@ -1829,6 +1864,7 @@ async fn fetch_connected_integrations_uncached(
         tracing::debug!(
             toolkit = %ci.toolkit,
             connected = ci.connected,
+            non_active_status = ?ci.non_active_status,
             tool_count = ci.tools.len(),
             "[composio] integration overview"
         );
