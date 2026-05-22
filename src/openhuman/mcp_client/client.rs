@@ -288,7 +288,7 @@ impl McpHttpClient {
             .http
             .post(&self.endpoint)
             .header(CONTENT_TYPE, "application/json")
-            .header(ACCEPT, "application/json")
+            .header(ACCEPT, MCP_HTTP_ACCEPT)
             .body(serde_json::to_vec(&json!({
                 "jsonrpc": "2.0",
                 "id": self.next_id.fetch_add(1, Ordering::Relaxed),
