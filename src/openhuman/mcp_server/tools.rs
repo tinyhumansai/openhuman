@@ -236,6 +236,7 @@ fn base_tool_specs() -> Vec<McpToolSpec> {
                           `memory.search` or `memory.recall`.",
             rpc_method: Some("openhuman.memory_doc_put"),
             input_schema: memory_store_schema(),
+            annotations: write_local_annotations(),
         },
         McpToolSpec {
             name: "memory.note",
@@ -245,6 +246,7 @@ fn base_tool_specs() -> Vec<McpToolSpec> {
                           can be retrieved alongside it.",
             rpc_method: Some("openhuman.memory_doc_put"),
             input_schema: memory_note_schema(),
+            annotations: write_local_annotations(),
         },
         McpToolSpec {
             name: "tree.tag",
@@ -257,6 +259,7 @@ fn base_tool_specs() -> Vec<McpToolSpec> {
                           queryable via the document `tags` field — rather than free-form text.",
             rpc_method: Some("openhuman.memory_doc_put"),
             input_schema: tree_tag_schema(),
+            annotations: write_local_annotations(),
         },
     ]
 }
@@ -270,6 +273,23 @@ fn base_tool_specs() -> Vec<McpToolSpec> {
 fn read_only_local_annotations() -> Value {
     json!({
         "readOnlyHint": true,
+        "openWorldHint": false
+    })
+}
+
+/// Annotation preset for the MCP write tools (`memory.store`, `memory.note`,
+/// `tree.tag`) that upsert documents into OpenHuman's local memory tree.
+/// Writes are keyed deterministically (slug-from-title, `mcp-note-<chunk_id>`,
+/// `mcp-tag-<chunk_id>`) so repeating a call with identical arguments yields
+/// the same stored state — `idempotentHint: true`. The upsert can replace a
+/// previously stored document for the same key, which is a destructive update
+/// in MCP-spec terms — `destructiveHint: true`. Local-only, no external I/O —
+/// `openWorldHint: false`.
+fn write_local_annotations() -> Value {
+    json!({
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
         "openWorldHint": false
     })
 }
@@ -800,7 +820,7 @@ fn build_rpc_params(
             }
             if let Some(oversize) = tags.iter().find(|t| t.len() > TREE_TAG_MAX_TAG_LENGTH) {
                 return Err(ToolCallError::InvalidParams(format!(
-                    "argument `tags` entry exceeds {TREE_TAG_MAX_TAG_LENGTH} characters (got {} chars)",
+                    "argument `tags` entry exceeds {TREE_TAG_MAX_TAG_LENGTH} bytes (got {} bytes)",
                     oversize.len()
                 )));
             }
@@ -1479,7 +1499,12 @@ mod tests {
         // to clients. (`searxng_search` is read-only but openWorld, so it
         // verifies the read-only axis here and is exempt from the
         // openWorld=false check below.)
-        let act_tool_names = ["agent.run_subagent"];
+        let act_tool_names = [
+            "agent.run_subagent",
+            "memory.store",
+            "memory.note",
+            "tree.tag",
+        ];
         let open_world_read_only = ["searxng_search"];
         for spec in tool_specs() {
             if act_tool_names.contains(&spec.name) {
