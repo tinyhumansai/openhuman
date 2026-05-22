@@ -26,6 +26,7 @@ import {
   clearStoredCoreMode,
   clearStoredCoreToken,
   isLocalOrPrivateNetworkHost,
+  normalizeRpcUrl,
   storeCoreMode,
   storeCoreToken,
   storeRpcUrl,
@@ -122,13 +123,14 @@ function ModePicker({ onConfirm }: PickerProps) {
    * paths are passed through verbatim without the bearer value.
    */
   const validateInputs = (): { url: string; token: string } | null => {
-    const trimmedUrl = cloudUrl.trim();
-    if (!trimmedUrl) {
+    const rawUrl = cloudUrl.trim();
+    if (!rawUrl) {
       setUrlError(t('bootCheck.invalidUrl'));
       return null;
     }
+    const normalizedUrl = normalizeRpcUrl(rawUrl);
     try {
-      const parsed = new URL(trimmedUrl);
+      const parsed = new URL(normalizedUrl);
       if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
         setUrlError(t('bootCheck.urlMustStartWith'));
         return null;
@@ -152,7 +154,7 @@ function ModePicker({ onConfirm }: PickerProps) {
     }
     setTokenError(null);
 
-    return { url: trimmedUrl, token: trimmedToken };
+    return { url: normalizedUrl, token: trimmedToken };
   };
 
   const handleTestConnection = async () => {
