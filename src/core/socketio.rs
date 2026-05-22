@@ -28,12 +28,25 @@ struct HandshakeAuth {
 
 /// Origins the local core trusts at the Socket.IO handshake.
 ///
-/// `tauri://localhost` is the production app webview; `http://localhost:*`
-/// and `http://127.0.0.1:*` cover the Vite dev server (`pnpm dev:app`)
-/// and standalone CLI tooling that opens browser pages against the local
-/// listener. A missing `Origin` header is treated as a native (non-browser)
-/// client and accepted — only the cross-origin browser-page case is the
-/// targeted bad actor here.
+/// The document origin of the CEF-served app shell is platform-dependent:
+///
+/// | Platform | Scheme | Host |
+/// |----------|--------|------|
+/// | macOS / iOS (native scheme) | `tauri` | `localhost` |
+/// | Windows (CEF http custom protocol) | `http` | `tauri.localhost` |
+/// | Linux / older Windows builds | `https` | `tauri.localhost` |
+/// | Vite dev (`pnpm dev:app`, `pnpm dev`) | `http` | `localhost` / `127.0.0.1` / `[::1]` |
+///
+/// The handshake `Origin` header is stamped by the webview with whichever
+/// of these shapes loaded the page — it is **not** the destination URL the
+/// socket is connecting to. We match the parsed host against the allowlist
+/// so all four shapes pass regardless of scheme, while `starts_with` decoys
+/// like `http://localhost.attacker.example` are still rejected (parser
+/// returns a different `host_str`).
+///
+/// A missing `Origin` header is treated as a native (non-browser) client
+/// and accepted — only the cross-origin browser-page case is the targeted
+/// bad actor here.
 fn origin_is_allowed(origin: Option<&str>) -> bool {
     let Some(origin) = origin else {
         return true; // native clients (CLI, Tauri shell) — no Origin header
@@ -42,12 +55,12 @@ fn origin_is_allowed(origin: Option<&str>) -> bool {
     if origin.is_empty() || origin == "null" {
         return false;
     }
-    if origin == "tauri://localhost" || origin == "https://tauri.localhost" {
-        return true;
-    }
-    // Parse the URL and compare the host EXACTLY against the loopback
-    // allowlist — `starts_with` matching accepted decoys like
-    // `http://localhost.attacker.example` and bypassed the gate.
+    // Parse the URL and compare the host EXACTLY against the loopback +
+    // tauri.localhost allowlist. The earlier scheme-literal short-circuit
+    // (`tauri://localhost` / `https://tauri.localhost`) missed
+    // `http://tauri.localhost`, which is the document origin CEF stamps
+    // on Windows — every flavour of the Tauri webview shell now goes
+    // through the same host check.
     let Ok(parsed) = url::Url::parse(origin) else {
         return false;
     };
@@ -55,7 +68,7 @@ fn origin_is_allowed(origin: Option<&str>) -> bool {
     // hostnames bare. Accept both shapes.
     matches!(
         parsed.host_str(),
-        Some("localhost" | "127.0.0.1" | "::1" | "[::1]")
+        Some("localhost" | "127.0.0.1" | "::1" | "[::1]" | "tauri.localhost")
     )
 }
 
@@ -752,9 +765,16 @@ mod tests {
     }
 
     #[test]
-    fn origin_allowlist_accepts_tauri_localhost() {
+    fn origin_allowlist_accepts_tauri_localhost_across_schemes() {
+        // The CEF-served app shell stamps a platform-dependent Origin:
+        //   - macOS / iOS use the native `tauri://localhost` scheme
+        //   - Windows uses the CEF custom HTTP protocol → `http://tauri.localhost`
+        //   - Linux / older Windows builds use `https://tauri.localhost`
+        // All three flavours are the same trust tier (the bundled webview),
+        // so each must pass the handshake gate.
         assert!(origin_is_allowed(Some("tauri://localhost")));
         assert!(origin_is_allowed(Some("https://tauri.localhost")));
+        assert!(origin_is_allowed(Some("http://tauri.localhost")));
     }
 
     #[test]
@@ -762,6 +782,9 @@ mod tests {
         assert!(origin_is_allowed(Some("http://localhost:1420")));
         assert!(origin_is_allowed(Some("http://127.0.0.1:1420")));
         assert!(origin_is_allowed(Some("http://[::1]:1420")));
+        // Loopback without an explicit port (some CEF builds stamp this
+        // shape when the shell runs on the default port).
+        assert!(origin_is_allowed(Some("http://localhost")));
     }
 
     #[test]
@@ -783,6 +806,11 @@ mod tests {
             "http://127.0.0.1.attacker.example"
         )));
         assert!(!origin_is_allowed(Some("https://localhost-evil")));
+        // Same rule applies to the tauri.localhost host — must be exact.
+        assert!(!origin_is_allowed(Some(
+            "http://tauri.localhost.attacker.example"
+        )));
+        assert!(!origin_is_allowed(Some("https://tauri.localhost.evil")));
     }
 
     #[test]
