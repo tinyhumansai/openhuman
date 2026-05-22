@@ -219,11 +219,11 @@ impl ScannerRegistry {
     }
 
     pub fn forget_all(&self) -> usize {
-        let n = self.started.lock().len();
-        for (_, h) in self.started.lock().drain() {
+        let entries: Vec<_> = self.started.lock().drain().collect();
+        for (_, h) in &entries {
             h.abort();
         }
-        n
+        entries.len()
     }
 }
 
