@@ -1,3 +1,7 @@
+---
+lang: zh-CN
+---
+
 # Polymarket 集成（读取 + 交易）
 
 本文档描述 issue #1398 的 Polymarket 集成。

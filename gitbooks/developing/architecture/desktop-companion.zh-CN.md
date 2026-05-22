@@ -20,7 +20,7 @@ Desktop Companion 编排一个 Clicky 风格的交互循环：热键激活、麦
 
 ## 模块布局
 
-```
+```text
 src/openhuman/desktop_companion/
   mod.rs          — 模块导出（轻量）
   types.rs        — CompanionState enum、CompanionConfig、ConversationTurn、会话 param/result 类型
@@ -34,7 +34,7 @@ src/openhuman/desktop_companion/
 
 ## 状态机
 
-```
+```text
 Idle -> Listening -> Thinking -> Speaking -> Pointing -> Idle
                                     |           |
                                     v           v

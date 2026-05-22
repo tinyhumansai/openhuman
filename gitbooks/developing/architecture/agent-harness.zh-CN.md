@@ -14,7 +14,7 @@ Agent Harness 是将用户消息（或 webhook 触发、cron tick）转变为完
 
 每个轮次 —— 无论是用户刚输入消息、Telegram webhook 刚触发，还是 9am cron 刚 tick —— 都流经相同的生命周期：
 
-```
+```text
 ┌─ 入站 ─────────────────────────────────────────────────────────┐
 │ 用户消息 · 渠道入站 · webhook · cron · composio 事件 │
 └──────────────────────────┬────────────────────────────────────────┘
@@ -74,7 +74,7 @@ Agent Harness 是将用户消息（或 webhook 触发、cron tick）转变为完
 
 在 `Agent::turn` 内部，工具调用循环是内部引擎。它最多运行 `max_tool_iterations` 轮（默认 10）：
 
-```
+```text
 loop {
     1. 上下文守卫      - 如果历史太长，microcompact / autocompact
     2. 停止 hook 检查  - 预算上限、最大迭代次数、自定义 kill switch
@@ -209,7 +209,7 @@ Chat        (快速，UX 聚焦 —— 例如 orchestrator 使用 `chat` 提示)
 
 当 webhook 触发、cron tick 或 Composio 事件到达时，系统不能直接将它们交给 orchestrator。大多数触发器是噪音；有些值得通知；只有少数值得完整的智能体轮次。**触发器-分类流水线**是门禁。
 
-```
+```text
 TriggerEnvelope ──► run_triage ──► TriageDecision ──► apply_decision
                        │                                     │
                        │                                     ├─► 丢弃 (噪音)

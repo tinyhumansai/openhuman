@@ -1,6 +1,7 @@
 ---
 description: 发布节奏、版本策略、OAuth 与安装包规则。发布是如何运作的。
 icon: ship
+lang: zh-CN
 ---
 
 # 发布策略：最新桌面构建与 OAuth

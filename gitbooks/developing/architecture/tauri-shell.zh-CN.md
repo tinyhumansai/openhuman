@@ -10,7 +10,7 @@ OpenHuman 的桌面宿主：Tauri v2 + WebView、IPC 命令、窗口管理，以
 ## 职责
 
 1. **Web UI**。从 `app/dist` 加载 Vite 构建（或开发服务器，端口 1420）。
-2. **IPC**。暴露一小套明确的 Tauri 命令（见 [Commands](#commands)）。
+2. **IPC**。暴露一小套明确的 Tauri 命令（见 [Commands](#tauri-ipc-commands-app-src-tauri)）。
 3. **核心生命周期**。确保 `openhuman-core` 二进制文件正在运行（子进程和/或服务）并通过 `core_rpc_relay` 代理 JSON-RPC。
 4. **磁盘上的 AI 提示**。从资源 / 开发 cwd 解析捆绑的 `src/openhuman/agent/prompts`，用于 `ai_get_config` / `write_ai_config_file`。
 5. **窗口 + 托盘**。桌面窗口行为和系统托盘（见 `lib.rs`）。
@@ -38,7 +38,7 @@ OpenHuman 的桌面宿主：Tauri v2 + WebView、IPC 命令、窗口管理，以
 
 ### 目录布局（实际）
 
-```
+```text
 app/src-tauri/src/
 ├── lib.rs                 # `run()`、托盘/菜单动作、插件、`generate_handler!`、核心启动
 ├── main.rs                # 二进制入口
@@ -58,7 +58,7 @@ app/src-tauri/src/
 
 ### 数据流：UI → 核心
 
-```
+```text
 React (invoke)
     → core_rpc_relay { method, params, serviceManaged? }
         → core_rpc::call HTTP POST 到 OPENHUMAN_CORE_RPC_URL

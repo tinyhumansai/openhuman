@@ -1,6 +1,7 @@
 ---
 description: 将 OpenHuman Core 作为只读 stdio Model Context Protocol 服务器运行。
 icon: plug
+lang: zh-CN
 ---
 
 # MCP 服务器
@@ -80,7 +81,7 @@ printf '%s\n' \
 
 响应应包含来自 `initialize` 的 `capabilities.tools` 和来自 `tools/list` 的精选工具名称。成功的运行向 stdout 写入恰好两行紧凑的 JSON 响应；`notifications/initialized` 消息是通知，没有响应。
 
-```
+```json
 {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","capabilities":{"tools":{}},"serverInfo":{"name":"openhuman-core","version":"<crate version>"},"instructions":"..."}}
 {"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"memory.search",...},{"name":"memory.recall",...},{"name":"tree.read_chunk",...},{"name":"tree.browse",...},{"name":"tree.top_entities",...},{"name":"tree.list_sources",...}]}}
 ```

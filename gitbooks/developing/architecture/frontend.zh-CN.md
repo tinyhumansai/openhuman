@@ -32,7 +32,7 @@ OpenHuman 桌面 UI：`app/src/` 下的 Vite + React 19 树（Yarn workspace `op
 
 ## 目录布局
 
-```
+```text
 app/src/
 ├── App.tsx                 # Provider 链 + HashRouter shell
 ├── AppRoutes.tsx           # 路由表 + 守卫
@@ -70,7 +70,7 @@ OpenHuman 的桌面 UI 是一个 **React 19** 应用 (`app/src/`)，它：
 
 ### Provider 链
 
-```
+```text
 Redux Provider
   └─ PersistGate
       └─ UserProvider
@@ -91,7 +91,7 @@ Redux Provider
 
 ### 模块关系（简化）
 
-```
+```text
 App.tsx
   ├─ Redux store + persistor
   ├─ UserProvider - 用户 profile / workspace 上下文
@@ -106,7 +106,7 @@ App.tsx
 
 ### 服务层（概念性）
 
-```
+```text
 services/
   ├─ apiClient        → 通过运行时解析的 URL 的 REST，使用 `services/backendUrl#getBackendUrl`
   ├─ backendUrl       → 调用 `openhuman.config_resolve_api_url`；仅在 Tauri 外 fallback 到 VITE_BACKEND_URL
@@ -393,7 +393,7 @@ function MyComponent({ userId }) {
 
 ### 服务架构
 
-```
+```text
 app/src/services/
   ├─ apiClient (HTTP REST)
   │   ├─ 从 Redux 读取 auth.token
@@ -1074,7 +1074,7 @@ export function Home() {
 
 #### 结构
 
-```
+```text
 pages/onboarding/
 ├── Onboarding.tsx           # 流程控制器
 └── steps/
@@ -1182,7 +1182,7 @@ const isOpen = location.pathname.startsWith("/settings");
 
 #### 子路由
 
-```
+```text
 /settings              → SettingsHome (主菜单)
 /settings/connections  → ConnectionsPanel
 /settings/messaging    → MessagingPanel (未来)
@@ -1294,7 +1294,7 @@ const { itemId } = location.state;
 
 ### 组件结构
 
-```
+```text
 components/
 ├── Route Guards
 │   ├── ProtectedRoute.tsx
@@ -1496,7 +1496,7 @@ import welcomeAnimation from '../assets/animations/welcome.json';
 
 #### 文件结构
 
-```
+```text
 components/settings/
 ├── SettingsModal.tsx          # 基于路由的容器
 ├── SettingsLayout.tsx         # Portal + 背景包装器

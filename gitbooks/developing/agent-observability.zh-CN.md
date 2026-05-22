@@ -17,7 +17,7 @@ bash app/scripts/e2e-agent-review.sh
 
 工件落在：
 
-```
+```text
 app/test/e2e/artifacts/<ISO-timestamp>-agent-review/
   01-welcome.png
   01-welcome.source.xml
