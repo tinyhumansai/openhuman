@@ -137,6 +137,22 @@ fn extract_pagination_end_cursor_none_when_pageinfo_missing() {
 }
 
 #[test]
+fn extract_pagination_end_cursor_skips_empty_cursor_string() {
+    // hasNextPage:true but endCursor is whitespace — must NOT return
+    // the blank cursor, otherwise the caller would loop forever
+    // requesting the same end-of-results page. Moved here from the
+    // sync.rs inline tests as part of the dedup pass on graycyrus's
+    // #2402 review feedback.
+    let data = json!({
+        "pageInfo": {
+            "hasNextPage": true,
+            "endCursor": "   "
+        }
+    });
+    assert_eq!(extract_pagination_end_cursor(&data), None);
+}
+
+#[test]
 fn provider_metadata_is_stable() {
     let p = LinearProvider::new();
     assert_eq!(p.toolkit_slug(), "linear");
