@@ -6449,3 +6449,99 @@ async fn mcp_clients_lifecycle() {
     mock_join.abort();
     rpc_join.abort();
 }
+
+#[tokio::test]
+async fn json_rpc_config_autonomy_settings_roundtrip() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+
+    let (mock_addr, mock_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let mock_origin = format!("http://{}", mock_addr);
+    write_min_config_with_local_ai_disabled(&openhuman_home, &mock_origin);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{}", rpc_addr);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // GET → expect the default (20).
+    let initial = post_json_rpc(
+        &rpc_base,
+        7001,
+        "openhuman.config_get_autonomy_settings",
+        json!({}),
+    )
+    .await;
+    eprintln!("initial response envelope: {initial}");
+    let initial_outer = assert_no_jsonrpc_error(&initial, "get_autonomy_settings initial");
+    // assert_no_jsonrpc_error already strips the JSON-RPC envelope; one more hop
+    // strips the into_cli_compatible_json wrapper to reach the payload fields.
+    let initial_value = initial_outer
+        .get("result")
+        .and_then(|r| r.get("max_actions_per_hour"))
+        .and_then(Value::as_u64);
+    assert_eq!(
+        initial_value,
+        Some(20),
+        "expected default 20, got envelope: {initial_outer}"
+    );
+
+    // UPDATE → 250.
+    let update = post_json_rpc(
+        &rpc_base,
+        7002,
+        "openhuman.config_update_autonomy_settings",
+        json!({ "max_actions_per_hour": 250 }),
+    )
+    .await;
+    eprintln!("update response envelope: {update}");
+    assert_no_jsonrpc_error(&update, "update_autonomy_settings");
+
+    // GET again → expect 250.
+    let after = post_json_rpc(
+        &rpc_base,
+        7003,
+        "openhuman.config_get_autonomy_settings",
+        json!({}),
+    )
+    .await;
+    eprintln!("after response envelope: {after}");
+    let after_outer = assert_no_jsonrpc_error(&after, "get_autonomy_settings after");
+    let after_value = after_outer
+        .get("result")
+        .and_then(|r| r.get("max_actions_per_hour"))
+        .and_then(Value::as_u64);
+    assert_eq!(
+        after_value,
+        Some(250),
+        "expected 250 after update, got envelope: {after_outer}"
+    );
+
+    // Invalid value rejected — server returns JSON-RPC error envelope, not a result.
+    let bad = post_json_rpc(
+        &rpc_base,
+        7004,
+        "openhuman.config_update_autonomy_settings",
+        json!({ "max_actions_per_hour": 99999 }),
+    )
+    .await;
+    eprintln!("bad response envelope: {bad}");
+    let err_message = bad
+        .get("error")
+        .and_then(|e| e.get("message"))
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| panic!("expected JSON-RPC error, got: {bad}"));
+    assert!(
+        err_message.contains("between 1 and 10000"),
+        "expected validation error in: {err_message}"
+    );
+
+    mock_join.abort();
+    rpc_join.abort();
+}
