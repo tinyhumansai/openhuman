@@ -4,6 +4,7 @@
 
 * [Welcome to OpenHuman](README.md)
 * [Getting Started](overview/getting-started.md)
+* [Troubleshooting Sign-In](overview/troubleshooting-sign-in.md)
 
 ## Features
 

@@ -18,6 +18,13 @@ describe('localeSlice', () => {
     expect(reducer(undefined, { type: '@@INIT' }).current).toBe('id');
   });
 
+  it('detects German browser locales', async () => {
+    vi.stubGlobal('navigator', { language: 'de-DE' });
+    const reducer = await loadReducer();
+
+    expect(reducer(undefined, { type: '@@INIT' }).current).toBe('de');
+  });
+
   it('detects the legacy Indonesian browser locale code', async () => {
     vi.stubGlobal('navigator', { language: 'in-ID' });
     const reducer = await loadReducer();
