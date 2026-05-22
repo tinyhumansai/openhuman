@@ -17,7 +17,7 @@ import type { Locale } from './types';
 import zhCN from './zh-CN';
 
 interface I18nContextValue {
-  t: (key: string) => string;
+  t: (key: string, fallback?: string) => string;
   locale: Locale;
 }
 
@@ -58,9 +58,9 @@ function resolveEn(): Record<string, string> {
 }
 
 const I18nContext = createContext<I18nContextValue>({
-  t: (key: string) => {
+  t: (key: string, fallback?: string) => {
     const map = resolveEn();
-    return map[key] ?? key;
+    return map[key] ?? fallback ?? key;
   },
   locale: 'en',
 });
@@ -78,9 +78,9 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   }, [locale]);
 
   const t = useCallback(
-    (key: string): string => {
+    (key: string, fallback?: string): string => {
       const map = translations[locale] ?? resolveEn();
-      return map[key] ?? resolveEn()[key] ?? key;
+      return map[key] ?? resolveEn()[key] ?? fallback ?? key;
     },
     [locale]
   );
