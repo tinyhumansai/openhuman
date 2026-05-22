@@ -29,6 +29,17 @@ const TREE_LIST_SOURCES_ARGUMENTS: &[&str] = &["user_email_hint"];
 const MEMORY_STORE_ARGUMENTS: &[&str] = &["title", "content", "namespace", "tags"];
 const MEMORY_NOTE_ARGUMENTS: &[&str] = &["chunk_id", "note_text"];
 const TREE_TAG_ARGUMENTS: &[&str] = &["chunk_id", "tags"];
+/// Upper bound on the number of tags `tree.tag` accepts per call.
+/// Matches the "explicit rejection over silent clamping" pattern used
+/// elsewhere in the MCP layer; prevents a misbehaving client from
+/// flooding a chunk's tag-record document with thousands of entries.
+const TREE_TAG_MAX_TAGS: usize = 50;
+/// Upper bound on a single tag's character length. Tags are categorical
+/// labels — anything past ~128 chars is almost certainly free-form text
+/// that should be `memory.note` instead, so reject up-front to surface
+/// the misuse rather than silently writing a giant token into the
+/// queryable `tags` index.
+const TREE_TAG_MAX_TAG_LENGTH: usize = 128;
 
 #[derive(Debug, Clone)]
 pub struct McpToolSpec {
@@ -723,6 +734,27 @@ fn build_rpc_params(
             // that the resulting list isn't empty after trimming — keeps
             // the LLM honest about supplying at least one label per call.
             let tags = required_non_empty_string_array(&args, "tags")?;
+            // Cap the tag set to keep the tag-record document bounded:
+            //   * `TREE_TAG_MAX_TAGS` rejects pathological cases where a
+            //     misbehaving client floods one chunk with hundreds of
+            //     labels (would also bloat the document tags index).
+            //   * `TREE_TAG_MAX_TAG_LENGTH` rejects oversize labels that
+            //     are almost certainly free-form text (which belongs in
+            //     `memory.note`, not the categorical tag surface).
+            // Both reject up-front rather than silently truncating — same
+            // "explicit rejection" pattern as `required_non_empty_string_array`.
+            if tags.len() > TREE_TAG_MAX_TAGS {
+                return Err(ToolCallError::InvalidParams(format!(
+                    "argument `tags` accepts at most {TREE_TAG_MAX_TAGS} entries (got {})",
+                    tags.len()
+                )));
+            }
+            if let Some(oversize) = tags.iter().find(|t| t.len() > TREE_TAG_MAX_TAG_LENGTH) {
+                return Err(ToolCallError::InvalidParams(format!(
+                    "argument `tags` entry exceeds {TREE_TAG_MAX_TAG_LENGTH} characters (got {} chars)",
+                    oversize.len()
+                )));
+            }
             // Deterministic key keyed on `chunk_id` (not on tag content)
             // so re-tagging the same chunk upserts the prior tag-record
             // document rather than accumulating duplicate annotations.
@@ -1984,6 +2016,71 @@ mod tests {
             err.message().contains("unexpected argument `priority`"),
             "got: {}",
             err.message()
+        );
+    }
+
+    #[test]
+    fn tree_tag_rejects_oversize_tag_array() {
+        // Per-graycyrus #2316 review: cap the tag-array length so a
+        // misbehaving client can't flood a chunk's tag-record document
+        // with hundreds of categorical labels. Builds an over-cap
+        // array and asserts the dedicated rejection message.
+        let oversize: Vec<String> = (0..(TREE_TAG_MAX_TAGS + 1))
+            .map(|i| format!("tag-{i}"))
+            .collect();
+        let err = build_rpc_params(
+            "tree.tag",
+            json!({ "chunk_id": "abc", "tags": oversize }),
+        )
+        .expect_err("must reject");
+        assert!(
+            err.message().contains("accepts at most"),
+            "got: {}",
+            err.message()
+        );
+    }
+
+    #[test]
+    fn tree_tag_rejects_oversize_individual_tag() {
+        // Per-graycyrus #2316 review: a single oversize tag is almost
+        // certainly free-form text that should be `memory.note` instead
+        // of going through the categorical tag surface — reject up-front
+        // so the misuse is visible rather than silently writing a giant
+        // token into the queryable `tags` index.
+        let oversize_tag = "a".repeat(TREE_TAG_MAX_TAG_LENGTH + 1);
+        let err = build_rpc_params(
+            "tree.tag",
+            json!({ "chunk_id": "abc", "tags": [oversize_tag] }),
+        )
+        .expect_err("must reject");
+        assert!(
+            err.message().contains("exceeds"),
+            "got: {}",
+            err.message()
+        );
+    }
+
+    #[test]
+    fn tree_tag_accepts_max_size_tags() {
+        // Boundary: exactly TREE_TAG_MAX_TAGS entries (the cap is
+        // "at most N", not "fewer than N") with each entry at exactly
+        // TREE_TAG_MAX_TAG_LENGTH chars must succeed. Locks the
+        // inclusive-vs-exclusive bound so a future off-by-one
+        // refactor breaks the test, not user calls.
+        let max_tags: Vec<String> = (0..TREE_TAG_MAX_TAGS)
+            .map(|i| format!("tag-{i:0width$}", width = TREE_TAG_MAX_TAG_LENGTH - 4))
+            .collect();
+        // Sanity: each entry is == TREE_TAG_MAX_TAG_LENGTH chars.
+        assert!(max_tags.iter().all(|t| t.len() == TREE_TAG_MAX_TAG_LENGTH));
+        let params = build_rpc_params(
+            "tree.tag",
+            json!({ "chunk_id": "abc", "tags": max_tags }),
+        )
+        .expect("at the cap must succeed");
+        // The built params should preserve all TREE_TAG_MAX_TAGS entries.
+        assert_eq!(
+            params["tags"].as_array().expect("tags is array").len(),
+            TREE_TAG_MAX_TAGS
         );
     }
 
