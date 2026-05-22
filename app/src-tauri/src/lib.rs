@@ -8,6 +8,8 @@ mod cef_profile;
 mod companion_commands;
 mod core_process;
 mod core_rpc;
+#[cfg(target_os = "windows")]
+mod deep_link_ipc_windows;
 mod dictation_hotkeys;
 mod discord_scanner;
 mod fake_camera;
@@ -2156,11 +2158,10 @@ pub fn run() {
     //
     // Fix: acquire a named Win32 mutex at the very top of `run()` — before
     // any CEF or builder work — so any secondary instance sees
-    // `ERROR_ALREADY_EXISTS` and exits immediately. The mutex name uses
-    // a `-cef-init` suffix distinct from the plugin's own `-sim` mutex so
-    // the two guards don't interfere; the plugin still handles WM_COPYDATA
-    // forwarding for graceful "focus primary" behaviour once the app is
-    // fully initialised.
+    // `ERROR_ALREADY_EXISTS` and exits immediately. If the secondary was
+    // launched for an `openhuman://` OAuth callback, forward that URL to the
+    // primary through our pre-CEF pipe before exiting; the Tauri deep-link
+    // plugin cannot run on this early secondary path.
     //
     // The RAII guard holds the mutex handle for the lifetime of `run()`.
     // Windows releases all process handles automatically on exit, so
@@ -2179,9 +2180,17 @@ pub fn run() {
 
         if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
             // Another instance is already past this point — exit before we
-            // touch CEF at all. The plugin's WM_COPYDATA path won't run
-            // here (it needs an AppHandle from setup()), but the primary
-            // is already showing its window so the user experience is fine.
+            // touch CEF at all. Forward deep links first so OAuth callbacks
+            // are not dropped by this early pre-plugin exit.
+            match deep_link_ipc_windows::try_forward_deep_links() {
+                deep_link_ipc_windows::ForwardResult::Forwarded
+                | deep_link_ipc_windows::ForwardResult::NoUrls => {}
+                deep_link_ipc_windows::ForwardResult::NoPrimary => {
+                    log::warn!(
+                        "[single-instance] secondary had deep-link argv but could not reach primary pipe"
+                    );
+                }
+            }
             if !handle.is_null() {
                 unsafe { CloseHandle(handle) };
             }
@@ -2202,6 +2211,9 @@ pub fn run() {
         }
         OwnedMutex(handle as isize)
     };
+
+    #[cfg(windows)]
+    let _deep_link_pipe_guard = deep_link_ipc_windows::bind_and_listen();
 
     // CEF cache-lock preflight (macOS only): if another OpenHuman instance
     // is already holding the CEF user-data-dir, the vendored
@@ -2492,6 +2504,7 @@ pub fn run() {
                 if let Err(err) = app.deep_link().register_all() {
                     log::warn!("[deep-link] register_all failed (non-fatal): {err}");
                 }
+                deep_link_ipc_windows::drain_pending_urls(app.app_handle());
             }
             #[cfg(target_os = "linux")]
             {

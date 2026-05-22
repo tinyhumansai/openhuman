@@ -169,6 +169,9 @@ windows-sys = { version = "0.59", features = [
     # parameter is gated behind it in windows-sys 0.59.
     "Win32_System_Threading",
     "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+    "Win32_System_Pipes",
 ] }
 
 [features]
