@@ -24,7 +24,7 @@ icon: bolt
 | **Stripe** | `STRIPE_CHARGE_SUCCEEDED`，你账户上的一笔成功 charge |
 | **日历** | `GOOGLE_CALENDAR_EVENT_CREATED`，你日历上的新事件 |
 
-完整集合来自为[第三方集成](README.md)提供支持的 [Composio](https://composio.dev) 连接器层。当连接活跃时，相关的触发器订阅会自动接入。
+完整集合来自为[第三方集成](README.zh-CN.md)提供支持的 [Composio](https://composio.dev) 连接器层。当连接活跃时，相关的触发器订阅会自动接入。
 
 ### Gmail OAuth 作用域
 
@@ -88,11 +88,11 @@ Webhook 永远不会被原始地到达你的机器。后端持有 OAuth token �
 
 - **`react`** 是廉价路径。Trigger Reactor 是一个有严格预算的窄专家，只有几个工具调用。它非常适合：写一条简短的记忆笔记说"看到 Stripe 新增一笔 $84 charge，客户 X，商户 Y"、静默将同一自动提醒标记为已处理因为你本周已经分类过两次、或存储用户以后可能想查找的事件的结构化记录。
 
-- **`escalate`** 是重型路径。当分类智能体决定触发器需要真正的工作时，它将自包含的任务描述交给 Orchestrator。orchestrator 可以访问你完整的技能表面、工具、记忆和[潜意识循环](../subconscious.md)输出。从那里它可能：
+- **`escalate`** 是重型路径。当分类智能体决定触发器需要真正的工作时，它将自包含的任务描述交给 Orchestrator。orchestrator 可以访问你完整的技能表面、工具、记忆和[潜意识循环](../subconscious.zh-CN.md)输出。从那里它可能：
   - 起草一封重要邮件的回复并排队等待你批准。
   - 为入站 issue 拉取相关的 Notion / Linear / Drive 上下文并写一条结构化评论。
   - 基于单个入站事件更新三个已连接系统（"这个客户的计划在 Stripe 变了，更新 HubSpot，在 #revenue 发帖，并在他们的 Notion 文件中添加一条笔记"）。
-  - 判断触发器意味着一个会议刚刚被预定并为该通话预加载[会议智能体](../mascot/meeting-agents.md)。
+  - 判断触发器意味着一个会议刚刚被预定并为该通话预加载[会议智能体](../mascot/meeting-agents.zh-CN.md)。
 
 两种情况下操作都在你的机器上运行，针对你的本地记忆树，使用与智能体其余部分相同的模型路由和工具表面。
 
@@ -103,7 +103,7 @@ Webhook 永远不会被原始地到达你的机器。后端持有 OAuth token �
 1. **大多数触发器是噪音。** 一个已连接的 Gmail 账户每小时触发数十个触发器，其中绝大多数是用户不在乎的。在每个上运行 orchestrator 会消耗预算并产生持续的后台活动流。
 2. **不同的触发器值得不同的上限。** 一个自动 Stripe 收据和个人 Slack DM 不应该花相同的 token 数来处理。分类让廉价路径保持廉价，并将 orchestrator 保留给值得它的东西。
 
-分类在快速模型层运行（参见[自动模型路由](../model-routing/README.md)），所以分类本身在亚秒级完成。
+分类在快速模型层运行（参见[自动模型路由](../model-routing/README.zh-CN.md)），所以分类本身在亚秒级完成。
 
 ## 配置和退出
 
@@ -114,7 +114,7 @@ Webhook 永远不会被原始地到达你的机器。后端持有 OAuth token �
 
 ## 隐私边界
 
-触发器遵循与产品其余部分相同的边界（参见[隐私与安全](../privacy-and-security.md)）：
+触发器遵循与产品其余部分相同的边界（参见[隐私与安全](../privacy-and-security.zh-CN.md)）：
 
 - 第三方 token 位于后端，永不在你的笔记本上。
 - Webhook 在到达你的机器之前由后端进行 HMAC 验证。
@@ -133,6 +133,6 @@ Webhook 永远不会被原始地到达你的机器。后端持有 OAuth token �
 ## 另见
 
 * [第三方集成](README.md)，触发器来源的服务目录。
-* [从集成自动拉取](../obsidian-wiki/auto-fetch.md)，轮询对应部分，定期将源数据摄入记忆树。
+* [从集成自动拉取](../obsidian-wiki/auto-fetch.zh-CN.md)，轮询对应部分，定期将源数据摄入记忆树。
 * [潜意识循环](../subconscious.md)，使用触发器上下文和记忆提前规划的背景循环。
 * [会议智能体](../mascot/meeting-agents.md)，升级触发器可以落地的地方之一（日历事件有 Meet 链接）。

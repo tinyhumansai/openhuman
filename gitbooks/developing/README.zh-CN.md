@@ -8,7 +8,7 @@ lang: zh-CN
 
 OpenHuman 在 [github.com/tinyhumansai/openhuman](https://github.com/tinyhumansai/openhuman) 以 GPLv3 协议开源。本节面向贡献者和所有从源码运行 OpenHuman 的人。
 
-如果你只是想使用应用，请前往[快速开始](../overview/getting-started.md)。如果你来这里是为了阅读架构文档、hack 一个新特性，或者提交一个 PR，那你来对地方了。
+如果你只是想使用应用，请前往[快速开始](../overview/getting-started.zh-CN.md)。如果你来这里是为了阅读架构文档、hack 一个新特性，或者提交一个 PR，那你来对地方了。
 
 ***
 
@@ -61,7 +61,7 @@ PR 必须通过 **变更行覆盖率 ≥ 80%** 的门禁。为新行为添加测
 * [**Agent Harness**](architecture/agent-harness.zh-CN.md)。智能体面向代码的工具表面，以及如何扩展它。
 * [**Chromium Embedded Framework**](cef.zh-CN.md)。嵌入式提供商 webview 如何工作、为什么不运行注入的 JS，以及各提供商 scanner 实际上做了什么。
 
-对于仍在构建中的特性，[Subconscious Loop](../features/subconscious.md) 页面从头到尾涵盖了后台任务评估系统。
+对于仍在构建中的特性，[Subconscious Loop](../features/subconscious.zh-CN.md) 页面从头到尾涵盖了后台任务评估系统。
 
 ***
 
