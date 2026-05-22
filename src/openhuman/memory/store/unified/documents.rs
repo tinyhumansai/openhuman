@@ -27,18 +27,28 @@ impl UnifiedMemory {
             );
             return Err("document namespace/key cannot contain secrets".to_string());
         }
+        if safety::pii::has_likely_pii(&input.namespace) || safety::pii::has_likely_pii(&input.key)
+        {
+            log::warn!(
+                "[memory:safety] document write rejected due to PII-like namespace/key namespace_chars={} key_chars={}",
+                input.namespace.chars().count(),
+                input.key.chars().count()
+            );
+            return Err("document namespace/key cannot contain personal identifiers".to_string());
+        }
 
         let sanitized = safety::sanitize_document_input(input);
         let input = sanitized.value;
         if sanitized.report.changed() {
             log::warn!(
-                "[memory:safety] document write sanitized namespace_chars={} key_chars={} text_redactions={} key_redactions={} blocked_secret_hits={} depth_redactions={}",
+                "[memory:safety] document write sanitized namespace_chars={} key_chars={} text_redactions={} key_redactions={} blocked_secret_hits={} depth_redactions={} pii_redactions={}",
                 input.namespace.chars().count(),
                 input.key.chars().count(),
                 sanitized.report.text_redactions,
                 sanitized.report.key_redactions,
                 sanitized.report.blocked_secret_hits,
-                sanitized.report.depth_redactions
+                sanitized.report.depth_redactions,
+                sanitized.report.pii_redactions
             );
         }
 
@@ -190,18 +200,28 @@ impl UnifiedMemory {
             );
             return Err("document namespace/key cannot contain secrets".to_string());
         }
+        if safety::pii::has_likely_pii(&input.namespace) || safety::pii::has_likely_pii(&input.key)
+        {
+            log::warn!(
+                "[memory:safety] metadata-only write rejected due to PII-like namespace/key namespace_chars={} key_chars={}",
+                input.namespace.chars().count(),
+                input.key.chars().count()
+            );
+            return Err("document namespace/key cannot contain personal identifiers".to_string());
+        }
 
         let sanitized = safety::sanitize_document_input(input);
         let input = sanitized.value;
         if sanitized.report.changed() {
             log::warn!(
-                "[memory:safety] metadata-only write sanitized namespace_chars={} key_chars={} text_redactions={} key_redactions={} blocked_secret_hits={} depth_redactions={}",
+                "[memory:safety] metadata-only write sanitized namespace_chars={} key_chars={} text_redactions={} key_redactions={} blocked_secret_hits={} depth_redactions={} pii_redactions={}",
                 input.namespace.chars().count(),
                 input.key.chars().count(),
                 sanitized.report.text_redactions,
                 sanitized.report.key_redactions,
                 sanitized.report.blocked_secret_hits,
-                sanitized.report.depth_redactions
+                sanitized.report.depth_redactions,
+                sanitized.report.pii_redactions
             );
         }
 

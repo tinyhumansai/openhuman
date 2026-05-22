@@ -39,6 +39,10 @@ const getCoreRpcUrlMock = vi.fn<() => Promise<string>>();
 vi.mock('../coreRpcClient', () => ({
   getCoreRpcUrl: getCoreRpcUrlMock,
   clearCoreRpcUrlCache: vi.fn(),
+  // socketService now reads the per-process bearer for the Socket.IO
+  // handshake `auth.token` payload; tests only care that the resolve
+  // chain proceeds, not what the bearer value is.
+  getCoreRpcToken: vi.fn(async () => 'mock-core-bearer'),
 }));
 
 /** Build a mock socket that captures event handlers in `handlers`. */

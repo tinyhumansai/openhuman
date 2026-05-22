@@ -28,7 +28,10 @@ vi.mock('../../../lib/composio/composioApi', () => ({
 
 // Stub `openUrl` so deep-link clicks land in a mock instead of routing
 // through `tauri-plugin-opener` (which isn't loaded in the test env).
-vi.mock('../../../utils/openUrl', () => ({ openUrl: vi.fn().mockResolvedValue(undefined) }));
+vi.mock('../../../utils/openUrl', () => ({
+  openUrl: vi.fn().mockResolvedValue(undefined),
+  revealPath: vi.fn().mockResolvedValue(undefined),
+}));
 
 const { memoryTreeGraphExport, memoryTreeFlushNow, memoryTreeWipeAll, memoryTreeResetTree } =
   (await import('../../../utils/tauriCommands')) as unknown as {
@@ -44,7 +47,10 @@ const { listConnections, syncConnection } =
     syncConnection: Mock;
   };
 
-const { openUrl } = (await import('../../../utils/openUrl')) as unknown as { openUrl: Mock };
+const { openUrl, revealPath } = (await import('../../../utils/openUrl')) as unknown as {
+  openUrl: Mock;
+  revealPath: Mock;
+};
 
 function makeSummary(partial: Partial<GraphNode>): GraphNode {
   return {
@@ -92,6 +98,7 @@ describe('MemoryWorkspace (graph view)', () => {
     listConnections.mockResolvedValue({ connections: [] });
     syncConnection.mockResolvedValue({ ok: true });
     openUrl.mockResolvedValue(undefined);
+    revealPath.mockResolvedValue(undefined);
   });
 
   it('renders the SVG graph once the export RPC resolves', async () => {
@@ -126,6 +133,65 @@ describe('MemoryWorkspace (graph view)', () => {
         'obsidian://open?path=' + encodeURIComponent('/tmp/workspace/memory_tree/content')
       );
     });
+  });
+
+  // #2281: every click must produce a visible result. We emit an info
+  // toast naming the vault path AND offering a "Reveal Folder" action
+  // so users without Obsidian still get feedback + a working escape
+  // hatch.
+  it('"View vault" click emits an info toast with the vault path and a Reveal Folder action', async () => {
+    const onToast = vi.fn();
+    renderWithProviders(<MemoryWorkspace onToast={onToast} />);
+    const button = await screen.findByTestId('memory-open-in-obsidian');
+    fireEvent.click(button);
+    await waitFor(() => {
+      expect(onToast).toHaveBeenCalled();
+    });
+    const toast = onToast.mock.calls[0][0];
+    expect(toast.type).toBe('info');
+    expect(toast.message).toContain('/tmp/workspace/memory_tree/content');
+    expect(toast.action?.label).toBeTruthy();
+    expect(typeof toast.action?.handler).toBe('function');
+  });
+
+  it('Reveal Folder action on the success toast calls revealPath with the vault content root', async () => {
+    const onToast = vi.fn();
+    renderWithProviders(<MemoryWorkspace onToast={onToast} />);
+    fireEvent.click(await screen.findByTestId('memory-open-in-obsidian'));
+    await waitFor(() => expect(onToast).toHaveBeenCalled());
+    const toast = onToast.mock.calls[0][0];
+    toast.action.handler();
+    await waitFor(() => {
+      expect(revealPath).toHaveBeenCalledWith('/tmp/workspace/memory_tree/content');
+    });
+  });
+
+  it('"View vault" surfaces an error toast (still with Reveal Folder) when openUrl rejects', async () => {
+    openUrl.mockRejectedValueOnce(new Error('boom'));
+    const onToast = vi.fn();
+    renderWithProviders(<MemoryWorkspace onToast={onToast} />);
+    fireEvent.click(await screen.findByTestId('memory-open-in-obsidian'));
+    await waitFor(() => expect(onToast).toHaveBeenCalled());
+    const toast = onToast.mock.calls[0][0];
+    expect(toast.type).toBe('error');
+    expect(toast.message).toContain('/tmp/workspace/memory_tree/content');
+    expect(toast.action?.label).toBeTruthy();
+  });
+
+  it('Reveal Folder fallback surfaces an error toast when revealPath itself fails', async () => {
+    revealPath.mockRejectedValueOnce(new Error('reveal failed'));
+    const onToast = vi.fn();
+    renderWithProviders(<MemoryWorkspace onToast={onToast} />);
+    fireEvent.click(await screen.findByTestId('memory-open-in-obsidian'));
+    await waitFor(() => expect(onToast).toHaveBeenCalled());
+    const firstToast = onToast.mock.calls[0][0];
+    firstToast.action.handler();
+    await waitFor(() => {
+      expect(onToast.mock.calls.length).toBeGreaterThanOrEqual(2);
+    });
+    const errorToast = onToast.mock.calls[onToast.mock.calls.length - 1][0];
+    expect(errorToast.type).toBe('error');
+    expect(errorToast.message).toContain('reveal failed');
   });
 
   it('clicking a summary node opens that file in Obsidian via the deep link', async () => {

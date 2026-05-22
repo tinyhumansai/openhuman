@@ -25,10 +25,13 @@ use crate::openhuman::agent::harness;
 use crate::openhuman::agent::hooks::{self, ToolCallRecord, TurnContext};
 use crate::openhuman::agent::memory_loader::collect_recall_citations;
 use crate::openhuman::agent::progress::AgentProgress;
-use crate::openhuman::agent::tool_policy::{ToolPolicyDecision, ToolPolicyRequest};
+use crate::openhuman::agent::tool_policy::{
+    ToolCallContext, ToolPolicyDecision, ToolPolicyRequest,
+};
 use crate::openhuman::agent_experience::{
     prepend_experience_block, render_experience_hits, AgentExperienceStore, ExperienceQuery,
 };
+use crate::openhuman::agent_tool_policy::render_tool_policy_boundary;
 use crate::openhuman::context::prompt::{LearnedContextData, PromptContext, PromptTool};
 use crate::openhuman::context::{ReductionOutcome, ARCHIVIST_EXTRACTION_PROMPT};
 use crate::openhuman::inference::model_context::context_window_for_model;
@@ -92,19 +95,17 @@ impl Agent {
             // stored prompt verbatim to preserve the KV-cache prefix the
             // inference backend has already tokenised. Fetching it later
             // would just burn memory-store reads on data we throw away.
-            self.fetch_connected_integrations().await;
-            // The synchronous builder couldn't synthesise `delegate_*`
-            // tools for connected Composio toolkits (no async runtime
-            // handle for the Composio fetcher), so it baked in `&[]`.
-            // Now that integrations are live, inject the matching
-            // delegation tools so the orchestrator's prompt + tool-spec
-            // list actually expose `delegate_gmail`, `delegate_notion`,
-            // etc. The shared-Arc failure path returns `false`, but on
-            // turn 1 the Arc is uniquely owned (no sub-agent has run
-            // yet); a `false` return here would indicate a programmer
-            // error and the warn-level log inside the helper already
-            // surfaces it, so we ignore the return value here.
-            let _ = self.refresh_delegation_tools();
+            if !self.connected_integrations_initialized {
+                self.fetch_connected_integrations().await;
+                // Sessions born without a cached Composio view still need
+                // a one-shot delegation-surface reconcile before the system
+                // prompt is frozen. The shared-Arc failure path returns
+                // `false`, but on turn 1 the Arc should still be uniquely
+                // owned; a `false` return here indicates a programmer error
+                // and the warn-level log inside the helper already surfaces
+                // it, so we keep the existing best-effort contract.
+                let _ = self.refresh_delegation_tools();
+            }
             let learned = self.fetch_learned_context().await;
             let rendered_prompt = self.build_system_prompt(learned)?;
             log::info!("[agent] system prompt built — initialising conversation history");
@@ -173,15 +174,13 @@ impl Agent {
             // [`crate::openhuman::composio::cached_active_integrations`]
             // helper — never trigger a backend fetch ourselves, never
             // block on a writer.
+            // Session agents built through `from_config_*` carry their
+            // runtime `Config` snapshot directly, so this read avoids the
+            // old `Config::load_or_init()` round-trip on every turn.
             //
-            // We need a `Config` to key into `INTEGRATIONS_CACHE`. The
-            // `Config::load_or_init()` call is cached internally so this
-            // is cheap on the hot path. On config-load failure we skip
-            // the refresh — no signal we can safely act on, same as
-            // when the cache itself is empty.
-            if let Ok(cfg) = crate::openhuman::config::Config::load_or_init().await {
+            if let Some(cfg) = self.integration_runtime_config.as_ref() {
                 if let Some(cache_view) =
-                    crate::openhuman::composio::cached_active_integrations(&cfg)
+                    crate::openhuman::composio::cached_active_integrations(cfg)
                 {
                     let new_hash = crate::openhuman::composio::connected_set_hash(&cache_view);
                     if new_hash != self.last_seen_integrations_hash {
@@ -202,6 +201,7 @@ impl Agent {
                             std::mem::replace(&mut self.connected_integrations, cache_view);
                         if self.refresh_delegation_tools() {
                             self.last_seen_integrations_hash = new_hash;
+                            self.connected_integrations_initialized = true;
                         } else {
                             // Reconcile aborted (shared Arc) — restore
                             // the previous integration list so the
@@ -1145,101 +1145,121 @@ impl Agent {
                 false,
             )
         } else if let Some(tool) = self.tools.iter().find(|t| t.name() == call.name) {
-            let policy_request = ToolPolicyRequest {
-                tool_name: call.name.clone(),
-                arguments: call.arguments.clone(),
-                session_id: self.event_session_id().to_string(),
-                channel: self.event_channel().to_string(),
-                agent_definition_id: self.agent_definition_id.to_string(),
-            };
-            if let ToolPolicyDecision::Deny { reason } =
-                self.tool_policy.check(&policy_request).await
-            {
-                tracing::debug!(
-                    tool = call.name.as_str(),
-                    policy = self.tool_policy.name(),
-                    reason = %reason,
-                    "[agent_loop] tool denied by policy"
-                );
+            let session_decision = self.tool_policy_session.decision_for(&call.name);
+            if session_decision.is_denied() {
+                let required = session_decision
+                    .required_permission
+                    .map(|permission| permission.to_string())
+                    .unwrap_or_else(|| "unknown".to_string());
                 (
                     format!(
-                        "Tool '{}' denied by policy '{}': {reason}",
+                        "Tool '{}' blocked by tool policy: requires {}, channel '{}' allows {}",
                         call.name,
-                        self.tool_policy.name()
+                        required,
+                        self.event_channel,
+                        session_decision.allowed_permission
                     ),
                     false,
                 )
             } else {
-                // Per-call options: ask the tool for markdown output when the
-                // context manager is configured to prefer it. Tools that
-                // implement `execute_with_options` will populate
-                // `markdown_formatted`; others fall through to the default
-                // implementation which forwards to `execute`.
-                let prefer_markdown = self.context.prefer_markdown_tool_output();
-                let options = ToolCallOptions { prefer_markdown };
-                let outcome = tool
-                    .execute_with_options(call.arguments.clone(), options)
-                    .await;
-                match outcome {
-                    Ok(r) => {
-                        if !r.is_error {
-                            let mut output = r.output_for_llm(prefer_markdown);
-                            if prefer_markdown && r.markdown_formatted.is_some() {
-                                log::debug!(
-                                    "[agent_loop] tool={} returned markdown payload bytes={}",
-                                    call.name,
-                                    output.len()
-                                );
-                            }
-                            // Issue #574 — if a payload summarizer is wired
-                            // in (orchestrator session only) and the output
-                            // exceeds the configured threshold, hand it to
-                            // the summarizer sub-agent before it enters
-                            // history. On any failure or below-threshold
-                            // payload, leave `output` untouched and let the
-                            // existing tool_result_budget_bytes truncation
-                            // pipeline handle it downstream.
-                            if let Some(ps) = self.payload_summarizer.as_ref() {
-                                log::debug!(
+                let context = ToolCallContext::session(
+                    self.event_session_id(),
+                    self.event_channel(),
+                    self.agent_definition_id.to_string(),
+                    call_id.clone(),
+                    (iteration + 1) as u32,
+                );
+                let policy_request =
+                    ToolPolicyRequest::new(call.name.clone(), call.arguments.clone(), context);
+                if let ToolPolicyDecision::Deny { reason } =
+                    self.tool_policy.check(&policy_request).await
+                {
+                    tracing::debug!(
+                        tool = call.name.as_str(),
+                        policy = self.tool_policy.name(),
+                        reason = %reason,
+                        "[agent_loop] tool denied by policy"
+                    );
+                    (
+                        format!(
+                            "Tool '{}' denied by policy '{}': {reason}",
+                            call.name,
+                            self.tool_policy.name()
+                        ),
+                        false,
+                    )
+                } else {
+                    // Per-call options: ask the tool for markdown output when the
+                    // context manager is configured to prefer it. Tools that
+                    // implement `execute_with_options` will populate
+                    // `markdown_formatted`; others fall through to the default
+                    // implementation which forwards to `execute`.
+                    let prefer_markdown = self.context.prefer_markdown_tool_output();
+                    let options = ToolCallOptions { prefer_markdown };
+                    let outcome = tool
+                        .execute_with_options(call.arguments.clone(), options)
+                        .await;
+                    match outcome {
+                        Ok(r) => {
+                            if !r.is_error {
+                                let mut output = r.output_for_llm(prefer_markdown);
+                                if prefer_markdown && r.markdown_formatted.is_some() {
+                                    log::debug!(
+                                        "[agent_loop] tool={} returned markdown payload bytes={}",
+                                        call.name,
+                                        output.len()
+                                    );
+                                }
+                                // Issue #574 — if a payload summarizer is wired
+                                // in (orchestrator session only) and the output
+                                // exceeds the configured threshold, hand it to
+                                // the summarizer sub-agent before it enters
+                                // history. On any failure or below-threshold
+                                // payload, leave `output` untouched and let the
+                                // existing tool_result_budget_bytes truncation
+                                // pipeline handle it downstream.
+                                if let Some(ps) = self.payload_summarizer.as_ref() {
+                                    log::debug!(
                                     "[agent_loop] payload_summarizer intercepting tool={} bytes={}",
                                     call.name,
                                     output.len()
                                 );
-                                match ps.maybe_summarize(&call.name, None, &output).await {
-                                    Ok(Some(payload)) => {
-                                        log::info!(
+                                    match ps.maybe_summarize(&call.name, None, &output).await {
+                                        Ok(Some(payload)) => {
+                                            log::info!(
                                             "[agent_loop] payload_summarizer compressed tool={} {}->{} bytes",
                                             call.name,
                                             payload.original_bytes,
                                             payload.summary_bytes
                                         );
-                                        output = payload.summary;
-                                    }
-                                    Ok(None) => {
-                                        log::debug!(
+                                            output = payload.summary;
+                                        }
+                                        Ok(None) => {
+                                            log::debug!(
                                             "[agent_loop] payload_summarizer pass-through tool={} bytes={}",
                                             call.name,
                                             output.len()
                                         );
-                                    }
-                                    Err(e) => {
-                                        log::warn!(
+                                        }
+                                        Err(e) => {
+                                            log::warn!(
                                             "[agent_loop] payload_summarizer error tool={} err={} (passing raw payload through)",
                                             call.name,
                                             e
                                         );
+                                        }
                                     }
                                 }
+                                (output, true)
+                            } else {
+                                (
+                                    format!("Error: {}", r.output_for_llm(prefer_markdown)),
+                                    false,
+                                )
                             }
-                            (output, true)
-                        } else {
-                            (
-                                format!("Error: {}", r.output_for_llm(prefer_markdown)),
-                                false,
-                            )
                         }
+                        Err(e) => (format!("Error executing {}: {e}", call.name), false),
                     }
-                    Err(e) => (format!("Error executing {}: {e}", call.name), false),
                 }
             }
         } else {
@@ -1646,17 +1666,21 @@ impl Agent {
     /// `composio/tools.rs`, and the spawn-time per-action tool build
     /// path in `subagent_runner/ops.rs`.
     pub async fn fetch_connected_integrations(&mut self) {
-        let config = match crate::openhuman::config::Config::load_or_init().await {
-            Ok(c) => c,
-            Err(e) => {
-                log::debug!(
-                    "[agent] skipping connected integrations fetch: config load failed: {e}"
-                );
-                return;
-            }
+        let config = match self.integration_runtime_config.clone() {
+            Some(config) => config,
+            None => match crate::openhuman::config::Config::load_or_init().await {
+                Ok(config) => config,
+                Err(e) => {
+                    log::debug!(
+                        "[agent] skipping connected integrations fetch: config load failed: {e}"
+                    );
+                    return;
+                }
+            },
         };
         self.connected_integrations =
             crate::openhuman::composio::fetch_connected_integrations(&config).await;
+        self.connected_integrations_initialized = true;
     }
 
     /// Re-synthesise `delegate_*` tools for the orchestrator's `subagents`
@@ -1686,10 +1710,10 @@ impl Agent {
     ///     guarantees every final entry is either a non-synthesised
     ///     direct tool or a member of the fresh `synthed` set.
     ///
-    /// **When to call**: on turn 1 (after [`Agent::fetch_connected_integrations`]
-    /// populates `self.connected_integrations` for the first time) and
-    /// on any subsequent turn where the connection set has changed
-    /// since the last reconcile (detected via
+    /// **When to call**: on turn 1 only when the session was built
+    /// without a prewarmed Composio cache snapshot, and on any
+    /// subsequent turn where the connection set has changed since the
+    /// last reconcile (detected via
     /// [`Self::last_seen_integrations_hash`] vs.
     /// [`crate::openhuman::composio::cached_active_integrations`]).
     ///
@@ -1792,17 +1816,7 @@ impl Agent {
         // `delegate_name = "research"`) doesn't collide with a
         // same-named skill tool on the wire — Anthropic 400s on dup
         // tool names where OpenHuman's backend silently accepts.
-        let visible_specs: Vec<crate::openhuman::tools::ToolSpec> =
-            if self.visible_tool_names.is_empty() {
-                (*self.tool_specs).clone()
-            } else {
-                self.tool_specs
-                    .iter()
-                    .filter(|spec| self.visible_tool_names.contains(&spec.name))
-                    .cloned()
-                    .collect()
-            };
-        self.visible_tool_specs = Arc::new(super::builder::dedup_visible_tool_specs(visible_specs));
+        self.rebuild_tool_policy_session();
 
         // Compute add/remove deltas for the log line — useful when
         // diagnosing a Composio connect/revoke that should have rebuilt
@@ -1837,12 +1851,16 @@ impl Agent {
     /// instructions and learned context.
     pub fn build_system_prompt(&self, learned: LearnedContextData) -> Result<String> {
         let tools_slice: &[Box<dyn Tool>] = self.tools.as_slice();
-        let instructions = self.tool_dispatcher.prompt_instructions(tools_slice);
+        let instructions = self
+            .tool_dispatcher
+            .prompt_instructions_for_specs(self.visible_tool_specs.as_slice())
+            .unwrap_or_else(|| self.tool_dispatcher.prompt_instructions(tools_slice));
         // Adapt the owned Box<dyn Tool> slice into the shared PromptTool
         // shape that every prompt-building call-site uses. Temporary vec
         // borrows from `tools_slice` and lives for the duration of the
         // prompt build.
         let prompt_tools = PromptTool::from_tools(tools_slice);
+        let prompt_visible_tool_names = self.tool_policy_session.visible_tool_names_for_prompt();
         let ctx = PromptContext {
             workspace_dir: &self.workspace_dir,
             model_name: &self.model_name,
@@ -1851,7 +1869,7 @@ impl Agent {
             skills: &self.skills,
             dispatcher_instructions: &instructions,
             learned,
-            visible_tool_names: &self.visible_tool_names,
+            visible_tool_names: &prompt_visible_tool_names,
             tool_call_format: self.tool_dispatcher.tool_call_format(),
             connected_integrations: &self.connected_integrations,
             connected_identities_md: crate::openhuman::agent::prompts::render_connected_identities(
@@ -1864,7 +1882,11 @@ impl Agent {
         // Route through the global context manager so every
         // prompt-building call-site — main agent, sub-agent runner,
         // channel runtimes — shares one builder configuration.
-        self.context.build_system_prompt(&ctx)
+        let mut prompt = self.context.build_system_prompt(&ctx)?;
+        if let Some(boundary) = render_tool_policy_boundary(&self.tool_policy_session, 2048) {
+            prompt = format!("{boundary}\n\n{prompt}");
+        }
+        Ok(prompt)
     }
 
     // ─────────────────────────────────────────────────────────────────

@@ -2,6 +2,12 @@
 //!
 //! This module is intentionally conservative: it prefers false positives over
 //! leaking credentials into long-lived memory stores.
+//!
+//! Personal-PII redaction (national IDs, international phone) is layered on
+//! top via the [`pii`] submodule and runs from [`sanitize_text`], so every
+//! call site that scrubs secrets also scrubs PII.
+
+pub mod pii;
 
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -19,6 +25,7 @@ pub struct SanitizationReport {
     pub key_redactions: usize,
     pub blocked_secret_hits: usize,
     pub depth_redactions: usize,
+    pub pii_redactions: usize,
 }
 
 impl SanitizationReport {
@@ -27,6 +34,7 @@ impl SanitizationReport {
             || self.key_redactions > 0
             || self.blocked_secret_hits > 0
             || self.depth_redactions > 0
+            || self.pii_redactions > 0
     }
 
     pub fn merge(self, rhs: Self) -> Self {
@@ -35,6 +43,7 @@ impl SanitizationReport {
             key_redactions: self.key_redactions + rhs.key_redactions,
             blocked_secret_hits: self.blocked_secret_hits + rhs.blocked_secret_hits,
             depth_redactions: self.depth_redactions + rhs.depth_redactions,
+            pii_redactions: self.pii_redactions + rhs.pii_redactions,
         }
     }
 }
@@ -216,7 +225,13 @@ pub fn sanitize_text(value: &str) -> Sanitized<String> {
         }
     }
 
-    Sanitized { value: out, report }
+    let pii_sanitized = pii::redact_pii(&out);
+    report = report.merge(pii_sanitized.report);
+
+    Sanitized {
+        value: pii_sanitized.value,
+        report,
+    }
 }
 
 pub fn sanitize_json(value: &Value) -> Sanitized<Value> {
@@ -439,6 +454,38 @@ mod tests {
         assert!(!sanitized.value.contains("OPENSSH PRIVATE KEY"));
         assert!(sanitized.value.contains(REDACTED_PRIVATE_KEY));
         assert!(sanitized.report.blocked_secret_hits >= 1);
+    }
+
+    #[test]
+    fn sanitize_text_also_redacts_pii_after_secrets() {
+        // Mix of secret + multilingual PII — both should be scrubbed in one pass.
+        let input = "Token sk-abcdefghijklmnopqrstuvwxyz; CPF 111.444.777-35; phone +15551234567";
+        let sanitized = sanitize_text(input);
+        assert!(!sanitized.value.contains("sk-abcdefghijklmnopqrstuvwxyz"));
+        assert!(!sanitized.value.contains("111.444.777-35"));
+        assert!(!sanitized.value.contains("+15551234567"));
+        assert!(sanitized.value.contains("[REDACTED_PII_CPF]"));
+        assert!(sanitized.value.contains("[REDACTED_PII_PHONE]"));
+        assert!(sanitized.report.text_redactions >= 1);
+        assert_eq!(sanitized.report.pii_redactions, 2);
+    }
+
+    #[test]
+    fn sanitize_json_propagates_pii_redaction_into_nested_strings() {
+        let input = json!({
+            "note": "Cliente RFC VECJ880326XK4 confirmado",
+            "meta": { "cuit": "20-11111111-2" }
+        });
+        let sanitized = sanitize_json(&input);
+        assert!(sanitized.value["note"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("[REDACTED_PII_RFC]"));
+        assert!(sanitized.value["meta"]["cuit"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("[REDACTED_PII_CUIT]"));
+        assert!(sanitized.report.pii_redactions >= 2);
     }
 
     #[test]

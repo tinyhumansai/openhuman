@@ -12,6 +12,7 @@ use crate::openhuman::agent::hooks::PostTurnHook;
 use crate::openhuman::agent::memory_loader::MemoryLoader;
 use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::agent::tool_policy::ToolPolicy;
+use crate::openhuman::agent_tool_policy::ToolPolicySession;
 use crate::openhuman::context::prompt::SystemPromptBuilder;
 use crate::openhuman::context::ContextManager;
 use crate::openhuman::inference::provider::{ChatMessage, ConversationMessage, Provider};
@@ -33,15 +34,16 @@ pub struct Agent {
     /// Full tool specs — sub-agents receive these via
     /// [`ParentExecutionContext::all_tool_specs`].
     pub(super) tool_specs: Arc<Vec<ToolSpec>>,
-    /// Tool specs filtered by `visible_tool_names`. These are the specs
-    /// actually sent to the provider in the main agent's chat requests.
-    /// When `visible_tool_names` is empty this equals `tool_specs`.
+    /// Tool specs filtered by the visible-tool allowlist and session
+    /// permission policy. These are the specs actually sent to the
+    /// provider in the main agent's chat requests.
     pub(super) visible_tool_specs: Arc<Vec<ToolSpec>>,
     /// When non-empty, only these tool names are visible in the main
     /// agent's prompt and callable by the main agent. Sub-agents ignore
     /// this filter — they apply per-definition whitelists in the runner.
     /// Empty = no filter (all tools visible, backward compat).
     pub(super) visible_tool_names: std::collections::HashSet<String>,
+    pub(super) tool_policy_session: ToolPolicySession,
     pub(super) memory: Arc<dyn Memory>,
     pub(super) tool_dispatcher: Box<dyn ToolDispatcher>,
     pub(super) memory_loader: Box<dyn MemoryLoader>,
@@ -137,6 +139,18 @@ pub struct Agent {
     /// the delegator / skill-executor voices can render their own
     /// integration blocks.
     pub(super) connected_integrations: Vec<crate::openhuman::context::prompt::ConnectedIntegration>,
+    /// Whether `connected_integrations` is an authoritative session-start
+    /// snapshot (prewarmed from the shared Composio cache or fetched
+    /// explicitly) versus the default empty placeholder installed by
+    /// `AgentBuilder::build`. Turn 1 uses this to decide whether it must
+    /// still pay the cold-start fetch cost before freezing the system prompt.
+    pub(super) connected_integrations_initialized: bool,
+    /// Full runtime config snapshot for integration-cache reads and the
+    /// best-effort fallback fetch path. Session agents built from
+    /// `Config` carry this directly so the turn loop does not need to
+    /// re-run `Config::load_or_init()` on the hot path just to key into
+    /// the Composio cache.
+    pub(super) integration_runtime_config: Option<crate::openhuman::config::Config>,
     /// Mirrors the agent definition's `omit_profile` flag. Threaded into
     /// [`PromptContext::include_profile`] in `turn::build_system_prompt`
     /// so only user-facing agents (welcome, orchestrator, triggers)

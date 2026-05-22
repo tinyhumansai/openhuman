@@ -217,6 +217,19 @@ mod tests {
     }
 
     #[test]
+    fn build_routes_live_facts_to_research_tool() {
+        let body = build(&ctx_with(&[])).unwrap();
+        assert!(body.contains("use `research`"));
+        assert!(body.contains("weather, forecasts, current temperatures"));
+        assert!(body.contains("\"use Grok/web/live data\""));
+        assert!(body.contains("Do **not** stop at \"on it\""));
+        assert!(
+            !body.contains("delegate_researcher"),
+            "orchestrator prompt should name the synthesized researcher tool"
+        );
+    }
+
+    #[test]
     fn build_emits_delegation_guide_with_collapsed_tool() {
         let integrations = vec![ConnectedIntegration {
             toolkit: "gmail".into(),
@@ -235,6 +248,16 @@ mod tests {
         assert!(!body.contains("spawn_subagent(agent_id=\"integrations_agent\""));
         // Delegator voice must NOT use the skill-executor wording.
         assert!(!body.contains("You have direct access"));
+    }
+
+    #[test]
+    fn build_does_not_route_scope_errors_as_disconnected() {
+        let body = build(&ctx_with(&[])).unwrap();
+        assert!(body.contains("[composio:error:insufficient_scope]"));
+        assert!(body.contains("missing required permissions"));
+        assert!(body.contains("connection exists but needs additional permissions"));
+        assert!(body.contains("Settings"));
+        assert!(body.contains("Connections"));
     }
 
     #[test]

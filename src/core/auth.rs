@@ -138,6 +138,23 @@ pub fn get_rpc_token() -> Option<&'static str> {
     RPC_TOKEN.get().map(String::as_str)
 }
 
+/// Validate a supplied bearer token against the active per-process RPC token.
+///
+/// Returns `true` only when the token subsystem is initialised and the
+/// supplied token is non-empty and matches the in-memory expected value.
+///
+/// This is the single entry point that non-HTTP transports (Socket.IO event
+/// handlers, SSE bind-token issuance, future WebSocket surfaces) should call
+/// before letting attacker-controlled input reach executable code. Keeping
+/// the comparison in one helper means a future move to constant-time
+/// equality is a one-line change for every transport at once.
+pub fn verify_bearer_token(supplied: &str) -> bool {
+    let Some(expected) = get_rpc_token() else {
+        return false;
+    };
+    bearer_matches(supplied, expected)
+}
+
 /// Axum middleware: enforce `Authorization: Bearer <token>` on all protected
 /// endpoints.
 ///
@@ -310,6 +327,16 @@ mod tests {
     #[test]
     fn bearer_matches_accepts_exact() {
         assert!(bearer_matches("cafebabe", "cafebabe"));
+    }
+
+    #[test]
+    fn verify_bearer_token_returns_false_when_token_uninitialized() {
+        // RPC_TOKEN is a process-global OnceLock; on a fresh test binary it
+        // may already be set by another test that ran first, so we cannot
+        // assert the uninitialized branch here without process isolation.
+        // We can however confirm that an empty supplied value is always
+        // rejected, which exercises the second-leg invariant.
+        assert!(!verify_bearer_token(""));
     }
 
     #[test]

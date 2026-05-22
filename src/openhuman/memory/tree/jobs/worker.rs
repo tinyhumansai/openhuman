@@ -100,8 +100,9 @@ pub fn start(config: Config) {
                                 );
                                 tokio::time::sleep(Duration::from_secs(1)).await;
                             } else if is_sqlite_io_transient(&err) {
-                                // I/O errors (IOERR_TRUNCATE 1546, IOERR_SHMMAP 4874,
-                                // CANTOPEN 14) or circuit breaker open — transient
+                                // I/O errors (IOERR_TRUNCATE 1546, the `-shm` family
+                                // 4618/4874/5386, IN_PAGE 8714, CANTOPEN 14) or circuit
+                                // breaker open — transient
                                 // filesystem / WAL condition. Back off 30 s and let the
                                 // connection cache try a fresh open on next poll. These
                                 // are NOT reported to Sentry (they are transient and were
@@ -243,17 +244,21 @@ pub async fn run_once(config: &Config) -> Result<bool> {
 /// silently backed off without a Sentry report (#2206).
 ///
 /// Covers:
-/// - `SQLITE_IOERR_TRUNCATE` (extended code 1546): WAL truncation failed —
-///   usually a transient filesystem hiccup.
-/// - `SQLITE_IOERR_SHMMAP` (extended code 4874): shared-memory mapping
-///   failed — WAL side-file temporarily unavailable.
-/// - `SQLITE_CANTOPEN` / `CannotOpen` (extended code 14): DB file temporarily
-///   inaccessible.
+/// - `SQLITE_IOERR_TRUNCATE` (1546): WAL truncation failed — usually a
+///   transient filesystem hiccup.
+/// - WAL `-shm` family — `SHMOPEN` (4618, the macOS cold-start failure),
+///   `SHMSIZE` (4874), `SHMMAP` (5386): shared-memory side-file temporarily
+///   unavailable. (4874 is SHMSIZE, not SHMMAP — the real SHMMAP is 5386.)
+/// - `SQLITE_IOERR_IN_PAGE` (8714): mmap-page I/O fault.
+/// - `SQLITE_CANTOPEN` / `CannotOpen` (14): DB file temporarily inaccessible.
 /// - Text fallback: circuit breaker message, or rusqlite phrases that don't
 ///   downcast cleanly after multiple `.context()` layers.
 fn is_sqlite_io_transient(err: &anyhow::Error) -> bool {
     if let Some(rusqlite::Error::SqliteFailure(f, _)) = err.downcast_ref::<rusqlite::Error>() {
-        if matches!(f.extended_code, 1546 | 4874 | 14) {
+        // 14 CANTOPEN, 1546 TRUNCATE, 4618 SHMOPEN, 4874 SHMSIZE, 5386 SHMMAP,
+        // 8714 IN_PAGE — the WAL `-shm` cold-start family (4874 is SHMSIZE, not
+        // SHMMAP; the real SHMMAP is 5386).
+        if matches!(f.extended_code, 14 | 1546 | 4618 | 4874 | 5386 | 8714) {
             return true;
         }
         if f.code == rusqlite::ErrorCode::CannotOpen {
@@ -396,18 +401,25 @@ mod tests {
         assert!(is_sqlite_io_transient(&anyhow::Error::from(raw)));
     }
 
-    /// SQLITE_IOERR_SHMMAP (extended code 4874) must be classified as
-    /// transient — WAL shared-memory mapping is a filesystem hiccup.
+    /// The WAL `-shm` family must classify as transient via the NUMERIC arm
+    /// (the message deliberately avoids the text-fallback phrases). 4618
+    /// SHMOPEN is the macOS cold-start failure; 4874 is SHMSIZE; 5386 is the
+    /// real SHMMAP; 8714 is IN_PAGE.
     #[test]
-    fn is_sqlite_io_transient_matches_ioerr_shmmap() {
-        let raw = rusqlite::Error::SqliteFailure(
-            rusqlite::ffi::Error {
-                code: rusqlite::ErrorCode::SystemIoFailure,
-                extended_code: 4874, // SQLITE_IOERR_SHMMAP
-            },
-            Some("xshmmap failed".into()),
-        );
-        assert!(is_sqlite_io_transient(&anyhow::Error::from(raw)));
+    fn is_sqlite_io_transient_matches_shm_family() {
+        for ext in [4618, 4874, 5386, 8714] {
+            let raw = rusqlite::Error::SqliteFailure(
+                rusqlite::ffi::Error {
+                    code: rusqlite::ErrorCode::SystemIoFailure,
+                    extended_code: ext,
+                },
+                Some("sqlite extended io failure".into()),
+            );
+            assert!(
+                is_sqlite_io_transient(&anyhow::Error::from(raw)),
+                "extended_code {ext} must classify as transient (numeric arm)"
+            );
+        }
     }
 
     /// SQLITE_CANTOPEN (code CannotOpen, extended code 14) must be

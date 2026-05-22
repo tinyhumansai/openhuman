@@ -42,6 +42,7 @@ const ALL_LOCALES = [
   "fr",
   "bn",
   "pt",
+  "de",
   "ru",
   "id",
   "it",

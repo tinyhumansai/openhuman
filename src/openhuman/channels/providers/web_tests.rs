@@ -207,6 +207,151 @@ fn classify_inference_error_surfaces_provider_config_rejection_actionably() {
     }
 }
 
+// ── #2364: rate-limit classification + retry-after surfacing ────
+
+#[test]
+fn classify_inference_error_distinguishes_action_budget_from_provider_429() {
+    // SecurityPolicy hourly cap (web_fetch / curl / http_request emit
+    // these strings). Before #2364 these were misclassified as a
+    // provider 429 and the user saw the "your AI provider is rate-
+    // limiting you" copy — which is wrong, the limit is OpenHuman's
+    // own per-hour safety budget.
+    for raw in [
+        "Rate limit exceeded: action budget exhausted",
+        "Rate limit exceeded: too many actions in the last hour",
+        "Action blocked: rate limit exceeded",
+    ] {
+        let (category, message) = classify_inference_error(raw);
+        assert_eq!(
+            category, "action_budget_exceeded",
+            "action-budget signal must NOT classify as provider rate_limited: {raw}"
+        );
+        assert!(
+            message.contains("local safety cap"),
+            "must clarify the limit is OpenHuman-local, not upstream: {message}"
+        );
+        assert!(
+            message.contains("can keep chatting in this thread"),
+            "must tell the user the thread isn't blocked: {message}"
+        );
+    }
+}
+
+#[test]
+fn classify_inference_error_max_iterations_gets_dedicated_branch() {
+    // The agent loop's MaxIterationsExceeded variant renders as
+    // "Agent exceeded maximum tool iterations (N)". Before #2364
+    // this fell through to the generic `inference` bucket and the
+    // user saw a vague "something went wrong" copy. Now it gets a
+    // specific message that says retrying in the same thread is OK.
+    let raw = "run_chat_task failed client_id=abc thread_id=t1 \
+               error=Agent exceeded maximum tool iterations (10)";
+    let (category, message) = classify_inference_error(raw);
+    assert_eq!(category, "max_iterations");
+    assert!(
+        message.contains("maximum number of tool steps"),
+        "must explain the cap: {message}"
+    );
+    assert!(
+        message.contains("retry the same question in this thread"),
+        "must reassure same-thread recovery: {message}"
+    );
+}
+
+#[test]
+fn classify_inference_error_rate_limited_surfaces_retry_after_seconds() {
+    let raw = "openrouter API error (429 Too Many Requests): Retry-After: 30";
+    let (category, message) = classify_inference_error(raw);
+    assert_eq!(category, "rate_limited");
+    assert!(
+        message.contains("Try again in 30 seconds"),
+        "must surface the parsed retry-after window: {message}"
+    );
+    assert!(
+        message.contains("retry in this thread"),
+        "must clarify the thread isn't blocked: {message}"
+    );
+}
+
+#[test]
+fn classify_inference_error_rate_limited_no_retry_after_omits_hint() {
+    let raw = "openrouter API error (429 Too Many Requests)";
+    let (category, message) = classify_inference_error(raw);
+    assert_eq!(category, "rate_limited");
+    // Generic copy must still describe the situation accurately.
+    assert!(message.contains("transient upstream limit"));
+    // No hallucinated countdown when none was parsed.
+    assert!(
+        !message.contains("Try again in"),
+        "must NOT invent a retry-after when none was parsed: {message}"
+    );
+}
+
+#[test]
+fn classify_inference_error_rate_limited_handles_fractional_and_minute_windows() {
+    // Fractional seconds round up — never tell the user to retry
+    // sooner than the upstream actually allows.
+    let (_, message) = classify_inference_error("429 Too Many Requests: retry_after: 2.4");
+    assert!(
+        message.contains("Try again in 3 seconds"),
+        "fractional 2.4 must round up to 3: {message}"
+    );
+
+    // Long windows switch to a "minutes" rendering at the 90s
+    // threshold so the user gets a less precise but more readable
+    // hint.
+    let (_, message) = classify_inference_error("429 Too Many Requests: Retry-After: 180");
+    assert!(
+        message.contains("about 3 minutes"),
+        "180s must render as minutes: {message}"
+    );
+}
+
+#[test]
+fn classify_inference_error_rate_limited_minute_window_uses_singular_and_rounds_up() {
+    // CodeRabbit on #2371: the 90–119s band used to render
+    // "about 1 minutes" (floor + missing plural handling). Round
+    // up + singular/plural now produces "about 2 minutes" for 90s
+    // (since 90s ceils to 2 minutes) and "about 2 minutes" for
+    // 119s (ditto). 60s lands in the seconds band; 61s is the
+    // smallest minute-band input but still <90 so seconds; 90s is
+    // the first true minute-band input.
+    let (_, m_90) = classify_inference_error("429 Too Many Requests: Retry-After: 90");
+    assert!(
+        m_90.contains("about 2 minutes"),
+        "90s must round up to 2 minutes (not floor to 1): {m_90}"
+    );
+    let (_, m_119) = classify_inference_error("429 Too Many Requests: Retry-After: 119");
+    assert!(
+        m_119.contains("about 2 minutes"),
+        "119s must round up to 2 minutes: {m_119}"
+    );
+    // Exactly 60-multiple inputs above the 90s threshold render as
+    // exact minutes with no round-up bump.
+    let (_, m_120) = classify_inference_error("429 Too Many Requests: Retry-After: 120");
+    assert!(
+        m_120.contains("about 2 minutes"),
+        "exact 120s must stay as 2 minutes: {m_120}"
+    );
+}
+
+#[test]
+fn classify_inference_error_rate_limited_parses_quoted_json_retry_after() {
+    // CodeRabbit on #2371: a serialised provider body like
+    // {"retry_after": 30} would previously miss every prefix
+    // because the quote stopped `lower.find("retry_after:")` from
+    // matching. The parser now strips quotes so the JSON-key shape
+    // resolves the same as the unquoted header shape.
+    let (category, message) = classify_inference_error(
+        r#"openrouter API error (429 Too Many Requests): {"retry_after": 30, "code": "rate_limited"}"#,
+    );
+    assert_eq!(category, "rate_limited");
+    assert!(
+        message.contains("Try again in 30 seconds"),
+        "quoted JSON retry_after must be parsed: {message}"
+    );
+}
+
 #[test]
 fn generic_error_copy_is_sanitized_and_has_discord_report_action() {
     let message = generic_inference_error_user_message();
