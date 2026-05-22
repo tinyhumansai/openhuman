@@ -101,6 +101,22 @@ Legacy injection should shrink, never grow. New providers go straight onto the C
 
 A hidden CEF webview (`cef-prewarm`) boots the browser on app launch so the first child webview spawns instantly when the user clicks. It's torn down before `cef::shutdown()` to avoid races during quit. See `app/src-tauri/src/lib.rs` around the prewarm + close lifecycle.
 
+## Windows startup triage
+
+CEF initializes before the onboarding UI can recover from renderer failures. If
+Windows users report a silent exit, a permanent "Connecting..." spinner, or a
+`tauri-runtime-cef` assertion before the first interactive window appears, ask
+for these details in the issue:
+
+* Windows edition and full build number, especially for Insider builds.
+* OpenHuman version and installer type (`.msi` or `.exe`).
+* Whether `%LOCALAPPDATA%\com.openhuman.app` was moved aside before retrying.
+* Startup log lines from `[startup]`, `[cef-profile]`, and `[cef-startup]`.
+* Any panic text that names `tauri-runtime-cef/src/lib.rs`.
+
+For Windows Insider builds, also confirm whether the same installer launches on
+the current stable Windows release. That separates a profile/cache problem from
+an OS/runtime compatibility regression in CEF startup.
 ## Linux shell fallback for CEF startup crashes
 
 On some Linux desktops, especially NVIDIA proprietary driver setups under Wayland/XWayland, the Tauri/CEF shell can fail during native window configuration before the React app becomes usable. One known symptom is an X11 `BadWindow` error after CEF reports the main browser context.
