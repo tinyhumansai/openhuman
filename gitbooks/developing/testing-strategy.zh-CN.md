@@ -47,7 +47,7 @@ OpenHuman 如何测试其产品。"我的测试该放哪里？"的权威答案�
 覆盖矩阵中的每个功能叶子节点，除了 happy path 外，**至少**还要有一个**失败 / 边界**断言。例如：
 
 - 文件写入工具：happy = 写入了字节；failure = 路径限制拒绝。
-- OAuth 流程：happy = 签发了令牌；edge = 过期刷新令牌恢复。
+- OAuth 流程：happy = 签发了 token；edge = 过期刷新 token 恢复。
 - 记忆存储：happy = 存储并召回；edge = 遗忘后再召回返回空。
 
 只断言 happy path 的 spec 是不完整的。

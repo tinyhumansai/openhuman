@@ -46,7 +46,7 @@ OpenHuman 是一款 **React + Tauri v2 桌面应用**，搭配一个承担重活
 
 ## 数据流
 
-1. **连接**。通过 OAuth 接入[集成](../../features/integrations/README.zh-CN.md)。后端保存令牌；核心永远不会以明文形式看到它。
+1. **连接**。通过 OAuth 接入[集成](../../features/integrations/README.zh-CN.md)。后端保存 token；核心永远不会以明文形式看到它。
 2. **自动获取**。每二十分钟，[调度器](../../features/obsidian-wiki/auto-fetch.zh-CN.md)会遍历每个活跃连接，并要求每个原生提供商进行同步。
 3. **规范化**。提供商输出（邮件页面、GitHub diff、Slack 频道转储）被归一化为带来源标签的 Markdown。
 4. **分块**。Markdown 被拆分为 ≤3k token 的确定性块。
@@ -68,8 +68,8 @@ OpenHuman 是一款 **React + Tauri v2 桌面应用**，搭配一个承担重活
 经过 OpenHuman 后端的数据（在一个订阅下）：
 
 * LLM 调用（模型提供商）。
-* 网页搜索代理。
-* 集成 OAuth 和工具代理。
+* 网页搜索智能体。
+* 集成 OAuth 和工具智能体。
 * TTS 流。
 
 完整图景请参阅 [隐私与安全](../../features/privacy-and-security.zh-CN.md)。

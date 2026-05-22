@@ -268,7 +268,7 @@ AI 对用户的响应
 |                                                                   |
 |  +------------------+  +------------------+  +------------------+ |
 |  |  一次性          |  |  rustls TLS      |  |  无 localStorage | |
-|  |  登录令牌        |  |  用于所有网络    |  |  存储敏感数据    | |
+|  |  登录 token        |  |  用于所有网络    |  |  存储敏感数据    | |
 |  |  (5-min TTL)     |  |  连接            |  |                  | |
 |  +------------------+  +------------------+  +------------------+ |
 +-------------------------------------------------------------------+
@@ -277,9 +277,9 @@ AI 对用户的响应
 - **凭证存储**：通过 `keyring` crate 的 OS 钥匙串集成（macOS Keychain、Windows Credential Manager、Linux Secret Service），仅限桌面端
 - **内存加密**：带 Argon2id 密钥派生的 AES-256-GCM。所有 AI 内存静态加密
 - **技能沙盒化**：每个 QuickJS 实例都有强制内存限制（默认 64 MB）和栈限制（512 KB）。禁止跨技能内存访问
-- **认证交接**：Web 到桌面认证使用 5 分钟 TTL 的一次性登录令牌，通过 Rust HTTP 客户端交换（绕过 CORS）
+- **认证交接**：Web 到桌面认证使用 5 分钟 TTL 的一次性登录 token，通过 Rust HTTP 客户端交换（绕过 CORS）
 - **网络 TLS**：所有 WebSocket 和 HTTP 连接使用 rustls，不依赖平台 OpenSSL
-- **状态管理**：敏感数据保存在 Redux（内存）和 OS 钥匙串（持久化）中。凭证或令牌不使用 localStorage
+- **状态管理**：敏感数据保存在 Redux（内存）和 OS 钥匙串（持久化）中。凭证或 token 不使用 localStorage
 - **提示注入防护**：用户提示在模型/工具执行前经过规范化/评分，并在服务器端强制执行（`allow | review | block`）。详见 [`docs/PROMPT_INJECTION_GUARD.md`](../../docs/PROMPT_INJECTION_GUARD.md)
 
 ---
