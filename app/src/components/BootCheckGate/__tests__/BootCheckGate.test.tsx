@@ -274,6 +274,24 @@ describe('BootCheckGate — picker test connection', () => {
     );
   });
 
+  it('shows Connected when /rpc returns 405 Method Not Allowed', async () => {
+    mockTestCoreRpcConnection.mockResolvedValue({
+      ok: false,
+      status: 405,
+      statusText: 'Method Not Allowed',
+      text: async () => 'Method Not Allowed',
+    } as unknown as Response);
+
+    renderGate();
+    fillCloudInputs('https://example.trycloudflare.com/rpc', 'tok-abc');
+    fireEvent.click(screen.getByRole('button', { name: 'Test Connection' }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('test-status-ok')).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId('test-status-unreachable')).not.toBeInTheDocument();
+  });
+
   it('shows Auth failed on a 401 response', async () => {
     mockTestCoreRpcConnection.mockResolvedValue({
       ok: false,

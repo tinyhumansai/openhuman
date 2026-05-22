@@ -173,6 +173,11 @@ function ModePicker({ onConfirm }: PickerProps) {
         setTestStatus({ kind: 'auth' });
         return;
       }
+      if (response.status === 405) {
+        log('[boot-check] picker — test reached /rpc but method was rejected');
+        setTestStatus({ kind: 'ok' });
+        return;
+      }
       if (!response.ok) {
         log('[boot-check] picker — test failed: HTTP %d', response.status);
         setTestStatus({ kind: 'unreachable', reason: `HTTP ${response.status} from /rpc` });
