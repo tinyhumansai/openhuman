@@ -198,7 +198,7 @@ ARM 构建需要 GTK 在 Tauri 创建系统托盘之前初始化。这在 `vendo
 
 `pnpm dev:app`（或 Tauri 壳层的任何 debug 构建）在窗口出现前退出，提示类似：
 
-```
+```text
 [openhuman] CEF cache at /Users/<you>/Library/Caches/com.openhuman.app/cef is held by another OpenHuman instance (host <hostname>, pid 12345).
 Quit the running instance and try again.
 Workaround:

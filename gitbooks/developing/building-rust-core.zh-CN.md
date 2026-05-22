@@ -121,7 +121,7 @@ sudo pacman -S --needed base-devel cmake pkgconf clang openssl \
 
 `whisper-rs-sys` 在 `clang` 下可能会失败并提示：
 
-```
+```text
 fatal error: 'array' file not found
 ```
 

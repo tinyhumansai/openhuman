@@ -13,7 +13,7 @@ OpenHuman 基于 GNU GPL3 开源。本页是系统的高层轮廓；深度开发
 
 OpenHuman 是一款 **React + Tauri v2 桌面应用**，搭配一个承担重活的 **Rust 核心**。
 
-```
+```text
 ┌──────────────────────────────────────────────────┐
 │ Tauri 壳层 (app/src-tauri/)                      │
 │ • 窗口管理、OS 集成、sidecar 生命周期            │
