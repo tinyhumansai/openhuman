@@ -73,9 +73,7 @@ pub fn backfill_in_progress() -> bool {
 pub fn ensure_reembed_backfill(config: &crate::openhuman::config::Config) {
     let sig = crate::openhuman::memory::tree::store::tree_active_signature(config);
     let result = crate::openhuman::memory::tree::store::with_connection(config, |conn| {
-        Ok(crate::openhuman::memory::tree::store::has_uncovered_reembed_work(
-            conn, &sig,
-        )?)
+        Ok(crate::openhuman::memory::tree::store::has_uncovered_reembed_work(conn, &sig)?)
     });
     match result {
         Ok(true) => {
