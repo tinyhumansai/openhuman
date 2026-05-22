@@ -34,6 +34,14 @@ const es3: TranslationMap = {
   'workspace.building': 'Construyendo...',
   'workspace.buildSummaryTrees': 'Construir árboles de resumen',
   'workspace.viewVault': 'Ver bóveda',
+  'workspace.openingVaultTitle': 'Opening vault in Obsidian',
+  'workspace.openingVaultMessage':
+    "If Obsidian doesn't open, install it from obsidian.md or use Reveal Folder. Vault path:",
+  'workspace.openVaultFailedTitle': "Couldn't open vault in Obsidian",
+  'workspace.openVaultFailedMessage':
+    'Use Reveal Folder to open the vault directory directly. Vault path:',
+  'workspace.revealVaultFailed': "Couldn't reveal vault folder",
+  'workspace.revealFolder': 'Reveal Folder',
   'workspace.graphLoadFailed': 'No se pudo cargar el grafo de memoria',
   'workspace.loadingGraph': 'Cargando grafo de memoria...',
   'workspace.graphViewMode': 'Modo de vista del grafo de memoria',
@@ -95,6 +103,8 @@ const es3: TranslationMap = {
   'subconscious.failed': 'fallido',
   'subconscious.tickInterval': 'Intervalo de tick',
   'subconscious.runNow': 'Ejecutar ahora',
+  'subconscious.providerUnavailableTitle': 'Subconsciente en pausa',
+  'subconscious.providerSettings': 'Ajustes de IA',
   'subconscious.approvalNeeded': 'Se necesita aprobación',
   'subconscious.requiresApproval': 'Requiere aprobación',
   'subconscious.fixInConnections': 'Corregir en Conexiones',

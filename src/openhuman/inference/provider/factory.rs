@@ -35,6 +35,12 @@ use crate::openhuman::inference::provider::ProviderRuntimeOptions;
 pub const PROVIDER_OPENHUMAN: &str = "openhuman";
 /// Prefix for Ollama-local providers: `"ollama:<model>"`.
 pub const OLLAMA_PROVIDER_PREFIX: &str = "ollama:";
+/// Sentinel returned when a user has expressed custom/BYOK inference intent
+/// (via a non-openhuman `inference_url`) but no matching `cloud_providers`
+/// entry was found. Passed through `provider_for_role` and caught early in
+/// `create_chat_provider_from_string` to produce a clear configuration error
+/// instead of silently routing through the managed OpenHuman backend.
+pub const BYOK_INCOMPLETE_SENTINEL: &str = "__byok_incomplete__";
 
 fn is_abstract_tier_model(model: &str) -> bool {
     use crate::openhuman::config::{
@@ -57,6 +63,34 @@ fn is_abstract_tier_model(model: &str) -> bool {
 /// as a legacy fallback (old configs stored keys as e.g. `"openai:default"`).
 pub fn auth_key_for_slug(slug: &str) -> String {
     format!("provider:{slug}")
+}
+
+/// Return whether `model` is a recognized OpenHuman backend tier name.
+///
+/// Used to guard against stale `default_model` values (e.g. set by older UI
+/// versions) that the backend would reject with HTTP 400.  The known tiers are
+/// the constants in `crate::openhuman::config`; the four `hint:*` strings that
+/// `make_openhuman_backend` actually translates are also accepted.  An
+/// unrecognized `hint:*` value is intentionally rejected so the factory falls
+/// back to the platform default instead of forwarding an untranslated string
+/// to the backend.
+pub(crate) fn is_known_openhuman_tier(model: &str) -> bool {
+    use crate::openhuman::config::{
+        MODEL_AGENTIC_V1, MODEL_CHAT_V1, MODEL_CODING_V1, MODEL_REASONING_QUICK_V1,
+        MODEL_REASONING_V1,
+    };
+    matches!(
+        model,
+        MODEL_REASONING_V1
+            | MODEL_CHAT_V1
+            | MODEL_AGENTIC_V1
+            | MODEL_CODING_V1
+            | MODEL_REASONING_QUICK_V1
+            | "hint:reasoning"
+            | "hint:chat"
+            | "hint:agentic"
+            | "hint:coding"
+    )
 }
 
 /// Return the configured provider string for a named workload role.
@@ -120,6 +154,24 @@ pub fn create_chat_provider_from_string(
         role,
         p
     );
+
+    // Fail-closed: BYOK intent was detected upstream but no matching provider
+    // entry was found. Surface a clear configuration error instead of silently
+    // routing through the managed OpenHuman backend.
+    if p == BYOK_INCOMPLETE_SENTINEL {
+        let inference_url = config
+            .inference_url
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or("<unset>");
+        anyhow::bail!(
+            "[chat-factory] BYOK_INCOMPLETE: inference_url is set to a custom/direct endpoint \
+             ({inference_url}) but no matching cloud_providers entry was found for role '{role}'. \
+             To complete BYOK setup add a cloud_providers entry whose endpoint matches \
+             {inference_url} (or use a workload-specific route). \
+             To use the OpenHuman managed backend instead, clear inference_url from config."
+        );
+    }
 
     // Empty / legacy "cloud" sentinel → primary cloud target.
     if p.is_empty() || p == "cloud" {
@@ -222,13 +274,35 @@ fn make_openhuman_backend(config: &Config) -> anyhow::Result<(Box<dyn Provider>,
         options.secrets_encrypt
     );
     // Translate `hint:<tier>` model strings into the OpenHuman backend's
-    // canonical tier names.
+    // canonical tier names.  Unrecognised `hint:*` strings (e.g. `hint:reaction`
+    // for lightweight models) are forwarded as-is — the backend is authoritative
+    // over which hint values it accepts, and the web-chat model_override path
+    // uses these verbatim.  Only non-hint strings that are not a known canonical
+    // tier (stale `default_model` values written by older UI versions, e.g.
+    // "deepseek-v4-pro", "claude-opus-4-7") fall back to the platform default.
     let model = match model.strip_prefix("hint:") {
         Some("reasoning") => crate::openhuman::config::MODEL_REASONING_V1.to_string(),
         Some("chat") => crate::openhuman::config::MODEL_REASONING_QUICK_V1.to_string(),
         Some("agentic") => crate::openhuman::config::MODEL_AGENTIC_V1.to_string(),
         Some("coding") => crate::openhuman::config::MODEL_CODING_V1.to_string(),
-        _ => model,
+        Some(_) => {
+            // Unrecognised hint — forward verbatim; the backend decides validity.
+            model
+        }
+        None => {
+            if is_known_openhuman_tier(&model) {
+                model
+            } else {
+                log::warn!(
+                    "[providers][chat-factory] model '{}' is not a recognized OpenHuman \
+                     backend tier (valid: reasoning-v1, chat-v1, agentic-v1, coding-v1, \
+                     reasoning-quick-v1); falling back to '{}'",
+                    model,
+                    crate::openhuman::config::MODEL_REASONING_V1,
+                );
+                crate::openhuman::config::MODEL_REASONING_V1.to_string()
+            }
+        }
     };
     let p = Box::new(OpenHumanBackendProvider::new(
         config.api_url.as_deref(),
@@ -282,14 +356,80 @@ fn resolve_primary_cloud_provider_string(config: &Config) -> String {
         if let Some(legacy) = legacy_custom_inference_provider_string(config) {
             return legacy;
         }
+        // Primary is explicitly OpenHuman but inference_url points at a custom
+        // endpoint with no matching provider entry — this is a half-migrated BYOK
+        // config. Fail closed so the user sees an actionable error rather than
+        // silently routing through the managed backend.
+        if has_custom_inference_intent(config) {
+            log::debug!(
+                "[providers][chat-factory] BYOK intent detected (host={}) \
+                 but no matching cloud_providers entry found; returning fail-closed sentinel",
+                redact_inference_url(config.inference_url.as_deref())
+            );
+            return BYOK_INCOMPLETE_SENTINEL.to_string();
+        }
     }
 
     if let Some(entry) = primary {
         return cloud_entry_provider_string(entry, config);
     }
 
-    legacy_custom_inference_provider_string(config)
-        .unwrap_or_else(|| PROVIDER_OPENHUMAN.to_string())
+    // No explicit primary configured. If inference_url signals custom intent but
+    // no matching provider entry exists, fail closed instead of falling back to
+    // the managed backend.
+    legacy_custom_inference_provider_string(config).unwrap_or_else(|| {
+        if has_custom_inference_intent(config) {
+            log::debug!(
+                "[providers][chat-factory] BYOK intent detected (host={}) \
+                 with no primary_cloud and no matching provider entry; returning fail-closed sentinel",
+                redact_inference_url(config.inference_url.as_deref())
+            );
+            BYOK_INCOMPLETE_SENTINEL.to_string()
+        } else {
+            PROVIDER_OPENHUMAN.to_string()
+        }
+    })
+}
+
+/// Extract the host portion of an inference URL for safe logging.
+///
+/// Returns the host (e.g. `"api.example.com"`) so log lines are grep-friendly
+/// without exposing tokens or credentials that may appear in query-string or
+/// path components of a bearer-auth URL (e.g. `"https://host/v1?key=…"`).
+/// Falls back to `"<redacted>"` when the URL cannot be parsed or is absent.
+fn redact_inference_url(url: Option<&str>) -> &str {
+    url.and_then(|u| {
+        // Minimal host extraction: find the authority after "://".
+        let after_scheme = u.find("://").map(|i| &u[i + 3..])?;
+        // Authority ends at '/', '?', '#', or end-of-string.
+        let host_end = after_scheme
+            .find(['/', '?', '#'])
+            .unwrap_or(after_scheme.len());
+        let authority = &after_scheme[..host_end];
+        // Strip optional "user:pass@" and port.
+        let host = authority
+            .rfind('@')
+            .map_or(authority, |i| &authority[i + 1..]);
+        let host = host.rfind(':').map_or(host, |i| &host[..i]);
+        if host.is_empty() {
+            None
+        } else {
+            Some(host)
+        }
+    })
+    .unwrap_or("<redacted>")
+}
+
+/// Return `true` when the config contains a non-openhuman `inference_url`,
+/// indicating the user intends custom/BYOK routing rather than the managed
+/// backend.
+fn has_custom_inference_intent(config: &Config) -> bool {
+    config
+        .inference_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|url| !url.is_empty())
+        .is_some_and(|url| !looks_like_openhuman_backend(url))
 }
 
 fn legacy_custom_inference_provider_string(config: &Config) -> Option<String> {
@@ -559,12 +699,40 @@ pub fn lookup_key_for_slug(slug: &str, config: &Config) -> anyhow::Result<String
             )
         })?
         .unwrap_or_default();
+    if !key.is_empty() {
+        log::debug!(
+            "[providers][chat-factory] auth lookup slug={} key_present=true",
+            slug
+        );
+        return Ok(key);
+    }
+
+    // OAuth fallback for `openai` runs only after standard API-key resolution
+    // returns empty, so env/audit/metrics in the standard path always execute
+    // and the OAuth path never silently bypasses provider-agnostic logic.
+    if slug == "openai" {
+        match crate::openhuman::inference::openai_oauth::lookup_openai_bearer_token(config) {
+            Ok(Some(token)) if !token.is_empty() => {
+                log::debug!(
+                    "[providers][chat-factory] auth lookup slug={} key_present=true (oauth)",
+                    slug
+                );
+                return Ok(token);
+            }
+            Ok(_) => {}
+            Err(e) => {
+                return Err(anyhow::anyhow!(
+                    "[chat-factory] openai oauth lookup failed: {e}"
+                ));
+            }
+        }
+    }
+
     log::debug!(
-        "[providers][chat-factory] auth lookup slug={} key_present={}",
-        slug,
-        !key.is_empty()
+        "[providers][chat-factory] auth lookup slug={} key_present=false",
+        slug
     );
-    Ok(key)
+    Ok(String::new())
 }
 
 /// Build an `OpenAiCompatibleProvider` with the given auth style.

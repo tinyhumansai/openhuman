@@ -13,7 +13,6 @@ const CURRENT_SCHEMA_VERSION: u32 = 1;
 const PROFILES_FILENAME: &str = "auth-profiles.json";
 const LOCK_FILENAME: &str = "auth-profiles.lock";
 const LOCK_WAIT_MS: u64 = 50;
-const LOCK_TIMEOUT_MS: u64 = 10_000;
 /// A lock file that has existed for longer than this is treated as leaked
 /// (its owner crashed without unlinking it, or `fs::remove_file` in the
 /// guard's `Drop` was rejected by Windows AV/indexer and the file got
@@ -23,6 +22,9 @@ const LOCK_TIMEOUT_MS: u64 = 10_000;
 /// threshold is intentionally well above any realistic operation time
 /// so we never reclaim under a slow-but-legitimate holder.
 const STALE_LOCK_AGE_MS: u64 = 30_000;
+/// Wait long enough for a fresh leaked lock to cross the stale threshold
+/// and be reclaimed before surfacing a lock timeout to the caller.
+const LOCK_TIMEOUT_MS: u64 = STALE_LOCK_AGE_MS + 5_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -314,7 +316,27 @@ impl AuthProfilesStore {
                 migrated = true;
             }
 
-            let kind = parse_profile_kind(&p.kind)?;
+            let kind = match parse_profile_kind(&p.kind) {
+                Ok(k) => k,
+                Err(e) => {
+                    // A single profile with an unrecognized `kind` (e.g. a legacy value
+                    // like "OAuth" written before the kebab-case rename, or "api_key"
+                    // written by an older code path) must not poison the whole store —
+                    // otherwise every reader fails the entire load and the user is
+                    // locked out of *all* their auth profiles. Drop just this entry,
+                    // matching the decrypt-failure recovery pattern above; the next
+                    // login re-encodes the kind correctly.
+                    log::warn!(
+                        "[auth] dropping profile with unrecognized kind={:?} provider={}: {e}. \
+                         This usually means the profile was written by an older version of \
+                         OpenHuman. Re-authenticate to restore the session.",
+                        p.kind,
+                        p.provider
+                    );
+                    dropped_ids.push(id.clone());
+                    continue;
+                }
+            };
             let token_set = match kind {
                 AuthProfileKind::OAuth => {
                     let access = access_token.ok_or_else(|| {
@@ -595,7 +617,7 @@ impl AuthProfilesStore {
                         // Issue #1612 — a previous openhuman crash can leave a
                         // stale auth-profiles.lock behind, after which every RPC
                         // path that touches the auth profile store fails for the
-                        // 10s LOCK_TIMEOUT_MS window and the user gets stuck in a
+                        // `LOCK_TIMEOUT_MS` window and the user gets stuck in a
                         // retry storm. Before falling back to the busy-wait, try
                         // once to peek at the writer's recorded PID and remove
                         // the lock if that process is no longer alive. Flag is
@@ -654,7 +676,7 @@ impl AuthProfilesStore {
     ///    `AuthProfileLockGuard::drop` could not unlink the file (AV /
     ///    indexer briefly held a handle) and orphaned the lock with its
     ///    still-alive pid inside — every subsequent acquirer would
-    ///    otherwise spin the full 10s `LOCK_TIMEOUT_MS` and bail. No
+    ///    otherwise spin the full `LOCK_TIMEOUT_MS` and bail. No
     ///    legitimate auth-profile op holds the lock long enough to be
     ///    affected, so a too-old lock is unambiguously a leak.
     ///

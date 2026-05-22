@@ -32,6 +32,19 @@ rustup toolchain install 1.93.0 --profile minimal
 rustup component add rustfmt clippy --toolchain 1.93.0
 ```
 
+Arch Linux quick start:
+
+```bash
+sudo pacman -S --needed nodejs npm rustup cmake base-devel clang openssl \
+  alsa-lib xdotool libxtst libxi libevdev gtk3 webkit2gtk-4.1 \
+  libayatana-appindicator librsvg patchelf nss nspr at-spi2-core \
+  libcups libdrm libxkbcommon libxcomposite libxdamage libxfixes \
+  libxrandr mesa pango cairo libxshmfence
+npm install -g pnpm@10.10.0
+rustup toolchain install 1.93.0 --profile minimal
+rustup component add rustfmt clippy --toolchain 1.93.0
+```
+
 ## Build from source (local compile)
 
 Run from the repository root:

@@ -23,6 +23,20 @@ pub struct PendingApproval {
     pub expires_at: Option<DateTime<Utc>>,
 }
 
+/// Durable audit row for an approval request after a decision.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApprovalAuditEntry {
+    pub request_id: String,
+    pub tool_name: String,
+    pub action_summary: String,
+    pub args_redacted: serde_json::Value,
+    pub session_id: String,
+    pub created_at: DateTime<Utc>,
+    pub expires_at: Option<DateTime<Utc>>,
+    pub decided_at: DateTime<Utc>,
+    pub decision: ApprovalDecision,
+}
+
 /// User's decision on a pending approval.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

@@ -27,18 +27,28 @@ impl UnifiedMemory {
             );
             return Err("document namespace/key cannot contain secrets".to_string());
         }
+        if safety::pii::has_likely_pii(&input.namespace) || safety::pii::has_likely_pii(&input.key)
+        {
+            log::warn!(
+                "[memory:safety] document write rejected due to PII-like namespace/key namespace_chars={} key_chars={}",
+                input.namespace.chars().count(),
+                input.key.chars().count()
+            );
+            return Err("document namespace/key cannot contain personal identifiers".to_string());
+        }
 
         let sanitized = safety::sanitize_document_input(input);
         let input = sanitized.value;
         if sanitized.report.changed() {
             log::warn!(
-                "[memory:safety] document write sanitized namespace_chars={} key_chars={} text_redactions={} key_redactions={} blocked_secret_hits={} depth_redactions={}",
+                "[memory:safety] document write sanitized namespace_chars={} key_chars={} text_redactions={} key_redactions={} blocked_secret_hits={} depth_redactions={} pii_redactions={}",
                 input.namespace.chars().count(),
                 input.key.chars().count(),
                 sanitized.report.text_redactions,
                 sanitized.report.key_redactions,
                 sanitized.report.blocked_secret_hits,
-                sanitized.report.depth_redactions
+                sanitized.report.depth_redactions,
+                sanitized.report.pii_redactions
             );
         }
 
@@ -145,18 +155,19 @@ impl UnifiedMemory {
 
         let chunks = Self::chunk_document_content(&input.content, 225);
         for (idx, chunk) in chunks.iter().enumerate() {
-            let embedding = self
-                .embedder
-                .embed_one(chunk)
-                .await
-                .ok()
-                .map(|v| Self::vec_to_bytes(&v));
+            // Embed the chunk, capturing the model signature + dimension so recall
+            // can exclude vectors produced by a different embedding model (cross-model
+            // cosine is meaningless) and guard against dimension mismatches.
+            let embedded = self.embedder.embed_one(chunk).await.ok();
+            let dim = embedded.as_ref().map(|v| v.len() as i64);
+            let model_signature = embedded.as_ref().map(|_| self.embedder.signature());
+            let embedding = embedded.as_ref().map(|v| Self::vec_to_bytes(v));
             let chunk_id = format!("{document_id}:{idx}");
             let conn = self.conn.lock();
             conn.execute(
                 "INSERT OR REPLACE INTO vector_chunks
-                  (namespace, document_id, chunk_id, text, embedding, metadata_json, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                  (namespace, document_id, chunk_id, text, embedding, metadata_json, created_at, updated_at, model_signature, dim)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                 params![
                     namespace,
                     document_id,
@@ -165,7 +176,9 @@ impl UnifiedMemory {
                     embedding,
                     json!({"lancedb_table": format!("ns_{namespace}"), "chunk_index": idx}).to_string(),
                     now,
-                    now
+                    now,
+                    model_signature,
+                    dim
                 ],
             )
             .map_err(|e| format!("insert vector chunk: {e}"))?;
@@ -190,18 +203,28 @@ impl UnifiedMemory {
             );
             return Err("document namespace/key cannot contain secrets".to_string());
         }
+        if safety::pii::has_likely_pii(&input.namespace) || safety::pii::has_likely_pii(&input.key)
+        {
+            log::warn!(
+                "[memory:safety] metadata-only write rejected due to PII-like namespace/key namespace_chars={} key_chars={}",
+                input.namespace.chars().count(),
+                input.key.chars().count()
+            );
+            return Err("document namespace/key cannot contain personal identifiers".to_string());
+        }
 
         let sanitized = safety::sanitize_document_input(input);
         let input = sanitized.value;
         if sanitized.report.changed() {
             log::warn!(
-                "[memory:safety] metadata-only write sanitized namespace_chars={} key_chars={} text_redactions={} key_redactions={} blocked_secret_hits={} depth_redactions={}",
+                "[memory:safety] metadata-only write sanitized namespace_chars={} key_chars={} text_redactions={} key_redactions={} blocked_secret_hits={} depth_redactions={} pii_redactions={}",
                 input.namespace.chars().count(),
                 input.key.chars().count(),
                 sanitized.report.text_redactions,
                 sanitized.report.key_redactions,
                 sanitized.report.blocked_secret_hits,
-                sanitized.report.depth_redactions
+                sanitized.report.depth_redactions,
+                sanitized.report.pii_redactions
             );
         }
 

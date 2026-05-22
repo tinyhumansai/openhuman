@@ -13,6 +13,7 @@
 import { createSlice, type PayloadAction } from '@reduxjs/toolkit';
 
 import { E2E_DEFAULT_CORE_MODE } from '../utils/config';
+import { normalizeRpcUrl } from '../utils/configPersistence';
 
 export type CoreMode =
   | { kind: 'unset' }
@@ -64,7 +65,7 @@ function deriveInitialMode(): CoreMode {
     if (mode === 'cloud') {
       const url = localStorage.getItem(RPC_URL_STORAGE_KEY)?.trim();
       const token = localStorage.getItem(CORE_TOKEN_STORAGE_KEY)?.trim();
-      if (url && token) return { kind: 'cloud', url, token };
+      if (url && token) return { kind: 'cloud', url: normalizeRpcUrl(url), token };
     }
   } catch {
     /* localStorage unavailable — fall through to unset */

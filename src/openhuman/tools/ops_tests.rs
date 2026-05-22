@@ -1,6 +1,7 @@
 use super::*;
 use crate::openhuman::config::{BrowserConfig, Config, MemoryConfig};
 use crate::openhuman::credentials::{AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME};
+use crate::openhuman::security::AuditLogger;
 use tempfile::TempDir;
 
 #[path = "../integrations/test_support.rs"]
@@ -67,6 +68,7 @@ fn integration_tools_for_config(tmp: &TempDir, cfg: &Config) -> Vec<Box<dyn Tool
     all_tools(
         Arc::new(cfg.clone()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -118,6 +120,7 @@ fn all_tools_includes_spawn_subagent() {
     let tools = all_tools(
         Arc::new(Config::default()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -154,6 +157,7 @@ fn all_tools_includes_spawn_parallel_agents() {
     let tools = all_tools(
         Arc::new(Config::default()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -190,6 +194,7 @@ fn all_tools_always_registers_curl() {
     let tools = all_tools(
         Arc::new(cfg.clone()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -222,6 +227,7 @@ fn all_tools_registers_gitbooks_when_enabled() {
     let tools = all_tools(
         Arc::new(cfg.clone()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -288,6 +294,7 @@ fn all_tools_skips_gitbooks_when_disabled() {
     let tools = all_tools(
         Arc::new(cfg.clone()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -327,6 +334,7 @@ fn all_tools_includes_complete_onboarding() {
     let tools = all_tools(
         Arc::new(Config::default()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -363,6 +371,7 @@ fn all_tools_includes_current_time() {
     let tools = all_tools(
         Arc::new(Config::default()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -392,6 +401,7 @@ fn all_tools_default_registry_contains_expected_baseline_surface() {
     let tools = all_tools(
         Arc::new(Config::default()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -469,6 +479,7 @@ fn all_tools_default_registry_has_no_duplicate_tool_names() {
     let tools = all_tools(
         Arc::new(Config::default()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -508,6 +519,7 @@ fn all_tools_excludes_browser_when_disabled() {
     let tools = all_tools(
         Arc::new(Config::default()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -545,6 +557,7 @@ fn all_tools_includes_browser_when_enabled() {
     let tools = all_tools(
         Arc::new(Config::default()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -672,6 +685,7 @@ fn all_tools_includes_delegate_when_agents_configured() {
     let tools = all_tools(
         Arc::new(Config::default()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -701,6 +715,7 @@ fn all_tools_excludes_delegate_when_no_agents() {
     let tools = all_tools(
         Arc::new(Config::default()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -734,6 +749,7 @@ fn all_tools_registers_node_exec_when_node_enabled() {
     let tools = all_tools(
         Arc::new(Config::default()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -771,6 +787,7 @@ fn all_tools_excludes_node_exec_when_node_disabled() {
     let tools = all_tools(
         Arc::new(Config::default()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -808,6 +825,7 @@ fn all_tools_excludes_computer_control_when_disabled() {
     let tools = all_tools(
         Arc::new(Config::default()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -845,6 +863,7 @@ fn all_tools_includes_computer_control_when_enabled() {
     let tools = all_tools(
         Arc::new(Config::default()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -884,6 +903,7 @@ fn all_tools_registers_integration_families_when_enabled_and_signed_in() {
     let tools = all_tools(
         Arc::new(cfg.clone()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -951,6 +971,7 @@ fn all_tools_registers_optional_search_lsp_and_tool_stats_when_enabled() {
     let tools = all_tools(
         Arc::new(cfg.clone()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,

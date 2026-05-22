@@ -44,6 +44,11 @@ pub(crate) const PROVIDERS: &[Provider] = &[
         session_cookie_names: &["wa_ul", "wa_build"],
     },
     Provider {
+        key: "wechat",
+        host_suffix: "web.wechat.com",
+        session_cookie_names: &["wxuin", "webwx_data_ticket", "webwx_auth_ticket"],
+    },
+    Provider {
         key: "telegram",
         host_suffix: "web.telegram.org",
         session_cookie_names: &["stel_ssid", "stel_token"],
@@ -314,6 +319,18 @@ mod tests {
         let v = detect_webview_logins();
         assert_eq!(v["gmail"], Value::Bool(true));
         assert_eq!(v["slack"], Value::Bool(false));
+        std::env::remove_var(COOKIES_DB_ENV);
+    }
+
+    #[test]
+    fn detects_wechat_via_wxuin_cookie() {
+        let _lock = lock_env();
+        let tmp = TempDir::new().unwrap();
+        let db = tmp.path().join("Cookies");
+        make_cookies_db(&db, &[("web.wechat.com", "wxuin")]);
+        std::env::set_var(COOKIES_DB_ENV, &db);
+        let v = detect_webview_logins();
+        assert_eq!(v["wechat"], Value::Bool(true));
         std::env::remove_var(COOKIES_DB_ENV);
     }
 

@@ -245,6 +245,14 @@ impl ApprovalGate {
         store::list_pending(&self.config)
     }
 
+    /// List recently decided rows for durable audit views.
+    pub fn list_recent_decisions(
+        &self,
+        limit: usize,
+    ) -> anyhow::Result<Vec<super::types::ApprovalAuditEntry>> {
+        store::list_recent_decisions(&self.config, limit)
+    }
+
     /// Return the session id this gate was installed with (used by
     /// RPC handlers for diagnostics).
     pub fn session_id(&self) -> &str {
