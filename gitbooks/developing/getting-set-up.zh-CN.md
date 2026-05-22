@@ -1,6 +1,7 @@
 ---
 description: 如何从源码构建 OpenHuman —— 工具链、 vendored Tauri CLI、sidecar staging。
 icon: wrench
+lang: zh-CN
 ---
 
 # 构建与安装 OpenHuman

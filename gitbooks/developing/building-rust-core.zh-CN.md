@@ -1,6 +1,7 @@
 ---
 description: 在全新机器上从头构建 Rust 核心。
 icon: terminal
+lang: zh-CN
 ---
 
 # 构建 Rust 核心
@@ -186,4 +187,4 @@ Windows 注意事项：
 ## 7. 相关路径
 
 - [环境搭建](getting-set-up.zh-CN.md)：完整的桌面贡献者设置，含 `pnpm`、Tauri、子模块和 sidecar staging。
-- [OpenHuman 架构](README.zh-CN.md)：核心在桌面应用和 RPC 流程中的位置。
+- [OpenHuman 架构](architecture/README.zh-CN.md)：核心在桌面应用和 RPC 流程中的位置。

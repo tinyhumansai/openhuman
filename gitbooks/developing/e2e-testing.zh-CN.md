@@ -1,6 +1,7 @@
 ---
 description: 使用 WDIO + tauri-driver / Appium 进行端到端测试。CI 和本地设置。
 icon: vials
+lang: zh-CN
 ---
 
 # E2E 测试指南

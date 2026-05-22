@@ -2,6 +2,7 @@
 description: >-
   OpenHuman 系统的高层轮廓（桌面壳层、Rust 核心、Memory Tree、Agent 循环）。指向仓库中的深度开发者架构文档。
 icon: code-branch
+lang: zh-CN
 ---
 
 # 架构

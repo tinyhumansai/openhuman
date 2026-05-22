@@ -1,6 +1,7 @@
 ---
 description: OpenHuman 代码库的深度架构参考 —— 仓库布局、运行时范围、双 socket 同步、RPC 流程。
 icon: code-branch
+lang: zh-CN
 ---
 
 # OpenHuman 架构

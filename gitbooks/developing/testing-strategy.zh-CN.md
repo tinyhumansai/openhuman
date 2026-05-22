@@ -1,6 +1,7 @@
 ---
 description: OpenHuman 如何测试其产品 —— Vitest、cargo test、WDIO E2E。每种测试该放哪里。
 icon: vial
+lang: zh-CN
 ---
 
 # 测试策略
