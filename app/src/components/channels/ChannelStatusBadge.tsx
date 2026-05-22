@@ -13,7 +13,7 @@ const ChannelStatusBadge = ({ status, className = '' }: ChannelStatusBadgeProps)
   return (
     <span
       className={`shrink-0 px-2 py-1 text-[11px] border rounded-full ${style.className} ${className}`}>
-      {t(`channels.status.${status}`, style.label)}
+      {t(`channels.status.${status}`)}
     </span>
   );
 };

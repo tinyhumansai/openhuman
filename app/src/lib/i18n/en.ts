@@ -1353,10 +1353,10 @@ const en: TranslationMap = {
   'channels.web.alwaysAvailable': 'Always available',
 
   // Auth mode labels
-  'channels.authMode.managedDm': 'Login with OpenHuman',
+  'channels.authMode.managed_dm': 'Login with OpenHuman',
   'channels.authMode.oauth': 'OAuth Sign-in',
-  'channels.authMode.botToken': 'Use your own Bot Token',
-  'channels.authMode.apiKey': 'Use your own API Key',
+  'channels.authMode.bot_token': 'Use your own Bot Token',
+  'channels.authMode.api_key': 'Use your own API Key',
 
   // Field validation
   'channels.fieldRequired': '{field} is required',
@@ -1368,9 +1368,9 @@ const en: TranslationMap = {
   // Discord
   'channels.discord.displayName': 'Discord',
   'channels.discord.description': 'Send and receive messages via Discord.',
-  'channels.discord.authMode.botToken.description': 'Provide your own Discord bot token.',
+  'channels.discord.authMode.bot_token.description': 'Provide your own Discord bot token.',
   'channels.discord.authMode.oauth.description': 'Install the OpenHuman bot to your Discord server via OAuth.',
-  'channels.discord.authMode.managedDm.description': 'Link your personal Discord account to the OpenHuman bot.',
+  'channels.discord.authMode.managed_dm.description': 'Link your personal Discord account to the OpenHuman bot.',
   'channels.discord.fields.bot_token.label': 'Bot Token',
   'channels.discord.fields.bot_token.placeholder': 'Your Discord bot token',
   'channels.discord.fields.guild_id.label': 'Server (Guild) ID',
@@ -1379,8 +1379,8 @@ const en: TranslationMap = {
   // Telegram
   'channels.telegram.displayName': 'Telegram',
   'channels.telegram.description': 'Send and receive messages via Telegram.',
-  'channels.telegram.authMode.managedDm.description': 'Message the OpenHuman Telegram bot directly.',
-  'channels.telegram.authMode.botToken.description': 'Provide your own Telegram Bot token from @BotFather.',
+  'channels.telegram.authMode.managed_dm.description': 'Message the OpenHuman Telegram bot directly.',
+  'channels.telegram.authMode.bot_token.description': 'Provide your own Telegram Bot token from @BotFather.',
   'channels.telegram.fields.bot_token.label': 'Bot Token',
   'channels.telegram.fields.bot_token.placeholder': '123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11',
   'channels.telegram.fields.allowed_users.label': 'Allowed Users',
@@ -1389,7 +1389,7 @@ const en: TranslationMap = {
   // Web
   'channels.web.displayName': 'Web',
   'channels.web.description': 'Chat via the built-in web UI.',
-  'channels.web.authMode.managedDm.description': 'Use the embedded web chat — no setup required.',
+  'channels.web.authMode.managed_dm.description': 'Use the embedded web chat — no setup required.',
   'chat.unsubscribeApproval.approve': 'Approve & Unsubscribe',
   'chat.unsubscribeApproval.approved': '✓ Successfully unsubscribed.',
   'chat.unsubscribeApproval.denied': '✕ Request denied.',

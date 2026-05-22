@@ -2,7 +2,6 @@ import debug from 'debug';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useOAuthConnectionListener } from '../../hooks/useOAuthConnectionListener';
-import { AUTH_MODE_LABELS } from '../../lib/channels/definitions';
 import { useT } from '../../lib/i18n/I18nContext';
 import { channelConnectionsApi } from '../../services/api/channelConnectionsApi';
 import { callCoreRpc } from '../../services/coreRpcClient';
@@ -167,7 +166,7 @@ const DiscordConfig = ({ definition }: DiscordConfigProps) => {
                 channel: 'discord',
                 authMode: spec.mode,
                 status: 'error',
-                lastError: t('channels.fieldRequired', '{field} is required').replace('{field}', t(`channels.discord.fields.${field.key}.label`, field.label)),
+                lastError: t('channels.fieldRequired').replace('{field}', t(`channels.discord.fields.${field.key}.label`)),
               })
             );
             return;
@@ -290,10 +289,10 @@ const DiscordConfig = ({ definition }: DiscordConfigProps) => {
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="text-sm font-medium text-stone-900 dark:text-neutral-100">
-                  {t(`channels.authMode.${spec.mode}`, AUTH_MODE_LABELS[spec.mode] ?? spec.mode)}
+                  {t(`channels.authMode.${spec.mode}`)}
                 </p>
                 <p className="text-xs text-stone-500 dark:text-neutral-400 mt-1">
-                  {t(`channels.discord.authMode.${spec.mode}.description`, spec.description)}
+                  {t(`channels.discord.authMode.${spec.mode}.description`)}
                 </p>
                 {connection?.lastError && (
                   <p className="text-xs text-coral-600 mt-1">{connection.lastError}</p>
@@ -310,9 +309,9 @@ const DiscordConfig = ({ definition }: DiscordConfigProps) => {
                     key={field.key}
                     field={{
                       ...field,
-                      label: t(`channels.discord.fields.${field.key}.label`, field.label),
+                      label: t(`channels.discord.fields.${field.key}.label`),
                       placeholder: field.placeholder
-                        ? t(`channels.discord.fields.${field.key}.placeholder`, field.placeholder)
+                        ? t(`channels.discord.fields.${field.key}.placeholder`)
                         : field.placeholder,
                     }}
                     value={fieldValues[compositeKey]?.[field.key] ?? ''}

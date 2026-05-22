@@ -291,10 +291,10 @@ const zhCN1: TranslationMap = {
   'channels.defaultMessaging': '默认消息渠道',
 
   // Auth mode labels
-  'channels.authMode.managedDm': '使用 OpenHuman 登录',
+  'channels.authMode.managed_dm': '使用 OpenHuman 登录',
   'channels.authMode.oauth': 'OAuth 登录',
-  'channels.authMode.botToken': '使用你自己的 Bot Token',
-  'channels.authMode.apiKey': '使用你自己的 API Key',
+  'channels.authMode.bot_token': '使用你自己的 Bot Token',
+  'channels.authMode.api_key': '使用你自己的 API Key',
 
   // Field validation
   'channels.fieldRequired': '{field} 是必填项',
