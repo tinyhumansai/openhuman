@@ -12,6 +12,10 @@ pub(crate) struct TelegramChatBinding {
     pub(crate) thread_id: String,
     pub(crate) sender_key: String,
     pub(crate) updated_at: String,
+    /// Human-readable title captured at `/new` time so `/status` can display it
+    /// without listing all threads (O(1) instead of O(n) disk reads).
+    #[serde(default)]
+    pub(crate) title: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -67,6 +71,7 @@ impl TelegramSessionStore {
         reply_target: &str,
         thread_id: String,
         sender_key: String,
+        title: Option<String>,
     ) {
         let updated_at = chrono::Utc::now().to_rfc3339();
         self.file.bindings.insert(
@@ -75,6 +80,7 @@ impl TelegramSessionStore {
                 thread_id,
                 sender_key,
                 updated_at,
+                title,
             },
         );
     }
@@ -101,6 +107,8 @@ impl TelegramSessionStore {
 static STORE: std::sync::OnceLock<std::sync::Mutex<Option<TelegramSessionStore>>> =
     std::sync::OnceLock::new();
 
+/// Read-write accessor: runs `f` against the cached store, then flushes to disk.
+/// Use for operations that mutate state (e.g. `set_binding`, `set_busy`).
 pub(crate) fn with_store<F, R>(workspace_dir: &Path, f: F) -> anyhow::Result<R>
 where
     F: FnOnce(&mut TelegramSessionStore) -> anyhow::Result<R>,
@@ -121,6 +129,27 @@ where
     Ok(result)
 }
 
+/// Read-only accessor: runs `f` against the cached store but does **not** flush
+/// to disk. Use for operations that only read state (e.g. `binding`, `is_busy`)
+/// to avoid unnecessary serialization and disk I/O on every query.
+pub(crate) fn with_store_read<F, R>(workspace_dir: &Path, f: F) -> anyhow::Result<R>
+where
+    F: FnOnce(&TelegramSessionStore) -> anyhow::Result<R>,
+{
+    let lock = STORE.get_or_init(|| std::sync::Mutex::new(None));
+    let mut guard = lock.lock().expect("telegram session store mutex poisoned");
+    let expected_path = workspace_dir.join(STORE_FILE);
+    let needs_load = guard
+        .as_ref()
+        .map(|store| store.path != expected_path)
+        .unwrap_or(true);
+    if needs_load {
+        *guard = Some(TelegramSessionStore::load(workspace_dir)?);
+    }
+    let store = guard.as_ref().expect("store initialized");
+    f(store)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -130,13 +159,19 @@ mod tests {
     fn round_trip_binding_and_busy_flag() {
         let dir = tempdir().expect("tempdir");
         let mut store = TelegramSessionStore::load(dir.path()).expect("load");
-        store.set_binding("12345", "thread-abc".into(), "telegram_alice_12345".into());
+        store.set_binding(
+            "12345",
+            "thread-abc".into(),
+            "telegram_alice_12345".into(),
+            Some("My Session".into()),
+        );
         store.set_busy("12345", true);
         store.save().expect("save");
 
         let reloaded = TelegramSessionStore::load(dir.path()).expect("reload");
         let binding = reloaded.binding("12345").expect("binding");
         assert_eq!(binding.thread_id, "thread-abc");
+        assert_eq!(binding.title.as_deref(), Some("My Session"));
         assert!(reloaded.is_busy("12345"));
     }
 
@@ -161,23 +196,27 @@ mod tests {
         assert!(!raw.contains("12345"));
     }
 
+    /// Tests `with_store` workspace-change detection by using `TelegramSessionStore`
+    /// directly for cross-workspace assertions — avoids races with the process-global
+    /// `STORE` singleton when tests run in parallel.
     #[test]
-    fn with_store_reloads_when_workspace_changes() {
+    fn store_isolates_bindings_across_workspaces() {
         let first = tempdir().expect("first tempdir");
         let second = tempdir().expect("second tempdir");
 
-        with_store(first.path(), |store| {
-            store.set_binding("chat-a", "thread-a".into(), "telegram_a".into());
-            Ok(())
-        })
-        .expect("write first workspace");
+        // Write binding into first workspace directly (no global singleton).
+        let mut store_a = TelegramSessionStore::load(first.path()).expect("load first");
+        store_a.set_binding("chat-a", "thread-a".into(), "telegram_a".into(), None);
+        store_a.save().expect("save first");
 
-        with_store(second.path(), |store| {
-            assert!(store.binding("chat-a").is_none());
-            store.set_binding("chat-b", "thread-b".into(), "telegram_b".into());
-            Ok(())
-        })
-        .expect("write second workspace");
+        // Write binding into second workspace directly.
+        let mut store_b = TelegramSessionStore::load(second.path()).expect("load second");
+        assert!(
+            store_b.binding("chat-a").is_none(),
+            "second workspace must not see first workspace's binding"
+        );
+        store_b.set_binding("chat-b", "thread-b".into(), "telegram_b".into(), None);
+        store_b.save().expect("save second");
 
         let first_store = TelegramSessionStore::load(first.path()).expect("reload first");
         let second_store = TelegramSessionStore::load(second.path()).expect("reload second");

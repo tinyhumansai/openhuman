@@ -38,9 +38,9 @@ async fn subscriber_marks_busy_on_received_and_clears_on_processed() {
         })
         .await;
 
-    let idle = super::session_store::with_store(dir.path(), |store| Ok(store.is_busy("chat-99")))
+    let busy = super::session_store::with_store(dir.path(), |store| Ok(store.is_busy("chat-99")))
         .expect("store");
-    assert!(!idle);
+    assert!(!busy);
 }
 
 #[tokio::test]

@@ -1,6 +1,6 @@
 //! Telegram remote-control slash commands (phase 1: `/status`, `/sessions`, `/new`).
 
-use super::session_store::{with_store, TelegramChatBinding};
+use super::session_store::{with_store, with_store_read, TelegramChatBinding};
 use crate::openhuman::channels::context::{
     clear_sender_history, conversation_history_key, ChannelRouteSelection, ChannelRuntimeContext,
 };
@@ -99,26 +99,40 @@ async fn build_status_response(ctx: &ChannelRuntimeContext, msg: &ChannelMessage
         .map(|h| h.len())
         .unwrap_or(0);
 
-    let workspace = ctx.workspace_dir.as_path();
-    let (binding, busy) = match with_store(workspace, |store| {
-        Ok((
-            store.binding(&msg.reply_target).cloned(),
-            store.is_busy(&msg.reply_target),
-        ))
-    }) {
-        Ok(pair) => pair,
-        Err(error) => {
-            tracing::warn!("{LOG_PREFIX} status: session store error: {error}");
-            (None, false)
-        }
-    };
+    let workspace = ctx.workspace_dir.clone();
+    let reply_target = msg.reply_target.clone();
+    // Use with_store_read (no disk write) and spawn_blocking to keep the async
+    // executor thread unblocked during mutex acquisition + file I/O.
+    let (binding, busy) = tokio::task::spawn_blocking(move || {
+        with_store_read(&workspace, |store| {
+            Ok((
+                store.binding(&reply_target).cloned(),
+                store.is_busy(&reply_target),
+            ))
+        })
+    })
+    .await
+    .unwrap_or_else(|join_err| {
+        tracing::warn!("{LOG_PREFIX} status: join error reading session store: {join_err}");
+        Ok((None, false))
+    })
+    .unwrap_or_else(|store_err| {
+        tracing::warn!("{LOG_PREFIX} status: session store error: {store_err}");
+        (None, false)
+    });
 
     let thread_line = match binding {
-        Some(TelegramChatBinding { thread_id, .. }) => {
-            let title = lookup_thread_title(workspace, &thread_id)
-                .await
-                .unwrap_or_else(|| thread_id.clone());
-            format!("Thread: `{title}` (`{thread_id}`)")
+        Some(TelegramChatBinding {
+            ref thread_id,
+            ref title,
+            ..
+        }) => {
+            // Use the stored title (captured at /new time) — O(1), no disk read.
+            let display_title = title
+                .as_deref()
+                .filter(|t| !t.trim().is_empty())
+                .unwrap_or(thread_id);
+            format!("Thread: `{display_title}` (`{thread_id}`)")
         }
         None => "Thread: _(none — send `/new` to bind a thread)_".to_string(),
     };
@@ -138,14 +152,19 @@ async fn build_status_response(ctx: &ChannelRuntimeContext, msg: &ChannelMessage
 }
 
 async fn build_sessions_response(ctx: &ChannelRuntimeContext, msg: &ChannelMessage) -> String {
-    let workspace = ctx.workspace_dir.as_path();
-    let active_thread_id = with_store(workspace, |store| {
-        Ok(store
-            .binding(&msg.reply_target)
-            .map(|b| b.thread_id.clone()))
+    let workspace = ctx.workspace_dir.clone();
+    let reply_target = msg.reply_target.clone();
+    // Read-only lookup — use with_store_read (no save) wrapped in spawn_blocking.
+    let active_thread_id = tokio::task::spawn_blocking(move || {
+        with_store_read(&workspace, |store| {
+            Ok(store.binding(&reply_target).map(|b| b.thread_id.clone()))
+        })
     })
+    .await
     .ok()
+    .and_then(|res| res.ok())
     .flatten();
+    let workspace = ctx.workspace_dir.as_path();
 
     let threads = match conversations::list_threads(workspace.to_path_buf()) {
         Ok(list) => list,
@@ -221,10 +240,27 @@ async fn build_new_session_response(ctx: &ChannelRuntimeContext, msg: &ChannelMe
 
     clear_sender_history(ctx, &sender_key);
 
-    if let Err(error) = with_store(workspace, |store| {
-        store.set_binding(&msg.reply_target, thread_id.clone(), sender_key.clone());
-        Ok(())
-    }) {
+    let workspace_dir = ctx.workspace_dir.clone();
+    let reply_target_owned = msg.reply_target.clone();
+    let thread_id_owned = thread_id.clone();
+    let sender_key_owned = sender_key.clone();
+    let title_owned = title.clone();
+    // Write-back path — use with_store (saves) wrapped in spawn_blocking.
+    let bind_result = tokio::task::spawn_blocking(move || {
+        with_store(&workspace_dir, |store| {
+            store.set_binding(
+                &reply_target_owned,
+                thread_id_owned,
+                sender_key_owned,
+                Some(title_owned),
+            );
+            Ok(())
+        })
+    })
+    .await
+    .unwrap_or_else(|e| Err(anyhow::anyhow!("join error: {e}")));
+
+    if let Err(error) = bind_result {
         tracing::warn!("{LOG_PREFIX} new: persist binding failed: {error}");
         return format!(
             "Created thread `{thread_id}` but failed to persist Telegram binding: {error}"
@@ -243,14 +279,6 @@ async fn build_new_session_response(ctx: &ChannelRuntimeContext, msg: &ChannelMe
          Thread id: `{thread_id}`\n\
          In-memory channel history cleared for this chat."
     )
-}
-
-async fn lookup_thread_title(workspace: &std::path::Path, thread_id: &str) -> Option<String> {
-    let threads = conversations::list_threads(workspace.to_path_buf()).ok()?;
-    threads
-        .into_iter()
-        .find(|t| t.id == thread_id)
-        .map(|t| t.title)
 }
 
 #[cfg(test)]
