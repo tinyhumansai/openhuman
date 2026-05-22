@@ -130,6 +130,28 @@ pub trait Memory: Send + Sync {
         opts: RecallOpts<'_>,
     ) -> anyhow::Result<Vec<MemoryEntry>>;
 
+    /// Recall documents in `namespace` semantically relevant to `query`, keeping
+    /// only those whose *vector* similarity to the query is at least
+    /// `min_vector_similarity`. Returns `(key, content)` pairs, most-relevant
+    /// first — the key lets callers act on the matched entry (e.g. overwrite a
+    /// contradicting preference by its topic).
+    ///
+    /// Unlike [`Self::recall`] (which ranks on a combined keyword + vector +
+    /// freshness score), this gates on the vector component alone, so an
+    /// unrelated query surfaces nothing — the behaviour Lane-B situational
+    /// preferences need. Default returns empty so keyword-only and mock backends
+    /// opt out; the unified store overrides it.
+    async fn recall_relevant_by_vector(
+        &self,
+        namespace: &str,
+        query: &str,
+        limit: usize,
+        min_vector_similarity: f64,
+    ) -> anyhow::Result<Vec<(String, String)>> {
+        let _ = (namespace, query, limit, min_vector_similarity);
+        Ok(Vec::new())
+    }
+
     /// Retrieves a specific memory entry by exact (namespace, key).
     async fn get(&self, namespace: &str, key: &str) -> anyhow::Result<Option<MemoryEntry>>;
 

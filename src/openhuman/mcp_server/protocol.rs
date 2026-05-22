@@ -562,10 +562,13 @@ mod tests {
             "agent.run_subagent",
             "memory.search",
             "memory.recall",
+            "memory.store",
+            "memory.note",
             "tree.read_chunk",
             "tree.browse",
             "tree.top_entities",
             "tree.list_sources",
+            "tree.tag",
         ];
         base_names.sort_unstable();
         expected_base_names.sort_unstable();

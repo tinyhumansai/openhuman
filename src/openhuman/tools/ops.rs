@@ -159,6 +159,10 @@ pub fn all_tools_with_runtime(
             memory.clone(),
             security.clone(),
         )),
+        // Two-lane explicit preferences (general → system prompt, situational →
+        // per-query recall). Written verbatim to user_pref_{general,situational};
+        // bypasses the inference/stability pipeline. Always registered.
+        Box::new(SavePreferenceTool::new(memory.clone(), security.clone())),
         // WhatsApp data store — read-only agent surface (issue #1341).
         // The matching `whatsapp_data_ingest` write-path stays internal-only
         // (registered in `src/core/all.rs::build_internal_only_controllers`)
