@@ -1071,3 +1071,22 @@ async fn apply_autonomy_settings_rejects_above_cap() {
     .unwrap_err();
     assert!(err.contains("between 1 and 10000"));
 }
+
+#[tokio::test]
+async fn load_and_apply_autonomy_settings_roundtrip() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let tmp = tempdir().unwrap();
+    unsafe {
+        std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
+    }
+
+    let patch = AutonomySettingsPatch { max_actions_per_hour: Some(500) };
+    let outcome = load_and_apply_autonomy_settings(patch).await.expect("apply");
+    assert!(outcome.value.get("config").is_some());
+
+    // Reload from scratch and confirm the saved value sticks.
+    let reloaded = load_config_with_timeout().await.expect("reload");
+    assert_eq!(reloaded.autonomy.max_actions_per_hour, 500);
+
+    unsafe { std::env::remove_var("OPENHUMAN_WORKSPACE"); }
+}

@@ -817,6 +817,14 @@ pub async fn apply_autonomy_settings(
     ))
 }
 
+/// Loads the configuration, applies autonomy settings updates, and saves it.
+pub async fn load_and_apply_autonomy_settings(
+    update: AutonomySettingsPatch,
+) -> Result<RpcOutcome<serde_json::Value>, String> {
+    let mut config = load_config_with_timeout().await?;
+    apply_autonomy_settings(&mut config, update).await
+}
+
 /// Loads the configuration, applies browser settings updates, and saves it.
 pub async fn load_and_apply_browser_settings(
     update: BrowserSettingsPatch,
