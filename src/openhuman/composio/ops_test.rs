@@ -350,6 +350,60 @@ async fn composio_list_connections_via_mock_counts_active() {
 }
 
 #[tokio::test]
+async fn composio_authorize_clears_pending_meta_connection_before_handoff() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    let deletes = Arc::new(AtomicUsize::new(0));
+    let deletes_for_delete = Arc::clone(&deletes);
+    let app = Router::new()
+        .route(
+            "/agent-integrations/composio/connections",
+            get(|| async {
+                Json(json!({
+                    "success": true,
+                    "data": {"connections": [
+                        {"id":"ig-pending","toolkit":"instagram","status":"PENDING"}
+                    ]}
+                }))
+            }),
+        )
+        .route(
+            "/agent-integrations/composio/connections/{id}",
+            axum::routing::delete(move |Path(id): Path<String>| {
+                let deletes = Arc::clone(&deletes_for_delete);
+                async move {
+                    if id == "ig-pending" {
+                        deletes.fetch_add(1, Ordering::SeqCst);
+                    }
+                    Json(json!({"success": true, "data": {"deleted": true}}))
+                }
+            }),
+        )
+        .route(
+            "/agent-integrations/composio/authorize",
+            post(|Json(body): Json<Value>| async move {
+                assert_eq!(body["toolkit"], "instagram");
+                Json(json!({
+                    "success": true,
+                    "data": {
+                        "connectUrl": "https://meta.example/oauth",
+                        "connectionId": "c-new"
+                    }
+                }))
+            }),
+        );
+    let base = start_mock_backend(app).await;
+    let tmp = tempfile::tempdir().unwrap();
+    let config = config_with_backend(&tmp, base);
+    let outcome = composio_authorize(&config, "instagram", None)
+        .await
+        .unwrap();
+    assert_eq!(outcome.value.connection_id, "c-new");
+    assert_eq!(deletes.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
 async fn composio_authorize_via_mock_publishes_event_and_returns_url() {
     let app = Router::new().route(
         "/agent-integrations/composio/authorize",
@@ -593,23 +647,54 @@ async fn composio_sync_gmail_via_mock_archives_raw_email_and_updates_outcome() {
 
     assert_eq!(outcome.value.toolkit, "gmail");
     assert_eq!(outcome.value.connection_id.as_deref(), Some("c1"));
-    assert_eq!(outcome.value.items_ingested, 1);
-    assert!(outcome.value.summary.contains("persisted 1 new"));
+    // composio_sync is now spawn-and-return: the immediate envelope is a
+    // "started" sentinel, and the actual ingestion runs on a detached
+    // tokio task. items_ingested == 0 / finished_at_ms == 0 / summary
+    // contains "started" are the contract of that sentinel.
+    assert_eq!(
+        outcome.value.items_ingested, 0,
+        "spawn-and-return: items_ingested on the immediate envelope is a 'started' sentinel, not a final count"
+    );
+    assert_eq!(
+        outcome.value.finished_at_ms, 0,
+        "spawn-and-return: finished_at_ms == 0 means 'task spawned, not yet complete'"
+    );
+    assert!(
+        outcome.value.summary.contains("started"),
+        "expected spawn-and-return summary to mention 'started', got: {}",
+        outcome.value.summary
+    );
 
-    let chunks = list_chunks_rpc(
-        &config,
-        ListChunksRequest {
-            source_kind: Some("email".to_string()),
-            source_id: Some("gmail:pilot-at-example-dot-com".to_string()),
-            limit: Some(10),
-            ..Default::default()
-        },
-    )
-    .await
-    .unwrap()
-    .value
-    .chunks;
-    assert_eq!(chunks.len(), 1, "expected one ingested Gmail chunk");
+    // Poll for the spawned ingest task to drain. The mock backend is
+    // local + in-memory, so this normally lands in well under a second.
+    let chunks = {
+        let mut chunks = Vec::new();
+        for _ in 0..50 {
+            chunks = list_chunks_rpc(
+                &config,
+                ListChunksRequest {
+                    source_kind: Some("email".to_string()),
+                    source_id: Some("gmail:pilot-at-example-dot-com".to_string()),
+                    limit: Some(10),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap()
+            .value
+            .chunks;
+            if !chunks.is_empty() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        chunks
+    };
+    assert_eq!(
+        chunks.len(),
+        1,
+        "expected one ingested Gmail chunk after spawned task drains"
+    );
     assert!(
         chunks[0].content.contains("Phoenix launch canary"),
         "chunk content missing mock email subject: {}",
@@ -839,6 +924,7 @@ fn integration(toolkit: &str, connected: bool) -> ConnectedIntegration {
         toolkit: toolkit.to_string(),
         description: String::new(),
         tools: Vec::new(),
+        gated_tools: Vec::new(),
         connected,
     }
 }

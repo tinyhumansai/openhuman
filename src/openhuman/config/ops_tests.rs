@@ -149,30 +149,47 @@ fn get_runtime_flags_reads_env_overrides() {
 }
 
 #[test]
-fn set_browser_allow_all_toggles_env_var() {
+fn set_browser_allow_all_rejects_enable_without_operator_override() {
     let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let before = std::env::var("OPENHUMAN_BROWSER_ALLOW_ALL").ok();
+    let before = std::env::var(BROWSER_ALLOW_ALL_ENV).ok();
+    let before_override = std::env::var(BROWSER_ALLOW_ALL_RPC_ENABLE_ENV).ok();
 
-    let _ = set_browser_allow_all(true);
-    assert!(env_flag_enabled("OPENHUMAN_BROWSER_ALLOW_ALL"));
+    unsafe {
+        std::env::remove_var(BROWSER_ALLOW_ALL_ENV);
+        std::env::remove_var(BROWSER_ALLOW_ALL_RPC_ENABLE_ENV);
+    }
 
-    let _ = set_browser_allow_all(false);
-    assert!(!env_flag_enabled("OPENHUMAN_BROWSER_ALLOW_ALL"));
+    let err = set_browser_allow_all(true).expect_err("runtime enable should require override");
+    assert!(
+        err.contains("Refusing to enable OPENHUMAN_BROWSER_ALLOW_ALL via RPC"),
+        "unexpected error: {err}"
+    );
+    assert!(!env_flag_enabled(BROWSER_ALLOW_ALL_ENV));
 
     unsafe {
         match before {
-            Some(v) => std::env::set_var("OPENHUMAN_BROWSER_ALLOW_ALL", v),
-            None => std::env::remove_var("OPENHUMAN_BROWSER_ALLOW_ALL"),
+            Some(v) => std::env::set_var(BROWSER_ALLOW_ALL_ENV, v),
+            None => std::env::remove_var(BROWSER_ALLOW_ALL_ENV),
+        }
+        match before_override {
+            Some(v) => std::env::set_var(BROWSER_ALLOW_ALL_RPC_ENABLE_ENV, v),
+            None => std::env::remove_var(BROWSER_ALLOW_ALL_RPC_ENABLE_ENV),
         }
     }
 }
 
 #[test]
-fn set_browser_allow_all_emits_security_audit_log() {
+fn set_browser_allow_all_toggles_env_var_when_operator_override_is_set() {
     let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let before = std::env::var("OPENHUMAN_BROWSER_ALLOW_ALL").ok();
+    let before = std::env::var(BROWSER_ALLOW_ALL_ENV).ok();
+    let before_override = std::env::var(BROWSER_ALLOW_ALL_RPC_ENABLE_ENV).ok();
 
-    let enable_outcome = set_browser_allow_all(true);
+    unsafe {
+        std::env::remove_var(BROWSER_ALLOW_ALL_ENV);
+        std::env::set_var(BROWSER_ALLOW_ALL_RPC_ENABLE_ENV, "1");
+    }
+
+    let enable_outcome = set_browser_allow_all(true).expect("override should allow runtime enable");
     assert_eq!(enable_outcome.logs.len(), 1);
     let enable_log = &enable_outcome.logs[0];
     assert!(
@@ -184,8 +201,9 @@ fn set_browser_allow_all_emits_security_audit_log() {
         "enable log should mention enabled state: {enable_log}"
     );
     assert!(enable_outcome.value.browser_allow_all);
+    assert!(env_flag_enabled(BROWSER_ALLOW_ALL_ENV));
 
-    let disable_outcome = set_browser_allow_all(false);
+    let disable_outcome = set_browser_allow_all(false).expect("runtime disable should always work");
     assert_eq!(disable_outcome.logs.len(), 1);
     let disable_log = &disable_outcome.logs[0];
     assert!(
@@ -197,11 +215,49 @@ fn set_browser_allow_all_emits_security_audit_log() {
         "disable log should mention disabled state: {disable_log}"
     );
     assert!(!disable_outcome.value.browser_allow_all);
+    assert!(!env_flag_enabled(BROWSER_ALLOW_ALL_ENV));
 
     unsafe {
         match before {
-            Some(v) => std::env::set_var("OPENHUMAN_BROWSER_ALLOW_ALL", v),
-            None => std::env::remove_var("OPENHUMAN_BROWSER_ALLOW_ALL"),
+            Some(v) => std::env::set_var(BROWSER_ALLOW_ALL_ENV, v),
+            None => std::env::remove_var(BROWSER_ALLOW_ALL_ENV),
+        }
+        match before_override {
+            Some(v) => std::env::set_var(BROWSER_ALLOW_ALL_RPC_ENABLE_ENV, v),
+            None => std::env::remove_var(BROWSER_ALLOW_ALL_RPC_ENABLE_ENV),
+        }
+    }
+}
+
+#[test]
+fn set_browser_allow_all_disable_does_not_require_operator_override() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let before = std::env::var(BROWSER_ALLOW_ALL_ENV).ok();
+    let before_override = std::env::var(BROWSER_ALLOW_ALL_RPC_ENABLE_ENV).ok();
+
+    unsafe {
+        std::env::set_var(BROWSER_ALLOW_ALL_ENV, "1");
+        std::env::remove_var(BROWSER_ALLOW_ALL_RPC_ENABLE_ENV);
+    }
+
+    let disable_outcome =
+        set_browser_allow_all(false).expect("runtime disable should not require override");
+    assert!(
+        disable_outcome.logs[0].contains("[SECURITY]"),
+        "disable log should be audit-tagged: {:?}",
+        disable_outcome.logs
+    );
+    assert!(!disable_outcome.value.browser_allow_all);
+    assert!(!env_flag_enabled(BROWSER_ALLOW_ALL_ENV));
+
+    unsafe {
+        match before {
+            Some(v) => std::env::set_var(BROWSER_ALLOW_ALL_ENV, v),
+            None => std::env::remove_var(BROWSER_ALLOW_ALL_ENV),
+        }
+        match before_override {
+            Some(v) => std::env::set_var(BROWSER_ALLOW_ALL_RPC_ENABLE_ENV, v),
+            None => std::env::remove_var(BROWSER_ALLOW_ALL_RPC_ENABLE_ENV),
         }
     }
 }

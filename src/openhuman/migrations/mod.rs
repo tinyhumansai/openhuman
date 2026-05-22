@@ -24,10 +24,11 @@
 use crate::openhuman::config::Config;
 
 mod phase_out_profile_md;
+mod retire_chat_v1_model;
 mod unify_ai_provider_settings;
 
 /// Current target schema version. Bumped alongside every new migration.
-pub const CURRENT_SCHEMA_VERSION: u32 = 2;
+pub const CURRENT_SCHEMA_VERSION: u32 = 3;
 
 /// Run any migrations whose `schema_version` gate hasn't yet been
 /// crossed for this workspace.
@@ -136,6 +137,40 @@ pub async fn run_pending(config: &mut Config) {
             Err(err) => {
                 log::warn!(
                     "[migrations] unify_ai_provider_settings failed: {err:#} — \
+                     will retry on next launch"
+                );
+            }
+        }
+    }
+
+    // 2 -> 3: retire `chat-v1` as the default model. The backend removed
+    // `chat-v1` from its strict model registry; sub-agent spawns (new
+    // threads) that sent this literal model ID received a 400. Remap any
+    // persisted `default_model = "chat-v1"` to `"reasoning-quick-v1"`.
+    // Guard on `== 2` so a failed 1→2 migration doesn't skip this step.
+    if config.schema_version == 2 {
+        match retire_chat_v1_model::run(config) {
+            Ok(stats) => {
+                let previous_version = config.schema_version;
+                config.schema_version = 3;
+                if let Err(err) = config.save().await {
+                    config.schema_version = previous_version;
+                    log::warn!(
+                        "[migrations] retire_chat_v1_model ran but config.save failed: \
+                         {err:#} — rolled in-memory schema_version back to {previous_version}, \
+                         will retry on next launch"
+                    );
+                    return;
+                }
+                log::info!(
+                    "[migrations] schema_version bumped to 3 (retire_chat_v1_model \
+                     default_model_remapped={})",
+                    stats.default_model_remapped
+                );
+            }
+            Err(err) => {
+                log::warn!(
+                    "[migrations] retire_chat_v1_model failed: {err:#} — \
                      will retry on next launch"
                 );
             }

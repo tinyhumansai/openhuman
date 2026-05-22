@@ -228,16 +228,123 @@ fn with_provider_detail(summary: &str, err: &str) -> String {
     }
 }
 
+/// Extract a Retry-After / retry_after seconds hint from a free-form
+/// error string. Mirrors the typed [`crate::openhuman::inference::
+/// provider::reliable::parse_retry_after_ms`] helper but operates on
+/// the already-flattened `String` that reaches the channel-classifier
+/// layer.
+///
+/// Returns `Some(n)` when a non-negative integer or fractional value
+/// follows one of the canonical headers; fractional values are
+/// rounded up so the user is never told to retry sooner than the
+/// upstream actually allows.
+fn parse_retry_after_secs_from_str(err: &str) -> Option<u64> {
+    // Normalise quoted JSON-key wrappers ("retry_after": 30) by
+    // stripping double quotes before scanning for prefixes
+    // (CodeRabbit review on #2371). A serialised provider body like
+    // `{"retry_after": 30}` would otherwise miss every prefix and
+    // the user would lose the retry hint the provider supplied.
+    let normalized = err.to_ascii_lowercase().replace('"', "");
+    for prefix in &[
+        "retry-after:",
+        "retry_after:",
+        "retry-after ",
+        "retry_after ",
+    ] {
+        if let Some(pos) = normalized.find(prefix) {
+            let after = &normalized[pos + prefix.len()..];
+            let num_str: String = after
+                .trim()
+                .chars()
+                .take_while(|c| c.is_ascii_digit() || *c == '.')
+                .collect();
+            if let Ok(secs) = num_str.parse::<f64>() {
+                if secs.is_finite() && secs >= 0.0 {
+                    return Some(secs.ceil() as u64);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Format the retry-after hint as a short user-friendly suffix
+/// (`" Try again in 30 seconds."`). Returns an empty string when no
+/// hint is available so callers can `format!("{summary}{hint}")`
+/// without branching on `Option`.
+fn retry_after_hint(secs: Option<u64>) -> String {
+    match secs {
+        Some(0) => " You can retry immediately.".to_string(),
+        Some(1) => " Try again in 1 second.".to_string(),
+        Some(n) if n < 90 => format!(" Try again in {n} seconds."),
+        Some(n) => {
+            // Round UP — never tell the user to retry sooner than
+            // the upstream actually allows. 90–119s used to render
+            // as "about 1 minutes" both because of integer flooring
+            // and missing singular/plural handling (CodeRabbit
+            // review on #2371).
+            let mins = (n / 60) + u64::from(n % 60 != 0);
+            let unit = if mins == 1 { "minute" } else { "minutes" };
+            format!(" Try again in about {mins} {unit}.")
+        }
+        None => String::new(),
+    }
+}
+
+/// Detect the SecurityPolicy global hourly action-budget signal
+/// emitted by the built-in tools (`web_fetch`, `curl`, `http_request`,
+/// `polymarket`, `composio`, etc.) — see `src/openhuman/security/
+/// policy.rs::SecurityPolicy::is_rate_limited`.
+///
+/// We match the canonical English strings those tools emit. This is
+/// load-bearing for issue #2364: before this check ran, any string
+/// containing "rate limit" was misclassified as a provider 429 and
+/// the user saw the generic "You're being rate-limited" copy, which
+/// hides that the cap is OpenHuman's own per-hour safety budget,
+/// not the upstream LLM provider.
+fn is_action_budget_exhausted(err_lower: &str) -> bool {
+    err_lower.contains("rate limit exceeded: action budget exhausted")
+        || err_lower.contains("rate limit exceeded: too many actions in the last hour")
+        || err_lower.contains("action blocked: rate limit exceeded")
+}
+
 fn classify_inference_error(err: &str) -> (&'static str, String) {
     let lower = err.to_lowercase();
-    if lower.contains("rate limit") || lower.contains("429") {
+    // Order matters: the SecurityPolicy hourly cap and the
+    // agent-loop max-iterations error both surface as strings that
+    // contain "rate limit" / "iteration", so they MUST be checked
+    // before the generic provider-429 branch — otherwise users see
+    // a confusing "your AI provider is rate-limiting you" message
+    // for limits OpenHuman itself enforced (issue #2364).
+    if is_action_budget_exhausted(&lower) {
         (
-            "rate_limited",
+            "action_budget_exceeded",
             with_provider_detail(
-                "You're being rate-limited. Please wait a moment and try again.",
+                "You've hit OpenHuman's per-hour action budget — this is a local safety cap, \
+                 not your AI provider. The window decays gradually; you can keep chatting in \
+                 this thread and tool-heavy steps will resume as the budget refills.",
                 err,
             ),
         )
+    } else if crate::openhuman::agent::error::is_max_iterations_error(err) {
+        (
+            "max_iterations",
+            with_provider_detail(
+                "The agent ran the maximum number of tool steps for one turn without \
+                 finishing. This usually means a tool kept failing (often a rate limit on a \
+                 web fetch). You can retry the same question in this thread once the \
+                 underlying limit clears.",
+                err,
+            ),
+        )
+    } else if lower.contains("rate limit") || lower.contains("429") {
+        let retry = parse_retry_after_secs_from_str(err);
+        let summary = format!(
+            "Your AI provider is rate-limiting requests. This is a transient upstream \
+             limit, not a thread-level block — you can retry in this thread.{}",
+            retry_after_hint(retry)
+        );
+        ("rate_limited", with_provider_detail(summary.as_str(), err))
     } else if lower.contains("timeout") || lower.contains("timed out") {
         (
             "timeout",

@@ -410,3 +410,18 @@ export async function openhumanLocalAiDiagnostics(): Promise<LocalAiDiagnostics>
     params: {},
   });
 }
+
+export interface OllamaConnectionTestResult {
+  reachable: boolean;
+  error?: string | null;
+  models_count?: number | null;
+}
+
+export async function openhumanLocalAiTestConnection(
+  url: string
+): Promise<OllamaConnectionTestResult> {
+  return await callCoreRpc<OllamaConnectionTestResult>({
+    method: 'openhuman.local_ai_test_connection',
+    params: { url },
+  });
+}

@@ -120,8 +120,8 @@ fn format_insufficient_scope_message(tool: &str, detail: &str) -> String {
         .to_ascii_lowercase();
     format!(
         "`{tool}` was rejected because the connected {toolkit} account is missing required \
-         permissions ({detail}). Reconnect the integration in Settings → Skills and grant the \
-         scopes requested during OAuth."
+         permissions ({detail}). Reconnect the integration in Settings → Connections → \
+         {toolkit} and grant the scopes requested during OAuth."
     )
 }
 

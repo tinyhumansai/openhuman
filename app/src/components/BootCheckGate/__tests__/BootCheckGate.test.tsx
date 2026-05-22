@@ -187,6 +187,32 @@ describe('BootCheckGate — picker (unset mode)', () => {
     );
   });
 
+  it('normalizes a cloud core base URL to the /rpc endpoint before continuing', async () => {
+    mockRunBootCheck.mockResolvedValue({ kind: 'match' });
+
+    renderGate();
+    fireEvent.click(screen.getByText('Run on the Cloud (Complex)'));
+    fireEvent.change(screen.getByPlaceholderText(/https:\/\/core\.example\.com/), {
+      target: { value: 'https://example.trycloudflare.com/' },
+    });
+    fireEvent.change(screen.getByPlaceholderText(/Bearer token/i), {
+      target: { value: 'tok-1234' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('app-content')).toBeInTheDocument();
+    });
+    expect(mockRunBootCheck).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'cloud',
+        url: 'https://example.trycloudflare.com/rpc',
+        token: 'tok-1234',
+      }),
+      expect.any(Object)
+    );
+  });
+
   it('rejects public HTTP cloud URLs', () => {
     renderGate();
 
@@ -270,6 +296,26 @@ describe('BootCheckGate — picker test connection', () => {
     });
     expect(mockTestCoreRpcConnection).toHaveBeenCalledWith(
       'https://core.example.com/rpc',
+      'tok-abc'
+    );
+  });
+
+  it('tests /rpc when the user enters a cloud core base URL', async () => {
+    mockTestCoreRpcConnection.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ result: { ok: true } }),
+    } as unknown as Response);
+
+    renderGate();
+    fillCloudInputs('https://example.trycloudflare.com/');
+    fireEvent.click(screen.getByRole('button', { name: 'Test Connection' }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('test-status-ok')).toBeInTheDocument();
+    });
+    expect(mockTestCoreRpcConnection).toHaveBeenCalledWith(
+      'https://example.trycloudflare.com/rpc',
       'tok-abc'
     );
   });
