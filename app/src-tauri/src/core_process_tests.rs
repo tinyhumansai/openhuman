@@ -6,10 +6,16 @@ use std::sync::{Mutex, MutexGuard, OnceLock};
 
 fn env_lock() -> MutexGuard<'static, ()> {
     static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    // Recover from poison: when one test panics while holding this lock
+    // (e.g. an embedded-core readiness timeout under CI load), every
+    // subsequent test in the suite would otherwise cascade-fail with
+    // "env lock poisoned" — turning one real flake into three. The lock
+    // only serializes process-wide env-var mutation; the inner `()`
+    // carries no state that poisoning could corrupt.
     ENV_LOCK
         .get_or_init(|| Mutex::new(()))
         .lock()
-        .expect("env lock poisoned")
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 struct EnvGuard {

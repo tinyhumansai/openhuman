@@ -64,8 +64,8 @@ impl SeltzSearchTool {
         timeout_secs: u64,
     ) -> Self {
         let timeout = timeout_secs.max(1);
-        let http_client = reqwest::Client::builder()
-            .use_rustls_tls()
+        // Platform-appropriate TLS backend — see [`crate::openhuman::tls`].
+        let http_client = crate::openhuman::tls::tls_client_builder()
             .http1_only()
             .timeout(Duration::from_secs(timeout))
             .connect_timeout(Duration::from_secs(10))

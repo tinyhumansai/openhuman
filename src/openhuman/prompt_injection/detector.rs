@@ -140,7 +140,7 @@ static DETECTION_RULES: Lazy<Vec<DetectionRule>> = Lazy::new(|| {
             message: "Attempts to redefine assistant role or policy scope.",
             score: 0.30,
             regex: Regex::new(
-                r"(you\s+are\s+now|act\s+as|developer\s+mode|jailbreak|unrestricted\s+mode|dan)",
+                r"(you\s+are\s+now|developer\s+mode|jailbreak|unrestricted\s+mode|(you\s+are|pretend\s+you\s+are|act\s+as)\s+dan\b|(no\s+restrictions|unrestricted)\s+.*\bdan\b|\bdan\b\s+.*(no\s+restrictions|unrestricted))",
             )
             .expect("override.role_hijack regex"),
         },
@@ -171,15 +171,27 @@ static DETECTION_RULES: Lazy<Vec<DetectionRule>> = Lazy::new(|| {
         // The window between verb and noun is bounded so that a long phrase
         // separating them (e.g. "reveal how to configure my api key") does NOT
         // match. Up to 2 filler words are allowed between verb and determiner
-        // ("show me the X", "give me your X") so common phrasings still trip.
-        // The determiner is required, which is what excludes the benign
-        // "reveal how to set ..." case from issue #1940.
+        // so common attack phrasings still trip. The determiner is required,
+        // which is what excludes the benign "reveal how to set ..." case
+        // from issue #1940.
+        //
+        // Verb list intentionally excludes high-false-positive verbs that
+        // appear constantly in benign technical questions:
+        //   - "show" → "Show me the password reset flow" (TAURI-140)
+        //   - "give" → "Give me the environment token for CI"
+        //   - "tell" → "Tell me the token format / expiry"
+        //   - "fetch" → extremely common in API / code contexts
+        //   - "return" → extremely common in function / code contexts
+        //   - "output" → common in logging / code contexts
+        // The remaining verbs ("dump", "leak", "expose", "exfiltrate", etc.)
+        // are rarely used in benign technical writing and strongly imply
+        // adversarial intent when paired with a credential noun.
         DetectionRule {
             code: "exfiltrate.credentials_with_intent",
             message: "Attempts to extract credentials, secrets, or tokens (verb + target).",
             score: 0.46,
             regex: Regex::new(
-                r"(reveal|show|print|dump|leak|display|share|expose|give|tell|fetch|return|output)\s+(\S+\s+){0,2}(the|your|my|all|stored|active|internal|hidden|configured|saved|env|environment)\s+(\S+\s+){0,3}(api\s*key|secret|token|password|private\s+key|credentials?|session\s+cookie|jwt|bearer)",
+                r"(reveal|print|dump|leak|display|share|expose|exfiltrate)\s+(\S+\s+){0,2}(the|your|my|all|stored|active|internal|hidden|configured|saved|env|environment)\s+(\S+\s+){0,3}(api\s*key|secret|token|password|private\s+key|credentials?|session\s+cookie|jwt|bearer)",
             )
             .expect("exfiltrate.credentials_with_intent regex"),
         },
@@ -336,7 +348,12 @@ fn analyze_prompt(input: &str) -> (PromptInjectionVerdict, f32, Vec<PromptInject
     let mut reasons: Vec<PromptInjectionReason> = Vec::new();
 
     if normalized.has_instruction_override {
-        score += 0.46;
+        // 0.56 — above the Review threshold (0.55) on its own, so obfuscated
+        // spacing attacks ("i g n o r e   a l l   p r e v i o u s …") that
+        // only trigger this heuristic (the regex-based override.ignore_previous
+        // rule requires whitespace between tokens and misses spaced-out text)
+        // are still caught at Review level.
+        score += 0.56;
         reasons.push(PromptInjectionReason {
             code: "override.obfuscated_instruction".to_string(),
             message: "Detected obfuscated instruction-override phrase.".to_string(),
@@ -371,9 +388,20 @@ fn analyze_prompt(input: &str) -> (PromptInjectionVerdict, f32, Vec<PromptInject
     }
 
     score = score.min(1.0);
+    // Thresholds (rationale in TAURI-140 investigation):
+    //   Review ≥ 0.55 — raised from 0.50 to reduce borderline false positives
+    //   (especially weak multi-signal combinations) while retaining
+    //   deterministic coverage for direct override/exfiltration patterns.
+    //   The `override.obfuscated_instruction` signal was increased to 0.56 so
+    //   spacing-obfuscated override attacks still land in Review.
+    //   Previous (0.50) was raised from 0.45 to eliminate the 0.45-0.49 false-positive
+    //   band where a single weak role-hijack signal (\bdan\b, 0.30) plus a
+    //   single weak credential mention (exfiltrate.secrets, 0.18) summing to
+    //   0.48 was blocking legitimate technical prompts.
+    //   Block  ≥ 0.70 — unchanged; strong multi-rule attacks reliably exceed this.
     let verdict = if score >= 0.70 {
         PromptInjectionVerdict::Block
-    } else if score >= 0.45 {
+    } else if score >= 0.55 {
         PromptInjectionVerdict::Review
     } else {
         PromptInjectionVerdict::Allow

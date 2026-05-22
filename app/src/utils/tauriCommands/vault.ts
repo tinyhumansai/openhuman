@@ -29,14 +29,23 @@ export interface CoreVaultFile {
   status: CoreVaultFileStatus;
 }
 
-export interface CoreVaultSyncReport {
+export type CoreVaultSyncStatus = 'idle' | 'running' | 'completed' | 'failed';
+
+/** Live progress returned by `openhuman.vault_sync_status`. */
+export interface CoreVaultSyncState {
   vault_id: string;
+  status: CoreVaultSyncStatus;
   scanned: number;
   ingested: number;
   unchanged: number;
   removed: number;
   failed: number;
   skipped_unsupported: number;
+  /** Total files queued for ingestion; 0 while the discovery walk is still running. */
+  total: number;
+  started_at_ms: number;
+  finished_at_ms: number | null;
+  /** Wall-clock ms; 0 while running; set on completion. */
   duration_ms: number;
   errors: string[];
 }
@@ -100,10 +109,21 @@ export async function openhumanVaultRemove(
 
 export async function openhumanVaultSync(
   vaultId: string
-): Promise<CommandResponse<CoreVaultSyncReport>> {
+): Promise<CommandResponse<{ status: string; vault_id: string }>> {
   ensureTauri();
-  return await callCoreRpc<CommandResponse<CoreVaultSyncReport>>({
+  return await callCoreRpc<CommandResponse<{ status: string; vault_id: string }>>({
     method: 'openhuman.vault_sync',
+    params: { vault_id: vaultId },
+  });
+}
+
+/** Poll live sync progress for a vault. */
+export async function openhumanVaultSyncStatus(
+  vaultId: string
+): Promise<CommandResponse<CoreVaultSyncState>> {
+  ensureTauri();
+  return await callCoreRpc<CommandResponse<CoreVaultSyncState>>({
+    method: 'openhuman.vault_sync_status',
     params: { vault_id: vaultId },
   });
 }

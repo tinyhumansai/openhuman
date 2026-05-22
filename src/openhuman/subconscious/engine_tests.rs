@@ -1,5 +1,27 @@
 use super::*;
 
+struct EnvVarGuard {
+    key: &'static str,
+    old: Option<std::ffi::OsString>,
+}
+
+impl EnvVarGuard {
+    fn set_to_path(key: &'static str, path: &std::path::Path) -> Self {
+        let old = std::env::var_os(key);
+        std::env::set_var(key, path);
+        Self { key, old }
+    }
+}
+
+impl Drop for EnvVarGuard {
+    fn drop(&mut self) {
+        match &self.old {
+            Some(value) => std::env::set_var(self.key, value),
+            None => std::env::remove_var(self.key),
+        }
+    }
+}
+
 fn test_tasks() -> Vec<SubconsciousTask> {
     vec![
         SubconsciousTask {
@@ -25,6 +47,110 @@ fn test_tasks() -> Vec<SubconsciousTask> {
             created_at: 0.0,
         },
     ]
+}
+
+#[tokio::test]
+async fn tick_skips_unavailable_provider_without_activity_log_spam() {
+    let _env_lock = crate::openhuman::config::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let _workspace = EnvVarGuard::set_to_path("OPENHUMAN_WORKSPACE", tmp.path());
+    let config = Config::load_or_init().await.expect("load test config");
+    let engine = SubconsciousEngine::from_heartbeat_config(
+        &config.heartbeat,
+        config.workspace_dir.clone(),
+        None,
+    );
+
+    let result = engine.tick().await.expect("tick should skip cleanly");
+
+    assert!(result.evaluations.is_empty());
+    let logs = store::with_connection(&config.workspace_dir, |conn| {
+        store::list_log_entries(conn, None, 20)
+    })
+    .expect("list logs");
+    assert!(
+        logs.is_empty(),
+        "provider skip must not append per-task failure log entries"
+    );
+
+    let status = engine.status().await;
+    assert_eq!(status.consecutive_failures, 1);
+    assert!(!status.provider_available);
+    assert!(status
+        .provider_unavailable_reason
+        .as_deref()
+        .unwrap_or_default()
+        .contains("Sign in"));
+
+    let _second = engine.tick().await.expect("repeat skip should be clean");
+    let logs = store::with_connection(&config.workspace_dir, |conn| {
+        store::list_log_entries(conn, None, 20)
+    })
+    .expect("list logs after repeat");
+    assert!(logs.is_empty(), "repeat skips must not spam activity log");
+}
+
+#[test]
+fn local_subconscious_provider_with_endpoint_is_available() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut config = Config::default();
+    config.config_path = tmp.path().join("config.toml");
+    config.workspace_dir = tmp.path().join("workspace");
+    config.subconscious_provider = Some("ollama:qwen2.5:0.5b".into());
+    config.memory_tree.llm_summariser_endpoint = Some("http://localhost:11434".into());
+
+    assert!(subconscious_provider_unavailable_reason(&config).is_none());
+}
+
+#[test]
+fn local_subconscious_route_preserves_ollama_model() {
+    let mut config = Config::default();
+    config.subconscious_provider = Some("ollama:qwen2.5:0.5b".into());
+    config.memory_tree.llm_summariser_endpoint = Some("http://localhost:11434".into());
+
+    assert_eq!(
+        resolve_subconscious_route(&config),
+        SubconsciousProviderRoute::LocalOllama {
+            endpoint_set: true,
+            model: "qwen2.5:0.5b".into(),
+        }
+    );
+}
+
+#[test]
+fn local_subconscious_provider_without_endpoint_is_unavailable() {
+    let mut config = Config::default();
+    config.subconscious_provider = Some("ollama:qwen2.5:0.5b".into());
+    config.memory_tree.llm_summariser_endpoint = None;
+
+    let reason = subconscious_provider_unavailable_reason(&config).expect("unavailable reason");
+
+    assert!(reason.contains("Ollama summarizer endpoint"));
+}
+
+#[test]
+fn openhuman_subconscious_alias_uses_cloud_route() {
+    let mut config = Config::default();
+    config.subconscious_provider = Some("openhuman:summarization".into());
+
+    assert_eq!(
+        resolve_subconscious_route(&config),
+        SubconsciousProviderRoute::OpenHumanCloud
+    );
+}
+
+#[test]
+fn explicit_subconscious_provider_uses_other_route() {
+    let mut config = Config::default();
+    config.subconscious_provider = Some("custom-provider".into());
+
+    assert_eq!(
+        resolve_subconscious_route(&config),
+        SubconsciousProviderRoute::Other("custom-provider".into())
+    );
+    assert!(subconscious_provider_unavailable_reason(&config).is_none());
 }
 
 #[test]

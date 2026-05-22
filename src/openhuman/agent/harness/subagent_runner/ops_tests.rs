@@ -963,11 +963,12 @@ fn resolve_subagent_provider_hint_with_config_routes_via_factory() {
     // `{workload}-v1` synthesis.
     use crate::openhuman::config::Config;
     let mut config = Config::default();
-    // Route `agentic` to OpenHuman backend explicitly. The backend
-    // returns the configured default_model, which we set to a known
-    // string so the assertion is meaningful.
+    // Route `agentic` to OpenHuman backend explicitly. The backend returns
+    // the configured default_model. Use `coding-v1` — a recognized tier
+    // that the factory validation accepts and that differs from the old
+    // `agentic-v1` synthesis, making the assertion meaningful.
     config.agentic_provider = Some("openhuman".to_string());
-    config.default_model = Some("agentic-specific-model".to_string());
+    config.default_model = Some("coding-v1".to_string());
 
     let parent: Arc<dyn Provider> = ScriptedProvider::new(vec![]);
     let (_resolved_provider, resolved_model) = super::resolve_subagent_provider(
@@ -980,7 +981,7 @@ fn resolve_subagent_provider_hint_with_config_routes_via_factory() {
         None,
     );
     assert_eq!(
-        resolved_model, "agentic-specific-model",
+        resolved_model, "coding-v1",
         "Hint must use the factory-resolved exact model, not synthesise `agentic-v1` \
          and not fall back to parent's model"
     );

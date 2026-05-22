@@ -180,6 +180,16 @@ pub async fn start_channels(config: Config) -> Result<()> {
         &config.autonomy,
         &config.workspace_dir,
     ));
+    // Phase 1 of #1401: audit logger is wired with defaults so emission paths
+    // are exercised at runtime. A follow-up promotes `SecurityConfig` (and
+    // therefore the `audit` knob) onto the runtime `Config` schema so users
+    // can override `enabled`, `log_path`, and `max_size_mb` via TOML. The
+    // logger is workspace-scoped and shared, so concurrent sessions append to
+    // one `audit.log` without racing on rotation.
+    let audit = crate::openhuman::security::get_or_create_workspace_audit_logger(
+        crate::openhuman::config::AuditConfig::default(),
+        config.workspace_dir.clone(),
+    )?;
     let model = config
         .default_model
         .clone()
@@ -199,6 +209,7 @@ pub async fn start_channels(config: Config) -> Result<()> {
         Arc::new(config.clone()),
         &security,
         runtime,
+        audit,
         Arc::clone(&mem),
         &config.browser,
         &config.http_request,
@@ -563,6 +574,17 @@ pub async fn start_channels(config: Config) -> Result<()> {
             config.channels_config.active_channel.clone(),
         ),
     ));
+    let _telegram_remote_handle = if channels_by_name.contains_key("telegram") {
+        let handle = bus.subscribe(Arc::new(
+            crate::openhuman::channels::providers::telegram::TelegramRemoteSubscriber::new(
+                config.workspace_dir.clone(),
+            ),
+        ));
+        tracing::debug!("[telegram-remote] registered TelegramRemoteSubscriber");
+        Some(handle)
+    } else {
+        None
+    };
     // Register the tree summarizer event subscriber for observability logging.
     let _tree_summarizer_handle = bus.subscribe(Arc::new(
         crate::openhuman::tree_summarizer::bus::TreeSummarizerEventSubscriber::new(),

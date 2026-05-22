@@ -41,8 +41,22 @@ impl ComposioTool {
         default_entity_id: Option<&str>,
         security: Arc<SecurityPolicy>,
     ) -> Self {
+        let trimmed = api_key.trim();
+        if trimmed.len() != api_key.len() {
+            // The key carried leading/trailing whitespace that would otherwise
+            // reach Composio's `x-api-key` header verbatim and trip the
+            // server-side "Invalid API key format" 401 (Sentry TAURI-RUST-D3).
+            // We trim here so the request succeeds; logging the length delta
+            // (never the key itself) helps trace which credential source
+            // produced a dirty value without leaking the secret.
+            tracing::debug!(
+                original_len = api_key.len(),
+                trimmed_len = trimmed.len(),
+                "[composio] trimmed leading/trailing whitespace from api_key"
+            );
+        }
         Self {
-            api_key: api_key.to_string(),
+            api_key: trimmed.to_string(),
             default_entity_id: normalize_entity_id(default_entity_id.unwrap_or("default")),
             security,
         }

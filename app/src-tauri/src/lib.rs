@@ -8,6 +8,8 @@ mod cef_profile;
 mod companion_commands;
 mod core_process;
 mod core_rpc;
+#[cfg(target_os = "windows")]
+mod deep_link_ipc_windows;
 mod dictation_hotkeys;
 mod discord_scanner;
 mod fake_camera;
@@ -16,6 +18,7 @@ mod gmessages_scanner;
 mod imessage_scanner;
 #[cfg(target_os = "macos")]
 mod mascot_native_window;
+mod mcp_commands;
 mod meet_audio;
 mod meet_call;
 mod meet_scanner;
@@ -29,6 +32,7 @@ mod slack_scanner;
 mod telegram_scanner;
 mod webview_accounts;
 mod webview_apis;
+mod wechat_scanner;
 mod whatsapp_scanner;
 mod window_state;
 
@@ -407,6 +411,33 @@ struct ResolvedDataPaths {
     active_workspace_marker_path: std::path::PathBuf,
 }
 
+fn is_windows_file_lock_raw_os_error(raw_os_error: Option<i32>) -> bool {
+    matches!(raw_os_error, Some(32 | 33))
+}
+
+fn is_windows_file_lock_error(error: &std::io::Error) -> bool {
+    cfg!(windows) && is_windows_file_lock_raw_os_error(error.raw_os_error())
+}
+
+fn reset_local_data_delete_error(
+    label: &str,
+    path: &std::path::Path,
+    error: &std::io::Error,
+) -> String {
+    if is_windows_file_lock_error(error) {
+        log::warn!(
+            "[core] reset_local_data: Windows file lock blocked removal of {label} at {}: {error}",
+            path.display()
+        );
+        return format!(
+            "Failed to remove {label} at {} because it is locked by another OpenHuman window or process. Close all OpenHuman windows and try again. ({error})",
+            path.display()
+        );
+    }
+
+    format!("Failed to remove {label} at {}: {error}", path.display())
+}
+
 /// Call the core's `config_get_data_paths` RPC and parse the response.
 async fn fetch_data_paths() -> Result<ResolvedDataPaths, String> {
     let url = crate::core_rpc::core_rpc_url_value();
@@ -474,10 +505,7 @@ async fn remove_path_if_exists(path: &std::path::Path, label: &str) -> Result<()
             );
             Ok(())
         }
-        Err(e) => Err(format!(
-            "Failed to remove {label} at {}: {e}",
-            path.display()
-        )),
+        Err(e) => Err(reset_local_data_delete_error(label, path, &e)),
     }
 }
 
@@ -498,10 +526,7 @@ async fn remove_dir_if_exists(path: &std::path::Path, label: &str) -> Result<(),
             );
             Ok(())
         }
-        Err(e) => Err(format!(
-            "Failed to remove {label} at {}: {e}",
-            path.display()
-        )),
+        Err(e) => Err(reset_local_data_delete_error(label, path, &e)),
     }
 }
 
@@ -1168,6 +1193,59 @@ fn set_main_window_hidden(hide: bool) {
     );
 }
 
+/// Look up the main `WebviewWindow`, optionally waiting briefly on Windows
+/// for the Tauri runtime to re-track the window after SW_SHOW.
+///
+/// Why this exists (OPENHUMAN-TAURI-3A): on Windows the close button routes
+/// through [`set_main_window_hidden`] which uses raw-HWND `SW_HIDE`. CEF
+/// treats the hidden host as gone and the Tauri runtime drops its
+/// `WebviewWindow` record for `"main"` until the next event-loop tick after
+/// SW_SHOW restores visibility. A tray "Show window" callback that runs
+/// `set_main_window_hidden(false)` and then immediately calls
+/// `app.get_webview_window("main")` can race the re-track step and observe
+/// `None` even though the OS window is visible — Sentry sees a
+/// `[tray] failed to show main window from menu: main window not found`
+/// warn even though, from the user's perspective, the window came back.
+///
+/// Bounded retry budget: up to 5 lookups with 10 ms between attempts (≤ 50 ms
+/// worst case). The tray menu is closed during this window, so the small
+/// blocking delay is invisible. After the budget expires the original
+/// error path still triggers, preserving the signal if the runtime never
+/// re-tracks (which would indicate a real lifecycle bug, not a race).
+///
+/// Non-Windows platforms use a single lookup — the close-to-tray flow that
+/// produces the race is Windows-specific (the macOS close button routes
+/// through `app.hide()` per PR #2049, and Linux/X11 keeps the
+/// `WebviewWindow` record across `WM_DELETE_WINDOW` handling).
+fn get_main_webview_window_with_retry(
+    app: &AppHandle<AppRuntime>,
+) -> Option<tauri::WebviewWindow<AppRuntime>> {
+    #[cfg(target_os = "windows")]
+    {
+        const ATTEMPTS: usize = 5;
+        const BACKOFF: std::time::Duration = std::time::Duration::from_millis(10);
+        for attempt in 0..ATTEMPTS {
+            if let Some(window) = app.get_webview_window("main") {
+                if attempt > 0 {
+                    log::debug!(
+                        "[show_main_window] runtime re-tracked main window after {} retries",
+                        attempt
+                    );
+                }
+                return Some(window);
+            }
+            if attempt + 1 < ATTEMPTS {
+                std::thread::sleep(BACKOFF);
+            }
+        }
+        None
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        app.get_webview_window("main")
+    }
+}
+
 fn show_main_window(app: &AppHandle<AppRuntime>) -> Result<(), String> {
     // On Windows: surface the OS top-level Chrome_WidgetWin_1 frame BEFORE
     // any Tauri lookups. After our close handler's SW_HIDE the runtime
@@ -1176,7 +1254,10 @@ fn show_main_window(app: &AppHandle<AppRuntime>) -> Result<(), String> {
     // and the early `?` below would abort before SW_SHOW fires (#1607).
     // EnumWindows + SW_SHOW operates directly on the OS HWND that
     // survived independently, and the runtime re-tracks the window once
-    // it's visible again.
+    // it's visible again — but re-tracking lands on the next event-loop
+    // tick, not synchronously with SW_SHOW. `get_main_webview_window_with_retry`
+    // bounds the wait to ~50 ms total so the tray callback can pick up the
+    // re-tracked window without re-emitting OPENHUMAN-TAURI-3A.
     #[cfg(target_os = "windows")]
     {
         set_main_window_hidden(false);
@@ -1185,8 +1266,7 @@ fn show_main_window(app: &AppHandle<AppRuntime>) -> Result<(), String> {
             let _ = webview.set_focus();
         }
     }
-    let window = app
-        .get_webview_window("main")
+    let window = get_main_webview_window_with_retry(app)
         .ok_or_else(|| "main window not found".to_string())?;
     window
         .show()
@@ -1372,6 +1452,31 @@ fn setup_tray(app: &AppHandle<AppRuntime>) -> tauri::Result<()> {
 }
 
 const CEF_PREWARM_LABEL: &str = "cef-prewarm";
+
+/// Decide whether to spawn the CEF cold-start prewarm webview.
+///
+/// Testable pure function — callers pass the relevant env values directly.
+///
+/// Decision matrix:
+/// - `env_override` = `Some("0"|"false"|"no"|"off")` → disabled (explicit)
+/// - `env_override` = `Some(<other non-empty string>)` → enabled (explicit opt-in;
+///   overrides even the Wayland guard so ops can re-enable if CEF subprocess
+///   X handling improves)
+/// - `env_override` = `None` (env var unset, default path):
+///   - `wayland_display_set` = `true` → **disabled** — auto-guard against the
+///     fatal `X_ConfigureWindow BadWindow` crash that fires in CEF render
+///     subprocesses on Wayland/XWayland sessions (issue #2463). The main-process
+///     silent X error handler (`install_silent_x_error_handler`) does not reach
+///     CEF subprocesses; until subprocess-level coverage is available, skipping
+///     the prewarm child webview is the safest mitigation.
+///   - `wayland_display_set` = `false` → enabled
+fn cef_prewarm_enabled(env_override: Option<&str>, wayland_display_set: bool) -> bool {
+    if let Some(v) = env_override {
+        let v = v.trim().to_ascii_lowercase();
+        return !(v == "0" || v == "false" || v == "no" || v == "off");
+    }
+    !wayland_display_set
+}
 
 /// Spawn a hidden 1×1 child webview at `about:blank` on the main window so
 /// CEF's child-webview render path is hot before the user clicks an
@@ -1656,6 +1761,73 @@ fn check_linux_display_server() {
 #[cfg(not(target_os = "linux"))]
 fn check_linux_display_server() {}
 
+/// Pure predicate: given a candidate `DBUS_SESSION_BUS_ADDRESS` value, decide
+/// whether it points to a transport `zbus` can actually open.
+///
+/// `tauri-plugin-single-instance` on Linux calls
+/// `zbus::blocking::connection::Builder::session().unwrap()` in its `setup()`
+/// closure. When `DBUS_SESSION_BUS_ADDRESS` is missing or set to `disabled`
+/// (the literal string WSL2-without-WSLg sets), zbus returns
+/// `Address("unsupported transport 'disabled'")` and the unwrap blows up the
+/// whole process before any window is created (Sentry OPENHUMAN-TAURI-TM).
+///
+/// We treat an address as reachable only when at least one alternative listed
+/// in the env var uses a transport `zbus` ships with: `unix:`, `tcp:`,
+/// `launchd:`, or `autolaunch:`. Anything else (`disabled`, empty, unknown
+/// scheme) is treated as unreachable so we can skip registering the plugin
+/// instead of crashing.
+#[cfg(any(target_os = "linux", test))]
+fn dbus_address_is_supported(addr: &str) -> bool {
+    addr.split(';').any(|entry| {
+        let entry = entry.trim();
+        if entry.is_empty() {
+            return false;
+        }
+        let transport = entry.split(':').next().unwrap_or("").trim();
+        matches!(transport, "unix" | "tcp" | "launchd" | "autolaunch")
+    })
+}
+
+/// Pure predicate: decide whether the Linux D-Bus session bus is reachable
+/// based on the relevant env vars and (optionally) the existence of the
+/// `$XDG_RUNTIME_DIR/bus` socket.
+///
+/// Used to gate registration of `tauri-plugin-single-instance` on Linux so
+/// WSL2-without-WSLg / minimal-container launches don't crash on the plugin's
+/// `unwrap()` (Sentry OPENHUMAN-TAURI-TM).
+#[cfg(any(target_os = "linux", test))]
+fn linux_dbus_session_reachable(
+    dbus_session_bus_address: Option<&str>,
+    xdg_runtime_bus_socket_exists: bool,
+) -> bool {
+    match dbus_session_bus_address {
+        Some(addr) => dbus_address_is_supported(addr),
+        // When the env var is unset, zbus falls back to autolaunch which on
+        // most distros requires `$XDG_RUNTIME_DIR/bus` to exist. Treat its
+        // absence as "no D-Bus".
+        None => xdg_runtime_bus_socket_exists,
+    }
+}
+
+/// Returns `true` when this process can safely register
+/// `tauri-plugin-single-instance` without tripping the
+/// `Address("unsupported transport 'disabled'")` panic on Linux.
+/// Always `true` on non-Linux platforms.
+#[cfg(target_os = "linux")]
+fn can_register_single_instance_plugin() -> bool {
+    let env_addr = std::env::var("DBUS_SESSION_BUS_ADDRESS").ok();
+    let runtime_bus_present = std::env::var("XDG_RUNTIME_DIR")
+        .ok()
+        .map(|dir| std::path::Path::new(&dir).join("bus").exists())
+        .unwrap_or(false);
+    linux_dbus_session_reachable(env_addr.as_deref(), runtime_bus_present)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn can_register_single_instance_plugin() -> bool {
+    true
+}
+
 type CefCommandLineArg = (&'static str, Option<&'static str>);
 
 /// Returns `true` when the process is running as root (UID 0) on Linux.
@@ -1915,7 +2087,20 @@ pub fn run() {
             }
             // Strip server_name (hostname) to avoid leaking machine identity.
             event.server_name = None;
-            event.user = None;
+            // Attach the cached account uid so Sentry can count unique users
+            // affected by an issue. We only carry `id` — never email, name,
+            // or IP — so this stays consistent with `send_default_pii: false`.
+            // Since #1061 the core runs in-process inside this shell, so this
+            // is the surface that tags ~all desktop events. Mirrors the
+            // standalone `openhuman-core` binary's filter in `src/main.rs`.
+            // Empty/missing on early-startup events (cache populates after
+            // the first `auth_get_me` RPC); that's expected.
+            event.user = openhuman_core::openhuman::app_state::peek_cached_current_user_identity()
+                .and_then(|identity| identity.id)
+                .map(|id| sentry::User {
+                    id: Some(id),
+                    ..Default::default()
+                });
             Some(event)
         })),
         sample_rate: 1.0,
@@ -1999,11 +2184,10 @@ pub fn run() {
     //
     // Fix: acquire a named Win32 mutex at the very top of `run()` — before
     // any CEF or builder work — so any secondary instance sees
-    // `ERROR_ALREADY_EXISTS` and exits immediately. The mutex name uses
-    // a `-cef-init` suffix distinct from the plugin's own `-sim` mutex so
-    // the two guards don't interfere; the plugin still handles WM_COPYDATA
-    // forwarding for graceful "focus primary" behaviour once the app is
-    // fully initialised.
+    // `ERROR_ALREADY_EXISTS` and exits immediately. If the secondary was
+    // launched for an `openhuman://` OAuth callback, forward that URL to the
+    // primary through our pre-CEF pipe before exiting; the Tauri deep-link
+    // plugin cannot run on this early secondary path.
     //
     // The RAII guard holds the mutex handle for the lifetime of `run()`.
     // Windows releases all process handles automatically on exit, so
@@ -2022,9 +2206,17 @@ pub fn run() {
 
         if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
             // Another instance is already past this point — exit before we
-            // touch CEF at all. The plugin's WM_COPYDATA path won't run
-            // here (it needs an AppHandle from setup()), but the primary
-            // is already showing its window so the user experience is fine.
+            // touch CEF at all. Forward deep links first so OAuth callbacks
+            // are not dropped by this early pre-plugin exit.
+            match deep_link_ipc_windows::try_forward_deep_links() {
+                deep_link_ipc_windows::ForwardResult::Forwarded
+                | deep_link_ipc_windows::ForwardResult::NoUrls => {}
+                deep_link_ipc_windows::ForwardResult::NoPrimary => {
+                    log::warn!(
+                        "[single-instance] secondary had deep-link argv but could not reach primary pipe"
+                    );
+                }
+            }
             if !handle.is_null() {
                 unsafe { CloseHandle(handle) };
             }
@@ -2045,6 +2237,9 @@ pub fn run() {
         }
         OwnedMutex(handle as isize)
     };
+
+    #[cfg(windows)]
+    let _deep_link_pipe_guard = deep_link_ipc_windows::bind_and_listen();
 
     // CEF cache-lock preflight (macOS only): if another OpenHuman instance
     // is already holding the CEF user-data-dir, the vendored
@@ -2236,18 +2431,28 @@ pub fn run() {
             }
         });
 
-    let builder = builder
-        // Single-instance guard — MUST be the first plugin registered so the
-        // secondary-process exit path triggers before any other plugin setup
-        // (and before `Builder::build()` reaches `CefRuntime::init`). Without
-        // this, launching a second instance races into CEF init while the
-        // primary still holds the cache lock; `cef::initialize` returns 0 and
-        // the vendored runtime asserts (Sentry OPENHUMAN-TAURI-A — 442 events
-        // across Win10/11 + Linux, all releases). The callback receives the
-        // secondary's argv/cwd; we forward deep-link args and focus the main
-        // window. Deep-link payloads stay handled by `tauri-plugin-deep-link`
-        // — we just need to wake the primary so it observes them.
-        .plugin(tauri_plugin_single_instance::init(
+    // Single-instance guard — MUST be the first plugin registered so the
+    // secondary-process exit path triggers before any other plugin setup
+    // (and before `Builder::build()` reaches `CefRuntime::init`). Without
+    // this, launching a second instance races into CEF init while the
+    // primary still holds the cache lock; `cef::initialize` returns 0 and
+    // the vendored runtime asserts (Sentry OPENHUMAN-TAURI-A — 442 events
+    // across Win10/11 + Linux, all releases). The callback receives the
+    // secondary's argv/cwd; we forward deep-link args and focus the main
+    // window. Deep-link payloads stay handled by `tauri-plugin-deep-link`
+    // — we just need to wake the primary so it observes them.
+    //
+    // On Linux the plugin's `setup()` calls
+    // `zbus::blocking::connection::Builder::session().unwrap()`, which panics
+    // with `Address("unsupported transport 'disabled'")` when the D-Bus
+    // session bus is unreachable (WSL2-without-WSLg, minimal containers, root
+    // launches without `$XDG_RUNTIME_DIR/bus`) — Sentry OPENHUMAN-TAURI-TM.
+    // Probe for a usable session bus first and skip the plugin if absent;
+    // single-instance enforcement is best-effort in those environments
+    // anyway, and a graceful skip is strictly better than crashing at
+    // startup.
+    let builder = if can_register_single_instance_plugin() {
+        builder.plugin(tauri_plugin_single_instance::init(
             |app: &AppHandle<AppRuntime>, args, cwd| {
                 // Don't log raw argv/cwd: deep-link callbacks (OAuth codes,
                 // magic links) can carry auth tokens that would otherwise leak
@@ -2262,6 +2467,17 @@ pub fn run() {
                 }
             },
         ))
+    } else {
+        log::warn!(
+            "[single-instance] D-Bus session bus unreachable (DBUS_SESSION_BUS_ADDRESS={:?}, \
+             XDG_RUNTIME_DIR={:?}); skipping tauri-plugin-single-instance to avoid \
+             OPENHUMAN-TAURI-TM panic. Multiple OpenHuman instances will not be deduplicated.",
+            std::env::var("DBUS_SESSION_BUS_ADDRESS").ok(),
+            std::env::var("XDG_RUNTIME_DIR").ok()
+        );
+        builder
+    };
+    let builder = builder
         // Explicitly disable `open_js_links_on_click`: tauri-plugin-opener
         // defaults to injecting `init-iife.js` into *every* webview — a
         // global click listener that invokes `plugin:opener|open_url` via
@@ -2303,6 +2519,7 @@ pub fn run() {
     let builder = builder.manage(slack_scanner::ScannerRegistry::new());
     let builder = builder.manage(discord_scanner::ScannerRegistry::new());
     let builder = builder.manage(telegram_scanner::ScannerRegistry::new());
+    let builder = builder.manage(wechat_scanner::ScannerRegistry::new());
     let builder = builder.manage(screen_capture::ScreenShareState::new());
     let builder = builder.manage(meet_call::MeetCallState::new());
     let builder = builder.manage(meet_audio::MeetAudioState::new());
@@ -2314,32 +2531,49 @@ pub fn run() {
                 if let Err(err) = app.deep_link().register_all() {
                     log::warn!("[deep-link] register_all failed (non-fatal): {err}");
                 }
+                deep_link_ipc_windows::drain_pending_urls(app.app_handle());
             }
             #[cfg(target_os = "linux")]
             {
                 // `tauri-plugin-deep-link::register_all` on Linux shells out
-                // to `xdg-mime` (and `update-desktop-database` / `xdg-icon-resource`)
-                // to install MIME-type associations for our custom URL
-                // schemes. On Linux installs that ship without xdg-utils —
-                // WSL2 without a desktop env, headless servers, minimal
-                // containers (OPENHUMAN-TAURI-AS: WSL2 user in BR) — the
-                // tool isn't on PATH and the plugin fires
-                // `log::error!("Failed to run OS command \`xdg-mime\`…")`
+                // to `xdg-mime`, `update-desktop-database`, and
+                // `xdg-icon-resource` in sequence to install MIME-type
+                // associations for our custom URL schemes. On Linux installs
+                // that ship without one or more of those binaries — WSL2
+                // without a desktop env, headless servers, minimal
+                // containers (OPENHUMAN-TAURI-AS: WSL2 user in BR;
+                // OPENHUMAN-TAURI-5V: same shape but `xdg-mime` was
+                // installed while `update-desktop-database` was missing) —
+                // the plugin fires
+                // `log::error!("Failed to run OS command \`<name>\`…")`
                 // *internally* before returning the Err. That internal
                 // error log is scooped up by `sentry-tracing` into a Sentry
                 // event even though our `if let Err` arm below already
-                // demotes the user-visible failure to a warn. Skip the
-                // plugin call entirely when xdg-mime isn't available so
-                // the internal log never fires — registration only matters
-                // on systems with a desktop environment, where xdg-utils
-                // is part of the desktop install anyway.
-                if path_has_executable("xdg-mime") {
+                // demotes the user-visible failure to a warn.
+                //
+                // Pre-flight every binary the plugin will shell out to and
+                // skip `register_all` entirely if any of them is missing —
+                // partial registration can't succeed because the plugin
+                // runs all three in sequence inside `register_all`, so the
+                // first missing binary kills the whole flow. Registration
+                // only matters on systems with a desktop environment,
+                // where xdg-utils ships as a single package.
+                const XDG_BINARIES: &[&str] =
+                    &["xdg-mime", "update-desktop-database", "xdg-icon-resource"];
+                let missing: Vec<&str> = XDG_BINARIES
+                    .iter()
+                    .copied()
+                    .filter(|name| !path_has_executable(name))
+                    .collect();
+                if missing.is_empty() {
                     if let Err(err) = app.deep_link().register_all() {
                         log::warn!("[deep-link] register_all failed (non-fatal): {err}");
                     }
                 } else {
                     log::warn!(
-                        "[deep-link] skipping register_all — xdg-mime not on PATH (xdg-utils not installed; deep-link MIME registration unavailable on this host)"
+                        "[deep-link] skipping register_all — xdg-utils binaries missing on PATH: {} \
+                         (xdg-utils not installed; deep-link MIME registration unavailable on this host)",
+                        missing.join(", ")
                     );
                 }
             }
@@ -2631,13 +2865,12 @@ pub fn run() {
             // tear it down in the shutdown sequence below. Disable at
             // runtime with `OPENHUMAN_CEF_PREWARM=0` if it regresses.
             {
-                let prewarm_enabled = std::env::var("OPENHUMAN_CEF_PREWARM")
-                    .map(|v| {
-                        let v = v.trim().to_ascii_lowercase();
-                        !(v == "0" || v == "false" || v == "no" || v == "off")
-                    })
-                    .unwrap_or(true);
-                if prewarm_enabled {
+                #[cfg(target_os = "linux")]
+                let wayland_display_set = has_non_empty_env("WAYLAND_DISPLAY");
+                #[cfg(not(target_os = "linux"))]
+                let wayland_display_set = false;
+                let env_override = std::env::var("OPENHUMAN_CEF_PREWARM").ok();
+                if cef_prewarm_enabled(env_override.as_deref(), wayland_display_set) {
                     let app_handle = app.handle().clone();
                     tauri::async_runtime::spawn(async move {
                         // Defer one tick so the main window finishes its
@@ -2647,6 +2880,12 @@ pub fn run() {
                             log::warn!("[cef-prewarm] failed (non-fatal): {e}");
                         }
                     });
+                } else if wayland_display_set && env_override.is_none() {
+                    log::info!(
+                        "[cef-prewarm] auto-disabled: WAYLAND_DISPLAY is set (Wayland/XWayland \
+                         session) — prevents X_ConfigureWindow BadWindow crash in CEF \
+                         subprocesses (issue #2463); set OPENHUMAN_CEF_PREWARM=1 to override"
+                    );
                 } else {
                     log::info!("[cef-prewarm] disabled via OPENHUMAN_CEF_PREWARM");
                 }
@@ -2955,7 +3194,9 @@ pub fn run() {
             meet_call::meet_call_close_window,
             companion_commands::register_companion_hotkey,
             companion_commands::unregister_companion_hotkey,
-            companion_commands::companion_activate
+            companion_commands::companion_activate,
+            mcp_commands::mcp_resolve_binary_path,
+            mcp_commands::mcp_open_client_config
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
@@ -3268,6 +3509,41 @@ mod tests {
         }
     }
 
+    #[test]
+    fn reset_local_data_windows_file_lock_error_codes_are_recognized() {
+        assert!(is_windows_file_lock_raw_os_error(Some(32)));
+        assert!(is_windows_file_lock_raw_os_error(Some(33)));
+        assert!(!is_windows_file_lock_raw_os_error(Some(5)));
+        assert!(!is_windows_file_lock_raw_os_error(None));
+    }
+
+    #[test]
+    fn reset_local_data_delete_error_keeps_generic_message_for_other_errors() {
+        let err = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+        let msg = reset_local_data_delete_error(
+            "current openhuman dir",
+            std::path::Path::new("/tmp/openhuman"),
+            &err,
+        );
+
+        assert!(msg.starts_with("Failed to remove current openhuman dir at /tmp/openhuman:"));
+        assert!(!msg.contains("Close all OpenHuman windows and try again"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn reset_local_data_delete_error_explains_windows_file_locks() {
+        let err = std::io::Error::from_raw_os_error(32);
+        let msg = reset_local_data_delete_error(
+            "current openhuman dir",
+            std::path::Path::new("C:\\Users\\me\\.openhuman"),
+            &err,
+        );
+
+        assert!(msg.contains("locked by another OpenHuman window or process"));
+        assert!(msg.contains("Close all OpenHuman windows and try again"));
+    }
+
     /// Tests for setup_tray conditional compilation
     /// The PR adds two versions of setup_tray():
     /// 1. No-op for linux + cef: logs warning and returns Ok(())
@@ -3428,6 +3704,73 @@ mod tests {
     }
 
     // -------------------------------------------------------------------------
+    // Linux D-Bus session-bus probe (Sentry OPENHUMAN-TAURI-TM)
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn dbus_address_unix_is_supported() {
+        assert!(dbus_address_is_supported("unix:path=/run/user/1000/bus"));
+        assert!(dbus_address_is_supported("unix:abstract=/tmp/dbus-abc"));
+    }
+
+    #[test]
+    fn dbus_address_tcp_and_launchd_supported() {
+        assert!(dbus_address_is_supported("tcp:host=localhost,port=1234"));
+        assert!(dbus_address_is_supported(
+            "launchd:env=DBUS_LAUNCHD_SESSION_BUS_SOCKET"
+        ));
+        assert!(dbus_address_is_supported("autolaunch:"));
+    }
+
+    #[test]
+    fn dbus_address_disabled_is_unsupported() {
+        // The literal value WSL2-without-WSLg sets — root cause of the panic.
+        assert!(!dbus_address_is_supported("disabled"));
+        assert!(!dbus_address_is_supported(""));
+        assert!(!dbus_address_is_supported("   "));
+    }
+
+    #[test]
+    fn dbus_address_unknown_transport_is_unsupported() {
+        assert!(!dbus_address_is_supported("nonce-tcp:host=localhost"));
+        assert!(!dbus_address_is_supported("bogus:"));
+    }
+
+    #[test]
+    fn dbus_address_picks_first_supported_in_list() {
+        // zbus walks the semicolon-separated list and uses the first reachable
+        // transport, so one good entry is enough.
+        assert!(dbus_address_is_supported(
+            "disabled;unix:path=/run/user/1000/bus"
+        ));
+        assert!(dbus_address_is_supported(
+            "bogus:;tcp:host=localhost,port=55"
+        ));
+        assert!(!dbus_address_is_supported("disabled;bogus:"));
+    }
+
+    #[test]
+    fn dbus_reachable_when_env_addr_is_supported() {
+        assert!(linux_dbus_session_reachable(
+            Some("unix:path=/run/user/1000/bus"),
+            false,
+        ));
+    }
+
+    #[test]
+    fn dbus_unreachable_when_env_addr_disabled() {
+        // Even if the socket exists, an explicit `disabled` value means the
+        // session bus is intentionally turned off and zbus will reject it.
+        assert!(!linux_dbus_session_reachable(Some("disabled"), true));
+    }
+
+    #[test]
+    fn dbus_falls_back_to_runtime_socket_when_env_unset() {
+        assert!(linux_dbus_session_reachable(None, true));
+        assert!(!linux_dbus_session_reachable(None, false));
+    }
+
+    // -------------------------------------------------------------------------
     // Platform constants (issue #1012 Sentry tagging)
     // -------------------------------------------------------------------------
 
@@ -3500,6 +3843,60 @@ mod tests {
     #[test]
     fn platform_arch_is_aarch64_on_apple_silicon_build() {
         assert_eq!(std::env::consts::ARCH, "aarch64");
+    }
+
+    // -------------------------------------------------------------------------
+    // cef_prewarm_enabled (issue #2463 — Wayland/XWayland BadWindow guard)
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn prewarm_enabled_by_default_on_non_wayland() {
+        assert!(cef_prewarm_enabled(None, false));
+    }
+
+    #[test]
+    fn prewarm_auto_disabled_on_wayland_when_env_unset() {
+        assert!(!cef_prewarm_enabled(None, true));
+    }
+
+    #[test]
+    fn prewarm_explicit_disable_respected_on_non_wayland() {
+        assert!(!cef_prewarm_enabled(Some("0"), false));
+        assert!(!cef_prewarm_enabled(Some("false"), false));
+        assert!(!cef_prewarm_enabled(Some("no"), false));
+        assert!(!cef_prewarm_enabled(Some("off"), false));
+    }
+
+    #[test]
+    fn prewarm_explicit_disable_respected_on_wayland() {
+        assert!(!cef_prewarm_enabled(Some("0"), true));
+        assert!(!cef_prewarm_enabled(Some("false"), true));
+    }
+
+    #[test]
+    fn prewarm_explicit_enable_overrides_wayland_guard() {
+        // OPENHUMAN_CEF_PREWARM=1 (or any non-disable value) lets ops
+        // force prewarm even on Wayland sessions.
+        assert!(cef_prewarm_enabled(Some("1"), true));
+        assert!(cef_prewarm_enabled(Some("true"), true));
+        assert!(cef_prewarm_enabled(Some("yes"), true));
+        assert!(cef_prewarm_enabled(Some("on"), true));
+    }
+
+    #[test]
+    fn prewarm_disable_flags_are_case_insensitive() {
+        assert!(!cef_prewarm_enabled(Some("FALSE"), false));
+        assert!(!cef_prewarm_enabled(Some("OFF"), true));
+        assert!(!cef_prewarm_enabled(Some("  0  "), false));
+        assert!(!cef_prewarm_enabled(Some("  No  "), true));
+    }
+
+    #[test]
+    fn prewarm_unknown_env_value_treated_as_enable() {
+        // Any string that is not a recognised disable token → treat as enable.
+        assert!(cef_prewarm_enabled(Some("enabled"), false));
+        assert!(cef_prewarm_enabled(Some("yes"), false));
+        assert!(cef_prewarm_enabled(Some(""), false));
     }
 
     // -------------------------------------------------------------------------
@@ -3806,6 +4203,46 @@ mod tests {
         assert!(
             !path_has_executable("xdg-mime"),
             "unset $PATH must yield false (skip register_all on the missing-xdg-utils branch)"
+        );
+
+        match original {
+            Some(v) => std::env::set_var("PATH", v),
+            None => std::env::remove_var("PATH"),
+        }
+    }
+
+    /// Regression guard for OPENHUMAN-TAURI-5V: a Linux host with `xdg-mime`
+    /// installed but `update-desktop-database` missing must classify as
+    /// "skip register_all" — the pre-#5V code only checked `xdg-mime` and
+    /// would have entered the plugin call, which then fires the noisy
+    /// `Failed to run OS command \`update-desktop-database\`` internal log
+    /// that escapes to Sentry. The Wave-4 fix pre-flights every xdg-utils
+    /// binary the plugin shells out to; this test pins that contract by
+    /// checking each binary lookup independently with a `$PATH` that
+    /// contains only `xdg-mime`.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn path_has_executable_returns_false_for_partial_xdg_utils_install() {
+        let _g = ENV_LOCK.lock().unwrap();
+        let original = std::env::var_os("PATH");
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        // Only `xdg-mime` exists; `update-desktop-database` and
+        // `xdg-icon-resource` are deliberately absent.
+        std::fs::write(dir.path().join("xdg-mime"), b"#!/bin/sh\n").expect("write stub");
+        std::env::set_var("PATH", dir.path());
+
+        assert!(
+            path_has_executable("xdg-mime"),
+            "xdg-mime stub must be discoverable in the partial-install $PATH"
+        );
+        assert!(
+            !path_has_executable("update-desktop-database"),
+            "partial xdg-utils install must NOT report update-desktop-database present (OPENHUMAN-TAURI-5V)"
+        );
+        assert!(
+            !path_has_executable("xdg-icon-resource"),
+            "partial xdg-utils install must NOT report xdg-icon-resource present"
         );
 
         match original {
