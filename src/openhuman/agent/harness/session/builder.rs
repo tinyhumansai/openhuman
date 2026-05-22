@@ -582,6 +582,8 @@ impl AgentBuilder {
             context,
             on_progress: None,
             connected_integrations: Vec::new(),
+            connected_integrations_initialized: false,
+            integration_runtime_config: None,
             // Default to `true` (omit) so legacy / custom agents built
             // without a definition stay lean. Opt-in agents thread their
             // `omit_profile = false` through the builder.
@@ -1219,6 +1221,13 @@ impl Agent {
             None
         };
 
+        // Best-effort prewarm from the shared Composio cache. This avoids
+        // building the session with a knowingly stale `&[]` integration view
+        // and then paying a repair pass on turn 1 just to recover the real
+        // delegation surface.
+        let prewarmed_integrations = crate::openhuman::composio::cached_active_integrations(config);
+        let prewarmed_integrations_slice = prewarmed_integrations.as_deref().unwrap_or(&[]);
+
         // Resolve the per-agent delegation tool set and visible-tool
         // whitelist from the target definition (when we have one) or
         // fall back to the orchestrator's synthesis path.
@@ -1237,12 +1246,12 @@ impl Agent {
         // filter.
         //
         // This builder is synchronous and sits on the CLI / REPL /
-        // Tauri-web code path. It does not have access to the async
-        // Composio fetcher, so we pass an empty slice of connected
-        // integrations here — the skill-wildcard expansion therefore
-        // produces zero delegation tools. That is correct behaviour:
-        // callers that need live integration expansion go through the
-        // bus-based `channels::runtime::dispatch` path instead.
+        // Tauri-web code path. It still opportunistically reuses the
+        // process-wide Composio cache when one is already warm, which
+        // lets the session start with the right `delegate_<toolkit>`
+        // surface and prompt block without paying a turn-1 fetch. On a
+        // cold cache we still fall back to the empty slice and let the
+        // first turn repair the session state if needed.
         let (delegation_tools, filter_from_scope): (
             Vec<Box<dyn Tool>>,
             Option<std::collections::HashSet<String>>,
@@ -1251,7 +1260,11 @@ impl Agent {
             crate::openhuman::agent::harness::definition::AgentDefinitionRegistry::global(),
         ) {
             (Some(def), Some(reg)) => {
-                let synthed = tools::orchestrator_tools::collect_orchestrator_tools(def, reg, &[]);
+                let synthed = tools::orchestrator_tools::collect_orchestrator_tools(
+                    def,
+                    reg,
+                    prewarmed_integrations_slice,
+                );
                 let filter: Option<std::collections::HashSet<String>> = match &def.tools {
                     ToolScope::Named(names) => {
                         let mut set: std::collections::HashSet<String> =
@@ -1271,9 +1284,11 @@ impl Agent {
                 // callers that invoke the old `from_config` on a
                 // pre-startup or test registry state.
                 let synthed = match reg.get("orchestrator") {
-                    Some(orch_def) => {
-                        tools::orchestrator_tools::collect_orchestrator_tools(orch_def, reg, &[])
-                    }
+                    Some(orch_def) => tools::orchestrator_tools::collect_orchestrator_tools(
+                        orch_def,
+                        reg,
+                        prewarmed_integrations_slice,
+                    ),
                     None => {
                         log::debug!(
                             "[agent::builder] orchestrator definition not in registry — \
@@ -1343,11 +1358,15 @@ impl Agent {
         // cheap to guard against).
         let existing_names: std::collections::HashSet<String> =
             tools.iter().map(|t| t.name().to_string()).collect();
-        tools.extend(
-            delegation_tools
-                .into_iter()
-                .filter(|t| !existing_names.contains(t.name())),
-        );
+        let inserted_delegation_tools: Vec<Box<dyn Tool>> = delegation_tools
+            .into_iter()
+            .filter(|t| !existing_names.contains(t.name()))
+            .collect();
+        let synthesized_tool_names: std::collections::HashSet<String> = inserted_delegation_tools
+            .iter()
+            .map(|t| t.name().to_string())
+            .collect();
+        tools.extend(inserted_delegation_tools);
 
         // Pre-fetch Critical + High priority tool-scoped memory rules so they
         // pin into the (compression-resistant) system prompt for the whole
@@ -1554,7 +1573,15 @@ impl Agent {
         }
         builder = builder.archivist_hook(archivist_hook_arc);
         builder = builder.unified_compaction_enabled(config.learning.unified_compaction_enabled);
-        builder.build()
+        let mut agent = builder.build()?;
+        let connected_integrations_initialized = prewarmed_integrations.is_some();
+        agent.connected_integrations = prewarmed_integrations.unwrap_or_default();
+        agent.connected_integrations_initialized = connected_integrations_initialized;
+        agent.integration_runtime_config = Some(config.clone());
+        agent.last_seen_integrations_hash =
+            crate::openhuman::composio::connected_set_hash(&agent.connected_integrations);
+        agent.synthesized_tool_names = synthesized_tool_names;
+        Ok(agent)
     }
 }
 

@@ -95,19 +95,17 @@ impl Agent {
             // stored prompt verbatim to preserve the KV-cache prefix the
             // inference backend has already tokenised. Fetching it later
             // would just burn memory-store reads on data we throw away.
-            self.fetch_connected_integrations().await;
-            // The synchronous builder couldn't synthesise `delegate_*`
-            // tools for connected Composio toolkits (no async runtime
-            // handle for the Composio fetcher), so it baked in `&[]`.
-            // Now that integrations are live, inject the matching
-            // delegation tools so the orchestrator's prompt + tool-spec
-            // list actually expose `delegate_gmail`, `delegate_notion`,
-            // etc. The shared-Arc failure path returns `false`, but on
-            // turn 1 the Arc is uniquely owned (no sub-agent has run
-            // yet); a `false` return here would indicate a programmer
-            // error and the warn-level log inside the helper already
-            // surfaces it, so we ignore the return value here.
-            let _ = self.refresh_delegation_tools();
+            if !self.connected_integrations_initialized {
+                self.fetch_connected_integrations().await;
+                // Sessions born without a cached Composio view still need
+                // a one-shot delegation-surface reconcile before the system
+                // prompt is frozen. The shared-Arc failure path returns
+                // `false`, but on turn 1 the Arc should still be uniquely
+                // owned; a `false` return here indicates a programmer error
+                // and the warn-level log inside the helper already surfaces
+                // it, so we keep the existing best-effort contract.
+                let _ = self.refresh_delegation_tools();
+            }
             let learned = self.fetch_learned_context().await;
             let rendered_prompt = self.build_system_prompt(learned)?;
             log::info!("[agent] system prompt built — initialising conversation history");
@@ -176,15 +174,13 @@ impl Agent {
             // [`crate::openhuman::composio::cached_active_integrations`]
             // helper — never trigger a backend fetch ourselves, never
             // block on a writer.
+            // Session agents built through `from_config_*` carry their
+            // runtime `Config` snapshot directly, so this read avoids the
+            // old `Config::load_or_init()` round-trip on every turn.
             //
-            // We need a `Config` to key into `INTEGRATIONS_CACHE`. The
-            // `Config::load_or_init()` call is cached internally so this
-            // is cheap on the hot path. On config-load failure we skip
-            // the refresh — no signal we can safely act on, same as
-            // when the cache itself is empty.
-            if let Ok(cfg) = crate::openhuman::config::Config::load_or_init().await {
+            if let Some(cfg) = self.integration_runtime_config.as_ref() {
                 if let Some(cache_view) =
-                    crate::openhuman::composio::cached_active_integrations(&cfg)
+                    crate::openhuman::composio::cached_active_integrations(cfg)
                 {
                     let new_hash = crate::openhuman::composio::connected_set_hash(&cache_view);
                     if new_hash != self.last_seen_integrations_hash {
@@ -205,6 +201,7 @@ impl Agent {
                             std::mem::replace(&mut self.connected_integrations, cache_view);
                         if self.refresh_delegation_tools() {
                             self.last_seen_integrations_hash = new_hash;
+                            self.connected_integrations_initialized = true;
                         } else {
                             // Reconcile aborted (shared Arc) — restore
                             // the previous integration list so the
@@ -1669,17 +1666,21 @@ impl Agent {
     /// `composio/tools.rs`, and the spawn-time per-action tool build
     /// path in `subagent_runner/ops.rs`.
     pub async fn fetch_connected_integrations(&mut self) {
-        let config = match crate::openhuman::config::Config::load_or_init().await {
-            Ok(c) => c,
-            Err(e) => {
-                log::debug!(
-                    "[agent] skipping connected integrations fetch: config load failed: {e}"
-                );
-                return;
-            }
+        let config = match self.integration_runtime_config.clone() {
+            Some(config) => config,
+            None => match crate::openhuman::config::Config::load_or_init().await {
+                Ok(config) => config,
+                Err(e) => {
+                    log::debug!(
+                        "[agent] skipping connected integrations fetch: config load failed: {e}"
+                    );
+                    return;
+                }
+            },
         };
         self.connected_integrations =
             crate::openhuman::composio::fetch_connected_integrations(&config).await;
+        self.connected_integrations_initialized = true;
     }
 
     /// Re-synthesise `delegate_*` tools for the orchestrator's `subagents`
@@ -1709,10 +1710,10 @@ impl Agent {
     ///     guarantees every final entry is either a non-synthesised
     ///     direct tool or a member of the fresh `synthed` set.
     ///
-    /// **When to call**: on turn 1 (after [`Agent::fetch_connected_integrations`]
-    /// populates `self.connected_integrations` for the first time) and
-    /// on any subsequent turn where the connection set has changed
-    /// since the last reconcile (detected via
+    /// **When to call**: on turn 1 only when the session was built
+    /// without a prewarmed Composio cache snapshot, and on any
+    /// subsequent turn where the connection set has changed since the
+    /// last reconcile (detected via
     /// [`Self::last_seen_integrations_hash`] vs.
     /// [`crate::openhuman::composio::cached_active_integrations`]).
     ///
