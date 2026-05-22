@@ -918,6 +918,17 @@ const CAPABILITIES: &[Capability] = &[
         privacy: None,
     },
     Capability {
+        id: "channels.telegram_remote_control",
+        name: "Telegram Remote Control",
+        domain: "channels",
+        category: CapabilityCategory::Channels,
+        description:
+            "Operate OpenHuman from Telegram with slash commands: /status, /sessions, /new, and /help.",
+        how_to: "Settings > Messaging Channels > Telegram (connect), then message the bot",
+        status: CapabilityStatus::Beta,
+        privacy: None,
+    },
+    Capability {
         id: "channels.disconnect_platform",
         name: "Disconnect Messaging Platforms",
         domain: "channels",
