@@ -83,6 +83,13 @@ fn main() {
             {
                 return None;
             }
+            // Defense-in-depth: 404 on PATCH/DELETE to a channel-message path
+            // is an expected state (provider-side delete or backend GC). Primary
+            // suppression lives in `authed_json`; this catches any future call
+            // site that bypasses it. Targets OPENHUMAN-TAURI-R7 (28 events).
+            if openhuman_core::core::observability::is_channel_message_not_found_event(&event) {
+                return None;
+            }
             // Drop 401 "Session expired. Please log in again." bodies surfaced
             // by llm_provider / backend_api, plus pre-flight "no session token
             // stored" guards from the rpc dispatcher. Primary suppression

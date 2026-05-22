@@ -54,6 +54,28 @@ impl EnvLookup for ProcessEnv {
     }
 }
 
+/// Process env lookup that preserves every override except
+/// `OPENHUMAN_WORKSPACE`.
+struct ProcessEnvWithoutWorkspace;
+
+impl EnvLookup for ProcessEnvWithoutWorkspace {
+    fn get(&self, key: &str) -> Option<String> {
+        if key == "OPENHUMAN_WORKSPACE" {
+            None
+        } else {
+            ProcessEnv.get(key)
+        }
+    }
+
+    fn contains(&self, key: &str) -> bool {
+        if key == "OPENHUMAN_WORKSPACE" {
+            false
+        } else {
+            ProcessEnv.contains(key)
+        }
+    }
+}
+
 fn default_config_and_workspace_dirs() -> Result<(PathBuf, PathBuf)> {
     let config_dir = default_config_dir()?;
     Ok((config_dir.clone(), config_dir.join("workspace")))
@@ -1199,6 +1221,52 @@ impl Config {
         Ok(config)
     }
 
+    /// Reload a config from an already-resolved `config.toml` path.
+    ///
+    /// This is for long-lived runtime objects that hold a `Config`
+    /// snapshot and need to observe updates written back to the same
+    /// file. It deliberately bypasses only `OPENHUMAN_WORKSPACE`
+    /// resolution: the caller has already been scoped to a user/workspace,
+    /// and following the process-global workspace env var again can cross
+    /// streams with unrelated tests or runtime tasks that temporarily
+    /// repoint it. Other process env overrides still apply.
+    pub async fn load_from_config_path(config_path: &Path, workspace_dir: &Path) -> Result<Self> {
+        let config_path = config_path.to_path_buf();
+        let workspace_dir = workspace_dir.to_path_buf();
+
+        if !config_path.exists() {
+            let mut config = Config {
+                config_path,
+                workspace_dir,
+                ..Default::default()
+            };
+            config.apply_env_overrides_from(&ProcessEnvWithoutWorkspace);
+            return Ok(config);
+        }
+
+        let raw = fs::read_to_string(&config_path)
+            .await
+            .with_context(|| format!("reading config.toml from {}", config_path.display()))?;
+        let (mut config, config_was_corrupted) =
+            parse_config_with_recovery(&config_path, &raw).await;
+        config.config_path = config_path;
+        config.workspace_dir = workspace_dir;
+        migrate_legacy_autocomplete_disabled_apps(&mut config);
+        migrate_legacy_inference_url(&mut config);
+        migrate_cloud_provider_slugs(&mut config);
+        config.apply_env_overrides_from(&ProcessEnvWithoutWorkspace);
+
+        if config_was_corrupted {
+            tracing::warn!(
+                path = %config.config_path.display(),
+                "[config] Snapshot reload recovered a corrupted config; skipping persistence"
+            );
+        }
+
+        crate::openhuman::migrations::run_pending(&mut config).await;
+        Ok(config)
+    }
+
     pub fn apply_env_overrides(&mut self) {
         self.apply_env_overrides_from(&ProcessEnv);
     }
@@ -1216,6 +1284,14 @@ impl Config {
         }
 
         set_runtime_proxy_config(self.proxy.clone());
+
+        // Push the embedding request budget into its process-global limiter so
+        // every cloud embed (via the shared `OpenAiEmbedding` chokepoint) is
+        // throttled to the configured rate. Kept here, with the proxy commit,
+        // so the pure overlay stays side-effect-free for tests.
+        crate::openhuman::embeddings::rate_limit::set_embedding_rate_limit(
+            self.memory.embedding_rate_limit_per_min,
+        );
     }
 
     /// Pure-ish env overlay: applies overrides read from `env` to `self`.
@@ -1657,6 +1733,15 @@ impl Config {
         if let Ok(flag) = std::env::var("OPENHUMAN_MEMORY_EMBED_STRICT") {
             if let Some(strict) = parse_env_bool("OPENHUMAN_MEMORY_EMBED_STRICT", &flag) {
                 self.memory_tree.embedding_strict = strict;
+            }
+        }
+        // Cloud embedding request budget (requests/min) on `memory.*`. `0`
+        // disables throttling. A blank or non-numeric value leaves the
+        // configured/default budget untouched. Committed to the process-global
+        // limiter in `apply_env_overrides`.
+        if let Some(val) = env.get("OPENHUMAN_MEMORY_EMBED_RATE_LIMIT") {
+            if let Ok(per_min) = val.trim().parse::<u32>() {
+                self.memory.embedding_rate_limit_per_min = per_min;
             }
         }
 

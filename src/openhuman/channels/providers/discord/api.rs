@@ -48,6 +48,66 @@ fn auth_header(token: &str) -> String {
     format!("Bot {token}")
 }
 
+/// Format a non-2xx response from the Discord REST API as a string
+/// suitable for a JSON-RPC error result.
+///
+/// **Load-bearing for issue #2285**: the global JSON-RPC dispatcher
+/// at `src/core/jsonrpc.rs::is_session_expired_error` matches any
+/// error string that contains `"401"` AND `"unauthorized"` as a
+/// signal that the OpenHuman backend session has expired, and
+/// publishes a `DomainEvent::SessionExpired` event that signs the
+/// user out. A raw upstream Discord 401 (revoked bot token) would
+/// previously trip that classifier — opening the connected-Discord
+/// card on the Channels page logged the user out of OpenHuman over
+/// a *Discord* credentials problem.
+///
+/// The fix is to convert auth failures here into a Discord-domain
+/// message that:
+///
+///  1. Does NOT contain both `"401"` and `"unauthorized"` as a pair
+///     (so the global classifier ignores it).
+///  2. Tells the user the actual remediation: rotate the bot token
+///     at `Settings → Channels → Discord`.
+///  3. Preserves the originating endpoint identifier in the message
+///     so triage can still see WHICH Discord call failed without
+///     plumbing a separate error code.
+///
+/// Other non-2xx statuses (400 / 404 / 5xx) pass through with a
+/// `Discord API error` prefix — they don't match the
+/// `is_session_expired_error` predicate even when verbatim.
+fn format_discord_http_error(endpoint: &str, status: reqwest::StatusCode, body: &str) -> String {
+    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+        let kind = if status == reqwest::StatusCode::UNAUTHORIZED {
+            "bot token was rejected"
+        } else {
+            "bot token lacks required Discord permissions"
+        };
+        // Spell out the HTTP code so `lower.contains("401")` does NOT
+        // match — see #2285 rationale on this helper. Also avoid the
+        // word `unauthorized` for the same reason; "rejected"/"forbidden"
+        // are the user-visible equivalents.
+        let code_word = if status == reqwest::StatusCode::UNAUTHORIZED {
+            "four-oh-one"
+        } else {
+            "four-oh-three"
+        };
+        // Deliberately do NOT splice the upstream body into this
+        // user-facing message — Discord's auth-error bodies often
+        // include the literal words "401" and "Unauthorized", which
+        // would smuggle the cascade trigger back in. The body is
+        // still in `tracing::debug!` logs above the call site for
+        // triage; the user-facing message only needs the remediation.
+        let _ = body;
+        format!(
+            "Discord {endpoint}: {kind} (upstream HTTP {code_word}). \
+             Open Settings → Channels → Discord and rotate / reconnect the bot \
+             token."
+        )
+    } else {
+        format!("Discord {endpoint} failed ({status}): {body}")
+    }
+}
+
 /// List all guilds (servers) the bot is a member of.
 pub async fn list_bot_guilds(token: &str) -> anyhow::Result<Vec<DiscordGuild>> {
     list_bot_guilds_at_base(DISCORD_API_BASE, token).await
@@ -77,7 +137,10 @@ async fn list_bot_guilds_at_base(base: &str, token: &str) -> anyhow::Result<Vec<
             body = %body,
             "[discord-api] non-success response"
         );
-        anyhow::bail!("Discord list guilds failed ({status}): {body}");
+        anyhow::bail!(
+            "{}",
+            format_discord_http_error("list_guilds", status, &body)
+        );
     }
 
     let guilds: Vec<DiscordGuild> = resp.json().await?;
@@ -120,7 +183,10 @@ async fn list_guild_channels_at_base(
             body = %body,
             "[discord-api] non-success response"
         );
-        anyhow::bail!("Discord list channels failed ({status}): {body}");
+        anyhow::bail!(
+            "{}",
+            format_discord_http_error("list_channels", status, &body)
+        );
     }
 
     let all_channels: Vec<DiscordTextChannel> = resp.json().await?;
@@ -183,7 +249,10 @@ async fn check_channel_permissions_at_base(
             body = %body,
             "[discord-api] non-success response"
         );
-        anyhow::bail!("Discord get bot user failed ({status}): {body}");
+        anyhow::bail!(
+            "{}",
+            format_discord_http_error("get_bot_user", status, &body)
+        );
     }
     let me: serde_json::Value = me_resp.json().await?;
     let bot_user_id = me.get("id").and_then(|i| i.as_str()).unwrap_or("").trim();
@@ -212,7 +281,10 @@ async fn check_channel_permissions_at_base(
             body = %body,
             "[discord-api] non-success response"
         );
-        anyhow::bail!("Discord get member info failed ({status}): {body}");
+        anyhow::bail!(
+            "{}",
+            format_discord_http_error("get_member_info", status, &body)
+        );
     }
 
     let member: serde_json::Value = member_resp.json().await?;
@@ -237,7 +309,10 @@ async fn check_channel_permissions_at_base(
             body = %body,
             "[discord-api] non-success response"
         );
-        anyhow::bail!("Discord get guild roles failed ({status}): {body}");
+        anyhow::bail!(
+            "{}",
+            format_discord_http_error("get_guild_roles", status, &body)
+        );
     }
     let guild_roles: Vec<serde_json::Value> = roles_resp.json().await?;
 
@@ -295,7 +370,10 @@ async fn check_channel_permissions_at_base(
             body = %body,
             "[discord-api] non-success response"
         );
-        anyhow::bail!("Discord get channel failed ({status}): {body}");
+        anyhow::bail!(
+            "{}",
+            format_discord_http_error("get_channel", status, &body)
+        );
     }
     let channel_data: serde_json::Value = ch_resp.json().await?;
     if let Some(overwrites) = channel_data

@@ -17,6 +17,7 @@ pub mod noop;
 pub mod ollama;
 pub mod openai;
 mod provider_trait;
+pub mod rate_limit;
 pub mod store;
 
 pub use cloud::{

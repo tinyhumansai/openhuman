@@ -39,6 +39,10 @@ struct StoredChunk {
     text: String,
     embedding: Option<Vec<f32>>,
     updated_at: f64,
+    /// Signature of the embedding model that produced `embedding`. `None` for
+    /// rows written before model tagging was introduced. Used to exclude
+    /// cross-model vectors from cosine scoring.
+    model_signature: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -506,7 +510,7 @@ impl UnifiedMemory {
         let conn = self.conn.lock();
         let mut stmt = conn
             .prepare(
-                "SELECT document_id, chunk_id, text, embedding, updated_at
+                "SELECT document_id, chunk_id, text, embedding, updated_at, model_signature
                  FROM vector_chunks
                  WHERE namespace = ?1",
             )
@@ -526,6 +530,7 @@ impl UnifiedMemory {
                 text: row.get(2).map_err(|e| e.to_string())?,
                 embedding: embedding_blob.as_deref().map(Self::bytes_to_vec),
                 updated_at: row.get(4).map_err(|e| e.to_string())?,
+                model_signature: row.get(5).map_err(|e| e.to_string())?,
             });
         }
         Ok(chunks)
@@ -544,11 +549,26 @@ impl UnifiedMemory {
             .embed_one(query)
             .await
             .map_err(|e| format!("embedding query: {e}"))?;
+        let active_signature = self.embedder.signature();
         let mut scores = HashMap::new();
         for chunk in chunks {
             let Some(embedding) = chunk.embedding.as_ref() else {
                 continue;
             };
+            // Skip vectors produced by a different embedding model — cosine across
+            // two embedding spaces is meaningless. Rows with no signature (written
+            // before model tagging) fall through to the dimension guard below.
+            if let Some(sig) = chunk.model_signature.as_deref() {
+                if sig != active_signature {
+                    continue;
+                }
+            }
+            // Dimension guard: a model swap that changed dimensionality leaves
+            // legacy/untagged vectors at the old length; skip them rather than
+            // letting cosine_similarity silently return 0.
+            if embedding.len() != query_embedding.len() {
+                continue;
+            }
             let similarity = Self::cosine_similarity(&query_embedding, embedding);
             let entry = scores
                 .entry(chunk.document_id.clone())
@@ -891,11 +911,25 @@ impl UnifiedMemory {
         chunks: &[StoredChunk],
         relations: &[RelationMatch],
     ) -> HashMap<String, f64> {
-        let mut doc_scores: HashMap<String, f64> = HashMap::new();
+        if relations.is_empty() {
+            return HashMap::new();
+        }
+
+        let mut doc_scores: HashMap<String, f64> =
+            HashMap::with_capacity(docs.len().max(relations.len()));
         let chunk_to_doc = chunks
             .iter()
-            .map(|chunk| (chunk.chunk_id.clone(), chunk.document_id.clone()))
+            .map(|chunk| (chunk.chunk_id.as_str(), chunk.document_id.as_str()))
             .collect::<HashMap<_, _>>();
+        let normalized_docs = docs
+            .iter()
+            .map(|doc| {
+                (
+                    doc.document_id.as_str(),
+                    Self::normalize_search_text(&doc.content),
+                )
+            })
+            .collect::<Vec<_>>();
 
         for relation in relations {
             let base = f64::from(relation.relation.evidence_count) / relation.hop.max(1) as f64;
@@ -903,19 +937,22 @@ impl UnifiedMemory {
                 *doc_scores.entry(document_id.clone()).or_insert(0.0) += base;
             }
             for chunk_id in &relation.relation.chunk_ids {
-                if let Some(document_id) = chunk_to_doc.get(chunk_id) {
-                    *doc_scores.entry(document_id.clone()).or_insert(0.0) += base * 0.9;
+                if let Some(document_id) = chunk_to_doc.get(chunk_id.as_str()) {
+                    *doc_scores.entry((*document_id).to_string()).or_insert(0.0) += base * 0.9;
                 }
             }
 
-            for doc in docs {
-                let normalized = Self::normalize_search_text(&doc.content);
-                let subject = Self::normalize_search_text(&relation.relation.subject);
-                let object = Self::normalize_search_text(&relation.relation.object);
+            let subject = Self::normalize_search_text(&relation.relation.subject);
+            let object = Self::normalize_search_text(&relation.relation.object);
+            if subject.is_empty() && object.is_empty() {
+                continue;
+            }
+
+            for (document_id, normalized) in &normalized_docs {
                 if (!subject.is_empty() && normalized.contains(&subject))
                     || (!object.is_empty() && normalized.contains(&object))
                 {
-                    *doc_scores.entry(doc.document_id.clone()).or_insert(0.0) += base * 0.35;
+                    *doc_scores.entry((*document_id).to_string()).or_insert(0.0) += base * 0.35;
                 }
             }
         }

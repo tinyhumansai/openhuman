@@ -446,6 +446,22 @@ describe('<ComposioConnectModal> — needs-subdomain recovery phase', () => {
     });
   });
 
+  it('surfaces Meta rate-limit guidance for Instagram authorize failures', async () => {
+    const instagramToolkit = composioToolkitMeta('instagram');
+    vi.mocked(authorize).mockRejectedValueOnce(
+      new Error('Authorization failed: Backend returned 429 Too Many Requests')
+    );
+
+    render(<ComposioConnectModal toolkit={instagramToolkit} onClose={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: /Connect Instagram/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Business or Creator account/i)).toBeInTheDocument();
+      expect(screen.getByText(/HTTP 429/i)).toBeInTheDocument();
+      expect(screen.queryByText(/api.tinyhumans.ai/i)).not.toBeInTheDocument();
+    });
+  });
+
   it('surfaces a sanitized (non-raw) error for unrelated authorization failures', async () => {
     vi.mocked(authorize).mockRejectedValueOnce(
       new Error(

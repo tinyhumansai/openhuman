@@ -43,6 +43,7 @@ pub mod error_mapping;
 pub mod execute_dispatch;
 pub mod execute_prepare;
 pub mod googlecalendar_args;
+pub mod oauth_handoff;
 pub mod ops;
 pub mod periodic;
 pub mod providers;

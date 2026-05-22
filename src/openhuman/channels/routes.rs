@@ -20,6 +20,7 @@ enum ChannelRuntimeCommand {
     SetProvider(String),
     ShowModel,
     SetModel(String),
+    TelegramRemote(super::providers::telegram::TelegramRemoteCommand),
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -37,13 +38,25 @@ fn supports_runtime_model_switch(channel_name: &str) -> bool {
     matches!(channel_name, "telegram" | "discord")
 }
 
+fn supports_telegram_remote_control(channel_name: &str) -> bool {
+    channel_name == "telegram"
+}
+
 fn parse_runtime_command(channel_name: &str, content: &str) -> Option<ChannelRuntimeCommand> {
-    if !supports_runtime_model_switch(channel_name) {
+    let trimmed = content.trim();
+    if !trimmed.starts_with('/') {
         return None;
     }
 
-    let trimmed = content.trim();
-    if !trimmed.starts_with('/') {
+    if supports_telegram_remote_control(channel_name) {
+        if let Some(remote) =
+            super::providers::telegram::remote_control::parse_telegram_remote_command(content)
+        {
+            return Some(ChannelRuntimeCommand::TelegramRemote(remote));
+        }
+    }
+
+    if !supports_runtime_model_switch(channel_name) {
         return None;
     }
 
@@ -269,6 +282,12 @@ pub(crate) async fn handle_runtime_command_if_needed(
     let mut current = get_route_selection(ctx, &sender_key);
 
     let response = match command {
+        ChannelRuntimeCommand::TelegramRemote(remote) => {
+            super::providers::telegram::remote_control::build_remote_command_response(
+                ctx, msg, remote,
+            )
+            .await
+        }
         ChannelRuntimeCommand::ShowProviders => build_providers_help_response(&current),
         ChannelRuntimeCommand::SetProvider(raw_provider) => {
             match resolve_provider_alias(&raw_provider) {

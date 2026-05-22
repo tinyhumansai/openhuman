@@ -291,8 +291,15 @@ fn handle_status(_params: Map<String, Value>) -> ControllerFuture {
             })
             .map_err(|e| e.to_string())?;
 
+        let provider_unavailable_reason = if hb.enabled && hb.inference_enabled {
+            super::engine::subconscious_provider_unavailable_reason(&config)
+        } else {
+            None
+        };
         let status = super::types::SubconsciousStatus {
             enabled: hb.enabled && hb.inference_enabled,
+            provider_available: provider_unavailable_reason.is_none(),
+            provider_unavailable_reason,
             interval_minutes: hb.interval_minutes.max(5),
             last_tick_at,
             total_ticks,

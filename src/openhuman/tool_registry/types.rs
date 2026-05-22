@@ -58,3 +58,14 @@ pub struct ToolRegistryList {
     /// Sorted registry entries.
     pub tools: Vec<ToolRegistryEntry>,
 }
+
+/// Redacted diagnostics for policy/tool visibility reviews.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ToolPolicyDiagnostics {
+    pub total_tools: usize,
+    pub enabled_tools: usize,
+    pub mcp_stdio_tools: usize,
+    pub json_rpc_tools: usize,
+    pub possible_write_surfaces: Vec<String>,
+    pub policy_surfaces: Vec<String>,
+}

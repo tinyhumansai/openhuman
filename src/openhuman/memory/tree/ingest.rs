@@ -227,7 +227,23 @@ async fn persist(
     let written = tokio::task::spawn_blocking(move || -> Result<Option<usize>> {
         use std::collections::{HashMap, HashSet};
         store::with_connection(&config_owned, |conn| {
-            let tx = conn.unchecked_transaction()?;
+            // IMMEDIATE, not the default DEFERRED: this transaction reads
+            // (get_chunk_lifecycle_status_tx) before it writes
+            // (upsert_staged_chunks_tx). A DEFERRED tx takes only a read
+            // lock at BEGIN and tries to upgrade to a write lock on the
+            // first write; under contention with the memory_tree worker
+            // pool SQLite returns SQLITE_BUSY *immediately* for that
+            // upgrade and does NOT invoke the busy handler (deadlock
+            // avoidance), so the connection's 15s busy_timeout is bypassed
+            // and Gmail/Composio ingest fails every message with "database
+            // is locked", stalling composio_sync past its 30s RPC cap.
+            // IMMEDIATE acquires the write lock at BEGIN, where the busy
+            // handler / busy_timeout DOES apply, so writers serialise and
+            // wait instead of failing fast.
+            let tx = rusqlite::Transaction::new_unchecked(
+                conn,
+                rusqlite::TransactionBehavior::Immediate,
+            )?;
 
             // Authoritative source-level gate (documents only).
             //

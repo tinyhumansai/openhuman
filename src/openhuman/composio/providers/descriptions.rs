@@ -24,6 +24,10 @@ pub fn toolkit_description(slug: &str) -> &'static str {
         "jira" => "Create and manage issues, projects, and sprints in Jira",
         "trello" => "Create and manage cards, lists, and boards in Trello",
         "asana" => "Create and manage tasks, projects, and sections in Asana",
+        "clickup" => {
+            "Create, read, and manage tasks, lists, and docs in ClickUp; sync \
+             assigned tasks into Memory Tree"
+        }
         "dropbox" => "Upload, download, and share files in Dropbox",
         "twitter" => "Post tweets, read timelines, and manage Twitter interactions",
         "spotify" => "Control playback, search music, and manage playlists on Spotify",

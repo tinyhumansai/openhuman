@@ -268,9 +268,9 @@ fn schema_has_content_path_and_content_sha256_columns() {
 /// Regression: OPENHUMAN-TAURI-HH / -ZM / -MB.
 ///
 /// Before this fix, N `tree_jobs_worker` tasks racing into
-/// `with_connection` on a cold workspace would trigger one of three
-/// SQLite cold-start codes — 14 (CANTOPEN), 1546 (IOERR_TRUNCATE),
-/// or 4874 (IOERR_SHMMAP) — surfaced as
+/// `with_connection` on a cold workspace would trigger a WAL/SHM
+/// cold-start code — 14 (CANTOPEN), 1546 (IOERR_TRUNCATE), or a
+/// `-shm` code (4618 SHMOPEN / 4874 SHMSIZE / 5386 SHMMAP) — surfaced as
 /// `Failed to initialize memory_tree schema`. The mutex-gated init set
 /// in `store::open_and_init_with_retry` serialises the WAL+SHM
 /// bootstrap so only one thread runs `apply_schema` per DB path.
@@ -324,12 +324,16 @@ fn is_transient_cold_start_classifies_known_extended_codes() {
     use rusqlite::ffi;
     use rusqlite::ErrorCode;
 
-    // The three SHMmap/WAL bootstrap codes that fire under cold-start
-    // contention. All must classify as transient → retried.
+    // The WAL/SHM cold-start codes that fire under contention. All must
+    // classify as transient → retried. (4618 SHMOPEN is the macOS failure;
+    // 5386 is the real SHMMAP; 4874 is SHMSIZE — all of the `-shm` family.)
     for extended in [
         14,   // CANTOPEN
         1546, // IOERR_TRUNCATE
-        4874, // IOERR_SHMMAP
+        4618, // IOERR_SHMOPEN
+        4874, // IOERR_SHMSIZE
+        5386, // IOERR_SHMMAP
+        8714, // IOERR_IN_PAGE
     ] {
         let err = anyhow::Error::from(rusqlite::Error::SqliteFailure(
             ffi::Error {
@@ -584,4 +588,78 @@ fn stale_shm_cleanup_removes_files() {
     );
     assert!(!shm.exists(), "shm must be removed");
     assert!(!wal.exists(), "wal must be removed");
+}
+
+/// memory_tree must run the TRUNCATE rollback journal — never WAL. WAL's
+/// `-shm`/`-wal` machinery is the source of the cold-start IOERR_SHMMAP /
+/// IOERR_TRUNCATE failures (Sentry TAURI-RUST-EV / TAURI-RUST-X1), and the
+/// single cached connection gains nothing from WAL's reader concurrency.
+#[test]
+fn memory_tree_uses_truncate_journal_not_wal() {
+    let (_tmp, cfg) = test_config();
+
+    with_connection(&cfg, |conn| {
+        let mode: String = conn.query_row("PRAGMA journal_mode", [], |r| r.get(0))?;
+        assert!(
+            mode.eq_ignore_ascii_case("truncate"),
+            "memory_tree journal_mode must be TRUNCATE, got '{mode}'"
+        );
+        let sync: i64 = conn.query_row("PRAGMA synchronous", [], |r| r.get(0))?;
+        assert_eq!(sync, 2, "rollback journal requires synchronous=FULL (2)");
+        Ok(())
+    })
+    .expect("with_connection");
+
+    // A `-shm` shared-memory side-file is only ever created under WAL.
+    let shm = cfg.workspace_dir.join("memory_tree").join("chunks.db-shm");
+    assert!(
+        !shm.exists(),
+        "no -shm file must exist under TRUNCATE journal"
+    );
+}
+
+/// A database a prior (WAL-mode) release left behind must migrate cleanly to
+/// TRUNCATE on the next open, with the `-wal`/`-shm` side-files gone.
+#[test]
+fn existing_wal_db_migrates_to_truncate() {
+    let (_tmp, cfg) = test_config();
+    let db_path = cfg.workspace_dir.join("memory_tree").join("chunks.db");
+    std::fs::create_dir_all(db_path.parent().unwrap()).expect("mkdir");
+
+    // Simulate the old release: open the DB in WAL mode and commit a row so
+    // the WAL marker is persisted in the database header.
+    {
+        let conn = rusqlite::Connection::open(&db_path).expect("open wal db");
+        let mode: String = conn
+            .query_row("PRAGMA journal_mode=WAL", [], |r| r.get(0))
+            .expect("set wal");
+        assert!(mode.eq_ignore_ascii_case("wal"), "precondition: db in WAL");
+        conn.execute_batch("CREATE TABLE legacy_marker(x); INSERT INTO legacy_marker VALUES (1);")
+            .expect("seed");
+    } // connection dropped — the header still records WAL
+
+    // Clear any cached connection for isolation, then open via with_connection.
+    clear_connection_cache();
+    with_connection(&cfg, |conn| {
+        let mode: String = conn.query_row("PRAGMA journal_mode", [], |r| r.get(0))?;
+        assert!(
+            mode.eq_ignore_ascii_case("truncate"),
+            "WAL db must migrate to TRUNCATE on open, got '{mode}'"
+        );
+        // Data written under WAL must survive the checkpoint-and-switch — the
+        // migration must not lose committed rows.
+        let marker: i64 = conn.query_row("SELECT x FROM legacy_marker", [], |r| r.get(0))?;
+        assert_eq!(marker, 1, "row committed under WAL must survive migration");
+        Ok(())
+    })
+    .expect("with_connection migrates");
+
+    assert!(
+        !db_path.with_file_name("chunks.db-shm").exists(),
+        "-shm must be gone after WAL→TRUNCATE migration"
+    );
+    assert!(
+        !db_path.with_file_name("chunks.db-wal").exists(),
+        "-wal must be gone after WAL→TRUNCATE migration"
+    );
 }

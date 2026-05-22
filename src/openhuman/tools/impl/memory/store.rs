@@ -26,7 +26,10 @@ impl Tool for MemoryStoreTool {
     }
 
     fn description(&self) -> &str {
-        "Store a fact, preference, or note in a namespace. Requires explicit namespace (e.g. global, background, autocomplete, skill-telegram)."
+        "Store a general fact or note in a namespace (e.g. global, background, autocomplete, skill-{id}). \
+         Do NOT use this for user preferences — for any preference (how the user wants you to behave, \
+         their tastes, settings, standing instructions) call `save_preference` instead, which routes it \
+         to the preference store the assistant actually reads. Requires an explicit namespace."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
