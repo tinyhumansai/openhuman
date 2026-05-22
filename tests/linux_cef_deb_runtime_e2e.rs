@@ -315,17 +315,34 @@ fn core_ping_request_structure() {
 /// Test Debian package dependencies configuration.
 #[test]
 fn debian_package_dependencies_configured() {
-    // Document the expected dependencies from tauri.conf.json
+    let config_path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("app/src-tauri/tauri.conf.json");
+    let config_text = fs::read_to_string(&config_path).expect("read tauri.conf.json");
+    let config: serde_json::Value =
+        serde_json::from_str(&config_text).expect("parse tauri.conf.json");
+    let configured_deps: Vec<&str> = config
+        .pointer("/bundle/linux/deb/depends")
+        .and_then(|value| value.as_array())
+        .expect("bundle.linux.deb.depends should be an array")
+        .iter()
+        .map(|value| value.as_str().expect("deb dependency should be a string"))
+        .collect();
+
     let expected_deps = [
         "libgtk-3-0",
         "libwebkit2gtk-4.1-0",
         "libx11-6",
+        "libxdo3",
         "libgdk-pixbuf-2.0-0",
         "libglib2.0-0",
     ];
 
-    // Verify the expected packages are valid Debian package names
     for dep in &expected_deps {
+        assert!(
+            configured_deps.contains(dep),
+            "tauri.conf.json linux deb depends missing {}",
+            dep
+        );
         assert!(
             dep.chars()
                 .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '.'),
@@ -339,8 +356,17 @@ fn debian_package_dependencies_configured() {
         );
     }
 
+    assert_eq!(
+        configured_deps
+            .iter()
+            .filter(|dep| **dep == "libxdo3")
+            .count(),
+        1,
+        "libxdo3 should be listed exactly once"
+    );
+
     println!("Debian package dependencies:");
-    for dep in &expected_deps {
+    for dep in &configured_deps {
         println!("  - {}", dep);
     }
 }
