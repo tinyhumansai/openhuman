@@ -15,11 +15,11 @@ OpenHuman 遵循 GNU GPL3 开源许可证，代码库位于 [github.com/tinyhuma
 
 ## 系统要求
 
-OpenHuman 支持 **macOS、Windows 和 Linux** 桌面端。建议 4 GB 以上内存；如果要摄入超大型邮箱或仓库，或在同一台机器上运行[本地模型](../features/model-routing/local-ai.md)，建议 16 GB 以上。
+OpenHuman 支持 **macOS、Windows 和 Linux** 桌面端。建议 4 GB 以上内存；如果要摄入超大型邮箱或仓库，或在同一台机器上运行[本地模型](../features/model-routing/local-ai.zh-CN.md)，建议 16 GB 以上。
 
 ### 权限
 
-首次启动 OpenHuman 时，操作系统会提示授予应用所需的权限（macOS 上的 Accessibility、语音热键的 Input Monitoring，以及计划使用[会议智能体](../features/mascot/meeting-agents.md)时的相机/麦克风）。你随时可以在 **设置 → 自动化与渠道** 中查看和调整这些权限。
+首次启动 OpenHuman 时，操作系统会提示授予应用所需的权限（macOS 上的 Accessibility、语音热键的 Input Monitoring，以及计划使用[会议智能体](../features/mascot/meeting-agents.zh-CN.md)时的相机/麦克风）。你随时可以在 **设置 → 自动化与渠道** 中查看和调整这些权限。
 
 ***
 
@@ -65,10 +65,10 @@ OpenHuman 自动为每个任务选择合适的模型。参见[自动模型路由
 
 现在智能体有了记忆和一个模型，产品的其余部分就是给它更多发挥空间：
 
-* [**会议智能体**](../features/mascot/meeting-agents.md) —— 放入一个 Google Meet 链接，吉祥物作为真实参与者加入：它倾听、将笔记记入记忆树、在通话中说话，并实时使用工具。
+* [**会议智能体**](../features/mascot/meeting-agents.zh-CN.md) —— 放入一个 Google Meet 链接，吉祥物作为真实参与者加入：它倾听、将笔记记入记忆树、在通话中说话，并实时使用工具。
 * [**从集成自动拉取**](../features/obsidian-wiki/auto-fetch.zh-CN.md) —— 从**设置**中连接更多源；每二十分钟调度器将新数据拉入你的树。
-* [**原生语音**](../features/native-tools/voice.md) —— 按键说话输入和 TTS 回复，这样你可以和 OpenHuman 对话而不是打字。
-* [**潜意识循环**](../features/subconscious.md) —— 让你离开时吉祥物继续处理待办任务。
+* [**原生语音**](../features/native-tools/voice.zh-CN.md) —— 按键说话输入和 TTS 回复，这样你可以和 OpenHuman 对话而不是打字。
+* [**潜意识循环**](../features/subconscious.zh-CN.md) —— 让你离开时吉祥物继续处理待办任务。
 
 ## 加入社区
 

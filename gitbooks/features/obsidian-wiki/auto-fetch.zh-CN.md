@@ -11,7 +11,7 @@ icon: arrows-rotate
 
 ## 工作原理
 
-一个单一的周期性调度器每二十分钟触发一次。每次触发时，它遍历每个活跃的[集成](../integrations/README.md)，查找匹配的原生 provider，如果该连接的距上次同步的时间足够长，就调用 `provider.sync(ctx, SyncReason::Periodic)`。
+一个单一的周期性调度器每二十分钟触发一次。每次触发时，它遍历每个活跃的[集成](../integrations/README.zh-CN.md)，查找匹配的原生 provider，如果该连接的距上次同步的时间足够长，就调用 `provider.sync(ctx, SyncReason::Periodic)`。
 
 ```text
 每 20 分钟
@@ -55,6 +55,6 @@ icon: arrows-rotate
 
 ## 另见
 
-* [第三方集成](../integrations/README.md)。自动拉取运行的连接器层。
+* [第三方集成](../integrations/README.zh-CN.md)。自动拉取运行的连接器层。
 * [记忆树](memory-tree.zh-CN.md)。一切最终到达的地方。
 * [智能 Token 压缩](../token-compression.zh-CN.md)。使"获取一切"保持低成本的原因。
