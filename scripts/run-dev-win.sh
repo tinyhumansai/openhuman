@@ -530,6 +530,24 @@ PATH_PREFIX="/c/Program Files/CMake/bin:$(dirname "$NINJA_EXE")"
 if [[ -n "${CEF_RUNTIME_PATH:-}" ]]; then
   PATH_PREFIX="$PATH_PREFIX:$CEF_RUNTIME_PATH"
 fi
+# Ensure the workspace node_modules/.bin is on PATH so pnpm's child
+# spawns (e.g. `pnpm tauri dev` → `tauri.CMD`) can resolve the shims.
+# Pnpm normally prepends `./node_modules/.bin` for script execution, but
+# when the script body is `tauri "dev"` and the child shell is cmd.exe
+# under the long bash→cmd→bash chain, the relative entry sometimes
+# resolves against the wrong cwd and tauri.CMD is not found.
+PATH_PREFIX="$APP_DIR/node_modules/.bin:$PATH_PREFIX"
+
+# Ensure pnpm itself stays on PATH for cargo-tauri's beforeDevCommand
+# (`pnpm run dev` → vite). When run-dev-win.sh restores the Windows PATH
+# via cmd.exe %PATH%, some setups (WinGet-installed pnpm with no
+# AppData/Roaming/npm entry) don't surface a pnpm dir consistently
+# downstream. Prepend the resolved $PNPM_EXE dir to guarantee it.
+if [[ -n "${PNPM_EXE:-}" ]]; then
+  PNPM_EXE_DIR="$(dirname "$PNPM_EXE")"
+  PATH_PREFIX="$PNPM_EXE_DIR:$PATH_PREFIX"
+fi
+
 export PATH="$PATH_PREFIX:$PATH"
 
 "$PNPM_EXE" tauri:ensure
@@ -599,28 +617,98 @@ else
   DEV_PORT=1420
 fi
 
-# Tauri spawns beforeDevCommand (`pnpm run dev`) via a native `cmd /S /C`
-# inheriting THIS process's env. By here PATH has the full system PATH stacked
-# several times over (vcvars rebuild + Git-Bash /etc/profile re-runs + pnpm
-# .bin layering); the MSYS→Windows conversion overflows the process
-# environment-block limit, so the child inherits an EMPTY PATH and Tauri dies
-# with "'pnpm' is not recognized" (even `where` is gone). Collapse PATH to
-# first-seen entries (clean POSIX `/c/...` entries, so ':' split is safe).
-_dedup_seen=":"
-_dedup_new=""
-IFS=':' read -ra _dedup_parts <<< "$PATH"
-for _dp in "${_dedup_parts[@]}"; do
-  [[ -z "$_dp" ]] && continue
-  case "$_dedup_seen" in *":$_dp:"*) continue ;; esac
-  _dedup_seen="${_dedup_seen}${_dp}:"
-  _dedup_new="${_dedup_new:+$_dedup_new:}$_dp"
-done
-export PATH="$_dedup_new"
-echo "[run-dev-win] PATH de-duplicated: ${#_dedup_parts[@]} → $(awk -v RS=: 'END{print NR}' <<< "$_dedup_new") entries"
+# Invoke cargo-tauri directly rather than going through `pnpm tauri dev`.
+#
+# The pnpm chain (pnpm.exe → cmd.exe → tauri.CMD) is fragile on Windows:
+# whether `tauri.CMD` is resolvable in the spawned cmd subprocess depends
+# on which pnpm shim was picked up by `find_pnpm`. The self-managing
+# `~/AppData/Local/pnpm/.tools/.../pnpm` variant auto-prepends
+# `node_modules/.bin` for script children; the WinGet-installed
+# `pnpm.exe` does not, so the script body `tauri "dev"` then fails with
+# "'tauri' is not recognized" inside cmd.
+#
+# `ensure-tauri-cli.sh` already installed the vendored CEF-aware
+# cargo-tauri at `$REPO_ROOT/.cache/cargo-install/bin/cargo-tauri.exe`,
+# so we can invoke that binary directly and skip the wrapper layer.
+#
+# Historical note: a previous version of this script ran a PATH
+# deduplication loop (collapsing repeated entries that MSYS→Windows
+# conversion stacked during vcvars / Git-Bash re-runs / pnpm layering).
+# That loop was needed because the overflowing env block left child
+# processes with an EMPTY PATH — even `where.exe` was gone, causing
+# "'pnpm' is not recognized". Direct cargo-tauri.exe invocation with
+# absolute paths in the .bat wrapper makes the env block size irrelevant:
+# beforeDevCommand no longer needs PATH at all.
+CARGO_TAURI_EXE="$REPO_ROOT/.cache/cargo-install/bin/cargo-tauri.exe"
+if [[ ! -x "$CARGO_TAURI_EXE" ]]; then
+  echo "[run-dev-win] cargo-tauri.exe not found at $CARGO_TAURI_EXE" >&2
+  echo "[run-dev-win] tauri:ensure should have installed it. Aborting." >&2
+  exit 1
+fi
 
+# Build a tauri.conf.json `-c` JSON merge that:
+#  - pins `beforeDevCommand` to the absolute pnpm path so cargo-tauri's
+#    cmd.exe child can find pnpm regardless of any PATH stripping
+#    between bash → cargo-tauri → cmd. The default in tauri.conf.json
+#    is `"pnpm run dev"` (bare name) which depends on PATH.
+#  - overrides `devUrl` when OPENHUMAN_DEV_PORT is non-default.
+# Point beforeDevCommand at vite via a wrapper batch file in a
+# space-free temp directory.
+#
+# Why a wrapper instead of the absolute path directly:
+#   cargo-tauri runs beforeDevCommand as `cmd.exe /S /C <string>`. Rust's
+#   argv-to-cmd argument escaping strips literal double-quotes from the
+#   string, so if our `<string>` is `"E:\Office Files\…\vite.CMD"`,
+#   cmd ends up parsing `E:\Office` as the program name and the rest as
+#   arguments — "'E:\Office' is not recognized". 8.3 short-name fallback
+#   also fails when 8dot3name is disabled on the drive (as it is on this
+#   workspace's E: drive).
+#
+#   The fix is to call the spacey path from INSIDE a .bat file, where we
+#   can quote it however we want without involving cargo-tauri's outer
+#   escaping. The wrapper lives under %TEMP% (which is normally
+#   space-free) so its own path doesn't need quoting either.
+VITE_JS_UNIX="$APP_DIR/node_modules/vite/bin/vite.js"
+if [[ ! -f "$VITE_JS_UNIX" ]]; then
+  echo "[run-dev-win] vite entry not found at $VITE_JS_UNIX" >&2
+  echo "[run-dev-win] Did 'pnpm install' run? Aborting." >&2
+  exit 1
+fi
+VITE_JS_WIN="$(cygpath -w "$VITE_JS_UNIX" 2>/dev/null || printf '%s' "$VITE_JS_UNIX")"
+
+# Resolve node.exe absolute path so the wrapper doesn't depend on
+# whatever PATH cargo-tauri hands to its cmd child.
+NODE_EXE_UNIX="$(command -v node.exe 2>/dev/null || command -v node 2>/dev/null)"
+if [[ -z "$NODE_EXE_UNIX" || ! -f "$NODE_EXE_UNIX" ]]; then
+  echo "[run-dev-win] node.exe not findable on bash PATH at wrapper-build time" >&2
+  exit 1
+fi
+NODE_EXE_WIN="$(cygpath -w "$NODE_EXE_UNIX" 2>/dev/null || printf '%s' "$NODE_EXE_UNIX")"
+
+WRAPPER_DIR_UNIX="$(cygpath -u "${TEMP:-${TMP:-/tmp}}" 2>/dev/null || echo /tmp)/openhuman-dev"
+mkdir -p "$WRAPPER_DIR_UNIX"
+VITE_WRAPPER_UNIX="$WRAPPER_DIR_UNIX/run-vite.bat"
+# Invoke node.exe with vite's JS entry directly. The vite.CMD shim
+# falls back to bare `node` when its sibling doesn't have node.exe,
+# which fails inside cargo-tauri's cmd child (no node on PATH).
+{
+  printf '@echo off\r\n'
+  printf '"%s" "%s" %%*\r\n' "$NODE_EXE_WIN" "$VITE_JS_WIN"
+} > "$VITE_WRAPPER_UNIX"
+VITE_WRAPPER_WIN="$(cygpath -w "$VITE_WRAPPER_UNIX" 2>/dev/null || printf '%s' "$VITE_WRAPPER_UNIX")"
+if [[ "$VITE_WRAPPER_WIN" == *" "* ]]; then
+  echo "[run-dev-win] wrapper path contains spaces: $VITE_WRAPPER_WIN" >&2
+  echo "[run-dev-win] set TEMP/TMP to a space-free path (e.g. C:\\Temp) and retry." >&2
+  exit 1
+fi
+echo "[run-dev-win] vite wrapper at: $VITE_WRAPPER_WIN"
+BEFORE_DEV_CMD="${VITE_WRAPPER_WIN//\\/\\\\}"
+CONFIG_OVERRIDE="{\"build\":{\"beforeDevCommand\":\"$BEFORE_DEV_CMD\""
 if (( DEV_PORT != 1420 )); then
   echo "[run-dev-win] OPENHUMAN_DEV_PORT=$DEV_PORT — overriding tauri devUrl"
-  "$PNPM_EXE" tauri dev -c "{\"build\":{\"devUrl\":\"http://localhost:$DEV_PORT\"}}"
-else
-  "$PNPM_EXE" tauri dev
+  CONFIG_OVERRIDE+=",\"devUrl\":\"http://localhost:$DEV_PORT\""
 fi
+CONFIG_OVERRIDE+="}}"
+
+echo "[run-dev-win] tauri config override: $CONFIG_OVERRIDE"
+"$CARGO_TAURI_EXE" dev -c "$CONFIG_OVERRIDE"

@@ -82,6 +82,11 @@ pub async fn query_source_rpc(
 // ── query_global ──────────────────────────────────────────────────────
 
 /// Request body for `memory_tree_query_global`.
+///
+/// The consolidated `memory_tree` tool schema advertises `time_window_days`
+/// (consistent with `query_source` / `query_topic`), while the standalone
+/// tool uses `window_days`. Accept both via serde alias so callers using
+/// either field name succeed.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct QueryGlobalRequest {
     #[serde(alias = "window_days")]
@@ -425,15 +430,19 @@ mod tests {
     }
 
     #[test]
-    fn query_global_request_accepts_legacy_window_days_alias() {
-        let req: QueryGlobalRequest = serde_json::from_value(serde_json::json!({
-            "window_days": 7
-        }))
-        .expect("legacy window_days alias should deserialize");
+    fn query_global_request_accepts_both_field_names() {
+        // The consolidated memory_tree tool schema uses "time_window_days"
+        // while the standalone tool uses "window_days". Both must deserialize.
+        let from_alias: QueryGlobalRequest =
+            serde_json::from_value(serde_json::json!({"window_days": 7}))
+                .expect("legacy window_days alias should deserialize");
+        assert_eq!(from_alias.time_window_days, 7);
 
-        assert_eq!(req.time_window_days, 7);
+        let from_primary: QueryGlobalRequest =
+            serde_json::from_value(serde_json::json!({"time_window_days": 30}))
+                .expect("primary time_window_days should deserialize");
+        assert_eq!(from_primary.time_window_days, 30);
     }
-
     // ── query_topic_rpc ───────────────────────────────────────────────
 
     #[tokio::test]

@@ -67,7 +67,10 @@ describe('coreModeSlice — sync-localStorage-derived initial state', () => {
   it('uses local mode when the E2E default core mode config is local', async () => {
     localStorage.clear();
     vi.resetModules();
-    vi.doMock('../utils/config', () => ({ E2E_DEFAULT_CORE_MODE: 'local' }));
+    vi.doMock('../utils/config', () => ({
+      CORE_RPC_URL: 'http://127.0.0.1:7788/rpc',
+      E2E_DEFAULT_CORE_MODE: 'local',
+    }));
     try {
       const mod = await import('./coreModeSlice');
       const state = mod.default(undefined, { type: '@@INIT' });
@@ -96,6 +99,20 @@ describe('coreModeSlice — sync-localStorage-derived initial state', () => {
     expect(state.mode).toEqual({
       kind: 'cloud',
       url: 'https://core.example.com/rpc',
+      token: 'tok-abc',
+    });
+  });
+
+  it('normalizes restored cloud base URLs to the /rpc endpoint', async () => {
+    localStorage.clear();
+    localStorage.setItem('openhuman_core_mode', 'cloud');
+    localStorage.setItem('openhuman_core_rpc_url', 'https://example.trycloudflare.com/');
+    localStorage.setItem('openhuman_core_rpc_token', 'tok-abc');
+    const mod = await freshImport();
+    const state = mod.default(undefined, { type: '@@INIT' });
+    expect(state.mode).toEqual({
+      kind: 'cloud',
+      url: 'https://example.trycloudflare.com/rpc',
       token: 'tok-abc',
     });
   });

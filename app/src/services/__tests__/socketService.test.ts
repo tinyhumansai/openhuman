@@ -82,6 +82,10 @@ const hoisted = vi.hoisted(() => ({ getCoreRpcUrlMock: vi.fn<() => Promise<strin
 vi.mock('../coreRpcClient', () => ({
   getCoreRpcUrl: hoisted.getCoreRpcUrlMock,
   clearCoreRpcUrlCache: vi.fn(),
+  // socketService now reads the per-process bearer for the Socket.IO
+  // handshake `auth.token` payload; the test value is irrelevant — the
+  // mock just needs to resolve so the connect flow proceeds.
+  getCoreRpcToken: vi.fn(async () => 'mock-core-bearer'),
 }));
 
 describe('socketService — resolveCoreSocketBaseUrl uses getCoreRpcUrl', () => {

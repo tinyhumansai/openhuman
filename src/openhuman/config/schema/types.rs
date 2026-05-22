@@ -9,10 +9,11 @@ use std::path::PathBuf;
 /// Standard model identifiers matching the backend model registry.
 pub const MODEL_AGENTIC_V1: &str = "agentic-v1";
 pub const MODEL_REASONING_V1: &str = "reasoning-v1";
-/// Conversational tier — the orchestrator (user-facing chat agent) rides on
-/// this by default. Backend maps it to Kimi K2.6 Turbo on Fireworks (128k
-/// context, `supportsThinking: false`) — tuned for time-to-first-token so
-/// chat responses feel snappy.
+/// Conversational tier (deprecated — retired from the backend strict model
+/// registry in migration 2→3). Do not use for new sessions; the backend now
+/// returns 400 for threads that send `chat-v1`. Retained here only for
+/// migration code that needs to identify and replace the old model identifier.
+/// Use [`MODEL_REASONING_QUICK_V1`] or [`DEFAULT_MODEL`] instead.
 pub const MODEL_CHAT_V1: &str = "chat-v1";
 /// Low-latency chat tier. Backend maps this to Kimi K2.6 Turbo on
 /// Fireworks (128k context, `supportsThinking: false`) — tuned for

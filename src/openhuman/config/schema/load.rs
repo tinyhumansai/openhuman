@@ -1284,6 +1284,14 @@ impl Config {
         }
 
         set_runtime_proxy_config(self.proxy.clone());
+
+        // Push the embedding request budget into its process-global limiter so
+        // every cloud embed (via the shared `OpenAiEmbedding` chokepoint) is
+        // throttled to the configured rate. Kept here, with the proxy commit,
+        // so the pure overlay stays side-effect-free for tests.
+        crate::openhuman::embeddings::rate_limit::set_embedding_rate_limit(
+            self.memory.embedding_rate_limit_per_min,
+        );
     }
 
     /// Pure-ish env overlay: applies overrides read from `env` to `self`.
@@ -1725,6 +1733,15 @@ impl Config {
         if let Ok(flag) = std::env::var("OPENHUMAN_MEMORY_EMBED_STRICT") {
             if let Some(strict) = parse_env_bool("OPENHUMAN_MEMORY_EMBED_STRICT", &flag) {
                 self.memory_tree.embedding_strict = strict;
+            }
+        }
+        // Cloud embedding request budget (requests/min) on `memory.*`. `0`
+        // disables throttling. A blank or non-numeric value leaves the
+        // configured/default budget untouched. Committed to the process-global
+        // limiter in `apply_env_overrides`.
+        if let Some(val) = env.get("OPENHUMAN_MEMORY_EMBED_RATE_LIMIT") {
+            if let Ok(per_min) = val.trim().parse::<u32>() {
+                self.memory.embedding_rate_limit_per_min = per_min;
             }
         }
 
