@@ -86,7 +86,7 @@ impl PromptSection for UserProfileSection {
             return Ok(String::new());
         }
 
-        let mut out = String::from("## User Profile (Learned)\n\n");
+        let mut out = String::from("## Your standing preferences\n\n");
         for entry in &ctx.learned.user_profile {
             out.push_str("- ");
             out.push_str(entry);
@@ -357,7 +357,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(section.name(), "user_profile");
-        assert!(rendered.starts_with("## User Profile (Learned)\n\n"));
+        assert!(rendered.starts_with("## Your standing preferences\n\n"));
         assert!(rendered.contains("- Timezone: America/Los_Angeles"));
         assert!(rendered.contains("- Prefers Rust"));
     }

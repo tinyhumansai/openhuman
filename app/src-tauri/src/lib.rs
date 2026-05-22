@@ -1453,6 +1453,31 @@ fn setup_tray(app: &AppHandle<AppRuntime>) -> tauri::Result<()> {
 
 const CEF_PREWARM_LABEL: &str = "cef-prewarm";
 
+/// Decide whether to spawn the CEF cold-start prewarm webview.
+///
+/// Testable pure function — callers pass the relevant env values directly.
+///
+/// Decision matrix:
+/// - `env_override` = `Some("0"|"false"|"no"|"off")` → disabled (explicit)
+/// - `env_override` = `Some(<other non-empty string>)` → enabled (explicit opt-in;
+///   overrides even the Wayland guard so ops can re-enable if CEF subprocess
+///   X handling improves)
+/// - `env_override` = `None` (env var unset, default path):
+///   - `wayland_display_set` = `true` → **disabled** — auto-guard against the
+///     fatal `X_ConfigureWindow BadWindow` crash that fires in CEF render
+///     subprocesses on Wayland/XWayland sessions (issue #2463). The main-process
+///     silent X error handler (`install_silent_x_error_handler`) does not reach
+///     CEF subprocesses; until subprocess-level coverage is available, skipping
+///     the prewarm child webview is the safest mitigation.
+///   - `wayland_display_set` = `false` → enabled
+fn cef_prewarm_enabled(env_override: Option<&str>, wayland_display_set: bool) -> bool {
+    if let Some(v) = env_override {
+        let v = v.trim().to_ascii_lowercase();
+        return !(v == "0" || v == "false" || v == "no" || v == "off");
+    }
+    !wayland_display_set
+}
+
 /// Spawn a hidden 1×1 child webview at `about:blank` on the main window so
 /// CEF's child-webview render path is hot before the user clicks an
 /// account. The first `webview_account_open` then skips the cold
@@ -2840,13 +2865,12 @@ pub fn run() {
             // tear it down in the shutdown sequence below. Disable at
             // runtime with `OPENHUMAN_CEF_PREWARM=0` if it regresses.
             {
-                let prewarm_enabled = std::env::var("OPENHUMAN_CEF_PREWARM")
-                    .map(|v| {
-                        let v = v.trim().to_ascii_lowercase();
-                        !(v == "0" || v == "false" || v == "no" || v == "off")
-                    })
-                    .unwrap_or(true);
-                if prewarm_enabled {
+                #[cfg(target_os = "linux")]
+                let wayland_display_set = has_non_empty_env("WAYLAND_DISPLAY");
+                #[cfg(not(target_os = "linux"))]
+                let wayland_display_set = false;
+                let env_override = std::env::var("OPENHUMAN_CEF_PREWARM").ok();
+                if cef_prewarm_enabled(env_override.as_deref(), wayland_display_set) {
                     let app_handle = app.handle().clone();
                     tauri::async_runtime::spawn(async move {
                         // Defer one tick so the main window finishes its
@@ -2856,6 +2880,12 @@ pub fn run() {
                             log::warn!("[cef-prewarm] failed (non-fatal): {e}");
                         }
                     });
+                } else if wayland_display_set && env_override.is_none() {
+                    log::info!(
+                        "[cef-prewarm] auto-disabled: WAYLAND_DISPLAY is set (Wayland/XWayland \
+                         session) — prevents X_ConfigureWindow BadWindow crash in CEF \
+                         subprocesses (issue #2463); set OPENHUMAN_CEF_PREWARM=1 to override"
+                    );
                 } else {
                     log::info!("[cef-prewarm] disabled via OPENHUMAN_CEF_PREWARM");
                 }
@@ -3813,6 +3843,60 @@ mod tests {
     #[test]
     fn platform_arch_is_aarch64_on_apple_silicon_build() {
         assert_eq!(std::env::consts::ARCH, "aarch64");
+    }
+
+    // -------------------------------------------------------------------------
+    // cef_prewarm_enabled (issue #2463 — Wayland/XWayland BadWindow guard)
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn prewarm_enabled_by_default_on_non_wayland() {
+        assert!(cef_prewarm_enabled(None, false));
+    }
+
+    #[test]
+    fn prewarm_auto_disabled_on_wayland_when_env_unset() {
+        assert!(!cef_prewarm_enabled(None, true));
+    }
+
+    #[test]
+    fn prewarm_explicit_disable_respected_on_non_wayland() {
+        assert!(!cef_prewarm_enabled(Some("0"), false));
+        assert!(!cef_prewarm_enabled(Some("false"), false));
+        assert!(!cef_prewarm_enabled(Some("no"), false));
+        assert!(!cef_prewarm_enabled(Some("off"), false));
+    }
+
+    #[test]
+    fn prewarm_explicit_disable_respected_on_wayland() {
+        assert!(!cef_prewarm_enabled(Some("0"), true));
+        assert!(!cef_prewarm_enabled(Some("false"), true));
+    }
+
+    #[test]
+    fn prewarm_explicit_enable_overrides_wayland_guard() {
+        // OPENHUMAN_CEF_PREWARM=1 (or any non-disable value) lets ops
+        // force prewarm even on Wayland sessions.
+        assert!(cef_prewarm_enabled(Some("1"), true));
+        assert!(cef_prewarm_enabled(Some("true"), true));
+        assert!(cef_prewarm_enabled(Some("yes"), true));
+        assert!(cef_prewarm_enabled(Some("on"), true));
+    }
+
+    #[test]
+    fn prewarm_disable_flags_are_case_insensitive() {
+        assert!(!cef_prewarm_enabled(Some("FALSE"), false));
+        assert!(!cef_prewarm_enabled(Some("OFF"), true));
+        assert!(!cef_prewarm_enabled(Some("  0  "), false));
+        assert!(!cef_prewarm_enabled(Some("  No  "), true));
+    }
+
+    #[test]
+    fn prewarm_unknown_env_value_treated_as_enable() {
+        // Any string that is not a recognised disable token → treat as enable.
+        assert!(cef_prewarm_enabled(Some("enabled"), false));
+        assert!(cef_prewarm_enabled(Some("yes"), false));
+        assert!(cef_prewarm_enabled(Some(""), false));
     }
 
     // -------------------------------------------------------------------------
