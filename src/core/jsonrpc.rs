@@ -849,7 +849,6 @@ pub(super) fn with_cors_headers(mut response: Response, origin: Option<&str>) ->
         }
     }
 
-
     headers.insert(
         header::ACCESS_CONTROL_ALLOW_METHODS,
         HeaderValue::from_static("GET, POST, OPTIONS"),
