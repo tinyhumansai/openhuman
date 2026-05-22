@@ -696,11 +696,36 @@ fn clear_reembed_skipped_for_signature_removes_all_tombstones_for_sig() {
     mark_chunk_reembed_skipped(&cfg, &c1.id, &sig, "r1").unwrap();
     mark_chunk_reembed_skipped(&cfg, &c2.id, &sig, "r2").unwrap();
     mark_chunk_reembed_skipped(&cfg, &c1.id, other_sig, "other").unwrap();
+    let summary_id = "summary-bulk-clear-test";
+    with_connection(&cfg, |conn| {
+        conn.execute(
+            "INSERT OR IGNORE INTO mem_tree_trees (id, kind, scope, created_at_ms)
+             VALUES ('tree-bulk-clear', 'source', 'bulk-clear', 0)",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO mem_tree_summaries (
+                id, tree_id, tree_kind, level, child_ids_json, content, token_count,
+                entities_json, topics_json, time_range_start_ms, time_range_end_ms,
+                score, sealed_at_ms, deleted
+             ) VALUES (?1, 'tree-bulk-clear', 'source', 0, '[]', 'x', 1, '[]', '[]', 0, 0, 0.0, 0, 0)",
+            params![summary_id],
+        )?;
+        Ok(())
+    })
+    .unwrap();
+    crate::openhuman::memory::tree::tree_source::store::mark_summary_reembed_skipped(
+        &cfg,
+        summary_id,
+        &sig,
+        "summary tombstone",
+    )
+    .unwrap();
 
     let deleted = clear_reembed_skipped_for_signature(&cfg, &sig).unwrap();
-    assert_eq!(deleted, 2);
+    assert_eq!(deleted, 3);
 
-    let remaining: i64 = with_connection(&cfg, |conn| {
+    let remaining_chunks: i64 = with_connection(&cfg, |conn| {
         Ok(conn.query_row(
             "SELECT COUNT(*) FROM mem_tree_chunk_reembed_skipped WHERE model_signature = ?1",
             params![sig],
@@ -708,7 +733,17 @@ fn clear_reembed_skipped_for_signature_removes_all_tombstones_for_sig() {
         )?)
     })
     .unwrap();
-    assert_eq!(remaining, 0);
+    assert_eq!(remaining_chunks, 0);
+
+    let remaining_summaries: i64 = with_connection(&cfg, |conn| {
+        Ok(conn.query_row(
+            "SELECT COUNT(*) FROM mem_tree_summary_reembed_skipped WHERE model_signature = ?1",
+            params![sig],
+            |r| r.get(0),
+        )?)
+    })
+    .unwrap();
+    assert_eq!(remaining_summaries, 0);
 
     let other_kept: i64 = with_connection(&cfg, |conn| {
         Ok(conn.query_row(
