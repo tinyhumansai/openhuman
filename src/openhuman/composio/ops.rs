@@ -300,10 +300,13 @@ pub async fn composio_authorize(
     let resp = match kind {
         ComposioClientKind::Backend(client) => {
             tracing::debug!(toolkit = %toolkit, "[composio] authorize: backend variant");
-            client.authorize(toolkit, extra_params).await.map_err(|e| {
-                report_composio_op_error("authorize", &e);
-                format!("[composio] authorize failed: {e:#}")
-            })?
+            super::oauth_handoff::authorize_with_meta_guard(&client, toolkit, extra_params)
+                .await
+                .map_err(|e| {
+                    report_composio_op_error("authorize", &e);
+                    let wrapped = super::oauth_handoff::wrap_authorize_rate_limit_error(toolkit, e);
+                    format!("[composio] authorize failed: {wrapped:#}")
+                })?
         }
         ComposioClientKind::Direct(direct) => {
             tracing::info!(
@@ -327,9 +330,16 @@ pub async fn composio_authorize(
                      app.composio.dev for your auth config"
                 );
             }
-            direct_authorize(&direct, toolkit, &config.composio.entity_id)
-                .await
-                .map_err(|e| format!("[composio-direct] authorize failed: {e:#}"))?
+            super::oauth_handoff::direct_authorize_with_meta_guard(
+                &direct,
+                toolkit,
+                &config.composio.entity_id,
+            )
+            .await
+            .map_err(|e| {
+                let wrapped = super::oauth_handoff::wrap_authorize_rate_limit_error(toolkit, e);
+                format!("[composio-direct] authorize failed: {wrapped:#}")
+            })?
         }
     };
 

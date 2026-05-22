@@ -41,6 +41,7 @@
     "rust:check": "pnpm --filter openhuman-app rust:check",
     "typecheck": "pnpm --filter openhuman-app compile",
     "i18n:check": "tsx scripts/i18n-coverage.ts",
+    "i18n:bundle:check": "node scripts/verify-i18n-bundle.mjs",
     "i18n:dump": "tsx scripts/i18n-coverage.ts --no-unused --out tmp/i18n-coverage"
   },
   "devDependencies": {

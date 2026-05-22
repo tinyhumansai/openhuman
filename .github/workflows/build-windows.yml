@@ -66,8 +66,10 @@ jobs:
         if: steps.tauri-cli-cache.outputs.cache-hit != 'true'
         shell: bash
         run: cargo install --locked --path app/src-tauri/vendor/tauri-cef/crates/tauri-cli
+      - name: Enable Corepack
+        run: corepack enable
       - name: Install dependencies
-        run: yarn install --frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
       # vite build runs via tauri.conf.json's beforeBuildCommand during the
       # "Build Tauri app" step below — no separate frontend build needed.

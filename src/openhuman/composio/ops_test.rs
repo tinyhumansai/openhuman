@@ -350,6 +350,60 @@ async fn composio_list_connections_via_mock_counts_active() {
 }
 
 #[tokio::test]
+async fn composio_authorize_clears_pending_meta_connection_before_handoff() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    let deletes = Arc::new(AtomicUsize::new(0));
+    let deletes_for_delete = Arc::clone(&deletes);
+    let app = Router::new()
+        .route(
+            "/agent-integrations/composio/connections",
+            get(|| async {
+                Json(json!({
+                    "success": true,
+                    "data": {"connections": [
+                        {"id":"ig-pending","toolkit":"instagram","status":"PENDING"}
+                    ]}
+                }))
+            }),
+        )
+        .route(
+            "/agent-integrations/composio/connections/{id}",
+            axum::routing::delete(move |Path(id): Path<String>| {
+                let deletes = Arc::clone(&deletes_for_delete);
+                async move {
+                    if id == "ig-pending" {
+                        deletes.fetch_add(1, Ordering::SeqCst);
+                    }
+                    Json(json!({"success": true, "data": {"deleted": true}}))
+                }
+            }),
+        )
+        .route(
+            "/agent-integrations/composio/authorize",
+            post(|Json(body): Json<Value>| async move {
+                assert_eq!(body["toolkit"], "instagram");
+                Json(json!({
+                    "success": true,
+                    "data": {
+                        "connectUrl": "https://meta.example/oauth",
+                        "connectionId": "c-new"
+                    }
+                }))
+            }),
+        );
+    let base = start_mock_backend(app).await;
+    let tmp = tempfile::tempdir().unwrap();
+    let config = config_with_backend(&tmp, base);
+    let outcome = composio_authorize(&config, "instagram", None)
+        .await
+        .unwrap();
+    assert_eq!(outcome.value.connection_id, "c-new");
+    assert_eq!(deletes.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
 async fn composio_authorize_via_mock_publishes_event_and_returns_url() {
     let app = Router::new().route(
         "/agent-integrations/composio/authorize",

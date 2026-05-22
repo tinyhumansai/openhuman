@@ -4,8 +4,15 @@
  * Handles storing/retrieving user preferences like RPC URL using
  * localStorage (web) or Tauri store (desktop).
  */
+import debug from 'debug';
+
 import { CORE_RPC_URL, E2E_DEFAULT_CORE_MODE } from './config';
+import { redactRpcUrlForLog } from './redactRpcUrlForLog';
 import { isTauri } from './tauriCommands';
+
+export { redactRpcUrlForLog } from './redactRpcUrlForLog';
+
+const log = debug('config-persistence');
 
 // Storage key for RPC URL preference
 const RPC_URL_STORAGE_KEY = 'openhuman_core_rpc_url';
@@ -43,7 +50,7 @@ export function getStoredRpcUrl(): string {
   try {
     const stored = localStorage.getItem(RPC_URL_STORAGE_KEY);
     if (stored && stored.trim().length > 0) {
-      return stored.trim();
+      return normalizeRpcUrl(stored);
     }
   } catch {
     // localStorage might be unavailable in some environments
@@ -68,7 +75,7 @@ export function peekStoredRpcUrl(): string | null {
   try {
     const stored = localStorage.getItem(RPC_URL_STORAGE_KEY);
     if (stored && stored.trim().length > 0) {
-      return stored.trim();
+      return normalizeRpcUrl(stored);
     }
   } catch {
     console.warn('[configPersistence] Unable to access localStorage');
@@ -84,8 +91,9 @@ export function peekStoredRpcUrl(): string | null {
 export function storeRpcUrl(url: string): void {
   try {
     if (url && url.trim().length > 0) {
-      localStorage.setItem(RPC_URL_STORAGE_KEY, url.trim());
-      console.debug('[configPersistence] Stored RPC URL:', { url: url.trim() });
+      const normalized = normalizeRpcUrl(url);
+      localStorage.setItem(RPC_URL_STORAGE_KEY, normalized);
+      log('Stored RPC URL: %s', redactRpcUrlForLog(normalized));
     } else {
       // Allow clearing the stored URL to reset to default
       localStorage.removeItem(RPC_URL_STORAGE_KEY);
@@ -174,12 +182,41 @@ export function isAllowedCloudRpcUrl(url: string): boolean {
 
 /**
  * Normalize an RPC URL by trimming whitespace and trailing slashes.
+ * When the user provides a core base URL with no path, treat it as the
+ * JSON-RPC endpoint base and append `/rpc`.
  *
  * @param url - The URL to normalize
  * @returns The normalized URL
  */
 export function normalizeRpcUrl(url: string): string {
-  return url.trim().replace(/\/+$/, '');
+  const trimmed = url.trim();
+  try {
+    // Parse before trimming path slashes so query/hash values such as ?next=/
+    // or #/ stay byte-for-byte intact.
+    new URL(trimmed);
+
+    const suffixStart = firstUrlSuffixIndex(trimmed);
+    const base = suffixStart === -1 ? trimmed : trimmed.slice(0, suffixStart);
+    const suffix = suffixStart === -1 ? '' : trimmed.slice(suffixStart);
+    const pathStart = base.indexOf('/', base.indexOf('://') + 3);
+    const origin = pathStart === -1 ? base : base.slice(0, pathStart);
+    const path = pathStart === -1 ? '' : base.slice(pathStart);
+    const pathWithoutTrailingSlashes = path.replace(/\/+$/, '');
+    const normalizedPath = pathWithoutTrailingSlashes || '/rpc';
+
+    return `${origin}${normalizedPath}${suffix}`;
+  } catch {
+    // Validation reports malformed URLs. Keep this helper side-effect free.
+  }
+  return trimmed.replace(/\/+$/, '');
+}
+
+function firstUrlSuffixIndex(url: string): number {
+  const searchIndex = url.indexOf('?');
+  const hashIndex = url.indexOf('#');
+  if (searchIndex === -1) return hashIndex;
+  if (hashIndex === -1) return searchIndex;
+  return Math.min(searchIndex, hashIndex);
 }
 
 /**
