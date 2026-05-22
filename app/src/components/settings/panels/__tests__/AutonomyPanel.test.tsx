@@ -1,6 +1,13 @@
 import { fireEvent, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
+import { renderWithProviders } from '../../../../test/test-utils';
+import {
+  openhumanGetAutonomySettings,
+  openhumanUpdateAutonomySettings,
+} from '../../../../utils/tauriCommands/config';
+import AutonomyPanel from '../AutonomyPanel';
+
 vi.mock('../../hooks/useSettingsNavigation', () => ({
   useSettingsNavigation: () => ({
     navigateBack: vi.fn(),
@@ -19,13 +26,6 @@ vi.mock('../../../../utils/tauriCommands/config', async () => {
     openhumanUpdateAutonomySettings: vi.fn(),
   };
 });
-
-import {
-  openhumanGetAutonomySettings,
-  openhumanUpdateAutonomySettings,
-} from '../../../../utils/tauriCommands/config';
-import { renderWithProviders } from '../../../../test/test-utils';
-import AutonomyPanel from '../AutonomyPanel';
 
 const mockGet = vi.mocked(openhumanGetAutonomySettings);
 const mockUpdate = vi.mocked(openhumanUpdateAutonomySettings);
@@ -64,9 +64,7 @@ describe('AutonomyPanel', () => {
     const input = await screen.findByDisplayValue('20');
     fireEvent.change(input, { target: { value: '300' } });
     fireEvent.click(screen.getByRole('button', { name: /^Save$/ }));
-    await waitFor(() =>
-      expect(mockUpdate).toHaveBeenCalledWith({ max_actions_per_hour: 300 })
-    );
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalledWith({ max_actions_per_hour: 300 }));
     await screen.findByText(/Saved\./i);
   });
 

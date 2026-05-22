@@ -245,9 +245,7 @@ async fn handle_get_autonomy_settings_returns_current_value() {
         .expect("handler");
     // into_cli_compatible_json wraps data under "result" when logs are present.
     let inner = out.get("result").unwrap_or(&out);
-    let value = inner
-        .get("max_actions_per_hour")
-        .and_then(|v| v.as_u64());
+    let value = inner.get("max_actions_per_hour").and_then(|v| v.as_u64());
     assert_eq!(value, Some(123));
 
     unsafe {

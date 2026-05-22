@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
 
-import SettingsHeader from '../components/SettingsHeader';
-import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 import {
   openhumanGetAutonomySettings,
   openhumanUpdateAutonomySettings,
 } from '../../../utils/tauriCommands/config';
+import SettingsHeader from '../components/SettingsHeader';
+import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
 const PRESETS = [
   { label: '20 (default)', value: 20 },
@@ -42,10 +42,7 @@ const AutonomyPanel = () => {
         setStatus({ kind: 'idle' });
       } catch (err) {
         if (cancelled) return;
-        setStatus({
-          kind: 'error',
-          message: err instanceof Error ? err.message : String(err),
-        });
+        setStatus({ kind: 'error', message: err instanceof Error ? err.message : String(err) });
       }
     })();
     return () => {
@@ -54,8 +51,7 @@ const AutonomyPanel = () => {
   }, []);
 
   const parsed = Number.parseInt(draft, 10);
-  const isValid =
-    Number.isInteger(parsed) && parsed >= MIN && parsed <= MAX;
+  const isValid = Number.isInteger(parsed) && parsed >= MIN && parsed <= MAX;
   const isChanged = committed !== null && parsed !== committed;
   const canSave = isValid && isChanged && status.kind !== 'saving';
 
@@ -97,9 +93,8 @@ const AutonomyPanel = () => {
             Max actions per hour
           </label>
           <p className="text-xs text-stone-600 dark:text-neutral-400 mt-1">
-            Maximum tool actions an agent can run per rolling hour. New value
-            applies to your next chat — running sessions keep their current
-            limit.
+            Maximum tool actions an agent can run per rolling hour. New value applies to your next
+            chat — running sessions keep their current limit.
           </p>
 
           <div className="mt-3 flex items-center gap-2">
@@ -152,9 +147,7 @@ const AutonomyPanel = () => {
               <span className="text-sage-700 dark:text-sage-300">Saved.</span>
             )}
             {status.kind === 'error' && (
-              <span className="text-coral-600 dark:text-coral-300">
-                Failed: {status.message}
-              </span>
+              <span className="text-coral-600 dark:text-coral-300">Failed: {status.message}</span>
             )}
           </div>
         </section>

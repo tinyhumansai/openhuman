@@ -1036,7 +1036,9 @@ async fn apply_autonomy_settings_no_op_when_patch_empty() {
     let prior = cfg.autonomy.max_actions_per_hour;
     let _ = apply_autonomy_settings(
         &mut cfg,
-        AutonomySettingsPatch { max_actions_per_hour: None },
+        AutonomySettingsPatch {
+            max_actions_per_hour: None,
+        },
     )
     .await
     .expect("apply noop");
@@ -1049,7 +1051,9 @@ async fn apply_autonomy_settings_rejects_zero() {
     let mut cfg = tmp_config(&tmp);
     let err = apply_autonomy_settings(
         &mut cfg,
-        AutonomySettingsPatch { max_actions_per_hour: Some(0) },
+        AutonomySettingsPatch {
+            max_actions_per_hour: Some(0),
+        },
     )
     .await
     .unwrap_err();
@@ -1065,7 +1069,9 @@ async fn apply_autonomy_settings_rejects_above_cap() {
     let mut cfg = tmp_config(&tmp);
     let err = apply_autonomy_settings(
         &mut cfg,
-        AutonomySettingsPatch { max_actions_per_hour: Some(10_001) },
+        AutonomySettingsPatch {
+            max_actions_per_hour: Some(10_001),
+        },
     )
     .await
     .unwrap_err();
@@ -1080,13 +1086,19 @@ async fn load_and_apply_autonomy_settings_roundtrip() {
         std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
     }
 
-    let patch = AutonomySettingsPatch { max_actions_per_hour: Some(500) };
-    let outcome = load_and_apply_autonomy_settings(patch).await.expect("apply");
+    let patch = AutonomySettingsPatch {
+        max_actions_per_hour: Some(500),
+    };
+    let outcome = load_and_apply_autonomy_settings(patch)
+        .await
+        .expect("apply");
     assert!(outcome.value.get("config").is_some());
 
     // Reload from scratch and confirm the saved value sticks.
     let reloaded = load_config_with_timeout().await.expect("reload");
     assert_eq!(reloaded.autonomy.max_actions_per_hour, 500);
 
-    unsafe { std::env::remove_var("OPENHUMAN_WORKSPACE"); }
+    unsafe {
+        std::env::remove_var("OPENHUMAN_WORKSPACE");
+    }
 }

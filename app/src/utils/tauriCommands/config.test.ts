@@ -104,9 +104,9 @@ describe('tauriCommands/config', () => {
   describe('openhumanUpdateAutonomySettings', () => {
     test('throws when not running in Tauri', async () => {
       mockIsTauri.mockReturnValue(false);
-      await expect(
-        openhumanUpdateAutonomySettings({ max_actions_per_hour: 100 })
-      ).rejects.toThrow('Not running in Tauri');
+      await expect(openhumanUpdateAutonomySettings({ max_actions_per_hour: 100 })).rejects.toThrow(
+        'Not running in Tauri'
+      );
       expect(mockCallCoreRpc).not.toHaveBeenCalled();
     });
 
@@ -131,10 +131,7 @@ describe('tauriCommands/config', () => {
     });
 
     test('reads via openhuman.config_get_autonomy_settings', async () => {
-      mockCallCoreRpc.mockResolvedValue({
-        result: { max_actions_per_hour: 250 },
-        logs: [],
-      });
+      mockCallCoreRpc.mockResolvedValue({ result: { max_actions_per_hour: 250 }, logs: [] });
       const out = await openhumanGetAutonomySettings();
       expect(mockCallCoreRpc).toHaveBeenCalledWith({
         method: 'openhuman.config_get_autonomy_settings',
