@@ -2028,11 +2028,8 @@ mod tests {
         let oversize: Vec<String> = (0..(TREE_TAG_MAX_TAGS + 1))
             .map(|i| format!("tag-{i}"))
             .collect();
-        let err = build_rpc_params(
-            "tree.tag",
-            json!({ "chunk_id": "abc", "tags": oversize }),
-        )
-        .expect_err("must reject");
+        let err = build_rpc_params("tree.tag", json!({ "chunk_id": "abc", "tags": oversize }))
+            .expect_err("must reject");
         assert!(
             err.message().contains("accepts at most"),
             "got: {}",
@@ -2053,11 +2050,7 @@ mod tests {
             json!({ "chunk_id": "abc", "tags": [oversize_tag] }),
         )
         .expect_err("must reject");
-        assert!(
-            err.message().contains("exceeds"),
-            "got: {}",
-            err.message()
-        );
+        assert!(err.message().contains("exceeds"), "got: {}", err.message());
     }
 
     #[test]
@@ -2072,11 +2065,8 @@ mod tests {
             .collect();
         // Sanity: each entry is == TREE_TAG_MAX_TAG_LENGTH chars.
         assert!(max_tags.iter().all(|t| t.len() == TREE_TAG_MAX_TAG_LENGTH));
-        let params = build_rpc_params(
-            "tree.tag",
-            json!({ "chunk_id": "abc", "tags": max_tags }),
-        )
-        .expect("at the cap must succeed");
+        let params = build_rpc_params("tree.tag", json!({ "chunk_id": "abc", "tags": max_tags }))
+            .expect("at the cap must succeed");
         // The built params should preserve all TREE_TAG_MAX_TAGS entries.
         assert_eq!(
             params["tags"].as_array().expect("tags is array").len(),
