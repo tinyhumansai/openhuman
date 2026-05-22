@@ -85,7 +85,7 @@ React (invoke)
 - Rust 领域（实现）：仓库根目录 `src/openhuman/`、`src/core_server/`
 
 
-## Tauri IPC 命令 (`app/src-tauri`)
+## Tauri IPC 命令 (`app/src-tauri`) {#tauri-ipc-commands-app-src-tauri}
 
 所有命令都在 **`app/src-tauri/src/lib.rs`** 中的 `tauri::generate_handler![...]` 内注册（桌面构建）。下方名称是 **Rust** 命令名称（在 JS 中通过 serde 应用 camelCase）。
 
@@ -173,7 +173,7 @@ const result = await invoke("core_rpc_relay", {
 _见 `app/src-tauri/src/lib.rs` 获取权威列表。_
 
 
-## Core bridge & helpers (`app/src-tauri`)
+## Core bridge & helpers (`app/src-tauri`) {#core-bridge-helpers-app-src-tauri}
 
 本文档替代了旧的 "SessionService / SocketService" 拆分。Tauri crate **不**嵌入重复的 Socket.io 服务器或 Telegram 客户端；相反，它专注于对 **`openhuman-core`** 二进制文件的**进程管理**和 **HTTP JSON-RPC**。
 
