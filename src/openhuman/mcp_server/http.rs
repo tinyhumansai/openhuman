@@ -5,8 +5,10 @@
 //! MCP clients can talk to this server without custom glue.
 
 use std::collections::HashMap;
+use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use axum::{
@@ -15,12 +17,18 @@ use axum::{
         header::{AUTHORIZATION, CONTENT_TYPE},
         HeaderMap, StatusCode,
     },
-    response::{IntoResponse, Response},
+    response::{
+        sse::{Event, KeepAlive, Sse},
+        IntoResponse, Response,
+    },
     routing::post,
     Json, Router,
 };
 use parking_lot::Mutex;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
+use tokio::sync::broadcast;
+use tokio_stream::{wrappers::BroadcastStream, StreamExt};
 use uuid::Uuid;
 
 use super::protocol;
@@ -43,12 +51,22 @@ struct SessionRecord {
 struct AppState {
     sessions: Arc<Mutex<HashMap<String, SessionRecord>>>,
     auth_token: Option<String>,
+    event_tx: broadcast::Sender<McpSseEvent>,
+}
+
+#[derive(Debug, Clone)]
+struct McpSseEvent {
+    session_id: String,
+    event: Option<String>,
+    data: String,
 }
 
 pub async fn run_http(config: HttpServerConfig) -> Result<()> {
+    let (event_tx, _) = broadcast::channel(128);
     let state = AppState {
         sessions: Arc::new(Mutex::new(HashMap::new())),
         auth_token: config.auth_token.clone(),
+        event_tx,
     };
 
     let app = Router::new()
@@ -82,10 +100,11 @@ async fn handle_post(
     let session_id = header_value(&headers, HEADER_SESSION_ID);
     let protocol_version = header_value(&headers, HEADER_PROTOCOL_VERSION);
     let rpc_method = body.get("method").and_then(Value::as_str).unwrap_or("");
+    let redacted_session_id = session_id.map(redact_session_id);
 
     log::debug!(
         "[mcp_server] HTTP POST method={rpc_method} session={:?} protocol={:?}",
-        session_id,
+        redacted_session_id.as_deref(),
         protocol_version
     );
 
@@ -94,6 +113,7 @@ async fn handle_post(
     }
 
     let Some(session_id) = session_id else {
+        log_request_rejected("missing/invalid session", None, protocol_version, None);
         return text_error(
             StatusCode::BAD_REQUEST,
             "missing or invalid Mcp-Session-Id header",
@@ -103,12 +123,24 @@ async fn handle_post(
     let expected_protocol = {
         let sessions = state.sessions.lock();
         let Some(record) = sessions.get(session_id) else {
+            log_request_rejected(
+                "unknown/expired session",
+                Some(session_id),
+                protocol_version,
+                None,
+            );
             return text_error(StatusCode::NOT_FOUND, "unknown or expired MCP session");
         };
         record.protocol_version.clone()
     };
 
     if protocol_version.as_deref() != Some(expected_protocol.as_str()) {
+        log_request_rejected(
+            "protocol mismatch",
+            Some(session_id),
+            protocol_version,
+            Some(expected_protocol.as_str()),
+        );
         return text_error(
             StatusCode::BAD_REQUEST,
             "missing or invalid MCP-Protocol-Version header",
@@ -147,7 +179,8 @@ async fn handle_initialize(state: &AppState, body: Value) -> Response {
         .to_string();
 
     let session_id = Uuid::new_v4().to_string();
-    log::debug!("[mcp_server] HTTP session created id={session_id} protocol={negotiated}");
+    let redacted_session_id = redact_session_id(&session_id);
+    log::debug!("[mcp_server] HTTP session created id={redacted_session_id} protocol={negotiated}");
     state.sessions.lock().insert(
         session_id.clone(),
         SessionRecord {
@@ -163,19 +196,61 @@ async fn handle_get(State(state): State<AppState>, headers: HeaderMap) -> Respon
         return response;
     }
 
+    let protocol_version = header_value(&headers, HEADER_PROTOCOL_VERSION);
     let Some(session_id) = header_value(&headers, HEADER_SESSION_ID) else {
+        log_request_rejected("missing/invalid session", None, protocol_version, None);
         return text_error(StatusCode::BAD_REQUEST, "missing Mcp-Session-Id header");
     };
-    if !state.sessions.lock().contains_key(session_id) {
-        return text_error(StatusCode::NOT_FOUND, "unknown or expired MCP session");
+
+    let expected_protocol = {
+        let sessions = state.sessions.lock();
+        let Some(record) = sessions.get(session_id) else {
+            log_request_rejected(
+                "unknown/expired session",
+                Some(session_id),
+                protocol_version,
+                None,
+            );
+            return text_error(StatusCode::NOT_FOUND, "unknown or expired MCP session");
+        };
+        record.protocol_version.clone()
+    };
+
+    if protocol_version.as_deref() != Some(expected_protocol.as_str()) {
+        log_request_rejected(
+            "protocol mismatch",
+            Some(session_id),
+            protocol_version,
+            Some(expected_protocol.as_str()),
+        );
+        return text_error(
+            StatusCode::BAD_REQUEST,
+            "missing or invalid MCP-Protocol-Version header",
+        );
     }
 
-    // Phase 1: no server-initiated notifications yet; return an empty SSE stream
-    // so clients can open the events channel without error.
-    (
-        [(CONTENT_TYPE.as_str(), "text/event-stream")],
-        ": openhuman mcp events\n\n",
-    )
+    let redacted_session_id = redact_session_id(session_id);
+    log::debug!("[mcp_server] HTTP events stream opened session={redacted_session_id}");
+
+    let session_id = session_id.to_string();
+    let stream = BroadcastStream::new(state.event_tx.subscribe()).filter_map(move |message| {
+        let event = match message {
+            Ok(event) if event.session_id == session_id => event,
+            _ => return None,
+        };
+        let mut sse_event = Event::default().data(event.data);
+        if let Some(name) = event.event {
+            sse_event = sse_event.event(name);
+        }
+        Some(Ok::<Event, Infallible>(sse_event))
+    });
+
+    Sse::new(stream)
+        .keep_alive(
+            KeepAlive::new()
+                .interval(Duration::from_secs(10))
+                .text("keepalive"),
+        )
         .into_response()
 }
 
@@ -185,11 +260,18 @@ async fn handle_delete(State(state): State<AppState>, headers: HeaderMap) -> Res
     }
 
     let Some(session_id) = header_value(&headers, HEADER_SESSION_ID) else {
+        log_request_rejected(
+            "missing/invalid session",
+            None,
+            header_value(&headers, HEADER_PROTOCOL_VERSION),
+            None,
+        );
         return text_error(StatusCode::BAD_REQUEST, "missing Mcp-Session-Id header");
     };
 
     if state.sessions.lock().remove(session_id).is_some() {
-        log::debug!("[mcp_server] HTTP session closed id={session_id}");
+        let redacted_session_id = redact_session_id(session_id);
+        log::debug!("[mcp_server] HTTP session closed id={redacted_session_id}");
     }
     StatusCode::NO_CONTENT.into_response()
 }
@@ -219,6 +301,26 @@ fn header_value<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
     headers.get(name).and_then(|value| value.to_str().ok())
 }
 
+fn redact_session_id(session_id: &str) -> String {
+    let digest = Sha256::digest(session_id.as_bytes());
+    format!("sha256:{}", hex::encode(&digest[..4]))
+}
+
+fn log_request_rejected(
+    reason: &str,
+    session_id: Option<&str>,
+    protocol_version: Option<&str>,
+    expected_protocol: Option<&str>,
+) {
+    let redacted_session_id = session_id.map(redact_session_id);
+    log::debug!(
+        "[mcp_server] HTTP request rejected reason={reason} session={:?} protocol={:?} expected_protocol={:?}",
+        redacted_session_id.as_deref(),
+        protocol_version,
+        expected_protocol
+    );
+}
+
 fn text_error(status: StatusCode, message: &str) -> Response {
     (status, message.to_string()).into_response()
 }
@@ -231,11 +333,19 @@ mod tests {
     use serde_json::json;
 
     async fn spawn_test_server(auth_token: Option<&str>) -> String {
+        spawn_test_server_with_events(auth_token).await.0
+    }
+
+    async fn spawn_test_server_with_events(
+        auth_token: Option<&str>,
+    ) -> (String, broadcast::Sender<McpSseEvent>) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
+        let (event_tx, _) = broadcast::channel(128);
         let state = AppState {
             sessions: Arc::new(Mutex::new(HashMap::new())),
             auth_token: auth_token.map(str::to_string),
+            event_tx: event_tx.clone(),
         };
         let app = Router::new()
             .route("/", post(handle_post).get(handle_get).delete(handle_delete))
@@ -243,7 +353,7 @@ mod tests {
         tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
         });
-        format!("http://{addr}/")
+        (format!("http://{addr}/"), event_tx)
     }
 
     #[tokio::test]
@@ -258,10 +368,72 @@ mod tests {
         let tools = client.list_tools().await.expect("tools/list");
         assert!(tools.iter().any(|tool| tool.name == "memory.search"));
 
-        let events = client.drain_events(None).await.expect("GET events");
-        assert!(events.is_empty());
-
         client.close_session().await.expect("DELETE session");
+    }
+
+    #[tokio::test]
+    async fn get_events_returns_long_lived_sse_stream() {
+        let (endpoint, event_tx) = spawn_test_server_with_events(None).await;
+        let http = reqwest::Client::new();
+        let init = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": protocol::LATEST_PROTOCOL_VERSION,
+                "capabilities": {},
+                "clientInfo": {"name": "test", "version": "0"}
+            }
+        });
+        let init_response = http
+            .post(&endpoint)
+            .header(CONTENT_TYPE, "application/json")
+            .json(&init)
+            .send()
+            .await
+            .expect("initialize");
+        assert_eq!(init_response.status(), StatusCode::OK);
+        let session_id = init_response
+            .headers()
+            .get(HEADER_SESSION_ID)
+            .and_then(|value| value.to_str().ok())
+            .expect("session header")
+            .to_string();
+
+        let events_response = http
+            .get(&endpoint)
+            .header(HEADER_SESSION_ID, session_id.as_str())
+            .header(HEADER_PROTOCOL_VERSION, protocol::LATEST_PROTOCOL_VERSION)
+            .send()
+            .await
+            .expect("GET events");
+        assert_eq!(events_response.status(), StatusCode::OK);
+        assert!(events_response
+            .headers()
+            .get(CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| value.starts_with("text/event-stream")));
+
+        event_tx
+            .send(McpSseEvent {
+                session_id,
+                event: Some("test".into()),
+                data: "{\"ok\":true}".into(),
+            })
+            .expect("send test event");
+
+        let mut stream = events_response.bytes_stream();
+        let chunk = tokio::time::timeout(
+            Duration::from_secs(2),
+            futures_util::StreamExt::next(&mut stream),
+        )
+        .await
+        .expect("timely event chunk")
+        .expect("event chunk")
+        .expect("event bytes");
+        let text = String::from_utf8_lossy(&chunk);
+        assert!(text.contains("event: test"), "{text}");
+        assert!(text.contains("data: {\"ok\":true}"), "{text}");
     }
 
     #[tokio::test]
@@ -271,6 +443,7 @@ mod tests {
         let state = AppState {
             sessions: Arc::new(Mutex::new(HashMap::new())),
             auth_token: None,
+            event_tx: broadcast::channel(128).0,
         };
         let app = Router::new()
             .route("/", post(handle_post))
