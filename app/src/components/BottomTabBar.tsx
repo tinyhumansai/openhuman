@@ -2,8 +2,6 @@ import { useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
 import { useT } from '../lib/i18n/I18nContext';
-// [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
-// import { isWelcomeLocked } from '../lib/coreState/store';
 import { useCoreState } from '../providers/CoreStateProvider';
 import { selectCompanionSessionActive } from '../store/companionSlice';
 import { useAppSelector } from '../store/hooks';
@@ -147,14 +145,6 @@ const BottomTabBar = () => {
   ) {
     return null;
   }
-
-  // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
-  // Welcome lockdown (#883) — hide the bottom nav entirely while the
-  // chat-based welcome-agent flow is still in progress so the user
-  // cannot navigate away from the welcome conversation.
-  // if (isWelcomeLocked(snapshot)) {
-  //   return null;
-  // }
 
   // On /accounts we want as much real estate as possible for the embedded
   // webview — but *only* when a real account (WhatsApp, …) is selected.

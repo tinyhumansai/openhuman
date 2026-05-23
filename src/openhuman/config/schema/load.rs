@@ -416,6 +416,18 @@ fn decrypt_config_secrets(config: &mut Config, openhuman_dir: &Path) -> Result<(
 
     decrypt_optional_secret(&store, &mut config.api_key, "api_key")?;
 
+    // Search engines: BYO API keys for Parallel and Brave.
+    decrypt_optional_secret(
+        &store,
+        &mut config.search.parallel.api_key,
+        "search.parallel.api_key",
+    )?;
+    decrypt_optional_secret(
+        &store,
+        &mut config.search.brave.api_key,
+        "search.brave.api_key",
+    )?;
+
     // Channels: decrypt every optional secret field.
     //
     // For required (non-Option<String>) secret fields we wrap the value in a
@@ -512,6 +524,17 @@ fn encrypt_config_secrets(config: &mut Config) -> Result<()> {
     let store = crate::openhuman::security::SecretStore::new(parent_dir, true);
 
     encrypt_optional_secret(&store, &mut config.api_key, "api_key")?;
+
+    encrypt_optional_secret(
+        &store,
+        &mut config.search.parallel.api_key,
+        "search.parallel.api_key",
+    )?;
+    encrypt_optional_secret(
+        &store,
+        &mut config.search.brave.api_key,
+        "search.brave.api_key",
+    )?;
 
     let ch = &mut config.channels_config;
     if let Some(ref mut tg) = ch.telegram {
@@ -1284,6 +1307,14 @@ impl Config {
         }
 
         set_runtime_proxy_config(self.proxy.clone());
+
+        // Push the embedding request budget into its process-global limiter so
+        // every cloud embed (via the shared `OpenAiEmbedding` chokepoint) is
+        // throttled to the configured rate. Kept here, with the proxy commit,
+        // so the pure overlay stays side-effect-free for tests.
+        crate::openhuman::embeddings::rate_limit::set_embedding_rate_limit(
+            self.memory.embedding_rate_limit_per_min,
+        );
     }
 
     /// Pure-ish env overlay: applies overrides read from `env` to `self`.
@@ -1325,6 +1356,13 @@ impl Config {
                 if (0.0..=2.0).contains(&temp) {
                     self.default_temperature = temp;
                 }
+            }
+        }
+
+        if let Some(language) = env.get("OPENHUMAN_OUTPUT_LANGUAGE") {
+            let language = language.trim();
+            if !language.is_empty() {
+                self.output_language = Some(language.to_string());
             }
         }
 
@@ -1396,6 +1434,39 @@ impl Config {
             if let Ok(timeout_secs) = timeout_secs.parse::<u64>() {
                 if timeout_secs > 0 {
                     self.searxng.timeout_secs = timeout_secs;
+                }
+            }
+        }
+
+        // Unified search engine selector. `OPENHUMAN_SEARCH_ENGINE` picks
+        // the active engine; per-engine API keys auto-route to BYO once set.
+        if let Some(engine) = env.get_any(&["OPENHUMAN_SEARCH_ENGINE", "SEARCH_ENGINE"]) {
+            let engine = engine.trim().to_ascii_lowercase();
+            if !engine.is_empty() {
+                self.search.engine = engine;
+            }
+        }
+        if let Some(key) = env.get_any(&["OPENHUMAN_PARALLEL_API_KEY", "PARALLEL_API_KEY"]) {
+            if !key.trim().is_empty() {
+                self.search.parallel.api_key = Some(key);
+            }
+        }
+        if let Some(key) = env.get_any(&["OPENHUMAN_BRAVE_API_KEY", "BRAVE_API_KEY"]) {
+            if !key.trim().is_empty() {
+                self.search.brave.api_key = Some(key);
+            }
+        }
+        if let Some(max) = env.get_any(&["OPENHUMAN_SEARCH_MAX_RESULTS", "SEARCH_MAX_RESULTS"]) {
+            if let Ok(n) = max.parse::<usize>() {
+                if (1..=20).contains(&n) {
+                    self.search.max_results = n;
+                }
+            }
+        }
+        if let Some(t) = env.get_any(&["OPENHUMAN_SEARCH_TIMEOUT_SECS", "SEARCH_TIMEOUT_SECS"]) {
+            if let Ok(n) = t.parse::<u64>() {
+                if n > 0 {
+                    self.search.timeout_secs = n;
                 }
             }
         }
@@ -1725,6 +1796,15 @@ impl Config {
         if let Ok(flag) = std::env::var("OPENHUMAN_MEMORY_EMBED_STRICT") {
             if let Some(strict) = parse_env_bool("OPENHUMAN_MEMORY_EMBED_STRICT", &flag) {
                 self.memory_tree.embedding_strict = strict;
+            }
+        }
+        // Cloud embedding request budget (requests/min) on `memory.*`. `0`
+        // disables throttling. A blank or non-numeric value leaves the
+        // configured/default budget untouched. Committed to the process-global
+        // limiter in `apply_env_overrides`.
+        if let Some(val) = env.get("OPENHUMAN_MEMORY_EMBED_RATE_LIMIT") {
+            if let Ok(per_min) = val.trim().parse::<u32>() {
+                self.memory.embedding_rate_limit_per_min = per_min;
             }
         }
 

@@ -19,13 +19,13 @@ A plugin-only model means tools live in different processes, behind RPC, with th
 * Consistent error handling.
 * Zero install friction.
 * All output passes through [Smart Token Compression](../token-compression.md) for free.
-* Predictable security boundary - filesystem tools respect workspace scoping, network tools go through the OpenHuman proxy.
+* Predictable security boundary - filesystem tools respect workspace scoping, and network tools use the managed OpenHuman proxy by default unless you opt into a self-hosted path such as SearXNG.
 
 ## The toolbelt
 
 | Family | What it covers |
 | ------ | -------------- |
-| [Web Search](web-search.md) | Search the live web without bringing your own API key. |
+| [Web Search](web-search.md) | Search the live web via the managed proxy, or opt into self-hosted SearXNG. |
 | [Web Scraper](web-scraper.md) | Pull clean text out of any URL - articles, docs, READMEs. |
 | [Coder](coder.md) | Read/write/edit/patch files, glob, grep, git, lint, test. |
 | [Browser & Computer Control](browser-and-computer.md) | Open URLs, screenshot, click, type, move the mouse. |

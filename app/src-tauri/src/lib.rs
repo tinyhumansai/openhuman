@@ -8,12 +8,17 @@ mod cef_profile;
 mod companion_commands;
 mod core_process;
 mod core_rpc;
+#[cfg(target_os = "linux")]
+mod deep_link_ipc;
+#[cfg(target_os = "windows")]
+mod deep_link_ipc_windows;
 mod dictation_hotkeys;
 mod discord_scanner;
 mod fake_camera;
 mod file_logging;
 mod gmessages_scanner;
 mod imessage_scanner;
+mod loopback_oauth;
 #[cfg(target_os = "macos")]
 mod mascot_native_window;
 mod mcp_commands;
@@ -30,8 +35,10 @@ mod slack_scanner;
 mod telegram_scanner;
 mod webview_accounts;
 mod webview_apis;
+mod wechat_scanner;
 mod whatsapp_scanner;
 mod window_state;
+mod workspace_paths;
 
 #[cfg(target_os = "macos")]
 use tauri::menu::{PredefinedMenuItem, Submenu};
@@ -408,6 +415,33 @@ struct ResolvedDataPaths {
     active_workspace_marker_path: std::path::PathBuf,
 }
 
+fn is_windows_file_lock_raw_os_error(raw_os_error: Option<i32>) -> bool {
+    matches!(raw_os_error, Some(32 | 33))
+}
+
+fn is_windows_file_lock_error(error: &std::io::Error) -> bool {
+    cfg!(windows) && is_windows_file_lock_raw_os_error(error.raw_os_error())
+}
+
+fn reset_local_data_delete_error(
+    label: &str,
+    path: &std::path::Path,
+    error: &std::io::Error,
+) -> String {
+    if is_windows_file_lock_error(error) {
+        log::warn!(
+            "[core] reset_local_data: Windows file lock blocked removal of {label} at {}: {error}",
+            path.display()
+        );
+        return format!(
+            "Failed to remove {label} at {} because it is locked by another OpenHuman window or process. Close all OpenHuman windows and try again. ({error})",
+            path.display()
+        );
+    }
+
+    format!("Failed to remove {label} at {}: {error}", path.display())
+}
+
 /// Call the core's `config_get_data_paths` RPC and parse the response.
 async fn fetch_data_paths() -> Result<ResolvedDataPaths, String> {
     let url = crate::core_rpc::core_rpc_url_value();
@@ -475,10 +509,7 @@ async fn remove_path_if_exists(path: &std::path::Path, label: &str) -> Result<()
             );
             Ok(())
         }
-        Err(e) => Err(format!(
-            "Failed to remove {label} at {}: {e}",
-            path.display()
-        )),
+        Err(e) => Err(reset_local_data_delete_error(label, path, &e)),
     }
 }
 
@@ -499,10 +530,7 @@ async fn remove_dir_if_exists(path: &std::path::Path, label: &str) -> Result<(),
             );
             Ok(())
         }
-        Err(e) => Err(format!(
-            "Failed to remove {label} at {}: {e}",
-            path.display()
-        )),
+        Err(e) => Err(reset_local_data_delete_error(label, path, &e)),
     }
 }
 
@@ -1169,6 +1197,59 @@ fn set_main_window_hidden(hide: bool) {
     );
 }
 
+/// Look up the main `WebviewWindow`, optionally waiting briefly on Windows
+/// for the Tauri runtime to re-track the window after SW_SHOW.
+///
+/// Why this exists (OPENHUMAN-TAURI-3A): on Windows the close button routes
+/// through [`set_main_window_hidden`] which uses raw-HWND `SW_HIDE`. CEF
+/// treats the hidden host as gone and the Tauri runtime drops its
+/// `WebviewWindow` record for `"main"` until the next event-loop tick after
+/// SW_SHOW restores visibility. A tray "Show window" callback that runs
+/// `set_main_window_hidden(false)` and then immediately calls
+/// `app.get_webview_window("main")` can race the re-track step and observe
+/// `None` even though the OS window is visible — Sentry sees a
+/// `[tray] failed to show main window from menu: main window not found`
+/// warn even though, from the user's perspective, the window came back.
+///
+/// Bounded retry budget: up to 5 lookups with 10 ms between attempts (≤ 50 ms
+/// worst case). The tray menu is closed during this window, so the small
+/// blocking delay is invisible. After the budget expires the original
+/// error path still triggers, preserving the signal if the runtime never
+/// re-tracks (which would indicate a real lifecycle bug, not a race).
+///
+/// Non-Windows platforms use a single lookup — the close-to-tray flow that
+/// produces the race is Windows-specific (the macOS close button routes
+/// through `app.hide()` per PR #2049, and Linux/X11 keeps the
+/// `WebviewWindow` record across `WM_DELETE_WINDOW` handling).
+fn get_main_webview_window_with_retry(
+    app: &AppHandle<AppRuntime>,
+) -> Option<tauri::WebviewWindow<AppRuntime>> {
+    #[cfg(target_os = "windows")]
+    {
+        const ATTEMPTS: usize = 5;
+        const BACKOFF: std::time::Duration = std::time::Duration::from_millis(10);
+        for attempt in 0..ATTEMPTS {
+            if let Some(window) = app.get_webview_window("main") {
+                if attempt > 0 {
+                    log::debug!(
+                        "[show_main_window] runtime re-tracked main window after {} retries",
+                        attempt
+                    );
+                }
+                return Some(window);
+            }
+            if attempt + 1 < ATTEMPTS {
+                std::thread::sleep(BACKOFF);
+            }
+        }
+        None
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        app.get_webview_window("main")
+    }
+}
+
 fn show_main_window(app: &AppHandle<AppRuntime>) -> Result<(), String> {
     // On Windows: surface the OS top-level Chrome_WidgetWin_1 frame BEFORE
     // any Tauri lookups. After our close handler's SW_HIDE the runtime
@@ -1177,7 +1258,10 @@ fn show_main_window(app: &AppHandle<AppRuntime>) -> Result<(), String> {
     // and the early `?` below would abort before SW_SHOW fires (#1607).
     // EnumWindows + SW_SHOW operates directly on the OS HWND that
     // survived independently, and the runtime re-tracks the window once
-    // it's visible again.
+    // it's visible again — but re-tracking lands on the next event-loop
+    // tick, not synchronously with SW_SHOW. `get_main_webview_window_with_retry`
+    // bounds the wait to ~50 ms total so the tray callback can pick up the
+    // re-tracked window without re-emitting OPENHUMAN-TAURI-3A.
     #[cfg(target_os = "windows")]
     {
         set_main_window_hidden(false);
@@ -1186,8 +1270,7 @@ fn show_main_window(app: &AppHandle<AppRuntime>) -> Result<(), String> {
             let _ = webview.set_focus();
         }
     }
-    let window = app
-        .get_webview_window("main")
+    let window = get_main_webview_window_with_retry(app)
         .ok_or_else(|| "main window not found".to_string())?;
     window
         .show()
@@ -1373,6 +1456,31 @@ fn setup_tray(app: &AppHandle<AppRuntime>) -> tauri::Result<()> {
 }
 
 const CEF_PREWARM_LABEL: &str = "cef-prewarm";
+
+/// Decide whether to spawn the CEF cold-start prewarm webview.
+///
+/// Testable pure function — callers pass the relevant env values directly.
+///
+/// Decision matrix:
+/// - `env_override` = `Some("0"|"false"|"no"|"off")` → disabled (explicit)
+/// - `env_override` = `Some(<other non-empty string>)` → enabled (explicit opt-in;
+///   overrides even the Wayland guard so ops can re-enable if CEF subprocess
+///   X handling improves)
+/// - `env_override` = `None` (env var unset, default path):
+///   - `wayland_display_set` = `true` → **disabled** — auto-guard against the
+///     fatal `X_ConfigureWindow BadWindow` crash that fires in CEF render
+///     subprocesses on Wayland/XWayland sessions (issue #2463). The main-process
+///     silent X error handler (`install_silent_x_error_handler`) does not reach
+///     CEF subprocesses; until subprocess-level coverage is available, skipping
+///     the prewarm child webview is the safest mitigation.
+///   - `wayland_display_set` = `false` → enabled
+fn cef_prewarm_enabled(env_override: Option<&str>, wayland_display_set: bool) -> bool {
+    if let Some(v) = env_override {
+        let v = v.trim().to_ascii_lowercase();
+        return !(v == "0" || v == "false" || v == "no" || v == "off");
+    }
+    !wayland_display_set
+}
 
 /// Spawn a hidden 1×1 child webview at `about:blank` on the main window so
 /// CEF's child-webview render path is hot before the user clicks an
@@ -2080,11 +2188,10 @@ pub fn run() {
     //
     // Fix: acquire a named Win32 mutex at the very top of `run()` — before
     // any CEF or builder work — so any secondary instance sees
-    // `ERROR_ALREADY_EXISTS` and exits immediately. The mutex name uses
-    // a `-cef-init` suffix distinct from the plugin's own `-sim` mutex so
-    // the two guards don't interfere; the plugin still handles WM_COPYDATA
-    // forwarding for graceful "focus primary" behaviour once the app is
-    // fully initialised.
+    // `ERROR_ALREADY_EXISTS` and exits immediately. If the secondary was
+    // launched for an `openhuman://` OAuth callback, forward that URL to the
+    // primary through our pre-CEF pipe before exiting; the Tauri deep-link
+    // plugin cannot run on this early secondary path.
     //
     // The RAII guard holds the mutex handle for the lifetime of `run()`.
     // Windows releases all process handles automatically on exit, so
@@ -2103,9 +2210,17 @@ pub fn run() {
 
         if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
             // Another instance is already past this point — exit before we
-            // touch CEF at all. The plugin's WM_COPYDATA path won't run
-            // here (it needs an AppHandle from setup()), but the primary
-            // is already showing its window so the user experience is fine.
+            // touch CEF at all. Forward deep links first so OAuth callbacks
+            // are not dropped by this early pre-plugin exit.
+            match deep_link_ipc_windows::try_forward_deep_links() {
+                deep_link_ipc_windows::ForwardResult::Forwarded
+                | deep_link_ipc_windows::ForwardResult::NoUrls => {}
+                deep_link_ipc_windows::ForwardResult::NoPrimary => {
+                    log::warn!(
+                        "[single-instance] secondary had deep-link argv but could not reach primary pipe"
+                    );
+                }
+            }
             if !handle.is_null() {
                 unsafe { CloseHandle(handle) };
             }
@@ -2127,6 +2242,9 @@ pub fn run() {
         OwnedMutex(handle as isize)
     };
 
+    #[cfg(windows)]
+    let _deep_link_pipe_guard = deep_link_ipc_windows::bind_and_listen();
+
     // CEF cache-lock preflight (macOS only): if another OpenHuman instance
     // is already holding the CEF user-data-dir, the vendored
     // `tauri-runtime-cef` panics inside `cef::initialize` with a Rust
@@ -2146,6 +2264,23 @@ pub fn run() {
 
     #[cfg(target_os = "macos")]
     process_recovery::reap_stale_openhuman_processes();
+
+    // ── Linux pre-CEF deep-link forwarding guard (issue #2359) ────────────
+    // On Linux, a secondary instance with an openhuman:// URL in argv exits
+    // at the CEF preflight check before Builder::setup() runs, silently
+    // dropping the OAuth callback. Detect and forward the URL here, before
+    // CEF preflight can exit(1).
+    #[cfg(target_os = "linux")]
+    let _deep_link_socket_guard = {
+        use deep_link_ipc::ForwardResult;
+        match deep_link_ipc::try_forward_deep_links() {
+            ForwardResult::Forwarded => {
+                std::process::exit(0);
+            }
+            ForwardResult::NoPrimary | ForwardResult::NoUrls => {}
+        }
+        deep_link_ipc::bind_and_listen()
+    };
 
     // CEF cache-lock preflight: if another OpenHuman instance holds the CEF
     // user-data-dir SingletonLock, `cef_initialize` returns 0 and the vendored
@@ -2405,6 +2540,7 @@ pub fn run() {
     let builder = builder.manage(slack_scanner::ScannerRegistry::new());
     let builder = builder.manage(discord_scanner::ScannerRegistry::new());
     let builder = builder.manage(telegram_scanner::ScannerRegistry::new());
+    let builder = builder.manage(wechat_scanner::ScannerRegistry::new());
     let builder = builder.manage(screen_capture::ScreenShareState::new());
     let builder = builder.manage(meet_call::MeetCallState::new());
     let builder = builder.manage(meet_audio::MeetAudioState::new());
@@ -2416,6 +2552,7 @@ pub fn run() {
                 if let Err(err) = app.deep_link().register_all() {
                     log::warn!("[deep-link] register_all failed (non-fatal): {err}");
                 }
+                deep_link_ipc_windows::drain_pending_urls(app.app_handle());
             }
             #[cfg(target_os = "linux")]
             {
@@ -2460,6 +2597,11 @@ pub fn run() {
                         missing.join(", ")
                     );
                 }
+
+                // Drain any deep-link URLs that arrived via the IPC socket
+                // before setup() ran (issue #2359). Also installs the live
+                // handler so URLs arriving after setup() are emitted directly.
+                deep_link_ipc::drain_pending_urls(app.app_handle());
             }
 
             // Start the webview_apis WebSocket bridge BEFORE spawning core —
@@ -2749,13 +2891,12 @@ pub fn run() {
             // tear it down in the shutdown sequence below. Disable at
             // runtime with `OPENHUMAN_CEF_PREWARM=0` if it regresses.
             {
-                let prewarm_enabled = std::env::var("OPENHUMAN_CEF_PREWARM")
-                    .map(|v| {
-                        let v = v.trim().to_ascii_lowercase();
-                        !(v == "0" || v == "false" || v == "no" || v == "off")
-                    })
-                    .unwrap_or(true);
-                if prewarm_enabled {
+                #[cfg(target_os = "linux")]
+                let wayland_display_set = has_non_empty_env("WAYLAND_DISPLAY");
+                #[cfg(not(target_os = "linux"))]
+                let wayland_display_set = false;
+                let env_override = std::env::var("OPENHUMAN_CEF_PREWARM").ok();
+                if cef_prewarm_enabled(env_override.as_deref(), wayland_display_set) {
                     let app_handle = app.handle().clone();
                     tauri::async_runtime::spawn(async move {
                         // Defer one tick so the main window finishes its
@@ -2765,6 +2906,12 @@ pub fn run() {
                             log::warn!("[cef-prewarm] failed (non-fatal): {e}");
                         }
                     });
+                } else if wayland_display_set && env_override.is_none() {
+                    log::info!(
+                        "[cef-prewarm] auto-disabled: WAYLAND_DISPLAY is set (Wayland/XWayland \
+                         session) — prevents X_ConfigureWindow BadWindow crash in CEF \
+                         subprocesses (issue #2463); set OPENHUMAN_CEF_PREWARM=1 to override"
+                    );
                 } else {
                     log::info!("[cef-prewarm] disabled via OPENHUMAN_CEF_PREWARM");
                 }
@@ -3069,13 +3216,18 @@ pub fn run() {
             mascot_window_hide,
             file_logging::reveal_logs_folder,
             file_logging::logs_folder_path,
+            workspace_paths::open_workspace_path,
+            workspace_paths::reveal_workspace_path,
+            workspace_paths::preview_workspace_text,
             meet_call::meet_call_open_window,
             meet_call::meet_call_close_window,
             companion_commands::register_companion_hotkey,
             companion_commands::unregister_companion_hotkey,
             companion_commands::companion_activate,
             mcp_commands::mcp_resolve_binary_path,
-            mcp_commands::mcp_open_client_config
+            mcp_commands::mcp_open_client_config,
+            loopback_oauth::start_loopback_oauth_listener,
+            loopback_oauth::stop_loopback_oauth_listener
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
@@ -3388,6 +3540,41 @@ mod tests {
         }
     }
 
+    #[test]
+    fn reset_local_data_windows_file_lock_error_codes_are_recognized() {
+        assert!(is_windows_file_lock_raw_os_error(Some(32)));
+        assert!(is_windows_file_lock_raw_os_error(Some(33)));
+        assert!(!is_windows_file_lock_raw_os_error(Some(5)));
+        assert!(!is_windows_file_lock_raw_os_error(None));
+    }
+
+    #[test]
+    fn reset_local_data_delete_error_keeps_generic_message_for_other_errors() {
+        let err = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+        let msg = reset_local_data_delete_error(
+            "current openhuman dir",
+            std::path::Path::new("/tmp/openhuman"),
+            &err,
+        );
+
+        assert!(msg.starts_with("Failed to remove current openhuman dir at /tmp/openhuman:"));
+        assert!(!msg.contains("Close all OpenHuman windows and try again"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn reset_local_data_delete_error_explains_windows_file_locks() {
+        let err = std::io::Error::from_raw_os_error(32);
+        let msg = reset_local_data_delete_error(
+            "current openhuman dir",
+            std::path::Path::new("C:\\Users\\me\\.openhuman"),
+            &err,
+        );
+
+        assert!(msg.contains("locked by another OpenHuman window or process"));
+        assert!(msg.contains("Close all OpenHuman windows and try again"));
+    }
+
     /// Tests for setup_tray conditional compilation
     /// The PR adds two versions of setup_tray():
     /// 1. No-op for linux + cef: logs warning and returns Ok(())
@@ -3687,6 +3874,60 @@ mod tests {
     #[test]
     fn platform_arch_is_aarch64_on_apple_silicon_build() {
         assert_eq!(std::env::consts::ARCH, "aarch64");
+    }
+
+    // -------------------------------------------------------------------------
+    // cef_prewarm_enabled (issue #2463 — Wayland/XWayland BadWindow guard)
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn prewarm_enabled_by_default_on_non_wayland() {
+        assert!(cef_prewarm_enabled(None, false));
+    }
+
+    #[test]
+    fn prewarm_auto_disabled_on_wayland_when_env_unset() {
+        assert!(!cef_prewarm_enabled(None, true));
+    }
+
+    #[test]
+    fn prewarm_explicit_disable_respected_on_non_wayland() {
+        assert!(!cef_prewarm_enabled(Some("0"), false));
+        assert!(!cef_prewarm_enabled(Some("false"), false));
+        assert!(!cef_prewarm_enabled(Some("no"), false));
+        assert!(!cef_prewarm_enabled(Some("off"), false));
+    }
+
+    #[test]
+    fn prewarm_explicit_disable_respected_on_wayland() {
+        assert!(!cef_prewarm_enabled(Some("0"), true));
+        assert!(!cef_prewarm_enabled(Some("false"), true));
+    }
+
+    #[test]
+    fn prewarm_explicit_enable_overrides_wayland_guard() {
+        // OPENHUMAN_CEF_PREWARM=1 (or any non-disable value) lets ops
+        // force prewarm even on Wayland sessions.
+        assert!(cef_prewarm_enabled(Some("1"), true));
+        assert!(cef_prewarm_enabled(Some("true"), true));
+        assert!(cef_prewarm_enabled(Some("yes"), true));
+        assert!(cef_prewarm_enabled(Some("on"), true));
+    }
+
+    #[test]
+    fn prewarm_disable_flags_are_case_insensitive() {
+        assert!(!cef_prewarm_enabled(Some("FALSE"), false));
+        assert!(!cef_prewarm_enabled(Some("OFF"), true));
+        assert!(!cef_prewarm_enabled(Some("  0  "), false));
+        assert!(!cef_prewarm_enabled(Some("  No  "), true));
+    }
+
+    #[test]
+    fn prewarm_unknown_env_value_treated_as_enable() {
+        // Any string that is not a recognised disable token → treat as enable.
+        assert!(cef_prewarm_enabled(Some("enabled"), false));
+        assert!(cef_prewarm_enabled(Some("yes"), false));
+        assert!(cef_prewarm_enabled(Some(""), false));
     }
 
     // -------------------------------------------------------------------------

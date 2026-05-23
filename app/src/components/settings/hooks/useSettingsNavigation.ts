@@ -16,6 +16,7 @@ export type SettingsRoute =
   | 'team-members'
   | 'team-invites'
   | 'developer-options'
+  | 'autonomy'
   | 'ai'
   | 'llm'
   | 'voice'
@@ -92,6 +93,7 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
     if (path.includes('/settings/privacy')) return 'privacy';
     if (path.includes('/settings/billing')) return 'billing';
     if (path.includes('/settings/developer-options')) return 'developer-options';
+    if (path.includes('/settings/autonomy')) return 'autonomy';
     if (path.includes('/settings/llm')) return 'llm';
     if (path.includes('/settings/ai')) return 'ai';
     if (path.includes('/settings/local-model-debug')) return 'local-model-debug';
@@ -222,6 +224,7 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
       case 'composio-routing':
       case 'notification-routing':
       case 'mcp-server':
+      case 'autonomy':
         return [settingsCrumb, developerCrumb];
 
       // Developer options section page

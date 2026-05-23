@@ -1,12 +1,10 @@
 mod archetype_delegation;
 mod ask_clarification;
-pub(crate) mod check_onboarding_status;
-pub(crate) mod complete_onboarding;
 mod delegate;
 mod dispatch;
-pub(crate) mod onboarding_status;
 mod plan_exit;
 pub mod remember_preference;
+pub mod save_preference;
 mod skill_delegation;
 mod spawn_parallel_agents;
 mod spawn_subagent;
@@ -17,11 +15,10 @@ pub(crate) use dispatch::dispatch_subagent;
 
 pub use archetype_delegation::ArchetypeDelegationTool;
 pub use ask_clarification::AskClarificationTool;
-pub use check_onboarding_status::CheckOnboardingStatusTool;
-pub use complete_onboarding::CompleteOnboardingTool;
 pub use delegate::DelegateTool;
 pub use plan_exit::{PlanExitTool, PLAN_EXIT_MARKER};
 pub use remember_preference::RememberPreferenceTool;
+pub use save_preference::SavePreferenceTool;
 pub use skill_delegation::SkillDelegationTool;
 pub use spawn_parallel_agents::SpawnParallelAgentsTool;
 pub use spawn_subagent::SpawnSubagentTool;

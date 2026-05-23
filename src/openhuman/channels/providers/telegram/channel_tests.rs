@@ -148,6 +148,48 @@ fn telegram_api_url() {
     );
 }
 
+// ── OPENHUMAN_TELEGRAM_API_BASE override tests ──────────────────────────────
+//
+// Exercises `resolve_api_base` directly as a pure function so the test does
+// not mutate `std::env`. Mutating env here races with other parallel tests in
+// this module that construct `TelegramChannel::new()` and expect the default
+// api.telegram.org base.
+#[test]
+fn telegram_api_base_default_when_unset() {
+    use super::super::channel_core::resolve_api_base;
+    assert_eq!(resolve_api_base(None), "https://api.telegram.org");
+    assert_eq!(
+        resolve_api_base(Some("".to_string())),
+        "https://api.telegram.org"
+    );
+    assert_eq!(
+        resolve_api_base(Some("   ".to_string())),
+        "https://api.telegram.org"
+    );
+}
+
+#[test]
+fn telegram_api_base_custom_value() {
+    use super::super::channel_core::resolve_api_base;
+    assert_eq!(
+        resolve_api_base(Some("http://127.0.0.1:18473".to_string())),
+        "http://127.0.0.1:18473"
+    );
+}
+
+#[test]
+fn telegram_api_base_trailing_slash_stripped() {
+    use super::super::channel_core::resolve_api_base;
+    assert_eq!(
+        resolve_api_base(Some("http://127.0.0.1:18473/".to_string())),
+        "http://127.0.0.1:18473"
+    );
+    assert_eq!(
+        resolve_api_base(Some("http://example.com///".to_string())),
+        "http://example.com"
+    );
+}
+
 #[test]
 fn telegram_user_allowed_wildcard() {
     let ch = TelegramChannel::new("t".into(), vec!["*".into()], false);

@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import mascotReducer, {
   DEFAULT_MASCOT_COLOR,
+  setCustomMascotGifUrl,
   setMascotColor,
   setSelectedMascotId,
 } from '../../../../store/mascotSlice';
@@ -221,6 +222,42 @@ describe('MascotPanel — mascotSlice rehydrate guard', () => {
       const localRow = await screen.findByText(/Local OpenHuman/);
       fireEvent.click(localRow);
       expect(store.getState().mascot.selectedMascotId).toBeNull();
+    });
+
+    it('saves a custom GIF avatar and previews it', () => {
+      const { store } = renderPanel();
+      fireEvent.change(screen.getByTestId('mascot-custom-gif-input'), {
+        target: { value: '  https://example.com/avatar.gif  ' },
+      });
+      fireEvent.click(screen.getByTestId('mascot-custom-gif-save'));
+
+      expect(store.getState().mascot.customMascotGifUrl).toBe('https://example.com/avatar.gif');
+      expect(screen.getByTestId('custom-gif-mascot')).toHaveAttribute(
+        'src',
+        'https://example.com/avatar.gif'
+      );
+    });
+
+    it('rejects non-GIF avatar sources in the panel', () => {
+      const { store } = renderPanel();
+      fireEvent.change(screen.getByTestId('mascot-custom-gif-input'), {
+        target: { value: 'https://example.com/avatar.svg' },
+      });
+      fireEvent.click(screen.getByTestId('mascot-custom-gif-save'));
+
+      expect(store.getState().mascot.customMascotGifUrl).toBeNull();
+      expect(screen.getByTestId('mascot-custom-gif-error')).toHaveTextContent('HTTPS .gif');
+    });
+
+    it('selecting a backend mascot clears the custom GIF avatar', async () => {
+      const store = buildStore();
+      store.dispatch(setCustomMascotGifUrl('https://example.com/avatar.gif'));
+      fetchMascotListMock.mockResolvedValueOnce([summary]);
+      renderPanel(store);
+      fireEvent.click(await screen.findByTestId('backend-mascot-yellow'));
+
+      expect(store.getState().mascot.selectedMascotId).toBe('yellow');
+      expect(store.getState().mascot.customMascotGifUrl).toBeNull();
     });
   });
 });

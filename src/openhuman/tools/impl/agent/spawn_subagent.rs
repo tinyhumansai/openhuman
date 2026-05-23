@@ -352,13 +352,27 @@ impl Tool for SpawnSubagentTool {
                             //      doesn't render this as a failed tool call.
                             // The model still reads the explanation and produces
                             // an appropriate user-facing response.
-                            return Ok(ToolResult::success(format!(
-                                "Integration '{tk}' is available but the user has not \
-                                 authorized it yet. Do NOT retry this spawn. Tell the user \
-                                 the integration is available and ask them to authorize \
-                                 '{tk}' in Connections → Integrations before retrying the \
-                                 original request."
-                            )));
+                            //
+                            // Split (#2365) into 4 cases driven by the upstream
+                            // status field on the most-informative connection
+                            // row, instead of the legacy generic
+                            // "not authorized yet" copy. Before this split,
+                            // an OAuth-in-progress / expired / failed Gmail
+                            // surfaced the same "you need to connect Gmail"
+                            // message — which Settings UI contradicted (it
+                            // shows the connection as initiated/expired), so
+                            // users concluded the agent was confused.
+                            tracing::debug!(
+                                target: "spawn_subagent",
+                                toolkit = %ci.toolkit,
+                                non_active_status = ?ci.non_active_status,
+                                "[spawn_subagent] integrations_agent gate: toolkit not connected — emitting status-specific message"
+                            );
+                            let message = describe_unconnected_state(
+                                &ci.toolkit,
+                                ci.non_active_status.as_deref(),
+                            );
+                            return Ok(ToolResult::success(message));
                         }
                         Some(_) => {
                             tracing::debug!(
@@ -631,6 +645,84 @@ fn render_worker_thread_result(
     )
 }
 
+/// Build the user-facing explanation for an allowlisted-but-not-active
+/// integration during an `integrations_agent` spawn (#2365).
+///
+/// The single message that previously covered every cause ("available
+/// but the user has not authorized it yet") looked confused to users
+/// who had Gmail showing in Settings (because Settings reflects the
+/// FE's optimistic post-OAuth view, while the spawn gate reads the
+/// backend's authoritative status). We now pivot on the upstream
+/// connection status:
+///
+/// - `INITIATED` / `INITIALIZING` / `PENDING` — OAuth in progress;
+///   ask the user to finish the flow in their browser.
+/// - `EXPIRED` — token rolled over; reconnect.
+/// - `FAILED` / `ERROR` — handshake didn't land; reconnect.
+/// - any other non-active status — quote the upstream verbatim.
+/// - `None` — no connection row at all (truly disconnected).
+///
+/// Returns text the model reads literally; the orchestrator paraphrases
+/// it into a user-facing reply. Keep the *intent* stable across
+/// rewordings — the "Settings → Connections → {toolkit}" path is
+/// load-bearing for the UI navigation tests.
+pub(crate) fn describe_unconnected_state(toolkit: &str, status: Option<&str>) -> String {
+    // Keep the original (trimmed) status separately so the
+    // unknown-status branch can quote it verbatim — CodeRabbit
+    // review on #2373: matching on the uppercased value AND
+    // formatting with that uppercased value broke the
+    // "quote upstream status verbatim" contract for mixed/lowercase
+    // wire shapes.
+    let trimmed = status.map(str::trim).filter(|s| !s.is_empty());
+    let upper = trimmed.map(|s| s.to_ascii_uppercase());
+    match upper.as_deref() {
+        Some("INITIATED") | Some("INITIALIZING") | Some("PENDING") => format!(
+            "Integration '{toolkit}' has an OAuth flow in progress but it hasn't reached \
+             ACTIVE yet. Do NOT retry this spawn. Tell the user the authorization is \
+             pending and ask them to finish the browser OAuth flow (Settings → \
+             Connections → '{toolkit}') before retrying. If they already closed the \
+             browser tab, they can restart the connection from the same Settings page."
+        ),
+        Some("EXPIRED") => format!(
+            "Integration '{toolkit}' is connected but the OAuth token has expired. \
+             Do NOT retry this spawn. Tell the user the connection expired and ask \
+             them to reconnect '{toolkit}' at Settings → Connections → '{toolkit}' \
+             before retrying the original request."
+        ),
+        Some("FAILED") | Some("ERROR") => {
+            // Quote the actual upstream label (FAILED / ERROR) instead of
+            // hard-coding "FAILED" — triage cross-references backend logs
+            // and a misquoted `ERROR` row showing up as "FAILED" wastes
+            // their time. graycyrus review on #2373.
+            let raw = trimmed.unwrap_or("");
+            format!(
+                "Integration '{toolkit}' has a previous OAuth attempt in a `{raw}` state. \
+                 Do NOT retry this spawn. Tell the user the connection failed and ask them \
+                 to reconnect '{toolkit}' at Settings → Connections → '{toolkit}' before \
+                 retrying the original request."
+            )
+        }
+        Some(_) => {
+            // Quote the *original* upstream status, not its uppercased
+            // form — preserves "DeauthRequired" / "needs_relink"-style
+            // mixed-case wire values for triage.
+            let raw = trimmed.unwrap_or("");
+            format!(
+                "Integration '{toolkit}' has a connection row but its status is `{raw}`, \
+                 which is not yet usable. Do NOT retry this spawn. Tell the user the \
+                 connection is in an unusable state and ask them to reconnect '{toolkit}' \
+                 at Settings → Connections → '{toolkit}'."
+            )
+        }
+        _ => format!(
+            "Integration '{toolkit}' is available but the user has not authorized it \
+             yet. Do NOT retry this spawn. Tell the user the integration is available \
+             and ask them to authorize '{toolkit}' in Settings → Connections → \
+             '{toolkit}' before retrying the original request."
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -886,5 +978,131 @@ mod tests {
             "toolkit '{toolkit}' is not in the backend allowlist"
         )));
         assert!(out.contains("Valid toolkits"));
+    }
+
+    // ── #2365: describe_unconnected_state per upstream status ───────
+
+    #[test]
+    fn describe_unconnected_state_initiated_says_oauth_in_progress() {
+        let msg = describe_unconnected_state("gmail", Some("INITIATED"));
+        assert!(
+            msg.contains("OAuth flow in progress"),
+            "INITIATED must surface the in-progress wording: {msg}"
+        );
+        assert!(msg.contains("Settings → Connections → 'gmail'"));
+        // The legacy "not authorized yet" copy must NOT leak into the
+        // pending-OAuth branch — that was the user-perception bug
+        // from #2365 (Settings UI showed Gmail connected, agent said
+        // "not authorized").
+        assert!(
+            !msg.contains("has not authorized it yet"),
+            "INITIATED must not borrow the truly-disconnected copy: {msg}"
+        );
+    }
+
+    #[test]
+    fn describe_unconnected_state_pending_and_initializing_are_aliased() {
+        for status in ["PENDING", "INITIALIZING"] {
+            let msg = describe_unconnected_state("gmail", Some(status));
+            assert!(
+                msg.contains("OAuth flow in progress"),
+                "{status} must hit the in-progress branch: {msg}"
+            );
+        }
+    }
+
+    #[test]
+    fn describe_unconnected_state_expired_says_reconnect() {
+        let msg = describe_unconnected_state("gmail", Some("EXPIRED"));
+        assert!(msg.contains("OAuth token has expired"));
+        assert!(msg.contains("reconnect 'gmail'"));
+        assert!(!msg.contains("OAuth flow in progress"));
+    }
+
+    #[test]
+    fn describe_unconnected_state_failed_and_error_route_to_reconnect() {
+        for status in ["FAILED", "ERROR"] {
+            let msg = describe_unconnected_state("gmail", Some(status));
+            let expected = format!("`{status}` state");
+            assert!(
+                msg.contains(&expected),
+                "{status} must be quoted verbatim, not collapsed to a single label: {msg}"
+            );
+            assert!(msg.contains("reconnect 'gmail'"));
+        }
+    }
+
+    #[test]
+    fn describe_unconnected_state_failed_and_error_preserve_original_casing() {
+        // Mixed-case wire values must round-trip through the FAILED /
+        // ERROR branch with their original casing intact — that's the
+        // whole point of graycyrus' review feedback.
+        let lower_failed = describe_unconnected_state("gmail", Some("failed"));
+        assert!(
+            lower_failed.contains("`failed` state"),
+            "lowercase `failed` must be quoted verbatim: {lower_failed}"
+        );
+        let mixed_error = describe_unconnected_state("gmail", Some("Error"));
+        assert!(
+            mixed_error.contains("`Error` state"),
+            "mixed-case `Error` must be quoted verbatim: {mixed_error}"
+        );
+    }
+
+    #[test]
+    fn describe_unconnected_state_quotes_unknown_status_verbatim() {
+        // Pin three shapes (uppercase / mixed / snake_case) so the
+        // verbatim-quoting contract can't silently drift back to
+        // echoing the matched (uppercased) value — that was the
+        // CodeRabbit finding on #2373.
+        for raw in ["DEAUTH_REQUIRED", "needs_relink", "PartialAuthRequired"] {
+            let msg = describe_unconnected_state("gmail", Some(raw));
+            let expected = format!("`{raw}`");
+            assert!(
+                msg.contains(&expected),
+                "unknown status `{raw}` must be quoted verbatim (not its uppercased form): {msg}"
+            );
+        }
+    }
+
+    #[test]
+    fn describe_unconnected_state_quotes_unknown_status_after_trimming_whitespace() {
+        // Whitespace-only / blank statuses must NOT hit the
+        // unknown-status branch — they collapse to the
+        // truly-disconnected legacy copy via the `filter(|s|
+        // !s.is_empty())` guard in `describe_unconnected_state`.
+        let blank = describe_unconnected_state("gmail", Some("   "));
+        assert!(
+            blank.contains("has not authorized it yet"),
+            "whitespace-only status must collapse to legacy None branch: {blank}"
+        );
+        // A real status with surrounding whitespace is quoted with
+        // the whitespace trimmed (not preserved verbatim — triage
+        // would not want padded backticks).
+        let padded = describe_unconnected_state("gmail", Some("  DeauthRequired  "));
+        assert!(
+            padded.contains("`DeauthRequired`"),
+            "trimmed status must be quoted in original casing: {padded}"
+        );
+    }
+
+    #[test]
+    fn describe_unconnected_state_none_is_truly_disconnected() {
+        let msg = describe_unconnected_state("gmail", None);
+        assert!(
+            msg.contains("has not authorized it yet"),
+            "None must hit the legacy never-connected copy: {msg}"
+        );
+        assert!(msg.contains("Settings → Connections → 'gmail'"));
+    }
+
+    #[test]
+    fn describe_unconnected_state_status_match_is_case_insensitive() {
+        // The status string flows in from Composio's wire format; we
+        // can't assume casing. The classifier must normalise.
+        let initiated = describe_unconnected_state("gmail", Some("initiated"));
+        assert!(initiated.contains("OAuth flow in progress"));
+        let expired = describe_unconnected_state("gmail", Some("Expired"));
+        assert!(expired.contains("OAuth token has expired"));
     }
 }

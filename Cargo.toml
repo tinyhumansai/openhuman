@@ -1,6 +1,6 @@
 [package]
 name = "openhuman"
-version = "0.54.5"
+version = "0.54.10"
 edition = "2021"
 description = "OpenHuman core business logic and RPC server"
 autobins = false
@@ -115,6 +115,7 @@ rustls-pki-types = "1.14.0"
 tokio-rustls = "0.26.4"
 webpki-roots = "1.0.6"
 sysinfo = { version = "0.33", default-features = false, features = ["system"] }
+keyring = { version = "3", features = ["apple-native", "windows-native", "linux-native"] }
 clap = { version = "4.5", features = ["derive"] }
 clap_complete = "4.5"
 lettre = { version = "0.11.22", default-features = false, features = ["builder", "smtp-transport", "rustls-tls"] }
@@ -193,6 +194,8 @@ rppal = { version = "0.22", optional = true }
 sentry = { version = "0.47.0", default-features = false, features = ["test"] }
 # Mock HTTP server for provider E2E tests (inference_provider_e2e).
 wiremock = "0.6"
+# Used in json_rpc_e2e to backdate mtime on stale lock files.
+filetime = "0.2"
 
 [features]
 sandbox-landlock = ["dep:landlock"]

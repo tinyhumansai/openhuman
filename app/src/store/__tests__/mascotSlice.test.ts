@@ -3,10 +3,14 @@ import { describe, expect, it } from 'vitest';
 
 import reducer, {
   DEFAULT_MASCOT_COLOR,
+  isCustomMascotGifUrl,
+  MAX_CUSTOM_MASCOT_GIF_URL_LEN,
   MAX_MASCOT_VOICE_ID_LEN,
+  selectCustomMascotGifUrl,
   selectMascotColor,
   selectMascotVoiceId,
   selectSelectedMascotId,
+  setCustomMascotGifUrl,
   setMascotColor,
   setMascotVoiceId,
   setSelectedMascotId,
@@ -197,6 +201,80 @@ describe('mascotSlice', () => {
     it('treats a missing selectedMascotId field (older builds) as null', () => {
       const state = reducer(undefined, rehydrate('mascot', { color: 'navy' }));
       expect(state.selectedMascotId).toBeNull();
+    });
+  });
+
+  describe('custom mascot GIF avatar', () => {
+    it('defaults to null', () => {
+      const state = reducer(undefined, { type: '@@INIT' });
+      expect(state.customMascotGifUrl).toBeNull();
+      expect(selectCustomMascotGifUrl({ mascot: state })).toBeNull();
+    });
+
+    it('stores a trimmed HTTPS GIF URL', () => {
+      const state = reducer(
+        undefined,
+        setCustomMascotGifUrl('  https://example.com/avatar.gif?size=2  ')
+      );
+      expect(state.customMascotGifUrl).toBe('https://example.com/avatar.gif?size=2');
+    });
+
+    it('accepts local GIF paths and loopback HTTP URLs', () => {
+      expect(isCustomMascotGifUrl('/Users/me/avatar.gif')).toBe(true);
+      expect(isCustomMascotGifUrl('~/Pictures/avatar.gif')).toBe(true);
+      expect(isCustomMascotGifUrl('http://localhost/avatar.gif')).toBe(true);
+      expect(isCustomMascotGifUrl('http://127.0.0.1/avatar.gif')).toBe(true);
+    });
+
+    it('rejects unsafe or non-GIF avatar sources', () => {
+      expect(isCustomMascotGifUrl('javascript:alert(1)')).toBe(false);
+      expect(isCustomMascotGifUrl('http://example.com/avatar.gif')).toBe(false);
+      expect(isCustomMascotGifUrl('https://example.com/avatar.svg')).toBe(false);
+      expect(isCustomMascotGifUrl('https://example.com/avatar.png')).toBe(false);
+    });
+
+    it('rejects oversize avatar sources', () => {
+      const tooLong = `https://example.com/${'x'.repeat(MAX_CUSTOM_MASCOT_GIF_URL_LEN)}.gif`;
+      const state = reducer(undefined, setCustomMascotGifUrl(tooLong));
+      expect(state.customMascotGifUrl).toBeNull();
+    });
+
+    it('clears backend mascot id when a custom GIF is set', () => {
+      let state = reducer(undefined, setSelectedMascotId('yellow'));
+      state = reducer(state, setCustomMascotGifUrl('https://example.com/avatar.gif'));
+      expect(state.customMascotGifUrl).toBe('https://example.com/avatar.gif');
+      expect(state.selectedMascotId).toBeNull();
+    });
+
+    it('clears custom GIF when a backend mascot is selected', () => {
+      let state = reducer(undefined, setCustomMascotGifUrl('https://example.com/avatar.gif'));
+      state = reducer(state, setSelectedMascotId('yellow'));
+      expect(state.selectedMascotId).toBe('yellow');
+      expect(state.customMascotGifUrl).toBeNull();
+    });
+
+    it('resetUserScopedState clears a custom GIF avatar', () => {
+      let state = reducer(undefined, setCustomMascotGifUrl('https://example.com/avatar.gif'));
+      state = reducer(state, resetUserScopedState());
+      expect(state.customMascotGifUrl).toBeNull();
+    });
+
+    const rehydrate = (key: string, payload?: unknown) => ({ type: REHYDRATE, key, payload });
+
+    it('restores a valid persisted custom GIF avatar', () => {
+      const state = reducer(
+        undefined,
+        rehydrate('mascot', { customMascotGifUrl: 'https://example.com/avatar.gif' })
+      );
+      expect(state.customMascotGifUrl).toBe('https://example.com/avatar.gif');
+    });
+
+    it('scrubs an invalid persisted custom GIF avatar back to null', () => {
+      const state = reducer(
+        undefined,
+        rehydrate('mascot', { customMascotGifUrl: 'https://example.com/avatar.svg' })
+      );
+      expect(state.customMascotGifUrl).toBeNull();
     });
   });
 });

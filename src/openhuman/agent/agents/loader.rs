@@ -134,11 +134,6 @@ pub const BUILTINS: &[BuiltinAgent] = &[
         prompt_fn: super::morning_briefing::prompt::build,
     },
     BuiltinAgent {
-        id: "welcome",
-        toml: include_str!("welcome/agent.toml"),
-        prompt_fn: super::welcome::prompt::build,
-    },
-    BuiltinAgent {
         id: "summarizer",
         toml: include_str!("summarizer/agent.toml"),
         prompt_fn: super::summarizer::prompt::build,
@@ -278,7 +273,6 @@ mod tests {
     fn all_builtins_parse() {
         let defs = load_builtins().expect("built-in TOML must parse");
         assert_eq!(defs.len(), BUILTINS.len());
-        assert_eq!(defs.len(), 18, "expected 18 built-in agents");
     }
 
     #[test]
@@ -886,48 +880,6 @@ mod tests {
             "orchestrator.subagents must list `skill_creator` so the \
              routing layer can synthesise `create_skill`"
         );
-    }
-
-    #[test]
-    fn welcome_has_onboarding_and_memory_tools() {
-        let def = find("welcome");
-        assert_eq!(def.sandbox_mode, SandboxMode::ReadOnly);
-        match &def.tools {
-            ToolScope::Named(tools) => {
-                assert!(
-                    tools.iter().any(|t| t == "check_onboarding_status"),
-                    "welcome needs check_onboarding_status"
-                );
-                assert!(
-                    tools.iter().any(|t| t == "complete_onboarding"),
-                    "welcome needs complete_onboarding"
-                );
-                assert!(
-                    tools.iter().any(|t| t == "memory_recall"),
-                    "welcome needs memory_recall"
-                );
-                assert!(
-                    tools.iter().any(|t| t == "composio_authorize"),
-                    "welcome needs composio_authorize"
-                );
-                assert!(
-                    tools.iter().any(|t| t == "gitbooks_search"),
-                    "welcome needs gitbooks_search to answer 'how does X work' during onboarding"
-                );
-                assert!(
-                    tools.iter().any(|t| t == "gitbooks_get_page"),
-                    "welcome needs gitbooks_get_page for full-page lookups"
-                );
-                // Welcome must not gain write/exec power; onboarding stays read-only.
-                assert!(!tools.iter().any(|t| t == "shell"));
-                assert!(!tools.iter().any(|t| t == "file_write"));
-                assert!(!tools.iter().any(|t| t == "curl"));
-            }
-            ToolScope::Wildcard => panic!("welcome must have a Named tool scope"),
-        }
-        assert!(!def.omit_memory_context);
-        assert!(def.omit_identity);
-        assert_eq!(def.max_iterations, 12);
     }
 
     // ─────────────────────────────────────────────────────────────────────

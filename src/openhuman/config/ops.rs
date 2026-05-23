@@ -71,23 +71,12 @@ pub async fn reload_config_snapshot_with_timeout(snapshot: &Config) -> Result<Co
     }
 }
 
-async fn normalize_loaded_config(config: &mut Config) {
-    // [#1123] Normalize legacy configs at load time: existing users who
-    // completed onboarding before the Joyride migration may have
-    // onboarding_completed=true but chat_onboarding_completed=false.
-    // Without this, pick_target_agent_id() still routes them to the
-    // welcome agent on every chat message.
-    if config.onboarding_completed && !config.chat_onboarding_completed {
-        tracing::info!(
-            "[config] normalizing legacy onboarding state: setting \
-             chat_onboarding_completed=true (Joyride migration)"
-        );
-        config.chat_onboarding_completed = true;
-        // Best-effort persist — don't fail the load if save errors.
-        if let Err(e) = config.save().await {
-            tracing::warn!("[config] failed to persist onboarding normalization: {e}");
-        }
-    }
+async fn normalize_loaded_config(_config: &mut Config) {
+    // No-op: welcome-agent routing normalization removed. The welcome agent
+    // has been deleted; all chat turns route directly to the orchestrator.
+    // The `chat_onboarding_completed` field in Config is retained for
+    // backward-compatible deserialization of existing config.toml files
+    // but is no longer read by routing logic.
 }
 
 /// Returns the default workspace directory fallback (~/.openhuman/workspace).
@@ -386,6 +375,11 @@ pub struct MeetSettingsPatch {
 }
 
 #[derive(Debug, Clone, Default)]
+pub struct AutonomySettingsPatch {
+    pub max_actions_per_hour: Option<u32>,
+}
+
+#[derive(Debug, Clone, Default)]
 pub struct LocalAiSettingsPatch {
     pub runtime_enabled: Option<bool>,
     /// MVP opt-in marker. Bootstrap hard-overrides status to "disabled"
@@ -487,7 +481,44 @@ pub async fn apply_model_settings(
         config.model_routes = routes;
     }
     if let Some(providers) = update.cloud_providers {
+        // The schema handlers strip reserved-slug entries (e.g. the built-in
+        // "openhuman" provider seeded by `migrations::unify_ai_provider_settings`)
+        // from the user's payload. Preserve any reserved-slug entries that
+        // already live in the stored config so a routine settings save
+        // doesn't accidentally delete them — `primary_cloud` and the
+        // per-workload routing fields can reference these built-ins, and
+        // losing them would break inference routing.
+        use crate::openhuman::config::schema::cloud_providers::is_slug_reserved;
+        let preserved: Vec<_> = config
+            .cloud_providers
+            .iter()
+            .filter(|e| is_slug_reserved(e.slug.trim()))
+            .cloned()
+            .collect();
+        log::debug!(
+            "[config] apply_model_settings: preserving {} reserved cloud provider(s) before overwrite",
+            preserved.len()
+        );
         config.cloud_providers = providers;
+        let before_reinject = config.cloud_providers.len();
+        for entry in preserved {
+            // Defensive: don't double-add if the payload (somehow) already
+            // contained an entry with this reserved slug — the schema-handler
+            // filter is the canonical guard, but apply_model_settings is also
+            // reachable from tests and CLI paths that bypass that filter.
+            let preserved_slug = entry.slug.trim();
+            if !config
+                .cloud_providers
+                .iter()
+                .any(|e| e.slug.trim() == preserved_slug)
+            {
+                config.cloud_providers.push(entry);
+            }
+        }
+        log::debug!(
+            "[config] apply_model_settings: reinjected {} reserved cloud provider(s)",
+            config.cloud_providers.len() - before_reinject
+        );
     }
     if let Some(primary) = update.primary_cloud {
         let trimmed = primary.trim();
@@ -787,6 +818,39 @@ pub async fn load_and_apply_meet_settings(
     apply_meet_settings(&mut config, update).await
 }
 
+/// Updates the autonomy policy settings in the configuration.
+/// Validation: 1 <= max_actions_per_hour <= 10_000.
+pub async fn apply_autonomy_settings(
+    config: &mut Config,
+    update: AutonomySettingsPatch,
+) -> Result<RpcOutcome<serde_json::Value>, String> {
+    if let Some(v) = update.max_actions_per_hour {
+        if v == 0 || v > 10_000 {
+            return Err(format!(
+                "max_actions_per_hour must be between 1 and 10000 (got {v})"
+            ));
+        }
+        config.autonomy.max_actions_per_hour = v;
+    }
+    config.save().await.map_err(|e| e.to_string())?;
+    let snapshot = snapshot_config_json(config)?;
+    Ok(RpcOutcome::new(
+        snapshot,
+        vec![format!(
+            "autonomy settings saved to {}",
+            config.config_path.display()
+        )],
+    ))
+}
+
+/// Loads the configuration, applies autonomy settings updates, and saves it.
+pub async fn load_and_apply_autonomy_settings(
+    update: AutonomySettingsPatch,
+) -> Result<RpcOutcome<serde_json::Value>, String> {
+    let mut config = load_config_with_timeout().await?;
+    apply_autonomy_settings(&mut config, update).await
+}
+
 /// Loads the configuration, applies browser settings updates, and saves it.
 pub async fn load_and_apply_browser_settings(
     update: BrowserSettingsPatch,
@@ -1074,36 +1138,11 @@ pub async fn get_onboarding_completed() -> Result<RpcOutcome<bool>, String> {
 ///
 /// On a false→true transition, seeds the recurring morning-briefing
 /// cron job via [`crate::openhuman::cron::seed::seed_proactive_agents`].
-/// The welcome agent is **no longer auto-fired here** — the renderer
-/// fires a hidden `chat_send` trigger through the normal dispatch path
-/// (see `OnboardingLayout.completeAndExit`) so the welcome runs in a
-/// real thread session and subsequent user messages continue the same
-/// conversation with full prior context.
-///
-/// **[#1123] `chat_onboarding_completed` IS now flipped here** on the
-/// false→true transition. The welcome-agent onboarding flow was replaced
-/// by a Joyride walkthrough in the frontend, so the chat flag no longer
-/// needs the welcome agent to set it via `complete_onboarding`.
 pub async fn set_onboarding_completed(value: bool) -> Result<RpcOutcome<bool>, String> {
     tracing::debug!(value, "[onboarding] set_onboarding_completed called");
     let mut config = load_config_with_timeout().await?;
     let was_completed = config.onboarding_completed;
     config.onboarding_completed = value;
-
-    // [#1123] On a false→true transition, also flip chat_onboarding_completed=true
-    // so the UI never enters the old welcome-lock state. The Joyride walkthrough
-    // replaced the welcome-agent flow; chat_onboarding_completed no longer needs
-    // to be driven by the welcome agent calling complete_onboarding.
-    if value && !was_completed {
-        tracing::debug!(
-            "[onboarding] false→true transition: setting chat_onboarding_completed=true \
-             (welcome-agent replaced by Joyride walkthrough — skipping lockdown)"
-        );
-        config.chat_onboarding_completed = true;
-    }
-
-    // [#1123] Legacy normalization moved to load_config_with_timeout() so it
-    // catches ALL code paths (routing, snapshots, etc.), not just this function.
 
     config.save().await.map_err(|e| e.to_string())?;
 

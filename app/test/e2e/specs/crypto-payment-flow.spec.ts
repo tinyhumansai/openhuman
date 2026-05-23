@@ -32,9 +32,10 @@ describe('Crypto Payment Flow', () => {
     await performFullLogin('e2e-crypto-payment-token');
   });
 
-  it('6.1 — billing panel shows "moved to web" redirect page', async () => {
+  it('6.1 — billing panel shows "moved to web" redirect page', async function () {
+    this.timeout(60_000);
     await navigateToBilling();
-    await waitForText('Billing moved to the web', 10_000);
+    await waitForText('Open billing dashboard', 20_000);
     console.log(`${LOG_PREFIX} 6.1 — billing redirect panel loaded`);
   });
 

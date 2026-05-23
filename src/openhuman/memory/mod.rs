@@ -10,6 +10,7 @@ pub mod conversations;
 pub mod global;
 pub mod ingestion;
 pub mod ops;
+pub mod preferences;
 pub mod rpc_models;
 pub mod safety;
 pub mod schemas;

@@ -4,8 +4,8 @@ import { useT } from '../../lib/i18n/I18nContext';
 import Conversations from '../../pages/Conversations';
 import type { ToolTimelineEntry } from '../../store/chatRuntimeSlice';
 import { useAppSelector } from '../../store/hooks';
-import { selectMascotColor } from '../../store/mascotSlice';
-import { YellowMascot } from './Mascot';
+import { selectCustomMascotGifUrl, selectMascotColor } from '../../store/mascotSlice';
+import { CustomGifMascot, YellowMascot } from './Mascot';
 import { SubMascotLayer } from './SubMascotLayer';
 import { useHumanMascot } from './useHumanMascot';
 
@@ -29,6 +29,7 @@ const HumanPage = () => {
   // Visemes are intentionally unused — the YellowMascot has its own talking lipsync.
   const { face } = useHumanMascot({ speakReplies });
   const mascotColor = useAppSelector(selectMascotColor);
+  const customMascotGifUrl = useAppSelector(selectCustomMascotGifUrl);
   const subMascotTimeline = useAppSelector(state => {
     const threadId = state.thread.selectedThreadId ?? state.thread.activeThreadId;
     return threadId
@@ -50,7 +51,11 @@ const HumanPage = () => {
       {/* Mascot stage — fills the area to the left of the reserved sidebar column. */}
       <div className="absolute inset-y-0 left-0 right-[436px] flex items-center justify-center">
         <div className="relative w-[min(80vh,90%)] aspect-square">
-          <YellowMascot face={face} mascotColor={mascotColor} />
+          {customMascotGifUrl ? (
+            <CustomGifMascot src={customMascotGifUrl} face={face} />
+          ) : (
+            <YellowMascot face={face} mascotColor={mascotColor} />
+          )}
           <SubMascotLayer entries={subMascotTimeline} />
         </div>
       </div>

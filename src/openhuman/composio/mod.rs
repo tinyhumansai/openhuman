@@ -43,6 +43,7 @@ pub mod error_mapping;
 pub mod execute_dispatch;
 pub mod execute_prepare;
 pub mod googlecalendar_args;
+pub mod oauth_handoff;
 pub mod ops;
 pub mod periodic;
 pub mod providers;
@@ -77,8 +78,8 @@ pub use trigger_history::{
     global as global_composio_trigger_history, init_global as init_composio_trigger_history,
 };
 pub use types::{
-    ComposioAuthorizeResponse, ComposioCapabilitiesResponse, ComposioCapability,
-    ComposioConnection, ComposioConnectionsResponse, ComposioDeleteResponse,
+    ComposioAgentReadyToolkitsResponse, ComposioAuthorizeResponse, ComposioCapabilitiesResponse,
+    ComposioCapability, ComposioConnection, ComposioConnectionsResponse, ComposioDeleteResponse,
     ComposioExecuteResponse, ComposioToolFunction, ComposioToolSchema, ComposioToolkitsResponse,
     ComposioToolsResponse, ComposioTriggerEvent, ComposioTriggerHistoryEntry,
     ComposioTriggerHistoryResult, ComposioTriggerMetadata,

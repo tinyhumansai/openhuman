@@ -98,6 +98,26 @@ Installer behavior:
 - macOS: installs `OpenHuman.app` into `~/Applications`
 - Linux x64: installs AppImage as `~/.local/bin/openhuman` and writes a desktop entry
 
+### Arch Linux package recipe
+
+The repository includes an `openhuman-bin` AUR recipe at
+[`packages/arch/openhuman-bin`](../../packages/arch/openhuman-bin/). It uses the
+official x86_64 AppImage as the binary source, extracts the bundled application
+tree during `makepkg`, installs a desktop entry, and exposes `/usr/bin/openhuman`.
+
+Until the package is published on AUR, build it locally on Arch:
+
+```bash
+cd packages/arch/openhuman-bin
+makepkg --syncdeps --install
+```
+
+After publication, Arch users can install it with:
+
+```bash
+yay -S openhuman-bin
+```
+
 Useful flags:
 
 ```bash

@@ -1,7 +1,13 @@
 import crypto from "node:crypto";
 
 export const DEFAULT_PORT = 18473;
-export const MOCK_JWT = "e2e-mock-jwt-token";
+// Valid JWT format so isPlausibleSessionToken() in CoreStateProvider
+// recognizes it and triggers the auth-refresh path (clears logoutGuard).
+// exp = 4102444800 ≈ year 2099 — effectively never expires in tests.
+export const MOCK_JWT =
+  "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0" +
+  ".eyJzdWIiOiJ1c2VyLTEyMyIsInVzZXJJZCI6InVzZXItMTIzIiwidGdVc2VySWQiOiJ1c2VyLTEyMyIsImV4cCI6NDEwMjQ0NDgwMH0" +
+  ".e2e";
 export const MAX_PORT_RETRY_ATTEMPTS = 10;
 export const MAX_MOCK_DELAY_MS = 30_000;
 
@@ -15,6 +21,11 @@ let mockWebhookTriggers = [];
 let socketEventLog = [];
 let mockLlmThreads = new Map();
 let nextSequence = 1;
+
+// ── Telegram Bot API mock state ────────────────────────────────────────────
+let mockTelegramUpdates = [];
+let mockTelegramSentMessages = [];
+let mockTelegramMessageIdSeq = 1000;
 
 const socketSessions = new Map();
 
@@ -330,6 +341,8 @@ export function dropSocketSession(sid) {
   const session = getSocketSession(sid);
   if (!session) return;
   try {
+    session.webSocket?.close?.();
+    session.webSocket?.terminate?.();
     session.webSocket?.destroy?.();
   } catch {
     // noop
@@ -489,4 +502,54 @@ export function getMockTeam() {
     },
     role: "ADMIN",
   };
+}
+
+// ── Telegram Bot API mock state helpers ────────────────────────────────────
+
+/**
+ * Push a single Telegram Update object into the pending queue.
+ * The queue is drained by each `getUpdates` poll.
+ */
+export function pushMockTelegramUpdate(update) {
+  mockTelegramUpdates.push(update);
+}
+
+/**
+ * Drain and return all pending Telegram updates. Each `getUpdates` call
+ * should call this so each update is delivered exactly once.
+ */
+export function drainMockTelegramUpdates() {
+  const updates = [...mockTelegramUpdates];
+  mockTelegramUpdates = [];
+  return updates;
+}
+
+/**
+ * Record a message sent by the bot (sendMessage, sendPhoto, etc.).
+ * @param {object} entry - { method, body, message_id, ... }
+ */
+export function recordMockTelegramSent(entry) {
+  mockTelegramSentMessages.push({
+    timestamp: new Date().toISOString(),
+    ...entry,
+  });
+}
+
+/** Return all recorded outbound Telegram API calls (non-destructive). */
+export function getMockTelegramSent() {
+  return [...mockTelegramSentMessages];
+}
+
+/** Increment and return the next mock message_id. */
+export function nextMockTelegramMessageId() {
+  const id = mockTelegramMessageIdSeq;
+  mockTelegramMessageIdSeq += 1;
+  return id;
+}
+
+/** Reset all Telegram mock state (updates queue, sent log, id counter). */
+export function resetMockTelegram() {
+  mockTelegramUpdates = [];
+  mockTelegramSentMessages = [];
+  mockTelegramMessageIdSeq = 1000;
 }

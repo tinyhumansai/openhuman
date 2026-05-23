@@ -2,7 +2,7 @@ use serde_json::{json, Map, Value};
 
 use super::{session::McpSession, tools};
 
-const LATEST_PROTOCOL_VERSION: &str = "2025-11-25";
+pub const LATEST_PROTOCOL_VERSION: &str = "2025-11-25";
 const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &[
     "2024-11-05",
     "2025-03-26",
@@ -562,10 +562,13 @@ mod tests {
             "agent.run_subagent",
             "memory.search",
             "memory.recall",
+            "memory.store",
+            "memory.note",
             "tree.read_chunk",
             "tree.browse",
             "tree.top_entities",
             "tree.list_sources",
+            "tree.tag",
         ];
         base_names.sort_unstable();
         expected_base_names.sort_unstable();

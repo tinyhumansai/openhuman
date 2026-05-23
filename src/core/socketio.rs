@@ -28,12 +28,25 @@ struct HandshakeAuth {
 
 /// Origins the local core trusts at the Socket.IO handshake.
 ///
-/// `tauri://localhost` is the production app webview; `http://localhost:*`
-/// and `http://127.0.0.1:*` cover the Vite dev server (`pnpm dev:app`)
-/// and standalone CLI tooling that opens browser pages against the local
-/// listener. A missing `Origin` header is treated as a native (non-browser)
-/// client and accepted — only the cross-origin browser-page case is the
-/// targeted bad actor here.
+/// The document origin of the CEF-served app shell is platform-dependent:
+///
+/// | Platform | Scheme | Host |
+/// |----------|--------|------|
+/// | macOS / iOS (native scheme) | `tauri` | `localhost` |
+/// | Windows (CEF http custom protocol) | `http` | `tauri.localhost` |
+/// | Linux / older Windows builds | `https` | `tauri.localhost` |
+/// | Vite dev (`pnpm dev:app`, `pnpm dev`) | `http` | `localhost` / `127.0.0.1` / `[::1]` |
+///
+/// The handshake `Origin` header is stamped by the webview with whichever
+/// of these shapes loaded the page — it is **not** the destination URL the
+/// socket is connecting to. We match the parsed host against the allowlist
+/// so all four shapes pass regardless of scheme, while `starts_with` decoys
+/// like `http://localhost.attacker.example` are still rejected (parser
+/// returns a different `host_str`).
+///
+/// A missing `Origin` header is treated as a native (non-browser) client
+/// and accepted — only the cross-origin browser-page case is the targeted
+/// bad actor here.
 fn origin_is_allowed(origin: Option<&str>) -> bool {
     let Some(origin) = origin else {
         return true; // native clients (CLI, Tauri shell) — no Origin header
@@ -42,12 +55,12 @@ fn origin_is_allowed(origin: Option<&str>) -> bool {
     if origin.is_empty() || origin == "null" {
         return false;
     }
-    if origin == "tauri://localhost" || origin == "https://tauri.localhost" {
-        return true;
-    }
-    // Parse the URL and compare the host EXACTLY against the loopback
-    // allowlist — `starts_with` matching accepted decoys like
-    // `http://localhost.attacker.example` and bypassed the gate.
+    // Parse the URL and compare the host EXACTLY against the loopback +
+    // tauri.localhost allowlist. The earlier scheme-literal short-circuit
+    // (`tauri://localhost` / `https://tauri.localhost`) missed
+    // `http://tauri.localhost`, which is the document origin CEF stamps
+    // on Windows — every flavour of the Tauri webview shell now goes
+    // through the same host check.
     let Ok(parsed) = url::Url::parse(origin) else {
         return false;
     };
@@ -55,7 +68,7 @@ fn origin_is_allowed(origin: Option<&str>) -> bool {
     // hostnames bare. Accept both shapes.
     matches!(
         parsed.host_str(),
-        Some("localhost" | "127.0.0.1" | "::1" | "[::1]")
+        Some("localhost" | "127.0.0.1" | "::1" | "[::1]" | "tauri.localhost")
     )
 }
 
@@ -235,6 +248,11 @@ struct ChatStartPayload {
 
 #[derive(Debug, Deserialize)]
 struct ChatCancelPayload {
+    thread_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ThreadSubscribePayload {
     thread_id: String,
 }
 
@@ -422,6 +440,31 @@ pub fn attach_socketio() -> (socketioxide::layer::SocketIoLayer, SocketIo) {
                         &payload.thread_id,
                     )
                     .await;
+                },
+            );
+
+            // Handler for subscribing this socket to a thread's room.
+            //
+            // Chat-stream events are delivered to BOTH the initiating client's
+            // own room AND a per-thread room (`thread:<id>`). After a socket
+            // reconnects it has a NEW client_id, so it would miss an in-flight
+            // turn's remaining stream (delivered to the OLD client_id room). The
+            // frontend emits this on connect/reconnect for the active thread, so
+            // the new socket re-joins the thread room and keeps receiving the
+            // stream. Membership is dropped automatically on disconnect.
+            socket.on(
+                "thread:subscribe",
+                |socket: SocketRef, Data(payload): Data<ThreadSubscribePayload>| async move {
+                    if !socket_is_authed(&socket) {
+                        drop_unauthed(&socket, "thread:subscribe from unauthenticated socket");
+                        return;
+                    }
+                    let thread_id = payload.thread_id.trim();
+                    if thread_id.is_empty() {
+                        return;
+                    }
+                    let room = format!("thread:{thread_id}");
+                    join_room_logged(&socket, &room, &socket.id.to_string());
                 },
             );
         },
@@ -691,13 +734,23 @@ fn join_room_logged(socket: &SocketRef, room: &str, client_id: &str) {
 }
 
 fn emit_web_channel_event(io: &SocketIo, event: WebChannelEvent) {
-    let room = event.client_id.clone();
     let name = event.event.clone();
+    // Deliver to the initiating client's own room AND the per-thread room. The
+    // thread room lets a socket that reconnected with a new client_id (after
+    // re-subscribing via `thread:subscribe`) keep receiving an in-flight turn's
+    // stream. socket.io de-duplicates a socket present in multiple target rooms,
+    // so a socket in both receives each event exactly once (no double-render).
+    // "system" broadcasts and events without a thread_id keep the legacy
+    // single-room behavior.
+    let mut rooms: Vec<String> = vec![event.client_id.clone()];
+    if event.client_id != "system" && !event.thread_id.is_empty() {
+        rooms.push(format!("thread:{}", event.thread_id));
+    }
     if let Ok(payload) = serde_json::to_value(event) {
         log::debug!(
-            "[socketio] send event={} room={} thread_id={} request_id={}",
+            "[socketio] send event={} rooms={:?} thread_id={} request_id={}",
             name,
-            room,
+            rooms,
             payload
                 .get("thread_id")
                 .and_then(|v| v.as_str())
@@ -707,7 +760,7 @@ fn emit_web_channel_event(io: &SocketIo, event: WebChannelEvent) {
                 .and_then(|v| v.as_str())
                 .unwrap_or_default()
         );
-        emit_room_with_aliases(io, &room, &name, &payload);
+        emit_rooms_with_aliases(io, &rooms, &name, &payload);
     }
 }
 
@@ -728,10 +781,17 @@ fn emit_with_aliases(socket: &SocketRef, name: &str, payload: &serde_json::Value
     }
 }
 
-fn emit_room_with_aliases(io: &SocketIo, room: &str, name: &str, payload: &serde_json::Value) {
-    let _ = io.to(room.to_string()).emit(name, payload);
+fn emit_rooms_with_aliases(
+    io: &SocketIo,
+    rooms: &[String],
+    name: &str,
+    payload: &serde_json::Value,
+) {
+    // Emitting to multiple rooms in a single call delivers each event once per
+    // socket, even if a socket belongs to more than one of the target rooms.
+    let _ = io.to(rooms.to_vec()).emit(name, payload);
     if let Some(alias) = event_alias(name) {
-        let _ = io.to(room.to_string()).emit(alias, payload);
+        let _ = io.to(rooms.to_vec()).emit(alias, payload);
     }
 }
 
@@ -752,9 +812,16 @@ mod tests {
     }
 
     #[test]
-    fn origin_allowlist_accepts_tauri_localhost() {
+    fn origin_allowlist_accepts_tauri_localhost_across_schemes() {
+        // The CEF-served app shell stamps a platform-dependent Origin:
+        //   - macOS / iOS use the native `tauri://localhost` scheme
+        //   - Windows uses the CEF custom HTTP protocol → `http://tauri.localhost`
+        //   - Linux / older Windows builds use `https://tauri.localhost`
+        // All three flavours are the same trust tier (the bundled webview),
+        // so each must pass the handshake gate.
         assert!(origin_is_allowed(Some("tauri://localhost")));
         assert!(origin_is_allowed(Some("https://tauri.localhost")));
+        assert!(origin_is_allowed(Some("http://tauri.localhost")));
     }
 
     #[test]
@@ -762,6 +829,9 @@ mod tests {
         assert!(origin_is_allowed(Some("http://localhost:1420")));
         assert!(origin_is_allowed(Some("http://127.0.0.1:1420")));
         assert!(origin_is_allowed(Some("http://[::1]:1420")));
+        // Loopback without an explicit port (some CEF builds stamp this
+        // shape when the shell runs on the default port).
+        assert!(origin_is_allowed(Some("http://localhost")));
     }
 
     #[test]
@@ -783,6 +853,11 @@ mod tests {
             "http://127.0.0.1.attacker.example"
         )));
         assert!(!origin_is_allowed(Some("https://localhost-evil")));
+        // Same rule applies to the tauri.localhost host — must be exact.
+        assert!(!origin_is_allowed(Some(
+            "http://tauri.localhost.attacker.example"
+        )));
+        assert!(!origin_is_allowed(Some("https://tauri.localhost.evil")));
     }
 
     #[test]
