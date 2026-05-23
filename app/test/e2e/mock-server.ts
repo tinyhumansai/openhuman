@@ -9,6 +9,7 @@ export {
   clearRequestLog,
   emitMockAgentAudioStream,
   getMockBehavior,
+  getMockServerPort,
   getRequestLog,
   resetMockBehavior,
   setMockBehavior,

@@ -193,6 +193,8 @@ rppal = { version = "0.22", optional = true }
 sentry = { version = "0.47.0", default-features = false, features = ["test"] }
 # Mock HTTP server for provider E2E tests (inference_provider_e2e).
 wiremock = "0.6"
+# Used in json_rpc_e2e to backdate mtime on stale lock files.
+filetime = "0.2"
 
 [features]
 sandbox-landlock = ["dep:landlock"]

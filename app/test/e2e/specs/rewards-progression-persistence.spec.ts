@@ -225,4 +225,46 @@ describe('Rewards progression & persistence', () => {
     stepLog('rewards/me request count after restart simulation', { rewardsRequestCount });
     expect(rewardsRequestCount).toBeGreaterThanOrEqual(2);
   });
+
+  it('12.2.4 — stalled rewards endpoint past timeout shows recoverable error with retry affordance', async () => {
+    stepLog('priming rewardsDelayMs=20000 — response arrives after the 15s app-side timeout');
+    resetMockBehavior();
+    setMockBehavior('rewardsDelayMs', '20000');
+
+    await navigateAway();
+    await navigateToRewards();
+
+    // The Rewards page renders an error state containing "Sync unavailable"
+    // and a retry button after the 15 s REWARDS_SNAPSHOT_TIMEOUT_MS fires.
+    // Give the page up to 30 s to time out and render the error UI.
+    const sawError = await waitForText('Sync unavailable', 30_000).then(
+      () => true,
+      () => false
+    );
+    if (!sawError) {
+      stepLog('WARN: "Sync unavailable" not seen — checking for any error marker');
+    }
+    expect(sawError || (await textExists('Retrying'))).toBe(true);
+
+    // The retry button must be present so the user can recover without restart.
+    const hasRetry = await textExists('Retrying');
+    expect(hasRetry).toBe(true);
+  });
+
+  it('12.2.5 — retry after timeout recovers and renders normalized rewards data', async () => {
+    stepLog('clearing delay so next request responds immediately');
+    resetMockBehavior();
+    setMockBehavior('rewardsScenario', 'high_usage');
+
+    // Navigate away so the retry is a fresh mount (mirroring user navigating
+    // back after the stall rather than clicking the retry button directly,
+    // since clicking into the delayed response is racy).
+    await navigateAway();
+    await navigateToRewards();
+    await waitForText('Your Progress', 15_000);
+    await waitForRewardsSnapshot();
+
+    expect(await textExists('3 of 3 achievements unlocked')).toBe(true);
+    expect(await getRewardsMetricValue('Current streak')).toBe('14');
+  });
 });

@@ -355,6 +355,12 @@ export async function openhumanGetMeetSettings(): Promise<
   });
 }
 
+/**
+ * Update the agent autonomy policy settings (currently just the per-hour tool
+ * action ceiling). Persists to the user's `config.toml`. Takes effect on the
+ * next agent session — running sessions / cron jobs / channel listeners keep
+ * the limit they were started with until core restart.
+ */
 export async function openhumanUpdateAutonomySettings(update: {
   max_actions_per_hour?: number;
 }): Promise<CommandResponse<ConfigSnapshot>> {
@@ -367,6 +373,9 @@ export async function openhumanUpdateAutonomySettings(update: {
   });
 }
 
+/**
+ * Read the current agent autonomy policy settings from the loaded config.
+ */
 export async function openhumanGetAutonomySettings(): Promise<
   CommandResponse<{ max_actions_per_hour: number }>
 > {

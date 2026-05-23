@@ -24,6 +24,13 @@ type Status =
   | { kind: 'saved' }
   | { kind: 'error'; message: string };
 
+/**
+ * Settings panel under Developer Options for editing the agent's
+ * max_actions_per_hour rate-limit. Loads the current value via
+ * openhumanGetAutonomySettings on mount; saving writes through
+ * openhumanUpdateAutonomySettings and persists to the user's config.toml.
+ * New value applies to the next agent session.
+ */
 const AutonomyPanel = () => {
   const { navigateBack, breadcrumbs } = useSettingsNavigation();
   const [committed, setCommitted] = useState<number | null>(null);
