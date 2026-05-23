@@ -31,6 +31,27 @@ Commands assume the **repo root**; `pnpm dev` delegates to the `app` workspace. 
 
 ---
 
+## iOS client (experimental)
+
+The iOS client is an **in-progress, non-shipping** target in this repo. It does not ship a Rust core on-device; instead it connects to the desktop core via one of three transports selected by a `ConnectionProfile`.
+
+**Transport strategies** (see `app/src/services/transport/`):
+- `LanHttpTransport` — direct HTTP to the desktop core on the same LAN.
+- `TunnelTransport` — socket.io relay through the backend; E2E encrypted with XChaCha20-Poly1305 over X25519 key agreement.
+- `CloudHttpTransport` — fallback via the cloud backend API.
+
+**Key paths:**
+- PTT plugin: `packages/tauri-plugin-ptt/` (Swift + Rust, iOS-only).
+- iOS screens: `app/src/pages/ios/` and `app/src/components/ios/`.
+- Devices domain (Rust): `src/openhuman/devices/`.
+- Tunnel crypto (TS): `app/src/lib/tunnel/`.
+- iOS build entry: `pnpm tauri:ios:dev` — uses stock `@tauri-apps/cli@^2` via `npx`, **not** the vendored CEF CLI.
+- Setup guide: `docs/ios/SETUP.md`.
+
+**Backend dependency:** `tinyhumansai/backend#709` (tunnel socket.io contract) must be merged and deployed for end-to-end pairing to work.
+
+---
+
 ## Commands (from repo root)
 
 ```bash

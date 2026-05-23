@@ -24,6 +24,7 @@ import {
   startNativeNotificationsService,
   stopNativeNotificationsService,
 } from './lib/nativeNotifications';
+import { getIsMobile } from './lib/platform';
 import {
   startWebviewNotificationsService,
   stopWebviewNotificationsService,
@@ -51,6 +52,8 @@ import { DEV_FORCE_ONBOARDING } from './utils/config';
 // events (Google Meet captions → transcript flush, WhatsApp ingest, …)
 // are handled even when the user hasn't navigated to /accounts yet.
 // Idempotent — the service uses a `started` singleton guard.
+// On iOS these services are no-ops (isTauri() webview guard inside each),
+// but we call them unconditionally to keep the boot path consistent.
 startWebviewAccountService();
 startWebviewNotificationsService();
 startNativeNotificationsService();
@@ -72,6 +75,17 @@ if (import.meta.hot) {
 }
 
 function App() {
+  const onMobile = getIsMobile();
+
+  // On mobile (iOS or Android) the SocketProvider would try to connect to the
+  // local core HTTP socket, which does not exist on device (the core runs on
+  // the remote desktop). Gate it out to prevent spurious connection errors —
+  // chat events arrive through TunnelTransport's socket.io relay instead.
+  // NOTE: useHumanMascot's subscribeChatEvents() still returns a no-op unsub
+  // when the socket is absent — mascot state falls back to 'idle'.
+  const socketWrapped = (children: React.ReactNode) =>
+    onMobile ? <>{children}</> : <SocketProvider>{children}</SocketProvider>;
+
   return (
     <Sentry.ErrorBoundary
       fallback={({ error, componentStack, resetError }) => (
@@ -83,20 +97,20 @@ function App() {
             <I18nProvider>
               <BootCheckGate>
                 <CoreStateProvider>
-                  <SocketProvider>
+                  {socketWrapped(
                     <ChatRuntimeProvider>
                       <Router>
                         <CommandProvider>
                           <ServiceBlockingGate>
                             <AppShell />
-                            <DictationHotkeyManager />
-                            <LocalAIDownloadSnackbar />
-                            <AppUpdatePrompt />
+                            {!onMobile && <DictationHotkeyManager />}
+                            {!onMobile && <LocalAIDownloadSnackbar />}
+                            {!onMobile && <AppUpdatePrompt />}
                           </ServiceBlockingGate>
                         </CommandProvider>
                       </Router>
                     </ChatRuntimeProvider>
-                  </SocketProvider>
+                  )}
                 </CoreStateProvider>
               </BootCheckGate>
             </I18nProvider>
@@ -107,8 +121,30 @@ function App() {
   );
 }
 
-/** Inner shell — lives inside the Router so it can use useLocation. */
+/** Minimal mobile shell — renders routes only, no desktop chrome. */
+function AppShellMobile() {
+  return (
+    <div className="relative h-screen flex flex-col overflow-hidden bg-[#0f1117]">
+      <AppRoutes />
+    </div>
+  );
+}
+
+/**
+ * Top-level shell router — chooses mobile or desktop shell at render time.
+ * Must NOT call hooks before the branch because each sub-component has its
+ * own hook calls that obey the rules-of-hooks within their own scope.
+ */
 function AppShell() {
+  const onMobile = getIsMobile();
+  if (onMobile) {
+    return <AppShellMobile />;
+  }
+  return <AppShellDesktop />;
+}
+
+/** Desktop inner shell — lives inside the Router so it can use useLocation. */
+function AppShellDesktop() {
   const location = useLocation();
   const navigate = useNavigate();
   const { snapshot, isBootstrapping } = useCoreState();

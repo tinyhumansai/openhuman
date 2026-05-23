@@ -5174,6 +5174,7 @@ dependencies = [
  "whatsapp-rust-ureq-http-client",
  "whisper-rs",
  "wiremock",
+ "x25519-dalek",
  "xz2",
  "zip",
 ]

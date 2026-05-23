@@ -24,6 +24,11 @@ export default defineConfig({
       process: "process/browser",
       util: "util",
       os: "os-browserify/browser",
+      // Resolve workspace package imports for tests that import the PTT plugin.
+      "tauri-plugin-ptt-api": path.resolve(
+        configDir,
+        "../../packages/tauri-plugin-ptt/guest-js/index.ts"
+      ),
     },
   },
   test: {
@@ -37,7 +42,18 @@ export default defineConfig({
     mockReset: false,
     restoreMocks: false,
     setupFiles: ["src/test/setup.ts"],
-    include: ["src/**/*.test.{ts,tsx}", "test/*.test.{ts,tsx}"],
+    include: [
+      "src/**/*.test.{ts,tsx}",
+      "test/*.test.{ts,tsx}",
+    ],
+    // The PTT plugin's guest-js test (`packages/tauri-plugin-ptt/guest-js/index.test.ts`)
+    // is intentionally NOT included here. The app's vitest config injects
+    // `vite-plugin-node-polyfills` banner imports (Buffer/process/global) that
+    // resolve fine from within `app/` but fail from outside the workspace root
+    // on a stricter pnpm CI install (`Failed to resolve import
+    // "vite-plugin-node-polyfills/shims/buffer"`). The PTT test only mocks the
+    // Tauri JS bindings and doesn't need the polyfills — a future PR can add
+    // a self-contained vitest setup at packages/tauri-plugin-ptt/.
     hookTimeout: 30000,
     testTimeout: 30000,
     coverage: {

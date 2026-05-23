@@ -34,6 +34,7 @@ pub mod credentials;
 pub mod cron;
 pub mod desktop_companion;
 pub mod dev_paths;
+pub mod devices;
 pub mod doctor;
 pub mod embeddings;
 pub mod encryption;

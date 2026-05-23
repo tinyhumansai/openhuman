@@ -386,6 +386,33 @@ const de3: TranslationMap = {
   'channels.telegram.savedRestartRequired':
     'Kanal gespeichert. Starte die App neu, um sie zu aktivieren.',
   'channels.web.alwaysAvailable': 'Immer verfügbar',
+  'channels.discord.displayName': 'Discord',
+  'channels.discord.description': 'Sende und empfange Nachrichten über Discord.',
+  'channels.discord.authMode.bot_token.description': 'Gib deinen eigenen Discord-Bot-Token an.',
+  'channels.discord.authMode.oauth.description':
+    'Installiere den OpenHuman-Bot über OAuth auf deinem Discord-Server.',
+  'channels.discord.authMode.managed_dm.description':
+    'Verknüpfe dein persönliches Discord-Konto mit dem OpenHuman-Bot.',
+  'channels.discord.fields.bot_token.label': 'Bot-Token',
+  'channels.discord.fields.bot_token.placeholder': 'Dein Discord-Bot-Token',
+  'channels.discord.fields.guild_id.label': 'Server- (Guild-) ID',
+  'channels.discord.fields.guild_id.placeholder':
+    'Optional: Auf einen bestimmten Server beschränken',
+  'channels.telegram.displayName': 'Telegram',
+  'channels.telegram.description': 'Sende und empfange Nachrichten über Telegram.',
+  'channels.telegram.authMode.managed_dm.description':
+    'Schreibe dem OpenHuman-Telegram-Bot direkt.',
+  'channels.telegram.authMode.bot_token.description':
+    'Gib deinen eigenen Telegram-Bot-Token von @BotFather an.',
+  'channels.telegram.fields.bot_token.label': 'Bot-Token',
+  'channels.telegram.fields.bot_token.placeholder': '123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11',
+  'channels.telegram.fields.allowed_users.label': 'Erlaubte Benutzer',
+  'channels.telegram.fields.allowed_users.placeholder':
+    'Durch Kommas getrennte Telegram-Benutzernamen',
+  'channels.web.displayName': 'Web',
+  'channels.web.description': 'Chatte über die integrierte Web-Oberfläche.',
+  'channels.web.authMode.managed_dm.description':
+    'Nutze den eingebetteten Web-Chat — keine Einrichtung erforderlich.',
 };
 
 export default de3;

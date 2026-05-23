@@ -251,6 +251,8 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     // Structured WhatsApp Web data — agent-facing read-only controllers (list/search).
     // The write-path ingest controller is registered separately in build_internal_only_controllers.
     controllers.extend(crate::openhuman::whatsapp_data::all_whatsapp_data_registered_controllers());
+    // Mobile device pairing and management
+    controllers.extend(crate::openhuman::devices::all_devices_registered_controllers());
     controllers
 }
 
@@ -351,6 +353,8 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::desktop_companion::all_desktop_companion_controller_schemas());
     // Structured WhatsApp Web data — local SQLite store, agent-queryable
     schemas.extend(crate::openhuman::whatsapp_data::all_whatsapp_data_controller_schemas());
+    // Mobile device pairing and management
+    schemas.extend(crate::openhuman::devices::all_devices_controller_schemas());
     schemas
 }
 
@@ -460,6 +464,9 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
         "meet_agent" => Some(
             "Live agent loop for an open Google Meet call: shell streams inbound PCM, \
              core runs VAD-segmented STT → LLM → TTS, shell pulls synthesized PCM back.",
+        ),
+        "devices" => Some(
+            "Paired mobile device management — pairing channel creation, listing, and revocation.",
         ),
         "whatsapp_data" => Some(
             "Structured WhatsApp conversation and message store — list chats, read messages, and search across WhatsApp Web data.",

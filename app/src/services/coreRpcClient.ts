@@ -8,6 +8,7 @@ import { redactRpcUrlForLog } from '../utils/redactRpcUrlForLog';
 import { sanitizeError } from '../utils/sanitize';
 import { isTauri as coreIsTauri } from '../utils/tauriCommands/common';
 import { normalizeRpcMethod } from './rpcMethods';
+import type { CoreTransport } from './transport/CoreTransport';
 
 interface CoreRpcRelayRequest {
   method: string;
@@ -62,6 +63,22 @@ let resolvingCoreRpcUrl: Promise<string> | null = null;
 let resolvedCoreRpcToken: string | null = null;
 let didResolveCoreRpcToken = false;
 let resolvingCoreRpcToken: Promise<string | null> | null = null;
+
+// ---------------------------------------------------------------------------
+// Active transport override (used by iOS / remote profiles)
+// ---------------------------------------------------------------------------
+
+/** Active transport set by TransportManager for non-local profiles. */
+let _activeTransport: CoreTransport | null = null;
+
+/**
+ * Override the active transport used by `callCoreRpc`.
+ * Set to null to revert to the default local HTTP path.
+ */
+export function setActiveCoreTransport(transport: CoreTransport | null): void {
+  _activeTransport = transport;
+  coreRpcLog('[transport] active transport set kind=%s', transport?.kind ?? 'null');
+}
 
 /**
  * Stable classification of an RPC failure. Callers (hooks, providers, Sentry
@@ -456,6 +473,13 @@ export async function callCoreRpc<T>({
   }
 
   const normalizedMethod = normalizeRpcMethod(method);
+
+  // Dispatch through active transport when one is set (e.g. tunnel / cloud).
+  if (_activeTransport) {
+    coreRpcLog('[transport] dispatching via %s method=%s', _activeTransport.kind, normalizedMethod);
+    return _activeTransport.call<T>(normalizedMethod, params ?? {});
+  }
+
   const effectiveTimeoutMs = resolvePerCallTimeoutMs(timeoutMs);
   const payload: JsonRpcRequestBody = {
     jsonrpc: '2.0',

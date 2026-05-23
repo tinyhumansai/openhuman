@@ -2,7 +2,6 @@ import debug from 'debug';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useOAuthConnectionListener } from '../../hooks/useOAuthConnectionListener';
-import { AUTH_MODE_LABELS } from '../../lib/channels/definitions';
 import { useT } from '../../lib/i18n/I18nContext';
 import { channelConnectionsApi } from '../../services/api/channelConnectionsApi';
 import { callCoreRpc } from '../../services/coreRpcClient';
@@ -194,7 +193,10 @@ const TelegramConfig = ({ definition }: TelegramConfigProps) => {
                 channel: 'telegram',
                 authMode: spec.mode,
                 status: 'error',
-                lastError: `${field.label} is required`,
+                lastError: t('channels.fieldRequired', '{field} is required').replace(
+                  '{field}',
+                  t(`channels.telegram.fields.${field.key}.label`, field.label || field.key)
+                ),
               })
             );
             return;
@@ -351,10 +353,10 @@ const TelegramConfig = ({ definition }: TelegramConfigProps) => {
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="text-sm font-medium text-stone-900 dark:text-neutral-100">
-                  {AUTH_MODE_LABELS[spec.mode] ?? spec.mode}
+                  {t(`channels.authMode.${spec.mode}`)}
                 </p>
                 <p className="text-xs text-stone-500 dark:text-neutral-400 mt-1">
-                  {spec.description}
+                  {t(`channels.telegram.authMode.${spec.mode}.description`)}
                 </p>
                 {connection?.lastError && (
                   <p className="text-xs text-coral-600 mt-1">{connection.lastError}</p>
@@ -368,7 +370,13 @@ const TelegramConfig = ({ definition }: TelegramConfigProps) => {
                 {spec.fields.map(field => (
                   <ChannelFieldInput
                     key={field.key}
-                    field={field}
+                    field={{
+                      ...field,
+                      label: t(`channels.telegram.fields.${field.key}.label`, field.label),
+                      placeholder: field.placeholder
+                        ? t(`channels.telegram.fields.${field.key}.placeholder`, field.placeholder)
+                        : field.placeholder,
+                    }}
                     value={fieldValues[compositeKey]?.[field.key] ?? ''}
                     onChange={val => updateField(compositeKey, field.key, val)}
                     disabled={busyKeys[compositeKey]}

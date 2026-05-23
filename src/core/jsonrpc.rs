@@ -1578,6 +1578,11 @@ fn register_domain_subscribers(
         // Once-guarded registrar so domain-level startup can't duplicate it.
         crate::openhuman::channels::proactive::register_web_only_proactive_subscriber();
 
+        // Device tunnel subscriber: handles tunnel:frame handshakes, peer-status
+        // events, and register acks. Must be registered before any tunnel:frame
+        // events can arrive.
+        crate::openhuman::devices::bus::register_device_tunnel_subscriber();
+
         // Native request handlers — typed in-process request/response.
         // The agent `agent.run_turn` handler is what channel dispatch
         // calls instead of importing `run_tool_call_loop` directly.

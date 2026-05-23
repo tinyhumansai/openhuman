@@ -424,6 +424,15 @@ const id1: TranslationMap = {
   'settings.appearanceDesc': 'Pilih terang, gelap, atau ikuti tema sistem Anda',
   'settings.mascot': 'Maskot',
   'settings.mascotDesc': 'Pilih warna maskot yang digunakan di seluruh aplikasi',
+  // channels.* keys — English stubs; native translations welcome
+  'channels.authMode.managed_dm': 'Login with OpenHuman',
+  'channels.authMode.oauth': 'OAuth Sign-in',
+  'channels.authMode.bot_token': 'Use your own Bot Token',
+  'channels.authMode.api_key': 'Use your own API Key',
+  'channels.fieldRequired': '{field} is required',
+  'channels.mcp.title': 'MCP Servers',
+  'channels.mcp.description':
+    'Browse and manage Model Context Protocol servers that extend the AI with new tools.',
 };
 
 export default id1;

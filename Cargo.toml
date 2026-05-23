@@ -74,6 +74,7 @@ uuid = { version = "1", features = ["v4"] }
 anyhow = "1.0"
 async-trait = "0.1"
 chacha20poly1305 = "0.10"
+x25519-dalek = { version = "2", features = ["static_secrets"] }
 hex = "0.4"
 tokio-util = { version = "0.7", features = ["rt", "io"] }
 # tokio-tungstenite is declared per-target below so the TLS backend

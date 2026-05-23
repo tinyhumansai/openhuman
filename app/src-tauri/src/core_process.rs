@@ -32,7 +32,9 @@ use tokio_util::sync::CancellationToken;
 
 use crate::process_kill::{kill_pid_force, kill_pid_term};
 
-const EMBEDDED_CORE_READY_WAIT_ATTEMPTS: u16 = 200;
+const CORE_READY_POLL_MS: u64 = 100;
+const CORE_READY_ATTEMPTS: usize = 200;
+const CORE_READY_TIMEOUT_MS: u64 = CORE_READY_POLL_MS * CORE_READY_ATTEMPTS as u64;
 
 /// Generate a 256-bit cryptographically-random bearer token as a hex string.
 ///
@@ -288,9 +290,11 @@ impl CoreProcessHandle {
             // (issue: core_process tests intermittently failing with
             // "core process did not become ready"), especially under
             // cargo-llvm-cov instrumentation where the binary runs ~2x
-            // slower. Normal runs still exit the loop as soon as the ready
-            // signal arrives and the listener is open.
-            for _ in 0..EMBEDDED_CORE_READY_WAIT_ATTEMPTS {
+            // slower. 20s is still well under any user-visible startup
+            // expectation: in normal runs the ready signal arrives in well
+            // under 1s and the loop exits immediately; the headroom only
+            // matters on heavily loaded instrumented CI workers.
+            for _ in 0..CORE_READY_ATTEMPTS {
                 if !received_ready {
                     match ready_rx.try_recv() {
                         Ok(ready_signal) => {
@@ -341,16 +345,56 @@ impl CoreProcessHandle {
                         };
                     }
                 }
-                tokio::time::sleep(Duration::from_millis(100)).await;
+                tokio::time::sleep(Duration::from_millis(CORE_READY_POLL_MS)).await;
             }
 
             if retry_after_takeover {
                 continue;
             }
-            return Err("core process did not become ready".to_string());
+
+            // One last non-sleeping check avoids declaring a timeout when the
+            // ready signal arrived during the final poll sleep.
+            if !received_ready {
+                if let Ok(ready_signal) = ready_rx.try_recv() {
+                    self.apply_embedded_ready_signal(ready_signal);
+                    received_ready = true;
+                }
+            }
+            if received_ready && self.is_rpc_port_open().await {
+                log::info!("[core] core rpc became ready at {}", self.rpc_url());
+                return Ok(());
+            }
+
+            let port_open = self.is_rpc_port_open().await;
+            return Err(self
+                .cleanup_startup_timeout(received_ready, port_open)
+                .await);
         }
 
-        Err("core process did not become ready".to_string())
+        let port_open = self.is_rpc_port_open().await;
+        Err(self.cleanup_startup_timeout(false, port_open).await)
+    }
+
+    async fn cleanup_startup_timeout(&self, received_ready: bool, port_open: bool) -> String {
+        let task_state = {
+            let guard = self.task.lock().await;
+            match guard.as_ref() {
+                None => "missing",
+                Some(task) if task.is_finished() => "finished",
+                Some(_) => "running",
+            }
+        };
+        log::error!(
+            "[core] startup timed out after {CORE_READY_TIMEOUT_MS}ms \
+             (ready_signal={received_ready}, port_open={port_open}, task_state={task_state}); \
+             aborting embedded startup task before retry"
+        );
+        self.cancel_shutdown_token(" after startup timeout").await;
+        self.abort_task(" after startup timeout").await;
+        format!(
+            "core process did not become ready within {CORE_READY_TIMEOUT_MS}ms \
+             (ready_signal={received_ready}, port_open={port_open}, task_state={task_state})"
+        )
     }
 
     fn apply_embedded_ready_signal(

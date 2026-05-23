@@ -1,0 +1,58 @@
+[package]
+name = "openhuman-mobile"
+version = "0.54.10"
+description = "OpenHuman mobile (iOS) — Tauri host without CEF"
+authors = ["OpenHuman"]
+edition = "2021"
+default-run = "openhuman-mobile"
+autobins = false
+
+# Mobile host is iOS-only. Block other targets so this crate never gets pulled
+# into a desktop build by accident.
+[lib]
+name = "openhuman_mobile"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "openhuman-mobile"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# Stock upstream Tauri — no vendored CEF runtime. The mobile host renders via
+# WKWebView (iOS) / WebView (the Tauri default), not Chromium. CSP and the
+# React app are identical to desktop; only the host process is different.
+tauri = { version = "2.10", default-features = false, features = [
+    "common-controls-v6",
+    "devtools",
+    "unstable",
+    "webview-data-url",
+    "wry",
+] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+log = "0.4"
+env_logger = "0.11"
+
+# iOS gets the QR scanner + push-to-talk plugins. PTT ships Swift sources
+# under packages/tauri-plugin-ptt/ios/.
+[target.'cfg(target_os = "ios")'.dependencies]
+tauri-plugin-barcode-scanner = "2"
+tauri-plugin-ptt = { path = "../../packages/tauri-plugin-ptt" }
+
+# Android gets the QR scanner only. PTT returns `NotSupported` on Android —
+# we don't ship a Kotlin implementation today (tracked as a follow-up).
+[target.'cfg(target_os = "android")'.dependencies]
+tauri-plugin-barcode-scanner = "2"
+tauri-plugin-ptt = { path = "../../packages/tauri-plugin-ptt" }
+
+[features]
+default = []
+custom-protocol = ["tauri/custom-protocol"]
+
+# Match the desktop release profile for binary size.
+[profile.release]
+debug = "line-tables-only"
+split-debuginfo = "packed"

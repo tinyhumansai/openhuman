@@ -168,6 +168,86 @@ pub(super) fn handle_sio_event(
                 }
             }
         }
+        // Device tunnel — peer-status update.
+        "tunnel:peer-status" => {
+            log::info!("[socket] tunnel:peer-status received");
+            match serde_json::from_value::<crate::openhuman::devices::tunnel_client::TunnelPeerStatus>(
+                data.clone(),
+            ) {
+                Ok(status) => {
+                    if status.online {
+                        publish_global(DomainEvent::DevicePeerOnline {
+                            channel_id: status.channel_id,
+                        });
+                    } else {
+                        publish_global(DomainEvent::DevicePeerOffline {
+                            channel_id: status.channel_id,
+                        });
+                    }
+                }
+                Err(e) => {
+                    log::warn!("[socket] failed to parse tunnel:peer-status: {e}");
+                }
+            }
+        }
+        // Device tunnel — encrypted frame from the iOS device.
+        "tunnel:frame" => {
+            log::debug!("[socket] tunnel:frame received");
+            match serde_json::from_value::<crate::openhuman::devices::tunnel_client::TunnelFrame>(
+                data.clone(),
+            ) {
+                Ok(frame) => {
+                    publish_global(DomainEvent::DeviceTunnelFrame {
+                        channel_id: frame.channel_id,
+                        payload_b64: frame.payload,
+                    });
+                }
+                Err(e) => {
+                    log::warn!("[socket] failed to parse tunnel:frame: {e}");
+                }
+            }
+        }
+        // Device tunnel — backend ack for tunnel:register.
+        "tunnel:registered" => {
+            log::info!("[socket] tunnel:registered received");
+            let channel_id = data
+                .get("channelId")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let pairing_token = data
+                .get("pairingToken")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let session_token = data
+                .get("sessionToken")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            if !channel_id.is_empty() {
+                publish_global(DomainEvent::DeviceTunnelRegistered {
+                    channel_id,
+                    pairing_token,
+                    session_token,
+                });
+            } else {
+                log::warn!("[socket] tunnel:registered missing channelId");
+            }
+        }
+        // Device tunnel — backend evicted the channel (TTL / server restart).
+        "tunnel:evicted" => {
+            let channel_id = data
+                .get("channelId")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            log::info!("[socket] tunnel:evicted channel_id={}", channel_id);
+            if !channel_id.is_empty() {
+                publish_global(DomainEvent::DevicePeerOffline { channel_id });
+            }
+        }
+
         // Channel inbound message — publish to event bus for ChannelInboundSubscriber
         _ if event_name.ends_with(":message") => {
             log::info!(

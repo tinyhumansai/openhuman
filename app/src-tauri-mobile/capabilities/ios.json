@@ -1,0 +1,14 @@
+{
+  "$schema": "../gen/schemas/mobile-schema.json",
+  "identifier": "ios-ptt",
+  "description": "Push-to-talk permissions — iOS only (Swift AVAudioEngine/SFSpeechRecognizer/AVSpeechSynthesizer bridge).",
+  "platforms": ["iOS"],
+  "windows": ["main"],
+  "permissions": [
+    "ptt:allow-start-listening",
+    "ptt:allow-stop-listening",
+    "ptt:allow-speak",
+    "ptt:allow-cancel-speech",
+    "ptt:allow-list-voices"
+  ]
+}

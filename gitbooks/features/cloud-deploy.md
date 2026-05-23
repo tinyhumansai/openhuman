@@ -649,6 +649,10 @@ To run the same check locally:
 ```bash
 docker build -t openhuman-core:smoke .
 
+# Optional: tune build profile and Cargo parallelism.
+# Keep CARGO_BUILD_JOBS=1 on constrained builders; raise it on larger machines.
+docker build --build-arg CARGO_PROFILE=release --build-arg CARGO_BUILD_JOBS=4 -t openhuman-core:release .
+
 # Token-set path (App Platform):
 docker run -d --name oh-smoke -p 7788:7788 \
   -e OPENHUMAN_CORE_TOKEN=smoke-test-token \

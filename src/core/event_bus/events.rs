@@ -406,6 +406,31 @@ pub enum DomainEvent {
         routed: bool,
     },
 
+    // ── Device pairing ──────────────────────────────────────────────────
+    /// A mobile device completed the X25519 handshake and is now paired.
+    DevicePaired {
+        channel_id: String,
+        device_pubkey: String,
+        label: Option<String>,
+    },
+    /// A paired device's tunnel session was revoked.
+    DeviceRevoked { channel_id: String },
+    /// The backend tunnel reported the peer (device) came online.
+    DevicePeerOnline { channel_id: String },
+    /// The backend tunnel reported the peer (device) went offline.
+    DevicePeerOffline { channel_id: String },
+    /// An encrypted tunnel frame arrived from the device.
+    DeviceTunnelFrame {
+        channel_id: String,
+        payload_b64: String,
+    },
+    /// The backend acknowledged `tunnel:register` with channel credentials.
+    DeviceTunnelRegistered {
+        channel_id: String,
+        pairing_token: String,
+        session_token: String,
+    },
+
     // ── Memory tree ─────────────────────────────────────────────────────
     /// A document (chat batch, email thread, or standalone document) was
     /// fully canonicalised and its chunks written to the memory tree.
@@ -587,6 +612,13 @@ impl DomainEvent {
             | Self::TreeSummarizerRebuildCompleted { .. } => "tree_summarizer",
 
             Self::NotificationIngested { .. } | Self::NotificationTriaged { .. } => "notification",
+
+            Self::DevicePaired { .. }
+            | Self::DeviceRevoked { .. }
+            | Self::DevicePeerOnline { .. }
+            | Self::DevicePeerOffline { .. }
+            | Self::DeviceTunnelFrame { .. }
+            | Self::DeviceTunnelRegistered { .. } => "device",
 
             Self::CompanionSessionStarted { .. }
             | Self::CompanionStateChanged { .. }
