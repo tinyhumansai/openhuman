@@ -39,7 +39,7 @@ use std::sync::Arc;
 /// list — initial build, post-composio refresh, scope-filter change —
 /// so the request the provider sees is always name-unique regardless
 /// of which path produced it.
-pub(super) fn dedup_visible_tool_specs(specs: Vec<ToolSpec>) -> Vec<ToolSpec> {
+pub(crate) fn dedup_visible_tool_specs(specs: Vec<ToolSpec>) -> Vec<ToolSpec> {
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut deduped: Vec<ToolSpec> = Vec::with_capacity(specs.len());
     let mut dropped: Vec<String> = Vec::new();

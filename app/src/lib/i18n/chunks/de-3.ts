@@ -123,8 +123,6 @@ const de3: TranslationMap = {
   'subconscious.decision.failed': 'Fehlgeschlagen',
   'subconscious.decision.cancelled': 'Abgesagt',
   'subconscious.decision.skipped': 'Übersprungen',
-  'subconscious.providerUnavailableTitle': 'Unterbewusstsein pausiert',
-  'subconscious.providerSettings': 'KI-Einstellungen',
   'actionable.complete': 'Komplett',
   'actionable.dismiss': 'Entlassen',
   'actionable.snooze': 'Schlummern',

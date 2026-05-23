@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { listConnections, listToolkits } from './composioApi';
+import { listAgentReadyToolkits, listConnections, listToolkits } from './composioApi';
 import { canonicalizeComposioToolkitSlug } from './toolkitSlug';
 import type { ComposioConnection } from './types';
 
@@ -142,4 +142,64 @@ export function useComposioIntegrations(pollIntervalMs = 5_000): UseComposioInte
   }, [connections]);
 
   return { toolkits, connectionByToolkit, loading, error, refresh };
+}
+
+// ── useAgentReadyComposioToolkits ─────────────────────────────────
+
+export interface UseAgentReadyComposioToolkitsResult {
+  /** Lowercased slugs of toolkits that ship an agent-ready catalog. */
+  agentReady: ReadonlySet<string>;
+  /** Whether the initial fetch is still in flight. */
+  loading: boolean;
+  /** Last error message from the fetch, if any. */
+  error: string | null;
+}
+
+/**
+ * Fetches the set of Composio toolkits that have an agent-ready
+ * curated catalog on the core side. The list changes only with
+ * core releases, so we fetch once on mount and never refresh.
+ *
+ * Used by the Skills grid (issue #2283) to flag connected
+ * toolkits without a catalog as "preview / coming soon" so users
+ * don't trigger the max-iterations failure that an uncurated
+ * connection causes when the agent calls `composio_list_tools`.
+ *
+ * On fetch failure we return an empty set and surface the error
+ * — the UI degrades to "no preview labels" rather than
+ * incorrectly labelling everything as preview.
+ */
+export function useAgentReadyComposioToolkits(): UseAgentReadyComposioToolkitsResult {
+  const [agentReady, setAgentReady] = useState<ReadonlySet<string>>(() => new Set());
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    listAgentReadyToolkits()
+      .then(resp => {
+        if (!mountedRef.current) return;
+        const normalized = (resp.toolkits ?? []).map(canonicalizeComposioToolkitSlug);
+        setAgentReady(new Set(normalized));
+        setError(null);
+      })
+      .catch(err => {
+        if (!mountedRef.current) return;
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn('[composio] agent-ready toolkits fetch failed:', message);
+        setError(message);
+      })
+      .finally(() => {
+        if (mountedRef.current) setLoading(false);
+      });
+  }, []);
+
+  return { agentReady, loading, error };
 }

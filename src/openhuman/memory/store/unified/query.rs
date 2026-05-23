@@ -39,6 +39,10 @@ struct StoredChunk {
     text: String,
     embedding: Option<Vec<f32>>,
     updated_at: f64,
+    /// Signature of the embedding model that produced `embedding`. `None` for
+    /// rows written before model tagging was introduced. Used to exclude
+    /// cross-model vectors from cosine scoring.
+    model_signature: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -506,7 +510,7 @@ impl UnifiedMemory {
         let conn = self.conn.lock();
         let mut stmt = conn
             .prepare(
-                "SELECT document_id, chunk_id, text, embedding, updated_at
+                "SELECT document_id, chunk_id, text, embedding, updated_at, model_signature
                  FROM vector_chunks
                  WHERE namespace = ?1",
             )
@@ -526,6 +530,7 @@ impl UnifiedMemory {
                 text: row.get(2).map_err(|e| e.to_string())?,
                 embedding: embedding_blob.as_deref().map(Self::bytes_to_vec),
                 updated_at: row.get(4).map_err(|e| e.to_string())?,
+                model_signature: row.get(5).map_err(|e| e.to_string())?,
             });
         }
         Ok(chunks)
@@ -544,11 +549,26 @@ impl UnifiedMemory {
             .embed_one(query)
             .await
             .map_err(|e| format!("embedding query: {e}"))?;
+        let active_signature = self.embedder.signature();
         let mut scores = HashMap::new();
         for chunk in chunks {
             let Some(embedding) = chunk.embedding.as_ref() else {
                 continue;
             };
+            // Skip vectors produced by a different embedding model — cosine across
+            // two embedding spaces is meaningless. Rows with no signature (written
+            // before model tagging) fall through to the dimension guard below.
+            if let Some(sig) = chunk.model_signature.as_deref() {
+                if sig != active_signature {
+                    continue;
+                }
+            }
+            // Dimension guard: a model swap that changed dimensionality leaves
+            // legacy/untagged vectors at the old length; skip them rather than
+            // letting cosine_similarity silently return 0.
+            if embedding.len() != query_embedding.len() {
+                continue;
+            }
             let similarity = Self::cosine_similarity(&query_embedding, embedding);
             let entry = scores
                 .entry(chunk.document_id.clone())

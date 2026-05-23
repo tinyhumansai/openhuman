@@ -502,6 +502,7 @@ const DeveloperOptionsPanel = () => {
             title={t(item.titleKey)}
             description={t(item.descriptionKey)}
             onClick={() => navigateToSettings(item.route)}
+            testId={`settings-nav-${item.id}`}
             isFirst={index === 0}
             isLast={false}
           />
@@ -513,6 +514,7 @@ const DeveloperOptionsPanel = () => {
             title={item.title}
             description={item.description}
             onClick={item.onClick}
+            testId={`settings-nav-${item.id}`}
             isFirst={false}
             isLast={index === trailingItems.length - 1}
           />

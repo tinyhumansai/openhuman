@@ -444,6 +444,9 @@ const es5: TranslationMap = {
   'webhooks.tunnels.toggleFailed': 'No se pudo alternar el echo',
   'composio.authExpired': 'Autenticación caducada',
   'composio.reconnect': 'Reconectar',
+  'composio.previewBadge': 'Preview',
+  'composio.previewTooltip':
+    'Agent integration coming soon — you can connect, but the agent can’t use this toolkit yet.',
   'composio.directModeRequiresKey':
     'Error al guardar. El modo Directo requiere una clave API no vacía.',
   'composio.notYetRouted': 'aún sin enrutar',
