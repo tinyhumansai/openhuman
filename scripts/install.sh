@@ -141,6 +141,11 @@ case "${ARCH_RAW}" in
 esac
 
 if [ "${OS}" = "linux" ] && [ "${ARCH}" != "x86_64" ]; then
+  if [ "${DRY_RUN}" = true ]; then
+    log_warn "Linux installer currently supports x86_64 only; no install asset resolved for ${ARCH}."
+    echo "DRY RUN: skipping install for ${OS}/${ARCH} - no compatible asset is published."
+    exit 0
+  fi
   log_err "Linux installer currently supports x86_64 only."
   exit 1
 fi

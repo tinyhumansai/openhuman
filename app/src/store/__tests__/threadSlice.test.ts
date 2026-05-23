@@ -287,9 +287,16 @@ describe('threadSlice addMessageLocal thunk', () => {
       addMessageLocal({ threadId: 't-1', message: makeMessage({ content: persisted.content }) })
     );
 
+    // The title refresh is fire-and-forget — flush the microtask queue so the
+    // generateThreadTitleIfNeeded and loadThreads thunks settle in the store.
+    await vi.waitFor(() => {
+      expect(mockedThreadApi.generateTitleIfNeeded).toHaveBeenCalledWith('t-1', undefined);
+    });
+    await vi.waitFor(() => {
+      expect(store.getState().thread.threads[0]?.title).toBe('Summarize my latest 5 emails');
+    });
+
     expect(result.type).toBe('thread/addMessageLocal/fulfilled');
-    expect(mockedThreadApi.generateTitleIfNeeded).toHaveBeenCalledWith('t-1', undefined);
-    expect(store.getState().thread.threads[0].title).toBe('Summarize my latest 5 emails');
     expect(store.getState().thread.messagesByThreadId['t-1']).toEqual([persisted]);
   });
 

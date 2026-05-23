@@ -374,9 +374,13 @@ export default function ComposioConnectModal({
         resp.connectionId
       );
       setConnectUrl(resp.connectUrl);
-      await openUrl(resp.connectUrl);
       setPhase('waiting');
       startPolling();
+      try {
+        await openUrl(resp.connectUrl);
+      } catch (openErr) {
+        console.warn('[composio][authorize] failed to open connectUrl:', openErr);
+      }
     } catch (err) {
       console.error(
         '[composio][authorize] failed toolkit=%s slug_check=%s',

@@ -265,6 +265,7 @@ const SettingsHome = () => {
               title={item.title}
               description={item.description}
               onClick={item.onClick}
+              testId={`settings-nav-${item.id}`}
               dangerous={item.dangerous}
               isFirst={index === 0}
               isLast={index === flatItems.length - 1}

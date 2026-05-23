@@ -518,6 +518,42 @@ fn is_provider_user_state_message(lower: &str) -> bool {
         return true;
     }
 
+    // TAURI-RUST-X9 (#1166): direct-mode composio call against the user's
+    // personal Composio v3 tenant rejected with a 401 because the stored
+    // API key is invalid / revoked / has the wrong prefix. The canonical
+    // wire shape rendered by
+    // `src/openhuman/composio/tools/impl/network/composio.rs::response_error`
+    // and the various direct-mode op wrappers is:
+    //
+    //   `[composio-direct] list_connections failed: Composio v3
+    //    connected_accounts failed: HTTP 401: Invalid API key: ak_…`
+    //
+    // The "Invalid API key" body is rendered for every direct-mode
+    // endpoint (list_connections / list_tools / authorize / etc.), so we
+    // gate on the **`[composio-direct]` prefix** + either of the two
+    // anchors that prove the failure came from the v3 auth wall:
+    //   - `HTTP 401`  (the status the v3 wall returns)
+    //   - `Invalid API key`  (the body Composio puts in the JSON)
+    //
+    // Requiring the `[composio-direct]` prefix keeps this from
+    // accidentally swallowing unrelated bugs — backend-mode 401s from
+    // `integrations/composio/*` still carry the `Backend returned 401`
+    // shape (handled by the failure-tag flow with `status="401"`),
+    // not the `HTTP 401: Invalid API key` shape.
+    //
+    // Remediation is purely user-state: the user must rotate / re-enter
+    // their Composio key via Settings → Composio → Direct mode. Sentry
+    // has no actionable signal — the UI surfaces the "Invalid API key"
+    // toast and the polling layer already retries every 5 s.
+    //
+    // Drops Sentry TAURI-RUST-X9 (~15.7 k events / ~22 h, single user,
+    // release openhuman@0.54.0+c25fc8e5fd3e).
+    if lower.contains("[composio-direct]")
+        && (lower.contains("http 401") || lower.contains("invalid api key"))
+    {
+        return true;
+    }
+
     false
 }
 
@@ -2001,6 +2037,118 @@ mod tests {
             expected_error_kind(msg),
             Some(ExpectedErrorKind::ProviderUserState),
             "4xx + toolkit-not-enabled must land in ProviderUserState, not BackendUserError"
+        );
+    }
+
+    // ── TAURI-RUST-X9 (#1166): composio-direct 401 / Invalid API key ────
+
+    #[test]
+    fn classifies_composio_direct_invalid_api_key_as_provider_user_state() {
+        // Canonical Sentry TAURI-RUST-X9 wire shape — the verbatim title
+        // body from the issue, captured 15,732 times in ~22h on a single
+        // user with a bad direct-mode key. The classifier must demote
+        // this to `ProviderUserState` so the polling layer's 5 s retry
+        // doesn't keep flooding Sentry.
+        let msg = "[composio-direct] list_connections failed: \
+                   Composio v3 connected_accounts failed: \
+                   HTTP 401: Invalid API key: ak_VsUvq*****";
+        assert_eq!(
+            expected_error_kind(msg),
+            Some(ExpectedErrorKind::ProviderUserState),
+            "composio-direct HTTP 401 + Invalid API key must demote to ProviderUserState"
+        );
+    }
+
+    #[test]
+    fn classifies_composio_direct_invalid_api_key_for_other_ops() {
+        // Same arm must cover every op-name the direct branches emit —
+        // not just `list_connections`. The matcher gates on the
+        // `[composio-direct]` prefix, not on a specific op string, so
+        // `list_tools` / `authorize` / `list_connections` all demote.
+        let shapes = [
+            // list_tools prefetch fails before the actual list_tools call
+            "[composio-direct] list_tools: prefetch connections failed: \
+             Composio v3 connected_accounts failed: HTTP 401: Invalid API key: ak_…",
+            // direct authorize hits the v3 /connected_accounts/link wall
+            "[composio-direct] authorize failed: \
+             Composio v3 connected_accounts/link failed: HTTP 401: Invalid API key: ak_…",
+            // direct list_tools itself
+            "[composio-direct] list_tools failed: \
+             Composio v3 tools failed: HTTP 401: Invalid API key: ak_…",
+            // periodic-tick rendering (no "[composio-direct]" prefix because
+            // periodic.rs wraps differently, but the failure still gets the
+            // hook — handled by ops.rs's report path, not the
+            // expected_error_kind body shape, so we only verify the
+            // composio-direct branch here)
+        ];
+        for msg in shapes {
+            assert_eq!(
+                expected_error_kind(msg),
+                Some(ExpectedErrorKind::ProviderUserState),
+                "every [composio-direct] op with HTTP 401 / Invalid API key must demote: {msg}"
+            );
+        }
+    }
+
+    #[test]
+    fn classifies_composio_direct_with_invalid_api_key_only_no_http_401() {
+        // The matcher accepts EITHER `HTTP 401` OR `Invalid API key`
+        // alongside the `[composio-direct]` prefix. Catches the wire
+        // shape variant where the body anchor lands but the status text
+        // is rendered differently (e.g. "401 Unauthorized" instead of
+        // "HTTP 401") — same user-state condition.
+        let msg = "[composio-direct] list_connections failed: \
+                   Composio v3 connected_accounts failed: \
+                   401 Unauthorized: Invalid API key: ak_…";
+        assert_eq!(
+            expected_error_kind(msg),
+            Some(ExpectedErrorKind::ProviderUserState),
+            "composio-direct + Invalid API key body must demote even without literal 'HTTP 401'"
+        );
+    }
+
+    #[test]
+    fn does_not_classify_unrelated_http_401_as_composio_direct_user_state() {
+        // Discrimination test: a generic 401 that does NOT carry the
+        // `[composio-direct]` prefix must NOT match this arm. This
+        // protects against the arm accidentally swallowing backend-mode
+        // composio 401s, unrelated integration 401s, or any other
+        // 401-containing message that lacks the direct-mode anchor.
+        //
+        // The backend-mode shape is `Backend returned 401 …`; it does
+        // not contain `[composio-direct]`, so the new arm rightly skips
+        // it. Backend-mode 401s remain a real Sentry signal (bad
+        // service-to-service auth, expired token, etc.).
+        let backend_401 = "[composio] list_connections failed: \
+                           Backend returned 401 Unauthorized for GET \
+                           https://api.tinyhumans.ai/agent-integrations/composio/connections: \
+                           Invalid API key";
+        assert_ne!(
+            expected_error_kind(backend_401),
+            Some(ExpectedErrorKind::ProviderUserState),
+            "backend-mode 401 must NOT demote via the composio-direct arm"
+        );
+
+        let unrelated_401 = "GitHub API error: HTTP 401: Bad credentials";
+        assert_ne!(
+            expected_error_kind(unrelated_401),
+            Some(ExpectedErrorKind::ProviderUserState),
+            "unrelated 401 (no [composio-direct] anchor) must NOT match the composio-direct arm"
+        );
+    }
+
+    #[test]
+    fn does_not_classify_composio_direct_500_as_user_state() {
+        // Real bug shapes — a 500 from the direct v3 path with no auth
+        // body anchor — must still fall through to `None` so Sentry
+        // sees them. Without this guard the arm could be too permissive
+        // and silence genuine backend faults.
+        let msg = "[composio-direct] list_connections failed: \
+                   Composio v3 connected_accounts failed: HTTP 500";
+        assert_eq!(
+            expected_error_kind(msg),
+            None,
+            "composio-direct 500 with no auth body must NOT demote — it is a real bug shape"
         );
     }
 

@@ -207,6 +207,11 @@ const ru5: TranslationMap = {
   'settings.mascot.active': 'Активно',
   'settings.mascot.characterDesc': 'Описание персонажа',
   'settings.mascot.characterHeading': 'Персонаж',
+  // TODO: translate custom GIF mascot strings.
+  'settings.mascot.customGifError':
+    'Enter an HTTPS .gif URL, loopback HTTP .gif URL, file:// .gif URL, or local .gif path.',
+  'settings.mascot.customGifHeading': 'Custom GIF avatar',
+  'settings.mascot.customGifLabel': 'Custom GIF avatar URL',
   'settings.mascot.colorDesc': 'Описание цвета',
   'settings.mascot.colorHeading': 'Цвет',
   'settings.mascot.loadingLibrary': 'Загрузка библиотеки OpenHuman…',
@@ -442,6 +447,9 @@ const ru5: TranslationMap = {
   'webhooks.tunnels.toggleFailed': 'Не удалось переключить эхо',
   'composio.authExpired': 'Срок авторизации истёк',
   'composio.reconnect': 'Переподключить',
+  'composio.previewBadge': 'Preview',
+  'composio.previewTooltip':
+    'Agent integration coming soon — you can connect, but the agent can’t use this toolkit yet.',
   'composio.directModeRequiresKey': 'Не удалось сохранить. Прямой режим требует непустой API-ключ.',
   'composio.notYetRouted': 'пока не маршрутизируется',
   'composio.triggers.loading': 'Загрузка…',
@@ -485,6 +493,9 @@ const ru5: TranslationMap = {
   'settings.mascot.title': 'OpenHuman',
   'settings.developerMenu.mcpServer.title': 'MCP Server',
   'settings.developerMenu.mcpServer.desc': 'Configure external MCP clients to connect to OpenHuman',
+  'settings.developerMenu.autonomy.title': 'Автономия агента',
+  'settings.developerMenu.autonomy.desc':
+    'Ограничения частоты действий инструментов и пороги безопасности',
   'settings.mcpServer.title': 'MCP Server',
   'settings.mcpServer.toolsSectionTitle': 'Available Tools',
   'settings.mcpServer.toolsSectionDesc':
