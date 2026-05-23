@@ -101,7 +101,7 @@ impl IngestionQueue {
                 // whose graph-extraction follow-up was skipped.
                 self.state.dequeue();
                 log::warn!(
-                    "[memory:ingestion_queue] dropping job: queue at capacity ({} pending) doc_id={} namespace={} title={}",
+                    "[memory:ingestion_queue] dropping job: queue at capacity (cap={}) doc_id={} namespace={} title={}",
                     self.capacity,
                     dropped.document_id,
                     dropped.document.namespace,
@@ -178,7 +178,7 @@ pub fn start_worker_with_state(
 /// Panics if `capacity == 0`. `tokio::sync::mpsc::channel` itself panics on
 /// a zero buffer, but the message is cryptic; the explicit guard here turns
 /// the misuse into a clear, grep-friendly assertion at the call site.
-pub fn start_worker_with_capacity(
+pub(crate) fn start_worker_with_capacity(
     memory: Arc<UnifiedMemory>,
     state: IngestionState,
     capacity: usize,
