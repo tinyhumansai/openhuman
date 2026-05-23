@@ -236,7 +236,30 @@ impl ApprovalGate {
             }
             Err(_elapsed) => {
                 self.evict_waiter(&request_id);
-                let _ = store::decide(&self.config, &request_id, ApprovalDecision::Deny);
+                // Race: `decide()` may have committed an Approve in
+                // SQLite right as the TTL elapsed. `store::decide(Deny)`
+                // has `WHERE decided_at IS NULL` so it won't overwrite,
+                // but without a re-read we'd return Deny here while the
+                // durable audit row says Approved (CodeRabbit review on
+                // #2367). Try to deny; if the row was already decided,
+                // honor the persisted decision.
+                let denied = store::decide(&self.config, &request_id, ApprovalDecision::Deny);
+                let persisted = match &denied {
+                    Ok(Some(_)) => Some(ApprovalDecision::Deny),
+                    Ok(None) => store::get_decision(&self.config, &request_id)
+                        .ok()
+                        .flatten(),
+                    Err(_) => None,
+                };
+                if matches!(persisted, Some(d) if d.is_approve()) {
+                    tracing::info!(
+                        request_id = %request_id,
+                        tool = tool_name,
+                        ttl_secs = self.ttl.as_secs(),
+                        "[approval::gate] timeout race: persisted decision was Approve, honoring approval"
+                    );
+                    return (GateOutcome::Allow, Some(request_id));
+                }
                 tracing::warn!(
                     request_id = %request_id,
                     tool = tool_name,

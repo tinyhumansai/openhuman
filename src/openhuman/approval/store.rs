@@ -199,6 +199,33 @@ pub fn list_pending(config: &Config) -> Result<Vec<PendingApproval>> {
     })
 }
 
+/// Look up the persisted decision for a request_id without mutating
+/// state. Returns `Ok(None)` when the row doesn't exist or hasn't
+/// been decided yet. Used to resolve gate-timeout vs decide races
+/// where the TTL elapses concurrently with a committed approval
+/// (CodeRabbit review on PR #2367).
+pub fn get_decision(config: &Config, request_id: &str) -> Result<Option<ApprovalDecision>> {
+    with_connection(config, |conn| {
+        let mut stmt = conn
+            .prepare(
+                "SELECT decision FROM pending_approvals
+                 WHERE request_id = ?1 AND decided_at IS NOT NULL",
+            )
+            .context("[approval::store] prepare get_decision")?;
+        let mut rows = stmt
+            .query(params![request_id])
+            .context("[approval::store] query get_decision")?;
+        if let Some(row) = rows.next().context("[approval::store] get_decision next")? {
+            let raw: String = row
+                .get(0)
+                .context("[approval::store] get_decision decode")?;
+            Ok(ApprovalDecision::from_str(&raw))
+        } else {
+            Ok(None)
+        }
+    })
+}
+
 /// Mark a pending row as decided and return the now-decided row.
 /// Returns `Ok(None)` if no row matched (already decided, expired, or
 /// unknown id).
@@ -554,6 +581,26 @@ mod tests {
         let remaining = list_pending(&config).unwrap();
         assert_eq!(remaining.len(), 1);
         assert_eq!(remaining[0].request_id, "p3");
+    }
+
+    #[test]
+    fn get_decision_returns_none_until_decided_then_persisted_value() {
+        // PR #2367 review: timeout-vs-decide race resolution in the
+        // gate calls `get_decision` after a denied UPDATE no-ops.
+        // Undecided rows and unknown ids must both return `None`,
+        // and decided rows must round-trip the persisted decision.
+        let (config, _dir) = test_config();
+        assert!(get_decision(&config, "missing").unwrap().is_none());
+        insert_pending(&config, &sample("race", "sess-A")).unwrap();
+        assert!(
+            get_decision(&config, "race").unwrap().is_none(),
+            "undecided row reports no decision"
+        );
+        decide(&config, "race", ApprovalDecision::ApproveOnce).unwrap();
+        assert_eq!(
+            get_decision(&config, "race").unwrap(),
+            Some(ApprovalDecision::ApproveOnce)
+        );
     }
 
     #[test]

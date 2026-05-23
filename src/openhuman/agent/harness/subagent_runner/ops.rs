@@ -1580,26 +1580,34 @@ async fn run_inner_loop(
                     // (CodeRabbit review on PR #2149.)
                     format!("Error: {reason}")
                 } else {
-                    let raw = match tokio::time::timeout(timeout, tool.execute(args)).await {
-                        Ok(Ok(result)) => {
-                            let raw = result.output();
-                            if result.is_error {
-                                format!("Error: {raw}")
-                            } else {
-                                raw
+                    let (raw, exec_success) =
+                        match tokio::time::timeout(timeout, tool.execute(args)).await {
+                            Ok(Ok(result)) => {
+                                let raw = result.output();
+                                if result.is_error {
+                                    (format!("Error: {raw}"), false)
+                                } else {
+                                    (raw, true)
+                                }
                             }
-                        }
-                        Ok(Err(err)) => format!("Error executing {}: {err}", call.name),
-                        Err(_) => format!("Error: tool '{}' timed out", call.name),
-                    };
+                            Ok(Err(err)) => {
+                                (format!("Error executing {}: {err}", call.name), false)
+                            }
+                            Err(_) => (format!("Error: tool '{}' timed out", call.name), false),
+                        };
                     // Stamp the terminal status onto the
                     // pending_approvals audit row — best-effort,
                     // failures don't propagate to the agent (#2135).
+                    // Success comes from the structured execute result,
+                    // not from parsing `raw.starts_with("Error")` — a
+                    // legitimate success payload can start with "Error"
+                    // (search hits, copied logs), which would otherwise
+                    // persist a false Failure (CodeRabbit review on #2367).
                     if let (Some(gate), Some(req_id)) = (
                         approval_gate_for_audit.as_ref(),
                         approval_request_id.as_ref(),
                     ) {
-                        let success = !raw.starts_with("Error");
+                        let success = exec_success;
                         let exec_outcome = if success {
                             crate::openhuman::approval::ExecutionOutcome::Success
                         } else {
