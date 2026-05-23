@@ -25,6 +25,12 @@ vi.mock('../../lib/composio/hooks', () => ({
     loading: false,
     error: null,
   }),
+  // Issue #2283: Skills.tsx also consumes useAgentReadyComposioToolkits.
+  useAgentReadyComposioToolkits: () => ({
+    agentReady: new Set<string>(),
+    loading: true,
+    error: null,
+  }),
 }));
 
 describe('Skills page — Notion composio integration', () => {

@@ -17,6 +17,10 @@ use super::MemoryIngestionConfig;
 use crate::core::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::memory::store::{NamespaceDocumentInput, UnifiedMemory};
 
+/// Default bounded-channel capacity for the ingestion queue. Sized to absorb
+/// realistic bursts (bulk skill sync of ~200 docs) while capping memory usage.
+pub const DEFAULT_QUEUE_CAPACITY: usize = 512;
+
 /// A job submitted to the ingestion worker.
 ///
 /// Contains all the necessary information to process a document for graph
@@ -34,14 +38,19 @@ pub struct IngestionJob {
 
 /// Handle used by callers to submit ingestion jobs.
 ///
-/// This is a thin wrapper around a `tokio::sync::mpsc::UnboundedSender` and
+/// This is a thin wrapper around a `tokio::sync::mpsc::Sender` and
 /// can be cloned freely to be shared across multiple producers.
 #[derive(Clone)]
 pub struct IngestionQueue {
     /// Sender half of the job queue channel.
-    tx: mpsc::UnboundedSender<IngestionJob>,
+    tx: mpsc::Sender<IngestionJob>,
     /// Shared state — singleton lock, queue depth, status snapshot.
     state: IngestionState,
+    /// The actual channel capacity this queue was created with. Stored so
+    /// backpressure logs always reflect the real configured size rather than
+    /// the `DEFAULT_QUEUE_CAPACITY` constant (which may differ for test
+    /// queues or future callers of `start_worker_with_capacity`).
+    capacity: usize,
 }
 
 impl IngestionQueue {
@@ -54,18 +63,25 @@ impl IngestionQueue {
     /// # Returns
     ///
     /// Returns `true` if the job was successfully enqueued, `false` if the
-    /// worker has shut down (e.g., during application termination) and the
-    /// job was dropped.
+    /// queue is full (backpressure) or the worker has shut down.
     pub fn submit(&self, job: IngestionJob) -> bool {
         self.state.enqueue();
-        match self.tx.send(job) {
+        match self.tx.try_send(job) {
             Ok(()) => true,
-            Err(e) => {
-                // Worker is gone — undo the enqueue bump so depth stays accurate.
+            Err(mpsc::error::TrySendError::Full(dropped)) => {
+                self.state.dequeue();
+                log::warn!(
+                    "[memory:ingestion_queue] queue full (capacity {}), dropping job: {}",
+                    self.capacity,
+                    dropped.document.title,
+                );
+                false
+            }
+            Err(mpsc::error::TrySendError::Closed(dropped)) => {
                 self.state.dequeue();
                 log::warn!(
                     "[memory:ingestion_queue] failed to enqueue job (worker gone?): {}",
-                    e.0.document.title,
+                    dropped.document.title,
                 );
                 false
             }
@@ -77,6 +93,16 @@ impl IngestionQueue {
     /// paths that bypass the queue.
     pub fn state(&self) -> IngestionState {
         self.state.clone()
+    }
+
+    /// Build a queue handle from a raw sender, state, and capacity. Test-only.
+    #[cfg(test)]
+    fn from_parts(tx: mpsc::Sender<IngestionJob>, state: IngestionState, capacity: usize) -> Self {
+        Self {
+            tx,
+            state,
+            capacity,
+        }
     }
 }
 
@@ -103,12 +129,29 @@ pub fn start_worker_with_state(
     memory: Arc<UnifiedMemory>,
     state: IngestionState,
 ) -> IngestionQueue {
-    let (tx, rx) = mpsc::unbounded_channel::<IngestionJob>();
+    start_worker_with_capacity(memory, state, DEFAULT_QUEUE_CAPACITY)
+}
+
+/// Start a worker with an explicit channel capacity. Exposed for
+/// deterministic tests that need a tiny queue to exercise backpressure.
+pub fn start_worker_with_capacity(
+    memory: Arc<UnifiedMemory>,
+    state: IngestionState,
+    capacity: usize,
+) -> IngestionQueue {
+    let (tx, rx) = mpsc::channel::<IngestionJob>(capacity);
 
     tokio::spawn(ingestion_worker(memory, rx, state.clone()));
 
-    log::info!("[memory:ingestion_queue] background worker started");
-    IngestionQueue { tx, state }
+    log::debug!(
+        "[memory:ingestion_queue] background worker started (capacity={})",
+        capacity,
+    );
+    IngestionQueue {
+        tx,
+        state,
+        capacity,
+    }
 }
 
 /// The main worker loop for background document ingestion.
@@ -122,7 +165,7 @@ pub fn start_worker_with_state(
 /// * `rx` - The receiver half of the job queue channel.
 async fn ingestion_worker(
     memory: Arc<UnifiedMemory>,
-    mut rx: mpsc::UnboundedReceiver<IngestionJob>,
+    mut rx: mpsc::Receiver<IngestionJob>,
     state: IngestionState,
 ) {
     log::debug!("[memory:ingestion_queue] worker loop entered");
@@ -197,4 +240,92 @@ async fn ingestion_worker(
     }
 
     log::info!("[memory:ingestion_queue] worker shut down (channel closed)");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::sync::mpsc;
+
+    #[tokio::test]
+    async fn submit_when_full_returns_false() {
+        // Capacity-1 channel, fill it, then submit another — exercises the Full branch.
+        let state = IngestionState::new();
+        let (tx, _rx) = mpsc::channel::<IngestionJob>(1);
+        // Pre-fill the slot directly so submit() sees a full channel.
+        tx.try_send(make_dummy_job("filler")).ok();
+
+        let queue = IngestionQueue::from_parts(tx, state.clone(), 1);
+        assert!(!queue.submit(make_dummy_job("overflow")));
+        // Depth should be 0 — enqueue was rolled back.
+        assert_eq!(state.snapshot().queue_depth, 0);
+    }
+
+    #[tokio::test]
+    async fn submit_when_worker_gone_returns_false() {
+        let state = IngestionState::new();
+        let (tx, rx) = mpsc::channel::<IngestionJob>(4);
+        drop(rx); // simulate worker shutdown
+
+        let queue = IngestionQueue::from_parts(tx, state.clone(), 4);
+        assert!(!queue.submit(make_dummy_job("orphan")));
+        assert_eq!(state.snapshot().queue_depth, 0);
+    }
+
+    /// Verify that `submit()` succeeds again after transient backpressure is
+    /// relieved (the channel drains and a slot becomes available).
+    #[tokio::test]
+    async fn submit_recovers_after_backpressure() {
+        let state = IngestionState::new();
+        // Capacity-2 channel so we can fill one slot and still have headroom
+        // for the recovery submit.
+        let (tx, mut rx) = mpsc::channel::<IngestionJob>(2);
+
+        // Pre-fill both slots directly to force the Full condition on submit.
+        tx.try_send(make_dummy_job("filler-a")).ok();
+        tx.try_send(make_dummy_job("filler-b")).ok();
+
+        let queue = IngestionQueue::from_parts(tx, state.clone(), 2);
+
+        // Channel is now full — submit should return false and roll back depth.
+        assert!(!queue.submit(make_dummy_job("overflow")));
+        assert_eq!(
+            state.snapshot().queue_depth,
+            0,
+            "depth must be 0 after rejected submit"
+        );
+
+        // Drain one slot to free up space.
+        let _ = rx.recv().await;
+
+        // submit() should now succeed and increment queue_depth by 1.
+        assert!(queue.submit(make_dummy_job("recovered")));
+        assert_eq!(
+            state.snapshot().queue_depth,
+            1,
+            "depth must reflect the recovered enqueue"
+        );
+    }
+
+    fn make_dummy_job(title: &str) -> IngestionJob {
+        use crate::openhuman::memory::ingestion::MemoryIngestionConfig;
+        use crate::openhuman::memory::store::types::NamespaceDocumentInput;
+        IngestionJob {
+            document_id: format!("doc-{title}"),
+            document: NamespaceDocumentInput {
+                namespace: "test".to_string(),
+                key: title.to_string(),
+                title: title.to_string(),
+                content: "body".to_string(),
+                source_type: "doc".to_string(),
+                priority: "normal".to_string(),
+                tags: vec![],
+                metadata: serde_json::Value::Null,
+                category: "core".to_string(),
+                session_id: None,
+                document_id: None,
+            },
+            config: MemoryIngestionConfig::default(),
+        }
+    }
 }

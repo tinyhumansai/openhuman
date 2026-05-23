@@ -48,6 +48,7 @@ import {
 import { ConfirmationModal } from '../../intelligence/ConfirmationModal';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
+import { presentProviderSetupError, ProviderSetupErrorNotice } from './ProviderSetupErrorNotice';
 import { useReembedBackfillModal } from './useReembedBackfillModal';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -577,7 +578,13 @@ const ProviderKeyDialog = ({
     try {
       await onSubmit(trimmed);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn('[ai-settings] provider setup failed', {
+        slug,
+        local_runtime: isLocalRuntime,
+        summary: presentProviderSetupError(message).summary,
+      });
+      setError(message);
       setPhase('idle');
     }
   };
@@ -619,9 +626,7 @@ const ProviderKeyDialog = ({
             }}
             className={`rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 placeholder-stone-400 dark:placeholder-neutral-500 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 disabled:opacity-60 ${isLocalRuntime ? 'font-mono' : ''}`}
           />
-          {error ? (
-            <p className="text-xs font-medium text-red-600 dark:text-red-300">{error}</p>
-          ) : null}
+          {error ? <ProviderSetupErrorNotice error={error} /> : null}
         </div>
 
         <div className="mt-6 flex justify-end gap-2">
@@ -2617,11 +2622,7 @@ const CloudProviderEditor = ({
               />
             </div>
           )}
-          {submitError && (
-            <div className="rounded-md border border-red-200 dark:border-red-500/30 bg-red-50 dark:bg-red-500/10 px-3 py-2 text-xs text-red-700 dark:text-red-300 break-words">
-              {submitError}
-            </div>
-          )}
+          {submitError ? <ProviderSetupErrorNotice error={submitError} /> : null}
         </div>
         <div className="flex items-center justify-end gap-2 border-t border-stone-200 dark:border-neutral-800 px-4 py-3">
           <button
@@ -2650,7 +2651,12 @@ const CloudProviderEditor = ({
                 // Caller throws when the live /models probe rejects — surface
                 // the failure inline and keep the dialog open so the user can
                 // fix the key/URL and retry.
-                setSubmitError(err instanceof Error ? err.message : String(err));
+                const message = err instanceof Error ? err.message : String(err);
+                console.warn('[ai-settings] cloud provider editor submit failed', {
+                  slug,
+                  summary: presentProviderSetupError(message).summary,
+                });
+                setSubmitError(message);
               } finally {
                 setSaving(false);
               }

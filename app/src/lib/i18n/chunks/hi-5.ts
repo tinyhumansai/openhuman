@@ -441,6 +441,9 @@ const hi5: TranslationMap = {
   'webhooks.tunnels.toggleFailed': 'Echo टॉगल करने में दिक्कत',
   'composio.authExpired': 'प्रमाणीकरण समाप्त',
   'composio.reconnect': 'पुनः कनेक्ट करें',
+  'composio.previewBadge': 'Preview',
+  'composio.previewTooltip':
+    'Agent integration coming soon — you can connect, but the agent can’t use this toolkit yet.',
   'composio.directModeRequiresKey':
     'सहेजने में विफल। डायरेक्ट मोड के लिए गैर-रिक्त API कुंजी आवश्यक है।',
   'composio.notYetRouted': 'अभी तक रूट नहीं हुआ',

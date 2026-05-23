@@ -20,7 +20,10 @@ pub fn toolkit_description(slug: &str) -> &'static str {
         "google_sheets" => "Read, write, and manage Google Sheets spreadsheets",
         "outlook" => "Send, read, and manage emails in Microsoft Outlook",
         "microsoft_teams" => "Send messages and manage channels in Microsoft Teams",
-        "linear" => "Create and manage issues, projects, and cycles in Linear",
+        "linear" => {
+            "Create, read, and manage issues, projects, and cycles in Linear; sync \
+             assigned issues into Memory Tree"
+        }
         "jira" => "Create and manage issues, projects, and sprints in Jira",
         "trello" => "Create and manage cards, lists, and boards in Trello",
         "asana" => "Create and manage tasks, projects, and sections in Asana",
@@ -42,6 +45,11 @@ pub fn toolkit_description(slug: &str) -> &'static str {
         "figma" => "Access and manage Figma design files and components",
         "youtube" => "Search videos, manage playlists, and interact with YouTube",
         "calendar" => "Create, update, and query calendar events",
+        "one_drive" | "onedrive" => {
+            "Upload, download, search, and share files in Microsoft OneDrive"
+        }
+        "excel" => "Read, write, and manage workbooks, worksheets, and tables in Microsoft Excel",
+        "todoist" => "Create and manage tasks, projects, sections, and labels in Todoist",
         _ => "Interact with this connected service via its available actions",
     }
 }

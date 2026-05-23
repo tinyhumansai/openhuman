@@ -1,5 +1,12 @@
 //! Curated catalogs — productivity toolkits: Outlook, Linear, Jira,
-//! Trello, Asana, Dropbox.
+//! Trello, Asana, Dropbox, Todoist.
+//!
+//! Catalog-only toolkits (Linear, Jira, Trello, Asana, Dropbox,
+//! Todoist) don't ship a native [`super::ComposioProvider`] — they
+//! have no user-profile fetch, no initial/periodic sync, no trigger
+//! webhooks, and no memory ingestion. The agent invokes their actions
+//! through Composio's API, but their data is not pre-ingested into
+//! OpenHuman's memory tree.
 
 use super::tool_scope::{CuratedTool, ToolScope};
 
@@ -100,92 +107,12 @@ pub const OUTLOOK_CURATED: &[CuratedTool] = &[
 ];
 
 // ── linear ──────────────────────────────────────────────────────────
-pub const LINEAR_CURATED: &[CuratedTool] = &[
-    CuratedTool {
-        slug: "LINEAR_LIST_LINEAR_ISSUES",
-        scope: ToolScope::Read,
-    },
-    CuratedTool {
-        slug: "LINEAR_GET_LINEAR_ISSUE",
-        scope: ToolScope::Read,
-    },
-    CuratedTool {
-        slug: "LINEAR_LIST_LINEAR_TEAMS",
-        scope: ToolScope::Read,
-    },
-    CuratedTool {
-        slug: "LINEAR_LIST_LINEAR_PROJECTS",
-        scope: ToolScope::Read,
-    },
-    CuratedTool {
-        slug: "LINEAR_LIST_LINEAR_STATES",
-        scope: ToolScope::Read,
-    },
-    CuratedTool {
-        slug: "LINEAR_SEARCH_ISSUES",
-        scope: ToolScope::Read,
-    },
-    CuratedTool {
-        slug: "LINEAR_GET_CYCLES_BY_TEAM_ID",
-        scope: ToolScope::Read,
-    },
-    CuratedTool {
-        slug: "LINEAR_LIST_LINEAR_USERS",
-        scope: ToolScope::Read,
-    },
-    CuratedTool {
-        slug: "LINEAR_LIST_LINEAR_LABELS",
-        scope: ToolScope::Read,
-    },
-    CuratedTool {
-        slug: "LINEAR_GET_LINEAR_PROJECT",
-        scope: ToolScope::Read,
-    },
-    CuratedTool {
-        slug: "LINEAR_CREATE_LINEAR_ISSUE",
-        scope: ToolScope::Write,
-    },
-    CuratedTool {
-        slug: "LINEAR_UPDATE_ISSUE",
-        scope: ToolScope::Write,
-    },
-    CuratedTool {
-        slug: "LINEAR_CREATE_LINEAR_COMMENT",
-        scope: ToolScope::Write,
-    },
-    CuratedTool {
-        slug: "LINEAR_CREATE_ATTACHMENT",
-        scope: ToolScope::Write,
-    },
-    CuratedTool {
-        slug: "LINEAR_CREATE_LINEAR_PROJECT",
-        scope: ToolScope::Write,
-    },
-    CuratedTool {
-        slug: "LINEAR_CREATE_LINEAR_LABEL",
-        scope: ToolScope::Write,
-    },
-    CuratedTool {
-        slug: "LINEAR_UPDATE_LINEAR_COMMENT",
-        scope: ToolScope::Write,
-    },
-    CuratedTool {
-        slug: "LINEAR_CREATE_ISSUE_RELATION",
-        scope: ToolScope::Write,
-    },
-    CuratedTool {
-        slug: "LINEAR_UPDATE_LINEAR_PROJECT",
-        scope: ToolScope::Write,
-    },
-    CuratedTool {
-        slug: "LINEAR_DELETE_LINEAR_ISSUE",
-        scope: ToolScope::Admin,
-    },
-    CuratedTool {
-        slug: "LINEAR_REMOVE_ISSUE_LABEL",
-        scope: ToolScope::Admin,
-    },
-];
+//
+// `LINEAR_CURATED` lives in `super::linear::tools` alongside the native
+// `LinearProvider` impl (per-issue #2400). `catalog_for_toolkit("linear")`
+// in `super::mod` routes through that constant directly. Removing the
+// catalog-only declaration here keeps a single source of truth and
+// matches how `gmail` / `notion` / `clickup` are wired.
 
 // ── jira ────────────────────────────────────────────────────────────
 pub const JIRA_CURATED: &[CuratedTool] = &[
@@ -550,3 +477,119 @@ pub const DROPBOX_CURATED: &[CuratedTool] = &[
         scope: ToolScope::Admin,
     },
 ];
+
+// ── todoist ─────────────────────────────────────────────────────────
+pub const TODOIST_CURATED: &[CuratedTool] = &[
+    CuratedTool {
+        slug: "TODOIST_GET_TASK",
+        scope: ToolScope::Read,
+    },
+    CuratedTool {
+        slug: "TODOIST_GET_ACTIVE_TASKS",
+        scope: ToolScope::Read,
+    },
+    CuratedTool {
+        slug: "TODOIST_GET_COMPLETED_TASKS",
+        scope: ToolScope::Read,
+    },
+    CuratedTool {
+        slug: "TODOIST_GET_PROJECTS",
+        scope: ToolScope::Read,
+    },
+    CuratedTool {
+        slug: "TODOIST_GET_PROJECT",
+        scope: ToolScope::Read,
+    },
+    CuratedTool {
+        slug: "TODOIST_GET_SECTIONS",
+        scope: ToolScope::Read,
+    },
+    CuratedTool {
+        slug: "TODOIST_GET_LABELS",
+        scope: ToolScope::Read,
+    },
+    CuratedTool {
+        slug: "TODOIST_GET_COMMENTS",
+        scope: ToolScope::Read,
+    },
+    CuratedTool {
+        slug: "TODOIST_CREATE_TASK",
+        scope: ToolScope::Write,
+    },
+    CuratedTool {
+        slug: "TODOIST_UPDATE_TASK",
+        scope: ToolScope::Write,
+    },
+    CuratedTool {
+        slug: "TODOIST_CLOSE_TASK",
+        scope: ToolScope::Write,
+    },
+    CuratedTool {
+        slug: "TODOIST_REOPEN_TASK",
+        scope: ToolScope::Write,
+    },
+    CuratedTool {
+        slug: "TODOIST_CREATE_PROJECT",
+        scope: ToolScope::Write,
+    },
+    CuratedTool {
+        slug: "TODOIST_UPDATE_PROJECT",
+        scope: ToolScope::Write,
+    },
+    CuratedTool {
+        slug: "TODOIST_CREATE_SECTION",
+        scope: ToolScope::Write,
+    },
+    CuratedTool {
+        slug: "TODOIST_CREATE_LABEL",
+        scope: ToolScope::Write,
+    },
+    CuratedTool {
+        slug: "TODOIST_CREATE_COMMENT",
+        scope: ToolScope::Write,
+    },
+    CuratedTool {
+        slug: "TODOIST_DELETE_TASK",
+        scope: ToolScope::Admin,
+    },
+    CuratedTool {
+        slug: "TODOIST_DELETE_PROJECT",
+        scope: ToolScope::Admin,
+    },
+    CuratedTool {
+        slug: "TODOIST_DELETE_SECTION",
+        scope: ToolScope::Admin,
+    },
+    CuratedTool {
+        slug: "TODOIST_DELETE_LABEL",
+        scope: ToolScope::Admin,
+    },
+    CuratedTool {
+        slug: "TODOIST_DELETE_COMMENT",
+        scope: ToolScope::Admin,
+    },
+];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn todoist_catalog_is_non_empty_and_unique() {
+        assert!(!TODOIST_CURATED.is_empty());
+        let mut slugs: Vec<&'static str> = TODOIST_CURATED.iter().map(|t| t.slug).collect();
+        slugs.sort_unstable();
+        slugs.dedup();
+        assert_eq!(slugs.len(), TODOIST_CURATED.len());
+        for tool in TODOIST_CURATED {
+            assert!(tool.slug.starts_with("TODOIST_"));
+        }
+    }
+
+    #[test]
+    fn todoist_catalog_covers_all_three_scopes() {
+        assert!(TODOIST_CURATED.iter().any(|t| t.scope == ToolScope::Read));
+        assert!(TODOIST_CURATED.iter().any(|t| t.scope == ToolScope::Write));
+        assert!(TODOIST_CURATED.iter().any(|t| t.scope == ToolScope::Admin));
+    }
+}

@@ -135,6 +135,7 @@ impl ScoringConfig {
 
         let cfg = extract::LlmExtractorConfig {
             model: model.clone(),
+            output_language: config.output_language.clone(),
             ..extract::LlmExtractorConfig::default()
         };
 

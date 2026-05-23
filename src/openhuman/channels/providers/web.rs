@@ -131,8 +131,17 @@ static BUDGET_ERROR_PATTERNS: Lazy<Vec<Regex>> = Lazy::new(|| {
     ]
 });
 
-fn key_for(client_id: &str, thread_id: &str) -> String {
-    format!("{client_id}::{thread_id}")
+/// Key for the per-thread runtime maps (`THREAD_SESSIONS`, `IN_FLIGHT`).
+///
+/// Keyed by `thread_id` ALONE — the stable, persistent identity of a
+/// conversation — NOT by the Socket.IO `client_id`, which is regenerated on
+/// every reconnect. Keying these maps by `client_id` previously orphaned a
+/// thread's cached session (conversation amnesia) and its in-flight task handle
+/// (Cancel became a no-op) whenever the socket reconnected with a new id. Event
+/// delivery still routes by `client_id` (the live socket); only the
+/// thread-owned runtime state keys off `thread_id`.
+fn key_for(thread_id: &str) -> String {
+    thread_id.to_string()
 }
 
 fn event_session_id_for(client_id: &str, thread_id: &str) -> String {
@@ -507,7 +516,7 @@ pub async fn start_chat(
         return Err(prompt_guard_user_message(prompt_decision.action).to_string());
     }
 
-    let map_key = key_for(&client_id, &thread_id);
+    let map_key = key_for(&thread_id);
 
     {
         let mut in_flight = IN_FLIGHT.lock().await;
@@ -724,7 +733,7 @@ pub async fn cancel_chat(client_id: &str, thread_id: &str) -> Result<Option<Stri
         return Err("thread_id is required".to_string());
     }
 
-    let map_key = key_for(client_id, thread_id);
+    let map_key = key_for(thread_id);
     let mut removed_request_id: Option<String> = None;
 
     {
@@ -792,7 +801,7 @@ async fn run_chat_task(
     let config = config_rpc::load_config_with_timeout().await?;
     let (_profiles_state, profile) =
         AgentProfileStore::new(config.workspace_dir.clone()).resolve(profile_id.as_deref())?;
-    let map_key = key_for(client_id, thread_id);
+    let map_key = key_for(thread_id);
     let model_override = normalize_model_override(profile.model_override.clone())
         .or_else(|| normalize_model_override(model_override));
     let temperature = profile.temperature.or(temperature);

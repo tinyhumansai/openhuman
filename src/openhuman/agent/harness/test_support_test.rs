@@ -1580,6 +1580,7 @@ async fn orchestrator_prompt_drives_composio_call_via_delegation_chain() {
         tools: Vec::new(),
         gated_tools: Vec::new(),
         connected: true,
+        non_active_status: None,
     }];
     let ctx = {
         use crate::openhuman::context::prompt::{LearnedContextData, ToolCallFormat};

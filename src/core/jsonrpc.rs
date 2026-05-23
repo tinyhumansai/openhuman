@@ -831,6 +831,10 @@ async fn cors_middleware(req: Request, next: Next) -> Response {
 /// distinct. Disallowed origins receive no `Access-Control-Allow-Origin`
 /// header at all — the browser will then refuse to surface the response to
 /// the calling JS. Non-browser callers (no `Origin` header) are unaffected.
+///
+/// For Docker / cloud deployments where the server binds to `0.0.0.0`,
+/// extend the allowlist via the `OPENHUMAN_CORE_ALLOWED_ORIGINS` env var
+/// (comma-separated) rather than wildcarding `Access-Control-Allow-Origin`.
 pub(super) fn with_cors_headers(mut response: Response, origin: Option<&str>) -> Response {
     let headers = response.headers_mut();
     headers.append(header::VARY, HeaderValue::from_static("Origin"));

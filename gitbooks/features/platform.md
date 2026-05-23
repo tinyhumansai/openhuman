@@ -13,11 +13,11 @@ OpenHuman is a native desktop application, not a browser extension, not an Elect
 
 ## Supported platforms
 
-| Platform    | Architectures        | Distribution               |
-| ----------- | -------------------- | -------------------------- |
-| **macOS**   | Intel, Apple Silicon | `.dmg` installer, Homebrew |
-| **Windows** | x64, ARM64           | `.msi` installer           |
-| **Linux**   | x64                  | AppImage, `.deb`           |
+| Platform    | Architectures        | Distribution                                   |
+| ----------- | -------------------- | ---------------------------------------------- |
+| **macOS**   | Intel, Apple Silicon | `.dmg` installer, Homebrew                     |
+| **Windows** | x64, ARM64           | `.msi` installer                               |
+| **Linux**   | x64                  | AppImage, `.deb`, AUR recipe (`openhuman-bin`) |
 
 ### Linux AppImage notes
 
@@ -70,6 +70,21 @@ OpenHuman is built as a native application rather than a web wrapper for three r
 ```
 
 The shell is a delivery vehicle (windowing, process lifecycle, IPC). All product logic lives in the Rust core. The React frontend talks to the core over JSON-RPC. See [Architecture](../developing/architecture/) for the full picture.
+
+***
+
+## Remote/headless usage
+
+Linux servers can host the Rust core without a desktop session. The production
+shape is a remote `openhuman-core` JSON-RPC service plus a local desktop client
+configured with that core URL and bearer token.
+
+A private browser UI is possible for development/preview by serving the Vite
+frontend and pointing it at the remote core, but it is not a full replacement
+for the desktop shell. Native deep links, tray controls, OS keychain access, CEF
+account scanners, and screen/window integrations still require the Tauri app.
+See [Cloud Deploy](cloud-deploy.md#remote-ui-choices) for the current remote UI
+setup.
 
 ***
 

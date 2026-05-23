@@ -556,18 +556,38 @@ fn handle_inference_update_model_settings(params: Map<String, Value>) -> Control
                         generate_provider_id, is_slug_reserved, migrate_legacy_fields, AuthStyle,
                         CloudProviderCreds,
                     };
+                    let reserved_count = entries
+                        .iter()
+                        .filter(|e| {
+                            let t = e.slug.trim();
+                            !t.is_empty() && is_slug_reserved(t)
+                        })
+                        .count();
+                    if reserved_count > 0 {
+                        log::debug!(
+                            "[inference] update_model_settings: dropping {} reserved cloud provider slug(s)",
+                            reserved_count
+                        );
+                    }
                     entries
                         .into_iter()
+                        // Silently drop entries whose (non-empty) slug is reserved —
+                        // typically the migration-seeded "openhuman" / "cloud" /
+                        // "pid" built-ins that the frontend echoes back on every
+                        // save (see `migrations::unify_ai_provider_settings`).
+                        // Empty slugs still fall through so the explicit
+                        // validation error below fires for actual frontend
+                        // bugs. `apply_model_settings` re-injects the existing
+                        // reserved entries from the stored config so they
+                        // aren't dropped on save.
+                        .filter(|entry| {
+                            let trimmed = entry.slug.trim();
+                            trimmed.is_empty() || !is_slug_reserved(trimmed)
+                        })
                         .map(|entry| {
                             let slug = entry.slug.trim().to_string();
                             if slug.is_empty() {
                                 return Err("cloud provider slug must not be empty".to_string());
-                            }
-                            if is_slug_reserved(&slug) {
-                                return Err(format!(
-                                    "slug '{}' is reserved and cannot be used for a custom provider",
-                                    slug
-                                ));
                             }
                             let auth_style = match entry
                                 .auth_style

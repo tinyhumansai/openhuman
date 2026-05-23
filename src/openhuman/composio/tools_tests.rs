@@ -619,17 +619,20 @@ fn normalized_scope_toolkits_prefers_requested_filter() {
 
 #[test]
 fn empty_uncurated_toolkits_message_names_agent_unsupported_toolkits() {
+    // Use slugs that have no curated catalog so the message is generated.
+    // onedrive/excel/todoist are catalogued as of #2361, so they're no
+    // longer uncurated and must not be used here.
     let message = empty_uncurated_toolkits_message(&[
-        "onedrive".to_string(),
-        "excel".to_string(),
-        "todoist".to_string(),
+        "sharepoint".to_string(),
+        "monday".to_string(),
+        "intercom".to_string(),
     ])
     .expect("uncurated toolkit message");
 
     assert!(message.contains("no agent-ready actions"));
-    assert!(message.contains("`onedrive`"));
-    assert!(message.contains("`excel`"));
-    assert!(message.contains("`todoist`"));
+    assert!(message.contains("`sharepoint`"));
+    assert!(message.contains("`monday`"));
+    assert!(message.contains("`intercom`"));
     assert!(message.contains("curated agent tool catalogs"));
 }
 
