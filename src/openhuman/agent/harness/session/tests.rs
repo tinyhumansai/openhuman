@@ -257,6 +257,7 @@ fn set_connected_integrations_marks_session_initialized_and_updates_hash() {
             tools: vec![],
             gated_tools: vec![],
             connected: true,
+            non_active_status: None,
         },
     ]);
 
