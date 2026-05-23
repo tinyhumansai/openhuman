@@ -1002,6 +1002,7 @@ async fn run_tool_call_loop_dedups_duplicate_tool_names_before_provider_call() {
         &extra,
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .expect("loop should succeed with deduplicated tool list");
