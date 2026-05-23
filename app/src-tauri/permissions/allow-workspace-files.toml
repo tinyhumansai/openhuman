@@ -1,0 +1,13 @@
+[[permission]]
+identifier = "allow-workspace-files"
+description = "Allow opening, revealing, and previewing files resolved inside the active OpenHuman workspace"
+
+[permission.commands]
+
+allow = [
+    "open_workspace_path",
+    "reveal_workspace_path",
+    "preview_workspace_text",
+]
+
+deny = []

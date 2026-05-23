@@ -448,6 +448,9 @@ const fr5: TranslationMap = {
   'webhooks.tunnels.toggleFailed': "Échec de la bascule de l'écho",
   'composio.authExpired': 'Authentification expirée',
   'composio.reconnect': 'Reconnecter',
+  'composio.previewBadge': 'Preview',
+  'composio.previewTooltip':
+    'Agent integration coming soon — you can connect, but the agent can’t use this toolkit yet.',
   'composio.directModeRequiresKey':
     "Échec de l'enregistrement. Le mode Direct nécessite une clé API non vide.",
   'composio.notYetRouted': 'pas encore routé',

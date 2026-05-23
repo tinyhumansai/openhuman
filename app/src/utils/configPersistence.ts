@@ -292,7 +292,7 @@ export function getStoredCoreMode(): 'local' | 'cloud' | null {
 export function storeCoreMode(mode: 'local' | 'cloud'): void {
   try {
     localStorage.setItem(CORE_MODE_STORAGE_KEY, mode);
-    console.debug('[configPersistence] Stored core mode:', { mode });
+    console.debug('[configPersistence] Stored core mode:', mode);
   } catch {
     console.warn('[configPersistence] Unable to store core mode in localStorage');
   }

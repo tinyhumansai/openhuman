@@ -31,7 +31,7 @@ import { useAutocompleteSkillStatus } from '../features/autocomplete/useAutocomp
 import { useScreenIntelligenceSkillStatus } from '../features/screen-intelligence/useScreenIntelligenceSkillStatus';
 import { useVoiceSkillStatus } from '../features/voice/useVoiceSkillStatus';
 import { useChannelDefinitions } from '../hooks/useChannelDefinitions';
-import { useComposioIntegrations } from '../lib/composio/hooks';
+import { useAgentReadyComposioToolkits, useComposioIntegrations } from '../lib/composio/hooks';
 import { canonicalizeComposioToolkitSlug } from '../lib/composio/toolkitSlug';
 import { type ComposioConnection, deriveComposioState } from '../lib/composio/types';
 import { useT } from '../lib/i18n/I18nContext';
@@ -125,6 +125,13 @@ interface ComposioConnectorTileProps {
   meta: ComposioToolkitMeta;
   connection: ComposioConnection | undefined;
   hasComposioError: boolean;
+  /**
+   * Whether this toolkit has a curated agent-ready catalog on the
+   * core. Connected toolkits without a catalog show a "Preview"
+   * badge so users know the agent can't act on them yet — see
+   * issue #2283.
+   */
+  isAgentReady: boolean;
   testId?: string;
   onOpen: () => void;
   onRetryGlobal: () => void;
@@ -134,6 +141,7 @@ function ComposioConnectorTile({
   meta,
   connection,
   hasComposioError,
+  isAgentReady,
   testId,
   onOpen,
   onRetryGlobal,
@@ -159,6 +167,12 @@ function ComposioConnectorTile({
   const isPending = state === 'pending';
   const isExpired = state === 'expired';
   const isError = state === 'error' || hasComposioError;
+  // Show the preview badge for connected toolkits without a curated
+  // catalog, AND for unconnected uncurated toolkits so users see the
+  // limitation BEFORE going through OAuth (issue #2283).
+  const showPreviewBadge = !isAgentReady && (isConnected || (!isPending && !isExpired && !isError));
+  const previewLabel = t('composio.previewBadge');
+  const previewTooltip = t('composio.previewTooltip');
 
   const handleClick = () => {
     if (hasComposioError) {
@@ -173,8 +187,16 @@ function ComposioConnectorTile({
       type="button"
       data-testid={testId}
       onClick={handleClick}
-      title={`${meta.name} — ${meta.description}`}
-      aria-label={`${meta.name}, ${statusLabel}. ${ctaLabel}.`}
+      title={
+        showPreviewBadge
+          ? `${meta.name} — ${meta.description} (${previewTooltip})`
+          : `${meta.name} — ${meta.description}`
+      }
+      aria-label={
+        showPreviewBadge
+          ? `${meta.name}, ${statusLabel}, ${previewLabel}. ${ctaLabel}.`
+          : `${meta.name}, ${statusLabel}. ${ctaLabel}.`
+      }
       className={`group flex flex-col justify-center items-center rounded-2xl border p-3 text-center transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/40 ${
         isConnected
           ? 'border-sage-300 bg-sage-50/80 shadow-[0_0_0_1px_rgba(34,197,94,0.12)] hover:bg-sage-50 dark:border-sage-500/30 dark:bg-sage-500/10 dark:hover:bg-sage-500/15'
@@ -186,6 +208,13 @@ function ComposioConnectorTile({
       }`}>
       <div className="relative flex h-12 w-12 flex-shrink-0 items-center justify-center text-stone-700 dark:text-neutral-200 [&_img]:max-h-10 [&_img]:max-w-10 [&_svg]:h-8 [&_svg]:w-8">
         {meta.icon}
+        {showPreviewBadge && (
+          <span
+            data-testid={`composio-preview-badge-${meta.slug}`}
+            className="absolute -top-1 -right-1 rounded-full bg-amber-100 px-1.5 py-0.5 text-[8px] font-semibold uppercase leading-none text-amber-800 ring-1 ring-amber-300 dark:bg-amber-500/20 dark:text-amber-200 dark:ring-amber-500/40">
+            {previewLabel}
+          </span>
+        )}
       </div>
       <div className="flex w-full min-w-0 flex-col items-center justify-start gap-0.5">
         <span className="line-clamp-2 text-[11px] font-semibold leading-tight text-stone-900 dark:text-neutral-100">
@@ -305,6 +334,24 @@ export default function Skills() {
     error: composioError,
     refresh: refreshComposio,
   } = useComposioIntegrations();
+
+  // Set of curated agent-ready toolkit slugs — see issue #2283. We
+  // intentionally do NOT block UI rendering on this fetch; while
+  // loading we treat every toolkit as agent-ready (no preview
+  // badges) and only flip on uncurated toolkits once the response
+  // arrives. This avoids a flash of preview-badges on the curated
+  // tiles during the initial paint.
+  //
+  // When the RPC FAILS (non-loading, empty set, non-null error), we
+  // also default to "agent-ready" so curated toolkits don't all
+  // light up with a misleading Preview badge — the UI gracefully
+  // degrades to the pre-#2283 behaviour rather than misrepresenting
+  // the agent surface (CodeRabbit review on PR #2361).
+  const {
+    agentReady: agentReadyToolkits,
+    loading: agentReadyLoading,
+    error: agentReadyError,
+  } = useAgentReadyComposioToolkits();
 
   const [channelModalDef, setChannelModalDef] = useState<ChannelDefinition | null>(null);
   const [composioModalToolkit, setComposioModalToolkit] = useState<ComposioToolkitMeta | null>(
@@ -886,6 +933,11 @@ export default function Skills() {
                             meta={meta}
                             connection={connection}
                             hasComposioError={Boolean(composioError)}
+                            isAgentReady={
+                              agentReadyLoading ||
+                              Boolean(agentReadyError) ||
+                              agentReadyToolkits.has(meta.slug)
+                            }
                             testId={`skill-install-composio-${meta.slug}`}
                             onOpen={() => setComposioModalToolkit(meta)}
                             onRetryGlobal={() => void refreshComposio()}

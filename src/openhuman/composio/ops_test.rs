@@ -1619,3 +1619,85 @@ fn composio_transport_timeout_is_dropped_by_before_send() {
         "composio transport timeout must be dropped by integrations filter (#1608)"
     );
 }
+
+// ── TAURI-RUST-X9 (#1166): direct-mode auth-rejection routing ───────────
+//
+// Pins the contract that direct-mode 401 / Invalid API key shapes are
+// classified by the observability matcher AND their failure-tag stays
+// `non_2xx` so the `before_send` integrations filter has consistent
+// inputs. Together with the classifier-arm tests in
+// `core::observability` these tests prove the leak path (~15.7 k events
+// in ~22h before #1166) is closed end-to-end.
+
+#[test]
+fn composio_direct_invalid_api_key_classifies_as_provider_user_state() {
+    // The verbatim Sentry TAURI-RUST-X9 wire shape — emitted by
+    // `ops.rs::composio_list_connections` direct branch via the
+    // `report_composio_op_error` hook restored in #1166. Routing this
+    // through `expected_error_kind` is what demotes it to
+    // `ProviderUserState` (info breadcrumb) instead of firing a Sentry
+    // event.
+    let msg = "[composio-direct] list_connections failed: \
+               Composio v3 connected_accounts failed: \
+               HTTP 401: Invalid API key: ak_VsUvq*****";
+    assert_eq!(
+        crate::core::observability::expected_error_kind(msg),
+        Some(crate::core::observability::ExpectedErrorKind::ProviderUserState),
+        "the canonical TAURI-RUST-X9 wire shape must demote via the composio-direct arm"
+    );
+}
+
+#[test]
+fn composio_direct_invalid_api_key_failure_tag_is_non_2xx() {
+    // Belt-and-suspenders: even if `expected_error_kind` ever stops
+    // matching the body (regression in the classifier arm), the
+    // failure tag must STILL be `non_2xx`. Combined with the
+    // `before_send` filter's transient-status handling and a
+    // future-added `status="401"` tag (Patch 1 doesn't extract status
+    // from the `HTTP 401` shape — only the `Backend returned <status>`
+    // shape — so this just pins the safe default), this is the
+    // backstop drop path.
+    let rendered = "[composio-direct] list_connections failed: \
+                    Composio v3 connected_accounts failed: \
+                    HTTP 401: Invalid API key: ak_VsUvq*****";
+    assert_eq!(
+        classify_composio_failure_tag(rendered),
+        "non_2xx",
+        "direct-mode auth-rejection must tag as non_2xx (not transport)"
+    );
+}
+
+#[test]
+fn composio_direct_invalid_api_key_extract_status_returns_none() {
+    // Pins the contract: `extract_backend_returned_status` only parses
+    // the integrations-layer `Backend returned <status>` rendering, NOT
+    // the direct-mode `HTTP 401` shape. The direct-mode arm relies on
+    // the classifier demotion + the failure-tag drop path instead of
+    // status extraction; if this ever changes (e.g. we extend the
+    // status extractor to cover both shapes), the new behaviour should
+    // come with an explicit test, not be inferred.
+    let rendered = "[composio-direct] list_connections failed: \
+                    Composio v3 connected_accounts failed: \
+                    HTTP 401: Invalid API key: ak_…";
+    assert_eq!(
+        extract_backend_returned_status(rendered),
+        None,
+        "direct-mode HTTP 401 must not parse via extract_backend_returned_status"
+    );
+}
+
+#[test]
+fn composio_direct_500_does_not_demote() {
+    // Discrimination test from the composio side — a real bug shape
+    // (500 with no auth body) MUST escape the classifier and reach
+    // `report_error_message`. Without this guard the matcher in
+    // `observability.rs` could be tightened too far and silence
+    // genuine backend faults.
+    let msg = "[composio-direct] list_connections failed: \
+               Composio v3 connected_accounts failed: HTTP 500";
+    assert_eq!(
+        crate::core::observability::expected_error_kind(msg),
+        None,
+        "composio-direct 500 with no auth body must remain an unclassified bug shape"
+    );
+}

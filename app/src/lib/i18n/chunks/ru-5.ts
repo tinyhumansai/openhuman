@@ -442,6 +442,9 @@ const ru5: TranslationMap = {
   'webhooks.tunnels.toggleFailed': 'Не удалось переключить эхо',
   'composio.authExpired': 'Срок авторизации истёк',
   'composio.reconnect': 'Переподключить',
+  'composio.previewBadge': 'Preview',
+  'composio.previewTooltip':
+    'Agent integration coming soon — you can connect, but the agent can’t use this toolkit yet.',
   'composio.directModeRequiresKey': 'Не удалось сохранить. Прямой режим требует непустой API-ключ.',
   'composio.notYetRouted': 'пока не маршрутизируется',
   'composio.triggers.loading': 'Загрузка…',

@@ -35,6 +35,7 @@ mod webview_apis;
 mod wechat_scanner;
 mod whatsapp_scanner;
 mod window_state;
+mod workspace_paths;
 
 #[cfg(target_os = "macos")]
 use tauri::menu::{PredefinedMenuItem, Submenu};
@@ -3190,6 +3191,9 @@ pub fn run() {
             mascot_window_hide,
             file_logging::reveal_logs_folder,
             file_logging::logs_folder_path,
+            workspace_paths::open_workspace_path,
+            workspace_paths::reveal_workspace_path,
+            workspace_paths::preview_workspace_text,
             meet_call::meet_call_open_window,
             meet_call::meet_call_close_window,
             companion_commands::register_companion_hotkey,

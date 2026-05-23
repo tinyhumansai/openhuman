@@ -45,6 +45,11 @@ pub fn toolkit_description(slug: &str) -> &'static str {
         "figma" => "Access and manage Figma design files and components",
         "youtube" => "Search videos, manage playlists, and interact with YouTube",
         "calendar" => "Create, update, and query calendar events",
+        "one_drive" | "onedrive" => {
+            "Upload, download, search, and share files in Microsoft OneDrive"
+        }
+        "excel" => "Read, write, and manage workbooks, worksheets, and tables in Microsoft Excel",
+        "todoist" => "Create and manage tasks, projects, sections, and labels in Todoist",
         _ => "Interact with this connected service via its available actions",
     }
 }
