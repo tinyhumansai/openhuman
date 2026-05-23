@@ -188,9 +188,7 @@ pub fn effective_backend_api_url(api_url: &Option<String>) -> String {
     // `OPENHUMAN-TAURI-H6 / -HN`, issue #2075).
     api_base_from_env()
         .map(|u| normalize_backend_api_base_url(&u))
-        .unwrap_or_else(|| {
-            default_api_base_url_for_env(app_env_from_env().as_deref()).to_string()
-        })
+        .unwrap_or_else(|| default_api_base_url_for_env(app_env_from_env().as_deref()).to_string())
 }
 
 // ─── URL classification ──────────────────────────────────────────────────────
@@ -345,8 +343,8 @@ pub(crate) fn normalize_backend_api_base_url(url: &str) -> String {
         return normalized;
     }
 
-    let parsed = url::Url::parse(&normalized)
-        .or_else(|_| url::Url::parse(&format!("https://{normalized}")));
+    let parsed =
+        url::Url::parse(&normalized).or_else(|_| url::Url::parse(&format!("https://{normalized}")));
 
     let Ok(mut parsed) = parsed else {
         // Unparseable even with the scheme prefix — return as-is; the caller
@@ -573,7 +571,9 @@ fn non_empty_str(s: &Option<String>) -> Option<&str> {
 #[inline]
 fn host_is_local(parsed: &url::Url) -> bool {
     match parsed.host() {
-        Some(url::Host::Ipv4(addr)) => addr.is_loopback() || addr.is_unspecified() || addr.is_private(),
+        Some(url::Host::Ipv4(addr)) => {
+            addr.is_loopback() || addr.is_unspecified() || addr.is_private()
+        }
         Some(url::Host::Ipv6(addr)) => addr.is_loopback() || addr.is_unspecified(),
         Some(url::Host::Domain(name)) => {
             let h = name.to_ascii_lowercase();
@@ -650,9 +650,18 @@ mod tests {
 
     #[test]
     fn api_url_empty_path_returns_normalized_base() {
-        assert_eq!(api_url("https://api.tinyhumans.ai", ""), "https://api.tinyhumans.ai");
-        assert_eq!(api_url("https://api.tinyhumans.ai/", ""), "https://api.tinyhumans.ai");
-        assert_eq!(api_url("  https://api.tinyhumans.ai/  ", ""), "https://api.tinyhumans.ai");
+        assert_eq!(
+            api_url("https://api.tinyhumans.ai", ""),
+            "https://api.tinyhumans.ai"
+        );
+        assert_eq!(
+            api_url("https://api.tinyhumans.ai/", ""),
+            "https://api.tinyhumans.ai"
+        );
+        assert_eq!(
+            api_url("  https://api.tinyhumans.ai/  ", ""),
+            "https://api.tinyhumans.ai"
+        );
     }
 
     #[test]
@@ -671,21 +680,36 @@ mod tests {
     #[test]
     fn api_url_clean_base_joins_cleanly() {
         let expected = "https://api.tinyhumans.ai/agent-integrations/composio/toolkits";
-        assert_eq!(api_url("https://api.tinyhumans.ai",  "/agent-integrations/composio/toolkits"), expected);
-        assert_eq!(api_url("https://api.tinyhumans.ai/", "/agent-integrations/composio/toolkits"), expected);
+        assert_eq!(
+            api_url(
+                "https://api.tinyhumans.ai",
+                "/agent-integrations/composio/toolkits"
+            ),
+            expected
+        );
+        assert_eq!(
+            api_url(
+                "https://api.tinyhumans.ai/",
+                "/agent-integrations/composio/toolkits"
+            ),
+            expected
+        );
     }
 
     #[test]
     fn api_url_preserves_query_string_on_path() {
         assert_eq!(
-            api_url("https://api.tinyhumans.ai", "/agent-integrations/composio/tools?toolkits=gmail"),
+            api_url(
+                "https://api.tinyhumans.ai",
+                "/agent-integrations/composio/tools?toolkits=gmail"
+            ),
             "https://api.tinyhumans.ai/agent-integrations/composio/tools?toolkits=gmail"
         );
     }
 
     #[test]
     fn api_url_unparseable_base_falls_back_to_concat() {
-        assert_eq!(api_url("not a url",  "/x"), "not a url/x");
+        assert_eq!(api_url("not a url", "/x"), "not a url/x");
         assert_eq!(api_url("not a url/", "/x"), "not a url/x");
     }
 
@@ -720,15 +744,30 @@ mod tests {
 
     #[test]
     fn normalize_strips_trailing_slashes_and_whitespace() {
-        assert_eq!(normalize_api_base_url("https://api.tinyhumans.ai/"),    "https://api.tinyhumans.ai");
-        assert_eq!(normalize_api_base_url("https://api.tinyhumans.ai///"),   "https://api.tinyhumans.ai");
-        assert_eq!(normalize_api_base_url("  https://api.tinyhumans.ai  "), "https://api.tinyhumans.ai");
-        assert_eq!(normalize_api_base_url("  https://api.tinyhumans.ai/  "), "https://api.tinyhumans.ai");
+        assert_eq!(
+            normalize_api_base_url("https://api.tinyhumans.ai/"),
+            "https://api.tinyhumans.ai"
+        );
+        assert_eq!(
+            normalize_api_base_url("https://api.tinyhumans.ai///"),
+            "https://api.tinyhumans.ai"
+        );
+        assert_eq!(
+            normalize_api_base_url("  https://api.tinyhumans.ai  "),
+            "https://api.tinyhumans.ai"
+        );
+        assert_eq!(
+            normalize_api_base_url("  https://api.tinyhumans.ai/  "),
+            "https://api.tinyhumans.ai"
+        );
     }
 
     #[test]
     fn normalize_preserves_mid_path() {
-        assert_eq!(normalize_api_base_url("https://api.tinyhumans.ai/v2"), "https://api.tinyhumans.ai/v2");
+        assert_eq!(
+            normalize_api_base_url("https://api.tinyhumans.ai/v2"),
+            "https://api.tinyhumans.ai/v2"
+        );
     }
 
     #[test]
@@ -757,7 +796,10 @@ mod tests {
 
     #[test]
     fn normalize_backend_passes_through_clean_root() {
-        assert_eq!(normalize_backend_api_base_url("https://api.tinyhumans.ai/"), "https://api.tinyhumans.ai");
+        assert_eq!(
+            normalize_backend_api_base_url("https://api.tinyhumans.ai/"),
+            "https://api.tinyhumans.ai"
+        );
     }
 
     #[test]
@@ -769,13 +811,19 @@ mod tests {
 
     #[test]
     fn staging_env_resolves_to_staging_url() {
-        assert_eq!(default_api_base_url_for_env(Some("staging")), DEFAULT_STAGING_API_BASE_URL);
+        assert_eq!(
+            default_api_base_url_for_env(Some("staging")),
+            DEFAULT_STAGING_API_BASE_URL
+        );
         assert!(is_staging_app_env(Some("STAGING")));
     }
 
     #[test]
     fn non_staging_env_resolves_to_production_url() {
-        assert_eq!(default_api_base_url_for_env(Some("production")), DEFAULT_API_BASE_URL);
+        assert_eq!(
+            default_api_base_url_for_env(Some("production")),
+            DEFAULT_API_BASE_URL
+        );
         assert_eq!(default_api_base_url_for_env(None), DEFAULT_API_BASE_URL);
         assert!(!is_staging_app_env(Some("development")));
     }
@@ -786,7 +834,10 @@ mod tests {
         let prev = std::env::var(APP_ENV_VAR).ok();
         std::env::set_var(APP_ENV_VAR, "staging");
         let result = app_env_from_env();
-        match prev { Some(v) => std::env::set_var(APP_ENV_VAR, v), None => std::env::remove_var(APP_ENV_VAR) }
+        match prev {
+            Some(v) => std::env::set_var(APP_ENV_VAR, v),
+            None => std::env::remove_var(APP_ENV_VAR),
+        }
         assert_eq!(result.as_deref(), Some("staging"));
     }
 
@@ -798,8 +849,14 @@ mod tests {
         std::env::set_var(APP_ENV_VAR, "");
         std::env::set_var(VITE_APP_ENV_VAR, "staging");
         let result = app_env_from_env();
-        match prev_p { Some(v) => std::env::set_var(APP_ENV_VAR, v),      None => std::env::remove_var(APP_ENV_VAR) }
-        match prev_s { Some(v) => std::env::set_var(VITE_APP_ENV_VAR, v), None => std::env::remove_var(VITE_APP_ENV_VAR) }
+        match prev_p {
+            Some(v) => std::env::set_var(APP_ENV_VAR, v),
+            None => std::env::remove_var(APP_ENV_VAR),
+        }
+        match prev_s {
+            Some(v) => std::env::set_var(VITE_APP_ENV_VAR, v),
+            None => std::env::remove_var(VITE_APP_ENV_VAR),
+        }
         assert_eq!(result.as_deref(), Some("staging"));
     }
 
@@ -809,7 +866,10 @@ mod tests {
         let prev = std::env::var("BACKEND_URL").ok();
         std::env::set_var("BACKEND_URL", "https://staging-api.tinyhumans.ai/");
         let result = api_base_from_env();
-        match prev { Some(v) => std::env::set_var("BACKEND_URL", v), None => std::env::remove_var("BACKEND_URL") }
+        match prev {
+            Some(v) => std::env::set_var("BACKEND_URL", v),
+            None => std::env::remove_var("BACKEND_URL"),
+        }
         assert_eq!(result.as_deref(), Some("https://staging-api.tinyhumans.ai"));
     }
 
@@ -821,8 +881,14 @@ mod tests {
         std::env::set_var("BACKEND_URL", "");
         std::env::set_var("VITE_BACKEND_URL", "https://staging-api.tinyhumans.ai/");
         let result = api_base_from_env();
-        match prev_p { Some(v) => std::env::set_var("BACKEND_URL", v),      None => std::env::remove_var("BACKEND_URL") }
-        match prev_s { Some(v) => std::env::set_var("VITE_BACKEND_URL", v), None => std::env::remove_var("VITE_BACKEND_URL") }
+        match prev_p {
+            Some(v) => std::env::set_var("BACKEND_URL", v),
+            None => std::env::remove_var("BACKEND_URL"),
+        }
+        match prev_s {
+            Some(v) => std::env::set_var("VITE_BACKEND_URL", v),
+            None => std::env::remove_var("VITE_BACKEND_URL"),
+        }
         assert_eq!(result.as_deref(), Some("https://staging-api.tinyhumans.ai"));
     }
 
@@ -831,7 +897,9 @@ mod tests {
     #[test]
     fn local_ai_matches_loopback_hosts() {
         assert!(looks_like_local_ai_endpoint("http://127.0.0.1:11434/v1"));
-        assert!(looks_like_local_ai_endpoint("http://127.0.0.1:8080/v1/chat/completions"));
+        assert!(looks_like_local_ai_endpoint(
+            "http://127.0.0.1:8080/v1/chat/completions"
+        ));
         assert!(looks_like_local_ai_endpoint("http://localhost:11434/v1"));
         assert!(looks_like_local_ai_endpoint("http://[::1]:11434"));
         assert!(looks_like_local_ai_endpoint("http://0.0.0.0:11434/v1"));
@@ -839,8 +907,12 @@ mod tests {
 
     #[test]
     fn local_ai_matches_chat_completions_path_on_any_host() {
-        assert!(looks_like_local_ai_endpoint("http://203.0.113.5:8080/v1/chat/completions"));
-        assert!(looks_like_local_ai_endpoint("https://my-ollama.example/v1/completions"));
+        assert!(looks_like_local_ai_endpoint(
+            "http://203.0.113.5:8080/v1/chat/completions"
+        ));
+        assert!(looks_like_local_ai_endpoint(
+            "https://my-ollama.example/v1/completions"
+        ));
     }
 
     #[test]
@@ -853,7 +925,9 @@ mod tests {
 
     #[test]
     fn local_ai_matches_private_lan_hosts() {
-        assert!(looks_like_local_ai_endpoint("http://192.168.1.100:11434/v1"));
+        assert!(looks_like_local_ai_endpoint(
+            "http://192.168.1.100:11434/v1"
+        ));
         assert!(looks_like_local_ai_endpoint("http://10.0.0.5:8080/v1"));
         assert!(looks_like_local_ai_endpoint("http://172.16.0.42:8000"));
     }
@@ -861,18 +935,28 @@ mod tests {
     #[test]
     fn local_ai_rejects_real_backends() {
         assert!(!looks_like_local_ai_endpoint("https://api.tinyhumans.ai"));
-        assert!(!looks_like_local_ai_endpoint("https://staging-api.tinyhumans.ai"));
+        assert!(!looks_like_local_ai_endpoint(
+            "https://staging-api.tinyhumans.ai"
+        ));
         // OpenAI public API exposes /v1 as a version prefix — must NOT match.
         assert!(!looks_like_local_ai_endpoint("https://api.openai.com/v1"));
-        assert!(!looks_like_local_ai_endpoint("https://my-backend.example/v1"));
+        assert!(!looks_like_local_ai_endpoint(
+            "https://my-backend.example/v1"
+        ));
     }
 
     #[test]
     fn local_ai_rejects_substring_path_false_positives() {
         // Earlier version used `contains` — these are the regressions it caused.
-        assert!(!looks_like_local_ai_endpoint("https://real-backend.example/audit/v1/chat/completions-logs"));
-        assert!(!looks_like_local_ai_endpoint("https://real-backend.example/v1/chat/completions/history"));
-        assert!(!looks_like_local_ai_endpoint("https://real-backend.example/v1/completions-archive"));
+        assert!(!looks_like_local_ai_endpoint(
+            "https://real-backend.example/audit/v1/chat/completions-logs"
+        ));
+        assert!(!looks_like_local_ai_endpoint(
+            "https://real-backend.example/v1/chat/completions/history"
+        ));
+        assert!(!looks_like_local_ai_endpoint(
+            "https://real-backend.example/v1/completions-archive"
+        ));
     }
 
     #[test]
@@ -887,23 +971,37 @@ mod tests {
     fn local_ai_matches_lm_studio_default_port() {
         assert!(looks_like_local_ai_endpoint("http://localhost:1234"));
         assert!(looks_like_local_ai_endpoint("http://127.0.0.1:1234"));
-        assert!(looks_like_local_ai_endpoint("http://127.0.0.1:1234/v1/chat/completions"));
+        assert!(looks_like_local_ai_endpoint(
+            "http://127.0.0.1:1234/v1/chat/completions"
+        ));
     }
 
     #[test]
     fn local_ai_matches_v1_subpath_on_loopback() {
-        assert!(looks_like_local_ai_endpoint("http://localhost:11434/v1/models"));
-        assert!(looks_like_local_ai_endpoint("http://127.0.0.1:8080/v1/embeddings"));
+        assert!(looks_like_local_ai_endpoint(
+            "http://localhost:11434/v1/models"
+        ));
+        assert!(looks_like_local_ai_endpoint(
+            "http://127.0.0.1:8080/v1/embeddings"
+        ));
     }
 
     // ── openhuman_backend detection ───────────────────────────────────────────
 
     #[test]
     fn openhuman_backend_detection_accepts_hosted_api_paths() {
-        assert!( looks_like_openhuman_backend_endpoint("https://api.tinyhumans.ai/openai/v1/chat/completions"));
-        assert!( looks_like_openhuman_backend_endpoint("https://staging-api.tinyhumans.ai/openai/v1/chat/completions"));
-        assert!(!looks_like_openhuman_backend_endpoint("https://openrouter.ai/api/v1/chat/completions"));
-        assert!(!looks_like_openhuman_backend_endpoint("http://localhost:1234/v1/chat/completions"));
+        assert!(looks_like_openhuman_backend_endpoint(
+            "https://api.tinyhumans.ai/openai/v1/chat/completions"
+        ));
+        assert!(looks_like_openhuman_backend_endpoint(
+            "https://staging-api.tinyhumans.ai/openai/v1/chat/completions"
+        ));
+        assert!(!looks_like_openhuman_backend_endpoint(
+            "https://openrouter.ai/api/v1/chat/completions"
+        ));
+        assert!(!looks_like_openhuman_backend_endpoint(
+            "http://localhost:1234/v1/chat/completions"
+        ));
     }
 
     // ── effective_backend_api_url ─────────────────────────────────────────────
@@ -915,11 +1013,17 @@ mod tests {
         let fallback = fallback_backend_base_for_current_build();
 
         let cases: &[(&str, &str)] = &[
-            ("https://api.tinyhumans.ai/openai/v1/chat/completions", "https://api.tinyhumans.ai"),
-            ("http://localhost:11434/v1/chat/completions",            &fallback),
-            ("https://api.tinyhumans.ai",                            "https://api.tinyhumans.ai"),
-            ("https://api.tinyhumans.ai/openai/v1/",                 "https://api.tinyhumans.ai"),
-            ("https://openrouter.ai/api/v1/chat/completions",        &fallback),
+            (
+                "https://api.tinyhumans.ai/openai/v1/chat/completions",
+                "https://api.tinyhumans.ai",
+            ),
+            ("http://localhost:11434/v1/chat/completions", &fallback),
+            ("https://api.tinyhumans.ai", "https://api.tinyhumans.ai"),
+            (
+                "https://api.tinyhumans.ai/openai/v1/",
+                "https://api.tinyhumans.ai",
+            ),
+            ("https://openrouter.ai/api/v1/chat/completions", &fallback),
         ];
 
         for (api_url, expected) in cases {
@@ -950,7 +1054,9 @@ mod tests {
         std::env::set_var("BACKEND_URL", "https://staging-api.tinyhumans.ai/");
 
         assert_eq!(
-            effective_backend_api_url(&Some("http://127.0.0.1:8080/v1/chat/completions".to_string())),
+            effective_backend_api_url(&Some(
+                "http://127.0.0.1:8080/v1/chat/completions".to_string()
+            )),
             "https://staging-api.tinyhumans.ai"
         );
     }
@@ -975,8 +1081,14 @@ mod tests {
         // Regression: OPENHUMAN-TAURI-H6 / -HN, issue #2075.
         let _guard = env_lock();
         let _env = EnvSnapshot::clear_backend_env();
-        std::env::set_var("BACKEND_URL", "https://api.tinyhumans.ai/openai/v1/chat/completions");
+        std::env::set_var(
+            "BACKEND_URL",
+            "https://api.tinyhumans.ai/openai/v1/chat/completions",
+        );
 
-        assert_eq!(effective_backend_api_url(&None), "https://api.tinyhumans.ai");
+        assert_eq!(
+            effective_backend_api_url(&None),
+            "https://api.tinyhumans.ai"
+        );
     }
 }
