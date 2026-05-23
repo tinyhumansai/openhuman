@@ -300,6 +300,10 @@ const es1: TranslationMap = {
   'accounts.respondQueue': 'Cola de respuestas',
   'accounts.disconnect': 'Desconectar',
   'accounts.disconnectConfirm': '¿Seguro que quieres desconectar esta cuenta?',
+  'accounts.disconnectRevokeConfirm': 'Revoke credentials for {name}?',
+  'accounts.disconnectClearMemory':
+    'Also delete all memory ingested from this source (cannot be undone)',
+  'accounts.disconnectYes': 'Yes, disconnect',
   'accounts.searchAccounts': 'Buscar cuentas...',
   'channels.title': 'Canales',
   'channels.configure': 'Configurar canal',

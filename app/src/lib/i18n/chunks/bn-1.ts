@@ -293,6 +293,10 @@ const bn1: TranslationMap = {
   'accounts.respondQueue': 'রেসপন্ড কিউ',
   'accounts.disconnect': 'সংযোগ বিচ্ছিন্ন',
   'accounts.disconnectConfirm': 'আপনি কি এই অ্যাকাউন্ট সংযোগ বিচ্ছিন্ন করতে চান?',
+  'accounts.disconnectRevokeConfirm': 'Revoke credentials for {name}?',
+  'accounts.disconnectClearMemory':
+    'Also delete all memory ingested from this source (cannot be undone)',
+  'accounts.disconnectYes': 'Yes, disconnect',
   'accounts.searchAccounts': 'অ্যাকাউন্ট খুঁজুন...',
   'channels.title': 'চ্যানেল',
   'channels.configure': 'চ্যানেল কনফিগার করুন',

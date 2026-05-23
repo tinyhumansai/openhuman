@@ -36,6 +36,8 @@ struct ConnectParams {
 struct DisconnectParams {
     channel: String,
     auth_mode: String,
+    #[serde(default)]
+    clear_memory: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -480,7 +482,7 @@ fn handle_disconnect(params: Map<String, Value>) -> ControllerFuture {
             .auth_mode
             .parse()
             .map_err(|e: String| format!("invalid authMode: {e}"))?;
-        to_json(ops::disconnect_channel(&config, p.channel.trim(), mode).await?)
+        to_json(ops::disconnect_channel(&config, p.channel.trim(), mode, p.clear_memory).await?)
     })
 }
 

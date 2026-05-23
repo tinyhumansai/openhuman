@@ -9,6 +9,8 @@
 //! agent harness) when they need composio data at runtime.
 
 use crate::openhuman::config::Config;
+use crate::openhuman::memory::tree::store::delete_chunks_by_source;
+use crate::openhuman::memory::tree::types::SourceKind;
 use crate::rpc::RpcOutcome;
 
 /// Result alias used by every `composio_*` op in this module.
@@ -407,16 +409,24 @@ pub async fn composio_authorize(
 pub async fn composio_delete_connection(
     config: &Config,
     connection_id: &str,
+    clear_memory: bool,
 ) -> OpResult<RpcOutcome<ComposioDeleteResponse>> {
     tracing::debug!(connection_id = %connection_id, "[composio] rpc delete_connection");
     let client = resolve_client(config)?;
     let toolkit = resolve_toolkit_for_connection(&client, connection_id)
         .await
         .ok();
+    if toolkit.is_none() && clear_memory {
+        tracing::warn!(
+            connection_id = %connection_id,
+            "[composio] delete_connection: cannot clear memory — failed to resolve toolkit"
+        );
+    }
     let resp = client.delete_connection(connection_id).await.map_err(|e| {
         report_composio_op_error("delete_connection", &e);
         format!("[composio] delete_connection failed: {e:#}")
     })?;
+    let mut memory_clear: Option<serde_json::Value> = None;
     if let Some(toolkit) = toolkit.as_deref() {
         let deleted =
             super::providers::profile::delete_connected_identity_facets(toolkit, connection_id);
@@ -437,6 +447,31 @@ pub async fn composio_delete_connection(
                 error = %e,
                 "[composio] PROFILE.md bullet removal failed (non-fatal)"
             );
+        }
+        // Opt-in memory tree cleanup.
+        if clear_memory {
+            if let Some((kind, prefix)) = composio_toolkit_source_kind(toolkit) {
+                memory_clear = match delete_chunks_by_source(config, kind, &prefix) {
+                    Ok(n) => {
+                        tracing::info!(
+                            toolkit = %toolkit,
+                            connection_id = %connection_id,
+                            deleted_chunks = n,
+                            "[composio] delete_connection: cleared {n} chunks for {toolkit}"
+                        );
+                        Some(json!({"ok": true, "deleted_chunks": n}))
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            toolkit = %toolkit,
+                            connection_id = %connection_id,
+                            error = %e,
+                            "[composio] delete_connection: memory clear failed (non-fatal)"
+                        );
+                        Some(json!({"ok": false, "error": e.to_string()}))
+                    }
+                };
+            }
         }
     }
     crate::core::event_bus::publish_global(
@@ -477,10 +512,24 @@ pub async fn composio_delete_connection(
             );
         }
     }
+    if let Some(ref mc) = memory_clear {
+        resp["memory_clear"] = mc.clone();
+    }
     Ok(RpcOutcome::new(
         resp,
         vec![format!("composio: connection {connection_id} deleted")],
     ))
+}
+
+/// Map a composio toolkit slug to the `(SourceKind, source_id LIKE prefix)`
+/// used for memory-tree cleanup on disconnect.
+fn composio_toolkit_source_kind(toolkit: &str) -> Option<(SourceKind, String)> {
+    match toolkit.trim().to_ascii_lowercase().as_str() {
+        "gmail" => Some((SourceKind::Email, "gmail:%".into())),
+        "notion" => Some((SourceKind::Document, "notion:%".into())),
+        "googledrive" => Some((SourceKind::Document, "googledrive:%".into())),
+        _ => None,
+    }
 }
 
 // ── Tools ───────────────────────────────────────────────────────────
@@ -2144,3 +2193,40 @@ mod tests;
 // ── Helpers re-exported so callers can pull connection/tool types without
 // reaching into the nested types module.
 pub use super::types::{ComposioConnection as Connection, ComposioToolSchema as ToolSchemaType};
+
+#[cfg(test)]
+mod tests_toolkit_source_kind {
+    use super::*;
+
+    #[test]
+    fn gmail_maps_to_email() {
+        let (kind, prefix) = composio_toolkit_source_kind("gmail").unwrap();
+        assert_eq!(kind, SourceKind::Email);
+        assert_eq!(prefix, "gmail:%");
+    }
+
+    #[test]
+    fn notion_maps_to_document() {
+        let (kind, prefix) = composio_toolkit_source_kind("notion").unwrap();
+        assert_eq!(kind, SourceKind::Document);
+        assert_eq!(prefix, "notion:%");
+    }
+
+    #[test]
+    fn googledrive_maps_to_document() {
+        let (kind, prefix) = composio_toolkit_source_kind("googledrive").unwrap();
+        assert_eq!(kind, SourceKind::Document);
+        assert_eq!(prefix, "googledrive:%");
+    }
+
+    #[test]
+    fn unknown_toolkit_returns_none() {
+        assert!(composio_toolkit_source_kind("unknown-toolkit").is_none());
+        assert!(composio_toolkit_source_kind("slack").is_none());
+    }
+
+    #[test]
+    fn toolkit_with_whitespace_is_trimmed() {
+        assert!(composio_toolkit_source_kind("  gmail  ").is_some());
+    }
+}
