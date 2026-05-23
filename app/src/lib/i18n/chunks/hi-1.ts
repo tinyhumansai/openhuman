@@ -425,7 +425,8 @@ const hi1: TranslationMap = {
   'channels.authMode.api_key': 'Use your own API Key',
   'channels.fieldRequired': '{field} is required',
   'channels.mcp.title': 'MCP Servers',
-  'channels.mcp.description': 'Browse and manage Model Context Protocol servers that extend the AI with new tools.',
+  'channels.mcp.description':
+    'Browse and manage Model Context Protocol servers that extend the AI with new tools.',
 };
 
 export default hi1;

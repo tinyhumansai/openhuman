@@ -193,7 +193,10 @@ const TelegramConfig = ({ definition }: TelegramConfigProps) => {
                 channel: 'telegram',
                 authMode: spec.mode,
                 status: 'error',
-                lastError: t('channels.fieldRequired').replace('{field}', t(`channels.telegram.fields.${field.key}.label`)),
+                lastError: t('channels.fieldRequired').replace(
+                  '{field}',
+                  t(`channels.telegram.fields.${field.key}.label`)
+                ),
               })
             );
             return;

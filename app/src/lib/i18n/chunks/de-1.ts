@@ -440,7 +440,8 @@ const de1: TranslationMap = {
   'channels.authMode.api_key': 'Eigenen API-Schlüssel verwenden',
   'channels.fieldRequired': '{field} ist erforderlich',
   'channels.mcp.title': 'MCP-Server',
-  'channels.mcp.description': 'Durchsuche und verwalte Model Context Protocol-Server, die die KI um neue Tools erweitern.',
+  'channels.mcp.description':
+    'Durchsuche und verwalte Model Context Protocol-Server, die die KI um neue Tools erweitern.',
 };
 
 export default de1;
