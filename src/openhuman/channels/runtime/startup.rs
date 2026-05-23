@@ -574,6 +574,17 @@ pub async fn start_channels(config: Config) -> Result<()> {
             config.channels_config.active_channel.clone(),
         ),
     ));
+    let _telegram_remote_handle = if channels_by_name.contains_key("telegram") {
+        let handle = bus.subscribe(Arc::new(
+            crate::openhuman::channels::providers::telegram::TelegramRemoteSubscriber::new(
+                config.workspace_dir.clone(),
+            ),
+        ));
+        tracing::debug!("[telegram-remote] registered TelegramRemoteSubscriber");
+        Some(handle)
+    } else {
+        None
+    };
     // Register the tree summarizer event subscriber for observability logging.
     let _tree_summarizer_handle = bus.subscribe(Arc::new(
         crate::openhuman::tree_summarizer::bus::TreeSummarizerEventSubscriber::new(),

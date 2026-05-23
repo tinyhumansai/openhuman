@@ -79,12 +79,15 @@ fn due_jobs_filters_by_timestamp_and_enabled() {
 
     let job = add_job(&config, "* * * * *", "echo due").unwrap();
 
-    let due_now = due_jobs(&config, Utc::now()).unwrap();
-    assert!(due_now.is_empty(), "new job should not be due immediately");
+    let before_next_run = job.next_run - ChronoDuration::seconds(1);
+    let due_before_next_run = due_jobs(&config, before_next_run).unwrap();
+    assert!(
+        due_before_next_run.is_empty(),
+        "job should not be due before its next_run timestamp"
+    );
 
-    let far_future = Utc::now() + ChronoDuration::days(365);
-    let due_future = due_jobs(&config, far_future).unwrap();
-    assert_eq!(due_future.len(), 1, "job should be due in far future");
+    let due_at_next_run = due_jobs(&config, job.next_run).unwrap();
+    assert_eq!(due_at_next_run.len(), 1, "job should be due at next_run");
 
     let _ = update_job(
         &config,
@@ -95,7 +98,7 @@ fn due_jobs_filters_by_timestamp_and_enabled() {
         },
     )
     .unwrap();
-    let due_after_disable = due_jobs(&config, far_future).unwrap();
+    let due_after_disable = due_jobs(&config, job.next_run).unwrap();
     assert!(due_after_disable.is_empty());
 }
 

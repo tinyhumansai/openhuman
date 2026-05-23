@@ -299,8 +299,8 @@ const CAPABILITIES: &[Capability] = &[
         name: "MCP Server",
         domain: "intelligence",
         category: CapabilityCategory::Intelligence,
-        description: "Expose a curated, read-only memory-tree tool surface over stdio MCP for local MCP-compatible clients.",
-        how_to: "Run `openhuman-core mcp` and configure the local MCP client to launch that command.",
+        description: "Expose a curated OpenHuman tool surface over stdio MCP or Streamable HTTP/SSE for MCP-compatible clients.",
+        how_to: "Run `openhuman-core mcp` (stdio) or `openhuman-core mcp --transport http --port 9300` for remote clients.",
         status: CapabilityStatus::Beta,
         privacy: LOCAL_RAW,
     },
@@ -918,6 +918,17 @@ const CAPABILITIES: &[Capability] = &[
         privacy: None,
     },
     Capability {
+        id: "channels.telegram_remote_control",
+        name: "Telegram Remote Control",
+        domain: "channels",
+        category: CapabilityCategory::Channels,
+        description:
+            "Operate OpenHuman from Telegram with slash commands: /status, /sessions, /new, and /help.",
+        how_to: "Settings > Messaging Channels > Telegram (connect), then message the bot",
+        status: CapabilityStatus::Beta,
+        privacy: None,
+    },
+    Capability {
         id: "channels.disconnect_platform",
         name: "Disconnect Messaging Platforms",
         domain: "channels",
@@ -956,6 +967,50 @@ const CAPABILITIES: &[Capability] = &[
         how_to: "Connect WhatsApp Web via Channels, then ask the agent to read or summarise your messages.",
         status: CapabilityStatus::Beta,
         privacy: LOCAL_RAW,
+    },
+    Capability {
+        id: "channels.mcp_registry_browse",
+        name: "Browse MCP Server Registry",
+        domain: "channels",
+        category: CapabilityCategory::Channels,
+        description: "Search and discover MCP servers from the Smithery.ai public registry.",
+        how_to: "Channels > MCP Servers > Browse Registry",
+        status: CapabilityStatus::Beta,
+        privacy: Some(CapabilityPrivacy {
+            leaves_device: true,
+            data_kind: PrivacyDataKind::Metadata,
+            destinations: &["Smithery.ai registry API"],
+        }),
+    },
+    Capability {
+        id: "channels.mcp_server_install",
+        name: "Install MCP Servers",
+        domain: "channels",
+        category: CapabilityCategory::Channels,
+        description: "Install MCP servers locally. Required env vars are stored encrypted and never included in logs or responses.",
+        how_to: "Channels > MCP Servers > Install",
+        status: CapabilityStatus::Beta,
+        privacy: LOCAL_CREDENTIALS,
+    },
+    Capability {
+        id: "channels.mcp_server_connect",
+        name: "Connect / Disconnect MCP Servers",
+        domain: "channels",
+        category: CapabilityCategory::Channels,
+        description: "Spawn and manage MCP server subprocesses via the stdio JSON-RPC protocol.",
+        how_to: "Channels > MCP Servers > Connect",
+        status: CapabilityStatus::Beta,
+        privacy: None,
+    },
+    Capability {
+        id: "channels.mcp_tool_call",
+        name: "Invoke MCP Server Tools",
+        domain: "channels",
+        category: CapabilityCategory::Channels,
+        description: "Call tools exposed by connected MCP servers. Results are surfaced to the agent.",
+        how_to: "Human > ask the assistant to use a tool from a connected MCP server",
+        status: CapabilityStatus::Beta,
+        privacy: None,
     },
     Capability {
         id: "settings.configure_ai",
@@ -1127,16 +1182,6 @@ const CAPABILITIES: &[Capability] = &[
         status: CapabilityStatus::Beta,
         privacy: LOCAL_CREDENTIALS,
     },
-    Capability {
-        id: "automation.welcome_agent",
-        name: "Welcome Message",
-        domain: "automation",
-        category: CapabilityCategory::Automation,
-        description: "Conversational onboarding agent that learns about the user's intent and daily tools before guiding them through personalized setup.",
-        how_to: "Automatic — triggered once after onboarding.",
-        status: CapabilityStatus::Beta,
-        privacy: None,
-    },
     // ── Update ──────────────────────────────────────────────────────────────
     // ── Meet ────────────────────────────────────────────────────────────────
     Capability {
@@ -1225,6 +1270,19 @@ const CAPABILITIES: &[Capability] = &[
         how_to: "Automatic during companion sessions when the LLM identifies a UI target.",
         status: CapabilityStatus::Beta,
         privacy: None,
+    },
+    Capability {
+        id: "intelligence.remember_preferences",
+        name: "Remember Preferences",
+        domain: "memory",
+        category: CapabilityCategory::Intelligence,
+        description: "Remember preferences you state in chat and apply them automatically — \
+                      general preferences shape every reply (tone, language, standing habits); \
+                      situational ones surface only when relevant to your current message.",
+        how_to: "State a preference in chat, e.g. \"always reply in British English\" or \
+                 \"when writing Rust, prefer Result over unwrap\".",
+        status: CapabilityStatus::Stable,
+        privacy: LOCAL_RAW,
     },
 ];
 

@@ -13,11 +13,28 @@ OpenHuman is a native desktop application, not a browser extension, not an Elect
 
 ## Supported platforms
 
-| Platform    | Architectures        | Distribution               |
-| ----------- | -------------------- | -------------------------- |
-| **macOS**   | Intel, Apple Silicon | `.dmg` installer, Homebrew |
-| **Windows** | x64, ARM64           | `.msi` installer           |
-| **Linux**   | x64                  | AppImage, `.deb`           |
+| Platform    | Architectures        | Distribution                                   |
+| ----------- | -------------------- | ---------------------------------------------- |
+| **macOS**   | Intel, Apple Silicon | `.dmg` installer, Homebrew                     |
+| **Windows** | x64, ARM64           | `.msi` installer                               |
+| **Linux**   | x64                  | AppImage, `.deb`, AUR recipe (`openhuman-bin`) |
+
+### Linux AppImage notes
+
+The Linux AppImage is built for x64 desktops and is the default asset selected
+by the curl installer. On newer distributions, especially builds that tighten
+unprivileged user namespaces or AppArmor defaults, AppImage startup can fail
+before OpenHuman reaches its own crash reporter. Known symptoms include:
+
+- `unshare: write failed /proc/self/uid_map: Operation not permitted`
+- `Interpreter not found!`
+- `cannot execute binary file`
+
+When that happens, prefer the `.deb` package on Debian/Ubuntu systems. For
+Fedora, openSUSE, and other non-Debian distributions, include the distro
+version, kernel version, GPU/driver stack, and the exact AppImage filename when
+reporting the issue so maintainers can distinguish host restrictions from a
+badly packaged AppImage runtime.
 
 ***
 
@@ -53,6 +70,21 @@ OpenHuman is built as a native application rather than a web wrapper for three r
 ```
 
 The shell is a delivery vehicle (windowing, process lifecycle, IPC). All product logic lives in the Rust core. The React frontend talks to the core over JSON-RPC. See [Architecture](../developing/architecture/) for the full picture.
+
+***
+
+## Remote/headless usage
+
+Linux servers can host the Rust core without a desktop session. The production
+shape is a remote `openhuman-core` JSON-RPC service plus a local desktop client
+configured with that core URL and bearer token.
+
+A private browser UI is possible for development/preview by serving the Vite
+frontend and pointing it at the remote core, but it is not a full replacement
+for the desktop shell. Native deep links, tray controls, OS keychain access, CEF
+account scanners, and screen/window integrations still require the Tauri app.
+See [Cloud Deploy](cloud-deploy.md#remote-ui-choices) for the current remote UI
+setup.
 
 ***
 

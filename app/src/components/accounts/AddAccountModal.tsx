@@ -33,15 +33,19 @@ const AddAccountModal = ({ open, onClose, onPick, connectedProviders }: AddAccou
 
   return (
     <div
+      data-testid="add-account-modal"
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
       role="dialog"
       aria-modal="true"
+      aria-labelledby="add-account-modal-title"
       onClick={onClose}>
       <div
         className="w-[420px] max-w-[90vw] rounded-2xl bg-white dark:bg-neutral-900 p-6 shadow-strong"
         onClick={e => e.stopPropagation()}>
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-stone-900 dark:text-neutral-100">
+          <h2
+            id="add-account-modal-title"
+            className="text-lg font-semibold text-stone-900 dark:text-neutral-100">
             {t('accounts.addModal.title')}
           </h2>
           <button
@@ -69,6 +73,7 @@ const AddAccountModal = ({ open, onClose, onPick, connectedProviders }: AddAccou
             available.map(p => (
               <button
                 key={p.id}
+                data-testid={`add-account-provider-${p.id}`}
                 onClick={() => onPick(p)}
                 className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition-colors hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 dark:hover:bg-neutral-800/60">
                 <ProviderIcon provider={p.id} className="h-5 w-5 flex-none" />

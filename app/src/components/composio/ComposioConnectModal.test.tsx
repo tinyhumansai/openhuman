@@ -292,6 +292,23 @@ describe('<ComposioConnectModal>', () => {
         );
       });
     });
+
+    it('shows the waiting state even when the OS browser opener rejects', async () => {
+      vi.mocked(composioApi.authorize).mockResolvedValue({
+        connectUrl: 'https://hosted.composio.dev/test-token',
+        connectionId: '',
+      });
+      vi.mocked(composioApi.listConnections).mockResolvedValue({ connections: [] });
+      vi.mocked(openUrlModule.openUrl).mockRejectedValueOnce(new Error('opener unavailable'));
+
+      render(<ComposioConnectModal toolkit={mockToolkit} onClose={() => {}} />);
+
+      fireEvent.click(screen.getByRole('button', { name: /Connect Gmail/ }));
+
+      expect(await screen.findByRole('button', { name: /Reopen browser/i })).toBeInTheDocument();
+      expect(screen.getByText(/Waiting for Gmail/i)).toBeInTheDocument();
+      expect(screen.queryByText(/Something went wrong/i)).not.toBeInTheDocument();
+    });
   });
 });
 
@@ -443,6 +460,22 @@ describe('<ComposioConnectModal> — needs-subdomain recovery phase', () => {
 
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /Connect Jira/i })).toBeInTheDocument();
+    });
+  });
+
+  it('surfaces Meta rate-limit guidance for Instagram authorize failures', async () => {
+    const instagramToolkit = composioToolkitMeta('instagram');
+    vi.mocked(authorize).mockRejectedValueOnce(
+      new Error('Authorization failed: Backend returned 429 Too Many Requests')
+    );
+
+    render(<ComposioConnectModal toolkit={instagramToolkit} onClose={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: /Connect Instagram/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Business or Creator account/i)).toBeInTheDocument();
+      expect(screen.getByText(/HTTP 429/i)).toBeInTheDocument();
+      expect(screen.queryByText(/api.tinyhumans.ai/i)).not.toBeInTheDocument();
     });
   });
 

@@ -94,6 +94,10 @@ pub async fn apply_decision(run: TriageRun, envelope: &TriggerEnvelope) -> anyho
             // still applies — defense in depth, not duplication
             // (each gate is short-circuited by the session
             // allowlist after the first approval).
+            let mut approval_request_id: Option<String> = None;
+            let mut approval_gate_for_audit: Option<
+                std::sync::Arc<crate::openhuman::approval::ApprovalGate>,
+            > = None;
             if let Some(gate) = crate::openhuman::approval::ApprovalGate::try_global() {
                 let summary = format!(
                     "triage::{} target={} prompt_chars={}",
@@ -109,8 +113,15 @@ pub async fn apply_decision(run: TriageRun, envelope: &TriggerEnvelope) -> anyho
                     "prompt_chars": prompt.chars().count(),
                 });
                 let tool_key = format!("triage.{}", run.decision.action.as_str());
-                match gate.intercept(&tool_key, &summary, redacted).await {
-                    crate::openhuman::approval::GateOutcome::Allow => {}
+                let (outcome, request_id) =
+                    gate.intercept_audited(&tool_key, &summary, redacted).await;
+                match outcome {
+                    crate::openhuman::approval::GateOutcome::Allow => {
+                        approval_request_id = request_id;
+                        if approval_request_id.is_some() {
+                            approval_gate_for_audit = Some(gate);
+                        }
+                    }
                     crate::openhuman::approval::GateOutcome::Deny { reason } => {
                         tracing::warn!(
                             action = %action_str,
@@ -128,7 +139,24 @@ pub async fn apply_decision(run: TriageRun, envelope: &TriggerEnvelope) -> anyho
                 }
             }
 
-            match dispatch_target_agent(target, prompt).await {
+            let dispatch_result = dispatch_target_agent(target, prompt).await;
+            // Record terminal status on the approval audit row
+            // (#2135). Best-effort: write errors are logged inside
+            // record_execution and never propagate to the caller.
+            if let (Some(gate), Some(req_id)) = (
+                approval_gate_for_audit.as_ref(),
+                approval_request_id.as_ref(),
+            ) {
+                let (exec_outcome, err_text) = match &dispatch_result {
+                    Ok(_) => (crate::openhuman::approval::ExecutionOutcome::Success, None),
+                    Err(e) => (
+                        crate::openhuman::approval::ExecutionOutcome::Failure,
+                        Some(e.to_string()),
+                    ),
+                };
+                gate.record_execution(req_id, exec_outcome, err_text.as_deref());
+            }
+            match dispatch_result {
                 Ok(output) => {
                     tracing::info!(
                         target_agent = %target,

@@ -130,7 +130,11 @@ impl ConversationStore {
         if !self.thread_exists_unlocked(thread_id)? {
             return Ok(Vec::new());
         }
-        read_jsonl::<ConversationMessage>(&self.thread_messages_path(thread_id))
+        let path = self.thread_messages_path(thread_id);
+        if !path.exists() {
+            return Ok(Vec::new());
+        }
+        read_jsonl::<ConversationMessage>(&path)
     }
 
     /// Substring-match messages across **every** thread in the workspace,

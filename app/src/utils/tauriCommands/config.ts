@@ -355,6 +355,38 @@ export async function openhumanGetMeetSettings(): Promise<
   });
 }
 
+/**
+ * Update the agent autonomy policy settings (currently just the per-hour tool
+ * action ceiling). Persists to the user's `config.toml`. Takes effect on the
+ * next agent session — running sessions / cron jobs / channel listeners keep
+ * the limit they were started with until core restart.
+ */
+export async function openhumanUpdateAutonomySettings(update: {
+  max_actions_per_hour?: number;
+}): Promise<CommandResponse<ConfigSnapshot>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await callCoreRpc<CommandResponse<ConfigSnapshot>>({
+    method: CORE_RPC_METHODS.configUpdateAutonomySettings,
+    params: update,
+  });
+}
+
+/**
+ * Read the current agent autonomy policy settings from the loaded config.
+ */
+export async function openhumanGetAutonomySettings(): Promise<
+  CommandResponse<{ max_actions_per_hour: number }>
+> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await callCoreRpc<CommandResponse<{ max_actions_per_hour: number }>>({
+    method: CORE_RPC_METHODS.configGetAutonomySettings,
+  });
+}
+
 export interface ComposioTriggerSettingsUpdate {
   triage_disabled?: boolean | null;
   triage_disabled_toolkits?: string[] | null;

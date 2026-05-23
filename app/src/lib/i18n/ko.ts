@@ -1842,6 +1842,10 @@ const ko: TranslationMap = {
   'settings.mascot.active': '활성',
   'settings.mascot.characterDesc': 'OpenHuman 캐릭터를 선택하세요.',
   'settings.mascot.characterHeading': '캐릭터',
+  'settings.mascot.customGifError':
+    'HTTPS .gif URL, loopback HTTP .gif URL, file:// .gif URL 또는 로컬 .gif 경로를 입력하세요.',
+  'settings.mascot.customGifHeading': '사용자 지정 GIF 아바타',
+  'settings.mascot.customGifLabel': '사용자 지정 GIF 아바타 URL',
   'settings.mascot.characterPreview': '미리보기',
   'settings.mascot.characterStates': '상태',
   'settings.mascot.characterVisemes': '입 모양',

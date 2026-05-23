@@ -4,6 +4,7 @@ use crate::core::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::agent::harness::definition::AgentDefinitionRegistry;
 use crate::openhuman::agent::harness::fork_context::current_parent;
 use crate::openhuman::agent::harness::subagent_runner::{run_subagent, SubagentRunOptions};
+use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::tools::traits::ToolResult;
 
 pub(crate) async fn dispatch_subagent(
@@ -45,6 +46,20 @@ pub(crate) async fn dispatch_subagent(
         task_id: task_id.clone(),
         prompt_chars: prompt.chars().count(),
     });
+
+    // Also send to the per-request progress sink so the web channel bridge
+    // emits `subagent_spawned` to the frontend (same pattern as spawn_subagent.rs).
+    if let Some(progress) = current_parent().and_then(|p| p.on_progress.clone()) {
+        let _ = progress
+            .send(AgentProgress::SubagentSpawned {
+                agent_id: definition.id.clone(),
+                task_id: task_id.clone(),
+                mode: "typed".to_string(),
+                dedicated_thread: false,
+                prompt_chars: prompt.chars().count(),
+            })
+            .await;
+    }
 
     log::info!(
         "[agent] delegating to {} via {} (skill_filter={}) prompt_chars={}",

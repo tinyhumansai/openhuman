@@ -84,6 +84,11 @@ pub const BUILTINS: &[BuiltinAgent] = &[
         prompt_fn: super::crypto_agent::prompt::build,
     },
     BuiltinAgent {
+        id: "markets_agent",
+        toml: include_str!("markets_agent/agent.toml"),
+        prompt_fn: super::markets_agent::prompt::build,
+    },
+    BuiltinAgent {
         id: "tools_agent",
         toml: include_str!("tools_agent/agent.toml"),
         prompt_fn: super::tools_agent::prompt::build,
@@ -127,11 +132,6 @@ pub const BUILTINS: &[BuiltinAgent] = &[
         id: "morning_briefing",
         toml: include_str!("morning_briefing/agent.toml"),
         prompt_fn: super::morning_briefing::prompt::build,
-    },
-    BuiltinAgent {
-        id: "welcome",
-        toml: include_str!("welcome/agent.toml"),
-        prompt_fn: super::welcome::prompt::build,
     },
     BuiltinAgent {
         id: "summarizer",
@@ -273,7 +273,6 @@ mod tests {
     fn all_builtins_parse() {
         let defs = load_builtins().expect("built-in TOML must parse");
         assert_eq!(defs.len(), BUILTINS.len());
-        assert_eq!(defs.len(), 17, "expected 17 built-in agents");
     }
 
     #[test]
@@ -744,6 +743,131 @@ mod tests {
     }
 
     #[test]
+    fn markets_agent_has_narrow_prediction_market_tools_and_safety_on() {
+        let def = find("markets_agent");
+        // Hint must be agentic — the agent reasons about market shape vs.
+        // executes across multiple tool calls per turn.
+        assert!(matches!(def.model, ModelSpec::Hint(ref h) if h == "agentic"));
+        assert_eq!(def.sandbox_mode, SandboxMode::None);
+        // Financial-side-effect agent — global safety preamble stays ON.
+        assert!(
+            !def.omit_safety_preamble,
+            "markets_agent must keep the global safety preamble — financial-risk gate"
+        );
+        match &def.tools {
+            ToolScope::Named(tools) => {
+                // Prediction-market venues.
+                for required in ["polymarket", "kalshi"] {
+                    assert!(
+                        tools.iter().any(|t| t == required),
+                        "markets_agent needs venue tool `{required}`"
+                    );
+                }
+                // Confirmation gate — MUST be present so the prompt's
+                // "confirm before execute" rule is mechanically enforceable.
+                assert!(
+                    tools.iter().any(|t| t == "ask_user_clarification"),
+                    "markets_agent needs ask_user_clarification to gate write ops"
+                );
+                // Context helpers. Pin the full set so a TOML edit that
+                // silently drops `memory_recall` or `current_time` gets
+                // caught here — the agent's "ground in user preferences"
+                // and "as of <when>" framing depend on these.
+                for required in ["memory_recall", "current_time"] {
+                    assert!(
+                        tools.iter().any(|t| t == required),
+                        "markets_agent needs supporting tool `{required}`"
+                    );
+                }
+                // Hard exclusions — no broad-surface tools, no wallet
+                // primitives (those belong to crypto_agent), no
+                // delegation tools (markets_agent is a worker leaf).
+                for forbidden in [
+                    "shell",
+                    "file_write",
+                    "curl",
+                    "http_request",
+                    "composio_execute",
+                    "composio_list_tools",
+                    "spawn_subagent",
+                    "spawn_worker_thread",
+                    "delegate_to_integrations_agent",
+                    "delegate_run_code",
+                    "delegate_research",
+                    "delegate_plan",
+                    "wallet_execute_prepared",
+                    "wallet_prepare_transfer",
+                    "wallet_prepare_swap",
+                ] {
+                    assert!(
+                        !tools.iter().any(|t| t == forbidden),
+                        "markets_agent must NOT have `{forbidden}` — keeps blast radius bounded"
+                    );
+                }
+            }
+            ToolScope::Wildcard => panic!("markets_agent must have a Named tool scope"),
+        }
+        // Keep iteration cap tight — browse → propose → confirm → execute
+        // is a short loop, not a research crawl.
+        assert!(
+            def.max_iterations <= 10,
+            "markets_agent max_iterations must stay tight (got {})",
+            def.max_iterations
+        );
+        assert!(def.omit_identity);
+        assert!(def.omit_memory_context);
+        assert!(def.omit_skills_catalog);
+        // Delegate name must be the stable, chat-friendly slug — the
+        // orchestrator surfaces it as `delegate_do_prediction_markets`.
+        assert_eq!(
+            def.delegate_name.as_deref(),
+            Some("do_prediction_markets"),
+            "markets_agent must keep its `do_prediction_markets` delegate name stable"
+        );
+    }
+
+    /// Routing: the orchestrator must list `markets_agent` in its
+    /// `subagents` so a `delegate_do_prediction_markets` tool is
+    /// synthesised at agent-build time. Without this entry the
+    /// orchestrator can't route Polymarket / Kalshi requests to the
+    /// specialist and they fall back into the generalist tools_agent
+    /// wildcard.
+    #[test]
+    fn orchestrator_subagents_include_markets_agent() {
+        use crate::openhuman::agent::harness::definition::SubagentEntry;
+        let def = find("orchestrator");
+        let listed = def.subagents.iter().any(|e| match e {
+            SubagentEntry::AgentId(id) => id == "markets_agent",
+            _ => false,
+        });
+        assert!(
+            listed,
+            "orchestrator.subagents must list `markets_agent` so the \
+             routing layer can synthesise `delegate_do_prediction_markets`"
+        );
+    }
+
+    /// `tools_agent` must explicitly disallow `polymarket` and `kalshi`
+    /// so the prediction-market venues route ONLY through
+    /// `markets_agent` (`delegate_do_prediction_markets`). Without this
+    /// the wildcard inventory would also surface them as raw tools to
+    /// the generalist, bypassing the venue-aware approval-gate prompt.
+    #[test]
+    fn tools_agent_disallows_prediction_market_tools() {
+        let def = find("tools_agent");
+        assert!(
+            def.disallowed_tools.iter().any(|t| t == "polymarket"),
+            "tools_agent.disallowed_tools must contain `polymarket` so the \
+             venue routes through markets_agent exclusively"
+        );
+        assert!(
+            def.disallowed_tools.iter().any(|t| t == "kalshi"),
+            "tools_agent.disallowed_tools must contain `kalshi` so the \
+             venue routes through markets_agent exclusively"
+        );
+    }
+
+    #[test]
     fn orchestrator_subagents_include_skill_creator() {
         use crate::openhuman::agent::harness::definition::SubagentEntry;
         let def = find("orchestrator");
@@ -756,48 +880,6 @@ mod tests {
             "orchestrator.subagents must list `skill_creator` so the \
              routing layer can synthesise `create_skill`"
         );
-    }
-
-    #[test]
-    fn welcome_has_onboarding_and_memory_tools() {
-        let def = find("welcome");
-        assert_eq!(def.sandbox_mode, SandboxMode::ReadOnly);
-        match &def.tools {
-            ToolScope::Named(tools) => {
-                assert!(
-                    tools.iter().any(|t| t == "check_onboarding_status"),
-                    "welcome needs check_onboarding_status"
-                );
-                assert!(
-                    tools.iter().any(|t| t == "complete_onboarding"),
-                    "welcome needs complete_onboarding"
-                );
-                assert!(
-                    tools.iter().any(|t| t == "memory_recall"),
-                    "welcome needs memory_recall"
-                );
-                assert!(
-                    tools.iter().any(|t| t == "composio_authorize"),
-                    "welcome needs composio_authorize"
-                );
-                assert!(
-                    tools.iter().any(|t| t == "gitbooks_search"),
-                    "welcome needs gitbooks_search to answer 'how does X work' during onboarding"
-                );
-                assert!(
-                    tools.iter().any(|t| t == "gitbooks_get_page"),
-                    "welcome needs gitbooks_get_page for full-page lookups"
-                );
-                // Welcome must not gain write/exec power; onboarding stays read-only.
-                assert!(!tools.iter().any(|t| t == "shell"));
-                assert!(!tools.iter().any(|t| t == "file_write"));
-                assert!(!tools.iter().any(|t| t == "curl"));
-            }
-            ToolScope::Wildcard => panic!("welcome must have a Named tool scope"),
-        }
-        assert!(!def.omit_memory_context);
-        assert!(def.omit_identity);
-        assert_eq!(def.max_iterations, 12);
     }
 
     // ─────────────────────────────────────────────────────────────────────

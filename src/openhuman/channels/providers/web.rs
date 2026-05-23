@@ -52,12 +52,8 @@ struct SessionCacheFingerprint {
     /// Per-message `temperature` override (same channel as
     /// `model_override`).
     temperature: Option<f64>,
-    /// Which agent definition was used to build `agent`. Without this
-    /// the cache hit short-circuited the welcome→orchestrator routing
-    /// fix — the very first turn picked welcome, welcome called
-    /// `complete_onboarding(complete)`, the flag flipped, but the next
-    /// turn read the cached welcome agent instead of invoking
-    /// `build_session_agent` to re-resolve the target.
+    /// Which agent definition was used to build `agent`. Tracked so cache
+    /// invalidation can detect when the target changes between turns.
     target_agent_id: String,
     /// Bound provider string at build time for the selected workload
     /// role (`chat`, `reasoning`, `agentic`, `coding`, `summarization`).
@@ -78,22 +74,12 @@ struct SessionEntry {
 
 /// Decide which agent definition this turn should run with.
 ///
-/// Mirrors the routing decision inside `build_session_agent` so
-/// `run_chat_task` can compute it once up front and use it both as
-/// the cache hit predicate AND (transitively) as the target id the
-/// builder picks. Reads `chat_onboarding_completed` from a fresh
-/// disk-loaded `Config` (no in-process cache) so the value reflects
-/// the current persisted state — meaning the moment the welcome
-/// agent calls `complete_onboarding(complete)` and the flag flips
-/// to `true`, the very next chat turn observes the new value here
-/// and the cache miss + rebuild routes to orchestrator.
-fn pick_target_agent_id(config: &Config, profile: &AgentProfile) -> String {
+/// All new chat turns route to the `orchestrator` agent directly.
+/// The welcome agent has been removed; the Joyride walkthrough in the
+/// frontend handles onboarding UI instead.
+fn pick_target_agent_id(_config: &Config, profile: &AgentProfile) -> String {
     if profile.id == DEFAULT_PROFILE_ID {
-        if config.chat_onboarding_completed {
-            "orchestrator".to_string()
-        } else {
-            "welcome".to_string()
-        }
+        "orchestrator".to_string()
     } else {
         profile.agent_id.clone()
     }
@@ -131,8 +117,17 @@ static BUDGET_ERROR_PATTERNS: Lazy<Vec<Regex>> = Lazy::new(|| {
     ]
 });
 
-fn key_for(client_id: &str, thread_id: &str) -> String {
-    format!("{client_id}::{thread_id}")
+/// Key for the per-thread runtime maps (`THREAD_SESSIONS`, `IN_FLIGHT`).
+///
+/// Keyed by `thread_id` ALONE — the stable, persistent identity of a
+/// conversation — NOT by the Socket.IO `client_id`, which is regenerated on
+/// every reconnect. Keying these maps by `client_id` previously orphaned a
+/// thread's cached session (conversation amnesia) and its in-flight task handle
+/// (Cancel became a no-op) whenever the socket reconnected with a new id. Event
+/// delivery still routes by `client_id` (the live socket); only the
+/// thread-owned runtime state keys off `thread_id`.
+fn key_for(thread_id: &str) -> String {
+    thread_id.to_string()
 }
 
 fn event_session_id_for(client_id: &str, thread_id: &str) -> String {
@@ -228,16 +223,123 @@ fn with_provider_detail(summary: &str, err: &str) -> String {
     }
 }
 
+/// Extract a Retry-After / retry_after seconds hint from a free-form
+/// error string. Mirrors the typed [`crate::openhuman::inference::
+/// provider::reliable::parse_retry_after_ms`] helper but operates on
+/// the already-flattened `String` that reaches the channel-classifier
+/// layer.
+///
+/// Returns `Some(n)` when a non-negative integer or fractional value
+/// follows one of the canonical headers; fractional values are
+/// rounded up so the user is never told to retry sooner than the
+/// upstream actually allows.
+fn parse_retry_after_secs_from_str(err: &str) -> Option<u64> {
+    // Normalise quoted JSON-key wrappers ("retry_after": 30) by
+    // stripping double quotes before scanning for prefixes
+    // (CodeRabbit review on #2371). A serialised provider body like
+    // `{"retry_after": 30}` would otherwise miss every prefix and
+    // the user would lose the retry hint the provider supplied.
+    let normalized = err.to_ascii_lowercase().replace('"', "");
+    for prefix in &[
+        "retry-after:",
+        "retry_after:",
+        "retry-after ",
+        "retry_after ",
+    ] {
+        if let Some(pos) = normalized.find(prefix) {
+            let after = &normalized[pos + prefix.len()..];
+            let num_str: String = after
+                .trim()
+                .chars()
+                .take_while(|c| c.is_ascii_digit() || *c == '.')
+                .collect();
+            if let Ok(secs) = num_str.parse::<f64>() {
+                if secs.is_finite() && secs >= 0.0 {
+                    return Some(secs.ceil() as u64);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Format the retry-after hint as a short user-friendly suffix
+/// (`" Try again in 30 seconds."`). Returns an empty string when no
+/// hint is available so callers can `format!("{summary}{hint}")`
+/// without branching on `Option`.
+fn retry_after_hint(secs: Option<u64>) -> String {
+    match secs {
+        Some(0) => " You can retry immediately.".to_string(),
+        Some(1) => " Try again in 1 second.".to_string(),
+        Some(n) if n < 90 => format!(" Try again in {n} seconds."),
+        Some(n) => {
+            // Round UP — never tell the user to retry sooner than
+            // the upstream actually allows. 90–119s used to render
+            // as "about 1 minutes" both because of integer flooring
+            // and missing singular/plural handling (CodeRabbit
+            // review on #2371).
+            let mins = (n / 60) + u64::from(n % 60 != 0);
+            let unit = if mins == 1 { "minute" } else { "minutes" };
+            format!(" Try again in about {mins} {unit}.")
+        }
+        None => String::new(),
+    }
+}
+
+/// Detect the SecurityPolicy global hourly action-budget signal
+/// emitted by the built-in tools (`web_fetch`, `curl`, `http_request`,
+/// `polymarket`, `composio`, etc.) — see `src/openhuman/security/
+/// policy.rs::SecurityPolicy::is_rate_limited`.
+///
+/// We match the canonical English strings those tools emit. This is
+/// load-bearing for issue #2364: before this check ran, any string
+/// containing "rate limit" was misclassified as a provider 429 and
+/// the user saw the generic "You're being rate-limited" copy, which
+/// hides that the cap is OpenHuman's own per-hour safety budget,
+/// not the upstream LLM provider.
+fn is_action_budget_exhausted(err_lower: &str) -> bool {
+    err_lower.contains("rate limit exceeded: action budget exhausted")
+        || err_lower.contains("rate limit exceeded: too many actions in the last hour")
+        || err_lower.contains("action blocked: rate limit exceeded")
+}
+
 fn classify_inference_error(err: &str) -> (&'static str, String) {
     let lower = err.to_lowercase();
-    if lower.contains("rate limit") || lower.contains("429") {
+    // Order matters: the SecurityPolicy hourly cap and the
+    // agent-loop max-iterations error both surface as strings that
+    // contain "rate limit" / "iteration", so they MUST be checked
+    // before the generic provider-429 branch — otherwise users see
+    // a confusing "your AI provider is rate-limiting you" message
+    // for limits OpenHuman itself enforced (issue #2364).
+    if is_action_budget_exhausted(&lower) {
         (
-            "rate_limited",
+            "action_budget_exceeded",
             with_provider_detail(
-                "You're being rate-limited. Please wait a moment and try again.",
+                "You've hit OpenHuman's per-hour action budget — this is a local safety cap, \
+                 not your AI provider. The window decays gradually; you can keep chatting in \
+                 this thread and tool-heavy steps will resume as the budget refills.",
                 err,
             ),
         )
+    } else if crate::openhuman::agent::error::is_max_iterations_error(err) {
+        (
+            "max_iterations",
+            with_provider_detail(
+                "The agent ran the maximum number of tool steps for one turn without \
+                 finishing. This usually means a tool kept failing (often a rate limit on a \
+                 web fetch). You can retry the same question in this thread once the \
+                 underlying limit clears.",
+                err,
+            ),
+        )
+    } else if lower.contains("rate limit") || lower.contains("429") {
+        let retry = parse_retry_after_secs_from_str(err);
+        let summary = format!(
+            "Your AI provider is rate-limiting requests. This is a transient upstream \
+             limit, not a thread-level block — you can retry in this thread.{}",
+            retry_after_hint(retry)
+        );
+        ("rate_limited", with_provider_detail(summary.as_str(), err))
     } else if lower.contains("timeout") || lower.contains("timed out") {
         (
             "timeout",
@@ -400,7 +502,7 @@ pub async fn start_chat(
         return Err(prompt_guard_user_message(prompt_decision.action).to_string());
     }
 
-    let map_key = key_for(&client_id, &thread_id);
+    let map_key = key_for(&thread_id);
 
     {
         let mut in_flight = IN_FLIGHT.lock().await;
@@ -617,7 +719,7 @@ pub async fn cancel_chat(client_id: &str, thread_id: &str) -> Result<Option<Stri
         return Err("thread_id is required".to_string());
     }
 
-    let map_key = key_for(client_id, thread_id);
+    let map_key = key_for(thread_id);
     let mut removed_request_id: Option<String> = None;
 
     {
@@ -685,16 +787,13 @@ async fn run_chat_task(
     let config = config_rpc::load_config_with_timeout().await?;
     let (_profiles_state, profile) =
         AgentProfileStore::new(config.workspace_dir.clone()).resolve(profile_id.as_deref())?;
-    let map_key = key_for(client_id, thread_id);
+    let map_key = key_for(thread_id);
     let model_override = normalize_model_override(profile.model_override.clone())
         .or_else(|| normalize_model_override(model_override));
     let temperature = profile.temperature.or(temperature);
     // Compute the routing decision up front so the cache lookup can
-    // detect when it has changed. Without this, a turn that flips
-    // `chat_onboarding_completed` (welcome agent calling
-    // `complete_onboarding(complete)`) would still serve the next
-    // turn from the cached welcome agent — the cache hit predicate
-    // didn't know about the routing decision before Commit 13.
+    // detect when it has changed. This also keeps non-default profile
+    // switches from reusing a cached agent built for another target.
     let target_agent_id = pick_target_agent_id(&config, &profile);
     let provider_role = provider_role_for_model_override(model_override.as_deref());
     let current_fp = SessionCacheFingerprint {
@@ -1386,37 +1485,15 @@ fn build_session_agent(
         effective.default_temperature = temp;
     }
 
-    // Route to welcome vs orchestrator based on the per-user
-    // **chat-onboarding** flag. #525 fix: pre-onboarding users see the
-    // welcome agent's persona with its 2-tool TOML scope
-    // (complete_onboarding + memory_recall) instead of the
-    // orchestrator's default delegation surface. Post-onboarding they
-    // transition automatically on the next chat turn because
-    // `Config::load_or_init` reads fresh from disk every call.
-    //
-    // We deliberately read `chat_onboarding_completed`, NOT
-    // `onboarding_completed`. The latter is the React UI wizard's
-    // gate (`OnboardingOverlay.tsx`) which flips to `true` the moment
-    // the user dismisses the wizard — which happens BEFORE they ever
-    // type in the chat pane. If we routed on that flag the welcome
-    // agent could never run from the Tauri desktop app. The chat
-    // flag is set only by the welcome agent itself via
-    // `complete_onboarding`, so it stays `false`
-    // for the user's actual first chat message regardless of what
-    // the React layer did, then flips on the welcome turn so the
-    // very next message routes to orchestrator.
-    //
-    // The config reached here has already been loaded by
-    // `run_chat_task` via `config_rpc::load_config_with_timeout`, so
-    // both flags reflect the current persisted state — no cache to
-    // invalidate.
+    // All chat turns route directly to the orchestrator agent (or to the
+    // profile-specific agent for non-default profiles). The welcome agent
+    // has been removed; onboarding UI is handled by the Joyride walkthrough
+    // in the frontend.
     log::info!(
-        "[web-channel] routing chat turn to '{}' via profile '{}' provider_role='{}' (chat_onboarding_completed={}, ui_onboarding_completed={}, client_id={}, thread_id={})",
+        "[web-channel] routing chat turn to '{}' via profile '{}' provider_role='{}' (client_id={}, thread_id={})",
         target_agent_id,
         profile.id,
         provider_role,
-        effective.chat_onboarding_completed,
-        effective.onboarding_completed,
         client_id,
         thread_id
     );

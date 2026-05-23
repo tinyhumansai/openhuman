@@ -150,16 +150,37 @@ jobs:
 
       - name: Run E2E (full suite)
         if: ${{ inputs.full }}
+        env:
+          E2E_BAIL_ON_FAILURE: ${{ vars.E2E_BAIL_ON_FAILURE || '' }}
         run: |
+          BAIL_FLAG=""
+          if [[ "${E2E_BAIL_ON_FAILURE:-}" == "1" ]]; then
+            BAIL_FLAG="--bail"
+          fi
           xvfb-run -a --server-args="-screen 0 1280x960x24" \
-            bash app/scripts/e2e-run-session.sh
+            bash app/scripts/e2e-run-all-flows.sh --skip-preflight $BAIL_FLAG
 
-      # Artifact uploads intentionally omitted — this reusable workflow
-      # is invoked from release-staging.yml and release-production.yml,
-      # and uploaded logs can carry mock-backend payloads, env-var
-      # echoes, and CDP transcripts that we don't want pinned to a
-      # release artifact. Local repro: rerun the spec via Docker and
-      # the same logs land in /tmp.
+      - name: Upload E2E failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: e2e-failure-logs-${{ runner.os }}-${{ github.run_id }}
+          path: |
+            /tmp/openhuman-e2e-app-*.log
+            app/test/e2e/artifacts/
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Write job summary
+        if: always()
+        run: |
+          echo "## E2E Results (${{ runner.os }})" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ -f /tmp/e2e-summary.txt ]; then
+            cat /tmp/e2e-summary.txt >> $GITHUB_STEP_SUMMARY
+          else
+            echo "No summary file found." >> $GITHUB_STEP_SUMMARY
+          fi
 
   # Rust-side E2E counterpart to the Tauri runs above. Same Linux-only
   # scope (CI does not run this on macOS or Windows — the Rust core is
