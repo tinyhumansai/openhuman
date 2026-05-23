@@ -166,10 +166,14 @@ const DiscordConfig = ({ definition }: DiscordConfigProps) => {
                 channel: 'discord',
                 authMode: spec.mode,
                 status: 'error',
-                lastError: t('channels.fieldRequired').replace(
-                  '{field}',
-                  t(`channels.discord.fields.${field.key}.label`)
-                ),
+                lastError: (() => {
+                  const key = `channels.discord.fields.${field.key}.label`;
+                  const label = t(key);
+                  return t('channels.fieldRequired').replace(
+                    '{field}',
+                    label === key ? field.label || field.key : label
+                  );
+                })(),
               })
             );
             return;
