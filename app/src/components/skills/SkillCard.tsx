@@ -12,6 +12,8 @@ export interface UnifiedSkillCardProps {
   ctaLabel: string;
   ctaVariant?: 'primary' | 'sage' | 'amber';
   onCtaClick: () => void;
+  testId?: string;
+  ctaTestId?: string;
   badge?: ReactNode;
   secondaryActions?: Array<{
     label: string;
@@ -46,6 +48,8 @@ export function UnifiedSkillCard({
   ctaLabel,
   ctaVariant = 'primary',
   onCtaClick,
+  testId,
+  ctaTestId,
   secondaryActions,
   syncProgress,
   syncSummaryText,
@@ -69,7 +73,9 @@ export function UnifiedSkillCard({
   const ctaStyle = CTA_STYLES[ctaVariant] ?? CTA_STYLES.primary;
 
   return (
-    <div className="flex items-center gap-3 rounded-xl border border-stone-100 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-3 transition-colors hover:bg-stone-50 dark:hover:bg-neutral-800/60">
+    <div
+      data-testid={testId}
+      className="flex items-center gap-3 rounded-xl border border-stone-100 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-3 transition-colors hover:bg-stone-50 dark:hover:bg-neutral-800/60">
       <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center text-stone-600 dark:text-neutral-300">
         {icon}
       </div>
@@ -155,6 +161,7 @@ export function UnifiedSkillCard({
         )}
         <button
           type="button"
+          data-testid={ctaTestId}
           disabled={ctaDisabled}
           onClick={e => {
             e.stopPropagation();

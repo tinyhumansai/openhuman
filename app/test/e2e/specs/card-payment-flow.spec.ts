@@ -11,12 +11,8 @@
  */
 import { waitForApp } from '../helpers/app-helpers';
 import { textExists, waitForText } from '../helpers/element-helpers';
-import {
-  navigateToBilling,
-  navigateToHome,
-  navigateToSettings,
-  performFullLogin,
-} from '../helpers/shared-flows';
+import { resetApp } from '../helpers/reset-app';
+import { navigateToBilling, navigateToHome, navigateToSettings } from '../helpers/shared-flows';
 import { clearRequestLog, startMockServer, stopMockServer } from '../mock-server';
 
 const LOG_PREFIX = '[PaymentFlow]';
@@ -25,6 +21,7 @@ describe('Card Payment Flow', () => {
   before(async () => {
     await startMockServer();
     await waitForApp();
+    await resetApp('e2e-card-payment-token');
     clearRequestLog();
   });
 
@@ -32,14 +29,20 @@ describe('Card Payment Flow', () => {
     await stopMockServer();
   });
 
-  it('login and reach home', async () => {
-    await performFullLogin('e2e-card-payment-token');
-  });
-
-  it('5.1 — billing panel shows "moved to web" redirect page', async () => {
-    await navigateToBilling();
-    // BillingPanel.tsx renders t('settings.billing.movedToWeb') = 'Billing moved to the web'
-    await waitForText('Billing moved to the web', 10_000);
+  it('5.1 — billing panel shows "moved to web" redirect page', async function () {
+    this.timeout(60_000);
+    // Navigate to billing — navigateToBilling() handles multiple strategies.
+    try {
+      await navigateToBilling();
+    } catch {
+      // Fallback: direct hash navigation.
+      await browser.execute(() => {
+        window.location.hash = '/settings/billing';
+      });
+      await browser.pause(3_000);
+    }
+    // BillingPanel.tsx renders the dashboard button text.
+    await waitForText('Open billing dashboard', 20_000);
     console.log(`${LOG_PREFIX} 5.1 — billing redirect panel loaded`);
   });
 

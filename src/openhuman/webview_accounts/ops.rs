@@ -11,7 +11,7 @@ use std::path::PathBuf;
 /// path. See `app/src-tauri/src/lib.rs`.
 pub(crate) const COOKIES_DB_ENV: &str = "OPENHUMAN_CEF_COOKIES_DB";
 
-/// A provider we surface in the welcome snapshot.
+/// A provider surfaced in the webview-account snapshot.
 ///
 /// `host_suffix` is matched against Chromium's `host_key` column with a
 /// trailing-wildcard SQL `LIKE`. `session_cookie_names` are the cookie
@@ -30,7 +30,7 @@ struct Provider {
     session_cookie_names: &'static [&'static str],
 }
 
-/// Providers the welcome agent cares about. Keep this list aligned
+/// Providers tracked in the webview-account snapshot. Keep this list aligned
 /// with the webview accounts system in `app/src-tauri/src/webview_accounts/`.
 pub(crate) const PROVIDERS: &[Provider] = &[
     Provider {
@@ -42,6 +42,11 @@ pub(crate) const PROVIDERS: &[Provider] = &[
         key: "whatsapp",
         host_suffix: "web.whatsapp.com",
         session_cookie_names: &["wa_ul", "wa_build"],
+    },
+    Provider {
+        key: "wechat",
+        host_suffix: "web.wechat.com",
+        session_cookie_names: &["wxuin", "webwx_data_ticket", "webwx_auth_ticket"],
     },
     Provider {
         key: "telegram",
@@ -97,12 +102,10 @@ fn cookies_db_path() -> Option<PathBuf> {
 /// Returns a JSON object keyed by provider slug, value `true` when at
 /// least one known session cookie is present for that provider. Every
 /// provider in [`PROVIDERS`] is present in the result, even when
-/// `false` — the welcome agent uses `false` entries to decide what to
-/// offer.
+/// `false` — callers can rely on all keys being present.
 ///
 /// This never fails: missing env var, locked DB, schema drift — all
-/// map to "everything false." The welcome snapshot is load-bearing on
-/// first-run and must always build.
+/// map to "everything false."
 pub fn detect_webview_logins() -> Value {
     let mut out = serde_json::Map::with_capacity(PROVIDERS.len());
     for p in PROVIDERS {
@@ -291,8 +294,7 @@ mod tests {
         }
     }
 
-    /// Guard: results always cover every provider, even when the DB is
-    /// missing. The welcome snapshot depends on this invariant.
+    /// Guard: results always cover every provider, even when the DB is missing.
     #[test]
     fn missing_env_returns_all_false() {
         let _lock = lock_env();
@@ -314,6 +316,18 @@ mod tests {
         let v = detect_webview_logins();
         assert_eq!(v["gmail"], Value::Bool(true));
         assert_eq!(v["slack"], Value::Bool(false));
+        std::env::remove_var(COOKIES_DB_ENV);
+    }
+
+    #[test]
+    fn detects_wechat_via_wxuin_cookie() {
+        let _lock = lock_env();
+        let tmp = TempDir::new().unwrap();
+        let db = tmp.path().join("Cookies");
+        make_cookies_db(&db, &[("web.wechat.com", "wxuin")]);
+        std::env::set_var(COOKIES_DB_ENV, &db);
+        let v = detect_webview_logins();
+        assert_eq!(v["wechat"], Value::Bool(true));
         std::env::remove_var(COOKIES_DB_ENV);
     }
 

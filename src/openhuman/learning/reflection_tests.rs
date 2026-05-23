@@ -203,6 +203,19 @@ fn build_reflection_prompt_includes_tool_calls_and_truncation() {
 }
 
 #[test]
+fn build_reflection_prompt_includes_output_language_directive() {
+    let memory: Arc<dyn Memory> = Arc::new(MockMemory::default());
+    let mut config = Config::default();
+    config.output_language = Some("zh-CN".into());
+    let hook = ReflectionHook::new(reflection_config(), Arc::new(config), memory, None);
+
+    let prompt = hook.build_reflection_prompt(&reflective_turn());
+    assert!(prompt.contains("Simplified Chinese"));
+    assert!(prompt.contains("Keep JSON keys"));
+    assert!(prompt.contains("\"observations\""));
+}
+
+#[test]
 fn session_key_and_counter_management_work() {
     let hook = ReflectionHook::new(
         reflection_config(),

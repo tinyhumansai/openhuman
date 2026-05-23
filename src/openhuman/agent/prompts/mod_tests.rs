@@ -541,11 +541,10 @@ fn render_subagent_system_prompt_honors_identity_safety_and_skills_flags() {
 
 #[test]
 fn render_subagent_system_prompt_injects_profile_md_even_when_identity_omitted() {
-    // Regression: the welcome agent sets `omit_identity = true` to
-    // drop the SOUL/IDENTITY preamble (it has its own voice) but it
-    // still needs PROFILE.md to personalise the greeting. PROFILE.md
-    // is gated on its own `include_profile` flag so the welcome path
-    // can opt in without pulling SOUL/IDENTITY back in.
+    // Regression: an agent with `omit_identity = true` drops the SOUL/IDENTITY
+    // preamble but still needs PROFILE.md if `include_profile = true`.
+    // PROFILE.md is gated on its own flag so agents can opt in without
+    // pulling SOUL/IDENTITY back in.
     let workspace = std::env::temp_dir().join(format!(
         "openhuman_prompt_profile_nosoul_{}",
         uuid::Uuid::new_v4()
@@ -570,7 +569,7 @@ fn render_subagent_system_prompt_injects_profile_md_even_when_identity_omitted()
         &[0],
         &tools,
         &[],
-        "You are the welcome agent.",
+        "You are a specialist agent.",
         SubagentRenderOptions {
             include_identity: false,
             include_safety_preamble: false,
@@ -705,7 +704,7 @@ fn render_subagent_system_prompt_silently_skips_missing_profile_md() {
         &[0],
         &tools,
         &[],
-        "You are the welcome agent.",
+        "You are a specialist agent.",
         SubagentRenderOptions::narrow(),
         ToolCallFormat::PFormat,
         &[],
@@ -724,15 +723,13 @@ fn render_subagent_system_prompt_silently_skips_missing_profile_md() {
 }
 
 #[test]
-fn welcome_agent_definition_flags_still_load_profile_md() {
-    // End-to-end-ish check against the real welcome agent flags: the
-    // agent.toml sets omit_identity=true/omit_skills_catalog=true/
-    // omit_safety_preamble=true/omit_profile=false. Mirror that exact
-    // combo and verify PROFILE.md still lands in the rendered prompt.
-    // If someone flips `omit_profile` back to its default (true), this
-    // test breaks.
+fn narrow_agent_with_omit_identity_still_loads_profile_md() {
+    // Verify that an agent configured with omit_identity=true/omit_skills_catalog=true/
+    // omit_safety_preamble=true/omit_profile=false still gets PROFILE.md injected.
+    // This exercises the SubagentRenderOptions::from_definition_flags path for agents
+    // that want PROFILE.md without the full SOUL/IDENTITY preamble.
     let workspace = std::env::temp_dir().join(format!(
-        "openhuman_prompt_welcome_flags_{}",
+        "openhuman_prompt_narrow_agent_flags_{}",
         uuid::Uuid::new_v4()
     ));
     std::fs::create_dir_all(&workspace).unwrap();
@@ -742,13 +739,12 @@ fn welcome_agent_definition_flags_still_load_profile_md() {
     )
     .unwrap();
 
-    // Match `src/openhuman/agent/agents/welcome/agent.toml` exactly.
     let options = SubagentRenderOptions::from_definition_flags(
         true,  // omit_identity
         true,  // omit_safety_preamble
         true,  // omit_skills_catalog
-        false, // omit_profile   — welcome opts IN to PROFILE.md
-        false, // omit_memory_md — welcome opts IN to MEMORY.md too
+        false, // omit_profile   — opts IN to PROFILE.md
+        false, // omit_memory_md — opts IN to MEMORY.md too
     );
 
     let tools: Vec<Box<dyn Tool>> = vec![Box::new(TestTool)];
@@ -758,7 +754,7 @@ fn welcome_agent_definition_flags_still_load_profile_md() {
         &[0],
         &tools,
         &[],
-        "# Welcome Agent\n\nYou are the welcome agent.",
+        "# Specialist Agent\n\nYou are a specialist.",
         options,
         ToolCallFormat::PFormat,
         &[],
@@ -766,11 +762,11 @@ fn welcome_agent_definition_flags_still_load_profile_md() {
 
     assert!(
         rendered.contains("### PROFILE.md"),
-        "welcome agent (omit_profile=false) must load PROFILE.md, got:\n{rendered}"
+        "agent with omit_profile=false must load PROFILE.md, got:\n{rendered}"
     );
     assert!(
         rendered.contains("Crypto trader"),
-        "PROFILE.md body must reach the welcome agent prompt"
+        "PROFILE.md body must reach the agent prompt"
     );
 
     let _ = std::fs::remove_dir_all(workspace);
@@ -844,7 +840,7 @@ fn render_subagent_system_prompt_injects_memory_md_when_enabled() {
         &[0],
         &tools,
         &[],
-        "You are the welcome agent.",
+        "You are a specialist agent.",
         SubagentRenderOptions {
             include_identity: false,
             include_safety_preamble: false,
@@ -1065,10 +1061,10 @@ fn for_subagent_builder_injects_user_files_even_when_identity_omitted() {
         user_identity: None,
     };
 
-    // Mirror the welcome agent runtime path:
+    // Test a narrow-agent runtime path:
     // `SystemPromptBuilder::for_subagent(body, omit_identity=true, …)`.
     let builder = SystemPromptBuilder::for_subagent(
-        "You are the welcome agent.".into(),
+        "You are a specialist agent.".into(),
         true, // omit_identity  — drops SOUL/IDENTITY preamble
         true, // omit_safety_preamble
         true, // omit_skills_catalog
@@ -1081,11 +1077,11 @@ fn for_subagent_builder_injects_user_files_even_when_identity_omitted() {
     );
     assert!(
         rendered.contains("### PROFILE.md") && rendered.contains("Jane Doe"),
-        "welcome runtime path must inject PROFILE.md despite omit_identity=true, got:\n{rendered}"
+        "narrow runtime path must inject PROFILE.md despite omit_identity=true, got:\n{rendered}"
     );
     assert!(
         rendered.contains("### MEMORY.md") && rendered.contains("terse Rust"),
-        "welcome runtime path must inject MEMORY.md despite omit_identity=true, got:\n{rendered}"
+        "narrow runtime path must inject MEMORY.md despite omit_identity=true, got:\n{rendered}"
     );
 
     // Mirror the narrow-specialist runtime path (code_executor,

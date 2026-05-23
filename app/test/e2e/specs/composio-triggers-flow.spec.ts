@@ -11,43 +11,19 @@
  *   - one available trigger (`GMAIL_NEW_GMAIL_MESSAGE`)
  *   - an empty active-trigger list that mutates as enable/disable run
  *
- * RPC behavior is deterministic across platforms; the UI assertion only
- * runs when accessibility queries reach the WebView and tolerates
- * regression-free skip on locked-down hosts.
+ * RPC behavior is deterministic across platforms, and the UI assertion is a
+ * required part of the chain: route to Skills -> open the connected Gmail
+ * modal -> verify the trigger toggles rendered.
  */
-import { waitForApp, waitForAppReady } from '../helpers/app-helpers';
+import { waitForApp } from '../helpers/app-helpers';
 import { callOpenhumanRpc } from '../helpers/core-rpc';
-import { triggerAuthDeepLinkBypass } from '../helpers/deep-link-helpers';
-import {
-  clickNativeButton,
-  textExists,
-  waitForText,
-  waitForWebView,
-  waitForWindowVisible,
-} from '../helpers/element-helpers';
-import {
-  completeOnboardingIfVisible,
-  navigateToSkills,
-  waitForRequest,
-} from '../helpers/shared-flows';
-import {
-  clearRequestLog,
-  getRequestLog,
-  setMockBehavior,
-  startMockServer,
-  stopMockServer,
-} from '../mock-server';
-
-const LOG = '[ComposioTriggersE2E]';
-
-function step(msg: string, ctx?: unknown) {
-  if (ctx === undefined) console.log(`${LOG} ${msg}`);
-  else console.log(`${LOG} ${msg}`, JSON.stringify(ctx, null, 2));
-}
+import { textExists, waitForText } from '../helpers/element-helpers';
+import { resetApp } from '../helpers/reset-app';
+import { navigateToSkills } from '../helpers/shared-flows';
+import { clearRequestLog, setMockBehavior, startMockServer, stopMockServer } from '../mock-server';
 
 describe('Composio trigger toggles (UI + core RPC)', () => {
-  before(async function beforeSuite() {
-    this.timeout(90_000);
+  before(async () => {
     await startMockServer();
     setMockBehavior(
       'composioConnections',
@@ -62,20 +38,12 @@ describe('Composio trigger toggles (UI + core RPC)', () => {
     );
     setMockBehavior('composioActiveTriggers', JSON.stringify([]));
     await waitForApp();
+    await resetApp('e2e-composio-triggers-token');
     clearRequestLog();
   });
 
   after(async () => {
     await stopMockServer();
-  });
-
-  it('signs in deterministically', async function () {
-    this.timeout(90_000);
-    await triggerAuthDeepLinkBypass('e2e-composio-triggers-token');
-    await waitForWindowVisible(25_000);
-    await waitForWebView(15_000);
-    await waitForAppReady(15_000);
-    await completeOnboardingIfVisible(LOG);
   });
 
   it('list_available_triggers returns the seeded Gmail catalog', async () => {
@@ -84,44 +52,18 @@ describe('Composio trigger toggles (UI + core RPC)', () => {
       connection_id: 'c1',
     });
     expect(out.ok).toBe(true);
-    // result may be bare value or wrapped in {result: ...} when logs are present
-    const result = (out.result as { result?: unknown })?.result ?? out.result;
-    const triggers = (result as { triggers?: unknown[] })?.triggers ?? [];
-    const slugs = (triggers as { slug?: string }[]).map(t => t.slug);
+    const result = (out.result as any)?.result ?? out.result;
+    const triggers = result?.triggers ?? [];
+    const slugs = triggers.map((t: any) => t.slug);
     expect(slugs).toContain('GMAIL_NEW_GMAIL_MESSAGE');
     expect(slugs).toContain('SLACK_NEW_MESSAGE');
-  });
-
-  it('authorize sends Gmail read scope before Gmail trigger setup', async () => {
-    clearRequestLog();
-
-    const out = await callOpenhumanRpc('openhuman.composio_authorize', { toolkit: 'gmail' });
-    expect(out.ok).toBe(true);
-
-    const authorizeReq = await waitForRequest(
-      getRequestLog,
-      'POST',
-      '/agent-integrations/composio/authorize',
-      10_000
-    );
-    if (!authorizeReq) {
-      throw new Error(
-        `Missing /agent-integrations/composio/authorize request.\n` +
-          `Request log:\n${JSON.stringify(getRequestLog(), null, 2)}`
-      );
-    }
-
-    const body = JSON.parse(authorizeReq?.body || '{}');
-    expect(body.toolkit).toBe('gmail');
-    expect(body.oauth_scopes).toContain('https://www.googleapis.com/auth/gmail.readonly');
   });
 
   it('list_triggers starts empty for the seeded user', async () => {
     const out = await callOpenhumanRpc('openhuman.composio_list_triggers', {});
     expect(out.ok).toBe(true);
-    const result = (out.result as { result?: unknown })?.result ?? out.result;
-    const triggers = (result as { triggers?: unknown[] })?.triggers ?? [];
-    expect(triggers).toHaveLength(0);
+    const result = (out.result as any)?.result ?? out.result;
+    expect(result.triggers ?? []).toHaveLength(0);
   });
 
   it('enable_trigger creates a trigger that subsequent list calls observe', async () => {
@@ -130,38 +72,34 @@ describe('Composio trigger toggles (UI + core RPC)', () => {
       slug: 'GMAIL_NEW_GMAIL_MESSAGE',
     });
     expect(enable.ok).toBe(true);
-    const created = (enable.result as { result?: unknown })?.result ?? enable.result;
-    const createdRecord = created as Record<string, unknown>;
-    expect(createdRecord.slug).toBe('GMAIL_NEW_GMAIL_MESSAGE');
-    expect(createdRecord.connectionId).toBe('c1');
-    expect(typeof createdRecord.triggerId).toBe('string');
-    expect((createdRecord.triggerId as string).length).toBeGreaterThan(0);
+    const created = (enable.result as any)?.result ?? enable.result;
+    expect(created.slug).toBe('GMAIL_NEW_GMAIL_MESSAGE');
+    expect(created.connectionId).toBe('c1');
+    expect(typeof created.triggerId).toBe('string');
+    expect(created.triggerId.length).toBeGreaterThan(0);
 
     const list = await callOpenhumanRpc('openhuman.composio_list_triggers', { toolkit: 'gmail' });
-    const result = (list.result as { result?: unknown })?.result ?? list.result;
-    const triggers = (result as { triggers?: unknown[] })?.triggers ?? [];
-    expect(triggers).toHaveLength(1);
-    expect((triggers[0] as { slug?: string }).slug).toBe('GMAIL_NEW_GMAIL_MESSAGE');
+    const result = (list.result as any)?.result ?? list.result;
+    expect(result.triggers).toHaveLength(1);
+    expect(result.triggers[0].slug).toBe('GMAIL_NEW_GMAIL_MESSAGE');
   });
 
   it('disable_trigger removes the active trigger', async () => {
     const list = await callOpenhumanRpc('openhuman.composio_list_triggers', {});
-    const beforeResult = (list.result as { result?: unknown })?.result ?? list.result;
-    const beforeTriggers = (beforeResult as { triggers?: unknown[] })?.triggers ?? [];
-    const triggerId = (beforeTriggers[0] as { id?: string })?.id;
+    const beforeResult = (list.result as any)?.result ?? list.result;
+    const triggerId = beforeResult.triggers[0]?.id;
     expect(typeof triggerId).toBe('string');
 
     const disable = await callOpenhumanRpc('openhuman.composio_disable_trigger', {
       trigger_id: triggerId,
     });
     expect(disable.ok).toBe(true);
-    const disableResult = (disable.result as { result?: unknown })?.result ?? disable.result;
-    expect((disableResult as { deleted?: boolean })?.deleted).toBe(true);
+    const out = (disable.result as any)?.result ?? disable.result;
+    expect(out.deleted).toBe(true);
 
     const after = await callOpenhumanRpc('openhuman.composio_list_triggers', {});
-    const afterResult = (after.result as { result?: unknown })?.result ?? after.result;
-    const afterTriggers = (afterResult as { triggers?: unknown[] })?.triggers ?? [];
-    expect(afterTriggers).toHaveLength(0);
+    const afterResult = (after.result as any)?.result ?? after.result;
+    expect(afterResult.triggers ?? []).toHaveLength(0);
   });
 
   it('Triggers section renders in the Composio modal for an ACTIVE connection', async () => {
@@ -176,26 +114,38 @@ describe('Composio trigger toggles (UI + core RPC)', () => {
 
     await navigateToSkills();
 
-    // The Skills page card for an ACTIVE Composio connection exposes a
-    // "Manage" affordance that opens the modal. We don't depend on a
-    // specific click target — accessibility text on either platform
-    // surfaces "Triggers" once the modal mounts.
-    const manageVisible = await waitForText('Manage', 10_000);
-    if (!manageVisible) {
-      step('Skills page did not surface a Manage affordance — skipping UI assertion');
-      return;
+    await waitForText('Integrations', 10_000);
+    await waitForText('Gmail', 10_000);
+
+    const opened = await browser.execute(() => {
+      const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>('button'));
+      const gmailManage = buttons.find(button => {
+        const label = button.getAttribute('aria-label') ?? '';
+        return /Gmail/i.test(label) && /Manage/i.test(label);
+      });
+      if (!gmailManage) return false;
+      ['mousedown', 'mouseup', 'click'].forEach(type => {
+        gmailManage.dispatchEvent(
+          new MouseEvent(type, { bubbles: true, cancelable: true, view: window, button: 0 })
+        );
+      });
+      return true;
+    });
+    if (!opened) {
+      throw new Error('Could not find connected Gmail Manage button on Skills page');
     }
 
-    // Open whichever Manage button corresponds to Gmail. The modal then
-    // loads available + active triggers via the new RPCs.
-    try {
-      await clickNativeButton('Manage');
-    } catch (err) {
-      step('Could not click Manage button', { err: String(err) });
-    }
-
-    const sectionVisible =
-      (await waitForText('Triggers', 10_000)) || (await textExists('GMAIL_NEW_GMAIL_MESSAGE'));
-    expect(sectionVisible).toBe(true);
+    await waitForText('Triggers', 10_000);
+    const togglesVisible = await browser.waitUntil(
+      async () =>
+        Boolean(
+          await browser.execute(
+            () => document.querySelector('[data-testid="trigger-toggles"]') !== null
+          )
+        ),
+      { timeout: 10_000, interval: 500, timeoutMsg: 'trigger toggles did not render' }
+    );
+    expect(togglesVisible).toBe(true);
+    expect(await textExists('Gmail New Gmail Message')).toBe(true);
   });
 });

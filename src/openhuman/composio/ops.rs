@@ -26,7 +26,8 @@ use super::client::{
     direct_list_tools, ComposioClient, ComposioClientKind,
 };
 use super::providers::{
-    capability_matrix, get_provider, ProviderContext, ProviderUserProfile, SyncOutcome, SyncReason,
+    agent_ready_toolkits, capability_matrix, get_provider, ProviderContext, ProviderUserProfile,
+    SyncOutcome, SyncReason,
 };
 use super::types::{
     ComposioActiveTriggersResponse, ComposioAuthorizeResponse, ComposioAvailableTriggersResponse,
@@ -87,7 +88,7 @@ fn resolve_client(config: &Config) -> OpResult<ComposioClient> {
 /// handshake eof`, …), we tag `failure="transport"` instead so the
 /// `before_send` filter's transport-phrase branch fires — and keep the
 /// status tag absent (transport failures don't carry a status).
-fn report_composio_op_error<E: std::fmt::Display + ?Sized>(operation: &str, err: &E) {
+pub(super) fn report_composio_op_error<E: std::fmt::Display + ?Sized>(operation: &str, err: &E) {
     // `{err:#}` renders the full anyhow chain when applicable; for plain
     // `String` / `&str` errors it falls back to the Display impl.
     let rendered = format!("{err:#}");
@@ -211,6 +212,28 @@ pub async fn composio_list_capabilities(
     ))
 }
 
+/// List every toolkit slug that ships an agent-ready curated catalog.
+///
+/// Connected toolkits that are NOT in this list can still be
+/// authorized via OAuth, but the agent has no curated action surface
+/// for them — the UI should label such connections as
+/// "preview / agent integration coming soon" so users aren't led into
+/// a broken `composio_list_tools` → max-iterations loop. See #2283.
+pub async fn composio_list_agent_ready_toolkits(
+) -> OpResult<RpcOutcome<super::types::ComposioAgentReadyToolkitsResponse>> {
+    tracing::debug!("[composio] rpc list_agent_ready_toolkits");
+    let toolkits: Vec<String> = agent_ready_toolkits()
+        .into_iter()
+        .map(|s| s.to_string())
+        .collect();
+    let count = toolkits.len();
+    let resp = super::types::ComposioAgentReadyToolkitsResponse { toolkits };
+    Ok(RpcOutcome::new(
+        resp,
+        vec![format!("composio: {count} agent-ready toolkit(s) listed")],
+    ))
+}
+
 // ── Connections ─────────────────────────────────────────────────────
 
 pub async fn composio_list_connections(
@@ -243,9 +266,22 @@ pub async fn composio_list_connections(
                 "[composio-direct] list_connections: fetching v3 \
                  /connected_accounts for the user's personal Composio tenant"
             );
-            let resp = direct_list_connections(&direct)
-                .await
-                .map_err(|e| format!("[composio-direct] list_connections failed: {e:#}"))?;
+            let resp = direct_list_connections(&direct).await.map_err(|e| {
+                // [#1166 / Sentry TAURI-RUST-X9] Restore symmetric error
+                // routing for the direct-mode branch. Without this hook the
+                // direct-mode 401 ("Invalid API key …") wire shape bypassed
+                // `report_error_or_expected` and leaked ~15.7k events in ~22h
+                // — same UI 5 s poll + `periodic.rs` tick that the
+                // backend branch (line ~266) was already classifying.
+                //
+                // Render WITH the `[composio-direct]` anchor BEFORE
+                // reporting so the classifier arm in
+                // `is_provider_user_state_message` (which gates on that
+                // prefix) actually fires.
+                let rendered = format!("[composio-direct] list_connections failed: {e:#}");
+                report_composio_op_error("list_connections", &rendered);
+                rendered
+            })?;
             let active = resp.connections.iter().filter(|c| c.is_active()).count();
             let total = resp.connections.len();
             // Reconcile the integrations cache against this fresh live
@@ -300,10 +336,13 @@ pub async fn composio_authorize(
     let resp = match kind {
         ComposioClientKind::Backend(client) => {
             tracing::debug!(toolkit = %toolkit, "[composio] authorize: backend variant");
-            client.authorize(toolkit, extra_params).await.map_err(|e| {
-                report_composio_op_error("authorize", &e);
-                format!("[composio] authorize failed: {e:#}")
-            })?
+            super::oauth_handoff::authorize_with_meta_guard(&client, toolkit, extra_params)
+                .await
+                .map_err(|e| {
+                    report_composio_op_error("authorize", &e);
+                    let wrapped = super::oauth_handoff::wrap_authorize_rate_limit_error(toolkit, e);
+                    format!("[composio] authorize failed: {wrapped:#}")
+                })?
         }
         ComposioClientKind::Direct(direct) => {
             tracing::info!(
@@ -327,9 +366,25 @@ pub async fn composio_authorize(
                      app.composio.dev for your auth config"
                 );
             }
-            direct_authorize(&direct, toolkit, &config.composio.entity_id)
-                .await
-                .map_err(|e| format!("[composio-direct] authorize failed: {e:#}"))?
+            super::oauth_handoff::direct_authorize_with_meta_guard(
+                &direct,
+                toolkit,
+                &config.composio.entity_id,
+            )
+            .await
+            .map_err(|e| {
+                let wrapped = super::oauth_handoff::wrap_authorize_rate_limit_error(toolkit, e);
+                // [#1166 / Sentry TAURI-RUST-X9] Symmetric with the
+                // backend branch's `report_composio_op_error` on the
+                // same handler — direct-mode 401s from
+                // `connected_accounts/link` were leaking otherwise.
+                // Render WITH the `[composio-direct]` anchor so the
+                // classifier arm fires; wrapped error preserves any
+                // rate-limit classifications fed up the ladder.
+                let rendered = format!("[composio-direct] authorize failed: {wrapped:#}");
+                report_composio_op_error("authorize", &rendered);
+                rendered
+            })?
         }
     };
 
@@ -470,7 +525,17 @@ pub async fn composio_list_tools(
                 Some(list) if !list.is_empty() => list,
                 _ => {
                     let conns = direct_list_connections(&direct).await.map_err(|e| {
-                        format!("[composio-direct] list_tools: prefetch connections failed: {e:#}")
+                        // [#1166 / Sentry TAURI-RUST-X9] Symmetric error
+                        // routing — the prefetch call goes to the same v3
+                        // `/connected_accounts` endpoint as `list_connections`
+                        // and would emit the same 401 wire shape. Render
+                        // WITH the `[composio-direct]` anchor so the
+                        // classifier arm fires on the prefetch path too.
+                        let rendered = format!(
+                            "[composio-direct] list_tools: prefetch connections failed: {e:#}"
+                        );
+                        report_composio_op_error("list_connections", &rendered);
+                        rendered
                     })?;
                     let mut v: Vec<String> = conns
                         .connections
@@ -500,9 +565,16 @@ pub async fn composio_list_tools(
                 toolkits = scope.len(),
                 "[composio-direct] list_tools: fetching v3 tool schemas"
             );
-            let mut resp = direct_list_tools(&direct, &scope)
-                .await
-                .map_err(|e| format!("[composio-direct] list_tools failed: {e:#}"))?;
+            let mut resp = direct_list_tools(&direct, &scope).await.map_err(|e| {
+                // [#1166 / Sentry TAURI-RUST-X9] Symmetric with the backend
+                // branch's hook (line ~451). Direct-mode `list_tools`
+                // failures are user-state when the API key is bad. Render
+                // WITH the `[composio-direct]` anchor so the classifier
+                // arm fires.
+                let rendered = format!("[composio-direct] list_tools failed: {e:#}");
+                report_composio_op_error("list_tools", &rendered);
+                rendered
+            })?;
             // Apply the same curated-whitelist + user-scope filter the
             // backend path runs — schemas may be tenant-agnostic but
             // OpenHuman's curation policy isn't, and direct-mode users
@@ -1668,6 +1740,86 @@ async fn fetch_connected_integrations_uncached(
         .filter(|toolkit| !toolkit.is_empty())
         .collect();
 
+    // Most-informative *non-active* status per toolkit slug. Lets the
+    // integrations_agent spawn-gate (#2365) emit a precise message
+    // when a connection row exists but isn't usable yet (`INITIATED`
+    // — OAuth still in progress) or any longer (`EXPIRED` / `FAILED`)
+    // — instead of the legacy generic "available but not authorized".
+    //
+    // Status priority (UI-actionability):
+    //   1. EXPIRED  — reconnect path
+    //   2. FAILED / ERROR — reconnect path
+    //   3. INITIATED / INITIALIZING / PENDING — finish OAuth in browser
+    //   4. anything else — passes through verbatim
+    let non_active_status_by_slug: std::collections::HashMap<String, String> = {
+        fn priority(status: &str) -> u8 {
+            let s = status.trim().to_ascii_uppercase();
+            match s.as_str() {
+                "EXPIRED" => 4,
+                "FAILED" | "ERROR" => 3,
+                "INITIATED" | "INITIALIZING" | "PENDING" => 2,
+                _ => 1,
+            }
+        }
+        let mut map: std::collections::HashMap<String, (u8, String)> =
+            std::collections::HashMap::new();
+        for conn in connections.iter().filter(|c| !c.is_active()) {
+            let slug = conn.normalized_toolkit();
+            if slug.is_empty() {
+                continue;
+            }
+            // Don't override an ACTIVE-slug — those carry no non-active
+            // status from this map's perspective.
+            if connected_slugs.contains(&slug) {
+                continue;
+            }
+            let p = priority(&conn.status);
+            map.entry(slug.clone())
+                .and_modify(|cur| {
+                    if p > cur.0 {
+                        tracing::debug!(
+                            target: "composio",
+                            toolkit = %slug,
+                            previous_status = %cur.1,
+                            previous_priority = cur.0,
+                            new_status = %conn.status,
+                            new_priority = p,
+                            "[composio] non_active_status_by_slug: upgraded most-informative status"
+                        );
+                        *cur = (p, conn.status.clone());
+                    } else {
+                        tracing::trace!(
+                            target: "composio",
+                            toolkit = %slug,
+                            kept_status = %cur.1,
+                            kept_priority = cur.0,
+                            candidate_status = %conn.status,
+                            candidate_priority = p,
+                            "[composio] non_active_status_by_slug: kept higher-priority status"
+                        );
+                    }
+                })
+                .or_insert_with(|| {
+                    tracing::debug!(
+                        target: "composio",
+                        toolkit = %slug,
+                        status = %conn.status,
+                        priority = p,
+                        "[composio] non_active_status_by_slug: first non-active row"
+                    );
+                    (p, conn.status.clone())
+                });
+        }
+        let final_map: std::collections::HashMap<String, String> =
+            map.into_iter().map(|(k, (_, v))| (k, v)).collect();
+        tracing::debug!(
+            target: "composio",
+            entries = final_map.len(),
+            "[composio] non_active_status_by_slug: final map"
+        );
+        final_map
+    };
+
     // Deduplicate the allowlist so a backend that returns duplicates
     // doesn't produce dual entries downstream.
     let mut unique_toolkits: Vec<String> = allowlisted_toolkits.clone();
@@ -1764,6 +1916,11 @@ async fn fetch_connected_integrations_uncached(
             tools,
             gated_tools,
             connected,
+            non_active_status: if connected {
+                None
+            } else {
+                non_active_status_by_slug.get(slug).cloned()
+            },
         });
     }
 
@@ -1779,6 +1936,7 @@ async fn fetch_connected_integrations_uncached(
         tracing::debug!(
             toolkit = %ci.toolkit,
             connected = ci.connected,
+            non_active_status = ?ci.non_active_status,
             tool_count = ci.tools.len(),
             "[composio] integration overview"
         );

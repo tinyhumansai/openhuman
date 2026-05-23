@@ -77,11 +77,23 @@ fn build_backend_reqwest_client() -> Result<Client> {
             HeaderValue::from_str(&version).context("invalid x-core-version header value")?,
         );
     }
+    // The Tauri shell sets `OPENHUMAN_TAURI_VERSION` to its own package version
+    // before spawning the in-process core, so backend analytics can attribute
+    // core-originated requests to the desktop shell build that hosts them.
+    if let Ok(raw) = std::env::var("OPENHUMAN_TAURI_VERSION") {
+        if let Some(version) = sanitize_client_version(&raw) {
+            default_headers.insert(
+                HeaderName::from_static("x-tauri-version"),
+                HeaderValue::from_str(&version).context("invalid x-tauri-version header value")?,
+            );
+        }
+    }
 
-    // Force rustls for consistent cross-platform TLS behavior.
-    Client::builder()
+    // Platform-appropriate TLS backend: Windows → schannel (honors the OS
+    // cert store, required for corporate TLS-inspection proxies); macOS /
+    // Linux → rustls. See [`crate::openhuman::tls::tls_client_builder`].
+    crate::openhuman::tls::tls_client_builder()
         .default_headers(default_headers)
-        .use_rustls_tls()
         .http1_only()
         .timeout(Duration::from_secs(120))
         .connect_timeout(Duration::from_secs(15))

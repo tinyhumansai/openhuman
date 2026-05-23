@@ -338,6 +338,67 @@ pub fn set_summary_embedding_for_signature(
     })
 }
 
+/// Persistently record that `(summary_id, signature)` cannot be re-embedded.
+/// Mirror of `tree::store::mark_chunk_reembed_skipped` for the summary side
+/// of the reembed worklist (#1574 §6 fix). See that function's doc for the
+/// full rationale.
+pub fn mark_summary_reembed_skipped(
+    config: &Config,
+    summary_id: &str,
+    model_signature: &str,
+    reason: &str,
+) -> Result<()> {
+    let summary_id =
+        crate::openhuman::memory::tree::store::validate_reembed_skip_key("summary_id", summary_id)?;
+    let model_signature = crate::openhuman::memory::tree::store::validate_reembed_skip_key(
+        "model_signature",
+        model_signature,
+    )?;
+    with_connection(config, |conn| {
+        let now_ms = Utc::now().timestamp_millis();
+        conn.execute(
+            "INSERT INTO mem_tree_summary_reembed_skipped
+                 (summary_id, model_signature, reason, skipped_at_ms)
+                 VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(summary_id, model_signature) DO UPDATE SET
+                    reason = excluded.reason,
+                    skipped_at_ms = excluded.skipped_at_ms",
+            params![summary_id, model_signature, reason, now_ms],
+        )?;
+        log::debug!(
+            "[memory_tree::store] mark_summary_reembed_skipped summary_id={summary_id} sig={model_signature} reason={reason}"
+        );
+        Ok(())
+    })
+}
+
+/// Remove a single summary tombstone so re-embed backfill can retry the row.
+///
+/// Idempotent — see [`crate::openhuman::memory::tree::store::clear_chunk_reembed_skipped`].
+pub fn clear_summary_reembed_skipped(
+    config: &Config,
+    summary_id: &str,
+    model_signature: &str,
+) -> Result<()> {
+    let summary_id =
+        crate::openhuman::memory::tree::store::validate_reembed_skip_key("summary_id", summary_id)?;
+    let model_signature = crate::openhuman::memory::tree::store::validate_reembed_skip_key(
+        "model_signature",
+        model_signature,
+    )?;
+    with_connection(config, |conn| {
+        conn.execute(
+            "DELETE FROM mem_tree_summary_reembed_skipped
+              WHERE summary_id = ?1 AND model_signature = ?2",
+            params![summary_id, model_signature],
+        )?;
+        log::debug!(
+            "[memory_tree::store] clear_summary_reembed_skipped summary_id={summary_id} sig={model_signature}"
+        );
+        Ok(())
+    })
+}
+
 /// Transaction-scoped variant of [`set_summary_embedding_for_signature`], for
 /// the seal path which inserts the summary row and its embedding in one tx
 /// (#1574 write-side cutover). Opening a fresh connection there would break

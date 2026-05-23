@@ -3,6 +3,7 @@ import { createContext, type ReactNode, useCallback, useContext, useEffect, useM
 import { useAppSelector } from '../../store/hooks';
 import ar from './ar';
 import bn from './bn';
+import de from './de';
 import en from './en';
 import es from './es';
 import fr from './fr';
@@ -30,6 +31,7 @@ const translations: Record<Locale, Record<string, string>> = {
   fr,
   bn,
   pt,
+  de,
   ru,
   id,
   it,

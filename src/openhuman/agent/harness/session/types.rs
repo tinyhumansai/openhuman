@@ -139,6 +139,18 @@ pub struct Agent {
     /// the delegator / skill-executor voices can render their own
     /// integration blocks.
     pub(super) connected_integrations: Vec<crate::openhuman::context::prompt::ConnectedIntegration>,
+    /// Whether `connected_integrations` is an authoritative session-start
+    /// snapshot (prewarmed from the shared Composio cache or fetched
+    /// explicitly) versus the default empty placeholder installed by
+    /// `AgentBuilder::build`. Turn 1 uses this to decide whether it must
+    /// still pay the cold-start fetch cost before freezing the system prompt.
+    pub(super) connected_integrations_initialized: bool,
+    /// Full runtime config snapshot for integration-cache reads and the
+    /// best-effort fallback fetch path. Session agents built from
+    /// `Config` carry this directly so the turn loop does not need to
+    /// re-run `Config::load_or_init()` on the hot path just to key into
+    /// the Composio cache.
+    pub(super) integration_runtime_config: Option<crate::openhuman::config::Config>,
     /// Mirrors the agent definition's `omit_profile` flag. Threaded into
     /// [`PromptContext::include_profile`] in `turn::build_system_prompt`
     /// so only user-facing agents (welcome, orchestrator, triggers)

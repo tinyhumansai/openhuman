@@ -98,6 +98,32 @@ describe('Settings - Advanced Config', () => {
     );
   });
 
+  it('persists autonomy max_actions_per_hour through core RPC', async function () {
+    this.timeout(60_000);
+    const before = await callOpenhumanRpc('openhuman.config_get_autonomy_settings', {});
+    expect(before.ok).toBe(true);
+    const current = before.result?.result?.max_actions_per_hour ?? 20;
+    // Pick a value different from the current one so the save actually mutates state.
+    const target = current === 250 ? 251 : 250;
+
+    await navigateViaHash('/settings/autonomy');
+    await waitForText('Agent autonomy', 15_000);
+
+    const input = await browser.$('#autonomy-max-actions');
+    await input.waitForExist({ timeout: 10_000 });
+    await input.setValue(String(target));
+    await clickText('Save', 10_000);
+    await waitForText('Saved.', 10_000);
+
+    await browser.waitUntil(
+      async () => {
+        const after = await callOpenhumanRpc('openhuman.config_get_autonomy_settings', {});
+        return after.ok && after.result?.result?.max_actions_per_hour === target;
+      },
+      { timeout: 15_000, interval: 500, timeoutMsg: 'autonomy setting did not persist' }
+    );
+  });
+
   it('switches composio routing mode to direct and can return to backend mode', async function () {
     this.timeout(60_000);
     await navigateViaHash('/settings/composio-routing');
@@ -137,16 +163,34 @@ describe('Settings - Advanced Config', () => {
     await navigateViaHash('/settings/agent-chat');
 
     await waitForText('Overrides', 15_000);
-    const modelInput = await browser.$('input[placeholder="gpt-4o"]');
-    const temperatureInput = await browser.$('input[placeholder="0.7"]');
-    const promptTextarea = await browser.$('textarea[placeholder]');
-    await modelInput.waitForExist({ timeout: 10_000 });
-    await temperatureInput.waitForExist({ timeout: 10_000 });
-    await promptTextarea.waitForExist({ timeout: 10_000 });
-    await modelInput.setValue('gpt-4.1-mini');
-    await temperatureInput.setValue('0.2');
-    await promptTextarea.setValue('persist this draft');
-    await browser.pause(1000);
+
+    // Use the native value setter + React change event to drive controlled
+    // inputs. WebDriver's setValue clears the field but does not always
+    // trigger React's synthetic onChange on controlled inputs.
+    const setReactInput = async (selector: string, value: string) => {
+      await browser.execute(
+        (sel: string, val: string) => {
+          const el = document.querySelector<HTMLInputElement | HTMLTextAreaElement>(sel);
+          if (!el) return;
+          const setter = Object.getOwnPropertyDescriptor(
+            el instanceof HTMLTextAreaElement
+              ? window.HTMLTextAreaElement.prototype
+              : window.HTMLInputElement.prototype,
+            'value'
+          )?.set;
+          if (setter) setter.call(el, val);
+          else el.value = val;
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+        },
+        selector,
+        value
+      );
+    };
+
+    await setReactInput('input[placeholder="gpt-4o"]', 'gpt-4.1-mini');
+    await setReactInput('input[placeholder="0.7"]', '0.2');
+    await browser.pause(500);
 
     await browser.waitUntil(
       async () => {

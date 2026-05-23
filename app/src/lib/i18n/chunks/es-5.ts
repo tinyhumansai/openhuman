@@ -210,6 +210,11 @@ const es5: TranslationMap = {
   'settings.mascot.active': 'Activo',
   'settings.mascot.characterDesc': 'Descripción del personaje',
   'settings.mascot.characterHeading': 'Encabezado del personaje',
+  // TODO: translate custom GIF mascot strings.
+  'settings.mascot.customGifError':
+    'Enter an HTTPS .gif URL, loopback HTTP .gif URL, file:// .gif URL, or local .gif path.',
+  'settings.mascot.customGifHeading': 'Custom GIF avatar',
+  'settings.mascot.customGifLabel': 'Custom GIF avatar URL',
   'settings.mascot.colorDesc': 'Descripción del color',
   'settings.mascot.colorHeading': 'Encabezado del color',
   'settings.mascot.loadingLibrary': 'Cargando biblioteca de OpenHuman…',
@@ -444,6 +449,9 @@ const es5: TranslationMap = {
   'webhooks.tunnels.toggleFailed': 'No se pudo alternar el echo',
   'composio.authExpired': 'Autenticación caducada',
   'composio.reconnect': 'Reconectar',
+  'composio.previewBadge': 'Preview',
+  'composio.previewTooltip':
+    'Agent integration coming soon — you can connect, but the agent can’t use this toolkit yet.',
   'composio.directModeRequiresKey':
     'Error al guardar. El modo Directo requiere una clave API no vacía.',
   'composio.notYetRouted': 'aún sin enrutar',
@@ -487,6 +495,9 @@ const es5: TranslationMap = {
   'settings.mascot.title': 'OpenHuman',
   'settings.developerMenu.mcpServer.title': 'MCP Server',
   'settings.developerMenu.mcpServer.desc': 'Configure external MCP clients to connect to OpenHuman',
+  'settings.developerMenu.autonomy.title': 'Autonomía del agente',
+  'settings.developerMenu.autonomy.desc':
+    'Límites de frecuencia de acciones de herramientas y umbrales de seguridad',
   'settings.mcpServer.title': 'MCP Server',
   'settings.mcpServer.toolsSectionTitle': 'Available Tools',
   'settings.mcpServer.toolsSectionDesc':

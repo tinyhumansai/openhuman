@@ -25,6 +25,8 @@
     "test:coverage": "pnpm --filter openhuman-app test:coverage",
     "test:rust": "pnpm --filter openhuman-app test:rust",
     "test:rust:e2e": "bash scripts/test-rust-e2e.sh",
+    "test:e2e": "pnpm --filter openhuman-app test:e2e:all",
+    "test:e2e:flows": "pnpm --filter openhuman-app test:e2e:all:flows",
     "mascot:render": "pnpm --dir remotion render:runtime-assets",
     "merge-pr": "bash scripts/shortcuts/review/merge.sh",
     "mock:api": "node scripts/mock-api-server.mjs",
@@ -41,6 +43,7 @@
     "rust:check": "pnpm --filter openhuman-app rust:check",
     "typecheck": "pnpm --filter openhuman-app compile",
     "i18n:check": "tsx scripts/i18n-coverage.ts",
+    "i18n:bundle:check": "node scripts/verify-i18n-bundle.mjs",
     "i18n:dump": "tsx scripts/i18n-coverage.ts --no-unused --out tmp/i18n-coverage"
   },
   "devDependencies": {

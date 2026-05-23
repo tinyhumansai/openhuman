@@ -294,6 +294,17 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 | 8.3.8 | Drill-Down Isolates Children             | RU    | `src/openhuman/memory/tree/retrieval/benchmarks.rs::bench_drill_down_isolates_children` | ✅     | Verifies query_topic does not cross scope boundaries |
 | 8.3.9 | Scale Ingest 20 Sources No Real Data    | RU    | `src/openhuman/memory/tree/retrieval/benchmarks.rs::bench_scale_ingest_20_sources_no_real_data` | ✅     | Verifies retrieval correctness at scale with synthetic data |
 
+### 8.4 Explicit User Preferences (Two-Lane)
+
+| ID    | Feature                                    | Layer | Test path(s)                                                                                                       | Status | Notes                                                                  |
+| ----- | ------------------------------------------ | ----- | ----------------------------------------------------------------------------------------------------------------- | ------ | ---------------------------------------------------------------------- |
+| 8.4.1 | Save Preference (general / situational)    | RU    | `src/openhuman/tools/impl/agent/save_preference_tests.rs`                                                         | ✅     | `save_preference` tool → `user_pref_{general,situational}`, topic-keyed |
+| 8.4.2 | Lane A — Standing Prefs in System Prompt   | RU    | `src/openhuman/learning/prompt_sections.rs`, `src/openhuman/agent/harness/session/turn_tests.rs`                  | ✅     | General prefs rendered into the system prompt at thread start          |
+| 8.4.3 | Lane B — Situational Recall (vector-gated) | RU    | `src/openhuman/memory/store/unified/query_tests.rs::recall_relevant_by_vector_gates_on_similarity`                | ✅     | Per-turn; relevant query injects, unrelated suppresses                 |
+| 8.4.4 | Same-Topic Contradiction (replace)         | RU    | `src/openhuman/tools/impl/agent/save_preference_tests.rs::recategorising_moves_pref_between_namespaces`           | ✅     | `ON CONFLICT REPLACE`; a topic lives in exactly one scope              |
+| 8.4.5 | Cross-Topic Contradiction Surfacing        | RU    | `src/openhuman/tools/impl/agent/save_preference_tests.rs::save_surfaces_related_preference_for_contradiction_check` | ✅   | Related prefs surfaced in the tool result for the chat agent to resolve |
+| 8.4.6 | vector_chunks Model-Signature Recall Guard | RU    | `src/openhuman/memory/store/unified/query_tests.rs::vector_recall_excludes_other_model_signature`                | ✅     | Excludes cross-model vectors; dim-guards legacy rows                   |
+
 ---
 
 ## 9. Automation Engine
@@ -396,7 +407,7 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 | 11.1.1 | Multi-Source Analysis      | RI    | `tests/memory_graph_sync_e2e.rs`                                                                                    | 🟡     | Frontend trigger untested                                                                 |
 | 11.1.2 | Actionable Item Extraction | VU    | `app/src/components/intelligence/__tests__/utils.test.ts` (this PR)                                                 | ✅     | Was ❌                                                                                    |
 | 11.1.3 | Analyze Trigger            | WD    | `app/test/e2e/specs/insights-dashboard.spec.ts` mounts the route (this PR); explicit analyze-handler invocation TBD | 🟡     | Route mounts and search/filter UI assert — full analyze trigger flow tracked as follow-up |
-| 11.1.4 | MCP stdio server           | RU    | `src/openhuman/mcp_server/`                                                                                         | ✅     | Read-only initialize/tools/list/tools/call plus stdio framing; binary smoke in PR validation |
+| 11.1.4 | MCP server (stdio + HTTP)  | RU    | `src/openhuman/mcp_server/`                                                                                         | ✅     | Stdio framing plus Streamable HTTP/SSE session lifecycle; `McpHttpClient` round-trip tests |
 | 11.1.5 | Global tool registry       | RI    | `src/openhuman/tool_registry/`, `tests/json_rpc_e2e.rs`                                                             | ✅     | Read-only MCP/controller discovery with routes, schemas, version, allowed agents, and health |
 | 11.1.6 | SearXNG MCP search         | RU    | `src/openhuman/integrations/searxng.rs`, `src/openhuman/mcp_server/tools.rs`, `src/openhuman/tools/schemas.rs`      | ✅     | Self-hosted search config, normalized results, MCP argument validation, and mocked HTTP execution |
 
