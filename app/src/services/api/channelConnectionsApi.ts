@@ -154,7 +154,7 @@ export const channelConnectionsApi = {
   ): Promise<void> => {
     await callCoreRpc({
       method: 'openhuman.channels_disconnect',
-      params: { channel, authMode, clear_memory: clearMemory ?? false },
+      params: { channel, authMode, clearMemory: clearMemory ?? false },
     });
   },
 

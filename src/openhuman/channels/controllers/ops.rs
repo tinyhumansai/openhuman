@@ -354,7 +354,7 @@ pub async fn connect_channel(
 ///
 /// When `clear_memory` is true, every `mem_tree_chunks` row whose source_id
 /// begins with `{channel_id}:` is deleted (and dependent rows cleaned up) in
-/// a single transaction before credentials are revoked.
+/// a single transaction after credentials are revoked (non-fatal on failure).
 pub async fn disconnect_channel(
     config: &Config,
     channel_id: &str,

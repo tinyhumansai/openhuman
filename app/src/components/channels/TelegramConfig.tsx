@@ -406,7 +406,10 @@ const TelegramConfig = ({ definition }: TelegramConfigProps) => {
               {confirmingDisconnect === spec.mode ? (
                 <div className="flex flex-col gap-2">
                   <span className="text-xs text-coral-600 dark:text-coral-400 font-medium">
-                    Revoke credentials for {definition.display_name}?
+                    {t('accounts.disconnectRevokeConfirm').replace(
+                      '{name}',
+                      definition.display_name
+                    )}
                   </span>
                   <label className="flex items-center gap-2 text-xs text-stone-500 dark:text-neutral-400 cursor-pointer">
                     <input
@@ -415,7 +418,7 @@ const TelegramConfig = ({ definition }: TelegramConfigProps) => {
                       onChange={e => setClearMemory(e.target.checked)}
                       className="rounded border-stone-300 dark:border-neutral-600"
                     />
-                    Also delete all memory ingested from this source (cannot be undone)
+                    {t('accounts.disconnectClearMemory')}
                   </label>
                   <div className="flex items-center gap-1.5">
                     <button
@@ -423,14 +426,14 @@ const TelegramConfig = ({ definition }: TelegramConfigProps) => {
                       disabled={busyKeys[compositeKey]}
                       onClick={() => handleConfirmDisconnect(spec.mode)}
                       className="rounded-lg bg-coral-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-coral-600 disabled:opacity-50">
-                      Yes, disconnect
+                      {t('accounts.disconnectYes')}
                     </button>
                     <button
                       type="button"
                       disabled={busyKeys[compositeKey]}
                       onClick={() => setConfirmingDisconnect(null)}
                       className="rounded-lg border border-stone-200 dark:border-neutral-700 px-3 py-1.5 text-xs font-medium text-stone-600 dark:text-neutral-300 hover:border-stone-300 disabled:opacity-50">
-                      Cancel
+                      {t('common.cancel')}
                     </button>
                   </div>
                 </div>

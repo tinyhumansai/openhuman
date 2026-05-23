@@ -416,6 +416,12 @@ pub async fn composio_delete_connection(
     let toolkit = resolve_toolkit_for_connection(&client, connection_id)
         .await
         .ok();
+    if toolkit.is_none() && clear_memory {
+        tracing::warn!(
+            connection_id = %connection_id,
+            "[composio] delete_connection: cannot clear memory — failed to resolve toolkit"
+        );
+    }
     let resp = client.delete_connection(connection_id).await.map_err(|e| {
         report_composio_op_error("delete_connection", &e);
         format!("[composio] delete_connection failed: {e:#}")
@@ -2181,3 +2187,40 @@ mod tests;
 // ── Helpers re-exported so callers can pull connection/tool types without
 // reaching into the nested types module.
 pub use super::types::{ComposioConnection as Connection, ComposioToolSchema as ToolSchemaType};
+
+#[cfg(test)]
+mod tests_toolkit_source_kind {
+    use super::*;
+
+    #[test]
+    fn gmail_maps_to_email() {
+        let (kind, prefix) = composio_toolkit_source_kind("gmail").unwrap();
+        assert_eq!(kind, SourceKind::Email);
+        assert_eq!(prefix, "gmail:%");
+    }
+
+    #[test]
+    fn notion_maps_to_document() {
+        let (kind, prefix) = composio_toolkit_source_kind("notion").unwrap();
+        assert_eq!(kind, SourceKind::Document);
+        assert_eq!(prefix, "notion:%");
+    }
+
+    #[test]
+    fn googledrive_maps_to_document() {
+        let (kind, prefix) = composio_toolkit_source_kind("googledrive").unwrap();
+        assert_eq!(kind, SourceKind::Document);
+        assert_eq!(prefix, "googledrive:%");
+    }
+
+    #[test]
+    fn unknown_toolkit_returns_none() {
+        assert!(composio_toolkit_source_kind("unknown-toolkit").is_none());
+        assert!(composio_toolkit_source_kind("slack").is_none());
+    }
+
+    #[test]
+    fn toolkit_with_whitespace_is_trimmed() {
+        assert!(composio_toolkit_source_kind("  gmail  ").is_some());
+    }
+}

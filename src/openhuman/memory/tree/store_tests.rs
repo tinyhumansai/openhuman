@@ -768,3 +768,82 @@ fn validate_reembed_skip_key_rejects_empty_and_oversized() {
         "trimmed"
     );
 }
+
+// ── delete_chunks_by_source ──────────────────────────────────────
+
+#[test]
+fn delete_chunks_by_source_removes_matching_rows() {
+    let (_tmp, cfg) = test_config();
+    let a = sample_chunk("test:source-a", 0, 1_700_000_000_000);
+    let b = sample_chunk("test:source-b", 1, 1_700_000_000_001);
+    upsert_chunks(&cfg, &[a.clone(), b.clone()]).unwrap();
+    assert_eq!(count_chunks(&cfg).unwrap(), 2);
+
+    // Delete only source-a; source-b survives.
+    let deleted = delete_chunks_by_source(&cfg, SourceKind::Chat, "test:source-a%").unwrap();
+    assert_eq!(deleted, 1);
+    assert_eq!(count_chunks(&cfg).unwrap(), 1);
+    assert!(get_chunk(&cfg, &b.id).unwrap().is_some());
+    assert!(get_chunk(&cfg, &a.id).unwrap().is_none());
+}
+
+#[test]
+fn delete_chunks_by_source_cleans_score_and_entity_index() {
+    let (_tmp, cfg) = test_config();
+    let c = sample_chunk("test:source", 0, 1_700_000_000_000);
+    upsert_chunks(&cfg, &[c.clone()]).unwrap();
+
+    // Seed a score row and an entity-index row so we can verify cleanup.
+    with_connection(&cfg, |conn| {
+        conn.execute(
+            "INSERT INTO mem_tree_score (chunk_id, total, token_count_signal, unique_words_signal,
+             metadata_weight, source_weight, interaction_weight, entity_density, computed_at_ms)
+             VALUES (?1, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1)",
+            params![c.id],
+        )?;
+        conn.execute(
+            "INSERT INTO mem_tree_entity_index (entity_id, node_id, node_kind, entity_kind, surface, score, timestamp_ms)
+             VALUES ('ent-1', ?1, 'chunk', 'person', 'Alice', 1.0, 1)",
+            params![c.id],
+        )?;
+        Ok::<_, anyhow::Error>(())
+    })
+    .unwrap();
+
+    delete_chunks_by_source(&cfg, SourceKind::Chat, "test:source%").unwrap();
+
+    // Score and entity-index rows should be gone.
+    with_connection(&cfg, |conn| {
+        let score_n: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM mem_tree_score WHERE chunk_id = ?1",
+                params![c.id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(score_n, 0, "score row should be deleted");
+        let ei_n: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM mem_tree_entity_index WHERE node_id = ?1",
+                params![c.id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(ei_n, 0, "entity index row should be deleted");
+        Ok::<_, anyhow::Error>(())
+    })
+    .unwrap();
+}
+
+#[test]
+fn delete_chunks_by_source_does_not_touch_unrelated_sources() {
+    let (_tmp, cfg) = test_config();
+    let a = sample_chunk("discord:chat-1", 0, 1_700_000_000_000);
+    let b = sample_chunk("telegram:chat-2", 1, 1_700_000_000_001);
+    upsert_chunks(&cfg, &[a.clone(), b.clone()]).unwrap();
+
+    let deleted = delete_chunks_by_source(&cfg, SourceKind::Chat, "discord:%").unwrap();
+    assert_eq!(deleted, 1);
+    assert!(get_chunk(&cfg, &a.id).unwrap().is_none());
+    assert!(get_chunk(&cfg, &b.id).unwrap().is_some());
+}

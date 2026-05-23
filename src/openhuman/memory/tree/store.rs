@@ -1757,9 +1757,9 @@ pub fn delete_chunks_by_source(
         )?;
         tx.commit()?;
         log::info!(
-            "[memory_tree::store] delete_chunks_by_source kind={} pattern={} deleted={deleted}",
+            "[memory_tree::store] delete_chunks_by_source kind={} pattern_len={} deleted={deleted}",
             source_kind.as_str(),
-            source_id_pattern,
+            source_id_pattern.len(),
         );
         Ok(deleted)
     })

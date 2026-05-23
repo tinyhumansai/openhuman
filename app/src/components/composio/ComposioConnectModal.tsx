@@ -746,23 +746,25 @@ export default function ComposioConnectModal({
               {confirmingDisconnect ? (
                 <div className="flex flex-col gap-3">
                   <span className="text-sm text-coral-600 dark:text-coral-400 font-medium">
-                    Revoke credentials for {toolkit.name}?
+                    {t('accounts.disconnectRevokeConfirm').replace('{name}', toolkit.name)}
                   </span>
-                  <label className="flex items-center gap-2 text-xs text-stone-500 dark:text-neutral-400 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={clearMemory}
-                      onChange={e => setClearMemory(e.target.checked)}
-                      className="rounded border-stone-300 dark:border-neutral-600"
-                    />
-                    Also delete all memory ingested from this source (cannot be undone)
-                  </label>
+                  {['gmail', 'notion', 'googledrive'].includes(toolkit.slug) && (
+                    <label className="flex items-center gap-2 text-xs text-stone-500 dark:text-neutral-400 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={clearMemory}
+                        onChange={e => setClearMemory(e.target.checked)}
+                        className="rounded border-stone-300 dark:border-neutral-600"
+                      />
+                      {t('accounts.disconnectClearMemory')}
+                    </label>
+                  )}
                   <div className="grid grid-cols-2 gap-3">
                     <button
                       type="button"
                       onClick={() => void handleConfirmDisconnect()}
                       className="w-full rounded-xl bg-coral-500 text-white text-sm font-medium py-2.5 hover:bg-coral-600 transition-colors">
-                      Yes, disconnect
+                      {t('accounts.disconnectYes')}
                     </button>
                     <button
                       type="button"
