@@ -206,6 +206,11 @@ const bn5: TranslationMap = {
   'settings.mascot.active': 'সক্রিয়',
   'settings.mascot.characterDesc': 'চরিত্রের বিবরণ',
   'settings.mascot.characterHeading': 'চরিত্রের শিরোনাম',
+  // TODO: translate custom GIF mascot strings.
+  'settings.mascot.customGifError':
+    'Enter an HTTPS .gif URL, loopback HTTP .gif URL, file:// .gif URL, or local .gif path.',
+  'settings.mascot.customGifHeading': 'Custom GIF avatar',
+  'settings.mascot.customGifLabel': 'Custom GIF avatar URL',
   'settings.mascot.colorDesc': 'রঙের বিবরণ',
   'settings.mascot.colorHeading': 'রঙের শিরোনাম',
   'settings.mascot.loadingLibrary': 'OpenHuman লাইব্রেরি লোড হচ্ছে…',
@@ -485,6 +490,8 @@ const bn5: TranslationMap = {
   'settings.mascot.title': 'OpenHuman',
   'settings.developerMenu.mcpServer.title': 'MCP Server',
   'settings.developerMenu.mcpServer.desc': 'Configure external MCP clients to connect to OpenHuman',
+  'settings.developerMenu.autonomy.title': 'এজেন্ট স্বায়ত্তশাসন',
+  'settings.developerMenu.autonomy.desc': 'টুল অ্যাকশনের রেট সীমা এবং নিরাপত্তা থ্রেশহোল্ড',
   'settings.mcpServer.title': 'MCP Server',
   'settings.mcpServer.toolsSectionTitle': 'Available Tools',
   'settings.mcpServer.toolsSectionDesc':

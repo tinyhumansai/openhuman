@@ -82,7 +82,7 @@ icon: video
 - 大脑 - `src/openhuman/meet_agent/brain.rs`（LLM 轮次、说话/不说话决定、工具调用）。
 - 语音管道 - `src/openhuman/voice/`（STT in、TTS out、幻觉过滤、后处理）。参见[原生语音](../native-tools/voice.zh-CN.md)。
 - 作为出站摄像头的吉祥物画布 - `app/src/features/meet/MascotFrameProducer.tsx` 和 Tauri 端 `mascot_native_window.rs` 窗口。
-- 嵌入式 Meet webview - 参见 [Chromium Embedded Framework](../../developing/cef.md)。Meet 子 webview **零注入 JavaScript** 发货；所有 host 端通过 CDP 原生运行。
+- 嵌入式 Meet webview - 参见 [Chromium Embedded Framework](../../developing/cef.zh-CN.md)。与六个零注入提供商不同，Google Meet 使用 CDP 驱动 join 自动化：CDP 通过 `Page.addScriptToEvaluateOnNewDocument` 和 `Runtime.evaluate` 注入 bridging scripts / recipes（`GOOGLE_MEET_RECIPE_JS` / `provider_recipe_js("google-meet")`），而不是真正的零注入交付。
 - 要阅读的上下文的重要 commit - `0bc74575`（实时记笔记）、`f1203479`（真实 LLM 轮次 + 调优 TTS）、`b6d05cb4`（吉祥物画布作为出站摄像头）、`f5dce783`（吉祥物帧流水线 + 屏外会议窗口）。
 
 ## 另见

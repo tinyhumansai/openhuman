@@ -13,7 +13,7 @@ icon: display
 * **截图**当前页面。
 * **检查**图像输出和元数据，以便智能体描述它看到的内容。
 
-浏览器界面通过 CEF（Chromium Embedded Framework）运行，并包含一个安全层，限制页面能做什么。参见 [Chromium Embedded Framework](../../developing/cef.md) 了解平台详情。
+浏览器界面通过 CEF（Chromium Embedded Framework）运行，并包含一个安全层，限制页面能做什么。参见 [Chromium Embedded Framework](../../developing/cef.zh-CN.md) 了解平台详情。
 
 ## 计算机（鼠标 + 键盘）
 
@@ -23,11 +23,11 @@ icon: display
 
 ## 适用于
 
-* 驱动没有 API 或没有[原生集成](../integrations/README.md)的网站。
+* 驱动没有 API 或没有[原生集成](../integrations/README.zh-CN.md)的网站。
 * 单次截图不够的多步骤 UI 流程。
 * 在聊天中自动化本地应用。
 
 ## 另见
 
 * [网页抓取](web-scraper.zh-CN.md) —— 当你只需要文章而非整个页面时。
-* [Chromium Embedded Framework](../../developing/cef.md) —— 运行时浏览器层。
+* [Chromium Embedded Framework](../../developing/cef.zh-CN.md) —— 运行时浏览器层。

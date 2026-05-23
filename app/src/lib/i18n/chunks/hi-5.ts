@@ -206,6 +206,11 @@ const hi5: TranslationMap = {
   'settings.mascot.active': 'एक्टिव',
   'settings.mascot.characterDesc': 'कैरेक्टर विवरण',
   'settings.mascot.characterHeading': 'कैरेक्टर शीर्षक',
+  // TODO: translate custom GIF mascot strings.
+  'settings.mascot.customGifError':
+    'Enter an HTTPS .gif URL, loopback HTTP .gif URL, file:// .gif URL, or local .gif path.',
+  'settings.mascot.customGifHeading': 'Custom GIF avatar',
+  'settings.mascot.customGifLabel': 'Custom GIF avatar URL',
   'settings.mascot.colorDesc': 'रंग विवरण',
   'settings.mascot.colorHeading': 'रंग शीर्षक',
   'settings.mascot.loadingLibrary': 'OpenHuman लाइब्रेरी लोड हो रही है…',
@@ -487,6 +492,8 @@ const hi5: TranslationMap = {
   'settings.mascot.title': 'OpenHuman',
   'settings.developerMenu.mcpServer.title': 'MCP Server',
   'settings.developerMenu.mcpServer.desc': 'Configure external MCP clients to connect to OpenHuman',
+  'settings.developerMenu.autonomy.title': 'एजेंट स्वायत्तता',
+  'settings.developerMenu.autonomy.desc': 'टूल क्रिया दर सीमाएँ और सुरक्षा सीमाएँ',
   'settings.mcpServer.title': 'MCP Server',
   'settings.mcpServer.toolsSectionTitle': 'Available Tools',
   'settings.mcpServer.toolsSectionDesc':

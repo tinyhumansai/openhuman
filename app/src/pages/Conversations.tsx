@@ -11,17 +11,11 @@ import PillTabBar from '../components/PillTabBar';
 import UpsellBanner from '../components/upsell/UpsellBanner';
 import { dismissBanner, shouldShowBanner } from '../components/upsell/upsellDismissState';
 import MicComposer from '../features/human/MicComposer';
-// [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
-// import { ONBOARDING_WELCOME_THREAD_LABEL } from '../constants/onboardingChat';
 import { useStickToBottom } from '../hooks/useStickToBottom';
 import { useUsageState } from '../hooks/useUsageState';
 import { useT } from '../lib/i18n/I18nContext';
 import { trackEvent } from '../services/analytics';
 import { threadApi } from '../services/api/threadApi';
-// [#1123] getCoreStateSnapshot and isWelcomeLocked commented out — welcome-agent onboarding replaced by Joyride walkthrough
-// import { getCoreStateSnapshot, isWelcomeLocked } from '../lib/coreState/store';
-// [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
-// import { useCoreState } from '../providers/CoreStateProvider';
 import { chatCancel, chatSend, useRustChat } from '../services/chatService';
 import { store } from '../store';
 import {
@@ -127,10 +121,9 @@ interface ConversationsProps {
 
 export function isComposerInteractionBlocked(args: {
   activeThreadId: string | null;
-  welcomePending: boolean;
   rustChat: boolean;
 }): boolean {
-  return !args.rustChat || Boolean(args.activeThreadId) || args.welcomePending;
+  return !args.rustChat || Boolean(args.activeThreadId);
 }
 
 interface ImeKeyboardEventLike {
@@ -177,65 +170,12 @@ function formatAgentProfileAgentLabel(agentId: string): string {
     .join(' ');
 }
 
-// [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
-// function WelcomeThinkingTypewriter() {
-//   const text = 'Your agent is thinking...';
-//   const [visibleChars, setVisibleChars] = useState(0);
-//
-//   useEffect(() => {
-//     const isComplete = visibleChars >= text.length;
-//     const delayMs = isComplete ? 950 : 42;
-//     const timeoutId = window.setTimeout(() => {
-//       setVisibleChars(current => (current >= text.length ? 0 : current + 1));
-//     }, delayMs);
-//
-//     return () => window.clearTimeout(timeoutId);
-//   }, [text.length, visibleChars]);
-//
-//   return (
-//     <p className="flex items-center text-sm text-stone-600 dark:text-neutral-300 font-mono tracking-tight">
-//       <span>{text.slice(0, visibleChars)}</span>
-//       <span
-//         aria-hidden="true"
-//         className="ml-0.5 inline-block h-4 w-px bg-stone-400 animate-pulse"
-//       />
-//     </p>
-//   );
-// }
-
 const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsProps = {}) => {
   const { t } = useT();
   const dispatch = useAppDispatch();
   const navigate = useNavigate();
-  const {
-    threads,
-    selectedThreadId,
-    messages,
-    isLoadingMessages,
-    messagesError,
-    activeThreadId,
-    // [#1123] welcomeThreadId commented out — welcome-agent onboarding replaced by Joyride walkthrough
-    // welcomeThreadId,
-  } = useAppSelector(state => state.thread);
-
-  // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
-  // const { snapshot } = useCoreState();
-  // const welcomeLocked = isWelcomeLocked(snapshot);
-
-  // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
-  // While the proactive welcome agent is running and hasn't published its
-  // first message yet, hide the composer (and a few other non-message
-  // chrome bits) so the user just sees the "Your agent is thinking..."
-  // loader. Flips off the moment the first agent message arrives.
-  // const welcomePending =
-  //   !!welcomeThreadId && selectedThreadId === welcomeThreadId && messages.length === 0;
-  // const chatOnboardingCompleted = snapshot.chatOnboardingCompleted;
-  // const previousChatOnboardingCompletedRef = useRef<boolean | null>(null);
-  // Guard against the mount-time `loadThreads()` promise resolving AFTER
-  // the welcome-lock unlock transition creates a fresh thread. Without
-  // this, the stale `.then(...)` would re-select the old welcome thread
-  // and clobber the auto-created one (#883 CodeRabbit feedback).
-  // const skipInitialThreadSelectionRef = useRef(false);
+  const { threads, selectedThreadId, messages, isLoadingMessages, messagesError, activeThreadId } =
+    useAppSelector(state => state.thread);
 
   const [showSidebar, setShowSidebar] = useState(true);
   const [inputValue, setInputValue] = useState('');
@@ -400,21 +340,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
     void dispatch(loadThreads())
       .unwrap()
       .then(data => {
-        // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
-        // if (cancelled || skipInitialThreadSelectionRef.current) return;
         if (cancelled) return;
-        // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
-        // Always prefer the welcome thread during lockdown regardless of
-        // whether the server list is empty or not. Without this guard the
-        // stale `.then` could select a pre-existing thread from a prior
-        // session and pull the user out of the welcome conversation.
-        // const snapForSelect = getCoreStateSnapshot().snapshot;
-        // const threadStateForSelect = store.getState().thread;
-        // if (isWelcomeLocked(snapForSelect) && threadStateForSelect.welcomeThreadId) {
-        //   dispatch(setSelectedThread(threadStateForSelect.welcomeThreadId));
-        //   void dispatch(loadThreadMessages(threadStateForSelect.welcomeThreadId));
-        //   return;
-        // }
         const threadStateForSelect = store.getState().thread;
         // Worker/subagent threads are hidden from the conversation list
         // (see tinyhumansai/openhuman#1624). Match the sidebar filter here so
@@ -473,29 +399,6 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
         debug('agent profiles load failed: %o', error);
       });
   }, [dispatch]);
-
-  // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
-  // Welcome lockdown unlock (#883) — when `chatOnboardingCompleted`
-  // transitions from `false` → `true` (the welcome agent just called
-  // `complete_onboarding(action: "complete")`), open a fresh thread so
-  // the user starts their first "real" conversation with the orchestrator
-  // instead of continuing the welcome thread. Ref-tracked one-shot so
-  // the 2s snapshot poll cannot re-fire this.
-  // useEffect(() => {
-  //   const prev = previousChatOnboardingCompletedRef.current;
-  //   previousChatOnboardingCompletedRef.current = chatOnboardingCompleted;
-  //   if (prev === false && chatOnboardingCompleted === true) {
-  //     // Signal the mount-time `loadThreads()` promise to bail if it is
-  //     // still pending — otherwise its stale resolution would overwrite
-  //     // our freshly created thread selection.
-  //     skipInitialThreadSelectionRef.current = true;
-  //     console.debug('[welcome-lock] chat onboarding completed — opening new thread');
-  //     void handleCreateNewThread();
-  //   }
-  //   // handleCreateNewThread is stable for the component lifetime (only
-  //   // uses `dispatch`); the ref guards against duplicate fires.
-  //   // eslint-disable-next-line react-hooks/exhaustive-deps
-  // }, [chatOnboardingCompleted]);
 
   const location = useLocation();
   const { containerRef: messagesContainerRef, endRef: messagesEndRef } = useStickToBottom(
@@ -663,7 +566,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
   }, [inputMode, rustChat]);
 
   const handleSlashCommand = (command: string): boolean => {
-    const decision = handleComposerSlashCommand(command, false);
+    const decision = handleComposerSlashCommand(command);
     if (decision.kind === 'not_handled') return false;
 
     setInputValue('');
@@ -1052,15 +955,9 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
     ? (streamingAssistantByThread[selectedThreadId] ?? null)
     : null;
   const inlineCompletionSuffix = getInlineCompletionSuffix(inputValue, inlineSuggestionValue);
-  // Blocks all composer interaction while a turn is in-flight, the
-  // proactive welcome opener is pending, or Rust chat is unavailable.
+  // Blocks all composer interaction while a turn is in-flight or Rust chat is unavailable.
   // isSending: the *selected* thread is in-flight (drives selected-thread UI only).
-  // [#1123] welcomePending removed — welcome-agent onboarding replaced by Joyride walkthrough
-  const composerInteractionBlocked = isComposerInteractionBlocked({
-    activeThreadId,
-    welcomePending: false,
-    rustChat,
-  });
+  const composerInteractionBlocked = isComposerInteractionBlocked({ activeThreadId, rustChat });
   // Auto-focus the composer when a thread becomes selected and the composer
   // isn't blocked. Without this, navigating into a thread from elsewhere in
   // the app (e.g. acting on a subconscious reflection in the Intelligence
@@ -1146,19 +1043,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
     // `isThreadVisibleInTab` so it is pure, unit-testable, and stays
     // in lockstep with the sidebar tab definition (`labelTabs` below)
     // via the shared `WORKERS_TAB_VALUE` sentinel.
-    const base = threads.filter(t => isThreadVisibleInTab(t, selectedLabel));
-    // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
-    // if (!welcomeLocked) return base;
-    // // During welcome lockdown only the onboarding welcome thread should
-    // // appear — not stray blank threads from races or proactive:* handling.
-    // if (welcomeThreadId) {
-    //   return base.filter(t => t.id === welcomeThreadId);
-    // }
-    // // Fallback: welcomeThreadId not yet set but the server already returned the
-    // // thread (e.g. hot-reload). Keep only onboarding-labelled threads so the
-    // // welcome thread is visible rather than hidden behind the empty-state message.
-    // return base.filter(t => (t.labels ?? []).includes(ONBOARDING_WELCOME_THREAD_LABEL));
-    return base;
+    return threads.filter(t => isThreadVisibleInTab(t, selectedLabel));
   }, [threads, selectedLabel]);
 
   const sortedThreads = useMemo(() => {
@@ -1183,26 +1068,12 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
   ];
 
   const isSidebar = variant === 'sidebar';
-  // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
-  // During welcome lockdown keep the sidebar forced open so the user always
-  // sees the single onboarding thread entry and cannot accidentally close the
-  // panel via the toggle (leaving themselves with no thread list).
-  // const effectiveShowSidebar = welcomeLocked ? true : showSidebar;
   const effectiveShowSidebar = showSidebar;
 
   // Stable title resolver used by both the sidebar thread list and the header.
-  // [#1123] welcome-lock title override removed — Joyride walkthrough replaced welcome-agent
   const resolveThreadDisplayTitle = (threadId: string | null): string => {
     if (!threadId) return t('chat.selectThread');
     const thr = threads.find(th => th.id === threadId);
-    // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
-    // if (
-    //   welcomeLocked &&
-    //   t?.id === welcomeThreadId &&
-    //   (t?.labels ?? []).includes(ONBOARDING_WELCOME_THREAD_LABEL)
-    // ) {
-    //   return 'Onboarding';
-    // }
     return thr?.title ?? t('chat.selectThread');
   };
 
@@ -1242,7 +1113,6 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
             <h2 className="text-sm font-semibold text-stone-700 dark:text-neutral-200">
               {t('chat.threads')}
             </h2>
-            {/* [#1123] welcomeLocked guard removed — always show new thread button */}
             <button
               data-testid="new-thread-sidebar-button"
               onClick={() => void handleCreateNewThread()}
@@ -1258,7 +1128,6 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
               </svg>
             </button>
           </div>
-          {/* [#1123] welcomeLocked guard removed — always show label filter */}
           <div className="px-4 py-2 border-b border-stone-50 dark:border-neutral-800">
             <PillTabBar
               items={labelTabs}
@@ -1309,7 +1178,6 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                       }`}>
                       {resolveThreadDisplayTitle(thread.id)}
                     </p>
-                    {/* [#1123] welcomeLocked guard removed — always show delete button */}
                     <button
                       onClick={e => {
                         e.stopPropagation();
@@ -1410,7 +1278,6 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                 {resolveThreadDisplayTitle(selectedThreadId)}
               </h3>
             </div>
-            {/* [#1123] welcomeLocked guard removed — always show token usage + new thread button */}
             <>
               <div className="flex items-center gap-1">
                 <select
@@ -1830,20 +1697,6 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
               <div ref={messagesEndRef} />
             </div>
           ) : (
-            // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
-            // ) : welcomeThreadId && selectedThreadId === welcomeThreadId ? (
-            //   // Welcome thread, no messages yet — the proactive welcome agent
-            //   // is running in the background. Show a friendly loader until
-            //   // the first agent message lands (which flips us into the
-            //   // `hasVisibleMessages` branch above).
-            //   <div className="flex-1 flex flex-col items-center justify-center h-full gap-3">
-            //     <div className="flex items-center gap-1">
-            //       <span className="w-2 h-2 rounded-full bg-stone-50 dark:bg-neutral-800/600 animate-bounce [animation-delay:0ms]" />
-            //       <span className="w-2 h-2 rounded-full bg-stone-50 dark:bg-neutral-800/600 animate-bounce [animation-delay:150ms]" />
-            //       <span className="w-2 h-2 rounded-full bg-stone-50 dark:bg-neutral-800/600 animate-bounce [animation-delay:300ms]" />
-            //     </div>
-            //     <WelcomeThinkingTypewriter />
-            //   </div>
             <div className="flex-1 flex items-center justify-center h-full">
               <p className="text-sm text-stone-600 dark:text-neutral-300">{t('chat.noMessages')}</p>
             </div>
@@ -1851,7 +1704,6 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
         </div>
 
         <div className="flex-shrink-0 border-t border-stone-200 dark:border-neutral-800 px-4 py-3">
-          {/* [#1123] welcomeLocked and welcomePending guards removed — Joyride walkthrough replaced welcome-agent */}
           <>
             {isNearLimit &&
               !isAtLimit &&

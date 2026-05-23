@@ -1963,6 +1963,8 @@ const en: TranslationMap = {
     'Configure AI triage settings for Composio integration triggers',
   'settings.developerMenu.mcpServer.title': 'MCP Server',
   'settings.developerMenu.mcpServer.desc': 'Configure external MCP clients to connect to OpenHuman',
+  'settings.developerMenu.autonomy.title': 'Agent autonomy',
+  'settings.developerMenu.autonomy.desc': 'Tool action rate limits and safety thresholds',
   'settings.mcpServer.title': 'MCP Server',
   'settings.mcpServer.toolsSectionTitle': 'Available Tools',
   'settings.mcpServer.toolsSectionDesc':
@@ -1997,6 +1999,10 @@ const en: TranslationMap = {
   'settings.mascot.active': 'Active',
   'settings.mascot.characterDesc': 'Choose your OpenHuman character.',
   'settings.mascot.characterHeading': 'Character',
+  'settings.mascot.customGifError':
+    'Enter an HTTPS .gif URL, loopback HTTP .gif URL, file:// .gif URL, or local .gif path.',
+  'settings.mascot.customGifHeading': 'Custom GIF avatar',
+  'settings.mascot.customGifLabel': 'Custom GIF avatar URL',
   'settings.mascot.characterPreview': 'Preview',
   'settings.mascot.characterStates': 'states',
   'settings.mascot.characterVisemes': 'visemes',

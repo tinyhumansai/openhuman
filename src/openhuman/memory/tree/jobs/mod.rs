@@ -73,29 +73,7 @@ pub fn backfill_in_progress() -> bool {
 pub fn ensure_reembed_backfill(config: &crate::openhuman::config::Config) {
     let sig = crate::openhuman::memory::tree::store::tree_active_signature(config);
     let result = crate::openhuman::memory::tree::store::with_connection(config, |conn| {
-        let has_uncovered: bool = conn.query_row(
-            // The `NOT EXISTS … reembed_skipped` clauses match the worklist in
-            // `handle_reembed_backfill`: terminally-failed rows are sentinel-
-            // marked there and must NOT count as "uncovered" here, otherwise
-            // this probe keeps reporting "uncovered" → keeps re-enqueueing the
-            // backfill chain → infinite re-arming (#1574 §6 runaway-loop fix).
-            "SELECT EXISTS(
-                 SELECT 1 FROM mem_tree_chunks c
-                  WHERE NOT EXISTS (SELECT 1 FROM mem_tree_chunk_embeddings e
-                                     WHERE e.chunk_id = c.id AND e.model_signature = ?1)
-                    AND NOT EXISTS (SELECT 1 FROM mem_tree_chunk_reembed_skipped sk
-                                     WHERE sk.chunk_id = c.id AND sk.model_signature = ?1))
-               OR EXISTS(
-                 SELECT 1 FROM mem_tree_summaries s
-                  WHERE s.deleted = 0
-                    AND NOT EXISTS (SELECT 1 FROM mem_tree_summary_embeddings e
-                                     WHERE e.summary_id = s.id AND e.model_signature = ?1)
-                    AND NOT EXISTS (SELECT 1 FROM mem_tree_summary_reembed_skipped sk
-                                     WHERE sk.summary_id = s.id AND sk.model_signature = ?1))",
-            rusqlite::params![sig],
-            |r| r.get(0),
-        )?;
-        Ok(has_uncovered)
+        Ok(crate::openhuman::memory::tree::store::has_uncovered_reembed_work(conn, &sig)?)
     });
     match result {
         Ok(true) => {

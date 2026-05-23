@@ -210,6 +210,11 @@ const it5: TranslationMap = {
   'settings.mascot.active': 'Attivo',
   'settings.mascot.characterDesc': 'Descrizione personaggio',
   'settings.mascot.characterHeading': 'Intestazione personaggio',
+  // TODO: translate custom GIF mascot strings.
+  'settings.mascot.customGifError':
+    'Enter an HTTPS .gif URL, loopback HTTP .gif URL, file:// .gif URL, or local .gif path.',
+  'settings.mascot.customGifHeading': 'Custom GIF avatar',
+  'settings.mascot.customGifLabel': 'Custom GIF avatar URL',
   'settings.mascot.colorDesc': 'Descrizione colore',
   'settings.mascot.colorHeading': 'Intestazione colore',
   'settings.mascot.loadingLibrary': 'Caricamento libreria OpenHuman…',
@@ -491,6 +496,9 @@ const it5: TranslationMap = {
   'settings.mascot.title': 'OpenHuman',
   'settings.developerMenu.mcpServer.title': 'MCP Server',
   'settings.developerMenu.mcpServer.desc': 'Configure external MCP clients to connect to OpenHuman',
+  'settings.developerMenu.autonomy.title': 'Autonomia agente',
+  'settings.developerMenu.autonomy.desc':
+    'Limiti di frequenza delle azioni degli strumenti e soglie di sicurezza',
   'settings.mcpServer.title': 'MCP Server',
   'settings.mcpServer.toolsSectionTitle': 'Available Tools',
   'settings.mcpServer.toolsSectionDesc':

@@ -20,7 +20,7 @@ use super::handoff::{
 };
 use super::tool_prep::{
     build_text_mode_tool_instructions, filter_tool_indices, is_subagent_spawn_tool,
-    is_welcome_only_tool, load_prompt_source, top_k_for_toolkit,
+    load_prompt_source, top_k_for_toolkit,
 };
 use super::types::{SubagentMode, SubagentRunError, SubagentRunOptions, SubagentRunOutcome};
 use crate::openhuman::agent::harness::definition::{AgentDefinition, PromptSource};
@@ -499,14 +499,6 @@ async fn run_typed_mode(
             .as_deref()
             .or(definition.skill_filter.as_deref()),
     );
-
-    // `complete_onboarding` is a welcome-only tool — it flips the
-    // onboarding-complete flag in workspace config and is meaningless
-    // (and potentially destructive) from any other agent. Strip it
-    // from every non-welcome subagent regardless of their scope.
-    if definition.id != "welcome" {
-        allowed_indices.retain(|&i| !is_welcome_only_tool(parent.all_tools[i].name()));
-    }
 
     // Sub-agents must never spawn their own sub-agents. Nested spawns
     // create a recursion tree the harness doesn't budget, observe, or

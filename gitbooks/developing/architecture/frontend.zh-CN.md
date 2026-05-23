@@ -874,7 +874,7 @@ speaking、acknowledgement 和 error 状态。
 
 在 **`app/src/AppRoutes.tsx`** (HashRouter) 中定义。近似映射：
 
-```
+```text
 /                  → Welcome (公共包装器)
 /onboarding        → Onboarding (auth，onboarding 未完成)
 /mnemonic          → Mnemonic / 加密设置 (auth)

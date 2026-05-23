@@ -98,6 +98,32 @@ describe('Settings - Advanced Config', () => {
     );
   });
 
+  it('persists autonomy max_actions_per_hour through core RPC', async function () {
+    this.timeout(60_000);
+    const before = await callOpenhumanRpc('openhuman.config_get_autonomy_settings', {});
+    expect(before.ok).toBe(true);
+    const current = before.result?.result?.max_actions_per_hour ?? 20;
+    // Pick a value different from the current one so the save actually mutates state.
+    const target = current === 250 ? 251 : 250;
+
+    await navigateViaHash('/settings/autonomy');
+    await waitForText('Agent autonomy', 15_000);
+
+    const input = await browser.$('#autonomy-max-actions');
+    await input.waitForExist({ timeout: 10_000 });
+    await input.setValue(String(target));
+    await clickText('Save', 10_000);
+    await waitForText('Saved.', 10_000);
+
+    await browser.waitUntil(
+      async () => {
+        const after = await callOpenhumanRpc('openhuman.config_get_autonomy_settings', {});
+        return after.ok && after.result?.result?.max_actions_per_hour === target;
+      },
+      { timeout: 15_000, interval: 500, timeoutMsg: 'autonomy setting did not persist' }
+    );
+  });
+
   it('switches composio routing mode to direct and can return to backend mode', async function () {
     this.timeout(60_000);
     await navigateViaHash('/settings/composio-routing');

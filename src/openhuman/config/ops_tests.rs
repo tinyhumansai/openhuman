@@ -1128,3 +1128,102 @@ async fn apply_screen_intelligence_settings_clamps_baseline_fps() {
     .expect("low clamp");
     assert!((cfg.screen_intelligence.baseline_fps - 0.2).abs() < f32::EPSILON);
 }
+
+// ── apply_autonomy_settings ────────────────────────────────────
+
+#[tokio::test]
+async fn apply_autonomy_settings_persists_max_actions_per_hour() {
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+    let outcome = apply_autonomy_settings(
+        &mut cfg,
+        AutonomySettingsPatch {
+            max_actions_per_hour: Some(200),
+        },
+    )
+    .await
+    .expect("apply");
+    assert_eq!(cfg.autonomy.max_actions_per_hour, 200);
+    // Snapshot returned so the caller can echo the saved state.
+    assert!(outcome.value.get("config").is_some());
+    // Round-trip from disk: reload the saved TOML and confirm.
+    let on_disk = tokio::fs::read_to_string(&cfg.config_path).await.unwrap();
+    assert!(
+        on_disk.contains("max_actions_per_hour = 200"),
+        "expected TOML to contain max_actions_per_hour = 200, got:\n{on_disk}"
+    );
+}
+
+#[tokio::test]
+async fn apply_autonomy_settings_no_op_when_patch_empty() {
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+    let prior = cfg.autonomy.max_actions_per_hour;
+    let _ = apply_autonomy_settings(
+        &mut cfg,
+        AutonomySettingsPatch {
+            max_actions_per_hour: None,
+        },
+    )
+    .await
+    .expect("apply noop");
+    assert_eq!(cfg.autonomy.max_actions_per_hour, prior);
+}
+
+#[tokio::test]
+async fn apply_autonomy_settings_rejects_zero() {
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+    let err = apply_autonomy_settings(
+        &mut cfg,
+        AutonomySettingsPatch {
+            max_actions_per_hour: Some(0),
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        err.contains("between 1 and 10000"),
+        "expected validation error, got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn apply_autonomy_settings_rejects_above_cap() {
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+    let err = apply_autonomy_settings(
+        &mut cfg,
+        AutonomySettingsPatch {
+            max_actions_per_hour: Some(10_001),
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(err.contains("between 1 and 10000"));
+}
+
+#[tokio::test]
+async fn load_and_apply_autonomy_settings_roundtrip() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let tmp = tempdir().unwrap();
+    unsafe {
+        std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
+    }
+
+    let patch = AutonomySettingsPatch {
+        max_actions_per_hour: Some(500),
+    };
+    let outcome = load_and_apply_autonomy_settings(patch)
+        .await
+        .expect("apply");
+    assert!(outcome.value.get("config").is_some());
+
+    // Reload from scratch and confirm the saved value sticks.
+    let reloaded = load_config_with_timeout().await.expect("reload");
+    assert_eq!(reloaded.autonomy.max_actions_per_hour, 500);
+
+    unsafe {
+        std::env::remove_var("OPENHUMAN_WORKSPACE");
+    }
+}

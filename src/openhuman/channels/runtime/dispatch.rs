@@ -192,94 +192,6 @@ fn log_worker_join_result(result: Result<(), tokio::task::JoinError>) {
     }
 }
 
-/// Build a `[CONNECTION_STATE]...[/CONNECTION_STATE]` block listing the
-/// current Composio connection status for each connected or available
-/// integration.
-///
-/// Fetches integration state at call time so the agent always sees the
-/// up-to-date status for the user's current turn (including connections
-/// that completed mid-conversation via OAuth in a browser). The fetch is
-/// wrapped in a short timeout so Composio API latency never blocks the
-/// channel turn.
-///
-/// Returns an empty string on any failure (API down, not authenticated,
-/// timeout) so the caller can safely append it without branching.
-async fn build_connection_state_block() -> String {
-    // 3-second ceiling — connection state is best-effort context. If the
-    // Composio API is slow, skip the block rather than delaying the turn.
-    const COMPOSIO_FETCH_TIMEOUT_SECS: u64 = 3;
-
-    let config = match tokio::time::timeout(
-        Duration::from_secs(COMPOSIO_FETCH_TIMEOUT_SECS),
-        Config::load_or_init(),
-    )
-    .await
-    {
-        Ok(Ok(c)) => c,
-        Ok(Err(e)) => {
-            tracing::debug!(
-                error = %e,
-                "[dispatch::connection_state] config load failed — skipping block"
-            );
-            return String::new();
-        }
-        Err(_) => {
-            tracing::debug!("[dispatch::connection_state] config load timed out — skipping block");
-            return String::new();
-        }
-    };
-
-    let integrations = match tokio::time::timeout(
-        Duration::from_secs(COMPOSIO_FETCH_TIMEOUT_SECS),
-        fetch_connected_integrations(&config),
-    )
-    .await
-    {
-        Ok(list) => list,
-        Err(_) => {
-            tracing::debug!(
-                "[dispatch::connection_state] Composio fetch timed out — skipping block"
-            );
-            return String::new();
-        }
-    };
-
-    if integrations.is_empty() {
-        tracing::debug!("[dispatch::connection_state] no integrations returned — skipping block");
-        return String::new();
-    }
-
-    let mut lines = Vec::with_capacity(integrations.len());
-    for integration in &integrations {
-        let status = if integration.connected {
-            // Include account identifier if available (first tool name often encodes it,
-            // but the toolkit slug is the clearest label available here).
-            format!("connected (toolkit: {})", integration.toolkit)
-        } else {
-            "not connected".to_string()
-        };
-        // Capitalize the toolkit name for readability (e.g. "gmail" → "Gmail").
-        let display_name = {
-            let mut chars = integration.toolkit.chars();
-            match chars.next() {
-                None => String::new(),
-                Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
-            }
-        };
-        lines.push(format!("{display_name}: {status}"));
-    }
-
-    tracing::debug!(
-        integration_count = integrations.len(),
-        "[dispatch::connection_state] built connection state block for welcome agent"
-    );
-
-    format!(
-        "\n\n[CONNECTION_STATE]\n{}\n[/CONNECTION_STATE]",
-        lines.join("\n")
-    )
-}
-
 fn spawn_scoped_typing_task(
     channel: Arc<dyn Channel>,
     recipient: String,
@@ -338,38 +250,9 @@ impl AgentScoping {
 /// Decide which agent should run for this channel turn and build the
 /// matching tool-scoping payload.
 ///
-/// The selection is purely a function of
-/// `config.chat_onboarding_completed`:
-///
-/// * **`false`** → route to the `welcome` agent. Welcome's TOML
-///   restricts it to two tools (`complete_onboarding`, `memory_recall`)
-///   so the LLM cannot accidentally send messages or write files
-///   while guiding the user through setup. The welcome agent decides
-///   when the user is ready and calls
-///   `complete_onboarding`, which flips the flag.
-///
-/// * **`true`** → route to the `orchestrator` agent. Orchestrator
-///   delegates real work to specialist subagents via a `subagents`
-///   field in its TOML; this function expands that field into a list
-///   of `delegate_*` tools spliced alongside the global registry.
-///
-/// We deliberately read `chat_onboarding_completed` and NOT the
-/// React-UI-managed `onboarding_completed` flag. The latter is the
-/// gate `OnboardingOverlay.tsx` uses to render its full-screen wizard
-/// in the Tauri desktop app — by the time a desktop user can type a
-/// chat message it's already `true`, so routing on it would mean
-/// welcome could never run from the Tauri app. The chat flag is set
-/// exclusively by the welcome agent itself when it calls
-/// `complete_onboarding(complete)`, so it stays `false` for the
-/// user's actual first message regardless of what the React layer
-/// did. See `Config::chat_onboarding_completed` rustdoc for the full
-/// rationale.
-///
-/// The next channel message after `complete_onboarding` flips the
-/// flag is automatically routed to the orchestrator because
-/// `Config::load_or_init()` reads from disk every call (no in-process
-/// cache, verified at `config/schema/load.rs:409`), so the new value
-/// is observed on the next turn without any explicit handoff event.
+/// All channel turns route directly to the `orchestrator` agent. The
+/// welcome agent has been removed; the Joyride walkthrough in the
+/// frontend handles onboarding UI instead.
 ///
 /// On any failure path (missing registry, missing definition, missing
 /// orchestrator delegation targets) the function logs and returns
@@ -388,23 +271,11 @@ async fn resolve_target_agent(channel: &str) -> AgentScoping {
         }
     };
 
-    // Welcome is **desktop-app only**. The web channel has its own
-    // bespoke chat path (`channels::provider::web::run_chat_task` →
-    // `pick_target_agent_id`) that routes to the welcome agent while
-    // `chat_onboarding_completed` is false. Every other channel
-    // (telegram, slack, discord, mattermost, signal, …) flows through
-    // this function, and we always send those straight to the
-    // orchestrator regardless of onboarding state — an external user
-    // pinging us from Telegram should never land on the welcome
-    // agent's narrow setup-checklist toolset, since the checklist
-    // (notifications permission, in-app account setup, etc.) is only
-    // meaningful inside the desktop app.
     let target_id = "orchestrator";
 
     tracing::info!(
         channel = %channel,
         target_agent = target_id,
-        chat_onboarding_completed = config.chat_onboarding_completed,
         ui_onboarding_completed = config.onboarding_completed,
         "[dispatch::routing] selected target agent"
     );
@@ -439,9 +310,8 @@ async fn resolve_target_agent(channel: &str) -> AgentScoping {
     // (e.g. a custom workspace-override planner that subdivides work)
     // pick this up for free.
     //
-    // Wrap the Composio fetch in the same 3-second timeout used by
-    // `build_connection_state_block` so a slow/unresponsive Composio API
-    // can never block turn dispatch indefinitely.
+    // Wrap the Composio fetch in a 3-second timeout so a slow/unresponsive
+    // Composio API can never block turn dispatch indefinitely.
     const COMPOSIO_FETCH_TIMEOUT_SECS: u64 = 3;
     let extra_tools = if !definition.subagents.is_empty() {
         let connected = match tokio::time::timeout(
@@ -618,18 +488,18 @@ mod scoping_tests {
     }
 
     /// `ToolScope::Named` with no extras returns exactly the named set.
-    /// This is the welcome agent's path: 2 tools in TOML, no
-    /// delegation, no extras → 2 entries in the visibility whitelist.
+    /// For agents with a narrow tool scope (e.g. 2 tools in TOML,
+    /// no delegation, no extras) → 2 entries in the visibility whitelist.
     #[test]
     fn named_scope_without_extras_returns_named_only() {
         let def = def_with_scope(ToolScope::Named(vec![
-            "complete_onboarding".into(),
             "memory_recall".into(),
+            "ask_user_clarification".into(),
         ]));
         let set = build_visible_tool_set(&def, &[]).expect("named scope yields Some");
         assert_eq!(set.len(), 2);
-        assert!(set.contains("complete_onboarding"));
         assert!(set.contains("memory_recall"));
+        assert!(set.contains("ask_user_clarification"));
     }
 
     /// `ToolScope::Named` with extras returns the union of the TOML
@@ -683,9 +553,7 @@ mod scoping_tests {
     /// effectively "no tools visible". The prompt loop's `is_visible`
     /// helper treats `Some(empty)` differently from `None`: the former
     /// means "filter active, nothing matches" so the LLM gets an empty
-    /// tool list, while the latter means "no filter at all". This is
-    /// the welcome agent's emergency fallback if its TOML somehow
-    /// shipped without any tools.
+    /// tool list, while the latter means "no filter at all".
     #[test]
     fn empty_named_with_no_extras_returns_empty_set() {
         let def = def_with_scope(ToolScope::Named(vec![]));
@@ -982,30 +850,10 @@ pub(crate) async fn process_channel_message(
     // The agent handler owns the history vector — we `mem::take` the
     // local one to avoid an unnecessary clone; `history` is not read
     // again below.
-    // Pick the active agent for this turn (welcome pre-onboarding,
-    // orchestrator post) and synthesise its delegation tool surface.
-    // Fresh disk read of `Config::onboarding_completed` happens inside
-    // `resolve_target_agent` — see the `[dispatch::routing]` traces.
+    // Pick the active agent for this turn (always orchestrator) and
+    // synthesise its delegation tool surface. Fresh disk read of
+    // `Config::onboarding_completed` happens inside `resolve_target_agent`.
     let scoping = resolve_target_agent(&msg.channel).await;
-
-    // When routing to the welcome agent, inject up-to-date Composio connection
-    // state into the last user message so the agent always knows which
-    // integrations are live without burning a tool call to check. The block is
-    // appended — not prepended — so it does not interfere with memory context
-    // that was already prepended to `enriched_message`. Scoped strictly to the
-    // welcome agent: orchestrator turns are not annotated.
-    if scoping.target_agent_id.as_deref() == Some("welcome") {
-        let conn_block = build_connection_state_block().await;
-        if !conn_block.is_empty() {
-            if let Some(last_user_msg) = history.iter_mut().rev().find(|m| m.role == "user") {
-                last_user_msg.content.push_str(&conn_block);
-                tracing::debug!(
-                    block_chars = conn_block.len(),
-                    "[dispatch::connection_state] appended CONNECTION_STATE block to welcome-agent turn"
-                );
-            }
-        }
-    }
 
     let turn_request = AgentTurnRequest {
         provider: Arc::clone(&active_provider),

@@ -190,6 +190,11 @@ const zhCN5: TranslationMap = {
   'settings.mascot.active': '活跃',
   'settings.mascot.characterDesc': '选择你的 OpenHuman 角色',
   'settings.mascot.characterHeading': '角色',
+  // TODO: translate custom GIF mascot strings.
+  'settings.mascot.customGifError':
+    'Enter an HTTPS .gif URL, loopback HTTP .gif URL, file:// .gif URL, or local .gif path.',
+  'settings.mascot.customGifHeading': 'Custom GIF avatar',
+  'settings.mascot.customGifLabel': 'Custom GIF avatar URL',
   'settings.mascot.colorDesc': '选择颜色方案',
   'settings.mascot.colorHeading': '颜色',
   'settings.mascot.loadingLibrary': '正在加载 OpenHuman 库…',
@@ -460,6 +465,8 @@ const zhCN5: TranslationMap = {
   'settings.mascot.title': 'OpenHuman',
   'settings.developerMenu.mcpServer.title': 'MCP 服务器',
   'settings.developerMenu.mcpServer.desc': '配置外部 MCP 客户端以连接到 OpenHuman',
+  'settings.developerMenu.autonomy.title': '智能体自主权',
+  'settings.developerMenu.autonomy.desc': '工具操作速率限制和安全阈值',
   'settings.mcpServer.title': 'MCP 服务器',
   'settings.mcpServer.toolsSectionTitle': '可用工具',
   'settings.mcpServer.toolsSectionDesc':

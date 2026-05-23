@@ -12,16 +12,10 @@ interface ThreadState {
   threads: Thread[];
   selectedThreadId: string | null;
   activeThreadId: string | null;
-  // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
-  // /**
-  //  * Thread created by `OnboardingLayout` to host the proactive welcome
-  //  * conversation. Tracked so we can delete it once the welcome agent
-  //  * calls `complete_onboarding` and `chat_onboarding_completed` flips —
-  //  * the welcome thread is transient onboarding chat, not history we
-  //  * want to clutter the user's thread list with.
-  //  */
-  // welcomeThreadId: string | null;
-  /** @deprecated [#1123] — welcome-agent replaced by Joyride walkthrough; kept for TS compat */
+  /**
+   * @deprecated — welcome-agent replaced by Joyride walkthrough. Always null
+   * for new users; retained for redux-persist deserialization compatibility.
+   */
   welcomeThreadId: string | null;
   messagesByThreadId: Record<string, ThreadMessage[]>;
   messages: ThreadMessage[];

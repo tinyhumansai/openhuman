@@ -190,3 +190,146 @@ export function hexEncodeThreadId(s: string): string {
     .map(b => b.toString(16).padStart(2, '0'))
     .join('');
 }
+
+// ---------------------------------------------------------------------------
+// Tool-call inspection helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Poll the mock request log until a request appears that indicates the given
+ * tool was invoked.  The check strategy depends on how the tool reaches the
+ * mock backend:
+ *
+ *   - Composio tools (`composio`) hit `POST /agent-integrations/composio/execute`
+ *     with an `action` body field equal to the Composio action name (e.g.
+ *     `GMAIL_GET_MAIL`).
+ *   - LLM-side tools (file_read, web_fetch, web_search_tool, cron_*, memory_*)
+ *     appear as tool_calls in the `POST /openai/v1/chat/completions` request body.
+ *     We look for the tool name in the serialised request body.
+ *
+ * Pass the `source` param to narrow the search surface:
+ *   - `'composio'`  — only search the composio execute endpoint
+ *   - `'llm'`       — only search LLM completions requests
+ *   - `'any'`       — try both (default)
+ *
+ * Returns the matching request entry when found, or `undefined` on timeout.
+ * Logs richly with the supplied `logPrefix` so CI output is grep-friendly.
+ */
+export async function waitForToolCallInMockLog(
+  toolName: string,
+  options: { timeoutMs?: number; source?: 'composio' | 'llm' | 'any'; logPrefix?: string } = {}
+): Promise<Record<string, unknown> | undefined> {
+  const { timeoutMs = 15_000, source = 'any', logPrefix = '[chat-harness]' } = options;
+
+  // Lazily import at call-site — the mock-server module is ESM and only
+  // available in the test environment; static top-level import is fine too
+  // but keeping this isolated avoids circular deps if this file is ever
+  // imported from non-E2E contexts.
+  const { getRequestLog } = await import('../mock-server');
+
+  console.log(
+    `${logPrefix} waitForToolCallInMockLog: waiting up to ${timeoutMs}ms for tool "${toolName}" (source=${source})`
+  );
+
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const log = getRequestLog() as Array<{ method: string; url: string; body?: string }>;
+
+    for (const entry of log) {
+      const { method, url, body = '' } = entry;
+
+      // Composio execute endpoint — check the `action` field in the body.
+      if (source !== 'llm') {
+        if (method === 'POST' && url.includes('/agent-integrations/composio/execute')) {
+          let parsedBody: Record<string, unknown> | null = null;
+          try {
+            parsedBody = typeof body === 'string' ? JSON.parse(body) : body;
+          } catch {
+            // non-JSON body — skip
+          }
+          const actionName =
+            typeof parsedBody?.action === 'string'
+              ? parsedBody.action
+              : typeof parsedBody?.tool === 'string'
+                ? parsedBody.tool
+                : '';
+          if (
+            actionName.toLowerCase() === toolName.toLowerCase() ||
+            actionName.toLowerCase().includes(toolName.toLowerCase())
+          ) {
+            console.log(
+              `${logPrefix} waitForToolCallInMockLog: found composio execute for "${toolName}" (action=${actionName})`
+            );
+            return entry as Record<string, unknown>;
+          }
+        }
+      }
+
+      // LLM completions endpoint — check tool_calls in the request body.
+      if (source !== 'composio') {
+        if (method === 'POST' && url.includes('/chat/completions')) {
+          const bodyStr = typeof body === 'string' ? body : JSON.stringify(body);
+          // The tool name appears in the tool_calls array of a prior message
+          // (as a tool result) OR in the assistant message's function.name field.
+          if (bodyStr.includes(`"${toolName}"`)) {
+            console.log(
+              `${logPrefix} waitForToolCallInMockLog: found LLM completions request containing tool name "${toolName}"`
+            );
+            return entry as Record<string, unknown>;
+          }
+        }
+      }
+    }
+
+    await browser.pause(300);
+  }
+
+  const log = getRequestLog() as Array<{ method: string; url: string }>;
+  console.warn(
+    `${logPrefix} waitForToolCallInMockLog: TIMEOUT — tool "${toolName}" not found after ${timeoutMs}ms. ` +
+      `Log has ${log.length} entries: ${log
+        .slice(-5)
+        .map(e => `${e.method} ${e.url}`)
+        .join(', ')}`
+  );
+  return undefined;
+}
+
+/**
+ * Poll the rendered chat UI until an assistant message containing
+ * `substring` is visible in the DOM.
+ *
+ * Works by scanning `#root` for text content.  Reuses the same
+ * `textExists` primitive that other chat specs use so selector drift
+ * is isolated to one place.
+ *
+ * Returns `true` when the text is found, `false` on timeout.
+ */
+export async function waitForAssistantReplyContaining(
+  substring: string,
+  options: { timeoutMs?: number; logPrefix?: string } = {}
+): Promise<boolean> {
+  const { timeoutMs = 20_000, logPrefix = '[chat-harness]' } = options;
+  console.log(
+    `${logPrefix} waitForAssistantReplyContaining: waiting up to ${timeoutMs}ms for "${substring}"`
+  );
+
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const found = await browser.execute((sub: string) => {
+      const root = document.getElementById('root');
+      if (!root) return false;
+      return (root.textContent ?? '').includes(sub);
+    }, substring);
+    if (found) {
+      console.log(`${logPrefix} waitForAssistantReplyContaining: found "${substring}" in DOM`);
+      return true;
+    }
+    await browser.pause(300);
+  }
+
+  console.warn(
+    `${logPrefix} waitForAssistantReplyContaining: TIMEOUT — "${substring}" not found after ${timeoutMs}ms`
+  );
+  return false;
+}

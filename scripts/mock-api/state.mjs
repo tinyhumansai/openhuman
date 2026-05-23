@@ -22,6 +22,11 @@ let socketEventLog = [];
 let mockLlmThreads = new Map();
 let nextSequence = 1;
 
+// ── Telegram Bot API mock state ────────────────────────────────────────────
+let mockTelegramUpdates = [];
+let mockTelegramSentMessages = [];
+let mockTelegramMessageIdSeq = 1000;
+
 const socketSessions = new Map();
 
 export const openSockets = new Set();
@@ -497,4 +502,54 @@ export function getMockTeam() {
     },
     role: "ADMIN",
   };
+}
+
+// ── Telegram Bot API mock state helpers ────────────────────────────────────
+
+/**
+ * Push a single Telegram Update object into the pending queue.
+ * The queue is drained by each `getUpdates` poll.
+ */
+export function pushMockTelegramUpdate(update) {
+  mockTelegramUpdates.push(update);
+}
+
+/**
+ * Drain and return all pending Telegram updates. Each `getUpdates` call
+ * should call this so each update is delivered exactly once.
+ */
+export function drainMockTelegramUpdates() {
+  const updates = [...mockTelegramUpdates];
+  mockTelegramUpdates = [];
+  return updates;
+}
+
+/**
+ * Record a message sent by the bot (sendMessage, sendPhoto, etc.).
+ * @param {object} entry - { method, body, message_id, ... }
+ */
+export function recordMockTelegramSent(entry) {
+  mockTelegramSentMessages.push({
+    timestamp: new Date().toISOString(),
+    ...entry,
+  });
+}
+
+/** Return all recorded outbound Telegram API calls (non-destructive). */
+export function getMockTelegramSent() {
+  return [...mockTelegramSentMessages];
+}
+
+/** Increment and return the next mock message_id. */
+export function nextMockTelegramMessageId() {
+  const id = mockTelegramMessageIdSeq;
+  mockTelegramMessageIdSeq += 1;
+  return id;
+}
+
+/** Reset all Telegram mock state (updates queue, sent log, id counter). */
+export function resetMockTelegram() {
+  mockTelegramUpdates = [];
+  mockTelegramSentMessages = [];
+  mockTelegramMessageIdSeq = 1000;
 }

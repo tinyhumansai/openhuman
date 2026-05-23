@@ -1348,29 +1348,7 @@ fn migrate_legacy_embeddings_to_sidecar(conn: &Connection, config: &Config) -> R
     // no-op job on every DB open — which would otherwise pollute the jobs
     // table for unrelated callers/tests. Enqueued atomically with the
     // migration; dedupe key = signature, so exactly one chain per space.
-    let has_uncovered: bool = tx.query_row(
-        // The `NOT EXISTS … reembed_skipped` clauses match the worklist in
-        // `handle_reembed_backfill`: terminally-failed rows (body missing,
-        // embed wrong dim / err) are sentinel-marked there and must NOT count
-        // as "uncovered" here, otherwise this migration probe keeps reporting
-        // "uncovered" → keeps enqueueing the backfill chain on every DB open →
-        // infinite re-arming (#1574 §6 runaway-loop fix).
-        "SELECT EXISTS(
-             SELECT 1 FROM mem_tree_chunks c
-              WHERE NOT EXISTS (SELECT 1 FROM mem_tree_chunk_embeddings e
-                                 WHERE e.chunk_id = c.id AND e.model_signature = ?1)
-                AND NOT EXISTS (SELECT 1 FROM mem_tree_chunk_reembed_skipped sk
-                                 WHERE sk.chunk_id = c.id AND sk.model_signature = ?1))
-           OR EXISTS(
-             SELECT 1 FROM mem_tree_summaries s
-              WHERE s.deleted = 0
-                AND NOT EXISTS (SELECT 1 FROM mem_tree_summary_embeddings e
-                                 WHERE e.summary_id = s.id AND e.model_signature = ?1)
-                AND NOT EXISTS (SELECT 1 FROM mem_tree_summary_reembed_skipped sk
-                                 WHERE sk.summary_id = s.id AND sk.model_signature = ?1))",
-        rusqlite::params![sig],
-        |r| r.get(0),
-    )?;
+    let has_uncovered = has_uncovered_reembed_work(&*tx, &sig)?;
     if has_uncovered {
         let backfill_job = crate::openhuman::memory::tree::jobs::types::NewJob::reembed_backfill(
             &crate::openhuman::memory::tree::jobs::types::ReembedBackfillPayload {
@@ -1632,6 +1610,34 @@ pub fn set_chunk_embedding_for_signature(
     })
 }
 
+/// `true` when at least one chunk or summary still needs an embedding at
+/// `model_signature` and is not tombstoned as terminally unembeddable.
+///
+/// Shared by `ensure_reembed_backfill`, the §7 migration enqueue probe, and
+/// tests so the worklist and coverage probes cannot drift (#2358).
+pub(crate) fn has_uncovered_reembed_work(
+    conn: &Connection,
+    model_signature: &str,
+) -> rusqlite::Result<bool> {
+    conn.query_row(
+        "SELECT EXISTS(
+             SELECT 1 FROM mem_tree_chunks c
+              WHERE NOT EXISTS (SELECT 1 FROM mem_tree_chunk_embeddings e
+                                 WHERE e.chunk_id = c.id AND e.model_signature = ?1)
+                AND NOT EXISTS (SELECT 1 FROM mem_tree_chunk_reembed_skipped sk
+                                 WHERE sk.chunk_id = c.id AND sk.model_signature = ?1))
+           OR EXISTS(
+             SELECT 1 FROM mem_tree_summaries s
+              WHERE s.deleted = 0
+                AND NOT EXISTS (SELECT 1 FROM mem_tree_summary_embeddings e
+                                 WHERE e.summary_id = s.id AND e.model_signature = ?1)
+                AND NOT EXISTS (SELECT 1 FROM mem_tree_summary_reembed_skipped sk
+                                 WHERE sk.summary_id = s.id AND sk.model_signature = ?1))",
+        rusqlite::params![model_signature],
+        |r| r.get(0),
+    )
+}
+
 /// Persistently record that `(chunk_id, signature)` cannot be re-embedded.
 ///
 /// Called by `handle_reembed_backfill` when the per-chunk body file is
@@ -1647,6 +1653,8 @@ pub fn mark_chunk_reembed_skipped(
     model_signature: &str,
     reason: &str,
 ) -> Result<()> {
+    let chunk_id = validate_reembed_skip_key("chunk_id", chunk_id)?;
+    let model_signature = validate_reembed_skip_key("model_signature", model_signature)?;
     with_connection(config, |conn| {
         let now_ms = Utc::now().timestamp_millis();
         conn.execute(
@@ -1658,8 +1666,80 @@ pub fn mark_chunk_reembed_skipped(
                     skipped_at_ms = excluded.skipped_at_ms",
             rusqlite::params![chunk_id, model_signature, reason, now_ms],
         )?;
+        log::debug!(
+            "[memory_tree::store] mark_chunk_reembed_skipped chunk_id={chunk_id} sig={model_signature} reason={reason}"
+        );
         Ok(())
     })
+}
+
+/// Remove a single chunk tombstone so re-embed backfill can retry the row.
+///
+/// Idempotent: deleting a missing `(chunk_id, model_signature)` pair is a
+/// no-op. Intended for operator recovery after environmental failures (moved
+/// workspace, restored body files, fixed embedder config) — see #2358.
+pub fn clear_chunk_reembed_skipped(
+    config: &Config,
+    chunk_id: &str,
+    model_signature: &str,
+) -> Result<()> {
+    let chunk_id = validate_reembed_skip_key("chunk_id", chunk_id)?;
+    let model_signature = validate_reembed_skip_key("model_signature", model_signature)?;
+    with_connection(config, |conn| {
+        conn.execute(
+            "DELETE FROM mem_tree_chunk_reembed_skipped
+              WHERE chunk_id = ?1 AND model_signature = ?2",
+            rusqlite::params![chunk_id, model_signature],
+        )?;
+        log::debug!(
+            "[memory_tree::store] clear_chunk_reembed_skipped chunk_id={chunk_id} sig={model_signature}"
+        );
+        Ok(())
+    })
+}
+
+/// Clear all chunk and summary tombstones for a model signature.
+///
+/// Returns the total number of rows removed across both tombstone tables.
+/// Idempotent when no tombstones exist for the signature.
+pub fn clear_reembed_skipped_for_signature(
+    config: &Config,
+    model_signature: &str,
+) -> Result<usize> {
+    let model_signature = validate_reembed_skip_key("model_signature", model_signature)?;
+    with_connection(config, |conn| {
+        let chunk_deleted = conn.execute(
+            "DELETE FROM mem_tree_chunk_reembed_skipped WHERE model_signature = ?1",
+            rusqlite::params![model_signature],
+        )?;
+        let summary_deleted = conn.execute(
+            "DELETE FROM mem_tree_summary_reembed_skipped WHERE model_signature = ?1",
+            rusqlite::params![model_signature],
+        )?;
+        log::debug!(
+            "[memory_tree::store] clear_reembed_skipped_for_signature sig={model_signature} chunk_rows={chunk_deleted} summary_rows={summary_deleted}"
+        );
+        Ok(chunk_deleted + summary_deleted)
+    })
+}
+
+/// Bounds attacker-controlled ids/signatures passed to reembed-skipped admin
+/// helpers without affecting legitimate rows (typical ids are well under 512
+/// chars). Rejects NUL bytes so SQLite bindings cannot be truncated.
+const REEMBED_SKIP_KEY_MAX_LEN: usize = 2048;
+
+pub(crate) fn validate_reembed_skip_key<'a>(label: &str, value: &'a str) -> Result<&'a str> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        anyhow::bail!("{label} must be non-empty");
+    }
+    if trimmed.len() > REEMBED_SKIP_KEY_MAX_LEN {
+        anyhow::bail!("{label} exceeds maximum length ({REEMBED_SKIP_KEY_MAX_LEN})");
+    }
+    if trimmed.as_bytes().contains(&0) {
+        anyhow::bail!("{label} must not contain NUL bytes");
+    }
+    Ok(trimmed)
 }
 
 /// Transaction-scoped variant of [`set_chunk_embedding_for_signature`].

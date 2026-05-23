@@ -319,7 +319,7 @@ const handleOAuthDeepLink = async (parsed: URL) => {
  *   - `openhuman://payment/success?session_id=...` → Stripe payment confirmation
  *   - `openhuman://payment/cancel` → Stripe payment cancellation
  */
-const handleDeepLinkUrls = async (urls: string[] | null | undefined) => {
+export const handleDeepLinkUrls = async (urls: string[] | null | undefined) => {
   if (!urls || urls.length === 0) {
     return;
   }
