@@ -133,4 +133,32 @@ describe('coreModeSlice — sync-localStorage-derived initial state', () => {
     const state = mod.default(undefined, { type: '@@INIT' });
     expect(state.mode).toEqual({ kind: 'unset' });
   });
+
+  it('keeps the synchronous local marker when redux-persist rehydrates stale unset state', async () => {
+    localStorage.clear();
+    localStorage.setItem('openhuman_core_mode', 'local');
+
+    const mod = await freshImport();
+    const { persistReducer } =
+      await vi.importActual<typeof import('redux-persist')>('redux-persist');
+    const persistedReducer = persistReducer(
+      {
+        key: 'coreMode',
+        storage: { getItem: vi.fn(), setItem: vi.fn(), removeItem: vi.fn() },
+        whitelist: ['mode'],
+      },
+      mod.default
+    );
+
+    const next = persistedReducer(
+      { mode: { kind: 'local' }, _persist: { version: -1, rehydrated: false } },
+      {
+        type: 'persist/REHYDRATE',
+        key: 'coreMode',
+        payload: { mode: { kind: 'unset' } },
+      } as Parameters<typeof persistedReducer>[1]
+    );
+
+    expect(next.mode).toEqual({ kind: 'local' });
+  });
 });
