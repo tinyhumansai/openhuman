@@ -168,4 +168,12 @@ export const threadApi = {
     });
     return unwrapEnvelope(response);
   },
+
+  updateTitle: async (threadId: string, title: string): Promise<Thread> => {
+    const response = await callCoreRpc<Envelope<Thread>>({
+      method: 'openhuman.threads_update_title',
+      params: { thread_id: threadId, title },
+    });
+    return unwrapEnvelope(response);
+  },
 };

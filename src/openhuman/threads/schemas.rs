@@ -10,7 +10,7 @@ use crate::openhuman::memory::{
     AppendConversationMessageRequest, ConversationMessagesRequest, CreateConversationThreadRequest,
     DeleteConversationThreadRequest, EmptyRequest, GenerateConversationThreadTitleRequest,
     UpdateConversationMessageRequest, UpdateConversationThreadLabelsRequest,
-    UpsertConversationThreadRequest,
+    UpdateConversationThreadTitleRequest, UpsertConversationThreadRequest,
 };
 use crate::openhuman::threads::turn_state::{ClearTurnStateRequest, GetTurnStateRequest};
 
@@ -25,6 +25,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("message_append"),
         schemas("generate_title"),
         schemas("update_labels"),
+        schemas("update_title"),
         schemas("message_update"),
         schemas("delete"),
         schemas("purge"),
@@ -65,6 +66,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("update_labels"),
             handler: handle_update_labels,
+        },
+        RegisteredController {
+            schema: schemas("update_title"),
+            handler: handle_update_title,
         },
         RegisteredController {
             schema: schemas("message_update"),
@@ -294,6 +299,31 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 required: true,
             }],
         },
+        "update_title" => ControllerSchema {
+            namespace: "threads",
+            function: "update_title",
+            description: "Set a user-specified title on a conversation thread.",
+            inputs: vec![
+                FieldSchema {
+                    name: "thread_id",
+                    ty: TypeSchema::String,
+                    comment: "Thread identifier.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "title",
+                    ty: TypeSchema::String,
+                    comment: "New title for the thread.",
+                    required: true,
+                },
+            ],
+            outputs: vec![FieldSchema {
+                name: "result",
+                ty: TypeSchema::Json,
+                comment: "Envelope with the resulting thread summary.",
+                required: true,
+            }],
+        },
         "delete" => ControllerSchema {
             namespace: "threads",
             function: "delete",
@@ -480,6 +510,13 @@ fn handle_update_labels(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let p = parse::<UpdateConversationThreadLabelsRequest>(params)?;
         to_json(ops::thread_update_labels(p).await?)
+    })
+}
+
+fn handle_update_title(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let p = parse::<UpdateConversationThreadTitleRequest>(params)?;
+        to_json(ops::thread_update_title(p).await?)
     })
 }
 
