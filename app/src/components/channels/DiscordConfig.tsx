@@ -43,6 +43,8 @@ const DiscordConfig = ({ definition }: DiscordConfigProps) => {
   /** Pending link tokens, keyed by compositeKey (discord:managed_dm). Only present while polling. */
   const [linkToken, setLinkToken] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [confirmingDisconnect, setConfirmingDisconnect] = useState<ChannelAuthMode | null>(null);
+  const [clearMemory, setClearMemory] = useState(false);
   const pollAbort = useRef<AbortController | null>(null);
 
   const runBusy = useCallback(async (key: string, task: () => Promise<void>) => {
@@ -250,17 +252,23 @@ const DiscordConfig = ({ definition }: DiscordConfigProps) => {
     [dispatch, fieldValues, runBusy, startLinkPolling, t]
   );
 
-  const handleDisconnect = useCallback(
+  const handleDisconnect = useCallback((authMode: ChannelAuthMode) => {
+    setClearMemory(false);
+    setConfirmingDisconnect(authMode);
+  }, []);
+
+  const handleConfirmDisconnect = useCallback(
     (authMode: ChannelAuthMode) => {
+      setConfirmingDisconnect(null);
       void runBusy(`discord:${authMode}`, async () => {
-        log('disconnecting discord via %s', authMode);
+        log('disconnecting discord via %s clearMemory=%s', authMode, clearMemory);
         pollAbort.current?.abort();
         setLinkToken(null);
-        await channelConnectionsApi.disconnectChannel('discord', authMode);
+        await channelConnectionsApi.disconnectChannel('discord', authMode, clearMemory);
         dispatch(disconnectChannelConnection({ channel: 'discord', authMode }));
       });
     },
-    [dispatch, runBusy]
+    [clearMemory, dispatch, runBusy]
   );
 
   const copyToken = useCallback(() => {
@@ -377,13 +385,46 @@ const DiscordConfig = ({ definition }: DiscordConfigProps) => {
                     {t('channels.discord.connect')}
                   </button>
                 )}
-                <button
-                  type="button"
-                  disabled={busy || status === 'disconnected'}
-                  onClick={() => handleDisconnect(spec.mode)}
-                  className="rounded-lg border border-stone-200 dark:border-neutral-800 px-3 py-1.5 text-xs font-medium text-stone-600 dark:text-neutral-300 hover:border-stone-300 dark:hover:border-neutral-700 disabled:opacity-50">
-                  {t('accounts.disconnect')}
-                </button>
+                {confirmingDisconnect === spec.mode ? (
+                  <div className="flex flex-col gap-2">
+                    <span className="text-xs text-coral-600 dark:text-coral-400 font-medium">
+                      Revoke credentials for {definition.display_name}?
+                    </span>
+                    <label className="flex items-center gap-2 text-xs text-stone-500 dark:text-neutral-400 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={clearMemory}
+                        onChange={e => setClearMemory(e.target.checked)}
+                        className="rounded border-stone-300 dark:border-neutral-600"
+                      />
+                      Also delete all memory ingested from this source (cannot be undone)
+                    </label>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => handleConfirmDisconnect(spec.mode)}
+                        className="rounded-lg bg-coral-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-coral-600 disabled:opacity-50">
+                        Yes, disconnect
+                      </button>
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => setConfirmingDisconnect(null)}
+                        className="rounded-lg border border-stone-200 dark:border-neutral-700 px-3 py-1.5 text-xs font-medium text-stone-600 dark:text-neutral-300 hover:border-stone-300 disabled:opacity-50">
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={busy || status === 'disconnected'}
+                    onClick={() => handleDisconnect(spec.mode)}
+                    className="rounded-lg border border-stone-200 dark:border-neutral-800 px-3 py-1.5 text-xs font-medium text-stone-600 dark:text-neutral-300 hover:border-stone-300 dark:hover:border-neutral-700 disabled:opacity-50">
+                    {t('accounts.disconnect')}
+                  </button>
+                )}
               </div>
             ) : null}
 

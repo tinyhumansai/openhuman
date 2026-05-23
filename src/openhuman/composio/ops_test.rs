@@ -113,7 +113,7 @@ async fn composio_authorize_errors_without_session() {
 async fn composio_delete_connection_errors_without_session() {
     let tmp = tempfile::tempdir().unwrap();
     let config = test_config(&tmp);
-    let err = composio_delete_connection(&config, "c-1")
+    let err = composio_delete_connection(&config, "c-1", false)
         .await
         .unwrap_err();
     assert!(err.contains("composio unavailable"));
@@ -433,7 +433,9 @@ async fn composio_delete_connection_via_mock() {
     let base = start_mock_backend(app).await;
     let tmp = tempfile::tempdir().unwrap();
     let config = config_with_backend(&tmp, base);
-    let outcome = composio_delete_connection(&config, "c1").await.unwrap();
+    let outcome = composio_delete_connection(&config, "c1", false)
+        .await
+        .unwrap();
     assert!(outcome.value.deleted);
 }
 

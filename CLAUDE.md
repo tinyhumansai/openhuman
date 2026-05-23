@@ -330,3 +330,24 @@ Specify → prove in Rust → prove over RPC → surface in the UI → test.
 - **macOS deep links**: often require a built `.app` bundle, not just `tauri dev`.
 - **Tauri environment guard**: use `isTauri()` (from `app/src/services/webviewAccountService.ts`) or wrap `invoke(...)` in `try/catch`; do not check `window.__TAURI__` directly — it is not present at module load and bypasses the established wrapper contract.
 - **Core is in-process** (no sidecar): `core_rpc` reaches the embedded server at `http://127.0.0.1:<port>/rpc` with bearer auth via `OPENHUMAN_CORE_TOKEN`. `scripts/stage-core-sidecar.mjs` no longer exists; `pnpm core:stage` is a no-op echo. To run the core standalone for debugging, use `./target/debug/openhuman-core serve` (token at `{workspace}/core.token`, default `~/.openhuman-staging/core.token` under `OPENHUMAN_APP_ENV=staging`).
+
+---
+
+## 内存系统
+
+个人 wiki 位于 E:\Projects\Vault\Test，使用 LLM Wiki 方法论管理。重要经验持久化到 C:\Users\12267\.claude\projects\e--Projects-Vault-Test\memory\。
+
+## 网络代理
+
+Clash 代理 http://127.0.0.1:7890。网络操作（pip/curl/npm/git）报 ProxyError 时，第一步检查 Clash 进程（netstat -an | findstr 7890），不要先改 pip 参数。DeepSeek API 不走代理。
+
+## GitHub
+
+用户名 mengqiuzhen。项目仓库见 https://github.com/mengqiuzhen。
+
+## 开源贡献纪律
+
+- 一个 PR 一个 issue，不要混。
+- 改 scope/API 名字前，先搜项目已有 issue 和 PR 确认方向。
+- 验证以平台开发者后台实际能授予的为准，不以 metadata 接口为准。
+- 提交前搜已有 PR，避免重复劳动。

@@ -9,6 +9,8 @@
 //! agent harness) when they need composio data at runtime.
 
 use crate::openhuman::config::Config;
+use crate::openhuman::memory::tree::store::delete_chunks_by_source;
+use crate::openhuman::memory::tree::types::SourceKind;
 use crate::rpc::RpcOutcome;
 
 /// Result alias used by every `composio_*` op in this module.
@@ -407,6 +409,7 @@ pub async fn composio_authorize(
 pub async fn composio_delete_connection(
     config: &Config,
     connection_id: &str,
+    clear_memory: bool,
 ) -> OpResult<RpcOutcome<ComposioDeleteResponse>> {
     tracing::debug!(connection_id = %connection_id, "[composio] rpc delete_connection");
     let client = resolve_client(config)?;
@@ -437,6 +440,29 @@ pub async fn composio_delete_connection(
                 error = %e,
                 "[composio] PROFILE.md bullet removal failed (non-fatal)"
             );
+        }
+        // Opt-in memory tree cleanup.
+        if clear_memory {
+            if let Some((kind, prefix)) = composio_toolkit_source_kind(toolkit) {
+                match delete_chunks_by_source(config, kind, &prefix) {
+                    Ok(n) => {
+                        tracing::info!(
+                            toolkit = %toolkit,
+                            connection_id = %connection_id,
+                            deleted_chunks = n,
+                            "[composio] delete_connection: cleared {n} chunks for {toolkit}"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            toolkit = %toolkit,
+                            connection_id = %connection_id,
+                            error = %e,
+                            "[composio] delete_connection: memory clear failed (non-fatal)"
+                        );
+                    }
+                }
+            }
         }
     }
     crate::core::event_bus::publish_global(
@@ -481,6 +507,17 @@ pub async fn composio_delete_connection(
         resp,
         vec![format!("composio: connection {connection_id} deleted")],
     ))
+}
+
+/// Map a composio toolkit slug to the `(SourceKind, source_id LIKE prefix)`
+/// used for memory-tree cleanup on disconnect.
+fn composio_toolkit_source_kind(toolkit: &str) -> Option<(SourceKind, String)> {
+    match toolkit.trim().to_ascii_lowercase().as_str() {
+        "gmail" => Some((SourceKind::Email, "gmail:%".into())),
+        "notion" => Some((SourceKind::Document, "notion:%".into())),
+        "googledrive" => Some((SourceKind::Document, "googledrive:%".into())),
+        _ => None,
+    }
 }
 
 // ── Tools ───────────────────────────────────────────────────────────

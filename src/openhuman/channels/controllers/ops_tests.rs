@@ -138,7 +138,7 @@ async fn disconnect_discord_bot_token_clears_runtime_config() {
         .await
         .expect("preloaded config should be persisted");
 
-    disconnect_channel(&config, "discord", ChannelAuthMode::BotToken)
+    disconnect_channel(&config, "discord", ChannelAuthMode::BotToken, false)
         .await
         .expect("discord disconnect should succeed");
 
@@ -349,7 +349,7 @@ async fn disconnect_imessage_clears_runtime_config() {
         .await
         .expect("preloaded config should be persisted");
 
-    disconnect_channel(&config, "imessage", ChannelAuthMode::ManagedDm)
+    disconnect_channel(&config, "imessage", ChannelAuthMode::ManagedDm, false)
         .await
         .expect("imessage disconnect should succeed");
 

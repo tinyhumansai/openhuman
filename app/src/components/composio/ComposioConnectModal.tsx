@@ -216,6 +216,8 @@ export default function ComposioConnectModal({
   // Per-key in-flight flag so spamming a single toggle disables only
   // that row while the RPC round-trips.
   const [savingScope, setSavingScope] = useState<keyof ComposioUserScopePref | null>(null);
+  const [confirmingDisconnect, setConfirmingDisconnect] = useState(false);
+  const [clearMemory, setClearMemory] = useState(false);
 
   // Escape to close
   useEffect(() => {
@@ -503,12 +505,18 @@ export default function ComposioConnectModal({
     [savingScope, scopes, t, toolkit.slug]
   );
 
-  const handleDisconnect = useCallback(async () => {
+  const handleDisconnect = useCallback(() => {
+    setClearMemory(false);
+    setConfirmingDisconnect(true);
+  }, []);
+
+  const handleConfirmDisconnect = useCallback(async () => {
     if (!activeConnection) return;
+    setConfirmingDisconnect(false);
     setPhase('disconnecting');
     setError(null);
     try {
-      await deleteConnection(activeConnection.id);
+      await deleteConnection(activeConnection.id, clearMemory);
       setActiveConnection(undefined);
       setPhase('idle');
       onChanged?.();
@@ -517,7 +525,7 @@ export default function ComposioConnectModal({
       setPhase('error');
       setError(`${t('composio.connect.disconnectFailed')}: ${msg}`);
     }
-  }, [activeConnection, onChanged, t]);
+  }, [activeConnection, clearMemory, onChanged, t]);
 
   const handleBackdropClick = (e: React.MouseEvent) => {
     if (e.target === e.currentTarget) onClose();
@@ -735,20 +743,51 @@ export default function ComposioConnectModal({
                   connectionId={activeConnection.id}
                 />
               )}
-              <div className="grid grid-cols-2 gap-3">
-                <button
-                  type="button"
-                  onClick={() => void handleDisconnect()}
-                  className="w-full rounded-xl border border-coral-200 bg-coral-50 text-coral-700 text-sm font-medium py-2.5 hover:bg-coral-100 transition-colors">
-                  {t('skills.disconnect')}
-                </button>
-                <button
-                  type="button"
-                  onClick={onClose}
-                  className="w-full rounded-xl bg-primary-500 text-white text-sm font-medium py-2.5 hover:bg-primary-600 transition-colors">
-                  {t('common.close')}
-                </button>
-              </div>
+              {confirmingDisconnect ? (
+                <div className="flex flex-col gap-3">
+                  <span className="text-sm text-coral-600 dark:text-coral-400 font-medium">
+                    Revoke credentials for {toolkit.name}?
+                  </span>
+                  <label className="flex items-center gap-2 text-xs text-stone-500 dark:text-neutral-400 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={clearMemory}
+                      onChange={e => setClearMemory(e.target.checked)}
+                      className="rounded border-stone-300 dark:border-neutral-600"
+                    />
+                    Also delete all memory ingested from this source (cannot be undone)
+                  </label>
+                  <div className="grid grid-cols-2 gap-3">
+                    <button
+                      type="button"
+                      onClick={() => void handleConfirmDisconnect()}
+                      className="w-full rounded-xl bg-coral-500 text-white text-sm font-medium py-2.5 hover:bg-coral-600 transition-colors">
+                      Yes, disconnect
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmingDisconnect(false)}
+                      className="w-full rounded-xl border border-stone-200 dark:border-neutral-700 text-stone-600 dark:text-neutral-300 text-sm font-medium py-2.5 hover:border-stone-300 dark:hover:border-neutral-600 transition-colors">
+                      {t('common.cancel')}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => handleDisconnect()}
+                    className="w-full rounded-xl border border-coral-200 bg-coral-50 text-coral-700 text-sm font-medium py-2.5 hover:bg-coral-100 transition-colors">
+                    {t('skills.disconnect')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onClose}
+                    className="w-full rounded-xl bg-primary-500 text-white text-sm font-medium py-2.5 hover:bg-primary-600 transition-colors">
+                    {t('common.close')}
+                  </button>
+                </div>
+              )}
             </>
           )}
 

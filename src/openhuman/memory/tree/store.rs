@@ -1723,6 +1723,48 @@ pub fn clear_reembed_skipped_for_signature(
     })
 }
 
+/// Delete all chunks (and their dependent rows) matching a source kind +
+/// source_id prefix. Embeds and reembed-skipped tombstones are cleaned by
+/// `ON DELETE CASCADE`; score rows and entity-index entries are deleted
+/// explicitly because those tables do not carry a foreign key back to
+/// `mem_tree_chunks`. Everything runs inside a single transaction so a
+/// caller sees an all-or-nothing outcome.
+///
+/// `source_id_pattern` is used with SQlite `LIKE`, so `"gmail:%"` deletes
+/// every chunk whose source_id begins with `gmail:`.
+pub fn delete_chunks_by_source(
+    config: &Config,
+    source_kind: SourceKind,
+    source_id_pattern: &str,
+) -> Result<usize> {
+    with_connection(config, |conn| {
+        let tx = conn.unchecked_transaction()?;
+        // Clean up rows that don't cascade from mem_tree_chunks.
+        for (table, col) in &[
+            ("mem_tree_score", "chunk_id"),
+            ("mem_tree_entity_index", "node_id"),
+        ] {
+            let sql = format!(
+                "DELETE FROM {table} WHERE {col} IN \
+                 (SELECT id FROM mem_tree_chunks \
+                  WHERE source_kind = ?1 AND source_id LIKE ?2)"
+            );
+            tx.execute(&sql, params![source_kind.as_str(), source_id_pattern])?;
+        }
+        let deleted = tx.execute(
+            "DELETE FROM mem_tree_chunks WHERE source_kind = ?1 AND source_id LIKE ?2",
+            params![source_kind.as_str(), source_id_pattern],
+        )?;
+        tx.commit()?;
+        log::info!(
+            "[memory_tree::store] delete_chunks_by_source kind={} pattern={} deleted={deleted}",
+            source_kind.as_str(),
+            source_id_pattern,
+        );
+        Ok(deleted)
+    })
+}
+
 /// Bounds attacker-controlled ids/signatures passed to reembed-skipped admin
 /// helpers without affecting legitimate rows (typical ids are well under 512
 /// chars). Rejects NUL bytes so SQLite bindings cannot be truncated.
