@@ -208,9 +208,31 @@ const de5: TranslationMap = {
   'settings.developerMenu.composioRouting.title': 'Composio Routing (Direktmodus)',
   'settings.developerMenu.composioRouting.desc':
     'Bring deinen eigenen Composio API-Schlüssel mit und leite Anrufe direkt an backend.composio.dev weiter',
+  'settings.developerMenu.mcpServer.title': 'MCP Server',
+  'settings.developerMenu.mcpServer.desc':
+    'Konfiguriere externe MCP-Clients für die Verbindung mit OpenHuman',
   'settings.developerMenu.integrationTriggers.title': 'Integrationsauslöser',
   'settings.developerMenu.integrationTriggers.desc':
     'Konfiguriere KI-Triage-Einstellungen für Composio-Integrationsauslöser',
+  'settings.mcpServer.title': 'MCP-Server',
+  'settings.mcpServer.toolsSectionTitle': 'Verfügbare Werkzeuge',
+  'settings.mcpServer.toolsSectionDesc':
+    'Werkzeuge, die über den MCP-Stdio-Server beim Ausführen von openhuman-core mcp bereitgestellt werden',
+  'settings.mcpServer.configSectionTitle': 'Client-Konfiguration',
+  'settings.mcpServer.configSectionDesc':
+    'Wähle deinen MCP-Client aus, um das richtige Konfigurations-Snippet zu generieren',
+  'settings.mcpServer.copySnippet': 'In die Zwischenablage kopieren',
+  'settings.mcpServer.copied': 'Kopiert!',
+  'settings.mcpServer.openConfigFile': 'Konfigurationsdatei öffnen',
+  'settings.mcpServer.binaryPathNotFound':
+    'OpenHuman-Binärdatei nicht gefunden. Wenn du aus dem Quellcode arbeitest, baue sie mit: cargo build --bin openhuman-core',
+  'settings.mcpServer.openConfigError': 'Konfigurationsdatei konnte nicht geöffnet werden',
+  'settings.mcpServer.clientClaudeDesktop': 'Claude Desktop',
+  'settings.mcpServer.clientCursor': 'Cursor',
+  'settings.mcpServer.clientCodex': 'Codex',
+  'settings.mcpServer.clientZed': 'Zed',
+  'settings.mcpServer.configFilePath': 'Konfigurationsdatei',
+  'settings.mcpServer.clientSelectorAriaLabel': 'MCP-Client-Auswahl',
   'settings.appearance.menuDesc': 'Wähle hell, dunkel oder passend zu deinem Systemthema',
   'settings.mascot.active': 'Aktiv',
   'settings.mascot.characterDesc': 'Charakterbeschreibung',
