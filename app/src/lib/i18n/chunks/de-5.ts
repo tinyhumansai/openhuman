@@ -526,28 +526,6 @@ const de5: TranslationMap = {
   'settings.mascot.colorYellow': 'Gelb',
   'settings.mascot.libraryUnavailable': 'OpenHuman Bibliothek nicht verfügbar',
   'settings.mascot.title': 'OpenHuman',
-  'settings.developerMenu.mcpServer.title': 'MCP-Server',
-  'settings.developerMenu.mcpServer.desc':
-    'Externe MCP-Clients zur Verbindung mit OpenHuman konfigurieren',
-  'settings.mcpServer.title': 'MCP-Server',
-  'settings.mcpServer.toolsSectionTitle': 'Verfügbare Tools',
-  'settings.mcpServer.toolsSectionDesc':
-    'Tools, die über den MCP-Stdio-Server bereitgestellt werden, wenn openhuman-core mcp ausgeführt wird',
-  'settings.mcpServer.configSectionTitle': 'Client-Konfiguration',
-  'settings.mcpServer.configSectionDesc':
-    'Wähle deinen MCP-Client aus, um den passenden Konfigurations-Schnipsel zu erzeugen',
-  'settings.mcpServer.copySnippet': 'In die Zwischenablage kopieren',
-  'settings.mcpServer.copied': 'Kopiert!',
-  'settings.mcpServer.openConfigFile': 'Konfigurationsdatei öffnen',
-  'settings.mcpServer.binaryPathNotFound':
-    'OpenHuman-Binärdatei nicht gefunden. Wenn du aus dem Quellcode arbeitest, baue sie mit: cargo build --bin openhuman-core',
-  'settings.mcpServer.openConfigError': 'Konfigurationsdatei konnte nicht geöffnet werden',
-  'settings.mcpServer.clientClaudeDesktop': 'Claude Desktop',
-  'settings.mcpServer.clientCursor': 'Cursor',
-  'settings.mcpServer.clientCodex': 'Codex',
-  'settings.mcpServer.clientZed': 'Zed',
-  'settings.mcpServer.configFilePath': 'Konfigurationsdatei',
-  'settings.mcpServer.clientSelectorAriaLabel': 'MCP-Client-Auswahl',
 };
 
 export default de5;
