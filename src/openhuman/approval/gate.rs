@@ -382,7 +382,13 @@ mod tests {
             ..Config::default()
         };
         let session = format!("test-session-{}", uuid::Uuid::new_v4());
-        let gate = ApprovalGate::new(config, session, Duration::from_millis(500));
+        // 500ms TTL was racing the 50×10ms poll loop on slow CI
+        // runners — the row would expire (and get denied by
+        // list_pending's lazy-expire) before `decide` could fire,
+        // surfacing as "pending row never appeared". 2s gives the
+        // polling tests enough headroom while keeping
+        // `timeout_returns_deny` fast (PR #2367 CI flake).
+        let gate = ApprovalGate::new(config, session, Duration::from_secs(2));
         (gate, dir)
     }
 
