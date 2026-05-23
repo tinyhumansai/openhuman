@@ -73,12 +73,12 @@ pub use storage_memory::{
 };
 pub use tools::{
     BrowserComputerUseConfig, BrowserConfig, ComposioConfig, ComputerControlConfig, CurlConfig,
-    GitbooksConfig, HttpRequestConfig, IntegrationToggle, IntegrationsConfig, McpAuthConfig,
-    McpClientConfig, McpClientIdentityConfig, McpServerConfig, MultimodalConfig,
-    PolymarketClobCredentials, PolymarketConfig, SearchConfig, SearchEngine,
-    SearchEngineCredentials, SearxngConfig, SecretsConfig, SeltzConfig, WebSearchConfig,
-    COMPOSIO_MODE_BACKEND, COMPOSIO_MODE_DIRECT, SEARCH_ENGINE_BRAVE, SEARCH_ENGINE_MANAGED,
-    SEARCH_ENGINE_PARALLEL,
+    ExternalCapabilityProviderConfig, ExternalCapabilityProvidersConfig, GitbooksConfig,
+    HttpRequestConfig, IntegrationToggle, IntegrationsConfig, McpAuthConfig, McpClientConfig,
+    McpClientIdentityConfig, McpServerConfig, MultimodalConfig, PolymarketClobCredentials,
+    PolymarketConfig, SearchConfig, SearchEngine, SearchEngineCredentials, SearxngConfig,
+    SecretsConfig, SeltzConfig, WebSearchConfig, COMPOSIO_MODE_BACKEND, COMPOSIO_MODE_DIRECT,
+    SEARCH_ENGINE_BRAVE, SEARCH_ENGINE_MANAGED, SEARCH_ENGINE_PARALLEL,
 };
 pub use update::{UpdateConfig, UpdateRestartStrategy};
 mod voice_server;

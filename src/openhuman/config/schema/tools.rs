@@ -1,6 +1,9 @@
 //! Tool-related config: browser, HTTP, web search, composio, secrets, multimodal.
 
 use super::defaults;
+pub use crate::openhuman::external_capabilities::{
+    ExternalCapabilityProviderConfig, ExternalCapabilityProvidersConfig,
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

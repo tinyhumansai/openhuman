@@ -38,6 +38,7 @@ pub mod devices;
 pub mod doctor;
 pub mod embeddings;
 pub mod encryption;
+pub mod external_capabilities;
 pub mod health;
 pub mod heartbeat;
 pub mod http_host;

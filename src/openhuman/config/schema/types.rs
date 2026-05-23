@@ -176,6 +176,9 @@ pub struct Config {
     pub mcp_client: McpClientConfig,
 
     #[serde(default)]
+    pub external_capability_providers: ExternalCapabilityProvidersConfig,
+
+    #[serde(default)]
     pub multimodal: MultimodalConfig,
 
     #[serde(default)]
@@ -585,6 +588,7 @@ impl Default for Config {
             storage: StorageConfig::default(),
             composio: ComposioConfig::default(),
             secrets: SecretsConfig::default(),
+            external_capability_providers: ExternalCapabilityProvidersConfig::default(),
             browser: BrowserConfig::default(),
             http_request: HttpRequestConfig::default(),
             curl: CurlConfig::default(),
