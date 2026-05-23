@@ -6,6 +6,7 @@ on:
   pull_request:
 permissions:
   contents: read
+  packages: read
   pull-requests: read
   # Required for Sentry to associate commits with releases
   actions: read

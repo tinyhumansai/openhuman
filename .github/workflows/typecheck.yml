@@ -6,6 +6,7 @@ on:
   pull_request:
 permissions:
   contents: read
+  packages: read
   pull-requests: read
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.head_ref

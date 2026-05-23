@@ -58,6 +58,7 @@ on:
 
 permissions:
   contents: read
+  packages: read
 
 jobs:
   e2e-linux:
