@@ -1,12 +1,11 @@
-//! Linear sync helpers — result extraction, title / cursor / user-id
-//! / pagination, and time utilities.
+//! Linear sync helpers — result extraction, issue-title extraction,
+//! viewer identity, cursor extraction, and time utilities.
 //!
-//! Linear's GraphQL API is wrapped by Composio actions into REST-shaped
-//! responses. The exact envelope varies by action (`LINEAR_LIST_LINEAR_ISSUES`
-//! returns `{ issues: { nodes: [...], pageInfo: {...} } }` while the
-//! generic `data` wrapper may also nest it under `data.issues.nodes`).
-//! The helpers here walk the union of common shapes so the provider
-//! doesn't have to branch per envelope variant.
+//! Linear's GraphQL API (and therefore Composio's wrapping of it) returns
+//! connection-style lists (`{ nodes: [...], pageInfo: {...} }`) at the top
+//! level or nested under `data`. The functions here walk the union of
+//! common shapes so the provider does not have to branch per Composio
+//! envelope variant.
 
 use serde_json::Value;
 
@@ -14,26 +13,20 @@ use crate::openhuman::composio::providers::pick_str;
 
 /// Walk the Composio response envelope for Linear issue list results.
 ///
-/// Linear's GraphQL `issues` query returns `{ nodes: [...] }` under
-/// the issue connection. Composio re-wraps the upstream payload under
-/// `data` or `data.data` depending on the action, and sometimes flattens
-/// the connection. We probe each shape in order and return the first
-/// array we find.
+/// Linear's list endpoints return `{ nodes: [...] }` or
+/// `{ issues: { nodes: [...] } }` shapes; Composio may re-wrap the
+/// upstream payload under `data` or `data.data`. We probe each shape
+/// in order and return the first array we find.
 pub(crate) fn extract_issues(data: &Value) -> Vec<Value> {
     let candidates = [
-        // Composio's standard "data.issues.nodes" shape for LINEAR_LIST_LINEAR_ISSUES.
+        data.pointer("/data/nodes"),
+        data.pointer("/nodes"),
+        data.pointer("/data/data/nodes"),
         data.pointer("/data/issues/nodes"),
-        data.pointer("/issues/nodes"),
-        // Some Composio wrappings drop the GraphQL connection and surface a flat list.
-        data.pointer("/data/issues"),
-        data.pointer("/issues"),
-        // Generic envelope fallbacks (Notion/ClickUp-style).
         data.pointer("/data/results"),
         data.pointer("/results"),
         data.pointer("/data/items"),
         data.pointer("/items"),
-        data.pointer("/data/nodes"),
-        data.pointer("/nodes"),
     ];
     for cand in candidates.into_iter().flatten() {
         if let Some(arr) = cand.as_array() {
@@ -45,10 +38,9 @@ pub(crate) fn extract_issues(data: &Value) -> Vec<Value> {
 
 /// Extract a human-readable title from a Linear issue object.
 ///
-/// Linear issues store the human title at `title`. When missing we
-/// fall back to the human-readable `identifier` (e.g. `"OH-123"`) so
-/// chunks remain identifiable in the memory tree even if the issue
-/// was created without a title.
+/// Linear issues store the name at `title` (or `data.title` after
+/// Composio envelope wrapping). Falls back to `name` / `identifier`
+/// so the chunk remains identifiable even for unusual response shapes.
 pub(crate) fn extract_issue_title(issue: &Value) -> Option<String> {
     pick_str(
         issue,
@@ -63,19 +55,11 @@ pub(crate) fn extract_issue_title(issue: &Value) -> Option<String> {
     )
 }
 
-/// Extract Linear's human-readable issue identifier (e.g. `"OH-123"`).
+/// Extract a stable cursor timestamp from a Linear issue object.
 ///
-/// Used as a secondary surface for tag-record metadata, where the raw
-/// UUID `id` is less useful than the workspace-prefixed identifier.
-pub(crate) fn extract_issue_identifier(issue: &Value) -> Option<String> {
-    pick_str(issue, &["identifier", "data.identifier"])
-}
-
-/// Extract the cursor timestamp from a Linear issue object.
-///
-/// Linear returns `updatedAt` as an ISO 8601 string
-/// (`"2026-05-21T10:30:00.000Z"`); we keep it as a string so
-/// lexicographic comparison against the stored cursor remains valid.
+/// Linear uses ISO-8601 strings for timestamps (`updatedAt`). We keep
+/// the value as a string so lexicographic comparison against the stored
+/// cursor is valid.
 pub(crate) fn extract_issue_updated(issue: &Value) -> Option<String> {
     pick_str(
         issue,
@@ -88,55 +72,66 @@ pub(crate) fn extract_issue_updated(issue: &Value) -> Option<String> {
     )
 }
 
-/// Extract the authenticated viewer's `id` (UUID string) from the
-/// `LINEAR_GET_VIEWER` response.
+/// Extract the viewer (authenticated user) object from a
+/// `LINEAR_LIST_LINEAR_USERS { isMe: true }` response.
 ///
-/// Composio wraps the upstream `{ viewer: { id: …, name: … } }` GraphQL
-/// shape; this walker is defensive against both raw and wrapped
-/// payloads. The id is returned as a string because
-/// `LINEAR_LIST_LINEAR_ISSUES` accepts the `assignee` filter as either
-/// a string or `{ id: { eq: "..." } }`.
-///
-/// Only explicit viewer/user paths are probed — generic top-level
-/// `id` / `data.id` fallbacks were intentionally removed. This value
-/// drives the assignee filter for the whole sync, so picking up a
-/// non-viewer identifier (e.g. the first item id in a list response
-/// that Composio collapsed) would silently scope the sync to the
-/// wrong user and leak issues from another teammate. Stricter is
-/// safer; if Composio surfaces the viewer at a new shape we can add
-/// it explicitly here.
-pub(crate) fn extract_viewer_id(data: &Value) -> Option<String> {
-    pick_str(
-        data,
-        &["viewer.id", "data.viewer.id", "user.id", "data.user.id"],
-    )
+/// Linear's GraphQL viewer endpoint returns `{ nodes: [{ id, email, … }] }`.
+/// Composio may wrap this under `data` or `data.data`. We probe each
+/// shape and return the first element of the nodes array, falling back
+/// to the payload itself if it looks like a direct user object (has
+/// `id` or `email`).
+pub(crate) fn extract_viewer(data: &Value) -> Option<Value> {
+    let array_candidates = [
+        data.pointer("/data/nodes"),
+        data.pointer("/nodes"),
+        data.pointer("/data/data/nodes"),
+        data.pointer("/data/users/nodes"),
+    ];
+    for cand in array_candidates.into_iter().flatten() {
+        if let Some(arr) = cand.as_array() {
+            if let Some(first) = arr.first() {
+                return Some(first.clone());
+            }
+        }
+    }
+    // Fallback: if the payload itself looks like a user object, return it.
+    if data.get("id").is_some() || data.get("email").is_some() {
+        return Some(data.clone());
+    }
+    None
 }
 
-/// Extract Linear's Relay-style end cursor for pagination, if the page
-/// info indicates more results are available.
+/// Extract the viewer's ID string from a `LINEAR_LIST_LINEAR_USERS`
+/// response. Returns `None` if the payload does not contain a
+/// recognizable user ID.
+pub(crate) fn extract_viewer_id(data: &Value) -> Option<String> {
+    let viewer = extract_viewer(data)?;
+    pick_str(&viewer, &["id", "data.id"])
+}
+
+/// Extract a pagination cursor from a Linear connection `pageInfo` block.
 ///
-/// Linear's GraphQL connections expose `pageInfo: { hasNextPage, endCursor }`.
-/// We surface the cursor only when `hasNextPage` is true so the
-/// caller can use `.is_some()` as the "fetch another page" signal.
-pub(crate) fn extract_pagination_end_cursor(data: &Value) -> Option<String> {
+/// Returns `Some(endCursor)` only when `hasNextPage` is `true`;
+/// `None` when the last page has been reached or when the envelope does
+/// not carry `pageInfo` at all.
+pub(crate) fn extract_pagination_cursor(data: &Value) -> Option<String> {
     let page_info_candidates = [
-        data.pointer("/data/issues/pageInfo"),
-        data.pointer("/issues/pageInfo"),
         data.pointer("/data/pageInfo"),
         data.pointer("/pageInfo"),
+        data.pointer("/data/data/pageInfo"),
+        data.pointer("/data/issues/pageInfo"),
     ];
-    for page_info in page_info_candidates.into_iter().flatten() {
-        let has_next = page_info
+    for cand in page_info_candidates.into_iter().flatten() {
+        let has_next = cand
             .get("hasNextPage")
-            .and_then(Value::as_bool)
+            .and_then(|v| v.as_bool())
             .unwrap_or(false);
-        if !has_next {
-            continue;
-        }
-        if let Some(cursor) = page_info.get("endCursor").and_then(Value::as_str) {
-            let trimmed = cursor.trim();
-            if !trimmed.is_empty() {
-                return Some(trimmed.to_string());
+        if has_next {
+            if let Some(cursor) = cand.get("endCursor").and_then(|v| v.as_str()) {
+                let trimmed = cursor.trim();
+                if !trimmed.is_empty() {
+                    return Some(trimmed.to_string());
+                }
             }
         }
     }
@@ -150,4 +145,156 @@ pub(crate) fn now_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    // ── extract_issues ───────────────────────────────────────────────
+
+    #[test]
+    fn extract_issues_from_data_nodes() {
+        let data = json!({ "data": { "nodes": [{"id": "i1"}, {"id": "i2"}] } });
+        assert_eq!(extract_issues(&data).len(), 2);
+    }
+
+    #[test]
+    fn extract_issues_from_top_level_nodes() {
+        let data = json!({ "nodes": [{"id": "i3"}] });
+        assert_eq!(extract_issues(&data).len(), 1);
+    }
+
+    #[test]
+    fn extract_issues_from_data_issues_nodes() {
+        let data = json!({ "data": { "issues": { "nodes": [{"id": "i4"}, {"id": "i5"}, {"id": "i6"}] } } });
+        assert_eq!(extract_issues(&data).len(), 3);
+    }
+
+    #[test]
+    fn extract_issues_from_results() {
+        let data = json!({ "results": [{"id": "i7"}] });
+        assert_eq!(extract_issues(&data).len(), 1);
+    }
+
+    #[test]
+    fn extract_issues_empty_when_missing() {
+        let data = json!({ "foo": "bar" });
+        assert!(extract_issues(&data).is_empty());
+    }
+
+    // ── extract_issue_title ──────────────────────────────────────────
+
+    #[test]
+    fn extract_issue_title_from_title_field() {
+        let issue = json!({ "id": "i1", "title": "Fix the login bug" });
+        assert_eq!(
+            extract_issue_title(&issue),
+            Some("Fix the login bug".into())
+        );
+    }
+
+    #[test]
+    fn extract_issue_title_falls_back_to_wrapped_data() {
+        let issue = json!({ "data": { "title": "Wrapped issue" } });
+        assert_eq!(extract_issue_title(&issue), Some("Wrapped issue".into()));
+    }
+
+    #[test]
+    fn extract_issue_title_falls_back_to_identifier() {
+        let issue = json!({ "identifier": "ENG-42" });
+        assert_eq!(extract_issue_title(&issue), Some("ENG-42".into()));
+    }
+
+    // ── extract_issue_updated ────────────────────────────────────────
+
+    #[test]
+    fn extract_issue_updated_from_updated_at() {
+        let issue = json!({ "updatedAt": "2026-03-01T12:00:00.000Z" });
+        assert_eq!(
+            extract_issue_updated(&issue),
+            Some("2026-03-01T12:00:00.000Z".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_issue_updated_falls_back_to_snake_case() {
+        let issue = json!({ "data": { "updated_at": "2026-01-15T08:30:00.000Z" } });
+        assert_eq!(
+            extract_issue_updated(&issue),
+            Some("2026-01-15T08:30:00.000Z".to_string())
+        );
+    }
+
+    // ── extract_viewer ───────────────────────────────────────────────
+
+    #[test]
+    fn extract_viewer_from_data_nodes() {
+        let data = json!({ "data": { "nodes": [{ "id": "usr_1", "email": "a@b.com" }] } });
+        let v = extract_viewer(&data).expect("should find viewer");
+        assert_eq!(v["id"], "usr_1");
+    }
+
+    #[test]
+    fn extract_viewer_from_top_level_nodes() {
+        let data = json!({ "nodes": [{ "id": "usr_2" }] });
+        let v = extract_viewer(&data).expect("should find viewer");
+        assert_eq!(v["id"], "usr_2");
+    }
+
+    #[test]
+    fn extract_viewer_fallback_direct_object() {
+        let data = json!({ "id": "usr_direct", "name": "Direct User" });
+        let v = extract_viewer(&data).expect("should return direct object");
+        assert_eq!(v["id"], "usr_direct");
+    }
+
+    #[test]
+    fn extract_viewer_returns_none_when_absent() {
+        let data = json!({ "foo": "bar" });
+        assert!(extract_viewer(&data).is_none());
+    }
+
+    // ── extract_pagination_cursor ────────────────────────────────────
+
+    #[test]
+    fn extract_pagination_cursor_returns_cursor_when_has_next_page() {
+        let data = json!({
+            "data": {
+                "pageInfo": {
+                    "hasNextPage": true,
+                    "endCursor": "cursor_abc"
+                }
+            }
+        });
+        assert_eq!(
+            extract_pagination_cursor(&data),
+            Some("cursor_abc".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_pagination_cursor_returns_none_when_last_page() {
+        let data = json!({
+            "pageInfo": {
+                "hasNextPage": false,
+                "endCursor": "cursor_xyz"
+            }
+        });
+        assert!(extract_pagination_cursor(&data).is_none());
+    }
+
+    #[test]
+    fn extract_pagination_cursor_returns_none_when_absent() {
+        let data = json!({ "nodes": [{"id": "i1"}] });
+        assert!(extract_pagination_cursor(&data).is_none());
+    }
+
+    // ── now_ms ───────────────────────────────────────────────────────
+
+    #[test]
+    fn now_ms_returns_nonzero() {
+        assert!(now_ms() > 0);
+    }
 }

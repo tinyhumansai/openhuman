@@ -185,8 +185,8 @@ function createServerInstance() {
     openSockets.add(socket);
     socket.on("close", () => openSockets.delete(socket));
   });
-  nextServer.on("upgrade", (req, socket) =>
-    handleWebSocketUpgrade(req, socket),
+  nextServer.on("upgrade", (req, socket, head) =>
+    handleWebSocketUpgrade(req, socket, head),
   );
   return nextServer;
 }

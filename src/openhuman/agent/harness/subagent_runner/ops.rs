@@ -326,6 +326,44 @@ pub async fn run_subagent(
 // Typed mode — narrow prompt, filtered tools, cheaper model
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Deduplicate assembled tool specs by name, keeping the first occurrence.
+///
+/// The sub-agent's `filtered_specs` is a `Vec` assembled from
+/// `parent.all_tool_specs` indices plus dynamic tools, so a delegation tool can
+/// shadow a same-named skill/integration tool (common for the wide-set
+/// `tools_agent`), leaving two specs with the same name. Strict providers reject
+/// such a request with `400 "Tool names must be unique."` The main-agent path
+/// dedups via [`session::builder::dedup_visible_tool_specs`]; this separate
+/// sub-agent assembly must do the same.
+///
+/// First occurrence wins so registration-order semantics are preserved (tool
+/// dispatch still resolves by name). Dropped duplicates are logged at `debug`
+/// (diagnostic instrumentation, per the repo Rust logging guideline).
+///
+/// Extracted as a free function so the regression suite can exercise the dedup
+/// without standing up the full `run_typed_mode` plumbing.
+fn dedup_tool_specs_by_name(agent_id: &str, specs: Vec<ToolSpec>) -> Vec<ToolSpec> {
+    let mut seen: HashSet<String> = HashSet::with_capacity(specs.len());
+    let mut deduped: Vec<ToolSpec> = Vec::with_capacity(specs.len());
+    let mut dropped: Vec<String> = Vec::new();
+    for spec in specs {
+        if seen.insert(spec.name.clone()) {
+            deduped.push(spec);
+        } else {
+            dropped.push(spec.name);
+        }
+    }
+    if !dropped.is_empty() {
+        tracing::debug!(
+            agent_id = %agent_id,
+            "[subagent_runner] dropped {} duplicate tool spec(s) before sending to provider: {:?}",
+            dropped.len(),
+            dropped
+        );
+    }
+    deduped
+}
+
 /// Execute a sub-agent in "Typed" mode.
 ///
 /// This mode builds a brand-new, minimized system prompt specifically for the
@@ -689,6 +727,10 @@ async fn run_typed_mode(
                     // the user pref and doesn't change per-spawn.
                     gated_tools: cached_integration.gated_tools.clone(),
                     connected: cached_integration.connected,
+                    // Inherit the cached non-active status — this spawn
+                    // path only fires on connected toolkits, but keep the
+                    // field consistent with the source row for #2365.
+                    non_active_status: cached_integration.non_active_status.clone(),
                 };
                 let integration = &integration;
                 // Fuzzy-filter the toolkit's actions against the task prompt
@@ -824,20 +866,41 @@ async fn run_typed_mode(
         None
     };
 
-    let mut filtered_specs: Vec<ToolSpec> = allowed_indices
-        .iter()
-        .map(|&i| parent.all_tool_specs[i].clone())
-        .collect();
+    // Build provider-visible tool schemas in EXECUTION-PRECEDENCE order:
+    // `dynamic_tools` (extra_tools at runtime) before parent specs, because
+    // the inner loop's name lookup (see end of this fn) resolves
+    // `extra_tools` first and only falls back to `parent_tools`. Aligning
+    // the dedup order with the runtime lookup order guarantees the schema
+    // the model sees and the tool that actually executes describe the same
+    // behaviour. (CodeRabbit review on PR #2446.)
+    let mut filtered_specs: Vec<ToolSpec> = dynamic_tools.iter().map(|t| t.spec()).collect();
+    filtered_specs.extend(
+        allowed_indices
+            .iter()
+            .map(|&i| parent.all_tool_specs[i].clone()),
+    );
     let mut allowed_names: HashSet<String> = allowed_indices
         .iter()
         .map(|&i| parent.all_tools[i].name().to_string())
         .collect();
-    // Append dynamic tool specs / names so they're discoverable by the
-    // provider (native tool-calling) and by the inner loop's allowlist.
+    // Dynamic tool names must also be in the allowlist so the inner loop
+    // accepts model tool_calls that reference them.
     for tool in &dynamic_tools {
-        filtered_specs.push(tool.spec());
         allowed_names.insert(tool.name().to_string());
     }
+    // Dedup by name: first occurrence wins. Dynamic Composio action tools
+    // can share a name with an inherited parent-registry spec when the
+    // agent's AllowedAll scope includes a same-named skill tool. Some
+    // providers (Anthropic, OpenHuman cloud after the uniqueness-enforcement
+    // rollout) 400 on duplicate tool names — see TAURI-RUST-4. Because
+    // `filtered_specs` is in execution order (dynamic first), the kept
+    // schema matches what the runtime will actually dispatch.
+    let filtered_specs =
+        crate::openhuman::agent::harness::session::dedup_visible_tool_specs(filtered_specs);
+
+    // Dedup by tool name before the specs reach the provider (see
+    // `dedup_tool_specs_by_name` for why duplicates appear here).
+    let filtered_specs = dedup_tool_specs_by_name(&definition.id, filtered_specs);
 
     tracing::debug!(
         agent_id = %definition.id,
@@ -1679,6 +1742,10 @@ pub(crate) fn user_is_signed_in_to_composio(config: &crate::openhuman::config::C
 #[cfg(test)]
 #[path = "ops_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "ops_dedup_tests.rs"]
+mod dedup_tests;
 
 #[cfg(test)]
 #[path = "ops_truncation_tests.rs"]

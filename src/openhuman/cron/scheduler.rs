@@ -1,4 +1,5 @@
 use crate::core::event_bus::{publish_global, DomainEvent};
+use crate::openhuman::agent::error::AgentError;
 use crate::openhuman::config::Config;
 use crate::openhuman::cron::{
     due_jobs, next_run_for_schedule, record_last_run, record_run, remove_job, reschedule_after_run,
@@ -18,6 +19,63 @@ const SHELL_JOB_TIMEOUT_SECS: u64 = 120;
 const AGENT_JOB_USER_FAILURE_MESSAGE: &str = "Something went wrong. Please try again.\nThis error has been reported. You can also report it on Discord.\n<openhuman-link path=\"community/discord\">Report on Discord</openhuman-link>";
 const MORNING_BRIEFING_AGENT_ID: &str = "morning_briefing";
 const MORNING_BRIEFING_FAILURE_NOTIFICATION: &str = "Morning briefing could not run. Check your AI provider, API key, and connected apps, then run it again from Settings > Cron Jobs.";
+
+/// Map a typed [`AgentError`] to a canned, user-facing message for cron-job
+/// failure notifications.
+///
+/// **Contract (load-bearing — see `scheduler_tests::classifier_does_not_leak_error_content`):**
+/// this function returns only static `&'static str` constants. It MUST NEVER
+/// interpolate any field of `err` into its output (no `format!`, no
+/// `err.to_string()`, no `Debug`/`Display`). `last_agent_error` carries stack
+/// traces, provider URLs with query tokens, partial response bodies and
+/// occasionally user input — routing any of that into a user-visible
+/// notification would be a data-exposure regression.
+///
+/// Variants for which we have no concrete user action (e.g.
+/// [`AgentError::ToolExecutionError`], [`AgentError::Other`]) fall back to
+/// [`AGENT_JOB_USER_FAILURE_MESSAGE`], preserving today's behaviour.
+fn agent_error_to_user_message(err: &AgentError) -> &'static str {
+    match err {
+        AgentError::ProviderError { retryable: true, .. } => {
+            "The model provider is temporarily unavailable. The next run will retry automatically."
+        }
+        AgentError::ProviderError { retryable: false, .. } => {
+            "The model provider rejected the request. Check your provider credentials in Settings \u{2192} AI \u{2192} LLM."
+        }
+        AgentError::ContextLimitExceeded { .. } => {
+            "The conversation grew too long for the model. Start a new session or pick a model with a larger context window."
+        }
+        AgentError::CostBudgetExceeded { .. } => {
+            "You've reached the daily cost budget for this agent. Raise it in Settings \u{2192} Billing or wait for the next budget window."
+        }
+        AgentError::MaxIterationsExceeded { .. } => {
+            "The agent stopped after too many tool iterations. Raise the iteration cap in Settings \u{2192} AI \u{2192} LLM or simplify the task."
+        }
+        AgentError::CompactionFailed { .. } => {
+            "Automatic history compaction failed. The next run will start with a fresh context."
+        }
+        AgentError::PermissionDenied { .. } => {
+            "The agent needs a tool that isn't allowed on this channel. Adjust the permissions in Settings."
+        }
+        // ToolExecutionError and Other have no actionable canned message —
+        // their error bodies are too freeform to summarise safely without
+        // interpolating contents. Fall back to the generic copy.
+        AgentError::ToolExecutionError { .. } | AgentError::Other(_) => {
+            AGENT_JOB_USER_FAILURE_MESSAGE
+        }
+    }
+}
+
+/// Classify an [`anyhow::Error`] returned by the agent runtime into a canned
+/// user-facing message. If the underlying error is a typed [`AgentError`],
+/// route through [`agent_error_to_user_message`]; otherwise fall back to the
+/// generic message.
+fn classify_agent_anyhow_for_user(err: &anyhow::Error) -> &'static str {
+    match err.downcast_ref::<AgentError>() {
+        Some(agent_err) => agent_error_to_user_message(agent_err),
+        None => AGENT_JOB_USER_FAILURE_MESSAGE,
+    }
+}
 
 fn agent_session_target_tag(target: &SessionTarget) -> &'static str {
     match target {
@@ -378,11 +436,17 @@ async fn run_agent_job(config: &Config, job: &CronJob) -> (bool, String, Option<
             },
             None,
         ),
-        Err(e) => (
-            false,
-            AGENT_JOB_USER_FAILURE_MESSAGE.to_string(),
-            Some(e.to_string()),
-        ),
+        Err(e) => {
+            // Classify into a canned user-facing message *before* logging
+            // anything that touches `e`. The classifier output is a
+            // `&'static str` — it never contains any data derived from `e`.
+            // The raw error is preserved as `last_agent_error` for the
+            // observability pipeline (`report_error`), where stack traces
+            // and provider URLs are appropriate; it must NOT reach the
+            // user-visible notification body.
+            let user_message = classify_agent_anyhow_for_user(&e);
+            (false, user_message.to_string(), Some(e.to_string()))
+        }
     }
 }
 

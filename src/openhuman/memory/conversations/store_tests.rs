@@ -52,6 +52,23 @@ fn store_roundtrips_threads_and_messages() {
 }
 
 #[test]
+fn get_messages_for_new_empty_thread_returns_empty_list() {
+    let (_temp, store) = make_store();
+    store
+        .ensure_thread(CreateConversationThread {
+            parent_thread_id: None,
+            id: "empty-thread".to_string(),
+            title: "Conversation".to_string(),
+            created_at: "2026-04-10T12:00:00Z".to_string(),
+            labels: None,
+        })
+        .expect("ensure thread");
+
+    let messages = store.get_messages("empty-thread").expect("get messages");
+    assert!(messages.is_empty());
+}
+
+#[test]
 fn store_updates_message_metadata() {
     let (_temp, store) = make_store();
     store

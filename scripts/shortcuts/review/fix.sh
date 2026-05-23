@@ -38,6 +38,10 @@ done
 require "$agent"
 sync_pr "$pr"
 
+if [ "${REVIEW_AUTO_ASSIGN:-1}" = "1" ]; then
+  gh_assign_self_pr "$pr" "$REVIEW_REPO_RESOLVED"
+fi
+
 template="$here/prompts/fix.md"
 if [ ! -f "$template" ]; then
   echo "[review] missing prompt template: $template" >&2

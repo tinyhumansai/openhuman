@@ -133,12 +133,20 @@ pub(crate) async fn run_tool_call_loop(
         }
     };
 
-    let tool_specs: Vec<crate::openhuman::tools::ToolSpec> = tools_registry
+    // Filter to visible tools, then dedup by name before sending to the
+    // provider. Registry tools may collide with per-turn synthesised
+    // extra_tools (e.g. an `ArchetypeDelegationTool` whose
+    // `delegate_name = "research"` shadowing a same-named skill). Some
+    // providers (Anthropic, OpenHuman cloud after the uniqueness-enforcement
+    // rollout) 400 on duplicate tool names — see TAURI-RUST-4.
+    let filtered_specs: Vec<crate::openhuman::tools::ToolSpec> = tools_registry
         .iter()
         .chain(extra_tools.iter())
         .filter(|tool| is_visible(tool.name()))
         .map(|tool| tool.spec())
         .collect();
+    let tool_specs =
+        crate::openhuman::agent::harness::session::dedup_visible_tool_specs(filtered_specs);
     let use_native_tools = provider.supports_native_tools() && !tool_specs.is_empty();
 
     log::debug!(

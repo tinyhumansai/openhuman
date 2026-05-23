@@ -132,6 +132,16 @@ pub enum ExpectedErrorKind {
     /// `rpc.invoke_method`. See [`is_loopback_unavailable`] for the exact
     /// body shapes matched.
     LoopbackUnavailable,
+    /// A user prompt was rejected by the in-process prompt-injection guard
+    /// before it reached the model. Both enforcement actions that produce a
+    /// user-visible error — `Blocked` (score ≥ 0.70) and `ReviewBlocked`
+    /// (score ≥ 0.55) — are expected, user-input conditions: the detector
+    /// fired on the user's own message and the UI already surfaces an
+    /// actionable "please rephrase" message. Sentry has no remediation path
+    /// and the volume is high (OPENHUMAN-TAURI-140: ~1 480 events in 2 days,
+    /// ~56 events/hour, all from `openhuman.agent_chat` via
+    /// `local_ai.ops.agent_chat`).
+    PromptInjectionBlocked,
 }
 
 pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
@@ -186,6 +196,9 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     }
     if is_session_expired_message(message) {
         return Some(ExpectedErrorKind::SessionExpired);
+    }
+    if is_prompt_injection_blocked_message(&lower) {
+        return Some(ExpectedErrorKind::PromptInjectionBlocked);
     }
     None
 }
@@ -529,6 +542,18 @@ fn is_local_ai_capability_unavailable_message(lower: &str) -> bool {
     lower.contains("for this ram tier")
 }
 
+/// Detect prompts rejected by the in-process prompt-injection guard.
+///
+/// Both enforcement actions that produce a user-visible error — `Blocked`
+/// (score ≥ 0.70) and `ReviewBlocked` (score ≥ 0.55) — share a unique
+/// prefix that cannot appear in any other error path. Anchored to the exact
+/// strings emitted by `prompt_guard_user_message` in
+/// `src/openhuman/inference/local/ops.rs`.
+fn is_prompt_injection_blocked_message(lower: &str) -> bool {
+    lower.contains("prompt flagged for security review")
+        || lower.contains("prompt blocked by security policy")
+}
+
 /// Capture an error to Sentry with structured tags.
 ///
 /// `domain` and `operation` are required and become tags `domain:<…>` and
@@ -745,6 +770,14 @@ fn report_expected_message(kind: ExpectedErrorKind, message: &str, domain: &str,
                 operation = operation,
                 kind = "loopback_unavailable",
                 "[observability] {domain}.{operation} skipped expected loopback-unavailable error"
+            );
+        }
+        ExpectedErrorKind::PromptInjectionBlocked => {
+            tracing::info!(
+                domain = domain,
+                operation = operation,
+                kind = "prompt_injection_blocked",
+                "[observability] {domain}.{operation} skipped expected prompt-injection-blocked error"
             );
         }
     }
@@ -1235,6 +1268,45 @@ mod tests {
                 "rpc.invoke_method failed: Vision is disabled for this RAM tier. Switch to the 4-8 GB tier or above to enable it."
             ),
             Some(ExpectedErrorKind::LocalAiCapabilityUnavailable)
+        );
+    }
+
+    #[test]
+    fn classifies_prompt_injection_blocked_errors() {
+        // OPENHUMAN-TAURI-140: ~1 480 events from `openhuman.agent_chat` where
+        // users' messages scored ≥ 0.45 on the injection heuristic. Both
+        // enforcement wire shapes must be classified as expected so they stop
+        // reaching Sentry.
+        for raw in [
+            "Prompt flagged for security review and was not processed. Please rephrase clearly.",
+            "Prompt blocked by security policy. Please rephrase without instruction overrides or exfiltration requests.",
+        ] {
+            assert_eq!(
+                expected_error_kind(raw),
+                Some(ExpectedErrorKind::PromptInjectionBlocked),
+                "should classify as prompt-injection blocked: {raw}"
+            );
+        }
+
+        // Wrapped by the RPC dispatch layer — substring match must survive the prefix.
+        assert_eq!(
+            expected_error_kind(
+                "rpc.invoke_method failed: Prompt flagged for security review and was not processed. Please rephrase clearly."
+            ),
+            Some(ExpectedErrorKind::PromptInjectionBlocked)
+        );
+    }
+
+    #[test]
+    fn does_not_classify_unrelated_messages_as_prompt_injection_blocked() {
+        // Must not silently swallow real security errors or generic "prompt" mentions.
+        assert_eq!(
+            expected_error_kind("prompt injection detected in tool arguments"),
+            None
+        );
+        assert_eq!(
+            expected_error_kind("security review required for deploy"),
+            None
         );
     }
 

@@ -182,7 +182,7 @@ pub async fn invoke_method(state: AppState, method: &str, params: Value) -> Resu
         let sanitized_reason = crate::openhuman::inference::provider::ops::sanitize_api_error(msg);
         if is_session_expired_error(msg) {
             log::warn!(
-                "[jsonrpc] confirmed session expiry for method '{}' — publishing SessionExpired: {}",
+                "[jsonrpc] confirmed session expiry for method='{}' — publishing SessionExpired: {}",
                 method,
                 sanitized_reason
             );
@@ -196,8 +196,8 @@ pub async fn invoke_method(state: AppState, method: &str, params: Value) -> Resu
                 },
             );
         } else if is_unconfirmed_unauthorized_error(msg) {
-            log::warn!(
-                "[jsonrpc] unauthorized error for method '{}' did not match OpenHuman session expiry — leaving session intact: {}",
+            log::info!(
+                "[jsonrpc] unconfirmed unauthorized error for method='{}' (not session expiry) — leaving session intact: {}",
                 method,
                 sanitized_reason
             );
@@ -207,35 +207,76 @@ pub async fn invoke_method(state: AppState, method: &str, params: Value) -> Resu
     result
 }
 
-/// Helper to determine if an error message indicates an expired or invalid session.
+/// Helper to determine if an error message indicates an expired or invalid
+/// OpenHuman backend session.
 ///
-/// Uses the same strict classifier as observability so only explicit
-/// OpenHuman auth-session failures clear the app session. A generic
-/// `"401 Unauthorized"` or `"invalid token"` can come from BYO-key
-/// providers, Composio, channels, or other scoped downstream calls; those
-/// must surface as recoverable errors rather than publishing
-/// `DomainEvent::SessionExpired`.
+/// **Narrower than the previous implementation** (fixed in issue #2286):
 ///
-/// "No backend session token" is also treated as a session-expired signal: the
-/// auth profile is missing entirely (the user was never signed in, or their
-/// stored profile was wiped between login and the next RPC). The frontend may
-/// still believe it holds a session token from an optimistic post-login patch,
-/// so we want the same auto-cleanup + UI-level re-auth path to fire instead of
-/// repeatedly reporting this as a hard error to Sentry. See #1465-ish: users
-/// stuck on the onboarding `SkillsStep` would spam `composio_list_connections`
-/// failures every 5 s without ever being bounced back to the login screen.
+/// The old predicate matched ANY `"401 + unauthorized"` pattern, which caused
+/// downstream provider 401s (Discord bot token failures, BYO-key OpenAI /
+/// Anthropic failures, Composio direct-mode errors) to clear the user's session
+/// and log them out. The fix distinguishes between:
 ///
-/// "session JWT required" covers the case where a prior 401 already cleared the
-/// token and the very next RPC call (e.g. `channels_telegram_login_start`) finds
-/// no JWT in the store. This is the same auth-boundary condition, just surfaced
-/// as a local guard rather than a backend response.
+/// - **OpenHuman backend 401s** (`authed_json` in `src/api/rest.rs`): formatted
+///   as `"{METHOD} /path failed (401 Unauthorized): {body}"`, e.g.
+///   `"GET /teams failed (401 Unauthorized): {"success":false}"`. These always
+///   start with an HTTP method verb followed by a space and a forward slash.
+/// - **Provider / downstream 401s** (`api_error` in
+///   `src/openhuman/inference/provider/ops.rs`): formatted as
+///   `"{ProviderName} API error (401 Unauthorized): {body}"` or
+///   `"Discord API error: ... (401): Unauthorized"`. These start with a
+///   provider name, NOT an HTTP method verb.
+///
+/// **What still triggers session expiry:**
+/// - `"Session expired"` — explicit body text from the OpenHuman backend.
+/// - `"no backend session token"` — pre-flight guard; auth profile is missing.
+/// - `"session jwt required"` — local guard; JWT already cleared by a prior 401.
+/// - `"SESSION_EXPIRED"` — scheduler-gate sentinel (exact case).
+/// - HTTP-method-prefixed 401s (`GET /`, `POST /`, etc.) — backend path format.
+///
+/// **What no longer triggers session expiry (fixed in #2286):**
+/// - Provider-prefixed 401s (`"Discord API error: ..."`, `"OpenAI API error ..."`)
+/// - `"invalid token"` — too broad; also matches Discord / OAuth provider tokens.
+///
+/// Note: for inference-path OpenHuman backend 401s, `api_error` (in
+/// `inference/provider/ops.rs` lines 479–497) ALREADY publishes `SessionExpired`
+/// directly, so there is no regression if this predicate misses them — the
+/// subscriber is idempotent and a harmless double-publish would still be correct.
 fn is_session_expired_error(msg: &str) -> bool {
-    crate::core::observability::is_session_expired_message(msg)
+    // Explicit session-expired markers from the OpenHuman backend / local
+    // guards — delegated to the shared observability classifier so both the
+    // Sentry expected-error pipeline and the JSON-RPC publish boundary stay
+    // in lock-step.
+    if crate::core::observability::is_session_expired_message(msg) {
+        return true;
+    }
+    // OpenHuman backend path 401s via `authed_json`:
+    // format is "{METHOD} /path failed (401 Unauthorized): {body}"
+    // The HTTP-method prefix distinguishes these from provider-prefixed errors.
+    // HEAD and OPTIONS are intentionally excluded — `authed_json` only issues
+    // the five listed verbs (GET/POST/PUT/DELETE/PATCH) for REST JSON endpoints.
+    let lower = msg.to_ascii_lowercase();
+    if (lower.contains("401") && lower.contains("unauthorized"))
+        && (msg.starts_with("GET /")
+            || msg.starts_with("POST /")
+            || msg.starts_with("PUT /")
+            || msg.starts_with("DELETE /")
+            || msg.starts_with("PATCH /"))
+    {
+        return true;
+    }
+    false
 }
 
 /// Detect auth-looking failures that are not specific enough to clear the
 /// OpenHuman session. This is only for diagnostics; it must not feed the
 /// `SessionExpired` publish path.
+///
+/// Matches a generic `401 Unauthorized` OR a bare `"invalid token"` string,
+/// either of which can come from BYO-key providers, Composio, channels, or
+/// other scoped downstream calls. Used exclusively for diagnostic logging
+/// at the `invoke_method` call site so provider auth failures are visible
+/// in the logs without being misclassified as session expiry.
 fn is_unconfirmed_unauthorized_error(msg: &str) -> bool {
     let lower = msg.to_ascii_lowercase();
     (lower.contains("401") && lower.contains("unauthorized")) || lower.contains("invalid token")
@@ -419,11 +460,95 @@ fn error_html(message: &str) -> String {
     )
 }
 
+/// Inspect the browser fetch-metadata + Referer/Origin headers and decide
+/// whether the inbound `/auth/telegram` request looks like a legitimate
+/// top-level redirect from Telegram, or a cross-site CSRF attempt.
+///
+/// The endpoint cannot require a bearer token (the redirect happens in a
+/// fresh browser tab; `EventSource`-style header injection is not an
+/// option), and there is no in-process state issued by an authenticated
+/// FE flow today (`/start register` is initiated in Telegram, not in the
+/// local app). So this fetch-metadata gate is the layer that distinguishes
+/// "user clicked the link the bot sent them" from "malicious page
+/// navigates the user's loopback core via `window.location`/`<img>`".
+///
+/// Accepted shapes:
+/// - All `Sec-Fetch-*` headers absent (older browsers, CLI clients).
+/// - `Sec-Fetch-Mode: navigate` AND `Sec-Fetch-Dest: document`.
+/// - `Sec-Fetch-Site` is `same-origin` / `none`, OR `cross-site` with a
+///   `Referer` that starts with `https://t.me/` (the legit bot redirect).
+///
+/// Rejected shapes:
+/// - `Sec-Fetch-Mode` is `no-cors` / `cors` / `same-origin` (only
+///   `navigate` makes sense for a top-level page load).
+/// - `Sec-Fetch-Dest` is anything other than `document` (image/script/
+///   iframe embeds from malicious pages).
+/// - `Sec-Fetch-Site: cross-site` with a `Referer`/`Origin` that is not
+///   `https://t.me/...` (CSRF redirect from a third-party site).
+fn telegram_callback_origin_ok(headers: &axum::http::HeaderMap) -> Result<(), &'static str> {
+    let get_str = |name: &str| -> Option<&str> {
+        headers
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+    };
+
+    let mode = get_str("sec-fetch-mode");
+    let dest = get_str("sec-fetch-dest");
+    let site = get_str("sec-fetch-site");
+    let referer = get_str("referer");
+    let origin = get_str("origin");
+
+    if let Some(mode) = mode {
+        if mode != "navigate" {
+            return Err("Sec-Fetch-Mode must be 'navigate'");
+        }
+    }
+    if let Some(dest) = dest {
+        if dest != "document" {
+            return Err("Sec-Fetch-Dest must be 'document'");
+        }
+    }
+
+    let referer_is_telegram = referer
+        .map(|r| r.starts_with("https://t.me/") || r.starts_with("https://web.telegram.org/"))
+        .unwrap_or(false);
+    let origin_is_telegram = origin
+        .map(|o| o == "https://t.me" || o == "https://web.telegram.org")
+        .unwrap_or(false);
+
+    if let Some(site) = site {
+        if site == "cross-site" && !(referer_is_telegram || origin_is_telegram) {
+            return Err("cross-site redirect must originate from telegram");
+        }
+    } else if let Some(referer) = referer {
+        // No Sec-Fetch-Site: fall back to Referer host check. Accept
+        // loopback referer (direct nav inside the local app) — parsed
+        // exactly so `http://localhost.attacker.example/...` does not
+        // satisfy the gate — and accept telegram referer (legit bot
+        // redirect); reject everything else.
+        let local = url::Url::parse(referer)
+            .ok()
+            .and_then(|u| u.host_str().map(str::to_string))
+            .map(|h| matches!(h.as_str(), "localhost" | "127.0.0.1" | "::1"))
+            .unwrap_or(false);
+        if !(local || referer_is_telegram) {
+            return Err("Referer must be telegram or local");
+        }
+    }
+
+    Ok(())
+}
+
 /// Handles the Telegram authentication callback.
 ///
 /// It consumes a one-time token, exchanges it for a JWT from the backend,
 /// and stores the session locally.
-async fn telegram_auth_handler(Query(query): Query<TelegramAuthQuery>) -> impl IntoResponse {
+async fn telegram_auth_handler(
+    headers: axum::http::HeaderMap,
+    Query(query): Query<TelegramAuthQuery>,
+) -> impl IntoResponse {
     let html_response = |status: StatusCode, body: String| -> Response {
         (
             status,
@@ -432,6 +557,18 @@ async fn telegram_auth_handler(Query(query): Query<TelegramAuthQuery>) -> impl I
         )
             .into_response()
     };
+
+    if let Err(reason) = telegram_callback_origin_ok(&headers) {
+        log::warn!("[auth:telegram] rejecting callback: {reason}");
+        return html_response(
+            StatusCode::FORBIDDEN,
+            error_html(
+                "This login callback did not come from the Telegram bot. \
+                 Open the link the bot sent you directly, do not let \
+                 another page redirect you here.",
+            ),
+        );
+    }
 
     let token = match query
         .token
@@ -694,6 +831,10 @@ async fn cors_middleware(req: Request, next: Next) -> Response {
 /// distinct. Disallowed origins receive no `Access-Control-Allow-Origin`
 /// header at all — the browser will then refuse to surface the response to
 /// the calling JS. Non-browser callers (no `Origin` header) are unaffected.
+///
+/// For Docker / cloud deployments where the server binds to `0.0.0.0`,
+/// extend the allowlist via the `OPENHUMAN_CORE_ALLOWED_ORIGINS` env var
+/// (comma-separated) rather than wildcarding `Access-Control-Allow-Origin`.
 pub(super) fn with_cors_headers(mut response: Response, origin: Option<&str>) -> Response {
     let headers = response.headers_mut();
     headers.append(header::VARY, HeaderValue::from_static("Origin"));
@@ -761,36 +902,107 @@ async fn schema_handler(State(_state): State<AppState>) -> impl IntoResponse {
 }
 
 /// Query parameters for the events SSE endpoint.
+///
+/// `client_id` selects which broadcast events to forward; `token` is the
+/// single-shot bind token minted by the `core.events_subscribe_token` RPC.
+/// Both are required — browser `EventSource` cannot attach an
+/// `Authorization` header, so the bind token is the only credential the
+/// endpoint accepts.
 #[derive(Debug, serde::Deserialize)]
 struct EventsQuery {
-    /// Unique identifier for the client requesting events.
     client_id: String,
+    #[serde(default)]
+    token: Option<String>,
 }
 
 /// Handler for the main events SSE endpoint.
 ///
-/// Streams real-time events filtered by `client_id`.
+/// Accepts either of two credentials:
+/// 1. `Authorization: Bearer <core token>` — used by CLI tooling, the
+///    Tauri shell via `core_rpc_relay`, and the in-tree e2e suite that
+///    can set HTTP headers directly. Validated against the same
+///    per-process bearer the rest of `/rpc` uses.
+/// 2. `?token=<bind>` minted via the `core.events_subscribe_token` RPC
+///    — used by browser `EventSource`, which cannot attach custom
+///    headers. The token is bound to a specific `client_id` and is
+///    consumed on validation so a leaked URL cannot be replayed.
+///
+/// Both paths converge on the same broadcast stream filtered by
+/// `client_id`.
 async fn events_handler(
+    headers: axum::http::HeaderMap,
     Query(query): Query<EventsQuery>,
-) -> Sse<impl tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>>> {
+) -> Response {
+    let bearer = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let bearer_ok = bearer
+        .map(crate::core::auth::verify_bearer_token)
+        .unwrap_or(false);
+
+    if !bearer_ok {
+        let supplied_token = query
+            .token
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        let Some(supplied_token) = supplied_token else {
+            log::warn!(
+                "[events] reject subscribe: missing bind token + missing bearer (client_id_len={})",
+                query.client_id.len()
+            );
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(json!({
+                    "ok": false,
+                    "error": "unauthorized",
+                    "message": "Missing credentials. Supply 'Authorization: Bearer <core>' or mint a bind token with the `core.events_subscribe_token` RPC and pass it as ?token="
+                })),
+            )
+                .into_response();
+        };
+        if !crate::core::event_bind_tokens::consume(&query.client_id, supplied_token) {
+            log::warn!(
+                "[events] reject subscribe: bind token invalid or expired (client_id_len={})",
+                query.client_id.len()
+            );
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(json!({
+                    "ok": false,
+                    "error": "unauthorized",
+                    "message": "Bind token is unknown, expired, or bound to a different client_id."
+                })),
+            )
+                .into_response();
+        }
+    }
+
     let client_id = query.client_id;
     let rx = crate::openhuman::channels::providers::web::subscribe_web_channel_events();
-    let stream = tokio_stream::wrappers::BroadcastStream::new(rx).filter_map(move |item| {
-        let event = match item {
-            Ok(ev) => ev,
-            Err(_) => return None,
-        };
-        if event.client_id != client_id {
-            return None;
-        }
-        let data = match serde_json::to_string(&event) {
-            Ok(data) => data,
-            Err(_) => return None,
-        };
-        Some(Ok(Event::default().event(event.event).data(data)))
-    });
+    let stream = tokio_stream::wrappers::BroadcastStream::new(rx).filter_map(
+        move |item| -> Option<Result<Event, std::convert::Infallible>> {
+            let event = match item {
+                Ok(ev) => ev,
+                Err(_) => return None,
+            };
+            if event.client_id != client_id {
+                return None;
+            }
+            let data = match serde_json::to_string(&event) {
+                Ok(data) => data,
+                Err(_) => return None,
+            };
+            Some(Ok(Event::default().event(event.event).data(data)))
+        },
+    );
 
-    Sse::new(stream).keep_alive(KeepAlive::new().interval(std::time::Duration::from_secs(10)))
+    Sse::new(stream)
+        .keep_alive(KeepAlive::new().interval(std::time::Duration::from_secs(10)))
+        .into_response()
 }
 
 /// Handler for the webhook debug events SSE endpoint.
@@ -821,7 +1033,7 @@ async fn root_handler() -> impl IntoResponse {
             "endpoints": {
                 "health": "/health",
                 "schema": "/schema",
-                "events": "/events?client_id=<id>",
+                "events": "/events?client_id=<id>&token=<core.events_subscribe_token>",
                 "rpc": "/rpc"
             },
             "usage": {

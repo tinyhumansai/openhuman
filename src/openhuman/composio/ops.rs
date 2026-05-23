@@ -300,10 +300,13 @@ pub async fn composio_authorize(
     let resp = match kind {
         ComposioClientKind::Backend(client) => {
             tracing::debug!(toolkit = %toolkit, "[composio] authorize: backend variant");
-            client.authorize(toolkit, extra_params).await.map_err(|e| {
-                report_composio_op_error("authorize", &e);
-                format!("[composio] authorize failed: {e:#}")
-            })?
+            super::oauth_handoff::authorize_with_meta_guard(&client, toolkit, extra_params)
+                .await
+                .map_err(|e| {
+                    report_composio_op_error("authorize", &e);
+                    let wrapped = super::oauth_handoff::wrap_authorize_rate_limit_error(toolkit, e);
+                    format!("[composio] authorize failed: {wrapped:#}")
+                })?
         }
         ComposioClientKind::Direct(direct) => {
             tracing::info!(
@@ -327,9 +330,16 @@ pub async fn composio_authorize(
                      app.composio.dev for your auth config"
                 );
             }
-            direct_authorize(&direct, toolkit, &config.composio.entity_id)
-                .await
-                .map_err(|e| format!("[composio-direct] authorize failed: {e:#}"))?
+            super::oauth_handoff::direct_authorize_with_meta_guard(
+                &direct,
+                toolkit,
+                &config.composio.entity_id,
+            )
+            .await
+            .map_err(|e| {
+                let wrapped = super::oauth_handoff::wrap_authorize_rate_limit_error(toolkit, e);
+                format!("[composio-direct] authorize failed: {wrapped:#}")
+            })?
         }
     };
 
@@ -1668,6 +1678,86 @@ async fn fetch_connected_integrations_uncached(
         .filter(|toolkit| !toolkit.is_empty())
         .collect();
 
+    // Most-informative *non-active* status per toolkit slug. Lets the
+    // integrations_agent spawn-gate (#2365) emit a precise message
+    // when a connection row exists but isn't usable yet (`INITIATED`
+    // — OAuth still in progress) or any longer (`EXPIRED` / `FAILED`)
+    // — instead of the legacy generic "available but not authorized".
+    //
+    // Status priority (UI-actionability):
+    //   1. EXPIRED  — reconnect path
+    //   2. FAILED / ERROR — reconnect path
+    //   3. INITIATED / INITIALIZING / PENDING — finish OAuth in browser
+    //   4. anything else — passes through verbatim
+    let non_active_status_by_slug: std::collections::HashMap<String, String> = {
+        fn priority(status: &str) -> u8 {
+            let s = status.trim().to_ascii_uppercase();
+            match s.as_str() {
+                "EXPIRED" => 4,
+                "FAILED" | "ERROR" => 3,
+                "INITIATED" | "INITIALIZING" | "PENDING" => 2,
+                _ => 1,
+            }
+        }
+        let mut map: std::collections::HashMap<String, (u8, String)> =
+            std::collections::HashMap::new();
+        for conn in connections.iter().filter(|c| !c.is_active()) {
+            let slug = conn.normalized_toolkit();
+            if slug.is_empty() {
+                continue;
+            }
+            // Don't override an ACTIVE-slug — those carry no non-active
+            // status from this map's perspective.
+            if connected_slugs.contains(&slug) {
+                continue;
+            }
+            let p = priority(&conn.status);
+            map.entry(slug.clone())
+                .and_modify(|cur| {
+                    if p > cur.0 {
+                        tracing::debug!(
+                            target: "composio",
+                            toolkit = %slug,
+                            previous_status = %cur.1,
+                            previous_priority = cur.0,
+                            new_status = %conn.status,
+                            new_priority = p,
+                            "[composio] non_active_status_by_slug: upgraded most-informative status"
+                        );
+                        *cur = (p, conn.status.clone());
+                    } else {
+                        tracing::trace!(
+                            target: "composio",
+                            toolkit = %slug,
+                            kept_status = %cur.1,
+                            kept_priority = cur.0,
+                            candidate_status = %conn.status,
+                            candidate_priority = p,
+                            "[composio] non_active_status_by_slug: kept higher-priority status"
+                        );
+                    }
+                })
+                .or_insert_with(|| {
+                    tracing::debug!(
+                        target: "composio",
+                        toolkit = %slug,
+                        status = %conn.status,
+                        priority = p,
+                        "[composio] non_active_status_by_slug: first non-active row"
+                    );
+                    (p, conn.status.clone())
+                });
+        }
+        let final_map: std::collections::HashMap<String, String> =
+            map.into_iter().map(|(k, (_, v))| (k, v)).collect();
+        tracing::debug!(
+            target: "composio",
+            entries = final_map.len(),
+            "[composio] non_active_status_by_slug: final map"
+        );
+        final_map
+    };
+
     // Deduplicate the allowlist so a backend that returns duplicates
     // doesn't produce dual entries downstream.
     let mut unique_toolkits: Vec<String> = allowlisted_toolkits.clone();
@@ -1764,6 +1854,11 @@ async fn fetch_connected_integrations_uncached(
             tools,
             gated_tools,
             connected,
+            non_active_status: if connected {
+                None
+            } else {
+                non_active_status_by_slug.get(slug).cloned()
+            },
         });
     }
 
@@ -1779,6 +1874,7 @@ async fn fetch_connected_integrations_uncached(
         tracing::debug!(
             toolkit = %ci.toolkit,
             connected = ci.connected,
+            non_active_status = ?ci.non_active_status,
             tool_count = ci.tools.len(),
             "[composio] integration overview"
         );

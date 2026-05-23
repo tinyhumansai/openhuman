@@ -1,3 +1,4 @@
+pub mod generated;
 pub mod local_cli;
 pub mod ops;
 pub mod orchestrator_tools;

@@ -155,18 +155,19 @@ impl UnifiedMemory {
 
         let chunks = Self::chunk_document_content(&input.content, 225);
         for (idx, chunk) in chunks.iter().enumerate() {
-            let embedding = self
-                .embedder
-                .embed_one(chunk)
-                .await
-                .ok()
-                .map(|v| Self::vec_to_bytes(&v));
+            // Embed the chunk, capturing the model signature + dimension so recall
+            // can exclude vectors produced by a different embedding model (cross-model
+            // cosine is meaningless) and guard against dimension mismatches.
+            let embedded = self.embedder.embed_one(chunk).await.ok();
+            let dim = embedded.as_ref().map(|v| v.len() as i64);
+            let model_signature = embedded.as_ref().map(|_| self.embedder.signature());
+            let embedding = embedded.as_ref().map(|v| Self::vec_to_bytes(v));
             let chunk_id = format!("{document_id}:{idx}");
             let conn = self.conn.lock();
             conn.execute(
                 "INSERT OR REPLACE INTO vector_chunks
-                  (namespace, document_id, chunk_id, text, embedding, metadata_json, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                  (namespace, document_id, chunk_id, text, embedding, metadata_json, created_at, updated_at, model_signature, dim)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                 params![
                     namespace,
                     document_id,
@@ -175,7 +176,9 @@ impl UnifiedMemory {
                     embedding,
                     json!({"lancedb_table": format!("ns_{namespace}"), "chunk_index": idx}).to_string(),
                     now,
-                    now
+                    now,
+                    model_signature,
+                    dim
                 ],
             )
             .map_err(|e| format!("insert vector chunk: {e}"))?;

@@ -621,6 +621,10 @@ EOF
   echo ""
   echo "OpenHuman is ready."
   echo "Launch: ${app_path}"
+  echo "If the AppImage prints 'Interpreter not found!' or unshare/uid_map errors,"
+  echo "try the .deb package from https://github.com/${REPO}/releases/latest"
+  echo "(Debian/Ubuntu) or report at https://github.com/${REPO}/issues with your"
+  echo "distro, kernel (uname -a), GPU driver (lspci), dmesg excerpt, and asset: ${ASSET_NAME}."
   echo "Uninstall: rm -f \"${app_path}\" \"${desktop_file}\""
 }
 
