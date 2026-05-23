@@ -617,6 +617,23 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
   );
 
   const lastReauthAtRef = useRef(0);
+  const suppressReauthUntilRef = useRef(0);
+
+  // Listen for deep-link auth suppression signals so that an in-flight
+  // `auth_store_session` call (OAuth deep link) does not race with the
+  // `core-rpc-auth-expired` handler and clear the session mid-delivery.
+  // See issue #2377.
+  useEffect(() => {
+    const onSuppressReauth = (event: Event) => {
+      const until = (event as CustomEvent<{ until: number }>).detail?.until ?? 0;
+      suppressReauthUntilRef.current = until;
+      log('[CoreState] suppress-reauth updated until=%d', until);
+    };
+    window.addEventListener('core-state:suppress-reauth', onSuppressReauth as EventListener);
+    return () => {
+      window.removeEventListener('core-state:suppress-reauth', onSuppressReauth as EventListener);
+    };
+  }, []);
 
   const clearSession = useCallback(async () => {
     logoutGuardUntilRef.current = Date.now() + 5_000;
@@ -665,6 +682,14 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
   useEffect(() => {
     const runReauth = (method: string, source: string) => {
       const now = Date.now();
+      if (now < suppressReauthUntilRef.current) {
+        log(
+          '[CoreState] auth-expired suppressed during deep-link auth delivery (method=%s source=%s)',
+          method,
+          source
+        );
+        return;
+      }
       if (now - lastReauthAtRef.current < 10_000) {
         log('auth-expired debounced (method=%s source=%s)', method, source);
         return;

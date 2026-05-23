@@ -682,6 +682,10 @@ impl ArchivistHook {
             let cfg = LlmSummariserConfig {
                 model: provider.name().to_string(),
                 structured_facet_extraction: false,
+                output_language: self
+                    .config
+                    .as_ref()
+                    .and_then(|cfg| cfg.output_language.clone()),
             };
             let summariser = LlmSummariser::new(cfg, Arc::clone(provider));
             tracing::debug!(

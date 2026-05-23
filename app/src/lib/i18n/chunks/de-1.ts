@@ -434,6 +434,14 @@ const de1: TranslationMap = {
   'settings.appearanceDesc': 'Wähle hell, dunkel oder passend zu deinem Systemthema',
   'settings.mascot': 'Maskottchen',
   'settings.mascotDesc': 'Wähle die Maskottchenfarbe aus, die in der gesamten App verwendet wird',
+  'channels.authMode.managed_dm': 'Mit OpenHuman anmelden',
+  'channels.authMode.oauth': 'OAuth-Anmeldung',
+  'channels.authMode.bot_token': 'Eigenen Bot-Token verwenden',
+  'channels.authMode.api_key': 'Eigenen API-Schlüssel verwenden',
+  'channels.fieldRequired': '{field} ist erforderlich',
+  'channels.mcp.title': 'MCP-Server',
+  'channels.mcp.description':
+    'Durchsuche und verwalte Model Context Protocol-Server, die die KI um neue Tools erweitern.',
 };
 
 export default de1;

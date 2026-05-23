@@ -1,0 +1,19 @@
+{
+  "name": "tauri-plugin-ptt-api",
+  "version": "0.1.0",
+  "description": "JS bindings for tauri-plugin-ptt (push-to-talk + TTS, iOS)",
+  "main": "guest-js/index.ts",
+  "types": "guest-js/index.ts",
+  "exports": {
+    ".": "./guest-js/index.ts"
+  },
+  "files": [
+    "guest-js"
+  ],
+  "peerDependencies": {
+    "@tauri-apps/api": ">=2.0.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/api": "^2"
+  }
+}

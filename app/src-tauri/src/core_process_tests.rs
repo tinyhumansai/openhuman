@@ -375,3 +375,47 @@ fn send_terminate_signal_cancels_shutdown_token() {
         );
     });
 }
+
+#[test]
+fn startup_timeout_cleanup_aborts_task_and_clears_slot() {
+    let rt = tokio::runtime::Runtime::new().expect("runtime");
+    rt.block_on(async {
+        let handle = CoreProcessHandle::new(19006);
+        let task = tokio::spawn(async {
+            tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
+            Ok::<(), anyhow::Error>(())
+        });
+
+        {
+            let mut guard = handle.task.lock().await;
+            *guard = Some(task);
+        }
+
+        let message = handle.cleanup_startup_timeout(false, false).await;
+
+        assert!(
+            message.contains("core process did not become ready within"),
+            "timeout message should include the readiness budget: {message}"
+        );
+        assert!(
+            message.contains("ready_signal=false"),
+            "timeout message should include ready signal state: {message}"
+        );
+        assert!(
+            message.contains("port_open=false"),
+            "timeout message should include final port state: {message}"
+        );
+        assert!(
+            message.contains("task_state=running"),
+            "timeout message should include task state: {message}"
+        );
+        assert!(
+            handle.task.lock().await.is_none(),
+            "cleanup must clear the managed task slot so retry can spawn fresh"
+        );
+        assert!(
+            handle.shutdown_token_is_cancelled().await,
+            "cleanup must cancel the startup token before aborting"
+        );
+    });
+}

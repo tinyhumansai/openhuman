@@ -13,6 +13,7 @@
 import { callCoreRpc } from '../../services/coreRpcClient';
 import type {
   ComposioActiveTriggersResponse,
+  ComposioAgentReadyToolkitsResponse,
   ComposioAuthorizeResponse,
   ComposioAvailableTriggersResponse,
   ComposioConnectionsResponse,
@@ -52,6 +53,24 @@ function unwrapCliEnvelope<T>(value: unknown): T {
 export async function listToolkits(): Promise<ComposioToolkitsResponse> {
   const raw = await callCoreRpc<unknown>({ method: 'openhuman.composio_list_toolkits' });
   return unwrapCliEnvelope<ComposioToolkitsResponse>(raw);
+}
+
+/**
+ * Fetch the slugs of toolkits that have an agent-ready curated
+ * catalog on the core side. The response is sorted alphabetically
+ * and is safe to cache once per session — the set only changes
+ * with core releases.
+ *
+ * Used by the Skills grid (issue #2283) to label connected
+ * toolkits without a catalog as "preview / coming soon" so users
+ * don't trigger the max-iterations failure that uncurated
+ * connections cause.
+ */
+export async function listAgentReadyToolkits(): Promise<ComposioAgentReadyToolkitsResponse> {
+  const raw = await callCoreRpc<unknown>({
+    method: 'openhuman.composio_list_agent_ready_toolkits',
+  });
+  return unwrapCliEnvelope<ComposioAgentReadyToolkitsResponse>(raw);
 }
 
 export async function listConnections(): Promise<ComposioConnectionsResponse> {

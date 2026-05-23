@@ -17,7 +17,11 @@ import type { Locale } from './types';
 import zhCN from './zh-CN';
 
 interface I18nContextValue {
-  t: (key: string) => string;
+  // `fallback`, when provided, is returned if neither the active locale nor
+  // English contains the key. This enables incremental migration: callers can
+  // pass a string they already had (e.g. a hardcoded label) without having to
+  // compare `t(key) === key` to detect missing translations.
+  t: (key: string, fallback?: string) => string;
   locale: Locale;
 }
 
@@ -58,9 +62,9 @@ function resolveEn(): Record<string, string> {
 }
 
 const I18nContext = createContext<I18nContextValue>({
-  t: (key: string) => {
+  t: (key: string, fallback?: string) => {
     const map = resolveEn();
-    return map[key] ?? key;
+    return map[key] ?? fallback ?? key;
   },
   locale: 'en',
 });
@@ -78,9 +82,9 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   }, [locale]);
 
   const t = useCallback(
-    (key: string): string => {
+    (key: string, fallback?: string): string => {
       const map = translations[locale] ?? resolveEn();
-      return map[key] ?? resolveEn()[key] ?? key;
+      return map[key] ?? resolveEn()[key] ?? fallback ?? key;
     },
     [locale]
   );

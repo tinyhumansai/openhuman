@@ -348,6 +348,12 @@ pub fn mark_summary_reembed_skipped(
     model_signature: &str,
     reason: &str,
 ) -> Result<()> {
+    let summary_id =
+        crate::openhuman::memory::tree::store::validate_reembed_skip_key("summary_id", summary_id)?;
+    let model_signature = crate::openhuman::memory::tree::store::validate_reembed_skip_key(
+        "model_signature",
+        model_signature,
+    )?;
     with_connection(config, |conn| {
         let now_ms = Utc::now().timestamp_millis();
         conn.execute(
@@ -359,6 +365,36 @@ pub fn mark_summary_reembed_skipped(
                     skipped_at_ms = excluded.skipped_at_ms",
             params![summary_id, model_signature, reason, now_ms],
         )?;
+        log::debug!(
+            "[memory_tree::store] mark_summary_reembed_skipped summary_id={summary_id} sig={model_signature} reason={reason}"
+        );
+        Ok(())
+    })
+}
+
+/// Remove a single summary tombstone so re-embed backfill can retry the row.
+///
+/// Idempotent — see [`crate::openhuman::memory::tree::store::clear_chunk_reembed_skipped`].
+pub fn clear_summary_reembed_skipped(
+    config: &Config,
+    summary_id: &str,
+    model_signature: &str,
+) -> Result<()> {
+    let summary_id =
+        crate::openhuman::memory::tree::store::validate_reembed_skip_key("summary_id", summary_id)?;
+    let model_signature = crate::openhuman::memory::tree::store::validate_reembed_skip_key(
+        "model_signature",
+        model_signature,
+    )?;
+    with_connection(config, |conn| {
+        conn.execute(
+            "DELETE FROM mem_tree_summary_reembed_skipped
+              WHERE summary_id = ?1 AND model_signature = ?2",
+            params![summary_id, model_signature],
+        )?;
+        log::debug!(
+            "[memory_tree::store] clear_summary_reembed_skipped summary_id={summary_id} sig={model_signature}"
+        );
         Ok(())
     })
 }

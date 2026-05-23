@@ -2,7 +2,6 @@ import debug from 'debug';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useOAuthConnectionListener } from '../../hooks/useOAuthConnectionListener';
-import { AUTH_MODE_LABELS } from '../../lib/channels/definitions';
 import { useT } from '../../lib/i18n/I18nContext';
 import { channelConnectionsApi } from '../../services/api/channelConnectionsApi';
 import { callCoreRpc } from '../../services/coreRpcClient';
@@ -194,7 +193,10 @@ const TelegramConfig = ({ definition }: TelegramConfigProps) => {
                 channel: 'telegram',
                 authMode: spec.mode,
                 status: 'error',
-                lastError: `${field.label} is required`,
+                lastError: t('channels.fieldRequired', '{field} is required').replace(
+                  '{field}',
+                  t(`channels.telegram.fields.${field.key}.label`, field.label || field.key)
+                ),
               })
             );
             return;
@@ -323,6 +325,16 @@ const TelegramConfig = ({ definition }: TelegramConfigProps) => {
 
   return (
     <div className="space-y-3">
+      <div className="rounded-lg border border-primary-200 dark:border-primary-500/30 bg-primary-50/80 dark:bg-primary-500/10 px-4 py-3 text-sm text-stone-700 dark:text-neutral-200">
+        <p className="font-medium text-stone-900 dark:text-neutral-100">
+          Remote control (Telegram)
+        </p>
+        <p className="mt-1 text-xs text-stone-600 dark:text-neutral-400">
+          From an allowed Telegram chat, send /status, /sessions, /new, or /help. Model routing
+          still uses /model and /models.
+        </p>
+      </div>
+
       {error && (
         <div className="rounded-lg border border-coral-200 dark:border-coral-500/30 bg-coral-50 dark:bg-coral-500/10 px-4 py-3 text-sm text-coral-700 dark:text-coral-300">
           {error}
@@ -341,10 +353,10 @@ const TelegramConfig = ({ definition }: TelegramConfigProps) => {
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="text-sm font-medium text-stone-900 dark:text-neutral-100">
-                  {AUTH_MODE_LABELS[spec.mode] ?? spec.mode}
+                  {t(`channels.authMode.${spec.mode}`)}
                 </p>
                 <p className="text-xs text-stone-500 dark:text-neutral-400 mt-1">
-                  {spec.description}
+                  {t(`channels.telegram.authMode.${spec.mode}.description`)}
                 </p>
                 {connection?.lastError && (
                   <p className="text-xs text-coral-600 mt-1">{connection.lastError}</p>
@@ -358,7 +370,13 @@ const TelegramConfig = ({ definition }: TelegramConfigProps) => {
                 {spec.fields.map(field => (
                   <ChannelFieldInput
                     key={field.key}
-                    field={field}
+                    field={{
+                      ...field,
+                      label: t(`channels.telegram.fields.${field.key}.label`, field.label),
+                      placeholder: field.placeholder
+                        ? t(`channels.telegram.fields.${field.key}.placeholder`, field.placeholder)
+                        : field.placeholder,
+                    }}
                     value={fieldValues[compositeKey]?.[field.key] ?? ''}
                     onChange={val => updateField(compositeKey, field.key, val)}
                     disabled={busyKeys[compositeKey]}

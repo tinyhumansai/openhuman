@@ -2,13 +2,21 @@ import { isTauri } from '@tauri-apps/api/core';
 import { getCurrent, onOpenUrl } from '@tauri-apps/plugin-deep-link';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { clearCoreRpcTokenCache, clearCoreRpcUrlCache } from '../../services/coreRpcClient';
 import {
   completeDeepLinkAuthProcessing,
   getDeepLinkAuthState,
   subscribeDeepLinkAuthState,
 } from '../../store/deepLinkAuthState';
+import { getStoredCoreMode } from '../configPersistence';
 import { setupDesktopDeepLinkListener } from '../desktopDeepLinkListener';
 import { storeSession } from '../tauriCommands';
+
+vi.mock('../configPersistence', () => ({ getStoredCoreMode: vi.fn() }));
+vi.mock('../../services/coreRpcClient', () => ({
+  clearCoreRpcUrlCache: vi.fn(),
+  clearCoreRpcTokenCache: vi.fn(),
+}));
 
 const waitForAuthSettled = (): Promise<void> =>
   new Promise(resolve => {
@@ -32,13 +40,6 @@ vi.mock('../../lib/coreState/store', () => ({
 const waitForOAuthAuthReadiness = vi.hoisted(() =>
   vi.fn().mockResolvedValue({ ready: true as const })
 );
-
-const coreRpcCache = vi.hoisted(() => ({
-  clearCoreRpcUrlCache: vi.fn(),
-  clearCoreRpcTokenCache: vi.fn(),
-}));
-
-vi.mock('../../services/coreRpcClient', () => coreRpcCache);
 
 vi.mock('../oauthAppVersionGate', async importOriginal => {
   const actual = await importOriginal<typeof import('../oauthAppVersionGate')>();
@@ -66,8 +67,9 @@ describe('desktopDeepLinkListener', () => {
     waitForOAuthAuthReadiness.mockResolvedValue({ ready: true });
     vi.mocked(storeSession).mockReset();
     vi.mocked(storeSession).mockResolvedValue(undefined);
-    coreRpcCache.clearCoreRpcUrlCache.mockClear();
-    coreRpcCache.clearCoreRpcTokenCache.mockClear();
+    vi.mocked(getStoredCoreMode).mockReturnValue(null);
+    vi.mocked(clearCoreRpcUrlCache).mockClear();
+    vi.mocked(clearCoreRpcTokenCache).mockClear();
     windowControls.show.mockClear();
     windowControls.unminimize.mockClear();
     windowControls.setFocus.mockClear();
@@ -181,8 +183,6 @@ describe('desktopDeepLinkListener', () => {
     await waitForAuthSettled();
 
     expect(storeSession).toHaveBeenCalledWith('abc', {});
-    expect(coreRpcCache.clearCoreRpcUrlCache).toHaveBeenCalledTimes(1);
-    expect(coreRpcCache.clearCoreRpcTokenCache).toHaveBeenCalledTimes(1);
     expect(getDeepLinkAuthState().isProcessing).toBe(false);
   });
 
@@ -204,5 +204,48 @@ describe('desktopDeepLinkListener', () => {
       message:
         'OAuth sign-in failed before OpenHuman received authorization. Check the provider app settings and try again.',
     });
+  });
+
+  it('busts RPC caches before storeSession in cloud mode', async () => {
+    vi.mocked(getStoredCoreMode).mockReturnValue('cloud');
+    vi.mocked(getCurrent).mockResolvedValue(['openhuman://auth?token=abc&key=auth']);
+
+    await setupDesktopDeepLinkListener();
+    await waitForAuthSettled();
+
+    expect(clearCoreRpcUrlCache).toHaveBeenCalledTimes(1);
+    expect(clearCoreRpcTokenCache).toHaveBeenCalledTimes(1);
+    expect(storeSession).toHaveBeenCalledWith('abc', {});
+  });
+
+  it('does NOT bust RPC caches before storeSession in local mode', async () => {
+    vi.mocked(getStoredCoreMode).mockReturnValue('local');
+    vi.mocked(getCurrent).mockResolvedValue(['openhuman://auth?token=abc&key=auth']);
+
+    await setupDesktopDeepLinkListener();
+    await waitForAuthSettled();
+
+    expect(clearCoreRpcUrlCache).not.toHaveBeenCalled();
+    expect(clearCoreRpcTokenCache).not.toHaveBeenCalled();
+    expect(storeSession).toHaveBeenCalledWith('abc', {});
+  });
+
+  it('dispatches suppress-reauth before storeSession and clears it after in cloud mode', async () => {
+    vi.mocked(getStoredCoreMode).mockReturnValue('cloud');
+    vi.mocked(getCurrent).mockResolvedValue(['openhuman://auth?token=abc&key=auth']);
+
+    const suppressEvents: Array<{ until: number }> = [];
+    window.addEventListener('core-state:suppress-reauth', event => {
+      suppressEvents.push((event as CustomEvent<{ until: number }>).detail);
+    });
+
+    await setupDesktopDeepLinkListener();
+    await waitForAuthSettled();
+
+    // First event: non-zero until (suppress on)
+    expect(suppressEvents.length).toBeGreaterThanOrEqual(2);
+    expect(suppressEvents[0].until).toBeGreaterThan(0);
+    // Last event: until=0 (suppress cleared)
+    expect(suppressEvents[suppressEvents.length - 1].until).toBe(0);
   });
 });

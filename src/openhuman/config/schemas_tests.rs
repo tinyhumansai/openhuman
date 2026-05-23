@@ -43,6 +43,8 @@ fn every_registered_key_resolves_to_non_unknown_schema() {
         "get_analytics_settings",
         "update_meet_settings",
         "get_meet_settings",
+        "update_autonomy_settings",
+        "get_autonomy_settings",
         "agent_server_status",
         "reset_local_data",
         "get_onboarding_completed",
@@ -216,4 +218,57 @@ fn default_onboarding_flag_constant_points_to_hidden_marker() {
     // Keeps the constant's observable value pinned so tool behavior
     // stays stable across refactors.
     assert_eq!(DEFAULT_ONBOARDING_FLAG_NAME, ".skip_onboarding");
+}
+
+// ── autonomy settings handlers ───────────────────────────────
+
+use crate::openhuman::config::TEST_ENV_LOCK;
+
+#[tokio::test]
+async fn handle_get_autonomy_settings_returns_current_value() {
+    let _g = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let tmp = tempfile::tempdir().unwrap();
+    unsafe {
+        std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
+    }
+    // Seed a known value before reading.
+    let _ = crate::openhuman::config::ops::load_and_apply_autonomy_settings(
+        crate::openhuman::config::ops::AutonomySettingsPatch {
+            max_actions_per_hour: Some(123),
+        },
+    )
+    .await
+    .expect("seed");
+
+    let out = super::handle_get_autonomy_settings(serde_json::Map::new())
+        .await
+        .expect("handler");
+    // into_cli_compatible_json wraps data under "result" when logs are present.
+    let inner = out.get("result").unwrap_or(&out);
+    let value = inner.get("max_actions_per_hour").and_then(|v| v.as_u64());
+    assert_eq!(value, Some(123));
+
+    unsafe {
+        std::env::remove_var("OPENHUMAN_WORKSPACE");
+    }
+}
+
+#[tokio::test]
+async fn handle_update_autonomy_settings_rejects_invalid_value() {
+    let _g = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let tmp = tempfile::tempdir().unwrap();
+    unsafe {
+        std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
+    }
+    let mut params = serde_json::Map::new();
+    params.insert("max_actions_per_hour".into(), serde_json::json!(0));
+
+    let err = super::handle_update_autonomy_settings(params)
+        .await
+        .unwrap_err();
+    assert!(err.contains("between 1 and 10000"), "got: {err}");
+
+    unsafe {
+        std::env::remove_var("OPENHUMAN_WORKSPACE");
+    }
 }

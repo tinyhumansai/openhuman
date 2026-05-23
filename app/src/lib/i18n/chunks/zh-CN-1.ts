@@ -289,6 +289,19 @@ const zhCN1: TranslationMap = {
   'channels.status.error': '错误',
   'channels.status.configuring': '配置中',
   'channels.defaultMessaging': '默认消息渠道',
+
+  // Auth mode labels
+  'channels.authMode.managed_dm': '使用 OpenHuman 登录',
+  'channels.authMode.oauth': 'OAuth 登录',
+  'channels.authMode.bot_token': '使用你自己的 Bot Token',
+  'channels.authMode.api_key': '使用你自己的 API Key',
+
+  // Field validation
+  'channels.fieldRequired': '{field} 是必填项',
+
+  // MCP (virtual channel)
+  'channels.mcp.title': 'MCP 服务器',
+  'channels.mcp.description': '浏览和管理扩展 AI 能力的 Model Context Protocol 服务器。',
   'webhooks.title': 'Webhook',
   'webhooks.create': '创建 Webhook',
   'webhooks.noWebhooks': '未配置任何 Webhook',

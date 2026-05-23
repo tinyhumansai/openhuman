@@ -128,12 +128,14 @@ const persistedNotificationReducer = persistReducer(notificationPersistConfig, n
 const threadPersistConfig = { key: 'thread', storage, whitelist: ['selectedThreadId'] };
 const persistedThreadReducer = persistReducer(threadPersistConfig, threadReducer);
 
-// Mascot appearance + voice — color and voiceId preferences are per-user
-// so they travel with the account on logout/login rather than leaking
-// across users. `voiceId` is the user's chosen ElevenLabs voice for
-// reply speech (issue #1762); `null` falls back to the build-time
-// default in `app/src/utils/config.ts::MASCOT_VOICE_ID`.
-const mascotPersistConfig = { key: 'mascot', storage, whitelist: ['color', 'voiceId'] };
+// Persist only previously persisted mascot appearance fields plus the custom
+// GIF override added by this feature; leave existing non-persisted mascot
+// fields as runtime state to avoid changing refresh behavior.
+const mascotPersistConfig = {
+  key: 'mascot',
+  storage,
+  whitelist: ['color', 'voiceId', 'customMascotGifUrl'],
+};
 const persistedMascotReducer = persistReducer(mascotPersistConfig, mascotReducer);
 
 export const store = configureStore({

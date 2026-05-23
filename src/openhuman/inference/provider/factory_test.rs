@@ -458,7 +458,10 @@ fn legacy_inference_url_custom_provider_wins_over_openhuman_primary_for_unset_ro
 }
 
 #[test]
-fn legacy_inference_url_without_matching_provider_stays_on_openhuman_primary() {
+fn legacy_inference_url_without_matching_provider_returns_byok_sentinel() {
+    // BYOK intent: primary is OpenHuman but inference_url points at a custom
+    // endpoint with no matching cloud_providers entry. Must fail closed — do
+    // NOT silently route through the managed backend.
     let mut other = openai_entry("p_other", "other");
     other.endpoint = "https://other.example.com/v1".to_string();
 
@@ -466,7 +469,10 @@ fn legacy_inference_url_without_matching_provider_stays_on_openhuman_primary() {
     config.primary_cloud = Some("p_oh".to_string());
     config.inference_url = Some("https://api.example.com/v1".to_string());
 
-    assert_eq!(provider_for_role("reasoning", &config), "openhuman");
+    assert_eq!(
+        provider_for_role("reasoning", &config),
+        BYOK_INCOMPLETE_SENTINEL
+    );
 }
 
 #[test]
@@ -707,4 +713,88 @@ fn make_openhuman_backend_keeps_reasoning_quick() {
     config.default_model = Some("reasoning-quick-v1".to_string());
     let (_, model) = make_openhuman_backend(&config).expect("factory should succeed");
     assert_eq!(model, "reasoning-quick-v1");
+}
+
+// ── BYOK fail-closed tests ────────────────────────────────────────────────────
+
+#[test]
+fn byok_intent_no_primary_no_matching_entry_returns_sentinel() {
+    // No primary_cloud set, inference_url points at a non-openhuman host with
+    // no matching cloud_providers entry → must return the fail-closed sentinel.
+    let mut config = Config::default();
+    config.inference_url = Some("https://custom-api.example.com/v1".to_string());
+    assert_eq!(
+        provider_for_role("reasoning", &config),
+        BYOK_INCOMPLETE_SENTINEL
+    );
+}
+
+#[test]
+fn byok_intent_with_matching_entry_resolves_correctly() {
+    // Matching cloud_providers entry exists → legacy lookup succeeds; no sentinel.
+    let mut custom = openai_entry("p_custom", "custom");
+    custom.endpoint = "https://custom-api.example.com/v1".to_string();
+
+    let mut config = config_with_providers(vec![custom]);
+    config.inference_url = Some("https://custom-api.example.com/v1".to_string());
+
+    // Legacy URL matches the custom entry → "custom:gpt-4o"
+    assert_eq!(provider_for_role("reasoning", &config), "custom:gpt-4o");
+}
+
+#[test]
+fn openhuman_inference_url_never_triggers_sentinel() {
+    // inference_url pointing at the managed backend is not BYOK intent.
+    let mut config = Config::default();
+    config.inference_url = Some("https://api.openhuman.ai/v1".to_string());
+    assert_eq!(provider_for_role("reasoning", &config), "openhuman");
+}
+
+#[test]
+fn explicit_workload_route_bypasses_byok_sentinel() {
+    // A per-role provider route set explicitly always wins over the BYOK check.
+    let mut config = Config::default();
+    config.inference_url = Some("https://custom-api.example.com/v1".to_string());
+    config.reasoning_provider = Some("openhuman".to_string());
+    // Explicit "openhuman" route → goes straight to backend, no sentinel.
+    assert_eq!(provider_for_role("reasoning", &config), "openhuman");
+}
+
+#[test]
+fn byok_sentinel_makes_provider_creation_error_with_clear_message() {
+    let mut config = Config::default();
+    config.inference_url = Some("https://custom-api.example.com/v1".to_string());
+
+    // Use match instead of unwrap_err(): Box<dyn Provider> doesn't impl Debug.
+    let msg = match create_chat_provider_from_string("reasoning", BYOK_INCOMPLETE_SENTINEL, &config)
+    {
+        Ok(_) => panic!("sentinel must produce an error, not a provider"),
+        Err(e) => e.to_string(),
+    };
+    assert!(
+        msg.contains("BYOK_INCOMPLETE"),
+        "error must name BYOK_INCOMPLETE; got: {msg}"
+    );
+    assert!(
+        msg.contains("custom-api.example.com"),
+        "error must include the configured inference_url; got: {msg}"
+    );
+}
+
+#[test]
+fn byok_sentinel_error_mentions_configuration_action() {
+    // The error message must tell the user how to fix the issue.
+    let mut config = Config::default();
+    config.inference_url = Some("https://byok.example.com/v1".to_string());
+
+    // Use match instead of unwrap_err(): Box<dyn Provider> doesn't impl Debug.
+    let msg = match create_chat_provider_from_string("chat", BYOK_INCOMPLETE_SENTINEL, &config) {
+        Ok(_) => panic!("sentinel must produce an error"),
+        Err(e) => e.to_string(),
+    };
+    // Must mention adding a cloud_providers entry or clearing inference_url.
+    assert!(
+        msg.contains("cloud_providers") || msg.contains("inference_url"),
+        "error must suggest a remediation; got: {msg}"
+    );
 }

@@ -16,6 +16,7 @@ export type SettingsRoute =
   | 'team-members'
   | 'team-invites'
   | 'developer-options'
+  | 'autonomy'
   | 'ai'
   | 'llm'
   | 'voice'
@@ -37,7 +38,8 @@ export type SettingsRoute =
   | 'webhooks-triggers'
   | 'composio-triggers'
   | 'composio-routing'
-  | 'mcp-server';
+  | 'mcp-server'
+  | 'devices';
 
 export interface BreadcrumbItem {
   label: string;
@@ -92,6 +94,7 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
     if (path.includes('/settings/privacy')) return 'privacy';
     if (path.includes('/settings/billing')) return 'billing';
     if (path.includes('/settings/developer-options')) return 'developer-options';
+    if (path.includes('/settings/autonomy')) return 'autonomy';
     if (path.includes('/settings/llm')) return 'llm';
     if (path.includes('/settings/ai')) return 'ai';
     if (path.includes('/settings/local-model-debug')) return 'local-model-debug';
@@ -112,6 +115,7 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
     // shorter `notifications` prefix.
     if (path.includes('/settings/notification-routing')) return 'notification-routing';
     if (path.includes('/settings/notifications')) return 'notifications';
+    if (path.includes('/settings/devices')) return 'devices';
     if (path.includes('/settings/mascot')) return 'mascot';
     if (path.includes('/settings/appearance')) return 'appearance';
     if (path.includes('/settings/mcp-server')) return 'mcp-server';
@@ -222,6 +226,7 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
       case 'composio-routing':
       case 'notification-routing':
       case 'mcp-server':
+      case 'autonomy':
         return [settingsCrumb, developerCrumb];
 
       // Developer options section page
@@ -230,6 +235,9 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
 
       // Notifications panel sits at the top level of Settings.
       case 'notifications':
+        return [settingsCrumb];
+
+      case 'devices':
         return [settingsCrumb];
 
       // Mascot appearance panel sits at the top level of Settings.

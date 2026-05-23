@@ -211,16 +211,19 @@ const de5: TranslationMap = {
   'settings.developerMenu.mcpServer.title': 'MCP Server',
   'settings.developerMenu.mcpServer.desc':
     'Konfiguriere externe MCP-Clients für die Verbindung mit OpenHuman',
+  'settings.developerMenu.autonomy.title': 'Agent-Autonomie',
+  'settings.developerMenu.autonomy.desc':
+    'Aktionsraten-Limits und Sicherheitsschwellen für Werkzeuge',
   'settings.developerMenu.integrationTriggers.title': 'Integrationsauslöser',
   'settings.developerMenu.integrationTriggers.desc':
     'Konfiguriere KI-Triage-Einstellungen für Composio-Integrationsauslöser',
-  'settings.mcpServer.title': 'MCP Server',
+  'settings.mcpServer.title': 'MCP-Server',
   'settings.mcpServer.toolsSectionTitle': 'Verfügbare Werkzeuge',
   'settings.mcpServer.toolsSectionDesc':
-    'Werkzeuge, die über den MCP-stdio-Server verfügbar sind, wenn openhuman-core mcp ausgeführt wird',
+    'Werkzeuge, die über den MCP-Stdio-Server beim Ausführen von openhuman-core mcp bereitgestellt werden',
   'settings.mcpServer.configSectionTitle': 'Client-Konfiguration',
   'settings.mcpServer.configSectionDesc':
-    'Wähle deinen MCP-Client aus, um den passenden Konfigurationsausschnitt zu erstellen',
+    'Wähle deinen MCP-Client aus, um das richtige Konfigurations-Snippet zu generieren',
   'settings.mcpServer.copySnippet': 'In die Zwischenablage kopieren',
   'settings.mcpServer.copied': 'Kopiert!',
   'settings.mcpServer.openConfigFile': 'Konfigurationsdatei öffnen',
@@ -237,6 +240,10 @@ const de5: TranslationMap = {
   'settings.mascot.active': 'Aktiv',
   'settings.mascot.characterDesc': 'Charakterbeschreibung',
   'settings.mascot.characterHeading': 'Zeichenüberschrift',
+  'settings.mascot.customGifError':
+    'Gib eine HTTPS-.gif-URL, eine Loopback-HTTP-.gif-URL, eine file://-.gif-URL oder einen lokalen .gif-Pfad ein.',
+  'settings.mascot.customGifHeading': 'Eigener GIF-Avatar',
+  'settings.mascot.customGifLabel': 'URL des eigenen GIF-Avatars',
   'settings.mascot.colorDesc': 'Farbbeschreibung',
   'settings.mascot.colorHeading': 'Farbüberschrift',
   'settings.mascot.loadingLibrary': 'OpenHuman-Bibliothek wird geladen…',
@@ -479,6 +486,9 @@ const de5: TranslationMap = {
   'webhooks.tunnels.toggleFailed': 'Echo konnte nicht umgeschaltet werden',
   'composio.authExpired': 'Authentifizierung abgelaufen',
   'composio.reconnect': 'Wieder verbinden',
+  'composio.previewBadge': 'Preview',
+  'composio.previewTooltip':
+    'Agent integration coming soon — you can connect, but the agent can’t use this toolkit yet.',
   'composio.directModeRequiresKey':
     'Speichern fehlgeschlagen. Der Direktmodus erfordert einen nicht leeren Schlüssel API.',
   'composio.notYetRouted': 'noch nicht geroutet',
@@ -523,28 +533,6 @@ const de5: TranslationMap = {
   'settings.mascot.colorYellow': 'Gelb',
   'settings.mascot.libraryUnavailable': 'OpenHuman Bibliothek nicht verfügbar',
   'settings.mascot.title': 'OpenHuman',
-  'settings.developerMenu.mcpServer.title': 'MCP-Server',
-  'settings.developerMenu.mcpServer.desc':
-    'Externe MCP-Clients für die Verbindung zu OpenHuman konfigurieren',
-  'settings.mcpServer.title': 'MCP-Server',
-  'settings.mcpServer.toolsSectionTitle': 'Verfügbare Tools',
-  'settings.mcpServer.toolsSectionDesc':
-    'Tools, die über den MCP-stdio-Server bereitgestellt werden, wenn openhuman-core mcp läuft',
-  'settings.mcpServer.configSectionTitle': 'Client-Konfiguration',
-  'settings.mcpServer.configSectionDesc':
-    'Wähle deinen MCP-Client, um den passenden Konfigurations-Snippet zu erzeugen',
-  'settings.mcpServer.copySnippet': 'In Zwischenablage kopieren',
-  'settings.mcpServer.copied': 'Kopiert!',
-  'settings.mcpServer.openConfigFile': 'Konfigurationsdatei öffnen',
-  'settings.mcpServer.binaryPathNotFound':
-    'OpenHuman-Binary nicht gefunden. Bei Quellbau bitte mit `cargo build --bin openhuman-core` bauen.',
-  'settings.mcpServer.openConfigError': 'Konfigurationsdatei konnte nicht geöffnet werden',
-  'settings.mcpServer.clientClaudeDesktop': 'Claude Desktop',
-  'settings.mcpServer.clientCursor': 'Cursor',
-  'settings.mcpServer.clientCodex': 'Codex',
-  'settings.mcpServer.clientZed': 'Zed',
-  'settings.mcpServer.configFilePath': 'Konfigurationsdatei',
-  'settings.mcpServer.clientSelectorAriaLabel': 'MCP-Client-Auswahl',
 };
 
 export default de5;

@@ -44,11 +44,13 @@ pub mod catalogs;
 pub mod catalogs_business;
 pub mod catalogs_google;
 pub mod catalogs_messaging;
+pub mod catalogs_microsoft;
 pub mod catalogs_productivity;
 pub mod catalogs_social_media;
 pub mod clickup;
 pub mod github;
 pub mod gmail;
+pub mod linear;
 pub mod notion;
 pub mod profile;
 pub mod profile_md;
@@ -87,6 +89,9 @@ const CAPABILITY_TOOLKITS: &[&str] = &[
     "airtable",
     "figma",
     "youtube",
+    "one_drive",
+    "excel",
+    "todoist",
 ];
 
 fn native_provider_sync_interval(toolkit: &str) -> Option<u64> {
@@ -95,13 +100,14 @@ fn native_provider_sync_interval(toolkit: &str) -> Option<u64> {
         "notion" => Some(notion::NotionProvider::new().sync_interval_secs()),
         "slack" => Some(slack::SlackProvider::new().sync_interval_secs()),
         "clickup" => Some(clickup::ClickUpProvider::new().sync_interval_secs()),
+        "linear" => Some(linear::LinearProvider::new().sync_interval_secs()),
         _ => None,
     }
     .flatten()
 }
 
 fn has_native_provider(toolkit: &str) -> bool {
-    matches!(toolkit, "gmail" | "notion" | "slack" | "clickup")
+    matches!(toolkit, "gmail" | "notion" | "slack" | "clickup" | "linear")
 }
 
 /// Static overview of the Composio integrations supported by this core build.
@@ -181,6 +187,7 @@ pub fn catalog_for_toolkit(toolkit: &str) -> Option<&'static [CuratedTool]> {
         "gmail" => Some(gmail::GMAIL_CURATED),
         "notion" => Some(notion::NOTION_CURATED),
         "github" => Some(github::GITHUB_CURATED),
+        "linear" => Some(linear::LINEAR_CURATED),
         // Catalog-only toolkits
         "slack" => Some(catalogs::SLACK_CURATED),
         "discord" => Some(catalogs::DISCORD_CURATED),
@@ -191,7 +198,6 @@ pub fn catalog_for_toolkit(toolkit: &str) -> Option<&'static [CuratedTool]> {
         "outlook" => Some(catalogs::OUTLOOK_CURATED),
         // MICROSOFT_TEAMS_* slugs extract to "microsoft" via toolkit_from_slug.
         "microsoft" | "microsoft_teams" => Some(catalogs::MICROSOFT_TEAMS_CURATED),
-        "linear" => Some(catalogs::LINEAR_CURATED),
         "jira" => Some(catalogs::JIRA_CURATED),
         "trello" => Some(catalogs::TRELLO_CURATED),
         "asana" => Some(catalogs::ASANA_CURATED),
@@ -208,8 +214,61 @@ pub fn catalog_for_toolkit(toolkit: &str) -> Option<&'static [CuratedTool]> {
         "airtable" => Some(catalogs::AIRTABLE_CURATED),
         "figma" => Some(catalogs::FIGMA_CURATED),
         "youtube" => Some(catalogs::YOUTUBE_CURATED),
+        // ONE_DRIVE_* slugs extract to "one" via toolkit_from_slug;
+        // alias both the prefix and the canonical UI/backend slugs.
+        "one" | "one_drive" | "onedrive" => Some(catalogs::ONE_DRIVE_CURATED),
+        "excel" => Some(catalogs::EXCEL_CURATED),
+        "todoist" => Some(catalogs::TODOIST_CURATED),
         _ => None,
     }
+}
+
+/// All toolkit slugs that have a curated agent-ready catalog.
+///
+/// Source of truth for the UI "preview / agent integration coming
+/// soon" badge: any connected toolkit whose slug is NOT in this list
+/// can be authorized but lacks a curated tool surface, so the agent
+/// can't use it productively.
+///
+/// Returned in sorted order to keep the RPC response stable across
+/// builds.
+pub fn agent_ready_toolkits() -> Vec<&'static str> {
+    let mut slugs: Vec<&'static str> = vec![
+        // Native providers
+        "gmail",
+        "notion",
+        "github",
+        // Catalog-only toolkits
+        "slack",
+        "discord",
+        "googlecalendar",
+        "googledrive",
+        "googledocs",
+        "googlesheets",
+        "outlook",
+        "microsoft_teams",
+        "linear",
+        "jira",
+        "trello",
+        "asana",
+        "dropbox",
+        "twitter",
+        "spotify",
+        "telegram",
+        "whatsapp",
+        "shopify",
+        "stripe",
+        "hubspot",
+        "salesforce",
+        "airtable",
+        "figma",
+        "youtube",
+        "one_drive",
+        "excel",
+        "todoist",
+    ];
+    slugs.sort_unstable();
+    slugs
 }
 
 pub use descriptions::toolkit_description;
@@ -293,6 +352,64 @@ mod tests {
     // alongside the implementation.
 
     #[test]
+    fn catalog_for_toolkit_resolves_new_microsoft_and_todoist_slugs() {
+        // Newly added catalogs (#2283): OneDrive, Excel, Todoist must be
+        // discoverable both by their canonical UI slug AND by the
+        // prefix that `toolkit_from_slug` extracts from action slugs.
+        assert!(catalog_for_toolkit("one_drive").is_some());
+        assert!(catalog_for_toolkit("onedrive").is_some());
+        // ONE_DRIVE_GET_FILE → toolkit_from_slug() → "one"
+        assert!(catalog_for_toolkit("one").is_some());
+        assert!(catalog_for_toolkit("excel").is_some());
+        assert!(catalog_for_toolkit("todoist").is_some());
+    }
+
+    #[test]
+    fn agent_ready_toolkits_includes_new_catalogs_and_is_sorted() {
+        let slugs = agent_ready_toolkits();
+        assert!(slugs.contains(&"one_drive"));
+        assert!(slugs.contains(&"excel"));
+        assert!(slugs.contains(&"todoist"));
+        // Spot-check legacy entries still present.
+        assert!(slugs.contains(&"gmail"));
+        assert!(slugs.contains(&"slack"));
+        // Uncurated toolkit must NOT appear — guarantees the UI badge
+        // logic can rely on this set to flag "preview" toolkits.
+        assert!(!slugs.contains(&"sharepoint"));
+        assert!(!slugs.contains(&"clickup"));
+        // Stable order across builds — the RPC consumer caches it.
+        let mut expected = slugs.clone();
+        expected.sort_unstable();
+        assert_eq!(slugs, expected);
+    }
+
+    #[test]
+    fn capability_matrix_includes_new_catalog_only_toolkits() {
+        let matrix = capability_matrix();
+        for slug in ["one_drive", "excel", "todoist"] {
+            let row = matrix
+                .iter()
+                .find(|entry| entry.toolkit == slug)
+                .unwrap_or_else(|| panic!("{slug} capability row missing"));
+            assert!(!row.native_provider, "{slug} should not be native");
+            assert!(row.curated_tools, "{slug} should be catalogued");
+            assert!(
+                row.curated_tool_count > 0,
+                "{slug} catalog should be non-empty"
+            );
+            assert!(
+                row.tool_execution,
+                "{slug} tool execution should be enabled"
+            );
+            // No profile/sync/memory ingest — catalog-only.
+            assert!(!row.user_profile);
+            assert!(!row.initial_sync);
+            assert!(!row.periodic_sync);
+            assert!(!row.memory_ingest);
+        }
+    }
+
+    #[test]
     fn capability_matrix_distinguishes_native_from_catalog_only_toolkits() {
         let matrix = capability_matrix();
 
@@ -352,6 +469,34 @@ mod tests {
         assert!(clickup.periodic_sync);
         assert_eq!(clickup.sync_interval_secs, Some(30 * 60));
         assert!(clickup.memory_ingest);
+    }
+
+    #[test]
+    fn capability_matrix_includes_linear_as_native_memory_provider() {
+        // Per-issue #2400 registration: a Linear row must appear in
+        // the capability matrix as a native memory-ingest provider,
+        // matching gmail / notion / slack / clickup. If a future
+        // change drops one of the five registration touchpoints
+        // (CAPABILITY_TOOLKITS, has_native_provider,
+        // native_provider_sync_interval, catalog_for_toolkit,
+        // toolkit_description) this test fails loud rather than
+        // silently degrading the provider to catalog-only status.
+        let matrix = capability_matrix();
+        let linear = matrix
+            .iter()
+            .find(|entry| entry.toolkit == "linear")
+            .expect("linear capability row");
+        assert!(linear.native_provider, "linear must be native");
+        assert!(linear.curated_tools, "linear must have a curated catalog");
+        assert!(
+            linear.curated_tool_count > 0,
+            "linear catalog must be non-empty"
+        );
+        assert!(linear.user_profile);
+        assert!(linear.initial_sync);
+        assert!(linear.periodic_sync);
+        assert_eq!(linear.sync_interval_secs, Some(30 * 60));
+        assert!(linear.memory_ingest);
     }
 
     #[test]
