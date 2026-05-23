@@ -2,7 +2,7 @@ import * as Sentry from '@sentry/react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { getCurrent, onOpenUrl } from '@tauri-apps/plugin-deep-link';
 
-import { patchCoreStateSnapshot } from '../lib/coreState/store';
+import { getCoreStateSnapshot, patchCoreStateSnapshot } from '../lib/coreState/store';
 import { consumeLoginToken } from '../services/api/authApi';
 import { clearCoreRpcTokenCache, clearCoreRpcUrlCache } from '../services/coreRpcClient';
 import {
@@ -110,6 +110,38 @@ const handleAuthDeepLink = async (parsed: URL) => {
 
     const sessionToken = key === 'auth' ? token : await consumeLoginToken(token);
     await applySessionToken(sessionToken);
+
+    // Wait for CoreStateProvider to process the session-token-updated
+    // event and commit the refreshed snapshot to React state.
+    //
+    // `applySessionToken` patches the module-level store with the session
+    // token immediately, but React state (read by ProtectedRoute) only
+    // updates after the async refreshCore() → fetchCoreAppSnapshot RPC
+    // → commitState() cycle completes. That cycle includes a backend
+    // /auth/me call that can take several seconds under load or test
+    // delays. Navigating to /home before commitState fires causes
+    // ProtectedRoute to see stale sessionToken=null and redirect to /.
+    //
+    // Poll for `currentUser` in the module-level snapshot: it is NOT set
+    // by patchCoreStateSnapshot (which only patches sessionToken), so its
+    // presence proves commitState ran with the full refreshed snapshot.
+    const commitDeadline = Date.now() + 15_000;
+    let commitObserved = false;
+    while (Date.now() < commitDeadline) {
+      const state = getCoreStateSnapshot();
+      if (state.snapshot?.currentUser && state.snapshot?.sessionToken) {
+        // Give React one more tick to re-render after commitState.
+        await new Promise(r => setTimeout(r, 150));
+        commitObserved = true;
+        break;
+      }
+      await new Promise(r => setTimeout(r, 200));
+    }
+    if (!commitObserved) {
+      console.warn(
+        '[DeepLink][auth] CoreStateProvider did not commit currentUser within 15 s — navigating anyway'
+      );
+    }
 
     window.location.hash = '/home';
     completeDeepLinkAuthProcessing();

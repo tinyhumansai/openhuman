@@ -97,6 +97,14 @@ export function setCoreStateSnapshot(next: CoreState): void {
   currentState = next;
 }
 
+// Expose the snapshot getter on `window` so WDIO E2E specs can read the
+// authenticated user id (held in core state, not redux) to scope socket
+// readiness, account-switch races, and other backing-state assertions.
+if (typeof window !== 'undefined') {
+  (window as unknown as { __OPENHUMAN_CORE_STATE__?: () => CoreState }).__OPENHUMAN_CORE_STATE__ =
+    getCoreStateSnapshot;
+}
+
 /**
  * Is the UI currently locked to the welcome-agent conversation? (#883)
  *

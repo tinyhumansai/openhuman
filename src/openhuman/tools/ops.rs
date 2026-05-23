@@ -146,6 +146,11 @@ pub fn all_tools_with_runtime(
         Box::new(CronUpdateTool::new(config.clone(), security.clone())),
         Box::new(CronRunTool::new(config.clone())),
         Box::new(CronRunsTool::new(config.clone())),
+        // Wallet tools — expose wallet operations to the agent tool-call pipeline
+        // so the crypto sub-agent can prepare transfers, check status, etc.
+        Box::new(WalletStatusTool::new()),
+        Box::new(WalletChainStatusTool::new()),
+        Box::new(WalletPrepareTransferTool::new()),
         Box::new(MemoryStoreTool::new(memory.clone(), security.clone())),
         Box::new(MemoryRecallTool::new(memory.clone())),
         Box::new(MemoryForgetTool::new(memory.clone(), security.clone())),

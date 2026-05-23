@@ -34,7 +34,7 @@ describe('Settings - Account Preferences', () => {
     await navigateViaHash('/settings/account');
 
     await waitForText('Account', 15_000);
-    await waitForText('Recovery Phrase', 15_000);
+    await waitForText('Recovery phrase', 15_000);
     await waitForText('Connections', 15_000);
     await waitForText('Privacy', 15_000);
   });
