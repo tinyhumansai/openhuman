@@ -40,6 +40,14 @@ pub struct Action {
     pub risk_level: Option<String>,
     pub approved: bool,
     pub allowed: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub capability_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub policy_decision: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approval_id: Option<String>,
 }
 
 /// Execution result
@@ -117,6 +125,25 @@ impl AuditEvent {
             risk_level: Some(risk_level),
             approved,
             allowed,
+            provider_id: None,
+            capability_id: None,
+            policy_decision: None,
+            approval_id: None,
+        });
+        self
+    }
+
+    /// Set action metadata for a generated tool execution.
+    pub fn with_generated_tool_action(mut self, entry: GeneratedToolExecutionLog<'_>) -> Self {
+        self.action = Some(Action {
+            command: Some(entry.tool_name.to_string()),
+            risk_level: Some(entry.risk_level.to_string()),
+            approved: entry.approved,
+            allowed: entry.allowed,
+            provider_id: Some(entry.provider_id.to_string()),
+            capability_id: Some(entry.capability_id.to_string()),
+            policy_decision: Some(entry.policy_decision.to_string()),
+            approval_id: entry.approval_id.map(str::to_string),
         });
         self
     }
@@ -221,6 +248,22 @@ pub struct CommandExecutionLog<'a> {
     pub duration_ms: u64,
 }
 
+/// Structured generated tool execution details for audit correlation.
+#[derive(Debug, Clone)]
+pub struct GeneratedToolExecutionLog<'a> {
+    pub channel: &'a str,
+    pub tool_name: &'a str,
+    pub provider_id: &'a str,
+    pub capability_id: &'a str,
+    pub risk_level: &'a str,
+    pub policy_decision: &'a str,
+    pub approval_id: Option<&'a str>,
+    pub approved: bool,
+    pub allowed: bool,
+    pub success: bool,
+    pub duration_ms: u64,
+}
+
 impl AuditLogger {
     /// Build a disabled `Arc<AuditLogger>` for tests and contexts that need a
     /// handle but should not write to disk. The `enabled = false` flag
@@ -296,6 +339,17 @@ impl AuditLogger {
                 entry.approved,
                 entry.allowed,
             )
+            .with_result(entry.success, None, entry.duration_ms, None);
+
+        self.log(&event)
+    }
+
+    /// Log a generated tool execution event with provider/capability
+    /// provenance suitable for runtime policy audits.
+    pub fn log_generated_tool_event(&self, entry: GeneratedToolExecutionLog<'_>) -> Result<()> {
+        let event = AuditEvent::new(AuditEventType::CommandExecution)
+            .with_actor(entry.channel.to_string(), None, None)
+            .with_generated_tool_action(entry.clone())
             .with_result(entry.success, None, entry.duration_ms, None);
 
         self.log(&event)
@@ -510,6 +564,42 @@ mod tests {
         let result = parsed.result.unwrap();
         assert!(result.success);
         assert_eq!(result.duration_ms, Some(42));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn audit_log_generated_tool_event_writes_correlation_fields() -> Result<()> {
+        let tmp = TempDir::new()?;
+        let config = AuditConfig {
+            enabled: true,
+            max_size_mb: 10,
+            ..Default::default()
+        };
+        let logger = AuditLogger::new(config, tmp.path().to_path_buf())?;
+
+        logger.log_generated_tool_event(GeneratedToolExecutionLog {
+            channel: "chat",
+            tool_name: "email.send",
+            provider_id: "mail.runtime",
+            capability_id: "email.send",
+            risk_level: "external_write",
+            policy_decision: "require_approval",
+            approval_id: Some("approval-1"),
+            approved: true,
+            allowed: true,
+            success: true,
+            duration_ms: 13,
+        })?;
+
+        let log_path = tmp.path().join("audit.log");
+        let content = tokio::fs::read_to_string(&log_path).await?;
+        let parsed: AuditEvent = serde_json::from_str(content.trim())?;
+        let action = parsed.action.unwrap();
+        assert_eq!(action.command, Some("email.send".to_string()));
+        assert_eq!(action.provider_id, Some("mail.runtime".to_string()));
+        assert_eq!(action.capability_id, Some("email.send".to_string()));
+        assert_eq!(action.policy_decision, Some("require_approval".to_string()));
+        assert_eq!(action.approval_id, Some("approval-1".to_string()));
         Ok(())
     }
 
