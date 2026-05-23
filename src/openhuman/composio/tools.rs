@@ -513,8 +513,9 @@ impl Tool for ComposioListConnectionsTool {
                     // `[composio-direct]` anchor BEFORE reporting so the
                     // classifier arm in `is_provider_user_state_message`
                     // (gated on that prefix) actually fires.
-                    let rendered =
-                        format!("[composio-direct] composio_list_connections (direct) failed: {e}");
+                    let rendered = format!(
+                        "[composio-direct] composio_list_connections (direct) failed: {e:#}"
+                    );
                     super::ops::report_composio_op_error("list_connections", &rendered);
                     anyhow::anyhow!("{rendered}")
                 })?
