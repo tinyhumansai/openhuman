@@ -331,6 +331,10 @@ const en1: TranslationMap = {
   'accounts.respondQueue': 'Respond Queue',
   'accounts.disconnect': 'Disconnect',
   'accounts.disconnectConfirm': 'Are you sure you want to disconnect this account?',
+  'accounts.disconnectRevokeConfirm': 'Revoke credentials for {name}?',
+  'accounts.disconnectClearMemory':
+    'Also delete all memory ingested from this source (cannot be undone)',
+  'accounts.disconnectYes': 'Yes, disconnect',
   'accounts.searchAccounts': 'Search accounts...',
   'channels.title': 'Channels',
   'channels.configure': 'Configure Channel',

@@ -98,4 +98,63 @@ describe('TelegramConfig', () => {
     });
     expect(await screen.findByText('Connected')).toBeInTheDocument();
   });
+
+  it('shows disconnect confirmation with clearMemory checkbox and calls API on confirm', async () => {
+    vi.mocked(channelConnectionsApi.disconnectChannel).mockResolvedValue(undefined);
+
+    renderWithProviders(<TelegramConfig definition={telegramDef} />, {
+      preloadedState: {
+        channelConnections: {
+          schemaVersion: 1,
+          migrationCompleted: true,
+          defaultMessagingChannel: 'telegram',
+          connections: {
+            telegram: {
+              bot_token: {
+                channel: 'telegram',
+                authMode: 'bot_token',
+                status: 'connected',
+                selectedDefault: false,
+                capabilities: [],
+                updatedAt: new Date().toISOString(),
+              },
+            },
+          },
+        },
+      },
+    });
+
+    // "Disconnect" button should be enabled when connected.
+    const disconnectBtns = screen.getAllByText('Disconnect');
+    // bot_token is the second Disconnect button (managed_dm is first, disconnected by default).
+    const botTokenBtn = disconnectBtns[1];
+    expect(botTokenBtn).not.toBeDisabled();
+
+    // Click Disconnect → confirmation UI appears.
+    fireEvent.click(botTokenBtn);
+    expect(await screen.findByText('Yes, disconnect')).toBeInTheDocument();
+    expect(
+      screen.getByText('Also delete all memory ingested from this source (cannot be undone)')
+    ).toBeInTheDocument();
+
+    // Click cancel → confirmation dismisses.
+    fireEvent.click(screen.getByText('Cancel'));
+    await waitFor(() => {
+      expect(screen.queryByText('Yes, disconnect')).not.toBeInTheDocument();
+    });
+
+    // Click Disconnect again (bot_token button), then confirm with checkbox.
+    fireEvent.click(screen.getAllByText('Disconnect')[1]);
+    const checkbox = screen.getByRole('checkbox');
+    fireEvent.click(checkbox);
+    fireEvent.click(await screen.findByText('Yes, disconnect'));
+
+    await waitFor(() => {
+      expect(channelConnectionsApi.disconnectChannel).toHaveBeenCalledWith(
+        'telegram',
+        'bot_token',
+        true
+      );
+    });
+  });
 });

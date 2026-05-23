@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  deleteConnection,
   disableTrigger,
   enableTrigger,
   listAgentReadyToolkits,
@@ -173,5 +174,29 @@ describe('listAgentReadyToolkits', () => {
     mockCallCoreRpc.mockResolvedValue({ toolkits: ['gmail'] });
     const out = await listAgentReadyToolkits();
     expect(out.toolkits).toEqual(['gmail']);
+  });
+});
+
+describe('deleteConnection', () => {
+  beforeEach(() => {
+    mockCallCoreRpc.mockReset();
+  });
+
+  it('calls composio_delete_connection with connection_id', async () => {
+    mockCallCoreRpc.mockResolvedValue({ result: { deleted: true }, logs: [] });
+    await deleteConnection('conn-abc');
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.composio_delete_connection',
+      params: { connection_id: 'conn-abc', clear_memory: false },
+    });
+  });
+
+  it('forwards clearMemory=true to the RPC', async () => {
+    mockCallCoreRpc.mockResolvedValue({ result: { deleted: true }, logs: [] });
+    await deleteConnection('conn-abc', true);
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.composio_delete_connection',
+      params: { connection_id: 'conn-abc', clear_memory: true },
+    });
   });
 });

@@ -294,6 +294,10 @@ const id1: TranslationMap = {
   'accounts.respondQueue': 'Antrean Respons',
   'accounts.disconnect': 'Putuskan',
   'accounts.disconnectConfirm': 'Yakin ingin memutuskan akun ini?',
+  'accounts.disconnectRevokeConfirm': 'Revoke credentials for {name}?',
+  'accounts.disconnectClearMemory':
+    'Also delete all memory ingested from this source (cannot be undone)',
+  'accounts.disconnectYes': 'Yes, disconnect',
   'accounts.searchAccounts': 'Cari akun...',
   'channels.title': 'Kanal',
   'channels.configure': 'Konfigurasi Kanal',

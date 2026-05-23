@@ -145,9 +145,17 @@ export const channelConnectionsApi = {
     return normalizeConnectResult(result);
   },
 
-  /** Disconnect a channel for a given auth mode. */
-  disconnectChannel: async (channel: ChannelType, authMode: ChannelAuthMode): Promise<void> => {
-    await callCoreRpc({ method: 'openhuman.channels_disconnect', params: { channel, authMode } });
+  /** Disconnect a channel for a given auth mode.
+   *  Set `clearMemory` to also delete ingested memory chunks for this channel. */
+  disconnectChannel: async (
+    channel: ChannelType,
+    authMode: ChannelAuthMode,
+    clearMemory?: boolean
+  ): Promise<void> => {
+    await callCoreRpc({
+      method: 'openhuman.channels_disconnect',
+      params: { channel, authMode, clearMemory: clearMemory ?? false },
+    });
   },
 
   /** Test channel credentials without persisting. */

@@ -8,6 +8,8 @@ use crate::api::jwt::get_session_token;
 use crate::api::rest::BackendOAuthClient;
 use crate::openhuman::config::{Config, DiscordConfig, IMessageConfig, TelegramConfig};
 use crate::openhuman::credentials;
+use crate::openhuman::memory::tree::store::delete_chunks_by_source;
+use crate::openhuman::memory::tree::types::SourceKind;
 use crate::rpc::RpcOutcome;
 
 use super::definitions::{
@@ -349,10 +351,15 @@ pub async fn connect_channel(
 }
 
 /// Disconnect a channel by removing stored credentials.
+///
+/// When `clear_memory` is true, every `mem_tree_chunks` row whose source_id
+/// begins with `{channel_id}:` is deleted (and dependent rows cleaned up) in
+/// a single transaction after credentials are revoked (non-fatal on failure).
 pub async fn disconnect_channel(
     config: &Config,
     channel_id: &str,
     auth_mode: ChannelAuthMode,
+    clear_memory: bool,
 ) -> Result<RpcOutcome<Value>, String> {
     // Verify channel exists.
     find_channel_definition(channel_id).ok_or_else(|| format!("unknown channel: {channel_id}"))?;
@@ -404,13 +411,44 @@ pub async fn disconnect_channel(
         }
     }
 
+    let memory_cleared: Option<serde_json::Value> = if clear_memory {
+        let pattern = format!("{channel_id}:%");
+        match delete_chunks_by_source(config, SourceKind::Chat, &pattern) {
+            Ok(n) => {
+                tracing::info!(
+                    target: "openhuman::channels",
+                    channel_id = %channel_id,
+                    deleted_chunks = n,
+                    "[channels] disconnect_channel: cleared {n} chunks for source {channel_id}"
+                );
+                Some(json!({"ok": true, "deleted_chunks": n}))
+            }
+            Err(e) => {
+                tracing::error!(
+                    target: "openhuman::channels",
+                    channel_id = %channel_id,
+                    error = %e,
+                    "[channels] disconnect_channel: memory clear failed (non-fatal)"
+                );
+                Some(json!({"ok": false, "error": e.to_string()}))
+            }
+        }
+    } else {
+        None
+    };
+
+    let mut resp = json!({
+        "channel": channel_id,
+        "auth_mode": auth_mode,
+        "disconnected": true,
+        "restart_required": true,
+    });
+    if let Some(v) = memory_cleared {
+        resp["memory_clear"] = v;
+    }
+
     Ok(RpcOutcome::single_log(
-        json!({
-            "channel": channel_id,
-            "auth_mode": auth_mode,
-            "disconnected": true,
-            "restart_required": true,
-        }),
+        resp,
         format!("removed credentials for {}", provider_key),
     ))
 }

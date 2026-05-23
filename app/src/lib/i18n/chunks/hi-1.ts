@@ -290,6 +290,10 @@ const hi1: TranslationMap = {
   'accounts.respondQueue': 'रिस्पॉन्ड क्यू',
   'accounts.disconnect': 'डिसकनेक्ट करें',
   'accounts.disconnectConfirm': 'क्या आप वाकई इस अकाउंट को डिसकनेक्ट करना चाहते हैं?',
+  'accounts.disconnectRevokeConfirm': 'Revoke credentials for {name}?',
+  'accounts.disconnectClearMemory':
+    'Also delete all memory ingested from this source (cannot be undone)',
+  'accounts.disconnectYes': 'Yes, disconnect',
   'accounts.searchAccounts': 'अकाउंट सर्च करें...',
   'channels.title': 'चैनल',
   'channels.configure': 'चैनल कॉन्फिगर करें',

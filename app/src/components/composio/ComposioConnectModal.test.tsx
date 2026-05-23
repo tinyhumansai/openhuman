@@ -609,3 +609,72 @@ describe('<ComposioConnectModal> — WhatsApp WABA id parity (#2127)', () => {
     });
   });
 });
+
+describe('<ComposioConnectModal> — disconnect confirmation', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const gmailConnection: ComposioConnection = {
+    id: 'ca_gmail_1',
+    toolkit: 'gmail',
+    status: 'ACTIVE',
+  };
+
+  it('shows confirmation with clearMemory checkbox and calls deleteConnection on confirm', async () => {
+    vi.mocked(composioApi.deleteConnection).mockResolvedValue({ deleted: true });
+
+    render(
+      <ComposioConnectModal toolkit={mockToolkit} connection={gmailConnection} onClose={() => {}} />
+    );
+
+    // Click "Disconnect".
+    fireEvent.click(screen.getByText('Disconnect'));
+
+    // Confirmation UI should appear with the memory-clear checkbox for supported toolkit.
+    expect(await screen.findByText('Yes, disconnect')).toBeInTheDocument();
+    expect(
+      screen.getByText('Also delete all memory ingested from this source (cannot be undone)')
+    ).toBeInTheDocument();
+
+    // Cancel returns to connected view.
+    fireEvent.click(screen.getByText('Cancel'));
+    await waitFor(() => {
+      expect(screen.queryByText('Yes, disconnect')).not.toBeInTheDocument();
+    });
+
+    // Click Disconnect again, check the box, and confirm.
+    fireEvent.click(screen.getByText('Disconnect'));
+    const checkbox = screen.getByRole('checkbox');
+    fireEvent.click(checkbox);
+    fireEvent.click(screen.getByText('Yes, disconnect'));
+
+    await waitFor(() => {
+      expect(composioApi.deleteConnection).toHaveBeenCalledWith('ca_gmail_1', true);
+    });
+  });
+
+  it('hides clearMemory checkbox for unsupported toolkits but still confirms disconnect', async () => {
+    const jiraConnection: ComposioConnection = {
+      id: 'ca_jira_1',
+      toolkit: 'jira',
+      status: 'ACTIVE',
+    };
+    vi.mocked(composioApi.deleteConnection).mockResolvedValue({ deleted: true });
+
+    render(
+      <ComposioConnectModal toolkit={jiraToolkit} connection={jiraConnection} onClose={() => {}} />
+    );
+
+    fireEvent.click(screen.getByText('Disconnect'));
+    expect(await screen.findByText('Yes, disconnect')).toBeInTheDocument();
+    expect(
+      screen.queryByText('Also delete all memory ingested from this source (cannot be undone)')
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('Yes, disconnect'));
+    await waitFor(() => {
+      expect(composioApi.deleteConnection).toHaveBeenCalledWith('ca_jira_1', false);
+    });
+  });
+});

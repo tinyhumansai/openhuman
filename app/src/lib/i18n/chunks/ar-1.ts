@@ -286,6 +286,10 @@ const ar1: TranslationMap = {
   'accounts.respondQueue': 'قائمة الردود',
   'accounts.disconnect': 'قطع الاتصال',
   'accounts.disconnectConfirm': 'هل أنت متأكد من أنك تريد قطع الاتصال بهذا الحساب؟',
+  'accounts.disconnectRevokeConfirm': 'Revoke credentials for {name}?',
+  'accounts.disconnectClearMemory':
+    'Also delete all memory ingested from this source (cannot be undone)',
+  'accounts.disconnectYes': 'Yes, disconnect',
   'accounts.searchAccounts': 'البحث في الحسابات...',
   'channels.title': 'القنوات',
   'channels.configure': 'ضبط القناة',
