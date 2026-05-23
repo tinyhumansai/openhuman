@@ -42,6 +42,7 @@ import {
   getSelectedThreadId,
   hexEncodeThreadId,
   typeIntoComposer,
+  waitForSocketConnected,
 } from '../helpers/chat-harness';
 import { callOpenhumanRpc } from '../helpers/core-rpc';
 import { textExists } from '../helpers/element-helpers';
@@ -137,6 +138,10 @@ describe('Chat harness — orchestrator → subagent flow', () => {
     expect(typeof threadId).toBe('string');
 
     await typeIntoComposer(PROMPT);
+    const socketReady = await waitForSocketConnected(30_000);
+    if (!socketReady) {
+      console.warn('[chat-harness-subagent] socket did not connect within 30 s — send may fail');
+    }
     expect(
       await browser.waitUntil(async () => await clickSend(), {
         timeout: 5_000,
@@ -205,7 +210,10 @@ describe('Chat harness — orchestrator → subagent flow', () => {
     const relPath = `memory/conversations/threads/${hexEncodeThreadId(threadId as string)}.jsonl`;
 
     let content = '';
-    const deadline = Date.now() + 10_000;
+    // The orchestrator's final synthesis may take extra time to persist:
+    // the agent harness flushes the JSONL asynchronously after the stream
+    // completes. Allow up to 30s for disk write to land.
+    const deadline = Date.now() + 30_000;
     while (Date.now() < deadline) {
       const read = await callOpenhumanRpc<{ result: { content_utf8: string } }>(
         'openhuman.test_support_read_workspace_file',
@@ -215,7 +223,7 @@ describe('Chat harness — orchestrator → subagent flow', () => {
         content = read.result.result.content_utf8;
         if (content.includes(CANARY_FINAL)) break;
       }
-      await browser.pause(300);
+      await browser.pause(500);
     }
     expect(content).toContain(CANARY_FINAL);
   });

@@ -1,11 +1,22 @@
-//! GitHub Composio toolkit — curated tool catalog only.
+//! GitHub Composio provider — incremental Memory Tree ingest for issues and
+//! pull requests involving the connected user.
 //!
-//! There is no native [`super::ComposioProvider`] implementation for
-//! GitHub yet (no profile fetch / sync). The curated catalog here is
-//! still consulted by [`super::catalog_for_toolkit`] so the meta-tool
-//! layer applies the same whitelist + scope filtering it does for
-//! Gmail and Notion.
+//! Mirrors the [`crate::openhuman::composio::providers::clickup`] layout so
+//! anyone familiar with ClickUp/Notion ingestion can read this without
+//! re-learning a new shape:
+//!
+//! - `provider.rs` — `impl ComposioProvider for GitHubProvider`
+//! - `sync.rs`     — payload-shape helpers (result extraction, title, cursor)
+//! - `tools.rs`    — `GITHUB_CURATED` whitelist of Composio actions
+//! - `tests.rs`    — unit tests for the helpers + trait metadata
+//!
+//! Issue: #2408.
 
+mod provider;
+mod sync;
+#[cfg(test)]
+mod tests;
 pub mod tools;
 
+pub use provider::GitHubProvider;
 pub use tools::GITHUB_CURATED;

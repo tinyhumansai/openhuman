@@ -22,7 +22,12 @@
  * thread for the scroll asserts.
  */
 import { waitForApp } from '../helpers/app-helpers';
-import { clickByTitle, clickSend, typeIntoComposer } from '../helpers/chat-harness';
+import {
+  clickByTitle,
+  clickSend,
+  typeIntoComposer,
+  waitForSocketConnected,
+} from '../helpers/chat-harness';
 import { textExists } from '../helpers/element-helpers';
 import { resetApp } from '../helpers/reset-app';
 import { navigateViaHash } from '../helpers/shared-flows';
@@ -121,6 +126,12 @@ describe('Chat harness — scroll + markdown render', () => {
     expect(await clickByTitle('New thread', 8_000)).toBe(true);
 
     await typeIntoComposer('Reply with the markdown sample please.');
+    const socketReady = await waitForSocketConnected(30_000);
+    if (!socketReady) {
+      console.warn(
+        '[chat-harness-scroll-render] socket did not connect within 30 s — send may fail'
+      );
+    }
     expect(
       await browser.waitUntil(async () => await clickSend(), {
         timeout: 5_000,

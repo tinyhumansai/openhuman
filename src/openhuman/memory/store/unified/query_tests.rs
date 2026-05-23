@@ -6,7 +6,7 @@ use serde_json::json;
 use tempfile::TempDir;
 
 use crate::openhuman::embeddings::NoopEmbedding;
-use crate::openhuman::memory::{NamespaceDocumentInput, UnifiedMemory};
+use crate::openhuman::memory::{Memory, NamespaceDocumentInput, UnifiedMemory};
 
 #[tokio::test]
 async fn graph_duplicate_upsert_aggregates_evidence_count() {
@@ -420,5 +420,258 @@ async fn format_context_text_includes_entity_types() {
         context.context_text.contains("ATLAS (PROJECT)"),
         "context_text should include entity type for Atlas, got: {}",
         context.context_text
+    );
+}
+
+// ── vector_chunks model-signature guard (embedding model-swap safety) ─────────
+
+use async_trait::async_trait;
+
+use crate::openhuman::embeddings::EmbeddingProvider;
+
+/// Embedder stub that returns a fixed vector for any text, with a controllable
+/// name + dimension so tests can produce distinct embedding signatures and
+/// dimensionalities.
+struct StubEmbedder {
+    name: &'static str,
+    vector: Vec<f32>,
+}
+
+#[async_trait]
+impl EmbeddingProvider for StubEmbedder {
+    fn name(&self) -> &str {
+        self.name
+    }
+    fn model_id(&self) -> &str {
+        self.name
+    }
+    fn dimensions(&self) -> usize {
+        self.vector.len()
+    }
+    async fn embed(&self, texts: &[&str]) -> anyhow::Result<Vec<Vec<f32>>> {
+        Ok(texts.iter().map(|_| self.vector.clone()).collect())
+    }
+}
+
+fn pref_doc(key: &str, content: &str) -> NamespaceDocumentInput {
+    NamespaceDocumentInput {
+        namespace: "user_pref".to_string(),
+        key: key.to_string(),
+        title: key.to_string(),
+        content: content.to_string(),
+        source_type: "pref".to_string(),
+        priority: "medium".to_string(),
+        tags: vec![],
+        metadata: json!({}),
+        category: "core".to_string(),
+        session_id: None,
+        document_id: None,
+    }
+}
+
+#[tokio::test]
+async fn upsert_tags_vector_chunks_with_signature_and_dim() {
+    let tmp = TempDir::new().unwrap();
+    let embedder = Arc::new(StubEmbedder {
+        name: "stub-a",
+        vector: vec![1.0, 0.0, 0.0],
+    });
+    let memory = UnifiedMemory::new(tmp.path(), embedder.clone(), None).unwrap();
+
+    memory
+        .upsert_document(pref_doc("reply_language", "Reply in British English."))
+        .await
+        .unwrap();
+
+    // The stored chunk carries the active model's signature.
+    let chunks = memory.load_chunks_for_scope("user_pref").await.unwrap();
+    assert_eq!(chunks.len(), 1, "expected exactly one chunk for the doc");
+    assert_eq!(
+        chunks[0].model_signature.as_deref(),
+        Some(embedder.signature().as_str()),
+        "chunk should be tagged with the embedder signature"
+    );
+
+    // The `dim` column reflects the embedding dimensionality.
+    let dim: Option<i64> = memory
+        .conn
+        .lock()
+        .query_row(
+            "SELECT dim FROM vector_chunks WHERE namespace = 'user_pref' LIMIT 1",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(dim, Some(3));
+}
+
+#[tokio::test]
+async fn vector_recall_excludes_other_model_signature() {
+    let tmp = TempDir::new().unwrap();
+
+    // Write under model A.
+    let emb_a = Arc::new(StubEmbedder {
+        name: "model-a",
+        vector: vec![1.0, 0.0, 0.0],
+    });
+    {
+        let memory = UnifiedMemory::new(tmp.path(), emb_a.clone(), None).unwrap();
+        memory
+            .upsert_document(pref_doc("p1", "formal tone for emails to my manager"))
+            .await
+            .unwrap();
+
+        // Same model → the vector is scored.
+        let chunks = memory.load_chunks_for_scope("user_pref").await.unwrap();
+        let scores = memory
+            .query_vector_scores_from_chunks(&chunks, "email tone")
+            .await
+            .unwrap();
+        assert!(!scores.is_empty(), "same-signature vectors must be scored");
+    }
+
+    // Reopen the same DB under a DIFFERENT model (swap), same dim + vector.
+    let emb_b = Arc::new(StubEmbedder {
+        name: "model-b",
+        vector: vec![1.0, 0.0, 0.0],
+    });
+    let memory_b = UnifiedMemory::new(tmp.path(), emb_b, None).unwrap();
+    let chunks = memory_b.load_chunks_for_scope("user_pref").await.unwrap();
+    assert_eq!(chunks.len(), 1, "the chunk persists across reopen");
+    let scores = memory_b
+        .query_vector_scores_from_chunks(&chunks, "email tone")
+        .await
+        .unwrap();
+    assert!(
+        scores.is_empty(),
+        "vectors from a different embedding model must be excluded, not compared as garbage"
+    );
+}
+
+#[tokio::test]
+async fn vector_recall_skips_dimension_mismatch_for_untagged_rows() {
+    let tmp = TempDir::new().unwrap();
+    // Active model produces 4-dim vectors.
+    let emb = Arc::new(StubEmbedder {
+        name: "model-a",
+        vector: vec![1.0, 0.0, 0.0, 0.0],
+    });
+    let memory = UnifiedMemory::new(tmp.path(), emb, None).unwrap();
+
+    // Insert a legacy chunk: NULL signature, 2-dim vector (a pre-tagging row left
+    // behind by a dimension-changing model swap).
+    let legacy_vec = UnifiedMemory::vec_to_bytes(&[1.0_f32, 0.0]);
+    memory
+        .conn
+        .lock()
+        .execute(
+            "INSERT INTO vector_chunks
+               (namespace, document_id, chunk_id, text, embedding, metadata_json, created_at, updated_at, model_signature, dim)
+             VALUES ('user_pref','legacy','legacy:0','old pref',?1,'{}',0,0,NULL,2)",
+            rusqlite::params![legacy_vec],
+        )
+        .unwrap();
+
+    let chunks = memory.load_chunks_for_scope("user_pref").await.unwrap();
+    assert_eq!(chunks.len(), 1);
+    assert!(
+        chunks[0].model_signature.is_none(),
+        "legacy row should have no signature"
+    );
+    let scores = memory
+        .query_vector_scores_from_chunks(&chunks, "old pref")
+        .await
+        .unwrap();
+    assert!(
+        scores.is_empty(),
+        "dimension-mismatched legacy vectors must be skipped, not scored 0"
+    );
+}
+
+// ── recall_relevant_by_vector — Lane B situational-pref relevance gate ─────────
+
+/// Embedder whose vector depends on keywords in the text, so a query can be
+/// genuinely relevant (high cosine) or irrelevant (zero) to a stored pref.
+struct KeywordEmbedder;
+
+#[async_trait]
+impl EmbeddingProvider for KeywordEmbedder {
+    fn name(&self) -> &str {
+        "keyword-stub"
+    }
+    fn model_id(&self) -> &str {
+        "keyword-stub"
+    }
+    fn dimensions(&self) -> usize {
+        2
+    }
+    async fn embed(&self, texts: &[&str]) -> anyhow::Result<Vec<Vec<f32>>> {
+        Ok(texts
+            .iter()
+            .map(|t| {
+                let lower = t.to_lowercase();
+                vec![
+                    if lower.contains("rust") { 1.0 } else { 0.0 },
+                    if lower.contains("email") { 1.0 } else { 0.0 },
+                ]
+            })
+            .collect())
+    }
+}
+
+fn situational_doc(key: &str, content: &str) -> NamespaceDocumentInput {
+    NamespaceDocumentInput {
+        namespace: "user_pref_situational".to_string(),
+        key: key.to_string(),
+        title: key.to_string(),
+        content: content.to_string(),
+        source_type: "pref".to_string(),
+        priority: "medium".to_string(),
+        tags: vec![],
+        metadata: json!({}),
+        category: "core".to_string(),
+        session_id: None,
+        document_id: None,
+    }
+}
+
+#[tokio::test]
+async fn recall_relevant_by_vector_gates_on_similarity() {
+    let tmp = TempDir::new().unwrap();
+    let memory = UnifiedMemory::new(tmp.path(), Arc::new(KeywordEmbedder), None).unwrap();
+
+    // Two situational prefs that embed onto orthogonal axes.
+    memory
+        .upsert_document(situational_doc(
+            "rust_style",
+            "When writing rust, prefer explicit error handling.",
+        ))
+        .await
+        .unwrap();
+    memory
+        .upsert_document(situational_doc(
+            "email_tone",
+            "Be formal in email to my manager.",
+        ))
+        .await
+        .unwrap();
+
+    // A rust-related message recalls only the rust pref.
+    let hits = memory
+        .recall_relevant_by_vector("user_pref_situational", "help me with my rust code", 5, 0.5)
+        .await
+        .unwrap();
+    assert_eq!(hits.len(), 1, "only the relevant pref should pass the gate");
+    assert_eq!(hits[0].0, "rust_style");
+    assert!(hits[0].1.contains("explicit error handling"));
+
+    // An unrelated message clears the gate to nothing — no block injected.
+    let none = memory
+        .recall_relevant_by_vector("user_pref_situational", "what is the weather today", 5, 0.5)
+        .await
+        .unwrap();
+    assert!(
+        none.is_empty(),
+        "an unrelated message must surface no situational preferences"
     );
 }
