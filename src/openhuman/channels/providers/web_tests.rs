@@ -425,9 +425,16 @@ fn unknown_schema_returns_unknown_fallback() {
 // ── Helpers ───────────────────────────────────────────────────
 
 #[test]
-fn key_for_combines_client_id_and_thread_id() {
-    assert_eq!(key_for("c1", "t1"), "c1::t1");
-    assert_eq!(key_for("", ""), "::");
+fn key_for_is_thread_scoped_not_client_scoped() {
+    // Runtime maps (THREAD_SESSIONS, IN_FLIGHT) key by thread_id ALONE, so the
+    // key is stable across socket reconnects (which regenerate client_id).
+    // Regression guard for the conversation-amnesia / dead-Cancel bug, where a
+    // reconnect under a new client_id orphaned the thread's session + in-flight
+    // handle.
+    assert_eq!(key_for("thread-abc"), "thread-abc");
+    assert_eq!(key_for(""), "");
+    // The same thread resolves to the same key no matter which socket asks.
+    assert_eq!(key_for("thread-xyz"), key_for("thread-xyz"));
 }
 
 #[test]

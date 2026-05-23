@@ -104,7 +104,7 @@ const de3: TranslationMap = {
   'subconscious.failed': 'gescheitert',
   'subconscious.tickInterval': 'Tick-Intervall',
   'subconscious.runNow': 'Jetzt ausführen',
-  'subconscious.providerUnavailableTitle': 'Subconscious ist pausiert',
+  'subconscious.providerUnavailableTitle': 'Unterbewusstsein ist pausiert',
   'subconscious.providerSettings': 'KI-Einstellungen',
   'subconscious.approvalNeeded': 'Genehmigung erforderlich',
   'subconscious.requiresApproval': 'Erfordert eine Genehmigung',

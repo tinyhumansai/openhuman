@@ -14,7 +14,28 @@ const MAX_OUTPUT_BYTES: usize = 1_048_576;
 /// Environment variables safe to pass to shell commands.
 /// Only functional variables are included — never API keys or secrets.
 const SAFE_ENV_VARS: &[&str] = &[
-    "PATH", "HOME", "TERM", "LANG", "LC_ALL", "LC_CTYPE", "USER", "SHELL", "TMPDIR",
+    "PATH",
+    "HOME",
+    "TERM",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "USER",
+    "SHELL",
+    "TMPDIR",
+    // Windows process creation and child command lookup need these after env_clear().
+    "SystemRoot",
+    "WINDIR",
+    "COMSPEC",
+    "PATHEXT",
+    "TEMP",
+    "TMP",
+    "USERPROFILE",
+    "APPDATA",
+    "LOCALAPPDATA",
+    "ProgramFiles",
+    "ProgramFiles(x86)",
+    "ProgramW6432",
 ];
 
 /// Shell command execution tool with sandboxing
@@ -614,6 +635,16 @@ mod tests {
             SAFE_ENV_VARS.contains(&"TERM"),
             "TERM must be in safe env vars"
         );
+    }
+
+    #[test]
+    fn shell_safe_env_vars_include_windows_process_essentials() {
+        for var in ["SystemRoot", "COMSPEC", "PATHEXT", "TEMP", "USERPROFILE"] {
+            assert!(
+                SAFE_ENV_VARS.contains(&var),
+                "{var} must be forwarded for Windows child processes"
+            );
+        }
     }
 
     #[tokio::test]
