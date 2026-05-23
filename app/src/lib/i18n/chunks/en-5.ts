@@ -440,6 +440,9 @@ const en5: TranslationMap = {
   'webhooks.tunnels.toggleFailed': 'Failed to toggle echo',
   'composio.authExpired': 'Auth expired',
   'composio.reconnect': 'Reconnect',
+  'composio.previewBadge': 'Preview',
+  'composio.previewTooltip':
+    'Agent integration coming soon — you can connect, but the agent can’t use this toolkit yet.',
   'composio.directModeRequiresKey': 'Failed to save. Direct mode requires a non-empty API key.',
   'composio.notYetRouted': 'not yet routed',
   'composio.triggers.loading': 'Loading…',

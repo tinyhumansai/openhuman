@@ -445,6 +445,9 @@ const it5: TranslationMap = {
   'webhooks.tunnels.toggleFailed': 'Attivazione echo fallita',
   'composio.authExpired': 'Autenticazione scaduta',
   'composio.reconnect': 'Riconnetti',
+  'composio.previewBadge': 'Preview',
+  'composio.previewTooltip':
+    'Agent integration coming soon — you can connect, but the agent can’t use this toolkit yet.',
   'composio.directModeRequiresKey':
     'Salvataggio fallito. La modalità Diretta richiede una chiave API non vuota.',
   'composio.notYetRouted': 'non ancora instradato',

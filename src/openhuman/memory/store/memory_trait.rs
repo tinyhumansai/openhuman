@@ -256,6 +256,25 @@ impl Memory for UnifiedMemory {
         Ok(out)
     }
 
+    async fn recall_relevant_by_vector(
+        &self,
+        namespace: &str,
+        query: &str,
+        limit: usize,
+        min_vector_similarity: f64,
+    ) -> anyhow::Result<Vec<(String, String)>> {
+        let hits = self
+            .query_namespace_hits(namespace, query, limit as u32)
+            .await
+            .map_err(anyhow::Error::msg)?;
+        Ok(hits
+            .into_iter()
+            .filter(|h| h.score_breakdown.vector_similarity >= min_vector_similarity)
+            .filter(|h| !h.content.trim().is_empty())
+            .map(|h| (h.key, h.content))
+            .collect())
+    }
+
     async fn get(&self, namespace: &str, key: &str) -> anyhow::Result<Option<MemoryEntry>> {
         let ns = if namespace.trim().is_empty() {
             GLOBAL_NAMESPACE.to_string()

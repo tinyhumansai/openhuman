@@ -23,7 +23,7 @@ import { callOpenhumanRpc } from './core-rpc';
 import { triggerAuthDeepLinkBypass } from './deep-link-helpers';
 import { waitForWebView, waitForWindowVisible } from './element-helpers';
 import { supportsExecuteScript } from './platform';
-import { dismissBootCheckGateIfVisible, walkOnboarding } from './shared-flows';
+import { dismissBootCheckGateIfVisible, waitForHomePage, walkOnboarding } from './shared-flows';
 
 interface ResetAppOptions {
   /** Skip the auth + onboarding bootstrap. Use for specs that test the welcome/login screens themselves. */
@@ -78,6 +78,19 @@ export async function resetApp(userId: string, options: ResetAppOptions = {}): P
   if (reset.ok) {
     stepLog(`Sidecar wipe ok: ${JSON.stringify(reset.result)}`);
     didWipe = true;
+
+    // test_reset clears onboarding_completed=false (mirrors a fresh install).
+    // E2E specs assume an already-onboarded user — restore the flag so
+    // App.tsx's onboarding gate doesn't redirect every spec into the wizard.
+    const setOnboarding = await callOpenhumanRpc('openhuman.config_set_onboarding_completed', {
+      value: true,
+    }).catch((err: unknown) => {
+      stepLog(`config_set_onboarding_completed failed (non-fatal): ${err}`);
+      return { ok: false as const };
+    });
+    if (setOnboarding.ok) {
+      stepLog('Restored onboarding_completed=true after reset');
+    }
   } else {
     const errText = String(reset.error ?? '');
     const unreachable =
@@ -105,6 +118,12 @@ export async function resetApp(userId: string, options: ResetAppOptions = {}): P
       window.location.replace('#/');
       window.location.reload();
     });
+    // window.location.reload() is asynchronous — give the browser time to
+    // start the reload before we poll readyState. Without this pause the
+    // subsequent waitForApp / waitForAppReady calls may find readyState:
+    // 'complete' on the OLD document (before the reload started) and return
+    // immediately, racing with the reload and producing a stale auth state.
+    await browser.pause(1_000);
   } else if (didWipe) {
     stepLog('execute() unsupported — skipping renderer reload (state may be stale)');
   } else {
@@ -129,6 +148,27 @@ export async function resetApp(userId: string, options: ResetAppOptions = {}): P
   // the modal again if it slid back into view.
   await dismissBootCheckGateIfVisible(8_000);
   await walkOnboarding(logPrefix);
+
+  // Confirm the app actually reached the Home page after auth bypass + onboarding.
+  // Without this check, a routing race can leave the renderer stuck at #/ (Welcome)
+  // so that every subsequent `navigateViaHash` call is silently redirected back by
+  // the auth guard — causing cascading navigation failures in the spec.
+  const homeText = await waitForHomePage(15_000).catch(() => null);
+  if (!homeText) {
+    stepLog('Home page not reached after onboarding — retrying auth bypass');
+    await triggerAuthDeepLinkBypass(userId);
+    await waitForAppReady(10_000);
+    await dismissBootCheckGateIfVisible(8_000);
+    await walkOnboarding(logPrefix);
+    const retryHome = await waitForHomePage(15_000).catch(() => null);
+    if (!retryHome) {
+      stepLog('Home page still not reached after retry — proceeding anyway');
+    } else {
+      stepLog(`Home page confirmed on retry: "${retryHome}"`);
+    }
+  } else {
+    stepLog(`Home page confirmed: "${homeText}"`);
+  }
 
   stepLog('Reset + onboarding complete');
   return userId;

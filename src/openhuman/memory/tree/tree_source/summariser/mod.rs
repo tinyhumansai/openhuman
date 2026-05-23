@@ -147,6 +147,7 @@ pub fn build_summariser(config: &Config) -> Arc<dyn Summariser> {
         llm::LlmSummariserConfig {
             model,
             structured_facet_extraction: true,
+            output_language: config.output_language.clone(),
         },
         provider,
     ))

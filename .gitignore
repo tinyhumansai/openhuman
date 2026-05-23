@@ -100,3 +100,6 @@ app/test/e2e/.cache/
 .cache/cargo-install/
 test-map.md
 .test-gap-analysis.md
+
+# AI assistant progress tracking
+.kimi/

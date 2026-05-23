@@ -2329,12 +2329,22 @@ async fn json_rpc_web_chat_custom_chat_provider_with_auth_none_omits_auth_header
         config.get("chat_provider").and_then(Value::as_str),
         Some("proxy:gpt-oss")
     );
-    assert_eq!(
-        config
-            .get("cloud_providers")
-            .and_then(Value::as_array)
-            .map(Vec::len),
-        Some(1)
+    // The user's "proxy" entry must survive the update. We intentionally
+    // assert by slug rather than by raw length — the
+    // `unify_ai_provider_settings` migration seeds a built-in "openhuman"
+    // cloud_providers entry on fresh configs, and `apply_model_settings`
+    // preserves reserved-slug built-ins across updates (Sentry TAURI-RUST-5
+    // fix). A raw length assertion would couple this test to the count of
+    // built-ins, which is a separate concern.
+    let providers = config
+        .get("cloud_providers")
+        .and_then(Value::as_array)
+        .expect("cloud_providers should be present in config snapshot");
+    assert!(
+        providers
+            .iter()
+            .any(|e| e.get("slug").and_then(Value::as_str) == Some("proxy")),
+        "user's auth-none 'proxy' entry must survive the update: {providers:?}"
     );
     let loaded_config = openhuman_core::openhuman::config::load_config_with_timeout()
         .await

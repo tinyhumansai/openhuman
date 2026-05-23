@@ -161,6 +161,13 @@ class SocketService {
       } else if (!this.socket.disconnected) {
         // Socket is connecting, wait for it
         return;
+      } else {
+        // Stale disconnected socket instance for the same token.
+        // Drop it so this connect attempt can create a fresh socket;
+        // otherwise the async stale-invocation guard below (`|| this.socket`)
+        // returns early and leaves connectivity stuck at "connecting".
+        this.socket = null;
+        this.mcpTransport = null;
       }
     }
 
@@ -240,6 +247,17 @@ class SocketService {
       store.dispatch(setStatusForUser({ userId: uid, status: 'connected' }));
       store.dispatch(setSocketIdForUser({ userId: uid, socketId }));
       store.dispatch(setBackend({ value: 'connected' }));
+
+      // Re-join the active thread's room so an in-flight turn's stream survives
+      // this (re)connection. Chat events are delivered to both the client_id
+      // room and a per-thread room (see socketio.rs `emit_web_channel_event`);
+      // because a reconnect produces a NEW client_id, the new socket must
+      // re-subscribe to the thread room to keep receiving the stream.
+      const threadState = store.getState().thread;
+      const activeThreadId = threadState?.selectedThreadId ?? threadState?.activeThreadId;
+      if (activeThreadId) {
+        this.socket?.emit('thread:subscribe', { thread_id: activeThreadId });
+      }
     });
 
     this.socket.on('ready', () => {

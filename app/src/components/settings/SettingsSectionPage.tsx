@@ -45,6 +45,7 @@ const SettingsSectionPage = ({ title, description, items }: SettingsSectionPageP
               title={item.title}
               description={item.description}
               onClick={() => navigateToSettings(item.route)}
+              testId={`settings-nav-${item.id}`}
               isFirst={index === 0}
               isLast={index === items.length - 1}
             />

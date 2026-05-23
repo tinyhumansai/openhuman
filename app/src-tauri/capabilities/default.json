@@ -30,6 +30,7 @@
     },
     "updater:default",
     "allow-core-process",
+    "allow-workspace-files",
     "allow-app-update"
   ]
 }

@@ -52,6 +52,42 @@ Routing happens behind a single OpenHuman subscription. You don't hold separate 
 - **Per call**. pass a concrete model name (no `hint:` prefix) and the router falls through to the default provider with that exact model.
 - **For a skill**. skills can pin a hint or a model in their manifest.
 
+## Per-agent model pins
+
+Sub-agents can also pin an exact model without disabling automatic routing for the rest of the app. Use this when an orchestrator or team lead needs a stronger model, while high-volume leaf agents should stay on a cheaper one.
+
+Inline calls win for one delegation:
+
+```json
+{
+  "agent_id": "researcher",
+  "model": "anthropic/claude-sonnet-4",
+  "prompt": "Collect source notes for the launch memo."
+}
+```
+
+Persistent defaults live in `config.toml`:
+
+```toml
+[orchestrator]
+model = "anthropic/claude-sonnet-4"
+
+[teams.research]
+lead_model = "openai/gpt-5.1"
+agent_model = "groq/llama-3.1-8b-instant"
+
+[teams.code]
+agent_model = "qwen/qwen3-coder"
+```
+
+Resolution order:
+
+1. Inline `model` on `spawn_subagent` or an archetype delegation call.
+2. `[orchestrator].model` or `[teams.<team>]` / built-in aliases such as `[teams.research]` and `[teams.code]`.
+3. The archetype's own model hint and the normal route table.
+
+For `[teams.*]`, `lead_model` applies to agents that can delegate and `agent_model` applies to leaf workers. If only one is set, the harness falls back to it for both roles.
+
 ## Why this isn't just "model switcher"
 
 Routing isn't a UI dropdown. The agent loop itself emits hints based on what it's about to do. You don't pick the model; the *task* does. That's the difference between "multi-model" and "smart routing".
