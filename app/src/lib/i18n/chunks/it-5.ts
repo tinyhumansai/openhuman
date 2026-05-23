@@ -491,8 +491,9 @@ const it5: TranslationMap = {
   'settings.mascot.title': 'OpenHuman',
   'settings.developerMenu.mcpServer.title': 'MCP Server',
   'settings.developerMenu.mcpServer.desc': 'Configure external MCP clients to connect to OpenHuman',
-  'settings.developerMenu.autonomy.title': 'Agent autonomy',
-  'settings.developerMenu.autonomy.desc': 'Tool action rate limits and safety thresholds.',
+  'settings.developerMenu.autonomy.title': 'Autonomia agente',
+  'settings.developerMenu.autonomy.desc':
+    'Limiti di frequenza delle azioni degli strumenti e soglie di sicurezza',
   'settings.mcpServer.title': 'MCP Server',
   'settings.mcpServer.toolsSectionTitle': 'Available Tools',
   'settings.mcpServer.toolsSectionDesc':

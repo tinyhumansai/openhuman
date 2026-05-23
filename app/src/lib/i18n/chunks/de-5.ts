@@ -211,8 +211,9 @@ const de5: TranslationMap = {
   'settings.developerMenu.mcpServer.title': 'MCP Server',
   'settings.developerMenu.mcpServer.desc':
     'Konfiguriere externe MCP-Clients für die Verbindung mit OpenHuman',
-  'settings.developerMenu.autonomy.title': 'Agent autonomy',
-  'settings.developerMenu.autonomy.desc': 'Tool action rate limits and safety thresholds.',
+  'settings.developerMenu.autonomy.title': 'Agent-Autonomie',
+  'settings.developerMenu.autonomy.desc':
+    'Aktionsraten-Limits und Sicherheitsschwellen für Werkzeuge',
   'settings.developerMenu.integrationTriggers.title': 'Integrationsauslöser',
   'settings.developerMenu.integrationTriggers.desc':
     'Konfiguriere KI-Triage-Einstellungen für Composio-Integrationsauslöser',

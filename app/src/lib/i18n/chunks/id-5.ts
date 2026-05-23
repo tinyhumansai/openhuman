@@ -488,8 +488,8 @@ const id5: TranslationMap = {
   'settings.developerMenu.mcpServer.title': 'Server MCP',
   'settings.developerMenu.mcpServer.desc':
     'Konfigurasikan klien MCP eksternal untuk terhubung ke OpenHuman',
-  'settings.developerMenu.autonomy.title': 'Agent autonomy',
-  'settings.developerMenu.autonomy.desc': 'Tool action rate limits and safety thresholds',
+  'settings.developerMenu.autonomy.title': 'Otonomi agen',
+  'settings.developerMenu.autonomy.desc': 'Batas laju aksi alat dan ambang keamanan',
   'settings.mcpServer.title': 'Server MCP',
   'settings.mcpServer.toolsSectionTitle': 'Alat yang tersedia',
   'settings.mcpServer.toolsSectionDesc':
