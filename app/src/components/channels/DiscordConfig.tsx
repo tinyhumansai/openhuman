@@ -166,7 +166,7 @@ const DiscordConfig = ({ definition }: DiscordConfigProps) => {
                 channel: 'discord',
                 authMode: spec.mode,
                 status: 'error',
-                lastError: t('channels.fieldRequired').replace(
+                lastError: t('channels.fieldRequired', '{field} is required').replace(
                   '{field}',
                   t(`channels.discord.fields.${field.key}.label`, field.label || field.key)
                 ),
@@ -312,9 +312,9 @@ const DiscordConfig = ({ definition }: DiscordConfigProps) => {
                     key={field.key}
                     field={{
                       ...field,
-                      label: t(`channels.discord.fields.${field.key}.label`),
+                      label: t(`channels.discord.fields.${field.key}.label`, field.label),
                       placeholder: field.placeholder
-                        ? t(`channels.discord.fields.${field.key}.placeholder`)
+                        ? t(`channels.discord.fields.${field.key}.placeholder`, field.placeholder)
                         : field.placeholder,
                     }}
                     value={fieldValues[compositeKey]?.[field.key] ?? ''}

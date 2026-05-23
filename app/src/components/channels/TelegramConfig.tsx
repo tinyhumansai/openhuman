@@ -193,7 +193,7 @@ const TelegramConfig = ({ definition }: TelegramConfigProps) => {
                 channel: 'telegram',
                 authMode: spec.mode,
                 status: 'error',
-                lastError: t('channels.fieldRequired').replace(
+                lastError: t('channels.fieldRequired', '{field} is required').replace(
                   '{field}',
                   t(`channels.telegram.fields.${field.key}.label`, field.label || field.key)
                 ),
@@ -372,9 +372,9 @@ const TelegramConfig = ({ definition }: TelegramConfigProps) => {
                     key={field.key}
                     field={{
                       ...field,
-                      label: t(`channels.telegram.fields.${field.key}.label`),
+                      label: t(`channels.telegram.fields.${field.key}.label`, field.label),
                       placeholder: field.placeholder
-                        ? t(`channels.telegram.fields.${field.key}.placeholder`)
+                        ? t(`channels.telegram.fields.${field.key}.placeholder`, field.placeholder)
                         : field.placeholder,
                     }}
                     value={fieldValues[compositeKey]?.[field.key] ?? ''}
