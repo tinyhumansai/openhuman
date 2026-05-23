@@ -245,7 +245,7 @@ fn runtime_snapshot_cache_miss_after_ttl() {
     let cache = RUNTIME_SNAPSHOT_CACHE.lock();
     let entry = cache.as_ref().expect("cache should have entry");
     assert!(
-        fetched_at.elapsed() >= RUNTIME_SNAPSHOT_TTL,
+        entry.fetched_at.elapsed() >= RUNTIME_SNAPSHOT_TTL,
         "stale entry should be past TTL"
     );
 }
