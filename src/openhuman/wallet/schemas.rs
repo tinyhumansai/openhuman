@@ -225,15 +225,21 @@ pub fn wallet_schemas(function: &str) -> ControllerSchema {
             namespace: "wallet",
             function: "prepare_transfer",
             description:
-                "Build a native or token-transfer quote. For EVM, default ERC-20 symbols are supported and wallet.execute_prepared will sign+broadcast after explicit confirmation.",
+                "Build a native or token-transfer quote. All four chains (EVM, BTC, Solana, Tron) sign + broadcast on execute_prepared after explicit confirmation. BTC supports only native transfers (no token concept).",
             inputs: vec![
                 required_json("chain", "Target chain (evm | btc | solana | tron)."),
                 required_json("toAddress", "Recipient address on the target chain."),
-                required_json("amountRaw", "Amount in the asset's smallest unit (wei/sat/lamport) as a decimal string."),
+                required_json("amountRaw", "Amount in the asset's smallest unit (wei/sat/lamport/sun) as a decimal string."),
                 FieldSchema {
                     name: "assetSymbol",
                     ty: TypeSchema::Option(Box::new(TypeSchema::String)),
                     comment: "Optional. Omit / null for the chain's native asset; otherwise a token symbol from wallet.supported_assets.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "evmNetwork",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "Optional. Required only for chain='evm' to pick a network: ethereum_mainnet | base_mainnet | arbitrum_one | optimism_mainnet | polygon_mainnet. Defaults to ethereum_mainnet.",
                     required: false,
                 },
             ],
@@ -256,6 +262,12 @@ pub fn wallet_schemas(function: &str) -> ControllerSchema {
                 required_json("amountInRaw", "Input amount in the from-asset's smallest unit, as a decimal string."),
                 required_json("slippageBps", "Slippage tolerance in basis points (max 5000 = 50%)."),
                 required_json("routerAddress", "Router / aggregator contract address."),
+                FieldSchema {
+                    name: "evmNetwork",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "Optional. EVM network selector when chain='evm'. Defaults to ethereum_mainnet.",
+                    required: false,
+                },
             ],
             outputs: vec![FieldSchema {
                 name: "result",
@@ -277,6 +289,12 @@ pub fn wallet_schemas(function: &str) -> ControllerSchema {
                     name: "valueRaw",
                     ty: TypeSchema::Option(Box::new(TypeSchema::String)),
                     comment: "Native value attached, smallest unit. Defaults to '0'.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "evmNetwork",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "Optional. EVM network selector. Defaults to ethereum_mainnet.",
                     required: false,
                 },
             ],

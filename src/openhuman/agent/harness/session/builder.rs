@@ -848,17 +848,6 @@ impl Agent {
             config,
         );
 
-        // `complete_onboarding` is the terminal step of the welcome
-        // flow and must never be callable from any other session.
-        // Stripping it here (before prompt + delegation assembly) keeps
-        // it out of both the LLM's function-calling schema and the
-        // rendered `## Tools` section.
-        if agent_id != "welcome" {
-            tools.retain(|t| {
-                !crate::openhuman::agent::harness::subagent_runner::is_welcome_only_tool(t.name())
-            });
-        }
-
         // Filter tools by user preference stored in app state.
         {
             use crate::openhuman::app_state::load_stored_app_state;
@@ -961,21 +950,10 @@ impl Agent {
         // definition's `prompt.md` body and respects its `omit_*` flags.
         //
         // The narrow path is selected whenever we resolved a
-        // non-orchestrator definition from the registry. Welcome agent
-        // is the first real consumer: its TOML sets
-        // `omit_identity = true`, `omit_memory_context = false`,
-        // `omit_safety_preamble = true`, `omit_skills_catalog = true`,
-        // so the rendered prompt becomes:
-        //
-        //   (welcome persona body)
-        //   ── Memory context (user profile, learned observations)
-        //   ── Tools (2 entries: complete_onboarding + memory_recall)
-        //   ── Workspace directory
-        //
-        // The orchestrator continues to use `with_defaults` so its
-        // prompt stays byte-identical to the legacy CLI/REPL behaviour
-        // except for the tool-scope tightening we already landed in
-        // earlier commits.
+        // non-orchestrator definition from the registry. The orchestrator
+        // continues to use `with_defaults` so its prompt stays
+        // byte-identical to the legacy CLI/REPL behaviour except for the
+        // tool-scope tightening we already landed in earlier commits.
         // Every agent with a resolved definition (built-in or workspace
         // override) goes through the per-agent pipeline — the legacy
         // `with_defaults()` branch only fires when the registry is

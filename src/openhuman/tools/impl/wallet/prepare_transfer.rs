@@ -41,6 +41,11 @@ impl Tool for WalletPrepareTransferTool {
                 "assetSymbol": {
                     "type": "string",
                     "description": "Asset symbol (e.g. ETH, USDC). Defaults to the native asset."
+                },
+                "evmNetwork": {
+                    "type": "string",
+                    "enum": ["ethereum_mainnet", "base_mainnet", "arbitrum_one", "optimism_mainnet", "polygon_mainnet"],
+                    "description": "Optional EVM network when chain='evm'. Defaults to ethereum_mainnet."
                 }
             },
             "required": ["chain", "toAddress", "amountRaw"],

@@ -18,6 +18,7 @@ mod fake_camera;
 mod file_logging;
 mod gmessages_scanner;
 mod imessage_scanner;
+mod loopback_oauth;
 #[cfg(target_os = "macos")]
 mod mascot_native_window;
 mod mcp_commands;
@@ -3224,7 +3225,9 @@ pub fn run() {
             companion_commands::unregister_companion_hotkey,
             companion_commands::companion_activate,
             mcp_commands::mcp_resolve_binary_path,
-            mcp_commands::mcp_open_client_config
+            mcp_commands::mcp_open_client_config,
+            loopback_oauth::start_loopback_oauth_listener,
+            loopback_oauth::stop_loopback_oauth_listener
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

@@ -88,12 +88,10 @@ pub struct AppStateSnapshot {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub current_user: Option<Value>,
     pub onboarding_completed: bool,
-    /// Whether the chat-based welcome-agent flow has completed. Sourced
-    /// from [`Config::chat_onboarding_completed`]. The React app hides
-    /// the bottom tab bar, thread sidebar, and account rail while this is
-    /// `false` (and `onboarding_completed` is `true`) so the user stays
-    /// with the welcome agent until it calls
-    /// `complete_onboarding(action="complete")`.
+    /// Deprecated — the welcome agent has been removed. Retained in the
+    /// snapshot for backward compatibility with frontend code that still
+    /// reads it. This value may be `false` in newer configs; routing no
+    /// longer depends on this field.
     pub chat_onboarding_completed: bool,
     pub analytics_enabled: bool,
     /// Mirror of `Config::meet.auto_orchestrator_handoff` — gates whether

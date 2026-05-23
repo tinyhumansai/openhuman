@@ -5,10 +5,6 @@ import { AgentIcon, ProviderIcon } from '../components/accounts/providerIcons';
 import RespondQueuePanel from '../components/accounts/RespondQueuePanel';
 import WebviewHost from '../components/accounts/WebviewHost';
 import { usePrewarmMostRecentAccount } from '../hooks/usePrewarmMostRecentAccount';
-// [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
-// import { isWelcomeLocked } from '../lib/coreState/store';
-// [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
-// import { useCoreState } from '../providers/CoreStateProvider';
 import { useT } from '../lib/i18n/I18nContext';
 import { trackEvent } from '../services/analytics';
 import {
@@ -108,9 +104,6 @@ const Accounts = () => {
   const order = useAppSelector(state => state.accounts.order);
   const activeAccountId = useAppSelector(state => state.accounts.activeAccountId);
   const unreadByAccount = useAppSelector(state => state.accounts.unread);
-  // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
-  // const { snapshot } = useCoreState();
-  // const welcomeLocked = isWelcomeLocked(snapshot);
   // Respond-queue selectors enabled
   const respondQueue = useAppSelector(state => state.providerSurfaces.queue);
   const respondQueueCount = useAppSelector(state => state.providerSurfaces.count);
@@ -138,17 +131,6 @@ const Accounts = () => {
   );
   usePrewarmMostRecentAccount({ accounts, accountsById, activeAccountId });
 
-  // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
-  // Welcome lockdown (#883) — force the Agent pane while the welcome
-  // conversation is in progress so the user cannot jump to a connected
-  // account webview. The rail is hidden below, so this is belt-and-
-  // suspenders in case an external caller toggles `activeAccountId`.
-  // useEffect(() => {
-  //   if (welcomeLocked && activeAccountId !== AGENT_ID) {
-  //     dispatch(setActiveAccount(AGENT_ID));
-  //   }
-  // }, [welcomeLocked, activeAccountId, dispatch]);
-
   useEffect(() => {
     void dispatch(fetchRespondQueue());
     const id = window.setInterval(() => {
@@ -162,12 +144,6 @@ const Accounts = () => {
     [accounts]
   );
 
-  // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
-  // While welcome-locked, derive the effective selection directly from
-  // `welcomeLocked` so the first paint after a lock flip never renders the
-  // stale `activeAccountId`. The post-paint `useEffect` above still
-  // syncs Redux so other consumers observe the forced selection.
-  // const selectedId = welcomeLocked ? AGENT_ID : (activeAccountId ?? AGENT_ID);
   const selectedId = activeAccountId ?? AGENT_ID;
   const active = selectedId === AGENT_ID ? null : (accountsById[selectedId] ?? null);
   const isAgentSelected = selectedId === AGENT_ID;
@@ -247,7 +223,6 @@ const Accounts = () => {
   return (
     <div className="relative flex h-full gap-3 overflow-hidden" data-testid="accounts-page">
       {/* Narrow icon rail — always rendered. */}
-      {/* [#1123] welcomeLocked guard removed — welcome-agent onboarding replaced by Joyride walkthrough */}
       <aside className="z-30 flex w-16 flex-none flex-col items-center gap-2 bg-white/60 dark:bg-neutral-900/60 py-3 backdrop-blur-md my-3 ml-3 rounded-2xl border border-stone-200/70 dark:border-neutral-800/70 shadow-soft">
         <RailButton active={isAgentSelected} onClick={selectAgent} tooltip={t('accounts.agent')}>
           <AgentIcon className="h-9 w-9 rounded-lg" />

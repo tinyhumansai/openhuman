@@ -18,7 +18,93 @@ use crate::rpc::RpcOutcome;
 const LOG_PREFIX: &str = "[wallet]";
 const WALLET_STATE_FILENAME: &str = "wallet-state.json";
 const VALID_MNEMONIC_WORD_COUNTS: [u8; 5] = [12, 15, 18, 21, 24];
+/// Keychain key for the encrypted mnemonic blob (user_id is added by the keyring module).
+const KEYCHAIN_MNEMONIC_KEY: &str = "wallet.mnemonic";
 static WALLET_STATE_FILE_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+
+/// Derive a stable keychain user-id from the workspace directory path.
+///
+/// Uses the same strategy as credentials/profiles.rs: take the last meaningful
+/// path component of the workspace directory.
+fn wallet_user_id(config: &Config) -> String {
+    // workspace_dir is typically `{openhuman_dir}/workspace` — take the parent
+    // (the user's openhuman dir) and then the last component.
+    let candidate = config
+        .workspace_dir
+        .parent()
+        .and_then(|p| p.file_name())
+        .and_then(|s| s.to_str())
+        .filter(|s| !s.is_empty());
+    if let Some(id) = candidate {
+        return id.to_string();
+    }
+    // Fallback: FNV-1a hash of the workspace path.
+    let path_str = config.workspace_dir.to_string_lossy();
+    let mut hash: u64 = 14695981039346656037u64;
+    for b in path_str.as_bytes() {
+        hash ^= u64::from(*b);
+        hash = hash.wrapping_mul(1099511628211u64);
+    }
+    format!("wallet-path-{hash:016x}")
+}
+
+/// Load the encrypted mnemonic from the OS keychain if available.
+///
+/// Returns `None` if the keychain is unavailable or the entry does not exist.
+fn keychain_load_mnemonic(config: &Config) -> Option<String> {
+    if !crate::openhuman::keyring::is_available() {
+        log::debug!("{LOG_PREFIX} keychain unavailable, skipping mnemonic load");
+        return None;
+    }
+    let user_id = wallet_user_id(config);
+    match crate::openhuman::keyring::get(&user_id, KEYCHAIN_MNEMONIC_KEY) {
+        Ok(Some(val)) => {
+            log::debug!("{LOG_PREFIX} keychain mnemonic loaded user_id={user_id}");
+            Some(val)
+        }
+        Ok(None) => {
+            log::debug!("{LOG_PREFIX} keychain mnemonic not found user_id={user_id}");
+            None
+        }
+        Err(e) => {
+            log::warn!("{LOG_PREFIX} keychain mnemonic load error user_id={user_id}: {e}");
+            None
+        }
+    }
+}
+
+/// Store the encrypted mnemonic in the OS keychain.
+///
+/// Returns `true` if the write succeeded.
+fn keychain_save_mnemonic(config: &Config, encrypted_mnemonic: &str) -> bool {
+    if !crate::openhuman::keyring::is_available() {
+        log::debug!("{LOG_PREFIX} keychain unavailable, skipping mnemonic save");
+        return false;
+    }
+    let user_id = wallet_user_id(config);
+    match crate::openhuman::keyring::set(&user_id, KEYCHAIN_MNEMONIC_KEY, encrypted_mnemonic) {
+        Ok(()) => {
+            log::debug!("{LOG_PREFIX} keychain mnemonic saved user_id={user_id}");
+            true
+        }
+        Err(e) => {
+            log::warn!("{LOG_PREFIX} keychain mnemonic save error user_id={user_id}: {e}");
+            false
+        }
+    }
+}
+
+/// Whether a keychain entry exists for the encrypted mnemonic.
+fn keychain_has_mnemonic(config: &Config) -> bool {
+    if !crate::openhuman::keyring::is_available() {
+        return false;
+    }
+    let user_id = wallet_user_id(config);
+    matches!(
+        crate::openhuman::keyring::get(&user_id, KEYCHAIN_MNEMONIC_KEY),
+        Ok(Some(_))
+    )
+}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -155,7 +241,24 @@ fn quarantine_corrupted_wallet_state(path: &Path, reason: &str) {
 
 fn load_stored_wallet_state_unlocked(config: &Config) -> Result<Option<StoredWalletState>, String> {
     let path = wallet_state_path(config);
+
+    // ── Step 1: Try to resolve the encrypted mnemonic from the OS keychain ──
+    // If the keychain has the entry, we don't need the JSON field at all.
+    // The JSON file may or may not exist (it still holds non-secret metadata).
+    let keychain_mnemonic = keychain_load_mnemonic(config);
+
+    // ── Step 2: Load state from JSON (metadata, accounts, flags) ─────────────
     if !path.exists() {
+        if keychain_mnemonic.is_some() {
+            // Keychain has the mnemonic but there is no wallet-state.json.
+            // This shouldn't happen in practice (both are written together),
+            // but we log it and return None so the user re-setups the wallet.
+            warn!(
+                "{LOG_PREFIX} keychain has mnemonic but no wallet-state.json at {}; \
+                 treating as not configured",
+                path.display()
+            );
+        }
         return Ok(None);
     }
 
@@ -172,7 +275,7 @@ fn load_stored_wallet_state_unlocked(config: &Config) -> Result<Option<StoredWal
         }
     };
 
-    let state = match serde_json::from_str::<StoredWalletState>(&raw) {
+    let mut state = match serde_json::from_str::<StoredWalletState>(&raw) {
         Ok(state) => state,
         Err(error) => {
             warn!(
@@ -185,11 +288,56 @@ fn load_stored_wallet_state_unlocked(config: &Config) -> Result<Option<StoredWal
         }
     };
 
+    // ── Step 3: Merge keychain mnemonic with JSON state ───────────────────────
+    // Priority: keychain > JSON field.
+    let needs_keychain_migration =
+        keychain_mnemonic.is_none() && state.encrypted_mnemonic.is_some();
+
+    if let Some(mnemonic) = keychain_mnemonic {
+        // Keychain is authoritative. If the JSON still has the field, clear it.
+        if state.encrypted_mnemonic.is_some() {
+            debug!(
+                "{LOG_PREFIX} load: clearing encrypted_mnemonic from JSON (already in keychain)"
+            );
+            state.encrypted_mnemonic = None;
+            // Rewrite the JSON without the secret field.
+            if let Err(e) = save_stored_wallet_state_unlocked(config, &state) {
+                warn!(
+                    "{LOG_PREFIX} load: failed to rewrite wallet-state.json after keychain migration: {e}"
+                );
+            }
+        }
+        state.encrypted_mnemonic = Some(mnemonic);
+    } else if needs_keychain_migration {
+        // The encrypted mnemonic is in the JSON. Promote it to keychain if available.
+        if let Some(ref enc_mnemonic) = state.encrypted_mnemonic.clone() {
+            debug!("{LOG_PREFIX} load: promoting encrypted_mnemonic from JSON to keychain");
+            if keychain_save_mnemonic(config, enc_mnemonic) {
+                // Successfully saved to keychain — clear from JSON.
+                state.encrypted_mnemonic = None;
+                if let Err(e) = save_stored_wallet_state_unlocked(config, &state) {
+                    warn!(
+                        "{LOG_PREFIX} load: failed to rewrite wallet-state.json after mnemonic promotion: {e}"
+                    );
+                }
+                // Restore the value in-memory so validation passes.
+                state.encrypted_mnemonic = Some(enc_mnemonic.clone());
+            }
+        }
+    }
+
+    // ── Step 4: Validate (allows encrypted_mnemonic to be None when in keychain) ──
+    // Build validation params treating keychain-held mnemonic as present.
+    let effective_mnemonic = state.encrypted_mnemonic.clone().or_else(|| {
+        // Mnemonic was just wiped from state; re-probe keychain.
+        keychain_load_mnemonic(config)
+    });
+
     let validation_params = WalletSetupParams {
         consent_granted: state.consent_granted,
         source: state.source,
         mnemonic_word_count: state.mnemonic_word_count,
-        encrypted_mnemonic: state.encrypted_mnemonic.clone(),
+        encrypted_mnemonic: effective_mnemonic,
         accounts: state.accounts.clone(),
     };
     if let Err(validation_error) = validate_setup(&validation_params) {
@@ -224,7 +372,21 @@ fn save_stored_wallet_state_unlocked(
 ) -> Result<(), String> {
     let path = wallet_state_path(config);
     ensure_wallet_state_dir(&path)?;
-    let payload = serde_json::to_string_pretty(state)
+
+    // When the OS keychain is available, store the encrypted mnemonic there and
+    // write the JSON without the secret field.  This is the preferred path on
+    // macOS / Windows / Linux-with-Secret-Service.
+    let mut state_for_json = state.clone();
+    if let Some(ref enc_mnemonic) = state.encrypted_mnemonic {
+        if keychain_save_mnemonic(config, enc_mnemonic) {
+            debug!("{LOG_PREFIX} save: encrypted_mnemonic saved to keychain; stripping from JSON");
+            state_for_json.encrypted_mnemonic = None;
+        } else {
+            debug!("{LOG_PREFIX} save: keychain unavailable; keeping encrypted_mnemonic in JSON");
+        }
+    }
+
+    let payload = serde_json::to_string_pretty(&state_for_json)
         .map_err(|e| format!("failed to serialize wallet state: {e}"))?;
     let parent = path
         .parent()
@@ -328,22 +490,28 @@ fn current_time_ms() -> u64 {
         .unwrap_or(0)
 }
 
-fn to_status(state: Option<StoredWalletState>) -> WalletStatus {
+fn to_status(config: &Config, state: Option<StoredWalletState>) -> WalletStatus {
     match state {
-        Some(state) => WalletStatus {
-            configured: true,
-            onboarding_completed: state.consent_granted && !state.accounts.is_empty(),
-            consent_granted: state.consent_granted,
-            secret_stored: state
+        Some(state) => {
+            // A mnemonic is "stored" if it's either in the JSON field (headless path)
+            // or has been moved to the OS keychain (preferred path).
+            let secret_in_json = state
                 .encrypted_mnemonic
                 .as_ref()
-                .map(|value| !value.trim().is_empty())
-                .unwrap_or(false),
-            source: Some(state.source),
-            mnemonic_word_count: Some(state.mnemonic_word_count),
-            accounts: state.accounts,
-            updated_at_ms: Some(state.updated_at_ms),
-        },
+                .map(|v| !v.trim().is_empty())
+                .unwrap_or(false);
+            let secret_stored = secret_in_json || keychain_has_mnemonic(config);
+            WalletStatus {
+                configured: true,
+                onboarding_completed: state.consent_granted && !state.accounts.is_empty(),
+                consent_granted: state.consent_granted,
+                secret_stored,
+                source: Some(state.source),
+                mnemonic_word_count: Some(state.mnemonic_word_count),
+                accounts: state.accounts,
+                updated_at_ms: Some(state.updated_at_ms),
+            }
+        }
         None => WalletStatus {
             configured: false,
             onboarding_completed: false,
@@ -360,7 +528,7 @@ fn to_status(state: Option<StoredWalletState>) -> WalletStatus {
 pub async fn status() -> Result<RpcOutcome<WalletStatus>, String> {
     let config = config_rpc::load_config_with_timeout().await?;
     let _guard = WALLET_STATE_FILE_LOCK.lock();
-    let status = to_status(load_stored_wallet_state_unlocked(&config)?);
+    let status = to_status(&config, load_stored_wallet_state_unlocked(&config)?);
 
     debug!(
         "{LOG_PREFIX} status configured={} onboarding_completed={} account_count={}",
@@ -398,7 +566,7 @@ pub async fn setup(params: WalletSetupParams) -> Result<RpcOutcome<WalletStatus>
 
     let _guard = WALLET_STATE_FILE_LOCK.lock();
     save_stored_wallet_state_unlocked(&config, &state)?;
-    let status = to_status(Some(state));
+    let status = to_status(&config, Some(state));
 
     debug!(
         "{LOG_PREFIX} setup saved source={:?} account_count={} mnemonic_words={} secret_stored={}",
@@ -538,7 +706,8 @@ mod tests {
 
     #[test]
     fn status_defaults_to_unconfigured() {
-        let status = to_status(None);
+        let config = Config::default();
+        let status = to_status(&config, None);
         assert!(!status.configured);
         assert!(!status.onboarding_completed);
         assert!(!status.secret_stored);
@@ -547,6 +716,7 @@ mod tests {
 
     #[test]
     fn status_maps_stored_state() {
+        let config = Config::default();
         let state = StoredWalletState {
             consent_granted: true,
             source: WalletSetupSource::Generated,
@@ -555,9 +725,10 @@ mod tests {
             accounts: WalletChain::ALL.into_iter().map(sample_account).collect(),
             updated_at_ms: 123,
         };
-        let status = to_status(Some(state));
+        let status = to_status(&config, Some(state));
         assert!(status.configured);
         assert!(status.onboarding_completed);
+        // When encrypted_mnemonic is in the JSON field, secret_stored should be true.
         assert!(status.secret_stored);
         assert_eq!(status.accounts.len(), 4);
         assert_eq!(status.updated_at_ms, Some(123));

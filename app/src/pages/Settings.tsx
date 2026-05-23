@@ -7,6 +7,7 @@ import AIPanel from '../components/settings/panels/AIPanel';
 import AppearancePanel from '../components/settings/panels/AppearancePanel';
 import AutocompleteDebugPanel from '../components/settings/panels/AutocompleteDebugPanel';
 import AutocompletePanel from '../components/settings/panels/AutocompletePanel';
+import AutonomyPanel from '../components/settings/panels/AutonomyPanel';
 import BillingPanel from '../components/settings/panels/BillingPanel';
 import CompanionPanel from '../components/settings/panels/CompanionPanel';
 import ComposioPanel from '../components/settings/panels/ComposioPanel';
@@ -353,6 +354,7 @@ const Settings = () => {
         <Route path="companion" element={wrapSettingsPage(<CompanionPanel />)} />
         {/* Developer Options */}
         <Route path="developer-options" element={wrapSettingsPage(<DeveloperOptionsPanel />)} />
+        <Route path="autonomy" element={wrapSettingsPage(<AutonomyPanel />)} />
         <Route path="mcp-server" element={wrapSettingsPage(<McpServerPanel />)} />
         <Route
           path="notification-routing"

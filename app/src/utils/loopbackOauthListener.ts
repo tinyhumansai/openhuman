@@ -1,0 +1,114 @@
+import { invoke } from '@tauri-apps/api/core';
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+
+import { isTauri } from './tauriCommands/common';
+
+/**
+ * Loopback OAuth listener — preferred desktop redirect target ahead of
+ * `openhuman://` deep links (RFC 8252).
+ *
+ * The Tauri shell binds `http://127.0.0.1:<port>/auth` on demand, returns the
+ * redirect URI plus a state nonce, and emits a `loopback-oauth-callback` event
+ * once the backend redirects the browser back. Callers append the state to the
+ * URL handed to the backend so a hostile page on the same loopback origin
+ * cannot fake a callback.
+ *
+ * Falls back gracefully: any failure (not in Tauri, port already in use,
+ * timeout) returns `null` so callers can take the `openhuman://` deep-link
+ * path instead.
+ */
+
+const DEFAULT_PORT = 53824;
+const DEFAULT_TIMEOUT_SECS = 300;
+const CALLBACK_EVENT = 'loopback-oauth-callback';
+
+export interface LoopbackHandle {
+  /** Fully qualified redirect URI to give to the backend, state already appended. */
+  redirectUri: string;
+  /** State nonce the backend must echo back as `?state=<value>`. */
+  state: string;
+  /** Resolves with the full callback URL once the browser hits the loopback. */
+  awaitCallback: () => Promise<string>;
+  /** Tear down the listener early (e.g. user cancelled). */
+  cancel: () => Promise<void>;
+}
+
+interface StartResult {
+  redirectUri: string;
+  state: string;
+}
+
+interface CallbackPayload {
+  url: string;
+}
+
+export interface StartLoopbackOptions {
+  /** Loopback port to bind. Must be pre-registered with the backend. */
+  port?: number;
+  /** How long to keep the listener alive. */
+  timeoutSecs?: number;
+}
+
+/**
+ * Start a one-shot loopback listener. Returns `null` if not running inside
+ * Tauri, or if the shell fails to bind (port in use, etc) — the caller should
+ * then fall back to the `openhuman://` deep-link redirect.
+ */
+export const startLoopbackOauthListener = async (
+  options: StartLoopbackOptions = {}
+): Promise<LoopbackHandle | null> => {
+  if (!isTauri()) {
+    return null;
+  }
+
+  const port = options.port ?? DEFAULT_PORT;
+  const timeoutSecs = options.timeoutSecs ?? DEFAULT_TIMEOUT_SECS;
+
+  let result: StartResult;
+  try {
+    result = await invoke<StartResult>('start_loopback_oauth_listener', { port, timeoutSecs });
+  } catch (err) {
+    console.warn('[loopback-oauth] start failed, falling back to deep link', err);
+    return null;
+  }
+
+  const redirectUriWithState = appendState(result.redirectUri, result.state);
+
+  const stop = async () => {
+    try {
+      await invoke('stop_loopback_oauth_listener');
+    } catch (err) {
+      console.warn('[loopback-oauth] stop failed', err);
+    }
+  };
+
+  const awaitCallback = (): Promise<string> =>
+    new Promise<string>((resolve, reject) => {
+      let unlisten: UnlistenFn | null = null;
+      const timer = window.setTimeout(() => {
+        if (unlisten) unlisten();
+        void stop();
+        reject(new Error('Loopback OAuth listener timed out'));
+      }, timeoutSecs * 1000);
+
+      listen<CallbackPayload>(CALLBACK_EVENT, event => {
+        window.clearTimeout(timer);
+        if (unlisten) unlisten();
+        resolve(event.payload.url);
+      })
+        .then(fn => {
+          unlisten = fn;
+        })
+        .catch(err => {
+          window.clearTimeout(timer);
+          reject(err);
+        });
+    });
+
+  return { redirectUri: redirectUriWithState, state: result.state, awaitCallback, cancel: stop };
+};
+
+const appendState = (uri: string, state: string): string => {
+  const separator = uri.includes('?') ? '&' : '?';
+  return `${uri}${separator}state=${encodeURIComponent(state)}`;
+};

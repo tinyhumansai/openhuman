@@ -43,6 +43,7 @@ pub mod http_host;
 pub mod inference;
 pub mod integrations;
 pub mod javascript;
+pub mod keyring;
 pub mod learning;
 pub mod mcp_client;
 pub mod mcp_clients;
@@ -68,6 +69,7 @@ pub mod security;
 pub mod service;
 pub mod skills;
 pub mod socket;
+pub mod startup;
 pub mod subconscious;
 pub mod team;
 #[cfg(feature = "e2e-test-support")]

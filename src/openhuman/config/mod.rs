@@ -35,11 +35,13 @@ pub use schema::{
     OrchestratorModelConfig, PolymarketClobCredentials, PolymarketConfig, ProxyConfig, ProxyScope,
     ReflectionSource, ReliabilityConfig, ResourceLimitsConfig, RuntimeConfig, SandboxBackend,
     SandboxConfig, SchedulerConfig, SchedulerGateConfig, SchedulerGateMode,
-    ScreenIntelligenceConfig, SearxngConfig, SecretsConfig, SecurityConfig, SlackConfig,
-    StorageConfig, StorageProviderConfig, StorageProviderSection, StreamMode, TeamModelConfig,
-    TelegramConfig, UpdateConfig, UpdateRestartStrategy, VoiceActivationMode, VoiceServerConfig,
-    WebSearchConfig, WebhookConfig, DEFAULT_CLOUD_LLM_MODEL, DEFAULT_MODEL, MODEL_AGENTIC_V1,
-    MODEL_CHAT_V1, MODEL_CODING_V1, MODEL_REASONING_QUICK_V1, MODEL_REASONING_V1,
+    ScreenIntelligenceConfig, SearchConfig, SearchEngine, SearchEngineCredentials, SearxngConfig,
+    SecretsConfig, SecurityConfig, SlackConfig, StorageConfig, StorageProviderConfig,
+    StorageProviderSection, StreamMode, TeamModelConfig, TelegramConfig, UpdateConfig,
+    UpdateRestartStrategy, VoiceActivationMode, VoiceServerConfig, WebSearchConfig, WebhookConfig,
+    DEFAULT_CLOUD_LLM_MODEL, DEFAULT_MODEL, MODEL_AGENTIC_V1, MODEL_CHAT_V1, MODEL_CODING_V1,
+    MODEL_REASONING_QUICK_V1, MODEL_REASONING_V1, SEARCH_ENGINE_BRAVE, SEARCH_ENGINE_MANAGED,
+    SEARCH_ENGINE_PARALLEL,
 };
 pub use schema::{
     clear_active_user, default_root_openhuman_dir, pre_login_user_dir, read_active_user_id,

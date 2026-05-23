@@ -187,6 +187,11 @@ pub struct Config {
     #[serde(default)]
     pub web_search: WebSearchConfig,
 
+    /// Unified search-engine selector. Picks exactly one engine
+    /// (managed / parallel / brave) and layers the corresponding tools.
+    #[serde(default)]
+    pub search: SearchConfig,
+
     #[serde(default)]
     pub proxy: ProxyConfig,
 
@@ -303,48 +308,13 @@ pub struct Config {
     /// full-screen onboarding overlay on top of the chat pane: when
     /// `false`, the overlay is shown and the user cannot interact with
     /// the chat until they complete or defer the wizard.
-    ///
-    /// Distinct from [`Config::chat_onboarding_completed`] — this flag
-    /// only tracks the UI wizard, NOT the welcome agent's chat-based
-    /// greeting flow. See that field for the agent routing semantics.
     #[serde(default)]
     pub onboarding_completed: bool,
 
-    /// Whether the **chat-based welcome agent** flow has run for this
-    /// user. Distinct from [`Config::onboarding_completed`] (the
-    /// React UI wizard flag) so the welcome agent can run on the very
-    /// first chat turn even after the React wizard has already
-    /// completed.
-    ///
-    /// Routing semantics:
-    /// * **`false`** — incoming channel messages and Tauri in-app
-    ///   chat turns route to the `welcome` agent definition (see
-    ///   `channels::providers::web::build_session_agent` and
-    ///   `channels::runtime::dispatch::resolve_target_agent`). The
-    ///   welcome agent inspects the user's setup, delivers a
-    ///   personalized greeting, and (when the essentials are in
-    ///   place) calls `complete_onboarding` which
-    ///   flips this flag to `true`.
-    /// * **`true`** — the welcome agent has already run; future chat
-    ///   turns route to the orchestrator.
-    ///
-    /// Why two separate flags:
-    ///
-    /// In the Tauri desktop app, `OnboardingOverlay` blocks the chat
-    /// pane until `onboarding_completed=true`. If the welcome agent
-    /// also gated on `onboarding_completed`, by the time the user
-    /// could type in chat the flag would already be `true` and the
-    /// welcome agent would never run on the desktop. Using a separate
-    /// flag lets the React wizard manage UI gating while the chat
-    /// welcome runs orthogonally — every user gets greeted by the
-    /// welcome agent on their first chat turn regardless of which
-    /// surface they came from (web, Telegram, Discord, etc.).
-    ///
-    /// Defaults to `false` for backward compatibility — existing
-    /// `config.toml` files without this field will get the welcome
-    /// agent on their next chat turn, which is the correct behaviour
-    /// (the welcome agent is idempotent and re-running it for an
-    /// already-onboarded user just produces a recognition message).
+    /// Deprecated — retained for backward-compatible deserialization of
+    /// existing `config.toml` files. The welcome agent and its chat-based
+    /// onboarding flow have been removed; all chat turns now route directly
+    /// to the orchestrator regardless of this flag's value.
     #[serde(default)]
     pub chat_onboarding_completed: bool,
 }
@@ -624,6 +594,7 @@ impl Default for Config {
             seltz: SeltzConfig::default(),
             searxng: SearxngConfig::default(),
             web_search: WebSearchConfig::default(),
+            search: SearchConfig::default(),
             proxy: ProxyConfig::default(),
             cost: CostConfig::default(),
             computer_control: ComputerControlConfig::default(),

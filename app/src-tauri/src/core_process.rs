@@ -217,6 +217,10 @@ impl CoreProcessHandle {
                     // the same env, matching what a child sidecar would have
                     // received via Command::env.
                     std::env::set_var("OPENHUMAN_CORE_TOKEN", self.rpc_token.as_str());
+                    // Surface the Tauri shell version to the in-process core so
+                    // backend-bound HTTP requests can attach `x-tauri-version`
+                    // analytics headers alongside `x-core-version`.
+                    std::env::set_var("OPENHUMAN_TAURI_VERSION", env!("CARGO_PKG_VERSION"));
                     *self.active_port.write() = port;
                     *self.last_port_fallback.write() = None;
 

@@ -579,12 +579,9 @@ fn provider_role_override_routes_hint_workloads() {
 
 #[test]
 fn fingerprint_target_agent_flip_forces_rebuild() {
-    // welcome → orchestrator routing flip (onboarding completion) must
-    // still invalidate — regression guard for the original cache bug
-    // this struct also protects.
-    let welcome = fp(None, None, "welcome", "cloud");
     let orchestrator = fp(None, None, "orchestrator", "cloud");
-    assert_ne!(welcome, orchestrator);
+    let profile_agent = fp(None, None, "integrations_agent", "cloud");
+    assert_ne!(orchestrator, profile_agent);
 }
 
 #[test]

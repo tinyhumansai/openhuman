@@ -137,8 +137,6 @@ pub fn all_tools_with_runtime(
         // follow-up; the tool emits a stable marker today.
         Box::new(TodoTool::new()),
         Box::new(PlanExitTool::new()),
-        Box::new(CheckOnboardingStatusTool::new()),
-        Box::new(CompleteOnboardingTool::new()),
         Box::new(CurrentTimeTool::new()),
         Box::new(CronAddTool::new(config.clone(), security.clone())),
         Box::new(CronListTool::new(config.clone())),
@@ -310,81 +308,121 @@ pub fn all_tools_with_runtime(
         tracing::debug!("[mcp_client] no MCP servers registered — bridge tools skipped");
     }
 
-    // Web search — always registered. Result/timeout budget
-    // knobs still come from `config.web_search`, but there is no
-    // enable flag: every session needs research as a baseline
-    // capability.
-    let seltz_has_api_key = root_config
-        .seltz
-        .api_key
-        .as_deref()
-        .is_some_and(|key| !key.trim().is_empty());
-    let direct_seltz_for_web_search = if root_config.seltz.enabled && seltz_has_api_key {
-        tracing::debug!(
-            max_results = root_config.seltz.max_results,
-            timeout_secs = root_config.seltz.timeout_secs,
-            "[web_search] direct Seltz routing enabled"
-        );
-        Some(crate::openhuman::integrations::SeltzSearchTool::new(
-            root_config.seltz.api_key.clone(),
-            root_config.seltz.api_url.clone(),
-            root_config.seltz.max_results,
-            root_config.seltz.timeout_secs,
-        ))
-    } else {
-        tracing::debug!(
-            seltz_enabled = root_config.seltz.enabled,
-            has_api_key = seltz_has_api_key,
-            "[web_search] direct Seltz routing disabled; backend proxy path remains"
-        );
-        None
-    };
-    tools.push(Box::new(
-        WebSearchTool::new(
-            crate::openhuman::integrations::build_client(root_config),
-            root_config.web_search.max_results,
-            root_config.web_search.timeout_secs,
-        )
-        .with_direct_search(direct_seltz_for_web_search),
-    ));
-
-    // Seltz — direct-API web search, gated on `seltz.enabled` (auto-set
-    // when `SELTZ_API_KEY` env var is present). Unlike the backend-proxied
-    // web_search above, this calls the Seltz API directly with a user-
-    // provided API key.
-    if root_config.seltz.enabled {
-        tools.push(Box::new(
-            crate::openhuman::integrations::SeltzSearchTool::new(
-                root_config.seltz.api_key.clone(),
-                root_config.seltz.api_url.clone(),
-                root_config.seltz.max_results,
-                root_config.seltz.timeout_secs,
-            ),
-        ));
-        tracing::debug!("[seltz] registered seltz_search tool");
-    } else {
-        tracing::debug!("[seltz] disabled — set SELTZ_API_KEY to enable");
-    }
-
-    // SearXNG — self-hosted web search, gated on `searxng.enabled`.
-    // This is useful for users who want current web results without routing
-    // queries through OpenHuman's backend or a hosted search API.
-    if root_config.searxng.enabled {
-        tools.push(Box::new(
-            crate::openhuman::integrations::SearxngSearchTool::new(
-                root_config.searxng.base_url.clone(),
-                root_config.searxng.max_results,
-                root_config.searxng.default_language.clone(),
-                root_config.searxng.timeout_secs,
-            ),
-        ));
-        tracing::debug!(
-            base_url = %root_config.searxng.base_url,
-            max_results = root_config.searxng.max_results,
-            "[searxng] registered searxng_search tool"
-        );
-    } else {
-        tracing::debug!("[searxng] disabled — set searxng.enabled=true to enable");
+    // ── Unified search engine ───────────────────────────────────────
+    //
+    // Exactly one engine drives `web_search_tool` plus any
+    // engine-specific tools (Parallel research/extract/etc., Brave
+    // news/image/video). Mirrors the LLM-provider API-key model: a
+    // single switch, BYO credentials, layered tool surface.
+    //
+    // Legacy `seltz` / `searxng` config blocks are still parsed but
+    // no longer register tools — they were superseded by this
+    // selector. Use `search.engine = "managed" | "parallel" | "brave"`
+    // instead.
+    {
+        use crate::openhuman::config::SearchEngine;
+        let search = &root_config.search;
+        let max_results = search.max_results.clamp(1, 20);
+        let timeout_secs = search.timeout_secs.max(1);
+        match search.effective_engine() {
+            SearchEngine::Managed => {
+                tracing::debug!(
+                    requested = %search.requested_engine_str(),
+                    "[search] active engine = managed (backend-proxied web_search)"
+                );
+                tools.push(Box::new(WebSearchTool::new(
+                    crate::openhuman::integrations::build_client(root_config),
+                    max_results,
+                    timeout_secs,
+                )));
+            }
+            SearchEngine::Parallel => {
+                tracing::debug!("[search] active engine = parallel (BYO direct API)");
+                // Direct-mode Parallel still goes through the
+                // backend-proxy client today; the BYO key is stored on
+                // the integration client so the upstream tools can
+                // pick it up once direct Parallel routing lands.
+                let client = crate::openhuman::integrations::build_client(root_config);
+                if let Some(client) = client {
+                    tools.push(Box::new(
+                        crate::openhuman::integrations::ParallelSearchTool::new(Arc::clone(
+                            &client,
+                        )),
+                    ));
+                    tools.push(Box::new(
+                        crate::openhuman::integrations::ParallelExtractTool::new(Arc::clone(
+                            &client,
+                        )),
+                    ));
+                    tools.push(Box::new(
+                        crate::openhuman::integrations::ParallelChatTool::new(Arc::clone(&client)),
+                    ));
+                    tools.push(Box::new(
+                        crate::openhuman::integrations::ParallelResearchTool::new(Arc::clone(
+                            &client,
+                        )),
+                    ));
+                    tools.push(Box::new(
+                        crate::openhuman::integrations::ParallelEnrichTool::new(Arc::clone(
+                            &client,
+                        )),
+                    ));
+                    tools.push(Box::new(
+                        crate::openhuman::integrations::ParallelDatasetTool::new(Arc::clone(
+                            &client,
+                        )),
+                    ));
+                    // Layer the unified web_search slot too so the
+                    // agent's default research path keeps working.
+                    tools.push(Box::new(WebSearchTool::new(
+                        Some(Arc::clone(&client)),
+                        max_results,
+                        timeout_secs,
+                    )));
+                } else {
+                    tracing::warn!(
+                        "[search] engine=parallel but no backend client — falling back to managed surface"
+                    );
+                    tools.push(Box::new(WebSearchTool::new(
+                        None,
+                        max_results,
+                        timeout_secs,
+                    )));
+                }
+            }
+            SearchEngine::Brave => {
+                tracing::debug!("[search] active engine = brave (BYO direct API)");
+                let api_key = search.brave.api_key.clone();
+                tools.push(Box::new(
+                    crate::openhuman::integrations::BraveWebSearchTool::new(
+                        api_key.clone(),
+                        max_results,
+                        timeout_secs,
+                    ),
+                ));
+                tools.push(Box::new(
+                    crate::openhuman::integrations::BraveNewsSearchTool::new(
+                        api_key.clone(),
+                        max_results,
+                        timeout_secs,
+                    ),
+                ));
+                tools.push(Box::new(
+                    crate::openhuman::integrations::BraveImageSearchTool::new(
+                        api_key.clone(),
+                        max_results,
+                        timeout_secs,
+                    ),
+                ));
+                tools.push(Box::new(
+                    crate::openhuman::integrations::BraveVideoSearchTool::new(
+                        api_key,
+                        max_results,
+                        timeout_secs,
+                    ),
+                ));
+            }
+        }
     }
 
     // Managed Node.js exec tools — gated on `root_config.node.enabled`.
@@ -475,28 +513,14 @@ pub fn all_tools_with_runtime(
         } else {
             tracing::debug!("[integrations] google_places disabled — skipping");
         }
+        // NOTE: parallel tools moved to the unified [search] engine
+        // selector above. `integrations.parallel` is parsed but no
+        // longer registers tools directly — set
+        // `search.engine = "parallel"` instead.
         if root_config.integrations.parallel.is_active() {
-            tools.push(Box::new(
-                crate::openhuman::integrations::ParallelSearchTool::new(Arc::clone(&client)),
-            ));
-            tools.push(Box::new(
-                crate::openhuman::integrations::ParallelExtractTool::new(Arc::clone(&client)),
-            ));
-            tools.push(Box::new(
-                crate::openhuman::integrations::ParallelChatTool::new(Arc::clone(&client)),
-            ));
-            tools.push(Box::new(
-                crate::openhuman::integrations::ParallelResearchTool::new(Arc::clone(&client)),
-            ));
-            tools.push(Box::new(
-                crate::openhuman::integrations::ParallelEnrichTool::new(Arc::clone(&client)),
-            ));
-            tools.push(Box::new(
-                crate::openhuman::integrations::ParallelDatasetTool::new(Arc::clone(&client)),
-            ));
-            tracing::debug!("[integrations] registered parallel tools");
-        } else {
-            tracing::debug!("[integrations] parallel disabled — skipping");
+            tracing::debug!(
+                "[integrations] parallel toggle is active but tools are governed by search.engine now"
+            );
         }
         if root_config.integrations.tinyfish.is_active() {
             tools.push(Box::new(
