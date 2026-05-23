@@ -12,8 +12,9 @@
 //! `with_connection()` previously opened a new SQLite connection and re-ran
 //! the full schema init (8 tables, 15+ indexes, 8+ migrations) on **every**
 //! call. With 4 workers polling every 5 s this amounted to ~69K connection
-//! opens/day, and three I/O error codes (1546 IOERR_TRUNCATE, 4874
-//! IOERR_SHMMAP, 14 CANTOPEN) flooded Sentry with ~19K events in 4 days.
+//! opens/day, and a family of WAL/SHM cold-start I/O codes (1546
+//! IOERR_TRUNCATE, 4618 IOERR_SHMOPEN, 4874 IOERR_SHMSIZE, 14 CANTOPEN)
+//! flooded Sentry with ~19K events in 4 days.
 //!
 //! Fix: a process-level `ConnectionCache` keyed by DB path. Each entry holds
 //! one `parking_lot::Mutex<Connection>` that is initialised once (schema +
@@ -792,25 +793,41 @@ pub(crate) fn schema_apply_count_for_path_for_tests(path: &Path) -> usize {
         .unwrap_or(0)
 }
 
-/// SQLite extended result code `CANTOPEN` — surfaces when a cold-start
-/// caller races the lockfile/WAL creation done by another connection.
+// SQLite extended result codes that fire during cold-start WAL/SHM bootstrap
+// races. NOTE on values: extended codes are `SQLITE_IOERR (10) | (sub << 8)`.
+// 4874 is `IOERR_SHMSIZE` (sub 19), NOT `SHMMAP` — the real `SHMMAP` is 5386
+// (sub 21) and the "open a new shared-memory segment" failure is `SHMOPEN`
+// 4618 (sub 18), which is what surfaced on macOS. The whole `-shm` family is
+// listed so the classifiers don't miss any of them.
+/// `CANTOPEN` — racing the lockfile/WAL creation done by another connection.
 const SQLITE_CANTOPEN: i32 = 14;
-/// SQLite extended result code `IOERR_TRUNCATE` — fires when the WAL is
-/// being truncated by another connection during bootstrap.
+/// `IOERR_TRUNCATE` — the WAL/db is being truncated during bootstrap.
 const SQLITE_IOERR_TRUNCATE: i32 = 1546;
-/// SQLite extended result code `IOERR_SHMMAP` — fires when the shared
-/// memory file is resized by another connection during bootstrap.
-const SQLITE_IOERR_SHMMAP: i32 = 4874;
+/// `IOERR_SHMOPEN` — opening a new `-shm` shared-memory segment failed (the
+/// macOS cold-start failure, e.g. Sentry TAURI-RUST-X1).
+const SQLITE_IOERR_SHMOPEN: i32 = 4618;
+/// `IOERR_SHMSIZE` — the `-shm` file is being resized during bootstrap.
+const SQLITE_IOERR_SHMSIZE: i32 = 4874;
+/// `IOERR_SHMMAP` — mapping a page of the `-shm` wal-index failed.
+const SQLITE_IOERR_SHMMAP: i32 = 5386;
+/// `IOERR_IN_PAGE` — an mmap-page I/O fault, also seen under WAL cold-start.
+const SQLITE_IOERR_IN_PAGE: i32 = 8714;
 
-/// True if `err` (or anything in its cause chain) is one of the three
-/// SQLite codes that fire during cold-start WAL/SHM bootstrap races:
-/// `CANTOPEN`, `IOERR_TRUNCATE`, `IOERR_SHMMAP`.
+/// True if `err` (or anything in its cause chain) is one of the SQLite codes
+/// that fire during cold-start WAL/SHM bootstrap races: `CANTOPEN`,
+/// `IOERR_TRUNCATE`, the `-shm` family (`SHMOPEN` / `SHMSIZE` / `SHMMAP`), and
+/// `IOERR_IN_PAGE`.
 pub(crate) fn is_transient_cold_start(err: &anyhow::Error) -> bool {
     fn is_transient_sqlite(e: &(dyn std::error::Error + 'static)) -> bool {
         if let Some(rusqlite::Error::SqliteFailure(ffi, _)) = e.downcast_ref::<rusqlite::Error>() {
             return matches!(
                 ffi.extended_code,
-                SQLITE_CANTOPEN | SQLITE_IOERR_TRUNCATE | SQLITE_IOERR_SHMMAP
+                SQLITE_CANTOPEN
+                    | SQLITE_IOERR_TRUNCATE
+                    | SQLITE_IOERR_SHMOPEN
+                    | SQLITE_IOERR_SHMSIZE
+                    | SQLITE_IOERR_SHMMAP
+                    | SQLITE_IOERR_IN_PAGE
             );
         }
         false
@@ -963,8 +980,8 @@ pub(crate) fn try_cleanup_stale_files(db_path: &std::path::Path) -> bool {
     cleaned
 }
 
-/// Run the full one-time DB initialisation (WAL, schema, migrations) against
-/// an already-open `Connection`. Used by `get_or_init_connection`.
+/// Run the full one-time DB initialisation (journal mode, schema, migrations)
+/// against an already-open `Connection`. Used by `get_or_init_connection`.
 fn init_db(conn: &Connection, config: &Config) -> Result<()> {
     conn.busy_timeout(SQLITE_BUSY_TIMEOUT)
         .context("Failed to configure memory_tree busy timeout")?;
@@ -975,6 +992,11 @@ fn init_db(conn: &Connection, config: &Config) -> Result<()> {
     // on.
     conn.execute_batch("PRAGMA foreign_keys = ON;")
         .context("Failed to enable memory_tree foreign_keys pragma")?;
+    // memory_tree runs the TRUNCATE rollback journal (see `apply_schema`), so
+    // crash-safety requires synchronous=FULL — NORMAL is only corruption-safe
+    // under WAL. Set explicitly so a future global default can't weaken it.
+    conn.execute_batch("PRAGMA synchronous = FULL;")
+        .context("Failed to set memory_tree synchronous=FULL")?;
     apply_schema(conn)?;
     // #1574 §7: one-shot, version-gated legacy→sidecar embedding migration.
     migrate_legacy_embeddings_to_sidecar(conn, config)?;
@@ -984,9 +1006,27 @@ fn init_db(conn: &Connection, config: &Config) -> Result<()> {
 fn apply_schema(conn: &Connection) -> Result<()> {
     // Note: `init_db` runs the `#1574 §7` legacy→sidecar embedding migration
     // after this returns, so the dim-equal copy step is not duplicated here.
-    if let Err(wal_err) = conn.execute_batch("PRAGMA journal_mode=WAL;") {
+    // memory_tree uses the TRUNCATE rollback journal, NOT WAL. WAL's `-shm`
+    // shared-memory index + `-wal` checkpoint machinery are the root of the
+    // cold-start IOERR_SHMMAP (macOS) / IOERR_TRUNCATE (Windows, AV-held
+    // handles) failures (Sentry TAURI-RUST-EV / TAURI-RUST-X1). All tree
+    // access serialises on the single cached `PMutex<Connection>` (see
+    // `get_or_init_connection`), so WAL's only real benefit — concurrent
+    // readers — is unused here, which makes WAL pure liability. The sibling
+    // tree DBs (cron / vault / redirect_links) already run the default
+    // rollback journal without issue.
+    //
+    // Requesting TRUNCATE on a database a prior release left in WAL mode
+    // checkpoints the `-wal` back into the main file and removes the
+    // `-wal`/`-shm` side-files, so this also migrates existing WAL databases
+    // in place on upgrade.
+    let journal_mode: String = conn
+        .query_row("PRAGMA journal_mode=TRUNCATE", [], |row| row.get(0))
+        .context("Failed to set memory_tree journal_mode=TRUNCATE")?;
+    if !journal_mode.eq_ignore_ascii_case("truncate") {
         log::warn!(
-            "[memory_tree] Failed to enable WAL mode (filesystem may not support it): {wal_err}"
+            "[memory_tree] journal_mode is '{journal_mode}' after requesting TRUNCATE \
+             — a prior WAL connection or a locked -wal may be blocking the switch"
         );
     }
     conn.execute_batch(SCHEMA)
@@ -1037,9 +1077,15 @@ fn apply_schema(conn: &Connection) -> Result<()> {
 /// stale-file cleanup + single retry before giving up.
 fn is_io_open_error(err: &anyhow::Error) -> bool {
     if let Some(rusqlite::Error::SqliteFailure(f, _)) = err.downcast_ref::<rusqlite::Error>() {
-        // 1546 = SQLITE_IOERR_TRUNCATE, 4874 = SQLITE_IOERR_SHMMAP, 14 = SQLITE_CANTOPEN
-        return matches!(f.extended_code, 1546 | 4874 | 14)
-            || f.code == rusqlite::ErrorCode::CannotOpen;
+        return matches!(
+            f.extended_code,
+            SQLITE_CANTOPEN
+                | SQLITE_IOERR_TRUNCATE
+                | SQLITE_IOERR_SHMOPEN
+                | SQLITE_IOERR_SHMSIZE
+                | SQLITE_IOERR_SHMMAP
+                | SQLITE_IOERR_IN_PAGE
+        ) || f.code == rusqlite::ErrorCode::CannotOpen;
     }
     let msg = format!("{err:#}").to_ascii_lowercase();
     msg.contains("disk i/o error")
@@ -1302,29 +1348,7 @@ fn migrate_legacy_embeddings_to_sidecar(conn: &Connection, config: &Config) -> R
     // no-op job on every DB open — which would otherwise pollute the jobs
     // table for unrelated callers/tests. Enqueued atomically with the
     // migration; dedupe key = signature, so exactly one chain per space.
-    let has_uncovered: bool = tx.query_row(
-        // The `NOT EXISTS … reembed_skipped` clauses match the worklist in
-        // `handle_reembed_backfill`: terminally-failed rows (body missing,
-        // embed wrong dim / err) are sentinel-marked there and must NOT count
-        // as "uncovered" here, otherwise this migration probe keeps reporting
-        // "uncovered" → keeps enqueueing the backfill chain on every DB open →
-        // infinite re-arming (#1574 §6 runaway-loop fix).
-        "SELECT EXISTS(
-             SELECT 1 FROM mem_tree_chunks c
-              WHERE NOT EXISTS (SELECT 1 FROM mem_tree_chunk_embeddings e
-                                 WHERE e.chunk_id = c.id AND e.model_signature = ?1)
-                AND NOT EXISTS (SELECT 1 FROM mem_tree_chunk_reembed_skipped sk
-                                 WHERE sk.chunk_id = c.id AND sk.model_signature = ?1))
-           OR EXISTS(
-             SELECT 1 FROM mem_tree_summaries s
-              WHERE s.deleted = 0
-                AND NOT EXISTS (SELECT 1 FROM mem_tree_summary_embeddings e
-                                 WHERE e.summary_id = s.id AND e.model_signature = ?1)
-                AND NOT EXISTS (SELECT 1 FROM mem_tree_summary_reembed_skipped sk
-                                 WHERE sk.summary_id = s.id AND sk.model_signature = ?1))",
-        rusqlite::params![sig],
-        |r| r.get(0),
-    )?;
+    let has_uncovered = has_uncovered_reembed_work(&*tx, &sig)?;
     if has_uncovered {
         let backfill_job = crate::openhuman::memory::tree::jobs::types::NewJob::reembed_backfill(
             &crate::openhuman::memory::tree::jobs::types::ReembedBackfillPayload {
@@ -1586,6 +1610,34 @@ pub fn set_chunk_embedding_for_signature(
     })
 }
 
+/// `true` when at least one chunk or summary still needs an embedding at
+/// `model_signature` and is not tombstoned as terminally unembeddable.
+///
+/// Shared by `ensure_reembed_backfill`, the §7 migration enqueue probe, and
+/// tests so the worklist and coverage probes cannot drift (#2358).
+pub(crate) fn has_uncovered_reembed_work(
+    conn: &Connection,
+    model_signature: &str,
+) -> rusqlite::Result<bool> {
+    conn.query_row(
+        "SELECT EXISTS(
+             SELECT 1 FROM mem_tree_chunks c
+              WHERE NOT EXISTS (SELECT 1 FROM mem_tree_chunk_embeddings e
+                                 WHERE e.chunk_id = c.id AND e.model_signature = ?1)
+                AND NOT EXISTS (SELECT 1 FROM mem_tree_chunk_reembed_skipped sk
+                                 WHERE sk.chunk_id = c.id AND sk.model_signature = ?1))
+           OR EXISTS(
+             SELECT 1 FROM mem_tree_summaries s
+              WHERE s.deleted = 0
+                AND NOT EXISTS (SELECT 1 FROM mem_tree_summary_embeddings e
+                                 WHERE e.summary_id = s.id AND e.model_signature = ?1)
+                AND NOT EXISTS (SELECT 1 FROM mem_tree_summary_reembed_skipped sk
+                                 WHERE sk.summary_id = s.id AND sk.model_signature = ?1))",
+        rusqlite::params![model_signature],
+        |r| r.get(0),
+    )
+}
+
 /// Persistently record that `(chunk_id, signature)` cannot be re-embedded.
 ///
 /// Called by `handle_reembed_backfill` when the per-chunk body file is
@@ -1601,6 +1653,8 @@ pub fn mark_chunk_reembed_skipped(
     model_signature: &str,
     reason: &str,
 ) -> Result<()> {
+    let chunk_id = validate_reembed_skip_key("chunk_id", chunk_id)?;
+    let model_signature = validate_reembed_skip_key("model_signature", model_signature)?;
     with_connection(config, |conn| {
         let now_ms = Utc::now().timestamp_millis();
         conn.execute(
@@ -1612,8 +1666,80 @@ pub fn mark_chunk_reembed_skipped(
                     skipped_at_ms = excluded.skipped_at_ms",
             rusqlite::params![chunk_id, model_signature, reason, now_ms],
         )?;
+        log::debug!(
+            "[memory_tree::store] mark_chunk_reembed_skipped chunk_id={chunk_id} sig={model_signature} reason={reason}"
+        );
         Ok(())
     })
+}
+
+/// Remove a single chunk tombstone so re-embed backfill can retry the row.
+///
+/// Idempotent: deleting a missing `(chunk_id, model_signature)` pair is a
+/// no-op. Intended for operator recovery after environmental failures (moved
+/// workspace, restored body files, fixed embedder config) — see #2358.
+pub fn clear_chunk_reembed_skipped(
+    config: &Config,
+    chunk_id: &str,
+    model_signature: &str,
+) -> Result<()> {
+    let chunk_id = validate_reembed_skip_key("chunk_id", chunk_id)?;
+    let model_signature = validate_reembed_skip_key("model_signature", model_signature)?;
+    with_connection(config, |conn| {
+        conn.execute(
+            "DELETE FROM mem_tree_chunk_reembed_skipped
+              WHERE chunk_id = ?1 AND model_signature = ?2",
+            rusqlite::params![chunk_id, model_signature],
+        )?;
+        log::debug!(
+            "[memory_tree::store] clear_chunk_reembed_skipped chunk_id={chunk_id} sig={model_signature}"
+        );
+        Ok(())
+    })
+}
+
+/// Clear all chunk and summary tombstones for a model signature.
+///
+/// Returns the total number of rows removed across both tombstone tables.
+/// Idempotent when no tombstones exist for the signature.
+pub fn clear_reembed_skipped_for_signature(
+    config: &Config,
+    model_signature: &str,
+) -> Result<usize> {
+    let model_signature = validate_reembed_skip_key("model_signature", model_signature)?;
+    with_connection(config, |conn| {
+        let chunk_deleted = conn.execute(
+            "DELETE FROM mem_tree_chunk_reembed_skipped WHERE model_signature = ?1",
+            rusqlite::params![model_signature],
+        )?;
+        let summary_deleted = conn.execute(
+            "DELETE FROM mem_tree_summary_reembed_skipped WHERE model_signature = ?1",
+            rusqlite::params![model_signature],
+        )?;
+        log::debug!(
+            "[memory_tree::store] clear_reembed_skipped_for_signature sig={model_signature} chunk_rows={chunk_deleted} summary_rows={summary_deleted}"
+        );
+        Ok(chunk_deleted + summary_deleted)
+    })
+}
+
+/// Bounds attacker-controlled ids/signatures passed to reembed-skipped admin
+/// helpers without affecting legitimate rows (typical ids are well under 512
+/// chars). Rejects NUL bytes so SQLite bindings cannot be truncated.
+const REEMBED_SKIP_KEY_MAX_LEN: usize = 2048;
+
+pub(crate) fn validate_reembed_skip_key<'a>(label: &str, value: &'a str) -> Result<&'a str> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        anyhow::bail!("{label} must be non-empty");
+    }
+    if trimmed.len() > REEMBED_SKIP_KEY_MAX_LEN {
+        anyhow::bail!("{label} exceeds maximum length ({REEMBED_SKIP_KEY_MAX_LEN})");
+    }
+    if trimmed.as_bytes().contains(&0) {
+        anyhow::bail!("{label} must not contain NUL bytes");
+    }
+    Ok(trimmed)
 }
 
 /// Transaction-scoped variant of [`set_chunk_embedding_for_signature`].

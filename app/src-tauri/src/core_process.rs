@@ -32,6 +32,8 @@ use tokio_util::sync::CancellationToken;
 
 use crate::process_kill::{kill_pid_force, kill_pid_term};
 
+const EMBEDDED_CORE_READY_WAIT_ATTEMPTS: u16 = 200;
+
 /// Generate a 256-bit cryptographically-random bearer token as a hex string.
 ///
 /// Uses the same encoding as `openhuman_core::core::auth::generate_token`
@@ -215,6 +217,10 @@ impl CoreProcessHandle {
                     // the same env, matching what a child sidecar would have
                     // received via Command::env.
                     std::env::set_var("OPENHUMAN_CORE_TOKEN", self.rpc_token.as_str());
+                    // Surface the Tauri shell version to the in-process core so
+                    // backend-bound HTTP requests can attach `x-tauri-version`
+                    // analytics headers alongside `x-core-version`.
+                    std::env::set_var("OPENHUMAN_TAURI_VERSION", env!("CARGO_PKG_VERSION"));
                     *self.active_port.write() = port;
                     *self.last_port_fallback.write() = None;
 
@@ -276,17 +282,15 @@ impl CoreProcessHandle {
                 }
             }
 
-            // Readiness budget: 200 iterations × 100ms = 20s. The embedded
+            // Readiness budget: 200 iterations x 100ms = 20s. The embedded
             // core's JSON-RPC controller registry has grown over time and
             // earlier 4s/10s budgets started flaking under CI worker load
             // (issue: core_process tests intermittently failing with
             // "core process did not become ready"), especially under
             // cargo-llvm-cov instrumentation where the binary runs ~2x
-            // slower. 20s is still well under any user-visible startup
-            // expectation: in normal runs the ready signal arrives in well
-            // under 1s and the loop exits immediately; the headroom only
-            // matters on heavily loaded instrumented CI workers.
-            for _ in 0..200 {
+            // slower. Normal runs still exit the loop as soon as the ready
+            // signal arrives and the listener is open.
+            for _ in 0..EMBEDDED_CORE_READY_WAIT_ATTEMPTS {
                 if !received_ready {
                     match ready_rx.try_recv() {
                         Ok(ready_signal) => {

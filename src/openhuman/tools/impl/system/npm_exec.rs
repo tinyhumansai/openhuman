@@ -35,7 +35,28 @@ const NPM_TIMEOUT_MAX_SECS: u64 = 1800;
 const MAX_OUTPUT_BYTES: usize = 1_048_576;
 /// Env allow-list — matches the shell / node_exec tools.
 const SAFE_ENV_VARS: &[&str] = &[
-    "HOME", "TERM", "LANG", "LC_ALL", "LC_CTYPE", "USER", "SHELL", "TMPDIR",
+    "HOME",
+    "TERM",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "USER",
+    "SHELL",
+    "TMPDIR",
+    // Windows process creation and child command lookup need these after env_clear().
+    // PATH is rebuilt separately with the managed Node bin dir prepended.
+    "SystemRoot",
+    "WINDIR",
+    "COMSPEC",
+    "PATHEXT",
+    "TEMP",
+    "TMP",
+    "USERPROFILE",
+    "APPDATA",
+    "LOCALAPPDATA",
+    "ProgramFiles",
+    "ProgramFiles(x86)",
+    "ProgramW6432",
 ];
 
 /// Subcommands we outright refuse to run. These either break the managed
@@ -372,5 +393,15 @@ mod tests {
         let ws = std::path::Path::new("/tmp/ws");
         let got = resolve_cwd(ws, Some("app")).unwrap();
         assert_eq!(got, std::path::PathBuf::from("/tmp/ws/app"));
+    }
+
+    #[test]
+    fn safe_env_vars_include_windows_process_essentials() {
+        for var in ["SystemRoot", "COMSPEC", "PATHEXT", "TEMP", "USERPROFILE"] {
+            assert!(
+                SAFE_ENV_VARS.contains(&var),
+                "{var} must be forwarded for Windows child processes"
+            );
+        }
     }
 }

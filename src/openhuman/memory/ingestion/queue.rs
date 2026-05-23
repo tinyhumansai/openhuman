@@ -65,6 +65,11 @@ pub struct IngestionQueue {
     tx: mpsc::Sender<IngestionJob>,
     /// Shared state — singleton lock, queue depth, status snapshot.
     state: IngestionState,
+    /// The actual channel capacity this queue was created with. Stored so
+    /// backpressure logs always reflect the real configured size rather than
+    /// the `DEFAULT_QUEUE_CAPACITY` constant (which may differ for test
+    /// queues or future callers of `start_worker_with_capacity`).
+    capacity: usize,
 }
 
 impl IngestionQueue {
@@ -97,7 +102,7 @@ impl IngestionQueue {
                 self.state.dequeue();
                 log::warn!(
                     "[memory:ingestion_queue] dropping job: queue at capacity ({} pending) doc_id={} namespace={} title={}",
-                    self.tx.max_capacity(),
+                    self.capacity,
                     dropped.document_id,
                     dropped.document.namespace,
                     dropped.document.title,
@@ -125,6 +130,16 @@ impl IngestionQueue {
     /// paths that bypass the queue.
     pub fn state(&self) -> IngestionState {
         self.state.clone()
+    }
+
+    /// Build a queue handle from a raw sender, state, and capacity. Test-only.
+    #[cfg(test)]
+    fn from_parts(tx: mpsc::Sender<IngestionJob>, state: IngestionState, capacity: usize) -> Self {
+        Self {
+            tx,
+            state,
+            capacity,
+        }
     }
 }
 
@@ -177,7 +192,11 @@ pub fn start_worker_with_capacity(
     tokio::spawn(ingestion_worker(memory, rx, state.clone()));
 
     log::info!("[memory:ingestion_queue] background worker started capacity={capacity}");
-    IngestionQueue { tx, state }
+    IngestionQueue {
+        tx,
+        state,
+        capacity,
+    }
 }
 
 /// The main worker loop for background document ingestion.
@@ -298,20 +317,11 @@ mod tests {
         }
     }
 
-    /// Build a queue plus its receiver, deliberately without spawning a
-    /// worker, so tests can keep jobs in the channel.
-    fn channel_only_queue(capacity: usize) -> (IngestionQueue, mpsc::Receiver<IngestionJob>) {
-        let (tx, rx) = mpsc::channel::<IngestionJob>(capacity);
-        let queue = IngestionQueue {
-            tx,
-            state: IngestionState::new(),
-        };
-        (queue, rx)
-    }
-
     #[tokio::test]
     async fn submit_succeeds_until_capacity_then_drops() {
-        let (queue, _rx) = channel_only_queue(2);
+        let state = IngestionState::new();
+        let (tx, _rx) = mpsc::channel::<IngestionJob>(2);
+        let queue = IngestionQueue::from_parts(tx, state.clone(), 2);
 
         assert!(queue.submit(fixture_job("a")), "first submit must enqueue");
         assert!(queue.submit(fixture_job("b")), "second submit must enqueue");
@@ -327,7 +337,7 @@ mod tests {
         // queue_depth must reflect only the accepted jobs — the drop path
         // is required to decrement so the status RPC does not drift upward.
         assert_eq!(
-            queue.state().snapshot().queue_depth,
+            state.snapshot().queue_depth,
             2,
             "queue_depth must roll back on overflow drop"
         );
@@ -335,7 +345,9 @@ mod tests {
 
     #[tokio::test]
     async fn submit_recovers_after_drain() {
-        let (queue, mut rx) = channel_only_queue(1);
+        let state = IngestionState::new();
+        let (tx, mut rx) = mpsc::channel::<IngestionJob>(1);
+        let queue = IngestionQueue::from_parts(tx, state.clone(), 1);
 
         assert!(queue.submit(fixture_job("first")));
         assert!(
@@ -348,26 +360,28 @@ mod tests {
         assert_eq!(pulled.document.title, "first");
         // Mirror the worker's accounting (queue depth -> dequeue) so the
         // post-drain snapshot does not look like a leftover queued job.
-        queue.state().dequeue();
+        state.dequeue();
 
         assert!(
             queue.submit(fixture_job("after-drain")),
             "submit after drain must enqueue"
         );
-        assert_eq!(queue.state().snapshot().queue_depth, 1);
+        assert_eq!(state.snapshot().queue_depth, 1);
     }
 
     #[tokio::test]
     async fn submit_after_worker_gone_returns_false() {
-        let (queue, rx) = channel_only_queue(4);
+        let state = IngestionState::new();
+        let (tx, rx) = mpsc::channel::<IngestionJob>(4);
         drop(rx); // simulate worker task exiting and dropping its receiver
+        let queue = IngestionQueue::from_parts(tx, state.clone(), 4);
 
         assert!(
             !queue.submit(fixture_job("orphan")),
             "submit must return false once the receiver is dropped"
         );
         assert_eq!(
-            queue.state().snapshot().queue_depth,
+            state.snapshot().queue_depth,
             0,
             "channel-closed drop path must roll the depth counter back"
         );

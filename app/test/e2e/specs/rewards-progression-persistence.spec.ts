@@ -1,13 +1,7 @@
-import { waitForApp, waitForAppReady } from '../helpers/app-helpers';
-import { triggerAuthDeepLinkBypass } from '../helpers/deep-link-helpers';
-import {
-  textExists,
-  waitForText,
-  waitForWebView,
-  waitForWindowVisible,
-} from '../helpers/element-helpers';
+import { waitForApp } from '../helpers/app-helpers';
+import { textExists, waitForText } from '../helpers/element-helpers';
 import { supportsExecuteScript } from '../helpers/platform';
-import { completeOnboardingIfVisible } from '../helpers/shared-flows';
+import { resetApp } from '../helpers/reset-app';
 import {
   resetMockBehavior,
   setMockBehavior,
@@ -54,6 +48,13 @@ function stepLog(message: string, context?: unknown): void {
 }
 
 async function navigateToRewards(): Promise<void> {
+  // Navigate to /home first so the Rewards component always re-mounts.
+  // Without this, if already at /rewards, setting the same hash is a no-op
+  // and the component never re-fetches the primed mock scenario.
+  await browser.execute(() => {
+    window.location.hash = '/home';
+  });
+  await browser.pause(1_000);
   await browser.execute(() => {
     window.location.hash = '/rewards';
   });
@@ -84,11 +85,19 @@ async function waitForRewardsSnapshot(timeout = 15_000): Promise<void> {
   throw new Error('[RewardsProgressionE2E] Rewards page did not finish loading snapshot in time');
 }
 
+async function getRewardsMetricValue(label: string): Promise<string | null> {
+  return browser.execute(metricLabel => {
+    const labels = Array.from(document.querySelectorAll('span'));
+    const labelNode = labels.find(node => node.textContent?.trim() === metricLabel);
+    const row = labelNode?.parentElement;
+    if (!row) return null;
+    const valueNode = Array.from(row.querySelectorAll('span')).find(node => node !== labelNode);
+    return valueNode?.textContent?.trim() ?? null;
+  }, label);
+}
+
 describe('Rewards progression & persistence', () => {
   before(async function beforeSuite() {
-    // Auth + onboarding can take longer than the default 30s per-hook budget.
-    this.timeout(90_000);
-
     if (!supportsExecuteScript()) {
       stepLog('Skipping suite on Mac2 — Rewards bottom-tab label not mapped for Appium');
       this.skip();
@@ -98,12 +107,8 @@ describe('Rewards progression & persistence', () => {
     await startMockServer();
     stepLog('waiting for app');
     await waitForApp();
-    stepLog('triggering auth bypass deep link');
-    await triggerAuthDeepLinkBypass('e2e-rewards-progression');
-    await waitForWindowVisible(25_000);
-    await waitForWebView(15_000);
-    await waitForAppReady(15_000);
-    await completeOnboardingIfVisible('[RewardsProgressionE2E]');
+    stepLog('resetting app with e2e-rewards-progression identity');
+    await resetApp('e2e-rewards-progression');
   });
 
   after(async () => {
@@ -113,8 +118,7 @@ describe('Rewards progression & persistence', () => {
     await stopMockServer();
   });
 
-  it('12.2.1 — message-driven progress is reflected in the unlocked-count summary', async function () {
-    this.timeout(90_000);
+  it('12.2.1 — message-driven progress is reflected in the unlocked-count summary', async () => {
     stepLog(
       'priming high_usage scenario (featuresUsedCount=6, cumulativeTokens=12.5M, streak=14d)'
     );
@@ -137,8 +141,7 @@ describe('Rewards progression & persistence', () => {
     expect(await textExists('Pro Supporter')).toBe(true);
   });
 
-  it('12.2.2 — usage metrics (current streak + cumulative tokens) render the snapshot values', async function () {
-    this.timeout(90_000);
+  it('12.2.2 — usage metrics (current streak + cumulative tokens) render the snapshot values', async () => {
     stepLog('priming high_usage scenario for metrics footer');
     resetMockBehavior();
     setMockBehavior('rewardsScenario', 'high_usage');
@@ -152,21 +155,16 @@ describe('Rewards progression & persistence', () => {
     await waitForRewardsSnapshot();
 
     // Current streak row in the metrics footer.
-    // i18n key 'rewards.community.streakDays' = '{n}' so the rendered text is
-    // just the number (e.g. '14'). The label key renders as 'Current streak'.
     expect(await textExists('Current streak')).toBe(true);
-    // Accept either '14 days' (if i18n is updated) or just '14' (current i18n).
-    const hasStreak = (await textExists('14 days')) || (await textExists('14'));
-    expect(hasStreak).toBe(true);
+    expect(await getRewardsMetricValue('Current streak')).toBe('14');
 
     // Cumulative tokens row — value formatted via en-US Intl.NumberFormat
     // (see RewardsCommunityTab.formatNumber). 12_500_000 → "12,500,000".
     expect(await textExists('Cumulative tokens')).toBe(true);
-    expect(await textExists('12,500,000')).toBe(true);
+    expect(await getRewardsMetricValue('Cumulative tokens')).toBe('12,500,000');
   });
 
-  it('12.2.3 — state persists across a simulated restart (re-fetch on remount)', async function () {
-    this.timeout(90_000);
+  it('12.2.3 — state persists across a simulated restart (re-fetch on remount)', async () => {
     // Phase 1: load the high-usage snapshot with a fixed lastSyncedAt so we
     // can prove the second fetch advanced the timestamp without changing
     // the durable counters.
@@ -184,11 +182,8 @@ describe('Rewards progression & persistence', () => {
     await waitForRewardsSnapshot();
 
     // Capture the durable counters from the rendered DOM before the restart.
-    // i18n 'rewards.community.streakDays' = '{n}' so rendered text is just '14'.
-    const phase1Streak = (await textExists('14 days')) || (await textExists('14'));
-    const phase1Tokens = await textExists('12,500,000');
-    expect(phase1Streak).toBe(true);
-    expect(phase1Tokens).toBe(true);
+    expect(await getRewardsMetricValue('Current streak')).toBe('14');
+    expect(await getRewardsMetricValue('Cumulative tokens')).toBe('12,500,000');
 
     // Phase 2: simulate a restart by unmounting Rewards (navigate away),
     // priming the post_restart scenario (same counters, later
@@ -207,9 +202,8 @@ describe('Rewards progression & persistence', () => {
     await waitForRewardsSnapshot();
 
     // Durable counters must survive the restart unchanged.
-    // i18n 'rewards.community.streakDays' = '{n}' so rendered text is just '14'.
-    expect((await textExists('14 days')) || (await textExists('14'))).toBe(true);
-    expect(await textExists('12,500,000')).toBe(true);
+    expect(await getRewardsMetricValue('Current streak')).toBe('14');
+    expect(await getRewardsMetricValue('Cumulative tokens')).toBe('12,500,000');
     expect(await textExists('3 of 3 achievements unlocked')).toBe(true);
 
     // Verify the second `/rewards/me` request landed on the mock — the
@@ -230,5 +224,47 @@ describe('Rewards progression & persistence', () => {
     });
     stepLog('rewards/me request count after restart simulation', { rewardsRequestCount });
     expect(rewardsRequestCount).toBeGreaterThanOrEqual(2);
+  });
+
+  it('12.2.4 — stalled rewards endpoint past timeout shows recoverable error with retry affordance', async () => {
+    stepLog('priming rewardsDelayMs=20000 — response arrives after the 15s app-side timeout');
+    resetMockBehavior();
+    setMockBehavior('rewardsDelayMs', '20000');
+
+    await navigateAway();
+    await navigateToRewards();
+
+    // The Rewards page renders an error state containing "Sync unavailable"
+    // and a retry button after the 15 s REWARDS_SNAPSHOT_TIMEOUT_MS fires.
+    // Give the page up to 30 s to time out and render the error UI.
+    const sawError = await waitForText('Sync unavailable', 30_000).then(
+      () => true,
+      () => false
+    );
+    if (!sawError) {
+      stepLog('WARN: "Sync unavailable" not seen — checking for any error marker');
+    }
+    expect(sawError || (await textExists('Retrying'))).toBe(true);
+
+    // The retry button must be present so the user can recover without restart.
+    const hasRetry = await textExists('Retrying');
+    expect(hasRetry).toBe(true);
+  });
+
+  it('12.2.5 — retry after timeout recovers and renders normalized rewards data', async () => {
+    stepLog('clearing delay so next request responds immediately');
+    resetMockBehavior();
+    setMockBehavior('rewardsScenario', 'high_usage');
+
+    // Navigate away so the retry is a fresh mount (mirroring user navigating
+    // back after the stall rather than clicking the retry button directly,
+    // since clicking into the delayed response is racy).
+    await navigateAway();
+    await navigateToRewards();
+    await waitForText('Your Progress', 15_000);
+    await waitForRewardsSnapshot();
+
+    expect(await textExists('3 of 3 achievements unlocked')).toBe(true);
+    expect(await getRewardsMetricValue('Current streak')).toBe('14');
   });
 });

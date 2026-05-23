@@ -85,6 +85,8 @@ pub struct LlmSummariserConfig {
     /// Set to `false` to restore the plain-text-only behaviour for A/B testing
     /// or debugging.
     pub structured_facet_extraction: bool,
+    /// Optional configured output language for generated prose summaries.
+    pub output_language: Option<String>,
 }
 
 impl Default for LlmSummariserConfig {
@@ -92,6 +94,7 @@ impl Default for LlmSummariserConfig {
         Self {
             model: "qwen2.5:0.5b".to_string(),
             structured_facet_extraction: true,
+            output_language: None,
         }
     }
 }
@@ -121,7 +124,11 @@ impl LlmSummariser {
     /// an instruction to emit a fenced `json` block after the prose summary.
     fn build_prompt(&self, prompt_body: &str, budget: u32) -> ChatPrompt {
         ChatPrompt {
-            system: system_prompt(budget, self.cfg.structured_facet_extraction),
+            system: system_prompt(
+                budget,
+                self.cfg.structured_facet_extraction,
+                self.cfg.output_language.as_deref(),
+            ),
             user: prompt_body.to_string(),
             temperature: 0.0,
             kind: "memory_tree::summarise",
@@ -295,22 +302,25 @@ fn build_user_prompt(inputs: &[SummaryInput], per_input_cap_tokens: u32) -> Stri
 /// "stay under N tokens" makes them produce curt, generic output even when the
 /// input has plenty of substance. Output is clamped post-generation by
 /// [`clamp_to_budget`] in the caller.
-fn system_prompt(_budget: u32, structured_facets: bool) -> String {
+fn system_prompt(_budget: u32, structured_facets: bool, output_language: Option<&str>) -> String {
     let base = "You are a precise summariser. Summarise the user-provided contributions into a \
      single cohesive passage that preserves concrete facts, decisions, \
      and temporal ordering. Do not invent facts.\n\
      \n\
      Return the summary text first.";
+    let language_directive = crate::openhuman::config::output_language_directive(output_language)
+        .map(|directive| format!("\n\n{directive}"))
+        .unwrap_or_default();
 
     if !structured_facets {
         return format!(
-            "{base} No commentary, no preamble, no headings, \
+            "{base}{language_directive} No commentary, no preamble, no headings, \
              no markdown wrappers, no JSON — just the prose summary."
         );
     }
 
     format!(
-        "{base}\n\
+        "{base}{language_directive}\n\
          \n\
          After the summary, output a JSON object as the second part of your response, \
          fenced in a ```json block:\n\
@@ -473,7 +483,7 @@ mod tests {
     #[test]
     fn system_prompt_describes_plain_text_output() {
         // When structured_facets is disabled, the prompt asks for plain prose.
-        let p = system_prompt(4096, false);
+        let p = system_prompt(4096, false, None);
         assert!(!p.contains("4096"));
         assert!(!p.contains("Stay well under"));
         assert!(!p.contains("\"summary\""));
@@ -483,7 +493,7 @@ mod tests {
 
     #[test]
     fn extends_prompt_when_flag_enabled() {
-        let p = system_prompt(4096, true);
+        let p = system_prompt(4096, true, None);
         // When structured_facets is true, the prompt should contain the JSON fence instruction.
         assert!(
             p.contains("```json"),
@@ -498,6 +508,14 @@ mod tests {
             p.contains("canonical keys"),
             "should specify canonical keys"
         );
+    }
+
+    #[test]
+    fn system_prompt_includes_output_language_directive() {
+        let p = system_prompt(4096, true, Some("zh-CN"));
+        assert!(p.contains("Simplified Chinese"));
+        assert!(p.contains("Keep JSON keys"));
+        assert!(p.contains("\"summary\""));
     }
 
     #[test]
@@ -533,7 +551,7 @@ mod tests {
 
     #[test]
     fn respects_disabled_flag() {
-        let p = system_prompt(4096, false);
+        let p = system_prompt(4096, false, None);
         assert!(
             !p.contains("```json"),
             "disabled flag must omit JSON instruction"
@@ -596,6 +614,7 @@ mod tests {
         LlmSummariserConfig {
             model: "qwen2.5:0.5b".into(),
             structured_facet_extraction: false,
+            output_language: None,
         }
     }
 
@@ -652,11 +671,13 @@ mod tests {
             LlmSummariserConfig {
                 model: "llama3.1:8b".into(),
                 structured_facet_extraction: false,
+                output_language: Some("zh-CN".into()),
             },
             provider,
         );
         let prompt = s.build_prompt("body", 2048);
         assert!(prompt.system.to_lowercase().contains("no commentary"));
+        assert!(prompt.system.contains("Simplified Chinese"));
         assert!(!prompt.system.contains("\"summary\""));
         assert_eq!(prompt.user, "body");
         assert_eq!(prompt.temperature, 0.0);

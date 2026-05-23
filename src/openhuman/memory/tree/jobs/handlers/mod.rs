@@ -567,6 +567,36 @@ const REEMBED_BACKFILL_REVISIT_MS: i64 = 750;
 ///
 /// Per-row read/embed failures are logged and skipped, never fail the
 /// chain — one unreadable row must not strand the rest of memory.
+fn try_mark_chunk_reembed_skipped(
+    config: &Config,
+    chunk_id: &str,
+    model_signature: &str,
+    reason: &str,
+) {
+    if let Err(e) =
+        chunk_store::mark_chunk_reembed_skipped(config, chunk_id, model_signature, reason)
+    {
+        log::warn!(
+            "[memory_tree::jobs] reembed_backfill: failed to persist chunk tombstone chunk_id={chunk_id} sig={model_signature}: {e}"
+        );
+    }
+}
+
+fn try_mark_summary_reembed_skipped(
+    config: &Config,
+    summary_id: &str,
+    model_signature: &str,
+    reason: &str,
+) {
+    if let Err(e) =
+        summary_store::mark_summary_reembed_skipped(config, summary_id, model_signature, reason)
+    {
+        log::warn!(
+            "[memory_tree::jobs] reembed_backfill: failed to persist summary tombstone summary_id={summary_id} sig={model_signature}: {e}"
+        );
+    }
+}
+
 async fn handle_reembed_backfill(config: &Config, job: &Job) -> Result<JobOutcome> {
     let payload: ReembedBackfillPayload =
         serde_json::from_str(&job.payload_json).context("parse ReembedBackfill payload")?;
@@ -659,8 +689,8 @@ async fn handle_reembed_backfill(config: &Config, job: &Job) -> Result<JobOutcom
     // unembeddable row is attempted at most ONCE per signature instead of
     // re-selected on every batch forever (the original bug: 16 orphans
     // generating ~128k warns across ~8k defers, observed in the wild).
-    // The mark itself is best-effort — if its own SQLite write fails the
-    // row will be retried on a later batch, which is the desired fallback.
+    // Tombstone writes are best-effort: failures are logged so the row can
+    // be retried on a later batch instead of spinning forever.
     let embedder =
         build_embedder_from_config(config).context("build embedder in reembed_backfill")?;
     let mut chunk_vecs: Vec<(String, Vec<f32>)> = Vec::new();
@@ -672,18 +702,13 @@ async fn handle_reembed_backfill(config: &Config, job: &Job) -> Result<JobOutcom
                     log::warn!(
                         "[memory_tree::jobs] reembed_backfill: chunk {id} embed wrong dim, skipping (sig={active_sig})"
                     );
-                    let _ = chunk_store::mark_chunk_reembed_skipped(
-                        config,
-                        id,
-                        &active_sig,
-                        "embed wrong dim",
-                    );
+                    try_mark_chunk_reembed_skipped(config, id, &active_sig, "embed wrong dim");
                 }
                 Err(e) => {
                     log::warn!(
                         "[memory_tree::jobs] reembed_backfill: chunk {id} embed failed: {e}; skipping (sig={active_sig})"
                     );
-                    let _ = chunk_store::mark_chunk_reembed_skipped(
+                    try_mark_chunk_reembed_skipped(
                         config,
                         id,
                         &active_sig,
@@ -695,7 +720,7 @@ async fn handle_reembed_backfill(config: &Config, job: &Job) -> Result<JobOutcom
                 log::warn!(
                     "[memory_tree::jobs] reembed_backfill: chunk {id} body read failed: {e}; skipping (sig={active_sig})"
                 );
-                let _ = chunk_store::mark_chunk_reembed_skipped(
+                try_mark_chunk_reembed_skipped(
                     config,
                     id,
                     &active_sig,
@@ -713,18 +738,13 @@ async fn handle_reembed_backfill(config: &Config, job: &Job) -> Result<JobOutcom
                     log::warn!(
                         "[memory_tree::jobs] reembed_backfill: summary {id} embed wrong dim, skipping (sig={active_sig})"
                     );
-                    let _ = summary_store::mark_summary_reembed_skipped(
-                        config,
-                        id,
-                        &active_sig,
-                        "embed wrong dim",
-                    );
+                    try_mark_summary_reembed_skipped(config, id, &active_sig, "embed wrong dim");
                 }
                 Err(e) => {
                     log::warn!(
                         "[memory_tree::jobs] reembed_backfill: summary {id} embed failed: {e}; skipping (sig={active_sig})"
                     );
-                    let _ = summary_store::mark_summary_reembed_skipped(
+                    try_mark_summary_reembed_skipped(
                         config,
                         id,
                         &active_sig,
@@ -736,7 +756,7 @@ async fn handle_reembed_backfill(config: &Config, job: &Job) -> Result<JobOutcom
                 log::warn!(
                     "[memory_tree::jobs] reembed_backfill: summary {id} body read failed: {e}; skipping (sig={active_sig})"
                 );
-                let _ = summary_store::mark_summary_reembed_skipped(
+                try_mark_summary_reembed_skipped(
                     config,
                     id,
                     &active_sig,
@@ -1350,29 +1370,83 @@ mod tests {
         // (3) Migration probe in `ensure_reembed_backfill` must agree the
         // space is covered, otherwise the chain re-arms on every config
         // save and we're back to the original infinite-loop bug.
-        let probe_uncovered: bool = with_connection(&cfg, |conn| {
-            Ok(conn.query_row(
-                "SELECT EXISTS(
-                     SELECT 1 FROM mem_tree_chunks c
-                      WHERE NOT EXISTS (SELECT 1 FROM mem_tree_chunk_embeddings e
-                                         WHERE e.chunk_id = c.id AND e.model_signature = ?1)
-                        AND NOT EXISTS (SELECT 1 FROM mem_tree_chunk_reembed_skipped sk
-                                         WHERE sk.chunk_id = c.id AND sk.model_signature = ?1))
-                   OR EXISTS(
-                     SELECT 1 FROM mem_tree_summaries s
-                      WHERE s.deleted = 0
-                        AND NOT EXISTS (SELECT 1 FROM mem_tree_summary_embeddings e
-                                         WHERE e.summary_id = s.id AND e.model_signature = ?1)
-                        AND NOT EXISTS (SELECT 1 FROM mem_tree_summary_reembed_skipped sk
-                                         WHERE sk.summary_id = s.id AND sk.model_signature = ?1))",
-                params![sig],
-                |r| r.get(0),
-            )?)
+        let probe_uncovered = with_connection(&cfg, |conn| {
+            Ok(chunk_store::has_uncovered_reembed_work(conn, &sig)?)
         })
         .unwrap();
         assert!(
             !probe_uncovered,
             "after tombstoning the only orphan, the ensure_reembed_backfill probe must report covered"
+        );
+    }
+
+    /// #2358: clearing a tombstone re-opens the row for the backfill worklist.
+    #[tokio::test]
+    async fn clear_chunk_reembed_skipped_reopens_worklist() {
+        use crate::openhuman::memory::tree::store::{
+            clear_chunk_reembed_skipped, get_chunk_content_path, mark_chunk_reembed_skipped,
+            tree_active_signature, upsert_chunks, upsert_staged_chunks_tx,
+        };
+        use crate::openhuman::memory::tree::types::{
+            chunk_id, Chunk, Metadata, SourceKind, SourceRef,
+        };
+
+        let (_tmp, cfg) = test_config();
+        let ts = chrono::Utc.timestamp_millis_opt(1_700_000_000_000).unwrap();
+        let chunk = Chunk {
+            id: chunk_id(SourceKind::Chat, "slack:#eng", 0, "clear-tombstone-seed"),
+            content: "memory content for clear tombstone test".into(),
+            metadata: Metadata {
+                source_kind: SourceKind::Chat,
+                source_id: "slack:#eng".into(),
+                owner: "alice".into(),
+                timestamp: ts,
+                time_range: (ts, ts),
+                tags: vec![],
+                source_ref: Some(SourceRef::new("slack://x")),
+            },
+            token_count: 12,
+            seq_in_source: 0,
+            created_at: ts,
+            partial_message: false,
+        };
+        upsert_chunks(&cfg, &[chunk.clone()]).unwrap();
+        let content_root = cfg.memory_tree_content_root();
+        std::fs::create_dir_all(&content_root).unwrap();
+        let staged = content_store::stage_chunks(&content_root, &[chunk.clone()]).unwrap();
+        with_connection(&cfg, |conn| {
+            let tx = conn.unchecked_transaction()?;
+            upsert_staged_chunks_tx(&tx, &staged)?;
+            tx.commit()?;
+            Ok(())
+        })
+        .unwrap();
+        let staged_rel = get_chunk_content_path(&cfg, &chunk.id)
+            .unwrap()
+            .expect("staged body path");
+        std::fs::remove_file(content_root.join(&staged_rel)).unwrap();
+
+        let sig = tree_active_signature(&cfg);
+        mark_chunk_reembed_skipped(&cfg, &chunk.id, &sig, "orphan").unwrap();
+
+        let covered_before_clear = with_connection(&cfg, |conn| {
+            Ok(!chunk_store::has_uncovered_reembed_work(conn, &sig)?)
+        })
+        .unwrap();
+        assert!(
+            covered_before_clear,
+            "tombstone must hide orphan from uncovered probe"
+        );
+
+        clear_chunk_reembed_skipped(&cfg, &chunk.id, &sig).unwrap();
+
+        let uncovered_after_clear = with_connection(&cfg, |conn| {
+            Ok(chunk_store::has_uncovered_reembed_work(conn, &sig)?)
+        })
+        .unwrap();
+        assert!(
+            uncovered_after_clear,
+            "clearing tombstone must re-include chunk in worklist probe"
         );
     }
 

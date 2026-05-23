@@ -62,9 +62,9 @@ fn provider_url(provider: &str) -> Option<&'static str> {
 }
 
 /// Returns the injected recipe.js for providers that still rely on the
-/// JS-bridge ingest path. Migrated providers (whatsapp, telegram, slack,
-/// discord, browserscan) return `None` — their scraping runs natively via
-/// CDP in the per-provider scanner modules.
+/// JS-bridge ingest path. Migrated providers (whatsapp, wechat, telegram,
+/// slack, discord, browserscan) return `None` — their scraping runs natively
+/// via CDP in the per-provider scanner modules.
 fn provider_recipe_js(provider: &str) -> Option<&'static str> {
     match provider {
         "linkedin" => Some(LINKEDIN_RECIPE_JS),
@@ -967,6 +967,11 @@ fn teardown_all_account_scanners<R: Runtime>(app: &AppHandle<R>) {
     {
         total += registry.inner().forget_all();
     }
+    if let Some(registry) =
+        app.try_state::<std::sync::Arc<crate::wechat_scanner::ScannerRegistry>>()
+    {
+        total += registry.inner().forget_all();
+    }
     if total > 0 {
         log::info!(
             "[webview-accounts] aborted {} provider scanner task(s) for shutdown",
@@ -996,6 +1001,11 @@ fn teardown_account_scanners<R: Runtime>(app: &AppHandle<R>, account_id: &str) {
     }
     if let Some(registry) =
         app.try_state::<std::sync::Arc<crate::telegram_scanner::ScannerRegistry>>()
+    {
+        registry.inner().forget(account_id);
+    }
+    if let Some(registry) =
+        app.try_state::<std::sync::Arc<crate::wechat_scanner::ScannerRegistry>>()
     {
         registry.inner().forget(account_id);
     }
@@ -1761,7 +1771,7 @@ fn data_directory_for<R: Runtime>(app: &AppHandle<R>, account_id: &str) -> Resul
 ///
 /// Empty for the 6 zero-injection providers (whatsapp, wechat, telegram,
 /// slack, discord, browserscan) — they load with ZERO injected JS. Some have
-/// native/CDP scraper paths; WeChat is shell-only for now. The per-account
+/// native/CDP scraper paths (`wechat_scanner`, etc.). The per-account
 /// CDP session opener (`cdp::session`) still injects the notification-permission
 /// shim via `Page.addScriptToEvaluateOnNewDocument` before the real provider
 /// URL loads. The 2 deferred providers (linkedin, google-meet) still get the
@@ -2541,6 +2551,19 @@ pub async fn webview_account_open<R: Runtime>(
                 );
             } else {
                 log::warn!("[webview-accounts] discord ScannerRegistry not in app state");
+            }
+        } else if args.provider == "wechat" {
+            if let Some(registry) = app
+                .try_state::<std::sync::Arc<crate::wechat_scanner::ScannerRegistry>>()
+                .map(|s| s.inner().clone())
+            {
+                registry.ensure_scanner(
+                    app.clone(),
+                    args.account_id.clone(),
+                    scanner_url_prefix.clone(),
+                );
+            } else {
+                log::warn!("[webview-accounts] wechat ScannerRegistry not in app state");
             }
         }
 

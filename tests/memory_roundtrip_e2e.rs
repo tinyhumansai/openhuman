@@ -161,6 +161,69 @@ async fn doc_put_then_recall_context_renders_llm_context_message() {
     );
 }
 
+/// doc_put with a body whose multi-byte codepoint straddles the 2048-byte
+/// body_preview boundary must complete without panic and return a non-empty
+/// document_id (PR #1681 regression guard).
+///
+/// Scenario: a ZWNJ (U+200C, 3 bytes: 0xE2 0x80 0x8C) is placed so each of
+/// its bytes falls exactly on the nominal 2048-byte cut point in turn.
+/// The ingest path calls `markdown_body_preview` which uses `ceil_char_boundary`
+/// — a panic here would surface as a test failure.
+#[tokio::test]
+async fn doc_put_with_multibyte_at_body_preview_boundary_does_not_panic() {
+    let _lock = env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let _home = EnvVarGuard::set_to_path("HOME", tmp.path());
+    let workspace_path = tmp.path().join("workspace");
+    std::fs::create_dir_all(&workspace_path).expect("create workspace dir");
+    let _ws = EnvVarGuard::set_to_path("OPENHUMAN_WORKSPACE", &workspace_path);
+
+    const BODY_PREVIEW_MAX_BYTES: usize = 2048;
+    let zwnj = '\u{200c}'; // 3-byte codepoint
+    let zwnj_bytes = zwnj.len_utf8();
+
+    for offset in 0..zwnj_bytes {
+        // Build a body where the nominal cut falls exactly `offset` bytes into the
+        // ZWNJ. `prefix_len` bytes of 'a' are placed before the ZWNJ so that the
+        // 2048-byte cut point lands `offset` bytes into the 3-byte ZWNJ codepoint.
+        // Total body length is prefix_len + zwnj_bytes + trailing, which is
+        // > BODY_PREVIEW_MAX_BYTES since trailing = offset + 80 >= 80.
+        let prefix_len = BODY_PREVIEW_MAX_BYTES - offset;
+        let body = format!(
+            "{}{}{}",
+            "a".repeat(prefix_len),
+            zwnj,
+            "b".repeat(offset + 80)
+        );
+        assert!(
+            body.len() > BODY_PREVIEW_MAX_BYTES,
+            "offset={offset}: fixture body too short to exercise truncation"
+        );
+
+        let params = PutDocParams {
+            namespace: format!("utf8-boundary-e2e-{offset}"),
+            key: format!("utf8-boundary-key-{offset}"),
+            title: format!("UTF-8 boundary test offset={offset}"),
+            content: body,
+            source_type: "doc".to_string(),
+            priority: "medium".to_string(),
+            tags: Vec::new(),
+            metadata: serde_json::Value::Null,
+            category: "core".to_string(),
+            session_id: None,
+            document_id: None,
+        };
+
+        let outcome = doc_put(params)
+            .await
+            .unwrap_or_else(|e| panic!("doc_put panicked at offset={offset}: {e}"));
+        assert!(
+            !outcome.value.document_id.is_empty(),
+            "doc_put must return non-empty document_id at offset={offset}"
+        );
+    }
+}
+
 /// 8.1.3 forget — clear_namespace must scrub the namespace so subsequent
 /// recalls do not see the canary content. Failure-path / edge-case assertion
 /// required by gitbooks/developing/testing-strategy.md.

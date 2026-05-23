@@ -19,7 +19,7 @@ mod types;
 pub mod queue;
 pub mod state;
 
-pub use queue::{IngestionJob, IngestionQueue};
+pub use queue::{IngestionJob, IngestionQueue, DEFAULT_QUEUE_CAPACITY};
 pub use state::{IngestionState, IngestionStatusSnapshot};
 pub use types::{
     ExtractedEntity, ExtractedRelation, ExtractionMode, MemoryIngestionConfig,
