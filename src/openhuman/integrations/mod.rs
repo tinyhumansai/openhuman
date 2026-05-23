@@ -7,6 +7,7 @@
 //! trusted because requests leave the local core process.
 
 pub mod apify;
+pub mod brave;
 pub mod client;
 pub mod google_places;
 pub mod parallel;
@@ -18,6 +19,9 @@ pub mod twilio;
 pub mod types;
 
 pub use apify::{ApifyGetRunResultsTool, ApifyGetRunStatusTool, ApifyRunActorTool};
+pub use brave::{
+    BraveImageSearchTool, BraveNewsSearchTool, BraveVideoSearchTool, BraveWebSearchTool,
+};
 pub use client::{build_client, pricing_for_config, IntegrationClient};
 pub use google_places::{GooglePlacesDetailsTool, GooglePlacesSearchTool};
 pub use parallel::{

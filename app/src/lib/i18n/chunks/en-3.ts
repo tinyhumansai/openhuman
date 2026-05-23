@@ -87,8 +87,9 @@ const en3: TranslationMap = {
   'backend.cloud': 'Cloud',
   'backend.recommended': 'Recommended',
   'backend.cloudDescription':
-    'Fast, powerful models hosted on our servers. Ready to use immediately.',
-  'backend.privacyNote': 'No personal data, messages, or keys are ever sent to our servers.',
+    'Fast, powerful models routed through the OpenHuman backend. Ready to use immediately.',
+  'backend.privacyNote':
+    'Prompts and selected context may be sent to the configured backend/provider. Use local mode for supported on-device workloads.',
   'backend.local': 'Local',
   'backend.advanced': 'Advanced',
   'backend.localDescription':

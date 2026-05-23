@@ -161,6 +161,13 @@ class SocketService {
       } else if (!this.socket.disconnected) {
         // Socket is connecting, wait for it
         return;
+      } else {
+        // Stale disconnected socket instance for the same token.
+        // Drop it so this connect attempt can create a fresh socket;
+        // otherwise the async stale-invocation guard below (`|| this.socket`)
+        // returns early and leaves connectivity stuck at "connecting".
+        this.socket = null;
+        this.mcpTransport = null;
       }
     }
 

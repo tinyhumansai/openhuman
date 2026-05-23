@@ -8,6 +8,8 @@ mod cef_profile;
 mod companion_commands;
 mod core_process;
 mod core_rpc;
+#[cfg(target_os = "linux")]
+mod deep_link_ipc;
 #[cfg(target_os = "windows")]
 mod deep_link_ipc_windows;
 mod dictation_hotkeys;
@@ -16,6 +18,7 @@ mod fake_camera;
 mod file_logging;
 mod gmessages_scanner;
 mod imessage_scanner;
+mod loopback_oauth;
 #[cfg(target_os = "macos")]
 mod mascot_native_window;
 mod mcp_commands;
@@ -35,6 +38,7 @@ mod webview_apis;
 mod wechat_scanner;
 mod whatsapp_scanner;
 mod window_state;
+mod workspace_paths;
 
 #[cfg(target_os = "macos")]
 use tauri::menu::{PredefinedMenuItem, Submenu};
@@ -2261,6 +2265,23 @@ pub fn run() {
     #[cfg(target_os = "macos")]
     process_recovery::reap_stale_openhuman_processes();
 
+    // ── Linux pre-CEF deep-link forwarding guard (issue #2359) ────────────
+    // On Linux, a secondary instance with an openhuman:// URL in argv exits
+    // at the CEF preflight check before Builder::setup() runs, silently
+    // dropping the OAuth callback. Detect and forward the URL here, before
+    // CEF preflight can exit(1).
+    #[cfg(target_os = "linux")]
+    let _deep_link_socket_guard = {
+        use deep_link_ipc::ForwardResult;
+        match deep_link_ipc::try_forward_deep_links() {
+            ForwardResult::Forwarded => {
+                std::process::exit(0);
+            }
+            ForwardResult::NoPrimary | ForwardResult::NoUrls => {}
+        }
+        deep_link_ipc::bind_and_listen()
+    };
+
     // CEF cache-lock preflight: if another OpenHuman instance holds the CEF
     // user-data-dir SingletonLock, `cef_initialize` returns 0 and the vendored
     // runtime panics (`left: 0, right: 1`). Catch the collision here and exit
@@ -2576,6 +2597,11 @@ pub fn run() {
                         missing.join(", ")
                     );
                 }
+
+                // Drain any deep-link URLs that arrived via the IPC socket
+                // before setup() ran (issue #2359). Also installs the live
+                // handler so URLs arriving after setup() are emitted directly.
+                deep_link_ipc::drain_pending_urls(app.app_handle());
             }
 
             // Start the webview_apis WebSocket bridge BEFORE spawning core —
@@ -3190,13 +3216,18 @@ pub fn run() {
             mascot_window_hide,
             file_logging::reveal_logs_folder,
             file_logging::logs_folder_path,
+            workspace_paths::open_workspace_path,
+            workspace_paths::reveal_workspace_path,
+            workspace_paths::preview_workspace_text,
             meet_call::meet_call_open_window,
             meet_call::meet_call_close_window,
             companion_commands::register_companion_hotkey,
             companion_commands::unregister_companion_hotkey,
             companion_commands::companion_activate,
             mcp_commands::mcp_resolve_binary_path,
-            mcp_commands::mcp_open_client_config
+            mcp_commands::mcp_open_client_config,
+            loopback_oauth::start_loopback_oauth_listener,
+            loopback_oauth::stop_loopback_oauth_listener
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

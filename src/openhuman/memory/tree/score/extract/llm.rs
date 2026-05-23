@@ -66,6 +66,10 @@ pub struct LlmExtractorConfig {
     /// content). Adds prompt tokens and gives the model one more
     /// schema field to keep track of, so leave off unless needed.
     pub emit_topics: bool,
+    /// Optional configured output language for natural-language values such
+    /// as `importance_reason` and topic labels. JSON field names and enum
+    /// values remain stable.
+    pub output_language: Option<String>,
 }
 
 impl Default for LlmExtractorConfig {
@@ -85,6 +89,7 @@ impl Default for LlmExtractorConfig {
             ],
             strict_kinds: false,
             emit_topics: false,
+            output_language: None,
         }
     }
 }
@@ -114,7 +119,7 @@ impl LlmEntityExtractor {
     /// Build the chat prompt sent to the provider for `text`.
     fn build_prompt(&self, text: &str) -> ChatPrompt {
         ChatPrompt {
-            system: build_system_prompt(self.cfg.emit_topics),
+            system: build_system_prompt(self.cfg.emit_topics, self.cfg.output_language.as_deref()),
             user: format!("Text:\n{text}\n\nReturn JSON only."),
             temperature: 0.0,
             kind: "memory_tree::extract",
@@ -230,7 +235,7 @@ impl LlmEntityExtractor {
 /// matches the pre-flag behaviour exactly — no mention of topics
 /// anywhere — so the small model isn't asked to produce a field the
 /// caller doesn't want.
-fn build_system_prompt(emit_topics: bool) -> String {
+fn build_system_prompt(emit_topics: bool, output_language: Option<&str>) -> String {
     let topics_schema_line = if emit_topics {
         "  \"topics\": [\"<short theme label>\"],\n"
     } else {
@@ -256,9 +261,12 @@ fn build_system_prompt(emit_topics: bool) -> String {
     } else {
         ""
     };
+    let language_directive = crate::openhuman::config::output_language_directive(output_language)
+        .map(|directive| format!("{directive}\n\n"))
+        .unwrap_or_default();
 
     format!(
-        "You are a named-entity extractor and importance rater. Return JSON only — \
+        "{language_directive}You are a named-entity extractor and importance rater. Return JSON only — \
 no prose, no markdown, no commentary. Do not summarize. Extract every named \
 entity mention you find, including duplicates, and rate the chunk's overall \
 importance as a float in [0.0, 1.0].

@@ -1182,16 +1182,6 @@ const CAPABILITIES: &[Capability] = &[
         status: CapabilityStatus::Beta,
         privacy: LOCAL_CREDENTIALS,
     },
-    Capability {
-        id: "automation.welcome_agent",
-        name: "Welcome Message",
-        domain: "automation",
-        category: CapabilityCategory::Automation,
-        description: "Conversational onboarding agent that learns about the user's intent and daily tools before guiding them through personalized setup.",
-        how_to: "Automatic — triggered once after onboarding.",
-        status: CapabilityStatus::Beta,
-        privacy: None,
-    },
     // ── Update ──────────────────────────────────────────────────────────────
     // ── Meet ────────────────────────────────────────────────────────────────
     Capability {

@@ -5,6 +5,7 @@ interface SettingsMenuItemProps {
   title: string;
   description?: string;
   onClick?: () => void;
+  testId?: string;
   dangerous?: boolean;
   isFirst?: boolean;
   isLast?: boolean;
@@ -16,6 +17,7 @@ const SettingsMenuItem = ({
   title,
   description,
   onClick,
+  testId,
   dangerous = false,
   isFirst = false,
   isLast = false,
@@ -49,6 +51,7 @@ const SettingsMenuItem = ({
     return (
       <button
         type="button"
+        data-testid={testId}
         onClick={onClick}
         className={`w-full flex items-center justify-between py-3 px-4 bg-white dark:bg-neutral-900 text-stone-900 dark:text-neutral-100 ${borderClasses} hover:bg-stone-50 dark:hover:bg-neutral-800/60 dark:bg-neutral-800/60 dark:hover:bg-neutral-800/60 transition-all duration-200 text-left ${roundedClasses} focus:outline-none focus:ring-0 focus:border-inherit`}>
         {content}
@@ -58,6 +61,7 @@ const SettingsMenuItem = ({
 
   return (
     <div
+      data-testid={testId}
       className={`w-full flex items-center justify-between py-3 px-4 bg-white dark:bg-neutral-900 text-stone-900 dark:text-neutral-100 ${borderClasses} ${roundedClasses}`}>
       {content}
     </div>

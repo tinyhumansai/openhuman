@@ -52,12 +52,8 @@ struct SessionCacheFingerprint {
     /// Per-message `temperature` override (same channel as
     /// `model_override`).
     temperature: Option<f64>,
-    /// Which agent definition was used to build `agent`. Without this
-    /// the cache hit short-circuited the welcome→orchestrator routing
-    /// fix — the very first turn picked welcome, welcome called
-    /// `complete_onboarding(complete)`, the flag flipped, but the next
-    /// turn read the cached welcome agent instead of invoking
-    /// `build_session_agent` to re-resolve the target.
+    /// Which agent definition was used to build `agent`. Tracked so cache
+    /// invalidation can detect when the target changes between turns.
     target_agent_id: String,
     /// Bound provider string at build time for the selected workload
     /// role (`chat`, `reasoning`, `agentic`, `coding`, `summarization`).
@@ -78,22 +74,12 @@ struct SessionEntry {
 
 /// Decide which agent definition this turn should run with.
 ///
-/// Mirrors the routing decision inside `build_session_agent` so
-/// `run_chat_task` can compute it once up front and use it both as
-/// the cache hit predicate AND (transitively) as the target id the
-/// builder picks. Reads `chat_onboarding_completed` from a fresh
-/// disk-loaded `Config` (no in-process cache) so the value reflects
-/// the current persisted state — meaning the moment the welcome
-/// agent calls `complete_onboarding(complete)` and the flag flips
-/// to `true`, the very next chat turn observes the new value here
-/// and the cache miss + rebuild routes to orchestrator.
-fn pick_target_agent_id(config: &Config, profile: &AgentProfile) -> String {
+/// All new chat turns route to the `orchestrator` agent directly.
+/// The welcome agent has been removed; the Joyride walkthrough in the
+/// frontend handles onboarding UI instead.
+fn pick_target_agent_id(_config: &Config, profile: &AgentProfile) -> String {
     if profile.id == DEFAULT_PROFILE_ID {
-        if config.chat_onboarding_completed {
-            "orchestrator".to_string()
-        } else {
-            "welcome".to_string()
-        }
+        "orchestrator".to_string()
     } else {
         profile.agent_id.clone()
     }
@@ -806,11 +792,8 @@ async fn run_chat_task(
         .or_else(|| normalize_model_override(model_override));
     let temperature = profile.temperature.or(temperature);
     // Compute the routing decision up front so the cache lookup can
-    // detect when it has changed. Without this, a turn that flips
-    // `chat_onboarding_completed` (welcome agent calling
-    // `complete_onboarding(complete)`) would still serve the next
-    // turn from the cached welcome agent — the cache hit predicate
-    // didn't know about the routing decision before Commit 13.
+    // detect when it has changed. This also keeps non-default profile
+    // switches from reusing a cached agent built for another target.
     let target_agent_id = pick_target_agent_id(&config, &profile);
     let provider_role = provider_role_for_model_override(model_override.as_deref());
     let current_fp = SessionCacheFingerprint {
@@ -1502,37 +1485,15 @@ fn build_session_agent(
         effective.default_temperature = temp;
     }
 
-    // Route to welcome vs orchestrator based on the per-user
-    // **chat-onboarding** flag. #525 fix: pre-onboarding users see the
-    // welcome agent's persona with its 2-tool TOML scope
-    // (complete_onboarding + memory_recall) instead of the
-    // orchestrator's default delegation surface. Post-onboarding they
-    // transition automatically on the next chat turn because
-    // `Config::load_or_init` reads fresh from disk every call.
-    //
-    // We deliberately read `chat_onboarding_completed`, NOT
-    // `onboarding_completed`. The latter is the React UI wizard's
-    // gate (`OnboardingOverlay.tsx`) which flips to `true` the moment
-    // the user dismisses the wizard — which happens BEFORE they ever
-    // type in the chat pane. If we routed on that flag the welcome
-    // agent could never run from the Tauri desktop app. The chat
-    // flag is set only by the welcome agent itself via
-    // `complete_onboarding`, so it stays `false`
-    // for the user's actual first chat message regardless of what
-    // the React layer did, then flips on the welcome turn so the
-    // very next message routes to orchestrator.
-    //
-    // The config reached here has already been loaded by
-    // `run_chat_task` via `config_rpc::load_config_with_timeout`, so
-    // both flags reflect the current persisted state — no cache to
-    // invalidate.
+    // All chat turns route directly to the orchestrator agent (or to the
+    // profile-specific agent for non-default profiles). The welcome agent
+    // has been removed; onboarding UI is handled by the Joyride walkthrough
+    // in the frontend.
     log::info!(
-        "[web-channel] routing chat turn to '{}' via profile '{}' provider_role='{}' (chat_onboarding_completed={}, ui_onboarding_completed={}, client_id={}, thread_id={})",
+        "[web-channel] routing chat turn to '{}' via profile '{}' provider_role='{}' (client_id={}, thread_id={})",
         target_agent_id,
         profile.id,
         provider_role,
-        effective.chat_onboarding_completed,
-        effective.onboarding_completed,
         client_id,
         thread_id
     );

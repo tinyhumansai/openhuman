@@ -15,7 +15,7 @@
 //! env var is missing, the DB can't be opened (locked, corrupt,
 //! nonexistent), or no matching rows exist, we report
 //! `logged_in: false` for every provider — never return an error, the
-//! welcome-agent snapshot must always build.
+//! snapshot must always build.
 //!
 //! This is a heuristic. Chromium prunes expired cookies at startup, so
 //! any row with a known session-cookie name is a strong signal the

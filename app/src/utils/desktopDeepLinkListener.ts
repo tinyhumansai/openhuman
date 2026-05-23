@@ -2,7 +2,7 @@ import * as Sentry from '@sentry/react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { getCurrent, onOpenUrl } from '@tauri-apps/plugin-deep-link';
 
-import { patchCoreStateSnapshot } from '../lib/coreState/store';
+import { getCoreStateSnapshot, patchCoreStateSnapshot } from '../lib/coreState/store';
 import { consumeLoginToken } from '../services/api/authApi';
 import { clearCoreRpcTokenCache, clearCoreRpcUrlCache } from '../services/coreRpcClient';
 import {
@@ -10,6 +10,7 @@ import {
   completeDeepLinkAuthProcessing,
   failDeepLinkAuthProcessing,
 } from '../store/deepLinkAuthState';
+import { getStoredCoreMode } from './configPersistence';
 import { BILLING_DASHBOARD_URL } from './links';
 import {
   evaluateOAuthAppVersionGate,
@@ -77,9 +78,24 @@ const focusMainWindow = async () => {
 };
 
 const applySessionToken = async (sessionToken: string): Promise<void> => {
-  clearCoreRpcUrlCache();
-  clearCoreRpcTokenCache();
-  await storeSession(sessionToken, {});
+  // In cloud mode, bust any stale RPC URL/token caches so auth_store_session
+  // targets the user's configured remote core. See issue #2377.
+  const currentCoreMode = getStoredCoreMode();
+  if (currentCoreMode === 'cloud') {
+    console.debug('[DeepLink] cloud mode: busting RPC caches before session delivery');
+    clearCoreRpcUrlCache();
+    clearCoreRpcTokenCache();
+  }
+
+  // Signal CoreStateProvider to hold off clearing session during token delivery.
+  window.dispatchEvent(
+    new CustomEvent('core-state:suppress-reauth', { detail: { until: Date.now() + 15_000 } })
+  );
+  try {
+    await storeSession(sessionToken, {});
+  } finally {
+    window.dispatchEvent(new CustomEvent('core-state:suppress-reauth', { detail: { until: 0 } }));
+  }
   patchCoreStateSnapshot({ snapshot: { sessionToken } });
   window.dispatchEvent(new CustomEvent(SESSION_TOKEN_UPDATED_EVENT, { detail: { sessionToken } }));
 };
@@ -110,6 +126,38 @@ const handleAuthDeepLink = async (parsed: URL) => {
 
     const sessionToken = key === 'auth' ? token : await consumeLoginToken(token);
     await applySessionToken(sessionToken);
+
+    // Wait for CoreStateProvider to process the session-token-updated
+    // event and commit the refreshed snapshot to React state.
+    //
+    // `applySessionToken` patches the module-level store with the session
+    // token immediately, but React state (read by ProtectedRoute) only
+    // updates after the async refreshCore() → fetchCoreAppSnapshot RPC
+    // → commitState() cycle completes. That cycle includes a backend
+    // /auth/me call that can take several seconds under load or test
+    // delays. Navigating to /home before commitState fires causes
+    // ProtectedRoute to see stale sessionToken=null and redirect to /.
+    //
+    // Poll for `currentUser` in the module-level snapshot: it is NOT set
+    // by patchCoreStateSnapshot (which only patches sessionToken), so its
+    // presence proves commitState ran with the full refreshed snapshot.
+    const commitDeadline = Date.now() + 15_000;
+    let commitObserved = false;
+    while (Date.now() < commitDeadline) {
+      const state = getCoreStateSnapshot();
+      if (state.snapshot?.currentUser && state.snapshot?.sessionToken) {
+        // Give React one more tick to re-render after commitState.
+        await new Promise(r => setTimeout(r, 150));
+        commitObserved = true;
+        break;
+      }
+      await new Promise(r => setTimeout(r, 200));
+    }
+    if (!commitObserved) {
+      console.warn(
+        '[DeepLink][auth] CoreStateProvider did not commit currentUser within 15 s — navigating anyway'
+      );
+    }
 
     window.location.hash = '/home';
     completeDeepLinkAuthProcessing();
@@ -271,7 +319,7 @@ const handleOAuthDeepLink = async (parsed: URL) => {
  *   - `openhuman://payment/success?session_id=...` → Stripe payment confirmation
  *   - `openhuman://payment/cancel` → Stripe payment cancellation
  */
-const handleDeepLinkUrls = async (urls: string[] | null | undefined) => {
+export const handleDeepLinkUrls = async (urls: string[] | null | undefined) => {
   if (!urls || urls.length === 0) {
     return;
   }

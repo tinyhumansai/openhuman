@@ -467,6 +467,12 @@ export async function callCoreRpc<T>({
   try {
     const [rpcUrl, token] = await Promise.all([getCoreRpcUrl(), getCoreRpcToken()]);
     coreRpcLog('HTTP request', { id: payload.id, method: payload.method });
+    if (normalizedMethod === 'openhuman.auth_store_session') {
+      coreRpcLog('[rpc] auth_store_session routing', {
+        rpcUrl,
+        tokenSource: getStoredCoreToken() ? 'cloud-stored' : 'local-resolved',
+      });
+    }
     if (coreIsTauri() && !token) {
       throw new Error('Core RPC token unavailable in Tauri; local RPC auth cannot be satisfied');
     }

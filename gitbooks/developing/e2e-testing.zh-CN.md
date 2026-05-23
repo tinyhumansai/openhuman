@@ -239,7 +239,7 @@ bash app/scripts/e2e-run-spec.sh test/e2e/specs/notifications.spec.ts notificati
 bash app/scripts/e2e-agent-review.sh
 ```
 
-工件落在 `app/test/e2e/artifacts/<timestamp>-agent-review/`。完整详情 + 辅助 API：[`AGENT-OBSERVABILITY.md`](agent-observability.md)。任何失败的测试都会触发 `wdio.conf.ts` 的 `afterTest` hook，将 `failure-*.png` + `failure-*.source.xml` 写入同一运行目录。
+工件落在 `app/test/e2e/artifacts/<timestamp>-agent-review/`。完整详情 + 辅助 API：[`AGENT-OBSERVABILITY.md`](agent-observability.zh-CN.md)。任何失败的测试都会触发 `wdio.conf.ts` 的 `afterTest` hook，将 `failure-*.png` + `failure-*.source.xml` 写入同一运行目录。
 
 ---
 

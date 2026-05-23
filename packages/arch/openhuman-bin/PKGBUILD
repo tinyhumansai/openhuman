@@ -1,0 +1,49 @@
+# Maintainer: OpenHuman <hello@tinyhumans.ai>
+
+pkgname=openhuman-bin
+pkgver=0.54.0
+pkgrel=1
+pkgdesc='Personal AI desktop assistant for communities'
+arch=('x86_64')
+url='https://github.com/tinyhumansai/openhuman'
+license=('GPL-3.0-only')
+optdepends=(
+  'xdg-utils: open browser, file, and URL handlers from the desktop app'
+  'libsecret: Secret Service credential storage on some Linux desktops'
+  'fuse2: run the downloaded AppImage directly outside this package'
+)
+provides=('openhuman')
+conflicts=('openhuman')
+options=('!strip')
+source=(
+  "OpenHuman_${pkgver}_amd64.AppImage::https://github.com/tinyhumansai/openhuman/releases/download/v${pkgver}/OpenHuman_${pkgver}_amd64.AppImage"
+  'openhuman'
+  'openhuman.desktop'
+  'openhuman.svg'
+)
+sha256sums=(
+  '2f76bc5b6f3a0e6cf2765f414a82b26903337720d190b4f9b26a5d7e2508abab'
+  'dbd46b85be9d551363b44ec19613a5fb5df4a08f5b618cb38ffe8891a0f31eeb'
+  'e357a666334449273047c02740a3e3fa34c58ff00304af8b3ec1a080a9574e99'
+  '7892979a084a5e2bbc73c32fe0f447918aa9b458c50bf0bb856469c837e6401c'
+)
+
+prepare() {
+  cd "${srcdir}"
+  rm -rf squashfs-root
+  chmod +x "OpenHuman_${pkgver}_amd64.AppImage"
+  "./OpenHuman_${pkgver}_amd64.AppImage" --appimage-extract >/dev/null
+  test -x squashfs-root/shared/bin/OpenHuman
+}
+
+package() {
+  install -d "${pkgdir}/opt/openhuman"
+  cp -a --no-preserve=ownership "${srcdir}/squashfs-root/." \
+    "${pkgdir}/opt/openhuman/"
+  install -Dm755 "${srcdir}/openhuman" \
+    "${pkgdir}/usr/bin/openhuman"
+  install -Dm644 "${srcdir}/openhuman.desktop" \
+    "${pkgdir}/usr/share/applications/openhuman.desktop"
+  install -Dm644 "${srcdir}/openhuman.svg" \
+    "${pkgdir}/usr/share/icons/hicolor/scalable/apps/openhuman.svg"
+}

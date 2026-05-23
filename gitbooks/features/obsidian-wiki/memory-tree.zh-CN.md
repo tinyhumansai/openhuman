@@ -42,7 +42,7 @@ icon: tree
 
 热路径（规范化 → 分块 → 快速评分 → 持久化 → 入队后续工作）很快。重型工作——向量生成、实体提取、密封摘要 bucket、每日摘要——在后台 workers 中运行，UI 永远不会阻塞。
 
-如果你开启了[本地 AI](../model-routing/local-ai.md)，嵌入向量和摘要树的构建可以在**设备上通过 Ollama** 运行；否则它们像其他模型调用一样通过 OpenHuman 后端处理。
+如果你开启了[本地 AI](../model-routing/local-ai.zh-CN.md)，嵌入向量和摘要树的构建可以在**设备上通过 Ollama** 运行；否则它们像其他模型调用一样通过 OpenHuman 后端处理。
 
 ## 三棵树，三个作用域
 

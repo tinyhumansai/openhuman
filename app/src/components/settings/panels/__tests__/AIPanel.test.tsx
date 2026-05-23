@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { listConnections as listComposioConnections } from '../../../../lib/composio/composioApi';
 import {
+  listProviderModels,
   loadAISettings,
   loadLocalProviderSnapshot,
   saveAISettings,
@@ -35,7 +36,7 @@ vi.mock('../../../../services/api/aiSettingsApi', () => ({
   saveAISettings: vi.fn(),
   loadLocalProviderSnapshot: vi.fn(),
   setCloudProviderKey: vi.fn(),
-  clearCloudProviderKey: vi.fn(),
+  clearCloudProviderKey: vi.fn().mockResolvedValue(undefined),
   serializeProviderRef: vi.fn((r: { kind: string; providerSlug?: string; model?: string }) =>
     r.kind === 'openhuman'
       ? 'openhuman'
@@ -189,6 +190,8 @@ describe('AIPanel', () => {
     vi.clearAllMocks();
     vi.mocked(loadAISettings).mockResolvedValue(baseSettings);
     vi.mocked(loadLocalProviderSnapshot).mockResolvedValue(baseLocalSnapshot);
+    vi.mocked(setCloudProviderKey).mockResolvedValue(undefined);
+    vi.mocked(listProviderModels).mockResolvedValue([]);
     vi.mocked(openhumanHeartbeatSettingsGet).mockResolvedValue({
       result: { settings: baseHeartbeatSettings },
       logs: [],
@@ -460,6 +463,65 @@ describe('AIPanel', () => {
     expect(screen.getAllByRole('switch').length).toBe(chipsBefore);
 
     // Specifically: no "Disconnect OpenAI" switch (chip is still in off state).
+    expect(screen.queryByRole('switch', { name: /Disconnect OpenAI/i })).not.toBeInTheDocument();
+  });
+
+  it('wraps long provider setup errors and hides raw JSON behind technical details', async () => {
+    vi.mocked(loadAISettings).mockResolvedValue({ ...baseSettings, cloudProviders: [] });
+    vi.mocked(listProviderModels).mockRejectedValue(
+      new Error(
+        'provider returned 401: {"error":{"message":"Incorrect API key provided: sk-this-is-a-very-long-invalid-key-value-that-should-not-dominate-the-modal-or-force-horizontal-overflow. You can find your API key at https://platform.openai.com/account/api-keys.","type":"invalid_request_error","param":null,"code":"invalid_api_key"},"request_id":"req_1234567890abcdefghijklmnopqrstuvwxyz"}'
+      )
+    );
+
+    renderWithProviders(<AIPanel />);
+    await waitFor(() =>
+      expect(screen.getByRole('switch', { name: /Connect OpenAI/i })).toBeInTheDocument()
+    );
+
+    fireEvent.click(screen.getByRole('switch', { name: /Connect OpenAI/i }));
+    const dialog = await screen.findByRole('dialog', { name: /Connect OpenAI/i });
+    fireEvent.change(within(dialog).getByLabelText(/API key/i), {
+      target: { value: 'sk-bad-key' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Save$/i }));
+
+    const alert = await within(dialog).findByRole('alert');
+    expect(alert).toHaveClass('max-w-full', 'min-w-0', 'overflow-hidden');
+    expect(
+      within(alert).getByText('OpenAI rejected the credentials. Check the API key and try again.')
+    ).toBeInTheDocument();
+    expect(within(alert).getByText('Technical details')).toBeInTheDocument();
+    expect(within(alert).getByText(/provider returned 401/)).toBeInTheDocument();
+    expect(screen.queryByRole('switch', { name: /Disconnect OpenAI/i })).not.toBeInTheDocument();
+  });
+
+  it('summarizes advanced provider editor JSON errors and preserves details', async () => {
+    vi.mocked(loadAISettings).mockResolvedValue({ ...baseSettings, cloudProviders: [] });
+    vi.mocked(listProviderModels).mockRejectedValue(
+      new Error(
+        'provider returned 418: {"error":{"message":"Provider teapot says no. Try another endpoint."},"request_id":"req_teapot"}'
+      )
+    );
+
+    renderWithProviders(<AIPanel />);
+    await waitFor(() =>
+      expect(screen.getByRole('switch', { name: /Connect Custom/i })).toBeInTheDocument()
+    );
+
+    fireEvent.click(screen.getByRole('switch', { name: /Connect Custom/i }));
+    await waitFor(() => expect(screen.getByText(/Add cloud provider/i)).toBeInTheDocument());
+    fireEvent.change(screen.getByPlaceholderText('sk-...'), { target: { value: 'sk-test-key' } });
+    fireEvent.click(screen.getByRole('button', { name: /Add provider/i }));
+
+    const alert = await screen.findByRole('alert');
+    expect(
+      within(alert).getByText(
+        'Could not reach OpenAI: Provider teapot says no. Try another endpoint.'
+      )
+    ).toBeInTheDocument();
+    expect(within(alert).getByText('Technical details')).toBeInTheDocument();
+    expect(within(alert).getByText(/provider returned 418/)).toBeInTheDocument();
     expect(screen.queryByRole('switch', { name: /Disconnect OpenAI/i })).not.toBeInTheDocument();
   });
 

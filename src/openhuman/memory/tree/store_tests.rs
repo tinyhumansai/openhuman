@@ -663,3 +663,108 @@ fn existing_wal_db_migrates_to_truncate() {
         "-wal must be gone after WAL→TRUNCATE migration"
     );
 }
+
+#[test]
+fn clear_chunk_reembed_skipped_is_idempotent() {
+    let (_tmp, cfg) = test_config();
+    let c = sample_chunk("slack:#eng", 0, 1_700_000_000_000);
+    upsert_chunks(&cfg, &[c.clone()]).unwrap();
+    let sig = tree_active_signature(&cfg);
+    mark_chunk_reembed_skipped(&cfg, &c.id, &sig, "test orphan").unwrap();
+    clear_chunk_reembed_skipped(&cfg, &c.id, &sig).unwrap();
+    clear_chunk_reembed_skipped(&cfg, &c.id, &sig).unwrap();
+    let count: i64 = with_connection(&cfg, |conn| {
+        Ok(conn.query_row(
+            "SELECT COUNT(*) FROM mem_tree_chunk_reembed_skipped
+              WHERE chunk_id = ?1 AND model_signature = ?2",
+            params![c.id, sig],
+            |r| r.get(0),
+        )?)
+    })
+    .unwrap();
+    assert_eq!(count, 0);
+}
+
+#[test]
+fn clear_reembed_skipped_for_signature_removes_all_tombstones_for_sig() {
+    let (_tmp, cfg) = test_config();
+    let c1 = sample_chunk("slack:#a", 0, 1_700_000_000_000);
+    let c2 = sample_chunk("slack:#b", 1, 1_700_000_000_001);
+    upsert_chunks(&cfg, &[c1.clone(), c2.clone()]).unwrap();
+    let sig = tree_active_signature(&cfg);
+    let other_sig = "provider=other;model=x;dims=8";
+    mark_chunk_reembed_skipped(&cfg, &c1.id, &sig, "r1").unwrap();
+    mark_chunk_reembed_skipped(&cfg, &c2.id, &sig, "r2").unwrap();
+    mark_chunk_reembed_skipped(&cfg, &c1.id, other_sig, "other").unwrap();
+    let summary_id = "summary-bulk-clear-test";
+    with_connection(&cfg, |conn| {
+        conn.execute(
+            "INSERT OR IGNORE INTO mem_tree_trees (id, kind, scope, created_at_ms)
+             VALUES ('tree-bulk-clear', 'source', 'bulk-clear', 0)",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO mem_tree_summaries (
+                id, tree_id, tree_kind, level, child_ids_json, content, token_count,
+                entities_json, topics_json, time_range_start_ms, time_range_end_ms,
+                score, sealed_at_ms, deleted
+             ) VALUES (?1, 'tree-bulk-clear', 'source', 0, '[]', 'x', 1, '[]', '[]', 0, 0, 0.0, 0, 0)",
+            params![summary_id],
+        )?;
+        Ok(())
+    })
+    .unwrap();
+    crate::openhuman::memory::tree::tree_source::store::mark_summary_reembed_skipped(
+        &cfg,
+        summary_id,
+        &sig,
+        "summary tombstone",
+    )
+    .unwrap();
+
+    let deleted = clear_reembed_skipped_for_signature(&cfg, &sig).unwrap();
+    assert_eq!(deleted, 3);
+
+    let remaining_chunks: i64 = with_connection(&cfg, |conn| {
+        Ok(conn.query_row(
+            "SELECT COUNT(*) FROM mem_tree_chunk_reembed_skipped WHERE model_signature = ?1",
+            params![sig],
+            |r| r.get(0),
+        )?)
+    })
+    .unwrap();
+    assert_eq!(remaining_chunks, 0);
+
+    let remaining_summaries: i64 = with_connection(&cfg, |conn| {
+        Ok(conn.query_row(
+            "SELECT COUNT(*) FROM mem_tree_summary_reembed_skipped WHERE model_signature = ?1",
+            params![sig],
+            |r| r.get(0),
+        )?)
+    })
+    .unwrap();
+    assert_eq!(remaining_summaries, 0);
+
+    let other_kept: i64 = with_connection(&cfg, |conn| {
+        Ok(conn.query_row(
+            "SELECT COUNT(*) FROM mem_tree_chunk_reembed_skipped
+              WHERE chunk_id = ?1 AND model_signature = ?2",
+            params![c1.id, other_sig],
+            |r| r.get(0),
+        )?)
+    })
+    .unwrap();
+    assert_eq!(other_kept, 1);
+}
+
+#[test]
+fn validate_reembed_skip_key_rejects_empty_and_oversized() {
+    assert!(validate_reembed_skip_key("chunk_id", "  ").is_err());
+    let huge = "a".repeat(REEMBED_SKIP_KEY_MAX_LEN + 1);
+    assert!(validate_reembed_skip_key("chunk_id", &huge).is_err());
+    assert!(validate_reembed_skip_key("chunk_id", "ok\0bad").is_err());
+    assert_eq!(
+        validate_reembed_skip_key("chunk_id", "  trimmed  ").unwrap(),
+        "trimmed"
+    );
+}

@@ -322,6 +322,7 @@ mod tests {
             tools: vec![],
             gated_tools: vec![],
             connected: true,
+            non_active_status: None,
         }
     }
 
@@ -466,11 +467,11 @@ mod tests {
     }
 
     /// An empty `subagents` list should produce zero tools — regular
-    /// non-delegating agents (welcome, code_executor, etc.) reach this
+    /// non-delegating agents (code_executor, etc.) reach this
     /// path without any subagents and must not pick up stray tools.
     #[test]
     fn empty_subagents_produces_no_tools() {
-        let orch = def("welcome", "First agent", None);
+        let orch = def("code_executor", "First agent", None);
         let reg = registry_with_targets();
         let tools = collect_orchestrator_tools(&orch, &reg, &[]);
         assert!(tools.is_empty());
@@ -503,6 +504,7 @@ mod tests {
                 tools: vec![],
                 gated_tools: vec![],
                 connected: false, // not connected — must not appear in the enum
+                non_active_status: None,
             },
             integration("notion", "Read and write pages."),
         ];
@@ -577,6 +579,7 @@ mod tests {
                 tools: vec![],
                 gated_tools: vec![],
                 connected: true,
+                non_active_status: None,
             },
             integration("gmail", "Email."),
         ];

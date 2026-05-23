@@ -18,6 +18,7 @@ import { handleInvites } from "./routes/invites.mjs";
 import { handleLlmCompletions } from "./routes/llm.mjs";
 import { handleOAuth } from "./routes/oauth.mjs";
 import { handlePayments } from "./routes/payments.mjs";
+import { handleTelegram } from "./routes/telegram.mjs";
 import { handleUser } from "./routes/user.mjs";
 import { handleVersion } from "./routes/version.mjs";
 import { handleWebhooks } from "./routes/webhooks.mjs";
@@ -38,6 +39,9 @@ let server = null;
 // Order matters: admin & socket.io short-circuit early; the rest fall through
 // in domain order so the cheapest predicates run first.
 const ROUTE_HANDLERS = [
+  // Telegram Bot API paths start with /bot<token>/… — check before the
+  // general-purpose handlers so the distinctive prefix routes cleanly.
+  handleTelegram,
   handleOAuth,
   handleAuth,
   handleUser,
@@ -185,8 +189,8 @@ function createServerInstance() {
     openSockets.add(socket);
     socket.on("close", () => openSockets.delete(socket));
   });
-  nextServer.on("upgrade", (req, socket) =>
-    handleWebSocketUpgrade(req, socket),
+  nextServer.on("upgrade", (req, socket, head) =>
+    handleWebSocketUpgrade(req, socket, head),
   );
   return nextServer;
 }
