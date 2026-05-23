@@ -509,9 +509,14 @@ impl Tool for ComposioListConnectionsTool {
                     // The agent-tool path can also fire 401s when a
                     // direct-mode user has a bad API key — without this
                     // hook the failure escapes the classifier and lands
-                    // as an unclassified Sentry event.
-                    super::ops::report_composio_op_error("list_connections", &e);
-                    anyhow::anyhow!("composio_list_connections (direct) failed: {e}")
+                    // as an unclassified Sentry event. Render WITH the
+                    // `[composio-direct]` anchor BEFORE reporting so the
+                    // classifier arm in `is_provider_user_state_message`
+                    // (gated on that prefix) actually fires.
+                    let rendered =
+                        format!("[composio-direct] composio_list_connections (direct) failed: {e}");
+                    super::ops::report_composio_op_error("list_connections", &rendered);
+                    anyhow::anyhow!("{rendered}")
                 })?
             }
             Err(e) => {

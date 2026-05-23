@@ -250,8 +250,14 @@ pub async fn composio_list_connections(
                 // `report_error_or_expected` and leaked ~15.7k events in ~22h
                 // — same UI 5 s poll + `periodic.rs` tick that the
                 // backend branch (line ~266) was already classifying.
-                report_composio_op_error("list_connections", &e);
-                format!("[composio-direct] list_connections failed: {e:#}")
+                //
+                // Render WITH the `[composio-direct]` anchor BEFORE
+                // reporting so the classifier arm in
+                // `is_provider_user_state_message` (which gates on that
+                // prefix) actually fires.
+                let rendered = format!("[composio-direct] list_connections failed: {e:#}");
+                report_composio_op_error("list_connections", &rendered);
+                rendered
             })?;
             let active = resp.connections.iter().filter(|c| c.is_active()).count();
             let total = resp.connections.len();
@@ -349,10 +355,12 @@ pub async fn composio_authorize(
                 // backend branch's `report_composio_op_error` on the
                 // same handler — direct-mode 401s from
                 // `connected_accounts/link` were leaking otherwise.
-                // Feed the wrapped error so rate-limit classifications
-                // are also surfaced to the expected-kind ladder.
-                report_composio_op_error("authorize", &wrapped);
-                format!("[composio-direct] authorize failed: {wrapped:#}")
+                // Render WITH the `[composio-direct]` anchor so the
+                // classifier arm fires; wrapped error preserves any
+                // rate-limit classifications fed up the ladder.
+                let rendered = format!("[composio-direct] authorize failed: {wrapped:#}");
+                report_composio_op_error("authorize", &rendered);
+                rendered
             })?
         }
     };
@@ -497,9 +505,14 @@ pub async fn composio_list_tools(
                         // [#1166 / Sentry TAURI-RUST-X9] Symmetric error
                         // routing — the prefetch call goes to the same v3
                         // `/connected_accounts` endpoint as `list_connections`
-                        // and would emit the same 401 wire shape.
-                        report_composio_op_error("list_connections", &e);
-                        format!("[composio-direct] list_tools: prefetch connections failed: {e:#}")
+                        // and would emit the same 401 wire shape. Render
+                        // WITH the `[composio-direct]` anchor so the
+                        // classifier arm fires on the prefetch path too.
+                        let rendered = format!(
+                            "[composio-direct] list_tools: prefetch connections failed: {e:#}"
+                        );
+                        report_composio_op_error("list_connections", &rendered);
+                        rendered
                     })?;
                     let mut v: Vec<String> = conns
                         .connections
@@ -532,9 +545,12 @@ pub async fn composio_list_tools(
             let mut resp = direct_list_tools(&direct, &scope).await.map_err(|e| {
                 // [#1166 / Sentry TAURI-RUST-X9] Symmetric with the backend
                 // branch's hook (line ~451). Direct-mode `list_tools`
-                // failures are user-state when the API key is bad.
-                report_composio_op_error("list_tools", &e);
-                format!("[composio-direct] list_tools failed: {e:#}")
+                // failures are user-state when the API key is bad. Render
+                // WITH the `[composio-direct]` anchor so the classifier
+                // arm fires.
+                let rendered = format!("[composio-direct] list_tools failed: {e:#}");
+                report_composio_op_error("list_tools", &rendered);
+                rendered
             })?;
             // Apply the same curated-whitelist + user-scope filter the
             // backend path runs — schemas may be tenant-agnostic but

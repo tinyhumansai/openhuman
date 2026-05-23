@@ -183,9 +183,12 @@ pub(crate) async fn run_one_tick() -> Result<(), String> {
                 // route it through the observability classifier too.
                 // Without this, the tick-side 401s leak as unclassified
                 // Sentry events even when the UI poll's identical failure
-                // is correctly classified.
-                super::ops::report_composio_op_error("list_connections", &e);
-                format!("list_connections (direct): {e:#}")
+                // is correctly classified. Render WITH the
+                // `[composio-direct]` anchor so the classifier arm in
+                // `is_provider_user_state_message` actually fires.
+                let rendered = format!("[composio-direct] list_connections (direct): {e:#}");
+                super::ops::report_composio_op_error("list_connections", &rendered);
+                rendered
             })?
         }
     };
