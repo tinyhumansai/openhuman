@@ -479,6 +479,9 @@ const de5: TranslationMap = {
   'webhooks.tunnels.toggleFailed': 'Echo konnte nicht umgeschaltet werden',
   'composio.authExpired': 'Authentifizierung abgelaufen',
   'composio.reconnect': 'Wieder verbinden',
+  'composio.previewBadge': 'Preview',
+  'composio.previewTooltip':
+    'Agent integration coming soon — you can connect, but the agent can’t use this toolkit yet.',
   'composio.directModeRequiresKey':
     'Speichern fehlgeschlagen. Der Direktmodus erfordert einen nicht leeren Schlüssel API.',
   'composio.notYetRouted': 'noch nicht geroutet',
