@@ -29,7 +29,6 @@ pub use super::catalogs_messaging::{
 };
 pub use super::catalogs_microsoft::{EXCEL_CURATED, ONE_DRIVE_CURATED};
 pub use super::catalogs_productivity::{
-    ASANA_CURATED, DROPBOX_CURATED, JIRA_CURATED, LINEAR_CURATED, OUTLOOK_CURATED, TODOIST_CURATED,
-    TRELLO_CURATED,
+    ASANA_CURATED, DROPBOX_CURATED, JIRA_CURATED, OUTLOOK_CURATED, TODOIST_CURATED, TRELLO_CURATED,
 };
 pub use super::catalogs_social_media::{SPOTIFY_CURATED, TWITTER_CURATED, YOUTUBE_CURATED};

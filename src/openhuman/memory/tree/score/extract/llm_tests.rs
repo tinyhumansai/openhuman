@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn build_system_prompt_default_omits_topics() {
-    let p = build_system_prompt(false);
+    let p = build_system_prompt(false, None);
     assert!(!p.contains("\"topics\""));
     assert!(!p.contains("Topics are"));
     assert!(p.contains("ALL three top-level fields"));
@@ -11,11 +11,19 @@ fn build_system_prompt_default_omits_topics() {
 
 #[test]
 fn build_system_prompt_with_flag_includes_topics() {
-    let p = build_system_prompt(true);
+    let p = build_system_prompt(true, None);
     assert!(p.contains("\"topics\""));
     assert!(p.contains("Topics are short free-form theme labels"));
     assert!(p.contains("ALL four top-level fields"));
     assert!(p.contains("entities, topics, importance"));
+}
+
+#[test]
+fn build_system_prompt_includes_output_language_directive() {
+    let p = build_system_prompt(true, Some("zh-CN"));
+    assert!(p.contains("Simplified Chinese"));
+    assert!(p.contains("Keep JSON keys"));
+    assert!(p.contains("\"importance_reason\""));
 }
 
 #[test]

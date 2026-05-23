@@ -1,7 +1,13 @@
 import crypto from "node:crypto";
 
 export const DEFAULT_PORT = 18473;
-export const MOCK_JWT = "e2e-mock-jwt-token";
+// Valid JWT format so isPlausibleSessionToken() in CoreStateProvider
+// recognizes it and triggers the auth-refresh path (clears logoutGuard).
+// exp = 4102444800 ≈ year 2099 — effectively never expires in tests.
+export const MOCK_JWT =
+  "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0" +
+  ".eyJzdWIiOiJ1c2VyLTEyMyIsInVzZXJJZCI6InVzZXItMTIzIiwidGdVc2VySWQiOiJ1c2VyLTEyMyIsImV4cCI6NDEwMjQ0NDgwMH0" +
+  ".e2e";
 export const MAX_PORT_RETRY_ATTEMPTS = 10;
 export const MAX_MOCK_DELAY_MS = 30_000;
 
@@ -330,6 +336,8 @@ export function dropSocketSession(sid) {
   const session = getSocketSession(sid);
   if (!session) return;
   try {
+    session.webSocket?.close?.();
+    session.webSocket?.terminate?.();
     session.webSocket?.destroy?.();
   } catch {
     // noop

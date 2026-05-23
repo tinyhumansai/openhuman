@@ -273,20 +273,21 @@ const en: TranslationMap = {
   // Onboarding: runtime-choice step (Cloud vs Custom)
   'onboarding.runtimeChoice.title': 'How would you like to run OpenHuman?',
   'onboarding.runtimeChoice.subtitle':
-    'Pick the setup that fits you best. You can change this later in Settings.',
+    'Pick how much OpenHuman manages for you. You can change this later in Settings.',
   'onboarding.runtimeChoice.cloud.title': 'Simple',
-  'onboarding.runtimeChoice.cloud.tagline': 'Let OpenHuman manage everything for you.',
-  'onboarding.runtimeChoice.cloud.f1': 'Built-in security',
+  'onboarding.runtimeChoice.cloud.tagline':
+    'Use OpenHuman-hosted sign-in, model routing, search, and managed integrations.',
+  'onboarding.runtimeChoice.cloud.f1': 'Backend-brokered OAuth and model routing',
   'onboarding.runtimeChoice.cloud.f2': 'Token compression to stretch your usage further',
   'onboarding.runtimeChoice.cloud.f3': 'One subscription, every model included',
-  'onboarding.runtimeChoice.cloud.f4': 'No API keys to manage',
-  'onboarding.runtimeChoice.cloud.f5': 'Simple to set up',
+  'onboarding.runtimeChoice.cloud.f4': 'No model, search, or Composio keys to manage',
+  'onboarding.runtimeChoice.cloud.f5': 'Local Memory Tree, managed network services',
   'onboarding.runtimeChoice.custom.title': 'Run Custom',
   'onboarding.runtimeChoice.custom.tagline':
-    "Bring your own keys. Full control of what you're using.",
+    'Bring your own keys. Choose which services OpenHuman should call.',
   'onboarding.runtimeChoice.custom.f1': "You'll need API keys for almost everything",
   'onboarding.runtimeChoice.custom.f2': 'Reuses services you already pay for',
-  'onboarding.runtimeChoice.custom.f3': 'Can be free if you run everything locally',
+  'onboarding.runtimeChoice.custom.f3': 'Keep supported workloads on your machine',
   'onboarding.runtimeChoice.custom.f4': 'More setup, more knobs',
   'onboarding.runtimeChoice.custom.f5': 'Best for power users and developers',
   'onboarding.runtimeChoice.cloud.creditHighlight': '$1 free credit to try it out',
@@ -331,7 +332,7 @@ const en: TranslationMap = {
   'onboarding.custom.inference.subtitle':
     'Which language model should answer your questions and run your agents?',
   'onboarding.custom.inference.defaultDesc':
-    'OpenHuman routes every workload to a sensible default model. No keys, no setup.',
+    'OpenHuman routes workloads through its managed backend by default. No keys, no setup.',
   'onboarding.custom.inference.configureDesc':
     'Bring your own OpenAI or Anthropic key. We use it for every text-based workload.',
 
@@ -339,7 +340,7 @@ const en: TranslationMap = {
   'onboarding.custom.voice.title': 'Voice',
   'onboarding.custom.voice.subtitle': 'Speech-to-text and text-to-speech for voice mode.',
   'onboarding.custom.voice.defaultDesc':
-    'OpenHuman ships with managed STT/TTS that just works. Nothing to wire up.',
+    'OpenHuman ships with managed STT/TTS providers that may send audio/text to hosted services.',
   'onboarding.custom.voice.configureDesc':
     'Use your own ElevenLabs / OpenAI Whisper / etc. Configure in Settings › Voice.',
 
@@ -348,7 +349,7 @@ const en: TranslationMap = {
   'onboarding.custom.oauth.subtitle':
     'Gmail, Slack, Notion, and other connected services that need OAuth.',
   'onboarding.custom.oauth.defaultDesc':
-    'OpenHuman runs a managed Composio workspace. One click to connect each service later.',
+    'OpenHuman brokers OAuth and tool calls through a managed Composio workspace.',
   'onboarding.custom.oauth.configureDesc':
     'Bring your own Composio account / API key. Configure in Settings › Connections.',
 
@@ -356,7 +357,7 @@ const en: TranslationMap = {
   'onboarding.custom.search.title': 'Web Search',
   'onboarding.custom.search.subtitle': 'How OpenHuman searches the web on your behalf.',
   'onboarding.custom.search.defaultDesc':
-    'OpenHuman uses a managed search backend. No keys needed.',
+    'OpenHuman uses a managed search proxy by default. No search API key needed.',
   'onboarding.custom.search.configureDesc':
     'Bring your own search provider key (Tavily, Brave, etc.). Configure in Settings › Tools.',
 
@@ -1019,8 +1020,9 @@ const en: TranslationMap = {
   'backend.cloud': 'Cloud',
   'backend.recommended': 'Recommended',
   'backend.cloudDescription':
-    'Fast, powerful models hosted on our servers. Ready to use immediately.',
-  'backend.privacyNote': 'No personal data, messages, or keys are ever sent to our servers.',
+    'Fast, powerful models routed through the OpenHuman backend. Ready to use immediately.',
+  'backend.privacyNote':
+    'Prompts and selected context may be sent to the configured backend/provider. Use local mode for supported on-device workloads.',
   'backend.local': 'Local',
   'backend.advanced': 'Advanced',
   'backend.localDescription':

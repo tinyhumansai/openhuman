@@ -214,13 +214,13 @@ const de5: TranslationMap = {
   'settings.developerMenu.integrationTriggers.title': 'Integrationsauslöser',
   'settings.developerMenu.integrationTriggers.desc':
     'Konfiguriere KI-Triage-Einstellungen für Composio-Integrationsauslöser',
-  'settings.mcpServer.title': 'MCP Server',
+  'settings.mcpServer.title': 'MCP-Server',
   'settings.mcpServer.toolsSectionTitle': 'Verfügbare Werkzeuge',
   'settings.mcpServer.toolsSectionDesc':
-    'Werkzeuge, die über den MCP-stdio-Server verfügbar sind, wenn openhuman-core mcp ausgeführt wird',
+    'Werkzeuge, die über den MCP-Stdio-Server beim Ausführen von openhuman-core mcp bereitgestellt werden',
   'settings.mcpServer.configSectionTitle': 'Client-Konfiguration',
   'settings.mcpServer.configSectionDesc':
-    'Wähle deinen MCP-Client aus, um den passenden Konfigurationsausschnitt zu erstellen',
+    'Wähle deinen MCP-Client aus, um das richtige Konfigurations-Snippet zu generieren',
   'settings.mcpServer.copySnippet': 'In die Zwischenablage kopieren',
   'settings.mcpServer.copied': 'Kopiert!',
   'settings.mcpServer.openConfigFile': 'Konfigurationsdatei öffnen',

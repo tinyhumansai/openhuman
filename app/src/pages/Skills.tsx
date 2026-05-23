@@ -132,6 +132,7 @@ interface ComposioConnectorTileProps {
    * issue #2283.
    */
   isAgentReady: boolean;
+  testId?: string;
   onOpen: () => void;
   onRetryGlobal: () => void;
 }
@@ -141,6 +142,7 @@ function ComposioConnectorTile({
   connection,
   hasComposioError,
   isAgentReady,
+  testId,
   onOpen,
   onRetryGlobal,
 }: ComposioConnectorTileProps) {
@@ -183,6 +185,7 @@ function ComposioConnectorTile({
   return (
     <button
       type="button"
+      data-testid={testId}
       onClick={handleClick}
       title={
         showPreviewBadge
@@ -234,10 +237,11 @@ interface ChannelTileProps {
   def: ChannelDefinition;
   status: ChannelConnectionStatus;
   icon: React.ReactNode;
+  testId?: string;
   onOpen: () => void;
 }
 
-function ChannelTile({ def, status, icon, onOpen }: ChannelTileProps) {
+function ChannelTile({ def, status, icon, testId, onOpen }: ChannelTileProps) {
   const { t } = useT();
   const isConnected = status === 'connected';
   const isPending = status === 'connecting';
@@ -248,6 +252,7 @@ function ChannelTile({ def, status, icon, onOpen }: ChannelTileProps) {
   return (
     <button
       type="button"
+      data-testid={testId}
       onClick={onOpen}
       title={`${def.display_name} — ${def.description}`}
       aria-label={`${def.display_name}, ${statusLabel}. ${ctaLabel}.`}
@@ -652,6 +657,8 @@ export default function Skills() {
                   statusColor={screenIntelligenceStatus.statusColor}
                   ctaLabel={screenIntelligenceStatus.ctaLabel}
                   ctaVariant={screenIntelligenceStatus.ctaVariant}
+                  testId={`skill-row-${item.id}`}
+                  ctaTestId={`skill-install-${item.id}`}
                   onCtaClick={() => {
                     if (screenIntelligenceStatus.platformUnsupported) {
                       navigate(item.route!);
@@ -680,6 +687,8 @@ export default function Skills() {
                   statusColor={autocompleteStatus.statusColor}
                   ctaLabel={autocompleteStatus.ctaLabel}
                   ctaVariant={autocompleteStatus.ctaVariant}
+                  testId={`skill-row-${item.id}`}
+                  ctaTestId={`skill-install-${item.id}`}
                   onCtaClick={() => {
                     if (
                       autocompleteStatus.platformUnsupported ||
@@ -705,6 +714,8 @@ export default function Skills() {
                   statusColor={voiceStatus.statusColor}
                   ctaLabel={voiceStatus.ctaLabel}
                   ctaVariant={voiceStatus.ctaVariant}
+                  testId={`skill-row-${item.id}`}
+                  ctaTestId={`skill-install-${item.id}`}
                   onCtaClick={() => {
                     if (
                       voiceStatus.connectionStatus === 'connected' ||
@@ -726,6 +737,8 @@ export default function Skills() {
                 title={item.name}
                 description={item.description}
                 ctaLabel={t('nav.settings')}
+                testId={`skill-row-${item.id}`}
+                ctaTestId={`skill-install-${item.id}`}
                 onCtaClick={() => navigate(item.route!)}
               />
             );
@@ -757,6 +770,8 @@ export default function Skills() {
                 statusLabel={scopeLabel}
                 statusColor={scopeColor}
                 ctaLabel={t('common.seeAll')}
+                testId={`skill-row-${skill.id}`}
+                ctaTestId={`skill-install-${skill.id}`}
                 onCtaClick={() => {
                   console.debug('[skills][discovered] open drawer', { skillId: skill.id });
                   setSelectedSkill(skill);
@@ -766,7 +781,7 @@ export default function Skills() {
                     ? [
                         {
                           label: t('skills.disconnect'),
-                          testId: `uninstall-skill-${skill.id}`,
+                          testId: `skill-uninstall-${skill.id}`,
                           icon: (
                             <svg
                               className="h-3.5 w-3.5"
@@ -873,13 +888,15 @@ export default function Skills() {
                       className="grid gap-2 sm:gap-3"
                       style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(5.5rem, 1fr))' }}>
                       {channelsGroup.items.map(item => (
-                        <ChannelTile
-                          key={item.id}
-                          def={item.channelDef!}
-                          status={item.channelStatus!}
-                          icon={item.icon}
-                          onOpen={() => setChannelModalDef(item.channelDef!)}
-                        />
+                        <div key={item.id} data-testid={`skill-row-${item.id}`}>
+                          <ChannelTile
+                            def={item.channelDef!}
+                            status={item.channelStatus!}
+                            icon={item.icon}
+                            testId={`skill-install-${item.id}`}
+                            onOpen={() => setChannelModalDef(item.channelDef!)}
+                          />
+                        </div>
                       ))}
                     </div>
                   </div>
@@ -911,19 +928,21 @@ export default function Skills() {
                       className="grid gap-2 sm:gap-3"
                       style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(5.5rem, 1fr))' }}>
                       {composioSortedEntries.map(({ meta, connection }) => (
-                        <ComposioConnectorTile
-                          key={meta.slug}
-                          meta={meta}
-                          connection={connection}
-                          hasComposioError={Boolean(composioError)}
-                          isAgentReady={
-                            agentReadyLoading ||
-                            Boolean(agentReadyError) ||
-                            agentReadyToolkits.has(meta.slug)
-                          }
-                          onOpen={() => setComposioModalToolkit(meta)}
-                          onRetryGlobal={() => void refreshComposio()}
-                        />
+                        <div key={meta.slug} data-testid={`skill-row-composio-${meta.slug}`}>
+                          <ComposioConnectorTile
+                            meta={meta}
+                            connection={connection}
+                            hasComposioError={Boolean(composioError)}
+                            isAgentReady={
+                              agentReadyLoading ||
+                              Boolean(agentReadyError) ||
+                              agentReadyToolkits.has(meta.slug)
+                            }
+                            testId={`skill-install-composio-${meta.slug}`}
+                            onOpen={() => setComposioModalToolkit(meta)}
+                            onRetryGlobal={() => void refreshComposio()}
+                          />
+                        </div>
                       ))}
                     </div>
                   ) : (

@@ -245,7 +245,7 @@ const Accounts = () => {
   }, [ctxMenu]);
 
   return (
-    <div className="relative flex h-full gap-3 overflow-hidden">
+    <div className="relative flex h-full gap-3 overflow-hidden" data-testid="accounts-page">
       {/* Narrow icon rail — always rendered. */}
       {/* [#1123] welcomeLocked guard removed — welcome-agent onboarding replaced by Joyride walkthrough */}
       <aside className="z-30 flex w-16 flex-none flex-col items-center gap-2 bg-white/60 dark:bg-neutral-900/60 py-3 backdrop-blur-md my-3 ml-3 rounded-2xl border border-stone-200/70 dark:border-neutral-800/70 shadow-soft">
@@ -267,6 +267,7 @@ const Accounts = () => {
 
         <button
           onClick={() => setAddOpen(true)}
+          data-testid="accounts-add-button"
           className="group relative mt-2 flex h-11 w-11 items-center justify-center rounded-xl border border-dashed border-stone-300 dark:border-neutral-700 text-stone-400 dark:text-neutral-500 hover:z-50 hover:bg-stone-50 dark:hover:bg-neutral-800/60 hover:text-stone-600 dark:hover:text-neutral-300"
           aria-label={t('accounts.addAccount')}>
           <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
