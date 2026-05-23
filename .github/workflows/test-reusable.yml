@@ -110,6 +110,7 @@ jobs:
         with:
           ref: ${{ inputs.ref }}
           fetch-depth: 1
+          persist-credentials: false
           submodules: recursive
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
@@ -137,6 +138,7 @@ jobs:
         with:
           ref: ${{ inputs.ref }}
           fetch-depth: 1
+          persist-credentials: false
           submodules: recursive
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
@@ -169,6 +171,7 @@ jobs:
           ref: ${{ inputs.ref }}
           fetch-depth: 1
           # Required for app/src-tauri/vendor/tauri-cef.
+          persist-credentials: false
           submodules: recursive
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2

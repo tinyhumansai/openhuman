@@ -73,6 +73,7 @@ jobs:
         with:
           ref: ${{ inputs.ref }}
           fetch-depth: 1
+          persist-credentials: false
           submodules: recursive
 
       - name: Cache pnpm store
@@ -203,6 +204,7 @@ jobs:
         with:
           ref: ${{ inputs.ref }}
           fetch-depth: 1
+          persist-credentials: false
           submodules: recursive
 
       - name: Cache pnpm store
@@ -246,6 +248,7 @@ jobs:
         with:
           ref: ${{ inputs.ref }}
           fetch-depth: 1
+          persist-credentials: false
           submodules: recursive
 
       - name: Install pnpm
@@ -349,6 +352,7 @@ jobs:
         with:
           ref: ${{ inputs.ref }}
           fetch-depth: 1
+          persist-credentials: false
           submodules: recursive
 
       - name: Install pnpm

@@ -79,6 +79,7 @@ jobs:
         uses: actions/checkout@v5
         with:
           fetch-depth: 1
+          persist-credentials: false
           submodules: recursive
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
@@ -110,6 +111,7 @@ jobs:
         uses: actions/checkout@v5
         with:
           fetch-depth: 1
+          persist-credentials: false
           submodules: recursive
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
