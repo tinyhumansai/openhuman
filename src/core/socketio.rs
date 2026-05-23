@@ -251,6 +251,11 @@ struct ChatCancelPayload {
     thread_id: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct ThreadSubscribePayload {
+    thread_id: String,
+}
+
 /// Attaches the Socket.IO layer to the Axum router and sets up event handlers.
 ///
 /// It configures:
@@ -435,6 +440,31 @@ pub fn attach_socketio() -> (socketioxide::layer::SocketIoLayer, SocketIo) {
                         &payload.thread_id,
                     )
                     .await;
+                },
+            );
+
+            // Handler for subscribing this socket to a thread's room.
+            //
+            // Chat-stream events are delivered to BOTH the initiating client's
+            // own room AND a per-thread room (`thread:<id>`). After a socket
+            // reconnects it has a NEW client_id, so it would miss an in-flight
+            // turn's remaining stream (delivered to the OLD client_id room). The
+            // frontend emits this on connect/reconnect for the active thread, so
+            // the new socket re-joins the thread room and keeps receiving the
+            // stream. Membership is dropped automatically on disconnect.
+            socket.on(
+                "thread:subscribe",
+                |socket: SocketRef, Data(payload): Data<ThreadSubscribePayload>| async move {
+                    if !socket_is_authed(&socket) {
+                        drop_unauthed(&socket, "thread:subscribe from unauthenticated socket");
+                        return;
+                    }
+                    let thread_id = payload.thread_id.trim();
+                    if thread_id.is_empty() {
+                        return;
+                    }
+                    let room = format!("thread:{thread_id}");
+                    join_room_logged(&socket, &room, &socket.id.to_string());
                 },
             );
         },
@@ -704,13 +734,23 @@ fn join_room_logged(socket: &SocketRef, room: &str, client_id: &str) {
 }
 
 fn emit_web_channel_event(io: &SocketIo, event: WebChannelEvent) {
-    let room = event.client_id.clone();
     let name = event.event.clone();
+    // Deliver to the initiating client's own room AND the per-thread room. The
+    // thread room lets a socket that reconnected with a new client_id (after
+    // re-subscribing via `thread:subscribe`) keep receiving an in-flight turn's
+    // stream. socket.io de-duplicates a socket present in multiple target rooms,
+    // so a socket in both receives each event exactly once (no double-render).
+    // "system" broadcasts and events without a thread_id keep the legacy
+    // single-room behavior.
+    let mut rooms: Vec<String> = vec![event.client_id.clone()];
+    if event.client_id != "system" && !event.thread_id.is_empty() {
+        rooms.push(format!("thread:{}", event.thread_id));
+    }
     if let Ok(payload) = serde_json::to_value(event) {
         log::debug!(
-            "[socketio] send event={} room={} thread_id={} request_id={}",
+            "[socketio] send event={} rooms={:?} thread_id={} request_id={}",
             name,
-            room,
+            rooms,
             payload
                 .get("thread_id")
                 .and_then(|v| v.as_str())
@@ -720,7 +760,7 @@ fn emit_web_channel_event(io: &SocketIo, event: WebChannelEvent) {
                 .and_then(|v| v.as_str())
                 .unwrap_or_default()
         );
-        emit_room_with_aliases(io, &room, &name, &payload);
+        emit_rooms_with_aliases(io, &rooms, &name, &payload);
     }
 }
 
@@ -741,10 +781,17 @@ fn emit_with_aliases(socket: &SocketRef, name: &str, payload: &serde_json::Value
     }
 }
 
-fn emit_room_with_aliases(io: &SocketIo, room: &str, name: &str, payload: &serde_json::Value) {
-    let _ = io.to(room.to_string()).emit(name, payload);
+fn emit_rooms_with_aliases(
+    io: &SocketIo,
+    rooms: &[String],
+    name: &str,
+    payload: &serde_json::Value,
+) {
+    // Emitting to multiple rooms in a single call delivers each event once per
+    // socket, even if a socket belongs to more than one of the target rooms.
+    let _ = io.to(rooms.to_vec()).emit(name, payload);
     if let Some(alias) = event_alias(name) {
-        let _ = io.to(room.to_string()).emit(alias, payload);
+        let _ = io.to(rooms.to_vec()).emit(alias, payload);
     }
 }
 

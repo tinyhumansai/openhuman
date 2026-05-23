@@ -862,20 +862,37 @@ async fn run_typed_mode(
         None
     };
 
-    let mut filtered_specs: Vec<ToolSpec> = allowed_indices
-        .iter()
-        .map(|&i| parent.all_tool_specs[i].clone())
-        .collect();
+    // Build provider-visible tool schemas in EXECUTION-PRECEDENCE order:
+    // `dynamic_tools` (extra_tools at runtime) before parent specs, because
+    // the inner loop's name lookup (see end of this fn) resolves
+    // `extra_tools` first and only falls back to `parent_tools`. Aligning
+    // the dedup order with the runtime lookup order guarantees the schema
+    // the model sees and the tool that actually executes describe the same
+    // behaviour. (CodeRabbit review on PR #2446.)
+    let mut filtered_specs: Vec<ToolSpec> = dynamic_tools.iter().map(|t| t.spec()).collect();
+    filtered_specs.extend(
+        allowed_indices
+            .iter()
+            .map(|&i| parent.all_tool_specs[i].clone()),
+    );
     let mut allowed_names: HashSet<String> = allowed_indices
         .iter()
         .map(|&i| parent.all_tools[i].name().to_string())
         .collect();
-    // Append dynamic tool specs / names so they're discoverable by the
-    // provider (native tool-calling) and by the inner loop's allowlist.
+    // Dynamic tool names must also be in the allowlist so the inner loop
+    // accepts model tool_calls that reference them.
     for tool in &dynamic_tools {
-        filtered_specs.push(tool.spec());
         allowed_names.insert(tool.name().to_string());
     }
+    // Dedup by name: first occurrence wins. Dynamic Composio action tools
+    // can share a name with an inherited parent-registry spec when the
+    // agent's AllowedAll scope includes a same-named skill tool. Some
+    // providers (Anthropic, OpenHuman cloud after the uniqueness-enforcement
+    // rollout) 400 on duplicate tool names — see TAURI-RUST-4. Because
+    // `filtered_specs` is in execution order (dynamic first), the kept
+    // schema matches what the runtime will actually dispatch.
+    let filtered_specs =
+        crate::openhuman::agent::harness::session::dedup_visible_tool_specs(filtered_specs);
 
     // Dedup by tool name before the specs reach the provider (see
     // `dedup_tool_specs_by_name` for why duplicates appear here).

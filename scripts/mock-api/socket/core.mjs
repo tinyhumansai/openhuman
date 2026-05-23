@@ -26,8 +26,11 @@ import {
 } from "./protocol.mjs";
 import {
   acceptWebSocket,
+  closeWebSocket,
   decodeWebSocketFrames,
   sendWsText,
+  socketIsOpen,
+  upgradeWebSocket,
 } from "./websocket.mjs";
 
 function socketIoSid() {
@@ -83,11 +86,7 @@ function sendSocketPacket(session, packet) {
   const target = getSocketSession(session.sid);
   if (!target) return false;
   target.lastSeenAt = new Date().toISOString();
-  if (
-    target.webSocket &&
-    !target.webSocket.destroyed &&
-    target.upgradedToWebSocket === true
-  ) {
+  if (socketIsOpen(target.webSocket) && target.upgradedToWebSocket === true) {
     sendWsText(target.webSocket, packet);
     return true;
   }
@@ -97,13 +96,8 @@ function sendSocketPacket(session, packet) {
 function cleanupRejectedSession(session) {
   const live = getSocketSession(session.sid);
   if (!live) return;
-  if (live.webSocket && !live.webSocket.destroyed) {
-    try {
-      live.webSocket.end?.();
-      live.webSocket.destroy?.();
-    } catch {
-      // noop
-    }
+  if (socketIsOpen(live.webSocket)) {
+    closeWebSocket(live.webSocket);
     dropSocketSession(live.sid);
     return;
   }
@@ -329,14 +323,7 @@ export function handleSocketRequest(ctx) {
   return true;
 }
 
-export function handleWebSocketUpgrade(req, socket) {
-  if (!req.url?.startsWith("/socket.io/")) {
-    socket.destroy();
-    return;
-  }
-
-  if (!acceptWebSocket(req, socket)) return;
-
+function attachAcceptedWebSocket(req, socket) {
   const urlObj = parseRequestUrl(req.url);
   const requestedSid = urlObj.searchParams.get("sid");
   let session = requestedSid ? getSocketSession(requestedSid) : null;
@@ -371,6 +358,24 @@ export function handleWebSocketUpgrade(req, socket) {
     logSocketCheckpoint("websocket_closed", { sid: session.sid });
   });
   socket.on("error", () => {});
+}
+
+export function handleWebSocketUpgrade(req, socket, head) {
+  if (!req.url?.startsWith("/socket.io/")) {
+    socket.destroy();
+    return;
+  }
+
+  if (
+    upgradeWebSocket(req, socket, head, (ws) =>
+      attachAcceptedWebSocket(req, ws),
+    )
+  ) {
+    return;
+  }
+
+  if (!acceptWebSocket(req, socket)) return;
+  attachAcceptedWebSocket(req, socket);
 }
 
 export function emitMockSocketEvent({
@@ -489,12 +494,7 @@ export function disconnectMockSockets({ targetSid, targetUserId } = {}) {
     if (!matchSession(sessionInfo, { targetSid, targetUserId })) continue;
     const session = getSocketSession(sessionInfo.sid);
     if (!session) continue;
-    try {
-      session.webSocket?.end?.();
-      session.webSocket?.destroy?.();
-    } catch {
-      // noop
-    }
+    closeWebSocket(session.webSocket);
     dropSocketSession(session.sid);
     disconnected += 1;
   }

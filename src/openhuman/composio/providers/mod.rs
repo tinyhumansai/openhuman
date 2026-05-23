@@ -49,6 +49,7 @@ pub mod catalogs_social_media;
 pub mod clickup;
 pub mod github;
 pub mod gmail;
+pub mod linear;
 pub mod notion;
 pub mod profile;
 pub mod profile_md;
@@ -95,13 +96,14 @@ fn native_provider_sync_interval(toolkit: &str) -> Option<u64> {
         "notion" => Some(notion::NotionProvider::new().sync_interval_secs()),
         "slack" => Some(slack::SlackProvider::new().sync_interval_secs()),
         "clickup" => Some(clickup::ClickUpProvider::new().sync_interval_secs()),
+        "linear" => Some(linear::LinearProvider::new().sync_interval_secs()),
         _ => None,
     }
     .flatten()
 }
 
 fn has_native_provider(toolkit: &str) -> bool {
-    matches!(toolkit, "gmail" | "notion" | "slack" | "clickup")
+    matches!(toolkit, "gmail" | "notion" | "slack" | "clickup" | "linear")
 }
 
 /// Static overview of the Composio integrations supported by this core build.
@@ -191,7 +193,7 @@ pub fn catalog_for_toolkit(toolkit: &str) -> Option<&'static [CuratedTool]> {
         "outlook" => Some(catalogs::OUTLOOK_CURATED),
         // MICROSOFT_TEAMS_* slugs extract to "microsoft" via toolkit_from_slug.
         "microsoft" | "microsoft_teams" => Some(catalogs::MICROSOFT_TEAMS_CURATED),
-        "linear" => Some(catalogs::LINEAR_CURATED),
+        "linear" => Some(linear::LINEAR_CURATED),
         "jira" => Some(catalogs::JIRA_CURATED),
         "trello" => Some(catalogs::TRELLO_CURATED),
         "asana" => Some(catalogs::ASANA_CURATED),
@@ -352,6 +354,35 @@ mod tests {
         assert!(clickup.periodic_sync);
         assert_eq!(clickup.sync_interval_secs, Some(30 * 60));
         assert!(clickup.memory_ingest);
+    }
+
+    #[test]
+    fn capability_matrix_includes_linear_as_native_memory_provider() {
+        // Locks in the per-issue #2400 registration: a Linear row must
+        // appear in the capability matrix with the same native-provider
+        // flags Gmail/Notion/Slack/ClickUp already carry (`memory_ingest`,
+        // `periodic_sync`, non-zero `sync_interval_secs`). If a future
+        // change drops one of the four registration touchpoints
+        // (CAPABILITY_TOOLKITS, has_native_provider,
+        // native_provider_sync_interval, catalog_for_toolkit) this test
+        // fails loud rather than silently degrading the provider to
+        // catalog-only status.
+        let matrix = capability_matrix();
+        let linear = matrix
+            .iter()
+            .find(|entry| entry.toolkit == "linear")
+            .expect("linear capability row");
+        assert!(linear.native_provider, "linear must be native");
+        assert!(linear.curated_tools, "linear must have a curated catalog");
+        assert!(
+            linear.curated_tool_count > 0,
+            "linear catalog must be non-empty"
+        );
+        assert!(linear.user_profile);
+        assert!(linear.initial_sync);
+        assert!(linear.periodic_sync);
+        assert_eq!(linear.sync_interval_secs, Some(30 * 60));
+        assert!(linear.memory_ingest);
     }
 
     #[test]
