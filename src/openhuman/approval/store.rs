@@ -25,22 +25,34 @@ use chrono::{DateTime, Utc};
 use rusqlite::{params, types::Type, Connection};
 
 use crate::openhuman::config::Config;
+use crate::openhuman::memory::safety::sanitize_text;
 
-use super::types::{ApprovalAuditEntry, ApprovalDecision, PendingApproval};
+use super::types::{ApprovalAuditEntry, ApprovalDecision, ExecutionOutcome, PendingApproval};
 
+/// SQL schema applied on every `with_connection` call.
+///
+/// `executed_at`, `execution_outcome`, and `execution_error` capture
+/// the *after-action* audit row introduced for issue #2135 so a
+/// reader can see both "the action was approved at X" and "the
+/// action ran at Y with outcome Z" from the same table. Pre-existing
+/// rows from older builds back-fill these as NULL — see
+/// [`migrate_columns`] for the live-upgrade path.
 const SCHEMA: &str = "
 PRAGMA foreign_keys = ON;
 
 CREATE TABLE IF NOT EXISTS pending_approvals (
-    request_id      TEXT PRIMARY KEY,
-    tool_name       TEXT NOT NULL,
-    action_summary  TEXT NOT NULL,
-    args_redacted   TEXT NOT NULL,
-    session_id      TEXT NOT NULL,
-    created_at      TEXT NOT NULL,
-    expires_at      TEXT,
-    decided_at      TEXT,
-    decision        TEXT
+    request_id        TEXT PRIMARY KEY,
+    tool_name         TEXT NOT NULL,
+    action_summary    TEXT NOT NULL,
+    args_redacted     TEXT NOT NULL,
+    session_id        TEXT NOT NULL,
+    created_at        TEXT NOT NULL,
+    expires_at        TEXT,
+    decided_at        TEXT,
+    decision          TEXT,
+    executed_at       TEXT,
+    execution_outcome TEXT,
+    execution_error   TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_pending_approvals_pending
     ON pending_approvals(decided_at);
@@ -48,6 +60,49 @@ CREATE INDEX IF NOT EXISTS idx_pending_approvals_session
     ON pending_approvals(session_id);
 ";
 
+/// Idempotently add the post-execution audit columns to an existing
+/// `pending_approvals` table. `CREATE TABLE IF NOT EXISTS` above is
+/// a no-op when the table already exists, so a DB created by an
+/// older build keeps the v1 schema until this migration patches it.
+///
+/// SQLite has no `ADD COLUMN IF NOT EXISTS`, so we read
+/// `PRAGMA table_info` and add missing columns one at a time.
+fn migrate_columns(conn: &Connection) -> Result<()> {
+    let mut have: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut stmt = conn
+        .prepare("PRAGMA table_info(pending_approvals)")
+        .context("[approval::store] prepare table_info")?;
+    let rows = stmt
+        .query_map(params![], |row| row.get::<_, String>(1))
+        .context("[approval::store] query table_info")?;
+    for r in rows {
+        have.insert(r.context("[approval::store] table_info row decode")?);
+    }
+    for (col, ddl) in [
+        (
+            "executed_at",
+            "ALTER TABLE pending_approvals ADD COLUMN executed_at TEXT",
+        ),
+        (
+            "execution_outcome",
+            "ALTER TABLE pending_approvals ADD COLUMN execution_outcome TEXT",
+        ),
+        (
+            "execution_error",
+            "ALTER TABLE pending_approvals ADD COLUMN execution_error TEXT",
+        ),
+    ] {
+        if !have.contains(col) {
+            conn.execute(ddl, params![])
+                .with_context(|| format!("[approval::store] add column {col}"))?;
+            tracing::info!(column = col, "[approval::store] migrated v1 schema");
+        }
+    }
+    Ok(())
+}
+
+/// Open (and migrate) the approval DB, then call `f` with a live
+/// connection. Mirrors `notifications/store.rs::with_connection`.
 fn with_connection<T>(config: &Config, f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
     let db_path = config.workspace_dir.join("approval").join("approval.db");
 
@@ -74,6 +129,7 @@ fn with_connection<T>(config: &Config, f: impl FnOnce(&Connection) -> Result<T>)
 
     conn.execute_batch(SCHEMA)
         .context("[approval::store] schema migration failed")?;
+    migrate_columns(&conn)?;
 
     f(&conn)
 }
@@ -143,6 +199,33 @@ pub fn list_pending(config: &Config) -> Result<Vec<PendingApproval>> {
     })
 }
 
+/// Look up the persisted decision for a request_id without mutating
+/// state. Returns `Ok(None)` when the row doesn't exist or hasn't
+/// been decided yet. Used to resolve gate-timeout vs decide races
+/// where the TTL elapses concurrently with a committed approval
+/// (CodeRabbit review on PR #2367).
+pub fn get_decision(config: &Config, request_id: &str) -> Result<Option<ApprovalDecision>> {
+    with_connection(config, |conn| {
+        let mut stmt = conn
+            .prepare(
+                "SELECT decision FROM pending_approvals
+                 WHERE request_id = ?1 AND decided_at IS NOT NULL",
+            )
+            .context("[approval::store] prepare get_decision")?;
+        let mut rows = stmt
+            .query(params![request_id])
+            .context("[approval::store] query get_decision")?;
+        if let Some(row) = rows.next().context("[approval::store] get_decision next")? {
+            let raw: String = row
+                .get(0)
+                .context("[approval::store] get_decision decode")?;
+            Ok(ApprovalDecision::from_str(&raw))
+        } else {
+            Ok(None)
+        }
+    })
+}
+
 /// Mark a pending row as decided and return the now-decided row.
 /// Returns `Ok(None)` if no row matched (already decided, expired, or
 /// unknown id).
@@ -182,6 +265,70 @@ pub fn decide(
         } else {
             Ok(None)
         }
+    })
+}
+
+/// Persist the terminal status of a tool call the gate previously
+/// allowed.
+///
+/// Writes `executed_at = now`, `execution_outcome`, and an optional
+/// short error string back onto the original `pending_approvals`
+/// row. Returns `Ok(true)` when the row was found and updated,
+/// `Ok(false)` when no matching row exists (gate not installed, or
+/// a stray `record_execution` for an id that was never persisted) —
+/// the latter is a no-op so callers can fire it unconditionally
+/// without branching on `Option<request_id>`.
+///
+/// **Invariant:** only call this AFTER `decide(..., ApproveOnce |
+/// ApproveAlwaysForTool)` has succeeded — otherwise the row will
+/// show an `executed_at` without a `decided_at`, which is nonsense.
+/// The gate enforces this by only handing out a request_id when the
+/// intercepted call was allowed.
+pub fn record_execution(
+    config: &Config,
+    request_id: &str,
+    outcome: ExecutionOutcome,
+    error: Option<&str>,
+) -> Result<bool> {
+    with_connection(config, |conn| {
+        let now = Utc::now().to_rfc3339();
+        // Sanitize before truncation so the durable audit row can't
+        // leak bearer tokens, API keys, private-key blocks, OAuth
+        // params, emails, or other PII the upstream tool might have
+        // echoed back into its error message (PR #2367 review).
+        // Truncate-first would split a secret mid-string and dodge
+        // the redaction regexes — sanitize, then cap. Cap is 512
+        // chars inclusive of the ellipsis marker; the agent already
+        // sees the full error in its own tool-result envelope so
+        // nothing observable depends on the stored copy.
+        let trimmed_error = error.map(|raw| {
+            let sanitized = sanitize_text(raw).value;
+            if sanitized.chars().count() > 512 {
+                let head: String = sanitized.chars().take(511).collect();
+                format!("{head}…")
+            } else {
+                sanitized
+            }
+        });
+        // `executed_at IS NULL` makes the terminal audit row
+        // immutable — the first `record_execution` call wins, and a
+        // late retry/cleanup path can't silently rewrite the original
+        // outcome (CodeRabbit review on #2367). `decided_at IS NOT
+        // NULL` keeps the monotonic invariant (no "executed before
+        // approved" rows).
+        let updated = conn
+            .execute(
+                "UPDATE pending_approvals
+                 SET executed_at = ?1,
+                     execution_outcome = ?2,
+                     execution_error = ?3
+                 WHERE request_id = ?4
+                   AND decided_at IS NOT NULL
+                   AND executed_at IS NULL",
+                params![now, outcome.as_str(), trimmed_error, request_id],
+            )
+            .context("[approval::store] record_execution update")?;
+        Ok(updated > 0)
     })
 }
 
@@ -437,12 +584,252 @@ mod tests {
     }
 
     #[test]
+    fn get_decision_returns_none_until_decided_then_persisted_value() {
+        // PR #2367 review: timeout-vs-decide race resolution in the
+        // gate calls `get_decision` after a denied UPDATE no-ops.
+        // Undecided rows and unknown ids must both return `None`,
+        // and decided rows must round-trip the persisted decision.
+        let (config, _dir) = test_config();
+        assert!(get_decision(&config, "missing").unwrap().is_none());
+        insert_pending(&config, &sample("race", "sess-A")).unwrap();
+        assert!(
+            get_decision(&config, "race").unwrap().is_none(),
+            "undecided row reports no decision"
+        );
+        decide(&config, "race", ApprovalDecision::ApproveOnce).unwrap();
+        assert_eq!(
+            get_decision(&config, "race").unwrap(),
+            Some(ApprovalDecision::ApproveOnce)
+        );
+    }
+
+    #[test]
     fn pending_row_survives_connection_close() {
         let (config, _dir) = test_config();
         insert_pending(&config, &sample("survives", "sess-A")).unwrap();
         let rows = list_pending(&config).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].request_id, "survives");
+    }
+
+    // ── record_execution / column-migration tests (#2135) ──────────
+
+    fn read_execution_row(
+        config: &Config,
+        request_id: &str,
+    ) -> (Option<String>, Option<String>, Option<String>) {
+        with_connection(config, |conn| {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT executed_at, execution_outcome, execution_error
+                     FROM pending_approvals WHERE request_id = ?1",
+                )
+                .unwrap();
+            let mut rows = stmt.query(params![request_id]).unwrap();
+            let row = rows.next().unwrap().expect("row exists");
+            Ok((
+                row.get::<_, Option<String>>(0).unwrap(),
+                row.get::<_, Option<String>>(1).unwrap(),
+                row.get::<_, Option<String>>(2).unwrap(),
+            ))
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn record_execution_writes_terminal_audit_row_after_decide() {
+        let (config, _dir) = test_config();
+        insert_pending(&config, &sample("req-exec", "sess-A")).unwrap();
+        // Before decide, record_execution must not patch the row —
+        // a decided_at IS NOT NULL guard keeps the audit trail
+        // monotonic (no "executed before approved").
+        let early = record_execution(&config, "req-exec", ExecutionOutcome::Success, None).unwrap();
+        assert!(!early, "record_execution before decide must be a no-op");
+        let (exec_at, _, _) = read_execution_row(&config, "req-exec");
+        assert!(exec_at.is_none());
+
+        decide(&config, "req-exec", ApprovalDecision::ApproveOnce).unwrap();
+        let ok = record_execution(&config, "req-exec", ExecutionOutcome::Success, None).unwrap();
+        assert!(ok, "record_execution after decide must update the row");
+        let (exec_at, outcome, error) = read_execution_row(&config, "req-exec");
+        assert!(exec_at.is_some());
+        assert_eq!(outcome.as_deref(), Some("success"));
+        assert!(error.is_none());
+    }
+
+    #[test]
+    fn record_execution_persists_outcome_and_redacted_error() {
+        let (config, _dir) = test_config();
+        insert_pending(&config, &sample("req-fail", "sess-A")).unwrap();
+        decide(&config, "req-fail", ApprovalDecision::ApproveOnce).unwrap();
+
+        record_execution(
+            &config,
+            "req-fail",
+            ExecutionOutcome::Failure,
+            Some("backend returned 500"),
+        )
+        .unwrap();
+
+        let (_, outcome, error) = read_execution_row(&config, "req-fail");
+        assert_eq!(outcome.as_deref(), Some("failure"));
+        assert_eq!(error.as_deref(), Some("backend returned 500"));
+    }
+
+    #[test]
+    fn record_execution_caps_long_error_messages() {
+        let (config, _dir) = test_config();
+        insert_pending(&config, &sample("req-long", "sess-A")).unwrap();
+        decide(&config, "req-long", ApprovalDecision::ApproveOnce).unwrap();
+
+        let huge = "x".repeat(2_000);
+        record_execution(&config, "req-long", ExecutionOutcome::Failure, Some(&huge)).unwrap();
+
+        let (_, _, error) = read_execution_row(&config, "req-long");
+        let stored = error.expect("error stored");
+        // 512-char cap is inclusive of the ellipsis marker
+        // (CodeRabbit review on #2367) — anything longer would let
+        // upstream crash dumps slowly fill the audit log.
+        assert_eq!(
+            stored.chars().count(),
+            512,
+            "truncated value must be exactly 512 chars (incl. ellipsis): {} chars",
+            stored.chars().count()
+        );
+        assert!(stored.ends_with('…'));
+    }
+
+    #[test]
+    fn record_execution_redacts_secrets_in_error_message() {
+        // PR #2367 review: upstream tool errors regularly echo back
+        // the offending request including auth headers. The audit
+        // row must persist the sanitized form so a leaked bearer
+        // or API key never lands in the durable log.
+        let (config, _dir) = test_config();
+        insert_pending(&config, &sample("req-secret", "sess-A")).unwrap();
+        decide(&config, "req-secret", ApprovalDecision::ApproveOnce).unwrap();
+
+        let raw = "upstream 401: Authorization: Bearer sk-live-abcdef1234567890abcdef1234567890 \
+             returned by sk-proj-FAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE";
+        record_execution(&config, "req-secret", ExecutionOutcome::Failure, Some(raw)).unwrap();
+
+        let (_, _, error) = read_execution_row(&config, "req-secret");
+        let stored = error.expect("error stored");
+        assert!(
+            !stored.contains("sk-live-abcdef1234567890abcdef1234567890"),
+            "raw bearer token must not be persisted: {stored}"
+        );
+        assert!(
+            !stored.contains("sk-proj-FAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE"),
+            "raw provider key must not be persisted: {stored}"
+        );
+        assert!(
+            stored.contains("[REDACTED]"),
+            "sanitizer must leave a redaction marker so audit reviewers see something was scrubbed: {stored}"
+        );
+    }
+
+    #[test]
+    fn record_execution_is_idempotent_after_first_terminal_report_wins() {
+        // CodeRabbit review on #2367: a late retry / cleanup path
+        // must NOT rewrite the original audit row. The first
+        // `record_execution` call wins; subsequent calls return
+        // `false` and leave the row unchanged.
+        let (config, _dir) = test_config();
+        insert_pending(&config, &sample("req-idem", "sess-A")).unwrap();
+        decide(&config, "req-idem", ApprovalDecision::ApproveOnce).unwrap();
+
+        // First report: succeeds, row gets stamped.
+        let first = record_execution(
+            &config,
+            "req-idem",
+            ExecutionOutcome::Success,
+            Some("ok-first"),
+        )
+        .unwrap();
+        assert!(first);
+        let (exec_at_1, outcome_1, error_1) = read_execution_row(&config, "req-idem");
+        assert!(exec_at_1.is_some());
+        assert_eq!(outcome_1.as_deref(), Some("success"));
+        assert_eq!(error_1.as_deref(), Some("ok-first"));
+
+        // Second report (e.g. a late retry that finally noticed the
+        // outcome) must be a no-op and must NOT change the stored
+        // outcome or timestamp.
+        let second = record_execution(
+            &config,
+            "req-idem",
+            ExecutionOutcome::Failure,
+            Some("late-failure-noise"),
+        )
+        .unwrap();
+        assert!(
+            !second,
+            "second record_execution must report no row updated"
+        );
+
+        let (exec_at_2, outcome_2, error_2) = read_execution_row(&config, "req-idem");
+        assert_eq!(exec_at_2, exec_at_1, "executed_at must not change");
+        assert_eq!(outcome_2.as_deref(), Some("success"));
+        assert_eq!(error_2.as_deref(), Some("ok-first"));
+    }
+
+    #[test]
+    fn record_execution_unknown_id_is_safe_noop() {
+        let (config, _dir) = test_config();
+        let ok = record_execution(&config, "never-here", ExecutionOutcome::Success, None).unwrap();
+        assert!(!ok, "unknown id must report no row updated");
+    }
+
+    #[test]
+    fn migrate_columns_is_idempotent_on_v1_databases() {
+        // Simulate an older build by creating the v1 table shape
+        // manually (no executed_at / execution_outcome / execution_error)
+        // then opening the store via with_connection — the migration
+        // must add the missing columns without losing existing rows.
+        let dir = TempDir::new().unwrap();
+        let workspace = dir.path().to_path_buf();
+        let db_path = workspace.join("approval").join("approval.db");
+        std::fs::create_dir_all(db_path.parent().unwrap()).unwrap();
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE pending_approvals (
+                    request_id      TEXT PRIMARY KEY,
+                    tool_name       TEXT NOT NULL,
+                    action_summary  TEXT NOT NULL,
+                    args_redacted   TEXT NOT NULL,
+                    session_id      TEXT NOT NULL,
+                    created_at      TEXT NOT NULL,
+                    expires_at      TEXT,
+                    decided_at      TEXT,
+                    decision        TEXT
+                );",
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO pending_approvals
+                    (request_id, tool_name, action_summary, args_redacted,
+                     session_id, created_at)
+                 VALUES ('legacy', 'composio', 'legacy row', '{}', 'sess-X', ?1)",
+                params![Utc::now().to_rfc3339()],
+            )
+            .unwrap();
+        }
+        let config = Config {
+            workspace_dir: workspace,
+            ..Config::default()
+        };
+        // First open triggers the migration; existing row survives.
+        let rows = list_pending(&config).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].request_id, "legacy");
+        // After migration, record_execution must work end-to-end.
+        decide(&config, "legacy", ApprovalDecision::ApproveOnce).unwrap();
+        assert!(record_execution(&config, "legacy", ExecutionOutcome::Success, None).unwrap());
+        // Second open must be a no-op (migration is idempotent).
+        let rows = list_pending(&config).unwrap();
+        assert!(rows.is_empty(), "decided rows should not appear in pending");
     }
 
     #[test]

@@ -4,7 +4,7 @@ import { getCoreStateSnapshot } from '../../../lib/coreState/store';
 import { bootCheckTransport } from '../../../services/bootCheckService';
 import { testCoreRpcConnection } from '../../../services/coreRpcClient';
 import { isTauri } from '../../../services/webviewAccountService';
-import { getStoredCoreMode } from '../../../utils/configPersistence';
+import { getStoredCoreMode, getStoredCoreToken } from '../../../utils/configPersistence';
 import {
   oauthAuthReadinessUserMessage,
   prepareOAuthLoginLaunch,
@@ -22,7 +22,10 @@ vi.mock('../../../services/bootCheckService', () => ({
   bootCheckTransport: { invokeCmd: vi.fn().mockResolvedValue(undefined), callRpc: vi.fn() },
 }));
 
-vi.mock('../../../utils/configPersistence', () => ({ getStoredCoreMode: vi.fn() }));
+vi.mock('../../../utils/configPersistence', () => ({
+  getStoredCoreMode: vi.fn(),
+  getStoredCoreToken: vi.fn().mockReturnValue(null),
+}));
 
 vi.mock('../../../services/webviewAccountService', () => ({
   isTauri: vi.fn().mockReturnValue(true),
@@ -134,5 +137,31 @@ describe('oauthAuthReadiness', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('returns cloud-specific message for core_unreachable when mode is cloud', () => {
+    vi.mocked(getStoredCoreMode).mockReturnValue('cloud');
+    const msg = oauthAuthReadinessUserMessage('core_unreachable');
+    expect(msg).toMatch(/remote.*cloud/i);
+    expect(msg).toMatch(/RPC URL/i);
+  });
+
+  it('returns local-specific message for core_unreachable when mode is local', () => {
+    vi.mocked(getStoredCoreMode).mockReturnValue('local');
+    const msg = oauthAuthReadinessUserMessage('core_unreachable');
+    expect(msg).toMatch(/local runtime/i);
+    expect(msg).toMatch(/Quit and reopen/i);
+  });
+
+  it('passes cloud token to testCoreRpcConnection when mode is cloud', async () => {
+    vi.mocked(getStoredCoreMode).mockReturnValue('cloud');
+    vi.mocked(getStoredCoreToken).mockReturnValue('cloud-bearer-token');
+
+    await waitForOAuthAuthReadiness(2_000);
+
+    expect(testCoreRpcConnection).toHaveBeenCalledWith(
+      'http://127.0.0.1:7788/rpc',
+      'cloud-bearer-token'
+    );
   });
 });

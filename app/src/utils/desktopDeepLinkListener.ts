@@ -10,6 +10,7 @@ import {
   completeDeepLinkAuthProcessing,
   failDeepLinkAuthProcessing,
 } from '../store/deepLinkAuthState';
+import { getStoredCoreMode } from './configPersistence';
 import { BILLING_DASHBOARD_URL } from './links';
 import {
   evaluateOAuthAppVersionGate,
@@ -77,9 +78,24 @@ const focusMainWindow = async () => {
 };
 
 const applySessionToken = async (sessionToken: string): Promise<void> => {
-  clearCoreRpcUrlCache();
-  clearCoreRpcTokenCache();
-  await storeSession(sessionToken, {});
+  // In cloud mode, bust any stale RPC URL/token caches so auth_store_session
+  // targets the user's configured remote core. See issue #2377.
+  const currentCoreMode = getStoredCoreMode();
+  if (currentCoreMode === 'cloud') {
+    console.debug('[DeepLink] cloud mode: busting RPC caches before session delivery');
+    clearCoreRpcUrlCache();
+    clearCoreRpcTokenCache();
+  }
+
+  // Signal CoreStateProvider to hold off clearing session during token delivery.
+  window.dispatchEvent(
+    new CustomEvent('core-state:suppress-reauth', { detail: { until: Date.now() + 15_000 } })
+  );
+  try {
+    await storeSession(sessionToken, {});
+  } finally {
+    window.dispatchEvent(new CustomEvent('core-state:suppress-reauth', { detail: { until: 0 } }));
+  }
   patchCoreStateSnapshot({ snapshot: { sessionToken } });
   window.dispatchEvent(new CustomEvent(SESSION_TOKEN_UPDATED_EVENT, { detail: { sessionToken } }));
 };

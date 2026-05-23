@@ -547,6 +547,27 @@ fn env_overlay_temperature_accepts_valid_and_ignores_out_of_range_or_garbage() {
 }
 
 #[test]
+fn env_overlay_output_language_accepts_non_empty_value() {
+    let mut cfg = Config::default();
+    assert!(cfg.output_language.is_none());
+
+    cfg.apply_env_overlay_with(&HashMapEnv::new().with("OPENHUMAN_OUTPUT_LANGUAGE", "zh-CN"));
+    assert_eq!(cfg.output_language.as_deref(), Some("zh-CN"));
+    assert!(cfg
+        .output_language_directive()
+        .as_deref()
+        .unwrap_or_default()
+        .contains("Simplified Chinese"));
+
+    cfg.apply_env_overlay_with(&HashMapEnv::new().with("OPENHUMAN_OUTPUT_LANGUAGE", "   "));
+    assert_eq!(
+        cfg.output_language.as_deref(),
+        Some("zh-CN"),
+        "blank env value must not clear an explicit config value"
+    );
+}
+
+#[test]
 fn env_overlay_reasoning_enabled_recognises_truthy_falsy_and_ignores_garbage() {
     let mut cfg = Config::default();
     cfg.runtime.reasoning_enabled = None;

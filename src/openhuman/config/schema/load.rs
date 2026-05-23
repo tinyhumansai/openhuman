@@ -1336,6 +1336,13 @@ impl Config {
             }
         }
 
+        if let Some(language) = env.get("OPENHUMAN_OUTPUT_LANGUAGE") {
+            let language = language.trim();
+            if !language.is_empty() {
+                self.output_language = Some(language.to_string());
+            }
+        }
+
         if let Some(flag) = env.get_any(&["OPENHUMAN_REASONING_ENABLED", "REASONING_ENABLED"]) {
             let normalized = flag.trim().to_ascii_lowercase();
             match normalized.as_str() {

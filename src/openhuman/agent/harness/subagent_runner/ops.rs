@@ -1533,16 +1533,33 @@ async fn run_inner_loop(
             {
                 let args = parse_tool_arguments(&call.arguments);
                 let timeout = crate::openhuman::tool_timeout::tool_execution_timeout_duration();
-                // ── External-effect approval gate (#1339) ─────
+                // ── External-effect approval gate (#1339, #2135) ─
                 // Subagents share the same gate as the parent loop;
                 // see `tool_loop.rs` for the rationale.
+                //
+                // When the call is allowed and persisted, we keep
+                // hold of the `request_id` so we can stamp the
+                // terminal execution outcome onto the same audit
+                // row (issue #2135).
+                let mut approval_request_id: Option<String> = None;
+                let mut approval_gate_for_audit: Option<
+                    std::sync::Arc<crate::openhuman::approval::ApprovalGate>,
+                > = None;
                 let gate_denial: Option<String> = if tool.external_effect_with_args(&args) {
                     if let Some(gate) = crate::openhuman::approval::ApprovalGate::try_global() {
                         let summary =
                             crate::openhuman::approval::summarize_action(&call.name, &args);
                         let redacted = crate::openhuman::approval::redact_args(&args);
-                        match gate.intercept(&call.name, &summary, redacted).await {
-                            crate::openhuman::approval::GateOutcome::Allow => None,
+                        let (outcome, request_id) =
+                            gate.intercept_audited(&call.name, &summary, redacted).await;
+                        match outcome {
+                            crate::openhuman::approval::GateOutcome::Allow => {
+                                approval_request_id = request_id;
+                                if approval_request_id.is_some() {
+                                    approval_gate_for_audit = Some(gate);
+                                }
+                                None
+                            }
                             crate::openhuman::approval::GateOutcome::Deny { reason } => {
                                 tracing::warn!(
                                     tool = call.name.as_str(),
@@ -1567,18 +1584,43 @@ async fn run_inner_loop(
                     // (CodeRabbit review on PR #2149.)
                     format!("Error: {reason}")
                 } else {
-                    match tokio::time::timeout(timeout, tool.execute(args)).await {
-                        Ok(Ok(result)) => {
-                            let raw = result.output();
-                            if result.is_error {
-                                format!("Error: {raw}")
-                            } else {
-                                raw
+                    let (raw, exec_success) =
+                        match tokio::time::timeout(timeout, tool.execute(args)).await {
+                            Ok(Ok(result)) => {
+                                let raw = result.output();
+                                if result.is_error {
+                                    (format!("Error: {raw}"), false)
+                                } else {
+                                    (raw, true)
+                                }
                             }
-                        }
-                        Ok(Err(err)) => format!("Error executing {}: {err}", call.name),
-                        Err(_) => format!("Error: tool '{}' timed out", call.name),
+                            Ok(Err(err)) => {
+                                (format!("Error executing {}: {err}", call.name), false)
+                            }
+                            Err(_) => (format!("Error: tool '{}' timed out", call.name), false),
+                        };
+                    // Stamp the terminal status onto the
+                    // pending_approvals audit row — best-effort,
+                    // failures don't propagate to the agent (#2135).
+                    // Success comes from the structured execute result,
+                    // not from parsing `raw.starts_with("Error")` — a
+                    // legitimate success payload can start with "Error"
+                    // (search hits, copied logs), which would otherwise
+                    // persist a false Failure (CodeRabbit review on #2367).
+                    if let (Some(gate), Some(req_id)) = (
+                        approval_gate_for_audit.as_ref(),
+                        approval_request_id.as_ref(),
+                    ) {
+                        let success = exec_success;
+                        let exec_outcome = if success {
+                            crate::openhuman::approval::ExecutionOutcome::Success
+                        } else {
+                            crate::openhuman::approval::ExecutionOutcome::Failure
+                        };
+                        let err_text = if success { None } else { Some(raw.as_str()) };
+                        gate.record_execution(req_id, exec_outcome, err_text);
                     }
+                    raw
                 }
             } else {
                 format!("Unknown tool: {}", call.name)
