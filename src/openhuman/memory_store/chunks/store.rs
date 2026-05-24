@@ -342,6 +342,25 @@ CREATE TABLE IF NOT EXISTS mem_tree_ingested_sources (
     ingested_at_ms         INTEGER NOT NULL,
     PRIMARY KEY (source_kind, source_id)
 );
+
+-- #2536 (Phase 3 RFC Q4): persistent audit log for MCP write tool
+-- invocations (memory.store / memory.note / tree.tag). Co-located in
+-- this DB rather than a separate file per Q1=A — shares the existing
+-- connection cache + circuit breaker without a second SQLite handle.
+-- Insert helper lives in `memory::mcp_audit::store::record_write`.
+CREATE TABLE IF NOT EXISTS mcp_writes (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp_ms        INTEGER NOT NULL,
+    client_source_type  TEXT NOT NULL,
+    tool_name           TEXT NOT NULL,
+    args_summary        TEXT,
+    resulting_chunk_id  TEXT,
+    success             INTEGER NOT NULL,
+    error_message       TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_mcp_writes_timestamp ON mcp_writes (timestamp_ms DESC);
+CREATE INDEX IF NOT EXISTS idx_mcp_writes_client    ON mcp_writes (client_source_type);
+CREATE INDEX IF NOT EXISTS idx_mcp_writes_tool      ON mcp_writes (tool_name);
 ";
 
 /// Upsert a batch of chunks atomically.

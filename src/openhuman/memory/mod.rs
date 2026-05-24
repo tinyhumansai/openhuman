@@ -12,6 +12,7 @@
 // Legacy memory modules
 pub mod global;
 pub mod ingestion;
+pub mod mcp_audit;
 pub mod ops;
 pub mod preferences;
 pub mod rpc_models;
