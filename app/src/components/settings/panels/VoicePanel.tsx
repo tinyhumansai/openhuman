@@ -31,16 +31,16 @@ import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 // huggingface.co/rhasspy/piper-voices has 100+ voices; a dropdown of
 // every option is unusable so we ship a starter set and keep the free-
 // text input as an escape hatch via the "Other…" option.
-const PIPER_VOICE_PRESETS: ReadonlyArray<{ id: string; label: string }> = [
-  { id: 'en_US-lessac-medium', label: 'US · Lessac (neutral, recommended)' },
-  { id: 'en_US-lessac-high', label: 'US · Lessac (higher quality, larger)' },
-  { id: 'en_US-ryan-medium', label: 'US · Ryan (male)' },
-  { id: 'en_US-amy-medium', label: 'US · Amy (female)' },
-  { id: 'en_US-libritts-high', label: 'US · LibriTTS (multi-speaker)' },
-  { id: 'en_GB-alan-medium', label: 'GB · Alan (male)' },
-  { id: 'en_GB-jenny_dioco-medium', label: 'GB · Jenny Dioco (female)' },
-  { id: 'en_GB-northern_english_male-medium', label: 'GB · Northern English (male)' },
-];
+const PIPER_VOICE_PRESET_IDS = [
+  'en_US-lessac-medium',
+  'en_US-lessac-high',
+  'en_US-ryan-medium',
+  'en_US-amy-medium',
+  'en_US-libritts-high',
+  'en_GB-alan-medium',
+  'en_GB-jenny_dioco-medium',
+  'en_GB-northern_english_male-medium',
+] as const;
 
 interface VoicePanelProps {
   /** When true, render without the SettingsHeader chrome (used when embedded
@@ -76,6 +76,19 @@ const VoicePanel = ({ embedded = false }: VoicePanelProps = {}) => {
   const [newDictWord, setNewDictWord] = useState('');
   const settingsRef = useRef<VoiceServerSettings | null>(null);
   const savedSettingsRef = useRef<VoiceServerSettings | null>(null);
+  const piperVoicePresets: ReadonlyArray<{ id: string; label: string }> = [
+    { id: 'en_US-lessac-medium', label: t('voice.providers.piperPreset.lessacMedium') },
+    { id: 'en_US-lessac-high', label: t('voice.providers.piperPreset.lessacHigh') },
+    { id: 'en_US-ryan-medium', label: t('voice.providers.piperPreset.ryanMedium') },
+    { id: 'en_US-amy-medium', label: t('voice.providers.piperPreset.amyMedium') },
+    { id: 'en_US-libritts-high', label: t('voice.providers.piperPreset.librittsHigh') },
+    { id: 'en_GB-alan-medium', label: t('voice.providers.piperPreset.alanMedium') },
+    { id: 'en_GB-jenny_dioco-medium', label: t('voice.providers.piperPreset.jennyDiocoMedium') },
+    {
+      id: 'en_GB-northern_english_male-medium',
+      label: t('voice.providers.piperPreset.northernEnglishMaleMedium'),
+    },
+  ];
 
   const hasUnsavedChanges =
     settings != null &&
@@ -165,7 +178,7 @@ const VoicePanel = ({ embedded = false }: VoicePanelProps = {}) => {
       setSttReady(sttAssetOk && voiceResponse.stt_available);
       setError(null);
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to load voice settings';
+      const message = err instanceof Error ? err.message : t('voice.failedToLoadSettings');
       setError(message);
     } finally {
       setIsLoading(false);
@@ -218,7 +231,7 @@ const VoicePanel = ({ embedded = false }: VoicePanelProps = {}) => {
 
       await loadData(true);
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to save voice settings';
+      const message = err instanceof Error ? err.message : t('voice.failedToSaveSettings');
       setError(message);
     } finally {
       setIsSaving(false);
@@ -249,7 +262,7 @@ const VoicePanel = ({ embedded = false }: VoicePanelProps = {}) => {
       setNotice(t('voice.serverStarted'));
       await loadData(true);
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to start voice server';
+      const message = err instanceof Error ? err.message : t('voice.failedToStartServer');
       setError(message);
     } finally {
       setIsStarting(false);
@@ -265,7 +278,7 @@ const VoicePanel = ({ embedded = false }: VoicePanelProps = {}) => {
       setNotice(t('voice.serverStopped'));
       await loadData(true);
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to stop voice server';
+      const message = err instanceof Error ? err.message : t('voice.failedToStopServer');
       setError(message);
     } finally {
       setIsStopping(false);
@@ -295,11 +308,11 @@ const VoicePanel = ({ embedded = false }: VoicePanelProps = {}) => {
       if (process.env.NODE_ENV !== 'production') {
         console.debug('[VoicePanel:providers] saved', snapshot);
       }
-      setNotice('Voice providers saved.');
+      setNotice(t('voice.providers.saved'));
       // Force a reload so the rest of the panel reflects the new state.
       await loadData(true);
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to save voice providers';
+      const message = err instanceof Error ? err.message : t('voice.providers.failedToSave');
       setError(message);
     } finally {
       setIsSavingProviders(false);
@@ -335,14 +348,15 @@ const VoicePanel = ({ embedded = false }: VoicePanelProps = {}) => {
     // the RPC return. The real "is install running?" signal comes from the
     // polled status table, which lags behind by at most one 2s tick.
     if (status?.state === 'installing') {
-      const pct = typeof status.progress === 'number' ? `${status.progress}%` : '…';
-      return `Installing ${pct}`;
+      const pct =
+        typeof status.progress === 'number' ? `${status.progress}%` : t('voice.providers.ellipsis');
+      return `${t('voice.providers.installing')} ${pct}`;
     }
-    if (busy) return 'Installing…';
-    if (status?.state === 'installed') return 'Reinstall locally';
-    if (status?.state === 'broken') return 'Repair';
-    if (status?.state === 'error') return 'Retry locally';
-    return 'Install locally';
+    if (busy) return t('voice.providers.installingBusy');
+    if (status?.state === 'installed') return t('voice.providers.reinstallLocally');
+    if (status?.state === 'broken') return t('voice.providers.repair');
+    if (status?.state === 'error') return t('voice.providers.retryLocally');
+    return t('voice.providers.installLocally');
   };
 
   const handleInstallWhisper = async () => {
@@ -356,11 +370,12 @@ const VoicePanel = ({ embedded = false }: VoicePanelProps = {}) => {
       setWhisperInstall(result);
       setNotice(
         result.state === 'installed'
-          ? 'Whisper is ready.'
-          : `Whisper install started (${result.stage ?? 'queued'})`
+          ? t('voice.providers.whisperReady')
+          : `${t('voice.providers.whisperInstallStarted')} (${result.stage ?? t('voice.providers.queued')})`
       );
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to install Whisper';
+      const message =
+        err instanceof Error ? err.message : t('voice.providers.failedToInstallWhisper');
       setError(message);
     } finally {
       setIsInstallingWhisper(false);
@@ -379,11 +394,12 @@ const VoicePanel = ({ embedded = false }: VoicePanelProps = {}) => {
       setPiperInstall(result);
       setNotice(
         result.state === 'installed'
-          ? 'Piper is ready.'
-          : `Piper install started (${result.stage ?? 'queued'})`
+          ? t('voice.providers.piperReady')
+          : `${t('voice.providers.piperInstallStarted')} (${result.stage ?? t('voice.providers.queued')})`
       );
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to install Piper';
+      const message =
+        err instanceof Error ? err.message : t('voice.providers.failedToInstallPiper');
       setError(message);
     } finally {
       setIsInstallingPiper(false);
@@ -412,30 +428,28 @@ const VoicePanel = ({ embedded = false }: VoicePanelProps = {}) => {
             data-testid="voice-providers-section">
             <div>
               <h3 className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
-                Voice Providers
+                {t('voice.providers.title')}
               </h3>
               <p className="text-xs text-stone-500 dark:text-neutral-400 mt-1">
-                Choose where transcription and synthesis run. Use the Install locally buttons to
-                download the binaries and models into your workspace. Local providers can be saved
-                before the install finishes — no manual <code>WHISPER_BIN</code> or{' '}
-                <code>PIPER_BIN</code> setup required.
+                {t('voice.providers.desc')}
               </p>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <label className="block space-y-1">
                 <span className="text-xs font-medium text-stone-600 dark:text-neutral-300">
-                  Speech-to-Text Provider
+                  {t('voice.providers.sttProvider')}
                 </span>
                 <select
-                  aria-label="STT provider"
+                  aria-label={t('voice.providers.sttProviderAria')}
                   data-testid="stt-provider-select"
                   value={sttProvider || 'cloud'}
                   disabled={isSavingProviders}
                   onChange={e => onSttProviderChange(e.target.value as 'cloud' | 'whisper')}
                   className="w-full rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 focus:outline-none focus:ring-1 focus:ring-primary-400">
-                  <option value="cloud">Cloud (Whisper proxy)</option>
+                  <option value="cloud">{t('voice.providers.cloudWhisperProxy')}</option>
                   <option value="whisper">
-                    Local Whisper{whisperReady ? '' : ' (install required)'}
+                    {t('voice.providers.localWhisper')}
+                    {whisperReady ? '' : t('voice.providers.installRequired')}
                   </option>
                 </select>
                 <div className="flex items-center gap-2 pt-1">
@@ -446,8 +460,8 @@ const VoicePanel = ({ embedded = false }: VoicePanelProps = {}) => {
                     disabled={isInstallingWhisper || whisperInstall?.state === 'installing'}
                     title={
                       whisperReady
-                        ? 'Whisper is installed. Click to reinstall.'
-                        : 'Download whisper.cpp and the GGML model into your workspace.'
+                        ? t('voice.providers.whisperInstalledTitle')
+                        : t('voice.providers.whisperDownloadTitle')
                     }
                     className={`px-2.5 py-1 text-[11px] rounded-md text-white disabled:opacity-60 ${
                       whisperReady
@@ -468,20 +482,20 @@ const VoicePanel = ({ embedded = false }: VoicePanelProps = {}) => {
                     {whisperInstall?.state === 'installing' && whisperInstall.stage
                       ? whisperInstall.stage
                       : whisperReady
-                        ? 'Installed'
+                        ? t('voice.providers.installed')
                         : whisperInstall?.state === 'error'
-                          ? (whisperInstall.error_detail ?? 'Install failed')
-                          : 'Not installed'}
+                          ? (whisperInstall.error_detail ?? t('voice.providers.installFailed'))
+                          : t('voice.providers.notInstalled')}
                   </span>
                 </div>
               </label>
               {sttProvider === 'whisper' && (
                 <label className="block space-y-1">
                   <span className="text-xs font-medium text-stone-600 dark:text-neutral-300">
-                    Whisper Model
+                    {t('voice.providers.whisperModel')}
                   </span>
                   <select
-                    aria-label="Whisper model"
+                    aria-label={t('voice.providers.whisperModelAria')}
                     data-testid="stt-model-select"
                     value={sttModel || 'medium'}
                     disabled={isSavingProviders}
@@ -502,30 +516,31 @@ const VoicePanel = ({ embedded = false }: VoicePanelProps = {}) => {
                       );
                     }}
                     className="w-full rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 focus:outline-none focus:ring-1 focus:ring-primary-400">
-                    <option value="tiny">Tiny (39 MB, fastest)</option>
-                    <option value="base">Base (74 MB)</option>
-                    <option value="small">Small (244 MB)</option>
-                    <option value="medium">Medium (769 MB, recommended)</option>
+                    <option value="tiny">{t('voice.providers.whisperModelTiny')}</option>
+                    <option value="base">{t('voice.providers.whisperModelBase')}</option>
+                    <option value="small">{t('voice.providers.whisperModelSmall')}</option>
+                    <option value="medium">{t('voice.providers.whisperModelMedium')}</option>
                     <option value="whisper-large-v3-turbo">
-                      Large v3 Turbo (1.5 GB, best accuracy)
+                      {t('voice.providers.whisperModelLargeTurbo')}
                     </option>
                   </select>
                 </label>
               )}
               <label className="block space-y-1">
                 <span className="text-xs font-medium text-stone-600 dark:text-neutral-300">
-                  Text-to-Speech Provider
+                  {t('voice.providers.ttsProvider')}
                 </span>
                 <select
-                  aria-label="TTS provider"
+                  aria-label={t('voice.providers.ttsProviderAria')}
                   data-testid="tts-provider-select"
                   value={ttsProvider || 'cloud'}
                   disabled={isSavingProviders}
                   onChange={e => onTtsProviderChange(e.target.value as 'cloud' | 'piper')}
                   className="w-full rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 focus:outline-none focus:ring-1 focus:ring-primary-400">
-                  <option value="cloud">Cloud (ElevenLabs proxy)</option>
+                  <option value="cloud">{t('voice.providers.cloudElevenLabsProxy')}</option>
                   <option value="piper">
-                    Local Piper{piperReady ? '' : ' (install required)'}
+                    {t('voice.providers.localPiper')}
+                    {piperReady ? '' : t('voice.providers.installRequired')}
                   </option>
                 </select>
                 <div className="flex items-center gap-2 pt-1">
@@ -536,8 +551,8 @@ const VoicePanel = ({ embedded = false }: VoicePanelProps = {}) => {
                     disabled={isInstallingPiper || piperInstall?.state === 'installing'}
                     title={
                       piperReady
-                        ? 'Piper is installed. Click to reinstall.'
-                        : 'Download Piper and the bundled en_US-lessac-medium voice into your workspace.'
+                        ? t('voice.providers.piperInstalledTitle')
+                        : t('voice.providers.piperDownloadTitle')
                     }
                     className={`px-2.5 py-1 text-[11px] rounded-md text-white disabled:opacity-60 ${
                       piperReady
@@ -558,23 +573,23 @@ const VoicePanel = ({ embedded = false }: VoicePanelProps = {}) => {
                     {piperInstall?.state === 'installing' && piperInstall.stage
                       ? piperInstall.stage
                       : piperReady
-                        ? 'Installed'
+                        ? t('voice.providers.installed')
                         : piperInstall?.state === 'error'
-                          ? (piperInstall.error_detail ?? 'Install failed')
-                          : 'Not installed'}
+                          ? (piperInstall.error_detail ?? t('voice.providers.installFailed'))
+                          : t('voice.providers.notInstalled')}
                   </span>
                 </div>
               </label>
               {ttsProvider === 'piper' && (
                 <label className="block space-y-1">
                   <span className="text-xs font-medium text-stone-600 dark:text-neutral-300">
-                    Piper Voice
+                    {t('voice.providers.piperVoice')}
                   </span>
                   <select
-                    aria-label="Piper voice"
+                    aria-label={t('voice.providers.piperVoiceAria')}
                     data-testid="tts-voice-select"
                     value={
-                      PIPER_VOICE_PRESETS.some(v => v.id === ttsVoice) ? ttsVoice : '__custom__'
+                      PIPER_VOICE_PRESET_IDS.some(v => v === ttsVoice) ? ttsVoice : '__custom__'
                     }
                     disabled={isSavingProviders}
                     onChange={e => {
@@ -597,19 +612,19 @@ const VoicePanel = ({ embedded = false }: VoicePanelProps = {}) => {
                       );
                     }}
                     className="w-full rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 focus:outline-none focus:ring-1 focus:ring-primary-400">
-                    {PIPER_VOICE_PRESETS.map(v => (
+                    {piperVoicePresets.map(v => (
                       <option key={v.id} value={v.id}>
                         {v.label}
                       </option>
                     ))}
-                    <option value="__custom__">Other (type below)…</option>
+                    <option value="__custom__">{t('voice.providers.customVoiceOption')}</option>
                   </select>
-                  {!PIPER_VOICE_PRESETS.some(v => v.id === ttsVoice) && (
+                  {!PIPER_VOICE_PRESET_IDS.some(v => v === ttsVoice) && (
                     <input
-                      aria-label="Piper voice id (custom)"
+                      aria-label={t('voice.providers.customVoiceAria')}
                       data-testid="tts-voice-input"
                       value={ttsVoice}
-                      placeholder="en_US-lessac-medium"
+                      placeholder={t('voice.providers.customVoicePlaceholder')}
                       disabled={isSavingProviders}
                       onChange={e => setTtsVoice(e.target.value)}
                       onBlur={() => {
@@ -627,10 +642,7 @@ const VoicePanel = ({ embedded = false }: VoicePanelProps = {}) => {
                     />
                   )}
                   <p className="text-[11px] text-stone-500 dark:text-neutral-400 mt-0.5">
-                    Voices come from{' '}
-                    <code className="font-mono">huggingface.co/rhasspy/piper-voices</code>.
-                    Switching voices may require an Install/Reinstall click to download the new{' '}
-                    <code>.onnx</code>.
+                    {t('voice.providers.piperVoicesDesc')}
                   </p>
                 </label>
               )}
@@ -644,17 +656,17 @@ const VoicePanel = ({ embedded = false }: VoicePanelProps = {}) => {
           <section className="space-y-3" data-testid="mascot-voice-link">
             <div className="bg-stone-50 dark:bg-neutral-800/60 rounded-lg border border-stone-200 dark:border-neutral-800 p-4">
               <h3 className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
-                Mascot Voice
+                {t('voice.providers.mascotVoice')}
               </h3>
               <p className="text-xs text-stone-500 dark:text-neutral-400 mt-1">
-                The ElevenLabs voice the mascot uses for spoken replies is configured under{' '}
+                {t('voice.providers.mascotVoiceDescPrefix')}{' '}
                 <button
                   type="button"
                   onClick={() => navigateToSettings('mascot')}
                   className="underline text-primary-600 dark:text-primary-300 hover:text-primary-700 dark:hover:text-primary-200">
-                  Mascot settings
+                  {t('voice.providers.mascotSettings')}
                 </button>
-                .
+                {t('voice.providers.mascotVoiceDescSuffix')}
               </p>
             </div>
           </section>
@@ -680,7 +692,7 @@ const VoicePanel = ({ embedded = false }: VoicePanelProps = {}) => {
                   <input
                     value={settings.hotkey}
                     onChange={e => updateSetting('hotkey', e.target.value)}
-                    placeholder="Fn"
+                    placeholder={t('voice.providers.hotkeyPlaceholder')}
                     className="w-full rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 placeholder:text-stone-400 dark:placeholder:text-neutral-500 dark:text-neutral-500 dark:placeholder:text-neutral-500 focus:outline-none focus:ring-1 focus:ring-primary-400"
                   />
                 </label>
@@ -797,8 +809,8 @@ const VoicePanel = ({ embedded = false }: VoicePanelProps = {}) => {
 
             {disabled && (
               <div className="rounded-md border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 p-4 text-sm text-amber-800 dark:text-amber-200">
-                Voice dictation is disabled until the local STT model is downloaded. Use the{' '}
-                <strong>Voice Providers</strong> section above to install Whisper.
+                {t('voice.sttDisabledPrefix')} <strong>{t('voice.providers.title')}</strong>{' '}
+                {t('voice.sttDisabledSuffix')}
               </div>
             )}
 

@@ -417,10 +417,6 @@ const de3: TranslationMap = {
   'welcome.continueLocallyExperimental': 'Continue Locally (Experimental)',
   'welcome.localSessionStarting': 'Starting local session...',
   'welcome.localSessionDesc': 'Uses an offline local profile and skips TinyHumans OAuth.',
-  'welcome.legalConsentPrefix': 'By continuing, you agree to the',
-  'welcome.termsLink': 'Terms',
-  'welcome.legalConsentAnd': 'and',
-  'welcome.privacyPolicyLink': 'Privacy Policy',
 };
 
 export default de3;

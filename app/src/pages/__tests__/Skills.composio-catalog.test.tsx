@@ -122,7 +122,7 @@ describe('Skills page — Composio catalog fallback', () => {
     expect(gmailTile).toBeInTheDocument();
     expect(within(gmailTile).getByText('Status unavailable')).toBeInTheDocument();
 
-    fireEvent.click(screen.getAllByRole('button', { name: 'Retry' })[0]);
+    fireEvent.click(screen.getAllByRole('button', { name: 'Try again' })[0]);
     expect(composioRefresh).toHaveBeenCalledTimes(1);
   });
 

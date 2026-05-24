@@ -255,10 +255,10 @@ const Conversations = ({
       });
     }
     if (options.length === 0) {
-      options.push({ id: 'orchestrator', label: 'Orchestrator' });
+      options.push({ id: 'orchestrator', label: t('chat.agentProfile.defaultAgentLabel') });
     }
     return options;
-  }, [agentProfiles, profileDraft.agentId]);
+  }, [agentProfiles, profileDraft.agentId, t]);
 
   const textInputRef = useRef<HTMLTextAreaElement>(null);
   const isComposingTextRef = useRef(false);
@@ -310,7 +310,7 @@ const Conversations = ({
       profile => profile.name.trim().toLowerCase() === name.toLowerCase()
     );
     if (duplicate) {
-      setSendAdvisory(`Agent profile "${name}" already exists.`);
+      setSendAdvisory(t('chat.agentProfile.exists').replace('{name}', name));
       return;
     }
     const id = `profile-${globalThis.crypto.randomUUID().slice(0, 8)}`;
@@ -321,7 +321,7 @@ const Conversations = ({
     const profile: AgentProfile = {
       id,
       name,
-      description: 'Custom agent profile',
+      description: t('chat.agentProfile.customDescription'),
       agentId: profileDraft.agentId,
       systemPromptSuffix: profileDraft.systemPromptSuffix.trim() || null,
       allowedTools: allowedTools.length > 0 ? allowedTools : null,
@@ -335,7 +335,7 @@ const Conversations = ({
       setSendAdvisory(null);
     } catch (error) {
       debug('agent profile create failed: %o', error);
-      setSendAdvisory('Could not create agent profile.');
+      setSendAdvisory(t('chat.agentProfile.createFailed'));
     }
   };
 
@@ -1097,9 +1097,9 @@ const Conversations = ({
     if (!parentId) return null;
     const parent = threads.find(thr => thr.id === parentId);
     return parent
-      ? { id: parent.id, title: parent.title || 'parent thread' }
-      : { id: parentId, title: 'parent thread' };
-  }, [threads, selectedThreadId]);
+      ? { id: parent.id, title: parent.title || t('chat.parentThread') }
+      : { id: parentId, title: t('chat.parentThread') };
+  }, [threads, selectedThreadId, t]);
 
   return (
     <div
@@ -1275,7 +1275,7 @@ const Conversations = ({
                   data-testid="worker-thread-back-to-parent">
                   <span aria-hidden="true">←</span>
                   <span className="truncate max-w-[16rem]">
-                    back to {selectedThreadParent.title}
+                    {t('chat.backToThread').replace('{title}', selectedThreadParent.title)}
                   </span>
                 </button>
               ) : null}
@@ -1286,7 +1286,7 @@ const Conversations = ({
             <>
               <div className="flex items-center gap-1">
                 <select
-                  aria-label="Agent profile"
+                  aria-label={t('chat.agentProfile.label')}
                   value={selectedAgentProfileId}
                   onChange={event => void handleSelectAgentProfile(event.target.value)}
                   className="h-7 max-w-[120px] rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-2 text-xs text-stone-700 dark:text-neutral-200 outline-none transition-colors focus:border-primary-400">
@@ -1300,8 +1300,8 @@ const Conversations = ({
                   type="button"
                   onClick={() => setProfileDraftOpen(prev => !prev)}
                   className="h-7 w-7 rounded-lg text-xs font-medium text-stone-500 dark:text-neutral-400 transition-colors hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 dark:hover:bg-neutral-800/60 hover:text-stone-700 dark:hover:text-neutral-200 dark:text-neutral-200 dark:hover:text-neutral-200"
-                  title="Create agent profile"
-                  aria-label="Create agent profile">
+                  title={t('chat.agentProfile.create')}
+                  aria-label={t('chat.agentProfile.create')}>
                   +
                 </button>
               </div>
@@ -1322,7 +1322,7 @@ const Conversations = ({
               <input
                 value={profileDraft.name}
                 onChange={event => setProfileDraft(prev => ({ ...prev, name: event.target.value }))}
-                placeholder="Profile name"
+                placeholder={t('chat.agentProfile.namePlaceholder')}
                 className="h-8 rounded-lg border border-stone-200 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-200 px-3 text-xs outline-none focus:border-primary-400"
               />
               <select
@@ -1343,7 +1343,7 @@ const Conversations = ({
               onChange={event =>
                 setProfileDraft(prev => ({ ...prev, systemPromptSuffix: event.target.value }))
               }
-              placeholder="Prompt style"
+              placeholder={t('chat.agentProfile.promptStylePlaceholder')}
               rows={2}
               className="mt-2 w-full resize-none rounded-lg border border-stone-200 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-200 px-3 py-2 text-xs outline-none focus:border-primary-400"
             />
@@ -1353,7 +1353,7 @@ const Conversations = ({
                 onChange={event =>
                   setProfileDraft(prev => ({ ...prev, allowedTools: event.target.value }))
                 }
-                placeholder="Allowed tools"
+                placeholder={t('chat.agentProfile.allowedToolsPlaceholder')}
                 className="h-8 min-w-0 flex-1 rounded-lg border border-stone-200 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-200 px-3 text-xs outline-none focus:border-primary-400"
               />
               <button
@@ -1361,7 +1361,7 @@ const Conversations = ({
                 onClick={() => void handleCreateAgentProfile()}
                 disabled={!profileDraft.name.trim()}
                 className="h-8 rounded-lg bg-primary-500 px-3 text-xs font-medium text-white transition-colors hover:bg-primary-600 disabled:opacity-40">
-                Save
+                {t('common.save')}
               </button>
               <button
                 type="button"
@@ -1370,7 +1370,7 @@ const Conversations = ({
                   setProfileDraftOpen(false);
                 }}
                 className="h-8 rounded-lg border border-stone-200 dark:border-neutral-800 px-3 text-xs font-medium text-stone-600 dark:text-neutral-300 transition-colors hover:bg-stone-50 dark:hover:bg-neutral-800/60">
-                Cancel
+                {t('common.cancel')}
               </button>
             </div>
           </div>
@@ -1544,7 +1544,7 @@ const Conversations = ({
                                   )
                                 }
                                 className="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-primary-100 border border-primary-200 text-xs transition-colors hover:bg-primary-200"
-                                title={`Remove ${emoji}`}>
+                                title={t('chat.removeReaction').replace('{emoji}', emoji)}>
                                 {emoji}
                               </button>
                             ))}
@@ -1581,7 +1581,7 @@ const Conversations = ({
                                 <button
                                   onClick={() => setReactionPickerMsgId(msg.id)}
                                   className="opacity-0 group-hover/msg:opacity-100 flex items-center px-1.5 py-0.5 rounded-full bg-stone-50 dark:bg-neutral-800/60 hover:bg-stone-200 dark:bg-neutral-800 dark:hover:bg-neutral-800 text-stone-500 dark:text-neutral-400 hover:text-stone-300 dark:hover:text-neutral-600 text-xs transition-all"
-                                  title="Add reaction">
+                                  title={t('chat.addReaction')}>
                                   +
                                 </button>
                               ))}

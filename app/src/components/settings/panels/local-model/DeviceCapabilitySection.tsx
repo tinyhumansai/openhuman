@@ -304,11 +304,15 @@ const DeviceCapabilitySection = ({
                   {preset.description}
                 </div>
                 <div className="text-[10px] text-stone-500 dark:text-neutral-400 mt-1">
-                  Chat: {preset.chat_model_id} &middot; Vision:{' '}
-                  {preset.vision_mode === 'disabled'
-                    ? 'disabled'
-                    : preset.vision_model_id || preset.vision_mode}{' '}
-                  &middot; Target RAM: {preset.target_ram_gb} GB
+                  {t('settings.localModel.deviceCapability.presetDetails')
+                    .replace('{chatModel}', preset.chat_model_id)
+                    .replace(
+                      '{visionModel}',
+                      preset.vision_mode === 'disabled'
+                        ? t('settings.localModel.deviceCapability.disabledLowercase')
+                        : preset.vision_model_id || preset.vision_mode
+                    )
+                    .replace('{targetRamGb}', String(preset.target_ram_gb))}
                 </div>
               </button>
             );

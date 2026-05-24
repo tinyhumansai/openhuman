@@ -31,7 +31,9 @@ const McpToolList = ({ tools }: McpToolListProps) => {
         <span className={`transition-transform ${expanded ? 'rotate-90' : ''}`} aria-hidden="true">
           ▶
         </span>
-        {safeTools.length} tool{safeTools.length !== 1 ? 's' : ''} available
+        {t(
+          safeTools.length === 1 ? 'mcp.toolList.availableSingular' : 'mcp.toolList.availablePlural'
+        ).replace('{count}', String(safeTools.length))}
       </button>
 
       {expanded && (

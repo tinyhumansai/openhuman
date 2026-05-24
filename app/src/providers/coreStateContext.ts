@@ -1,10 +1,6 @@
 import { createContext } from 'react';
 
-import type {
-  CoreAppSnapshot,
-  CoreOnboardingTasks,
-  CoreState,
-} from '../lib/coreState/store';
+import type { CoreAppSnapshot, CoreOnboardingTasks, CoreState } from '../lib/coreState/store';
 
 export interface CoreStateContextValue extends CoreState {
   refresh: () => Promise<void>;

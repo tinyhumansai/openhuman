@@ -907,7 +907,7 @@ describe('AIPanel', () => {
     const dialog = await screen.findByRole('dialog', { name: /Custom routing/i });
     fireEvent.click(within(dialog).getByRole('button', { name: /^Test$/i }));
 
-    expect(await within(dialog).findByText('Testing model…')).toBeInTheDocument();
+    expect(await within(dialog).findByText('Testing model...')).toBeInTheDocument();
     expect(within(dialog).getByText(/Provider: openai:gpt-4o/i)).toBeInTheDocument();
     expect(within(dialog).getByText(/Prompt: Hello world/i)).toBeInTheDocument();
 

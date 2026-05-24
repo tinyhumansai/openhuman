@@ -36,6 +36,7 @@ import {
 
 import { YellowMascot } from '../../features/human/Mascot';
 import { useHumanMascot } from '../../features/human/useHumanMascot';
+import { useT } from '../../lib/i18n/I18nContext';
 import {
   type ChatDoneEvent,
   type ChatErrorEvent,
@@ -110,11 +111,12 @@ const MascotChatTranscript: FC<TranscriptProps> = ({ messages }) => {
 interface PTTButtonProps {
   active: boolean;
   partialText: string;
+  ariaLabel: string;
   onDown: () => void;
   onUp: () => void;
 }
 
-const PTTButton: FC<PTTButtonProps> = ({ active, partialText, onDown, onUp }) => {
+const PTTButton: FC<PTTButtonProps> = ({ active, partialText, ariaLabel, onDown, onUp }) => {
   return (
     <div className="relative flex flex-col items-center justify-center gap-1">
       {partialText && (
@@ -126,7 +128,7 @@ const PTTButton: FC<PTTButtonProps> = ({ active, partialText, onDown, onUp }) =>
       )}
       <button
         type="button"
-        aria-label="Push to talk"
+        aria-label={ariaLabel}
         onPointerDown={e => {
           // setPointerCapture is not available in jsdom test environments.
           if (typeof e.currentTarget.setPointerCapture === 'function') {
@@ -187,6 +189,7 @@ const Toast: FC<ToastProps> = ({ message, onDismiss }) => (
 
 export const MascotScreen: FC = () => {
   const navigate = useNavigate();
+  const { t } = useT();
 
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
@@ -207,7 +210,7 @@ export const MascotScreen: FC = () => {
   // Derive label from stored profile.
   const pairedLabel = (() => {
     const profiles = listProfiles();
-    return profiles[0]?.label ?? 'Desktop';
+    return profiles[0]?.label ?? t('iosMascot.defaultPairedLabel');
   })();
 
   log('[ios] mascot screen mounted pairedLabel=%s', pairedLabel);
@@ -255,14 +258,14 @@ export const MascotScreen: FC = () => {
           {
             id: `err-${Date.now()}`,
             role: 'assistant' as const,
-            text: 'Something went wrong. Please try again.',
+            text: t('iosMascot.error.generic'),
             streaming: false,
           },
         ]);
       },
     });
     return unsub;
-  }, []);
+  }, [t]);
 
   // -- PTT event subscription ------------------------------------------------
 
@@ -304,36 +307,39 @@ export const MascotScreen: FC = () => {
 
   // -- shared send (declared before PTT handlers so it is in scope) -----------
 
-  const sendMessage = useCallback(async (text: string) => {
-    log('[ios] sendMessage len=%d thread_id=%s', text.length, IOS_THREAD_ID);
+  const sendMessage = useCallback(
+    async (text: string) => {
+      log('[ios] sendMessage len=%d thread_id=%s', text.length, IOS_THREAD_ID);
 
-    const userMsg: Message = { id: `user-${Date.now()}`, role: 'user', text };
-    const assistantId = `asst-${Date.now()}`;
-    streamingIdRef.current = assistantId;
+      const userMsg: Message = { id: `user-${Date.now()}`, role: 'user', text };
+      const assistantId = `asst-${Date.now()}`;
+      streamingIdRef.current = assistantId;
 
-    setMessages(prev => [
-      ...prev,
-      userMsg,
-      { id: assistantId, role: 'assistant', text: '', streaming: true },
-    ]);
-    setIsSending(true);
+      setMessages(prev => [
+        ...prev,
+        userMsg,
+        { id: assistantId, role: 'assistant', text: '', streaming: true },
+      ]);
+      setIsSending(true);
 
-    try {
-      await chatSend({ threadId: IOS_THREAD_ID, message: text, model: IOS_CHAT_MODEL });
-      log('[ios] chatSend enqueued thread_id=%s', IOS_THREAD_ID);
-    } catch (err) {
-      logErr('[ios] chatSend failed: %o', err);
-      streamingIdRef.current = null;
-      setIsSending(false);
-      setMessages(prev =>
-        prev.map(m =>
-          m.id === assistantId
-            ? { ...m, text: 'Failed to send. Check your connection.', streaming: false }
-            : m
-        )
-      );
-    }
-  }, []);
+      try {
+        await chatSend({ threadId: IOS_THREAD_ID, message: text, model: IOS_CHAT_MODEL });
+        log('[ios] chatSend enqueued thread_id=%s', IOS_THREAD_ID);
+      } catch (err) {
+        logErr('[ios] chatSend failed: %o', err);
+        streamingIdRef.current = null;
+        setIsSending(false);
+        setMessages(prev =>
+          prev.map(m =>
+            m.id === assistantId
+              ? { ...m, text: t('iosMascot.error.sendFailed'), streaming: false }
+              : m
+          )
+        );
+      }
+    },
+    [t]
+  );
 
   // -- PTT handlers ----------------------------------------------------------
 
@@ -406,7 +412,9 @@ export const MascotScreen: FC = () => {
       {/* Header */}
       <div className="flex items-center justify-between px-4 pt-safe-top py-3 border-b border-white/10 shrink-0">
         <div className="flex flex-col">
-          <span className="text-xs text-white/40 uppercase tracking-wide">Connected to</span>
+          <span className="text-xs text-white/40 uppercase tracking-wide">
+            {t('iosMascot.connectedTo')}
+          </span>
           <span className="text-sm font-medium text-white/90 truncate max-w-[200px]">
             {pairedLabel}
           </span>
@@ -416,7 +424,7 @@ export const MascotScreen: FC = () => {
           onClick={handleDisconnect}
           className="px-3 py-1.5 rounded-lg text-xs text-red-400 border border-red-400/30
                      active:opacity-70 transition-opacity">
-          Disconnect
+          {t('iosMascot.disconnect')}
         </button>
       </div>
 
@@ -440,6 +448,7 @@ export const MascotScreen: FC = () => {
           <PTTButton
             active={pttActive}
             partialText={partialText}
+            ariaLabel={t('iosMascot.pushToTalk')}
             onDown={handlePttDown}
             onUp={handlePttUp}
           />
@@ -450,7 +459,7 @@ export const MascotScreen: FC = () => {
             value={inputText}
             onChange={e => setInputText(e.target.value)}
             disabled={isSending}
-            placeholder={isSending ? 'Thinking...' : 'Type a message...'}
+            placeholder={isSending ? t('iosMascot.thinking') : t('iosMascot.typeMessage')}
             className="flex-1 bg-white/10 text-white placeholder-white/30 rounded-xl
                        px-4 py-3 text-sm outline-none border border-white/10
                        focus:border-[#4A83DD]/60 transition-colors
@@ -461,7 +470,7 @@ export const MascotScreen: FC = () => {
           <button
             type="submit"
             disabled={!inputText.trim() || isSending}
-            aria-label="Send message"
+            aria-label={t('iosMascot.sendMessage')}
             className="w-10 h-10 rounded-xl bg-[#4A83DD] flex items-center justify-center
                        disabled:opacity-30 active:opacity-70 transition-opacity shrink-0">
             <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">

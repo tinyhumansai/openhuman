@@ -47,9 +47,7 @@ const Welcome = () => {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       log('clearAllAppData failed: %s', message);
-      setResetError(
-        message || 'Could not clear app data. Please quit and reopen OpenHuman, then try again.'
-      );
+      setResetError(message || t('welcome.resetErrorFallback'));
       setIsClearingAppData(false);
     }
   };
@@ -157,15 +155,14 @@ const Welcome = () => {
                     {isClearingAppData ? (
                       <span className="flex items-center justify-center gap-2">
                         <span className="h-3 w-3 animate-spin rounded-full border border-white border-t-transparent" />
-                        Clearing app data...
+                        {t('welcome.clearingAppData')}
                       </span>
                     ) : (
-                      'Clear app data & restart'
+                      t('welcome.clearAppDataAndRestart')
                     )}
                   </button>
                   <p className="text-[11px] leading-4 text-red-600/80">
-                    This wipes locally stored secrets and accounts on this device. Your cloud
-                    account is unaffected — you can sign in again right after.
+                    {t('welcome.clearAppDataWarning')}
                   </p>
                   {resetError ? (
                     <p className="text-[11px] leading-4 font-medium text-red-700">{resetError}</p>
@@ -183,7 +180,7 @@ const Welcome = () => {
               className="mb-5 flex flex-col items-center justify-center gap-3 py-2">
               <div className="h-6 w-6 animate-spin rounded-full border-2 border-stone-300 dark:border-neutral-700 border-t-primary-500" />
               <p className="text-sm font-medium text-stone-700 dark:text-neutral-200">
-                Signing you in...
+                {t('welcome.signingIn')}
               </p>
             </div>
           ) : (
@@ -200,9 +197,8 @@ const Welcome = () => {
                     />
                   ))}
               </div>
-
-              <p className="mt-3 text-center text-[11px] leading-5 text-stone-500 dark:text-neutral-500">
-                {t('welcome.legalConsentPrefix')}{' '}
+              <p className="mt-5 text-center text-[11px] leading-5 text-stone-500 dark:text-neutral-500">
+                {t('welcome.termsIntro')}{' '}
                 <a
                   href={TERMS_OF_USE_URL}
                   target="_blank"
@@ -212,9 +208,9 @@ const Welcome = () => {
                     void openUrl(TERMS_OF_USE_URL);
                   }}
                   className="font-medium text-stone-700 underline underline-offset-2 hover:text-stone-900 dark:text-neutral-300 dark:hover:text-neutral-100">
-                  {t('welcome.termsLink')}
+                  {t('welcome.termsOfUse')}
                 </a>{' '}
-                {t('welcome.legalConsentAnd')}{' '}
+                {t('welcome.termsJoiner')}{' '}
                 <a
                   href={PRIVACY_POLICY_URL}
                   target="_blank"
@@ -224,9 +220,9 @@ const Welcome = () => {
                     void openUrl(PRIVACY_POLICY_URL);
                   }}
                   className="font-medium text-stone-700 underline underline-offset-2 hover:text-stone-900 dark:text-neutral-300 dark:hover:text-neutral-100">
-                  {t('welcome.privacyPolicyLink')}
+                  {t('welcome.privacyPolicy')}
                 </a>
-                .
+                {t('welcome.termsOutro')}
               </p>
             </>
           )}

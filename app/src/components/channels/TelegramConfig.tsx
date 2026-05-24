@@ -334,11 +334,10 @@ const TelegramConfig = ({ definition }: TelegramConfigProps) => {
     <div className="space-y-3">
       <div className="rounded-lg border border-primary-200 dark:border-primary-500/30 bg-primary-50/80 dark:bg-primary-500/10 px-4 py-3 text-sm text-stone-700 dark:text-neutral-200">
         <p className="font-medium text-stone-900 dark:text-neutral-100">
-          Remote control (Telegram)
+          {t('channels.telegram.remoteControlTitle')}
         </p>
         <p className="mt-1 text-xs text-stone-600 dark:text-neutral-400">
-          From an allowed Telegram chat, send /status, /sessions, /new, or /help. Model routing
-          still uses /model and /models.
+          {t('channels.telegram.remoteControlBody')}
         </p>
       </div>
 

@@ -180,19 +180,17 @@ const WrappedSettingsPage = ({
   );
 };
 
-function wrapSettingsPage(element: ReactNode, opts?: { maxWidthClass?: string }) {
-  return (
+const Settings = () => {
+  const { t } = useT();
+
+  const wrapSettingsPage = (element: ReactNode, opts?: { maxWidthClass?: string }) => (
     <WrappedSettingsPage maxWidthClass={opts?.maxWidthClass}>
       {element}
       <div className="border-t border-stone-100 dark:border-neutral-800 px-4 py-3 text-center text-[11px] text-stone-400 dark:text-neutral-500">
-        Beta build - v{APP_VERSION}
+        {t('settings.betaBuild').replace('{version}', APP_VERSION)}
       </div>
     </WrappedSettingsPage>
   );
-}
-
-const Settings = () => {
-  const { t } = useT();
 
   const accountSettingsItems = [
     {

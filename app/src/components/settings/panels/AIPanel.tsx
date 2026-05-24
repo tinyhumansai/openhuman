@@ -484,6 +484,24 @@ const LOCAL_CHIP_TONE: Record<LocalChipSlug, string> = {
 
 const LOCAL_CHIP_LABEL: Record<LocalChipSlug, string> = { lmstudio: 'LM Studio', ollama: 'Ollama' };
 
+function providerToggleAriaLabel(
+  t: (key: string, fallback?: string) => string,
+  enabled: boolean,
+  label: string
+): string {
+  return formatI18n(
+    enabled ? t('settings.ai.disconnectProvider') : t('settings.ai.connectProviderLabel'),
+    { label }
+  );
+}
+
+function formatI18n(template: string, vars: Record<string, string | number>): string {
+  return Object.entries(vars).reduce(
+    (result, [key, value]) => result.replaceAll(`{${key}}`, String(value)),
+    template
+  );
+}
+
 function slugTone(slug: string): string {
   return (
     BUILTIN_PROVIDER_META[slug]?.tone ??
@@ -504,6 +522,7 @@ const ProviderToggleChip = ({
   busy?: boolean;
   onToggle: () => void;
 }) => {
+  const { t } = useT();
   const tone = slugTone(slug);
   return (
     <div
@@ -513,7 +532,7 @@ const ProviderToggleChip = ({
         type="button"
         role="switch"
         aria-checked={enabled}
-        aria-label={`${enabled ? 'Disconnect' : 'Connect'} ${label}`}
+        aria-label={providerToggleAriaLabel(t, enabled, label)}
         disabled={busy}
         onClick={onToggle}
         className={`relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors disabled:cursor-wait disabled:opacity-60 ${enabled ? 'bg-primary-500' : 'bg-stone-300 dark:bg-neutral-700'}`}>
@@ -561,7 +580,7 @@ const ProviderKeyDialog = ({
   const busy = phase !== 'idle';
 
   const placeholder = isLocalRuntime
-    ? defaultEndpointFor(slug) || 'http://localhost:11434/v1'
+    ? defaultEndpointFor(slug) || t('settings.ai.defaultLocalEndpoint')
     : slug === 'openai'
       ? 'sk-...'
       : slug === 'anthropic'
@@ -572,19 +591,23 @@ const ProviderKeyDialog = ({
             ? 'sk-orca-...'
             : 'your-api-key';
 
-  const fieldLabel = isLocalRuntime ? 'Endpoint URL' : t('settings.ai.apiKeyFieldLabel');
+  const fieldLabel = isLocalRuntime
+    ? t('settings.ai.endpointUrlLabel')
+    : t('settings.ai.apiKeyFieldLabel');
   const helper = isLocalRuntime
-    ? `Where ${label} is reachable. Default is localhost; point this at a remote host (e.g. http://10.0.0.4:11434/v1) to use a shared instance.`
+    ? formatI18n(t('settings.ai.localRuntimeHelper'), { label })
     : t('settings.ai.apiKeyStoredEncrypted');
 
   const handleSave = async () => {
     const trimmed = value.trim();
     if (!trimmed) {
-      setError(isLocalRuntime ? 'Endpoint URL is required' : t('settings.ai.apiKeyRequired'));
+      setError(
+        isLocalRuntime ? t('settings.ai.endpointUrlRequired') : t('settings.ai.apiKeyRequired')
+      );
       return;
     }
     if (isLocalRuntime && !/^https?:\/\//i.test(trimmed)) {
-      setError('Endpoint must start with http:// or https://');
+      setError(t('settings.ai.endpointProtocolRequired'));
       return;
     }
     setError(null);
@@ -597,7 +620,7 @@ const ProviderKeyDialog = ({
       console.warn('[ai-settings] provider setup failed', {
         slug,
         local_runtime: isLocalRuntime,
-        summary: presentProviderSetupError(message).summary,
+        summary: presentProviderSetupError(message, t).summary,
       });
       setError(message);
       setPhase('idle');
@@ -614,7 +637,7 @@ const ProviderKeyDialog = ({
       const message = err instanceof Error ? err.message : String(err);
       console.warn('[ai-settings] provider oauth failed', {
         slug,
-        summary: presentProviderSetupError(message).summary,
+        summary: presentProviderSetupError(message, t).summary,
       });
       setError(message);
       setPhase('idle');
@@ -625,7 +648,7 @@ const ProviderKeyDialog = ({
     <div
       role="dialog"
       aria-modal="true"
-      aria-label={`Connect ${label}`}
+      aria-label={formatI18n(t('settings.ai.connectProviderDialog'), { label })}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
       <div className="w-full max-w-md rounded-2xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-6 shadow-soft">
         <div className="mb-4">
@@ -664,17 +687,17 @@ const ProviderKeyDialog = ({
         {oauthAction ? (
           <div className="mt-4 rounded-xl border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/50 p-3">
             <div className="text-[11px] font-semibold uppercase tracking-wide text-stone-500 dark:text-neutral-400">
-              Or
+              {t('settings.ai.or')}
             </div>
             <p className="mt-1 text-xs text-stone-500 dark:text-neutral-400">
-              Sign in with OpenRouter and import a user-controlled API key using PKCE.
+              {t('settings.ai.openRouterOauthDescription')}
             </p>
             <button
               type="button"
               onClick={() => void handleOAuth()}
               disabled={busy}
               className="mt-3 inline-flex items-center justify-center rounded-lg border border-stone-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-4 py-2 text-sm font-medium text-stone-900 dark:text-neutral-100 hover:bg-stone-100 dark:hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-50">
-              {phase === 'oauth' ? 'Connecting...' : oauthAction.label}
+              {phase === 'oauth' ? t('settings.ai.connecting') : oauthAction.label}
             </button>
           </div>
         ) : null}
@@ -895,6 +918,7 @@ export const BackgroundLoopControls = ({
   view?: BackgroundLoopControlsView;
   hideHeader?: boolean;
 }) => {
+  const { t } = useT();
   const [settings, setSettings] = useState<HeartbeatSettings | null>(null);
   const [usage, setUsage] = useState<TeamUsage | null>(null);
   const [transactions, setTransactions] = useState<CreditTransaction[]>([]);
@@ -1113,11 +1137,10 @@ export const BackgroundLoopControls = ({
       {!hideHeader && (
         <div className="border-b border-stone-200 dark:border-neutral-800 pb-2">
           <h2 className="text-base font-semibold text-stone-900 dark:text-neutral-100">
-            Background loops
+            {t('settings.ai.backgroundLoops')}
           </h2>
           <p className="mt-0.5 text-xs text-stone-500 dark:text-neutral-400">
-            See what runs without a chat message, pause heartbeat work, and inspect recent credit
-            ledger rows.
+            {t('settings.ai.backgroundLoopsDesc')}
           </p>
         </div>
       )}
@@ -1135,10 +1158,10 @@ export const BackgroundLoopControls = ({
               <div className="mb-3 flex items-center justify-between gap-3">
                 <div>
                   <div className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
-                    Heartbeat controls
+                    {t('settings.ai.heartbeatControls')}
                   </div>
                   <div className="text-xs text-stone-500 dark:text-neutral-400">
-                    Defaults off. Enabling starts the loop; disabling aborts the running task.
+                    {t('settings.ai.heartbeatControlsDesc')}
                   </div>
                 </div>
                 <button
@@ -1146,22 +1169,22 @@ export const BackgroundLoopControls = ({
                   onClick={() => void refresh()}
                   disabled={loading}
                   className="rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-2 py-1 text-xs font-medium text-stone-700 dark:text-neutral-200 hover:bg-stone-50 dark:hover:bg-neutral-800/60 dark:bg-neutral-800/60 dark:hover:bg-neutral-800/60 disabled:opacity-50">
-                  Refresh
+                  {t('common.refresh')}
                 </button>
               </div>
 
               {settings ? (
                 <div className="space-y-2">
                   <LoopToggle
-                    label="Heartbeat loop"
-                    description="Master scheduler for planner + optional subconscious inference."
+                    label={t('settings.ai.heartbeatLoop')}
+                    description={t('settings.ai.heartbeatLoopDesc')}
                     checked={settings.enabled}
                     busy={saving === 'enabled'}
                     onToggle={() => void applyHeartbeatPatch({ enabled: !settings.enabled })}
                   />
                   <LoopToggle
-                    label="Subconscious inference"
-                    description="Runs model-backed task/reflection evaluation on heartbeat ticks."
+                    label={t('settings.ai.subconsciousInference')}
+                    description={t('settings.ai.subconsciousInferenceDesc')}
                     checked={settings.inference_enabled}
                     busy={saving === 'inference_enabled'}
                     onToggle={() =>
@@ -1169,8 +1192,8 @@ export const BackgroundLoopControls = ({
                     }
                   />
                   <LoopToggle
-                    label="Calendar meeting checks"
-                    description="Calls calendar event list for active Google Calendar connections."
+                    label={t('settings.ai.calendarMeetingChecks')}
+                    description={t('settings.ai.calendarMeetingChecksDesc')}
                     checked={settings.notify_meetings}
                     busy={saving === 'notify_meetings'}
                     onToggle={() =>
@@ -1179,7 +1202,7 @@ export const BackgroundLoopControls = ({
                   />
                   <div className="grid gap-2 rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 md:grid-cols-3">
                     <label className="space-y-1 text-xs font-medium text-stone-700 dark:text-neutral-200">
-                      <span>Calendar cap</span>
+                      <span>{t('settings.ai.calendarCap')}</span>
                       <select
                         value={maxCalendarConnectionsPerTick}
                         disabled={saving === 'max_calendar_connections_per_tick'}
@@ -1191,13 +1214,13 @@ export const BackgroundLoopControls = ({
                         className="w-full rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-2 py-1 text-xs text-stone-900 dark:text-neutral-100 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500">
                         {[1, 2, 3, 5, 10].map(count => (
                           <option key={count} value={count}>
-                            {count} conn/tick
+                            {formatI18n(t('settings.ai.connectionsPerTick'), { count })}
                           </option>
                         ))}
                       </select>
                     </label>
                     <label className="space-y-1 text-xs font-medium text-stone-700 dark:text-neutral-200">
-                      <span>Meeting lookahead</span>
+                      <span>{t('settings.ai.meetingLookahead')}</span>
                       <select
                         value={settings.meeting_lookahead_minutes}
                         disabled={saving === 'meeting_lookahead_minutes'}
@@ -1209,13 +1232,13 @@ export const BackgroundLoopControls = ({
                         className="w-full rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-2 py-1 text-xs text-stone-900 dark:text-neutral-100 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500">
                         {[15, 30, 60, 120, 240].map(minutes => (
                           <option key={minutes} value={minutes}>
-                            {minutes} min
+                            {formatI18n(t('settings.ai.minutesShort'), { count: minutes })}
                           </option>
                         ))}
                       </select>
                     </label>
                     <label className="space-y-1 text-xs font-medium text-stone-700 dark:text-neutral-200">
-                      <span>Reminder lookahead</span>
+                      <span>{t('settings.ai.reminderLookahead')}</span>
                       <select
                         value={settings.reminder_lookahead_minutes}
                         disabled={saving === 'reminder_lookahead_minutes'}
@@ -1227,15 +1250,15 @@ export const BackgroundLoopControls = ({
                         className="w-full rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-2 py-1 text-xs text-stone-900 dark:text-neutral-100 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500">
                         {[5, 15, 30, 60, 120].map(minutes => (
                           <option key={minutes} value={minutes}>
-                            {minutes} min
+                            {formatI18n(t('settings.ai.minutesShort'), { count: minutes })}
                           </option>
                         ))}
                       </select>
                     </label>
                   </div>
                   <LoopToggle
-                    label="Cron reminder checks"
-                    description="Scans enabled cron jobs for reminder-like upcoming items."
+                    label={t('settings.ai.cronReminderChecks')}
+                    description={t('settings.ai.cronReminderChecksDesc')}
                     checked={settings.notify_reminders}
                     busy={saving === 'notify_reminders'}
                     onToggle={() =>
@@ -1243,8 +1266,8 @@ export const BackgroundLoopControls = ({
                     }
                   />
                   <LoopToggle
-                    label="Relevant notification checks"
-                    description="Promotes urgent local notifications into proactive alerts."
+                    label={t('settings.ai.relevantNotificationChecks')}
+                    description={t('settings.ai.relevantNotificationChecksDesc')}
                     checked={settings.notify_relevant_events}
                     busy={saving === 'notify_relevant_events'}
                     onToggle={() =>
@@ -1254,8 +1277,8 @@ export const BackgroundLoopControls = ({
                     }
                   />
                   <LoopToggle
-                    label="External delivery"
-                    description="Lets heartbeat alerts send proactive messages to external channels."
+                    label={t('settings.ai.externalDelivery')}
+                    description={t('settings.ai.externalDeliveryDesc')}
                     checked={settings.external_delivery_enabled}
                     busy={saving === 'external_delivery_enabled'}
                     onToggle={() =>
@@ -1269,7 +1292,7 @@ export const BackgroundLoopControls = ({
                     <label
                       className="text-xs font-medium text-stone-700 dark:text-neutral-200"
                       htmlFor="heartbeat-interval">
-                      Interval
+                      {t('settings.ai.interval')}
                     </label>
                     <select
                       id="heartbeat-interval"
@@ -1281,7 +1304,7 @@ export const BackgroundLoopControls = ({
                       className="rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-2 py-1 text-xs text-stone-900 dark:text-neutral-100 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500">
                       {[5, 10, 15, 30, 60].map(minutes => (
                         <option key={minutes} value={minutes}>
-                          {minutes} min
+                          {formatI18n(t('settings.ai.minutesShort'), { count: minutes })}
                         </option>
                       ))}
                     </select>
@@ -1290,28 +1313,31 @@ export const BackgroundLoopControls = ({
                       onClick={() => void runPlannerNow()}
                       disabled={runningTick}
                       className="ml-auto rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-2 py-1 text-xs font-medium text-stone-700 dark:text-neutral-200 hover:bg-stone-50 dark:hover:bg-neutral-800/60 dark:bg-neutral-800/60 dark:hover:bg-neutral-800/60 disabled:opacity-50">
-                      {runningTick ? 'Running...' : 'Planner tick now'}
+                      {runningTick ? t('settings.ai.running') : t('settings.ai.plannerTickNow')}
                     </button>
                   </div>
 
                   {plannerSummary && (
                     <div className="rounded-md border border-primary-100 bg-primary-50 dark:bg-primary-500/10 px-3 py-2 text-xs text-primary-900">
-                      Planner: {plannerSummary.source_events} source events,{' '}
-                      {plannerSummary.deliveries_sent} sent,{' '}
-                      {plannerSummary.deliveries_skipped_dedup} deduped.
+                      {t('settings.ai.plannerSummary')
+                        .replace('{sourceEvents}', String(plannerSummary.source_events))
+                        .replace('{sent}', String(plannerSummary.deliveries_sent))
+                        .replace('{deduped}', String(plannerSummary.deliveries_skipped_dedup))}
                     </div>
                   )}
                 </div>
               ) : (
                 <div className="text-xs text-stone-500 dark:text-neutral-400">
-                  {loading ? 'Loading heartbeat controls...' : 'Heartbeat controls unavailable.'}
+                  {loading
+                    ? t('settings.ai.loadingHeartbeatControls')
+                    : t('settings.ai.heartbeatControlsUnavailable')}
                 </div>
               )}
             </div>
 
             <div className="overflow-hidden rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60">
               <div className="border-b border-stone-200 dark:border-neutral-800 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-stone-400 dark:text-neutral-500">
-                Loop map
+                {t('settings.ai.loopMap')}
               </div>
               <div className="divide-y divide-stone-200 dark:divide-neutral-800">
                 {loops.map(loop => (
@@ -1321,14 +1347,14 @@ export const BackgroundLoopControls = ({
                         {loop.name}
                       </div>
                       <div className="mt-0.5 flex flex-wrap gap-1 text-[11px] text-stone-500 dark:text-neutral-400">
-                        <span>{loop.enabled ? 'on' : 'off'}</span>
+                        <span>{loop.enabled ? t('settings.ai.on') : t('settings.ai.off')}</span>
                         <span>{loop.cadence}</span>
                       </div>
                     </div>
                     <div className="text-xs text-stone-600 dark:text-neutral-300">
                       <div>{loop.work}</div>
                       <div className="mt-1 font-mono text-[11px] text-stone-500 dark:text-neutral-400">
-                        route: {loop.route}
+                        {t('settings.ai.routeLabel').replace('{route}', loop.route)}
                       </div>
                       <div className="mt-1 text-stone-500 dark:text-neutral-400">{loop.risk}</div>
                     </div>
@@ -1344,10 +1370,10 @@ export const BackgroundLoopControls = ({
             <div className="flex items-center justify-between gap-3">
               <div>
                 <div className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
-                  Recent usage ledger
+                  {t('settings.ai.recentUsageLedger')}
                 </div>
                 <div className="text-xs text-stone-500 dark:text-neutral-400">
-                  Backend rows expose action/time today; source tags need backend support.
+                  {t('settings.ai.recentUsageLedgerDesc')}
                 </div>
               </div>
               <button
@@ -1355,23 +1381,23 @@ export const BackgroundLoopControls = ({
                 onClick={() => void refresh()}
                 disabled={loading}
                 className="rounded-md border border-stone-200 dark:border-neutral-800 px-2 py-1 text-xs font-medium text-stone-700 dark:text-neutral-200 hover:bg-stone-50 dark:hover:bg-neutral-800/60 dark:bg-neutral-800/60 dark:hover:bg-neutral-800/60 disabled:opacity-50">
-                Reload
+                {t('common.reload')}
               </button>
             </div>
 
             <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-3">
               <MetricTile
-                label="Week budget"
+                label={t('settings.ai.weekBudget')}
                 value={usage ? formatUsd(usage.cycleBudgetUsd) : 'n/a'}
                 detail={`resets ${formatDateTime(usage?.cycleEndsAt)}`}
               />
               <MetricTile
-                label="Cycle remaining"
+                label={t('settings.ai.cycleRemaining')}
                 value={usage ? formatUsd(usage.remainingUsd) : 'n/a'}
                 detail={usage ? `${formatUsd(usage.cycleSpentUsd)} used` : undefined}
               />
               <MetricTile
-                label="Cycle total spend"
+                label={t('settings.ai.cycleTotalSpend')}
                 value={usage ? formatUsd(usage.insights.totals.totalUsd) : 'n/a'}
                 detail={
                   usage
@@ -1380,17 +1406,17 @@ export const BackgroundLoopControls = ({
                 }
               />
               <MetricTile
-                label="Avg spend row"
+                label={t('settings.ai.avgSpendRow')}
                 value={spendSample.avgRowUsd > 0 ? formatUsd(spendSample.avgRowUsd) : 'n/a'}
                 detail={`${spendRows.length} recent spend rows`}
               />
               <MetricTile
-                label="Bg API reads"
+                label={t('settings.ai.backgroundApiReads')}
                 value={`${formatCount(backgroundApiReadsPerWeek)}/week`}
                 detail={`${formatCount(calendarPlannerCallsPerWeek)} planner + ${formatCount(composioConnectionScansPerWeek)} sync`}
               />
               <MetricTile
-                label="Bg wakeups"
+                label={t('settings.ai.backgroundWakeups')}
                 value={`${formatCount(backgroundWakeupsPerWeek)}/week`}
                 detail={`${formatCount(memoryPollsPerWeek)} memory polls`}
               />
@@ -1398,11 +1424,11 @@ export const BackgroundLoopControls = ({
 
             <div className="mt-3 rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 p-3">
               <div className="text-[10px] font-semibold uppercase tracking-wide text-stone-400 dark:text-neutral-500">
-                Budget math
+                {t('settings.ai.budgetMath')}
               </div>
               <div className="mt-2 grid gap-2">
                 <FormulaRow
-                  label="Rows left"
+                  label={t('settings.ai.rowsLeft')}
                   value={estimatedRowsLeft !== null ? formatCount(estimatedRowsLeft) : 'n/a'}
                   detail={
                     estimatedRowsLeft !== null
@@ -1411,7 +1437,7 @@ export const BackgroundLoopControls = ({
                   }
                 />
                 <FormulaRow
-                  label="Rows per full week budget"
+                  label={t('settings.ai.rowsPerFullWeekBudget')}
                   value={
                     estimatedRowsPerBudget !== null ? formatCount(estimatedRowsPerBudget) : 'n/a'
                   }
@@ -1422,7 +1448,7 @@ export const BackgroundLoopControls = ({
                   }
                 />
                 <FormulaRow
-                  label="Sample burn rate"
+                  label={t('settings.ai.sampleBurnRate')}
                   value={
                     spendSample.spendPerHour > 0
                       ? `${formatUsd(spendSample.spendPerHour)}/hr`
@@ -1435,7 +1461,7 @@ export const BackgroundLoopControls = ({
                   }
                 />
                 <FormulaRow
-                  label="Projected empty"
+                  label={t('settings.ai.projectedEmpty')}
                   value={projectedExhaustAt}
                   detail={
                     projectedHoursLeft !== null
@@ -1444,7 +1470,7 @@ export const BackgroundLoopControls = ({
                   }
                 />
                 <FormulaRow
-                  label="API reads per $ remaining"
+                  label={t('settings.ai.apiReadsPerDollarRemaining')}
                   value={
                     scheduledCallsPerRemainingDollar !== null
                       ? `${formatCount(scheduledCallsPerRemainingDollar)} reads/$`
@@ -1461,16 +1487,16 @@ export const BackgroundLoopControls = ({
 
             <div className="mt-3 rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 p-3">
               <div className="text-[10px] font-semibold uppercase tracking-wide text-stone-400 dark:text-neutral-500">
-                Loop call budget
+                {t('settings.ai.loopCallBudget')}
               </div>
               <div className="mt-2 grid gap-2">
                 <FormulaRow
-                  label="Heartbeat ticks"
+                  label={t('settings.ai.heartbeatTicks')}
                   value={`${formatCount(heartbeatTicksPerWeek)}/week`}
                   detail={`10080 min/week / ${heartbeatIntervalMinutes} min interval`}
                 />
                 <FormulaRow
-                  label="Calendar planner calls"
+                  label={t('settings.ai.calendarPlannerCalls')}
                   value={`${formatCount(calendarPlannerCallsPerWeek)}/week`}
                   detail={
                     settings?.notify_meetings
@@ -1479,12 +1505,12 @@ export const BackgroundLoopControls = ({
                   }
                 />
                 <FormulaRow
-                  label="Calendar fanout cap"
+                  label={t('settings.ai.calendarFanoutCap')}
                   value={`${formatCount(calendarConnectionsPolled)}/${formatCount(activeCalendarConnections.length)} conn/tick`}
                   detail={`max_calendar_connections_per_tick = ${maxCalendarConnectionsPerTick}; skipped now = ${calendarConnectionsSkipped}`}
                 />
                 <FormulaRow
-                  label="Subconscious model calls"
+                  label={t('settings.ai.subconsciousModelCalls')}
                   value={`${formatCount(subconsciousModelCallsPerWeek)}/week`}
                   detail={
                     settings?.enabled && settings.inference_enabled
@@ -1493,17 +1519,17 @@ export const BackgroundLoopControls = ({
                   }
                 />
                 <FormulaRow
-                  label="Composio sync scans"
+                  label={t('settings.ai.composioSyncScans')}
                   value={`${formatCount(composioConnectionScansPerWeek)}/week`}
                   detail={`${activeConnections.length} active integration connection(s) scanned every ${COMPOSIO_PERIODIC_TICK_MINUTES} min`}
                 />
                 <FormulaRow
-                  label="Total bg API read budget"
+                  label={t('settings.ai.totalBackgroundApiReadBudget')}
                   value={`${formatCount(backgroundApiReadsPerWeek)}/week`}
                   detail={`calendar planner reads + periodic integration scans; excludes user-initiated chat tools`}
                 />
                 <FormulaRow
-                  label="Memory worker polls"
+                  label={t('settings.ai.memoryWorkerPolls')}
                   value={`${formatCount(memoryPollsPerWeek)}/week max`}
                   detail={`${MEMORY_WORKERS} workers * ${MEMORY_POLL_SECONDS}s poll; LLM calls only for queued jobs`}
                 />
@@ -1512,15 +1538,17 @@ export const BackgroundLoopControls = ({
 
             {latestSpend && (
               <div className="mt-3 rounded-md border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 px-3 py-2 text-xs text-stone-600 dark:text-neutral-300">
-                Latest spend: {formatUsd(spendAmount(latestSpend))} at{' '}
-                {new Date(latestSpend.createdAt).toLocaleString()} ({latestSpend.action})
+                {t('settings.ai.latestSpend')
+                  .replace('{amount}', formatUsd(spendAmount(latestSpend)))
+                  .replace('{time}', new Date(latestSpend.createdAt).toLocaleString())
+                  .replace('{action}', latestSpend.action)}
               </div>
             )}
 
             <div className="mt-3 space-y-3">
               <div>
                 <div className="text-[10px] font-semibold uppercase tracking-wide text-stone-400 dark:text-neutral-500">
-                  Top actions
+                  {t('settings.ai.topActions')}
                 </div>
                 <div className="mt-1 space-y-1">
                   {actionSummary.length > 0 ? (
@@ -1536,7 +1564,7 @@ export const BackgroundLoopControls = ({
                     ))
                   ) : (
                     <div className="text-xs text-stone-500 dark:text-neutral-400">
-                      No spend rows loaded.
+                      {t('settings.ai.noSpendRows')}
                     </div>
                   )}
                 </div>
@@ -1544,7 +1572,7 @@ export const BackgroundLoopControls = ({
 
               <div>
                 <div className="text-[10px] font-semibold uppercase tracking-wide text-stone-400 dark:text-neutral-500">
-                  Top hours
+                  {t('settings.ai.topHours')}
                 </div>
                 <div className="mt-1 space-y-1">
                   {hourSummary.length > 0 ? (
@@ -1560,7 +1588,7 @@ export const BackgroundLoopControls = ({
                     ))
                   ) : (
                     <div className="text-xs text-stone-500 dark:text-neutral-400">
-                      No hourly spend yet.
+                      {t('settings.ai.noHourlySpend')}
                     </div>
                   )}
                 </div>
@@ -1608,12 +1636,12 @@ const WorkloadRow = ({
 
   let resolved: string;
   if (ref_.kind === 'openhuman') {
-    resolved = 'OpenHuman (default)';
+    resolved = t('settings.ai.openhumanDefault');
   } else if (ref_.kind === 'cloud') {
     if (!selectedCloud) resolved = `${ref_.providerSlug} · ${ref_.model}`;
     else resolved = `${selectedCloud.label} · ${ref_.model}`;
   } else {
-    resolved = `Ollama · ${ref_.model}`;
+    resolved = formatI18n(t('settings.ai.localModelResolved'), { model: ref_.model });
   }
 
   // Quiet `ollamaState` / `localModels` unused-prop warnings — they're still
@@ -1848,7 +1876,7 @@ const CustomRoutingDialog = ({
     <div
       role="dialog"
       aria-modal="true"
-      aria-label={`Custom routing for ${workload.label}`}
+      aria-label={formatI18n(t('settings.ai.customRoutingForWorkload'), { label: workload.label })}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
       <div className="w-full max-w-md rounded-2xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-6 shadow-soft">
         <div className="flex items-start justify-between gap-3 mb-4">
@@ -1935,7 +1963,7 @@ const CustomRoutingDialog = ({
                 <select
                   disabled
                   className="rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-400 dark:text-neutral-500 opacity-60 cursor-wait">
-                  <option>Loading models…</option>
+                  <option>{t('settings.ai.loadingModels')}</option>
                 </select>
               ) : cloudModelsError ? (
                 <div className="space-y-1.5">
@@ -1947,10 +1975,10 @@ const CustomRoutingDialog = ({
                       type="button"
                       onClick={() => setModelsKey(k => k + 1)}
                       className="text-xs text-primary-600 dark:text-primary-400 hover:underline">
-                      Retry
+                      {t('common.retry')}
                     </button>
                     <span className="text-xs text-stone-400 dark:text-neutral-500">
-                      or enter model id manually:
+                      {t('settings.ai.enterModelIdManually')}
                     </span>
                   </div>
                   <input
@@ -1960,7 +1988,13 @@ const CustomRoutingDialog = ({
                       resetTestState();
                       setModel(e.target.value);
                     }}
-                    placeholder={selectedCloud ? `${selectedCloud.slug} model id` : 'model-id'}
+                    placeholder={
+                      selectedCloud
+                        ? formatI18n(t('settings.ai.modelIdPlaceholderForProvider'), {
+                            slug: selectedCloud.slug,
+                          })
+                        : t('settings.ai.modelIdPlaceholder')
+                    }
                     className="w-full rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm font-mono text-stone-900 dark:text-neutral-100 placeholder-stone-400 dark:placeholder-neutral-500 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
                   />
                 </div>
@@ -1972,7 +2006,7 @@ const CustomRoutingDialog = ({
                     setModel(e.target.value);
                   }}
                   className="rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500">
-                  {!model && <option value="">Select a model…</option>}
+                  {!model && <option value="">{t('settings.ai.selectModel')}</option>}
                   {/* Keep existing value selectable even if the provider no longer lists it */}
                   {model && !cloudModels.some(m => m.id === model) && (
                     <option value={model}>{model}</option>
@@ -1991,7 +2025,13 @@ const CustomRoutingDialog = ({
                     resetTestState();
                     setModel(e.target.value);
                   }}
-                  placeholder={selectedCloud ? `${selectedCloud.slug} model id` : 'model-id'}
+                  placeholder={
+                    selectedCloud
+                      ? formatI18n(t('settings.ai.modelIdPlaceholderForProvider'), {
+                          slug: selectedCloud.slug,
+                        })
+                      : t('settings.ai.modelIdPlaceholder')
+                  }
                   className="rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm font-mono text-stone-900 dark:text-neutral-100 placeholder-stone-400 dark:placeholder-neutral-500 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
                 />
               )}
@@ -2011,7 +2051,7 @@ const CustomRoutingDialog = ({
                     }}
                     className="h-3.5 w-3.5 rounded border-stone-300 dark:border-neutral-700 text-primary-500 focus:ring-primary-500"
                   />
-                  Temperature override
+                  {t('settings.ai.temperatureOverride')}
                 </span>
                 {temperature != null && (
                   <span className="font-mono text-[11px] text-stone-500 dark:text-neutral-400">
@@ -2023,7 +2063,7 @@ const CustomRoutingDialog = ({
                 <div className="flex items-center gap-2">
                   <input
                     type="range"
-                    aria-label="Temperature override (slider)"
+                    aria-label={t('settings.ai.temperatureOverrideSlider')}
                     min={0}
                     max={2}
                     step={0.05}
@@ -2036,7 +2076,7 @@ const CustomRoutingDialog = ({
                   />
                   <input
                     type="number"
-                    aria-label="Temperature override (value)"
+                    aria-label={t('settings.ai.temperatureOverrideValue')}
                     min={0}
                     max={2}
                     step={0.05}
@@ -2053,7 +2093,7 @@ const CustomRoutingDialog = ({
                 </div>
               )}
               <p className="text-[11px] text-stone-400 dark:text-neutral-500">
-                Lower = more deterministic. Leave unchecked to use the provider default.
+                {t('settings.ai.temperatureOverrideDesc')}
               </p>
             </div>
 
@@ -2068,22 +2108,30 @@ const CustomRoutingDialog = ({
                       : 'border-sage-200 dark:border-sage-500/30 bg-sage-50 dark:bg-sage-500/10 text-sage-800 dark:text-sage-200'
                 }`}>
                 <div className="font-semibold">
-                  {testError ? 'Test failed' : testBusy ? 'Testing model…' : 'Model response'}
+                  {testError
+                    ? t('settings.ai.testFailed')
+                    : testBusy
+                      ? t('settings.ai.testingModel')
+                      : t('settings.ai.modelResponse')}
                 </div>
                 <div className="mt-1 space-y-1">
                   <div className="font-mono text-[11px] text-current/80">
-                    Provider: {currentProviderString ?? '—'}
+                    {formatI18n(t('settings.ai.providerWithValue'), {
+                      value: currentProviderString ?? t('settings.ai.noneDash'),
+                    })}
                   </div>
-                  <div className="font-mono text-[11px] text-current/80">Prompt: Hello world</div>
+                  <div className="font-mono text-[11px] text-current/80">
+                    {t('settings.ai.promptHelloWorld')}
+                  </div>
                   {testStartedAt && (
                     <div className="font-mono text-[11px] text-current/80">
-                      Started: {testStartedAt}
+                      {formatI18n(t('settings.ai.startedAt'), { value: testStartedAt })}
                     </div>
                   )}
                 </div>
                 {testBusy ? (
                   <div className="mt-2 rounded-md border border-current/15 bg-white/50 px-3 py-2 text-[12px] dark:bg-black/10">
-                    Waiting for response from the selected model…
+                    {t('settings.ai.waitingForModelResponse')}
                   </div>
                 ) : testError ? (
                   <div className="mt-2 rounded-md border border-current/15 bg-white/50 px-3 py-2 font-mono text-[11px] whitespace-pre-wrap break-words dark:bg-black/10">
@@ -2092,7 +2140,7 @@ const CustomRoutingDialog = ({
                 ) : (
                   <div className="mt-3 space-y-1.5">
                     <div className="text-[11px] font-semibold uppercase tracking-wide text-current/80">
-                      Response
+                      {t('settings.ai.response')}
                     </div>
                     <div className="rounded-md border border-current/15 bg-white/70 px-3 py-3 text-[13px] leading-relaxed text-stone-900 whitespace-pre-wrap break-words dark:bg-black/10 dark:text-neutral-100">
                       {testReply}
@@ -2116,7 +2164,7 @@ const CustomRoutingDialog = ({
             onClick={() => void handleTest()}
             disabled={!canTest || testBusy}
             className="rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-4 py-2 text-sm font-medium text-stone-700 dark:text-neutral-200 hover:bg-stone-50 dark:hover:bg-neutral-800/60 disabled:cursor-not-allowed disabled:opacity-50">
-            {testBusy ? 'Testing…' : 'Test'}
+            {testBusy ? t('settings.ai.testing') : t('settings.ai.test')}
           </button>
           <button
             type="button"
@@ -2371,7 +2419,7 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
     <div className="relative">
       {!embedded && (
         <SettingsHeader
-          title="LLM"
+          title={t('pages.settings.ai.llm')}
           showBackButton
           onBack={navigateBack}
           breadcrumbs={breadcrumbs}
@@ -2549,7 +2597,7 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
                       type="button"
                       role="switch"
                       aria-checked={enabled}
-                      aria-label={`${enabled ? 'Disconnect' : 'Connect'} ${label}`}
+                      aria-label={providerToggleAriaLabel(t, enabled, label)}
                       disabled={busyAction === `toggle-${localKind}`}
                       onClick={() => {
                         if (enabled && existing) {
@@ -2643,7 +2691,10 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
 
             <div className="text-[11px] text-stone-500 dark:text-neutral-400">
               {t('settings.ai.defaultResolvesTo')}{' '}
-              <span className="font-mono text-stone-700 dark:text-neutral-200">OpenHuman</span>.
+              <span className="font-mono text-stone-700 dark:text-neutral-200">
+                {t('settings.ai.defaultProviderName')}
+              </span>
+              .
             </div>
           </section>
         </div>
@@ -2662,13 +2713,11 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
       <ConfirmationModal
         modal={{
           isOpen: reembed.open,
-          title: 'Re-indexing memory',
-          message:
-            `Embeddings are being reprocessed. ${reembed.pending} memory item(s) ` +
-            `are being re-embedded under the current model — semantic recall is ` +
-            `reduced until this finishes. Keyword search keeps working, and ` +
-            `re-embedding continues in the background if you close this.`,
-          confirmText: 'OK',
+          title: t('settings.ai.reindexingMemory'),
+          message: formatI18n(t('settings.ai.reindexingMemoryMessage'), {
+            pending: reembed.pending,
+          }),
+          confirmText: t('common.ok'),
           onConfirm: dismissReembed,
           onCancel: dismissReembed,
         }}
@@ -2815,7 +2864,7 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
           oauthAction={
             keyDialogFor === 'openrouter' && !pendingLocalLabel
               ? {
-                  label: 'Sign in with OpenRouter',
+                  label: t('settings.ai.signInWithOpenRouter'),
                   onClick: async () => {
                     const controller = new AbortController();
                     openRouterOauthAbortRef.current = controller;
@@ -2894,11 +2943,11 @@ const CloudProviderEditor = ({
       'lmstudio',
     ].includes(slug);
   const slugError = !slug
-    ? 'Enter a provider name to generate a slug.'
+    ? t('settings.ai.slugMissingError')
     : existingSlugs.includes(slug)
-      ? 'That provider name is already in use.'
+      ? t('settings.ai.slugInUseError')
       : hasReservedSlugCollision
-        ? 'Choose a different provider name.'
+        ? t('settings.ai.slugReservedError')
         : null;
   const hasExistingKey = (initial?.maskedKey ?? '').startsWith('••••');
 
@@ -2908,7 +2957,7 @@ const CloudProviderEditor = ({
         <div className="border-b border-stone-200 dark:border-neutral-800 px-4 py-3">
           <div className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
             {initial
-              ? `${t('settings.ai.editProvider')} ${initial.label}`
+              ? formatI18n(t('settings.ai.editProvider'), { label: initial.label })
               : t('settings.ai.addCloudProvider')}
           </div>
           <div className="mt-0.5 text-xs text-stone-500 dark:text-neutral-400">
@@ -2921,18 +2970,20 @@ const CloudProviderEditor = ({
             <label
               htmlFor="cloud-provider-name"
               className="text-[10px] font-semibold uppercase tracking-wide text-stone-500 dark:text-neutral-400">
-              Name
+              {t('common.name')}
             </label>
             <input
               id="cloud-provider-name"
               value={label}
               onChange={e => setLabel(e.target.value)}
               className="mt-1 w-full rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 placeholder:text-stone-400 dark:placeholder:text-neutral-500 dark:text-neutral-500 dark:placeholder:text-neutral-500 focus:border-primary-400 focus:outline-none focus:ring-1 focus:ring-primary-200"
-              placeholder="My Provider"
+              placeholder={t('settings.ai.providerNamePlaceholder')}
             />
             <div className="mt-1 text-[11px] text-stone-500 dark:text-neutral-400">
-              Slug:{' '}
-              <span className="font-mono text-stone-700 dark:text-neutral-200">{slug || '—'}</span>
+              {t('settings.ai.slugLabel')}{' '}
+              <span className="font-mono text-stone-700 dark:text-neutral-200">
+                {slug || t('settings.ai.noneDash')}
+              </span>
             </div>
             {slugError ? (
               <div className="mt-1 text-[11px] text-coral-600 dark:text-coral-300">{slugError}</div>
@@ -2942,19 +2993,19 @@ const CloudProviderEditor = ({
             <label
               htmlFor="cloud-provider-openai-url"
               className="text-[10px] font-semibold uppercase tracking-wide text-stone-500 dark:text-neutral-400">
-              OpenAI URL
+              {t('settings.ai.openAiUrlLabel')}
             </label>
             <input
               id="cloud-provider-openai-url"
               value={endpoint}
               onChange={e => setEndpoint(e.target.value)}
               className="mt-1 w-full rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 font-mono text-xs text-stone-900 dark:text-neutral-100 placeholder:text-stone-400 dark:placeholder:text-neutral-500 dark:text-neutral-500 dark:placeholder:text-neutral-500 disabled:opacity-60 focus:border-primary-400 focus:outline-none focus:ring-1 focus:ring-primary-200"
-              placeholder="https://api.openai.com/v1"
+              placeholder={t('settings.ai.openAiUrlPlaceholder')}
             />
           </div>
           <div>
             <label className="flex items-center justify-between text-[10px] font-semibold uppercase tracking-wide text-stone-500 dark:text-neutral-400">
-              <span>API key</span>
+              <span>{t('settings.ai.apiKeyFieldLabel')}</span>
               {hasExistingKey && (
                 <button
                   onClick={() => void onClearKey(slug)}
@@ -2964,12 +3015,12 @@ const CloudProviderEditor = ({
               )}
             </label>
             <input
-              aria-label="API key"
+              aria-label={t('settings.ai.apiKeyFieldLabel')}
               type="password"
               value={apiKey}
               onChange={e => setApiKey(e.target.value)}
               className="mt-1 w-full rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 font-mono text-xs text-stone-900 dark:text-neutral-100 placeholder:text-stone-400 dark:placeholder:text-neutral-500 dark:text-neutral-500 dark:placeholder:text-neutral-500 focus:border-primary-400 focus:outline-none focus:ring-1 focus:ring-primary-200"
-              placeholder={hasExistingKey ? 'Leave blank to keep existing key' : 'sk-...'}
+              placeholder={hasExistingKey ? t('settings.ai.keepExistingKeyPlaceholder') : 'sk-...'}
             />
           </div>
           {submitError ? <ProviderSetupErrorNotice error={submitError} /> : null}
@@ -3007,7 +3058,7 @@ const CloudProviderEditor = ({
                 const message = err instanceof Error ? err.message : String(err);
                 console.warn('[ai-settings] cloud provider editor submit failed', {
                   slug,
-                  summary: presentProviderSetupError(message).summary,
+                  summary: presentProviderSetupError(message, t).summary,
                 });
                 setSubmitError(message);
               } finally {

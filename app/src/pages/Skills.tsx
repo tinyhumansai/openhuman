@@ -22,7 +22,7 @@ import SkillCategoryFilter from '../components/skills/SkillCategoryFilter';
 import SkillDetailDrawer from '../components/skills/SkillDetailDrawer';
 import {
   BUILT_IN_SKILL_ICONS,
-  CHANNEL_ICONS,
+  getChannelIcons,
   skillCategoryHeadingClassName,
   SkillCategoryIcon,
 } from '../components/skills/skillIcons';
@@ -383,6 +383,7 @@ type ConnectionsTab = 'channels' | 'composio' | 'mcp';
 
 export default function Skills() {
   const { t } = useT();
+  const channelIcons = useMemo(() => getChannelIcons(t), [t]);
   const location = useLocation();
   const navigate = useNavigate();
   const isLocalSession = isLocalSessionToken(getCoreStateSnapshot().snapshot.sessionToken);
@@ -618,7 +619,7 @@ export default function Skills() {
         kind: 'channel',
         channelDef: def,
         channelStatus: bestChannelStatus(def.id as ChannelType),
-        icon: CHANNEL_ICONS[def.icon],
+        icon: channelIcons[def.icon],
       });
     }
 
@@ -642,7 +643,7 @@ export default function Skills() {
 
     return items;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [configurableChannels, channelConnections, discoveredSkills]);
+  }, [channelIcons, configurableChannels, channelConnections, discoveredSkills]);
 
   const composioGridEntries = useMemo(() => {
     const entries: Array<{
@@ -959,7 +960,7 @@ export default function Skills() {
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <h2 className="text-sm font-semibold text-amber-900">
-                      Connections are showing stale status
+                      {t('skills.composio.staleStatusTitle')}
                     </h2>
                     <p className="mt-1 text-xs leading-relaxed text-amber-800">{composioError}</p>
                   </div>
@@ -967,7 +968,7 @@ export default function Skills() {
                     type="button"
                     onClick={() => void refreshComposio()}
                     className="flex-shrink-0 rounded-lg border border-amber-300 dark:border-amber-500/40 bg-white dark:bg-neutral-900 px-3 py-1.5 text-[11px] font-medium text-amber-800 dark:text-amber-300 transition-colors hover:bg-amber-100 dark:hover:bg-amber-500/10">
-                    Retry
+                    {t('common.retry')}
                   </button>
                 </div>
               </div>
@@ -1058,7 +1059,7 @@ export default function Skills() {
                           {t('skills.integrations')}
                         </h2>
                         <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wider bg-primary-50 text-primary-700 dark:bg-primary-900/30 dark:text-primary-300 border border-primary-100 dark:border-primary-800/50">
-                          Powered by Composio
+                          {t('skills.composio.poweredBy')}
                         </span>
                       </div>
                       <p className="mt-0.5 text-[11px] leading-relaxed text-stone-500 dark:text-neutral-400">
