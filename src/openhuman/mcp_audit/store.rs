@@ -11,10 +11,41 @@ const DEFAULT_LIST_LIMIT: u64 = 50;
 const MAX_LIST_LIMIT: u64 = 500;
 
 pub fn record_write(config: &Config, record: NewMcpWriteRecord) -> Result<i64> {
-    let args_summary = serde_json::to_string(&record.args_summary)
-        .context("failed to serialize mcp write args_summary")?;
-    memory_tree::store::with_connection(config, |conn| {
-        conn.execute(
+    log::debug!(
+        "[mcp_audit] record_write enter tool={} client={} timestamp_ms={} success={} has_error={}",
+        record.tool_name,
+        record.client_info,
+        record.timestamp_ms,
+        record.success,
+        record.error_message.is_some()
+    );
+    let args_summary = match serde_json::to_string(&record.args_summary) {
+        Ok(args_summary) => {
+            log::trace!(
+                "[mcp_audit] record_write args_summary serialized tool={} bytes={}",
+                record.tool_name,
+                args_summary.len()
+            );
+            args_summary
+        }
+        Err(err) => {
+            log::warn!(
+                "[mcp_audit] record_write args_summary serialize failed tool={} client={} error={err}",
+                record.tool_name,
+                record.client_info
+            );
+            return Err(anyhow::Error::new(err))
+                .context("failed to serialize mcp write args_summary");
+        }
+    };
+    let result = memory_tree::store::with_connection(config, |conn| {
+        log::trace!(
+            "[mcp_audit] record_write inserting row tool={} client={} timestamp_ms={}",
+            record.tool_name,
+            record.client_info,
+            record.timestamp_ms
+        );
+        match conn.execute(
             "INSERT INTO mcp_writes (
                 timestamp_ms,
                 client_info,
@@ -26,21 +57,55 @@ pub fn record_write(config: &Config, record: NewMcpWriteRecord) -> Result<i64> {
             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 record.timestamp_ms,
-                record.client_info,
-                record.tool_name,
-                args_summary,
-                record.resulting_chunk_id,
+                &record.client_info,
+                &record.tool_name,
+                &args_summary,
+                record.resulting_chunk_id.as_deref(),
                 if record.success { 1_i64 } else { 0_i64 },
-                record.error_message,
+                record.error_message.as_deref(),
             ],
-        )
-        .context("failed to insert mcp_writes audit row")?;
+        ) {
+            Ok(_) => {}
+            Err(err) => {
+                log::warn!(
+                    "[mcp_audit] record_write insert failed tool={} client={} timestamp_ms={} error={err}",
+                    record.tool_name,
+                    record.client_info,
+                    record.timestamp_ms
+                );
+                return Err(anyhow::Error::new(err))
+                    .context("failed to insert mcp_writes audit row");
+            }
+        }
         Ok(conn.last_insert_rowid())
-    })
+    });
+    match &result {
+        Ok(row_id) => log::debug!(
+            "[mcp_audit] record_write exit row_id={} tool={} client={}",
+            row_id,
+            record.tool_name,
+            record.client_info
+        ),
+        Err(err) => log::warn!(
+            "[mcp_audit] record_write failed tool={} client={} error={err}",
+            record.tool_name,
+            record.client_info
+        ),
+    }
+    result
 }
 
 pub fn list_writes(config: &Config, query: &McpWriteListQuery) -> Result<Vec<McpWriteRecord>> {
-    memory_tree::store::with_connection(config, |conn| {
+    log::debug!(
+        "[mcp_audit] list_writes enter since_ms={:?} limit={:?} offset={:?} client_filter={:?} tool_filter={:?} success_only={:?}",
+        query.since_ms,
+        query.limit,
+        query.offset,
+        query.client_filter,
+        query.tool_filter,
+        query.success_only
+    );
+    let result = memory_tree::store::with_connection(config, |conn| {
         let mut sql = String::from(
             "SELECT
                 id,
@@ -59,37 +124,71 @@ pub fn list_writes(config: &Config, query: &McpWriteListQuery) -> Result<Vec<Mcp
         if let Some(since_ms) = query.since_ms {
             sql.push_str(" AND timestamp_ms >= ?");
             bound.push(Box::new(u64_to_i64(since_ms, "since_ms")?));
+            log::trace!("[mcp_audit] list_writes applied since_ms filter={since_ms}");
         }
         if let Some(client) = normalized_filter(query.client_filter.as_deref()) {
             sql.push_str(" AND client_info = ?");
             bound.push(Box::new(client.to_string()));
+            log::trace!("[mcp_audit] list_writes applied client filter={client}");
         }
         if let Some(tool) = normalized_filter(query.tool_filter.as_deref()) {
             sql.push_str(" AND tool_name = ?");
             bound.push(Box::new(tool.to_string()));
+            log::trace!("[mcp_audit] list_writes applied tool filter={tool}");
         }
         if query.success_only.unwrap_or(false) {
             sql.push_str(" AND success = 1");
+            log::trace!("[mcp_audit] list_writes applied success_only filter");
         }
 
         sql.push_str(" ORDER BY timestamp_ms DESC, id DESC LIMIT ? OFFSET ?");
-        bound.push(Box::new(normalized_limit(query.limit)?));
-        bound.push(Box::new(normalized_offset(query.offset)?));
+        let limit = normalized_limit(query.limit)?;
+        let offset = normalized_offset(query.offset)?;
+        bound.push(Box::new(limit));
+        bound.push(Box::new(offset));
+        log::trace!(
+            "[mcp_audit] list_writes sql={} bound_count={} limit={} offset={}",
+            sql,
+            bound.len(),
+            limit,
+            offset
+        );
 
         let refs = bound
             .iter()
             .map(|value| value.as_ref() as &dyn ToSql)
             .collect::<Vec<_>>();
-        let mut stmt = conn
-            .prepare(&sql)
-            .context("failed to prepare mcp_writes list query")?;
-        let rows = stmt
-            .query_map(refs.as_slice(), row_to_record)
-            .context("failed to query mcp_writes")?
-            .collect::<rusqlite::Result<Vec<_>>>()
-            .context("failed to collect mcp_writes rows")?;
+        log::trace!("[mcp_audit] list_writes preparing query");
+        let mut stmt = match conn.prepare(&sql) {
+            Ok(stmt) => stmt,
+            Err(err) => {
+                log::warn!("[mcp_audit] list_writes prepare failed error={err}");
+                return Err(anyhow::Error::new(err))
+                    .context("failed to prepare mcp_writes list query");
+            }
+        };
+        log::trace!("[mcp_audit] list_writes executing query");
+        let mapped = match stmt.query_map(refs.as_slice(), row_to_record) {
+            Ok(mapped) => mapped,
+            Err(err) => {
+                log::warn!("[mcp_audit] list_writes query failed error={err}");
+                return Err(anyhow::Error::new(err)).context("failed to query mcp_writes");
+            }
+        };
+        let rows = match mapped.collect::<rusqlite::Result<Vec<_>>>() {
+            Ok(rows) => rows,
+            Err(err) => {
+                log::warn!("[mcp_audit] list_writes collect failed error={err}");
+                return Err(anyhow::Error::new(err)).context("failed to collect mcp_writes rows");
+            }
+        };
+        log::debug!("[mcp_audit] list_writes exit rows={}", rows.len());
         Ok(rows)
-    })
+    });
+    if let Err(err) = &result {
+        log::warn!("[mcp_audit] list_writes failed error={err}");
+    }
+    result
 }
 
 fn normalized_limit(limit: Option<u64>) -> Result<i64> {
