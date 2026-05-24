@@ -352,8 +352,11 @@ async fn inline_complete_interactive_does_not_block_on_held_permit() {
 }
 
 #[tokio::test]
-async fn prompt_interactive_does_not_block_when_signed_out() {
+async fn prompt_interactive_does_not_block_on_held_permit() {
     let _guard = crate::openhuman::inference::inference_test_guard();
+
+    let _held = crate::openhuman::scheduler_gate::gate::try_acquire_llm_permit()
+        .expect("test must start with a free permit");
 
     let app = Router::new().route(
         "/api/generate",
@@ -371,8 +374,6 @@ async fn prompt_interactive_does_not_block_when_signed_out() {
     }
 
     let config = enabled_config();
-    crate::openhuman::scheduler_gate::init_global(&config);
-    let _signed_out = crate::openhuman::scheduler_gate::SignedOutTestGuard::set(true);
     let service = ready_service(&config);
 
     let result = tokio::time::timeout(
@@ -386,14 +387,17 @@ async fn prompt_interactive_does_not_block_when_signed_out() {
     }
 
     let reply = result
-        .expect("interactive prompt must not block when scheduler gate is signed out")
+        .expect("interactive prompt must not block on a held permit")
         .expect("interactive prompt response");
     assert_eq!(reply, "hello from mock");
 }
 
 #[tokio::test]
-async fn chat_with_history_interactive_does_not_block_when_signed_out() {
+async fn chat_with_history_interactive_does_not_block_on_held_permit() {
     let _guard = crate::openhuman::inference::inference_test_guard();
+
+    let _held = crate::openhuman::scheduler_gate::gate::try_acquire_llm_permit()
+        .expect("test must start with a free permit");
 
     let app = Router::new().route(
         "/api/chat",
@@ -411,8 +415,6 @@ async fn chat_with_history_interactive_does_not_block_when_signed_out() {
     }
 
     let config = enabled_config();
-    crate::openhuman::scheduler_gate::init_global(&config);
-    let _signed_out = crate::openhuman::scheduler_gate::SignedOutTestGuard::set(true);
     let service = ready_service(&config);
 
     let result = tokio::time::timeout(
@@ -435,7 +437,7 @@ async fn chat_with_history_interactive_does_not_block_when_signed_out() {
     }
 
     let reply = result
-        .expect("interactive chat must not block when scheduler gate is signed out")
+        .expect("interactive chat must not block on a held permit")
         .expect("interactive chat response");
     assert_eq!(reply, "history reply");
 }
