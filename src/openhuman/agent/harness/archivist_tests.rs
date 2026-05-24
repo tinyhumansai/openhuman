@@ -1,7 +1,7 @@
 use super::*;
 use crate::openhuman::agent::hooks::{ToolCallRecord, TurnContext};
 use crate::openhuman::memory::store::{events as ev, fts5, segments as seg};
-use crate::openhuman::memory::tree::chat::ChatPrompt;
+use crate::openhuman::memory_tree::chat::ChatPrompt;
 
 fn setup_conn() -> Arc<Mutex<Connection>> {
     let conn = Connection::open_in_memory().unwrap();
@@ -343,7 +343,7 @@ async fn phase0_episodic_rows_and_segment_without_learning_enabled() {
 struct StubChatProvider;
 
 #[async_trait::async_trait]
-impl crate::openhuman::memory::tree::chat::ChatProvider for StubChatProvider {
+impl crate::openhuman::memory_tree::chat::ChatProvider for StubChatProvider {
     fn name(&self) -> &str {
         "stub:test"
     }
@@ -361,7 +361,7 @@ impl crate::openhuman::memory::tree::chat::ChatProvider for StubChatProvider {
 struct StubEmbedder;
 
 #[async_trait::async_trait]
-impl crate::openhuman::memory::tree::score::embed::Embedder for StubEmbedder {
+impl crate::openhuman::memory_tree::score::embed::Embedder for StubEmbedder {
     fn name(&self) -> &'static str {
         "stub-embedder-v1"
     }
@@ -546,7 +546,7 @@ async fn phase1_flush_open_segment_finalizes_trailing_segment() {
 //   g) flush_open_segment also triggers tree ingest.
 
 use crate::openhuman::config::Config;
-use crate::openhuman::memory::tree::store::{count_chunks, list_chunks, ListChunksQuery};
+use crate::openhuman::memory_tree::store::{count_chunks, list_chunks, ListChunksQuery};
 use tempfile::TempDir;
 
 /// Build a Config that points at a temp workspace, suitable for tree-ingest tests.

@@ -6,7 +6,9 @@ on:
     paths:
       - Dockerfile
       - .dockerignore
+      - .gitattributes
       - docker-compose.yml
+      - scripts/docker-entrypoint-core.sh
       - .do/app.yaml
       - gitbooks/developing/cloud-deploy.md
       - .github/workflows/deploy-smoke.yml
@@ -18,7 +20,9 @@ on:
     paths:
       - Dockerfile
       - .dockerignore
+      - .gitattributes
       - docker-compose.yml
+      - scripts/docker-entrypoint-core.sh
       - .do/app.yaml
       - gitbooks/developing/cloud-deploy.md
       - .github/workflows/deploy-smoke.yml

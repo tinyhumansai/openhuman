@@ -300,6 +300,18 @@ const pt4: TranslationMap = {
   'settings.ai.localOllama': 'Local (Ollama)',
   'settings.ai.modelLabel': 'Modelo',
   'settings.ai.noCustomProviders': 'Sem provedores personalizados',
+  'settings.ai.openAiCompat.authHeaderExample': 'Authorization: Bearer <your key>',
+  'settings.ai.openAiCompat.authHeaderLabel': 'Auth header',
+  'settings.ai.openAiCompat.baseUrlLabel': 'Base URL',
+  'settings.ai.openAiCompat.baseUrlUnavailable': 'Unavailable',
+  'settings.ai.openAiCompat.clearKey': 'Clear key',
+  'settings.ai.openAiCompat.description':
+    "Point local harnesses at this /v1 server to route through the providers configured below. Authentication uses a stable key you set here, not the app's internal core bearer.",
+  'settings.ai.openAiCompat.keyConfigured': 'Key configured',
+  'settings.ai.openAiCompat.keyRequired': 'Key required',
+  'settings.ai.openAiCompat.rotateKey': 'Rotate key',
+  'settings.ai.openAiCompat.setKey': 'Set key',
+  'settings.ai.openAiCompat.title': 'OpenAI-compatible endpoint',
   'settings.ai.providerLabel': 'Provedor',
   'settings.ai.routing': 'Roteamento',
   'settings.ai.routingCustom': 'Roteamento personalizado',
@@ -394,6 +406,17 @@ const pt4: TranslationMap = {
   'pages.settings.account.migration': 'Importar de outro assistente',
   'pages.settings.account.migrationDesc':
     'Migre memória e anotações do OpenClaw (e, em breve, do Hermes) para este espaço de trabalho.',
+  'composio.connect.scope.read': 'Read',
+  'composio.connect.scope.readHint': 'Allow the agent to read data from this connection.',
+  'composio.connect.scope.write': 'Write',
+  'composio.connect.scope.writeHint':
+    'Allow the agent to create or modify data through this connection.',
+  'composio.connect.scope.admin': 'Admin',
+  'composio.connect.scope.adminHint':
+    'Allow the agent to manage settings, permissions, or destructive actions.',
+  'pages.settings.composioSection.title': 'Composio',
+  'pages.settings.composioSection.description':
+    'Routing, triggers, and history for integrations powered by Composio.',
 };
 
 export default pt4;

@@ -12,13 +12,19 @@ import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
 const PROVIDERS = ['gmail', 'slack', 'discord', 'whatsapp'];
 
+interface NotificationRoutingPanelProps {
+  /** When embedded inside the tabbed Notifications page, the parent owns the
+      `<SettingsHeader>` chrome and we render only the body. */
+  embedded?: boolean;
+}
+
 /**
  * Settings panel for the notification intelligence / routing pipeline.
  *
  * Currently exposes a global explanation card. Per-provider threshold
  * controls will populate here as providers are connected.
  */
-const NotificationRoutingPanel = () => {
+const NotificationRoutingPanel = ({ embedded = false }: NotificationRoutingPanelProps = {}) => {
   const { t } = useT();
   const { navigateBack, breadcrumbs } = useSettingsNavigation();
   const providers = PROVIDERS;
@@ -104,12 +110,14 @@ const NotificationRoutingPanel = () => {
 
   return (
     <div>
-      <SettingsHeader
-        title={t('notifications.routingTitle')}
-        showBackButton={true}
-        onBack={navigateBack}
-        breadcrumbs={breadcrumbs}
-      />
+      {!embedded && (
+        <SettingsHeader
+          title={t('notifications.routingTitle')}
+          showBackButton={true}
+          onBack={navigateBack}
+          breadcrumbs={breadcrumbs}
+        />
+      )}
 
       <div className="p-4 space-y-4">
         {stats && (

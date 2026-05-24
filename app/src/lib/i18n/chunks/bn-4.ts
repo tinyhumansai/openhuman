@@ -297,6 +297,18 @@ const bn4: TranslationMap = {
   'settings.ai.localOllama': 'লোকাল (Ollama)',
   'settings.ai.modelLabel': 'মডেল',
   'settings.ai.noCustomProviders': 'কোনো কাস্টম প্রোভাইডার নেই',
+  'settings.ai.openAiCompat.authHeaderExample': 'Authorization: Bearer <your key>',
+  'settings.ai.openAiCompat.authHeaderLabel': 'Auth header',
+  'settings.ai.openAiCompat.baseUrlLabel': 'Base URL',
+  'settings.ai.openAiCompat.baseUrlUnavailable': 'Unavailable',
+  'settings.ai.openAiCompat.clearKey': 'Clear key',
+  'settings.ai.openAiCompat.description':
+    "Point local harnesses at this /v1 server to route through the providers configured below. Authentication uses a stable key you set here, not the app's internal core bearer.",
+  'settings.ai.openAiCompat.keyConfigured': 'Key configured',
+  'settings.ai.openAiCompat.keyRequired': 'Key required',
+  'settings.ai.openAiCompat.rotateKey': 'Rotate key',
+  'settings.ai.openAiCompat.setKey': 'Set key',
+  'settings.ai.openAiCompat.title': 'OpenAI-compatible endpoint',
   'settings.ai.providerLabel': 'প্রোভাইডার',
   'settings.ai.routing': 'রুটিং',
   'settings.ai.routingCustom': 'কাস্টম রুটিং',
@@ -391,6 +403,17 @@ const bn4: TranslationMap = {
   'pages.settings.account.migration': 'অন্য সহকারী থেকে আমদানি করুন',
   'pages.settings.account.migrationDesc':
     'OpenClaw (এবং শীঘ্রই Hermes) থেকে মেমরি ও নোট এই ওয়ার্কস্পেসে স্থানান্তর করুন।',
+  'composio.connect.scope.read': 'Read',
+  'composio.connect.scope.readHint': 'Allow the agent to read data from this connection.',
+  'composio.connect.scope.write': 'Write',
+  'composio.connect.scope.writeHint':
+    'Allow the agent to create or modify data through this connection.',
+  'composio.connect.scope.admin': 'Admin',
+  'composio.connect.scope.adminHint':
+    'Allow the agent to manage settings, permissions, or destructive actions.',
+  'pages.settings.composioSection.title': 'Composio',
+  'pages.settings.composioSection.description':
+    'Routing, triggers, and history for integrations powered by Composio.',
 };
 
 export default bn4;

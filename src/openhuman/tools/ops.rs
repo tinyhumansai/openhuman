@@ -153,6 +153,7 @@ pub fn all_tools_with_runtime(
         Box::new(MemoryRecallTool::new(memory.clone())),
         Box::new(MemoryForgetTool::new(memory.clone(), security.clone())),
         Box::new(MemoryTreeTool),
+        Box::new(MemoryTreeWalkTool),
         // Explicit user-preference pinning — always registered so the model
         // can save user-stated preferences regardless of whether the full
         // inference-based learning subsystem is enabled.  The preference
@@ -286,6 +287,20 @@ pub fn all_tools_with_runtime(
             root_config.gitbooks.timeout_secs,
         )));
         tracing::debug!("[gitbooks] registered gitbooks_search + gitbooks_get_page");
+    }
+
+    // MCP setup-agent tool surface (search/get/request_secret/test/install).
+    // Registered unconditionally — the `mcp_setup` sub-agent filters to just
+    // these via its `[tools] named = [...]` allowlist, and the host agent's
+    // own tool list is wide enough that the extra five entries are negligible.
+    {
+        let cfg = Arc::new(root_config.clone());
+        tools.push(Box::new(McpSetupSearchTool::new(Arc::clone(&cfg))));
+        tools.push(Box::new(McpSetupGetTool::new(Arc::clone(&cfg))));
+        tools.push(Box::new(McpSetupRequestSecretTool::new()));
+        tools.push(Box::new(McpSetupTestConnectionTool::new(Arc::clone(&cfg))));
+        tools.push(Box::new(McpSetupInstallAndConnectTool::new(cfg)));
+        tracing::debug!("[mcp_setup] registered 5 setup-agent tools");
     }
 
     // Generic remote MCP bridge tools. These let the agent enumerate

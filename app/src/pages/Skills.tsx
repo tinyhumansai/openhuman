@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
 import ChannelSetupModal from '../components/channels/ChannelSetupModal';
+import McpServersTab from '../components/channels/mcp/McpServersTab';
 import ComposioConnectModal from '../components/composio/ComposioConnectModal';
 import {
   composioToolkitMeta,
@@ -9,6 +10,7 @@ import {
   KNOWN_COMPOSIO_TOOLKITS,
 } from '../components/composio/toolkitMeta';
 import { ToastContainer } from '../components/intelligence/Toast';
+import PillTabBar from '../components/PillTabBar';
 import AutocompleteSetupModal from '../components/skills/AutocompleteSetupModal';
 import CreateSkillModal from '../components/skills/CreateSkillModal';
 import InstallSkillDialog from '../components/skills/InstallSkillDialog';
@@ -35,8 +37,10 @@ import { useAgentReadyComposioToolkits, useComposioIntegrations } from '../lib/c
 import { canonicalizeComposioToolkitSlug } from '../lib/composio/toolkitSlug';
 import { type ComposioConnection, deriveComposioState } from '../lib/composio/types';
 import { useT } from '../lib/i18n/I18nContext';
+import { channelConnectionsApi } from '../services/api/channelConnectionsApi';
 import { skillsApi, type SkillSummary } from '../services/api/skillsApi';
-import { useAppSelector } from '../store/hooks';
+import { setDefaultMessagingChannel } from '../store/channelConnectionsSlice';
+import { useAppDispatch, useAppSelector } from '../store/hooks';
 import type { ChannelConnectionStatus, ChannelDefinition, ChannelType } from '../types/channels';
 import type { ToastNotification } from '../types/intelligence';
 import { IS_DEV } from '../utils/config';
@@ -321,10 +325,35 @@ interface SkillItem {
 
 // ─── Main Skills Page ──────────────────────────────────────────────────────────
 
+type ConnectionsTab = 'channels' | 'composio' | 'mcp';
+
 export default function Skills() {
   const { t } = useT();
   const location = useLocation();
   const navigate = useNavigate();
+  const [activeTab, setActiveTab] = useState<ConnectionsTab>('composio');
+  const dispatch = useAppDispatch();
+  const [defaultChannelBusy, setDefaultChannelBusy] = useState<ChannelType | null>(null);
+  const handleSetDefaultChannel = useCallback(
+    async (channel: ChannelType) => {
+      // Single-flight: ignore re-entries while a write is in progress so two
+      // back-to-back clicks can't interleave (would leave UI + persisted
+      // preference disagreeing on which channel won).
+      if (defaultChannelBusy !== null) return;
+      setDefaultChannelBusy(channel);
+      try {
+        // Persist first, then dispatch — on failure the UI keeps the previous
+        // selection and the user sees no false-positive flicker.
+        await channelConnectionsApi.updatePreferences(channel);
+        dispatch(setDefaultMessagingChannel(channel));
+      } catch (err) {
+        console.warn('[skills] default channel persist failed:', err);
+      } finally {
+        setDefaultChannelBusy(null);
+      }
+    },
+    [dispatch, defaultChannelBusy]
+  );
   const { definitions: channelDefs } = useChannelDefinitions();
   const channelConnections = useAppSelector(state => state.channelConnections);
 
@@ -864,9 +893,18 @@ export default function Skills() {
               </div>
             )}
 
+            <PillTabBar<ConnectionsTab>
+              selected={activeTab}
+              onChange={setActiveTab}
+              items={[
+                { value: 'composio', label: t('skills.tabs.composio') },
+                { value: 'channels', label: t('skills.tabs.channels') },
+                { value: 'mcp', label: t('skills.tabs.mcp') },
+              ]}
+            />
             {
               <>
-                {channelsGroup && (
+                {activeTab === 'channels' && channelsGroup && (
                   <div className="rounded-2xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-3 shadow-soft animate-fade-up">
                     <div className="px-1 pb-3 pt-1">
                       <h2
@@ -899,60 +937,107 @@ export default function Skills() {
                         </div>
                       ))}
                     </div>
+
+                    <div className="mt-4 pt-3 border-t border-stone-100 dark:border-neutral-800">
+                      <div className="text-[10px] font-semibold uppercase tracking-wider text-stone-500 dark:text-neutral-400 mb-2">
+                        {t('channels.defaultMessaging')}
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        {channelDefs.map(def => {
+                          const channelId = def.id as ChannelType;
+                          const selected = channelConnections.defaultMessagingChannel === channelId;
+                          return (
+                            <button
+                              key={channelId}
+                              type="button"
+                              onClick={() => void handleSetDefaultChannel(channelId)}
+                              disabled={defaultChannelBusy !== null}
+                              className={`rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${
+                                selected
+                                  ? 'border-primary-500/60 bg-primary-50 dark:bg-primary-500/10 text-primary-600 dark:text-primary-300'
+                                  : 'border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 text-stone-600 dark:text-neutral-300 hover:border-stone-300 dark:hover:border-neutral-700'
+                              }`}>
+                              {def.display_name}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
                   </div>
                 )}
 
                 {/* <MeetingBotsCard onToast={addToast} /> */}
 
-                <div className="rounded-2xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-3 shadow-soft animate-fade-up">
-                  <div className="px-1 pb-3 pt-1">
-                    <h2
-                      className="text-sm font-semibold text-stone-900 dark:text-neutral-100"
-                      data-walkthrough="skills-grid">
-                      {t('skills.integrations')}
-                    </h2>
-                    <p className="mt-0.5 text-[11px] leading-relaxed text-stone-500 dark:text-neutral-400">
-                      {t('skills.available')}
-                    </p>
-                  </div>
-                  <div className="space-y-3 px-1 pb-3">
-                    <SkillSearchBar value={searchQuery} onChange={setSearchQuery} />
-                    <SkillCategoryFilter
-                      categories={availableCategories}
-                      selected={selectedCategory}
-                      onChange={setSelectedCategory}
-                    />
-                  </div>
-                  {composioSortedEntries.length > 0 ? (
-                    <div
-                      className="grid gap-2 sm:gap-3"
-                      style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(5.5rem, 1fr))' }}>
-                      {composioSortedEntries.map(({ meta, connection }) => (
-                        <div key={meta.slug} data-testid={`skill-row-composio-${meta.slug}`}>
-                          <ComposioConnectorTile
-                            meta={meta}
-                            connection={connection}
-                            hasComposioError={Boolean(composioError)}
-                            isAgentReady={
-                              agentReadyLoading ||
-                              Boolean(agentReadyError) ||
-                              agentReadyToolkits.has(meta.slug)
-                            }
-                            testId={`skill-install-composio-${meta.slug}`}
-                            onOpen={() => setComposioModalToolkit(meta)}
-                            onRetryGlobal={() => void refreshComposio()}
-                          />
-                        </div>
-                      ))}
+                {activeTab === 'composio' && (
+                  <div className="rounded-2xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-3 shadow-soft animate-fade-up">
+                    <div className="px-1 pb-3 pt-1">
+                      <div className="flex items-center gap-2">
+                        <h2
+                          className="text-sm font-semibold text-stone-900 dark:text-neutral-100"
+                          data-walkthrough="skills-grid">
+                          {t('skills.integrations')}
+                        </h2>
+                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wider bg-primary-50 text-primary-700 dark:bg-primary-900/30 dark:text-primary-300 border border-primary-100 dark:border-primary-800/50">
+                          Powered by Composio
+                        </span>
+                      </div>
+                      <p className="mt-0.5 text-[11px] leading-relaxed text-stone-500 dark:text-neutral-400">
+                        {t('skills.integrationsSubtitle')}
+                      </p>
                     </div>
-                  ) : (
-                    <p className="px-1 py-4 text-center text-xs text-stone-400 dark:text-neutral-500">
-                      {t('skills.noResults')}
-                    </p>
-                  )}
-                </div>
+                    <div className="space-y-3 px-1 pb-3">
+                      <SkillSearchBar value={searchQuery} onChange={setSearchQuery} />
+                      <SkillCategoryFilter
+                        categories={availableCategories}
+                        selected={selectedCategory}
+                        onChange={setSelectedCategory}
+                      />
+                    </div>
+                    {composioSortedEntries.length > 0 ? (
+                      <div
+                        className="grid gap-2 sm:gap-3"
+                        style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(5.5rem, 1fr))' }}>
+                        {composioSortedEntries.map(({ meta, connection }) => (
+                          <div key={meta.slug} data-testid={`skill-row-composio-${meta.slug}`}>
+                            <ComposioConnectorTile
+                              meta={meta}
+                              connection={connection}
+                              hasComposioError={Boolean(composioError)}
+                              isAgentReady={
+                                agentReadyLoading ||
+                                Boolean(agentReadyError) ||
+                                agentReadyToolkits.has(meta.slug)
+                              }
+                              testId={`skill-install-composio-${meta.slug}`}
+                              onOpen={() => setComposioModalToolkit(meta)}
+                              onRetryGlobal={() => void refreshComposio()}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="px-1 py-4 text-center text-xs text-stone-400 dark:text-neutral-500">
+                        {t('skills.noResults')}
+                      </p>
+                    )}
+                  </div>
+                )}
 
-                {otherGroups.map(group => renderGroup(group))}
+                {activeTab === 'composio' && otherGroups.map(group => renderGroup(group))}
+
+                {activeTab === 'mcp' && (
+                  <div className="rounded-2xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 shadow-soft animate-fade-up">
+                    <div className="pb-3">
+                      <h2 className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
+                        {t('channels.mcp.title')}
+                      </h2>
+                      <p className="mt-0.5 text-[11px] leading-relaxed text-stone-500 dark:text-neutral-400">
+                        {t('channels.mcp.description')}
+                      </p>
+                    </div>
+                    <McpServersTab />
+                  </div>
+                )}
               </>
             }
           </div>

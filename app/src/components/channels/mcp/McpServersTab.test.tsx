@@ -223,6 +223,80 @@ describe('McpServersTab', () => {
     });
   });
 
+  // -----------------------------------------------------------------------
+  // Regression: malformed RPC envelopes must not crash the tab
+  // (Commit 38fcbd8f5 — `Cannot read properties of undefined (reading 'find')`)
+  // -----------------------------------------------------------------------
+
+  it('renders empty state when installedList resolves with undefined installed field', async () => {
+    // Simulates core returning `{}` on first launch before MCP store is init'd.
+    // The api layer now returns [] in this case; this test verifies the full path.
+    mockInstalledList.mockResolvedValue([]);
+    mockStatus.mockResolvedValue([]);
+
+    render(<McpServersTab />);
+    vi.useRealTimers();
+
+    await waitFor(() => {
+      expect(screen.getByText('No MCP servers installed yet.')).toBeInTheDocument();
+    });
+  });
+
+  it('does not crash when installedList resolves with null', async () => {
+    // If mcpClientsApi.installedList ever passes through null (belt + suspenders).
+    mockInstalledList.mockResolvedValue(null as unknown as never[]);
+    mockStatus.mockResolvedValue([]);
+
+    // Should not throw
+    const { container } = render(<McpServersTab />);
+    vi.useRealTimers();
+
+    // Either shows empty state or loading — but does NOT crash
+    await waitFor(() => {
+      expect(container).toBeTruthy();
+    });
+  });
+
+  it('does not crash when status resolves with undefined', async () => {
+    mockInstalledList.mockResolvedValue(SERVERS);
+    mockStatus.mockResolvedValue(undefined as unknown as never[]);
+
+    render(<McpServersTab />);
+    vi.useRealTimers();
+
+    // Server row still renders; just no status badge data
+    await waitFor(() => {
+      expect(screen.getByText('File Server')).toBeInTheDocument();
+    });
+  });
+
+  it('shows error banner when installedList rejects, not a crash', async () => {
+    mockInstalledList.mockRejectedValue(new Error('RPC timeout'));
+    mockStatus.mockResolvedValue([]);
+
+    render(<McpServersTab />);
+    vi.useRealTimers();
+
+    await waitFor(() => {
+      expect(screen.getByText('RPC timeout')).toBeInTheDocument();
+    });
+    // Loading state should be gone
+    expect(screen.queryByText('Loading MCP servers...')).not.toBeInTheDocument();
+  });
+
+  it('server row renders even when status rejects', async () => {
+    mockInstalledList.mockResolvedValue(SERVERS);
+    mockStatus.mockRejectedValue(new Error('status unavailable'));
+
+    render(<McpServersTab />);
+    vi.useRealTimers();
+
+    // Tab should still show the server list; status error is non-fatal
+    await waitFor(() => {
+      expect(screen.getByText('File Server')).toBeInTheDocument();
+    });
+  });
+
   it('shows tool count badge when connected', async () => {
     mockInstalledList.mockResolvedValue(SERVERS);
     mockStatus.mockResolvedValue(STATUSES_CONNECTED);

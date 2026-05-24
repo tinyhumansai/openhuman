@@ -170,14 +170,19 @@ function formatAgentProfileAgentLabel(agentId: string): string {
     .join(' ');
 }
 
-const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsProps = {}) => {
+const Conversations = ({
+  variant = 'page',
+  composer: composerProp = 'text',
+}: ConversationsProps = {}) => {
+  const [composerOverride, setComposerOverride] = useState<'mic-cloud' | 'text' | null>(null);
+  const composer = composerOverride ?? composerProp;
   const { t } = useT();
   const dispatch = useAppDispatch();
   const navigate = useNavigate();
   const { threads, selectedThreadId, messages, isLoadingMessages, messagesError, activeThreadId } =
     useAppSelector(state => state.thread);
 
-  const [showSidebar, setShowSidebar] = useState(true);
+  const [showSidebar, setShowSidebar] = useState(false);
   const [inputValue, setInputValue] = useState('');
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [inputMode, setInputMode] = useState<InputMode>('text');
@@ -1843,15 +1848,18 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
           )}
 
           {composer === 'mic-cloud' ? (
-            <MicComposer
-              // Without `!selectedThreadId`, a mic submit before a thread is
-              // ready hits `handleSendMessage`'s early return and the
-              // transcript is silently dropped — the user spoke into the void.
-              disabled={composerInteractionBlocked || isSending || !selectedThreadId}
-              onSubmit={text => handleSendMessage(text)}
-              onError={message => setSendError(chatSendError('voice_transcription', message))}
-              showDeviceSelector
-            />
+            <div className="flex flex-col items-center gap-3 py-1">
+              <MicComposer
+                // Without `!selectedThreadId`, a mic submit before a thread is
+                // ready hits `handleSendMessage`'s early return and the
+                // transcript is silently dropped — the user spoke into the void.
+                disabled={composerInteractionBlocked || isSending || !selectedThreadId}
+                onSubmit={text => handleSendMessage(text)}
+                onError={message => setSendError(chatSendError('voice_transcription', message))}
+                showDeviceSelector
+                onSwitchToText={() => setComposerOverride('text')}
+              />
+            </div>
           ) : inputMode === 'text' ? (
             <div className="flex items-end gap-3">
               <div className="relative flex flex-1 items-center justify-center rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 transition-all focus-within:border-primary-500/50 focus-within:ring-1 focus-within:ring-primary-500/50">
@@ -1881,6 +1889,28 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                 />
                 {/* Voice input mic hidden per #717 (inputMode='voice' path retained). */}
               </div>
+              <button
+                type="button"
+                aria-label={t('mic.startRecording')}
+                title={t('mic.startRecording')}
+                onClick={() => setComposerOverride('mic-cloud')}
+                disabled={composerInteractionBlocked || isSending}
+                className="w-10 h-10 flex items-center justify-center rounded-full border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-stone-500 dark:text-neutral-400 hover:text-primary-500 dark:hover:text-primary-400 hover:border-primary-300 dark:hover:border-primary-700 transition-colors flex-shrink-0 disabled:opacity-40 disabled:cursor-not-allowed">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"
+                  />
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M19 10v2a7 7 0 01-14 0v-2M12 19v4m-4 0h8"
+                  />
+                </svg>
+              </button>
               <button
                 data-testid="send-message-button"
                 aria-label={t('chat.send')}

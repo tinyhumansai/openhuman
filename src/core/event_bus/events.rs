@@ -516,6 +516,16 @@ pub enum DomainEvent {
         success: bool,
         elapsed_ms: u64,
     },
+    /// The MCP setup agent asked the user for a secret value. The UI
+    /// subscribes to this and renders a native prompt; on submit it calls
+    /// `openhuman.mcp_setup_submit_secret`. `ref_id` is the opaque handle
+    /// returned to the agent; the raw secret value never traverses this
+    /// event.
+    McpSetupSecretRequested {
+        ref_id: String,
+        key_name: String,
+        prompt: String,
+    },
 
     // ── System lifecycle ────────────────────────────────────────────────
     /// A system component started up.
@@ -638,7 +648,8 @@ impl DomainEvent {
             Self::McpServerInstalled { .. }
             | Self::McpServerConnected { .. }
             | Self::McpServerDisconnected { .. }
-            | Self::McpClientToolExecuted { .. } => "mcp_client",
+            | Self::McpClientToolExecuted { .. }
+            | Self::McpSetupSecretRequested { .. } => "mcp_client",
         }
     }
 }

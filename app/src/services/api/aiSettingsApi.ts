@@ -15,7 +15,7 @@
  * through this file. Keeps the wiring testable and the panel focused on
  * presentation.
  */
-import { callCoreRpc } from '../../services/coreRpcClient';
+import { callCoreRpc, getCoreHttpBaseUrl } from '../../services/coreRpcClient';
 import {
   authListProviderCredentials,
   type AuthProfileSummary,
@@ -119,6 +119,11 @@ export interface AISettings {
   routing: Record<WorkloadId, ProviderRef>;
 }
 
+export interface OpenAICompatEndpointStatus {
+  baseUrl: string | null;
+  has_api_key: boolean;
+}
+
 // ─── Read path: load + parse ───────────────────────────────────────────────
 
 /**
@@ -175,6 +180,10 @@ function authKeyForSlug(slug: string): string {
   return `provider:${slug}`;
 }
 
+function openAiCompatAuthProvider(): string {
+  return 'external-openai-compat';
+}
+
 /**
  * Loads the full AI settings view by joining:
  *  - the core's client-config snapshot (cloud_providers + *_provider fields)
@@ -218,6 +227,23 @@ export async function loadAISettings(): Promise<AISettings> {
   };
 
   return { cloudProviders, routing };
+}
+
+export async function loadOpenAICompatEndpointStatus(): Promise<OpenAICompatEndpointStatus> {
+  const [baseUrl, profilesRes] = await Promise.all([
+    getCoreHttpBaseUrl()
+      .then(url => `${url.replace(/\/$/, '')}/v1`)
+      .catch((): string | null => null),
+    authListProviderCredentials(openAiCompatAuthProvider()).catch(
+      (): { result: AuthProfileSummary[] } => ({ result: [] })
+    ),
+  ]);
+
+  const has_api_key = profilesRes.result.some(
+    profile => profile.provider.toLowerCase() === openAiCompatAuthProvider()
+  );
+
+  return { baseUrl, has_api_key };
 }
 
 // ─── Write path: diff + save ───────────────────────────────────────────────
@@ -298,6 +324,19 @@ export async function clearCloudProviderKey(slug: string): Promise<void> {
   // Clear the new-style key. Legacy bare-slug entries are left as-is
   // since we can't be sure they aren't used by other things.
   await authRemoveProviderCredentials({ provider: authKeyForSlug(slug), profile: 'default' });
+}
+
+export async function setOpenAICompatEndpointKey(apiKey: string): Promise<void> {
+  await authStoreProviderCredentials({
+    provider: openAiCompatAuthProvider(),
+    profile: 'default',
+    token: apiKey,
+    setActive: true,
+  });
+}
+
+export async function clearOpenAICompatEndpointKey(): Promise<void> {
+  await authRemoveProviderCredentials({ provider: openAiCompatAuthProvider(), profile: 'default' });
 }
 
 /**

@@ -50,6 +50,14 @@ export interface StartLoopbackOptions {
 }
 
 /**
+ * The JS-side `listen()` handler from a previous call. We unsubscribe it
+ * before starting a new listener so a single Rust emit can't fan out to
+ * multiple stale handlers (happens when the user re-clicks before the
+ * previous OAuth round-trip completes).
+ */
+let activeUnlisten: UnlistenFn | null = null;
+
+/**
  * Start a one-shot loopback listener. Returns `null` if not running inside
  * Tauri, or if the shell fails to bind (port in use, etc) — the caller should
  * then fall back to the `openhuman://` deep-link redirect.
@@ -57,6 +65,11 @@ export interface StartLoopbackOptions {
 export const startLoopbackOauthListener = async (
   options: StartLoopbackOptions = {}
 ): Promise<LoopbackHandle | null> => {
+  if (activeUnlisten) {
+    const prev = activeUnlisten;
+    activeUnlisten = null;
+    prev();
+  }
   if (!isTauri()) {
     return null;
   }
@@ -93,11 +106,15 @@ export const startLoopbackOauthListener = async (
 
       listen<CallbackPayload>(CALLBACK_EVENT, event => {
         window.clearTimeout(timer);
-        if (unlisten) unlisten();
+        if (unlisten) {
+          unlisten();
+          if (activeUnlisten === unlisten) activeUnlisten = null;
+        }
         resolve(event.payload.url);
       })
         .then(fn => {
           unlisten = fn;
+          activeUnlisten = fn;
         })
         .catch(err => {
           window.clearTimeout(timer);

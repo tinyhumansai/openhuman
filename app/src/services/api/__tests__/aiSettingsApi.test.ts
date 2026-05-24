@@ -11,10 +11,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   type AISettings,
   clearCloudProviderKey,
+  clearOpenAICompatEndpointKey,
   flushCloudProviders,
   listProviderModels,
   loadAISettings,
   loadLocalProviderSnapshot,
+  loadOpenAICompatEndpointStatus,
   localProvider,
   parseProviderString,
   type ProviderRef,
@@ -22,6 +24,7 @@ import {
   serializeProviderRef,
   setCloudProviderKey,
   setLocalRuntimeEnabled,
+  setOpenAICompatEndpointKey,
 } from '../aiSettingsApi';
 
 // ─── Mock declarations (must be hoisted before imports) ───────────────────────
@@ -33,13 +36,17 @@ const mockOpenhumanUpdateLocalAiSettings = vi.fn();
 const mockAuthStoreProviderCredentials = vi.fn();
 const mockAuthRemoveProviderCredentials = vi.fn();
 const mockCallCoreRpc = vi.fn();
+const mockGetCoreHttpBaseUrl = vi.fn();
 const mockIsTauri = vi.fn(() => true);
 const mockOpenhumanLocalAiStatus = vi.fn();
 const mockOpenhumanLocalAiDiagnostics = vi.fn();
 const mockOpenhumanLocalAiPresets = vi.fn();
 const mockOpenhumanLocalAiApplyPreset = vi.fn();
 
-vi.mock('../../coreRpcClient', () => ({ callCoreRpc: (a: unknown) => mockCallCoreRpc(a) }));
+vi.mock('../../coreRpcClient', () => ({
+  callCoreRpc: (a: unknown) => mockCallCoreRpc(a),
+  getCoreHttpBaseUrl: () => mockGetCoreHttpBaseUrl(),
+}));
 
 vi.mock('../../../utils/tauriCommands/common', () => ({
   isTauri: () => mockIsTauri(),
@@ -458,6 +465,34 @@ describe('loadAISettings', () => {
   });
 });
 
+describe('loadOpenAICompatEndpointStatus', () => {
+  beforeEach(() => {
+    mockGetCoreHttpBaseUrl.mockReset();
+    mockAuthListProviderCredentials.mockReset();
+  });
+
+  it('returns the local /v1 base URL and configured-key status', async () => {
+    mockGetCoreHttpBaseUrl.mockResolvedValue('http://127.0.0.1:7788');
+    mockAuthListProviderCredentials.mockResolvedValue(
+      makeAuthProfileResult([{ id: 'prof-external', provider: 'external-openai-compat' }])
+    );
+
+    const status = await loadOpenAICompatEndpointStatus();
+
+    expect(mockAuthListProviderCredentials).toHaveBeenCalledWith('external-openai-compat');
+    expect(status).toEqual({ baseUrl: 'http://127.0.0.1:7788/v1', has_api_key: true });
+  });
+
+  it('degrades gracefully when URL resolution or auth-list lookup fails', async () => {
+    mockGetCoreHttpBaseUrl.mockRejectedValue(new Error('unavailable'));
+    mockAuthListProviderCredentials.mockRejectedValue(new Error('no profiles file'));
+
+    const status = await loadOpenAICompatEndpointStatus();
+
+    expect(status).toEqual({ baseUrl: null, has_api_key: false });
+  });
+});
+
 describe('local provider facade', () => {
   beforeEach(() => {
     mockOpenhumanUpdateLocalAiSettings.mockReset();
@@ -689,6 +724,35 @@ describe('clearCloudProviderKey', () => {
   it('is a no-op for "openhuman" (session-managed, no key to clear)', async () => {
     await clearCloudProviderKey('openhuman');
     expect(mockAuthRemoveProviderCredentials).not.toHaveBeenCalled();
+  });
+});
+
+describe('OpenAI-compatible endpoint key helpers', () => {
+  beforeEach(() => {
+    mockAuthStoreProviderCredentials.mockReset();
+    mockAuthStoreProviderCredentials.mockResolvedValue({ result: {} });
+    mockAuthRemoveProviderCredentials.mockReset();
+    mockAuthRemoveProviderCredentials.mockResolvedValue({ result: { removed: true } });
+  });
+
+  it('stores the endpoint bearer under the dedicated provider id', async () => {
+    await setOpenAICompatEndpointKey('router-key');
+
+    expect(mockAuthStoreProviderCredentials).toHaveBeenCalledWith({
+      provider: 'external-openai-compat',
+      profile: 'default',
+      token: 'router-key',
+      setActive: true,
+    });
+  });
+
+  it('clears the endpoint bearer under the dedicated provider id', async () => {
+    await clearOpenAICompatEndpointKey();
+
+    expect(mockAuthRemoveProviderCredentials).toHaveBeenCalledWith({
+      provider: 'external-openai-compat',
+      profile: 'default',
+    });
   });
 });
 

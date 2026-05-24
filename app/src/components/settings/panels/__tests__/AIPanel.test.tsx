@@ -3,11 +3,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { listConnections as listComposioConnections } from '../../../../lib/composio/composioApi';
 import {
+  clearOpenAICompatEndpointKey,
   listProviderModels,
   loadAISettings,
   loadLocalProviderSnapshot,
+  loadOpenAICompatEndpointStatus,
   saveAISettings,
   setCloudProviderKey,
+  setOpenAICompatEndpointKey,
 } from '../../../../services/api/aiSettingsApi';
 import { creditsApi } from '../../../../services/api/creditsApi';
 import { renderWithProviders } from '../../../../test/test-utils';
@@ -18,7 +21,7 @@ import {
   openhumanHeartbeatSettingsSet,
   openhumanHeartbeatTickNow,
 } from '../../../../utils/tauriCommands/heartbeat';
-import AIPanel from '../AIPanel';
+import AIPanel, { BackgroundLoopControls } from '../AIPanel';
 
 vi.mock('../../../../services/api/aiSettingsApi', () => ({
   ALL_WORKLOADS: [
@@ -33,8 +36,11 @@ vi.mock('../../../../services/api/aiSettingsApi', () => ({
     'subconscious',
   ],
   loadAISettings: vi.fn(),
+  loadOpenAICompatEndpointStatus: vi.fn(),
   saveAISettings: vi.fn(),
   loadLocalProviderSnapshot: vi.fn(),
+  setOpenAICompatEndpointKey: vi.fn(),
+  clearOpenAICompatEndpointKey: vi.fn().mockResolvedValue(undefined),
   setCloudProviderKey: vi.fn(),
   clearCloudProviderKey: vi.fn().mockResolvedValue(undefined),
   serializeProviderRef: vi.fn((r: { kind: string; providerSlug?: string; model?: string }) =>
@@ -189,7 +195,13 @@ describe('AIPanel', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(loadAISettings).mockResolvedValue(baseSettings);
+    vi.mocked(loadOpenAICompatEndpointStatus).mockResolvedValue({
+      baseUrl: 'http://127.0.0.1:7788/v1',
+      has_api_key: false,
+    });
     vi.mocked(loadLocalProviderSnapshot).mockResolvedValue(baseLocalSnapshot);
+    vi.mocked(setOpenAICompatEndpointKey).mockResolvedValue(undefined);
+    vi.mocked(clearOpenAICompatEndpointKey).mockResolvedValue(undefined);
     vi.mocked(setCloudProviderKey).mockResolvedValue(undefined);
     vi.mocked(listProviderModels).mockResolvedValue([]);
     vi.mocked(openhumanHeartbeatSettingsGet).mockResolvedValue({
@@ -229,6 +241,69 @@ describe('AIPanel', () => {
     expect(screen.queryByText(/^Auth$/)).not.toBeInTheDocument();
     expect(screen.queryByText(/^Cloud providers$/)).not.toBeInTheDocument();
     expect(screen.getAllByText(/^Routing$/).length).toBeGreaterThan(0);
+  });
+
+  it('renders the OpenAI-compatible endpoint card with the local /v1 base URL', async () => {
+    renderWithProviders(<AIPanel />);
+
+    await waitFor(() => expect(screen.getByText('OpenAI-compatible endpoint')).toBeInTheDocument());
+    expect(screen.getByDisplayValue('http://127.0.0.1:7788/v1')).toBeInTheDocument();
+    expect(screen.getByText(/Authorization: Bearer/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Set key' })).toBeInTheDocument();
+  });
+
+  it('renders Rotate/Clear controls when an OpenAI-compat key is configured', async () => {
+    vi.mocked(loadOpenAICompatEndpointStatus).mockResolvedValueOnce({
+      baseUrl: 'http://127.0.0.1:7788/v1',
+      has_api_key: true,
+    });
+    renderWithProviders(<AIPanel />);
+
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Rotate key' })).toBeInTheDocument()
+    );
+    expect(screen.getByRole('button', { name: 'Clear key' })).toBeInTheDocument();
+    expect(screen.getByText('Key configured')).toBeInTheDocument();
+  });
+
+  it('falls back to the localized "Unavailable" base URL when resolution fails', async () => {
+    vi.mocked(loadOpenAICompatEndpointStatus).mockRejectedValueOnce(new Error('boom'));
+    renderWithProviders(<AIPanel />);
+
+    await waitFor(() => expect(screen.getByDisplayValue('Unavailable')).toBeInTheDocument());
+  });
+
+  it('clears the OpenAI-compat key when the Clear button is clicked', async () => {
+    vi.mocked(loadOpenAICompatEndpointStatus).mockResolvedValueOnce({
+      baseUrl: 'http://127.0.0.1:7788/v1',
+      has_api_key: true,
+    });
+    renderWithProviders(<AIPanel />);
+
+    const clearBtn = await screen.findByRole('button', { name: 'Clear key' });
+    fireEvent.click(clearBtn);
+
+    await waitFor(() => expect(clearOpenAICompatEndpointKey).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Set key' })).toBeInTheDocument()
+    );
+  });
+
+  it('persists a new OpenAI-compat key via the Set key dialog', async () => {
+    renderWithProviders(<AIPanel />);
+
+    const setBtn = await screen.findByRole('button', { name: 'Set key' });
+    fireEvent.click(setBtn);
+
+    const input = await screen.findByLabelText(/API Key/i);
+    fireEvent.change(input, { target: { value: 'sk-test-12345' } });
+    const submit = screen.getByRole('button', { name: /^Save$/ });
+    fireEvent.click(submit);
+
+    await waitFor(() => expect(setOpenAICompatEndpointKey).toHaveBeenCalledWith('sk-test-12345'));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Rotate key' })).toBeInTheDocument()
+    );
   });
 
   it('renders the OpenHuman primary card after load', async () => {
@@ -650,7 +725,14 @@ describe('AIPanel', () => {
   });
 
   it('renders background loop diagnostics with newest spend row and budget math', async () => {
-    renderWithProviders(<AIPanel />);
+    // BackgroundLoopControls was moved out of AIPanel into standalone panels.
+    renderWithProviders(
+      <BackgroundLoopControls
+        view="all"
+        routing={baseSettings.routing}
+        cloudProviders={baseSettings.cloudProviders}
+      />
+    );
 
     await waitFor(() => expect(screen.getByText('Background loops')).toBeInTheDocument());
 
@@ -701,7 +783,14 @@ describe('AIPanel', () => {
       return { result: { settings: currentSettings }, logs: [] };
     });
 
-    renderWithProviders(<AIPanel />);
+    // BackgroundLoopControls was moved out of AIPanel into standalone panels.
+    renderWithProviders(
+      <BackgroundLoopControls
+        view="all"
+        routing={baseSettings.routing}
+        cloudProviders={baseSettings.cloudProviders}
+      />
+    );
     await waitFor(() => expect(screen.getByText('Heartbeat controls')).toBeInTheDocument());
 
     const clickToggle = async (label: string, expectedPatch: Record<string, unknown>) => {
@@ -760,7 +849,14 @@ describe('AIPanel', () => {
     vi.mocked(openhumanHeartbeatSettingsGet).mockRejectedValueOnce(new Error('heartbeat offline'));
     vi.mocked(openhumanHeartbeatTickNow).mockRejectedValueOnce(new Error('tick failed'));
 
-    renderWithProviders(<AIPanel />);
+    // BackgroundLoopControls was moved out of AIPanel into standalone panels.
+    renderWithProviders(
+      <BackgroundLoopControls
+        view="all"
+        routing={baseSettings.routing}
+        cloudProviders={baseSettings.cloudProviders}
+      />
+    );
 
     await waitFor(() => expect(screen.getByText('heartbeat offline')).toBeInTheDocument());
     expect(screen.getByText('Heartbeat controls unavailable.')).toBeInTheDocument();

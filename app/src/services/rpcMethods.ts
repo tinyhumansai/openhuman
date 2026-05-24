@@ -4,6 +4,8 @@ export const CORE_RPC_METHODS = {
   configGetAutonomySettings: 'openhuman.config_get_autonomy_settings',
   configGetComposioTriggerSettings: 'openhuman.config_get_composio_trigger_settings',
   configGetRuntimeFlags: 'openhuman.config_get_runtime_flags',
+  configGetSearchSettings: 'openhuman.config_get_search_settings',
+  configUpdateSearchSettings: 'openhuman.config_update_search_settings',
   configSetBrowserAllowAll: 'openhuman.config_set_browser_allow_all',
   configUpdateAnalyticsSettings: 'openhuman.config_update_analytics_settings',
   configUpdateAutonomySettings: 'openhuman.config_update_autonomy_settings',

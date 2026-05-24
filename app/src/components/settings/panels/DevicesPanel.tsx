@@ -1,6 +1,7 @@
 import createDebug from 'debug';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { useT } from '../../../lib/i18n/I18nContext';
 import { callCoreRpc } from '../../../services/coreRpcClient';
 import type { ToastNotification } from '../../../types/intelligence';
 import { ToastContainer } from '../../intelligence/Toast';
@@ -131,6 +132,7 @@ function ConfirmRevokeDialog({
 // ---------------------------------------------------------------------------
 
 const DevicesPanel = () => {
+  const { t } = useT();
   const { navigateBack, breadcrumbs } = useSettingsNavigation();
 
   const [devices, setDevices] = useState<PairedDevice[]>([]);
@@ -259,9 +261,12 @@ const DevicesPanel = () => {
         </button>
       </div>
 
-      <p className="px-5 pb-3 text-xs text-stone-500">
-        Pair iOS phones with this OpenHuman to use them as a remote client.
-      </p>
+      <div className="px-5 pb-3 flex items-center gap-2">
+        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200 border border-amber-200 dark:border-amber-800/60">
+          {t('devices.betaBadge')}
+        </span>
+        <p className="text-xs text-stone-500 dark:text-neutral-400">{t('devices.betaText')}</p>
+      </div>
 
       <div className="px-5 pb-5">
         {loading && (

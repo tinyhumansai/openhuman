@@ -321,6 +321,7 @@ Specify → prove in Rust → prove over RPC → surface in the UI → test.
 - **Pre-merge** (code changes): Prettier, ESLint, `tsc --noEmit` in `app/`; `cargo fmt` + `cargo check` for changed Rust.
 - **No dynamic imports** in production `app/src` code — static `import` / `import type` only. No `import()`, `React.lazy(() => import(...))`, `await import(...)`. For heavy optional paths, use a static import and guard the call site with `try/catch` or a runtime check. *Exceptions*: Vitest harness patterns in `*.test.ts` / `__tests__` / `test/setup.ts`; ambient `typeof import('…')` in `.d.ts`; config files (e.g. `tailwind.config.js` JSDoc).
 - **Dual socket sync**: when changing the realtime protocol, keep `socketService` / MCP transport aligned with core socket behavior (see `gitbooks/developing/architecture.md` dual-socket section).
+- **i18n for all UI text**: every user-visible string in `app/src/**` (headings, labels, button text, placeholders, status chips, toasts, error messages, dialog copy) must go through `useT()` from `app/src/lib/i18n/I18nContext`. Hard-coded literals in JSX or `label=`/`placeholder=`/`aria-label=` props are not allowed. Add the key to [`app/src/lib/i18n/en.ts`](app/src/lib/i18n/en.ts) in the same PR — other locales fall back to English. Exceptions: developer-only debug logs, code identifiers, and non-display data (URLs, slugs, technical sentinel values).
 
 ---
 

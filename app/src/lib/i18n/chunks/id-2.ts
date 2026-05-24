@@ -421,6 +421,7 @@ const id2: TranslationMap = {
   'devOptions.menuComposioTriggers': 'Pemicu Integrasi',
   'devOptions.menuComposioTriggersDesc':
     'Konfigurasikan pengaturan triase AI untuk pemicu integrasi Composio',
+  'mic.deviceSelector': 'Microphone device',
 };
 
 export default id2;

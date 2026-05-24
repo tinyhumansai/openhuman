@@ -64,6 +64,8 @@ const en: TranslationMap = {
   'settings.accountDesc': 'Recovery phrase, team, connections, and privacy',
   'settings.notifications': 'Notifications',
   'settings.notificationsDesc': 'Do Not Disturb and per-account notification controls',
+  'settings.notifications.tabs.preferences': 'Preferences',
+  'settings.notifications.tabs.routing': 'Routing',
   'settings.features': 'Features',
   'settings.featuresDesc': 'Screen awareness, messaging, and tools',
   'settings.aiModels': 'AI & Models',
@@ -224,7 +226,12 @@ const en: TranslationMap = {
   'skills.available': 'Available',
   'skills.addAccount': 'Add Account',
   'skills.channels': 'Channels',
-  'skills.integrations': 'Integrations',
+  'skills.integrations': 'Composio Integrations',
+  'skills.integrationsSubtitle':
+    'Cloud-based OAuth connections — sign in with your account and Composio brokers the tokens so agents can read and act on your behalf. No API keys to manage.',
+  'skills.tabs.composio': 'Composio',
+  'skills.tabs.channels': 'Channels',
+  'skills.tabs.mcp': 'MCP Servers',
 
   // Intelligence / Memory
   'memory.title': 'Memory',
@@ -484,6 +491,85 @@ const en: TranslationMap = {
   'settings.about.releases': 'Releases',
   'settings.about.releasesDesc': 'Browse release notes and earlier builds on GitHub.',
   'settings.about.openReleases': 'Open GitHub releases',
+  'settings.about.connection': 'Connection',
+  'settings.about.connectionMode': 'Mode',
+  'settings.about.connectionModeLocal': 'Local',
+  'settings.about.connectionModeCloud': 'Cloud',
+  'settings.about.connectionModeUnset': 'Not selected',
+  'settings.about.serverUrl': 'Server URL',
+  'settings.about.serverUrlUnavailable': 'Unavailable',
+  'settings.about.connectionHelperLocal':
+    'Spawned in-process by the Tauri shell on app launch. The port is chosen at startup, so this URL changes between launches.',
+  'settings.about.connectionHelperCloud':
+    'Connected to a remote core. Change this in BootCheck or the cloud mode picker.',
+  'settings.heartbeat.title': 'Heartbeat & loops',
+  'settings.heartbeat.desc': 'Control background scheduling cadences and inspect the loop map.',
+  'settings.ledgerUsage.title': 'Usage ledger',
+  'settings.ledgerUsage.desc': 'Recent credit spend, budget math, and background API read budget.',
+  'settings.search.title': 'Search engine',
+  'settings.search.menuDesc':
+    'Default to OpenHuman-managed search or wire up your own provider with an API key.',
+  'settings.search.description':
+    'Pick the search engine the agent uses. Managed uses OpenHuman’s backend (no setup). Parallel and Brave run direct from your machine using your API key.',
+  'settings.search.engineAria': 'Search engine',
+  'settings.search.engineManagedLabel': 'OpenHuman Managed',
+  'settings.search.engineManagedDesc':
+    'Default. Routed through the OpenHuman backend — no API key required.',
+  'settings.search.engineParallelLabel': 'Parallel',
+  'settings.search.engineParallelDesc':
+    'Direct Parallel API: search, extract, chat, research, enrich, dataset tools.',
+  'settings.search.engineBraveLabel': 'Brave Search',
+  'settings.search.engineBraveDesc': 'Direct Brave Search API: web, news, image, and video tools.',
+  'settings.search.statusConfigured': 'Configured',
+  'settings.search.statusNeedsKey': 'Needs API key',
+  'settings.search.fallbackToManaged':
+    'No key configured — search will fall back to Managed until a key is saved.',
+  'settings.search.getApiKey': 'Get API key',
+  'settings.search.save': 'Save',
+  'settings.search.clear': 'Clear',
+  'settings.search.show': 'Show',
+  'settings.search.hide': 'Hide',
+  'settings.search.statusSaving': 'Saving…',
+  'settings.search.statusSaved': 'Saved.',
+  'settings.search.statusError': 'Failed',
+  'settings.search.parallelKeyLabel': 'Parallel API key',
+  'settings.search.braveKeyLabel': 'Brave Search API key',
+  'settings.search.placeholderStored': '•••••••• (stored)',
+  'settings.search.placeholderParallel': 'pk_...',
+  'settings.search.placeholderBrave': 'BSA...',
+  'mcp.alphaBadge': 'Alpha',
+  'mcp.alphaBannerText':
+    'MCP server support is in early alpha. The Smithery registry, install flow, and tool wiring may misbehave or change shape between releases.',
+  'mcp.toolList.noTools': 'No tools available.',
+  'mcp.setup.secretDialog.title': 'MCP Setup — Enter Secret',
+  'mcp.setup.secretDialog.bodyPrefix': 'The MCP setup agent needs',
+  'mcp.setup.secretDialog.bodySuffix':
+    '. Your value is sent directly to the core process and never enters the AI conversation.',
+  'mcp.setup.secretDialog.inputLabel': 'Value',
+  'mcp.setup.secretDialog.inputPlaceholder': 'Paste here',
+  'mcp.setup.secretDialog.show': 'Show',
+  'mcp.setup.secretDialog.hide': 'Hide',
+  'mcp.setup.secretDialog.submit': 'Submit',
+  'mcp.setup.secretDialog.cancel': 'Cancel',
+  'mcp.setup.secretDialog.submitting': 'Submitting…',
+  'mcp.setup.secretDialog.errorPrefix': 'Failed to submit:',
+  'mcp.setup.secretDialog.privacyNote':
+    'Stored encrypted in the local MCP secrets table. Never logged or sent to a model.',
+  'devices.betaBadge': 'Beta',
+  'devices.betaText':
+    'This feature is currently in beta. Pair iOS phones with this OpenHuman to use them as a remote client.',
+  'autonomy.title': 'Agent autonomy',
+  'autonomy.maxActionsLabel': 'Max actions per hour',
+  'autonomy.maxActionsHelp':
+    'Maximum tool actions an agent can run per rolling hour. New value applies to your next chat. Cron jobs and channel listeners keep their current limit until you restart OpenHuman.',
+  'autonomy.statusSaving': 'Saving…',
+  'autonomy.statusSaved': 'Saved.',
+  'autonomy.statusFailed': 'Failed',
+  'autonomy.unlimitedNote': 'Unlimited — rate limiting disabled.',
+  'autonomy.invalidIntegerMsg':
+    'Must be a positive integer (use the Unlimited preset for no limit).',
+  'autonomy.presetUnlimited': 'Unlimited (default)',
+  'triggers.toggleFailed': '{action} failed for {trigger}: {message}',
 
   // Settings: AI
   'settings.ai.overview': 'AI System Overview',
@@ -869,6 +955,7 @@ const en: TranslationMap = {
   'mic.tapAndSpeak': 'Tap and speak',
   'mic.stopRecording': 'Stop recording and send',
   'mic.startRecording': 'Start recording',
+  'mic.deviceSelector': 'Microphone device',
 
   // Token
   'token.usageLimitReached': 'Usage limit reached',
@@ -1448,6 +1535,14 @@ const en: TranslationMap = {
   'composio.connect.retryConnection': 'Retry connection',
   'composio.connect.scopeLoadError': "Couldn't load scope preferences: {msg}",
   'composio.connect.scopeSaveError': "Couldn't save {key} scope: {msg}",
+  'composio.connect.scope.read': 'Read',
+  'composio.connect.scope.readHint': 'Allow the agent to read data from this connection.',
+  'composio.connect.scope.write': 'Write',
+  'composio.connect.scope.writeHint':
+    'Allow the agent to create or modify data through this connection.',
+  'composio.connect.scope.admin': 'Admin',
+  'composio.connect.scope.adminHint':
+    'Allow the agent to manage settings, permissions, or destructive actions.',
   'composio.connect.subdomainInvalid':
     'Enter the short subdomain only (e.g. "acme"), not the full URL. It should contain only letters, numbers, and hyphens.',
   'composio.connect.subdomainRequired': 'Please enter your Atlassian subdomain to continue.',
@@ -1594,6 +1689,12 @@ const en: TranslationMap = {
   'pages.settings.aiSection.description':
     'Language model providers, local Ollama, and voice (STT / TTS).',
   'pages.settings.aiSection.title': 'AI',
+  'pages.settings.composioSection.title': 'Composio',
+  'pages.settings.composioSection.description':
+    'Routing, triggers, and history for integrations powered by Composio.',
+  'settings.developerMenu.composio.title': 'Composio',
+  'settings.developerMenu.composio.desc':
+    'Routing mode, integration triggers, and trigger history archive.',
   'pages.settings.features.desktopCompanion': 'Desktop Companion',
   'pages.settings.features.desktopCompanionDesc':
     'Voice assistant with screen awareness — listens, sees, speaks, points',
@@ -1703,6 +1804,18 @@ const en: TranslationMap = {
   'settings.ai.localOllama': 'Local (Ollama)',
   'settings.ai.modelLabel': 'Model',
   'settings.ai.noCustomProviders': 'No custom providers',
+  'settings.ai.openAiCompat.authHeaderExample': 'Authorization: Bearer <your key>',
+  'settings.ai.openAiCompat.authHeaderLabel': 'Auth header',
+  'settings.ai.openAiCompat.baseUrlLabel': 'Base URL',
+  'settings.ai.openAiCompat.baseUrlUnavailable': 'Unavailable',
+  'settings.ai.openAiCompat.clearKey': 'Clear key',
+  'settings.ai.openAiCompat.description':
+    "Point local harnesses at this /v1 server to route through the providers configured below. Authentication uses a stable key you set here, not the app's internal core bearer.",
+  'settings.ai.openAiCompat.keyConfigured': 'Key configured',
+  'settings.ai.openAiCompat.keyRequired': 'Key required',
+  'settings.ai.openAiCompat.rotateKey': 'Rotate key',
+  'settings.ai.openAiCompat.setKey': 'Set key',
+  'settings.ai.openAiCompat.title': 'OpenAI-compatible endpoint',
   'settings.ai.providerLabel': 'Provider',
   'settings.ai.routing': 'Routing',
   'settings.ai.routingCustom': 'Custom routing',
@@ -2040,6 +2153,10 @@ const en: TranslationMap = {
   'settings.appearance.modeSystemDesc': 'Follow your OS appearance setting.',
   'settings.appearance.helperText':
     'Dark mode switches the entire app — chat, settings, panels — to a dim palette. "Match system" follows your OS appearance and updates live.',
+  'settings.appearance.tabBarHeading': 'Bottom tab bar',
+  'settings.appearance.tabBarAlwaysShowLabels': 'Always show labels',
+  'settings.appearance.tabBarAlwaysShowLabelsDesc':
+    'When off, labels only appear on hover or for the active tab.',
   'settings.mascot.active': 'Active',
   'settings.mascot.characterDesc': 'Choose your OpenHuman character.',
   'settings.mascot.characterHeading': 'Character',

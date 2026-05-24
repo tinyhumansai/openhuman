@@ -2,7 +2,7 @@
 //!
 //! Owns the conversion from a page of [`SlackMessage`]s (post-processed
 //! and enriched by [`super::sync`]) into per-channel [`ChatBatch`]es and
-//! drives [`memory::tree::ingest::ingest_chat`] per message.
+//! drives [`memory_tree::ingest::ingest_chat`] per message.
 //!
 //! ## Source-id scope
 //!
@@ -30,16 +30,16 @@ use anyhow::Result;
 
 use super::types::SlackMessage;
 use crate::openhuman::config::Config;
-use crate::openhuman::memory::tree::canonicalize::chat::{ChatBatch, ChatMessage};
-use crate::openhuman::memory::tree::content_store::raw::{
+use crate::openhuman::memory_tree::canonicalize::chat::{ChatBatch, ChatMessage};
+use crate::openhuman::memory_tree::content_store::raw::{
     self as raw_store, raw_rel_path, RawItem, RawKind,
 };
-use crate::openhuman::memory::tree::ingest::ingest_chat;
-use crate::openhuman::memory::tree::store::{set_chunk_raw_refs, RawRef};
-use crate::openhuman::memory::tree::util::redact::redact;
+use crate::openhuman::memory_tree::ingest::ingest_chat;
+use crate::openhuman::memory_tree::store::{set_chunk_raw_refs, RawRef};
+use crate::openhuman::memory_tree::util::redact::redact;
 
 /// Platform identifier embedded in the canonical chat transcript header.
-/// Matches the value `memory::tree::retrieval::source::PLATFORM_KINDS` expects.
+/// Matches the value `memory_tree::retrieval::source::PLATFORM_KINDS` expects.
 pub const SLACK_PLATFORM: &str = "slack";
 
 /// Tags attached to every Slack-ingested chunk. Stable list — retrieval

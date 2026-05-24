@@ -329,6 +329,36 @@ class SocketService {
     this.socket.on('auth:session_expired', handleSessionExpired);
     this.socket.on('auth_session_expired', handleSessionExpired);
 
+    // MCP setup agent: server-side `request_secret` blocks until the
+    // user submits a value. Dispatch a window event so a singleton React
+    // dialog can render a native input and POST back via
+    // openhuman.mcp_setup_submit_secret. Raw secret values never travel
+    // through the socket — only the opaque ref + safe display fields.
+    const handleSecretRequested = (data: unknown) => {
+      const obj = data as Record<string, unknown> | null;
+      if (!obj || typeof obj !== 'object') {
+        socketWarn('mcp_setup:secret_requested dropped — invalid payload');
+        return;
+      }
+      const refId = typeof obj.ref_id === 'string' ? obj.ref_id : null;
+      const keyName = typeof obj.key_name === 'string' ? obj.key_name : null;
+      const prompt = typeof obj.prompt === 'string' ? obj.prompt : '';
+      if (!refId || !keyName) {
+        socketWarn('mcp_setup:secret_requested missing ref_id or key_name');
+        return;
+      }
+      socketLog('mcp_setup:secret_requested', { refId, keyName });
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(
+          new CustomEvent('openhuman:mcp-setup-secret-requested', {
+            detail: { refId, keyName, prompt },
+          })
+        );
+      }
+    };
+    this.socket.on('mcp_setup:secret_requested', handleSecretRequested);
+    this.socket.on('mcp_setup_secret_requested', handleSecretRequested);
+
     this.socket.on('channel:managed-dm-verified', data => {
       const obj = data as Record<string, unknown> | null;
       if (!obj || typeof obj !== 'object') return;

@@ -533,6 +533,13 @@ const de5: TranslationMap = {
   'settings.mascot.colorYellow': 'Gelb',
   'settings.mascot.libraryUnavailable': 'OpenHuman Bibliothek nicht verfügbar',
   'settings.mascot.title': 'OpenHuman',
+  'settings.developerMenu.composio.title': 'Composio',
+  'settings.developerMenu.composio.desc':
+    'Routing mode, integration triggers, and trigger history archive.',
+  'settings.appearance.tabBarHeading': 'Bottom tab bar',
+  'settings.appearance.tabBarAlwaysShowLabels': 'Always show labels',
+  'settings.appearance.tabBarAlwaysShowLabelsDesc':
+    'When off, labels only appear on hover or for the active tab.',
 };
 
 export default de5;

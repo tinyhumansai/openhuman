@@ -24,7 +24,7 @@ export const CUSTOM_WIZARD_ROUTES: Record<CustomStepKey, string> = {
 export const CUSTOM_WIZARD_SETTINGS_ROUTES: Record<CustomStepKey, string> = {
   inference: '/settings/llm',
   voice: '/settings/voice',
-  oauth: '/settings/connections',
+  oauth: '/settings/composio-routing',
   search: '/settings/tools',
   memory: '/settings/memory-data',
 };

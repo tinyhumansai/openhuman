@@ -16,7 +16,7 @@ use crate::openhuman::agent::hooks::{PostTurnHook as _, TurnContext};
 use crate::openhuman::context::summarizer::{Summarizer, SummaryStats};
 use crate::openhuman::inference::provider::{ChatMessage, ConversationMessage};
 use crate::openhuman::memory::store::{fts5, segments as seg};
-use crate::openhuman::memory::tree::chat::ChatPrompt;
+use crate::openhuman::memory_tree::chat::ChatPrompt;
 use anyhow::Result;
 use async_trait::async_trait;
 use parking_lot::Mutex;
@@ -40,7 +40,7 @@ fn setup_conn() -> Arc<Mutex<Connection>> {
 struct StubChatProvider;
 
 #[async_trait]
-impl crate::openhuman::memory::tree::chat::ChatProvider for StubChatProvider {
+impl crate::openhuman::memory_tree::chat::ChatProvider for StubChatProvider {
     fn name(&self) -> &str {
         "stub:test"
     }
@@ -56,7 +56,7 @@ impl crate::openhuman::memory::tree::chat::ChatProvider for StubChatProvider {
 struct FailingChatProvider;
 
 #[async_trait]
-impl crate::openhuman::memory::tree::chat::ChatProvider for FailingChatProvider {
+impl crate::openhuman::memory_tree::chat::ChatProvider for FailingChatProvider {
     fn name(&self) -> &str {
         "stub:failing"
     }
@@ -72,7 +72,7 @@ impl crate::openhuman::memory::tree::chat::ChatProvider for FailingChatProvider 
 struct StubEmbedder;
 
 #[async_trait]
-impl crate::openhuman::memory::tree::score::embed::Embedder for StubEmbedder {
+impl crate::openhuman::memory_tree::score::embed::Embedder for StubEmbedder {
     fn name(&self) -> &'static str {
         "stub-embedder-v1"
     }

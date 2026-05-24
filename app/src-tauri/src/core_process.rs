@@ -780,6 +780,13 @@ fn parse_lsof_pid(stdout: &str) -> Option<u32> {
 }
 
 /// Pure parse of `netstat -ano` output for a LISTENING entry on `port`.
+///
+/// Skips kernel-protected PIDs 0 (System Idle Process) and 4 (NT Kernel) —
+/// `HTTP.sys` and kernel-mode socket reservations occasionally surface as
+/// LISTENING under PID 4 even though no user-mode owner exists. Killing
+/// those is impossible and would otherwise abort startup recovery; if the
+/// "owner" is the kernel, callers should fall back to a port reroute
+/// instead of trying to take over.
 #[allow(dead_code)] // exercised only on windows builds
 fn parse_netstat_pid(stdout: &str, port: u16) -> Option<u32> {
     let needle = format!(":{port}");
@@ -792,6 +799,12 @@ fn parse_netstat_pid(stdout: &str, port: u16) -> Option<u32> {
         // Expected: ["TCP", "127.0.0.1:7788", "0.0.0.0:0", "LISTENING", "1234"]
         if parts.len() >= 5 && parts[1].ends_with(&needle) {
             if let Ok(pid) = parts[parts.len() - 1].parse::<u32>() {
+                if pid == 0 || pid == 4 {
+                    log::warn!(
+                        "[core] netstat reports port {port} owned by protected windows pid {pid}; treating as no-owner"
+                    );
+                    continue;
+                }
                 return Some(pid);
             }
         }

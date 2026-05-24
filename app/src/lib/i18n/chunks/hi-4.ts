@@ -298,6 +298,18 @@ const hi4: TranslationMap = {
   'settings.ai.localOllama': 'लोकल (Ollama)',
   'settings.ai.modelLabel': 'मॉडल',
   'settings.ai.noCustomProviders': 'कोई कस्टम प्रोवाइडर नहीं',
+  'settings.ai.openAiCompat.authHeaderExample': 'Authorization: Bearer <your key>',
+  'settings.ai.openAiCompat.authHeaderLabel': 'Auth header',
+  'settings.ai.openAiCompat.baseUrlLabel': 'Base URL',
+  'settings.ai.openAiCompat.baseUrlUnavailable': 'Unavailable',
+  'settings.ai.openAiCompat.clearKey': 'Clear key',
+  'settings.ai.openAiCompat.description':
+    "Point local harnesses at this /v1 server to route through the providers configured below. Authentication uses a stable key you set here, not the app's internal core bearer.",
+  'settings.ai.openAiCompat.keyConfigured': 'Key configured',
+  'settings.ai.openAiCompat.keyRequired': 'Key required',
+  'settings.ai.openAiCompat.rotateKey': 'Rotate key',
+  'settings.ai.openAiCompat.setKey': 'Set key',
+  'settings.ai.openAiCompat.title': 'OpenAI-compatible endpoint',
   'settings.ai.providerLabel': 'प्रोवाइडर',
   'settings.ai.routing': 'रूटिंग',
   'settings.ai.routingCustom': 'कस्टम रूटिंग',
@@ -392,6 +404,17 @@ const hi4: TranslationMap = {
   'pages.settings.account.migration': 'किसी अन्य असिस्टेंट से इम्पोर्ट करें',
   'pages.settings.account.migrationDesc':
     'OpenClaw (और जल्द ही Hermes) से मेमोरी और नोट्स इस वर्कस्पेस में माइग्रेट करें।',
+  'composio.connect.scope.read': 'Read',
+  'composio.connect.scope.readHint': 'Allow the agent to read data from this connection.',
+  'composio.connect.scope.write': 'Write',
+  'composio.connect.scope.writeHint':
+    'Allow the agent to create or modify data through this connection.',
+  'composio.connect.scope.admin': 'Admin',
+  'composio.connect.scope.adminHint':
+    'Allow the agent to manage settings, permissions, or destructive actions.',
+  'pages.settings.composioSection.title': 'Composio',
+  'pages.settings.composioSection.description':
+    'Routing, triggers, and history for integrations powered by Composio.',
 };
 
 export default hi4;

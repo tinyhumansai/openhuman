@@ -25,7 +25,7 @@ const InstalledServerList = ({
   onSelect,
   onBrowseCatalog,
 }: InstalledServerListProps) => {
-  const statusMap = new Map(statuses.map(s => [s.server_id, s]));
+  const statusMap = new Map((statuses ?? []).map(s => [s.server_id, s]));
 
   return (
     <div className="flex flex-col h-full">

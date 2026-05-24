@@ -397,6 +397,7 @@ const zhCN2: TranslationMap = {
     '使用你自己的 Composio API 密钥，将调用直接路由到 backend.composio.dev',
   'devOptions.menuComposioTriggers': '集成触发器',
   'devOptions.menuComposioTriggersDesc': '为 Composio 集成触发器配置 AI 分级设置',
+  'mic.deviceSelector': 'Microphone device',
 };
 
 export default zhCN2;
