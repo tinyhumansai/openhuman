@@ -288,7 +288,7 @@ const DiscordConfig = ({ definition }: DiscordConfigProps) => {
 
       {isLocalSession && visibleAuthModes.length !== definition.auth_modes.length && (
         <div className="rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 px-4 py-3 text-sm text-stone-700 dark:text-neutral-200">
-          Managed channels are not available for local users.
+          {t('channels.localManagedUnavailable')}
         </div>
       )}
 

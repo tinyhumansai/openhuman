@@ -2110,6 +2110,19 @@ const ko: TranslationMap = {
   'settings.localModel.status.ollamaDocs': 'Ollama 문서',
   'settings.localModel.status.thenRetry':
     '설정 지침을 확인한 다음 런타임에 연결할 수 있게 되면 다시 시도하세요.',
+  'skills.composio.noApiKeyTitle': 'Composio API 키가 설정되지 않았습니다',
+  'skills.composio.noApiKeyDescription':
+    '로컬 모드는 사용자의 Composio API 키를 사용합니다. 여기서 통합을 연결하기 전에 설정 → 고급 → Composio에서 키를 추가하세요.',
+  'skills.composio.noApiKeyCta': '설정에서 열기',
+  'channels.localManagedUnavailable': '로컬 사용자에게는 관리형 채널을 사용할 수 없습니다.',
+  'rewards.localUnavailable':
+    '로컬 로그인으로는 보상, 쿠폰 또는 추천 크레딧을 받을 수 없습니다. 보상을 받으려면 로그아웃한 뒤 OpenHuman 계정으로 로그인하세요.',
+  'rewards.localUnavailableCta': '계정 설정 열기',
+  'settings.search.localManagedUnavailable':
+    '로컬 사용자에게는 OpenHuman Managed 검색을 사용할 수 없습니다. 웹 검색을 사용하려면 Parallel 또는 Brave API 키를 추가하세요.',
+  'devices.comingSoonDescription':
+    '기기 페어링은 곧 제공됩니다. 이 페이지는 iPhone 페어링과 연결된 기기 관리를 위한 공간이 됩니다.',
+  'welcome.continueLocallyExperimental': '로컬로 계속하기 (실험적)',
 };
 
 export default ko;

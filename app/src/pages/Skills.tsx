@@ -316,6 +316,7 @@ function McpComingSoonPanel() {
 }
 
 function ComposioApiKeyEmptyState({ onOpenSettings }: { onOpenSettings: () => void }) {
+  const { t } = useT();
   return (
     <EmptyStateCard
       className="mx-1 mb-3 py-10"
@@ -329,9 +330,9 @@ function ComposioApiKeyEmptyState({ onOpenSettings }: { onOpenSettings: () => vo
           <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7Z" />
         </svg>
       }
-      title="No Composio API key configured"
-      description="Local mode uses your own Composio API key. Open Settings → Advanced → Composio to add one before connecting integrations here."
-      actionLabel="Open in Settings"
+      title={t('skills.composio.noApiKeyTitle')}
+      description={t('skills.composio.noApiKeyDescription')}
+      actionLabel={t('skills.composio.noApiKeyCta')}
       onAction={onOpenSettings}
     />
   );

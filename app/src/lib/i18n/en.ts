@@ -232,6 +232,10 @@ const en: TranslationMap = {
   'skills.integrations': 'Composio Integrations',
   'skills.integrationsSubtitle':
     'Cloud-based OAuth connections — sign in with your account and Composio brokers the tokens so agents can read and act on your behalf. No API keys to manage.',
+  'skills.composio.noApiKeyTitle': 'No Composio API Key Configured',
+  'skills.composio.noApiKeyDescription':
+    'Local mode uses your own Composio API key. Open Settings → Advanced → Composio to add one before connecting integrations here.',
+  'skills.composio.noApiKeyCta': 'Open in Settings',
   'skills.tabs.composio': 'Composio',
   'skills.tabs.channels': 'Channels',
   'skills.tabs.mcp': 'MCP Servers',
@@ -399,6 +403,7 @@ const en: TranslationMap = {
   'channels.configure': 'Configure Channel',
   'channels.setup': 'Setup',
   'channels.noChannels': 'No channels configured',
+  'channels.localManagedUnavailable': 'Managed channels are not available for local users.',
   'channels.addChannel': 'Add Channel',
   'channels.status.connected': 'Connected',
   'channels.status.disconnected': 'Disconnected',
@@ -521,6 +526,8 @@ const en: TranslationMap = {
   'settings.search.engineManagedLabel': 'OpenHuman Managed',
   'settings.search.engineManagedDesc':
     'Default. Routed through the OpenHuman backend — no API key required.',
+  'settings.search.localManagedUnavailable':
+    'OpenHuman Managed search is not available for local users. Add your own Parallel or Brave API key to enable web search.',
   'settings.search.engineParallelLabel': 'Parallel',
   'settings.search.engineParallelDesc':
     'Direct Parallel API: search, extract, chat, research, enrich, dataset tools.',
@@ -564,6 +571,8 @@ const en: TranslationMap = {
   'devices.betaBadge': 'Beta',
   'devices.betaText':
     'This feature is currently in beta. Pair iOS phones with this OpenHuman to use them as a remote client.',
+  'devices.comingSoonDescription':
+    'Device pairing is coming soon. This page will be the home for pairing iPhones and managing connected devices.',
   'autonomy.title': 'Agent autonomy',
   'autonomy.maxActionsLabel': 'Max actions per hour',
   'autonomy.maxActionsHelp':

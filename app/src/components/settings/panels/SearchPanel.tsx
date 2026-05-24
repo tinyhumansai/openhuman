@@ -141,8 +141,7 @@ const SearchPanel = ({ embedded = false }: { embedded?: boolean }) => {
 
         {isLocalSession && (
           <div className="rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 px-4 py-3 text-sm text-stone-700 dark:text-neutral-200">
-            OpenHuman Managed search is not available for local users. Add your own Parallel or
-            Brave API key to enable web search.
+            {t('settings.search.localManagedUnavailable')}
           </div>
         )}
 

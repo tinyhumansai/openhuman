@@ -183,7 +183,7 @@ describe('Skills page — Composio catalog fallback', () => {
     renderWithProviders(<Skills />, { initialEntries: ['/skills'] });
 
     await waitFor(() => {
-      expect(screen.getByText('No Composio API key configured')).toBeInTheDocument();
+      expect(screen.getByText(/No Composio API Key Configured/i)).toBeInTheDocument();
     });
     expect(screen.getByText(/Local mode uses your own Composio API key/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Open.*Settings/i })).toBeInTheDocument();

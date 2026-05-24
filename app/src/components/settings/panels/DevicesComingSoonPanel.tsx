@@ -1,15 +1,17 @@
+import { useT } from '../../../lib/i18n/I18nContext';
 import EmptyStateCard from '../../EmptyStateCard';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
 const DevicesComingSoonPanel = () => {
+  const { t } = useT();
   const { navigateBack, breadcrumbs } = useSettingsNavigation();
 
   return (
     <div className="z-10 relative">
       <div className="px-5 pt-5 pb-3">
         <SettingsHeader
-          title="Devices"
+          title={t('settings.devices')}
           showBackButton={breadcrumbs.length > 0}
           onBack={navigateBack}
           breadcrumbs={breadcrumbs}
