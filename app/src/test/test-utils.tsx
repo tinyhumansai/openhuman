@@ -9,7 +9,7 @@ import { Provider } from 'react-redux';
 import { MemoryRouter } from 'react-router-dom';
 
 import { getCoreStateSnapshot } from '../lib/coreState/store';
-import { CoreStateContext } from '../providers/CoreStateProvider';
+import { CoreStateContext } from '../providers/coreStateContext';
 import channelConnectionsReducer from '../store/channelConnectionsSlice';
 import companionReducer from '../store/companionSlice';
 import connectivityReducer from '../store/connectivitySlice';

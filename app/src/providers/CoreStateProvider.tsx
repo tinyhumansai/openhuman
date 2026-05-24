@@ -1,6 +1,5 @@
 import debugFactory from 'debug';
 import {
-  createContext,
   type ReactNode,
   useCallback,
   useContext,
@@ -9,6 +8,8 @@ import {
   useRef,
   useState,
 } from 'react';
+
+import { CoreStateContext, type CoreStateContextValue } from './coreStateContext';
 
 import {
   type CoreAppSnapshot,
@@ -115,34 +116,8 @@ function isPlausibleSessionToken(token: unknown): token is string {
   return payload.exp * 1000 > Date.now();
 }
 
-interface CoreStateContextValue extends CoreState {
-  refresh: () => Promise<void>;
-  refreshTeams: () => Promise<void>;
-  refreshTeamMembers: (teamId: string) => Promise<void>;
-  refreshTeamInvites: (teamId: string) => Promise<void>;
-  setAnalyticsEnabled: (enabled: boolean) => Promise<void>;
-  setMeetAutoOrchestratorHandoff: (enabled: boolean) => Promise<void>;
-  setOnboardingCompletedFlag: (value: boolean) => Promise<void>;
-  setEncryptionKey: (value: string | null) => Promise<void>;
-  /**
-   * Shallow-merge `patch` into `state.snapshot`. Top-level keys in `patch`
-   * REPLACE the existing value — they are not deep-merged.
-   *
-   * This means passing a nested object (e.g. `{ localState: { encryptionKey: 'x' } }`)
-   * will CLOBBER sibling fields on that object (`onboardingTasks`). Only flat
-   * top-level fields are safe to patch directly:
-   * `currentUser`, `onboardingCompleted`, `chatOnboardingCompleted`,
-   * `analyticsEnabled`, `sessionToken`. For nested-object updates, use the
-   * dedicated setter (`setEncryptionKey`, `setOnboardingTasks`) which
-   * preserves siblings.
-   */
-  patchSnapshot: (patch: Partial<CoreAppSnapshot>) => void;
-  setOnboardingTasks: (value: CoreOnboardingTasks | null) => Promise<void>;
-  storeSessionToken: (token: string, user?: object) => Promise<void>;
-  clearSession: () => Promise<void>;
-}
-
-export const CoreStateContext = createContext<CoreStateContextValue | null>(null);
+// CoreStateContextValue and CoreStateContext are defined in ./coreStateContext.ts
+// to avoid mock-interception issues when tests vi.mock this module.
 
 function snapshotIdentity(snapshot: CoreAppSnapshot): string | null {
   return snapshot.auth.userId ?? snapshot.currentUser?._id ?? null;
