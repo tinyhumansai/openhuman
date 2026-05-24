@@ -9,8 +9,8 @@ import reducer, {
   selectPersonaDisplayName,
   setPersonaDescription,
   setPersonaDisplayName,
-} from '../personaSlice';
-import { resetUserScopedState } from '../resetActions';
+} from './personaSlice';
+import { resetUserScopedState } from './resetActions';
 
 describe('personaSlice', () => {
   it('starts empty', () => {

@@ -1,11 +1,8 @@
-import { configureStore } from '@reduxjs/toolkit';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { Provider } from 'react-redux';
-import { MemoryRouter } from 'react-router-dom';
+import { fireEvent, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import personaReducer from '../../../../store/personaSlice';
-import PersonaPanel from '../PersonaPanel';
+import { renderWithProviders } from '../../../test/test-utils';
+import PersonaPanel from './PersonaPanel';
 
 const {
   mockNavigateBack,
@@ -21,14 +18,14 @@ const {
   resetPersonaFileMock: vi.fn(),
 }));
 
-vi.mock('../../../../services/api/personaFilesApi', () => ({
+vi.mock('../../../services/api/personaFilesApi', () => ({
   PERSONA_FILE_SOUL: 'SOUL.md',
   readPersonaFile: (...args: unknown[]) => readPersonaFileMock(...args),
   writePersonaFile: (...args: unknown[]) => writePersonaFileMock(...args),
   resetPersonaFile: (...args: unknown[]) => resetPersonaFileMock(...args),
 }));
 
-vi.mock('../../hooks/useSettingsNavigation', () => ({
+vi.mock('../hooks/useSettingsNavigation', () => ({
   useSettingsNavigation: () => ({
     navigateBack: mockNavigateBack,
     navigateToSettings: mockNavigateToSettings,
@@ -36,28 +33,10 @@ vi.mock('../../hooks/useSettingsNavigation', () => ({
   }),
 }));
 
-function buildStore() {
-  return configureStore({ reducer: { persona: personaReducer } });
-}
-
-function renderPanel(store = buildStore()) {
-  return {
-    store,
-    ...render(
-      <Provider store={store}>
-        <MemoryRouter>
-          <PersonaPanel />
-        </MemoryRouter>
-      </Provider>
-    ),
-  };
-}
-
 const soulFile = (overrides: Record<string, unknown> = {}) => ({
   filename: 'SOUL.md',
   contents: 'You are helpful.',
   is_default: true,
-  path: '/ws/SOUL.md',
   ...overrides,
 });
 
@@ -74,7 +53,7 @@ describe('PersonaPanel', () => {
   });
 
   it('loads SOUL.md contents into the editor on mount', async () => {
-    renderPanel();
+    renderWithProviders(<PersonaPanel />);
     await waitFor(() => {
       expect(screen.getByTestId('persona-soul-editor')).toHaveValue('You are helpful.');
     });
@@ -82,7 +61,7 @@ describe('PersonaPanel', () => {
   });
 
   it('persists the display name to the store on save', async () => {
-    const { store } = renderPanel();
+    const { store } = renderWithProviders(<PersonaPanel />);
     await waitFor(() => expect(screen.getByTestId('persona-soul-editor')).toBeInTheDocument());
 
     fireEvent.change(screen.getByTestId('persona-display-name-input'), {
@@ -98,13 +77,13 @@ describe('PersonaPanel', () => {
   });
 
   it('keeps the identity save button disabled until a field changes', async () => {
-    renderPanel();
+    renderWithProviders(<PersonaPanel />);
     await waitFor(() => expect(screen.getByTestId('persona-soul-editor')).toBeInTheDocument());
     expect(screen.getByTestId('persona-identity-save')).toBeDisabled();
   });
 
   it('writes edited SOUL.md contents over RPC', async () => {
-    renderPanel();
+    renderWithProviders(<PersonaPanel />);
     await waitFor(() => expect(screen.getByTestId('persona-soul-editor')).toBeInTheDocument());
 
     fireEvent.change(screen.getByTestId('persona-soul-editor'), {
@@ -119,7 +98,7 @@ describe('PersonaPanel', () => {
 
   it('surfaces a save error when the write RPC fails', async () => {
     writePersonaFileMock.mockRejectedValue(new Error('disk full'));
-    renderPanel();
+    renderWithProviders(<PersonaPanel />);
     await waitFor(() => expect(screen.getByTestId('persona-soul-editor')).toBeInTheDocument());
 
     fireEvent.change(screen.getByTestId('persona-soul-editor'), { target: { value: 'edited' } });
@@ -133,7 +112,7 @@ describe('PersonaPanel', () => {
   it('surfaces a reset error when the reset RPC fails', async () => {
     readPersonaFileMock.mockResolvedValue(soulFile({ contents: 'custom', is_default: false }));
     resetPersonaFileMock.mockRejectedValue(new Error('reset boom'));
-    renderPanel();
+    renderWithProviders(<PersonaPanel />);
     await waitFor(() => expect(screen.getByTestId('persona-soul-editor')).toHaveValue('custom'));
 
     fireEvent.click(screen.getByTestId('persona-soul-reset'));
@@ -146,7 +125,7 @@ describe('PersonaPanel', () => {
   it('resets SOUL.md to the bundled default', async () => {
     // Start from a non-default file so the Reset button is enabled.
     readPersonaFileMock.mockResolvedValue(soulFile({ contents: 'custom', is_default: false }));
-    renderPanel();
+    renderWithProviders(<PersonaPanel />);
     await waitFor(() => {
       expect(screen.getByTestId('persona-soul-editor')).toHaveValue('custom');
     });
@@ -160,7 +139,7 @@ describe('PersonaPanel', () => {
   });
 
   it('disables Reset while the file is already the bundled default', async () => {
-    renderPanel();
+    renderWithProviders(<PersonaPanel />);
     await waitFor(() => expect(screen.getByTestId('persona-soul-editor')).toBeInTheDocument());
     expect(screen.getByTestId('persona-soul-reset')).toBeDisabled();
     expect(screen.getByTestId('persona-soul-default-badge')).toBeInTheDocument();
@@ -168,14 +147,14 @@ describe('PersonaPanel', () => {
 
   it('surfaces a load error', async () => {
     readPersonaFileMock.mockRejectedValue(new Error('boom'));
-    renderPanel();
+    renderWithProviders(<PersonaPanel />);
     await waitFor(() => {
       expect(screen.getByTestId('persona-soul-error')).toHaveTextContent('boom');
     });
   });
 
   it('navigates to mascot settings for avatar & voice', async () => {
-    renderPanel();
+    renderWithProviders(<PersonaPanel />);
     await waitFor(() => expect(screen.getByTestId('persona-soul-editor')).toBeInTheDocument());
     fireEvent.click(screen.getByTestId('persona-open-mascot'));
     expect(mockNavigateToSettings).toHaveBeenCalledWith('mascot');

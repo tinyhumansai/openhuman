@@ -6,6 +6,7 @@
 //! [`crate::openhuman::workspace::ops::bundled_default_contents`]) so a caller
 //! can never read or overwrite an arbitrary path under the workspace.
 
+use std::io::Read;
 use std::path::Path;
 
 use serde::Serialize;
@@ -57,19 +58,13 @@ pub fn read_workspace_file(
     let default_contents = ensure_editable(filename)?;
     let path = workspace_dir.join(filename);
 
-    match std::fs::metadata(&path) {
-        Ok(meta) if meta.len() > MAX_WORKSPACE_FILE_BYTES => {
-            log::debug!(
-                "[workspace][rpc] read refused file='{filename}' path='{}' bytes={} cap={MAX_WORKSPACE_FILE_BYTES}",
-                path.display(),
-                meta.len()
-            );
-            return Err(format!(
-                "{filename} is too large to edit ({} bytes; limit {MAX_WORKSPACE_FILE_BYTES})",
-                meta.len()
-            ));
-        }
-        Ok(_) => {}
+    // Open first, then enforce the cap on the *opened handle* via a bounded
+    // reader. A prior `metadata().len()` check would be TOCTOU-prone: another
+    // process could grow or swap the file between the stat and the read, so an
+    // oversized file could still be slurped fully into memory. Reading through
+    // `take(cap + 1)` caps the bytes we will ever hold regardless of races.
+    let file = match std::fs::File::open(&path) {
+        Ok(file) => file,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             log::debug!(
                 "[workspace][rpc] read fallback-to-default file='{filename}' (missing on disk)"
@@ -85,19 +80,36 @@ pub fn read_workspace_file(
         }
         Err(e) => {
             log::debug!(
-                "[workspace][rpc] read stat-failed file='{filename}' path='{}': {e}",
+                "[workspace][rpc] read open-failed file='{filename}' path='{}': {e}",
                 path.display()
             );
             return Err(format!("failed to read {filename}: {e}"));
         }
+    };
+
+    let mut buf = Vec::new();
+    file.take(MAX_WORKSPACE_FILE_BYTES + 1)
+        .read_to_end(&mut buf)
+        .map_err(|e| {
+            log::debug!(
+                "[workspace][rpc] read failed file='{filename}' path='{}': {e}",
+                path.display()
+            );
+            format!("failed to read {filename}: {e}")
+        })?;
+    // Hitting the extra byte means the file exceeds the cap; refuse it.
+    if buf.len() as u64 > MAX_WORKSPACE_FILE_BYTES {
+        log::debug!(
+            "[workspace][rpc] read refused file='{filename}' (over cap={MAX_WORKSPACE_FILE_BYTES})"
+        );
+        return Err(format!(
+            "{filename} is too large to edit (over the {MAX_WORKSPACE_FILE_BYTES}-byte limit)"
+        ));
     }
 
-    let contents = std::fs::read_to_string(&path).map_err(|e| {
-        log::debug!(
-            "[workspace][rpc] read failed file='{filename}' path='{}': {e}",
-            path.display()
-        );
-        format!("failed to read {filename}: {e}")
+    let contents = String::from_utf8(buf).map_err(|e| {
+        log::debug!("[workspace][rpc] read rejected non-utf8 file='{filename}': {e}");
+        format!("failed to read {filename}: contents are not valid UTF-8")
     })?;
     log::debug!(
         "[workspace][rpc] read ok file='{filename}' bytes={}",
@@ -231,6 +243,27 @@ mod tests {
         std::fs::write(tmp.path().join("SOUL.md"), &huge).unwrap();
         let err = read_workspace_file(tmp.path(), "SOUL.md").unwrap_err();
         assert!(err.contains("too large"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn read_accepts_file_exactly_at_the_size_limit() {
+        let tmp = tempdir().unwrap();
+        let at_limit = "a".repeat(MAX_WORKSPACE_FILE_BYTES as usize);
+        std::fs::write(tmp.path().join("SOUL.md"), &at_limit).unwrap();
+        let file = read_workspace_file(tmp.path(), "SOUL.md")
+            .expect("exactly-at-limit read should succeed")
+            .value;
+        assert_eq!(file.contents.len(), MAX_WORKSPACE_FILE_BYTES as usize);
+        assert!(!file.is_default);
+    }
+
+    #[test]
+    fn read_rejects_non_utf8_file() {
+        let tmp = tempdir().unwrap();
+        // A lone 0xFF byte is never valid UTF-8.
+        std::fs::write(tmp.path().join("SOUL.md"), [0xff_u8, 0xfe, 0xfd]).unwrap();
+        let err = read_workspace_file(tmp.path(), "SOUL.md").unwrap_err();
+        assert!(err.contains("UTF-8"), "unexpected error: {err}");
     }
 
     #[test]
