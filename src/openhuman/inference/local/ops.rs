@@ -197,7 +197,7 @@ pub async fn local_ai_prompt(
         service.bootstrap(config).await;
     }
     let output = service
-        .prompt(config, prompt.trim(), max_tokens, no_think.unwrap_or(true))
+        .prompt_interactive(config, prompt.trim(), max_tokens, no_think.unwrap_or(true))
         .await
         .map_err(|e| e.to_string())?;
     Ok(RpcOutcome::single_log(output, "local ai prompt completed"))
@@ -412,7 +412,7 @@ pub async fn local_ai_chat(
 
     let service = local_ai::global(config);
     let reply = service
-        .chat_with_history(config, ollama_messages, max_tokens)
+        .chat_with_history_interactive(config, ollama_messages, max_tokens)
         .await?;
 
     tracing::debug!(

@@ -63,6 +63,25 @@ impl LocalAiService {
             .await
     }
 
+    pub async fn prompt_interactive(
+        &self,
+        config: &Config,
+        prompt: &str,
+        max_tokens: Option<u32>,
+        no_think: bool,
+    ) -> Result<String, String> {
+        if !config.local_ai.runtime_enabled {
+            return Err("local ai is disabled".to_string());
+        }
+        let system = if no_think {
+            "You are a concise assistant. Return only the final answer. Do not include reasoning or chain-of-thought."
+        } else {
+            "You are a helpful assistant."
+        };
+        self.inference_interactive(config, system, prompt, max_tokens.or(Some(160)), no_think)
+            .await
+    }
+
     pub async fn inline_complete(
         &self,
         config: &Config,
@@ -194,6 +213,27 @@ impl LocalAiService {
         messages: Vec<crate::openhuman::inference::local::ollama::OllamaChatMessage>,
         max_tokens: Option<u32>,
     ) -> Result<String, String> {
+        self.chat_with_history_internal(config, messages, max_tokens, true)
+            .await
+    }
+
+    pub(crate) async fn chat_with_history_interactive(
+        &self,
+        config: &Config,
+        messages: Vec<crate::openhuman::inference::local::ollama::OllamaChatMessage>,
+        max_tokens: Option<u32>,
+    ) -> Result<String, String> {
+        self.chat_with_history_internal(config, messages, max_tokens, false)
+            .await
+    }
+
+    async fn chat_with_history_internal(
+        &self,
+        config: &Config,
+        messages: Vec<crate::openhuman::inference::local::ollama::OllamaChatMessage>,
+        max_tokens: Option<u32>,
+        gated: bool,
+    ) -> Result<String, String> {
         if !config.local_ai.runtime_enabled {
             return Err("local ai is disabled".to_string());
         }
@@ -206,8 +246,11 @@ impl LocalAiService {
             return Err("messages must not be empty".to_string());
         }
 
-        // Multi-turn local chat is background LLM-bound work — gate it.
-        let _gate_permit = crate::openhuman::scheduler_gate::wait_for_capacity().await;
+        let _gate_permit = if gated {
+            crate::openhuman::scheduler_gate::wait_for_capacity().await
+        } else {
+            None
+        };
 
         if provider_from_config(config) == LocalAiProvider::LmStudio {
             let started = std::time::Instant::now();
