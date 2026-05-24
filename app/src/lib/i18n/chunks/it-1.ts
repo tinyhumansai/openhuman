@@ -529,14 +529,18 @@ const it1: TranslationMap = {
     'Must be a positive integer (use the Unlimited preset for no limit).',
   'autonomy.presetUnlimited': 'Unlimited (default)',
   'triggers.toggleFailed': '{action} failed for {trigger}: {message}',
-  "skills.composio.noApiKeyTitle": "No Composio API Key Configured",
-  "skills.composio.noApiKeyDescription": "Local mode uses your own Composio API key. Open Settings → Advanced → Composio to add one before connecting integrations here.",
-  "skills.composio.noApiKeyCta": "Open in Settings",
-  "rewards.localUnavailable": "Local login does not earn rewards, coupons, or referral credit. To earn rewards, log out and continue by signing in with an OpenHuman account.",
-  "rewards.localUnavailableCta": "Open Account Settings",
-  "channels.localManagedUnavailable": "Managed channels are not available for local users.",
-  "settings.search.localManagedUnavailable": "OpenHuman Managed search is not available for local users. Add your own Parallel or Brave API key to enable web search.",
-  "devices.comingSoonDescription": "Device pairing is coming soon. This page will be the home for pairing iPhones and managing connected devices.",
+  'skills.composio.noApiKeyTitle': 'No Composio API Key Configured',
+  'skills.composio.noApiKeyDescription':
+    'Local mode uses your own Composio API key. Open Settings → Advanced → Composio to add one before connecting integrations here.',
+  'skills.composio.noApiKeyCta': 'Open in Settings',
+  'rewards.localUnavailable':
+    'Local login does not earn rewards, coupons, or referral credit. To earn rewards, log out and continue by signing in with an OpenHuman account.',
+  'rewards.localUnavailableCta': 'Open Account Settings',
+  'channels.localManagedUnavailable': 'Managed channels are not available for local users.',
+  'settings.search.localManagedUnavailable':
+    'OpenHuman Managed search is not available for local users. Add your own Parallel or Brave API key to enable web search.',
+  'devices.comingSoonDescription':
+    'Device pairing is coming soon. This page will be the home for pairing iPhones and managing connected devices.',
 };
 
 export default it1;

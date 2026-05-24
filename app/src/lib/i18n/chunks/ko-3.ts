@@ -410,6 +410,6 @@ const ko3: TranslationMap = {
   'channels.web.displayName': 'Web',
   'channels.web.description': 'Chat via the built-in web UI.',
   'channels.web.authMode.managed_dm.description': 'Use the embedded web chat — no setup required.',
-  "welcome.continueLocallyExperimental": "Continue Locally (Experimental)",
+  'welcome.continueLocallyExperimental': 'Continue Locally (Experimental)',
 };
 export default ko3;
