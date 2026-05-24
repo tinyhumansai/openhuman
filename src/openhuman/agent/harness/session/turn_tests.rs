@@ -685,6 +685,7 @@ async fn execute_tool_call_threads_generated_tool_context_into_policy() {
 
     let (result, record) = agent.execute_tool_call(&call, 0).await;
     assert!(!result.success);
+    assert!(result.output.contains("requires approval by policy"));
     assert!(result
         .output
         .contains("generated context requires approval"));

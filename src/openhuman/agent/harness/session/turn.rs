@@ -25,7 +25,9 @@ use crate::openhuman::agent::harness;
 use crate::openhuman::agent::hooks::{self, ToolCallRecord, TurnContext};
 use crate::openhuman::agent::memory_loader::collect_recall_citations;
 use crate::openhuman::agent::progress::AgentProgress;
-use crate::openhuman::agent::tool_policy::{ToolCallContext, ToolPolicyRequest};
+use crate::openhuman::agent::tool_policy::{
+    ToolCallContext, ToolPolicyDecision, ToolPolicyRequest,
+};
 use crate::openhuman::agent_experience::{
     prepend_experience_block, render_experience_hits, AgentExperienceStore, ExperienceQuery,
 };
@@ -1206,15 +1208,21 @@ impl Agent {
                 }
                 let policy_decision = self.tool_policy.check(&policy_request).await;
                 if let Some(reason) = policy_decision.blocking_reason() {
+                    let blocked_action = match &policy_decision {
+                        ToolPolicyDecision::RequireApproval { .. } => "requires approval",
+                        ToolPolicyDecision::Deny { .. } => "denied",
+                        ToolPolicyDecision::Allow => "allowed",
+                    };
                     tracing::debug!(
                         tool = call.name.as_str(),
                         policy = self.tool_policy.name(),
+                        action = blocked_action,
                         reason = %reason,
-                        "[agent_loop] tool denied by policy"
+                        "[agent_loop] tool blocked by policy"
                     );
                     (
                         format!(
-                            "Tool '{}' denied by policy '{}': {reason}",
+                            "Tool '{}' {blocked_action} by policy '{}': {reason}",
                             call.name,
                             self.tool_policy.name()
                         ),

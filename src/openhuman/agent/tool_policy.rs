@@ -138,8 +138,17 @@ fn redact_for_debug(value: &str) -> String {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ToolPolicyDecision {
     Allow,
-    RequireApproval { reason: String },
-    Deny { reason: String },
+    /// The policy requires an approval handoff before execution.
+    ///
+    /// Session execution currently treats this as fail-closed through
+    /// [`ToolPolicyDecision::blocking_reason`]. Callers that can prompt for
+    /// approval may branch on this variant and retry after approval is granted.
+    RequireApproval {
+        reason: String,
+    },
+    Deny {
+        reason: String,
+    },
 }
 
 impl ToolPolicyDecision {
@@ -155,6 +164,7 @@ impl ToolPolicyDecision {
         }
     }
 
+    /// Reason used by fail-closed executors that cannot complete approvals inline.
     pub fn blocking_reason(&self) -> Option<&str> {
         match self {
             Self::Allow => None,
