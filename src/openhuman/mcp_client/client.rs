@@ -385,8 +385,7 @@ impl McpHttpClient {
         let request = self
             .http
             .post(&self.endpoint)
-            .header(CONTENT_TYPE, "application/json")
-            .header(ACCEPT, MCP_HTTP_ACCEPT);
+            .header(CONTENT_TYPE, "application/json");
         let request = self.apply_standard_headers(request, false, method, None, &[]);
         let response = request.body(serde_json::to_vec(&body)?).send().await?;
         let status = response.status();
@@ -436,8 +435,7 @@ impl McpHttpClient {
         let request = self
             .http
             .post(&self.endpoint)
-            .header(CONTENT_TYPE, "application/json")
-            .header(ACCEPT, MCP_HTTP_ACCEPT);
+            .header(CONTENT_TYPE, "application/json");
         let request = if options.initialize {
             self.apply_auth(request, true)
         } else {

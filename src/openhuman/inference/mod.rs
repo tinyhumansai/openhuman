@@ -17,7 +17,6 @@ pub mod http;
 pub mod local;
 pub mod model_context;
 pub mod model_ids;
-pub mod openai_oauth;
 pub mod ops;
 pub mod parse;
 pub mod paths;
