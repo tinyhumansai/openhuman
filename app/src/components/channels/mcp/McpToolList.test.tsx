@@ -68,6 +68,14 @@ describe('McpToolList', () => {
     expect(screen.queryByText('read_file')).not.toBeInTheDocument();
   });
 
+  it('shows empty state when tools is undefined (malformed prop)', () => {
+    // McpToolList receives `tools` typed as McpTool[] but defensive test for runtime safety.
+    // tools.length would throw if undefined; the component must guard or fall back.
+    render(<McpToolList tools={undefined as unknown as McpTool[]} />);
+    // Should render empty state, not crash
+    expect(screen.getByText('No tools available.')).toBeInTheDocument();
+  });
+
   it('arrow rotates when expanded', () => {
     render(<McpToolList tools={TOOLS} />);
     const arrow = screen.getByText('▶');

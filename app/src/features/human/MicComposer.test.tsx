@@ -322,6 +322,8 @@ describe('MicComposer', () => {
 
   // ── Device selector (showDeviceSelector) ─────────────────────────────────
 
+  // ── Device selector: gear FAB + portaled menu (replaced <select> combobox) ──
+
   it('enumerates devices on mount when showDeviceSelector is true', async () => {
     const enumerateDevicesMock = vi.fn().mockResolvedValue([
       { kind: 'audioinput', deviceId: 'dev1', label: 'Built-in Mic' },
@@ -337,11 +339,15 @@ describe('MicComposer', () => {
     render(<MicComposer disabled={false} onSubmit={vi.fn()} showDeviceSelector />);
 
     await waitFor(() => expect(enumerateDevicesMock).toHaveBeenCalled());
-    expect(await screen.findByRole('combobox', { name: /microphone device/i })).toBeInTheDocument();
-    expect(screen.getByText('Built-in Mic')).toBeInTheDocument();
-    expect(screen.getByText('USB Headset')).toBeInTheDocument();
-    // Video input must not appear
-    expect(screen.queryByText('Camera')).not.toBeInTheDocument();
+    // The gear FAB is shown when devices.length > 1.
+    const gearBtn = await screen.findByLabelText(/Microphone device/i);
+    expect(gearBtn).toBeInTheDocument();
+    // Open the menu to see device items.
+    fireEvent.click(gearBtn);
+    expect(await screen.findByRole('menuitemradio', { name: /Built-in Mic/i })).toBeInTheDocument();
+    expect(screen.getByRole('menuitemradio', { name: /USB Headset/i })).toBeInTheDocument();
+    // Video input must not appear.
+    expect(screen.queryByRole('menuitemradio', { name: /Camera/i })).not.toBeInTheDocument();
   });
 
   it('does not show the selector when showDeviceSelector is false (default)', async () => {
@@ -358,14 +364,12 @@ describe('MicComposer', () => {
     render(<MicComposer disabled={false} onSubmit={vi.fn()} />);
 
     await waitFor(() => {
-      expect(
-        screen.queryByRole('combobox', { name: /microphone device/i })
-      ).not.toBeInTheDocument();
+      expect(screen.queryByLabelText(/Microphone device/i)).not.toBeInTheDocument();
       expect(enumerateDevicesMock).not.toHaveBeenCalled();
     });
   });
 
-  it('shows the selector disabled when only one device is available', async () => {
+  it('does not show the gear FAB when only one device is available', async () => {
     const enumerateDevicesMock = vi
       .fn()
       .mockResolvedValue([{ kind: 'audioinput', deviceId: 'dev1', label: 'Built-in Mic' }]);
@@ -377,9 +381,9 @@ describe('MicComposer', () => {
 
     render(<MicComposer disabled={false} onSubmit={vi.fn()} showDeviceSelector />);
 
-    const select = await screen.findByRole('combobox', { name: /microphone device/i });
-    expect(select).toBeInTheDocument();
-    expect(select).toBeDisabled();
+    await waitFor(() => expect(enumerateDevicesMock).toHaveBeenCalled());
+    // With only one device the gear FAB is not rendered at all.
+    expect(screen.queryByLabelText(/Microphone device/i)).not.toBeInTheDocument();
   });
 
   it('falls back to "Microphone N" label when browser hides labels before permission', async () => {
@@ -395,9 +399,14 @@ describe('MicComposer', () => {
 
     render(<MicComposer disabled={false} onSubmit={vi.fn()} showDeviceSelector />);
 
-    await waitFor(() => expect(screen.queryByRole('combobox')).toBeInTheDocument());
-    expect(screen.getByText('Microphone 1')).toBeInTheDocument();
-    expect(screen.getByText('Microphone 2')).toBeInTheDocument();
+    // Gear FAB appears when there are >1 devices.
+    const gearBtn = await screen.findByLabelText(/Microphone device/i);
+    expect(gearBtn).toBeInTheDocument();
+    fireEvent.click(gearBtn);
+    await waitFor(() =>
+      expect(screen.getByRole('menuitemradio', { name: /Microphone 1/i })).toBeInTheDocument()
+    );
+    expect(screen.getByRole('menuitemradio', { name: /Microphone 2/i })).toBeInTheDocument();
   });
 
   it('passes the selected deviceId as an exact constraint to getUserMedia', async () => {
@@ -414,9 +423,11 @@ describe('MicComposer', () => {
 
     render(<MicComposer disabled={false} onSubmit={vi.fn()} showDeviceSelector />);
 
-    // Wait for the selector to appear and pick the second device
-    const select = await screen.findByRole('combobox', { name: /microphone device/i });
-    fireEvent.change(select, { target: { value: 'dev2' } });
+    // Open the gear menu and pick the second device.
+    const gearBtn = await screen.findByLabelText(/Microphone device/i);
+    fireEvent.click(gearBtn);
+    const usbOption = await screen.findByRole('menuitemradio', { name: /USB Headset/i });
+    fireEvent.click(usbOption);
 
     fireEvent.click(screen.getByRole('button', { name: /start recording/i }));
     await waitFor(() => expect(getUserMediaMock).toHaveBeenCalled());
@@ -448,19 +459,30 @@ describe('MicComposer', () => {
 
     render(<MicComposer disabled={false} onSubmit={vi.fn()} showDeviceSelector />);
 
-    // Mount enumerate ran — labels are blank placeholders
-    await waitFor(() => expect(screen.queryByRole('combobox')).toBeInTheDocument());
-    expect(screen.getByText('Microphone 1')).toBeInTheDocument();
+    // Mount enumerate ran — labels are blank placeholders; gear FAB visible.
+    const gearBtn = await screen.findByLabelText(/Microphone device/i);
+    expect(gearBtn).toBeInTheDocument();
 
-    // Start recording → triggers the post-permission refresh
+    // Start recording → triggers the post-permission enumerate refresh.
     fireEvent.click(screen.getByRole('button', { name: /start recording/i }));
     await waitFor(() =>
       expect(screen.getByRole('button', { name: /stop recording and send/i })).toBeInTheDocument()
     );
+    // enumerateDevices should have been called again (post-permission refresh).
+    await waitFor(() => expect(enumerateDevicesMock).toHaveBeenCalledTimes(2));
 
-    // After permission, real labels should now be visible
-    await waitFor(() => expect(screen.getByText('Built-in Mic')).toBeInTheDocument());
-    expect(screen.getByText('USB Headset')).toBeInTheDocument();
+    // Stop recording so the gear button is re-enabled (disabled while recording).
+    fireEvent.click(screen.getByRole('button', { name: /stop recording and send/i }));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /start recording/i })).toBeInTheDocument()
+    );
+
+    // Open the menu to verify real labels are now shown.
+    fireEvent.click(gearBtn);
+    await waitFor(() =>
+      expect(screen.getByRole('menuitemradio', { name: /Built-in Mic/i })).toBeInTheDocument()
+    );
+    expect(screen.getByRole('menuitemradio', { name: /USB Headset/i })).toBeInTheDocument();
   });
 
   it('handles enumerateDevices throwing gracefully (no crash, selector hidden)', async () => {

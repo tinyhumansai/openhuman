@@ -136,8 +136,11 @@ describe('HumanPage — speak-replies localStorage persistence', () => {
     expect(
       screen.getByRole('status', { name: /researcher subagent running/i })
     ).toBeInTheDocument();
+    // The bubble renders only the label; activity moved to the title tooltip.
     expect(screen.getByText('Researcher')).toBeInTheDocument();
-    expect(screen.getByText('Iteration 1/3')).toBeInTheDocument();
+    // Activity is in the title attribute of the bubble, not visible body text.
+    const bubble = screen.getByTestId('sub-mascot-bubble');
+    expect(bubble).toHaveAttribute('title', expect.stringContaining('Iteration 1/3'));
   });
 
   it('renders a custom GIF mascot when one is configured', () => {

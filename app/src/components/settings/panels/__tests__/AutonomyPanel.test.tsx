@@ -73,7 +73,7 @@ describe('AutonomyPanel', () => {
     renderWithProviders(<AutonomyPanel />, { initialEntries: ['/settings/autonomy'] });
     const input = await screen.findByDisplayValue('20');
     fireEvent.change(input, { target: { value: '0' } });
-    await screen.findByText(/Must be an integer between 1 and 10,000/i);
+    await screen.findByText(/Must be a positive integer/i);
     expect(screen.getByRole('button', { name: /^Save$/ })).toBeDisabled();
   });
 
@@ -85,7 +85,7 @@ describe('AutonomyPanel', () => {
     renderWithProviders(<AutonomyPanel />, { initialEntries: ['/settings/autonomy'] });
     const input = await screen.findByDisplayValue('20');
     fireEvent.change(input, { target: { value } });
-    await screen.findByText(/Must be an integer between 1 and 10,000/i);
+    await screen.findByText(/Must be a positive integer/i);
     expect(screen.getByRole('button', { name: /^Save$/ })).toBeDisabled();
   });
 

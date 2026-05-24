@@ -21,10 +21,10 @@ use super::types::{
 };
 use crate::openhuman::config::Config;
 use crate::openhuman::credentials::{AuthService, APP_SESSION_PROVIDER};
-use crate::openhuman::memory::tree::chat::{
+use crate::openhuman::memory::MemoryClientRef;
+use crate::openhuman::memory_tree::chat::{
     build_chat_provider, ChatConsumer, ChatPrompt, ChatProvider,
 };
-use crate::openhuman::memory::MemoryClientRef;
 use anyhow::Result;
 use executor::ExecutionOutcome;
 use std::collections::HashMap;

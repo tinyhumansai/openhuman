@@ -406,6 +406,17 @@ const it4: TranslationMap = {
   'pages.settings.account.migration': 'Importa da un altro assistente',
   'pages.settings.account.migrationDesc':
     'Migra memoria e note da OpenClaw (e presto Hermes) in questo spazio di lavoro.',
+  'composio.connect.scope.read': 'Read',
+  'composio.connect.scope.readHint': 'Allow the agent to read data from this connection.',
+  'composio.connect.scope.write': 'Write',
+  'composio.connect.scope.writeHint':
+    'Allow the agent to create or modify data through this connection.',
+  'composio.connect.scope.admin': 'Admin',
+  'composio.connect.scope.adminHint':
+    'Allow the agent to manage settings, permissions, or destructive actions.',
+  'pages.settings.composioSection.title': 'Composio',
+  'pages.settings.composioSection.description':
+    'Routing, triggers, and history for integrations powered by Composio.',
 };
 
 export default it4;

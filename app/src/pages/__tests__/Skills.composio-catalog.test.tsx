@@ -58,7 +58,7 @@ describe('Skills page — Composio catalog fallback', () => {
   it('shows known composio integrations in the integrations icon grid when the live toolkit list is empty', () => {
     renderWithProviders(<Skills />, { initialEntries: ['/skills'] });
 
-    expect(screen.getByRole('heading', { name: 'Integrations' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Composio Integrations' })).toBeInTheDocument();
     expect(screen.getByText('Discord')).toBeInTheDocument();
     expect(screen.getByText('Google Calendar')).toBeInTheDocument();
     expect(screen.getByText('Google Drive')).toBeInTheDocument();
@@ -75,7 +75,7 @@ describe('Skills page — Composio catalog fallback', () => {
     // missing Composio Zoom tile even though the Meeting bots card also
     // renders a "Zoom" entry on the same page.
     const integrationsSection = screen
-      .getByRole('heading', { name: 'Integrations' })
+      .getByRole('heading', { name: 'Composio Integrations' })
       .closest('.rounded-2xl');
     expect(integrationsSection).not.toBeNull();
     expect(within(integrationsSection as HTMLElement).getByText('Zoom')).toBeInTheDocument();
@@ -91,7 +91,7 @@ describe('Skills page — Composio catalog fallback', () => {
     expect(screen.getByText('Backend unavailable')).toBeInTheDocument();
 
     const integrationsSection = screen
-      .getByRole('heading', { name: 'Integrations' })
+      .getByRole('heading', { name: 'Composio Integrations' })
       .closest('.rounded-2xl');
     expect(integrationsSection).not.toBeNull();
     const gmailTile = within(integrationsSection as HTMLElement).getByRole('button', {
@@ -113,7 +113,7 @@ describe('Skills page — Composio catalog fallback', () => {
     renderWithProviders(<Skills />, { initialEntries: ['/skills'] });
 
     const integrationsSection = screen
-      .getByRole('heading', { name: 'Integrations' })
+      .getByRole('heading', { name: 'Composio Integrations' })
       .closest('.rounded-2xl');
     expect(integrationsSection).not.toBeNull();
     const gmailTile = within(integrationsSection as HTMLElement).getByRole('button', {
@@ -141,7 +141,7 @@ describe('Skills page — Composio catalog fallback', () => {
     renderWithProviders(<Skills />, { initialEntries: ['/skills'] });
 
     const integrationsSection = screen
-      .getByRole('heading', { name: 'Integrations' })
+      .getByRole('heading', { name: 'Composio Integrations' })
       .closest('.rounded-2xl');
     expect(integrationsSection).not.toBeNull();
     // No Preview badges anywhere in the integrations grid. The

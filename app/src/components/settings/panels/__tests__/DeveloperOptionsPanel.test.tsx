@@ -113,8 +113,8 @@ describe('DeveloperOptionsPanel — CoreModeBadge', () => {
 
     expect(screen.getByText('AI 配置')).toBeInTheDocument();
     expect(screen.getByText('屏幕感知')).toBeInTheDocument();
-    expect(screen.getByText('消息渠道')).toBeInTheDocument();
-    expect(screen.getByText('配置 Telegram/Discord 认证模式和默认渠道路由')).toBeInTheDocument();
+    // The messaging tile was removed; composio replaced it as a single destination.
+    expect(screen.getByText('Composio')).toBeInTheDocument();
   });
 });
 

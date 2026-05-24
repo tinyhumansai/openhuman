@@ -41,11 +41,11 @@ use openhuman_core::openhuman::composio::providers::registry::{
     get_provider, init_default_providers,
 };
 use openhuman_core::openhuman::config::Config;
-use openhuman_core::openhuman::memory::tree::content_store::read::{
+use openhuman_core::openhuman::memory_tree::content_store::read::{
     verify_chunk_file, verify_summary_file, VerifyResult,
 };
-use openhuman_core::openhuman::memory::tree::jobs::drain_until_idle;
-use openhuman_core::openhuman::memory::tree::store::{
+use openhuman_core::openhuman::memory_tree::jobs::drain_until_idle;
+use openhuman_core::openhuman::memory_tree::store::{
     get_chunk_content_pointers, list_chunks, list_summaries_with_content_path, ListChunksQuery,
 };
 

@@ -69,7 +69,7 @@ const Notifications = () => {
       {/* Core-bridge notifications — system events */}
       <div
         data-testid="system-events-section"
-        className="max-w-2xl mx-auto bg-white rounded-2xl shadow-soft border border-stone-200 overflow-hidden">
+        className="max-w-2xl mx-auto bg-white dark:bg-neutral-900 rounded-2xl shadow-soft border border-stone-200 dark:border-neutral-800 overflow-hidden">
         <div className="flex items-center justify-between border-b border-stone-100 dark:border-neutral-800 px-4 py-3">
           <div>
             <h1 className="text-lg font-semibold text-stone-900 dark:text-neutral-100">

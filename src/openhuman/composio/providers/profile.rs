@@ -32,7 +32,7 @@ use std::collections::BTreeMap;
 
 /// Shape of an identifier persisted against a connection. Mirrors the
 /// matching dimensions of the memory tree's
-/// `crate::openhuman::memory::tree::score::extract::EntityKind` so the
+/// `crate::openhuman::memory_tree::score::extract::EntityKind` so the
 /// self-check is a direct `(toolkit, kind, value)` lookup.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IdentityKind {

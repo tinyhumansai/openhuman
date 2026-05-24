@@ -44,7 +44,7 @@
 //! progress signal.
 
 use crate::openhuman::config::Config;
-use crate::openhuman::memory::tree::store::with_connection;
+use crate::openhuman::memory_tree::store::with_connection;
 use crate::rpc::RpcOutcome;
 use rusqlite::Connection;
 
@@ -247,7 +247,7 @@ mod tests {
     /// column is NULL.
     #[test]
     fn pending_and_processed_key_off_sidecar_not_inline_column() {
-        use crate::openhuman::memory::tree::store::with_connection;
+        use crate::openhuman::memory_tree::store::with_connection;
         use rusqlite::params;
         use tempfile::TempDir;
 
@@ -311,7 +311,7 @@ mod tests {
     /// hides the progress bar): `batch_total = batch_processed = 0`.
     #[test]
     fn fully_embedded_provider_reports_no_active_wave() {
-        use crate::openhuman::memory::tree::store::with_connection;
+        use crate::openhuman::memory_tree::store::with_connection;
         use rusqlite::params;
         use tempfile::TempDir;
 
@@ -357,7 +357,7 @@ mod tests {
     /// provider whose only leftovers are terminal drains to 0 pending / no wave.
     #[test]
     fn dropped_and_skipped_chunks_count_as_resolved_not_pending() {
-        use crate::openhuman::memory::tree::store::with_connection;
+        use crate::openhuman::memory_tree::store::with_connection;
         use rusqlite::params;
         use tempfile::TempDir;
 
@@ -422,7 +422,7 @@ mod tests {
     /// still reflects the old straggler.
     #[test]
     fn stale_out_of_window_pending_does_not_open_a_wave() {
-        use crate::openhuman::memory::tree::store::with_connection;
+        use crate::openhuman::memory_tree::store::with_connection;
         use rusqlite::params;
         use tempfile::TempDir;
 

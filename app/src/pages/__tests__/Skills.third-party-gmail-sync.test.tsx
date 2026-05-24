@@ -40,7 +40,7 @@ describe('Skills page — Gmail composio integration', () => {
     renderWithProviders(<Skills />, { initialEntries: ['/skills'] });
 
     const integrationsSection = screen
-      .getByRole('heading', { name: 'Integrations' })
+      .getByRole('heading', { name: 'Composio Integrations' })
       .closest('.rounded-2xl');
     expect(integrationsSection).not.toBeNull();
     expect(within(integrationsSection as HTMLElement).getByText('Gmail')).toBeInTheDocument();

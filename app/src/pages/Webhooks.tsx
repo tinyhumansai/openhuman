@@ -1,3 +1,4 @@
+import ComposioTriagePanel from '../components/settings/panels/ComposioTriagePanel';
 import ComposeioTriggerHistory from '../components/webhooks/ComposeioTriggerHistory';
 import { useComposeioTriggerHistory } from '../hooks/useComposeioTriggerHistory';
 import { useT } from '../lib/i18n/I18nContext';
@@ -80,6 +81,12 @@ export default function Webhooks() {
 
         <div className="bg-white dark:bg-neutral-900 rounded-2xl shadow-soft border border-stone-200 dark:border-neutral-800 p-6">
           <ComposeioTriggerHistory entries={entries} />
+        </div>
+
+        {/* Triage settings merged in from the former Integration Triggers
+            page so all Composio trigger config lives in one place. */}
+        <div className="bg-white dark:bg-neutral-900 rounded-2xl shadow-soft border border-stone-200 dark:border-neutral-800 overflow-hidden">
+          <ComposioTriagePanel />
         </div>
       </div>
     </div>

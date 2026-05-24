@@ -200,6 +200,25 @@ describe('InstalledServerList', () => {
     expect(screen.getByTitle('disconnected')).toBeInTheDocument();
   });
 
+  // -----------------------------------------------------------------------
+  // Defensive rendering with malformed props
+  // -----------------------------------------------------------------------
+
+  it('does not crash when statuses is undefined', () => {
+    // Guard: passing undefined instead of [] should not throw
+    render(
+      <InstalledServerList
+        servers={[SERVER_1]}
+        statuses={undefined as unknown as ConnStatus[]}
+        selectedId={null}
+        onSelect={() => {}}
+        onBrowseCatalog={() => {}}
+      />
+    );
+    // Server name still renders; status falls back to disconnected
+    expect(screen.getByText('File Server')).toBeInTheDocument();
+  });
+
   it('calls onBrowseCatalog from the header link', () => {
     const onBrowse = vi.fn();
     render(

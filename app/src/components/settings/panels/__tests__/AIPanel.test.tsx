@@ -21,7 +21,7 @@ import {
   openhumanHeartbeatSettingsSet,
   openhumanHeartbeatTickNow,
 } from '../../../../utils/tauriCommands/heartbeat';
-import AIPanel from '../AIPanel';
+import AIPanel, { BackgroundLoopControls } from '../AIPanel';
 
 vi.mock('../../../../services/api/aiSettingsApi', () => ({
   ALL_WORKLOADS: [
@@ -725,7 +725,14 @@ describe('AIPanel', () => {
   });
 
   it('renders background loop diagnostics with newest spend row and budget math', async () => {
-    renderWithProviders(<AIPanel />);
+    // BackgroundLoopControls was moved out of AIPanel into standalone panels.
+    renderWithProviders(
+      <BackgroundLoopControls
+        view="all"
+        routing={baseSettings.routing}
+        cloudProviders={baseSettings.cloudProviders}
+      />
+    );
 
     await waitFor(() => expect(screen.getByText('Background loops')).toBeInTheDocument());
 
@@ -776,7 +783,14 @@ describe('AIPanel', () => {
       return { result: { settings: currentSettings }, logs: [] };
     });
 
-    renderWithProviders(<AIPanel />);
+    // BackgroundLoopControls was moved out of AIPanel into standalone panels.
+    renderWithProviders(
+      <BackgroundLoopControls
+        view="all"
+        routing={baseSettings.routing}
+        cloudProviders={baseSettings.cloudProviders}
+      />
+    );
     await waitFor(() => expect(screen.getByText('Heartbeat controls')).toBeInTheDocument());
 
     const clickToggle = async (label: string, expectedPatch: Record<string, unknown>) => {
@@ -835,7 +849,14 @@ describe('AIPanel', () => {
     vi.mocked(openhumanHeartbeatSettingsGet).mockRejectedValueOnce(new Error('heartbeat offline'));
     vi.mocked(openhumanHeartbeatTickNow).mockRejectedValueOnce(new Error('tick failed'));
 
-    renderWithProviders(<AIPanel />);
+    // BackgroundLoopControls was moved out of AIPanel into standalone panels.
+    renderWithProviders(
+      <BackgroundLoopControls
+        view="all"
+        routing={baseSettings.routing}
+        cloudProviders={baseSettings.cloudProviders}
+      />
+    );
 
     await waitFor(() => expect(screen.getByText('heartbeat offline')).toBeInTheDocument());
     expect(screen.getByText('Heartbeat controls unavailable.')).toBeInTheDocument();

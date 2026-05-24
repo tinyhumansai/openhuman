@@ -365,6 +365,57 @@ const ko4: TranslationMap = {
   'settings.billing.subscription.paymentConfirmed': '결제 확인됨',
   'settings.billing.subscription.perMonth': '월별',
   'settings.billing.subscription.popular': '인기',
+  'composio.connect.scope.read': 'Read',
+  'composio.connect.scope.readHint': 'Allow the agent to read data from this connection.',
+  'composio.connect.scope.write': 'Write',
+  'composio.connect.scope.writeHint':
+    'Allow the agent to create or modify data through this connection.',
+  'composio.connect.scope.admin': 'Admin',
+  'composio.connect.scope.adminHint':
+    'Allow the agent to manage settings, permissions, or destructive actions.',
+  'composio.connect.dynamicsOrgNameLabel': 'Dynamics 365 Organization Name',
+  'composio.connect.dynamicsOrgNameHint':
+    'For example, "myorg" for myorg.crm.dynamics.com. Enter the short org name only, not the full URL.',
+  'composio.connect.needsFieldsPrefix': 'To connect',
+  'composio.connect.needsFieldsSuffix':
+    'we need a bit more information. Fill in the missing fields below and try again.',
+  'composio.connect.requiredFieldEmpty': 'This field is required.',
+  'composio.connect.wabaIdHint':
+    'Find it via GET /me/businesses then GET /{business_id}/owned_whatsapp_business_accounts using your Meta access token.',
+  'onboarding.contextGathering.coreAlive': 'Core is reachable — first launch can take a minute.',
+  'onboarding.contextGathering.coreAliveProbing': 'Checking core connection…',
+  'onboarding.contextGathering.coreUnreachable':
+    'Core is not responding. You can continue and try again later.',
+  'onboarding.contextGathering.stillWorkingDesc':
+    'First launch can take 30–60 seconds while we warm up your local model and tools. You can continue to chat at any time — profile build keeps running in the background.',
+  'onboarding.contextGathering.stillWorkingTitle': 'Still working on your profile…',
+  'overlay.ariaCompanion': 'Companion active',
+  'overlay.companion.error': 'Error',
+  'overlay.companion.listening': 'Listening…',
+  'overlay.companion.pointing': 'Pointing…',
+  'overlay.companion.speaking': 'Speaking…',
+  'overlay.companion.thinking': 'Thinking…',
+  'pages.settings.account.migration': 'Import from another assistant',
+  'pages.settings.account.migrationDesc':
+    'Migrate memory and notes from OpenClaw (or, soon, Hermes) into this workspace.',
+  'pages.settings.composioSection.title': 'Composio',
+  'pages.settings.composioSection.description':
+    'Routing, triggers, and history for integrations powered by Composio.',
+  'pages.settings.features.desktopCompanion': 'Desktop Companion',
+  'pages.settings.features.desktopCompanionDesc':
+    'Voice assistant with screen awareness — listens, sees, speaks, points',
+  'settings.ai.openAiCompat.authHeaderExample': 'Authorization: Bearer <your key>',
+  'settings.ai.openAiCompat.authHeaderLabel': 'Auth header',
+  'settings.ai.openAiCompat.baseUrlLabel': 'Base URL',
+  'settings.ai.openAiCompat.baseUrlUnavailable': 'Unavailable',
+  'settings.ai.openAiCompat.clearKey': 'Clear key',
+  'settings.ai.openAiCompat.description':
+    "Point local harnesses at this /v1 server to route through the providers configured below. Authentication uses a stable key you set here, not the app's internal core bearer.",
+  'settings.ai.openAiCompat.keyConfigured': 'Key configured',
+  'settings.ai.openAiCompat.keyRequired': 'Key required',
+  'settings.ai.openAiCompat.rotateKey': 'Rotate key',
+  'settings.ai.openAiCompat.setKey': 'Set key',
+  'settings.ai.openAiCompat.title': 'OpenAI-compatible endpoint',
 };
 
 export default ko4;

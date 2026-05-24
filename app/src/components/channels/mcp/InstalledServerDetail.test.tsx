@@ -168,6 +168,19 @@ describe('InstalledServerDetail', () => {
     await waitFor(() => screen.getByText('Connection refused'));
   });
 
+  it('renders without crashing when connStatus is undefined (no status badge data)', () => {
+    // connStatus=undefined is the cold-start case before status polling resolves.
+    // The component must not crash and must default to disconnected state.
+    render(
+      <InstalledServerDetail server={BASE_SERVER} connStatus={undefined} onUninstalled={() => {}} />
+    );
+    expect(screen.getByText('Test Server')).toBeInTheDocument();
+    // Connect button shown (defaulted to disconnected)
+    expect(screen.getByRole('button', { name: 'Connect' })).toBeInTheDocument();
+    // No tool list shown in disconnected state
+    expect(screen.getByText('No tools available.')).toBeInTheDocument();
+  });
+
   it('renders status badge from connStatus', () => {
     render(
       <InstalledServerDetail

@@ -185,9 +185,9 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     // Document and knowledge graph storage
     controllers.extend(crate::openhuman::memory::all_memory_registered_controllers());
     // Memory tree ingestion layer (#707 — canonicalised chunks with provenance)
-    controllers.extend(crate::openhuman::memory::all_memory_tree_registered_controllers());
+    controllers.extend(crate::openhuman::memory_tree::all_memory_tree_registered_controllers());
     // Memory tree retrieval layer (#710 — LLM-callable read tools over the tree)
-    controllers.extend(crate::openhuman::memory::all_retrieval_registered_controllers());
+    controllers.extend(crate::openhuman::memory_tree::all_retrieval_registered_controllers());
     // Slack → memory-tree ingestion engine (per-message ingest, no bucketing)
     controllers.extend(
         crate::openhuman::composio::providers::slack::all_slack_memory_registered_controllers(),
@@ -226,8 +226,7 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     // Core binary update management
     controllers.extend(crate::openhuman::update::all_update_registered_controllers());
     // Hierarchical knowledge summarization
-    controllers
-        .extend(crate::openhuman::tree_summarizer::all_tree_summarizer_registered_controllers());
+    controllers.extend(crate::openhuman::memory_tree::all_tree_summarizer_registered_controllers());
     // Self-learning and user context enrichment
     controllers.extend(crate::openhuman::learning::all_learning_registered_controllers());
     // Conversation thread and message management
@@ -314,8 +313,8 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::tools::all_tools_controller_schemas());
     schemas.extend(crate::openhuman::tool_registry::all_tool_registry_controller_schemas());
     schemas.extend(crate::openhuman::memory::all_memory_controller_schemas());
-    schemas.extend(crate::openhuman::memory::all_memory_tree_controller_schemas());
-    schemas.extend(crate::openhuman::memory::all_retrieval_controller_schemas());
+    schemas.extend(crate::openhuman::memory_tree::all_memory_tree_controller_schemas());
+    schemas.extend(crate::openhuman::memory_tree::all_retrieval_controller_schemas());
     schemas.extend(
         crate::openhuman::composio::providers::slack::all_slack_memory_controller_schemas(),
     );
@@ -333,7 +332,7 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::subconscious::all_subconscious_controller_schemas());
     schemas.extend(crate::openhuman::webhooks::all_webhooks_controller_schemas());
     schemas.extend(crate::openhuman::update::all_update_controller_schemas());
-    schemas.extend(crate::openhuman::tree_summarizer::all_tree_summarizer_controller_schemas());
+    schemas.extend(crate::openhuman::memory_tree::all_tree_summarizer_controller_schemas());
     schemas.extend(crate::openhuman::learning::all_learning_controller_schemas());
     // Conversation thread and message management
     schemas.extend(crate::openhuman::threads::all_threads_controller_schemas());

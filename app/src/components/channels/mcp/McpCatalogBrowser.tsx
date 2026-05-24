@@ -47,8 +47,10 @@ const McpCatalogBrowser = ({ onSelectInstall }: McpCatalogBrowserProps) => {
       }
       setTotalPages(result.total_pages);
       setPage(result.page);
-      setServers(prev => (append ? [...prev, ...result.servers] : result.servers));
-      log('loaded %d servers (append=%s)', result.servers.length, append);
+      // Guard against malformed envelope where `servers` is null/undefined.
+      const incoming = result.servers ?? [];
+      setServers(prev => (append ? [...prev, ...incoming] : incoming));
+      log('loaded %d servers (append=%s)', incoming.length, append);
     } catch (err) {
       if (seq !== requestSeqRef.current) return;
       const msg = err instanceof Error ? err.message : 'Failed to load catalog';

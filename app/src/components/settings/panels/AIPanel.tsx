@@ -757,7 +757,7 @@ function summarizeSpendSample(transactions: CreditTransaction[]) {
   return { rows, total, avgRowUsd, sampleHours, spendPerHour, rowsPerHour };
 }
 
-function describeProvider(ref: ProviderRef, providers: CloudProvider[]): string {
+function describeProvider(ref: ProviderRef, providers: BackgroundLoopProviderView[]): string {
   if (ref.kind === 'openhuman') return 'OpenHuman';
   if (ref.kind === 'local') return `Local ${ref.model}`;
   const provider = providers.find(p => p.slug === ref.providerSlug);
@@ -828,12 +828,25 @@ const FormulaRow = ({ label, value, detail }: { label: string; value: string; de
   </div>
 );
 
-const BackgroundLoopControls = ({
+export type BackgroundLoopControlsView = 'all' | 'heartbeat' | 'ledger';
+
+/** Minimal cloud-provider shape consumed by the loop map's `describeProvider`
+ *  helper — only slug/label/id are read. Accepting this narrower shape lets
+ *  external panels (HeartbeatPanel, LedgerUsagePanel) feed in the API view
+ *  (`CloudProviderView`) without copying the AIPanel-internal extras
+ *  (`authStyle`, `maskedKey`). */
+export type BackgroundLoopProviderView = { id: string; slug: string; label: string };
+
+export const BackgroundLoopControls = ({
   routing,
   cloudProviders,
+  view = 'all',
+  hideHeader = false,
 }: {
   routing: RoutingMap;
-  cloudProviders: CloudProvider[];
+  cloudProviders: BackgroundLoopProviderView[];
+  view?: BackgroundLoopControlsView;
+  hideHeader?: boolean;
 }) => {
   const [settings, setSettings] = useState<HeartbeatSettings | null>(null);
   const [usage, setUsage] = useState<TeamUsage | null>(null);
@@ -1043,17 +1056,24 @@ const BackgroundLoopControls = ({
     },
   ];
 
+  const showHeartbeat = view === 'all' || view === 'heartbeat';
+  const showLedger = view === 'all' || view === 'ledger';
+  const gridCols =
+    view === 'all' ? 'lg:grid-cols-[minmax(0,1fr)_minmax(300px,0.8fr)]' : 'lg:grid-cols-1';
+
   return (
     <div className="space-y-4">
-      <div className="border-b border-stone-200 dark:border-neutral-800 pb-2">
-        <h2 className="text-base font-semibold text-stone-900 dark:text-neutral-100">
-          Background loops
-        </h2>
-        <p className="mt-0.5 text-xs text-stone-500 dark:text-neutral-400">
-          See what runs without a chat message, pause heartbeat work, and inspect recent credit
-          ledger rows.
-        </p>
-      </div>
+      {!hideHeader && (
+        <div className="border-b border-stone-200 dark:border-neutral-800 pb-2">
+          <h2 className="text-base font-semibold text-stone-900 dark:text-neutral-100">
+            Background loops
+          </h2>
+          <p className="mt-0.5 text-xs text-stone-500 dark:text-neutral-400">
+            See what runs without a chat message, pause heartbeat work, and inspect recent credit
+            ledger rows.
+          </p>
+        </div>
+      )}
 
       {error && (
         <div className="rounded-md border border-coral-200 dark:border-coral-500/30 bg-coral-50 dark:bg-coral-500/10 px-3 py-2 text-xs text-coral-700 dark:text-coral-300">
@@ -1061,440 +1081,446 @@ const BackgroundLoopControls = ({
         </div>
       )}
 
-      <section className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(300px,0.8fr)]">
-        <div className="space-y-3">
-          <div className="rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 p-3">
-            <div className="mb-3 flex items-center justify-between gap-3">
+      <section className={`grid gap-3 ${gridCols}`}>
+        {showHeartbeat && (
+          <div className="space-y-3">
+            <div className="rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 p-3">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
+                    Heartbeat controls
+                  </div>
+                  <div className="text-xs text-stone-500 dark:text-neutral-400">
+                    Defaults off. Enabling starts the loop; disabling aborts the running task.
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void refresh()}
+                  disabled={loading}
+                  className="rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-2 py-1 text-xs font-medium text-stone-700 dark:text-neutral-200 hover:bg-stone-50 dark:hover:bg-neutral-800/60 dark:bg-neutral-800/60 dark:hover:bg-neutral-800/60 disabled:opacity-50">
+                  Refresh
+                </button>
+              </div>
+
+              {settings ? (
+                <div className="space-y-2">
+                  <LoopToggle
+                    label="Heartbeat loop"
+                    description="Master scheduler for planner + optional subconscious inference."
+                    checked={settings.enabled}
+                    busy={saving === 'enabled'}
+                    onToggle={() => void applyHeartbeatPatch({ enabled: !settings.enabled })}
+                  />
+                  <LoopToggle
+                    label="Subconscious inference"
+                    description="Runs model-backed task/reflection evaluation on heartbeat ticks."
+                    checked={settings.inference_enabled}
+                    busy={saving === 'inference_enabled'}
+                    onToggle={() =>
+                      void applyHeartbeatPatch({ inference_enabled: !settings.inference_enabled })
+                    }
+                  />
+                  <LoopToggle
+                    label="Calendar meeting checks"
+                    description="Calls calendar event list for active Google Calendar connections."
+                    checked={settings.notify_meetings}
+                    busy={saving === 'notify_meetings'}
+                    onToggle={() =>
+                      void applyHeartbeatPatch({ notify_meetings: !settings.notify_meetings })
+                    }
+                  />
+                  <div className="grid gap-2 rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 md:grid-cols-3">
+                    <label className="space-y-1 text-xs font-medium text-stone-700 dark:text-neutral-200">
+                      <span>Calendar cap</span>
+                      <select
+                        value={maxCalendarConnectionsPerTick}
+                        disabled={saving === 'max_calendar_connections_per_tick'}
+                        onChange={e =>
+                          void applyHeartbeatPatch({
+                            max_calendar_connections_per_tick: Number(e.target.value),
+                          })
+                        }
+                        className="w-full rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-2 py-1 text-xs text-stone-900 dark:text-neutral-100 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500">
+                        {[1, 2, 3, 5, 10].map(count => (
+                          <option key={count} value={count}>
+                            {count} conn/tick
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="space-y-1 text-xs font-medium text-stone-700 dark:text-neutral-200">
+                      <span>Meeting lookahead</span>
+                      <select
+                        value={settings.meeting_lookahead_minutes}
+                        disabled={saving === 'meeting_lookahead_minutes'}
+                        onChange={e =>
+                          void applyHeartbeatPatch({
+                            meeting_lookahead_minutes: Number(e.target.value),
+                          })
+                        }
+                        className="w-full rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-2 py-1 text-xs text-stone-900 dark:text-neutral-100 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500">
+                        {[15, 30, 60, 120, 240].map(minutes => (
+                          <option key={minutes} value={minutes}>
+                            {minutes} min
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="space-y-1 text-xs font-medium text-stone-700 dark:text-neutral-200">
+                      <span>Reminder lookahead</span>
+                      <select
+                        value={settings.reminder_lookahead_minutes}
+                        disabled={saving === 'reminder_lookahead_minutes'}
+                        onChange={e =>
+                          void applyHeartbeatPatch({
+                            reminder_lookahead_minutes: Number(e.target.value),
+                          })
+                        }
+                        className="w-full rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-2 py-1 text-xs text-stone-900 dark:text-neutral-100 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500">
+                        {[5, 15, 30, 60, 120].map(minutes => (
+                          <option key={minutes} value={minutes}>
+                            {minutes} min
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                  <LoopToggle
+                    label="Cron reminder checks"
+                    description="Scans enabled cron jobs for reminder-like upcoming items."
+                    checked={settings.notify_reminders}
+                    busy={saving === 'notify_reminders'}
+                    onToggle={() =>
+                      void applyHeartbeatPatch({ notify_reminders: !settings.notify_reminders })
+                    }
+                  />
+                  <LoopToggle
+                    label="Relevant notification checks"
+                    description="Promotes urgent local notifications into proactive alerts."
+                    checked={settings.notify_relevant_events}
+                    busy={saving === 'notify_relevant_events'}
+                    onToggle={() =>
+                      void applyHeartbeatPatch({
+                        notify_relevant_events: !settings.notify_relevant_events,
+                      })
+                    }
+                  />
+                  <LoopToggle
+                    label="External delivery"
+                    description="Lets heartbeat alerts send proactive messages to external channels."
+                    checked={settings.external_delivery_enabled}
+                    busy={saving === 'external_delivery_enabled'}
+                    onToggle={() =>
+                      void applyHeartbeatPatch({
+                        external_delivery_enabled: !settings.external_delivery_enabled,
+                      })
+                    }
+                  />
+
+                  <div className="flex flex-wrap items-center gap-2 rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2">
+                    <label
+                      className="text-xs font-medium text-stone-700 dark:text-neutral-200"
+                      htmlFor="heartbeat-interval">
+                      Interval
+                    </label>
+                    <select
+                      id="heartbeat-interval"
+                      value={settings.interval_minutes}
+                      disabled={saving === 'interval_minutes'}
+                      onChange={e =>
+                        void applyHeartbeatPatch({ interval_minutes: Number(e.target.value) })
+                      }
+                      className="rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-2 py-1 text-xs text-stone-900 dark:text-neutral-100 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500">
+                      {[5, 10, 15, 30, 60].map(minutes => (
+                        <option key={minutes} value={minutes}>
+                          {minutes} min
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => void runPlannerNow()}
+                      disabled={runningTick}
+                      className="ml-auto rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-2 py-1 text-xs font-medium text-stone-700 dark:text-neutral-200 hover:bg-stone-50 dark:hover:bg-neutral-800/60 dark:bg-neutral-800/60 dark:hover:bg-neutral-800/60 disabled:opacity-50">
+                      {runningTick ? 'Running...' : 'Planner tick now'}
+                    </button>
+                  </div>
+
+                  {plannerSummary && (
+                    <div className="rounded-md border border-primary-100 bg-primary-50 dark:bg-primary-500/10 px-3 py-2 text-xs text-primary-900">
+                      Planner: {plannerSummary.source_events} source events,{' '}
+                      {plannerSummary.deliveries_sent} sent,{' '}
+                      {plannerSummary.deliveries_skipped_dedup} deduped.
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="text-xs text-stone-500 dark:text-neutral-400">
+                  {loading ? 'Loading heartbeat controls...' : 'Heartbeat controls unavailable.'}
+                </div>
+              )}
+            </div>
+
+            <div className="overflow-hidden rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60">
+              <div className="border-b border-stone-200 dark:border-neutral-800 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-stone-400 dark:text-neutral-500">
+                Loop map
+              </div>
+              <div className="divide-y divide-stone-200 dark:divide-neutral-800">
+                {loops.map(loop => (
+                  <div key={loop.name} className="grid gap-2 px-3 py-3 md:grid-cols-[150px_1fr]">
+                    <div>
+                      <div className="text-sm font-medium text-stone-900 dark:text-neutral-100">
+                        {loop.name}
+                      </div>
+                      <div className="mt-0.5 flex flex-wrap gap-1 text-[11px] text-stone-500 dark:text-neutral-400">
+                        <span>{loop.enabled ? 'on' : 'off'}</span>
+                        <span>{loop.cadence}</span>
+                      </div>
+                    </div>
+                    <div className="text-xs text-stone-600 dark:text-neutral-300">
+                      <div>{loop.work}</div>
+                      <div className="mt-1 font-mono text-[11px] text-stone-500 dark:text-neutral-400">
+                        route: {loop.route}
+                      </div>
+                      <div className="mt-1 text-stone-500 dark:text-neutral-400">{loop.risk}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {showLedger && (
+          <div className="rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-3">
+            <div className="flex items-center justify-between gap-3">
               <div>
                 <div className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
-                  Heartbeat controls
+                  Recent usage ledger
                 </div>
                 <div className="text-xs text-stone-500 dark:text-neutral-400">
-                  Defaults off. Enabling starts the loop; disabling aborts the running task.
+                  Backend rows expose action/time today; source tags need backend support.
                 </div>
               </div>
               <button
                 type="button"
                 onClick={() => void refresh()}
                 disabled={loading}
-                className="rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-2 py-1 text-xs font-medium text-stone-700 dark:text-neutral-200 hover:bg-stone-50 dark:hover:bg-neutral-800/60 dark:bg-neutral-800/60 dark:hover:bg-neutral-800/60 disabled:opacity-50">
-                Refresh
+                className="rounded-md border border-stone-200 dark:border-neutral-800 px-2 py-1 text-xs font-medium text-stone-700 dark:text-neutral-200 hover:bg-stone-50 dark:hover:bg-neutral-800/60 dark:bg-neutral-800/60 dark:hover:bg-neutral-800/60 disabled:opacity-50">
+                Reload
               </button>
             </div>
 
-            {settings ? (
-              <div className="space-y-2">
-                <LoopToggle
-                  label="Heartbeat loop"
-                  description="Master scheduler for planner + optional subconscious inference."
-                  checked={settings.enabled}
-                  busy={saving === 'enabled'}
-                  onToggle={() => void applyHeartbeatPatch({ enabled: !settings.enabled })}
-                />
-                <LoopToggle
-                  label="Subconscious inference"
-                  description="Runs model-backed task/reflection evaluation on heartbeat ticks."
-                  checked={settings.inference_enabled}
-                  busy={saving === 'inference_enabled'}
-                  onToggle={() =>
-                    void applyHeartbeatPatch({ inference_enabled: !settings.inference_enabled })
-                  }
-                />
-                <LoopToggle
-                  label="Calendar meeting checks"
-                  description="Calls calendar event list for active Google Calendar connections."
-                  checked={settings.notify_meetings}
-                  busy={saving === 'notify_meetings'}
-                  onToggle={() =>
-                    void applyHeartbeatPatch({ notify_meetings: !settings.notify_meetings })
-                  }
-                />
-                <div className="grid gap-2 rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 md:grid-cols-3">
-                  <label className="space-y-1 text-xs font-medium text-stone-700 dark:text-neutral-200">
-                    <span>Calendar cap</span>
-                    <select
-                      value={maxCalendarConnectionsPerTick}
-                      disabled={saving === 'max_calendar_connections_per_tick'}
-                      onChange={e =>
-                        void applyHeartbeatPatch({
-                          max_calendar_connections_per_tick: Number(e.target.value),
-                        })
-                      }
-                      className="w-full rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-2 py-1 text-xs text-stone-900 dark:text-neutral-100 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500">
-                      {[1, 2, 3, 5, 10].map(count => (
-                        <option key={count} value={count}>
-                          {count} conn/tick
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="space-y-1 text-xs font-medium text-stone-700 dark:text-neutral-200">
-                    <span>Meeting lookahead</span>
-                    <select
-                      value={settings.meeting_lookahead_minutes}
-                      disabled={saving === 'meeting_lookahead_minutes'}
-                      onChange={e =>
-                        void applyHeartbeatPatch({
-                          meeting_lookahead_minutes: Number(e.target.value),
-                        })
-                      }
-                      className="w-full rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-2 py-1 text-xs text-stone-900 dark:text-neutral-100 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500">
-                      {[15, 30, 60, 120, 240].map(minutes => (
-                        <option key={minutes} value={minutes}>
-                          {minutes} min
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="space-y-1 text-xs font-medium text-stone-700 dark:text-neutral-200">
-                    <span>Reminder lookahead</span>
-                    <select
-                      value={settings.reminder_lookahead_minutes}
-                      disabled={saving === 'reminder_lookahead_minutes'}
-                      onChange={e =>
-                        void applyHeartbeatPatch({
-                          reminder_lookahead_minutes: Number(e.target.value),
-                        })
-                      }
-                      className="w-full rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-2 py-1 text-xs text-stone-900 dark:text-neutral-100 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500">
-                      {[5, 15, 30, 60, 120].map(minutes => (
-                        <option key={minutes} value={minutes}>
-                          {minutes} min
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                </div>
-                <LoopToggle
-                  label="Cron reminder checks"
-                  description="Scans enabled cron jobs for reminder-like upcoming items."
-                  checked={settings.notify_reminders}
-                  busy={saving === 'notify_reminders'}
-                  onToggle={() =>
-                    void applyHeartbeatPatch({ notify_reminders: !settings.notify_reminders })
-                  }
-                />
-                <LoopToggle
-                  label="Relevant notification checks"
-                  description="Promotes urgent local notifications into proactive alerts."
-                  checked={settings.notify_relevant_events}
-                  busy={saving === 'notify_relevant_events'}
-                  onToggle={() =>
-                    void applyHeartbeatPatch({
-                      notify_relevant_events: !settings.notify_relevant_events,
-                    })
-                  }
-                />
-                <LoopToggle
-                  label="External delivery"
-                  description="Lets heartbeat alerts send proactive messages to external channels."
-                  checked={settings.external_delivery_enabled}
-                  busy={saving === 'external_delivery_enabled'}
-                  onToggle={() =>
-                    void applyHeartbeatPatch({
-                      external_delivery_enabled: !settings.external_delivery_enabled,
-                    })
-                  }
-                />
-
-                <div className="flex flex-wrap items-center gap-2 rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2">
-                  <label
-                    className="text-xs font-medium text-stone-700 dark:text-neutral-200"
-                    htmlFor="heartbeat-interval">
-                    Interval
-                  </label>
-                  <select
-                    id="heartbeat-interval"
-                    value={settings.interval_minutes}
-                    disabled={saving === 'interval_minutes'}
-                    onChange={e =>
-                      void applyHeartbeatPatch({ interval_minutes: Number(e.target.value) })
-                    }
-                    className="rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-2 py-1 text-xs text-stone-900 dark:text-neutral-100 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500">
-                    {[5, 10, 15, 30, 60].map(minutes => (
-                      <option key={minutes} value={minutes}>
-                        {minutes} min
-                      </option>
-                    ))}
-                  </select>
-                  <button
-                    type="button"
-                    onClick={() => void runPlannerNow()}
-                    disabled={runningTick}
-                    className="ml-auto rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-2 py-1 text-xs font-medium text-stone-700 dark:text-neutral-200 hover:bg-stone-50 dark:hover:bg-neutral-800/60 dark:bg-neutral-800/60 dark:hover:bg-neutral-800/60 disabled:opacity-50">
-                    {runningTick ? 'Running...' : 'Planner tick now'}
-                  </button>
-                </div>
-
-                {plannerSummary && (
-                  <div className="rounded-md border border-primary-100 bg-primary-50 dark:bg-primary-500/10 px-3 py-2 text-xs text-primary-900">
-                    Planner: {plannerSummary.source_events} source events,{' '}
-                    {plannerSummary.deliveries_sent} sent, {plannerSummary.deliveries_skipped_dedup}{' '}
-                    deduped.
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className="text-xs text-stone-500 dark:text-neutral-400">
-                {loading ? 'Loading heartbeat controls...' : 'Heartbeat controls unavailable.'}
-              </div>
-            )}
-          </div>
-
-          <div className="overflow-hidden rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60">
-            <div className="border-b border-stone-200 dark:border-neutral-800 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-stone-400 dark:text-neutral-500">
-              Loop map
-            </div>
-            <div className="divide-y divide-stone-200 dark:divide-neutral-800">
-              {loops.map(loop => (
-                <div key={loop.name} className="grid gap-2 px-3 py-3 md:grid-cols-[150px_1fr]">
-                  <div>
-                    <div className="text-sm font-medium text-stone-900 dark:text-neutral-100">
-                      {loop.name}
-                    </div>
-                    <div className="mt-0.5 flex flex-wrap gap-1 text-[11px] text-stone-500 dark:text-neutral-400">
-                      <span>{loop.enabled ? 'on' : 'off'}</span>
-                      <span>{loop.cadence}</span>
-                    </div>
-                  </div>
-                  <div className="text-xs text-stone-600 dark:text-neutral-300">
-                    <div>{loop.work}</div>
-                    <div className="mt-1 font-mono text-[11px] text-stone-500 dark:text-neutral-400">
-                      route: {loop.route}
-                    </div>
-                    <div className="mt-1 text-stone-500 dark:text-neutral-400">{loop.risk}</div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        <div className="rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-3">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <div className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
-                Recent usage ledger
-              </div>
-              <div className="text-xs text-stone-500 dark:text-neutral-400">
-                Backend rows expose action/time today; source tags need backend support.
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => void refresh()}
-              disabled={loading}
-              className="rounded-md border border-stone-200 dark:border-neutral-800 px-2 py-1 text-xs font-medium text-stone-700 dark:text-neutral-200 hover:bg-stone-50 dark:hover:bg-neutral-800/60 dark:bg-neutral-800/60 dark:hover:bg-neutral-800/60 disabled:opacity-50">
-              Reload
-            </button>
-          </div>
-
-          <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-3">
-            <MetricTile
-              label="Week budget"
-              value={usage ? formatUsd(usage.cycleBudgetUsd) : 'n/a'}
-              detail={`resets ${formatDateTime(usage?.cycleEndsAt)}`}
-            />
-            <MetricTile
-              label="Cycle remaining"
-              value={usage ? formatUsd(usage.remainingUsd) : 'n/a'}
-              detail={usage ? `${formatUsd(usage.cycleSpentUsd)} used` : undefined}
-            />
-            <MetricTile
-              label="Cycle total spend"
-              value={usage ? formatUsd(usage.insights.totals.totalUsd) : 'n/a'}
-              detail={
-                usage
-                  ? `inference ${formatUsd(usage.insights.totals.inferenceUsd)} + integrations ${formatUsd(usage.insights.totals.integrationsUsd)}`
-                  : undefined
-              }
-            />
-            <MetricTile
-              label="Avg spend row"
-              value={spendSample.avgRowUsd > 0 ? formatUsd(spendSample.avgRowUsd) : 'n/a'}
-              detail={`${spendRows.length} recent spend rows`}
-            />
-            <MetricTile
-              label="Bg API reads"
-              value={`${formatCount(backgroundApiReadsPerWeek)}/week`}
-              detail={`${formatCount(calendarPlannerCallsPerWeek)} planner + ${formatCount(composioConnectionScansPerWeek)} sync`}
-            />
-            <MetricTile
-              label="Bg wakeups"
-              value={`${formatCount(backgroundWakeupsPerWeek)}/week`}
-              detail={`${formatCount(memoryPollsPerWeek)} memory polls`}
-            />
-          </div>
-
-          <div className="mt-3 rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 p-3">
-            <div className="text-[10px] font-semibold uppercase tracking-wide text-stone-400 dark:text-neutral-500">
-              Budget math
-            </div>
-            <div className="mt-2 grid gap-2">
-              <FormulaRow
-                label="Rows left"
-                value={estimatedRowsLeft !== null ? formatCount(estimatedRowsLeft) : 'n/a'}
-                detail={
-                  estimatedRowsLeft !== null
-                    ? `remaining / avg row = ${formatUsd(usage?.remainingUsd ?? 0)} / ${formatUsd(spendSample.avgRowUsd)}`
-                    : 'Need recent spend rows to estimate.'
-                }
+            <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-3">
+              <MetricTile
+                label="Week budget"
+                value={usage ? formatUsd(usage.cycleBudgetUsd) : 'n/a'}
+                detail={`resets ${formatDateTime(usage?.cycleEndsAt)}`}
               />
-              <FormulaRow
-                label="Rows per full week budget"
-                value={
-                  estimatedRowsPerBudget !== null ? formatCount(estimatedRowsPerBudget) : 'n/a'
-                }
-                detail={
-                  estimatedRowsPerBudget !== null
-                    ? `cycle budget / avg row = ${formatUsd(usage?.cycleBudgetUsd ?? 0)} / ${formatUsd(spendSample.avgRowUsd)}`
-                    : 'Need recent spend rows to estimate.'
-                }
+              <MetricTile
+                label="Cycle remaining"
+                value={usage ? formatUsd(usage.remainingUsd) : 'n/a'}
+                detail={usage ? `${formatUsd(usage.cycleSpentUsd)} used` : undefined}
               />
-              <FormulaRow
-                label="Sample burn rate"
-                value={
-                  spendSample.spendPerHour > 0 ? `${formatUsd(spendSample.spendPerHour)}/hr` : 'n/a'
-                }
-                detail={
-                  spendSample.sampleHours > 0
-                    ? `${formatCount(spendSample.rowsPerHour)} rows/hr across ${spendSample.sampleHours.toFixed(1)}h sample`
-                    : 'Need timestamps from at least two spend rows.'
-                }
-              />
-              <FormulaRow
-                label="Projected empty"
-                value={projectedExhaustAt}
-                detail={
-                  projectedHoursLeft !== null
-                    ? `${projectedHoursLeft.toFixed(1)}h after latest spend at recent burn rate`
-                    : 'No projection without recent hourly spend.'
-                }
-              />
-              <FormulaRow
-                label="API reads per $ remaining"
-                value={
-                  scheduledCallsPerRemainingDollar !== null
-                    ? `${formatCount(scheduledCallsPerRemainingDollar)} reads/$`
-                    : 'n/a'
-                }
+              <MetricTile
+                label="Cycle total spend"
+                value={usage ? formatUsd(usage.insights.totals.totalUsd) : 'n/a'}
                 detail={
                   usage
-                    ? `background API reads/week / remaining = ${formatCount(backgroundApiReadsPerWeek)} / ${formatUsd(usage.remainingUsd)}`
-                    : 'Need usage response to estimate.'
+                    ? `inference ${formatUsd(usage.insights.totals.inferenceUsd)} + integrations ${formatUsd(usage.insights.totals.integrationsUsd)}`
+                    : undefined
                 }
               />
-            </div>
-          </div>
-
-          <div className="mt-3 rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 p-3">
-            <div className="text-[10px] font-semibold uppercase tracking-wide text-stone-400 dark:text-neutral-500">
-              Loop call budget
-            </div>
-            <div className="mt-2 grid gap-2">
-              <FormulaRow
-                label="Heartbeat ticks"
-                value={`${formatCount(heartbeatTicksPerWeek)}/week`}
-                detail={`10080 min/week / ${heartbeatIntervalMinutes} min interval`}
+              <MetricTile
+                label="Avg spend row"
+                value={spendSample.avgRowUsd > 0 ? formatUsd(spendSample.avgRowUsd) : 'n/a'}
+                detail={`${spendRows.length} recent spend rows`}
               />
-              <FormulaRow
-                label="Calendar planner calls"
-                value={`${formatCount(calendarPlannerCallsPerWeek)}/week`}
-                detail={
-                  settings?.notify_meetings
-                    ? `ticks * (1 list_connections + ${calendarConnectionsPolled} GOOGLECALENDAR_EVENTS_LIST)`
-                    : 'Meeting collector disabled.'
-                }
-              />
-              <FormulaRow
-                label="Calendar fanout cap"
-                value={`${formatCount(calendarConnectionsPolled)}/${formatCount(activeCalendarConnections.length)} conn/tick`}
-                detail={`max_calendar_connections_per_tick = ${maxCalendarConnectionsPerTick}; skipped now = ${calendarConnectionsSkipped}`}
-              />
-              <FormulaRow
-                label="Subconscious model calls"
-                value={`${formatCount(subconsciousModelCallsPerWeek)}/week`}
-                detail={
-                  settings?.enabled && settings.inference_enabled
-                    ? 'one kind=subconscious_tick model call per heartbeat tick'
-                    : 'Heartbeat inference disabled.'
-                }
-              />
-              <FormulaRow
-                label="Composio sync scans"
-                value={`${formatCount(composioConnectionScansPerWeek)}/week`}
-                detail={`${activeConnections.length} active integration connection(s) scanned every ${COMPOSIO_PERIODIC_TICK_MINUTES} min`}
-              />
-              <FormulaRow
-                label="Total bg API read budget"
+              <MetricTile
+                label="Bg API reads"
                 value={`${formatCount(backgroundApiReadsPerWeek)}/week`}
-                detail={`calendar planner reads + periodic integration scans; excludes user-initiated chat tools`}
+                detail={`${formatCount(calendarPlannerCallsPerWeek)} planner + ${formatCount(composioConnectionScansPerWeek)} sync`}
               />
-              <FormulaRow
-                label="Memory worker polls"
-                value={`${formatCount(memoryPollsPerWeek)}/week max`}
-                detail={`${MEMORY_WORKERS} workers * ${MEMORY_POLL_SECONDS}s poll; LLM calls only for queued jobs`}
+              <MetricTile
+                label="Bg wakeups"
+                value={`${formatCount(backgroundWakeupsPerWeek)}/week`}
+                detail={`${formatCount(memoryPollsPerWeek)} memory polls`}
               />
+            </div>
+
+            <div className="mt-3 rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 p-3">
+              <div className="text-[10px] font-semibold uppercase tracking-wide text-stone-400 dark:text-neutral-500">
+                Budget math
+              </div>
+              <div className="mt-2 grid gap-2">
+                <FormulaRow
+                  label="Rows left"
+                  value={estimatedRowsLeft !== null ? formatCount(estimatedRowsLeft) : 'n/a'}
+                  detail={
+                    estimatedRowsLeft !== null
+                      ? `remaining / avg row = ${formatUsd(usage?.remainingUsd ?? 0)} / ${formatUsd(spendSample.avgRowUsd)}`
+                      : 'Need recent spend rows to estimate.'
+                  }
+                />
+                <FormulaRow
+                  label="Rows per full week budget"
+                  value={
+                    estimatedRowsPerBudget !== null ? formatCount(estimatedRowsPerBudget) : 'n/a'
+                  }
+                  detail={
+                    estimatedRowsPerBudget !== null
+                      ? `cycle budget / avg row = ${formatUsd(usage?.cycleBudgetUsd ?? 0)} / ${formatUsd(spendSample.avgRowUsd)}`
+                      : 'Need recent spend rows to estimate.'
+                  }
+                />
+                <FormulaRow
+                  label="Sample burn rate"
+                  value={
+                    spendSample.spendPerHour > 0
+                      ? `${formatUsd(spendSample.spendPerHour)}/hr`
+                      : 'n/a'
+                  }
+                  detail={
+                    spendSample.sampleHours > 0
+                      ? `${formatCount(spendSample.rowsPerHour)} rows/hr across ${spendSample.sampleHours.toFixed(1)}h sample`
+                      : 'Need timestamps from at least two spend rows.'
+                  }
+                />
+                <FormulaRow
+                  label="Projected empty"
+                  value={projectedExhaustAt}
+                  detail={
+                    projectedHoursLeft !== null
+                      ? `${projectedHoursLeft.toFixed(1)}h after latest spend at recent burn rate`
+                      : 'No projection without recent hourly spend.'
+                  }
+                />
+                <FormulaRow
+                  label="API reads per $ remaining"
+                  value={
+                    scheduledCallsPerRemainingDollar !== null
+                      ? `${formatCount(scheduledCallsPerRemainingDollar)} reads/$`
+                      : 'n/a'
+                  }
+                  detail={
+                    usage
+                      ? `background API reads/week / remaining = ${formatCount(backgroundApiReadsPerWeek)} / ${formatUsd(usage.remainingUsd)}`
+                      : 'Need usage response to estimate.'
+                  }
+                />
+              </div>
+            </div>
+
+            <div className="mt-3 rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 p-3">
+              <div className="text-[10px] font-semibold uppercase tracking-wide text-stone-400 dark:text-neutral-500">
+                Loop call budget
+              </div>
+              <div className="mt-2 grid gap-2">
+                <FormulaRow
+                  label="Heartbeat ticks"
+                  value={`${formatCount(heartbeatTicksPerWeek)}/week`}
+                  detail={`10080 min/week / ${heartbeatIntervalMinutes} min interval`}
+                />
+                <FormulaRow
+                  label="Calendar planner calls"
+                  value={`${formatCount(calendarPlannerCallsPerWeek)}/week`}
+                  detail={
+                    settings?.notify_meetings
+                      ? `ticks * (1 list_connections + ${calendarConnectionsPolled} GOOGLECALENDAR_EVENTS_LIST)`
+                      : 'Meeting collector disabled.'
+                  }
+                />
+                <FormulaRow
+                  label="Calendar fanout cap"
+                  value={`${formatCount(calendarConnectionsPolled)}/${formatCount(activeCalendarConnections.length)} conn/tick`}
+                  detail={`max_calendar_connections_per_tick = ${maxCalendarConnectionsPerTick}; skipped now = ${calendarConnectionsSkipped}`}
+                />
+                <FormulaRow
+                  label="Subconscious model calls"
+                  value={`${formatCount(subconsciousModelCallsPerWeek)}/week`}
+                  detail={
+                    settings?.enabled && settings.inference_enabled
+                      ? 'one kind=subconscious_tick model call per heartbeat tick'
+                      : 'Heartbeat inference disabled.'
+                  }
+                />
+                <FormulaRow
+                  label="Composio sync scans"
+                  value={`${formatCount(composioConnectionScansPerWeek)}/week`}
+                  detail={`${activeConnections.length} active integration connection(s) scanned every ${COMPOSIO_PERIODIC_TICK_MINUTES} min`}
+                />
+                <FormulaRow
+                  label="Total bg API read budget"
+                  value={`${formatCount(backgroundApiReadsPerWeek)}/week`}
+                  detail={`calendar planner reads + periodic integration scans; excludes user-initiated chat tools`}
+                />
+                <FormulaRow
+                  label="Memory worker polls"
+                  value={`${formatCount(memoryPollsPerWeek)}/week max`}
+                  detail={`${MEMORY_WORKERS} workers * ${MEMORY_POLL_SECONDS}s poll; LLM calls only for queued jobs`}
+                />
+              </div>
+            </div>
+
+            {latestSpend && (
+              <div className="mt-3 rounded-md border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 px-3 py-2 text-xs text-stone-600 dark:text-neutral-300">
+                Latest spend: {formatUsd(spendAmount(latestSpend))} at{' '}
+                {new Date(latestSpend.createdAt).toLocaleString()} ({latestSpend.action})
+              </div>
+            )}
+
+            <div className="mt-3 space-y-3">
+              <div>
+                <div className="text-[10px] font-semibold uppercase tracking-wide text-stone-400 dark:text-neutral-500">
+                  Top actions
+                </div>
+                <div className="mt-1 space-y-1">
+                  {actionSummary.length > 0 ? (
+                    actionSummary.map(([action, count, total]) => (
+                      <div
+                        key={action}
+                        className="flex items-center justify-between gap-2 text-xs text-stone-600 dark:text-neutral-300">
+                        <span className="truncate font-mono">{action}</span>
+                        <span className="shrink-0 text-stone-500 dark:text-neutral-400">
+                          {count} / {formatUsd(total)}
+                        </span>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="text-xs text-stone-500 dark:text-neutral-400">
+                      No spend rows loaded.
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div>
+                <div className="text-[10px] font-semibold uppercase tracking-wide text-stone-400 dark:text-neutral-500">
+                  Top hours
+                </div>
+                <div className="mt-1 space-y-1">
+                  {hourSummary.length > 0 ? (
+                    hourSummary.map(([hour, total]) => (
+                      <div
+                        key={hour}
+                        className="flex items-center justify-between gap-2 text-xs text-stone-600 dark:text-neutral-300">
+                        <span>{hour}</span>
+                        <span className="font-mono text-stone-500 dark:text-neutral-400">
+                          {formatUsd(total)}
+                        </span>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="text-xs text-stone-500 dark:text-neutral-400">
+                      No hourly spend yet.
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
           </div>
-
-          {latestSpend && (
-            <div className="mt-3 rounded-md border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 px-3 py-2 text-xs text-stone-600 dark:text-neutral-300">
-              Latest spend: {formatUsd(spendAmount(latestSpend))} at{' '}
-              {new Date(latestSpend.createdAt).toLocaleString()} ({latestSpend.action})
-            </div>
-          )}
-
-          <div className="mt-3 space-y-3">
-            <div>
-              <div className="text-[10px] font-semibold uppercase tracking-wide text-stone-400 dark:text-neutral-500">
-                Top actions
-              </div>
-              <div className="mt-1 space-y-1">
-                {actionSummary.length > 0 ? (
-                  actionSummary.map(([action, count, total]) => (
-                    <div
-                      key={action}
-                      className="flex items-center justify-between gap-2 text-xs text-stone-600 dark:text-neutral-300">
-                      <span className="truncate font-mono">{action}</span>
-                      <span className="shrink-0 text-stone-500 dark:text-neutral-400">
-                        {count} / {formatUsd(total)}
-                      </span>
-                    </div>
-                  ))
-                ) : (
-                  <div className="text-xs text-stone-500 dark:text-neutral-400">
-                    No spend rows loaded.
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div>
-              <div className="text-[10px] font-semibold uppercase tracking-wide text-stone-400 dark:text-neutral-500">
-                Top hours
-              </div>
-              <div className="mt-1 space-y-1">
-                {hourSummary.length > 0 ? (
-                  hourSummary.map(([hour, total]) => (
-                    <div
-                      key={hour}
-                      className="flex items-center justify-between gap-2 text-xs text-stone-600 dark:text-neutral-300">
-                      <span>{hour}</span>
-                      <span className="font-mono text-stone-500 dark:text-neutral-400">
-                        {formatUsd(total)}
-                      </span>
-                    </div>
-                  ))
-                ) : (
-                  <div className="text-xs text-stone-500 dark:text-neutral-400">
-                    No hourly spend yet.
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
+        )}
       </section>
     </div>
   );
@@ -2342,8 +2368,6 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
           </section>
         </div>
         {/* end of Routing section */}
-
-        <BackgroundLoopControls routing={draft.routing} cloudProviders={draft.cloudProviders} />
       </div>
 
       {isDirty && (

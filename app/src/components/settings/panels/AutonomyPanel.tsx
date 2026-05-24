@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 
+import { useT } from '../../../lib/i18n/I18nContext';
 import {
   openhumanGetAutonomySettings,
   openhumanUpdateAutonomySettings,
@@ -7,15 +8,21 @@ import {
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
-const PRESETS = [
-  { label: '20 (default)', value: 20 },
+// u32::MAX — the Rust default and our sentinel for "no limit". Inputs at or
+// above this value render as "Unlimited" and clamp to UNLIMITED on save.
+const UNLIMITED = 4_294_967_295;
+
+/** Preset rows. The `label` field is an i18n key for the unlimited entry; the
+ *  numeric-only rows are intentionally locale-agnostic. */
+const PRESETS: { labelKey?: string; label?: string; value: number }[] = [
+  { labelKey: 'autonomy.presetUnlimited', value: UNLIMITED },
   { label: '100', value: 100 },
   { label: '500', value: 500 },
   { label: '1000', value: 1000 },
 ];
 
 const MIN = 1;
-const MAX = 10_000;
+const MAX = UNLIMITED;
 
 type Status =
   | { kind: 'idle' }
@@ -32,6 +39,7 @@ type Status =
  * New value applies to the next agent session.
  */
 const AutonomyPanel = () => {
+  const { t } = useT();
   const { navigateBack, breadcrumbs } = useSettingsNavigation();
   const [committed, setCommitted] = useState<number | null>(null);
   const [draft, setDraft] = useState<string>('');
@@ -89,7 +97,7 @@ const AutonomyPanel = () => {
   return (
     <div className="z-10 relative">
       <SettingsHeader
-        title="Agent autonomy"
+        title={t('autonomy.title')}
         showBackButton
         onBack={navigateBack}
         breadcrumbs={breadcrumbs}
@@ -99,12 +107,10 @@ const AutonomyPanel = () => {
           <label
             htmlFor="autonomy-max-actions"
             className="block text-sm font-semibold text-stone-900 dark:text-neutral-100">
-            Max actions per hour
+            {t('autonomy.maxActionsLabel')}
           </label>
           <p className="text-xs text-stone-600 dark:text-neutral-400 mt-1">
-            Maximum tool actions an agent can run per rolling hour. New value applies to your next
-            chat. Cron jobs and channel listeners keep their current limit until you restart
-            OpenHuman.
+            {t('autonomy.maxActionsHelp')}
           </p>
 
           <div className="mt-3 flex items-center gap-2">
@@ -128,7 +134,7 @@ const AutonomyPanel = () => {
               onClick={onSave}
               disabled={!canSave}
               className="px-3 py-1.5 rounded-md bg-primary-600 hover:bg-primary-500 disabled:opacity-50 text-white text-xs font-medium transition-colors">
-              {status.kind === 'saving' ? 'Saving…' : 'Save'}
+              {status.kind === 'saving' ? t('autonomy.statusSaving') : t('common.save')}
             </button>
           </div>
 
@@ -138,7 +144,7 @@ const AutonomyPanel = () => {
                 key={p.value}
                 onClick={() => applyPreset(p.value)}
                 className="px-2 py-1 rounded-md border border-stone-200 dark:border-neutral-800 text-xs text-stone-700 dark:text-neutral-200 hover:bg-stone-100 dark:hover:bg-neutral-800">
-                {p.label}
+                {p.labelKey ? t(p.labelKey) : p.label}
               </button>
             ))}
           </div>
@@ -150,14 +156,21 @@ const AutonomyPanel = () => {
             className="mt-3 text-xs min-h-[1rem]">
             {!isValid && draft.trim() !== '' && (
               <span className="text-coral-600 dark:text-coral-300">
-                Must be an integer between {MIN} and {MAX.toLocaleString()}.
+                {t('autonomy.invalidIntegerMsg')}
+              </span>
+            )}
+            {isValid && parsed === UNLIMITED && (
+              <span className="text-stone-500 dark:text-neutral-400">
+                {t('autonomy.unlimitedNote')}
               </span>
             )}
             {status.kind === 'saved' && (
-              <span className="text-sage-700 dark:text-sage-300">Saved.</span>
+              <span className="text-sage-700 dark:text-sage-300">{t('autonomy.statusSaved')}</span>
             )}
             {status.kind === 'error' && (
-              <span className="text-coral-600 dark:text-coral-300">Failed: {status.message}</span>
+              <span className="text-coral-600 dark:text-coral-300">
+                {t('autonomy.statusFailed')}: {status.message}
+              </span>
             )}
           </div>
         </section>

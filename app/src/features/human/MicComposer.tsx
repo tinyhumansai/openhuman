@@ -1,5 +1,6 @@
 import debug from 'debug';
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 import { useT } from '../../lib/i18n/I18nContext';
 import { transcribeWithFactory } from './voice/sttClient';
@@ -43,6 +44,9 @@ export interface MicComposerProps {
   language?: string;
   /** Show a microphone device selector beneath the button. Defaults to false. */
   showDeviceSelector?: boolean;
+  /** When provided, renders a keyboard FAB next to the gear that switches the
+   *  surrounding composer back to text input. */
+  onSwitchToText?: () => void;
 }
 
 type RecordingState = 'idle' | 'recording' | 'transcribing';
@@ -66,11 +70,15 @@ export function MicComposer({
   onError,
   language = 'en',
   showDeviceSelector = false,
+  onSwitchToText,
 }: MicComposerProps) {
   const { t } = useT();
   const [state, setState] = useState<RecordingState>('idle');
   const [devices, setDevices] = useState<AudioInputDevice[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
+  const [deviceMenuOpen, setDeviceMenuOpen] = useState(false);
+  const gearButtonRef = useRef<HTMLButtonElement | null>(null);
+  const [menuAnchor, setMenuAnchor] = useState<{ top: number; left: number } | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -430,23 +438,11 @@ export function MicComposer({
         ? t('mic.waitingForAgent')
         : t('mic.tapAndSpeak');
 
+  const showDeviceMenuFab = showDeviceSelector && devices.length > 1;
+
   return (
     <div className="flex flex-col items-center gap-2">
-      {showDeviceSelector && devices.length > 0 && (
-        <select
-          aria-label="Microphone device"
-          value={selectedDeviceId}
-          onChange={e => setSelectedDeviceId(e.target.value)}
-          disabled={state !== 'idle' || devices.length <= 1}
-          className="text-xs text-stone-600 dark:text-neutral-300 bg-stone-100 dark:bg-neutral-800 border border-stone-200 dark:border-neutral-700 rounded px-2 py-1 max-w-[220px] truncate disabled:opacity-50">
-          {devices.map(d => (
-            <option key={d.deviceId} value={d.deviceId}>
-              {d.label}
-            </option>
-          ))}
-        </select>
-      )}
-      <div className="flex items-center justify-center gap-3">
+      <div className="relative flex items-center justify-center gap-3">
         <button
           type="button"
           aria-label={isRecording ? t('mic.stopRecording') : t('mic.startRecording')}
@@ -489,6 +485,128 @@ export function MicComposer({
             </svg>
           )}
         </button>
+        {showDeviceMenuFab && (
+          <div className="relative">
+            <button
+              ref={gearButtonRef}
+              type="button"
+              aria-label={t('mic.deviceSelector') || 'Microphone device'}
+              aria-expanded={deviceMenuOpen}
+              onClick={() => {
+                const rect = gearButtonRef.current?.getBoundingClientRect();
+                if (rect) {
+                  setMenuAnchor({ top: rect.bottom + 8, left: rect.left + rect.width / 2 });
+                }
+                setDeviceMenuOpen(open => !open);
+              }}
+              disabled={state !== 'idle'}
+              className="w-8 h-8 flex items-center justify-center rounded-full border border-stone-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-stone-500 dark:text-neutral-400 hover:text-stone-700 dark:hover:text-neutral-200 hover:border-stone-300 dark:hover:border-neutral-600 transition-colors shadow-soft disabled:opacity-40 disabled:cursor-not-allowed">
+              <svg
+                className="w-4 h-4"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={1.8}
+                viewBox="0 0 24 24"
+                aria-hidden>
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
+                />
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+                />
+              </svg>
+            </button>
+            {deviceMenuOpen &&
+              menuAnchor &&
+              createPortal(
+                <>
+                  <div
+                    className="fixed inset-0"
+                    style={{ zIndex: 99998 }}
+                    onClick={() => setDeviceMenuOpen(false)}
+                    aria-hidden
+                  />
+                  <div
+                    role="menu"
+                    aria-label={t('mic.deviceSelector') || 'Microphone device'}
+                    style={{
+                      position: 'fixed',
+                      top: menuAnchor.top,
+                      left: menuAnchor.left,
+                      transform: 'translateX(-50%)',
+                      zIndex: 99999,
+                    }}
+                    className="w-64 rounded-xl border border-stone-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 shadow-soft py-1">
+                    {devices.map(d => {
+                      const selected = d.deviceId === selectedDeviceId;
+                      return (
+                        <button
+                          key={d.deviceId}
+                          role="menuitemradio"
+                          aria-checked={selected}
+                          type="button"
+                          onClick={() => {
+                            setSelectedDeviceId(d.deviceId);
+                            setDeviceMenuOpen(false);
+                          }}
+                          className={`w-full flex items-center gap-2 px-3 py-2 text-left text-xs transition-colors ${
+                            selected
+                              ? 'bg-primary-50 dark:bg-primary-900/20 text-stone-900 dark:text-neutral-100'
+                              : 'text-stone-700 dark:text-neutral-200 hover:bg-stone-50 dark:hover:bg-neutral-800'
+                          }`}>
+                          <span className="flex-1 min-w-0 truncate">{d.label}</span>
+                          {selected && (
+                            <svg
+                              className="w-3.5 h-3.5 text-primary-500 flex-shrink-0"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth={2.5}
+                              viewBox="0 0 24 24"
+                              aria-hidden>
+                              <path
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                d="M5 13l4 4L19 7"
+                              />
+                            </svg>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </>,
+                document.body
+              )}
+          </div>
+        )}
+        {onSwitchToText && (
+          <button
+            type="button"
+            aria-label={t('chat.switchToText')}
+            title={t('chat.switchToText')}
+            onClick={onSwitchToText}
+            disabled={state !== 'idle'}
+            className="w-8 h-8 flex items-center justify-center rounded-full border border-stone-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-stone-500 dark:text-neutral-400 hover:text-stone-700 dark:hover:text-neutral-200 hover:border-stone-300 dark:hover:border-neutral-600 transition-colors shadow-soft disabled:opacity-40 disabled:cursor-not-allowed">
+            <svg
+              className="w-4 h-4"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={1.8}
+              viewBox="0 0 24 24"
+              aria-hidden>
+              <rect x="2" y="6" width="20" height="12" rx="2" ry="2" />
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"
+              />
+            </svg>
+          </button>
+        )}
         <span className="text-xs text-stone-500 dark:text-neutral-400 select-none">{label}</span>
       </div>
     </div>

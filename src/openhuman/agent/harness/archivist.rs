@@ -24,17 +24,17 @@ use crate::openhuman::memory::store::profile::{self, FacetType};
 use crate::openhuman::memory::store::segments::{
     self, BoundaryConfig, BoundaryDecision, ConversationSegment,
 };
-use crate::openhuman::memory::tree::canonicalize::chat::{ChatBatch, ChatMessage};
-use crate::openhuman::memory::tree::chat::{ChatConsumer, ChatProvider};
-use crate::openhuman::memory::tree::ingest;
-use crate::openhuman::memory::tree::score::embed::{build_embedder_from_config, Embedder};
-use crate::openhuman::memory::tree::tree_source::summariser::llm::{
+use crate::openhuman::memory_tree::canonicalize::chat::{ChatBatch, ChatMessage};
+use crate::openhuman::memory_tree::chat::{ChatConsumer, ChatProvider};
+use crate::openhuman::memory_tree::ingest;
+use crate::openhuman::memory_tree::score::embed::{build_embedder_from_config, Embedder};
+use crate::openhuman::memory_tree::tree_source::summariser::llm::{
     LlmSummariser, LlmSummariserConfig,
 };
-use crate::openhuman::memory::tree::tree_source::summariser::{
+use crate::openhuman::memory_tree::tree_source::summariser::{
     Summariser, SummaryContext, SummaryInput,
 };
-use crate::openhuman::memory::tree::tree_source::types::TreeKind;
+use crate::openhuman::memory_tree::tree_source::types::TreeKind;
 use async_trait::async_trait;
 use parking_lot::Mutex;
 use rusqlite::Connection;
@@ -98,7 +98,7 @@ impl ArchivistHook {
     pub fn with_config(mut self, config: Config) -> Self {
         // Build the LLM chat provider for segment recap.
         let chat_provider: Option<Arc<dyn ChatProvider>> =
-            match crate::openhuman::memory::tree::chat::build_chat_provider(
+            match crate::openhuman::memory_tree::chat::build_chat_provider(
                 &config,
                 ChatConsumer::Summarise,
             ) {
@@ -650,7 +650,7 @@ impl ArchivistHook {
             .iter()
             .filter(|e| !e.content.trim().is_empty())
             .map(|e| {
-                use crate::openhuman::memory::tree::types::approx_token_count;
+                use crate::openhuman::memory_tree::types::approx_token_count;
                 let content = e.content.clone();
                 let token_count = approx_token_count(&content);
                 let ts = chrono::DateTime::from_timestamp(e.timestamp as i64, 0)

@@ -397,6 +397,17 @@ const zhCN4: TranslationMap = {
   'pages.settings.account.migration': '从其他助手导入',
   'pages.settings.account.migrationDesc':
     '将 OpenClaw（即将支持 Hermes）的记忆和笔记迁移到此工作区。',
+  'composio.connect.scope.read': 'Read',
+  'composio.connect.scope.readHint': 'Allow the agent to read data from this connection.',
+  'composio.connect.scope.write': 'Write',
+  'composio.connect.scope.writeHint':
+    'Allow the agent to create or modify data through this connection.',
+  'composio.connect.scope.admin': 'Admin',
+  'composio.connect.scope.adminHint':
+    'Allow the agent to manage settings, permissions, or destructive actions.',
+  'pages.settings.composioSection.title': 'Composio',
+  'pages.settings.composioSection.description':
+    'Routing, triggers, and history for integrations powered by Composio.',
 };
 
 export default zhCN4;

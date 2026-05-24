@@ -112,7 +112,8 @@ pub async fn memory_learn_all(
             namespace
         );
         let outcome =
-            crate::openhuman::tree_summarizer::ops::tree_summarizer_run(&config, namespace).await;
+            crate::openhuman::memory_tree::summarizer::ops::tree_summarizer_run(&config, namespace)
+                .await;
         match outcome {
             Ok(_) => {
                 tracing::info!("[memory.learn] namespace='{}' ok", namespace);

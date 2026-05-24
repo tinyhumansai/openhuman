@@ -586,7 +586,7 @@ fn render_empty_block_returns_empty_string() {
 
 #[tokio::test]
 async fn e2e_stm_recall_chain() {
-    use crate::openhuman::memory::tree::chat::ChatPrompt;
+    use crate::openhuman::memory_tree::chat::ChatPrompt;
 
     let conn = setup_conn();
 
@@ -597,7 +597,7 @@ async fn e2e_stm_recall_chain() {
     // requiring a live LLM or Ollama daemon.
 
     struct StubChat;
-    use crate::openhuman::memory::tree::chat::ChatProvider;
+    use crate::openhuman::memory_tree::chat::ChatProvider;
     #[async_trait::async_trait]
     impl ChatProvider for StubChat {
         fn name(&self) -> &str {
@@ -611,10 +611,10 @@ async fn e2e_stm_recall_chain() {
         }
     }
 
-    use crate::openhuman::memory::tree::score::embed::InertEmbedder;
-    let chat_provider: Arc<dyn crate::openhuman::memory::tree::chat::ChatProvider> =
+    use crate::openhuman::memory_tree::score::embed::InertEmbedder;
+    let chat_provider: Arc<dyn crate::openhuman::memory_tree::chat::ChatProvider> =
         Arc::new(StubChat);
-    let embedder: Arc<dyn crate::openhuman::memory::tree::score::embed::Embedder> =
+    let embedder: Arc<dyn crate::openhuman::memory_tree::score::embed::Embedder> =
         Arc::new(InertEmbedder::new());
 
     let archivist = ArchivistHook::new_with_stubs(conn.clone(), chat_provider, embedder);

@@ -423,6 +423,7 @@ const ru2: TranslationMap = {
   'devOptions.menuComposioTriggers': 'Integration Triggers',
   'devOptions.menuComposioTriggersDesc':
     'Configure AI triage settings for Composio integration triggers',
+  'mic.deviceSelector': 'Microphone device',
 };
 
 export default ru2;
