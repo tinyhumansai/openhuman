@@ -1,6 +1,8 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
+use crate::openhuman::agent::tool_policy::GeneratedToolRuntimeContext;
+
 // Re-export the unified ToolResult from the lightweight skills types module so all tools use one type.
 pub use crate::openhuman::skills::types::{ToolContent, ToolResult};
 
@@ -223,6 +225,18 @@ pub trait Tool: Send + Sync {
     /// overrides keep working without changes.
     fn external_effect_with_args(&self, _args: &serde_json::Value) -> bool {
         self.external_effect()
+    }
+
+    /// Optional generated-tool runtime metadata for policy enforcement.
+    ///
+    /// Generated or externally supplied tools can override this to let
+    /// the agent policy layer apply provider/capability/risk rules before
+    /// execution. Built-in tools leave it unset.
+    fn generated_runtime_context(
+        &self,
+        _args: &serde_json::Value,
+    ) -> Option<GeneratedToolRuntimeContext> {
+        None
     }
 
     /// Per-tool cap on the character length of the result body sent

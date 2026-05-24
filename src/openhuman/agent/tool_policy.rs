@@ -243,6 +243,14 @@ impl GeneratedToolRuntimePolicy {
             .revoked_providers
             .contains(context.provider_id.as_str())
         {
+            tracing::debug!(
+                tool = tool_name,
+                provider_id = context.provider_id.as_str(),
+                capability_id = context.capability_id.as_str(),
+                risk = ?context.risk,
+                action = ?RuntimeToolPolicyAction::Deny,
+                "[generated_tool_runtime] provider revoked"
+            );
             return (
                 RuntimeToolPolicyAction::Deny,
                 format!("provider `{}` is revoked", context.provider_id),
@@ -253,12 +261,28 @@ impl GeneratedToolRuntimePolicy {
             .revoked_capabilities
             .contains(context.capability_id.as_str())
         {
+            tracing::debug!(
+                tool = tool_name,
+                provider_id = context.provider_id.as_str(),
+                capability_id = context.capability_id.as_str(),
+                risk = ?context.risk,
+                action = ?RuntimeToolPolicyAction::Deny,
+                "[generated_tool_runtime] capability revoked"
+            );
             return (
                 RuntimeToolPolicyAction::Deny,
                 format!("capability `{}` is revoked", context.capability_id),
             );
         }
         if let Some(action) = self.config.capability_actions.get(&context.capability_id) {
+            tracing::debug!(
+                tool = tool_name,
+                provider_id = context.provider_id.as_str(),
+                capability_id = context.capability_id.as_str(),
+                risk = ?context.risk,
+                action = ?action,
+                "[generated_tool_runtime] capability action matched"
+            );
             return (
                 *action,
                 format!(
@@ -268,17 +292,41 @@ impl GeneratedToolRuntimePolicy {
             );
         }
         if let Some(action) = self.config.provider_actions.get(&context.provider_id) {
+            tracing::debug!(
+                tool = tool_name,
+                provider_id = context.provider_id.as_str(),
+                capability_id = context.capability_id.as_str(),
+                risk = ?context.risk,
+                action = ?action,
+                "[generated_tool_runtime] provider action matched"
+            );
             return (
                 *action,
                 format!("provider `{}` matched runtime policy", context.provider_id),
             );
         }
         if let Some(action) = self.config.risk_actions.get(&context.risk) {
+            tracing::debug!(
+                tool = tool_name,
+                provider_id = context.provider_id.as_str(),
+                capability_id = context.capability_id.as_str(),
+                risk = ?context.risk,
+                action = ?action,
+                "[generated_tool_runtime] risk action matched"
+            );
             return (
                 *action,
                 format!("risk `{:?}` matched runtime policy", context.risk),
             );
         }
+        tracing::trace!(
+            tool = tool_name,
+            provider_id = context.provider_id.as_str(),
+            capability_id = context.capability_id.as_str(),
+            risk = ?context.risk,
+            action = ?RuntimeToolPolicyAction::Allow,
+            "[generated_tool_runtime] default allow"
+        );
         (
             RuntimeToolPolicyAction::Allow,
             format!("tool `{tool_name}` allowed"),
@@ -294,12 +342,32 @@ impl ToolPolicy for GeneratedToolRuntimePolicy {
 
     async fn check(&self, request: &ToolPolicyRequest) -> ToolPolicyDecision {
         if !self.config.enabled {
+            tracing::trace!(
+                policy = self.name(),
+                tool = request.tool_name.as_str(),
+                "[generated_tool_runtime] policy disabled"
+            );
             return ToolPolicyDecision::Allow;
         }
         let Some(context) = request.generated_tool.as_ref() else {
+            tracing::trace!(
+                policy = self.name(),
+                tool = request.tool_name.as_str(),
+                "[generated_tool_runtime] context missing"
+            );
             return ToolPolicyDecision::Allow;
         };
         let (action, reason) = self.action_for(&request.tool_name, context);
+        tracing::debug!(
+            policy = self.name(),
+            tool = request.tool_name.as_str(),
+            provider_id = context.provider_id.as_str(),
+            capability_id = context.capability_id.as_str(),
+            risk = ?context.risk,
+            action = ?action,
+            reason = reason.as_str(),
+            "[generated_tool_runtime] policy decision"
+        );
         match action {
             RuntimeToolPolicyAction::Allow => ToolPolicyDecision::Allow,
             RuntimeToolPolicyAction::RequireApproval => {

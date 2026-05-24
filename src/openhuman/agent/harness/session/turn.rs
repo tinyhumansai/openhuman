@@ -1199,8 +1199,11 @@ impl Agent {
                     call_id.clone(),
                     (iteration + 1) as u32,
                 );
-                let policy_request =
+                let mut policy_request =
                     ToolPolicyRequest::new(call.name.clone(), call.arguments.clone(), context);
+                if let Some(generated_context) = tool.generated_runtime_context(&call.arguments) {
+                    policy_request = policy_request.with_generated_tool_context(generated_context);
+                }
                 let policy_decision = self.tool_policy.check(&policy_request).await;
                 if let Some(reason) = policy_decision.blocking_reason() {
                     tracing::debug!(
