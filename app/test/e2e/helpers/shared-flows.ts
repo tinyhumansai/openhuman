@@ -749,7 +749,11 @@ export async function waitForLoggedOutState(timeout = 10_000): Promise<string | 
 }
 
 export async function logoutViaSettings(logPrefix = '[E2E]') {
-  await navigateToSettings();
+  // Logout + Clear App Data moved out of the main /settings page and into
+  // the Account section in PR #2550 (LogoutAndClearActions footer on
+  // /settings/account). Navigate straight to the section that actually
+  // renders the buttons.
+  await navigateViaHash('/settings/account');
 
   const loggedOut = await browser.execute(() => {
     const candidates = ['Log out', 'Logout', 'Sign out'];

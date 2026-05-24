@@ -266,6 +266,37 @@ mod memory_tree_dispatcher_tests {
         assert!(result.is_err());
     }
 
+    #[tokio::test]
+    async fn memory_tree_query_global_mode_dispatches_successfully() {
+        let result = MemoryTreeTool
+            .execute(json!({
+                "mode": "query_global",
+                "time_window_days": 7
+            }))
+            .await
+            .expect("query_global mode should dispatch successfully");
+        assert!(!result.is_error);
+        let parsed: serde_json::Value =
+            serde_json::from_str(&result.text()).expect("result should be valid json");
+        assert!(parsed.get("hits").is_some());
+        assert!(parsed.get("total").is_some());
+    }
+
+    #[tokio::test]
+    async fn memory_tree_fetch_leaves_mode_dispatches_successfully() {
+        let result = MemoryTreeTool
+            .execute(json!({
+                "mode": "fetch_leaves",
+                "chunk_ids": ["chunk-does-not-exist"]
+            }))
+            .await
+            .expect("fetch_leaves mode should dispatch successfully");
+        assert!(!result.is_error);
+        let parsed: serde_json::Value =
+            serde_json::from_str(&result.text()).expect("result should be valid json");
+        assert!(parsed.is_array());
+    }
+
     #[test]
     fn translate_query_global_args_renames_time_window_days_to_window_days() {
         // Per-issue #2252: the consolidated schema advertises `time_window_days`

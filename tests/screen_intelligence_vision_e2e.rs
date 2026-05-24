@@ -36,8 +36,8 @@ use image::{ImageBuffer, Rgb, RgbImage};
 use tempfile::tempdir;
 
 use openhuman_core::openhuman::embeddings::NoopEmbedding;
-use openhuman_core::openhuman::memory::store::types::NamespaceDocumentInput;
-use openhuman_core::openhuman::memory::store::UnifiedMemory;
+use openhuman_core::openhuman::memory_store::types::NamespaceDocumentInput;
+use openhuman_core::openhuman::memory_store::UnifiedMemory;
 use openhuman_core::openhuman::screen_intelligence::CaptureFrame;
 use openhuman_core::openhuman::screen_intelligence::{
     global_engine, AccessibilityEngine, VisionSummary,

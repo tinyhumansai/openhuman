@@ -22,31 +22,28 @@
 //! Phases 2-4 (#708 scoring, #709 summary trees, #710 retrieval) build on
 //! top of these chunks without modifying the Phase 1 surface.
 
-pub mod canonicalize;
-pub mod chat;
-pub mod chunker;
-pub mod content_store;
-pub mod ingest;
-pub mod jobs;
-pub mod read_rpc;
-pub mod retrieval;
-pub mod rpc;
-pub mod schemas;
-pub mod score;
-pub mod store;
-pub mod summarizer;
+pub mod global;
+pub mod io;
+pub mod sources;
+pub mod summarise;
 pub mod tools;
-pub mod tree_global;
-pub mod tree_source;
-pub mod tree_topic;
-pub mod types;
-pub mod util;
+pub mod topic;
+pub mod tree;
+pub mod tree_runtime;
 
-pub use retrieval::{all_retrieval_controller_schemas, all_retrieval_registered_controllers};
-pub use schemas::{
+pub use io::{
+    TreeLabelStrategy, TreeLeafPayload, TreeReadHit, TreeReadRequest, TreeReadResult,
+    TreeWriteOutcome, TreeWriteRequest,
+};
+
+// Re-export controller registries — moved to memory but keep export names stable.
+pub use crate::openhuman::memory::retrieval::{
+    all_retrieval_controller_schemas, all_retrieval_registered_controllers,
+};
+pub use crate::openhuman::memory::schema::{
     all_controller_schemas as all_memory_tree_controller_schemas,
     all_registered_controllers as all_memory_tree_registered_controllers,
 };
-pub use summarizer::{
+pub use crate::openhuman::memory_tree::tree_runtime::{
     all_tree_summarizer_controller_schemas, all_tree_summarizer_registered_controllers,
 };

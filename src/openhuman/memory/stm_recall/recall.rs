@@ -8,8 +8,8 @@ use rusqlite::{params, Connection};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::openhuman::memory::store::fts5;
-use crate::openhuman::memory::store::fts5::EpisodicEntry;
+use crate::openhuman::memory_store::fts5;
+use crate::openhuman::memory_store::fts5::EpisodicEntry;
 
 use super::{
     COSINE_GATE, FTS5_LIMIT, MAX_EPISODIC_TURNS, MAX_SEGMENT_RECAPS, RECENCY_WINDOW_DAYS,

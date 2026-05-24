@@ -18,8 +18,13 @@ pub mod ollama;
 pub mod openai;
 mod provider_trait;
 pub mod rate_limit;
-pub mod store;
 
+// VectorStore has moved to memory_store::vectors; re-exported for callers.
+pub use crate::openhuman::memory_store::vectors::store;
+
+pub use crate::openhuman::memory_store::vectors::{
+    bytes_to_vec, cosine_similarity, vec_to_bytes, SearchResult, VectorStore,
+};
 pub use cloud::{
     OpenHumanCloudEmbedding, DEFAULT_CLOUD_EMBEDDING_DIMENSIONS, DEFAULT_CLOUD_EMBEDDING_MODEL,
 };
@@ -30,7 +35,6 @@ pub use noop::NoopEmbedding;
 pub use ollama::{OllamaEmbedding, DEFAULT_OLLAMA_DIMENSIONS, DEFAULT_OLLAMA_MODEL};
 pub use openai::OpenAiEmbedding;
 pub use provider_trait::{format_embedding_signature, EmbeddingProvider};
-pub use store::{bytes_to_vec, cosine_similarity, vec_to_bytes, SearchResult, VectorStore};
 
 #[cfg(test)]
 mod tests {

@@ -21,7 +21,7 @@
 //! concatenate without branching.
 
 use crate::openhuman::config::Config;
-use crate::openhuman::memory_tree::retrieval::query_global;
+use crate::openhuman::memory::retrieval::query_global;
 
 /// Default lookback window for the eager digest. Mirrors the language in
 /// the orchestrator prompt ("7-day digest pre-loaded into session context").

@@ -21,10 +21,8 @@ use super::types::{
 };
 use crate::openhuman::config::Config;
 use crate::openhuman::credentials::{AuthService, APP_SESSION_PROVIDER};
+use crate::openhuman::memory::chat::{build_chat_provider, ChatPrompt, ChatProvider};
 use crate::openhuman::memory::MemoryClientRef;
-use crate::openhuman::memory_tree::chat::{
-    build_chat_provider, ChatConsumer, ChatPrompt, ChatProvider,
-};
 use anyhow::Result;
 use executor::ExecutionOutcome;
 use std::collections::HashMap;
@@ -533,7 +531,8 @@ impl SubconsciousEngine {
     }
 
     /// Run the per-tick LLM call. Routes via `subconscious_provider`
-    /// while reusing the memory-tree chat provider plumbing (#623). On failure returns
+    /// while reusing the memory LLM adapter over unified inference routing.
+    /// On failure returns
     /// `(empty_evaluations, empty_drafts)` so `last_tick_at` is NOT
     /// advanced — the next tick re-fetches from the same point.
     async fn evaluate_tasks_and_reflections(
@@ -790,23 +789,14 @@ impl SubconsciousEngine {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum SubconsciousProviderRoute {
-    LocalOllama { endpoint_set: bool, model: String },
+    LocalOllama { model: String },
     OpenHumanCloud,
     Other(String),
 }
 
 pub(crate) fn subconscious_provider_unavailable_reason(config: &Config) -> Option<String> {
     match resolve_subconscious_route(config) {
-        SubconsciousProviderRoute::LocalOllama {
-            endpoint_set: true, ..
-        } => None,
-        SubconsciousProviderRoute::LocalOllama {
-            endpoint_set: false,
-            ..
-        } => Some(
-            "Configure the Ollama summarizer endpoint for Subconscious in Settings > AI."
-                .to_string(),
-        ),
+        SubconsciousProviderRoute::LocalOllama { .. } => None,
         SubconsciousProviderRoute::OpenHumanCloud => {
             if crate::openhuman::scheduler_gate::is_signed_out() {
                 return Some(
@@ -835,16 +825,7 @@ pub(crate) fn subconscious_provider_unavailable_reason(config: &Config) -> Optio
 
 fn resolve_subconscious_route(config: &Config) -> SubconsciousProviderRoute {
     if let Some(model) = config.workload_local_model("subconscious") {
-        let endpoint_set = config
-            .memory_tree
-            .llm_summariser_endpoint
-            .as_deref()
-            .map(str::trim)
-            .is_some_and(|s| !s.is_empty());
-        return SubconsciousProviderRoute::LocalOllama {
-            endpoint_set,
-            model,
-        };
+        return SubconsciousProviderRoute::LocalOllama { model };
     }
 
     let raw = config
@@ -866,11 +847,11 @@ fn resolve_subconscious_route(config: &Config) -> SubconsciousProviderRoute {
 fn build_subconscious_chat_provider(config: &Config) -> Result<Arc<dyn ChatProvider>> {
     let mut routed = config.clone();
     routed.memory_provider = match resolve_subconscious_route(config) {
-        SubconsciousProviderRoute::LocalOllama { model, .. } => Some(format!("ollama:{model}")),
+        SubconsciousProviderRoute::LocalOllama { model } => Some(format!("ollama:{model}")),
         SubconsciousProviderRoute::OpenHumanCloud => Some("cloud".to_string()),
         SubconsciousProviderRoute::Other(provider) => Some(provider),
     };
-    build_chat_provider(&routed, ChatConsumer::Summarise)
+    build_chat_provider(&routed)
 }
 
 /// Parse the per-tick LLM response into evaluations + reflection drafts.

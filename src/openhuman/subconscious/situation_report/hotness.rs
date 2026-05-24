@@ -145,7 +145,7 @@ struct HotnessDelta {
 /// subquery over `mem_tree_entity_index` (#1365): true iff any indexed
 /// row for this entity has `is_user = 1`.
 fn read_current_hotness(config: &Config) -> anyhow::Result<Vec<CurrentHotness>> {
-    crate::openhuman::memory_tree::store::with_connection(config, |conn| {
+    crate::openhuman::memory_store::chunks::store::with_connection(config, |conn| {
         let mut stmt = conn.prepare(
             "SELECT h.entity_id,
                     h.last_hotness,

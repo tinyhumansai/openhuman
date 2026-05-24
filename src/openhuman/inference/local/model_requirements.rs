@@ -2,7 +2,7 @@
 //!
 //! The memory tree's embedder (`bge-m3`) is requested with
 //! `num_ctx = 8192` (see
-//! [`crate::openhuman::memory_tree::score::embed::ollama::EMBED_NUM_CTX`])
+//! [`crate::openhuman::memory::score::embed::ollama::EMBED_NUM_CTX`])
 //! and the summariser hard-caps its output to fit that 8192-token embed
 //! ceiling. A local model whose native context window is below this floor
 //! silently truncates chunks/summaries and corrupts recall, so we refuse
@@ -21,7 +21,7 @@ use serde::Serialize;
 /// time. Changing the embedder's context request automatically moves the
 /// acceptance floor with it.
 pub const MIN_CONTEXT_TOKENS: u64 =
-    crate::openhuman::memory_tree::score::embed::ollama::EMBED_NUM_CTX as u64;
+    crate::openhuman::memory::score::embed::ollama::EMBED_NUM_CTX as u64;
 
 /// Verdict for a single model's context window against
 /// [`MIN_CONTEXT_TOKENS`]. Serialized into the diagnostics payload so the
@@ -79,7 +79,7 @@ mod tests {
         // requests; this guards against the two drifting apart.
         assert_eq!(
             MIN_CONTEXT_TOKENS,
-            crate::openhuman::memory_tree::score::embed::ollama::EMBED_NUM_CTX as u64
+            crate::openhuman::memory::score::embed::ollama::EMBED_NUM_CTX as u64
         );
         assert_eq!(MIN_CONTEXT_TOKENS, 8_192);
     }

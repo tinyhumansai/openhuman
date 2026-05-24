@@ -1,24 +1,56 @@
-//! Memory system for OpenHuman.
+//! Memory orchestration.
 //!
-//! This module provides the core abstractions and implementations for the memory system,
-//! including semantic search, ingestion pipelines, document management, and knowledge graph
-//! operations. It integrates vector search, keyword search, and relational data to provide
-//! a unified memory interface for AI agents.
+//! This module is the high-level routing + policy layer over the memory
+//! stack. Owns the ingest pipeline, background job handlers, scoring,
+//! tree-building policy (tree_global / tree_topic), recall ranking, and
+//! the RPC surface. Storage primitives all live in sibling memory_*
+//! modules — see [`README.md`](README.md) for the full map.
+//!
+//! No SQLite, no on-disk md, no vector tables here — those belong one
+//! layer down in [`memory_store`](crate::openhuman::memory_store).
 
-pub mod chunker;
-pub mod conversations;
+// Legacy memory modules
 pub mod global;
 pub mod ingestion;
 pub mod ops;
 pub mod preferences;
 pub mod rpc_models;
-pub mod safety;
 pub mod schemas;
 pub mod stm_recall;
-pub mod store;
-pub mod sync_status;
-pub mod tool_memory;
 pub mod traits;
+
+// Tool-scoped memory moved to top-level `memory_tools`. Re-exported here so
+// existing `memory::tool_memory::*` paths still resolve during the migration.
+pub use crate::openhuman::memory_tools as tool_memory;
+
+// Modules moved from memory_tree (Phase 3)
+pub mod chat;
+pub mod ingest_pipeline;
+pub mod read_rpc;
+pub mod retrieval;
+pub mod schema;
+pub mod score;
+pub mod tree_rpc;
+pub mod util;
+
+// Conversation storage moved to top-level `memory_conversations`. Re-exported
+// here so existing `memory::conversations::*` paths still resolve during the
+// migration.
+pub use crate::openhuman::memory_conversations as conversations;
+// Async memory job queue moved to top-level `memory_queue`. Re-exported here
+// so existing `memory::jobs::*` paths still resolve during the migration.
+pub use crate::openhuman::memory_queue as jobs;
+
+pub use crate::openhuman::memory_store::{
+    create_memory, create_memory_for_migration, create_memory_with_local_ai,
+    effective_embedding_settings, effective_memory_backend_name, MemoryClient, MemoryClientRef,
+    MemoryItemKind, MemoryState, NamespaceDocumentInput, NamespaceMemoryHit, NamespaceQueryResult,
+    NamespaceRetrievalContext, RetrievalScoreBreakdown, UnifiedMemory,
+};
+pub use crate::openhuman::memory_sync::sync_status::{
+    all_memory_sync_status_controller_schemas, all_memory_sync_status_registered_controllers,
+    FreshnessLabel, MemorySyncStatus,
+};
 pub use ingestion::{
     ExtractedEntity, ExtractedRelation, ExtractionMode, IngestionJob, IngestionQueue,
     IngestionState, IngestionStatusSnapshot, MemoryIngestionConfig, MemoryIngestionRequest,
@@ -30,18 +62,6 @@ pub use rpc_models::*;
 pub use schemas::{
     all_controller_schemas as all_memory_controller_schemas,
     all_registered_controllers as all_memory_registered_controllers,
-};
-pub use store::{
-    create_memory, create_memory_for_migration, create_memory_with_local_ai,
-    create_memory_with_storage, create_memory_with_storage_and_routes,
-    effective_embedding_settings, effective_embedding_settings_probed,
-    effective_memory_backend_name, MemoryClient, MemoryClientRef, MemoryItemKind, MemoryState,
-    NamespaceDocumentInput, NamespaceMemoryHit, NamespaceQueryResult, NamespaceRetrievalContext,
-    RetrievalScoreBreakdown, UnifiedMemory,
-};
-pub use sync_status::{
-    all_memory_sync_status_controller_schemas, all_memory_sync_status_registered_controllers,
-    FreshnessLabel, MemorySyncStatus,
 };
 pub use tool_memory::{
     render_tool_memory_rules, tool_memory_namespace, ToolMemoryCaptureHook, ToolMemoryPriority,

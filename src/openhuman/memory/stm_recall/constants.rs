@@ -33,3 +33,25 @@ pub const TOKEN_BUDGET: usize = 6_000;
 /// applied at the DB level via LIMIT; we over-fetch slightly and let dedup
 /// finish trimming.
 pub const FTS5_LIMIT: usize = 20;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stm_recall_constants_match_expected_defaults() {
+        assert_eq!(RECENCY_WINDOW_DAYS, 14.0);
+        assert_eq!(RECENCY_WINDOW_MAX_SEGMENTS, 100);
+        assert_eq!(COSINE_GATE, 0.65);
+        assert_eq!(MAX_SEGMENT_RECAPS, 5);
+        assert_eq!(MAX_EPISODIC_TURNS, 5);
+        assert_eq!(TOKEN_BUDGET, 6_000);
+        assert_eq!(FTS5_LIMIT, 20);
+    }
+
+    #[test]
+    fn stm_token_budget_exceeds_single_section_limits() {
+        assert!(TOKEN_BUDGET > MAX_SEGMENT_RECAPS);
+        assert!(TOKEN_BUDGET > MAX_EPISODIC_TURNS);
+    }
+}

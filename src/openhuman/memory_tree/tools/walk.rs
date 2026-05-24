@@ -18,10 +18,10 @@
 use crate::openhuman::config::rpc as config_rpc;
 use crate::openhuman::config::Config;
 use crate::openhuman::inference::provider::traits::{ChatMessage, Provider};
-use crate::openhuman::memory_tree::chat::{build_chat_provider, ChatConsumer, ChatPrompt};
-use crate::openhuman::memory_tree::retrieval;
-use crate::openhuman::memory_tree::retrieval::fetch::fetch_leaves as do_fetch_leaves;
-use crate::openhuman::memory_tree::summarizer::store::{read_children, read_node};
+use crate::openhuman::memory::chat::{build_chat_provider, ChatPrompt};
+use crate::openhuman::memory::retrieval;
+use crate::openhuman::memory::retrieval::fetch::fetch_leaves as do_fetch_leaves;
+use crate::openhuman::memory_tree::tree_runtime::store::{read_children, read_node};
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolCategory, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
@@ -179,7 +179,7 @@ impl Tool for MemoryTreeWalkTool {
 
         // Build a chat provider from config (same path used by the summariser)
         // and wrap it in the thin `ChatProviderAdapter` that satisfies `Provider`.
-        let chat_provider = build_chat_provider(&cfg, ChatConsumer::Summarise)
+        let chat_provider = build_chat_provider(&cfg)
             .map_err(|e| anyhow::anyhow!("memory_tree_walk: build chat provider failed: {e}"))?;
         let adapter = ChatProviderAdapter {
             inner: chat_provider,
@@ -372,7 +372,7 @@ pub async fn run_walk(
 // unit-test stubs that implement `Provider` directly.
 
 struct ChatProviderAdapter {
-    inner: std::sync::Arc<dyn crate::openhuman::memory_tree::chat::ChatProvider>,
+    inner: std::sync::Arc<dyn crate::openhuman::memory::chat::ChatProvider>,
 }
 
 #[async_trait]
@@ -740,8 +740,8 @@ mod tests {
     use super::*;
     use crate::openhuman::config::Config;
     use crate::openhuman::inference::provider::traits::ChatMessage;
-    use crate::openhuman::memory_tree::summarizer::store::write_node;
-    use crate::openhuman::memory_tree::summarizer::types::{NodeLevel, TreeNode};
+    use crate::openhuman::memory_tree::tree_runtime::store::write_node;
+    use crate::openhuman::memory_tree::tree_runtime::types::{NodeLevel, TreeNode};
     use async_trait::async_trait;
     use chrono::Utc;
     use std::sync::Mutex;
@@ -803,8 +803,9 @@ mod tests {
     }
 
     fn make_node(namespace: &str, node_id: &str, summary: &str, child_count: u32) -> TreeNode {
-        let level = crate::openhuman::memory_tree::summarizer::types::level_from_node_id(node_id);
-        let parent_id = crate::openhuman::memory_tree::summarizer::types::derive_parent_id(node_id);
+        let level = crate::openhuman::memory_tree::tree_runtime::types::level_from_node_id(node_id);
+        let parent_id =
+            crate::openhuman::memory_tree::tree_runtime::types::derive_parent_id(node_id);
         let ts = Utc::now();
         TreeNode {
             node_id: node_id.to_string(),
@@ -812,7 +813,9 @@ mod tests {
             level,
             parent_id,
             summary: summary.to_string(),
-            token_count: crate::openhuman::memory_tree::summarizer::types::estimate_tokens(summary),
+            token_count: crate::openhuman::memory_tree::tree_runtime::types::estimate_tokens(
+                summary,
+            ),
             child_count,
             created_at: ts,
             updated_at: ts,

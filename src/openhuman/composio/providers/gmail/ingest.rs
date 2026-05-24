@@ -21,14 +21,14 @@ use anyhow::Result;
 use serde_json::Value;
 
 use crate::openhuman::config::Config;
-use crate::openhuman::memory_tree::canonicalize::email::{EmailMessage, EmailThread};
-use crate::openhuman::memory_tree::canonicalize::email_clean::{extract_email, parse_message_date};
-use crate::openhuman::memory_tree::content_store::raw::{
+use crate::openhuman::memory::ingest_pipeline::{ingest_email, IngestResult};
+use crate::openhuman::memory::util::redact::redact;
+use crate::openhuman::memory_store::chunks::store::{set_chunk_raw_refs, RawRef};
+use crate::openhuman::memory_store::content::raw::{
     self as raw_store, raw_rel_path, slug_account_email, RawItem, RawKind,
 };
-use crate::openhuman::memory_tree::ingest::{ingest_email, IngestResult};
-use crate::openhuman::memory_tree::store::{set_chunk_raw_refs, RawRef};
-use crate::openhuman::memory_tree::util::redact::redact;
+use crate::openhuman::memory_sync::canonicalize::email::{EmailMessage, EmailThread};
+use crate::openhuman::memory_sync::canonicalize::email_clean::{extract_email, parse_message_date};
 
 /// Provider name embedded in the canonical email-thread header. Matches
 /// the value `memory::tree::retrieval::source::PLATFORM_KINDS` expects.

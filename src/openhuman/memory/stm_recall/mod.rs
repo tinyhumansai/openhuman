@@ -3,7 +3,7 @@
 //! Assembles a bounded, recency-weighted context block from two arms:
 //!
 //! - **Arm 1** — FTS5 over not-yet-compacted recent episodic entries from
-//!   OTHER sessions. Reuses [`crate::openhuman::memory::store::fts5::episodic_cross_session_search`].
+//!   OTHER sessions. Reuses [`crate::openhuman::memory_store::fts5::episodic_cross_session_search`].
 //!   When no user query is available (preemptive/session-start case), falls back to
 //!   a recency selection of recent non-current-session episodic turns.
 //!

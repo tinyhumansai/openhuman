@@ -489,3 +489,222 @@ pub async fn memory_recall_memories(
         Err(message) => Ok(error_envelope("memory.recall_memories_failed", message)),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+    use std::sync::OnceLock;
+
+    use serde_json::json;
+    use tempfile::TempDir;
+
+    use super::*;
+
+    fn ensure_memory_client() {
+        static WORKSPACE: OnceLock<PathBuf> = OnceLock::new();
+        let workspace = WORKSPACE.get_or_init(|| {
+            let tmp = TempDir::new().expect("tempdir");
+            let path = tmp.path().join("workspace");
+            std::fs::create_dir_all(&path).expect("workspace dir");
+            std::mem::forget(tmp);
+            path
+        });
+        let _ = crate::openhuman::memory::global::init(workspace.clone());
+    }
+
+    fn unique_namespace(prefix: &str) -> String {
+        format!("{prefix}-{}", uuid::Uuid::new_v4())
+    }
+
+    fn sample_put(namespace: String, key: String, title: &str, content: &str) -> PutDocParams {
+        PutDocParams {
+            namespace,
+            key,
+            title: title.into(),
+            content: content.into(),
+            source_type: default_source_type(),
+            priority: default_priority(),
+            tags: vec!["test".into()],
+            metadata: json!({"source": "test"}),
+            category: default_category(),
+            session_id: Some("session-docs".into()),
+            document_id: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn direct_document_handlers_roundtrip_through_namespace() {
+        ensure_memory_client();
+        let namespace = unique_namespace("memory-docs-direct");
+        let key = format!("note-{}", uuid::Uuid::new_v4());
+
+        let put = doc_put(sample_put(
+            namespace.clone(),
+            key.clone(),
+            "Rust ownership",
+            "Ownership and borrowing let Rust enforce memory safety.",
+        ))
+        .await
+        .expect("doc_put");
+        let document_id = put.value.document_id.clone();
+        assert!(!document_id.is_empty());
+
+        let listed = doc_list(Some(NamespaceOnlyParams {
+            namespace: namespace.clone(),
+        }))
+        .await
+        .expect("doc_list");
+        let docs = listed
+            .value
+            .get("documents")
+            .and_then(|v| v.as_array())
+            .expect("documents array");
+        assert!(docs.iter().any(|doc| doc["key"] == key));
+
+        let queried = context_query(QueryNamespaceParams {
+            namespace: namespace.clone(),
+            query: "ownership".into(),
+            limit: Some(5),
+        })
+        .await
+        .expect("context_query");
+        assert!(
+            queried.value.to_lowercase().contains("ownership"),
+            "query result should mention the stored concept"
+        );
+
+        let recalled = context_recall(RecallNamespaceParams {
+            namespace: namespace.clone(),
+            limit: Some(5),
+        })
+        .await
+        .expect("context_recall");
+        assert!(recalled.value.is_some());
+
+        let deleted = doc_delete(DeleteDocParams {
+            namespace: namespace.clone(),
+            document_id: document_id.clone(),
+        })
+        .await
+        .expect("doc_delete");
+        assert_eq!(deleted.logs, vec!["memory document deleted".to_string()]);
+
+        let deleted_flag = deleted
+            .value
+            .get("deleted")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        assert!(deleted_flag, "delete result should report success");
+
+        let after = doc_list(Some(NamespaceOnlyParams { namespace }))
+            .await
+            .expect("doc_list after delete");
+        let after_docs = after
+            .value
+            .get("documents")
+            .and_then(|v| v.as_array())
+            .expect("documents array after delete");
+        assert!(after_docs.is_empty());
+    }
+
+    #[tokio::test]
+    async fn envelope_memory_handlers_report_counts_and_statuses() {
+        ensure_memory_client();
+        let namespace = unique_namespace("memory-docs-envelope");
+        let key = format!("env-{}", uuid::Uuid::new_v4());
+
+        let _ = memory_init(MemoryInitRequest { jwt_token: None })
+            .await
+            .expect("memory_init");
+
+        let direct = doc_put(sample_put(
+            namespace.clone(),
+            key.clone(),
+            "Borrow checker",
+            "The borrow checker enforces aliasing and mutation rules.",
+        ))
+        .await
+        .expect("seed document");
+        let document_id = direct.value.document_id;
+
+        let listed = memory_list_documents(ListDocumentsRequest {
+            namespace: Some(namespace.clone()),
+        })
+        .await
+        .expect("memory_list_documents");
+        let listed_data = listed.value.data.expect("list envelope data");
+        assert_eq!(listed_data.count, 1);
+        assert_eq!(listed_data.documents[0].key, key);
+        assert_eq!(
+            listed
+                .value
+                .meta
+                .counts
+                .as_ref()
+                .and_then(|m| m.get("num_documents")),
+            Some(&1)
+        );
+
+        let namespaces = memory_list_namespaces(EmptyRequest {})
+            .await
+            .expect("memory_list_namespaces");
+        let namespace_data = namespaces.value.data.expect("namespace data");
+        assert!(
+            namespace_data.namespaces.iter().any(|ns| ns == &namespace),
+            "expected namespace list to include the seeded namespace"
+        );
+
+        let queried = memory_query_namespace(QueryNamespaceRequest {
+            namespace: namespace.clone(),
+            query: "borrow checker".into(),
+            limit: Some(5),
+            max_chunks: None,
+            include_references: Some(true),
+            document_ids: None,
+        })
+        .await
+        .expect("memory_query_namespace");
+        let query_data = queried.value.data.expect("query data");
+        assert!(query_data.llm_context_message.is_some());
+        assert!(query_data.context.is_some());
+
+        let recalled = memory_recall_memories(RecallMemoriesRequest {
+            namespace: namespace.clone(),
+            min_retention: None,
+            as_of: None,
+            limit: Some(5),
+            max_chunks: None,
+            top_k: None,
+        })
+        .await
+        .expect("memory_recall_memories");
+        let recall_data = recalled.value.data.expect("recall data");
+        assert_eq!(recall_data.memories.len(), 1);
+        assert_eq!(recall_data.memories[0].kind, "document");
+
+        let deleted = memory_delete_document(DeleteDocumentRequest {
+            namespace: namespace.clone(),
+            document_id,
+        })
+        .await
+        .expect("memory_delete_document");
+        let deleted_data = deleted.value.data.expect("delete envelope data");
+        assert_eq!(deleted_data.status, "completed");
+        assert!(deleted_data.deleted);
+
+        let cleared = clear_namespace(ClearNamespaceParams {
+            namespace: namespace.clone(),
+        })
+        .await
+        .expect("clear_namespace");
+        assert!(cleared.value.cleared);
+
+        let listed_after = memory_list_documents(ListDocumentsRequest {
+            namespace: Some(namespace),
+        })
+        .await
+        .expect("memory_list_documents after clear");
+        let after_data = listed_after.value.data.expect("after clear data");
+        assert_eq!(after_data.count, 0);
+    }
+}

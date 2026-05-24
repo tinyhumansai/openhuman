@@ -77,7 +77,10 @@ export const config: Options.Testrunner & Record<string, unknown> = {
     },
   ],
   logLevel: 'warn',
-  bail: 0,
+  // `bail` is the number of failing specs to tolerate before WDIO stops the
+  // run. `--bail` on e2e-run-all-flows.sh sets E2E_BAIL_ON_FAILURE=1 so we
+  // flip this to 1 (= stop after the first failed spec).
+  bail: process.env.E2E_BAIL_ON_FAILURE === '1' ? 1 : 0,
   waitforTimeout: 10_000,
   connectionRetryTimeout: 120_000,
   connectionRetryCount: 3,

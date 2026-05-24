@@ -18,23 +18,18 @@
 
 use crate::openhuman::agent::hooks::{PostTurnHook, TurnContext};
 use crate::openhuman::config::Config;
-use crate::openhuman::memory::store::events::{self, EventRecord, EventType};
-use crate::openhuman::memory::store::fts5::{self, EpisodicEntry};
-use crate::openhuman::memory::store::profile::{self, FacetType};
-use crate::openhuman::memory::store::segments::{
+use crate::openhuman::memory::chat::ChatProvider;
+use crate::openhuman::memory::ingest_pipeline;
+use crate::openhuman::memory::score::embed::{build_embedder_from_config, Embedder};
+use crate::openhuman::memory_store::events::{self, EventRecord, EventType};
+use crate::openhuman::memory_store::fts5::{self, EpisodicEntry};
+use crate::openhuman::memory_store::profile::{self, FacetType};
+use crate::openhuman::memory_store::segments::{
     self, BoundaryConfig, BoundaryDecision, ConversationSegment,
 };
-use crate::openhuman::memory_tree::canonicalize::chat::{ChatBatch, ChatMessage};
-use crate::openhuman::memory_tree::chat::{ChatConsumer, ChatProvider};
-use crate::openhuman::memory_tree::ingest;
-use crate::openhuman::memory_tree::score::embed::{build_embedder_from_config, Embedder};
-use crate::openhuman::memory_tree::tree_source::summariser::llm::{
-    LlmSummariser, LlmSummariserConfig,
-};
-use crate::openhuman::memory_tree::tree_source::summariser::{
-    Summariser, SummaryContext, SummaryInput,
-};
-use crate::openhuman::memory_tree::tree_source::types::TreeKind;
+use crate::openhuman::memory_store::trees::types::TreeKind;
+use crate::openhuman::memory_sync::canonicalize::chat::{ChatBatch, ChatMessage};
+use crate::openhuman::memory_tree::summarise::{summarise, SummaryContext, SummaryInput};
 use async_trait::async_trait;
 use parking_lot::Mutex;
 use rusqlite::Connection;
@@ -98,10 +93,7 @@ impl ArchivistHook {
     pub fn with_config(mut self, config: Config) -> Self {
         // Build the LLM chat provider for segment recap.
         let chat_provider: Option<Arc<dyn ChatProvider>> =
-            match crate::openhuman::memory_tree::chat::build_chat_provider(
-                &config,
-                ChatConsumer::Summarise,
-            ) {
+            match crate::openhuman::memory::chat::build_chat_provider(&config) {
                 Ok(p) => {
                     tracing::debug!("[archivist] segment recap provider={} registered", p.name());
                     Some(p)
@@ -207,6 +199,7 @@ impl ArchivistHook {
         timestamp: f64,
         user_message: &str,
         current_episodic_id: i64,
+        current_seq: Option<u32>,
     ) -> Option<ConversationSegment> {
         let now = Self::now_timestamp();
 
@@ -241,6 +234,7 @@ impl ArchivistHook {
                             conn,
                             &segment.segment_id,
                             current_episodic_id,
+                            current_seq,
                             timestamp,
                             now,
                         ) {
@@ -269,6 +263,7 @@ impl ArchivistHook {
                             session_id,
                             "global",
                             current_episodic_id,
+                            current_seq,
                             timestamp,
                             now,
                         ) {
@@ -293,6 +288,7 @@ impl ArchivistHook {
                     session_id,
                     "global",
                     current_episodic_id,
+                    current_seq,
                     timestamp,
                     now,
                 ) {
@@ -318,8 +314,10 @@ impl ArchivistHook {
         session_id: &str,
         now: f64,
     ) {
-        // Gather the conversation text for this segment from episodic entries.
-        let entries = fts5::episodic_session_entries(conn, session_id).unwrap_or_default();
+        // Gather the conversation text for this segment. Prefer the
+        // md-backed memory_archivist read when config is available; fall
+        // back to FTS5 in test paths or when config isn't wired.
+        let entries = self.read_session_entries(conn, session_id);
 
         // Filter entries that fall within the segment's time window.
         // Use <= for end_timestamp (entries at the boundary are part of this
@@ -583,6 +581,56 @@ impl PostTurnHook for ArchivistHook {
 
         tracing::debug!("[archivist] episodic rows written: session={session_id}");
 
+        // Dual-write into memory_archivist::store (md-backed) so we can
+        // validate the FTS5 → md migration before flipping the read side.
+        // Best-effort: a write failure here must not break the turn. The
+        // user turn's assigned seq is captured into `current_seq` so the
+        // segment ops can store it alongside the FTS5 episodic id.
+        let mut current_seq: Option<u32> = None;
+        if let Some(cfg) = self.config.as_ref() {
+            let ts_ms = (timestamp * 1000.0) as i64;
+            let user_turn = crate::openhuman::memory_archivist::ArchivedTurn {
+                session_id: session_id.to_string(),
+                seq: 0, // assigned by record_turn
+                timestamp_ms: ts_ms,
+                role: "user".to_string(),
+                content: ctx.user_message.clone(),
+                lesson: None,
+                tool_calls_json: None,
+                cost_microdollars: 0,
+            };
+            match crate::openhuman::memory_archivist::store::record_turn(cfg, user_turn) {
+                Ok(stored) => current_seq = Some(stored.seq),
+                Err(e) => {
+                    tracing::warn!("[archivist] memory_archivist user dual-write failed: {e}");
+                }
+            }
+            // Assistant turn carries the tool_calls_json + lesson the FTS5
+            // insert just wrote. Re-derive locally so we don't depend on
+            // FTS5 having returned.
+            let assistant_lesson = extract_lesson_from_tools(&ctx.tool_calls);
+            let assistant_tool_calls = if ctx.tool_calls.is_empty() {
+                None
+            } else {
+                Some(serde_json::to_string(&ctx.tool_calls).unwrap_or_default())
+            };
+            let assistant_turn = crate::openhuman::memory_archivist::ArchivedTurn {
+                session_id: session_id.to_string(),
+                seq: 0,
+                timestamp_ms: ts_ms + 1,
+                role: "assistant".to_string(),
+                content: ctx.assistant_response.clone(),
+                lesson: assistant_lesson,
+                tool_calls_json: assistant_tool_calls,
+                cost_microdollars: 0,
+            };
+            if let Err(e) =
+                crate::openhuman::memory_archivist::store::record_turn(cfg, assistant_turn)
+            {
+                tracing::warn!("[archivist] memory_archivist assistant dual-write failed: {e}");
+            }
+        }
+
         // Manage conversation segmentation (sync boundary detection + SQLite
         // operations). Returns the just-closed segment when a boundary fired.
         let closed_segment = self.manage_segment_sync(
@@ -591,6 +639,7 @@ impl PostTurnHook for ArchivistHook {
             timestamp,
             &ctx.user_message,
             current_episodic_id,
+            current_seq,
         );
 
         // Run async recap + embed + segment-tree ingest on the closed segment
@@ -607,6 +656,47 @@ impl PostTurnHook for ArchivistHook {
 }
 
 impl ArchivistHook {
+    /// Read every entry recorded for `session_id`, preferring the
+    /// md-backed `memory_archivist::store` when `self.config` is set and
+    /// falling back to the legacy FTS5 episodic table otherwise.
+    ///
+    /// Returns `EpisodicEntry` so the existing call sites (segment
+    /// gathering, recap rendering, tree push) keep their shape unchanged
+    /// during the FTS5 retirement migration.
+    fn read_session_entries(
+        &self,
+        conn: &Arc<Mutex<Connection>>,
+        session_id: &str,
+    ) -> Vec<EpisodicEntry> {
+        if let Some(cfg) = self.config.as_ref() {
+            match crate::openhuman::memory_archivist::store::session_entries(cfg, session_id) {
+                Ok(turns) => {
+                    return turns
+                        .into_iter()
+                        .map(|t| EpisodicEntry {
+                            id: None,
+                            session_id: t.session_id,
+                            // ArchivedTurn stores epoch-ms; EpisodicEntry
+                            // takes epoch-seconds as f64.
+                            timestamp: (t.timestamp_ms as f64) / 1000.0,
+                            role: t.role,
+                            content: t.content,
+                            lesson: t.lesson,
+                            tool_calls_json: t.tool_calls_json,
+                            cost_microdollars: t.cost_microdollars,
+                        })
+                        .collect();
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "[archivist] memory_archivist read failed (falling back to FTS5): {e}"
+                    );
+                }
+            }
+        }
+        fts5::episodic_session_entries(conn, session_id).unwrap_or_default()
+    }
+
     /// Shared summarize helper — the **single LLM summarizer** used by both
     /// the finalize path (`on_segment_closed`) and the rolling-recap path
     /// (`rolling_segment_recap`).
@@ -650,7 +740,7 @@ impl ArchivistHook {
             .iter()
             .filter(|e| !e.content.trim().is_empty())
             .map(|e| {
-                use crate::openhuman::memory_tree::types::approx_token_count;
+                use crate::openhuman::memory_store::chunks::types::approx_token_count;
                 let content = e.content.clone();
                 let token_count = approx_token_count(&content);
                 let ts = chrono::DateTime::from_timestamp(e.timestamp as i64, 0)
@@ -678,53 +768,60 @@ impl ArchivistHook {
         let first = entries.first().map(|e| e.content.as_str()).unwrap_or("");
         let last = entries.last().map(|e| e.content.as_str()).unwrap_or(first);
 
-        if let Some(ref provider) = self.chat_provider {
-            let cfg = LlmSummariserConfig {
-                model: provider.name().to_string(),
-                structured_facet_extraction: false,
-                output_language: self
-                    .config
-                    .as_ref()
-                    .and_then(|cfg| cfg.output_language.clone()),
-            };
-            let summariser = LlmSummariser::new(cfg, Arc::clone(provider));
-            tracing::debug!(
-                "[archivist] summarize_entries: LLM recap segment={segment_id} \
-                 provider={} entries={}",
-                provider.name(),
-                entries.len()
-            );
-            match summariser.summarise(&corpus_inputs, &summary_ctx).await {
-                Ok(output) if !output.content.is_empty() => {
-                    tracing::debug!(
-                        "[archivist] summarize_entries: LLM recap ok segment={segment_id} \
-                         chars={}",
-                        output.content.len()
-                    );
-                    (output.content, true)
+        if self.chat_provider.is_some() {
+            if let Some(ref config) = self.config {
+                tracing::debug!(
+                    "[archivist] summarize_entries: LLM recap segment={segment_id} entries={}",
+                    entries.len()
+                );
+                #[cfg(test)]
+                let summary_result = if let Some(provider) = self.chat_provider.as_ref() {
+                    crate::openhuman::memory::chat::test_override::with_provider(
+                        Arc::clone(provider),
+                        summarise(config, &corpus_inputs, &summary_ctx),
+                    )
+                    .await
+                } else {
+                    summarise(config, &corpus_inputs, &summary_ctx).await
+                };
+                #[cfg(not(test))]
+                let summary_result = summarise(config, &corpus_inputs, &summary_ctx).await;
+
+                match summary_result {
+                    Ok(output) if !output.content.is_empty() => {
+                        tracing::debug!(
+                            "[archivist] summarize_entries: LLM recap ok segment={segment_id} \
+                             chars={}",
+                            output.content.len()
+                        );
+                        return (output.content, true);
+                    }
+                    Ok(_) => {
+                        tracing::debug!(
+                            "[archivist] summarize_entries: LLM returned empty — \
+                             heuristic fallback segment={segment_id}"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "[archivist] summarize_entries: LLM recap failed (non-fatal) \
+                             segment={segment_id}: {e} — heuristic fallback"
+                        );
+                    }
                 }
-                Ok(_) => {
-                    tracing::debug!(
-                        "[archivist] summarize_entries: LLM returned empty — \
-                         heuristic fallback segment={segment_id}"
-                    );
-                    (segments::fallback_summary(first, last, turn_count), false)
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        "[archivist] summarize_entries: LLM recap failed (non-fatal) \
-                         segment={segment_id}: {e} — heuristic fallback"
-                    );
-                    (segments::fallback_summary(first, last, turn_count), false)
-                }
+            } else {
+                tracing::debug!(
+                    "[archivist] summarize_entries: no config — \
+                     heuristic fallback segment={segment_id}"
+                );
             }
         } else {
             tracing::debug!(
                 "[archivist] summarize_entries: no chat provider — \
                  heuristic fallback segment={segment_id}"
             );
-            (segments::fallback_summary(first, last, turn_count), false)
         }
+        (segments::fallback_summary(first, last, turn_count), false)
     }
 
     /// Produce a rolling recap of the **currently-open** segment for
@@ -782,7 +879,7 @@ impl ArchivistHook {
         };
 
         // Gather the episodic entries for this session so far.
-        let all_entries = fts5::episodic_session_entries(conn, session_id).unwrap_or_default();
+        let all_entries = self.read_session_entries(conn, session_id);
 
         // Keep only entries within the open segment's time window (start →
         // now, inclusive). An open segment has `end_timestamp = None`.
@@ -867,7 +964,7 @@ impl ArchivistHook {
     async fn pipe_segment_to_tree(
         &self,
         config: &Config,
-        segment: &crate::openhuman::memory::store::segments::ConversationSegment,
+        segment: &crate::openhuman::memory_store::segments::ConversationSegment,
         session_id: &str,
         entries: &[&fts5::EpisodicEntry],
     ) {
@@ -945,7 +1042,7 @@ impl ArchivistHook {
              segment={segment_id} ep_span={start_ep}-{end_ep} provenance={provenance}"
         );
 
-        match ingest::ingest_chat(config, source_id, owner, tags, batch).await {
+        match ingest_pipeline::ingest_chat(config, source_id, owner, tags, batch).await {
             Ok(result) => {
                 tracing::debug!(
                     "[archivist] tree ingest ok: source_id={source_id} \
@@ -1118,7 +1215,7 @@ impl ArchivistHook {
             conn: Some(conn),
             enabled: true,
             boundary_config: BoundaryConfig::default(),
-            config: None,
+            config: Some(Config::default()),
             chat_provider: Some(chat_provider),
             embedder: Some(embedder),
         }

@@ -32,7 +32,7 @@ use tempfile::tempdir;
 
 use openhuman_core::openhuman::config::Config;
 use openhuman_core::openhuman::inference::provider::traits::Provider;
-use openhuman_core::openhuman::memory_tree::summarizer::{engine, store};
+use openhuman_core::openhuman::memory_tree::tree_runtime::{engine, store};
 
 // ── Env isolation ─────────────────────────────────────────────────────────
 

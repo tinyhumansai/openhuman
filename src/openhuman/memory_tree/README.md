@@ -1,57 +1,42 @@
-# Memory tree
+# memory_tree
 
-Bucket-seal-ready local memory architecture (Phase 1 of issue #707; the LLD design doc `docs/MEMORY_ARCHITECTURE_LLD.md` is referenced by the in-tree module headers but is not checked into this repo). Coexists with the legacy `store/` backend until full replacement.
-
-## Pipeline
+Generic tree mechanics on top of `memory_store::trees`. Kind-agnostic: a
+`Source`, `Global`, or `Topic` tree all flow through the same code here.
+Kind-specific policy (when to spawn a topic tree, what scope a global tree
+covers, how digests are written) lives in `memory::tree_global` and
+`memory::tree_topic`; this module is unaware of it.
 
 ```text
-source adapters (chat / email / document)
-        │
-        ▼
-canonicalize/  ── normalised Markdown + provenance Metadata
-        │
-        ▼
-chunker.rs    ── deterministic IDs, ≤3k-token bounded segments
-        │
-        ▼
-content_store/── atomic .md files on disk (body + tags)
-        │
-        ▼
-store.rs      ── SQLite persistence (chunks, scores, summaries, jobs, hotness)
-        │
-        ▼
-score/        ── signals + embeddings + entity extraction
-        │
-        ▼
-tree_source/  tree_topic/  tree_global/   ── per-scope summary trees
-        │
-        ▼
-retrieval/    ── search / drill_down / topic / global / fetch
-        │
-        ▼
-jobs/         ── background workers + scheduler (extract, admit, seal, digest)
+memory (orchestrator) ──┐
+                        │ writes leaves via TreeWriteRequest
+                        ▼
+memory_tree            (this module — generic mechanics)
+   ├── tree/           append + cascade seal + flush
+   ├── summarise.rs    L_n -> L_{n+1} text via the chat model
+   ├── sources/        per-source tree registry + .md mirror
+   ├── tools/          agent-facing read tools (walk, drill, fetch)
+   └── io.rs           canonical Tree{Write,Read}{Request,Outcome,Result}
+                        │
+                        ▼
+memory_store::trees    (persistence: one Tree table, one schema)
 ```
 
-## Files at this level
+## Layout
 
-- [`mod.rs`](mod.rs) — Phase 1 module banner; re-exports controller registries (`all_memory_tree_*`, `all_retrieval_*`).
-- [`chunker.rs`](chunker.rs) — slice canonical Markdown into ≤`DEFAULT_CHUNK_MAX_TOKENS` chunks; chat/email split at message boundaries, document at paragraphs.
-- [`ingest.rs`](ingest.rs) — orchestrator: `canonicalize -> chunk -> stage_chunks -> fast score -> persist -> enqueue extract jobs`. Hot path; heavy work runs out of `jobs/`.
-- [`rpc.rs`](rpc.rs) — JSON-RPC handlers for `memory_tree_ingest`, `list_chunks`, `get_chunk`, `trigger_digest`. Delegates to `ingest`/`store`/`jobs`.
-- [`schemas.rs`](schemas.rs) — `ControllerSchema` definitions + `RegisteredController` wiring for the four `memory_tree_*` RPC methods.
-- [`store.rs`](store.rs) — SQLite schema (chunks, score, entity index, trees, summaries, buffers, hotness, jobs) and accessors. Lazily initialised at `<workspace>/memory_tree/chunks.db`.
-- [`store_tests.rs`](store_tests.rs) — store-layer unit tests.
-- [`types.rs`](types.rs) — `Chunk`, `Metadata`, `SourceKind`, `DataSource`, `SourceRef`; deterministic `chunk_id` hash; `approx_token_count` heuristic.
+| Path | Role |
+| --- | --- |
+| [`mod.rs`](mod.rs) | Re-exports `io::*` and the controller-schema registries hosted in `memory`. Re-exports `memory::tree_global` + `memory::tree_topic` under the legacy `memory_tree::tree_{global,topic}` paths. |
+| [`io.rs`](io.rs) | Canonical contract types: `TreeWriteRequest`/`TreeWriteOutcome`, `TreeReadRequest`/`TreeReadHit`/`TreeReadResult`, `TreeLeafPayload`, `TreeLabelStrategy`. Pure types, no IO. |
+| [`tree/`](tree/) | `bucket_seal` (append leaf + cascade seal), `flush` (time-based partial seal), `registry` (kind-parameterized `get_or_create_tree` with UNIQUE-race recovery), `mod.rs` (re-exports + `memory_store::trees` shims for legacy paths). |
+| [`summarise.rs`](summarise.rs) | One function: produce the next-level summary text for a bucket. Wraps the chat model with a fixed prompt and token budget. |
+| [`sources/`](sources/) | `registry::get_or_create_source_tree` wrapper that adds the `_source.md` on-disk mirror to the generic registry. `file.rs` writes the mirror. |
+| [`tools/`](tools/) | Agent-facing tools. Read: `walk` (agentic), `drill_down`, `fetch_leaves`, `query_{source,global,topic}`, `search_entities`. Write: `ingest_document` (orchestrator-facing). |
 
-## Subdirectories
+## Layer rules
 
-- [`canonicalize/`](canonicalize/README.md) — chat / email / document → canonical Markdown + email body cleaner.
-- [`chunker.rs`](chunker.rs) — see above.
-- [`content_store/`](content_store/README.md) — on-disk `.md` files (atomic writes, paths, YAML compose, read+verify, tag rewrites).
-- [`jobs/`](jobs/) — async job queue (extract / admit / seal / topic / digest workers).
-- [`retrieval/`](retrieval/) — search and drill-down RPC surface.
-- [`score/`](score/) — fast scorer, embeddings, entity extraction, score persistence.
-- [`tree_source/`](tree_source/) — per-source summary trees (L0 buffer → L1 seal → cascade).
-- [`tree_topic/`](tree_topic/) — per-entity topic trees, materialised lazily by hotness.
-- [`tree_global/`](tree_global/) — daily global digest tree.
-- [`util/`](util/README.md) — shared helpers (`redact` for log PII).
+- **No tree-kind branching here.** `bucket_seal`, `flush`, `registry`,
+  `summarise` all take `TreeKind` as a parameter or treat it as opaque.
+- **No persistence here.** Reads and writes go through
+  `memory_store::trees::{store, registry, hotness}`.
+- **No policy here.** Curator gates (hotness thresholds), digest cadence,
+  global scope sentinels — all live in `memory::tree_{global,topic}`.

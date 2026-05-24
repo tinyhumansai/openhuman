@@ -3,10 +3,10 @@
 use super::*;
 use crate::openhuman::agent::harness::archivist::ArchivistHook;
 use crate::openhuman::agent::hooks::{PostTurnHook, TurnContext};
-use crate::openhuman::memory::store::events::EVENTS_INIT_SQL;
-use crate::openhuman::memory::store::fts5;
-use crate::openhuman::memory::store::profile::PROFILE_INIT_SQL;
-use crate::openhuman::memory::store::segments::SEGMENTS_INIT_SQL;
+use crate::openhuman::memory_store::events::EVENTS_INIT_SQL;
+use crate::openhuman::memory_store::fts5;
+use crate::openhuman::memory_store::profile::PROFILE_INIT_SQL;
+use crate::openhuman::memory_store::segments::SEGMENTS_INIT_SQL;
 use parking_lot::Mutex;
 use rusqlite::{params, Connection};
 use std::sync::Arc;
@@ -209,6 +209,214 @@ fn arm2_drops_below_gate_and_accepts_above() {
     );
 }
 
+#[test]
+fn arm2_respects_model_signature_filter() {
+    let conn = setup_conn();
+    let now = now_ts();
+
+    let mut emb = vec![0.0_f32; 8];
+    emb[0] = 1.0;
+
+    let id_a = insert_episodic(&conn, "session-a", now - 120.0, "user", "matching model");
+    insert_segment_with_embedding(
+        &conn,
+        "seg-match",
+        "session-a",
+        id_a,
+        id_a,
+        "Segment with the selected embedding signature",
+        Some(emb.clone()),
+        now - 100.0,
+        "match:model:8",
+    );
+
+    let id_b = insert_episodic(&conn, "session-b", now - 90.0, "user", "other model");
+    insert_segment_with_embedding(
+        &conn,
+        "seg-other",
+        "session-b",
+        id_b,
+        id_b,
+        "Segment with a different embedding signature",
+        Some(emb.clone()),
+        now - 80.0,
+        "other:model:8",
+    );
+
+    let opts = StmRecallOpts {
+        exclude_session: "current",
+        query: Some("matching model"),
+        model_signature: Some("match:model:8"),
+    };
+    let block = stm_recall(&conn, &opts, Some(&emb)).unwrap();
+
+    let recap_ids: Vec<&str> = block
+        .items
+        .iter()
+        .filter_map(|it| match it {
+            StmItem::SegmentRecap { segment_id, .. } => Some(segment_id.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert!(recap_ids.contains(&"seg-match"));
+    assert!(!recap_ids.contains(&"seg-other"));
+}
+
+#[test]
+fn arm2_skips_blank_summary_rows_even_when_embedding_matches() {
+    let conn = setup_conn();
+    let now = now_ts();
+
+    let mut emb = vec![0.0_f32; 8];
+    emb[0] = 1.0;
+
+    let id = insert_episodic(&conn, "session-a", now - 100.0, "user", "blank summary row");
+    insert_segment_with_embedding(
+        &conn,
+        "seg-blank",
+        "session-a",
+        id,
+        id,
+        "   ",
+        Some(emb.clone()),
+        now - 90.0,
+        "test:model:8",
+    );
+
+    let opts = StmRecallOpts {
+        exclude_session: "current",
+        query: Some("blank summary row"),
+        model_signature: None,
+    };
+    let block = stm_recall(&conn, &opts, Some(&emb)).unwrap();
+
+    assert!(
+        block.items.iter().all(|it| {
+            !matches!(it, StmItem::SegmentRecap { segment_id, .. } if segment_id == "seg-blank")
+        }),
+        "blank summaries should be skipped during recall assembly"
+    );
+}
+
+#[test]
+fn empty_query_embedding_skips_arm2_but_preserves_arm1_fts5_hits() {
+    let conn = setup_conn();
+    let now = now_ts();
+
+    insert_episodic(
+        &conn,
+        "other-session",
+        now - 100.0,
+        "user",
+        "Rust ownership and borrowing notes",
+    );
+
+    let opts = StmRecallOpts {
+        exclude_session: "current-session",
+        query: Some("Rust ownership"),
+        model_signature: None,
+    };
+    let block = stm_recall(&conn, &opts, Some(&[])).unwrap();
+
+    assert_eq!(
+        block.cosine_candidates, 0,
+        "empty query embedding should skip Arm 2 entirely"
+    );
+    assert!(block.fts5_candidates > 0, "Arm 1 should still run");
+    assert!(
+        block
+            .items
+            .iter()
+            .any(|it| matches!(it, StmItem::EpisodicTurn { .. })),
+        "FTS5 hits should still surface episodic turns when Arm 2 is skipped"
+    );
+}
+
+#[test]
+fn missing_query_embedding_skips_arm2_but_preserves_arm1_fts5_hits() {
+    let conn = setup_conn();
+    let now = now_ts();
+
+    insert_episodic(
+        &conn,
+        "other-session",
+        now - 100.0,
+        "user",
+        "Rust ownership and borrowing notes",
+    );
+
+    let opts = StmRecallOpts {
+        exclude_session: "current-session",
+        query: Some("Rust ownership"),
+        model_signature: None,
+    };
+    let block = stm_recall(&conn, &opts, None).unwrap();
+
+    assert_eq!(
+        block.cosine_candidates, 0,
+        "missing query embedding should skip Arm 2 entirely"
+    );
+    assert!(block.fts5_candidates > 0, "Arm 1 should still run");
+    assert!(
+        block
+            .items
+            .iter()
+            .any(|it| matches!(it, StmItem::EpisodicTurn { .. })),
+        "FTS5 hits should still surface episodic turns when Arm 2 is skipped"
+    );
+}
+
+#[test]
+fn arm2_sql_filter_excludes_null_summary_segments() {
+    let conn = setup_conn();
+    let now = now_ts();
+
+    let id = insert_episodic(
+        &conn,
+        "session-null",
+        now - 100.0,
+        "user",
+        "null summary row",
+    );
+    {
+        let c = conn.lock();
+        c.execute(
+            "INSERT INTO conversation_segments
+             (segment_id, session_id, namespace, start_episodic_id, end_episodic_id,
+              start_timestamp, end_timestamp, turn_count, summary, status, created_at, updated_at)
+             VALUES (?1,?2,'global',?3,?4,?5,?5,1,NULL,'summarised',?5,?5)",
+            params!["seg-null", "session-null", id, id, now - 90.0],
+        )
+        .unwrap();
+        let bytes: Vec<u8> = vec![0, 0, 128, 63, 0, 0, 0, 0]; // [1.0, 0.0]
+        c.execute(
+            "INSERT INTO segment_embeddings (segment_id, model_signature, vector, dim, created_at)
+             VALUES (?1,?2,?3,?4,?5)",
+            params!["seg-null", "test:model:2", bytes, 2_i64, now - 90.0],
+        )
+        .unwrap();
+    }
+
+    let q_emb = vec![1.0_f32, 0.0];
+    let opts = StmRecallOpts {
+        exclude_session: "current",
+        query: Some("null summary row"),
+        model_signature: None,
+    };
+    let block = stm_recall(&conn, &opts, Some(&q_emb)).unwrap();
+
+    assert_eq!(
+        block.cosine_candidates, 0,
+        "NULL summary rows should be excluded before Arm 2 scoring"
+    );
+    assert!(
+        block.items.iter().all(|it| {
+            !matches!(it, StmItem::SegmentRecap { segment_id, .. } if segment_id == "seg-null")
+        }),
+        "NULL summary rows must never surface as segment recaps"
+    );
+}
+
 // ── exclude-own-session tests ─────────────────────────────────────────────────
 
 #[test]
@@ -380,6 +588,79 @@ fn dedup_drops_episodic_row_inside_segment_span() {
     );
 }
 
+#[test]
+fn open_ended_segment_span_does_not_dedup_episodic_hits() {
+    let conn = setup_conn();
+    let now = now_ts();
+
+    let covered_id = insert_episodic(
+        &conn,
+        "other-session",
+        now - 120.0,
+        "user",
+        "memory safety follow-up",
+    );
+
+    let emb = vec![1.0_f32, 0.0, 0.0, 0.0];
+    {
+        let c = conn.lock();
+        c.execute(
+            "INSERT INTO conversation_segments
+             (segment_id, session_id, namespace, start_episodic_id, end_episodic_id,
+              start_timestamp, end_timestamp, turn_count, summary, status, created_at, updated_at)
+             VALUES (?1,?2,'global',?3,NULL,?4,?4,1,?5,'summarised',?4,?4)",
+            params![
+                "seg-open-ended",
+                "other-session",
+                covered_id,
+                now - 60.0,
+                "Open-ended segment recap"
+            ],
+        )
+        .unwrap();
+
+        let bytes: Vec<u8> = emb.iter().flat_map(|f| f.to_le_bytes()).collect();
+        c.execute(
+            "INSERT INTO segment_embeddings (segment_id, model_signature, vector, dim, created_at)
+             VALUES (?1,?2,?3,?4,?5)",
+            params![
+                "seg-open-ended",
+                "test:model:4",
+                bytes,
+                emb.len() as i64,
+                now - 60.0
+            ],
+        )
+        .unwrap();
+    }
+
+    let opts = StmRecallOpts {
+        exclude_session: "current",
+        query: Some("memory safety"),
+        model_signature: None,
+    };
+    let block = stm_recall(&conn, &opts, Some(&emb)).unwrap();
+
+    assert!(
+        block.items.iter().any(|it| matches!(
+            it,
+            StmItem::SegmentRecap { segment_id, .. } if segment_id == "seg-open-ended"
+        )),
+        "matching segment recap should still be returned"
+    );
+    assert!(
+        block.items.iter().any(|it| matches!(
+            it,
+            StmItem::EpisodicTurn { id, .. } if *id == Some(covered_id)
+        )),
+        "open-ended spans should not deduplicate episodic hits until an end id exists"
+    );
+    assert_eq!(
+        block.dropped_dedup, 0,
+        "dedup counter should stay at zero for open-ended spans"
+    );
+}
+
 // ── recency window bound test ─────────────────────────────────────────────────
 
 #[test]
@@ -446,6 +727,91 @@ fn recency_window_excludes_old_segments() {
         "recent segment must appear; got: {:?}",
         seg_ids
     );
+}
+
+#[test]
+fn old_fts5_hit_is_filtered_out_of_stm_results() {
+    let conn = setup_conn();
+    let now = now_ts();
+    let old_ts = now - (super::super::RECENCY_WINDOW_DAYS + 2.0) * 86_400.0;
+
+    insert_episodic(
+        &conn,
+        "old-session",
+        old_ts,
+        "user",
+        "legacy rust ownership note",
+    );
+
+    let opts = StmRecallOpts {
+        exclude_session: "current",
+        query: Some("legacy rust ownership"),
+        model_signature: None,
+    };
+    let block = stm_recall(&conn, &opts, None).unwrap();
+
+    assert!(
+        block.fts5_candidates > 0,
+        "FTS5 should still find the historical match before STM recency filtering"
+    );
+    assert!(
+        block.items.is_empty(),
+        "old FTS5 hits must be removed from the final STM block"
+    );
+}
+
+#[test]
+fn merge_prefers_more_recent_item_across_segment_and_episodic_arms() {
+    let conn = setup_conn();
+    let now = now_ts();
+
+    let old_id = insert_episodic(
+        &conn,
+        "episodic-session",
+        now - 300.0,
+        "user",
+        "shared keyword older turn",
+    );
+    let recent_id = insert_episodic(
+        &conn,
+        "segment-session",
+        now - 200.0,
+        "assistant",
+        "shared keyword recap source",
+    );
+
+    let emb = vec![1.0_f32, 0.0, 0.0, 0.0];
+    insert_segment_with_embedding(
+        &conn,
+        "seg-recent-first",
+        "segment-session",
+        recent_id,
+        recent_id,
+        "Recent recap for the shared keyword thread",
+        Some(emb.clone()),
+        now - 50.0,
+        "test:model:4",
+    );
+
+    let opts = StmRecallOpts {
+        exclude_session: "current",
+        query: Some("shared keyword"),
+        model_signature: None,
+    };
+    let block = stm_recall(&conn, &opts, Some(&emb)).unwrap();
+
+    assert!(
+        block.items.len() >= 2,
+        "expected one recap and one uncovered episodic turn in the merged block"
+    );
+    assert!(matches!(
+        &block.items[0],
+        StmItem::SegmentRecap { segment_id, .. } if segment_id == "seg-recent-first"
+    ));
+    assert!(matches!(
+        &block.items[1],
+        StmItem::EpisodicTurn { id, .. } if *id == Some(old_id)
+    ));
 }
 
 // ── token budget test ─────────────────────────────────────────────────────────
@@ -579,6 +945,52 @@ fn render_empty_block_returns_empty_string() {
     assert!(block.is_empty());
 }
 
+#[test]
+fn decode_vector_blob_rejects_misaligned_bytes() {
+    let decoded = super::decode_vector_blob(&[1_u8, 2, 3]);
+    assert!(
+        decoded.is_empty(),
+        "malformed blobs should be discarded instead of partially decoded"
+    );
+}
+
+#[test]
+fn age_days_from_ts_is_zero_for_future_timestamps() {
+    let future = now_ts() + 86_400.0;
+    assert_eq!(super::age_days_from_ts(future), 0.0);
+}
+
+#[test]
+fn render_includes_recaps_and_episodic_turn_labels() {
+    let block = StmRecallBlock {
+        items: vec![
+            StmItem::SegmentRecap {
+                segment_id: "seg-1".into(),
+                session_id: "thread-a".into(),
+                summary: "Summary text".into(),
+                start_episodic_id: 10,
+                end_episodic_id: Some(12),
+                updated_at: now_ts() - 60.0,
+                cosine: 0.9,
+            },
+            StmItem::EpisodicTurn {
+                id: Some(42),
+                session_id: "thread-b".into(),
+                timestamp: now_ts() - 30.0,
+                role: "user".into(),
+                content: "Turn text".into(),
+            },
+        ],
+        ..Default::default()
+    };
+
+    let rendered = block.render();
+    assert!(rendered.contains("**Conversation recap**"));
+    assert!(rendered.contains("Summary text"));
+    assert!(rendered.contains("**user**"));
+    assert!(rendered.contains("Turn text"));
+}
+
 // ── end-to-end integration test ───────────────────────────────────────────────
 // Drive the real chain: completed turns → episodic rows → segment close
 // (recap + embedding via the Phase 0+1 path using stub providers) →
@@ -586,7 +998,7 @@ fn render_empty_block_returns_empty_string() {
 
 #[tokio::test]
 async fn e2e_stm_recall_chain() {
-    use crate::openhuman::memory_tree::chat::ChatPrompt;
+    use crate::openhuman::memory::chat::ChatPrompt;
 
     let conn = setup_conn();
 
@@ -597,7 +1009,7 @@ async fn e2e_stm_recall_chain() {
     // requiring a live LLM or Ollama daemon.
 
     struct StubChat;
-    use crate::openhuman::memory_tree::chat::ChatProvider;
+    use crate::openhuman::memory::chat::ChatProvider;
     #[async_trait::async_trait]
     impl ChatProvider for StubChat {
         fn name(&self) -> &str {
@@ -611,10 +1023,9 @@ async fn e2e_stm_recall_chain() {
         }
     }
 
-    use crate::openhuman::memory_tree::score::embed::InertEmbedder;
-    let chat_provider: Arc<dyn crate::openhuman::memory_tree::chat::ChatProvider> =
-        Arc::new(StubChat);
-    let embedder: Arc<dyn crate::openhuman::memory_tree::score::embed::Embedder> =
+    use crate::openhuman::memory::score::embed::InertEmbedder;
+    let chat_provider: Arc<dyn crate::openhuman::memory::chat::ChatProvider> = Arc::new(StubChat);
+    let embedder: Arc<dyn crate::openhuman::memory::score::embed::Embedder> =
         Arc::new(InertEmbedder::new());
 
     let archivist = ArchivistHook::new_with_stubs(conn.clone(), chat_provider, embedder);

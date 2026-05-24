@@ -2150,7 +2150,7 @@ impl Agent {
 }
 
 /// Wrapper around
-/// [`crate::openhuman::memory_tree::summarizer::store::collect_root_summaries_with_caps`]
+/// [`crate::openhuman::memory_tree::tree_runtime::store::collect_root_summaries_with_caps`]
 /// that takes user-resolved per-namespace and total caps. The actual
 /// limits are derived from the active
 /// [`crate::openhuman::config::schema::agent::MemoryContextWindow`]
@@ -2160,7 +2160,7 @@ fn collect_tree_root_summaries(
     per_namespace_cap: usize,
     total_cap: usize,
 ) -> Vec<(String, String)> {
-    crate::openhuman::memory_tree::summarizer::store::collect_root_summaries_with_caps(
+    crate::openhuman::memory_tree::tree_runtime::store::collect_root_summaries_with_caps(
         workspace_dir,
         per_namespace_cap,
         total_cap,

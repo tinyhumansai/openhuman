@@ -587,7 +587,7 @@ pub async fn start_channels(config: Config) -> Result<()> {
     };
     // Register the tree summarizer event subscriber for observability logging.
     let _tree_summarizer_handle = bus.subscribe(Arc::new(
-        crate::openhuman::memory_tree::summarizer::bus::TreeSummarizerEventSubscriber::new(),
+        crate::openhuman::memory_tree::tree_runtime::bus::TreeSummarizerEventSubscriber::new(),
     ));
 
     let max_in_flight_messages = compute_max_in_flight_messages(channels.len());

@@ -21,7 +21,7 @@ use super::ProviderUserProfile;
 use crate::openhuman::learning::candidate::{
     self as learning_candidate, CueFamily, EvidenceRef, FacetClass, LearningCandidate,
 };
-use crate::openhuman::memory::store::profile::{self, FacetType};
+use crate::openhuman::memory_store::profile::{self, FacetType};
 use rusqlite::params;
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -32,7 +32,7 @@ use std::collections::BTreeMap;
 
 /// Shape of an identifier persisted against a connection. Mirrors the
 /// matching dimensions of the memory tree's
-/// `crate::openhuman::memory_tree::score::extract::EntityKind` so the
+/// `crate::openhuman::memory::score::extract::EntityKind` so the
 /// self-check is a direct `(toolkit, kind, value)` lookup.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IdentityKind {
@@ -534,7 +534,7 @@ fn now_secs() -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::openhuman::memory::store::profile::{profile_load_all, PROFILE_INIT_SQL};
+    use crate::openhuman::memory_store::profile::{profile_load_all, PROFILE_INIT_SQL};
     use parking_lot::Mutex;
     use rusqlite::Connection;
     use serde_json::json;

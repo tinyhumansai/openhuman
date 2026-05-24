@@ -576,8 +576,8 @@ async fn composio_execute_via_mock_propagates_backend_error() {
 #[tokio::test]
 async fn composio_sync_gmail_via_mock_archives_raw_email_and_updates_outcome() {
     use crate::openhuman::config::TEST_ENV_LOCK;
-    use crate::openhuman::memory_tree::content_store::raw::{raw_rel_path, RawKind};
-    use crate::openhuman::memory_tree::rpc::{list_chunks_rpc, ListChunksRequest};
+    use crate::openhuman::memory::tree_rpc::{list_chunks_rpc, ListChunksRequest};
+    use crate::openhuman::memory_store::content::raw::{raw_rel_path, RawKind};
     let _cache_guard = CACHE_TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let _env_guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 

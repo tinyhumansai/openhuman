@@ -11,7 +11,7 @@
 use std::fmt::Write;
 
 use crate::openhuman::config::Config;
-use crate::openhuman::memory_tree::retrieval::global::query_global;
+use crate::openhuman::memory::retrieval::global::query_global;
 
 /// Cold-start fallback window when `last_tick_at` is unset.
 const COLD_START_DAYS: u32 = 7;

@@ -1564,7 +1564,7 @@ fn register_domain_subscribers(
             );
         }
 
-        crate::openhuman::memory_tree::jobs::start(config.clone());
+        crate::openhuman::memory::jobs::start(config.clone());
 
         // Restart requests go through a subscriber so every trigger path shares
         // the same respawn logic.
