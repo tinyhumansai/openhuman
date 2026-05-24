@@ -220,6 +220,14 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 | 5.3.3 | Voice Command Execution   | WD    | `voice-mode.spec.ts` | ✅     |       |
 | 5.3.4 | Mascot Voice Selection    | VU    | `app/src/store/__tests__/mascotSlice.test.ts`, `app/src/components/settings/panels/__tests__/VoicePanel.test.tsx`, `app/src/features/human/useHumanMascot.test.ts` (this PR) | ✅ | Slice validation + persist REHYDRATE, Settings picker UI (#1762), `synthesizeSpeech` voiceId override propagation |
 
+### 5.4 Persona
+
+| ID    | Feature                       | Layer | Test path(s)                                                                                                                          | Status | Notes                                                                                              |
+| ----- | ----------------------------- | ----- | ----------------------------------------------------------------------------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------- |
+| 5.4.1 | Persona Name & Description    | VU    | `app/src/store/__tests__/personaSlice.test.ts`, `app/src/components/settings/panels/__tests__/PersonaPanel.test.tsx` (this PR)        | ✅     | Slice validation + persist REHYDRATE scrub; Settings identity fields persist on save (#2345)        |
+| 5.4.2 | SOUL.md Edit & Reset          | RU+VU | `src/openhuman/workspace/rpc.rs`, `app/src/components/settings/panels/__tests__/PersonaPanel.test.tsx` (this PR)                       | ✅     | Core read/write/reset with allowlist + size cap; panel loads, saves, resets over RPC (#2345)        |
+| 5.4.3 | Persona Settings Surface      | VU    | `app/src/components/settings/panels/__tests__/PersonaPanel.test.tsx` (this PR)                                                        | ✅     | Bundles identity + SOUL.md + link to Mascot avatar/voice (#2345)                                    |
+
 ---
 
 ## 6. System Tools & Agent Capabilities
