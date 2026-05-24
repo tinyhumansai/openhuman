@@ -4,8 +4,10 @@ use crate::core::all;
 use crate::openhuman::agent::harness::AgentDefinitionRegistry;
 use crate::openhuman::agent::Agent;
 use crate::openhuman::config::rpc as config_rpc;
+use crate::openhuman::config::Config;
 use crate::openhuman::inference::provider::traits::build_tool_instructions_text;
 use crate::openhuman::integrations::searxng::MAX_RESULTS as SEARXNG_MAX_RESULTS;
+use crate::openhuman::mcp_audit::{self, NewMcpWriteRecord};
 use crate::openhuman::security::{SecurityPolicy, ToolOperation};
 
 const DEFAULT_LIMIT: u64 = 10;
@@ -543,13 +545,18 @@ fn list_tools_result_from_specs(specs: Vec<McpToolSpec>) -> Value {
     json!({ "tools": tools })
 }
 
-pub async fn call_tool(name: &str, arguments: Value) -> Result<Value, ToolCallError> {
+pub async fn call_tool(
+    name: &str,
+    arguments: Value,
+    client_info: &str,
+) -> Result<Value, ToolCallError> {
     let spec = tool_specs()
         .into_iter()
         .find(|tool| tool.name == name)
         .ok_or_else(|| ToolCallError::InvalidParams(format!("unknown MCP tool `{name}`")))?;
 
-    let params = build_rpc_params(spec.name, arguments)?;
+    let audit_arguments = arguments.clone();
+    let mut params = build_rpc_params(spec.name, arguments)?;
     match spec.name {
         "core.list_tools" => {
             reject_unexpected_arguments(&params, &[])?;
@@ -571,9 +578,14 @@ pub async fn call_tool(name: &str, arguments: Value) -> Result<Value, ToolCallEr
             return run_subagent_tool(&params).await;
         }
         "memory.store" | "memory.note" | "tree.tag" => {
-            enforce_write_policy(spec.name).await?;
+            let config = enforce_write_policy(spec.name).await?;
+            params.insert(
+                "source_type".to_string(),
+                Value::String(client_info.to_string()),
+            );
             validate_controller_params(&spec, &params)?;
-            return dispatch_write_tool(spec.name, &params).await;
+            return dispatch_write_tool(spec.name, &params, &audit_arguments, client_info, &config)
+                .await;
         }
         _ => {}
     }
@@ -1146,7 +1158,7 @@ async fn enforce_act_policy(tool_name: &str) -> Result<(), ToolCallError> {
 /// Write operations use the same gate as Act — they are side-effecting and
 /// must not run in read-only mode. The separate function gives us a distinct
 /// log line so auditors can tell reads from writes at a glance.
-async fn enforce_write_policy(tool_name: &str) -> Result<(), ToolCallError> {
+async fn enforce_write_policy(tool_name: &str) -> Result<Config, ToolCallError> {
     let config = match config_rpc::load_config_with_timeout().await {
         Ok(config) => config,
         Err(err) => {
@@ -1161,7 +1173,8 @@ async fn enforce_write_policy(tool_name: &str) -> Result<(), ToolCallError> {
     let policy = SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir);
     policy
         .enforce_tool_operation(ToolOperation::Act, tool_name)
-        .map_err(ToolCallError::InvalidParams)
+        .map_err(ToolCallError::InvalidParams)?;
+    Ok(config)
 }
 
 /// Dispatch a write tool to its underlying RPC method with provenance and
@@ -1169,31 +1182,55 @@ async fn enforce_write_policy(tool_name: &str) -> Result<(), ToolCallError> {
 async fn dispatch_write_tool(
     tool_name: &str,
     params: &Map<String, Value>,
+    audit_arguments: &Value,
+    client_info: &str,
+    config: &Config,
 ) -> Result<Value, ToolCallError> {
     let rpc_method = "openhuman.memory_doc_put";
 
     tracing::info!(
         tool = tool_name,
         rpc_method = rpc_method,
-        client = "mcp",
+        client = client_info,
         "[mcp_server] write dispatch"
     );
 
     match all::try_invoke_registered_rpc(rpc_method, params.clone()).await {
         Some(Ok(value)) => {
-            let document_id = value
-                .get("document_id")
-                .and_then(Value::as_str)
-                .unwrap_or("<unknown>");
+            let document_id = extract_document_id(&value);
+            audit_write(
+                config,
+                NewMcpWriteRecord {
+                    timestamp_ms: now_ms(),
+                    client_info: client_info.to_string(),
+                    tool_name: tool_name.to_string(),
+                    args_summary: summarize_write_args(tool_name, audit_arguments),
+                    resulting_chunk_id: document_id.clone(),
+                    success: true,
+                    error_message: None,
+                },
+            );
             tracing::info!(
                 tool = tool_name,
-                chunk_id = document_id,
-                client = "mcp",
+                chunk_id = document_id.as_deref().unwrap_or("<unknown>"),
+                client = client_info,
                 "[mcp_server] write success"
             );
             Ok(tool_success(value))
         }
         Some(Err(message)) => {
+            audit_write(
+                config,
+                NewMcpWriteRecord {
+                    timestamp_ms: now_ms(),
+                    client_info: client_info.to_string(),
+                    tool_name: tool_name.to_string(),
+                    args_summary: summarize_write_args(tool_name, audit_arguments),
+                    resulting_chunk_id: None,
+                    success: false,
+                    error_message: Some(message.clone()),
+                },
+            );
             log::warn!(
                 "[mcp_server] write handler error tool={} error={}",
                 tool_name,
@@ -1202,17 +1239,105 @@ async fn dispatch_write_tool(
             Ok(tool_error(format!("{} failed: {message}", tool_name)))
         }
         None => {
+            let message = format!("mapped RPC method `{rpc_method}` is not registered");
+            audit_write(
+                config,
+                NewMcpWriteRecord {
+                    timestamp_ms: now_ms(),
+                    client_info: client_info.to_string(),
+                    tool_name: tool_name.to_string(),
+                    args_summary: summarize_write_args(tool_name, audit_arguments),
+                    resulting_chunk_id: None,
+                    success: false,
+                    error_message: Some(message.clone()),
+                },
+            );
             log::error!(
                 "[mcp_server] write mapping missing registered RPC method tool={} rpc_method={}",
                 tool_name,
                 rpc_method
             );
-            Ok(tool_error(format!(
-                "{} is unavailable: mapped RPC method `{}` is not registered",
-                tool_name, rpc_method
-            )))
+            Ok(tool_error(format!("{tool_name} is unavailable: {message}")))
         }
     }
+}
+
+fn audit_write(config: &Config, record: NewMcpWriteRecord) {
+    if let Err(err) = mcp_audit::record_write(config, record) {
+        log::warn!("[mcp_server] mcp write audit insert failed: {err}");
+    }
+}
+
+fn now_ms() -> i64 {
+    chrono::Utc::now().timestamp_millis()
+}
+
+fn extract_document_id(value: &Value) -> Option<String> {
+    value
+        .get("document_id")
+        .or_else(|| {
+            value
+                .get("result")
+                .and_then(|result| result.get("document_id"))
+        })
+        .and_then(Value::as_str)
+        .map(str::to_string)
+}
+
+fn summarize_write_args(tool_name: &str, arguments: &Value) -> Value {
+    let Some(args) = arguments.as_object() else {
+        return json!({});
+    };
+    match tool_name {
+        "memory.store" => json!({
+            "title": args
+                .get("title")
+                .and_then(Value::as_str)
+                .map(|title| first_chars(title, 128))
+                .unwrap_or_default(),
+            "namespace": args
+                .get("namespace")
+                .and_then(Value::as_str)
+                .unwrap_or("mcp"),
+            "tag_count": args
+                .get("tags")
+                .and_then(Value::as_array)
+                .map(|tags| tags.len())
+                .unwrap_or(0),
+        }),
+        "memory.note" => json!({
+            "chunk_id": args
+                .get("chunk_id")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            "note_text_length": args
+                .get("note_text")
+                .and_then(Value::as_str)
+                .map(|note| note.chars().count())
+                .unwrap_or(0),
+        }),
+        "tree.tag" => json!({
+            "chunk_id": args
+                .get("chunk_id")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            "tags": args
+                .get("tags")
+                .and_then(Value::as_array)
+                .map(|tags| {
+                    tags.iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_string)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default(),
+        }),
+        _ => json!({}),
+    }
+}
+
+fn first_chars(value: &str, max_chars: usize) -> String {
+    value.chars().take(max_chars).collect()
 }
 
 async fn load_config_and_init_registry() -> Result<crate::openhuman::config::Config, ToolCallError>
@@ -2242,6 +2367,62 @@ mod tests {
         assert_eq!(
             params["tags"].as_array().expect("tags is array").len(),
             TREE_TAG_MAX_TAGS
+        );
+    }
+
+    // ── MCP write audit summary ────────────────────────────────────────
+
+    #[test]
+    fn summarize_write_args_omits_memory_store_content() {
+        let summary = summarize_write_args(
+            "memory.store",
+            &json!({
+                "title": "A".repeat(140),
+                "content": "private body",
+                "namespace": "work",
+                "tags": ["project", "planning"]
+            }),
+        );
+        assert_eq!(summary["title"].as_str().unwrap().chars().count(), 128);
+        assert_eq!(summary["namespace"], "work");
+        assert_eq!(summary["tag_count"], 2);
+        assert!(summary.get("content").is_none());
+    }
+
+    #[test]
+    fn summarize_write_args_omits_memory_note_text() {
+        let summary = summarize_write_args(
+            "memory.note",
+            &json!({ "chunk_id": "chunk-42", "note_text": "Important context" }),
+        );
+        assert_eq!(summary["chunk_id"], "chunk-42");
+        assert_eq!(
+            summary["note_text_length"].as_u64(),
+            Some("Important context".chars().count() as u64)
+        );
+        assert!(summary.get("note_text").is_none());
+    }
+
+    #[test]
+    fn summarize_write_args_keeps_tree_tag_labels() {
+        let summary = summarize_write_args(
+            "tree.tag",
+            &json!({ "chunk_id": "chunk-42", "tags": ["todo", "q3"] }),
+        );
+        assert_eq!(summary["chunk_id"], "chunk-42");
+        assert_eq!(summary["tags"], json!(["todo", "q3"]));
+    }
+
+    #[test]
+    fn extract_document_id_reads_rpc_outcome_envelope() {
+        assert_eq!(
+            extract_document_id(&json!({"result": {"document_id": "doc-123"}, "logs": []}))
+                .as_deref(),
+            Some("doc-123")
+        );
+        assert_eq!(
+            extract_document_id(&json!({"document_id": "doc-456"})).as_deref(),
+            Some("doc-456")
         );
     }
 
