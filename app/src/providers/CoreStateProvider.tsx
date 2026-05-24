@@ -9,11 +9,8 @@ import {
   useState,
 } from 'react';
 
-import { CoreStateContext, type CoreStateContextValue } from './coreStateContext';
-
 import {
   type CoreAppSnapshot,
-  type CoreOnboardingTasks,
   type CoreState,
   getCoreStateSnapshot,
   setCoreStateSnapshot,
@@ -41,6 +38,7 @@ import {
   syncMemoryClientToken,
   logout as tauriLogout,
 } from '../utils/tauriCommands';
+import { CoreStateContext, type CoreStateContextValue } from './coreStateContext';
 
 const log = debugFactory('core-state');
 
