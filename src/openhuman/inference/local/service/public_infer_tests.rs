@@ -419,10 +419,12 @@ async fn chat_with_history_interactive_does_not_block_when_signed_out() {
         std::time::Duration::from_secs(2),
         service.chat_with_history_interactive(
             &config,
-            vec![crate::openhuman::inference::local::ollama::OllamaChatMessage {
-                role: "user".to_string(),
-                content: "hi".to_string(),
-            }],
+            vec![
+                crate::openhuman::inference::local::ollama::OllamaChatMessage {
+                    role: "user".to_string(),
+                    content: "hi".to_string(),
+                },
+            ],
             Some(16),
         ),
     )
