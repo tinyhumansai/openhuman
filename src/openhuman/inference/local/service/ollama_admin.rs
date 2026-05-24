@@ -1302,7 +1302,7 @@ impl LocalAiService {
     async fn ollama_runner_ok_at(&self, base_url: &str) -> bool {
         let resp = self
             .http
-            .post(format!("{base_url}/api/tags"))
+            .get(format!("{base_url}/api/tags"))
             .timeout(std::time::Duration::from_secs(3))
             .send()
             .await;
