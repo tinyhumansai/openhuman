@@ -5,6 +5,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { I18nProvider } from '../../../lib/i18n/I18nContext';
+import type { Locale } from '../../../lib/i18n/types';
 import localeReducer from '../../../store/localeSlice';
 import CustomInferencePage from './CustomInferencePage';
 
@@ -35,7 +36,7 @@ vi.mock('../OnboardingContext', () => ({
 function renderPage() {
   const store = configureStore({
     reducer: { locale: localeReducer },
-    preloadedState: { locale: { current: 'en' } },
+    preloadedState: { locale: { current: 'en' as Locale } },
   });
 
   return render(

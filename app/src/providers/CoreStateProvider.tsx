@@ -30,7 +30,7 @@ import { store } from '../store';
 import { resetUserScopedState } from '../store/resetActions';
 import { loadThreads, resetThreadCachesPreservingSelection } from '../store/threadSlice';
 import { getActiveUserId, setActiveUserId } from '../store/userScopedStorage';
-import { isLocalSessionToken, LOCAL_SESSION_USER_ID } from '../utils/localSession';
+import { isLocalSessionToken } from '../utils/localSession';
 import {
   openhumanUpdateAnalyticsSettings,
   openhumanUpdateMeetSettings,
