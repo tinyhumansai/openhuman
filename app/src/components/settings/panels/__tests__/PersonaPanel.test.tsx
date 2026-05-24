@@ -85,11 +85,16 @@ describe('PersonaPanel', () => {
     const { store } = renderPanel();
     await waitFor(() => expect(screen.getByTestId('persona-soul-editor')).toBeInTheDocument());
 
-    const input = screen.getByTestId('persona-display-name-input');
-    fireEvent.change(input, { target: { value: 'Nova' } });
+    fireEvent.change(screen.getByTestId('persona-display-name-input'), {
+      target: { value: 'Nova' },
+    });
+    fireEvent.change(screen.getByTestId('persona-description-input'), {
+      target: { value: 'Calm and concise.' },
+    });
     fireEvent.click(screen.getByTestId('persona-identity-save'));
 
     expect(store.getState().persona.displayName).toBe('Nova');
+    expect(store.getState().persona.description).toBe('Calm and concise.');
   });
 
   it('keeps the identity save button disabled until a field changes', async () => {
@@ -109,6 +114,32 @@ describe('PersonaPanel', () => {
 
     await waitFor(() => {
       expect(writePersonaFileMock).toHaveBeenCalledWith('SOUL.md', 'You are calm and concise.');
+    });
+  });
+
+  it('surfaces a save error when the write RPC fails', async () => {
+    writePersonaFileMock.mockRejectedValue(new Error('disk full'));
+    renderPanel();
+    await waitFor(() => expect(screen.getByTestId('persona-soul-editor')).toBeInTheDocument());
+
+    fireEvent.change(screen.getByTestId('persona-soul-editor'), { target: { value: 'edited' } });
+    fireEvent.click(screen.getByTestId('persona-soul-save'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('persona-soul-error')).toHaveTextContent('disk full');
+    });
+  });
+
+  it('surfaces a reset error when the reset RPC fails', async () => {
+    readPersonaFileMock.mockResolvedValue(soulFile({ contents: 'custom', is_default: false }));
+    resetPersonaFileMock.mockRejectedValue(new Error('reset boom'));
+    renderPanel();
+    await waitFor(() => expect(screen.getByTestId('persona-soul-editor')).toHaveValue('custom'));
+
+    fireEvent.click(screen.getByTestId('persona-soul-reset'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('persona-soul-error')).toHaveTextContent('reset boom');
     });
   });
 
