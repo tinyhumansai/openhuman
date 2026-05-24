@@ -36,9 +36,10 @@ pub struct ExternalCapabilityProviderRegistry {
 impl ExternalCapabilityProviderRegistry {
     /// Build a registry from config, collecting invalid records as errors.
     pub fn from_config(config: &ExternalCapabilityProvidersConfig) -> Self {
+        let total_providers = config.providers.len();
         log::debug!(
             "[external_capability][registry] build_start total_providers={}",
-            config.providers.len()
+            total_providers
         );
         let mut providers = BTreeMap::new();
         let mut errors = Vec::new();
@@ -51,9 +52,14 @@ impl ExternalCapabilityProviderRegistry {
                 Ok(provider) => {
                     if providers.contains_key(&provider.id) {
                         duplicate_count += 1;
+                        rejected_count += 1;
                         log::debug!(
-                            "[external_capability][registry] duplicate provider_id={}",
-                            provider.id
+                            "[external_capability][registry] provider_duplicate provider_id={} total_providers={} accepted_count={} rejected_count={} duplicate_count={}",
+                            provider.id,
+                            total_providers,
+                            accepted_count,
+                            rejected_count,
+                            duplicate_count
                         );
                         errors.push(format!(
                             "duplicate external capability provider id `{}`",
@@ -62,10 +68,14 @@ impl ExternalCapabilityProviderRegistry {
                     } else {
                         accepted_count += 1;
                         log::debug!(
-                            "[external_capability][registry] accepted provider_id={} trusted={} enabled={}",
+                            "[external_capability][registry] provider_accepted provider_id={} trusted={} enabled={} total_providers={} accepted_count={} rejected_count={} duplicate_count={}",
                             provider.id,
                             provider.trusted,
-                            provider.enabled
+                            provider.enabled,
+                            total_providers,
+                            accepted_count,
+                            rejected_count,
+                            duplicate_count
                         );
                         providers.insert(provider.id.clone(), provider);
                     }
@@ -73,24 +83,29 @@ impl ExternalCapabilityProviderRegistry {
                 Err(err) => {
                     rejected_count += 1;
                     log::debug!(
-                        "[external_capability][registry] rejected provider_config_id={} error={}",
+                        "[external_capability][registry] provider_rejected provider_config_id={} error={} total_providers={} accepted_count={} rejected_count={} duplicate_count={}",
                         provider.id,
-                        err
+                        err,
+                        total_providers,
+                        accepted_count,
+                        rejected_count,
+                        duplicate_count
                     );
                     errors.push(err);
                 }
             }
         }
 
-        let provider_ids = providers.keys().cloned().collect::<Vec<_>>().join(",");
+        let provider_ids = providers.keys().cloned().collect::<Vec<_>>();
         log::debug!(
-            "[external_capability][registry] build_end total_providers={} accepted_count={} duplicate_count={} rejected_count={} error_count={} provider_ids={}",
-            config.providers.len(),
+            "[external_capability][registry] build_end total_providers={} accepted_count={} rejected_count={} duplicate_count={} error_count={} provider_ids={:?} errors={:?}",
+            total_providers,
             accepted_count,
-            duplicate_count,
             rejected_count,
+            duplicate_count,
             errors.len(),
-            provider_ids
+            provider_ids,
+            errors
         );
 
         Self { providers, errors }
