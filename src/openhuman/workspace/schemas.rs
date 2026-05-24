@@ -61,12 +61,6 @@ fn workspace_file_outputs() -> Vec<FieldSchema> {
             comment: "True when the contents are the bundled default (file missing on read, or just reset).",
             required: true,
         },
-        FieldSchema {
-            name: "path",
-            ty: TypeSchema::String,
-            comment: "Absolute path the contents map to on disk.",
-            required: true,
-        },
     ]
 }
 
@@ -125,10 +119,13 @@ fn handle_file_read(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
         let filename = read_required::<String>(&params, "filename")?;
-        to_json(workspace_rpc::read_workspace_file(
-            &config.workspace_dir,
-            filename.trim(),
-        )?)
+        let filename = filename.trim();
+        log::debug!("[workspace][rpc] handle_file_read filename='{filename}'");
+        let result = workspace_rpc::read_workspace_file(&config.workspace_dir, filename);
+        if let Err(ref e) = result {
+            log::debug!("[workspace][rpc] handle_file_read error filename='{filename}': {e}");
+        }
+        to_json(result?)
     })
 }
 
@@ -137,11 +134,17 @@ fn handle_file_write(params: Map<String, Value>) -> ControllerFuture {
         let config = config_rpc::load_config_with_timeout().await?;
         let filename = read_required::<String>(&params, "filename")?;
         let contents = read_required::<String>(&params, "contents")?;
-        to_json(workspace_rpc::write_workspace_file(
-            &config.workspace_dir,
-            filename.trim(),
-            &contents,
-        )?)
+        let filename = filename.trim();
+        log::debug!(
+            "[workspace][rpc] handle_file_write filename='{filename}' bytes={}",
+            contents.len()
+        );
+        let result =
+            workspace_rpc::write_workspace_file(&config.workspace_dir, filename, &contents);
+        if let Err(ref e) = result {
+            log::debug!("[workspace][rpc] handle_file_write error filename='{filename}': {e}");
+        }
+        to_json(result?)
     })
 }
 
@@ -149,10 +152,13 @@ fn handle_file_reset(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
         let filename = read_required::<String>(&params, "filename")?;
-        to_json(workspace_rpc::reset_workspace_file(
-            &config.workspace_dir,
-            filename.trim(),
-        )?)
+        let filename = filename.trim();
+        log::debug!("[workspace][rpc] handle_file_reset filename='{filename}'");
+        let result = workspace_rpc::reset_workspace_file(&config.workspace_dir, filename);
+        if let Err(ref e) = result {
+            log::debug!("[workspace][rpc] handle_file_reset error filename='{filename}': {e}");
+        }
+        to_json(result?)
     })
 }
 

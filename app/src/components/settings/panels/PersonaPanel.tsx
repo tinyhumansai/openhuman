@@ -1,3 +1,4 @@
+import debug from 'debug';
 import { useEffect, useState } from 'react';
 
 import { useT } from '../../../lib/i18n/I18nContext';
@@ -18,6 +19,8 @@ import {
 } from '../../../store/personaSlice';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
+
+const log = debug('persona:panel');
 
 const PersonaPanel = () => {
   const { t } = useT();
@@ -47,6 +50,7 @@ const PersonaPanel = () => {
     // synchronously (that would trip react-hooks/set-state-in-effect); the
     // `finally` below clears it once the read settles.
     let cancelled = false;
+    log('[ui-flow] soul.load:start file=%s', PERSONA_FILE_SOUL);
     readPersonaFile(PERSONA_FILE_SOUL)
       .then(file => {
         if (cancelled) return;
@@ -54,9 +58,11 @@ const PersonaPanel = () => {
         setSoulSaved(file.contents);
         setSoulIsDefault(file.is_default);
         setSoulError(null);
+        log('[ui-flow] soul.load:ok is_default=%s', file.is_default);
       })
       .catch((err: unknown) => {
         if (cancelled) return;
+        log('[ui-flow] soul.load:error %s', err instanceof Error ? err.message : err);
         setSoulError(err instanceof Error ? err.message : t('settings.persona.soul.loadError'));
       })
       .finally(() => {
@@ -81,12 +87,15 @@ const PersonaPanel = () => {
   const onSaveSoul = async () => {
     setSoulBusy(true);
     setSoulError(null);
+    log('[ui-flow] soul.save:start bytes=%d', soulDraft.length);
     try {
       const file = await writePersonaFile(PERSONA_FILE_SOUL, soulDraft);
       setSoulDraft(file.contents);
       setSoulSaved(file.contents);
       setSoulIsDefault(file.is_default);
+      log('[ui-flow] soul.save:ok');
     } catch (err) {
+      log('[ui-flow] soul.save:error %s', err instanceof Error ? err.message : err);
       setSoulError(err instanceof Error ? err.message : t('settings.persona.soul.saveError'));
     } finally {
       setSoulBusy(false);
@@ -96,12 +105,15 @@ const PersonaPanel = () => {
   const onResetSoul = async () => {
     setSoulBusy(true);
     setSoulError(null);
+    log('[ui-flow] soul.reset:start');
     try {
       const file = await resetPersonaFile(PERSONA_FILE_SOUL);
       setSoulDraft(file.contents);
       setSoulSaved(file.contents);
       setSoulIsDefault(file.is_default);
+      log('[ui-flow] soul.reset:ok');
     } catch (err) {
+      log('[ui-flow] soul.reset:error %s', err instanceof Error ? err.message : err);
       setSoulError(err instanceof Error ? err.message : t('settings.persona.soul.resetError'));
     } finally {
       setSoulBusy(false);

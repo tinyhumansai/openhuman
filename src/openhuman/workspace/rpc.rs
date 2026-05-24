@@ -13,14 +13,17 @@ use serde::Serialize;
 use crate::openhuman::workspace::ops::bundled_default_contents;
 use crate::rpc::RpcOutcome;
 
-/// Hard cap on the size accepted by [`write_workspace_file`]. `SOUL.md` /
-/// `IDENTITY.md` are prose prompts measured in kilobytes; the cap exists purely
-/// so a runaway paste cannot balloon the workspace or the prompt-injection
-/// budget the files are later spliced into.
-pub const MAX_WORKSPACE_FILE_BYTES: usize = 256 * 1024;
+/// Hard cap on the size accepted by [`write_workspace_file`] and tolerated by
+/// [`read_workspace_file`]. `SOUL.md` / `IDENTITY.md` are prose prompts
+/// measured in kilobytes; the cap bounds both a runaway paste from the UI and a
+/// pathologically large file dropped on disk by another process (which would
+/// otherwise be slurped fully into memory and shipped over RPC).
+pub const MAX_WORKSPACE_FILE_BYTES: u64 = 256 * 1024;
 
 /// A single editable persona file plus the metadata the settings UI needs to
-/// render and round-trip it.
+/// render and round-trip it. The absolute on-disk path is deliberately **not**
+/// part of this payload — the UI never needs it, and returning it would leak
+/// host filesystem layout to every RPC caller.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct WorkspaceFile {
     /// Allowlisted file name (e.g. `SOUL.md`).
@@ -31,41 +34,80 @@ pub struct WorkspaceFile {
     /// on disk — i.e. the workspace copy was missing (read) or has just been
     /// restored (reset). Lets the UI show a "using default" affordance.
     pub is_default: bool,
-    /// Absolute path the contents map to on disk.
-    pub path: String,
 }
 
 /// Resolve the bundled default for `filename`, rejecting any name that is not
 /// part of the editable allowlist.
 fn ensure_editable(filename: &str) -> Result<&'static str, String> {
-    bundled_default_contents(filename)
-        .ok_or_else(|| format!("'{filename}' is not an editable workspace file"))
+    bundled_default_contents(filename).ok_or_else(|| {
+        log::debug!("[workspace][rpc] rejected non-editable filename='{filename}'");
+        format!("'{filename}' is not an editable workspace file")
+    })
 }
 
 /// Read an editable persona file. When the workspace copy is missing (e.g. a
 /// fresh install that has not run `init` yet) the bundled default is returned
 /// with `is_default = true` so the editor always shows the effective prompt.
+/// A file larger than [`MAX_WORKSPACE_FILE_BYTES`] is refused rather than
+/// loaded into memory.
 pub fn read_workspace_file(
     workspace_dir: &Path,
     filename: &str,
 ) -> Result<RpcOutcome<WorkspaceFile>, String> {
     let default_contents = ensure_editable(filename)?;
     let path = workspace_dir.join(filename);
-    let (contents, is_default) = match std::fs::read_to_string(&path) {
-        Ok(text) => (text, false),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => (default_contents.to_string(), true),
-        Err(e) => return Err(format!("failed to read {}: {e}", path.display())),
-    };
+
+    match std::fs::metadata(&path) {
+        Ok(meta) if meta.len() > MAX_WORKSPACE_FILE_BYTES => {
+            log::debug!(
+                "[workspace][rpc] read refused file='{filename}' path='{}' bytes={} cap={MAX_WORKSPACE_FILE_BYTES}",
+                path.display(),
+                meta.len()
+            );
+            return Err(format!(
+                "{filename} is too large to edit ({} bytes; limit {MAX_WORKSPACE_FILE_BYTES})",
+                meta.len()
+            ));
+        }
+        Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            log::debug!(
+                "[workspace][rpc] read fallback-to-default file='{filename}' (missing on disk)"
+            );
+            return Ok(RpcOutcome::new(
+                WorkspaceFile {
+                    filename: filename.to_string(),
+                    contents: default_contents.to_string(),
+                    is_default: true,
+                },
+                Vec::new(),
+            ));
+        }
+        Err(e) => {
+            log::debug!(
+                "[workspace][rpc] read stat-failed file='{filename}' path='{}': {e}",
+                path.display()
+            );
+            return Err(format!("failed to read {filename}: {e}"));
+        }
+    }
+
+    let contents = std::fs::read_to_string(&path).map_err(|e| {
+        log::debug!(
+            "[workspace][rpc] read failed file='{filename}' path='{}': {e}",
+            path.display()
+        );
+        format!("failed to read {filename}: {e}")
+    })?;
     log::debug!(
-        "[workspace][rpc] read file='{filename}' is_default={is_default} bytes={}",
+        "[workspace][rpc] read ok file='{filename}' bytes={}",
         contents.len()
     );
     Ok(RpcOutcome::new(
         WorkspaceFile {
             filename: filename.to_string(),
             contents,
-            is_default,
-            path: path.display().to_string(),
+            is_default: false,
         },
         Vec::new(),
     ))
@@ -80,22 +122,32 @@ pub fn write_workspace_file(
     contents: &str,
 ) -> Result<RpcOutcome<WorkspaceFile>, String> {
     ensure_editable(filename)?;
-    if contents.len() > MAX_WORKSPACE_FILE_BYTES {
+    if contents.len() as u64 > MAX_WORKSPACE_FILE_BYTES {
+        log::debug!(
+            "[workspace][rpc] write refused file='{filename}' bytes={} cap={MAX_WORKSPACE_FILE_BYTES}",
+            contents.len()
+        );
         return Err(format!(
             "contents for {filename} exceed the {MAX_WORKSPACE_FILE_BYTES}-byte limit"
         ));
     }
-    std::fs::create_dir_all(workspace_dir).map_err(|e| {
-        format!(
-            "failed to create workspace dir {}: {e}",
-            workspace_dir.display()
-        )
-    })?;
     let path = workspace_dir.join(filename);
-    std::fs::write(&path, contents)
-        .map_err(|e| format!("failed to write {}: {e}", path.display()))?;
+    std::fs::create_dir_all(workspace_dir).map_err(|e| {
+        log::debug!(
+            "[workspace][rpc] write mkdir-failed dir='{}': {e}",
+            workspace_dir.display()
+        );
+        format!("failed to prepare the workspace directory: {e}")
+    })?;
+    std::fs::write(&path, contents).map_err(|e| {
+        log::debug!(
+            "[workspace][rpc] write failed file='{filename}' path='{}': {e}",
+            path.display()
+        );
+        format!("failed to write {filename}: {e}")
+    })?;
     log::debug!(
-        "[workspace][rpc] wrote file='{filename}' bytes={}",
+        "[workspace][rpc] write ok file='{filename}' bytes={}",
         contents.len()
     );
     Ok(RpcOutcome::new(
@@ -103,7 +155,6 @@ pub fn write_workspace_file(
             filename: filename.to_string(),
             contents: contents.to_string(),
             is_default: false,
-            path: path.display().to_string(),
         },
         Vec::new(),
     ))
@@ -116,22 +167,27 @@ pub fn reset_workspace_file(
     filename: &str,
 ) -> Result<RpcOutcome<WorkspaceFile>, String> {
     let default_contents = ensure_editable(filename)?;
-    std::fs::create_dir_all(workspace_dir).map_err(|e| {
-        format!(
-            "failed to create workspace dir {}: {e}",
-            workspace_dir.display()
-        )
-    })?;
     let path = workspace_dir.join(filename);
-    std::fs::write(&path, default_contents)
-        .map_err(|e| format!("failed to write {}: {e}", path.display()))?;
-    log::debug!("[workspace][rpc] reset file='{filename}' to bundled default");
+    std::fs::create_dir_all(workspace_dir).map_err(|e| {
+        log::debug!(
+            "[workspace][rpc] reset mkdir-failed dir='{}': {e}",
+            workspace_dir.display()
+        );
+        format!("failed to prepare the workspace directory: {e}")
+    })?;
+    std::fs::write(&path, default_contents).map_err(|e| {
+        log::debug!(
+            "[workspace][rpc] reset failed file='{filename}' path='{}': {e}",
+            path.display()
+        );
+        format!("failed to reset {filename}: {e}")
+    })?;
+    log::debug!("[workspace][rpc] reset ok file='{filename}' (restored bundled default)");
     Ok(RpcOutcome::new(
         WorkspaceFile {
             filename: filename.to_string(),
             contents: default_contents.to_string(),
             is_default: true,
-            path: path.display().to_string(),
         },
         Vec::new(),
     ))
@@ -166,6 +222,15 @@ mod tests {
             .value;
         assert!(!file.is_default);
         assert_eq!(file.contents, "custom soul");
+    }
+
+    #[test]
+    fn read_refuses_oversize_file_on_disk() {
+        let tmp = tempdir().unwrap();
+        let huge = "a".repeat((MAX_WORKSPACE_FILE_BYTES + 1) as usize);
+        std::fs::write(tmp.path().join("SOUL.md"), &huge).unwrap();
+        let err = read_workspace_file(tmp.path(), "SOUL.md").unwrap_err();
+        assert!(err.contains("too large"), "unexpected error: {err}");
     }
 
     #[test]
@@ -223,7 +288,7 @@ mod tests {
     #[test]
     fn write_rejects_oversize_contents() {
         let tmp = tempdir().unwrap();
-        let huge = "a".repeat(MAX_WORKSPACE_FILE_BYTES + 1);
+        let huge = "a".repeat((MAX_WORKSPACE_FILE_BYTES + 1) as usize);
         let err = write_workspace_file(tmp.path(), "SOUL.md", &huge).unwrap_err();
         assert!(err.contains("limit"), "unexpected error: {err}");
         assert!(
@@ -235,10 +300,10 @@ mod tests {
     #[test]
     fn write_accepts_contents_at_the_size_limit() {
         let tmp = tempdir().unwrap();
-        let at_limit = "a".repeat(MAX_WORKSPACE_FILE_BYTES);
+        let at_limit = "a".repeat(MAX_WORKSPACE_FILE_BYTES as usize);
         let written = write_workspace_file(tmp.path(), "SOUL.md", &at_limit)
             .expect("exactly-at-limit write should succeed")
             .value;
-        assert_eq!(written.contents.len(), MAX_WORKSPACE_FILE_BYTES);
+        assert_eq!(written.contents.len(), MAX_WORKSPACE_FILE_BYTES as usize);
     }
 }
