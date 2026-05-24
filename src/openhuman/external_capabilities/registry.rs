@@ -36,15 +36,23 @@ pub struct ExternalCapabilityProviderRegistry {
 impl ExternalCapabilityProviderRegistry {
     /// Build a registry from config, collecting invalid records as errors.
     pub fn from_config(config: &ExternalCapabilityProvidersConfig) -> Self {
+        log::debug!(
+            "[external_capability][registry] build_start total_providers={}",
+            config.providers.len()
+        );
         let mut providers = BTreeMap::new();
         let mut errors = Vec::new();
+        let mut accepted_count = 0usize;
+        let mut rejected_count = 0usize;
+        let mut duplicate_count = 0usize;
 
         for provider in &config.providers {
             match ExternalCapabilityProvider::from_config(provider) {
                 Ok(provider) => {
                     if providers.contains_key(&provider.id) {
+                        duplicate_count += 1;
                         log::debug!(
-                            "[external_capability] duplicate provider_id={}",
+                            "[external_capability][registry] duplicate provider_id={}",
                             provider.id
                         );
                         errors.push(format!(
@@ -52,12 +60,20 @@ impl ExternalCapabilityProviderRegistry {
                             provider.id
                         ));
                     } else {
+                        accepted_count += 1;
+                        log::debug!(
+                            "[external_capability][registry] accepted provider_id={} trusted={} enabled={}",
+                            provider.id,
+                            provider.trusted,
+                            provider.enabled
+                        );
                         providers.insert(provider.id.clone(), provider);
                     }
                 }
                 Err(err) => {
+                    rejected_count += 1;
                     log::debug!(
-                        "[external_capability] invalid provider_config_id={} error={}",
+                        "[external_capability][registry] rejected provider_config_id={} error={}",
                         provider.id,
                         err
                     );
@@ -65,6 +81,17 @@ impl ExternalCapabilityProviderRegistry {
                 }
             }
         }
+
+        let provider_ids = providers.keys().cloned().collect::<Vec<_>>().join(",");
+        log::debug!(
+            "[external_capability][registry] build_end total_providers={} accepted_count={} duplicate_count={} rejected_count={} error_count={} provider_ids={}",
+            config.providers.len(),
+            accepted_count,
+            duplicate_count,
+            rejected_count,
+            errors.len(),
+            provider_ids
+        );
 
         Self { providers, errors }
     }
