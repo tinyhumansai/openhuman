@@ -403,6 +403,7 @@ const zhCN3: TranslationMap = {
   'channels.web.displayName': 'Web',
   'channels.web.description': '通过内置的 Web UI 聊天。',
   'channels.web.authMode.managed_dm.description': '使用嵌入式 Web 聊天 — 无需设置。',
+  "welcome.continueLocallyExperimental": "Continue Locally (Experimental)",
 };
 
 export default zhCN3;

@@ -142,7 +142,7 @@ interface CoreStateContextValue extends CoreState {
   clearSession: () => Promise<void>;
 }
 
-const CoreStateContext = createContext<CoreStateContextValue | null>(null);
+export const CoreStateContext = createContext<CoreStateContextValue | null>(null);
 
 function snapshotIdentity(snapshot: CoreAppSnapshot): string | null {
   return snapshot.auth.userId ?? snapshot.currentUser?._id ?? null;
