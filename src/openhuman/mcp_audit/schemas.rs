@@ -33,7 +33,7 @@ fn schema() -> ControllerSchema {
     ControllerSchema {
         namespace: "mcp_audit",
         function: "list",
-        description: "List MCP write-tool audit records from local workspace persistence.",
+        description: "List MCP write-tool audit records, including successful writes and rejected or failed write attempts, from local workspace persistence.",
         inputs: vec![
             FieldSchema {
                 name: "limit",
@@ -68,14 +68,14 @@ fn schema() -> ControllerSchema {
             FieldSchema {
                 name: "success_only",
                 ty: TypeSchema::Option(Box::new(TypeSchema::Bool)),
-                comment: "When true, only return successful writes.",
+                comment: "When true, only return rows where the write attempt succeeded.",
                 required: false,
             },
         ],
         outputs: vec![FieldSchema {
             name: "records",
             ty: TypeSchema::Array(Box::new(TypeSchema::Ref("McpWriteRecord"))),
-            comment: "MCP write audit records ordered by timestamp descending.",
+            comment: "MCP write attempt audit records ordered by timestamp descending.",
             required: true,
         }],
     }
