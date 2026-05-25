@@ -531,10 +531,6 @@ const de5: TranslationMap = {
   'settings.mascot.colorGreen': 'Grün',
   'settings.mascot.colorNavy': 'Marine',
   'settings.mascot.colorYellow': 'Gelb',
-  'settings.mascot.customGifError':
-    'GIF konnte nicht geladen werden. Bitte überprüfe die URL und versuche es erneut.',
-  'settings.mascot.customGifHeading': 'Benutzerdefinierter GIF-Avatar',
-  'settings.mascot.customGifLabel': 'URL für benutzerdefinierten GIF-Avatar',
   'settings.mascot.libraryUnavailable': 'OpenHuman Bibliothek nicht verfügbar',
   'settings.mascot.title': 'OpenHuman',
   'settings.developerMenu.composio.title': 'Composio',
