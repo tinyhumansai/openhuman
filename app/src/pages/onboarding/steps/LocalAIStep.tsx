@@ -44,12 +44,12 @@ const LocalAIStep = ({ onNext, onBack: _onBack, onDownloadError }: LocalAIStepPr
     // Fire-and-forget: start bootstrap in the background — the global snackbar tracks progress.
     void bootstrapLocalAiWithRecommendedPreset(false, '[LocalAIStep]').catch((err: unknown) => {
       console.warn('[LocalAIStep] Local AI bootstrap failed:', err);
-      onDownloadError?.('Local AI setup encountered an issue');
+      onDownloadError?.(t('onboarding.localAI.setupIssue'));
     });
 
     // Advance to next step immediately
     onNext({ consentGiven: true, downloadStarted: true });
-  }, [onNext, onDownloadError]);
+  }, [onNext, onDownloadError, t]);
 
   const handleSkip = useCallback(() => {
     console.debug('[LocalAIStep] skipping local AI — using cloud fallback');
@@ -115,13 +115,16 @@ const LocalAIStep = ({ onNext, onBack: _onBack, onDownloadError }: LocalAIStepPr
           </div>
         </div>
 
-        <OnboardingNextButton label="Continue with Cloud" onClick={handleSkip} />
+        <OnboardingNextButton
+          label={t('onboarding.localAI.continueWithCloud')}
+          onClick={handleSkip}
+        />
 
         <button
           type="button"
           onClick={handleConsent}
           className="mt-3 w-full text-center text-xs text-stone-400 dark:text-neutral-500 hover:text-stone-600 dark:text-neutral-300 transition-colors">
-          Use local AI anyway (not recommended for your device)
+          {t('onboarding.localAI.useLocalAnyway')}
         </button>
       </div>
     );
@@ -181,13 +184,16 @@ const LocalAIStep = ({ onNext, onBack: _onBack, onDownloadError }: LocalAIStepPr
         </div>
       </div>
 
-      <OnboardingNextButton label="Continue with Cloud" onClick={handleSkip} />
+      <OnboardingNextButton
+        label={t('onboarding.localAI.continueWithCloud')}
+        onClick={handleSkip}
+      />
 
       <button
         type="button"
         onClick={handleConsent}
         className="mt-3 w-full text-center text-xs text-stone-400 dark:text-neutral-500 hover:text-stone-600 dark:text-neutral-300 transition-colors">
-        Use local AI instead (connect Ollama now)
+        {t('onboarding.localAI.useLocalInstead')}
       </button>
     </div>
   );

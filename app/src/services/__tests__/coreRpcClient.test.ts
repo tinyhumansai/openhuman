@@ -582,6 +582,19 @@ describe('coreRpcClient', () => {
       });
     });
 
+    test('normalizes a supplied core base URL before probing', async () => {
+      vi.resetModules();
+      vi.mocked(isTauri).mockReturnValue(false);
+      const { testCoreRpcConnection } = await import('../coreRpcClient');
+      const fetchMock = vi.mocked(fetch);
+      fetchMock.mockResolvedValueOnce({ ok: true, status: 200 } as Response);
+
+      await testCoreRpcConnection('https://example.trycloudflare.com/');
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock.mock.calls[0][0]).toBe('https://example.trycloudflare.com/rpc');
+    });
+
     test('omits Authorization header when no bearer token is available (non-Tauri)', async () => {
       vi.resetModules();
       vi.mocked(isTauri).mockReturnValue(false);
@@ -854,6 +867,11 @@ describe('coreRpcClient — typed errors + auth-expired event', () => {
 });
 
 describe('getCoreRpcUrl', () => {
+  const normalizeMockRpcUrl = (url: string) => {
+    const trimmed = url.replace(/\/+$/, '');
+    return trimmed.endsWith('/rpc') ? trimmed : `${trimmed}/rpc`;
+  };
+
   // Each test gets a fresh module so module-level caches are cleared
   beforeEach(() => {
     vi.resetModules();
@@ -865,6 +883,7 @@ describe('getCoreRpcUrl', () => {
     vi.doMock('../../utils/configPersistence', () => ({
       peekStoredRpcUrl: () => 'http://custom-host:9999/rpc',
       getStoredCoreToken: () => null,
+      normalizeRpcUrl: normalizeMockRpcUrl,
     }));
     vi.mocked(isTauri).mockReturnValue(false);
 
@@ -873,10 +892,24 @@ describe('getCoreRpcUrl', () => {
     expect(url).toBe('http://custom-host:9999/rpc');
   });
 
+  test('in web mode normalizes a stored core base URL', async () => {
+    vi.doMock('../../utils/configPersistence', () => ({
+      peekStoredRpcUrl: () => 'https://example.trycloudflare.com/',
+      getStoredCoreToken: () => null,
+      normalizeRpcUrl: normalizeMockRpcUrl,
+    }));
+    vi.mocked(isTauri).mockReturnValue(false);
+
+    const { getCoreRpcUrl: freshGetCoreRpcUrl } = await import('../coreRpcClient');
+    const url = await freshGetCoreRpcUrl();
+    expect(url).toBe('https://example.trycloudflare.com/rpc');
+  });
+
   test('in web mode returns default CORE_RPC_URL when nothing is stored', async () => {
     vi.doMock('../../utils/configPersistence', () => ({
       peekStoredRpcUrl: () => null,
       getStoredCoreToken: () => null,
+      normalizeRpcUrl: normalizeMockRpcUrl,
     }));
     vi.mocked(isTauri).mockReturnValue(false);
 
@@ -893,6 +926,7 @@ describe('getCoreRpcUrl', () => {
         return null;
       },
       getStoredCoreToken: () => null,
+      normalizeRpcUrl: normalizeMockRpcUrl,
     }));
     vi.mocked(isTauri).mockReturnValue(false);
 
@@ -909,6 +943,7 @@ describe('getCoreRpcUrl', () => {
     vi.doMock('../../utils/configPersistence', () => ({
       peekStoredRpcUrl: () => storedValue,
       getStoredCoreToken: () => null,
+      normalizeRpcUrl: normalizeMockRpcUrl,
     }));
     vi.mocked(isTauri).mockReturnValue(false);
 
@@ -930,6 +965,7 @@ describe('getCoreRpcUrl', () => {
     vi.doMock('../../utils/configPersistence', () => ({
       peekStoredRpcUrl: () => null,
       getStoredCoreToken: () => null,
+      normalizeRpcUrl: normalizeMockRpcUrl,
     }));
     vi.mocked(isTauri).mockReturnValue(true);
     vi.mocked(invoke).mockImplementation(async (cmd: string) => {
@@ -947,6 +983,7 @@ describe('getCoreRpcUrl', () => {
     vi.doMock('../../utils/configPersistence', () => ({
       peekStoredRpcUrl: () => 'http://stored-override:4444/rpc',
       getStoredCoreToken: () => null,
+      normalizeRpcUrl: normalizeMockRpcUrl,
     }));
     vi.mocked(isTauri).mockReturnValue(true);
     vi.mocked(invoke).mockImplementation(async (cmd: string) => {
@@ -968,6 +1005,7 @@ describe('getCoreRpcUrl', () => {
     vi.doMock('../../utils/configPersistence', () => ({
       peekStoredRpcUrl: () => 'http://127.0.0.1:7788/rpc',
       getStoredCoreToken: () => null,
+      normalizeRpcUrl: normalizeMockRpcUrl,
     }));
     vi.mocked(isTauri).mockReturnValue(true);
     vi.mocked(invoke).mockImplementation(async (cmd: string) => {
@@ -987,6 +1025,7 @@ describe('getCoreRpcUrl', () => {
     vi.doMock('../../utils/configPersistence', () => ({
       peekStoredRpcUrl: () => null,
       getStoredCoreToken: () => null,
+      normalizeRpcUrl: normalizeMockRpcUrl,
     }));
     vi.mocked(isTauri).mockReturnValue(true);
     vi.mocked(invoke).mockRejectedValue(new Error('invoke failed'));
@@ -999,6 +1038,11 @@ describe('getCoreRpcUrl', () => {
 });
 
 describe('getCoreRpcToken (cloud-mode persistence)', () => {
+  const normalizeMockRpcUrl = (url: string) => {
+    const trimmed = url.replace(/\/+$/, '');
+    return trimmed.endsWith('/rpc') ? trimmed : `${trimmed}/rpc`;
+  };
+
   beforeEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
@@ -1009,6 +1053,7 @@ describe('getCoreRpcToken (cloud-mode persistence)', () => {
     vi.doMock('../../utils/configPersistence', () => ({
       peekStoredRpcUrl: () => 'https://core.example.com/rpc',
       getStoredCoreToken: () => 'cloud-token-abc',
+      normalizeRpcUrl: normalizeMockRpcUrl,
     }));
     vi.mocked(isTauri).mockReturnValue(true);
     vi.mocked(invoke).mockImplementation(async (cmd: string) => {
@@ -1038,6 +1083,7 @@ describe('getCoreRpcToken (cloud-mode persistence)', () => {
     vi.doMock('../../utils/configPersistence', () => ({
       peekStoredRpcUrl: () => 'https://core.example.com/rpc',
       getStoredCoreToken: () => storedToken,
+      normalizeRpcUrl: normalizeMockRpcUrl,
     }));
     vi.mocked(isTauri).mockReturnValue(true);
     const fetchMock = vi.mocked(fetch);
@@ -1065,6 +1111,7 @@ describe('getCoreRpcToken (cloud-mode persistence)', () => {
     vi.doMock('../../utils/configPersistence', () => ({
       peekStoredRpcUrl: () => null,
       getStoredCoreToken: () => null,
+      normalizeRpcUrl: normalizeMockRpcUrl,
     }));
     vi.mocked(isTauri).mockReturnValue(true);
     vi.mocked(invoke).mockImplementation(async (cmd: string) => {

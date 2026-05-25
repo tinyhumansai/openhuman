@@ -166,7 +166,7 @@ export async function waitForAppReady(
   while (Date.now() - start < timeout) {
     try {
       const elements = await browser.$$('//*');
-      lastCount = elements.length;
+      lastCount = await elements.length;
       if (lastCount >= minElements) return;
     } catch {
       // accessibility tree not yet available
@@ -188,16 +188,24 @@ export async function waitForAuthBootstrap(timeout: number = 20_000): Promise<vo
   const started = Date.now();
   while (Date.now() - started < timeout) {
     try {
-      const requests = await browser.$$('//*');
-      if (requests.length > 0) {
-        return;
-      }
+      const userId = await browser.execute(() => {
+        const winAny = window as unknown as {
+          __OPENHUMAN_CORE_STATE__?: () => {
+            isReady?: boolean;
+            snapshot?: { auth?: { userId?: string | null } };
+          };
+        };
+        const coreState = winAny.__OPENHUMAN_CORE_STATE__?.();
+        if (!coreState?.isReady) return null;
+        return coreState.snapshot?.auth?.userId ?? null;
+      });
+      if (userId) return;
     } catch {
       // keep polling
     }
     await browser.pause(300);
   }
-  throw new Error(`waitForAuthBootstrap timed out after ${timeout}ms`);
+  throw new Error(`waitForAuthBootstrap timed out after ${timeout}ms: no authenticated user`);
 }
 
 /**

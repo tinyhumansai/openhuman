@@ -122,6 +122,20 @@ struct MeetSettingsUpdate {
 }
 
 #[derive(Debug, Deserialize)]
+struct AutonomySettingsUpdate {
+    max_actions_per_hour: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SearchSettingsUpdate {
+    engine: Option<String>,
+    max_results: Option<usize>,
+    timeout_secs: Option<u64>,
+    parallel_api_key: Option<String>,
+    brave_api_key: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct LocalAiSettingsUpdate {
     runtime_enabled: Option<bool>,
     /// MVP opt-in marker. Tied to `runtime_enabled` from the unified AI
@@ -206,6 +220,8 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("get_analytics_settings"),
         schemas("update_meet_settings"),
         schemas("get_meet_settings"),
+        schemas("update_autonomy_settings"),
+        schemas("get_autonomy_settings"),
         schemas("agent_server_status"),
         schemas("reset_local_data"),
         schemas("get_data_paths"),
@@ -217,6 +233,8 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("update_voice_server_settings"),
         schemas("update_composio_trigger_settings"),
         schemas("get_composio_trigger_settings"),
+        schemas("update_search_settings"),
+        schemas("get_search_settings"),
     ]
 }
 
@@ -291,6 +309,14 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
             handler: handle_get_meet_settings,
         },
         RegisteredController {
+            schema: schemas("update_autonomy_settings"),
+            handler: handle_update_autonomy_settings,
+        },
+        RegisteredController {
+            schema: schemas("get_autonomy_settings"),
+            handler: handle_get_autonomy_settings,
+        },
+        RegisteredController {
             schema: schemas("agent_server_status"),
             handler: handle_agent_server_status,
         },
@@ -333,6 +359,14 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("get_composio_trigger_settings"),
             handler: handle_get_composio_trigger_settings,
+        },
+        RegisteredController {
+            schema: schemas("update_search_settings"),
+            handler: handle_update_search_settings,
+        },
+        RegisteredController {
+            schema: schemas("get_search_settings"),
+            handler: handle_get_search_settings,
         },
     ]
 }
@@ -692,6 +726,74 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 required: true,
             }],
         },
+        "update_autonomy_settings" => ControllerSchema {
+            namespace: "config",
+            function: "update_autonomy_settings",
+            description:
+                "Update agent autonomy policy settings (currently the per-hour tool action ceiling).",
+            inputs: vec![FieldSchema {
+                name: "max_actions_per_hour",
+                ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
+                comment: "Maximum tool actions an agent may run per rolling hour (1..=u32::MAX; u32::MAX is the unlimited sentinel).",
+                required: false,
+            }],
+            outputs: vec![json_output("snapshot", "Updated config snapshot.")],
+        },
+        "get_autonomy_settings" => ControllerSchema {
+            namespace: "config",
+            function: "get_autonomy_settings",
+            description: "Read current agent autonomy policy settings.",
+            inputs: vec![],
+            outputs: vec![FieldSchema {
+                name: "max_actions_per_hour",
+                ty: TypeSchema::U64,
+                comment: "Current maximum tool actions per rolling hour.",
+                required: true,
+            }],
+        },
+        "update_search_settings" => ControllerSchema {
+            namespace: "config",
+            function: "update_search_settings",
+            description: "Update search engine selection and BYO API credentials.",
+            inputs: vec![
+                optional_string(
+                    "engine",
+                    "Active engine: managed | parallel | brave.",
+                ),
+                FieldSchema {
+                    name: "max_results",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
+                    comment: "Maximum results per query (1-20).",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "timeout_secs",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
+                    comment: "Per-request timeout in seconds (1-120).",
+                    required: false,
+                },
+                optional_string(
+                    "parallel_api_key",
+                    "Parallel API key (empty string clears the stored key).",
+                ),
+                optional_string(
+                    "brave_api_key",
+                    "Brave Search API key (empty string clears the stored key).",
+                ),
+            ],
+            outputs: vec![json_output("snapshot", "Updated config snapshot.")],
+        },
+        "get_search_settings" => ControllerSchema {
+            namespace: "config",
+            function: "get_search_settings",
+            description:
+                "Read search engine settings. API keys are surfaced as presence booleans only.",
+            inputs: vec![],
+            outputs: vec![json_output(
+                "settings",
+                "Engine, effective engine, limits, and per-provider configuration flags.",
+            )],
+        },
         "agent_server_status" => ControllerSchema {
             namespace: "config",
             function: "agent_server_status",
@@ -910,20 +1012,40 @@ fn handle_update_model_settings(params: Map<String, Value>) -> ControllerFuture 
                         generate_provider_id, is_slug_reserved, migrate_legacy_fields, AuthStyle,
                         CloudProviderCreds,
                     };
+                    let reserved_count = entries
+                        .iter()
+                        .filter(|e| {
+                            let t = e.slug.trim();
+                            !t.is_empty() && is_slug_reserved(t)
+                        })
+                        .count();
+                    if reserved_count > 0 {
+                        log::debug!(
+                            "[config] update_model_settings: dropping {} reserved cloud provider slug(s)",
+                            reserved_count
+                        );
+                    }
                     entries
                         .into_iter()
+                        // Silently drop entries whose (non-empty) slug is reserved —
+                        // typically the migration-seeded "openhuman" / "cloud" /
+                        // "pid" built-ins that the frontend echoes back on every
+                        // save (see `migrations::unify_ai_provider_settings`).
+                        // Empty slugs still fall through so the explicit
+                        // validation error below fires for actual frontend
+                        // bugs. `apply_model_settings` re-injects the existing
+                        // reserved entries from the stored config so they
+                        // aren't dropped on save.
+                        .filter(|e| {
+                            let trimmed = e.slug.trim();
+                            trimmed.is_empty() || !is_slug_reserved(trimmed)
+                        })
                         .map(|e| {
                             let slug = e.slug.trim().to_string();
                             if slug.is_empty() {
                                 return Err(
                                     "cloud provider slug must not be empty".to_string()
                                 );
-                            }
-                            if is_slug_reserved(&slug) {
-                                return Err(format!(
-                                    "slug '{}' is reserved and cannot be used for a custom provider",
-                                    slug
-                                ));
                             }
                             let auth_style = match e
                                 .auth_style
@@ -1175,6 +1297,60 @@ fn handle_get_meet_settings(_params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
+fn handle_update_autonomy_settings(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        log::debug!("[config][rpc] update_autonomy_settings enter");
+        let update = match deserialize_params::<AutonomySettingsUpdate>(params) {
+            Ok(u) => u,
+            Err(err) => {
+                log::warn!("[config][rpc] update_autonomy_settings invalid params: {err}");
+                return Err(err);
+            }
+        };
+        log::debug!(
+            "[config][rpc] update_autonomy_settings patch max_actions_per_hour={:?}",
+            update.max_actions_per_hour
+        );
+        let patch = config_rpc::AutonomySettingsPatch {
+            max_actions_per_hour: update.max_actions_per_hour,
+        };
+        match config_rpc::load_and_apply_autonomy_settings(patch).await {
+            Ok(outcome) => {
+                log::debug!("[config][rpc] update_autonomy_settings ok");
+                to_json(outcome)
+            }
+            Err(err) => {
+                log::warn!("[config][rpc] update_autonomy_settings failed: {err}");
+                Err(err)
+            }
+        }
+    })
+}
+
+fn handle_get_autonomy_settings(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async {
+        log::debug!("[config][rpc] get_autonomy_settings enter");
+        let config = match config_rpc::load_config_with_timeout().await {
+            Ok(c) => c,
+            Err(err) => {
+                log::warn!("[config][rpc] get_autonomy_settings load failed: {err}");
+                return Err(err);
+            }
+        };
+        let max_actions_per_hour = config.autonomy.max_actions_per_hour;
+        log::debug!(
+            "[config][rpc] get_autonomy_settings ok max_actions_per_hour={max_actions_per_hour}"
+        );
+        let result = serde_json::json!({
+            "max_actions_per_hour": max_actions_per_hour,
+        });
+        to_json(RpcOutcome::new(
+            result,
+            vec!["autonomy settings read".to_string()],
+        ))
+    })
+}
+
 fn handle_agent_server_status(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async { to_json(config_rpc::agent_server_status()) })
 }
@@ -1286,6 +1462,52 @@ fn handle_get_composio_trigger_settings(_params: Map<String, Value>) -> Controll
             }
             Err(err) => {
                 log::warn!("[config][rpc] get_composio_trigger_settings failed: {err}");
+                Err(err)
+            }
+        }
+    })
+}
+
+fn handle_update_search_settings(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        log::debug!("[config][rpc] update_search_settings enter");
+        let update = match deserialize_params::<SearchSettingsUpdate>(params) {
+            Ok(u) => u,
+            Err(err) => {
+                log::warn!("[config][rpc] update_search_settings invalid params: {err}");
+                return Err(err);
+            }
+        };
+        let patch = config_rpc::SearchSettingsPatch {
+            engine: update.engine,
+            max_results: update.max_results,
+            timeout_secs: update.timeout_secs,
+            parallel_api_key: update.parallel_api_key,
+            brave_api_key: update.brave_api_key,
+        };
+        match config_rpc::load_and_apply_search_settings(patch).await {
+            Ok(outcome) => {
+                log::debug!("[config][rpc] update_search_settings ok");
+                to_json(outcome)
+            }
+            Err(err) => {
+                log::warn!("[config][rpc] update_search_settings failed: {err}");
+                Err(err)
+            }
+        }
+    })
+}
+
+fn handle_get_search_settings(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async {
+        log::debug!("[config][rpc] get_search_settings enter");
+        match config_rpc::get_search_settings().await {
+            Ok(outcome) => {
+                log::debug!("[config][rpc] get_search_settings ok");
+                to_json(outcome)
+            }
+            Err(err) => {
+                log::warn!("[config][rpc] get_search_settings failed: {err}");
                 Err(err)
             }
         }

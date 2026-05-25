@@ -6,6 +6,7 @@
 // console at runtime via AttachConsole, so command-line output still works.
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
+// ── Desktop (CEF) entry point ─────────────────────────────────────────────────
 // On the CEF runtime, the main binary is re-exec'd as the renderer / GPU /
 // utility helper subprocesses. The `cef_entry_point` macro short-circuits
 // main() when CEF has passed `--type=<role>` in argv, routing straight into

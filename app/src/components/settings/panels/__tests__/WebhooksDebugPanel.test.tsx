@@ -8,7 +8,7 @@
  * SSE-side observable behaviour (constructor URL, skip-on-null,
  * webhooks_debug event handling).
  */
-import { render, waitFor } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Recording EventSource stub — jsdom has no native impl.
@@ -112,6 +112,7 @@ describe('WebhooksDebugPanel — SSE auth wiring (#1922)', () => {
 
     render(<WebhooksDebugPanel />);
 
+    expect(screen.getByTestId('webhooks-debug-panel')).toBeInTheDocument();
     await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
     expect(MockEventSource.instances[0].url).toBe(
       'http://localhost:7788/events/webhooks?token=rpc-token-debug-1'

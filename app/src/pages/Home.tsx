@@ -152,63 +152,62 @@ const Home = () => {
           <UsageLimitBanner
             tone="danger"
             icon="⚠️"
-            title="You’ve Exhausted Your Usage"
-            message="You’re out of included usage for now. Start a subscription to unlock more ongoing capacity."
-            ctaLabel="Get a subscription"
+            title={t('home.usageExhaustedTitle')}
+            message={t('home.usageExhaustedBody')}
+            ctaLabel={t('home.usageExhaustedCta')}
           />
         )}
 
         {showPromoBanner && <PromotionalCreditsBanner promoCredits={promoCredits} />}
 
-        {/* Theme toggle — sun/moon icon above the main card */}
-        <div className="flex justify-end mb-2">
-          <button
-            type="button"
-            onClick={toggleTheme}
-            aria-label={isDark ? t('home.themeToggle.toLight') : t('home.themeToggle.toDark')}
-            title={isDark ? t('home.themeToggle.toLight') : t('home.themeToggle.toDark')}
-            className="p-2 rounded-full text-stone-500 dark:text-neutral-400 hover:text-stone-700 dark:hover:text-neutral-200 hover:bg-stone-100 dark:hover:bg-neutral-800/60 transition-colors">
-            {isDark ? (
-              <svg
-                className="w-5 h-5"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth={2}
-                viewBox="0 0 24 24"
-                aria-hidden="true">
-                <circle cx="12" cy="12" r="4" />
-                <path
-                  strokeLinecap="round"
-                  d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"
-                />
-              </svg>
-            ) : (
-              <svg
-                className="w-5 h-5"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth={2}
-                viewBox="0 0 24 24"
-                aria-hidden="true">
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z"
-                />
-              </svg>
-            )}
-          </button>
-        </div>
-
         {/* Main card — data-walkthrough target for step 1 */}
         <div
           data-walkthrough="home-card"
           className="bg-white dark:bg-neutral-900 rounded-2xl shadow-soft border border-stone-200 dark:border-neutral-800 p-6 animate-fade-up">
-          {/* Header row: logo + version + settings */}
-          <div className="flex items-center justify-center mb-4">
+          {/* Header row: version centered, theme toggle right-aligned.
+              The empty left spacer matches the toggle's width so the version
+              stays visually centered. */}
+          <div className="flex items-center justify-between mb-4">
+            <div className="w-9" aria-hidden="true" />
             <span className="text-xs text-center text-stone-400 dark:text-neutral-500">
               v{APP_VERSION}
             </span>
+            <button
+              type="button"
+              onClick={toggleTheme}
+              aria-label={isDark ? t('home.themeToggle.toLight') : t('home.themeToggle.toDark')}
+              title={isDark ? t('home.themeToggle.toLight') : t('home.themeToggle.toDark')}
+              className="p-2 rounded-full text-stone-500 dark:text-neutral-400 hover:text-stone-700 dark:hover:text-neutral-200 hover:bg-stone-100 dark:hover:bg-neutral-800/60 transition-colors">
+              {isDark ? (
+                <svg
+                  className="w-5 h-5"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={2}
+                  viewBox="0 0 24 24"
+                  aria-hidden="true">
+                  <circle cx="12" cy="12" r="4" />
+                  <path
+                    strokeLinecap="round"
+                    d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"
+                  />
+                </svg>
+              ) : (
+                <svg
+                  className="w-5 h-5"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={2}
+                  viewBox="0 0 24 24"
+                  aria-hidden="true">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z"
+                  />
+                </svg>
+              )}
+            </button>
           </div>
 
           {/* Welcome title */}

@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-start-listening"
+description = "Enables the start_listening command without any pre-configured scope."
+commands.allow = ["start_listening"]
+
+[[permission]]
+identifier = "deny-start-listening"
+description = "Denies the start_listening command without any pre-configured scope."
+commands.deny = ["start_listening"]

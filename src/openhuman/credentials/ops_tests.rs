@@ -1,6 +1,31 @@
 use super::*;
+use crate::openhuman::credentials::session_support::local_session_user_id;
 use serde_json::json;
 use tempfile::TempDir;
+
+struct EnvVarGuard {
+    key: &'static str,
+    previous: Option<std::ffi::OsString>,
+}
+
+impl EnvVarGuard {
+    fn set_to_path(key: &'static str, path: &std::path::Path) -> Self {
+        let previous = std::env::var_os(key);
+        unsafe { std::env::set_var(key, path) };
+        Self { key, previous }
+    }
+}
+
+impl Drop for EnvVarGuard {
+    fn drop(&mut self) {
+        unsafe {
+            match self.previous.take() {
+                Some(value) => std::env::set_var(self.key, value),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
+}
 
 fn test_config(tmp: &TempDir) -> Config {
     Config {
@@ -71,6 +96,106 @@ fn sanitize_stored_session_user_discards_empty_objects() {
         sanitize_stored_session_user(Some(json!({ "firstName": "steven" }))),
         Some(json!({ "firstName": "steven" }))
     );
+}
+
+// ── store_session (local session) ─────────────────────────────
+
+/// A local session token requires a non-empty user payload — the backend
+/// fetch path is bypassed entirely, so there is no fallback to derive the
+/// user from an API response.
+#[tokio::test]
+async fn store_session_local_token_rejects_missing_user_payload() {
+    let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let tmp = TempDir::new().unwrap();
+    std::fs::create_dir_all(tmp.path().join("workspace")).unwrap();
+    let _home = EnvVarGuard::set_to_path("HOME", tmp.path());
+    let config = test_config(&tmp);
+    let local_token = "header.payload.local";
+    let err = store_session(&config, local_token, None, None)
+        .await
+        .unwrap_err();
+    assert!(
+        err.contains("local session requires a user payload"),
+        "expected 'local session requires a user payload', got: {err}"
+    );
+}
+
+/// A local session token with a user payload must be accepted without any
+/// network call, must force a deterministic `local-<device>` user id
+/// regardless of what the caller passes, and must return a stored profile
+/// summary.
+#[tokio::test]
+async fn store_session_local_token_succeeds_without_network_and_forces_local_user_id() {
+    let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let tmp = TempDir::new().unwrap();
+    std::fs::create_dir_all(tmp.path().join("workspace")).unwrap();
+    let _home = EnvVarGuard::set_to_path("HOME", tmp.path());
+    let config = test_config(&tmp);
+    let local_token = "header.payload.local";
+    let user = serde_json::json!({
+        "id": "local",
+        "name": "Local User",
+        "email": "local@openhuman.local"
+    });
+    // Pass a different user_id to verify it is overridden.
+    let result = store_session(
+        &config,
+        local_token,
+        Some("should-be-overridden".to_string()),
+        Some(user),
+    )
+    .await
+    .unwrap();
+    // Profile must be stored (no network call was required).
+    assert!(
+        result.value.has_token,
+        "local session should result in a stored token"
+    );
+    // Logs must mention that backend validation was skipped.
+    let log_text = result.logs.join(" ");
+    assert!(
+        log_text.contains("local session accepted without backend validation"),
+        "expected log confirming no backend call, got: {log_text}"
+    );
+    let expected_local_user_id = local_session_user_id();
+    assert!(
+        log_text.contains(&format!(
+            "user directory activated for {expected_local_user_id}"
+        )),
+        "expected user-directory activation log for deterministic local uid, got: {log_text}"
+    );
+    assert!(
+        log_text.contains("onboarding left incomplete for local session setup"),
+        "expected local session to remain in onboarding, got: {log_text}"
+    );
+    // The profile_id or metadata must reflect the forced user_id.
+    // Because store_session re-activates the user directory and reloads
+    // config (so it picks up the user-scoped workspace path), we verify
+    // via the returned profile summary rather than a secondary profile lookup.
+    assert_eq!(
+        result.value.provider, "app-session",
+        "profile must be stored under the app-session provider"
+    );
+}
+
+#[test]
+fn normalize_local_session_user_overwrites_id_fields() {
+    let out = normalize_local_session_user(
+        json!({
+            "id": "old",
+            "_id": "old",
+            "name": "Local User"
+        }),
+        "local-device-123",
+    );
+
+    assert_eq!(out["id"], "local-device-123");
+    assert_eq!(out["_id"], "local-device-123");
+    assert_eq!(out["name"], "Local User");
 }
 
 // ── clear_session ──────────────────────────────────────────────

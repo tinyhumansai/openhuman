@@ -119,7 +119,7 @@ const LocalAIDownloadSnackbar = () => {
         <button
           onClick={handleToggleCollapse}
           className="flex items-center gap-2 bg-stone-900 border border-stone-700/50 rounded-full px-3 py-2 shadow-large hover:border-stone-600 transition-colors"
-          aria-label="Expand download progress">
+          aria-label={t('app.localAiDownload.expandAria')}>
           <svg
             className="w-4 h-4 text-primary-400 animate-pulse"
             viewBox="0 0 20 20"
@@ -156,7 +156,7 @@ const LocalAIDownloadSnackbar = () => {
             <button
               onClick={handleToggleCollapse}
               className="p-1 text-stone-500 hover:text-stone-300 transition-colors"
-              aria-label="Collapse download progress">
+              aria-label={t('app.localAiDownload.collapseAria')}>
               <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="currentColor">
                 <path d="M3.75 7.25a.75.75 0 000 1.5h8.5a.75.75 0 000-1.5h-8.5z" />
               </svg>
@@ -164,7 +164,7 @@ const LocalAIDownloadSnackbar = () => {
             <button
               onClick={handleDismiss}
               className="p-1 text-stone-500 hover:text-stone-300 transition-colors"
-              aria-label="Dismiss download notification">
+              aria-label={t('app.localAiDownload.dismissAria')}>
               <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="currentColor">
                 <path d="M4.28 3.22a.75.75 0 00-1.06 1.06L6.94 8l-3.72 3.72a.75.75 0 101.06 1.06L8 9.06l3.72 3.72a.75.75 0 101.06-1.06L9.06 8l3.72-3.72a.75.75 0 00-1.06-1.06L8 6.94 4.28 3.22z" />
               </svg>

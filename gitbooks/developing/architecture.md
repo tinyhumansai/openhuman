@@ -349,3 +349,55 @@ Every layer is async and non-blocking. The Rust core processes thousands of conc
 | **AI**         | MCP (JSON-RPC 2.0)              | Standardized tool protocol for LLM integration           |
 | **Search**     | OpenAI embeddings + SQLite FTS5 | Hybrid semantic + keyword search                         |
 | **Graph**      | Neo4j                           | Entity relationship knowledge graph                      |
+
+---
+
+## iOS Client (experimental)
+
+The iOS client is a Tauri v2 app that shares the React/TypeScript UI codebase but ships **no Rust core binary on-device**. All AI, RPC, and domain logic remain on the desktop core; the iOS app is a thin transport client.
+
+### Transport architecture
+
+```
+iOS App (React + Tauri iOS shell)
+  |
+  TransportManager  (app/src/services/transport/TransportManager.ts)
+  |-- LanHttpTransport     direct HTTP to desktop core (same LAN)
+  |-- TunnelTransport      socket.io relay; E2E encrypted
+  |-- CloudHttpTransport   fallback via cloud backend API
+```
+
+Transport is selected by `ConnectionProfile` stored in secure storage. On pairing, the iOS app stores `{channelId, sessionToken, corePubkey, devicePrivkey}`.
+
+### Pairing flow
+
+1. Desktop: `devices_create_pairing` RPC -> backend issues `{channelId, pairingToken, sessionToken}`.
+2. Desktop shows QR: `openhuman://pair?cid=<>&pt=<>&cpk=<>&rpc=<>&exp=<>`.
+3. iOS scans QR, generates X25519 keypair, connects to backend (`tunnel:connect`, `role:client`).
+4. Backend consumes `pairingToken` (single-use) and returns iOS `sessionToken`.
+5. X25519 key agreement over `tunnel:frame` -> XChaCha20-Poly1305 symmetric key.
+6. Desktop emits `DomainEvent::DevicePaired`; device appears in the Devices panel.
+
+### Key paths
+
+| Path | Purpose |
+| --- | --- |
+| `src/openhuman/devices/` | Rust devices domain (pairing, store, crypto, event bus) |
+| `app/src/services/transport/` | TS transport strategies + manager |
+| `app/src/lib/tunnel/` | TS tunnel crypto (X25519 + XChaCha20-Poly1305) |
+| `app/src/pages/ios/` | iOS-specific screens (PairScreen, MascotScreen) |
+| `packages/tauri-plugin-ptt/` | Swift PTT plugin (AVAudioEngine + SFSpeechRecognizer) |
+| `app/src-tauri/Info.ios.plist` | Privacy strings for iOS Info.plist |
+| `docs/ios/SETUP.md` | Developer setup guide |
+
+### Security
+
+- Tunnel backend is a blind forwarder -- never sees plaintext payloads.
+- `pairingToken` is single-use, TTL'd, hashed at rest on backend.
+- `sessionToken` is per-peer and revocable from the desktop Devices panel.
+- Speech recognition runs on-device (Apple Speech framework); audio never leaves the device.
+- **TODO:** migrate iOS symmetric session key to Keychain for persistence across restarts.
+
+### Backend dependency
+
+`tinyhumansai/backend#709` implements the `tunnel:register` / `tunnel:connect` / `tunnel:frame` socket.io protocol. End-to-end pairing does not work until that PR is merged and deployed.

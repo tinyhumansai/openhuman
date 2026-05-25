@@ -535,3 +535,42 @@ fn handle_clear_namespace(params: Map<String, Value>) -> ControllerFuture {
         to_json(rpc::clear_namespace(payload).await?)
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn documents_schema_exposes_all_functions() {
+        assert_eq!(controllers().len(), FUNCTIONS.len());
+        assert!(FUNCTIONS.contains(&"init"));
+        assert!(FUNCTIONS.contains(&"doc_ingest"));
+        assert!(FUNCTIONS.contains(&"clear_namespace"));
+    }
+
+    #[test]
+    fn unknown_document_schema_returns_none() {
+        assert!(schema("not_real").is_none());
+    }
+
+    #[test]
+    fn query_namespace_schema_requires_namespace_and_query() {
+        let schema = schema("query_namespace").unwrap();
+        let required: Vec<&str> = schema
+            .inputs
+            .iter()
+            .filter(|f| f.required)
+            .map(|f| f.name)
+            .collect();
+        assert!(required.contains(&"namespace"));
+        assert!(required.contains(&"query"));
+    }
+
+    #[test]
+    fn clear_namespace_schema_requires_namespace() {
+        let schema = schema("clear_namespace").unwrap();
+        assert_eq!(schema.inputs.len(), 1);
+        assert_eq!(schema.inputs[0].name, "namespace");
+        assert!(schema.inputs[0].required);
+    }
+}

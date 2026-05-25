@@ -694,6 +694,36 @@ fn is_session_expired_error_does_not_match_unrelated_errors() {
 }
 
 #[test]
+fn is_session_expired_error_skips_discord_rewrap_for_2285() {
+    // Cross-module regression guard for #2285: the Discord domain
+    // controller intentionally formats its upstream-auth failures so
+    // they do NOT match this dispatch-time classifier. If anyone
+    // changes the wording on either side back into a string that
+    // contains both "401" and "unauthorized", a connected-Discord
+    // card click would once again log the user out of OpenHuman.
+    //
+    // We pin the exact substrings the Discord rewrap was designed
+    // to avoid, plus the canonical post-rewrap message body, so
+    // either-side drift fails loudly.
+    let canonical_rewrap = "Discord API error: Discord list_guilds: bot token was rejected \
+         (upstream HTTP four-oh-one). Open Settings → Channels → Discord \
+         and rotate / reconnect the bot token.";
+    assert!(
+        !is_session_expired_error(canonical_rewrap),
+        "Discord rewrap must NOT trip the session-expired classifier: {canonical_rewrap}"
+    );
+    // Defensive: also pin the 403 variant. Same rewrap path, same
+    // requirement — neither '403' nor 'forbidden' is part of the
+    // session classifier today, but locking the message in keeps a
+    // future regression visible.
+    let canonical_rewrap_403 =
+        "Discord API error: Discord list_channels: bot token lacks required Discord permissions \
+         (upstream HTTP four-oh-three). Open Settings → Channels → Discord \
+         and rotate / reconnect the bot token.";
+    assert!(!is_session_expired_error(canonical_rewrap_403));
+}
+
+#[test]
 fn is_param_validation_error_matches_the_three_validator_shapes() {
     // Regression guard for OPENHUMAN-TAURI-20: pre-#1467 cores rejected
     // `api_key` because it wasn't in the schema yet. The error string
@@ -931,6 +961,98 @@ fn escape_html_escapes_all_special_chars() {
 fn escape_html_is_noop_for_safe_text() {
     assert_eq!(escape_html("safe text 123"), "safe text 123");
     assert_eq!(escape_html(""), "");
+}
+
+// --- telegram callback fetch-metadata gate --------------------------------
+
+fn hdr_map(pairs: &[(&str, &str)]) -> axum::http::HeaderMap {
+    let mut m = axum::http::HeaderMap::new();
+    for (k, v) in pairs {
+        m.insert(
+            axum::http::HeaderName::from_bytes(k.as_bytes()).unwrap(),
+            axum::http::HeaderValue::from_str(v).unwrap(),
+        );
+    }
+    m
+}
+
+#[test]
+fn telegram_callback_origin_ok_accepts_no_metadata_headers() {
+    // Older browsers and CLI clients (curl) send neither Sec-Fetch-* nor
+    // Origin/Referer. The legacy flow has to keep working — reject only
+    // when there is evidence of a cross-site embedded context.
+    let headers = hdr_map(&[]);
+    assert!(super::telegram_callback_origin_ok(&headers).is_ok());
+}
+
+#[test]
+fn telegram_callback_origin_ok_accepts_legit_top_nav_from_telegram() {
+    let headers = hdr_map(&[
+        ("sec-fetch-mode", "navigate"),
+        ("sec-fetch-dest", "document"),
+        ("sec-fetch-site", "cross-site"),
+        ("referer", "https://t.me/some_bot"),
+    ]);
+    assert!(super::telegram_callback_origin_ok(&headers).is_ok());
+}
+
+#[test]
+fn telegram_callback_origin_ok_accepts_same_origin_local_nav() {
+    let headers = hdr_map(&[
+        ("sec-fetch-mode", "navigate"),
+        ("sec-fetch-dest", "document"),
+        ("sec-fetch-site", "same-origin"),
+    ]);
+    assert!(super::telegram_callback_origin_ok(&headers).is_ok());
+}
+
+#[test]
+fn telegram_callback_origin_ok_rejects_image_embed() {
+    let headers = hdr_map(&[
+        ("sec-fetch-mode", "no-cors"),
+        ("sec-fetch-dest", "image"),
+        ("sec-fetch-site", "cross-site"),
+    ]);
+    assert!(super::telegram_callback_origin_ok(&headers).is_err());
+}
+
+#[test]
+fn telegram_callback_origin_ok_rejects_iframe_embed() {
+    let headers = hdr_map(&[
+        ("sec-fetch-mode", "navigate"),
+        ("sec-fetch-dest", "iframe"),
+        ("sec-fetch-site", "cross-site"),
+    ]);
+    assert!(super::telegram_callback_origin_ok(&headers).is_err());
+}
+
+#[test]
+fn telegram_callback_origin_ok_rejects_cross_site_from_non_telegram() {
+    let headers = hdr_map(&[
+        ("sec-fetch-mode", "navigate"),
+        ("sec-fetch-dest", "document"),
+        ("sec-fetch-site", "cross-site"),
+        ("referer", "https://attacker.example/page"),
+    ]);
+    assert!(super::telegram_callback_origin_ok(&headers).is_err());
+}
+
+#[test]
+fn telegram_callback_origin_ok_rejects_non_telegram_referer_without_fetch_metadata() {
+    let headers = hdr_map(&[("referer", "https://attacker.example/post")]);
+    assert!(super::telegram_callback_origin_ok(&headers).is_err());
+}
+
+#[test]
+fn telegram_callback_origin_ok_rejects_localhost_host_prefix_decoy() {
+    // Regression: prefix-matching the referer accepted hostnames like
+    // `http://localhost.attacker.example/...`. With exact-host parsing
+    // these must be rejected even when no fetch-metadata headers are
+    // present.
+    let headers = hdr_map(&[("referer", "http://localhost.attacker.example/cb")]);
+    assert!(super::telegram_callback_origin_ok(&headers).is_err());
+    let headers = hdr_map(&[("referer", "http://127.0.0.1.attacker.example/cb")]);
+    assert!(super::telegram_callback_origin_ok(&headers).is_err());
 }
 
 // --- invoke_method parameter-shape errors ---------------------------------

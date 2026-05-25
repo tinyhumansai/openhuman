@@ -455,11 +455,10 @@ impl ComposioClient {
         // from `IntegrationClient`, which we intentionally avoid so the
         // public surface of that type doesn't widen for one caller.
         //
-        // Mirror the TLS settings of the shared client
-        // (`use_rustls_tls + http1_only`) so this path has the same
-        // connection behaviour as the other backend calls.
-        let http_client = reqwest::Client::builder()
-            .use_rustls_tls()
+        // Mirror the TLS settings of the shared client so this path has the
+        // same connection behaviour as the other backend calls.
+        // Platform-appropriate TLS backend — see [`crate::openhuman::tls`].
+        let http_client = crate::openhuman::tls::tls_client_builder()
             .http1_only()
             .timeout(std::time::Duration::from_secs(60))
             .connect_timeout(std::time::Duration::from_secs(15))

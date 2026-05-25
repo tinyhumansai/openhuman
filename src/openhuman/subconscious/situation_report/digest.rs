@@ -12,7 +12,7 @@
 //! exactly what was happening before this section was gated.
 
 use crate::openhuman::config::Config;
-use crate::openhuman::memory::tree::tree_source::types::TreeKind;
+use crate::openhuman::memory_store::trees::types::TreeKind;
 
 /// Truncate point for the digest body in the situation report.
 const DIGEST_BODY_PREVIEW: usize = 1200;
@@ -63,7 +63,7 @@ struct DigestRow {
 }
 
 fn read_latest_global_l0(config: &Config, cutoff_ms: i64) -> anyhow::Result<Option<DigestRow>> {
-    crate::openhuman::memory::tree::store::with_connection(config, |conn| {
+    crate::openhuman::memory_store::chunks::store::with_connection(config, |conn| {
         let row = conn
             .query_row(
                 "SELECT s.id, s.content, s.sealed_at_ms

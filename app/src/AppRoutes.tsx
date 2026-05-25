@@ -1,9 +1,11 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
 
+import AppRoutesIOS from './AppRoutesIOS';
 import DefaultRedirect from './components/DefaultRedirect';
 import ProtectedRoute from './components/ProtectedRoute';
 import PublicRoute from './components/PublicRoute';
 import HumanPage from './features/human/HumanPage';
+import { getIsMobile } from './lib/platform';
 import Accounts from './pages/Accounts';
 import Channels from './pages/Channels';
 import Home from './pages/Home';
@@ -17,6 +19,12 @@ import Skills from './pages/Skills';
 import Welcome from './pages/Welcome';
 
 const AppRoutes = () => {
+  // Mobile target (iOS or Android): pair → Human/Chat/Settings only.
+  // Desktop routes are not rendered.
+  if (getIsMobile()) {
+    return <AppRoutesIOS />;
+  }
+
   return (
     <Routes>
       {/* Public routes - redirect to /home if logged in */}

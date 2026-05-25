@@ -4,6 +4,7 @@
 //! `openhuman.composio_*`:
 //!   - `composio.list_toolkits`       → `openhuman.composio_list_toolkits`
 //!   - `composio.list_capabilities`   → `openhuman.composio_list_capabilities`
+//!   - `composio.list_agent_ready_toolkits` → `openhuman.composio_list_agent_ready_toolkits`
 //!   - `composio.list_connections`    → `openhuman.composio_list_connections`
 //!   - `composio.authorize`           → `openhuman.composio_authorize`
 //!   - `composio.delete_connection`   → `openhuman.composio_delete_connection`
@@ -62,6 +63,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
     vec![
         schemas("list_toolkits"),
         schemas("list_capabilities"),
+        schemas("list_agent_ready_toolkits"),
         schemas("list_connections"),
         schemas("authorize"),
         schemas("delete_connection"),
@@ -94,6 +96,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("list_capabilities"),
             handler: handle_list_capabilities,
+        },
+        RegisteredController {
+            schema: schemas("list_agent_ready_toolkits"),
+            handler: handle_list_agent_ready_toolkits,
         },
         RegisteredController {
             schema: schemas("list_connections"),
@@ -201,6 +207,21 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 name: "capabilities",
                 ty: TypeSchema::Json,
                 comment: "Array of capability rows describing native providers, curated catalogs, sync, trigger, and memory-ingest support.",
+                required: true,
+            }],
+        },
+        "list_agent_ready_toolkits" => ControllerSchema {
+            namespace: "composio",
+            function: "list_agent_ready_toolkits",
+            description:
+                "List every toolkit slug that ships an agent-ready curated catalog. Connected \
+                 toolkits not in this list should be surfaced in the UI as preview / agent \
+                 integration coming soon. See issue #2283.",
+            inputs: vec![],
+            outputs: vec![FieldSchema {
+                name: "toolkits",
+                ty: TypeSchema::Array(Box::new(TypeSchema::String)),
+                comment: "Sorted toolkit slugs with curated catalogs (e.g. gmail, notion, one_drive, excel, todoist).",
                 required: true,
             }],
         },
@@ -704,6 +725,10 @@ fn handle_list_capabilities(_params: Map<String, Value>) -> ControllerFuture {
         let config = config_rpc::load_config_with_timeout().await?;
         to_json(super::ops::composio_list_capabilities(&config).await?)
     })
+}
+
+fn handle_list_agent_ready_toolkits(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async { to_json(super::ops::composio_list_agent_ready_toolkits().await?) })
 }
 
 fn handle_list_connections(_params: Map<String, Value>) -> ControllerFuture {

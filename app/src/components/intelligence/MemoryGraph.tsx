@@ -378,18 +378,10 @@ export function MemoryGraph({ nodes, edges, mode, contentRootAbs, emptyHint }: M
   );
 }
 
-function tooltipFor(
-  n: GraphNode,
-  t: (key: string, params?: Record<string, string>) => string
-): string {
-  if (n.kind === 'summary') {
-    return t('graph.tooltip.summary', {
-      level: String(n.level ?? 0),
-      kind: n.tree_kind ?? '',
-      scope: n.tree_scope ?? '',
-      children: String(n.child_count ?? 0),
-    });
-  }
-  if (n.kind === 'contact') return t('graph.tooltip.contact', { label: n.label });
+function tooltipFor(n: GraphNode, t: (key: string, fallback?: string) => string): string {
+  // NOTE: the underlying t() does not interpolate params; placeholders in the
+  // translated string are rendered as-is. Preserved to match prior behavior.
+  if (n.kind === 'summary') return t('graph.tooltip.summary');
+  if (n.kind === 'contact') return t('graph.tooltip.contact');
   return n.label || t('graph.document');
 }

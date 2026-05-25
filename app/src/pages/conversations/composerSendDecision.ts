@@ -5,9 +5,7 @@ export type ComposerSendBlockReason =
   | 'usage_limit_reached'
   | 'socket_disconnected';
 
-export type SlashCommandDecision =
-  | { kind: 'new_or_clear'; blockedByWelcomeLock: boolean }
-  | { kind: 'not_handled' };
+export type SlashCommandDecision = { kind: 'new_or_clear' } | { kind: 'not_handled' };
 
 export interface ComposerSendDecisionArgs {
   rawText: string;
@@ -35,13 +33,10 @@ export interface ComposerKeyDownEventLike {
   nativeEvent?: { isComposing?: boolean; keyCode?: number };
 }
 
-export const handleComposerSlashCommand = (
-  command: string,
-  welcomeLocked: boolean
-): SlashCommandDecision => {
+export const handleComposerSlashCommand = (command: string): SlashCommandDecision => {
   const cmd = command.toLowerCase();
   if (cmd === '/new' || cmd === '/clear') {
-    return { kind: 'new_or_clear', blockedByWelcomeLock: welcomeLocked };
+    return { kind: 'new_or_clear' };
   }
   return { kind: 'not_handled' };
 };

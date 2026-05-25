@@ -40,7 +40,28 @@ const MAX_OUTPUT_BYTES: usize = 1_048_576;
 /// into spawned node processes. `PATH` gets a prepend of the managed bin
 /// dir before being forwarded.
 const SAFE_ENV_VARS: &[&str] = &[
-    "HOME", "TERM", "LANG", "LC_ALL", "LC_CTYPE", "USER", "SHELL", "TMPDIR",
+    "HOME",
+    "TERM",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "USER",
+    "SHELL",
+    "TMPDIR",
+    // Windows process creation and child command lookup need these after env_clear().
+    // PATH is rebuilt separately with the managed Node bin dir prepended.
+    "SystemRoot",
+    "WINDIR",
+    "COMSPEC",
+    "PATHEXT",
+    "TEMP",
+    "TMP",
+    "USERPROFILE",
+    "APPDATA",
+    "LOCALAPPDATA",
+    "ProgramFiles",
+    "ProgramFiles(x86)",
+    "ProgramW6432",
 ];
 
 /// `node_exec` — execute JavaScript through the resolved Node.js runtime.
@@ -354,5 +375,15 @@ mod tests {
         let ws = std::path::Path::new("/ws");
         let resolved = resolve_script_path(ws, "scripts/run.js").unwrap();
         assert_eq!(resolved, std::path::Path::new("/ws/scripts/run.js"));
+    }
+
+    #[test]
+    fn safe_env_vars_include_windows_process_essentials() {
+        for var in ["SystemRoot", "COMSPEC", "PATHEXT", "TEMP", "USERPROFILE"] {
+            assert!(
+                SAFE_ENV_VARS.contains(&var),
+                "{var} must be forwarded for Windows child processes"
+            );
+        }
     }
 }

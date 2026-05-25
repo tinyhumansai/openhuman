@@ -1,4 +1,4 @@
-export type ChannelType = 'telegram' | 'discord' | 'web' | 'lark' | 'dingtalk';
+export type ChannelType = 'telegram' | 'discord' | 'web' | 'lark' | 'dingtalk' | 'mcp';
 
 export type ChannelAuthMode = 'managed_dm' | 'oauth' | 'bot_token' | 'api_key';
 

@@ -6,26 +6,33 @@
 //! config (`stt_provider`, `tts_provider`); unit tests use the factory
 //! directly to verify dispatch branches.
 //!
+//! ## Provider-string grammar
+//!
+//! Mirrors the LLM inference factory pattern in
+//! [`crate::openhuman::inference::provider::factory`]:
+//!
+//! | String                | Resolves to                                    |
+//! |-----------------------|------------------------------------------------|
+//! | `"cloud"` / `"openhuman"` | OpenHuman backend proxy                    |
+//! | `"whisper"`           | Local Whisper (STT)                            |
+//! | `"piper"`             | Local Piper (TTS)                              |
+//! | `"<slug>:<model>"`    | Voice provider entry matched by slug           |
+//! | `"<slug>"`            | Bare slug — uses provider's default model/voice|
+//!
 //! ## STT providers
 //!
 //! - `"cloud"` → backend Whisper proxy (POST `/openai/v1/audio/transcriptions`).
-//!   Same path the renamed `MicComposer` used to call directly. Keeps the API key
-//!   off the desktop, costs network round-trip latency.
-//! - `"whisper"` → local Whisper via the `WHISPER_BIN` env var (or in-process
-//!   `whisper-rs` engine when `local_ai.whisper_in_process` is on). Zero
-//!   network, but the user has to download the model. Default model:
-//!   `whisper-large-v3-turbo` (recommended) or smaller variants
-//!   (`tiny / base / small / medium`) for lower-end hardware.
+//! - `"whisper"` → local Whisper via `WHISPER_BIN` (or in-process `whisper-rs`).
+//! - `"<slug>:<model>"` → third-party STT API via the voice provider registry
+//!   (e.g. `"deepgram:nova-2"`, `"openai:whisper-1"`).
 //!
 //! ## TTS providers
 //!
 //! - `"cloud"` → backend ElevenLabs proxy (POST `/openai/v1/audio/speech`)
 //!   which also returns Oculus-15 visemes for the mascot lip-sync.
-//! - `"piper"` → local Piper subprocess via `PIPER_BIN`. Lower latency than
-//!   ElevenLabs and runs offline; default voice `en_US-lessac-medium`.
-//!   **Note**: Kokoro (higher quality, 82M params) is intentionally out of
-//!   scope for this ship — `PIPER_BIN` is already reserved in `.env.example`
-//!   and Piper is the simpler integration. Kokoro is tracked as future work.
+//! - `"piper"` → local Piper subprocess via `PIPER_BIN`.
+//! - `"<slug>:<voice>"` → third-party TTS API via the voice provider registry
+//!   (e.g. `"openai:alloy"`, `"elevenlabs:<voice_id>"`).
 //!
 //! ## Logging prefixes
 //!
@@ -43,6 +50,9 @@ use super::cloud_transcribe::{transcribe_cloud, CloudTranscribeOptions, CloudTra
 use super::local_speech::{synthesize_piper, PiperOptions};
 use super::local_transcribe::{transcribe_whisper, WhisperTranscribeOptions};
 use super::reply_speech::{synthesize_reply, ReplySpeechOptions, ReplySpeechResult};
+use crate::openhuman::config::schema::voice_providers::{
+    SttApiStyle, TtsApiStyle, VoiceCapability,
+};
 use crate::openhuman::config::Config;
 use crate::rpc::RpcOutcome;
 
@@ -301,6 +311,546 @@ impl TtsProvider for PiperTtsProvider {
 }
 
 // ---------------------------------------------------------------------------
+// External STT provider (slug-keyed, third-party API)
+// ---------------------------------------------------------------------------
+
+/// Third-party STT provider dispatched via the voice provider registry.
+/// Supports OpenAI-compatible and Deepgram API styles.
+pub struct ExternalSttProvider {
+    slug: String,
+    model: String,
+    endpoint: String,
+    api_key: String,
+    api_style: SttApiStyle,
+}
+
+impl ExternalSttProvider {
+    pub fn new(
+        slug: impl Into<String>,
+        model: impl Into<String>,
+        endpoint: impl Into<String>,
+        api_key: impl Into<String>,
+        api_style: SttApiStyle,
+    ) -> Self {
+        Self {
+            slug: slug.into(),
+            model: model.into(),
+            endpoint: endpoint.into(),
+            api_key: api_key.into(),
+            api_style,
+        }
+    }
+}
+
+#[async_trait]
+impl SttProvider for ExternalSttProvider {
+    fn name(&self) -> &'static str {
+        "external"
+    }
+
+    async fn transcribe(
+        &self,
+        _config: &Config,
+        audio_base64: &str,
+        mime_type: Option<&str>,
+        file_name: Option<&str>,
+        language: Option<&str>,
+    ) -> Result<RpcOutcome<SttResult>, String> {
+        debug!(
+            "{LOG_PREFIX} external STT dispatch slug={} model={} style={:?} bytes_b64={}",
+            self.slug,
+            self.model,
+            self.api_style,
+            audio_base64.len()
+        );
+
+        let audio_bytes = base64_decode(audio_base64)?;
+        let mime = mime_type.unwrap_or("audio/wav");
+
+        let result = match self.api_style {
+            SttApiStyle::OpenaiAudio => {
+                self.transcribe_openai_compat(&audio_bytes, mime, file_name, language)
+                    .await?
+            }
+            SttApiStyle::Deepgram => {
+                self.transcribe_deepgram(&audio_bytes, mime, language)
+                    .await?
+            }
+        };
+
+        Ok(RpcOutcome::single_log(
+            SttResult {
+                text: result,
+                provider: self.slug.clone(),
+            },
+            &format!("voice-factory: external STT completed via {}", self.slug),
+        ))
+    }
+}
+
+impl ExternalSttProvider {
+    async fn transcribe_openai_compat(
+        &self,
+        audio_bytes: &[u8],
+        mime: &str,
+        file_name: Option<&str>,
+        language: Option<&str>,
+    ) -> Result<String, String> {
+        let url = format!(
+            "{}/audio/transcriptions",
+            self.endpoint.trim_end_matches('/')
+        );
+        let ext = extension_for_mime(mime);
+        let default_fname = format!("audio.{ext}");
+        let fname = file_name.unwrap_or(&default_fname);
+
+        let file_part = reqwest::multipart::Part::bytes(audio_bytes.to_vec())
+            .file_name(fname.to_string())
+            .mime_str(mime)
+            .map_err(|e| format!("[voice-stt] mime error: {e}"))?;
+
+        let mut form = reqwest::multipart::Form::new()
+            .text("model", self.model.clone())
+            .part("file", file_part);
+
+        if let Some(lang) = language {
+            form = form.text("language", lang.to_string());
+        }
+
+        let client = reqwest::Client::new();
+        let resp = client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .multipart(form)
+            .send()
+            .await
+            .map_err(|e| format!("[voice-stt] external STT request failed: {e}"))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(format!("[voice-stt] external STT error {status}: {body}"));
+        }
+
+        #[derive(Deserialize)]
+        struct TranscriptionResp {
+            text: String,
+        }
+        let parsed: TranscriptionResp = resp
+            .json()
+            .await
+            .map_err(|e| format!("[voice-stt] failed to parse response: {e}"))?;
+        Ok(parsed.text)
+    }
+
+    async fn transcribe_deepgram(
+        &self,
+        audio_bytes: &[u8],
+        mime: &str,
+        language: Option<&str>,
+    ) -> Result<String, String> {
+        let mut url = format!(
+            "{}/listen?model={}",
+            self.endpoint.trim_end_matches('/'),
+            self.model
+        );
+        if let Some(lang) = language {
+            url.push_str(&format!("&language={lang}"));
+        }
+
+        let client = reqwest::Client::new();
+        let resp = client
+            .post(&url)
+            .header("Authorization", format!("Token {}", self.api_key))
+            .header("Content-Type", mime)
+            .body(audio_bytes.to_vec())
+            .send()
+            .await
+            .map_err(|e| format!("[voice-stt] deepgram request failed: {e}"))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(format!("[voice-stt] deepgram error {status}: {body}"));
+        }
+
+        #[derive(Deserialize)]
+        struct DeepgramChannel {
+            alternatives: Vec<DeepgramAlt>,
+        }
+        #[derive(Deserialize)]
+        struct DeepgramAlt {
+            transcript: String,
+        }
+        #[derive(Deserialize)]
+        struct DeepgramResult {
+            channels: Vec<DeepgramChannel>,
+        }
+        #[derive(Deserialize)]
+        struct DeepgramResp {
+            results: DeepgramResult,
+        }
+
+        let parsed: DeepgramResp = resp
+            .json()
+            .await
+            .map_err(|e| format!("[voice-stt] deepgram parse error: {e}"))?;
+
+        let text = parsed
+            .results
+            .channels
+            .first()
+            .and_then(|ch| ch.alternatives.first())
+            .map(|a| a.transcript.clone())
+            .unwrap_or_default();
+        Ok(text)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// External TTS provider (slug-keyed, third-party API)
+// ---------------------------------------------------------------------------
+
+/// Third-party TTS provider dispatched via the voice provider registry.
+/// Supports OpenAI-compatible and ElevenLabs API styles.
+pub struct ExternalTtsProvider {
+    slug: String,
+    default_voice: String,
+    endpoint: String,
+    api_key: String,
+    api_style: TtsApiStyle,
+}
+
+impl ExternalTtsProvider {
+    pub fn new(
+        slug: impl Into<String>,
+        default_voice: impl Into<String>,
+        endpoint: impl Into<String>,
+        api_key: impl Into<String>,
+        api_style: TtsApiStyle,
+    ) -> Self {
+        Self {
+            slug: slug.into(),
+            default_voice: default_voice.into(),
+            endpoint: endpoint.into(),
+            api_key: api_key.into(),
+            api_style,
+        }
+    }
+}
+
+#[async_trait]
+impl TtsProvider for ExternalTtsProvider {
+    fn name(&self) -> &'static str {
+        "external"
+    }
+
+    async fn synthesize(
+        &self,
+        _config: &Config,
+        text: &str,
+        voice: Option<&str>,
+    ) -> Result<RpcOutcome<ReplySpeechResult>, String> {
+        let resolved_voice = voice
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or(&self.default_voice);
+
+        debug!(
+            "{LOG_PREFIX} external TTS dispatch slug={} voice={} style={:?} chars={}",
+            self.slug,
+            resolved_voice,
+            self.api_style,
+            text.len()
+        );
+
+        let (audio_bytes, audio_mime) = match self.api_style {
+            TtsApiStyle::OpenaiAudio => self.synthesize_openai_compat(text, resolved_voice).await?,
+            TtsApiStyle::ElevenLabs => self.synthesize_elevenlabs(text, resolved_voice).await?,
+        };
+
+        use base64::Engine;
+        let audio_base64 = base64::engine::general_purpose::STANDARD.encode(&audio_bytes);
+
+        Ok(RpcOutcome::single_log(
+            ReplySpeechResult {
+                audio_base64,
+                audio_mime,
+                visemes: Vec::new(),
+                alignment: None,
+            },
+            &format!("voice-factory: external TTS completed via {}", self.slug),
+        ))
+    }
+}
+
+impl ExternalTtsProvider {
+    async fn synthesize_openai_compat(
+        &self,
+        text: &str,
+        voice: &str,
+    ) -> Result<(Vec<u8>, String), String> {
+        let url = format!("{}/audio/speech", self.endpoint.trim_end_matches('/'));
+
+        let body = serde_json::json!({
+            "model": "tts-1",
+            "voice": voice,
+            "input": text,
+        });
+
+        let client = reqwest::Client::new();
+        let resp = client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .header("Content-Type", "application/json")
+            .body(body.to_string())
+            .send()
+            .await
+            .map_err(|e| format!("[voice-tts] external TTS request failed: {e}"))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(format!("[voice-tts] external TTS error {status}: {body}"));
+        }
+
+        let content_type = resp
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("audio/mpeg")
+            .to_string();
+
+        let bytes = resp
+            .bytes()
+            .await
+            .map_err(|e| format!("[voice-tts] failed to read audio: {e}"))?;
+
+        Ok((bytes.to_vec(), content_type))
+    }
+
+    async fn synthesize_elevenlabs(
+        &self,
+        text: &str,
+        voice_id: &str,
+    ) -> Result<(Vec<u8>, String), String> {
+        let url = format!(
+            "{}/text-to-speech/{}",
+            self.endpoint.trim_end_matches('/'),
+            voice_id
+        );
+
+        let body = serde_json::json!({
+            "text": text,
+            "model_id": "eleven_multilingual_v2",
+        });
+
+        let client = reqwest::Client::new();
+        let resp = client
+            .post(&url)
+            .header("xi-api-key", &self.api_key)
+            .header("Content-Type", "application/json")
+            .body(body.to_string())
+            .send()
+            .await
+            .map_err(|e| format!("[voice-tts] elevenlabs request failed: {e}"))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(format!("[voice-tts] elevenlabs error {status}: {body}"));
+        }
+
+        let content_type = resp
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("audio/mpeg")
+            .to_string();
+
+        let bytes = resp
+            .bytes()
+            .await
+            .map_err(|e| format!("[voice-tts] failed to read elevenlabs audio: {e}"))?;
+
+        Ok((bytes.to_vec(), content_type))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Slug:model helpers
+// ---------------------------------------------------------------------------
+
+/// Split a provider string into `(slug, model)`.
+///
+/// `"deepgram:nova-2"` → `("deepgram", "nova-2")`
+/// `"deepgram"` → `("deepgram", "")`
+fn split_slug_model(s: &str) -> (&str, &str) {
+    match s.find(':') {
+        Some(pos) => (&s[..pos], &s[pos + 1..]),
+        None => (s, ""),
+    }
+}
+
+/// Resolve the effective STT provider string from config.
+///
+/// Precedence: `config.stt_provider` → `config.local_ai.stt_provider` → `"cloud"`.
+pub fn effective_stt_provider(config: &Config) -> String {
+    config
+        .stt_provider
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| {
+            let legacy = config.local_ai.stt_provider.as_str();
+            if legacy.trim().is_empty() {
+                None
+            } else {
+                Some(legacy)
+            }
+        })
+        .unwrap_or("cloud")
+        .to_string()
+}
+
+/// Resolve the effective TTS provider string from config.
+///
+/// Precedence: `config.tts_provider` → `config.local_ai.tts_provider` → `"cloud"`.
+pub fn effective_tts_provider(config: &Config) -> String {
+    config
+        .tts_provider
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| {
+            let legacy = config.local_ai.tts_provider.as_str();
+            if legacy.trim().is_empty() {
+                None
+            } else {
+                Some(legacy)
+            }
+        })
+        .unwrap_or("cloud")
+        .to_string()
+}
+
+/// Create an STT provider by looking up a slug in `config.voice_providers`.
+fn create_stt_provider_by_slug(
+    slug: &str,
+    model: &str,
+    config: &Config,
+) -> anyhow::Result<Box<dyn SttProvider>> {
+    let entry = config
+        .voice_providers
+        .iter()
+        .find(|p| p.slug == slug)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "no voice provider with slug '{}' found in voice_providers",
+                slug
+            )
+        })?;
+
+    if !entry.capability.supports_stt() {
+        return Err(anyhow::anyhow!(
+            "voice provider '{}' does not support STT (capability: {})",
+            slug,
+            entry.capability.as_str()
+        ));
+    }
+
+    let effective_model = if model.trim().is_empty() {
+        entry.default_stt_model.as_deref().unwrap_or("default")
+    } else {
+        model
+    };
+
+    let api_key = crate::openhuman::inference::provider::factory::lookup_key_for_slug(slug, config)
+        .unwrap_or_default();
+
+    debug!(
+        "{LOG_PREFIX} creating external STT provider slug={slug} model={effective_model} \
+         endpoint={} key_present={}",
+        entry.endpoint,
+        !api_key.is_empty()
+    );
+
+    Ok(Box::new(ExternalSttProvider::new(
+        slug,
+        effective_model,
+        &entry.endpoint,
+        api_key,
+        entry.stt_api_style,
+    )))
+}
+
+/// Create a TTS provider by looking up a slug in `config.voice_providers`.
+fn create_tts_provider_by_slug(
+    slug: &str,
+    voice: &str,
+    config: &Config,
+) -> anyhow::Result<Box<dyn TtsProvider>> {
+    let entry = config
+        .voice_providers
+        .iter()
+        .find(|p| p.slug == slug)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "no voice provider with slug '{}' found in voice_providers",
+                slug
+            )
+        })?;
+
+    if !entry.capability.supports_tts() {
+        return Err(anyhow::anyhow!(
+            "voice provider '{}' does not support TTS (capability: {})",
+            slug,
+            entry.capability.as_str()
+        ));
+    }
+
+    let effective_voice = if voice.trim().is_empty() {
+        entry.default_tts_voice.as_deref().unwrap_or("default")
+    } else {
+        voice
+    };
+
+    let api_key = crate::openhuman::inference::provider::factory::lookup_key_for_slug(slug, config)
+        .unwrap_or_default();
+
+    debug!(
+        "{LOG_PREFIX} creating external TTS provider slug={slug} voice={effective_voice} \
+         endpoint={} key_present={}",
+        entry.endpoint,
+        !api_key.is_empty()
+    );
+
+    Ok(Box::new(ExternalTtsProvider::new(
+        slug,
+        effective_voice,
+        &entry.endpoint,
+        api_key,
+        entry.tts_api_style,
+    )))
+}
+
+fn base64_decode(input: &str) -> Result<Vec<u8>, String> {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD
+        .decode(input)
+        .map_err(|e| format!("[voice-factory] base64 decode error: {e}"))
+}
+
+fn extension_for_mime(mime: &str) -> &str {
+    match mime {
+        "audio/wav" | "audio/x-wav" => "wav",
+        "audio/mpeg" | "audio/mp3" => "mp3",
+        "audio/ogg" => "ogg",
+        "audio/webm" => "webm",
+        "audio/flac" => "flac",
+        "audio/mp4" | "audio/m4a" => "m4a",
+        _ => "wav",
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Factory entry points (mirrors embeddings/factory.rs)
 // ---------------------------------------------------------------------------
 
@@ -322,7 +872,7 @@ impl TtsProvider for PiperTtsProvider {
 pub fn create_stt_provider(
     provider: &str,
     model: &str,
-    _config: &Config,
+    config: &Config,
 ) -> anyhow::Result<Box<dyn SttProvider>> {
     debug!("{LOG_PREFIX} create_stt_provider provider={provider} model={model}");
     let model = if model.trim().is_empty() {
@@ -331,13 +881,19 @@ pub fn create_stt_provider(
         model
     };
     match provider.trim() {
-        "cloud" => Ok(Box::new(CloudSttProvider::new(
+        "cloud" | "openhuman" => Ok(Box::new(CloudSttProvider::new(
             super::cloud_transcribe_default_model(),
         ))),
         "whisper" => Ok(Box::new(WhisperSttProvider::new(model))),
-        unknown => Err(anyhow::anyhow!(
-            "unknown STT provider: \"{unknown}\". Supported: \"cloud\", \"whisper\""
-        )),
+        other => {
+            let (slug, slug_model) = split_slug_model(other);
+            let effective_model = if slug_model.is_empty() {
+                model
+            } else {
+                slug_model
+            };
+            create_stt_provider_by_slug(slug, effective_model, config)
+        }
     }
 }
 
@@ -355,7 +911,7 @@ pub fn create_stt_provider(
 pub fn create_tts_provider(
     provider: &str,
     voice: &str,
-    _config: &Config,
+    config: &Config,
 ) -> anyhow::Result<Box<dyn TtsProvider>> {
     debug!("{LOG_PREFIX} create_tts_provider provider={provider} voice={voice}");
     let voice = if voice.trim().is_empty() {
@@ -364,15 +920,21 @@ pub fn create_tts_provider(
         voice
     };
     match provider.trim() {
-        "cloud" => Ok(Box::new(CloudTtsProvider::new(if voice.is_empty() {
+        "cloud" | "openhuman" => Ok(Box::new(CloudTtsProvider::new(if voice.is_empty() {
             None
         } else {
             Some(voice.to_string())
         }))),
         "piper" => Ok(Box::new(PiperTtsProvider::new(voice))),
-        unknown => Err(anyhow::anyhow!(
-            "unknown TTS provider: \"{unknown}\". Supported: \"cloud\", \"piper\""
-        )),
+        other => {
+            let (slug, slug_voice) = split_slug_model(other);
+            let effective_voice = if slug_voice.is_empty() {
+                voice
+            } else {
+                slug_voice
+            };
+            create_tts_provider_by_slug(slug, effective_voice, config)
+        }
     }
 }
 
@@ -443,13 +1005,71 @@ mod tests {
     }
 
     #[test]
-    fn stt_factory_unknown_provider_errors() {
+    fn stt_factory_openhuman_sentinel() {
+        let p = create_stt_provider("openhuman", "ignored", &cfg()).unwrap();
+        assert_eq!(p.name(), "cloud");
+    }
+
+    #[test]
+    fn stt_factory_slug_without_registry_errors() {
         let err = create_stt_provider("deepgram", "nova-2", &cfg())
             .err()
-            .expect("deepgram is not implemented");
+            .expect("deepgram without registry entry must error");
         let msg = err.to_string();
-        assert!(msg.contains("deepgram"), "should name the provider: {msg}");
-        assert!(msg.contains("unknown"), "should say unknown: {msg}");
+        assert!(msg.contains("deepgram"), "should name the slug: {msg}");
+        assert!(
+            msg.contains("no voice provider"),
+            "should explain missing: {msg}"
+        );
+    }
+
+    #[test]
+    fn stt_factory_slug_colon_model_resolves_with_registry() {
+        let mut config = cfg();
+        config.voice_providers.push(
+            crate::openhuman::config::schema::voice_providers::VoiceProviderCreds {
+                slug: "deepgram".into(),
+                endpoint: "https://api.deepgram.com/v1".into(),
+                capability: VoiceCapability::Stt,
+                stt_api_style: SttApiStyle::Deepgram,
+                ..Default::default()
+            },
+        );
+        let p = create_stt_provider("deepgram:nova-2", "", &config).unwrap();
+        assert_eq!(p.name(), "external");
+    }
+
+    #[test]
+    fn stt_factory_bare_slug_resolves_with_registry() {
+        let mut config = cfg();
+        config.voice_providers.push(
+            crate::openhuman::config::schema::voice_providers::VoiceProviderCreds {
+                slug: "openai".into(),
+                endpoint: "https://api.openai.com/v1".into(),
+                capability: VoiceCapability::Both,
+                default_stt_model: Some("whisper-1".into()),
+                ..Default::default()
+            },
+        );
+        let p = create_stt_provider("openai", "", &config).unwrap();
+        assert_eq!(p.name(), "external");
+    }
+
+    #[test]
+    fn stt_factory_tts_only_provider_rejects() {
+        let mut config = cfg();
+        config.voice_providers.push(
+            crate::openhuman::config::schema::voice_providers::VoiceProviderCreds {
+                slug: "elevenlabs".into(),
+                endpoint: "https://api.elevenlabs.io/v1".into(),
+                capability: VoiceCapability::Tts,
+                ..Default::default()
+            },
+        );
+        let err = create_stt_provider("elevenlabs", "model", &config)
+            .err()
+            .expect("TTS-only provider must reject STT");
+        assert!(err.to_string().contains("does not support STT"));
     }
 
     #[test]
@@ -457,7 +1077,7 @@ mod tests {
         let err = create_stt_provider("", "model", &cfg())
             .err()
             .expect("empty provider must error");
-        assert!(err.to_string().contains("unknown"));
+        assert!(err.to_string().contains("no voice provider"));
     }
 
     #[test]
@@ -479,13 +1099,55 @@ mod tests {
     }
 
     #[test]
-    fn tts_factory_unknown_provider_errors() {
+    fn tts_factory_openhuman_sentinel() {
+        let p = create_tts_provider("openhuman", "alloy", &cfg()).unwrap();
+        assert_eq!(p.name(), "cloud");
+    }
+
+    #[test]
+    fn tts_factory_slug_without_registry_errors() {
         let err = create_tts_provider("kokoro", "af_bella", &cfg())
             .err()
-            .expect("kokoro is not implemented in this cut");
+            .expect("kokoro without registry entry must error");
         let msg = err.to_string();
-        assert!(msg.contains("kokoro"), "should name the provider: {msg}");
-        assert!(msg.contains("unknown"), "should say unknown: {msg}");
+        assert!(msg.contains("kokoro"), "should name the slug: {msg}");
+        assert!(
+            msg.contains("no voice provider"),
+            "should explain missing: {msg}"
+        );
+    }
+
+    #[test]
+    fn tts_factory_slug_colon_voice_resolves_with_registry() {
+        let mut config = cfg();
+        config.voice_providers.push(
+            crate::openhuman::config::schema::voice_providers::VoiceProviderCreds {
+                slug: "openai".into(),
+                endpoint: "https://api.openai.com/v1".into(),
+                capability: VoiceCapability::Both,
+                default_tts_voice: Some("alloy".into()),
+                ..Default::default()
+            },
+        );
+        let p = create_tts_provider("openai:shimmer", "", &config).unwrap();
+        assert_eq!(p.name(), "external");
+    }
+
+    #[test]
+    fn tts_factory_stt_only_provider_rejects() {
+        let mut config = cfg();
+        config.voice_providers.push(
+            crate::openhuman::config::schema::voice_providers::VoiceProviderCreds {
+                slug: "deepgram".into(),
+                endpoint: "https://api.deepgram.com/v1".into(),
+                capability: VoiceCapability::Stt,
+                ..Default::default()
+            },
+        );
+        let err = create_tts_provider("deepgram", "voice", &config)
+            .err()
+            .expect("STT-only provider must reject TTS");
+        assert!(err.to_string().contains("does not support TTS"));
     }
 
     #[test]
@@ -526,6 +1188,71 @@ mod tests {
     fn default_providers_return_cloud() {
         assert_eq!(default_stt_provider().name(), "cloud");
         assert_eq!(default_tts_provider().name(), "cloud");
+    }
+
+    // ── slug:model parsing ──────────────────────────────────────────────
+
+    #[test]
+    fn split_slug_model_with_colon() {
+        assert_eq!(split_slug_model("deepgram:nova-2"), ("deepgram", "nova-2"));
+    }
+
+    #[test]
+    fn split_slug_model_bare_slug() {
+        assert_eq!(split_slug_model("deepgram"), ("deepgram", ""));
+    }
+
+    #[test]
+    fn split_slug_model_multiple_colons() {
+        assert_eq!(split_slug_model("custom:model:v2"), ("custom", "model:v2"));
+    }
+
+    // ── effective provider resolution ───────────────────────────────────
+
+    #[test]
+    fn effective_stt_prefers_new_field() {
+        let mut config = cfg();
+        config.stt_provider = Some("deepgram:nova-2".into());
+        config.local_ai.stt_provider = "whisper".into();
+        assert_eq!(effective_stt_provider(&config), "deepgram:nova-2");
+    }
+
+    #[test]
+    fn effective_stt_falls_back_to_legacy() {
+        let mut config = cfg();
+        config.stt_provider = None;
+        config.local_ai.stt_provider = "whisper".into();
+        assert_eq!(effective_stt_provider(&config), "whisper");
+    }
+
+    #[test]
+    fn effective_stt_defaults_to_cloud() {
+        let mut config = cfg();
+        config.stt_provider = None;
+        config.local_ai.stt_provider = String::new();
+        assert_eq!(effective_stt_provider(&config), "cloud");
+    }
+
+    #[test]
+    fn effective_tts_prefers_new_field() {
+        let mut config = cfg();
+        config.tts_provider = Some("openai:alloy".into());
+        config.local_ai.tts_provider = "piper".into();
+        assert_eq!(effective_tts_provider(&config), "openai:alloy");
+    }
+
+    #[test]
+    fn effective_tts_falls_back_to_legacy() {
+        let mut config = cfg();
+        config.tts_provider = None;
+        config.local_ai.tts_provider = "piper".into();
+        assert_eq!(effective_tts_provider(&config), "piper");
+    }
+
+    #[test]
+    fn effective_tts_defaults_to_cloud() {
+        let config = cfg();
+        assert_eq!(effective_tts_provider(&config), "cloud");
     }
 
     /// Drop guard that unsets an env var on construction and restores it on

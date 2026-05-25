@@ -1,5 +1,7 @@
 export { Ghosty } from './Ghosty';
 export type { GhostyProps, MascotFace } from './Ghosty';
+export { CustomGifMascot } from './CustomGifMascot';
+export type { CustomGifMascotProps } from './CustomGifMascot';
 export { YellowMascot } from './YellowMascot';
 export type { YellowMascotProps } from './YellowMascot';
 export { lerpViseme, VISEMES, visemePath } from './visemes';

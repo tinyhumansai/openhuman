@@ -441,10 +441,15 @@ pub fn build_runtime_proxy_client(service_key: &str) -> reqwest::Client {
         return client;
     }
 
-    let builder = apply_runtime_proxy_to_builder(reqwest::Client::builder(), service_key);
+    // Platform-appropriate TLS backend — see [`crate::openhuman::tls`].
+    let builder =
+        apply_runtime_proxy_to_builder(crate::openhuman::tls::tls_client_builder(), service_key);
     let client = builder.build().unwrap_or_else(|error| {
         tracing::warn!(service_key, "Failed to build proxied client: {error}");
-        reqwest::Client::new()
+        // Apply the same platform TLS selection on the fallback path so the
+        // error-path client also honors the Windows cert store.
+        let fb = crate::openhuman::tls::tls_client_builder();
+        fb.build().unwrap_or_default()
     });
     set_runtime_proxy_cached_client(cache_key, client.clone());
     client
@@ -461,16 +466,23 @@ pub fn build_runtime_proxy_client_with_timeouts(
         return client;
     }
 
-    let builder = reqwest::Client::builder()
+    // Platform-appropriate TLS backend — see [`crate::openhuman::tls`].
+    let raw = crate::openhuman::tls::tls_client_builder()
         .timeout(std::time::Duration::from_secs(timeout_secs))
         .connect_timeout(std::time::Duration::from_secs(connect_timeout_secs));
-    let builder = apply_runtime_proxy_to_builder(builder, service_key);
+    let builder = apply_runtime_proxy_to_builder(raw, service_key);
     let client = builder.build().unwrap_or_else(|error| {
         tracing::warn!(
             service_key,
             "Failed to build proxied timeout client: {error}"
         );
-        reqwest::Client::new()
+        // Apply the same platform TLS selection and timeouts on the fallback
+        // path so the error-path client also honors the Windows cert store
+        // and remains bounded.
+        let fb = crate::openhuman::tls::tls_client_builder()
+            .timeout(std::time::Duration::from_secs(timeout_secs))
+            .connect_timeout(std::time::Duration::from_secs(connect_timeout_secs));
+        fb.build().unwrap_or_default()
     });
     set_runtime_proxy_cached_client(cache_key, client.clone());
     client

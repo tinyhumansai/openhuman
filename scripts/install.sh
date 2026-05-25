@@ -141,6 +141,11 @@ case "${ARCH_RAW}" in
 esac
 
 if [ "${OS}" = "linux" ] && [ "${ARCH}" != "x86_64" ]; then
+  if [ "${DRY_RUN}" = true ]; then
+    log_warn "Linux installer currently supports x86_64 only; no install asset resolved for ${ARCH}."
+    echo "DRY RUN: skipping install for ${OS}/${ARCH} - no compatible asset is published."
+    exit 0
+  fi
   log_err "Linux installer currently supports x86_64 only."
   exit 1
 fi
@@ -621,6 +626,10 @@ EOF
   echo ""
   echo "OpenHuman is ready."
   echo "Launch: ${app_path}"
+  echo "If the AppImage prints 'Interpreter not found!' or unshare/uid_map errors,"
+  echo "try the .deb package from https://github.com/${REPO}/releases/latest"
+  echo "(Debian/Ubuntu) or report at https://github.com/${REPO}/issues with your"
+  echo "distro, kernel (uname -a), GPU driver (lspci), dmesg excerpt, and asset: ${ASSET_NAME}."
   echo "Uninstall: rm -f \"${app_path}\" \"${desktop_file}\""
 }
 

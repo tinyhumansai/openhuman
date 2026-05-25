@@ -9,8 +9,6 @@ import RouteLoadingScreen from './RouteLoadingScreen';
  * - Not logged in → / (Welcome page)
  * - Logged in, onboarding not completed → /onboarding
  * - Logged in, onboarding completed → /home
- *   (the welcome-lock effect in App.tsx may then bounce to /chat
- *   if `chat_onboarding_completed` is still false)
  */
 const DefaultRedirect = () => {
   const { isBootstrapping, snapshot } = useCoreState();

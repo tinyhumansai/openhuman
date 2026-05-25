@@ -75,11 +75,18 @@ pub use tools::{
     BrowserComputerUseConfig, BrowserConfig, ComposioConfig, ComputerControlConfig, CurlConfig,
     GitbooksConfig, HttpRequestConfig, IntegrationToggle, IntegrationsConfig, McpAuthConfig,
     McpClientConfig, McpClientIdentityConfig, McpServerConfig, MultimodalConfig,
-    PolymarketClobCredentials, PolymarketConfig, SearxngConfig, SecretsConfig, SeltzConfig,
-    WebSearchConfig, COMPOSIO_MODE_BACKEND, COMPOSIO_MODE_DIRECT,
+    PolymarketClobCredentials, PolymarketConfig, SearchConfig, SearchEngine,
+    SearchEngineCredentials, SearxngConfig, SecretsConfig, SeltzConfig, WebSearchConfig,
+    COMPOSIO_MODE_BACKEND, COMPOSIO_MODE_DIRECT, SEARCH_ENGINE_BRAVE, SEARCH_ENGINE_MANAGED,
+    SEARCH_ENGINE_PARALLEL,
 };
 pub use update::{UpdateConfig, UpdateRestartStrategy};
 mod voice_server;
 pub use voice_server::{VoiceActivationMode, VoiceServerConfig};
+pub mod voice_providers;
+pub use voice_providers::{
+    generate_voice_provider_id, is_voice_slug_reserved, BuiltinVoiceProvider, SttApiStyle,
+    TtsApiStyle, VoiceCapability, VoiceProviderCreds, BUILTIN_VOICE_PROVIDERS,
+};
 mod types;
 pub use types::*;

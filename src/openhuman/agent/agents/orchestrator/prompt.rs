@@ -237,6 +237,7 @@ mod tests {
             tools: Vec::new(),
             gated_tools: Vec::new(),
             connected: true,
+            non_active_status: None,
         }];
         let body = build(&ctx_with(&integrations)).unwrap();
         assert!(body.contains("## Connected Integrations"));
@@ -251,6 +252,16 @@ mod tests {
     }
 
     #[test]
+    fn build_does_not_route_scope_errors_as_disconnected() {
+        let body = build(&ctx_with(&[])).unwrap();
+        assert!(body.contains("[composio:error:insufficient_scope]"));
+        assert!(body.contains("missing required permissions"));
+        assert!(body.contains("connection exists but needs additional permissions"));
+        assert!(body.contains("Settings"));
+        assert!(body.contains("Connections"));
+    }
+
+    #[test]
     fn delegation_guide_uses_compact_collapsed_format() {
         let integrations = vec![ConnectedIntegration {
             toolkit: "gmail".into(),
@@ -258,6 +269,7 @@ mod tests {
             tools: Vec::new(),
             gated_tools: Vec::new(),
             connected: true,
+            non_active_status: None,
         }];
         let body = build(&ctx_with(&integrations)).unwrap();
         assert!(body.contains("## Connected Integrations"));
@@ -280,6 +292,7 @@ mod tests {
                 tools: Vec::new(),
                 gated_tools: Vec::new(),
                 connected: true,
+                non_active_status: None,
             },
             ConnectedIntegration {
                 toolkit: "linear".into(),
@@ -287,6 +300,7 @@ mod tests {
                 tools: Vec::new(),
                 gated_tools: Vec::new(),
                 connected: false,
+                non_active_status: None,
             },
         ];
         let body = build(&ctx_with(&integrations)).unwrap();
@@ -302,6 +316,7 @@ mod tests {
             tools: Vec::new(),
             gated_tools: Vec::new(),
             connected: false,
+            non_active_status: None,
         }];
         let body = build(&ctx_with(&integrations)).unwrap();
         assert!(!body.contains("## Connected Integrations"));

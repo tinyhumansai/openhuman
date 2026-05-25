@@ -12,7 +12,7 @@ import { Provider } from 'react-redux';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import chatRuntimeReducer, { setToolTimelineForThread } from '../../store/chatRuntimeSlice';
-import mascotReducer from '../../store/mascotSlice';
+import mascotReducer, { setCustomMascotGifUrl } from '../../store/mascotSlice';
 import threadReducer, { setSelectedThread } from '../../store/threadSlice';
 // ── Static import (after mocks are hoisted) ──────────────────────────────
 import HumanPage from './HumanPage';
@@ -25,6 +25,9 @@ vi.mock('../../pages/Conversations', () => ({
 
 vi.mock('./Mascot', () => ({
   YellowMascot: () => <div data-testid="mascot-stub" />,
+  CustomGifMascot: ({ src, face }: { src: string; face?: string }) => (
+    <img data-testid="custom-gif-mascot" data-face={face} src={src} alt="" />
+  ),
   Ghosty: ({ face, bodyColor }: { face?: string; bodyColor?: string }) => (
     <div data-testid="ghosty-submascot" data-face={face} data-body-color={bodyColor} />
   ),
@@ -133,7 +136,23 @@ describe('HumanPage — speak-replies localStorage persistence', () => {
     expect(
       screen.getByRole('status', { name: /researcher subagent running/i })
     ).toBeInTheDocument();
+    // The bubble renders only the label; activity moved to the title tooltip.
     expect(screen.getByText('Researcher')).toBeInTheDocument();
-    expect(screen.getByText('Iteration 1/3')).toBeInTheDocument();
+    // Activity is in the title attribute of the bubble, not visible body text.
+    const bubble = screen.getByTestId('sub-mascot-bubble');
+    expect(bubble).toHaveAttribute('title', expect.stringContaining('Iteration 1/3'));
+  });
+
+  it('renders a custom GIF mascot when one is configured', () => {
+    const store = buildMinimalStore();
+    store.dispatch(setCustomMascotGifUrl('https://example.com/avatar.gif'));
+
+    renderHumanPage(store);
+
+    expect(screen.getByTestId('custom-gif-mascot')).toHaveAttribute(
+      'src',
+      'https://example.com/avatar.gif'
+    );
+    expect(screen.queryByTestId('mascot-stub')).not.toBeInTheDocument();
   });
 });

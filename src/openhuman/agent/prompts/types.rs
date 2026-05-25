@@ -112,6 +112,19 @@ pub struct ConnectedIntegration {
     /// and the orchestrator must point the user at Settings instead of
     /// attempting to delegate.
     pub connected: bool,
+    /// Raw upstream connection status when a connection row exists but
+    /// is not `ACTIVE` — e.g. `"INITIATED"`, `"INITIALIZING"`,
+    /// `"FAILED"`, `"EXPIRED"`. `None` means either the user is
+    /// `ACTIVE` (use `connected = true`) OR there is no connection
+    /// row at all (truly disconnected).
+    ///
+    /// Used by the `integrations_agent` spawn-gate to surface the
+    /// real reason a delegation can't proceed — see issue #2365
+    /// ("Agent says Gmail is disconnected when sending email"). The
+    /// gate previously emitted the same "not authorized yet" message
+    /// regardless of whether OAuth was mid-flight, the token had
+    /// expired, or the user had simply never started the flow.
+    pub non_active_status: Option<String>,
 }
 
 /// A toolkit action that exists in the catalog but is currently hidden from

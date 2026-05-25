@@ -226,6 +226,7 @@ async fn run_tool_call_loop_intercepts_oversized_tool_results_via_summarizer() {
         &[],
         None,
         Some(&summarizer),
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .expect("loop with summarizer should succeed");
@@ -277,6 +278,7 @@ async fn run_tool_call_loop_rejects_vision_markers_for_non_vision_provider() {
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .expect_err("vision markers should be rejected");
@@ -315,6 +317,7 @@ async fn run_tool_call_loop_streams_final_text_chunks() {
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .expect("final text should succeed");
@@ -368,6 +371,7 @@ async fn run_tool_call_loop_blocks_cli_rpc_only_tools_in_prompt_mode() {
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .expect("loop should recover after denial");
@@ -424,6 +428,7 @@ async fn run_tool_call_loop_persists_native_tool_results_as_tool_messages() {
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .expect("native tool flow should succeed");
@@ -481,6 +486,7 @@ async fn run_tool_call_loop_auto_approves_supervised_tools_on_non_cli_channels()
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .expect("non-cli channels should auto-approve supervised tools");
@@ -531,6 +537,7 @@ async fn run_tool_call_loop_reports_unknown_tool_and_uses_default_max_iterations
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .expect("default iteration fallback should still succeed");
@@ -587,6 +594,7 @@ async fn run_tool_call_loop_formats_tool_error_paths() {
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .expect("loop should recover after tool errors");
@@ -627,6 +635,7 @@ async fn run_tool_call_loop_propagates_provider_errors_and_max_iteration_failure
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .expect_err("provider error path should fail");
@@ -660,6 +669,7 @@ async fn run_tool_call_loop_propagates_provider_errors_and_max_iteration_failure
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .expect_err("loop should stop after configured iterations");
@@ -736,6 +746,7 @@ async fn run_tool_call_loop_aborts_when_stop_hook_returns_stop() {
             &[],
             None,
             None,
+            &crate::openhuman::tools::policy::DefaultToolPolicy,
         )
         .await
     })
@@ -788,6 +799,7 @@ async fn run_tool_call_loop_runs_unchanged_when_no_stop_hooks_installed() {
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .expect("loop should succeed without stop hooks");
@@ -863,6 +875,7 @@ async fn run_tool_call_loop_applies_per_tool_max_result_size_cap() {
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .expect("loop with capped tool should succeed");
@@ -884,5 +897,131 @@ async fn run_tool_call_loop_applies_per_tool_max_result_size_cap() {
         tool_results.content.len() < 1_000,
         "raw 200k payload should not appear in history (got {} bytes)",
         tool_results.content.len()
+    );
+}
+
+// ── TAURI-RUST-4 regression guard ────────────────────────────────────
+//
+// Some providers (Anthropic, OpenHuman cloud after the uniqueness-
+// enforcement rollout) reject chat requests whose `tools` list contains
+// two specs with the same `name` — HTTP 400 "Tool names must be unique."
+// `run_tool_call_loop` chains the persistent `tools_registry` with the
+// per-turn synthesised `extra_tools`; if any name collides across the
+// two lists, both would have made it to the provider before the fix.
+//
+// This test wires a capturing provider, builds a colliding tool list
+// (one `EchoTool` in the registry + a second `EchoTool` clone in
+// `extra_tools`), and asserts the names the provider sees contain
+// `"echo"` exactly once.
+
+/// Provider that records the tool-spec names of every `chat()` request
+/// it sees, then returns the next scripted response.
+struct CapturingProvider {
+    /// One entry per `chat()` call — the tool-name list extracted from
+    /// `ChatRequest.tools`. `None` if `tools` was `None`.
+    captured: Mutex<Vec<Option<Vec<String>>>>,
+    responses: Mutex<Vec<anyhow::Result<ChatResponse>>>,
+    native_tools: bool,
+}
+
+#[async_trait]
+impl Provider for CapturingProvider {
+    async fn chat_with_system(
+        &self,
+        _system_prompt: Option<&str>,
+        _message: &str,
+        _model: &str,
+        _temperature: f64,
+    ) -> Result<String> {
+        Ok("fallback".into())
+    }
+
+    async fn chat(
+        &self,
+        request: ChatRequest<'_>,
+        _model: &str,
+        _temperature: f64,
+    ) -> Result<ChatResponse> {
+        let names = request
+            .tools
+            .map(|specs| specs.iter().map(|s| s.name.clone()).collect::<Vec<_>>());
+        self.captured.lock().push(names);
+        let mut guard = self.responses.lock();
+        guard.remove(0)
+    }
+
+    fn capabilities(&self) -> ProviderCapabilities {
+        ProviderCapabilities {
+            native_tool_calling: self.native_tools,
+            vision: false,
+            ..ProviderCapabilities::default()
+        }
+    }
+}
+
+#[tokio::test]
+async fn run_tool_call_loop_dedups_duplicate_tool_names_before_provider_call() {
+    // Provider returns a single final text response — no tool calls —
+    // so the loop terminates after exactly one `chat()` invocation,
+    // and the captured tool list reflects what the fix is supposed to
+    // guard against (no duplicate names reaching the wire).
+    let provider = CapturingProvider {
+        captured: Mutex::new(Vec::new()),
+        responses: Mutex::new(vec![Ok(ChatResponse {
+            text: Some("done".into()),
+            tool_calls: vec![],
+            usage: None,
+        })]),
+        // Native tool-calling on: only when the provider supports native
+        // tools does `run_tool_call_loop` populate `ChatRequest.tools`.
+        native_tools: true,
+    };
+
+    // Registry has `EchoTool` (name = "echo"). `extra_tools` adds a
+    // second tool also named "echo" — the exact collision pattern from
+    // the bug report (a synthesised delegation tool whose
+    // `delegate_name` shadows a same-named skill tool).
+    let registry: Vec<Box<dyn Tool>> = vec![Box::new(EchoTool)];
+    let extra: Vec<Box<dyn Tool>> = vec![Box::new(EchoTool)];
+
+    let mut history = vec![ChatMessage::user("hi")];
+    let result = run_tool_call_loop(
+        &provider,
+        &mut history,
+        &registry,
+        "test-provider",
+        "model",
+        0.0,
+        true,
+        None,
+        "channel",
+        &crate::openhuman::config::MultimodalConfig::default(),
+        2,
+        None,
+        None,
+        &extra,
+        None,
+        None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
+    )
+    .await
+    .expect("loop should succeed with deduplicated tool list");
+    assert_eq!(result, "done");
+
+    let captured = provider.captured.lock();
+    assert_eq!(
+        captured.len(),
+        1,
+        "exactly one chat() call expected for a final-only response"
+    );
+    let names = captured[0]
+        .as_ref()
+        .expect("native_tools=true should populate ChatRequest.tools");
+    let echo_count = names.iter().filter(|n| n.as_str() == "echo").count();
+    assert_eq!(
+        echo_count, 1,
+        "duplicate tool names must be dropped before the provider call \
+         (TAURI-RUST-4) — got names={:?}",
+        names
     );
 }

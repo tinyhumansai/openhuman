@@ -219,6 +219,31 @@ async fn backend_client_sends_x_core_version_on_auth_requests() {
     );
 }
 
+#[tokio::test]
+async fn backend_client_sends_x_tauri_version_when_env_set() {
+    // Serialize against any concurrent test that also touches this env var.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+    let _guard = ENV_LOCK.lock().unwrap();
+
+    std::env::set_var("OPENHUMAN_TAURI_VERSION", "9.8.7-shell+test");
+    let (base_url, captured) = spawn_header_capture_server().await;
+    let client = BackendOAuthClient::new(&base_url).unwrap();
+    let url = client.url_for("/probe").unwrap();
+    let response = client.raw_client().get(url).send().await.unwrap();
+    assert!(response.status().is_success());
+    std::env::remove_var("OPENHUMAN_TAURI_VERSION");
+
+    let headers = captured.take();
+    let request_headers = headers.last().unwrap();
+    let tauri_version = request_headers
+        .get("x-tauri-version")
+        .and_then(|value| value.to_str().ok())
+        .unwrap();
+    assert_eq!(tauri_version, "9.8.7-shell+test");
+    // Core version still flows alongside the new tauri version header.
+    assert!(request_headers.get("x-core-version").is_some());
+}
+
 // Regression: OPENHUMAN-TAURI-8K / Sentry issue 7473650958.
 // When config.api_url is a full LLM completions URL (e.g. /v1/chat/completions),
 // Url::join used to produce wrong paths like /v1/chat/teams/me/usage instead of

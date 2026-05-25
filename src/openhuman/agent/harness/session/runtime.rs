@@ -143,6 +143,9 @@ impl Agent {
         integrations: Vec<crate::openhuman::context::prompt::ConnectedIntegration>,
     ) {
         self.connected_integrations = integrations;
+        self.connected_integrations_initialized = true;
+        self.last_seen_integrations_hash =
+            crate::openhuman::composio::connected_set_hash(&self.connected_integrations);
     }
 
     /// The agent's runtime config snapshot.

@@ -159,7 +159,7 @@ Custom archetypes ship as TOML files under `$OPENHUMAN_WORKSPACE/agents/*.toml` 
 When the orchestrator calls `spawn_subagent` (or one of the `delegate_*` convenience tools), the runner:
 
 1. Reads the parent's execution context from a task-local - the parent's provider, sandbox mode, cancellation fence, transcript root.
-2. Resolves the sub-agent's model - inherit from parent, follow a hint (`fast` / `reasoning` / `summarization`), or pin an exact model.
+2. Resolves the sub-agent's model - inline `model` override first, then config-level pins (`[orchestrator].model`, `[teams.*].lead_model`, `[teams.*].agent_model`), then the archetype hint or inherited parent model.
 3. Filters the parent's tool registry per the definition's `tools`, `disallowed_tools`, and `skill_filter`. In `fork` mode, the parent's full registry is inherited verbatim.
 4. Builds a narrow system prompt, omitting the sections the definition asks to strip.
 5. Runs an inner tool-call loop using the same machinery as the parent.

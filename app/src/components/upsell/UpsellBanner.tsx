@@ -1,3 +1,5 @@
+import { useT } from '../../lib/i18n/I18nContext';
+
 interface UpsellBannerProps {
   variant: 'info' | 'warning' | 'upgrade';
   title: string;
@@ -43,6 +45,7 @@ export default function UpsellBanner({
   onDismiss,
   rounded = true,
 }: UpsellBannerProps) {
+  const { t } = useT();
   const styles = VARIANT_STYLES[variant];
 
   return (
@@ -78,7 +81,7 @@ export default function UpsellBanner({
           <button
             onClick={onDismiss}
             className="p-1 rounded text-stone-400 dark:text-neutral-500 hover:text-stone-600 dark:hover:text-neutral-300 transition-colors"
-            aria-label="Dismiss">
+            aria-label={t('common.dismiss')}>
             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path
                 strokeLinecap="round"
