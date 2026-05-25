@@ -240,6 +240,10 @@ const de5: TranslationMap = {
   'settings.mascot.active': 'Aktiv',
   'settings.mascot.characterDesc': 'Charakterbeschreibung',
   'settings.mascot.characterHeading': 'Zeichenüberschrift',
+  'settings.mascot.customGifError':
+    'GIF konnte nicht geladen werden. Bitte überprüfe die URL und versuche es erneut.',
+  'settings.mascot.customGifHeading': 'Benutzerdefinierter GIF-Avatar',
+  'settings.mascot.customGifLabel': 'URL für benutzerdefinierten GIF-Avatar',
   'settings.mascot.colorDesc': 'Farbbeschreibung',
   'settings.mascot.colorHeading': 'Farbüberschrift',
   'settings.mascot.loadingLibrary': 'OpenHuman-Bibliothek wird geladen…',
