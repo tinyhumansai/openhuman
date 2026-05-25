@@ -476,6 +476,63 @@ describe('CoreStateProvider — identity-change cache clearing', () => {
     expect(screen.getByTestId('token').textContent).toBe(token);
   });
 
+  it('storeSessionToken skips refreshTeams for a local session token', async () => {
+    const localToken = `eyJhbGciOiJub25lIn0.${window.btoa(JSON.stringify({ sub: 'local' }))}.local`;
+    fetchSnapshot.mockResolvedValue(makeSnapshot({ userId: 'local', sessionToken: localToken }));
+    listTeams.mockResolvedValue([]);
+    vi.mocked(tauriCommands.storeSession).mockReset();
+    vi.mocked(tauriCommands.storeSession).mockResolvedValue(undefined as never);
+
+    let ctx: CoreStateContextValue | undefined;
+    render(
+      <CoreStateProvider>
+        <Consumer
+          captureCtx={next => {
+            ctx = next;
+          }}
+        />
+      </CoreStateProvider>
+    );
+
+    await waitFor(() => expect(screen.getByTestId('ready').textContent).toBe('ready'));
+
+    await act(async () => {
+      await ctx!.storeSessionToken(localToken, { id: 'local' });
+    });
+
+    expect(vi.mocked(tauriCommands.storeSession)).toHaveBeenCalledWith(localToken, { id: 'local' });
+    expect(listTeams).not.toHaveBeenCalled();
+  });
+
+  it('ignores auth-expired events when the current session is a local token', async () => {
+    const localToken = `eyJhbGciOiJub25lIn0.${window.btoa(JSON.stringify({ sub: 'local' }))}.local`;
+    fetchSnapshot.mockResolvedValue(makeSnapshot({ userId: 'local', sessionToken: localToken }));
+    listTeams.mockResolvedValue([]);
+    vi.mocked(tauriCommands.logout).mockReset();
+    vi.mocked(tauriCommands.logout).mockResolvedValue(undefined as never);
+
+    render(
+      <CoreStateProvider>
+        <Consumer />
+      </CoreStateProvider>
+    );
+
+    await waitFor(() => expect(screen.getByTestId('ready').textContent).toBe('ready'));
+
+    await act(async () => {
+      window.dispatchEvent(
+        new CustomEvent('core-rpc-auth-expired', {
+          detail: { method: 'openhuman.team_get_usage', source: 'rpc' },
+        })
+      );
+    });
+
+    // Wait a tick to ensure any async handler had a chance to run.
+    await act(async () => {});
+
+    expect(vi.mocked(tauriCommands.logout)).not.toHaveBeenCalled();
+  });
+
   it('setMeetAutoOrchestratorHandoff(true) calls update RPC + flips snapshot optimistically (#1299)', async () => {
     fetchSnapshot.mockResolvedValue(makeSnapshot({ userId: 'u1', sessionToken: 'tok1' }));
     listTeams.mockResolvedValue([]);

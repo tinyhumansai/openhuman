@@ -1,13 +1,17 @@
 import createDebug from 'debug';
 import { useCallback, useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 
+import EmptyStateCard from '../components/EmptyStateCard';
 import PillTabBar from '../components/PillTabBar';
 import RewardsCommunityTab from '../components/rewards/RewardsCommunityTab';
 import RewardsRedeemTab from '../components/rewards/RewardsRedeemTab';
 import RewardsReferralsTab from '../components/rewards/RewardsReferralsTab';
 import { useT } from '../lib/i18n/I18nContext';
+import { useCoreState } from '../providers/CoreStateProvider';
 import { rewardsApi } from '../services/api/rewardsApi';
 import type { RewardsSnapshot } from '../types/rewards';
+import { isLocalSessionToken } from '../utils/localSession';
 
 type RewardsTab = 'referrals' | 'redeem' | 'rewards';
 
@@ -25,8 +29,11 @@ function errorMessage(err: unknown): string {
 
 const Rewards = () => {
   const { t } = useT();
+  const navigate = useNavigate();
+  const { snapshot: coreSnapshot } = useCoreState();
+  const isLocalSession = isLocalSessionToken(coreSnapshot.sessionToken);
   const [selectedTab, setSelectedTab] = useState<RewardsTab>('rewards');
-  const [snapshot, setSnapshot] = useState<RewardsSnapshot | null>(null);
+  const [rewardsSnapshot, setRewardsSnapshot] = useState<RewardsSnapshot | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -37,7 +44,7 @@ const Rewards = () => {
     try {
       const result = await rewardsApi.getMyRewards();
       if (signal?.cancelled) return;
-      setSnapshot(result);
+      setRewardsSnapshot(result);
       log(
         'snapshot applied unlockedCount=%d totalCount=%d',
         result.summary.unlockedCount,
@@ -47,7 +54,7 @@ const Rewards = () => {
       const message = errorMessage(err);
       log('snapshot load failed error=%s', message);
       if (signal?.cancelled) return;
-      setSnapshot(null);
+      setRewardsSnapshot(null);
       setError(message);
     } finally {
       if (!signal?.cancelled) {
@@ -57,12 +64,15 @@ const Rewards = () => {
   }, []);
 
   useEffect(() => {
+    if (isLocalSession) {
+      return;
+    }
     const signal = { cancelled: false };
     void loadRewards(signal);
     return () => {
       signal.cancelled = true;
     };
-  }, [loadRewards]);
+  }, [isLocalSession, loadRewards]);
 
   const handleTabChange = useCallback((next: RewardsTab) => {
     log('tab changed next=%s', next);
@@ -73,6 +83,37 @@ const Rewards = () => {
     log('retry requested');
     void loadRewards();
   }, [loadRewards]);
+
+  if (isLocalSession) {
+    return (
+      <div className="min-h-full px-4 pt-6 pb-10">
+        <div className="mx-auto max-w-2xl space-y-4">
+          <EmptyStateCard
+            className="shadow-soft"
+            icon={
+              <svg
+                className="h-7 w-7 text-primary-500"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={1.5}
+                aria-hidden="true">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M12 8v8m0-8l-3-3m3 3l3-3M8 14H6a2 2 0 01-2-2V7a2 2 0 012-2h2m8 9h2a2 2 0 002-2V7a2 2 0 00-2-2h-2M7 19h10"
+                />
+              </svg>
+            }
+            title={t('rewards.title')}
+            description={t('rewards.localUnavailable')}
+            actionLabel={t('rewards.localUnavailableCta')}
+            onAction={() => navigate('/settings/account')}
+          />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-full px-4 pt-6 pb-10">
@@ -97,7 +138,7 @@ const Rewards = () => {
             error={error}
             isLoading={isLoading}
             onRetry={handleRetry}
-            snapshot={snapshot}
+            snapshot={rewardsSnapshot}
           />
         )}
       </div>

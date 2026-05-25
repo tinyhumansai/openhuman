@@ -1183,24 +1183,28 @@ async fn apply_autonomy_settings_rejects_zero() {
     .await
     .unwrap_err();
     assert!(
-        err.contains("between 1 and 10000"),
+        err.contains("at least 1"),
         "expected validation error, got: {err}"
     );
 }
 
 #[tokio::test]
-async fn apply_autonomy_settings_rejects_above_cap() {
+async fn apply_autonomy_settings_accepts_unlimited_sentinel() {
+    // u32::MAX is the new "unlimited" sentinel exposed by the UI as a
+    // preset. The upper cap was lifted in the same PR that defaulted
+    // fresh installs to u32::MAX; anything in [1, u32::MAX] should now
+    // round-trip cleanly.
     let tmp = tempdir().unwrap();
     let mut cfg = tmp_config(&tmp);
-    let err = apply_autonomy_settings(
+    apply_autonomy_settings(
         &mut cfg,
         AutonomySettingsPatch {
-            max_actions_per_hour: Some(10_001),
+            max_actions_per_hour: Some(u32::MAX),
         },
     )
     .await
-    .unwrap_err();
-    assert!(err.contains("between 1 and 10000"));
+    .expect("u32::MAX (unlimited) should round-trip");
+    assert_eq!(cfg.autonomy.max_actions_per_hour, u32::MAX);
 }
 
 #[tokio::test]

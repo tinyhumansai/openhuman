@@ -50,6 +50,14 @@ export interface StartLoopbackOptions {
 }
 
 /**
+ * The JS-side `listen()` handler from a previous call. We unsubscribe it
+ * before starting a new listener so a single Rust emit can't fan out to
+ * multiple stale handlers (happens when the user re-clicks before the
+ * previous OAuth round-trip completes).
+ */
+let activeUnlisten: UnlistenFn | null = null;
+
+/**
  * Start a one-shot loopback listener. Returns `null` if not running inside
  * Tauri, or if the shell fails to bind (port in use, etc) — the caller should
  * then fall back to the `openhuman://` deep-link redirect.
@@ -57,6 +65,11 @@ export interface StartLoopbackOptions {
 export const startLoopbackOauthListener = async (
   options: StartLoopbackOptions = {}
 ): Promise<LoopbackHandle | null> => {
+  if (activeUnlisten) {
+    const prev = activeUnlisten;
+    activeUnlisten = null;
+    prev();
+  }
   if (!isTauri()) {
     return null;
   }
@@ -93,11 +106,15 @@ export const startLoopbackOauthListener = async (
 
       listen<CallbackPayload>(CALLBACK_EVENT, event => {
         window.clearTimeout(timer);
-        if (unlisten) unlisten();
+        if (unlisten) {
+          unlisten();
+          if (activeUnlisten === unlisten) activeUnlisten = null;
+        }
         resolve(event.payload.url);
       })
         .then(fn => {
           unlisten = fn;
+          activeUnlisten = fn;
         })
         .catch(err => {
           window.clearTimeout(timer);
@@ -112,3 +129,16 @@ const appendState = (uri: string, state: string): string => {
   const separator = uri.includes('?') ? '&' : '?';
   return `${uri}${separator}state=${encodeURIComponent(state)}`;
 };
+
+// E2E hook: expose the same listener factory the production OAuth button uses
+// so spec helpers can drive the real loopback flow (Rust HTTP server + event
+// emit + frontend listener) without scripting the OAuth button UI itself.
+// Gated on the E2E-mode VITE flag baked in by app/scripts/e2e-build.sh so it
+// never leaks into release bundles.
+if (
+  typeof window !== 'undefined' &&
+  import.meta.env.VITE_OPENHUMAN_E2E_RESTART_APP_AS_RELOAD === 'true'
+) {
+  type WithE2eHook = Window & { __startLoopbackOauthListener?: typeof startLoopbackOauthListener };
+  (window as WithE2eHook).__startLoopbackOauthListener = startLoopbackOauthListener;
+}

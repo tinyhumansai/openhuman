@@ -15,8 +15,8 @@ use crate::openhuman::agent::harness::archivist::ArchivistHook;
 use crate::openhuman::agent::hooks::{PostTurnHook as _, TurnContext};
 use crate::openhuman::context::summarizer::{Summarizer, SummaryStats};
 use crate::openhuman::inference::provider::{ChatMessage, ConversationMessage};
-use crate::openhuman::memory::store::{fts5, segments as seg};
-use crate::openhuman::memory::tree::chat::ChatPrompt;
+use crate::openhuman::memory::chat::ChatPrompt;
+use crate::openhuman::memory_store::{fts5, segments as seg};
 use anyhow::Result;
 use async_trait::async_trait;
 use parking_lot::Mutex;
@@ -29,9 +29,9 @@ fn setup_conn() -> Arc<Mutex<Connection>> {
     let conn = Connection::open_in_memory().unwrap();
     conn.execute_batch(fts5::EPISODIC_INIT_SQL).unwrap();
     conn.execute_batch(seg::SEGMENTS_INIT_SQL).unwrap();
-    conn.execute_batch(crate::openhuman::memory::store::events::EVENTS_INIT_SQL)
+    conn.execute_batch(crate::openhuman::memory_store::events::EVENTS_INIT_SQL)
         .unwrap();
-    conn.execute_batch(crate::openhuman::memory::store::profile::PROFILE_INIT_SQL)
+    conn.execute_batch(crate::openhuman::memory_store::profile::PROFILE_INIT_SQL)
         .unwrap();
     Arc::new(Mutex::new(conn))
 }
@@ -40,7 +40,7 @@ fn setup_conn() -> Arc<Mutex<Connection>> {
 struct StubChatProvider;
 
 #[async_trait]
-impl crate::openhuman::memory::tree::chat::ChatProvider for StubChatProvider {
+impl crate::openhuman::memory::chat::ChatProvider for StubChatProvider {
     fn name(&self) -> &str {
         "stub:test"
     }
@@ -56,7 +56,7 @@ impl crate::openhuman::memory::tree::chat::ChatProvider for StubChatProvider {
 struct FailingChatProvider;
 
 #[async_trait]
-impl crate::openhuman::memory::tree::chat::ChatProvider for FailingChatProvider {
+impl crate::openhuman::memory::chat::ChatProvider for FailingChatProvider {
     fn name(&self) -> &str {
         "stub:failing"
     }
@@ -72,7 +72,7 @@ impl crate::openhuman::memory::tree::chat::ChatProvider for FailingChatProvider 
 struct StubEmbedder;
 
 #[async_trait]
-impl crate::openhuman::memory::tree::score::embed::Embedder for StubEmbedder {
+impl crate::openhuman::memory_tree::score::embed::Embedder for StubEmbedder {
     fn name(&self) -> &'static str {
         "stub-embedder-v1"
     }
@@ -439,13 +439,13 @@ async fn failing_provider_yields_inert_clipped_recap_used_as_compaction() {
     .await
     .unwrap();
 
-    // Provider present but failing → LlmSummariser inert fallback → real
-    // clipped content (not the bookend stub) → Some, treated as usable.
+    // Provider present but failing → summarize_entries returns a non-LLM
+    // fallback, which rolling_segment_recap must treat as unavailable for
+    // live compaction.
     let recap = hook.rolling_segment_recap(session).await;
     assert!(
-        recap.is_some(),
-        "Inert clipped-content recap (real text) is acceptable compaction \
-         text — must be Some, not None"
+        recap.is_none(),
+        "Non-LLM fallback recap text must not be used as live compaction input"
     );
 
     let inner = RecordingSummarizer::new();
@@ -464,9 +464,9 @@ async fn failing_provider_yields_inert_clipped_recap_used_as_compaction() {
 
     assert_eq!(
         inner.call_count(),
-        0,
-        "Inner summarizer must NOT run when an inert clipped-content recap \
-         is available (real content, better than no compaction)"
+        1,
+        "Inner summarizer must run when rolling recap is unavailable after \
+         provider failure"
     );
 }
 

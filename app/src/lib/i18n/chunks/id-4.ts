@@ -188,6 +188,8 @@ const id4: TranslationMap = {
   'pages.settings.ai.llmDesc': 'Deskripsi LLM',
   'pages.settings.ai.voice': 'Suara',
   'pages.settings.ai.voiceDesc': 'Deskripsi suara',
+  'pages.settings.ai.embeddings': 'Penyematan',
+  'pages.settings.ai.embeddingsDesc': 'Model encoding vektor untuk pengambilan memori',
   'pages.settings.aiSection.description':
     'Penyedia model bahasa, Ollama lokal, dan suara (STT / TTS).',
   'pages.settings.aiSection.title': 'AI',
@@ -299,6 +301,18 @@ const id4: TranslationMap = {
   'settings.ai.localOllama': 'Lokal (Ollama)',
   'settings.ai.modelLabel': 'Model',
   'settings.ai.noCustomProviders': 'Tidak ada penyedia kustom',
+  'settings.ai.openAiCompat.authHeaderExample': 'Otorisasi: Pembawa <kunci Anda>',
+  'settings.ai.openAiCompat.authHeaderLabel': 'Header autentikasi',
+  'settings.ai.openAiCompat.baseUrlLabel': 'Basis URL',
+  'settings.ai.openAiCompat.baseUrlUnavailable': 'Tidak tersedia',
+  'settings.ai.openAiCompat.clearKey': 'Hapus kunci',
+  'settings.ai.openAiCompat.description':
+    "Point local harnesses at this /v1 server to route through the providers configured below. Authentication uses a stable key you set here, not the app's internal core bearer.",
+  'settings.ai.openAiCompat.keyConfigured': 'Kunci dikonfigurasi',
+  'settings.ai.openAiCompat.keyRequired': 'Kunci diperlukan',
+  'settings.ai.openAiCompat.rotateKey': 'Tombol putar',
+  'settings.ai.openAiCompat.setKey': 'Setel kunci',
+  'settings.ai.openAiCompat.title': 'Titik akhir yang kompatibel dengan OpenAI',
   'settings.ai.providerLabel': 'Penyedia',
   'settings.ai.routing': 'Perutean',
   'settings.ai.routingCustom': 'Routing kustom',
@@ -318,7 +332,7 @@ const id4: TranslationMap = {
   'settings.autocomplete.appFilter.noLogs': ') :',
   'settings.autocomplete.appFilter.refreshStatus': 'Menyegarkan...',
   'settings.autocomplete.appFilter.refreshing': 'Menyegarkan...',
-  'settings.autocomplete.appFilter.runtime': 'Runtime',
+  'settings.autocomplete.appFilter.runtime': 'Waktu proses',
   'settings.autocomplete.appFilter.test': 'Tes',
   'settings.autocomplete.completionStyle.acceptedCompletion':
     '{count} pelengkapan diterima tersimpan — digunakan untuk mempersonalisasi saran berikutnya.',
@@ -393,6 +407,17 @@ const id4: TranslationMap = {
   'pages.settings.account.migration': 'Impor dari asisten lain',
   'pages.settings.account.migrationDesc':
     'Migrasikan memori dan catatan dari OpenClaw (dan, segera, Hermes) ke ruang kerja ini.',
+  'composio.connect.scope.read': 'Baca',
+  'composio.connect.scope.readHint': 'Izinkan agen membaca data dari koneksi ini.',
+  'composio.connect.scope.write': 'Tulis',
+  'composio.connect.scope.writeHint':
+    'Izinkan agen membuat atau mengubah data melalui koneksi ini.',
+  'composio.connect.scope.admin': 'Admin',
+  'composio.connect.scope.adminHint':
+    'Mengizinkan agen mengelola pengaturan, izin, atau tindakan destruktif.',
+  'pages.settings.composioSection.title': 'Composio',
+  'pages.settings.composioSection.description':
+    'Perutean, pemicu, dan riwayat untuk integrasi yang didukung oleh Composio.',
 };
 
 export default id4;

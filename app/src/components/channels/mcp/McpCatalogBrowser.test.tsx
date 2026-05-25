@@ -108,6 +108,41 @@ describe('McpCatalogBrowser', () => {
     expect(screen.getByRole('button', { name: 'Load more' })).toBeInTheDocument();
   });
 
+  it('does not crash when registrySearch returns servers: undefined', async () => {
+    // Simulates a malformed envelope where the `servers` field is missing.
+    // The catalog component spreads `result.servers` — if undefined, the spread
+    // would throw. This test verifies a graceful "no results" render instead.
+    mockRegistrySearch.mockResolvedValue({ servers: undefined, page: 1, total_pages: 1 });
+    render(<McpCatalogBrowser onSelectInstall={() => {}} />);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
+    vi.useRealTimers();
+
+    // Should show empty/no-results state, not crash
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText('Search Smithery catalog...')).toBeInTheDocument();
+    });
+    // No "Install" button — nothing to install from an undefined list
+    expect(screen.queryByRole('button', { name: 'Install' })).not.toBeInTheDocument();
+  });
+
+  it('does not crash when registrySearch returns null servers', async () => {
+    mockRegistrySearch.mockResolvedValue({ servers: null, page: 1, total_pages: 1 });
+    render(<McpCatalogBrowser onSelectInstall={() => {}} />);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
+    vi.useRealTimers();
+
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText('Search Smithery catalog...')).toBeInTheDocument();
+    });
+    expect(screen.queryByRole('button', { name: 'Install' })).not.toBeInTheDocument();
+  });
+
   it('shows error state when search fails', async () => {
     mockRegistrySearch.mockRejectedValue(new Error('Network error'));
     render(<McpCatalogBrowser onSelectInstall={() => {}} />);

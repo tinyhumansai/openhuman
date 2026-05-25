@@ -11,6 +11,7 @@ pub mod crypto_agent;
 pub mod help;
 pub mod integrations_agent;
 pub mod markets_agent;
+pub mod mcp_setup;
 pub mod morning_briefing;
 pub mod orchestrator;
 pub mod planner;

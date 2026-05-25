@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 
+import LogoutAndClearActions from '../components/settings/LogoutAndClearActions';
 import AboutPanel from '../components/settings/panels/AboutPanel';
 import AgentChatPanel from '../components/settings/panels/AgentChatPanel';
 import AIPanel from '../components/settings/panels/AIPanel';
@@ -12,23 +13,24 @@ import BillingPanel from '../components/settings/panels/BillingPanel';
 import CompanionPanel from '../components/settings/panels/CompanionPanel';
 import ComposioPanel from '../components/settings/panels/ComposioPanel';
 import ComposioTriagePanel from '../components/settings/panels/ComposioTriagePanel';
-import ConnectionsPanel from '../components/settings/panels/ConnectionsPanel';
 import CronJobsPanel from '../components/settings/panels/CronJobsPanel';
 import DeveloperOptionsPanel from '../components/settings/panels/DeveloperOptionsPanel';
-import DevicesPanel from '../components/settings/panels/DevicesPanel';
+import DevicesComingSoonPanel from '../components/settings/panels/DevicesComingSoonPanel';
+import EmbeddingsPanel from '../components/settings/panels/EmbeddingsPanel';
+import HeartbeatPanel from '../components/settings/panels/HeartbeatPanel';
+import LedgerUsagePanel from '../components/settings/panels/LedgerUsagePanel';
 import LocalModelDebugPanel from '../components/settings/panels/LocalModelDebugPanel';
 import MascotPanel from '../components/settings/panels/MascotPanel';
 import McpServerPanel from '../components/settings/panels/McpServerPanel';
 import MemoryDataPanel from '../components/settings/panels/MemoryDataPanel';
 import MemoryDebugPanel from '../components/settings/panels/MemoryDebugPanel';
-import MessagingPanel from '../components/settings/panels/MessagingPanel';
 import MigrationPanel from '../components/settings/panels/MigrationPanel';
-import NotificationRoutingPanel from '../components/settings/panels/NotificationRoutingPanel';
-import NotificationsPanel from '../components/settings/panels/NotificationsPanel';
+import NotificationsTabbedPanel from '../components/settings/panels/NotificationsTabbedPanel';
 import PrivacyPanel from '../components/settings/panels/PrivacyPanel';
 import RecoveryPhrasePanel from '../components/settings/panels/RecoveryPhrasePanel';
 import ScreenAwarenessDebugPanel from '../components/settings/panels/ScreenAwarenessDebugPanel';
 import ScreenIntelligencePanel from '../components/settings/panels/ScreenIntelligencePanel';
+import SearchPanel from '../components/settings/panels/SearchPanel';
 import TeamInvitesPanel from '../components/settings/panels/TeamInvitesPanel';
 import TeamManagementPanel from '../components/settings/panels/TeamManagementPanel';
 import TeamMembersPanel from '../components/settings/panels/TeamMembersPanel';
@@ -62,16 +64,6 @@ const TeamIcon = (
       strokeLinejoin="round"
       strokeWidth={2}
       d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"
-    />
-  </svg>
-);
-const ConnectionsIcon = (
-  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeWidth={2}
-      d="M13.828 10.172a4 4 0 010 5.656l-2 2a4 4 0 01-5.656-5.656l1-1m5-5a4 4 0 015.656 5.656l-1 1m-5 5l5-5"
     />
   </svg>
 );
@@ -172,29 +164,34 @@ const VoiceIcon = (
   </svg>
 );
 
-const WrappedSettingsPage = ({ children }: { children: ReactNode }) => {
+const WrappedSettingsPage = ({
+  children,
+  maxWidthClass = 'max-w-lg',
+}: {
+  children: ReactNode;
+  maxWidthClass?: string;
+}) => {
   return (
     <div className="p-4 pt-6">
-      <div className="max-w-lg mx-auto bg-white dark:bg-neutral-900 rounded-2xl shadow-soft border border-stone-200 dark:border-neutral-800 overflow-hidden">
+      <div
+        className={`${maxWidthClass} mx-auto bg-white dark:bg-neutral-900 rounded-2xl shadow-soft border border-stone-200 dark:border-neutral-800 overflow-hidden`}>
         {children}
       </div>
     </div>
   );
 };
 
-function wrapSettingsPage(element: ReactNode) {
-  return (
-    <WrappedSettingsPage>
+const Settings = () => {
+  const { t } = useT();
+
+  const wrapSettingsPage = (element: ReactNode, opts?: { maxWidthClass?: string }) => (
+    <WrappedSettingsPage maxWidthClass={opts?.maxWidthClass}>
       {element}
       <div className="border-t border-stone-100 dark:border-neutral-800 px-4 py-3 text-center text-[11px] text-stone-400 dark:text-neutral-500">
-        Beta build - v{APP_VERSION}
+        {t('settings.betaBuild').replace('{version}', APP_VERSION)}
       </div>
     </WrappedSettingsPage>
   );
-}
-
-const Settings = () => {
-  const { t } = useT();
 
   const accountSettingsItems = [
     {
@@ -210,13 +207,6 @@ const Settings = () => {
       description: t('pages.settings.account.teamDesc'),
       route: 'team',
       icon: TeamIcon,
-    },
-    {
-      id: 'connections',
-      title: t('pages.settings.account.connections'),
-      description: t('pages.settings.account.connectionsDesc'),
-      route: 'connections',
-      icon: ConnectionsIcon,
     },
     {
       id: 'privacy',
@@ -282,11 +272,70 @@ const Settings = () => {
       icon: LlmIcon,
     },
     {
+      id: 'embeddings',
+      title: t('pages.settings.ai.embeddings'),
+      description: t('pages.settings.ai.embeddingsDesc'),
+      route: 'embeddings',
+      icon: LlmIcon,
+    },
+    {
       id: 'voice',
       title: t('pages.settings.ai.voice'),
       description: t('pages.settings.ai.voiceDesc'),
       route: 'voice',
       icon: VoiceIcon,
+    },
+    {
+      id: 'agent-chat',
+      title: t('settings.developerMenu.agentChat.title'),
+      description: t('settings.developerMenu.agentChat.desc'),
+      route: 'agent-chat',
+      icon: LlmIcon,
+    },
+    {
+      id: 'autonomy',
+      title: t('settings.developerMenu.autonomy.title'),
+      description: t('settings.developerMenu.autonomy.desc'),
+      route: 'autonomy',
+      icon: LlmIcon,
+    },
+    {
+      id: 'local-model-debug',
+      title: t('settings.developerMenu.localModelDebug.title'),
+      description: t('settings.developerMenu.localModelDebug.desc'),
+      route: 'local-model-debug',
+      icon: LlmIcon,
+    },
+    {
+      id: 'heartbeat',
+      title: t('settings.heartbeat.title'),
+      description: t('settings.heartbeat.desc'),
+      route: 'heartbeat',
+      icon: LlmIcon,
+    },
+    {
+      id: 'ledger-usage',
+      title: t('settings.ledgerUsage.title'),
+      description: t('settings.ledgerUsage.desc'),
+      route: 'ledger-usage',
+      icon: LlmIcon,
+    },
+  ];
+
+  const composioSettingsItems = [
+    {
+      id: 'composio-routing',
+      title: t('settings.developerMenu.composioRouting.title'),
+      description: t('settings.developerMenu.composioRouting.desc'),
+      route: 'composio-routing',
+      icon: ToolsIcon,
+    },
+    {
+      id: 'webhooks-triggers',
+      title: t('settings.developerMenu.composeioTriggers.title'),
+      description: t('settings.developerMenu.composeioTriggers.desc'),
+      route: 'webhooks-triggers',
+      icon: ToolsIcon,
     },
   ];
 
@@ -301,6 +350,7 @@ const Settings = () => {
               title={t('pages.settings.accountSection.title')}
               description={t('pages.settings.accountSection.description')}
               items={accountSettingsItems}
+              footer={<LogoutAndClearActions />}
             />
           )}
         />
@@ -324,6 +374,16 @@ const Settings = () => {
             />
           )}
         />
+        <Route
+          path="composio"
+          element={wrapSettingsPage(
+            <SettingsSectionPage
+              title={t('pages.settings.composioSection.title')}
+              description={t('pages.settings.composioSection.description')}
+              items={composioSettingsItems}
+            />
+          )}
+        />
         {/* Account & Billing leaf panels */}
         <Route path="recovery-phrase" element={wrapSettingsPage(<RecoveryPhrasePanel />)} />
         <Route path="team" element={wrapSettingsPage(<TeamPanel />)} />
@@ -338,7 +398,6 @@ const Settings = () => {
         />
         <Route path="team/members" element={wrapSettingsPage(<TeamMembersPanel />)} />
         <Route path="team/invites" element={wrapSettingsPage(<TeamInvitesPanel />)} />
-        <Route path="connections" element={wrapSettingsPage(<ConnectionsPanel />)} />
         {/* BillingPanel intentionally uses its own wider layout. */}
         <Route path="billing" element={<BillingPanel />} />
         <Route path="privacy" element={wrapSettingsPage(<PrivacyPanel />)} />
@@ -347,8 +406,7 @@ const Settings = () => {
         <Route path="screen-intelligence" element={wrapSettingsPage(<ScreenIntelligencePanel />)} />
         <Route path="autocomplete" element={wrapSettingsPage(<AutocompletePanel />)} />
         <Route path="voice" element={wrapSettingsPage(<VoicePanel />)} />
-        <Route path="messaging" element={wrapSettingsPage(<MessagingPanel />)} />
-        <Route path="notifications" element={wrapSettingsPage(<NotificationsPanel />)} />
+        <Route path="notifications" element={wrapSettingsPage(<NotificationsTabbedPanel />)} />
         <Route path="mascot" element={wrapSettingsPage(<MascotPanel />)} />
         <Route path="appearance" element={wrapSettingsPage(<AppearancePanel />)} />
         <Route path="tools" element={wrapSettingsPage(<ToolsPanel />)} />
@@ -357,11 +415,24 @@ const Settings = () => {
         <Route path="developer-options" element={wrapSettingsPage(<DeveloperOptionsPanel />)} />
         <Route path="autonomy" element={wrapSettingsPage(<AutonomyPanel />)} />
         <Route path="mcp-server" element={wrapSettingsPage(<McpServerPanel />)} />
+        {/* Legacy direct path for the routing tab — kept so existing links
+            (Developer Options entries, walkthroughs) keep working. The
+            tabbed panel reads the URL hash to land on the right tab. */}
         <Route
           path="notification-routing"
-          element={wrapSettingsPage(<NotificationRoutingPanel />)}
+          element={<Navigate to="/settings/notifications#routing" replace />}
         />
-        <Route path="llm" element={wrapSettingsPage(<AIPanel />)} />
+        <Route path="llm" element={wrapSettingsPage(<AIPanel />, { maxWidthClass: 'max-w-4xl' })} />
+        <Route path="embeddings" element={wrapSettingsPage(<EmbeddingsPanel />)} />
+        <Route
+          path="heartbeat"
+          element={wrapSettingsPage(<HeartbeatPanel />, { maxWidthClass: 'max-w-4xl' })}
+        />
+        <Route
+          path="ledger-usage"
+          element={wrapSettingsPage(<LedgerUsagePanel />, { maxWidthClass: 'max-w-4xl' })}
+        />
+        <Route path="search" element={wrapSettingsPage(<SearchPanel />)} />
         <Route path="agent-chat" element={wrapSettingsPage(<AgentChatPanel />)} />
         <Route path="cron-jobs" element={wrapSettingsPage(<CronJobsPanel />)} />
         <Route
@@ -379,7 +450,7 @@ const Settings = () => {
         <Route path="composio-triggers" element={wrapSettingsPage(<ComposioTriagePanel />)} />
         <Route path="composio-routing" element={wrapSettingsPage(<ComposioPanel />)} />
         {/* Mobile devices */}
-        <Route path="devices" element={wrapSettingsPage(<DevicesPanel />)} />
+        <Route path="devices" element={wrapSettingsPage(<DevicesComingSoonPanel />)} />
         {/* About / updates */}
         <Route path="about" element={wrapSettingsPage(<AboutPanel />)} />
         {/* Fallback */}

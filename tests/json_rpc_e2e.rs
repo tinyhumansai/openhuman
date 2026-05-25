@@ -18,7 +18,7 @@ use tempfile::tempdir;
 
 use openhuman_core::core::auth::{init_rpc_token, CORE_TOKEN_ENV_VAR};
 use openhuman_core::core::jsonrpc::build_core_http_router;
-use openhuman_core::openhuman::memory::all_memory_tree_registered_controllers;
+use openhuman_core::openhuman::memory_tree::all_memory_tree_registered_controllers;
 
 const TEST_RPC_TOKEN: &str = "json-rpc-e2e-local-token";
 static JSON_RPC_AUTH_INIT: OnceLock<()> = OnceLock::new();
@@ -7544,10 +7544,13 @@ async fn json_rpc_config_autonomy_settings_roundtrip() {
         .get("result")
         .and_then(|r| r.get("max_actions_per_hour"))
         .and_then(Value::as_u64);
+    // Default is `u32::MAX` (functionally unlimited) — fresh installs should
+    // not be rate-limited until the user opts into a ceiling. See the
+    // autonomy schema for the rationale.
     assert_eq!(
         initial_value,
-        Some(20),
-        "expected default 20, got envelope: {initial_outer}"
+        Some(u32::MAX as u64),
+        "expected default u32::MAX (unlimited), got envelope: {initial_outer}"
     );
 
     // UPDATE → 250.
@@ -7580,11 +7583,13 @@ async fn json_rpc_config_autonomy_settings_roundtrip() {
     );
 
     // Invalid value rejected — server returns JSON-RPC error envelope, not a result.
+    // Upper bound was lifted to u32::MAX (the new "unlimited" sentinel that the
+    // UI exposes as a preset), so the only rejected value is now zero.
     let bad = post_json_rpc(
         &rpc_base,
         7004,
         "openhuman.config_update_autonomy_settings",
-        json!({ "max_actions_per_hour": 99999 }),
+        json!({ "max_actions_per_hour": 0 }),
     )
     .await;
     let bad_err = assert_jsonrpc_error(&bad, "update_autonomy_settings bad value");
@@ -7593,7 +7598,7 @@ async fn json_rpc_config_autonomy_settings_roundtrip() {
         .and_then(Value::as_str)
         .unwrap_or_else(|| panic!("error object missing message: {bad_err}"));
     assert!(
-        err_message.contains("between 1 and 10000"),
+        err_message.contains("at least 1"),
         "expected validation error in: {err_message}"
     );
 

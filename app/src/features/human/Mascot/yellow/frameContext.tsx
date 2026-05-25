@@ -82,3 +82,28 @@ export const FrameProvider: FC<FrameProviderProps> = ({
     </FrameConfigContext.Provider>
   );
 };
+
+/**
+ * Static variant of {@link FrameProvider} — pins the frame at 0 and never
+ * schedules a requestAnimationFrame. Use this for decorative mascot
+ * instances (e.g. small subagent indicators) where motion would be
+ * distracting and the per-frame rAF cost across N mascots is wasteful.
+ */
+export const StaticFrameProvider: FC<FrameProviderProps> = ({
+  fps,
+  width,
+  height,
+  durationInFrames,
+  children,
+}) => {
+  const config = useMemo<FrameConfig>(
+    () => ({ fps, width, height, durationInFrames }),
+    [fps, width, height, durationInFrames]
+  );
+
+  return (
+    <FrameConfigContext.Provider value={config}>
+      <FrameContext.Provider value={0}>{children}</FrameContext.Provider>
+    </FrameConfigContext.Provider>
+  );
+};

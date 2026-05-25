@@ -318,7 +318,7 @@ impl Tool for RememberPreferenceTool {
 mod tests {
     use super::*;
     use crate::openhuman::embeddings::NoopEmbedding;
-    use crate::openhuman::memory::UnifiedMemory;
+    use crate::openhuman::memory_store::UnifiedMemory;
     use crate::openhuman::security::{AutonomyLevel, SecurityPolicy};
     use serde_json::json;
     use tempfile::TempDir;

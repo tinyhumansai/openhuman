@@ -29,7 +29,7 @@ use tauri::Emitter;
 use crate::AppRuntime;
 type AppHandle = tauri::AppHandle<AppRuntime>;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpListener;
+use tokio::net::{TcpListener, TcpSocket};
 use tokio::sync::oneshot;
 use tokio::time::timeout;
 
@@ -40,15 +40,19 @@ const PER_CONNECTION_READ_TIMEOUT: Duration = Duration::from_secs(5);
 struct ActiveListener {
     id: u64,
     tx: oneshot::Sender<()>,
+    done: Option<tauri::async_runtime::JoinHandle<()>>,
 }
 
 static NEXT_LISTENER_ID: AtomicU64 = AtomicU64::new(1);
 static ACTIVE_LISTENER: Mutex<Option<ActiveListener>> = Mutex::new(None);
 
 #[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct StartResult {
     /// Full redirect URI the backend should redirect to, e.g.
     /// `http://127.0.0.1:53824/auth`. State is appended by the caller.
+    /// Serializes as `redirectUri` so the TS-side `result.redirectUri`
+    /// destructure works.
     pub redirect_uri: String,
     /// State nonce the backend must echo back as `?state=<value>`.
     pub state: String,
@@ -61,18 +65,39 @@ struct CallbackPayload {
     url: String,
 }
 
-fn cancel_active_listener() {
+/// Signal the active listener to stop and return its join handle so the caller
+/// can await its full teardown — critical when re-binding a fixed port, since
+/// macOS releases the socket only after the owning task drops the listener.
+fn take_active_listener() -> Option<tauri::async_runtime::JoinHandle<()>> {
     if let Ok(mut guard) = ACTIVE_LISTENER.lock() {
-        if let Some(active) = guard.take() {
+        if let Some(mut active) = guard.take() {
             let _ = active.tx.send(());
+            return active.done.take();
         }
     }
+    None
 }
 
-fn install_active_listener(id: u64, tx: oneshot::Sender<()>) {
+fn cancel_active_listener() {
+    let _ = take_active_listener();
+}
+
+fn install_active_listener(
+    id: u64,
+    tx: oneshot::Sender<()>,
+    done: tauri::async_runtime::JoinHandle<()>,
+) {
     if let Ok(mut guard) = ACTIVE_LISTENER.lock() {
-        if let Some(old) = guard.replace(ActiveListener { id, tx }) {
+        if let Some(mut old) = guard.replace(ActiveListener {
+            id,
+            tx,
+            done: Some(done),
+        }) {
             let _ = old.tx.send(());
+            // The previous listener's join handle is dropped here without an
+            // await — only the new-start path needs to await teardown. Stray
+            // installs (none today) would simply leak the wait, not break.
+            old.done.take();
         }
     }
 }
@@ -86,6 +111,25 @@ fn clear_active_listener(id: u64) {
             *guard = None;
         }
     }
+}
+
+/// Bind a loopback TCP listener on the given port (or 0 for ephemeral). Sets
+/// SO_REUSEADDR so re-binding the same port soon after a previous listener
+/// dropped doesn't trip EADDRINUSE on the TIME_WAIT window.
+fn bind_loopback(port: u16) -> Result<TcpListener, String> {
+    let sock_addr: std::net::SocketAddr = format!("127.0.0.1:{port}")
+        .parse()
+        .map_err(|err| format!("parse 127.0.0.1:{port} failed: {err}"))?;
+    let socket = TcpSocket::new_v4().map_err(|err| format!("TcpSocket::new_v4 failed: {err}"))?;
+    socket
+        .set_reuseaddr(true)
+        .map_err(|err| format!("set_reuseaddr failed: {err}"))?;
+    socket
+        .bind(sock_addr)
+        .map_err(|err| format!("bind 127.0.0.1:{port} failed: {err}"))?;
+    socket
+        .listen(16)
+        .map_err(|err| format!("listen on 127.0.0.1:{port} failed: {err}"))
 }
 
 fn random_state_nonce() -> String {
@@ -136,12 +180,31 @@ pub async fn start_loopback_oauth_listener(
     port: u16,
     timeout_secs: u64,
 ) -> Result<StartResult, String> {
-    cancel_active_listener();
+    // Await the previous listener's task ending so the OS has actually
+    // released the fixed loopback port. SO_REUSEADDR alone is not enough on
+    // macOS — the prior socket must be dropped first.
+    if let Some(done) = take_active_listener() {
+        let _ = done.await;
+    }
 
-    let bind_addr = format!("127.0.0.1:{port}");
-    let listener = TcpListener::bind(&bind_addr)
-        .await
-        .map_err(|err| format!("bind {bind_addr} failed: {err}"))?;
+    // Prefer the caller's requested port (so the backend allowlist, if any,
+    // matches) but fall back to an ephemeral OS-assigned port if the requested
+    // one is taken by another process (stale openhuman, second instance,
+    // unrelated service). The backend `redirectUri` whitelist restricts host
+    // but not port, so an ephemeral fallback is safe.
+    let listener: TcpListener = match bind_loopback(port) {
+        Ok(l) => l,
+        Err(primary_err) => {
+            log::warn!(
+                "[loopback-oauth] bind on requested port {port} failed ({primary_err}); retrying on ephemeral port"
+            );
+            bind_loopback(0).map_err(|err| {
+                format!(
+                    "bind 127.0.0.1:{port} failed ({primary_err}); ephemeral fallback also failed: {err}"
+                )
+            })?
+        }
+    };
     // Use the listener's actual bound port for the emitted callback URL so
     // the frontend rewrite (`^https?://127.0.0.1:\d+/auth`) always matches,
     // even if a future change moves to port 0.
@@ -156,10 +219,9 @@ pub async fn start_loopback_oauth_listener(
 
     let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
     let listener_id = NEXT_LISTENER_ID.fetch_add(1, Ordering::Relaxed);
-    install_active_listener(listener_id, cancel_tx);
 
     let expected_state = state.clone();
-    tauri::async_runtime::spawn(async move {
+    let done = tauri::async_runtime::spawn(async move {
         let lifetime = Duration::from_secs(timeout_secs.max(1));
         let run = run_accept_loop(listener, app, expected_state, bound_port, cancel_rx);
         match timeout(lifetime, run).await {
@@ -171,6 +233,7 @@ pub async fn start_loopback_oauth_listener(
         }
         clear_active_listener(listener_id);
     });
+    install_active_listener(listener_id, cancel_tx, done);
 
     Ok(StartResult {
         redirect_uri,
