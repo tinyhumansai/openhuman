@@ -1,6 +1,6 @@
 //! SQLite busy/locked detection and retry-with-backoff for WhatsApp data writes.
 //!
-//! Modelled on [`crate::openhuman::memory::tree::jobs::worker::is_sqlite_busy`] —
+//! Modelled on [`crate::openhuman::memory_queue::worker::is_sqlite_busy`] —
 //! the configured `busy_timeout` absorbs short waits inside rusqlite; this layer
 //! catches residual `SQLITE_BUSY` / `SQLITE_LOCKED` after that window.
 

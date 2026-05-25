@@ -2,24 +2,35 @@
 //!
 //! Converts text into numerical vectors for semantic search. Providers:
 //!
-//! - **Cloud** (default): Routes through the OpenHuman backend's
+//! - **Managed** (default): Routes through the OpenHuman backend's
 //!   `POST /openai/v1/embeddings` (Voyage-backed). The recommended path —
 //!   works on a fresh install without requiring a local Ollama daemon.
-//! - **Ollama**: Local Ollama server. Opt-in for offline-only setups
-//!   (set `memory.embedding_provider = "ollama"` or enable
-//!   `local_ai.usage.embeddings`).
-//! - **OpenAI**: Cloud-based embeddings via the OpenAI API or compatible endpoints.
+//! - **Voyage**: Direct Voyage AI API with the user's own key.
+//! - **OpenAI**: Cloud-based embeddings via the OpenAI API.
+//! - **Cohere**: Cohere embed API with the user's own key.
+//! - **Ollama**: Local Ollama server. Opt-in for offline-only setups.
+//! - **Custom**: Any OpenAI-compatible endpoint.
 //! - **Noop**: A fallback provider for keyword-only search.
 
+pub mod catalog;
 pub mod cloud;
+pub mod cohere;
 mod factory;
 pub mod noop;
 pub mod ollama;
 pub mod openai;
 mod provider_trait;
 pub mod rate_limit;
-pub mod store;
+mod rpc;
+mod schemas;
+pub mod voyage;
 
+// VectorStore has moved to memory_store::vectors; re-exported for callers.
+pub use crate::openhuman::memory_store::vectors::store;
+
+pub use crate::openhuman::memory_store::vectors::{
+    bytes_to_vec, cosine_similarity, vec_to_bytes, SearchResult, VectorStore,
+};
 pub use cloud::{
     OpenHumanCloudEmbedding, DEFAULT_CLOUD_EMBEDDING_DIMENSIONS, DEFAULT_CLOUD_EMBEDDING_MODEL,
 };
@@ -30,7 +41,10 @@ pub use noop::NoopEmbedding;
 pub use ollama::{OllamaEmbedding, DEFAULT_OLLAMA_DIMENSIONS, DEFAULT_OLLAMA_MODEL};
 pub use openai::OpenAiEmbedding;
 pub use provider_trait::{format_embedding_signature, EmbeddingProvider};
-pub use store::{bytes_to_vec, cosine_similarity, vec_to_bytes, SearchResult, VectorStore};
+pub use schemas::{
+    all_controller_schemas as all_embeddings_controller_schemas,
+    all_registered_controllers as all_embeddings_registered_controllers,
+};
 
 #[cfg(test)]
 mod tests {
@@ -108,14 +122,28 @@ mod tests {
         assert_eq!(p.dimensions(), 0);
     }
 
+    #[test]
+    fn factory_voyage() {
+        let p = create_embedding_provider("voyage", "voyage-3-large", 1024).unwrap();
+        assert_eq!(p.name(), "voyage");
+        assert_eq!(p.dimensions(), 1024);
+    }
+
+    #[test]
+    fn factory_cohere() {
+        let p = create_embedding_provider("cohere", "embed-english-v3.0", 1024).unwrap();
+        assert_eq!(p.name(), "cohere");
+        assert_eq!(p.dimensions(), 1024);
+    }
+
     // ── Factory — errors ─────────────────────────────────────
 
     #[test]
     fn factory_unknown_provider_errors() {
-        let result = create_embedding_provider("cohere", "model", 1536);
+        let result = create_embedding_provider("deepseek", "model", 1536);
         let msg = result.err().expect("should be an error").to_string();
         assert!(
-            msg.contains("cohere"),
+            msg.contains("deepseek"),
             "should include provider name: {msg}"
         );
         assert!(msg.contains("unknown"), "should say unknown: {msg}");
@@ -153,6 +181,18 @@ mod tests {
         assert_eq!(p.dimensions(), DEFAULT_CLOUD_EMBEDDING_DIMENSIONS);
     }
 
+    #[test]
+    fn factory_managed() {
+        let p = create_embedding_provider(
+            "managed",
+            DEFAULT_CLOUD_EMBEDDING_MODEL,
+            DEFAULT_CLOUD_EMBEDDING_DIMENSIONS,
+        )
+        .unwrap();
+        assert_eq!(p.name(), "cloud");
+        assert_eq!(p.dimensions(), DEFAULT_CLOUD_EMBEDDING_DIMENSIONS);
+    }
+
     // ── Default provider ─────────────────────────────────────
 
     #[test]
@@ -167,5 +207,69 @@ mod tests {
         let p = default_local_embedding_provider();
         assert_eq!(p.name(), "ollama");
         assert_eq!(p.dimensions(), DEFAULT_OLLAMA_DIMENSIONS);
+    }
+
+    // ── create_embedding_provider_with_credentials ───────────
+
+    #[test]
+    fn factory_with_credentials_voyage() {
+        let p = factory::create_embedding_provider_with_credentials(
+            "voyage",
+            "voyage-3-large",
+            1024,
+            "voyage-test-key",
+            None,
+        )
+        .expect("voyage with key");
+        assert_eq!(p.name(), "voyage");
+        assert_eq!(p.model_id(), "voyage-3-large");
+        assert_eq!(p.dimensions(), 1024);
+    }
+
+    #[test]
+    fn factory_with_credentials_cohere() {
+        let p = factory::create_embedding_provider_with_credentials(
+            "cohere",
+            "embed-english-v3.0",
+            1024,
+            "cohere-test-key",
+            None,
+        )
+        .expect("cohere with key");
+        assert_eq!(p.name(), "cohere");
+        assert_eq!(p.model_id(), "embed-english-v3.0");
+        assert_eq!(p.dimensions(), 1024);
+    }
+
+    #[test]
+    fn factory_with_credentials_custom() {
+        let p = factory::create_embedding_provider_with_credentials(
+            "custom",
+            "custom-model",
+            768,
+            "custom-key",
+            Some("http://localhost:9999"),
+        )
+        .expect("custom provider with endpoint");
+        // Custom is backed by OpenAiEmbedding
+        assert_eq!(p.name(), "openai");
+        assert_eq!(p.dimensions(), 768);
+    }
+
+    #[test]
+    fn factory_with_credentials_managed_ignores_key() {
+        // Managed/cloud provider does not use the API key — it routes through
+        // the OpenHuman backend. Creating it with an arbitrary key must succeed
+        // and produce the cloud provider.
+        let p = factory::create_embedding_provider_with_credentials(
+            "managed",
+            DEFAULT_CLOUD_EMBEDDING_MODEL,
+            DEFAULT_CLOUD_EMBEDDING_DIMENSIONS,
+            "should-be-ignored",
+            None,
+        )
+        .expect("managed ignores key");
+        assert_eq!(p.name(), "cloud");
+        assert_eq!(p.dimensions(), DEFAULT_CLOUD_EMBEDDING_DIMENSIONS);
     }
 }

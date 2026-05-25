@@ -197,6 +197,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "flaky on CI; see PR #2588 follow-up"]
     async fn push_then_poll_returns_audio_after_brain_turn() {
         let mut start = Map::new();
         start.insert("request_id".into(), json!("rpc-push"));

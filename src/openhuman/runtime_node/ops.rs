@@ -49,7 +49,7 @@ fn build_runtime_tools(config: &Config) -> Result<Vec<Box<dyn Tool>>, String> {
     let local_embedding = config.workload_local_model("embeddings");
     trace!("[runtime_node::ops] build_runtime_tools: create_memory_with_local_ai");
     let memory: Arc<dyn Memory> = Arc::from(
-        crate::openhuman::memory::create_memory_with_local_ai(
+        crate::openhuman::memory_store::create_memory_with_local_ai(
             &config.memory,
             local_embedding.as_deref(),
             &config.embedding_routes,

@@ -1,10 +1,10 @@
-import { ReactNode, useState } from 'react';
+import type { ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import { useT } from '../../lib/i18n/I18nContext';
 import { useCoreState } from '../../providers/CoreStateProvider';
-import { clearAllAppData } from '../../utils/clearAllAppData';
 import { BILLING_DASHBOARD_URL } from '../../utils/links';
+import { isLocalSessionToken } from '../../utils/localSession';
 import { openUrl } from '../../utils/openUrl';
 import LanguageSelect from '../LanguageSelect';
 import SettingsHeader from './components/SettingsHeader';
@@ -29,34 +29,9 @@ interface SettingsItem {
 const SettingsHome = () => {
   const navigate = useNavigate();
   const { navigateToSettings } = useSettingsNavigation();
-  const { clearSession, snapshot } = useCoreState();
   const { t } = useT();
-  const [showLogoutAndClearModal, setShowLogoutAndClearModal] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const handleLogout = async () => {
-    try {
-      await clearSession();
-    } catch (err) {
-      console.warn('[Settings] Rust logout failed:', err);
-      setError(t('clearData.failedLogout'));
-    }
-  };
-
-  const handleLogoutAndClearData = async () => {
-    try {
-      setIsLoading(true);
-      setError(null);
-      const currentUserId = snapshot.auth.userId ?? snapshot.currentUser?._id ?? null;
-      await clearAllAppData({ clearSession, userId: currentUserId }); // restarts the app
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      setError(message || t('clearData.failed'));
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  const { snapshot } = useCoreState();
+  const isLocalSession = isLocalSessionToken(snapshot.sessionToken);
 
   const settingsSections: SettingsSection[] = [
     {
@@ -179,29 +154,36 @@ const SettingsHome = () => {
     // Features tile (Screen Awareness / Messaging Channels / Notifications /
     // Tools) used to live here. Everything under it moved into Advanced
     // (DeveloperOptionsPanel), so the section is gone from the home menu.
-    {
-      label: t('settings.billingAndRewards'),
-      items: [
-        {
-          id: 'billing',
-          title: t('settings.billingUsage'),
-          description: t('settings.billingUsageDesc'),
-          icon: (
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H5a3 3 0 00-3 3v8a3 3 0 003 3z"
-              />
-            </svg>
-          ),
-          onClick: () => {
-            openUrl(BILLING_DASHBOARD_URL).catch(() => {});
-          },
-        },
-      ],
-    },
+    // Billing & Rewards requires a backend-authenticated session.
+    // Hidden in local/offline mode — no auth headers are sent and the
+    // billing dashboard would not recognise the session.
+    ...(!isLocalSession
+      ? [
+          {
+            label: t('settings.billingAndRewards'),
+            items: [
+              {
+                id: 'billing',
+                title: t('settings.billingUsage'),
+                description: t('settings.billingUsageDesc'),
+                icon: (
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H5a3 3 0 00-3 3v8a3 3 0 003 3z"
+                    />
+                  </svg>
+                ),
+                onClick: () => {
+                  openUrl(BILLING_DASHBOARD_URL).catch(() => {});
+                },
+              },
+            ],
+          } satisfies SettingsSection,
+        ]
+      : []),
     {
       label: t('settings.advanced'),
       items: [
@@ -225,43 +207,8 @@ const SettingsHome = () => {
     },
   ];
 
-  // Destructive actions — rendered separately under "Danger Zone" heading
-  const destructiveItems: SettingsItem[] = [
-    {
-      id: 'logout-and-clear',
-      title: t('settings.clearAppData'),
-      description: t('settings.clearAppDataDesc'),
-      icon: (
-        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"
-          />
-        </svg>
-      ),
-      onClick: () => setShowLogoutAndClearModal(true),
-      dangerous: true,
-    },
-    {
-      id: 'logout',
-      title: t('settings.logOut'),
-      description: t('settings.logOutDesc'),
-      icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"
-          />
-        </svg>
-      ),
-      onClick: handleLogout,
-      dangerous: true,
-    },
-  ];
+  // Log Out and Clear App Data now live on the Account page (Settings → Account)
+  // alongside the recovery phrase, team, privacy, and migration entries.
 
   return (
     <div className="z-10 relative">
@@ -270,10 +217,10 @@ const SettingsHome = () => {
       </div>
 
       <div>
-        {/* Flat list — group titles removed for clarity. Regular items first,
-            destructive items appended at the end. */}
+        {/* Flat list — group titles removed for clarity. Destructive
+            actions (Log Out, Clear App Data) now live on the Account page. */}
         {(() => {
-          const flatItems = settingsSections.flatMap(s => s.items).concat(destructiveItems);
+          const flatItems = settingsSections.flatMap(s => s.items);
           return flatItems.map((item, index) => (
             <SettingsMenuItem
               key={item.id}
@@ -290,89 +237,6 @@ const SettingsHome = () => {
           ));
         })()}
       </div>
-
-      {/* Log Out & Clear Data Confirmation Modal */}
-      {showLogoutAndClearModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/30">
-          <div className="bg-white dark:bg-neutral-900 rounded-2xl max-w-md w-full p-6 border border-stone-200 dark:border-neutral-800">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-10 h-10 rounded-lg bg-amber-100 dark:bg-amber-500/20 flex items-center justify-center">
-                <svg
-                  className="w-5 h-5 text-amber-400"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"
-                  />
-                </svg>
-              </div>
-              <div>
-                <h3 className="text-lg font-semibold text-stone-900 dark:text-neutral-100">
-                  {t('clearData.title')}
-                </h3>
-              </div>
-            </div>
-
-            <div className="mb-6">
-              <div className="text-stone-700 dark:text-neutral-200 text-sm leading-relaxed">
-                <p>{t('clearData.warning')}</p>
-                <ul className="list-disc pl-5 mt-2 space-y-1">
-                  <li>{t('clearData.bulletSettings')}</li>
-                  <li>{t('clearData.bulletCache')}</li>
-                  <li>{t('clearData.bulletWorkspace')}</li>
-                  <li>{t('clearData.bulletOther')}</li>
-                </ul>
-                <p className="mt-3">{t('clearData.irreversible')}</p>
-              </div>
-
-              {error && (
-                <div className="mt-3 p-3 rounded-lg bg-coral-100 dark:bg-coral-500/20 border border-coral-500/20">
-                  <p className="text-coral-600 dark:text-coral-300 text-sm">{error}</p>
-                </div>
-              )}
-            </div>
-
-            <div className="flex gap-3">
-              <button
-                onClick={() => {
-                  setShowLogoutAndClearModal(false);
-                  setError(null);
-                }}
-                disabled={isLoading}
-                className="flex-1 px-4 py-2 rounded-lg border border-stone-200 dark:border-neutral-800 text-stone-700 dark:text-neutral-200 hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 dark:hover:bg-neutral-800 transition-colors disabled:opacity-50">
-                {t('common.cancel')}
-              </button>
-              <button
-                onClick={handleLogoutAndClearData}
-                disabled={isLoading}
-                className="flex-1 px-4 py-2 rounded-sm bg-amber-600 hover:bg-amber-500 text-white transition-colors disabled:opacity-50 flex items-center justify-center gap-2">
-                {isLoading && (
-                  <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                    <circle
-                      className="opacity-25"
-                      cx="12"
-                      cy="12"
-                      r="10"
-                      stroke="currentColor"
-                      strokeWidth="4"
-                    />
-                    <path
-                      className="opacity-75"
-                      fill="currentColor"
-                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                    />
-                  </svg>
-                )}
-                {isLoading ? t('clearData.clearing') : t('clearData.title')}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

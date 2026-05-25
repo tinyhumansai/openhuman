@@ -32,6 +32,7 @@ pub use crate::openhuman::inference::voice::streaming;
 
 pub use factory::{
     create_stt_provider, create_tts_provider, default_stt_provider, default_tts_provider,
+    effective_stt_provider, effective_tts_provider, ExternalSttProvider, ExternalTtsProvider,
     SttProvider, SttResult, TtsProvider, DEFAULT_PIPER_VOICE, DEFAULT_WHISPER_MODEL,
     WHISPER_MODEL_PRESETS,
 };
