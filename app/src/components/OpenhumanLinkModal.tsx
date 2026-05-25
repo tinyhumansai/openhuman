@@ -95,7 +95,7 @@ const OpenhumanLinkModal = () => {
           <button
             type="button"
             onClick={close}
-            aria-label="Close"
+            aria-label={t('common.close')}
             className="rounded p-1 text-stone-500 dark:text-neutral-400 hover:bg-stone-100 dark:hover:bg-neutral-800/60 hover:text-stone-800 dark:hover:text-neutral-100">
             <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
               <path

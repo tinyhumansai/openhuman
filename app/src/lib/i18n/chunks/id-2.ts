@@ -204,7 +204,7 @@ const id2: TranslationMap = {
   'autocomplete.disabledApps': 'Aplikasi yang Dinonaktifkan (satu bundle/token aplikasi per baris)',
   'autocomplete.saveSettings': 'Simpan Pengaturan',
   'autocomplete.saving': 'Menyimpan...',
-  'autocomplete.runtime': 'Runtime',
+  'autocomplete.runtime': 'Waktu Proses',
   'autocomplete.running': 'Berjalan',
   'autocomplete.start': 'Mulai',
   'autocomplete.stop': 'Hentikan',
@@ -421,7 +421,7 @@ const id2: TranslationMap = {
   'devOptions.menuComposioTriggers': 'Pemicu Integrasi',
   'devOptions.menuComposioTriggersDesc':
     'Konfigurasikan pengaturan triase AI untuk pemicu integrasi Composio',
-  'mic.deviceSelector': 'Microphone device',
+  'mic.deviceSelector': 'Perangkat mikrofon',
 };
 
 export default id2;

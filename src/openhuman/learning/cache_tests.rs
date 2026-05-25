@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use super::*;
 use crate::openhuman::learning::candidate::{EvidenceRef, FacetClass};
-use crate::openhuman::memory::store::profile::{
+use crate::openhuman::memory_store::profile::{
     FacetState, FacetType, ProfileFacet, UserState, PROFILE_INIT_SQL,
 };
 

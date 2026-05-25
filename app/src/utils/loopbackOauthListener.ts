@@ -129,3 +129,16 @@ const appendState = (uri: string, state: string): string => {
   const separator = uri.includes('?') ? '&' : '?';
   return `${uri}${separator}state=${encodeURIComponent(state)}`;
 };
+
+// E2E hook: expose the same listener factory the production OAuth button uses
+// so spec helpers can drive the real loopback flow (Rust HTTP server + event
+// emit + frontend listener) without scripting the OAuth button UI itself.
+// Gated on the E2E-mode VITE flag baked in by app/scripts/e2e-build.sh so it
+// never leaks into release bundles.
+if (
+  typeof window !== 'undefined' &&
+  import.meta.env.VITE_OPENHUMAN_E2E_RESTART_APP_AS_RELOAD === 'true'
+) {
+  type WithE2eHook = Window & { __startLoopbackOauthListener?: typeof startLoopbackOauthListener };
+  (window as WithE2eHook).__startLoopbackOauthListener = startLoopbackOauthListener;
+}

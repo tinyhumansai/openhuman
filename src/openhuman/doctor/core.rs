@@ -817,7 +817,7 @@ fn check_memory_tree_db(config: &Config, items: &mut Vec<DiagnosticItem>) {
     }
 
     // ── Probe connection ─────────────────────────────────────────────
-    match crate::openhuman::memory_tree::store::with_connection(config, |conn| {
+    match crate::openhuman::memory_store::chunks::store::with_connection(config, |conn| {
         let n: i64 = conn.query_row("SELECT COUNT(*) FROM mem_tree_chunks", [], |r| r.get(0))?;
         Ok(n)
     }) {

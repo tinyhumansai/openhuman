@@ -1,24 +1,41 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import VoicePanel from '../../../components/settings/panels/VoicePanel';
 import { useT } from '../../../lib/i18n/I18nContext';
+import { useCoreState } from '../../../providers/CoreStateProvider';
 import { trackEvent } from '../../../services/analytics';
+import { isLocalSessionToken } from '../../../utils/localSession';
 import { CUSTOM_WIZARD_ROUTES, CUSTOM_WIZARD_STEPS } from '../customWizardSteps';
 import { type CustomStepChoice, useOnboardingContext } from '../OnboardingContext';
 import CustomWizardStep from '../steps/CustomWizardStep';
 
 const STEP_KEY = 'voice' as const;
 const STEP_INDEX = CUSTOM_WIZARD_STEPS.indexOf(STEP_KEY);
+const LOCAL_DEFAULT_DISABLED_REASON =
+  'Managed setup requires OpenHuman sign-in and is unavailable in local mode.';
 
 const CustomVoicePage = () => {
   const { t } = useT();
   const navigate = useNavigate();
+  const { snapshot } = useCoreState();
   const { draft, setDraft, completeAndExit } = useOnboardingContext();
+  const isLocalSession = isLocalSessionToken(snapshot.sessionToken);
 
   const [choice, setChoice] = useState<CustomStepChoice | null>(
-    draft.customChoices?.[STEP_KEY] ?? null
+    draft.customChoices?.[STEP_KEY] ?? (isLocalSession ? 'configure' : null)
   );
+
+  useEffect(() => {
+    if (!isLocalSession) {
+      return;
+    }
+    setChoice('configure');
+    setDraft(prev => ({
+      ...prev,
+      customChoices: { ...prev.customChoices, [STEP_KEY]: 'configure' },
+    }));
+  }, [isLocalSession, setDraft]);
 
   const persistChoice = (next: CustomStepChoice) => {
     setChoice(next);
@@ -37,6 +54,9 @@ const CustomVoicePage = () => {
       defaultDescription={t('onboarding.custom.voice.defaultDesc')}
       configureDescription={t('onboarding.custom.voice.configureDesc')}
       configureContent={<VoicePanel embedded />}
+      defaultDisabled={isLocalSession}
+      defaultDisabledReason={isLocalSession ? LOCAL_DEFAULT_DISABLED_REASON : undefined}
+      hideChoiceCards={isLocalSession}
       choice={choice}
       onChoiceChange={persistChoice}
       onBack={() => navigate(CUSTOM_WIZARD_ROUTES[CUSTOM_WIZARD_STEPS[STEP_INDEX - 1]])}

@@ -12,8 +12,8 @@
 use crate::openhuman::agent::harness::definition::AgentDefinitionRegistry;
 use crate::openhuman::agent::harness::fork_context::current_parent;
 use crate::openhuman::agent::harness::subagent_runner::{run_subagent, SubagentRunOptions};
-use crate::openhuman::memory::conversations::{
-    self, ConversationMessage, CreateConversationThread,
+use crate::openhuman::memory_conversations::{
+    self as conversations, ConversationMessage, CreateConversationThread,
 };
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
 use async_trait::async_trait;
