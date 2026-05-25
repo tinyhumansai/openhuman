@@ -251,6 +251,11 @@ struct ChatCancelPayload {
     thread_id: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct ThreadSubscribePayload {
+    thread_id: String,
+}
+
 /// Attaches the Socket.IO layer to the Axum router and sets up event handlers.
 ///
 /// It configures:
@@ -437,6 +442,31 @@ pub fn attach_socketio() -> (socketioxide::layer::SocketIoLayer, SocketIo) {
                     .await;
                 },
             );
+
+            // Handler for subscribing this socket to a thread's room.
+            //
+            // Chat-stream events are delivered to BOTH the initiating client's
+            // own room AND a per-thread room (`thread:<id>`). After a socket
+            // reconnects it has a NEW client_id, so it would miss an in-flight
+            // turn's remaining stream (delivered to the OLD client_id room). The
+            // frontend emits this on connect/reconnect for the active thread, so
+            // the new socket re-joins the thread room and keeps receiving the
+            // stream. Membership is dropped automatically on disconnect.
+            socket.on(
+                "thread:subscribe",
+                |socket: SocketRef, Data(payload): Data<ThreadSubscribePayload>| async move {
+                    if !socket_is_authed(&socket) {
+                        drop_unauthed(&socket, "thread:subscribe from unauthenticated socket");
+                        return;
+                    }
+                    let thread_id = payload.thread_id.trim();
+                    if thread_id.is_empty() {
+                        return;
+                    }
+                    let room = format!("thread:{thread_id}");
+                    join_room_logged(&socket, &room, &socket.id.to_string());
+                },
+            );
         },
     );
 
@@ -479,6 +509,7 @@ pub fn spawn_web_channel_bridge(io: SocketIo) {
     let io_transcription = io.clone();
     let io_auth = io.clone();
     let io_companion = io.clone();
+    let io_mcp_setup = io.clone();
 
     // 2. Dictation hotkey events → broadcast to all connected clients.
     tokio::spawn(async move {
@@ -629,6 +660,67 @@ pub fn spawn_web_channel_bridge(io: SocketIo) {
         log::debug!("[socketio] auth session_expired bridge stopped");
     });
 
+    // 6b. McpSetupSecretRequested → broadcast `mcp_setup:secret_requested`
+    //     so the UI can render a native input dialog. Only the opaque
+    //     ref + safe display fields are forwarded; raw secret values
+    //     are not part of the event payload.
+    tokio::spawn(async move {
+        let bus = {
+            const RETRY_INTERVAL_MS: u64 = 250;
+            const MAX_WAIT_SECS: u64 = 30;
+            let max_attempts = (MAX_WAIT_SECS * 1000) / RETRY_INTERVAL_MS;
+            let mut attempts: u64 = 0;
+            loop {
+                if let Some(bus) = crate::core::event_bus::global() {
+                    break bus;
+                }
+                attempts += 1;
+                if attempts > max_attempts {
+                    log::warn!(
+                        "[socketio] event_bus not initialised after {}s — mcp_setup bridge giving up",
+                        MAX_WAIT_SECS
+                    );
+                    return;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(RETRY_INTERVAL_MS)).await;
+            }
+        };
+        let mut rx = bus.raw_receiver();
+        loop {
+            let event = match rx.recv().await {
+                Ok(event) => event,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                    log::warn!(
+                        "[socketio] dropped {} event_bus events due to lag (mcp_setup bridge)",
+                        skipped
+                    );
+                    continue;
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            };
+            if let crate::core::event_bus::DomainEvent::McpSetupSecretRequested {
+                ref_id,
+                key_name,
+                prompt,
+            } = event
+            {
+                log::info!(
+                    "[socketio] broadcast mcp_setup:secret_requested ref={} key={}",
+                    ref_id,
+                    key_name
+                );
+                let payload = serde_json::json!({
+                    "ref_id": ref_id,
+                    "key_name": key_name,
+                    "prompt": prompt,
+                });
+                let _ = io_mcp_setup.emit("mcp_setup:secret_requested", &payload);
+                let _ = io_mcp_setup.emit("mcp_setup_secret_requested", &payload);
+            }
+        }
+        log::debug!("[socketio] mcp_setup secret_requested bridge stopped");
+    });
+
     // 5. Transcription results → broadcast to all connected clients.
     tokio::spawn(async move {
         let mut rx = crate::openhuman::voice::dictation_listener::subscribe_transcription_results();
@@ -704,13 +796,23 @@ fn join_room_logged(socket: &SocketRef, room: &str, client_id: &str) {
 }
 
 fn emit_web_channel_event(io: &SocketIo, event: WebChannelEvent) {
-    let room = event.client_id.clone();
     let name = event.event.clone();
+    // Deliver to the initiating client's own room AND the per-thread room. The
+    // thread room lets a socket that reconnected with a new client_id (after
+    // re-subscribing via `thread:subscribe`) keep receiving an in-flight turn's
+    // stream. socket.io de-duplicates a socket present in multiple target rooms,
+    // so a socket in both receives each event exactly once (no double-render).
+    // "system" broadcasts and events without a thread_id keep the legacy
+    // single-room behavior.
+    let mut rooms: Vec<String> = vec![event.client_id.clone()];
+    if event.client_id != "system" && !event.thread_id.is_empty() {
+        rooms.push(format!("thread:{}", event.thread_id));
+    }
     if let Ok(payload) = serde_json::to_value(event) {
         log::debug!(
-            "[socketio] send event={} room={} thread_id={} request_id={}",
+            "[socketio] send event={} rooms={:?} thread_id={} request_id={}",
             name,
-            room,
+            rooms,
             payload
                 .get("thread_id")
                 .and_then(|v| v.as_str())
@@ -720,7 +822,7 @@ fn emit_web_channel_event(io: &SocketIo, event: WebChannelEvent) {
                 .and_then(|v| v.as_str())
                 .unwrap_or_default()
         );
-        emit_room_with_aliases(io, &room, &name, &payload);
+        emit_rooms_with_aliases(io, &rooms, &name, &payload);
     }
 }
 
@@ -741,10 +843,17 @@ fn emit_with_aliases(socket: &SocketRef, name: &str, payload: &serde_json::Value
     }
 }
 
-fn emit_room_with_aliases(io: &SocketIo, room: &str, name: &str, payload: &serde_json::Value) {
-    let _ = io.to(room.to_string()).emit(name, payload);
+fn emit_rooms_with_aliases(
+    io: &SocketIo,
+    rooms: &[String],
+    name: &str,
+    payload: &serde_json::Value,
+) {
+    // Emitting to multiple rooms in a single call delivers each event once per
+    // socket, even if a socket belongs to more than one of the target rooms.
+    let _ = io.to(rooms.to_vec()).emit(name, payload);
     if let Some(alias) = event_alias(name) {
-        let _ = io.to(room.to_string()).emit(alias, payload);
+        let _ = io.to(rooms.to_vec()).emit(alias, payload);
     }
 }
 

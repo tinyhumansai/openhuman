@@ -95,19 +95,17 @@ impl Agent {
             // stored prompt verbatim to preserve the KV-cache prefix the
             // inference backend has already tokenised. Fetching it later
             // would just burn memory-store reads on data we throw away.
-            self.fetch_connected_integrations().await;
-            // The synchronous builder couldn't synthesise `delegate_*`
-            // tools for connected Composio toolkits (no async runtime
-            // handle for the Composio fetcher), so it baked in `&[]`.
-            // Now that integrations are live, inject the matching
-            // delegation tools so the orchestrator's prompt + tool-spec
-            // list actually expose `delegate_gmail`, `delegate_notion`,
-            // etc. The shared-Arc failure path returns `false`, but on
-            // turn 1 the Arc is uniquely owned (no sub-agent has run
-            // yet); a `false` return here would indicate a programmer
-            // error and the warn-level log inside the helper already
-            // surfaces it, so we ignore the return value here.
-            let _ = self.refresh_delegation_tools();
+            if !self.connected_integrations_initialized {
+                self.fetch_connected_integrations().await;
+                // Sessions born without a cached Composio view still need
+                // a one-shot delegation-surface reconcile before the system
+                // prompt is frozen. The shared-Arc failure path returns
+                // `false`, but on turn 1 the Arc should still be uniquely
+                // owned; a `false` return here indicates a programmer error
+                // and the warn-level log inside the helper already surfaces
+                // it, so we keep the existing best-effort contract.
+                let _ = self.refresh_delegation_tools();
+            }
             let learned = self.fetch_learned_context().await;
             let rendered_prompt = self.build_system_prompt(learned)?;
             log::info!("[agent] system prompt built — initialising conversation history");
@@ -176,15 +174,13 @@ impl Agent {
             // [`crate::openhuman::composio::cached_active_integrations`]
             // helper — never trigger a backend fetch ourselves, never
             // block on a writer.
+            // Session agents built through `from_config_*` carry their
+            // runtime `Config` snapshot directly, so this read avoids the
+            // old `Config::load_or_init()` round-trip on every turn.
             //
-            // We need a `Config` to key into `INTEGRATIONS_CACHE`. The
-            // `Config::load_or_init()` call is cached internally so this
-            // is cheap on the hot path. On config-load failure we skip
-            // the refresh — no signal we can safely act on, same as
-            // when the cache itself is empty.
-            if let Ok(cfg) = crate::openhuman::config::Config::load_or_init().await {
+            if let Some(cfg) = self.integration_runtime_config.as_ref() {
                 if let Some(cache_view) =
-                    crate::openhuman::composio::cached_active_integrations(&cfg)
+                    crate::openhuman::composio::cached_active_integrations(cfg)
                 {
                     let new_hash = crate::openhuman::composio::connected_set_hash(&cache_view);
                     if new_hash != self.last_seen_integrations_hash {
@@ -205,6 +201,7 @@ impl Agent {
                             std::mem::replace(&mut self.connected_integrations, cache_view);
                         if self.refresh_delegation_tools() {
                             self.last_seen_integrations_hash = new_hash;
+                            self.connected_integrations_initialized = true;
                         } else {
                             // Reconcile aborted (shared Arc) — restore
                             // the previous integration list so the
@@ -280,11 +277,6 @@ impl Agent {
         // when the digest is empty) so an empty workspace doesn't get
         // re-queried every turn.
         //
-        // Gate STM preemptive recall on the session turn index, independent
-        // of tree-prefetch success/failure. (Previously keyed off
-        // `last_tree_prefetch_at.is_none()`, which stays `None` when tree
-        // prefetch fails — re-firing STM recall on every later turn.)
-        let is_first_turn_for_stm = self.context.stats().session_memory_current_turn == 0;
         let now = std::time::Instant::now();
         let context = if crate::openhuman::agent::tree_loader::should_prefetch(
             self.last_tree_prefetch_at,
@@ -330,66 +322,39 @@ impl Agent {
         // ── Phase 3 STM preemptive recall ────────────────────────────
         // On the very first turn only, assemble a bounded cross-thread
         // context block from the FTS5 episodic arm (keyword match) and the
-        // segment-embedding arm (cosine similarity). The block rides on the
-        // user message (NOT the system prompt) to keep the KV-cache prefix
-        // stable, exactly like the tree-context injection above.
-        //
-        // Gate: `learning.stm_recall_enabled` must be true AND this must
-        // be the first turn (STM is snapshot-frozen at session start).
-        // Failure is non-fatal — bare `context` passes through untouched.
-        let context = if is_first_turn_for_stm {
-            // Load config to check the gate. Use a cached load (cheap).
-            let stm_enabled = crate::openhuman::config::rpc::load_config_with_timeout()
-                .await
-                .map(|cfg| cfg.learning.stm_recall_enabled)
-                .unwrap_or(true); // default: enabled
+        let mut context = context;
 
-            if stm_enabled {
-                if let Some(conn) = self.memory.sqlite_conn() {
-                    use crate::openhuman::memory::stm_recall::recall::{stm_recall, StmRecallOpts};
-                    let opts = StmRecallOpts {
-                        exclude_session: &self.event_session_id,
-                        query: if user_message.trim().is_empty() {
-                            None
-                        } else {
-                            Some(user_message)
-                        },
-                        model_signature: None,
-                    };
-                    match stm_recall(&conn, &opts, None) {
-                        Ok(block) if !block.is_empty() => {
-                            let stm_md = block.render();
-                            log::info!(
-                                "[stm_recall] preemptive block injected: {} items, ~{} chars, fts5_candidates={}, dropped_dedup={}",
-                                block.items.len(),
-                                stm_md.chars().count(),
-                                block.fts5_candidates,
-                                block.dropped_dedup
-                            );
-                            format!("{stm_md}{context}")
-                        }
-                        Ok(_) => {
-                            log::debug!(
-                                "[stm_recall] preemptive recall: no cross-thread context found"
-                            );
-                            context
-                        }
-                        Err(e) => {
-                            log::warn!("[stm_recall] preemptive recall failed (non-fatal): {e}");
-                            context
-                        }
-                    }
-                } else {
-                    log::debug!("[stm_recall] preemptive recall skipped — no SQLite connection on memory backend");
-                    context
+        // ── Lane B: situational preferences (every turn) ─────────────────────
+        // Recall topic-scoped preferences semantically relevant to THIS message
+        // (model-aware embeddings, gated by vector similarity) and inject them
+        // under a banner. Runs every turn — unlike the first-turn-gated tree/STM
+        // blocks above — because the query changes per message; it rides the
+        // per-turn context that's prepended to the user message (no KV-cache
+        // cost). An unrelated message clears the similarity gate to nothing, so
+        // no block is injected.
+        {
+            let situational =
+                crate::openhuman::memory::preferences::recall_situational_preferences(
+                    &self.memory,
+                    user_message,
+                )
+                .await;
+            if !situational.is_empty() {
+                log::info!(
+                    "[pref_recall] situational block injected: {} item(s)",
+                    situational.len()
+                );
+                context.push_str("## Relevant preferences for this message\n\n");
+                for pref in &situational {
+                    context.push_str("- ");
+                    context.push_str(pref.trim());
+                    context.push('\n');
                 }
+                context.push('\n');
             } else {
-                log::debug!("[stm_recall] preemptive recall skipped — stm_recall_enabled=false");
-                context
+                log::debug!("[pref_recall] no situational preference relevant to this message");
             }
-        } else {
-            context
-        };
+        }
 
         let enriched = if context.is_empty() {
             log::info!("[agent] no memory context found — using raw user message");
@@ -1496,63 +1461,24 @@ impl Agent {
             return LearnedContextData::default();
         }
 
-        // Narrow explicit-preferences path: only fetch pinned user_profile
-        // entries; skip all inference-derived data.
+        // Narrow explicit-preferences path (Lane A): inject the latest-N general
+        // (always-on) preferences written via `save_preference`. Topic-scoped
+        // (situational) prefs are NOT injected here — they ride the user message
+        // via per-turn recall (Lane B). The legacy `user_profile` pinned namespace
+        // is no longer read here; explicit prefs now live in `user_pref_general`.
         if !self.learning_enabled && self.explicit_preferences_enabled {
+            let general = crate::openhuman::memory::preferences::load_general_preferences(
+                &self.memory,
+                crate::openhuman::memory::preferences::STANDING_PREFS_LIMIT,
+            )
+            .await;
             tracing::debug!(
-                "[learning] fetch_learned_context: explicit_preferences_enabled=true, \
-                 learning_enabled=false — fetching only pinned user_profile entries"
+                "[learning] fetch_learned_context: explicit_preferences_enabled — loaded {} general preference(s) for the system prompt",
+                general.len()
             );
-            let profile_entries = self
-                .memory
-                .list(
-                    Some("user_profile"),
-                    // Core category is used by RememberPreferenceTool for pinned entries.
-                    // We list without category filter so we pick up both Core entries
-                    // (pinned) and any Custom("user_profile") entries from the older
-                    // UserProfileHook code path, keeping this backward-compatible.
-                    None,
-                    None,
-                )
-                .await
-                .unwrap_or_default();
-
-            // `.list()` already scopes to the `user_profile` namespace at the
-            // store layer (via the `Some("user_profile")` argument above).  This
-            // `.filter()` is a defensive guard against any future store-layer
-            // change that might weaken that scoping — it is not load-bearing
-            // under the current implementation.
-            if profile_entries.len() > 50 {
-                tracing::warn!(
-                    total = profile_entries.len(),
-                    dropped = profile_entries.len() - 50,
-                    "[learning] user_profile pinned preferences exceed prompt cap of 50; \
-                     {} entries will be dropped from this turn's context",
-                    profile_entries.len() - 50,
-                );
-            }
-            let user_profile: Vec<String> = profile_entries
-                .iter()
-                .filter(|e| {
-                    e.namespace
-                        .as_deref()
-                        .map_or(false, |ns| ns == "user_profile")
-                })
-                .take(50)
-                .map(|e| sanitize_learned_entry(&e.content))
-                .collect();
-
-            tracing::debug!(
-                "[learning] fetch_learned_context: fetched {} pinned user_profile entries",
-                user_profile.len()
-            );
-
             return LearnedContextData {
-                observations: Vec::new(),
-                patterns: Vec::new(),
-                user_profile,
-                reflections: Vec::new(),
-                tree_root_summaries: Vec::new(),
+                user_profile: general,
+                ..LearnedContextData::default()
             };
         }
 
@@ -1581,15 +1507,16 @@ impl Agent {
             .await
             .unwrap_or_default();
 
-        let profile_entries = self
-            .memory
-            .list(
-                Some("user_profile"),
-                Some(&MemoryCategory::Custom("user_profile".into())),
-                None,
-            )
-            .await
-            .unwrap_or_default();
+        // Standing preferences come from the explicit two-lane store (Lane A),
+        // not the inferred `user_profile` facets — those are demoted: no longer
+        // injected as ground truth. A high-confidence inferred facet should be
+        // *proposed* to the user (and pinned via `save_preference` on
+        // confirmation), not silently treated as a standing preference.
+        let general = crate::openhuman::memory::preferences::load_general_preferences(
+            &self.memory,
+            crate::openhuman::memory::preferences::STANDING_PREFS_LIMIT,
+        )
+        .await;
 
         // Explicit user reflections — privileged memory class. Pulled
         // separately from observations/patterns so the prompt assembly
@@ -1635,11 +1562,7 @@ impl Agent {
                 .take(3)
                 .map(|e| sanitize_learned_entry(&e.content))
                 .collect(),
-            user_profile: profile_entries
-                .iter()
-                .take(20)
-                .map(|e| sanitize_learned_entry(&e.content))
-                .collect(),
+            user_profile: general,
             // Cap reflections at 10 to keep the privileged section
             // bounded — the issue requires reflections improve context
             // rather than flood it. Newest first.
@@ -1669,17 +1592,21 @@ impl Agent {
     /// `composio/tools.rs`, and the spawn-time per-action tool build
     /// path in `subagent_runner/ops.rs`.
     pub async fn fetch_connected_integrations(&mut self) {
-        let config = match crate::openhuman::config::Config::load_or_init().await {
-            Ok(c) => c,
-            Err(e) => {
-                log::debug!(
-                    "[agent] skipping connected integrations fetch: config load failed: {e}"
-                );
-                return;
-            }
+        let config = match self.integration_runtime_config.clone() {
+            Some(config) => config,
+            None => match crate::openhuman::config::Config::load_or_init().await {
+                Ok(config) => config,
+                Err(e) => {
+                    log::debug!(
+                        "[agent] skipping connected integrations fetch: config load failed: {e}"
+                    );
+                    return;
+                }
+            },
         };
         self.connected_integrations =
             crate::openhuman::composio::fetch_connected_integrations(&config).await;
+        self.connected_integrations_initialized = true;
     }
 
     /// Re-synthesise `delegate_*` tools for the orchestrator's `subagents`
@@ -1709,10 +1636,10 @@ impl Agent {
     ///     guarantees every final entry is either a non-synthesised
     ///     direct tool or a member of the fresh `synthed` set.
     ///
-    /// **When to call**: on turn 1 (after [`Agent::fetch_connected_integrations`]
-    /// populates `self.connected_integrations` for the first time) and
-    /// on any subsequent turn where the connection set has changed
-    /// since the last reconcile (detected via
+    /// **When to call**: on turn 1 only when the session was built
+    /// without a prewarmed Composio cache snapshot, and on any
+    /// subsequent turn where the connection set has changed since the
+    /// last reconcile (detected via
     /// [`Self::last_seen_integrations_hash`] vs.
     /// [`crate::openhuman::composio::cached_active_integrations`]).
     ///
@@ -2159,7 +2086,7 @@ impl Agent {
 }
 
 /// Wrapper around
-/// [`crate::openhuman::tree_summarizer::store::collect_root_summaries_with_caps`]
+/// [`crate::openhuman::memory_tree::tree_runtime::store::collect_root_summaries_with_caps`]
 /// that takes user-resolved per-namespace and total caps. The actual
 /// limits are derived from the active
 /// [`crate::openhuman::config::schema::agent::MemoryContextWindow`]
@@ -2169,7 +2096,7 @@ fn collect_tree_root_summaries(
     per_namespace_cap: usize,
     total_cap: usize,
 ) -> Vec<(String, String)> {
-    crate::openhuman::tree_summarizer::store::collect_root_summaries_with_caps(
+    crate::openhuman::memory_tree::tree_runtime::store::collect_root_summaries_with_caps(
         workspace_dir,
         per_namespace_cap,
         total_cap,

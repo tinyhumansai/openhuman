@@ -14,14 +14,21 @@ import { waitForApp, waitForAppReady } from '../helpers/app-helpers';
 import { hasAppChrome } from '../helpers/element-helpers';
 import { resetApp } from '../helpers/reset-app';
 import { waitForHomePage } from '../helpers/shared-flows';
+import { startMockServer, stopMockServer } from '../mock-server';
 
 const USER_ID = 'e2e-smoke';
 
-describe('Smoke', () => {
-  before(async function beforeSuite() {
-    this.timeout(90_000);
+describe('Smoke', function () {
+  this.timeout(120_000);
+
+  before(async () => {
+    await startMockServer();
     await waitForApp();
     await resetApp(USER_ID);
+  });
+
+  after(async () => {
+    await stopMockServer();
   });
 
   it('has a live WebDriver session', async () => {

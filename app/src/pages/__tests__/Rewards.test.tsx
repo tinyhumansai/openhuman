@@ -9,6 +9,10 @@ const { rewardsApi, openUrl } = vi.hoisted(() => ({
   openUrl: vi.fn(),
 }));
 
+const coreStateMock = vi.hoisted(() => vi.fn(() => ({ snapshot: { sessionToken: 'jwt-abc' } })));
+
+vi.mock('../../providers/CoreStateProvider', () => ({ useCoreState: () => coreStateMock() }));
+
 vi.mock('../../components/rewards/RewardsReferralsTab', () => ({
   default: () => <div>Referral Rewards Section</div>,
 }));
@@ -27,6 +31,24 @@ vi.mock('../../utils/openUrl', () => ({ openUrl }));
 describe('Rewards page', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    coreStateMock.mockReturnValue({ snapshot: { sessionToken: 'jwt-abc' } });
+  });
+
+  it('shows a local-only message and skips rewards fetch for local sessions', () => {
+    coreStateMock.mockReturnValue({ snapshot: { sessionToken: 'header.payload.local' } });
+
+    render(
+      <MemoryRouter initialEntries={['/rewards']}>
+        <Rewards />
+      </MemoryRouter>
+    );
+
+    expect(rewardsApi.getMyRewards).not.toHaveBeenCalled();
+    expect(
+      screen.getByText(
+        'Local login does not earn rewards, coupons, or referral credit. To earn rewards, log out and continue by signing in with an OpenHuman account.'
+      )
+    ).toBeInTheDocument();
   });
 
   it('renders backend-backed achievements', async () => {

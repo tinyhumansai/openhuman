@@ -55,6 +55,31 @@ impl WorkspaceEnvGuard {
     }
 }
 
+struct HomeEnvGuard {
+    previous: Option<std::ffi::OsString>,
+}
+
+impl HomeEnvGuard {
+    fn set(path: &Path) -> Self {
+        let previous = std::env::var_os("HOME");
+        unsafe {
+            std::env::set_var("HOME", path);
+        }
+        Self { previous }
+    }
+}
+
+impl Drop for HomeEnvGuard {
+    fn drop(&mut self) {
+        unsafe {
+            match self.previous.take() {
+                Some(value) => std::env::set_var("HOME", value),
+                None => std::env::remove_var("HOME"),
+            }
+        }
+    }
+}
+
 impl Drop for WorkspaceEnvGuard {
     fn drop(&mut self) {
         unsafe {
@@ -619,17 +644,20 @@ fn normalized_scope_toolkits_prefers_requested_filter() {
 
 #[test]
 fn empty_uncurated_toolkits_message_names_agent_unsupported_toolkits() {
+    // Use slugs that have no curated catalog so the message is generated.
+    // onedrive/excel/todoist are catalogued as of #2361, so they're no
+    // longer uncurated and must not be used here.
     let message = empty_uncurated_toolkits_message(&[
-        "onedrive".to_string(),
-        "excel".to_string(),
-        "todoist".to_string(),
+        "sharepoint".to_string(),
+        "monday".to_string(),
+        "intercom".to_string(),
     ])
     .expect("uncurated toolkit message");
 
     assert!(message.contains("no agent-ready actions"));
-    assert!(message.contains("`onedrive`"));
-    assert!(message.contains("`excel`"));
-    assert!(message.contains("`todoist`"));
+    assert!(message.contains("`sharepoint`"));
+    assert!(message.contains("`monday`"));
+    assert!(message.contains("`intercom`"));
     assert!(message.contains("curated agent tool catalogs"));
 }
 
@@ -797,10 +825,12 @@ async fn execute_tool_per_call_factory_means_no_baked_client() {
 
     let tmp = tempfile::tempdir().unwrap();
     let _workspace_guard = WorkspaceEnvGuard::set(tmp.path());
+    let _home_guard = HomeEnvGuard::set(tmp.path());
 
     let mut config = crate::openhuman::config::Config::default();
     config.config_path = tmp.path().join("config.toml");
     config.workspace_dir = tmp.path().join("workspace");
+    std::fs::create_dir_all(&config.workspace_dir).expect("create workspace dir");
     config.composio.mode = crate::openhuman::config::schema::COMPOSIO_MODE_DIRECT.to_string();
     // No api_key here — direct-mode factory must reject.
     config.save().await.expect("save fake config to disk");
@@ -843,10 +873,12 @@ async fn list_toolkits_in_direct_mode_returns_empty_without_hitting_backend() {
 
     let tmp = tempfile::tempdir().expect("tempdir");
     let _workspace_guard = WorkspaceEnvGuard::set(tmp.path());
+    let _home_guard = HomeEnvGuard::set(tmp.path());
 
     let mut config = crate::openhuman::config::Config::default();
     config.config_path = tmp.path().join("config.toml");
     config.workspace_dir = tmp.path().join("workspace");
+    std::fs::create_dir_all(&config.workspace_dir).expect("create workspace dir");
     config.composio.mode = crate::openhuman::config::schema::COMPOSIO_MODE_DIRECT.to_string();
     config.composio.api_key = Some("test-direct-key".to_string());
     config.save().await.expect("save fake config to disk");
@@ -910,10 +942,12 @@ async fn authorize_in_direct_mode_refuses_with_app_composio_dev_hint() {
 
     let tmp = tempfile::tempdir().expect("tempdir");
     let _workspace_guard = WorkspaceEnvGuard::set(tmp.path());
+    let _home_guard = HomeEnvGuard::set(tmp.path());
 
     let mut config = crate::openhuman::config::Config::default();
     config.config_path = tmp.path().join("config.toml");
     config.workspace_dir = tmp.path().join("workspace");
+    std::fs::create_dir_all(&config.workspace_dir).expect("create workspace dir");
     config.composio.mode = crate::openhuman::config::schema::COMPOSIO_MODE_DIRECT.to_string();
     config.composio.api_key = Some("test-direct-key".to_string());
     config.save().await.expect("save fake config to disk");

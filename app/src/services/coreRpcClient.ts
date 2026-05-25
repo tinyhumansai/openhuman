@@ -3,10 +3,12 @@ import debug from 'debug';
 
 import { dispatchLocalAiMethod } from '../lib/ai/localCoreAiMemory';
 import { CORE_RPC_TIMEOUT_MS, CORE_RPC_URL } from '../utils/config';
-import { getStoredCoreToken, peekStoredRpcUrl } from '../utils/configPersistence';
+import { getStoredCoreToken, normalizeRpcUrl, peekStoredRpcUrl } from '../utils/configPersistence';
+import { redactRpcUrlForLog } from '../utils/redactRpcUrlForLog';
 import { sanitizeError } from '../utils/sanitize';
 import { isTauri as coreIsTauri } from '../utils/tauriCommands/common';
 import { normalizeRpcMethod } from './rpcMethods';
+import type { CoreTransport } from './transport/CoreTransport';
 
 interface CoreRpcRelayRequest {
   method: string;
@@ -61,6 +63,22 @@ let resolvingCoreRpcUrl: Promise<string> | null = null;
 let resolvedCoreRpcToken: string | null = null;
 let didResolveCoreRpcToken = false;
 let resolvingCoreRpcToken: Promise<string | null> | null = null;
+
+// ---------------------------------------------------------------------------
+// Active transport override (used by iOS / remote profiles)
+// ---------------------------------------------------------------------------
+
+/** Active transport set by TransportManager for non-local profiles. */
+let _activeTransport: CoreTransport | null = null;
+
+/**
+ * Override the active transport used by `callCoreRpc`.
+ * Set to null to revert to the default local HTTP path.
+ */
+export function setActiveCoreTransport(transport: CoreTransport | null): void {
+  _activeTransport = transport;
+  coreRpcLog('[transport] active transport set kind=%s', transport?.kind ?? 'null');
+}
 
 /**
  * Stable classification of an RPC failure. Callers (hooks, providers, Sentry
@@ -278,7 +296,7 @@ export async function getCoreRpcUrl(): Promise<string> {
     // null when nothing is stored, which lets us distinguish "user hasn't
     // chosen yet" from "user chose a value identical to the default".
     const storedUrl = peekStoredRpcUrl();
-    resolvedCoreRpcUrl = storedUrl ?? CORE_RPC_URL;
+    resolvedCoreRpcUrl = normalizeRpcUrl(storedUrl ?? CORE_RPC_URL);
     return resolvedCoreRpcUrl;
   }
 
@@ -296,8 +314,8 @@ export async function getCoreRpcUrl(): Promise<string> {
       // cloud mode where no local sidecar is running.
       const storedUrl = peekStoredRpcUrl();
       if (storedUrl) {
-        resolvedCoreRpcUrl = storedUrl;
-        return storedUrl;
+        resolvedCoreRpcUrl = normalizeRpcUrl(storedUrl);
+        return resolvedCoreRpcUrl;
       }
 
       const url = await invoke<string>('core_rpc_url');
@@ -307,16 +325,16 @@ export async function getCoreRpcUrl(): Promise<string> {
           fallback: CORE_RPC_URL,
         });
       }
-      resolvedCoreRpcUrl = trimmed || CORE_RPC_URL;
+      resolvedCoreRpcUrl = normalizeRpcUrl(trimmed || CORE_RPC_URL);
       return resolvedCoreRpcUrl || CORE_RPC_URL;
     } catch (err) {
       // Tauri invoke failed — fall back to stored URL if any, then the
       // build-time default. Keep the underlying invoke failure visible so
       // port mismatches and shell misconfiguration are diagnosable.
       const storedUrl = peekStoredRpcUrl();
-      resolvedCoreRpcUrl = storedUrl ?? CORE_RPC_URL;
+      resolvedCoreRpcUrl = normalizeRpcUrl(storedUrl ?? CORE_RPC_URL);
       coreRpcError('core_rpc_url invoke failed; using fallback RPC URL', {
-        fallback: resolvedCoreRpcUrl,
+        fallback: redactRpcUrlForLog(resolvedCoreRpcUrl),
         usedStoredUrl: Boolean(storedUrl),
         error: sanitizeError(err),
       });
@@ -397,12 +415,13 @@ export async function testCoreRpcConnection(
   tokenOverride?: string,
   init?: { signal?: AbortSignal }
 ): Promise<Response> {
+  const rpcUrl = normalizeRpcUrl(url);
   const token = tokenOverride?.trim() || (await getCoreRpcToken());
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (token) {
     headers.Authorization = `Bearer ${token}`;
   }
-  return fetch(url, {
+  return fetch(rpcUrl, {
     method: 'POST',
     headers,
     body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'core.ping', params: {} }),
@@ -454,6 +473,13 @@ export async function callCoreRpc<T>({
   }
 
   const normalizedMethod = normalizeRpcMethod(method);
+
+  // Dispatch through active transport when one is set (e.g. tunnel / cloud).
+  if (_activeTransport) {
+    coreRpcLog('[transport] dispatching via %s method=%s', _activeTransport.kind, normalizedMethod);
+    return _activeTransport.call<T>(normalizedMethod, params ?? {});
+  }
+
   const effectiveTimeoutMs = resolvePerCallTimeoutMs(timeoutMs);
   const payload: JsonRpcRequestBody = {
     jsonrpc: '2.0',
@@ -465,6 +491,12 @@ export async function callCoreRpc<T>({
   try {
     const [rpcUrl, token] = await Promise.all([getCoreRpcUrl(), getCoreRpcToken()]);
     coreRpcLog('HTTP request', { id: payload.id, method: payload.method });
+    if (normalizedMethod === 'openhuman.auth_store_session') {
+      coreRpcLog('[rpc] auth_store_session routing', {
+        rpcUrl,
+        tokenSource: getStoredCoreToken() ? 'cloud-stored' : 'local-resolved',
+      });
+    }
     if (coreIsTauri() && !token) {
       throw new Error('Core RPC token unavailable in Tauri; local RPC auth cannot be satisfied');
     }

@@ -186,9 +186,15 @@ pub async fn invoke_method(state: AppState, method: &str, params: Value) -> Resu
                 method,
                 sanitized_reason
             );
-            // Scrub before publishing — subscribers log `reason`, and the
-            // upstream error string could include API keys / tokens from
-            // pasted-through provider replies.
+            // pasted-through provider replies. `sanitize_api_error` runs
+            // `scrub_secret_patterns` and truncates.
+            //
+            // Local-session protection is handled by `SessionExpiredSubscriber`
+            // in `src/openhuman/credentials/bus.rs` — it checks `is_local_session_token`
+            // after config load and short-circuits teardown with
+            // `scheduler_gate::set_signed_out(false)`. Duplicating that check
+            // here would pull a domain concern into the transport layer and would
+            // add an extra config-load round-trip on every 401.
             crate::core::event_bus::publish_global(
                 crate::core::event_bus::DomainEvent::SessionExpired {
                     source: format!("jsonrpc.invoke_method:{method}"),
@@ -831,6 +837,10 @@ async fn cors_middleware(req: Request, next: Next) -> Response {
 /// distinct. Disallowed origins receive no `Access-Control-Allow-Origin`
 /// header at all — the browser will then refuse to surface the response to
 /// the calling JS. Non-browser callers (no `Origin` header) are unaffected.
+///
+/// For Docker / cloud deployments where the server binds to `0.0.0.0`,
+/// extend the allowlist via the `OPENHUMAN_CORE_ALLOWED_ORIGINS` env var
+/// (comma-separated) rather than wildcarding `Access-Control-Allow-Origin`.
 pub(super) fn with_cors_headers(mut response: Response, origin: Option<&str>) -> Response {
     let headers = response.headers_mut();
     headers.append(header::VARY, HeaderValue::from_static("Origin"));
@@ -1503,9 +1513,10 @@ fn register_domain_subscribers(
 
         crate::openhuman::health::bus::register_health_subscriber();
         crate::openhuman::notifications::register_notification_bridge_subscriber();
-        crate::openhuman::memory::conversations::register_conversation_persistence_subscriber(
+        crate::openhuman::memory_conversations::register_conversation_persistence_subscriber(
             workspace_dir.clone(),
         );
+        crate::openhuman::memory::sync::register_sync_stage_bridge();
         if let Err(error) = crate::openhuman::composio::init_composio_trigger_history(
             workspace_dir.clone(),
         ) {
@@ -1554,7 +1565,7 @@ fn register_domain_subscribers(
             );
         }
 
-        crate::openhuman::memory::tree::jobs::start(config.clone());
+        crate::openhuman::memory_queue::start(config.clone());
 
         // Restart requests go through a subscriber so every trigger path shares
         // the same respawn logic.
@@ -1573,6 +1584,11 @@ fn register_domain_subscribers(
         // no external channel instances are registered here). Uses a
         // Once-guarded registrar so domain-level startup can't duplicate it.
         crate::openhuman::channels::proactive::register_web_only_proactive_subscriber();
+
+        // Device tunnel subscriber: handles tunnel:frame handshakes, peer-status
+        // events, and register acks. Must be registered before any tunnel:frame
+        // events can arrive.
+        crate::openhuman::devices::bus::register_device_tunnel_subscriber();
 
         // Native request handlers — typed in-process request/response.
         // The agent `agent.run_turn` handler is what channel dispatch
@@ -1681,39 +1697,19 @@ pub async fn bootstrap_core_runtime(embedded_core: bool) {
         );
     }
 
-    // --- Session storage layout migration -------------------------------
-    // One-shot move from `session_raw/{DDMMYYYY}/` (≤ 0.53.4) to the new
-    // flat `session_raw/{stem}.jsonl` layout, plus DDMMYYYY → YYYY_MM_DD
-    // for the human-readable `sessions/` companions. Idempotent via a
-    // marker file at `state/migrations/session_layout_v1.done`, so this
-    // costs one stat() on every subsequent boot.
-    match crate::openhuman::agent::harness::session::migrate_session_layout_if_needed(
-        &workspace_dir,
-    ) {
-        Ok(outcome) if outcome.already_done => {
-            log::debug!("[runtime] session_layout migration already applied");
-        }
-        Ok(outcome) => {
-            log::info!(
-                "[runtime] session_layout migration applied: jsonl_moved={} md_moved={} pruned_dirs={} warnings={}",
-                outcome.jsonl_moved,
-                outcome.md_moved,
-                outcome.legacy_dirs_pruned,
-                outcome.warnings.len(),
-            );
-            for w in &outcome.warnings {
-                log::warn!("[runtime] session_layout migration warning: {w}");
-            }
-        }
-        Err(err) => {
-            // Don't bring down startup over a transcript-storage migration.
-            // The transcript module's legacy fallback covers the unmigrated
-            // case for one release window.
-            log::warn!(
-                "[runtime] session_layout migration failed: {err} — \
-                 falling back to in-place legacy reads"
-            );
-        }
+    // --- Workspace migrations --------------------------------------------
+    crate::openhuman::startup::run_workspace_migrations(&workspace_dir);
+
+    // --- MCP registry boot-spawn -----------------------------------------
+    // Bring up every locally-installed MCP server's stdio subprocess so its
+    // tools are available to the agent as soon as the core is ready.
+    // Errors are logged per-server and never block boot. Runs as a
+    // background task so a slow npx install can't gate startup.
+    {
+        let cfg = cfg.clone();
+        tokio::spawn(async move {
+            crate::openhuman::mcp_registry::boot::spawn_installed_servers(&cfg).await;
+        });
     }
 
     // --- Socket manager bootstrap ---

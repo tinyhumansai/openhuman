@@ -70,6 +70,11 @@ pnpm rust:check         # same as above
 # whisper-rs / llama.cpp on macOS Tahoe (Apple Silicon) fail with `-mcpu=native`.
 # Workaround for `cargo check`/`cargo test`:
 GGML_NATIVE=OFF cargo check --manifest-path Cargo.toml
+
+# PR maintenance
+pnpm pr:sync-main --help        # inspect options
+pnpm pr:sync-main               # dry-run: scan open PRs targeting main
+pnpm pr:sync-main --execute     # merge latest main into each matching PR branch and push
 ```
 
 **Tests**: Vitest in `app/` (`pnpm test`, `pnpm test:coverage`); Rust via `pnpm test:rust` (runs `scripts/test-rust-with-mock.sh`).
@@ -525,6 +530,8 @@ Follow this order so behavior is **specified**, **proven in Rust**, **proven ove
 - **Pre-merge checks** (when touching code): Prettier, ESLint, `tsc --noEmit` in `app/`; `cargo fmt` + `cargo check` for changed Rust (`Cargo.toml` at root and/or `app/src-tauri/Cargo.toml` as appropriate).
 - **No dynamic imports** in production **`app/src`** code — use **static** `import` / `import type` at the top of the module. Do **not** use `import()` (async dynamic import), `React.lazy(() => import(...))`, or `await import('…')` to load app modules, Tauri APIs, or RPC clients. **Why:** predictable chunk graph, simpler static analysis, fewer surprises in Tauri + Vite, and easier code review. **If a module must not run at load time** (e.g. heavy optional path), use a static import and **guard the call site** with `try/catch` or an explicit runtime check instead of deferring module load via dynamic import. **Exceptions:** Vitest harness patterns (`vi.importActual`, dynamic imports **only** inside `*.test.ts` / `__tests__` / `test/setup.ts` when required by the runner); ambient `typeof import('…')` in `.d.ts`; config files (e.g. `tailwind.config.js` JSDoc).- **Type-only imports**: `import type` where appropriate.
 - **Dual socket / tool sync**: If you change realtime protocol, keep **frontend** (`socketService` / MCP transport) and **core** socket behavior aligned (see [`gitbooks/developing/architecture.md`](gitbooks/developing/architecture.md) dual-socket section).
+- **i18n for all UI text**: Every user-visible string in `app/src/**` (headings, labels, button text, placeholders, status chips, toasts, dialog copy, `aria-label`, etc.) must go through `useT()` from `app/src/lib/i18n/I18nContext`. Hard-coded literals in JSX or `label=`/`placeholder=`/`aria-label=` props are not allowed. Add the new key to [`app/src/lib/i18n/en.ts`](app/src/lib/i18n/en.ts) in the same PR — other locales fall back to English. **Exceptions:** developer-only debug logs, code identifiers, and non-display data (URLs, slugs, technical sentinel values).
+- **i18n chunk files — update ALL locales**: The source-of-truth translation files are the **chunk files** under `app/src/lib/i18n/chunks/` (`en-{1..5}.ts` plus `<locale>-{1..5}.ts` for each locale). When adding or changing keys in `en.ts`, you **must also** add them to the corresponding English chunk file (`en-N.ts`) **and** to the same chunk number for every non-English locale (use the English value as a placeholder — translators fill in later). CI enforces parity via `pnpm i18n:check`; missing keys in any locale chunk will fail the i18n coverage gate. Locales: `ar`, `bn`, `de`, `es`, `fr`, `hi`, `id`, `it`, `ko`, `pt`, `ru`, `zh-CN`.
 
 ---
 

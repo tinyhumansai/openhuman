@@ -119,6 +119,19 @@ Use `waitForTestId(testId)` and `clickTestId(testId)` from `element-helpers.ts` 
 - **tauri-driver**: `browser.execute(window.__simulateDeepLink(url))` (primary), `xdg-open` (fallback)
 - **Appium Mac2**: `macos: deepLink` extension command (primary), `open -a ...` (fallback)
 
+For release candidates, also run one manual secondary-instance smoke on Linux
+or macOS when touching CEF preflight, single-instance, or deep-link startup
+code:
+
+1. Launch OpenHuman normally and leave it running.
+2. Trigger `openhuman://auth?token=e2e-token&key=auth` through the OS opener.
+3. Confirm the already-running window receives the callback and does not start
+   a second full CEF instance.
+4. Confirm the secondary process exits cleanly without a CEF cache-lock error.
+
+This catches the class of regressions where a secondary process exits during
+CEF cache preflight before Tauri's deep-link forwarding path is installed.
+
 ### Writing cross-platform specs
 
 1. **Use helpers** from `element-helpers.ts`, never use raw `XCUIElementType*` selectors in specs

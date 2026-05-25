@@ -421,7 +421,6 @@ pub async fn local_ai_chat(
     );
     Ok(RpcOutcome::single_log(reply, "local ai chat completed"))
 }
-
 /// Result of the reaction-decision prompt.
 #[derive(Debug, serde::Serialize)]
 pub struct ReactionDecision {

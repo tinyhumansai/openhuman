@@ -6,7 +6,7 @@ use crate::rpc::RpcOutcome;
 
 /// Declared controller schemas for the `tool_registry` namespace.
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
-    vec![schemas("list"), schemas("get")]
+    vec![schemas("list"), schemas("get"), schemas("diagnostics")]
 }
 
 /// Registered controller handlers for the `tool_registry` namespace.
@@ -19,6 +19,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("get"),
             handler: handle_get,
+        },
+        RegisteredController {
+            schema: schemas("diagnostics"),
+            handler: handle_diagnostics,
         },
     ]
 }
@@ -55,6 +59,18 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 required: true,
             }],
         },
+        "diagnostics" => ControllerSchema {
+            namespace: "tool_registry",
+            function: "diagnostics",
+            description: "Return redacted tool inventory and policy visibility diagnostics.",
+            inputs: vec![],
+            outputs: vec![FieldSchema {
+                name: "diagnostics",
+                ty: TypeSchema::Json,
+                comment: "Counts and redacted tool ids useful for policy/conformance checks.",
+                required: true,
+            }],
+        },
         _ => ControllerSchema {
             namespace: "tool_registry",
             function: "unknown",
@@ -88,6 +104,21 @@ fn handle_get(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
+fn handle_diagnostics(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        log::debug!(
+            "[tool_registry] rpc diagnostics requested param_count={}",
+            params.len()
+        );
+        let result = to_json(crate::openhuman::tool_registry::ops::diagnostics());
+        log::debug!(
+            "[tool_registry] rpc diagnostics completed success={}",
+            result.is_ok()
+        );
+        result
+    })
+}
+
 fn required_tool_id(params: &Map<String, Value>) -> Result<&str, String> {
     params
         .get("tool_id")
@@ -111,10 +142,11 @@ mod tests {
         let schemas = all_controller_schemas();
         let controllers = all_registered_controllers();
 
-        assert_eq!(schemas.len(), 2);
-        assert_eq!(controllers.len(), 2);
+        assert_eq!(schemas.len(), 3);
+        assert_eq!(controllers.len(), 3);
         assert_eq!(schemas[0].function, controllers[0].schema.function);
         assert_eq!(schemas[1].function, controllers[1].schema.function);
+        assert_eq!(schemas[2].function, controllers[2].schema.function);
     }
 
     #[test]
@@ -131,6 +163,15 @@ mod tests {
         let schema = schemas("get");
         assert_eq!(schema.inputs[0].name, "tool_id");
         assert!(schema.inputs[0].required);
+    }
+
+    #[test]
+    fn diagnostics_schema_has_no_inputs() {
+        let schema = schemas("diagnostics");
+        assert_eq!(schema.namespace, "tool_registry");
+        assert_eq!(schema.function, "diagnostics");
+        assert!(schema.inputs.is_empty());
+        assert_eq!(schema.outputs[0].name, "diagnostics");
     }
 
     #[test]
@@ -164,5 +205,21 @@ mod tests {
             value.get("tool_id").and_then(Value::as_str),
             Some("tools.web_search")
         );
+    }
+
+    #[tokio::test]
+    async fn handle_diagnostics_returns_counts() {
+        let value = handle_diagnostics(Map::new())
+            .await
+            .expect("diagnostics json");
+        let diagnostics = value.get("diagnostics").unwrap_or(&value);
+        assert!(diagnostics
+            .get("total_tools")
+            .and_then(Value::as_u64)
+            .is_some_and(|count| count > 0));
+        assert!(diagnostics
+            .get("policy_surfaces")
+            .and_then(Value::as_array)
+            .is_some());
     }
 }

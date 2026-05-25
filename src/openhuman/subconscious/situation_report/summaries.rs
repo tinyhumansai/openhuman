@@ -65,7 +65,7 @@ struct SummaryRow {
 }
 
 fn read_recent_summaries(config: &Config, cutoff_ms: i64) -> anyhow::Result<Vec<SummaryRow>> {
-    crate::openhuman::memory::tree::store::with_connection(config, |conn| {
+    crate::openhuman::memory_store::chunks::store::with_connection(config, |conn| {
         let mut stmt = conn.prepare(
             "SELECT s.id, s.level, s.content, t.scope
              FROM mem_tree_summaries s

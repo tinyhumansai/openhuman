@@ -31,14 +31,18 @@
 //!   headers, so the FE forwards the bearer as a query param. Validated
 //!   against the same in-process RPC token — no separate secret.
 //!
-//! Only `POST /rpc` carries executable commands and requires the bearer token.
+//! Executable surfaces:
+//! - `POST /rpc` requires the per-launch core bearer token.
+//! - `GET /v1/models` and `POST /v1/chat/completions` accept either that
+//!   internal bearer or a stable user-managed external API key stored under
+//!   `openhuman::inference::http::EXTERNAL_OPENAI_COMPAT_PROVIDER`.
 
 use std::io::Write as _;
 use std::path::Path;
 use std::sync::OnceLock;
 
 #[cfg(unix)]
-use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
+use std::os::unix::fs::OpenOptionsExt as _;
 
 use axum::http::{header, Method, StatusCode};
 use axum::middleware::Next;
@@ -46,12 +50,16 @@ use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde_json::json;
 
+use crate::openhuman::config::Config;
+use crate::openhuman::credentials::AuthService;
+use crate::openhuman::inference::http::EXTERNAL_OPENAI_COMPAT_PROVIDER;
+
 static RPC_TOKEN: OnceLock<String> = OnceLock::new();
 
 /// Paths that bypass bearer-token authentication.
 ///
-/// Only `/rpc` carries executable commands and must be protected.  All other
-/// routes are read-only, streaming, or WebSocket upgrades whose clients
+/// `/rpc` and `/v1/*` carry executable surfaces and must be protected. All
+/// other routes are read-only, streaming, or WebSocket upgrades whose clients
 /// (browser `EventSource`, browser `WebSocket`) cannot set `Authorization`
 /// headers via standard APIs.
 const PUBLIC_PATHS: &[&str] = &[
@@ -159,8 +167,9 @@ pub fn verify_bearer_token(supplied: &str) -> bool {
 /// endpoints.
 ///
 /// Public paths (see [`PUBLIC_PATHS`]) and CORS preflight `OPTIONS` requests
-/// bypass this check.  All other requests must carry the exact bearer token
-/// that was written to `core.token` at startup.
+/// bypass this check. `/rpc` requires the exact per-launch bearer token that
+/// was written to `core.token` at startup; `/v1/*` additionally accepts a
+/// stable user-managed external API key.
 pub async fn rpc_auth_middleware(req: axum::extract::Request, next: Next) -> Response {
     let path = req.uri().path().to_string();
 
@@ -196,6 +205,11 @@ pub async fn rpc_auth_middleware(req: axum::extract::Request, next: Next) -> Res
         return next.run(req).await;
     }
 
+    if is_external_inference_path(&path) && verify_external_inference_bearer(header_token).await {
+        log::trace!("[auth] authorized request to {path} (external inference bearer)");
+        return next.run(req).await;
+    }
+
     // Header path failed — fall back to `?token=…` for SSE/WS routes whose
     // browser clients cannot set headers. The query token is validated
     // against the same in-process RPC bearer (single source of truth), so
@@ -226,6 +240,42 @@ pub async fn rpc_auth_middleware(req: axum::extract::Request, next: Next) -> Res
 /// helper so adding constant-time semantics later is a one-line change.
 fn bearer_matches(supplied: &str, expected: &str) -> bool {
     !supplied.is_empty() && supplied == expected
+}
+
+fn is_external_inference_path(path: &str) -> bool {
+    path == "/v1" || path.starts_with("/v1/")
+}
+
+fn verify_external_inference_bearer_for_config(config: &Config, supplied: &str) -> bool {
+    if supplied.trim().is_empty() {
+        return false;
+    }
+
+    let auth = AuthService::from_config(config);
+    match auth.get_provider_bearer_token(EXTERNAL_OPENAI_COMPAT_PROVIDER, None) {
+        Ok(Some(expected)) => bearer_matches(supplied, expected.trim()),
+        Ok(None) => false,
+        Err(err) => {
+            log::warn!("[auth] failed to read external inference bearer: {err}");
+            false
+        }
+    }
+}
+
+async fn verify_external_inference_bearer(supplied: &str) -> bool {
+    if supplied.trim().is_empty() {
+        return false;
+    }
+
+    let config = match Config::load_or_init().await {
+        Ok(config) => config,
+        Err(err) => {
+            log::warn!("[auth] failed to load config for external inference bearer: {err}");
+            return false;
+        }
+    };
+
+    verify_external_inference_bearer_for_config(&config, supplied)
 }
 
 /// Pull the first `token` query parameter out of a URL query string.
@@ -378,6 +428,8 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn token_file_has_owner_only_permissions() {
+        use std::os::unix::fs::PermissionsExt as _;
+
         let tmp = std::env::temp_dir().join(format!("core-auth-perms-{}", std::process::id()));
         std::fs::create_dir_all(&tmp).unwrap();
         let path = tmp.join("core.token");
@@ -385,5 +437,40 @@ mod tests {
         let mode = std::fs::metadata(&path).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o600, "token file must be 0o600");
         std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn is_external_inference_path_matches_only_v1_routes() {
+        assert!(is_external_inference_path("/v1"));
+        assert!(is_external_inference_path("/v1/models"));
+        assert!(is_external_inference_path("/v1/chat/completions"));
+        assert!(!is_external_inference_path("/rpc"));
+        assert!(!is_external_inference_path("/v10/models"));
+    }
+
+    #[test]
+    fn verify_external_inference_bearer_for_config_accepts_stored_key() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut config = Config::default();
+        config.config_path = tmp.path().join("config.toml");
+
+        let auth = AuthService::from_config(&config);
+        auth.store_provider_token(
+            EXTERNAL_OPENAI_COMPAT_PROVIDER,
+            "default",
+            "external-test-key",
+            std::collections::HashMap::new(),
+            true,
+        )
+        .unwrap();
+
+        assert!(verify_external_inference_bearer_for_config(
+            &config,
+            "external-test-key"
+        ));
+        assert!(!verify_external_inference_bearer_for_config(
+            &config,
+            "wrong-key"
+        ));
     }
 }

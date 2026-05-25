@@ -35,14 +35,14 @@ const it3: TranslationMap = {
   'workspace.building': 'Costruzione...',
   'workspace.buildSummaryTrees': 'Costruisci alberi di riassunto',
   'workspace.viewVault': 'Visualizza vault',
-  'workspace.openingVaultTitle': 'Opening vault in Obsidian',
+  'workspace.openingVaultTitle': 'Apertura del vault in Obsidian',
   'workspace.openingVaultMessage':
     "If Obsidian doesn't open, install it from obsidian.md or use Reveal Folder. Vault path:",
   'workspace.openVaultFailedTitle': "Couldn't open vault in Obsidian",
   'workspace.openVaultFailedMessage':
-    'Use Reveal Folder to open the vault directory directly. Vault path:',
+    'Utilizzare Reveal Folder per aprire direttamente la directory del vault. Percorso del vault:',
   'workspace.revealVaultFailed': "Couldn't reveal vault folder",
-  'workspace.revealFolder': 'Reveal Folder',
+  'workspace.revealFolder': 'Rivela cartella',
   'workspace.graphLoadFailed': 'Impossibile caricare il grafo di memoria',
   'workspace.loadingGraph': 'Caricamento grafo di memoria...',
   'workspace.graphViewMode': 'Modalità di visualizzazione grafo di memoria',
@@ -218,8 +218,11 @@ const it3: TranslationMap = {
   'about.update.status.default': 'Verifica aggiornamenti',
   'welcome.connectionFailed': 'Connessione fallita: {status} {statusText}',
   'welcome.connectionFailedMsg': 'Connessione fallita: {message}',
+  'welcome.continueLocally': 'Continua localmente',
+  'welcome.localSessionStarting': 'Avvio sessione locale...',
+  'welcome.localSessionDesc': 'Utilizza un profilo locale offline e salta TinyHumans OAuth.',
   'chat.agentChatDesc': "Apri una sessione di chat diretta con l'agente.",
-  'channels.activeRouteValue': '{channel} via {authMode}',
+  'channels.activeRouteValue': '{channel} tramite {authMode}',
   'privacy.dataKind.messages': 'Messaggi',
   'privacy.dataKind.agents': 'Agenti',
   'privacy.dataKind.skills': 'Skill',
@@ -382,6 +385,32 @@ const it3: TranslationMap = {
   'channels.telegram.reconnect': 'Riconnetti',
   'channels.telegram.savedRestartRequired': "Canale salvato. Riavvia l'app per attivarlo.",
   'channels.web.alwaysAvailable': 'Sempre disponibile',
+  'channels.discord.displayName': 'Discord',
+  'channels.discord.description': 'Invia e ricevi messaggi tramite Discord.',
+  'channels.discord.authMode.bot_token.description': 'Fornisci il tuo token bot Discord.',
+  'channels.discord.authMode.oauth.description':
+    'Installa il bot OpenHuman sul tuo server Discord tramite OAuth.',
+  'channels.discord.authMode.managed_dm.description':
+    'Collega il tuo account personale Discord al bot OpenHuman.',
+  'channels.discord.fields.bot_token.label': 'Token bot',
+  'channels.discord.fields.bot_token.placeholder': 'Il tuo token bot Discord',
+  'channels.discord.fields.guild_id.label': 'ID server (gilda)',
+  'channels.discord.fields.guild_id.placeholder': 'Opzionale: limitare a un server specifico',
+  'channels.telegram.displayName': 'Telegram',
+  'channels.telegram.description': 'Invia e ricevi messaggi tramite Telegram.',
+  'channels.telegram.authMode.managed_dm.description':
+    'Invia un messaggio direttamente al bot OpenHuman Telegram.',
+  'channels.telegram.authMode.bot_token.description':
+    'Fornisci il tuo token Bot Telegram da @BotFather.',
+  'channels.telegram.fields.bot_token.label': 'Token bot',
+  'channels.telegram.fields.bot_token.placeholder': '123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11',
+  'channels.telegram.fields.allowed_users.label': 'Utenti consentiti',
+  'channels.telegram.fields.allowed_users.placeholder': 'Separati da virgole Telegram nomi utente',
+  'channels.web.displayName': 'Web',
+  'channels.web.description': "Chatta tramite l'interfaccia utente Web integrata.",
+  'channels.web.authMode.managed_dm.description':
+    'Utilizza la chat web incorporata: non è richiesta alcuna configurazione.',
+  'welcome.continueLocallyExperimental': 'Continua localmente (sperimentale)',
 };
 
 export default it3;

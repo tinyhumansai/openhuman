@@ -60,6 +60,18 @@ impl OpenHumanCloudEmbedding {
 
     fn state_dir(&self) -> PathBuf {
         self.openhuman_dir.clone().unwrap_or_else(|| {
+            // Honor OPENHUMAN_WORKSPACE (where auth-profiles.json lives) before
+            // falling back to ~/.openhuman, so the cloud embedder resolves the
+            // session JWT from the same directory the chat provider does. Without
+            // this, any non-default workspace (OPENHUMAN_WORKSPACE set, e.g. tests
+            // / multi-instance) silently has no session for embeddings —
+            // resolve_bearer() bails, embed() errors, and vectors are dropped.
+            if let Some(ws) = std::env::var_os("OPENHUMAN_WORKSPACE")
+                .filter(|s| !s.is_empty())
+                .map(PathBuf::from)
+            {
+                return ws;
+            }
             directories::UserDirs::new()
                 .map(|d| d.home_dir().join(".openhuman"))
                 .unwrap_or_else(|| PathBuf::from(".openhuman"))

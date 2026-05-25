@@ -301,6 +301,46 @@ describe('socketService — connectivity dispatch on socket events (lines 164, 2
     expect(disconnectedCall).toBeDefined();
   });
 
+  it('clears stale disconnected socket when reconnecting with the same token', async () => {
+    const { io } = await import('socket.io-client');
+    const ioMock = vi.mocked(io);
+    ioMock.mockClear();
+
+    hoisted.getCoreRpcUrlMock.mockResolvedValue('http://127.0.0.1:7788/rpc');
+
+    // Create a mock socket that reports as disconnected (stale).
+    const staleSocket = {
+      connected: false,
+      disconnected: true,
+      on: vi.fn(),
+      onAny: vi.fn(),
+      once: vi.fn(),
+      off: vi.fn(),
+      emit: vi.fn(),
+      disconnect: vi.fn(),
+      connect: vi.fn(),
+      id: 'stale-socket-id',
+      io: { opts: { extraHeaders: { Authorization: 'Bearer same-token' } } },
+    };
+    ioMock.mockReturnValueOnce(staleSocket as never);
+
+    const { socketService } = await import('../socketService');
+    socketService.disconnect();
+
+    // First connect creates the stale socket.
+    socketService.connect('same-token');
+    await pollUntil(() => expect(ioMock).toHaveBeenCalledTimes(1));
+
+    // Second connect with the same token should detect the stale disconnected
+    // socket, null it out, and create a fresh one.
+    ioMock.mockClear();
+    socketService.connect('same-token');
+    await pollUntil(() => expect(ioMock).toHaveBeenCalled());
+
+    // A new io() call proves the stale socket was cleared and replaced.
+    expect(ioMock).toHaveBeenCalled();
+  });
+
   // Socket event handler tests (connect, disconnect, connect_error) are covered
   // in socketService.events.test.ts which uses vi.resetModules() for isolation.
 });

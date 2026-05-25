@@ -5,6 +5,7 @@
 import debug from 'debug';
 import { useCallback, useState } from 'react';
 
+import { useT } from '../../../lib/i18n/I18nContext';
 import { mcpClientsApi } from '../../../services/api/mcpClientsApi';
 import ConfigAssistantPanel from './ConfigAssistantPanel';
 import McpStatusBadge from './McpStatusBadge';
@@ -24,6 +25,7 @@ const InstalledServerDetail = ({
   connStatus,
   onUninstalled,
 }: InstalledServerDetailProps) => {
+  const { t } = useT();
   const status: ServerStatus = connStatus?.status ?? 'disconnected';
   const [tools, setTools] = useState<McpTool[]>([]);
   const [busy, setBusy] = useState(false);
@@ -122,10 +124,12 @@ const InstalledServerDetail = ({
       {/* Suggested env notice */}
       {suggestedEnv && (
         <div className="rounded-lg border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-300">
-          <p className="font-medium mb-1">Suggested environment values ready</p>
+          <p className="font-medium mb-1">{t('mcp.detail.suggestedEnvReady')}</p>
           <p className="text-xs">
-            Re-install this server with the suggested values to apply them:{' '}
-            <span className="font-mono">{Object.keys(suggestedEnv).join(', ')}</span>
+            {t('mcp.detail.suggestedEnvBody').replace(
+              '{keys}',
+              Object.keys(suggestedEnv).join(', ')
+            )}
           </p>
         </div>
       )}
@@ -138,7 +142,7 @@ const InstalledServerDetail = ({
             disabled={busy || status === 'connecting'}
             onClick={handleConnect}
             className="rounded-lg bg-primary-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-600 disabled:opacity-50 transition-colors">
-            {status === 'connecting' ? 'Connecting...' : 'Connect'}
+            {status === 'connecting' ? t('mcp.detail.connecting') : t('mcp.detail.connect')}
           </button>
         ) : (
           <button
@@ -146,7 +150,7 @@ const InstalledServerDetail = ({
             disabled={busy}
             onClick={handleDisconnect}
             className="rounded-lg border border-stone-200 dark:border-neutral-700 px-3 py-1.5 text-xs font-medium text-stone-600 dark:text-neutral-300 hover:border-stone-300 dark:hover:border-neutral-600 disabled:opacity-50">
-            Disconnect
+            {t('mcp.detail.disconnect')}
           </button>
         )}
 
@@ -155,27 +159,27 @@ const InstalledServerDetail = ({
           disabled={busy}
           onClick={() => setShowAssistant(prev => !prev)}
           className="rounded-lg border border-stone-200 dark:border-neutral-700 px-3 py-1.5 text-xs font-medium text-stone-600 dark:text-neutral-300 hover:border-stone-300 dark:hover:border-neutral-600 disabled:opacity-50">
-          {showAssistant ? 'Hide assistant' : 'Help me configure'}
+          {showAssistant ? t('mcp.detail.hideAssistant') : t('mcp.detail.helpConfigure')}
         </button>
 
         {confirmUninstall ? (
           <div className="flex items-center gap-1.5">
             <span className="text-xs text-coral-600 dark:text-coral-400 font-medium">
-              Confirm uninstall?
+              {t('mcp.detail.confirmUninstall')}
             </span>
             <button
               type="button"
               disabled={busy}
               onClick={handleUninstall}
               className="rounded-lg bg-coral-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-coral-600 disabled:opacity-50">
-              Yes, uninstall
+              {t('mcp.detail.confirmUninstallAction')}
             </button>
             <button
               type="button"
               disabled={busy}
               onClick={() => setConfirmUninstall(false)}
               className="rounded-lg border border-stone-200 dark:border-neutral-700 px-3 py-1.5 text-xs font-medium text-stone-600 dark:text-neutral-300 hover:border-stone-300 disabled:opacity-50">
-              Cancel
+              {t('common.cancel')}
             </button>
           </div>
         ) : (
@@ -184,7 +188,7 @@ const InstalledServerDetail = ({
             disabled={busy}
             onClick={() => setConfirmUninstall(true)}
             className="rounded-lg border border-coral-200 dark:border-coral-500/30 px-3 py-1.5 text-xs font-medium text-coral-600 dark:text-coral-400 hover:bg-coral-50 dark:hover:bg-coral-500/10 disabled:opacity-50">
-            Uninstall
+            {t('mcp.detail.uninstall')}
           </button>
         )}
       </div>
@@ -193,7 +197,7 @@ const InstalledServerDetail = ({
       {server.env_keys.length > 0 && (
         <div className="space-y-1">
           <p className="text-xs font-medium text-stone-600 dark:text-neutral-400">
-            Environment variables
+            {t('mcp.detail.envVars')}
           </p>
           <div className="flex flex-wrap gap-1.5">
             {server.env_keys.map(key => (
@@ -209,7 +213,9 @@ const InstalledServerDetail = ({
 
       {/* Tool list — only show when connected so stale tools don't linger */}
       <div className="space-y-1">
-        <p className="text-xs font-medium text-stone-600 dark:text-neutral-400">Tools</p>
+        <p className="text-xs font-medium text-stone-600 dark:text-neutral-400">
+          {t('mcp.detail.tools')}
+        </p>
         <McpToolList tools={status === 'connected' ? tools : []} />
       </div>
 

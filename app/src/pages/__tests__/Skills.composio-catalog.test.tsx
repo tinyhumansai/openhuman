@@ -1,4 +1,4 @@
-import { fireEvent, screen, within } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import '../../test/mockDefaultSkillStatusHooks';
@@ -9,6 +9,17 @@ let composioRefresh = vi.fn();
 let composioError: string | null = null;
 let composioToolkits: string[] = [];
 let composioConnectionByToolkit = new Map();
+let sessionToken = 'jwt-abc';
+let composioModeStatus = { result: { mode: 'backend', api_key_set: true }, logs: [] };
+// CodeRabbit on #2361: failure-path coverage for the agent-ready
+// RPC requires overriding the hook's state per test. Default state
+// keeps Preview badges off (loading=true) so legacy assertions on
+// this file don't drift.
+let agentReadyState: { agentReady: Set<string>; loading: boolean; error: string | null } = {
+  agentReady: new Set<string>(),
+  loading: true,
+  error: null,
+};
 
 vi.mock('../../hooks/useChannelDefinitions', () => ({
   useChannelDefinitions: () => ({ definitions: [], loading: false, error: null }),
@@ -30,7 +41,30 @@ vi.mock('../../lib/composio/hooks', () => ({
     loading: false,
     error: composioError,
   }),
+  // Issue #2283 / CodeRabbit on #2361: Skills.tsx consumes
+  // useAgentReadyComposioToolkits. We route through a module-level
+  // `agentReadyState` so individual tests can override `loading` /
+  // `error` to exercise the failure-fallback path.
+  useAgentReadyComposioToolkits: () => agentReadyState,
 }));
+
+vi.mock('../../lib/coreState/store', async () => {
+  const actual = await vi.importActual<typeof import('../../lib/coreState/store')>(
+    '../../lib/coreState/store'
+  );
+  return { ...actual, getCoreStateSnapshot: () => ({ snapshot: { sessionToken } }) };
+});
+
+vi.mock('../../utils/tauriCommands', async () => {
+  const actual = await vi.importActual<typeof import('../../utils/tauriCommands')>(
+    '../../utils/tauriCommands'
+  );
+  return {
+    ...actual,
+    openhumanComposioGetMode: vi.fn(async () => composioModeStatus),
+    subconsciousEscalationsDismiss: vi.fn(),
+  };
+});
 
 describe('Skills page — Composio catalog fallback', () => {
   beforeEach(() => {
@@ -38,12 +72,15 @@ describe('Skills page — Composio catalog fallback', () => {
     composioError = null;
     composioToolkits = [];
     composioConnectionByToolkit = new Map();
+    sessionToken = 'jwt-abc';
+    composioModeStatus = { result: { mode: 'backend', api_key_set: true }, logs: [] };
+    agentReadyState = { agentReady: new Set<string>(), loading: true, error: null };
   });
 
   it('shows known composio integrations in the integrations icon grid when the live toolkit list is empty', () => {
     renderWithProviders(<Skills />, { initialEntries: ['/skills'] });
 
-    expect(screen.getByRole('heading', { name: 'Integrations' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Composio Integrations' })).toBeInTheDocument();
     expect(screen.getByText('Discord')).toBeInTheDocument();
     expect(screen.getByText('Google Calendar')).toBeInTheDocument();
     expect(screen.getByText('Google Drive')).toBeInTheDocument();
@@ -60,7 +97,7 @@ describe('Skills page — Composio catalog fallback', () => {
     // missing Composio Zoom tile even though the Meeting bots card also
     // renders a "Zoom" entry on the same page.
     const integrationsSection = screen
-      .getByRole('heading', { name: 'Integrations' })
+      .getByRole('heading', { name: 'Composio Integrations' })
       .closest('.rounded-2xl');
     expect(integrationsSection).not.toBeNull();
     expect(within(integrationsSection as HTMLElement).getByText('Zoom')).toBeInTheDocument();
@@ -76,7 +113,7 @@ describe('Skills page — Composio catalog fallback', () => {
     expect(screen.getByText('Backend unavailable')).toBeInTheDocument();
 
     const integrationsSection = screen
-      .getByRole('heading', { name: 'Integrations' })
+      .getByRole('heading', { name: 'Composio Integrations' })
       .closest('.rounded-2xl');
     expect(integrationsSection).not.toBeNull();
     const gmailTile = within(integrationsSection as HTMLElement).getByRole('button', {
@@ -85,7 +122,7 @@ describe('Skills page — Composio catalog fallback', () => {
     expect(gmailTile).toBeInTheDocument();
     expect(within(gmailTile).getByText('Status unavailable')).toBeInTheDocument();
 
-    fireEvent.click(screen.getAllByRole('button', { name: 'Retry' })[0]);
+    fireEvent.click(screen.getAllByRole('button', { name: 'Try again' })[0]);
     expect(composioRefresh).toHaveBeenCalledTimes(1);
   });
 
@@ -98,7 +135,7 @@ describe('Skills page — Composio catalog fallback', () => {
     renderWithProviders(<Skills />, { initialEntries: ['/skills'] });
 
     const integrationsSection = screen
-      .getByRole('heading', { name: 'Integrations' })
+      .getByRole('heading', { name: 'Composio Integrations' })
       .closest('.rounded-2xl');
     expect(integrationsSection).not.toBeNull();
     const gmailTile = within(integrationsSection as HTMLElement).getByRole('button', {
@@ -111,5 +148,46 @@ describe('Skills page — Composio catalog fallback', () => {
 
     expect(screen.getByText(/Gmail authorization expired/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Reconnect Gmail/i })).toBeInTheDocument();
+  });
+
+  it('does not flood the integrations grid with Preview badges when the agent-ready RPC fails', () => {
+    // CodeRabbit on #2361: when the agent-ready hook errors out
+    // (loading=false, agentReady=empty, error set), we must NOT
+    // label every curated toolkit as Preview — the UI has no
+    // signal to draw that conclusion. Skills.tsx now falls back to
+    // treating every toolkit as agent-ready in this state so the
+    // page degrades to the pre-#2283 behaviour instead of
+    // misrepresenting the agent surface.
+    agentReadyState = { agentReady: new Set<string>(), loading: false, error: 'rpc unavailable' };
+
+    renderWithProviders(<Skills />, { initialEntries: ['/skills'] });
+
+    const integrationsSection = screen
+      .getByRole('heading', { name: 'Composio Integrations' })
+      .closest('.rounded-2xl');
+    expect(integrationsSection).not.toBeNull();
+    // No Preview badges anywhere in the integrations grid. The
+    // badge carries a `data-testid` of the form
+    // `composio-preview-badge-<slug>`; absence means we degraded
+    // gracefully on RPC failure.
+    const previewBadges = within(integrationsSection as HTMLElement).queryAllByTestId(
+      /composio-preview-badge-/
+    );
+    expect(previewBadges).toHaveLength(0);
+  });
+
+  it('shows a local-mode composio API key banner when no key is configured', async () => {
+    sessionToken = 'header.payload.local';
+    composioModeStatus = { result: { mode: 'direct', api_key_set: false }, logs: [] };
+
+    renderWithProviders(<Skills />, { initialEntries: ['/skills'] });
+
+    await waitFor(() => {
+      expect(screen.getByText(/No Composio API Key Configured/i)).toBeInTheDocument();
+    });
+    expect(screen.getByText(/Local mode uses your own Composio API key/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Open.*Settings/i })).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText('Search skills…')).not.toBeInTheDocument();
+    expect(screen.queryByText('Gmail')).not.toBeInTheDocument();
   });
 });

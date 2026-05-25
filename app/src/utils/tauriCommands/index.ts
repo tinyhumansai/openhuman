@@ -20,3 +20,4 @@ export * from './accessibility';
 export * from './autocomplete';
 export * from './voice';
 export * from './aboutApp';
+export * from './workspacePaths';

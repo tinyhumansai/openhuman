@@ -33,14 +33,13 @@ const ar3: TranslationMap = {
   'workspace.building': 'جارٍ البناء...',
   'workspace.buildSummaryTrees': 'بناء أشجار الملخصات',
   'workspace.viewVault': 'عرض الخزينة',
-  'workspace.openingVaultTitle': 'Opening vault in Obsidian',
+  'workspace.openingVaultTitle': 'فتح المخزن في Obsidian',
   'workspace.openingVaultMessage':
     "If Obsidian doesn't open, install it from obsidian.md or use Reveal Folder. Vault path:",
   'workspace.openVaultFailedTitle': "Couldn't open vault in Obsidian",
-  'workspace.openVaultFailedMessage':
-    'Use Reveal Folder to open the vault directory directly. Vault path:',
+  'workspace.openVaultFailedMessage': 'استخدم Reveal Folder لفتح دليل المخزن مباشرة. مسار المدفن:',
   'workspace.revealVaultFailed': "Couldn't reveal vault folder",
-  'workspace.revealFolder': 'Reveal Folder',
+  'workspace.revealFolder': 'كشف المجلد',
   'workspace.graphLoadFailed': 'فشل تحميل الرسم البياني للذاكرة',
   'workspace.loadingGraph': 'جارٍ تحميل الرسم البياني للذاكرة...',
   'workspace.graphViewMode': 'وضع عرض الرسم البياني للذاكرة',
@@ -211,6 +210,9 @@ const ar3: TranslationMap = {
   'about.update.status.default': 'التحقق من التحديثات',
   'welcome.connectionFailed': 'فشل الاتصال: {status} {statusText}',
   'welcome.connectionFailedMsg': 'فشل الاتصال: {message}',
+  'welcome.continueLocally': 'المتابعة محليًا',
+  'welcome.localSessionStarting': 'بدء الجلسة المحلية...',
+  'welcome.localSessionDesc': 'يستخدم ملف تعريف محلي غير متصل ويتخطى TinyHumans OAuth.',
   'chat.agentChatDesc': 'فتح جلسة محادثة مباشرة مع الوكيل.',
   'channels.activeRouteValue': '{channel} عبر {authMode}',
   'privacy.dataKind.messages': 'الرسائل',
@@ -374,6 +376,32 @@ const ar3: TranslationMap = {
   'channels.telegram.reconnect': 'إعادة الاتصال',
   'channels.telegram.savedRestartRequired': 'تم حفظ القناة. أعد تشغيل التطبيق لتفعيلها.',
   'channels.web.alwaysAvailable': 'متاح دائمًا',
+  'channels.discord.displayName': 'Discord',
+  'channels.discord.description': 'إرسال واستقبال الرسائل عبر Discord.',
+  'channels.discord.authMode.bot_token.description':
+    'قم بتوفير رمز الروبوت المميز Discord الخاص بك.',
+  'channels.discord.authMode.oauth.description':
+    'قم بتثبيت الروبوت OpenHuman على خادم Discord الخاص بك عبر OAuth.',
+  'channels.discord.authMode.managed_dm.description':
+    'اربط حسابك الشخصي في Discord بالروبوت OpenHuman.',
+  'channels.discord.fields.bot_token.label': 'رمز الروبوت',
+  'channels.discord.fields.bot_token.placeholder': 'رمز الروبوت Discord الخاص بك',
+  'channels.discord.fields.guild_id.label': 'معرف الخادم (الرابطة)',
+  'channels.discord.fields.guild_id.placeholder': 'اختياري: يقتصر على خادم معين',
+  'channels.telegram.displayName': 'Telegram',
+  'channels.telegram.description': 'إرسال واستقبال الرسائل عبر Telegram.',
+  'channels.telegram.authMode.managed_dm.description':
+    'أرسل رسالة إلى الروبوت OpenHuman Telegram مباشرة.',
+  'channels.telegram.authMode.bot_token.description':
+    'قم بتوفير رمز الروبوت Telegram الخاص بك من @BotFather.',
+  'channels.telegram.fields.bot_token.label': 'رمز الروبوت',
+  'channels.telegram.fields.bot_token.placeholder': '123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11',
+  'channels.telegram.fields.allowed_users.label': 'المستخدمون المسموح لهم',
+  'channels.telegram.fields.allowed_users.placeholder': 'أسماء المستخدمين Telegram مفصولة بفواصل',
+  'channels.web.displayName': 'الويب',
+  'channels.web.description': 'الدردشة عبر واجهة مستخدم الويب المضمنة.',
+  'channels.web.authMode.managed_dm.description': 'استخدم دردشة الويب المضمنة - لا يلزم الإعداد.',
+  'welcome.continueLocallyExperimental': 'المتابعة محليًا (تجريبي)',
 };
 
 export default ar3;

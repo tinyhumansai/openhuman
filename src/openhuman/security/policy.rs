@@ -120,6 +120,13 @@ impl Default for SecurityPolicy {
                 "head".into(),
                 "tail".into(),
                 "date".into(),
+                // Windows read-only equivalents for the same basic
+                // inspection workflows as ls/cat/grep/which.
+                "dir".into(),
+                "type".into(),
+                "where".into(),
+                "findstr".into(),
+                "more".into(),
             ],
             forbidden_paths: vec![
                 // System directories (blocked even when workspace_only=false)

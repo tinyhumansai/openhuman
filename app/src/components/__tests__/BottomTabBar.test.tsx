@@ -54,16 +54,18 @@ function buildStore(opts: BuildStoreOpts = {}) {
 interface RenderOpts {
   hasToken?: boolean;
   companionSessionActive?: boolean;
+  tokenValue?: string;
 }
 
 async function renderBottomTabBar(pathname = '/home', opts: RenderOpts | boolean = {}) {
   // Back-compat: previous callsites passed `hasToken` as the 2nd positional arg.
   const resolved: RenderOpts = typeof opts === 'boolean' ? { hasToken: opts } : opts;
   const hasToken = resolved.hasToken ?? true;
+  const tokenValue = resolved.tokenValue ?? 'tok-test';
   const { useCoreState } = await import('../../providers/CoreStateProvider');
   vi.mocked(useCoreState).mockReturnValue({
     snapshot: {
-      sessionToken: hasToken ? 'tok-test' : null,
+      sessionToken: hasToken ? tokenValue : null,
       auth: { isAuthenticated: true, userId: 'u1', user: null, profileId: null },
       currentUser: null,
       onboardingCompleted: true,
@@ -121,6 +123,11 @@ describe('BottomTabBar', () => {
   it('returns null when there is no session token', async () => {
     const { container } = await renderBottomTabBar('/home', { hasToken: false });
     expect(container.firstChild).toBeNull();
+  });
+
+  it('still shows the Rewards tab for local sessions', async () => {
+    await renderBottomTabBar('/home', { tokenValue: 'header.payload.local' });
+    expect(screen.getByRole('button', { name: 'Rewards' })).toBeInTheDocument();
   });
 
   it('renders the pulsing companion dot on the Settings tab when a session is active', async () => {

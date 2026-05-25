@@ -16,9 +16,11 @@ interface SettingsSectionPageProps {
   title: string;
   description?: string;
   items: SettingsSectionItem[];
+  /** Optional content rendered below the items list (e.g. destructive actions). */
+  footer?: ReactNode;
 }
 
-const SettingsSectionPage = ({ title, description, items }: SettingsSectionPageProps) => {
+const SettingsSectionPage = ({ title, description, items, footer }: SettingsSectionPageProps) => {
   const { navigateBack, navigateToSettings, breadcrumbs } = useSettingsNavigation();
 
   return (
@@ -45,11 +47,14 @@ const SettingsSectionPage = ({ title, description, items }: SettingsSectionPageP
               title={item.title}
               description={item.description}
               onClick={() => navigateToSettings(item.route)}
+              testId={`settings-nav-${item.id}`}
               isFirst={index === 0}
               isLast={index === items.length - 1}
             />
           ))}
         </div>
+
+        {footer}
       </div>
     </div>
   );

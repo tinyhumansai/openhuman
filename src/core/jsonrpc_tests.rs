@@ -658,6 +658,23 @@ fn is_session_expired_error_does_not_match_byo_key_provider_401() {
 }
 
 #[test]
+fn is_session_expired_error_does_not_match_backend_wrapped_composio_invalid_api_key() {
+    // Issue #2537: the backend can return a 500 whose body wraps a Composio
+    // upstream 401. That is a scoped integration/service failure, not proof
+    // that the user's OpenHuman app session expired.
+    let msg = r#"[composio] list_connections failed: Backend returned 500 Internal Server Error for GET https://api.tinyhumans.ai/agent-integrations/composio/connections: 401 {"error":{"message":"Invalid API key: ak_o1Og5*****","code":10401,"slug":"HTTP_Unauthorized","status":401}}"#;
+
+    assert!(
+        !is_session_expired_error(msg),
+        "Composio upstream 401 wrapped by the backend must not publish SessionExpired"
+    );
+    assert!(
+        is_unconfirmed_unauthorized_error(msg),
+        "auth-looking upstream failures should still be logged diagnostically"
+    );
+}
+
+#[test]
 fn is_session_expired_error_does_not_match_invalid_token_case_insensitive() {
     // "invalid token" is no longer a session-expiry trigger (issue #2286):
     // it was too broad and caught Discord/OAuth provider token errors. It is
@@ -691,6 +708,36 @@ fn is_session_expired_error_does_not_match_unrelated_errors() {
     assert!(!is_session_expired_error("network timeout"));
     assert!(!is_session_expired_error("500 internal server error"));
     assert!(!is_session_expired_error(""));
+}
+
+#[test]
+fn is_session_expired_error_skips_discord_rewrap_for_2285() {
+    // Cross-module regression guard for #2285: the Discord domain
+    // controller intentionally formats its upstream-auth failures so
+    // they do NOT match this dispatch-time classifier. If anyone
+    // changes the wording on either side back into a string that
+    // contains both "401" and "unauthorized", a connected-Discord
+    // card click would once again log the user out of OpenHuman.
+    //
+    // We pin the exact substrings the Discord rewrap was designed
+    // to avoid, plus the canonical post-rewrap message body, so
+    // either-side drift fails loudly.
+    let canonical_rewrap = "Discord API error: Discord list_guilds: bot token was rejected \
+         (upstream HTTP four-oh-one). Open Settings → Channels → Discord \
+         and rotate / reconnect the bot token.";
+    assert!(
+        !is_session_expired_error(canonical_rewrap),
+        "Discord rewrap must NOT trip the session-expired classifier: {canonical_rewrap}"
+    );
+    // Defensive: also pin the 403 variant. Same rewrap path, same
+    // requirement — neither '403' nor 'forbidden' is part of the
+    // session classifier today, but locking the message in keeps a
+    // future regression visible.
+    let canonical_rewrap_403 =
+        "Discord API error: Discord list_channels: bot token lacks required Discord permissions \
+         (upstream HTTP four-oh-three). Open Settings → Channels → Discord \
+         and rotate / reconnect the bot token.";
+    assert!(!is_session_expired_error(canonical_rewrap_403));
 }
 
 #[test]

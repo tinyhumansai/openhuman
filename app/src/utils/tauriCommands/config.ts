@@ -355,6 +355,80 @@ export async function openhumanGetMeetSettings(): Promise<
   });
 }
 
+/**
+ * Update the agent autonomy policy settings (currently just the per-hour tool
+ * action ceiling). Persists to the user's `config.toml`. Takes effect on the
+ * next agent session — running sessions / cron jobs / channel listeners keep
+ * the limit they were started with until core restart.
+ */
+export async function openhumanUpdateAutonomySettings(update: {
+  max_actions_per_hour?: number;
+}): Promise<CommandResponse<ConfigSnapshot>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await callCoreRpc<CommandResponse<ConfigSnapshot>>({
+    method: CORE_RPC_METHODS.configUpdateAutonomySettings,
+    params: update,
+  });
+}
+
+/**
+ * Read the current agent autonomy policy settings from the loaded config.
+ */
+export async function openhumanGetAutonomySettings(): Promise<
+  CommandResponse<{ max_actions_per_hour: number }>
+> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await callCoreRpc<CommandResponse<{ max_actions_per_hour: number }>>({
+    method: CORE_RPC_METHODS.configGetAutonomySettings,
+  });
+}
+
+export type SearchEngineId = 'managed' | 'parallel' | 'brave';
+
+export interface SearchSettingsUpdate {
+  engine?: SearchEngineId;
+  max_results?: number;
+  timeout_secs?: number;
+  /** Empty string clears the stored key. */
+  parallel_api_key?: string;
+  /** Empty string clears the stored key. */
+  brave_api_key?: string;
+}
+
+export interface SearchSettings {
+  engine: SearchEngineId | string;
+  effective_engine: SearchEngineId;
+  max_results: number;
+  timeout_secs: number;
+  parallel_configured: boolean;
+  brave_configured: boolean;
+}
+
+export async function openhumanGetSearchSettings(): Promise<CommandResponse<SearchSettings>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await callCoreRpc<CommandResponse<SearchSettings>>({
+    method: CORE_RPC_METHODS.configGetSearchSettings,
+  });
+}
+
+export async function openhumanUpdateSearchSettings(
+  update: SearchSettingsUpdate
+): Promise<CommandResponse<ConfigSnapshot>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await callCoreRpc<CommandResponse<ConfigSnapshot>>({
+    method: CORE_RPC_METHODS.configUpdateSearchSettings,
+    params: update,
+  });
+}
+
 export interface ComposioTriggerSettingsUpdate {
   triage_disabled?: boolean | null;
   triage_disabled_toolkits?: string[] | null;

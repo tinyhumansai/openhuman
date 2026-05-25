@@ -1,12 +1,14 @@
 import { createSlice, type PayloadAction } from '@reduxjs/toolkit';
 
 export type ThemeMode = 'light' | 'dark' | 'system';
+export type TabBarLabels = 'hover' | 'always';
 
 interface ThemeState {
   mode: ThemeMode;
+  tabBarLabels: TabBarLabels;
 }
 
-const initialState: ThemeState = { mode: 'system' };
+const initialState: ThemeState = { mode: 'system', tabBarLabels: 'hover' };
 
 const themeSlice = createSlice({
   name: 'theme',
@@ -15,10 +17,13 @@ const themeSlice = createSlice({
     setThemeMode(state, action: PayloadAction<ThemeMode>) {
       state.mode = action.payload;
     },
+    setTabBarLabels(state, action: PayloadAction<TabBarLabels>) {
+      state.tabBarLabels = action.payload;
+    },
   },
 });
 
-export const { setThemeMode } = themeSlice.actions;
+export const { setThemeMode, setTabBarLabels } = themeSlice.actions;
 export default themeSlice.reducer;
 
 /**

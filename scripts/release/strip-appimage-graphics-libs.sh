@@ -236,6 +236,24 @@ ensure_sharun_interpreter() {
   return 0
 }
 
+validate_sharun_lib_path() {
+  local appdir="$1"
+  if ! uses_sharun_launcher "$appdir"; then
+    return 0
+  fi
+
+  local lib_path="$appdir/shared/lib/lib.path"
+  if [ ! -s "$lib_path" ]; then
+    echo "[strip-libs] ERROR: sharun AppImage is missing shared/lib/lib.path; refusing to ship an AppImage that exits with 'Interpreter not found!'" >&2
+    exit 1
+  fi
+
+  if grep -E '(^|[+:])/home/runner/|(^|[+:])/__w/' "$lib_path" >/dev/null; then
+    echo "[strip-libs] ERROR: shared/lib/lib.path contains CI runner paths; regenerate it with bundle-relative entries before release." >&2
+    exit 1
+  fi
+}
+
 strip_one_appimage() {
   local img="$1"
   local original
@@ -286,6 +304,7 @@ strip_one_appimage() {
   if ensure_sharun_interpreter "$appdir"; then
     added_loader=1
   fi
+  validate_sharun_lib_path "$appdir"
 
   if [ "$removed" -eq 0 ] && [ "$added_loader" -eq 0 ]; then
     echo "[strip-libs] No graphics libs or missing sharun interpreter found in $original; leaving unchanged."

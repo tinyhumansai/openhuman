@@ -491,6 +491,180 @@ impl Default for WebSearchConfig {
     }
 }
 
+// ── Search engines ──────────────────────────────────────────────────
+//
+// Unified search-engine selector. Only one engine is active at a time
+// (mirrors the LLM-provider API-key flow). The active engine governs
+// which tools are registered: `managed` → backend-proxied `web_search`;
+// `parallel` → direct Parallel API tools (search/extract/chat/research/
+// enrich/dataset); `brave` → direct Brave Search tools (web/news/
+// images/videos).
+
+pub const SEARCH_ENGINE_MANAGED: &str = "managed";
+pub const SEARCH_ENGINE_PARALLEL: &str = "parallel";
+pub const SEARCH_ENGINE_BRAVE: &str = "brave";
+
+fn default_search_engine() -> String {
+    SEARCH_ENGINE_MANAGED.into()
+}
+
+fn default_search_max_results() -> usize {
+    5
+}
+
+fn default_search_timeout_secs() -> u64 {
+    15
+}
+
+/// Credentials for a BYO search engine. Mirrors the LLM provider API-
+/// key shape — a simple `Option<String>` that is considered configured
+/// iff the trimmed value is non-empty.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct SearchEngineCredentials {
+    #[serde(default)]
+    pub api_key: Option<String>,
+}
+
+impl SearchEngineCredentials {
+    pub fn has_key(&self) -> bool {
+        self.api_key
+            .as_deref()
+            .map(|s| !s.trim().is_empty())
+            .unwrap_or(false)
+    }
+
+    pub fn key(&self) -> Option<&str> {
+        self.api_key.as_deref().and_then(|s| {
+            let t = s.trim();
+            if t.is_empty() {
+                None
+            } else {
+                Some(t)
+            }
+        })
+    }
+}
+
+/// Unified search-engine configuration. Exactly one engine drives tool
+/// registration at a time. `managed` is the backend-proxied default and
+/// requires no key; `parallel` and `brave` are BYO and require their
+/// own API key in the matching sub-block.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct SearchConfig {
+    /// Active search engine. One of [`SEARCH_ENGINE_MANAGED`],
+    /// [`SEARCH_ENGINE_PARALLEL`], [`SEARCH_ENGINE_BRAVE`]. Unknown
+    /// values fall back to managed at registration time.
+    #[serde(default = "default_search_engine")]
+    pub engine: String,
+
+    /// Max results per query (1–20, default 5).
+    #[serde(default = "default_search_max_results")]
+    pub max_results: usize,
+
+    /// Per-request timeout in seconds (default 15).
+    #[serde(default = "default_search_timeout_secs")]
+    pub timeout_secs: u64,
+
+    /// Parallel API credentials (used when `engine = "parallel"`).
+    #[serde(default)]
+    pub parallel: SearchEngineCredentials,
+
+    /// Brave Search credentials (used when `engine = "brave"`).
+    #[serde(default)]
+    pub brave: SearchEngineCredentials,
+}
+
+impl Default for SearchConfig {
+    fn default() -> Self {
+        Self {
+            engine: default_search_engine(),
+            max_results: default_search_max_results(),
+            timeout_secs: default_search_timeout_secs(),
+            parallel: SearchEngineCredentials::default(),
+            brave: SearchEngineCredentials::default(),
+        }
+    }
+}
+
+/// Normalized search-engine enum used at tool-registration time. Falls
+/// back to [`SearchEngine::Managed`] for unknown strings and for BYO
+/// engines that have no API key configured.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SearchEngine {
+    Managed,
+    Parallel,
+    Brave,
+}
+
+impl SearchConfig {
+    /// Resolve the *effective* engine after gating on API-key
+    /// availability. A BYO engine without a key silently falls back to
+    /// managed so the agent never ends up with zero search tools — the
+    /// UI surfaces the misconfiguration separately.
+    pub fn effective_engine(&self) -> SearchEngine {
+        match self.engine.trim().to_ascii_lowercase().as_str() {
+            SEARCH_ENGINE_PARALLEL if self.parallel.has_key() => SearchEngine::Parallel,
+            SEARCH_ENGINE_BRAVE if self.brave.has_key() => SearchEngine::Brave,
+            _ => SearchEngine::Managed,
+        }
+    }
+
+    pub fn requested_engine_str(&self) -> &str {
+        let trimmed = self.engine.trim();
+        if trimmed.is_empty() {
+            SEARCH_ENGINE_MANAGED
+        } else {
+            trimmed
+        }
+    }
+}
+
+#[cfg(test)]
+mod search_config_tests {
+    use super::*;
+
+    #[test]
+    fn defaults_to_managed() {
+        let cfg = SearchConfig::default();
+        assert_eq!(cfg.effective_engine(), SearchEngine::Managed);
+    }
+
+    #[test]
+    fn parallel_requires_key() {
+        let mut cfg = SearchConfig {
+            engine: SEARCH_ENGINE_PARALLEL.into(),
+            ..Default::default()
+        };
+        assert_eq!(cfg.effective_engine(), SearchEngine::Managed);
+        cfg.parallel.api_key = Some("  ".into());
+        assert_eq!(cfg.effective_engine(), SearchEngine::Managed);
+        cfg.parallel.api_key = Some("real".into());
+        assert_eq!(cfg.effective_engine(), SearchEngine::Parallel);
+    }
+
+    #[test]
+    fn brave_requires_key() {
+        let mut cfg = SearchConfig {
+            engine: SEARCH_ENGINE_BRAVE.into(),
+            ..Default::default()
+        };
+        assert_eq!(cfg.effective_engine(), SearchEngine::Managed);
+        cfg.brave.api_key = Some("real".into());
+        assert_eq!(cfg.effective_engine(), SearchEngine::Brave);
+    }
+
+    #[test]
+    fn unknown_engine_falls_back_to_managed() {
+        let cfg = SearchConfig {
+            engine: "duckduckgo".into(),
+            ..Default::default()
+        };
+        assert_eq!(cfg.effective_engine(), SearchEngine::Managed);
+    }
+}
+
 /// Composio integration routing mode for the main backend-proxied flow.
 ///
 /// `"backend"` (default) — every Composio call (toolkits, connections,

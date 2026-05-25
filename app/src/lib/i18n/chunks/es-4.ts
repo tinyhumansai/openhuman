@@ -17,7 +17,7 @@ const es4: TranslationMap = {
   'commandPalette.shortcutHint': 'Pulsa ? para ver todos los atajos',
   'commandPalette.title': 'Paleta de comandos',
   'composio.connect.additionalConfigRequired': 'Configuración adicional requerida',
-  'composio.connect.atlassianSubdomainHint': 'acme',
+  'composio.connect.atlassianSubdomainHint': 'cumbre',
   'composio.connect.atlassianSubdomainLabel': 'Etiqueta de subdominio de Atlassian',
   'composio.connect.connect': 'Conectar',
   'composio.connect.connectionFailed': 'Falló la conexión (estado: {status}).',
@@ -105,7 +105,7 @@ const es4: TranslationMap = {
   'intelligence.memoryChunk.scoreBars.kept': 'conservado',
   'intelligence.memoryText.entityTypePrefix': 'Tipo de entidad',
   'intelligence.screenDebug.active': 'Activo',
-  'intelligence.screenDebug.app': 'App',
+  'intelligence.screenDebug.app': 'Aplicación',
   'intelligence.screenDebug.bounds': 'Límites',
   'intelligence.screenDebug.captureAlt': 'Resultado de prueba de captura',
   'intelligence.screenDebug.captureFailed': 'Falló',
@@ -167,7 +167,7 @@ const es4: TranslationMap = {
   'overlay.ariaCompanion': 'Acompañante activo',
   'overlay.ariaOrb': 'Overlay de OpenHuman',
   'overlay.ariaVoiceActive': 'Entrada de voz activa',
-  'overlay.companion.error': 'Error',
+  'overlay.companion.error': 'error',
   'overlay.companion.listening': 'Escuchando…',
   'overlay.companion.pointing': 'Señalando…',
   'overlay.companion.speaking': 'Hablando…',
@@ -188,6 +188,9 @@ const es4: TranslationMap = {
   'pages.settings.ai.llmDesc': 'Descripción de LLM',
   'pages.settings.ai.voice': 'Voz',
   'pages.settings.ai.voiceDesc': 'Descripción de voz',
+  'pages.settings.ai.embeddings': 'Incrustaciones',
+  'pages.settings.ai.embeddingsDesc':
+    'Modelo de codificación vectorial para recuperación de memoria',
   'pages.settings.aiSection.description':
     'Proveedores de modelos de lenguaje, Ollama local y voz (STT / TTS).',
   'pages.settings.aiSection.title': 'IA',
@@ -288,7 +291,7 @@ const es4: TranslationMap = {
   'settings.ai.apiKeyFieldLabel': 'Etiqueta de campo de clave API',
   'settings.ai.apiKeyRequired': 'Pega tu clave API para continuar.',
   'settings.ai.apiKeyStoredEncrypted': 'Clave API almacenada cifrada',
-  'settings.ai.apiKeysEncrypted': 'auth-profiles.json',
+  'settings.ai.apiKeysEncrypted': 'perfiles-de-autenticación.json',
   'settings.ai.clearStoredKey': 'Borrar clave almacenada',
   'settings.ai.connectProvider': 'Conectar proveedor',
   'settings.ai.customRouting': 'Enrutamiento personalizado',
@@ -300,6 +303,18 @@ const es4: TranslationMap = {
   'settings.ai.localOllama': 'Local (Ollama)',
   'settings.ai.modelLabel': 'Modelo',
   'settings.ai.noCustomProviders': 'Sin proveedores personalizados',
+  'settings.ai.openAiCompat.authHeaderExample': 'Autorización: Portador <su clave>',
+  'settings.ai.openAiCompat.authHeaderLabel': 'encabezado de autenticación',
+  'settings.ai.openAiCompat.baseUrlLabel': 'Base URL',
+  'settings.ai.openAiCompat.baseUrlUnavailable': 'No disponible',
+  'settings.ai.openAiCompat.clearKey': 'Borrar clave',
+  'settings.ai.openAiCompat.description':
+    "Point local harnesses at this /v1 server to route through the providers configured below. Authentication uses a stable key you set here, not the app's internal core bearer.",
+  'settings.ai.openAiCompat.keyConfigured': 'Clave configurada',
+  'settings.ai.openAiCompat.keyRequired': 'Se requiere clave',
+  'settings.ai.openAiCompat.rotateKey': 'Girar clave',
+  'settings.ai.openAiCompat.setKey': 'Establecer clave',
+  'settings.ai.openAiCompat.title': 'Punto final compatible con OpenAI',
   'settings.ai.providerLabel': 'Proveedor',
   'settings.ai.routing': 'Enrutamiento',
   'settings.ai.routingCustom': 'Enrutamiento personalizado',
@@ -319,7 +334,7 @@ const es4: TranslationMap = {
   'settings.autocomplete.appFilter.noLogs': ') :',
   'settings.autocomplete.appFilter.refreshStatus': 'Actualizando…',
   'settings.autocomplete.appFilter.refreshing': 'Actualizando…',
-  'settings.autocomplete.appFilter.runtime': 'Runtime',
+  'settings.autocomplete.appFilter.runtime': 'Tiempo de ejecución',
   'settings.autocomplete.appFilter.test': 'Probar',
   'settings.autocomplete.completionStyle.acceptedCompletion':
     '{count} completado aceptado almacenado — se usa para personalizar futuras sugerencias.',
@@ -327,7 +342,7 @@ const es4: TranslationMap = {
     '{count} completados aceptados almacenados — se usan para personalizar futuras sugerencias.',
   'settings.autocomplete.completionStyle.clearHistory': 'Limpiando…',
   'settings.autocomplete.completionStyle.clearing': 'Limpiando…',
-  'settings.autocomplete.completionStyle.debounce': 'Debounce (ms)',
+  'settings.autocomplete.completionStyle.debounce': 'Rebote (ms)',
   'settings.autocomplete.completionStyle.enabled': 'Activado',
   'settings.autocomplete.completionStyle.maxChars': 'Máx. caracteres',
   'settings.autocomplete.completionStyle.noHistory':
@@ -390,10 +405,21 @@ const es4: TranslationMap = {
   'settings.billing.subscription.monthly': 'Mensual',
   'settings.billing.subscription.paymentConfirmed': 'Pago confirmado',
   'settings.billing.subscription.perMonth': 'Por mes',
-  'settings.billing.subscription.popular': 'Popular',
+  'settings.billing.subscription.popular': 'populares',
   'pages.settings.account.migration': 'Importar desde otro asistente',
   'pages.settings.account.migrationDesc':
     'Migra memoria y notas desde OpenClaw (y pronto Hermes) a este espacio de trabajo.',
+  'composio.connect.scope.read': 'leer',
+  'composio.connect.scope.readHint': 'Permita que el agente lea datos de esta conexión.',
+  'composio.connect.scope.write': 'escribir',
+  'composio.connect.scope.writeHint':
+    'Permita que el agente cree o modifique datos a través de esta conexión.',
+  'composio.connect.scope.admin': 'administrador',
+  'composio.connect.scope.adminHint':
+    'Permitir que el agente administre configuraciones, permisos o acciones destructivas.',
+  'pages.settings.composioSection.title': 'Composio',
+  'pages.settings.composioSection.description':
+    'Enrutamiento, activadores e historial para integraciones impulsadas por Composio.',
 };
 
 export default es4;

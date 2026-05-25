@@ -1,3 +1,4 @@
+import { useT } from '../../lib/i18n/I18nContext';
 import type { ChannelDefinition, ChannelType } from '../../types/channels';
 import ChannelCapabilities from './ChannelCapabilities';
 import DiscordConfig from './DiscordConfig';
@@ -11,6 +12,8 @@ interface ChannelConfigPanelProps {
 }
 
 const ChannelConfigPanel = ({ selectedChannel, definitions }: ChannelConfigPanelProps) => {
+  const { t } = useT();
+
   // MCP is a virtual tab — not backed by a ChannelDefinition from the core.
   if (selectedChannel === 'mcp') {
     return (
@@ -18,10 +21,10 @@ const ChannelConfigPanel = ({ selectedChannel, definitions }: ChannelConfigPanel
         <section className="rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 space-y-3">
           <div>
             <h3 className="text-base font-semibold text-stone-900 dark:text-neutral-100">
-              MCP Servers
+              {t('channels.mcp.title')}
             </h3>
             <p className="text-xs text-stone-500 dark:text-neutral-400 mt-1">
-              Browse and manage Model Context Protocol servers that extend the AI with new tools.
+              {t('channels.mcp.description')}
             </p>
           </div>
           <McpServersTab />
@@ -38,10 +41,10 @@ const ChannelConfigPanel = ({ selectedChannel, definitions }: ChannelConfigPanel
       <section className="rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 space-y-3">
         <div>
           <h3 className="text-base font-semibold text-stone-900 dark:text-neutral-100">
-            {definition.display_name}
+            {t(`channels.${definition.id}.displayName`)}
           </h3>
           <p className="text-xs text-stone-500 dark:text-neutral-400 mt-1">
-            {definition.description}
+            {t(`channels.${definition.id}.description`)}
           </p>
         </div>
         {selectedChannel === 'telegram' && <TelegramConfig definition={definition} />}

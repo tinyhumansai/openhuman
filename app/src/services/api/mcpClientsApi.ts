@@ -108,8 +108,16 @@ export const mcpClientsApi = {
       method: 'openhuman.mcp_clients_installed_list',
       params: {},
     });
-    log('installed_list returned %d servers', result.installed?.length ?? 0);
-    return result.installed;
+    log(
+      'installed_list returned %d servers',
+      Array.isArray(result.installed) ? result.installed.length : 0
+    );
+    // Guard against an unexpected envelope shape (e.g. core returns `{}` on
+    // first launch before the MCP store is initialised, or upstream sends a
+    // non-array value). Callers downstream call `.find` / `.map` on this
+    // array directly — returning anything but an array crashes the MCP
+    // Servers tab with `Cannot read properties of undefined (reading 'find')`.
+    return Array.isArray(result.installed) ? result.installed : [];
   },
 
   /** Install a server with the given env vars and optional config. */
@@ -167,8 +175,11 @@ export const mcpClientsApi = {
       method: 'openhuman.mcp_clients_status',
       params: {},
     });
-    log('status returned %d servers', result.servers?.length ?? 0);
-    return result.servers;
+    log('status returned %d servers', Array.isArray(result.servers) ? result.servers.length : 0);
+    // Same defensive shape as installedList: downstream `.find` / `.map` callers
+    // can't tolerate anything but an array if the RPC envelope is malformed or
+    // missing this field.
+    return Array.isArray(result.servers) ? result.servers : [];
   },
 
   /** Invoke a tool on a connected server. */

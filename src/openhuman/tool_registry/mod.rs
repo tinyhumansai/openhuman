@@ -9,4 +9,7 @@ pub use schemas::{
     all_controller_schemas as all_tool_registry_controller_schemas,
     all_registered_controllers as all_tool_registry_registered_controllers,
 };
-pub use types::{ToolRegistryEntry, ToolRegistryHealth, ToolRegistryList, ToolRegistryTransport};
+pub use types::{
+    ToolPolicyDiagnostics, ToolRegistryEntry, ToolRegistryHealth, ToolRegistryList,
+    ToolRegistryTransport,
+};

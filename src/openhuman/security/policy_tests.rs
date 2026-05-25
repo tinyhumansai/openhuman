@@ -93,6 +93,42 @@ fn allowed_commands_basic() {
 }
 
 #[test]
+fn allowed_commands_include_windows_read_equivalents() {
+    let p = default_policy();
+    for command in [
+        "dir",
+        "type README.md",
+        "where node",
+        "findstr pattern file.txt",
+        "more README.md",
+    ] {
+        assert!(
+            p.is_command_allowed(command),
+            "default policy should allow Windows read-only command: {command}"
+        );
+    }
+}
+
+#[test]
+fn config_default_policy_includes_windows_read_equivalents() {
+    let cfg = crate::openhuman::config::AutonomyConfig::default();
+    let p = SecurityPolicy::from_config(&cfg, std::path::Path::new("."));
+    for command in [
+        "dir",
+        "type README.md",
+        "where node",
+        "findstr pattern file.txt",
+        "more README.md",
+    ] {
+        assert!(
+            p.is_command_allowed(command),
+            "config-derived policy should allow Windows read-only command: {command}"
+        );
+    }
+    assert!(!p.is_command_allowed("date 2026-05-21"));
+}
+
+#[test]
 fn blocked_commands_basic() {
     let p = default_policy();
     assert!(!p.is_command_allowed("rm -rf /"));
@@ -388,7 +424,15 @@ fn empty_path_allowed() {
 
 #[test]
 fn dotfile_in_workspace_allowed() {
-    let p = default_policy();
+    let workspace = tempfile::tempdir().expect("workspace tempdir");
+    std::fs::write(workspace.path().join(".gitignore"), "target/\n").expect("write .gitignore");
+    std::fs::write(workspace.path().join(".env"), "LOCAL_ONLY=1\n").expect("write .env");
+    let p = SecurityPolicy {
+        workspace_dir: workspace.path().to_path_buf(),
+        workspace_only: true,
+        forbidden_paths: vec![],
+        ..SecurityPolicy::default()
+    };
     assert!(p.is_path_string_allowed(".gitignore"));
     assert!(p.is_path_string_allowed(".env"));
 }

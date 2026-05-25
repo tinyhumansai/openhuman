@@ -101,6 +101,7 @@ hint = "chat"
 named = [
     "query_memory",
     "memory_store",
+    "save_preference",
     "memory_forget",
     "memory_tree",
     # WhatsApp local-data tools (issue #1341). The scanner ingests chats

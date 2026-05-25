@@ -25,13 +25,19 @@ vi.mock('../../lib/composio/hooks', () => ({
     loading: false,
     error: null,
   }),
+  // Issue #2283: Skills.tsx also consumes useAgentReadyComposioToolkits.
+  useAgentReadyComposioToolkits: () => ({
+    agentReady: new Set<string>(),
+    loading: true,
+    error: null,
+  }),
 }));
 
 describe('Skills page — Notion composio integration', () => {
   it('renders Notion as a disconnected composio integration and opens its connect modal', async () => {
     renderWithProviders(<Skills />, { initialEntries: ['/skills'] });
 
-    expect(screen.getByRole('heading', { name: 'Integrations' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Composio Integrations' })).toBeInTheDocument();
     const notionTile = screen.getByRole('button', { name: /Notion.*Connect/i });
     expect(notionTile).toBeInTheDocument();
 

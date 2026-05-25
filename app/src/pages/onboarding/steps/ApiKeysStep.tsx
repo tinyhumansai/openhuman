@@ -154,7 +154,7 @@ const ApiKeysStep = ({ onNext, onSkip }: ApiKeysStepProps) => {
             ) : null}
           </div>
           <p className="text-[11px] text-stone-500 dark:text-neutral-400">
-            Use ChatGPT Plus/Pro (subscription) or an OpenAI API key — not both required.
+            {t('onboarding.apiKeys.openaiOauthHint')}
           </p>
           <button
             type="button"
@@ -162,7 +162,7 @@ const ApiKeysStep = ({ onNext, onSkip }: ApiKeysStepProps) => {
             disabled={oauthBusy || oauthConnected || saving}
             onClick={() => void handleOpenAiOAuthStart()}
             className="rounded-lg border border-primary-500 bg-primary-50 dark:bg-primary-500/10 px-3 py-2 text-sm font-medium text-primary-700 dark:text-primary-300 hover:bg-primary-100 dark:hover:bg-primary-500/20 disabled:opacity-50">
-            {oauthBusy ? 'Opening sign-in…' : OPENAI_OAUTH_CONNECT_LABEL}
+            {oauthBusy ? t('onboarding.apiKeys.openaiOauthOpening') : OPENAI_OAUTH_CONNECT_LABEL}
           </button>
           {oauthAwaitingCallback && !oauthConnected ? (
             <div className="flex flex-col gap-1.5">
@@ -188,14 +188,14 @@ const ApiKeysStep = ({ onNext, onSkip }: ApiKeysStepProps) => {
                 disabled={oauthBusy || saving}
                 onClick={() => void handleOpenAiOAuthComplete()}
                 className="self-start text-xs font-medium text-primary-600 dark:text-primary-400 underline disabled:opacity-50">
-                Finish ChatGPT sign-in
+                {t('onboarding.apiKeys.finishSignIn')}
               </button>
             </div>
           ) : null}
           <div className="relative flex items-center gap-2 py-1">
             <div className="h-px flex-1 bg-stone-200 dark:bg-neutral-700" />
             <span className="text-[10px] uppercase tracking-wide text-stone-400 dark:text-neutral-500">
-              or API key
+              {t('onboarding.apiKeys.orApiKey')}
             </span>
             <div className="h-px flex-1 bg-stone-200 dark:bg-neutral-700" />
           </div>
