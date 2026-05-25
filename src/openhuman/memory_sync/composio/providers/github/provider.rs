@@ -199,10 +199,6 @@ impl ComposioProvider for GitHubProvider {
         // Build the base search query.
         let query = match &state.cursor {
             Some(cursor) => {
-                // GitHub's `updated:>` qualifier accepts ISO 8601 dates
-                // (YYYY-MM-DD or full datetime). Using the full stored cursor
-                // (e.g. `"2024-05-21T15:30:00Z"`) is accepted by the API and
-                // more precise than truncating to the day.
                 format!("involves:{login} updated:>{cursor}")
             }
             None => format!("involves:{login}"),
@@ -236,12 +232,15 @@ impl ComposioProvider for GitHubProvider {
                 "[composio:github] executing {ACTION_SEARCH_ISSUES}"
             );
 
-            let resp = ctx
-                .execute(ACTION_SEARCH_ISSUES, Some(args))
-                .await
-                .map_err(|e| {
-                    format!("[composio:github] {ACTION_SEARCH_ISSUES} page={page_num}: {e:#}")
-                })?;
+            let resp = match ctx.execute(ACTION_SEARCH_ISSUES, Some(args)).await {
+                Ok(resp) => resp,
+                Err(e) => {
+                    let _ = state.save(&memory).await;
+                    return Err(format!(
+                        "[composio:github] {ACTION_SEARCH_ISSUES} page={page_num}: {e:#}"
+                    ));
+                }
+            };
             state.record_requests(1);
 
             if !resp.successful {

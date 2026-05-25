@@ -722,6 +722,7 @@ impl SecurityPolicy {
                         || arg == "-c"
                 })
             }
+            "date" => args.is_empty(),
             _ => true,
         }
     }

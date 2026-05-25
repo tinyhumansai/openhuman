@@ -111,10 +111,17 @@ export async function authorize(
  * Delete an existing Composio connection. Backend verifies ownership
  * before forwarding to Composio.
  */
-export async function deleteConnection(connectionId: string): Promise<ComposioDeleteResponse> {
+export async function deleteConnection(
+  connectionId: string,
+  options?: { clearMemory?: boolean }
+): Promise<ComposioDeleteResponse> {
+  const params: { connection_id: string; clear_memory?: boolean } = { connection_id: connectionId };
+  if (options?.clearMemory) {
+    params.clear_memory = true;
+  }
   const raw = await callCoreRpc<unknown>({
     method: 'openhuman.composio_delete_connection',
-    params: { connection_id: connectionId },
+    params,
   });
   return unwrapCliEnvelope<ComposioDeleteResponse>(raw);
 }

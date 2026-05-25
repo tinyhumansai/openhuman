@@ -314,6 +314,9 @@ const fr1: TranslationMap = {
   'accounts.respondQueue': 'File de réponses',
   'accounts.disconnect': 'Déconnecter',
   'accounts.disconnectConfirm': 'Es-tu sûr de vouloir déconnecter ce compte ?',
+  'accounts.disconnectClearMemory': 'Also delete memory from this source',
+  'accounts.disconnectClearMemoryHint':
+    'Permanently removes local memory chunks linked to this connection.',
   'accounts.searchAccounts': 'Rechercher des comptes…',
   'channels.title': 'Canaux',
   'channels.configure': 'Configurer le canal',

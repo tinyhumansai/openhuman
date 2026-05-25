@@ -46,6 +46,9 @@ const TelegramConfig = ({ definition }: TelegramConfigProps) => {
 
   const [busyKeys, setBusyKeys] = useState<Record<string, boolean>>({});
   const [fieldValues, setFieldValues] = useState<Record<string, Record<string, string>>>({});
+  const [clearMemoryOnDisconnect, setClearMemoryOnDisconnect] = useState<Record<string, boolean>>(
+    {}
+  );
   const [error, setError] = useState<string | null>(null);
   const managedDmPollControllers = useRef<Record<string, AbortController>>({});
 
@@ -323,11 +326,14 @@ const TelegramConfig = ({ definition }: TelegramConfigProps) => {
       void runBusy(key, async () => {
         log('disconnecting telegram via %s', authMode);
         stopManagedDmPolling(`telegram:${authMode}`);
-        await channelConnectionsApi.disconnectChannel('telegram', authMode);
+        await channelConnectionsApi.disconnectChannel('telegram', authMode, {
+          clearMemory: Boolean(clearMemoryOnDisconnect[key]),
+        });
+        setClearMemoryOnDisconnect(prev => ({ ...prev, [key]: false }));
         dispatch(disconnectChannelConnection({ channel: 'telegram', authMode }));
       });
     },
-    [dispatch, runBusy, stopManagedDmPolling]
+    [clearMemoryOnDisconnect, dispatch, runBusy, stopManagedDmPolling]
   );
 
   return (
@@ -395,6 +401,30 @@ const TelegramConfig = ({ definition }: TelegramConfigProps) => {
                   />
                 ))}
               </div>
+            )}
+
+            {status === 'connected' && (
+              <label className="mt-3 flex items-start gap-2 rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2">
+                <input
+                  type="checkbox"
+                  checked={Boolean(clearMemoryOnDisconnect[compositeKey])}
+                  onChange={event =>
+                    setClearMemoryOnDisconnect(prev => ({
+                      ...prev,
+                      [compositeKey]: event.currentTarget.checked,
+                    }))
+                  }
+                  className="mt-0.5 h-4 w-4 rounded border-stone-300 text-primary-600 focus:ring-primary-500"
+                />
+                <span className="min-w-0">
+                  <span className="block text-xs font-medium text-stone-800 dark:text-neutral-100">
+                    {t('accounts.disconnectClearMemory')}
+                  </span>
+                  <span className="block text-[11px] text-stone-500 dark:text-neutral-400">
+                    {t('accounts.disconnectClearMemoryHint')}
+                  </span>
+                </span>
+              </label>
             )}
 
             <div className="mt-3 flex gap-2">

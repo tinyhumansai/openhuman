@@ -291,6 +291,9 @@ const zhCN1: TranslationMap = {
   'accounts.respondQueue': '回复队列',
   'accounts.disconnect': '断开连接',
   'accounts.disconnectConfirm': '确定要断开此账户的连接吗？',
+  'accounts.disconnectClearMemory': 'Also delete memory from this source',
+  'accounts.disconnectClearMemoryHint':
+    'Permanently removes local memory chunks linked to this connection.',
   'accounts.searchAccounts': '搜索账户...',
   'channels.title': '渠道',
   'channels.configure': '配置渠道',

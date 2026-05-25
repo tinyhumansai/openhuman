@@ -1137,20 +1137,28 @@ impl Agent {
                     call_id.clone(),
                     (iteration + 1) as u32,
                 );
-                let policy_request =
+                let mut policy_request =
                     ToolPolicyRequest::new(call.name.clone(), call.arguments.clone(), context);
-                if let ToolPolicyDecision::Deny { reason } =
-                    self.tool_policy.check(&policy_request).await
-                {
+                if let Some(generated_context) = tool.generated_runtime_context(&call.arguments) {
+                    policy_request = policy_request.with_generated_tool_context(generated_context);
+                }
+                let policy_decision = self.tool_policy.check(&policy_request).await;
+                if let Some(reason) = policy_decision.blocking_reason() {
+                    let blocked_action = match &policy_decision {
+                        ToolPolicyDecision::RequireApproval { .. } => "requires approval",
+                        ToolPolicyDecision::Deny { .. } => "denied",
+                        ToolPolicyDecision::Allow => "allowed",
+                    };
                     tracing::debug!(
                         tool = call.name.as_str(),
                         policy = self.tool_policy.name(),
+                        action = blocked_action,
                         reason = %reason,
-                        "[agent_loop] tool denied by policy"
+                        "[agent_loop] tool blocked by policy"
                     );
                     (
                         format!(
-                            "Tool '{}' denied by policy '{}': {reason}",
+                            "Tool '{}' {blocked_action} by policy '{}': {reason}",
                             call.name,
                             self.tool_policy.name()
                         ),

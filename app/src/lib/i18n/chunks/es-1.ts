@@ -313,6 +313,9 @@ const es1: TranslationMap = {
   'accounts.respondQueue': 'Cola de respuestas',
   'accounts.disconnect': 'Desconectar',
   'accounts.disconnectConfirm': '¿Seguro que quieres desconectar esta cuenta?',
+  'accounts.disconnectClearMemory': 'Also delete memory from this source',
+  'accounts.disconnectClearMemoryHint':
+    'Permanently removes local memory chunks linked to this connection.',
   'accounts.searchAccounts': 'Buscar cuentas...',
   'channels.title': 'Canales',
   'channels.configure': 'Configurar canal',

@@ -351,6 +351,9 @@ const de1: TranslationMap = {
   'accounts.respondQueue': 'Antwortwarteschlange',
   'accounts.disconnect': 'Trennen',
   'accounts.disconnectConfirm': 'Möchtest du dieses Konto wirklich trennen?',
+  'accounts.disconnectClearMemory': 'Also delete memory from this source',
+  'accounts.disconnectClearMemoryHint':
+    'Permanently removes local memory chunks linked to this connection.',
   'accounts.searchAccounts': 'Konten durchsuchen...',
   'channels.title': 'Kanäle',
   'channels.configure': 'Kanal konfigurieren',

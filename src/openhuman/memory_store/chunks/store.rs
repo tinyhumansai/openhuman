@@ -35,6 +35,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use crate::openhuman::config::Config;
+use crate::openhuman::memory::util::redact;
 use crate::openhuman::memory_store::chunks::types::{Chunk, Metadata, SourceKind, SourceRef};
 use crate::openhuman::memory_store::content::StagedChunk;
 
@@ -46,7 +47,7 @@ const MAX_LIST_LIMIT: usize = 10_000;
 // contention (4 job workers + scheduler + ingest producers all writing the
 // same `memory_tree/chunks.db`) is absorbed inside rusqlite instead of
 // surfacing as `SQLITE_BUSY` to callers. Workers still treat busy as a
-// soft signal (see `memory::tree::jobs::worker`) so even if this is
+// soft signal (see `memory_tree::jobs::worker`) so even if this is
 // exceeded, the only effect is a one-poll backoff — but 15s is
 // comfortably above realistic peer-write durations and shrinks the rate
 // at which we have to fall back to that path. The previous 5s was tight
@@ -342,6 +343,26 @@ CREATE TABLE IF NOT EXISTS mem_tree_ingested_sources (
     ingested_at_ms         INTEGER NOT NULL,
     PRIMARY KEY (source_kind, source_id)
 );
+
+-- MCP write-tool audit trail (#2536). This intentionally stores compact
+-- identifying metadata instead of duplicating the memory document body.
+CREATE TABLE IF NOT EXISTS mcp_writes (
+    id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp_ms           INTEGER NOT NULL,
+    client_info            TEXT NOT NULL,
+    tool_name              TEXT NOT NULL,
+    args_summary           TEXT,
+    resulting_chunk_id     TEXT,
+    success                INTEGER NOT NULL,
+    error_message          TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_mcp_writes_timestamp
+    ON mcp_writes(timestamp_ms DESC);
+CREATE INDEX IF NOT EXISTS idx_mcp_writes_client
+    ON mcp_writes(client_info);
+CREATE INDEX IF NOT EXISTS idx_mcp_writes_tool
+    ON mcp_writes(tool_name);
 ";
 
 /// Upsert a batch of chunks atomically.
@@ -700,6 +721,188 @@ pub(crate) fn claim_source_ingest_tx(
         params![source_kind.as_str(), source_id, now_ms],
     )?;
     Ok(inserted > 0)
+}
+
+/// Delete all chunk rows for one exact `(source_kind, source_id)` and clear
+/// dependent source-local indexes. Returns the number of chunk rows removed.
+pub fn delete_chunks_by_source(
+    config: &Config,
+    source_kind: SourceKind,
+    source_id: &str,
+) -> Result<usize> {
+    delete_chunks_by_source_filter(config, source_kind, |candidate| candidate == source_id)
+}
+
+/// Delete all chunk rows whose source id starts with `source_id_prefix`.
+///
+/// This is intentionally a Rust-side prefix filter rather than a SQL `LIKE`
+/// expression so provider ids containing `_` / `%` are treated literally.
+pub fn delete_chunks_by_source_prefix(
+    config: &Config,
+    source_kind: SourceKind,
+    source_id_prefix: &str,
+) -> Result<usize> {
+    delete_chunks_by_source_filter(config, source_kind, |candidate| {
+        candidate.starts_with(source_id_prefix)
+    })
+}
+
+fn delete_chunks_by_source_filter(
+    config: &Config,
+    source_kind: SourceKind,
+    matches_source: impl Fn(&str) -> bool,
+) -> Result<usize> {
+    let mut content_paths = Vec::new();
+    let deleted = with_connection(config, |conn| {
+        let tx = conn.unchecked_transaction()?;
+
+        let chunks = {
+            let mut stmt = tx.prepare(
+                "SELECT id, source_id, content_path
+                   FROM mem_tree_chunks
+                  WHERE source_kind = ?1",
+            )?;
+            let rows = stmt.query_map(params![source_kind.as_str()], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                ))
+            })?;
+            rows.filter_map(|row| match row {
+                Ok((id, source_id, content_path)) if matches_source(&source_id) => {
+                    Some(Ok((id, content_path)))
+                }
+                Ok(_) => None,
+                Err(error) => Some(Err(error)),
+            })
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .context("Failed to collect memory_tree chunks by source")?
+        };
+
+        for (chunk_id, content_path) in &chunks {
+            tx.execute(
+                "DELETE FROM mem_tree_score WHERE chunk_id = ?1",
+                params![chunk_id],
+            )?;
+            tx.execute(
+                "DELETE FROM mem_tree_entity_index WHERE node_id = ?1",
+                params![chunk_id],
+            )?;
+            tx.execute(
+                "DELETE FROM mem_tree_chunk_embeddings WHERE chunk_id = ?1",
+                params![chunk_id],
+            )?;
+            tx.execute(
+                "DELETE FROM mem_tree_chunk_reembed_skipped WHERE chunk_id = ?1",
+                params![chunk_id],
+            )?;
+            tx.execute(
+                "DELETE FROM mem_tree_chunks WHERE id = ?1",
+                params![chunk_id],
+            )?;
+            if let Some(path) = content_path.as_ref().filter(|path| !path.is_empty()) {
+                content_paths.push(path.clone());
+            }
+        }
+
+        let ingested_sources = {
+            let mut stmt = tx.prepare(
+                "SELECT source_id
+                   FROM mem_tree_ingested_sources
+                  WHERE source_kind = ?1",
+            )?;
+            let rows =
+                stmt.query_map(params![source_kind.as_str()], |row| row.get::<_, String>(0))?;
+            rows.filter_map(|row| match row {
+                Ok(source_id) if matches_source(&source_id) => Some(Ok(source_id)),
+                Ok(_) => None,
+                Err(error) => Some(Err(error)),
+            })
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .context("Failed to collect memory_tree ingested sources")?
+        };
+
+        for source_id in &ingested_sources {
+            tx.execute(
+                "DELETE FROM mem_tree_ingested_sources
+                  WHERE source_kind = ?1 AND source_id = ?2",
+                params![source_kind.as_str(), source_id],
+            )?;
+        }
+
+        let deleted = chunks.len();
+        tx.commit()?;
+        Ok(deleted)
+    })?;
+
+    remove_chunk_content_files(config, &content_paths);
+    Ok(deleted)
+}
+
+fn remove_chunk_content_files(config: &Config, content_paths: &[String]) {
+    use std::path::{Component, Path};
+
+    let root = config.memory_tree_content_root();
+    let canonical_root = match std::fs::canonicalize(&root) {
+        Ok(path) => path,
+        Err(error) => {
+            if error.kind() != std::io::ErrorKind::NotFound {
+                log::warn!(
+                    "[memory_tree::store] failed to resolve content root {}: {error}",
+                    root.display(),
+                );
+            }
+            return;
+        }
+    };
+
+    for rel in content_paths {
+        let rel_path = Path::new(rel);
+        let has_escape_component = rel_path.components().any(|component| {
+            matches!(
+                component,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        });
+        if has_escape_component {
+            log::warn!(
+                "[memory_tree::store] refusing to remove chunk file with unsafe content_path path_hash={}",
+                redact::redact(rel),
+            );
+            continue;
+        }
+
+        let path = root.join(rel_path);
+        let resolved_path = match std::fs::canonicalize(&path) {
+            Ok(path) => path,
+            Err(error) => {
+                if error.kind() != std::io::ErrorKind::NotFound {
+                    log::warn!(
+                        "[memory_tree::store] failed to resolve chunk file path_hash={}: {error}",
+                        redact::redact(rel),
+                    );
+                }
+                continue;
+            }
+        };
+        if !resolved_path.starts_with(&canonical_root) {
+            log::warn!(
+                "[memory_tree::store] refusing to remove chunk file outside content root path_hash={}",
+                redact::redact(rel),
+            );
+            continue;
+        }
+
+        if let Err(error) = std::fs::remove_file(&path) {
+            if error.kind() != std::io::ErrorKind::NotFound {
+                log::warn!(
+                    "[memory_tree::store] failed to remove chunk file path_hash={}: {error}",
+                    redact::redact(rel),
+                );
+            }
+        }
+    }
 }
 
 fn row_to_chunk(row: &rusqlite::Row<'_>) -> rusqlite::Result<Chunk> {
