@@ -16,12 +16,12 @@ import { renderWithProviders } from '../../../test/test-utils';
 
 const hoisted = vi.hoisted(() => ({ invoke: vi.fn(), isTauri: vi.fn(() => true) }));
 
-vi.mock('@tauri-apps/api/core', () => ({ invoke: hoisted.invoke }));
-
-// McpServerPanel now imports `invoke` from `tauriCommands/common` (aliased
-// from `safeInvoke` — see OPENHUMAN-TAURI-REACT-7 / TAURI-REACT-6). Route
-// the same `hoisted.invoke` mock through `safeInvoke` so existing assertions
-// on `hoisted.invoke.toHaveBeenCalledWith(...)` keep working unchanged.
+// McpServerPanel imports `invoke` from `tauriCommands/common` (aliased from
+// `safeInvoke` — see OPENHUMAN-TAURI-REACT-7 / TAURI-REACT-6). Route
+// `hoisted.invoke` through `safeInvoke` so assertions on
+// `hoisted.invoke.toHaveBeenCalledWith(...)` work unchanged. The
+// `@tauri-apps/api/core` mock is omitted because `safeInvoke` shadows it
+// for all panel call sites.
 vi.mock('../../../utils/tauriCommands/common', () => ({
   isTauri: hoisted.isTauri,
   safeInvoke: (...args: unknown[]) => hoisted.invoke(...args),

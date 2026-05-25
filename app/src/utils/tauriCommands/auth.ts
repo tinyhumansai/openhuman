@@ -7,7 +7,7 @@ import { callCoreRpc } from '../../services/coreRpcClient';
 // synchronous throw (Sentry TAURI-REACT-7 / TAURI-REACT-6) surfaces as a
 // rejected Promise. `exchangeToken` runs early in the auth flow where the
 // CEF bridge can still be unwired, so this matters most.
-import { CommandResponse, safeInvoke as invoke, isTauri } from './common';
+import { type CommandResponse, safeInvoke as invoke, isTauri } from './common';
 
 /**
  * Exchange a login token for a session token
