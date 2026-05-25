@@ -29,7 +29,7 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { useT } from '../../lib/i18n/I18nContext';
 import type { ToastNotification } from '../../types/intelligence';
-import { openUrl, revealPath } from '../../utils/openUrl';
+import { openUrl } from '../../utils/openUrl';
 import {
   type GraphExportResponse,
   type GraphMode,
@@ -38,8 +38,10 @@ import {
   memoryTreeResetTree,
   memoryTreeWipeAll,
 } from '../../utils/tauriCommands';
+import { revealWorkspacePath } from '../../utils/tauriCommands/workspacePaths';
 import { MemoryGraph } from './MemoryGraph';
 import { MemorySources } from './MemorySources';
+import { MEMORY_CONTENT_WORKSPACE_PATH } from './memoryWorkspacePaths';
 import { VaultPanel } from './VaultPanel';
 import { WhatsAppMemorySection } from './WhatsAppMemorySection';
 
@@ -251,9 +253,9 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
       const revealHandler = () => {
         void (async () => {
           try {
-            await revealPath(contentRootAbs);
+            await revealWorkspacePath(MEMORY_CONTENT_WORKSPACE_PATH);
           } catch (err) {
-            console.error('[ui-flow][memory-workspace] revealPath failed', err);
+            console.error('[ui-flow][memory-workspace] revealWorkspacePath failed', err);
             onToast?.({
               type: 'error',
               title: t('workspace.revealVaultFailed'),
@@ -381,12 +383,7 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
           {t('workspace.loadingGraph')}
         </div>
       ) : (
-        <MemoryGraph
-          nodes={graph.nodes}
-          edges={graph.edges}
-          mode={mode}
-          contentRootAbs={graph.content_root_abs}
-        />
+        <MemoryGraph nodes={graph.nodes} edges={graph.edges} mode={mode} />
       )}
     </div>
   );

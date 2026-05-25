@@ -1,5 +1,5 @@
 ---
-description: 如何从源码构建 OpenHuman —— 工具链、 vendored Tauri CLI、sidecar staging。
+description: 如何从源码构建 OpenHuman —— 工具链、vendored Tauri CLI 和本地桌面构建。
 icon: wrench
 lang: zh-CN
 ---
@@ -61,25 +61,17 @@ git submodule update --init --recursive
 # 3) 安装 JS 依赖（workspace）
 pnpm install
 
-# 4) 构建 Rust 核心二进制文件
-cargo build --manifest-path Cargo.toml --bin openhuman-core
-
-# 5) 运行桌面 staging hook（当前为 no-op；为脚本兼容性保留）
-cd app
-pnpm core:stage
-
-# 6) 构建桌面应用产物
+# 4) 构建桌面应用产物
 pnpm build
 ```
 
 本地开发（而非生产构建）：
 
 ```bash
-# 仅 Web UI 开发：在上述 cd app 步骤后，在 app/ 内运行
+# 仅 Web UI 开发
 pnpm dev
 
 # 使用 vendored Tauri/CEF CLI 的桌面应用开发：从 workspace 根目录运行
-cd ..
 pnpm --filter openhuman-app dev:app
 ```
 

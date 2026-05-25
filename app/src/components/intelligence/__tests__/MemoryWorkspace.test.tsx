@@ -28,9 +28,21 @@ vi.mock('../../../lib/composio/composioApi', () => ({
 
 // Stub `openUrl` so deep-link clicks land in a mock instead of routing
 // through `tauri-plugin-opener` (which isn't loaded in the test env).
-vi.mock('../../../utils/openUrl', () => ({
-  openUrl: vi.fn().mockResolvedValue(undefined),
-  revealPath: vi.fn().mockResolvedValue(undefined),
+vi.mock('../../../utils/openUrl', () => ({ openUrl: vi.fn().mockResolvedValue(undefined) }));
+
+vi.mock('../../../utils/tauriCommands/workspacePaths', () => ({
+  openWorkspacePath: vi.fn().mockResolvedValue(undefined),
+  revealWorkspacePath: vi.fn().mockResolvedValue(undefined),
+  previewWorkspaceText: vi
+    .fn()
+    .mockResolvedValue({
+      path: 'memory_tree/content/wiki/summaries/source-alice-x-com/L1/summary-L1-abc.md',
+      absolutePath:
+        '/tmp/workspace/memory_tree/content/wiki/summaries/source-alice-x-com/L1/summary-L1-abc.md',
+      contents: '# Gmail summary',
+      truncated: false,
+      sizeBytes: 15,
+    }),
 }));
 
 const { memoryTreeGraphExport, memoryTreeFlushNow, memoryTreeWipeAll, memoryTreeResetTree } =
@@ -47,10 +59,13 @@ const { listConnections, syncConnection } =
     syncConnection: Mock;
   };
 
-const { openUrl, revealPath } = (await import('../../../utils/openUrl')) as unknown as {
-  openUrl: Mock;
-  revealPath: Mock;
-};
+const { openUrl } = (await import('../../../utils/openUrl')) as unknown as { openUrl: Mock };
+
+const { openWorkspacePath, revealWorkspacePath } =
+  (await import('../../../utils/tauriCommands/workspacePaths')) as unknown as {
+    openWorkspacePath: Mock;
+    revealWorkspacePath: Mock;
+  };
 
 function makeSummary(partial: Partial<GraphNode>): GraphNode {
   return {
@@ -98,7 +113,8 @@ describe('MemoryWorkspace (graph view)', () => {
     listConnections.mockResolvedValue({ connections: [] });
     syncConnection.mockResolvedValue({ ok: true });
     openUrl.mockResolvedValue(undefined);
-    revealPath.mockResolvedValue(undefined);
+    openWorkspacePath.mockResolvedValue(undefined);
+    revealWorkspacePath.mockResolvedValue(undefined);
   });
 
   it('renders the SVG graph once the export RPC resolves', async () => {
@@ -154,7 +170,7 @@ describe('MemoryWorkspace (graph view)', () => {
     expect(typeof toast.action?.handler).toBe('function');
   });
 
-  it('Reveal Folder action on the success toast calls revealPath with the vault content root', async () => {
+  it('Reveal Folder action on the success toast uses the shared workspace reveal command', async () => {
     const onToast = vi.fn();
     renderWithProviders(<MemoryWorkspace onToast={onToast} />);
     fireEvent.click(await screen.findByTestId('memory-open-in-obsidian'));
@@ -162,7 +178,7 @@ describe('MemoryWorkspace (graph view)', () => {
     const toast = onToast.mock.calls[0][0];
     toast.action.handler();
     await waitFor(() => {
-      expect(revealPath).toHaveBeenCalledWith('/tmp/workspace/memory_tree/content');
+      expect(revealWorkspacePath).toHaveBeenCalledWith('memory_tree/content');
     });
   });
 
@@ -178,8 +194,8 @@ describe('MemoryWorkspace (graph view)', () => {
     expect(toast.action?.label).toBeTruthy();
   });
 
-  it('Reveal Folder fallback surfaces an error toast when revealPath itself fails', async () => {
-    revealPath.mockRejectedValueOnce(new Error('reveal failed'));
+  it('Reveal Folder fallback surfaces an error toast when workspace reveal itself fails', async () => {
+    revealWorkspacePath.mockRejectedValueOnce(new Error('reveal failed'));
     const onToast = vi.fn();
     renderWithProviders(<MemoryWorkspace onToast={onToast} />);
     fireEvent.click(await screen.findByTestId('memory-open-in-obsidian'));
@@ -194,16 +210,13 @@ describe('MemoryWorkspace (graph view)', () => {
     expect(errorToast.message).toContain('reveal failed');
   });
 
-  it('clicking a summary node opens that file in Obsidian via the deep link', async () => {
+  it('clicking a summary node opens that file through the shared workspace path command', async () => {
     renderWithProviders(<MemoryWorkspace />);
     const node = await screen.findByTestId('memory-graph-node-child-1');
     fireEvent.click(node);
-    const expectedRel = 'wiki/summaries/source-gmail-alice-x-com/L1/summary-L1-abc.md';
-    const expectedAbs = '/tmp/workspace/memory_tree/content/' + expectedRel;
+    const expectedRel = 'wiki/summaries/source-alice-x-com/L1/summary-L1-abc.md';
     await waitFor(() => {
-      expect(openUrl).toHaveBeenCalledWith(
-        'obsidian://open?path=' + encodeURIComponent(expectedAbs)
-      );
+      expect(openWorkspacePath).toHaveBeenCalledWith(`memory_tree/content/${expectedRel}`);
     });
   });
 
