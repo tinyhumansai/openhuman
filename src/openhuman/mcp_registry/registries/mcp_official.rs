@@ -119,7 +119,11 @@ impl Registry for McpOfficialRegistry {
 
         let cache_key = format!("mcp_official:search:{q}:{page}:{limit}");
         if let Ok(Some(cached_body)) = store::get_cached(config, &cache_key) {
-            tracing::debug!("[mcp-official] search cache hit key={cache_key}");
+            tracing::debug!(
+                "[mcp-official] search cache hit has_query={} q_len={} page={page} limit={limit}",
+                !q.is_empty(),
+                q.len()
+            );
             if let Ok(parsed) = serde_json::from_str::<OfficialListResponse>(&cached_body) {
                 let total_pages = total_pages_hint(page, parsed.next_cursor().is_some());
                 if let Some(cursor) = parsed.next_cursor() {
@@ -145,7 +149,8 @@ impl Registry for McpOfficialRegistry {
                     // The walk ran out of results before reaching `page`.
                     // Return empty + report `page` so the UI stops paging.
                     tracing::debug!(
-                        "[mcp-official] search page={page} unreachable (walk exhausted)"
+                        "[mcp-official] walk exhausted has_query={} target_page={page} limit={limit}",
+                        !q.is_empty()
                     );
                     return Ok((Vec::new(), page));
                 }
@@ -210,8 +215,12 @@ impl Registry for McpOfficialRegistry {
 /// raw response body so callers can both parse it and write it to the SQLite
 /// response cache.
 async fn fetch_page(q: &str, limit: u32, cursor: Option<&str>) -> Result<String> {
+    // `q` is user-typed search input — log presence + length only so the
+    // diagnostic doesn't leak query text into log aggregators.
     tracing::debug!(
-        "[mcp-official] fetch q={q:?} limit={limit} has_cursor={}",
+        "[mcp-official] fetch has_query={} q_len={} limit={limit} has_cursor={}",
+        !q.is_empty(),
+        q.len(),
         cursor.is_some()
     );
 
@@ -259,24 +268,53 @@ async fn walk_cursor_for_page(
         return Ok(None);
     }
     if target_page > MAX_CURSOR_WALK_PAGES {
+        tracing::warn!(
+            "[mcp-official] walk refused has_query={} target_page={target_page} max={MAX_CURSOR_WALK_PAGES}",
+            !q.is_empty()
+        );
         anyhow::bail!(
             "MCP official deep-page walk refused: page={target_page} > MAX_CURSOR_WALK_PAGES={MAX_CURSOR_WALK_PAGES}"
         );
     }
 
+    tracing::debug!(
+        "[mcp-official] walk start has_query={} q_len={} target_page={target_page} limit={limit}",
+        !q.is_empty(),
+        q.len()
+    );
+
     let mut cursor: Option<String> = None;
+    let mut net_fetches = 0u32;
+    let mut cache_fetches = 0u32;
     // We need the cursor that produces `target_page`, which is the cursor
     // returned by the response for `target_page - 1`.
     for page in 1..target_page {
-        let body = fetch_page(q, limit, cursor.as_deref()).await?;
+        let cache_key = format!("mcp_official:search:{q}:{page}:{limit}");
+
+        // Try the persisted SQLite response cache first. After a process
+        // restart the in-memory cursor map is empty, but page bodies from a
+        // previous run may still be on disk — using them shaves up to N-1
+        // HTTP calls off a deep-link walk that has nothing to do with the
+        // network's current state.
+        let body = match store::get_cached(config, &cache_key) {
+            Ok(Some(body)) => {
+                cache_fetches += 1;
+                body
+            }
+            _ => {
+                let body = fetch_page(q, limit, cursor.as_deref()).await?;
+                let _ = store::set_cached(config, &cache_key, &body);
+                net_fetches += 1;
+                body
+            }
+        };
+
         let parsed: OfficialListResponse = serde_json::from_str(&body)
             .with_context(|| format!("Failed to parse MCP official response: {body}"))?;
         let next = parsed.next_cursor().map(str::to_string);
 
-        // Prime the per-page caches as we go so a subsequent direct lookup
-        // for `page` doesn't have to re-walk.
-        let cache_key = format!("mcp_official:search:{q}:{page}:{limit}");
-        let _ = store::set_cached(config, &cache_key, &body);
+        // Prime the in-memory cursor map as we go so a subsequent direct
+        // lookup for `page` doesn't have to re-walk.
         if let Some(ref c) = next {
             cursor_cache_set(q, limit, page, c.clone());
         }
@@ -285,10 +323,16 @@ async fn walk_cursor_for_page(
             Some(c) => cursor = Some(c),
             None => {
                 // Cursor chain exhausted before we reached target_page.
+                tracing::debug!(
+                    "[mcp-official] walk done (exhausted) page={page} net={net_fetches} cache={cache_fetches}"
+                );
                 return Ok(None);
             }
         }
     }
+    tracing::debug!(
+        "[mcp-official] walk done (cursor ready) target_page={target_page} net={net_fetches} cache={cache_fetches}"
+    );
     Ok(cursor)
 }
 
@@ -402,13 +446,20 @@ struct OfficialMetadata {
     count: Option<u32>,
 }
 
-/// `{ "server": OfficialServer, "_meta": ... }` envelope. The `_meta` block
-/// carries registry-side fields (`status`, `publishedAt`, `isLatest`); we
-/// don't need them for summary/detail rendering today, but capturing the
-/// whole `Value` keeps the door open without another DTO bump.
+/// `{ "server": OfficialServer, "_meta": ... }` envelope.
+///
+/// `server` is intentionally **not** `#[serde(default)]` — that's exactly
+/// the failure mode the wrapper fix is closing out. If upstream ever
+/// renames or omits the `server` key, deserialisation must surface as a
+/// parse error so the broken wire shape is loud rather than silently
+/// producing blank summary cards (the bug this PR was opened to fix).
+///
+/// `_meta` carries registry-side fields (`status`, `publishedAt`,
+/// `isLatest`); we don't need them for summary/detail rendering today, but
+/// capturing the whole `Value` keeps the door open without another DTO
+/// bump.
 #[derive(Debug, Clone, Deserialize)]
 struct OfficialServerEnvelope {
-    #[serde(default)]
     server: OfficialServer,
     #[serde(default, rename = "_meta")]
     #[allow(dead_code)]
@@ -632,6 +683,37 @@ mod tests {
         assert!(
             msg.contains("MAX_CURSOR_WALK_PAGES"),
             "error should name the limit: {msg}"
+        );
+    }
+
+    /// `server` is now required on the envelope. A payload that omits or
+    /// renames the `server` key must surface as a parse error — the exact
+    /// silent-empty-summary failure mode this whole PR was opened to fix.
+    /// Without this regression test, dropping `#[serde(default)]` on
+    /// `server` could quietly come back in a future "make it more
+    /// permissive" change.
+    #[test]
+    fn envelope_rejects_payload_missing_server_key() {
+        // The wrapper has `_meta` but no `server`.
+        let raw = json!({
+            "servers": [
+                { "_meta": { "io.modelcontextprotocol.registry/official": { "status": "active" } } }
+            ]
+        });
+        let parsed = serde_json::from_value::<OfficialListResponse>(raw);
+        assert!(
+            parsed.is_err(),
+            "missing `server` key must be a parse error, not a silent default"
+        );
+
+        // And a renamed key ("srv") also fails — defends against an upstream
+        // schema rename quietly producing blank cards.
+        let renamed = json!({
+            "servers": [{ "srv": { "name": "io.github.example/foo" } }]
+        });
+        assert!(
+            serde_json::from_value::<OfficialListResponse>(renamed).is_err(),
+            "renamed `server` field must surface as parse error"
         );
     }
 }
