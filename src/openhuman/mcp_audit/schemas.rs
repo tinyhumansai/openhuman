@@ -129,12 +129,12 @@ fn handle_list(params: Map<String, Value>) -> ControllerFuture {
         };
 
         let count = records.len();
-        let value = serde_json::to_value(records).map_err(|err| {
+        let records_value = serde_json::to_value(records).map_err(|err| {
             log::warn!("[mcp_audit] handle_list serialize response failed error={err}");
             err.to_string()
         })?;
         log::debug!("[mcp_audit] handle_list exit records={count}");
-        Ok(value)
+        Ok(serde_json::json!({ "records": records_value }))
     })
 }
 
@@ -191,7 +191,7 @@ mod tests {
         .expect("record write");
 
         let value = handle_list(Map::new()).await.expect("handle list");
-        let records = value.as_array().expect("records array");
+        let records = value["records"].as_array().expect("records array");
         assert_eq!(records.len(), 1);
         assert_eq!(records[0]["tool_name"], "memory.store");
         assert_eq!(records[0]["client_info"], "mcp:test");
