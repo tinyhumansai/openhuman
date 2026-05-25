@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import { isLocalSessionToken } from '../../utils/localSession';
+import { openhumanComposioGetMode } from '../../utils/tauriCommands';
+import { getCoreStateSnapshot } from '../coreState/store';
 import { listAgentReadyToolkits, listConnections, listToolkits } from './composioApi';
 import { canonicalizeComposioToolkitSlug } from './toolkitSlug';
 import type { ComposioConnection } from './types';
@@ -33,10 +36,14 @@ export interface UseComposioIntegrationsResult {
  * explicit `refresh()` because the allowlist is stable.
  */
 export function useComposioIntegrations(pollIntervalMs = 5_000): UseComposioIntegrationsResult {
+  const isLocalSession = isLocalSessionToken(getCoreStateSnapshot().snapshot.sessionToken);
   const [toolkits, setToolkits] = useState<string[]>([]);
   const [connections, setConnections] = useState<ComposioConnection[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [fetchEnabled, setFetchEnabled] = useState<boolean | null>(() =>
+    isLocalSession ? null : true
+  );
   const mountedRef = useRef(true);
 
   useEffect(() => {
@@ -46,7 +53,38 @@ export function useComposioIntegrations(pollIntervalMs = 5_000): UseComposioInte
     };
   }, []);
 
+  const resolveFetchEnabled = useCallback(async (): Promise<boolean> => {
+    if (!isLocalSession) {
+      if (mountedRef.current) setFetchEnabled(true);
+      return true;
+    }
+    try {
+      const res = await openhumanComposioGetMode();
+      const enabled = Boolean(res.result?.api_key_set);
+      if (mountedRef.current) setFetchEnabled(enabled);
+      return enabled;
+    } catch (err) {
+      console.warn(
+        '[composio] failed to resolve direct-mode api key status:',
+        err instanceof Error ? err.message : String(err)
+      );
+      if (mountedRef.current) setFetchEnabled(false);
+      return false;
+    }
+  }, [isLocalSession]);
+
   const refresh = useCallback(async () => {
+    const enabled = fetchEnabled ?? (await resolveFetchEnabled());
+    if (!enabled) {
+      if (mountedRef.current) {
+        setToolkits([]);
+        setConnections([]);
+        setError(null);
+        setLoading(false);
+      }
+      return;
+    }
+
     let nextError: string | null = null;
     try {
       const [toolkitsResult, connectionsResult] = await Promise.allSettled([
@@ -81,12 +119,12 @@ export function useComposioIntegrations(pollIntervalMs = 5_000): UseComposioInte
     } finally {
       if (mountedRef.current) setLoading(false);
     }
-  }, []);
+  }, [fetchEnabled, resolveFetchEnabled]);
 
   // Initial fetch + polling.
   useEffect(() => {
     void refresh();
-    if (pollIntervalMs <= 0) return;
+    if (pollIntervalMs <= 0 || fetchEnabled !== true) return;
     const id = window.setInterval(() => {
       void listConnections()
         .then(resp => {
@@ -101,7 +139,7 @@ export function useComposioIntegrations(pollIntervalMs = 5_000): UseComposioInte
         });
     }, pollIntervalMs);
     return () => window.clearInterval(id);
-  }, [refresh, pollIntervalMs]);
+  }, [refresh, pollIntervalMs, fetchEnabled]);
 
   // [composio-cache] Listen for a window-level "config changed" event
   // emitted by ComposioPanel when the user flips backend ↔ direct or
@@ -115,11 +153,26 @@ export function useComposioIntegrations(pollIntervalMs = 5_000): UseComposioInte
   useEffect(() => {
     const onConfigChanged = () => {
       console.debug('[composio-cache] window:composio:config-changed → refresh()');
+      if (isLocalSession) {
+        void resolveFetchEnabled().then(enabled => {
+          if (enabled) {
+            void refresh();
+            return;
+          }
+          if (mountedRef.current) {
+            setToolkits([]);
+            setConnections([]);
+            setError(null);
+            setLoading(false);
+          }
+        });
+        return;
+      }
       void refresh();
     };
     window.addEventListener('composio:config-changed', onConfigChanged);
     return () => window.removeEventListener('composio:config-changed', onConfigChanged);
-  }, [refresh]);
+  }, [isLocalSession, refresh, resolveFetchEnabled]);
 
   const connectionByToolkit = useMemo(() => {
     const map = new Map<string, ComposioConnection>();

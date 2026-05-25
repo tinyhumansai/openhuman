@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use self::extract::{EntityExtractor, ExtractedEntities};
 use self::resolver::{canonicalise, CanonicalEntity};
 use self::signals::{ScoreSignals, SignalWeights};
-use crate::openhuman::memory_tree::types::{approx_token_count, Chunk, SourceKind};
+use crate::openhuman::memory_store::chunks::types::{approx_token_count, Chunk, SourceKind};
 
 /// Default drop threshold. Chunks with `total < DEFAULT_DROP_THRESHOLD`
 /// are tombstoned and never reach the chunk store.
@@ -105,29 +105,20 @@ impl ScoringConfig {
         }
     }
 
-    /// Build a [`ScoringConfig`] from the workspace [`Config`]. The
-    /// resolution rules match `build_summary_extractor`:
+    /// Build a [`ScoringConfig`] from the workspace [`Config`].
     ///
-    /// - `llm_backend = "cloud"` (default): always wires the LLM extractor
-    ///   against the cloud provider, using the configured
-    ///   `cloud_llm_model` (defaulting to `summarization-v1`).
-    /// - `llm_backend = "local"`: wires the LLM extractor only when both
-    ///   `llm_extractor_endpoint` and `llm_extractor_model` are set;
-    ///   otherwise falls back to [`Self::default_regex_only`].
-    ///
-    /// Construction errors in the chat provider (rare — only client-builder
-    /// failures) fall back to regex-only with a warn log; scoring never
-    /// blocks on LLM availability.
+    /// The LLM extractor follows the unified summarization workload routing.
+    /// Construction errors fall back to regex-only with a warn log; scoring
+    /// never blocks on LLM availability.
     pub fn from_config(config: &crate::openhuman::config::Config) -> Self {
-        use crate::openhuman::memory_tree::chat::{build_chat_provider, ChatConsumer};
+        use crate::openhuman::memory::chat::build_chat_runtime;
 
-        let model = match extract::resolve_extractor_model(config) {
-            Some(m) => m,
-            None => {
-                log::debug!(
-                    "[memory_tree::score] llm_extractor not resolvable for memory_provider={:?} \
-                     — using regex-only",
-                    config.memory_provider.as_deref().unwrap_or("cloud")
+        let (provider, model) = match build_chat_runtime(config) {
+            Ok(runtime) => runtime,
+            Err(err) => {
+                log::warn!(
+                    "[memory::score] build_chat_runtime failed: {err:#} — \
+                     falling back to regex-only"
                 );
                 return Self::default_regex_only();
             }
@@ -139,23 +130,12 @@ impl ScoringConfig {
             ..extract::LlmExtractorConfig::default()
         };
 
-        match build_chat_provider(config, ChatConsumer::Extract) {
-            Ok(provider) => {
-                log::info!(
-                    "[memory_tree::score] using LlmEntityExtractor provider={} model={}",
-                    provider.name(),
-                    model
-                );
-                Self::with_llm_extractor(Arc::new(extract::LlmEntityExtractor::new(cfg, provider)))
-            }
-            Err(err) => {
-                log::warn!(
-                    "[memory_tree::score] build_chat_provider failed: {err:#} — \
-                     falling back to regex-only"
-                );
-                Self::default_regex_only()
-            }
-        }
+        log::info!(
+            "[memory::score] using LlmEntityExtractor provider={} model={}",
+            provider.name(),
+            model
+        );
+        Self::with_llm_extractor(Arc::new(extract::LlmEntityExtractor::new(cfg, provider)))
     }
 }
 
@@ -175,7 +155,7 @@ impl ScoringConfig {
 /// 4. Apply final admission gate against `drop_threshold`.
 pub async fn score_chunk(chunk: &Chunk, cfg: &ScoringConfig) -> Result<ScoreResult> {
     log::debug!(
-        "[memory_tree::score] score_chunk chunk_id={} tokens={}",
+        "[memory::score] score_chunk chunk_id={} tokens={}",
         chunk.id,
         chunk.token_count
     );
@@ -201,7 +181,7 @@ pub async fn score_chunk(chunk: &Chunk, cfg: &ScoringConfig) -> Result<ScoreResu
     let llm_consulted = if in_band {
         if let Some(llm) = cfg.llm_extractor.as_ref() {
             log::debug!(
-                "[memory_tree::score] borderline chunk_id={} cheap_total={:.3} — consulting LLM",
+                "[memory::score] borderline chunk_id={} cheap_total={:.3} — consulting LLM",
                 chunk.id,
                 cheap_total
             );
@@ -219,7 +199,7 @@ pub async fn score_chunk(chunk: &Chunk, cfg: &ScoringConfig) -> Result<ScoreResu
                 }
                 Err(e) => {
                     log::warn!(
-                        "[memory_tree::score] LLM extractor `{}` failed: {e} — \
+                        "[memory::score] LLM extractor `{}` failed: {e} — \
                          falling back to cheap signals only",
                         llm.name()
                     );
@@ -231,7 +211,7 @@ pub async fn score_chunk(chunk: &Chunk, cfg: &ScoringConfig) -> Result<ScoreResu
         }
     } else {
         log::debug!(
-            "[memory_tree::score] short-circuit chunk_id={} cheap_total={:.3} \
+            "[memory::score] short-circuit chunk_id={} cheap_total={:.3} \
              ({}, skipping LLM)",
             chunk.id,
             cheap_total,
@@ -289,7 +269,7 @@ pub async fn score_chunk(chunk: &Chunk, cfg: &ScoringConfig) -> Result<ScoreResu
 
     if !kept {
         log::debug!(
-            "[memory_tree::score] drop chunk_id={} total={:.3} reason={:?} llm_consulted={}",
+            "[memory::score] drop chunk_id={} total={:.3} reason={:?} llm_consulted={}",
             chunk.id,
             total,
             drop_reason,

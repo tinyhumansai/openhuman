@@ -315,7 +315,8 @@ function ModePicker({ onConfirm }: PickerProps) {
               />
               {tokenError && <p className="text-xs text-red-600">{tokenError}</p>}
               <p className="text-[11px] text-stone-500 dark:text-neutral-400 leading-snug">
-                {t('bootCheck.storedLocally')} <code>Authorization: Bearer …</code> on every RPC.
+                {t('bootCheck.storedLocally')} <code>Authorization: Bearer …</code>{' '}
+                {t('bootCheck.rpcAuthSuffix')}
               </p>
             </div>
 

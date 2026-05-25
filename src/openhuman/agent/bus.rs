@@ -260,6 +260,10 @@ pub fn register_agent_handlers() {
                     // wired into the orchestrator session via Agent::turn,
                     // not the bus dispatcher.
                     None,
+                    // Use the default (allow-all) tool policy. Custom
+                    // policies can be wired in via AgentTurnRequest when
+                    // per-channel policy configuration is added (#2134).
+                    &crate::openhuman::tools::policy::DefaultToolPolicy,
                 )
                 .await
             })

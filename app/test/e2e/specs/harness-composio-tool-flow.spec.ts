@@ -57,6 +57,18 @@ import {
 const LOG_PREFIX = '[HarnessComposio]';
 const USER_ID = 'e2e-harness-composio-tool-flow';
 
+function seedHarnessComposioState(): void {
+  setMockBehavior('composioToolkits', JSON.stringify(['gmail', 'github', 'linear']));
+  setMockBehavior(
+    'composioConnections',
+    JSON.stringify([
+      { id: 'conn-gmail', toolkit: 'gmail', status: 'ACTIVE' },
+      { id: 'conn-github', toolkit: 'github', status: 'ACTIVE' },
+      { id: 'conn-linear', toolkit: 'linear', status: 'ACTIVE' },
+    ])
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
@@ -65,15 +77,32 @@ const USER_ID = 'e2e-harness-composio-tool-flow';
  *  message and return. The calling test is responsible for asserting outcomes. */
 async function navigateChatAndSend(prompt: string): Promise<void> {
   await navigateViaHash('/chat');
-  await browser.waitUntil(async () => await textExists('Threads'), {
-    timeout: 15_000,
-    timeoutMsg: 'Conversations panel did not mount',
-  });
-  expect(await clickByTitle('New thread', 8_000)).toBe(true);
-  await browser.waitUntil(async () => await getSelectedThreadId(), {
-    timeout: 8_000,
-    timeoutMsg: 'thread.selectedThreadId never populated',
-  });
+  await browser.waitUntil(
+    async () => {
+      if (await getSelectedThreadId()) return true;
+      if (await textExists('No messages yet')) return true;
+      return textExists('Type a message');
+    },
+    { timeout: 15_000, timeoutMsg: 'Chat surface did not mount' }
+  );
+  if (!(await getSelectedThreadId())) {
+    const clicked =
+      (await clickByTitle('New thread', 8_000)) ||
+      (await clickByTitle('New thread (/new)', 3_000)) ||
+      (await browser.execute(() => {
+        const btn = Array.from(document.querySelectorAll('button')).find(
+          button => (button.textContent ?? '').trim() === 'New'
+        ) as HTMLButtonElement | undefined;
+        if (!btn) return false;
+        btn.click();
+        return true;
+      }));
+    expect(clicked).toBe(true);
+    await browser.waitUntil(async () => await getSelectedThreadId(), {
+      timeout: 8_000,
+      timeoutMsg: 'thread.selectedThreadId never populated',
+    });
+  }
 
   await typeIntoComposer(prompt);
   const socketReady = await waitForSocketConnected(30_000);
@@ -117,6 +146,7 @@ describe('Harness — Composio tool-call prompt flow', () => {
 
     clearRequestLog();
     resetMockBehavior();
+    seedHarnessComposioState();
 
     // Canned inbox: 3 messages the mock Composio execute will return.
     const GMAIL_MESSAGES = [
@@ -195,6 +225,7 @@ describe('Harness — Composio tool-call prompt flow', () => {
 
     clearRequestLog();
     resetMockBehavior();
+    seedHarnessComposioState();
 
     const GITHUB_REPOS = [
       { name: 'openhuman', full_name: 'tinyhumansai/openhuman', private: false },
@@ -248,6 +279,7 @@ describe('Harness — Composio tool-call prompt flow', () => {
 
     clearRequestLog();
     resetMockBehavior();
+    seedHarnessComposioState();
 
     // Inject a 400 failure for all composio execute calls.
     setMockBehavior('composioExecuteFails', '400');
@@ -304,6 +336,7 @@ describe('Harness — Composio tool-call prompt flow', () => {
 
     clearRequestLog();
     resetMockBehavior();
+    seedHarnessComposioState();
 
     const LINEAR_RESULT = {
       issue: {

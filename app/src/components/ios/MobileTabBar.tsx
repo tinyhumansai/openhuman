@@ -8,6 +8,8 @@
 import type { ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
+import { useT } from '../../lib/i18n/I18nContext';
+
 interface Tab {
   id: string;
   label: string;
@@ -70,6 +72,7 @@ const tabs: Tab[] = [
 ];
 
 const MobileTabBar = () => {
+  const { t } = useT();
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -80,7 +83,7 @@ const MobileTabBar = () => {
     <nav
       className="flex-shrink-0 flex justify-around items-stretch border-t border-neutral-800 bg-[#0f1117]/95 backdrop-blur-md"
       style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
-      aria-label="Mobile navigation">
+      aria-label={t('mobile.nav.ariaLabel')}>
       {tabs.map(tab => {
         const active = isActive(tab.path);
         return (

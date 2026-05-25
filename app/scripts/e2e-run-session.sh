@@ -19,8 +19,31 @@
 #
 set -euo pipefail
 
-SPEC_ARG="${1:-}"
-LOG_SUFFIX="${2:-session}"
+# Accept either:
+#   - Zero args             → run the entire `specs` glob from wdio.conf.ts
+#   - One spec path arg     → legacy single-spec mode (e2e-run-spec.sh shim)
+#   - One spec + log suffix → legacy two-arg mode used by debug runner / CI
+#   - N>1 spec paths        → multi-spec mode, one shared session
+#
+# To disambiguate "spec + suffix" from "two specs", we treat arg2 as a log
+# suffix only when it does NOT look like a spec path (i.e. doesn't end in
+# `.spec.ts` and doesn't start with `test/`).
+SPEC_ARGS=()
+LOG_SUFFIX="session"
+if [ "$#" -ge 1 ]; then
+  SPEC_ARGS+=("$1")
+  if [ "$#" -eq 2 ] && [[ "$2" != *.spec.ts && "$2" != test/* ]]; then
+    LOG_SUFFIX="$2"
+  else
+    shift
+    while [ "$#" -gt 0 ]; do
+      SPEC_ARGS+=("$1")
+      shift
+    done
+  fi
+fi
+# Back-compat: SPEC_ARG is the first spec (only used in stale log lines below).
+SPEC_ARG="${SPEC_ARGS[0]:-}"
 
 E2E_MOCK_PORT="${E2E_MOCK_PORT:-18473}"
 CEF_CDP_PORT="${CEF_CDP_PORT:-19222}"
@@ -598,9 +621,14 @@ done
 # ------------------------------------------------------------------------------
 # Run WDIO
 # ------------------------------------------------------------------------------
-if [ -n "$SPEC_ARG" ]; then
-  echo "[runner] Running single spec: $SPEC_ARG"
-  pnpm exec wdio run test/wdio.conf.ts --spec "$SPEC_ARG"
+if [ "${#SPEC_ARGS[@]}" -gt 0 ]; then
+  echo "[runner] Running ${#SPEC_ARGS[@]} spec(s) in a single shared session:"
+  printf '         %s\n' "${SPEC_ARGS[@]}"
+  WDIO_SPEC_ARGS=()
+  for s in "${SPEC_ARGS[@]}"; do
+    WDIO_SPEC_ARGS+=(--spec "$s")
+  done
+  pnpm exec wdio run test/wdio.conf.ts "${WDIO_SPEC_ARGS[@]}"
 else
   echo "[runner] Running full E2E suite (single shared session)..."
   pnpm exec wdio run test/wdio.conf.ts

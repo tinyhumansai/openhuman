@@ -14,6 +14,7 @@ import ServiceBlockingGate from './components/daemon/ServiceBlockingGate';
 import DictationHotkeyManager from './components/DictationHotkeyManager';
 import ErrorFallbackScreen from './components/ErrorFallbackScreen';
 import LocalAIDownloadSnackbar from './components/LocalAIDownloadSnackbar';
+import SecretPromptDialog from './components/mcp-setup/SecretPromptDialog';
 import OpenhumanLinkModal from './components/OpenhumanLinkModal';
 import PersistRehydrationScreen from './components/PersistRehydrationScreen';
 import GlobalUpsellBanner from './components/upsell/GlobalUpsellBanner';
@@ -106,6 +107,7 @@ function App() {
                             {!onMobile && <DictationHotkeyManager />}
                             {!onMobile && <LocalAIDownloadSnackbar />}
                             {!onMobile && <AppUpdatePrompt />}
+                            <SecretPromptDialog />
                           </ServiceBlockingGate>
                         </CommandProvider>
                       </Router>

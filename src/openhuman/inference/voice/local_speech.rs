@@ -196,12 +196,18 @@ pub async fn synthesize_piper(
         output.stderr.len()
     );
     if !output.status.success() {
-        // Best-effort cleanup of the partial output.
         let _ = tokio::fs::remove_file(&out_path).await;
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let detail = stderr.trim();
+        if detail.contains("libespeak-ng") || detail.contains("Library not loaded") {
+            return Err(format!(
+                "{LOG_PREFIX} piper requires espeak-ng which is not installed. \
+                 Run: brew install espeak-ng"
+            ));
+        }
         return Err(format!(
-            "{LOG_PREFIX} piper failed (exit={:?}): {}",
+            "{LOG_PREFIX} piper failed (exit={:?}): {detail}",
             exit_code,
-            String::from_utf8_lossy(&output.stderr).trim()
         ));
     }
 

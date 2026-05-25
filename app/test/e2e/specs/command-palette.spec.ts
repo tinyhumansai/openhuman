@@ -6,6 +6,12 @@ import { startMockServer, stopMockServer } from '../mock-server';
 // Map option names to WebDriver key strings (W3C Actions API codes).
 const WD_KEY: Record<string, string> = { meta: '\uE03D', ctrl: '\uE009', shift: '\uE008' };
 
+// `mod` in the product means Cmd on macOS, Ctrl on Linux/Windows
+// (see app/src/lib/commands/shortcut.ts:matchEvent). Mirror that here so
+// the dispatched event has the modifier the matcher actually checks.
+const MOD_KEY: { meta?: boolean; ctrl?: boolean } =
+  process.platform === 'darwin' ? { meta: true } : { ctrl: true };
+
 // Dispatch a key combination to the active page.
 //
 // Primary: WebDriver Actions API via CDP `Input.dispatchKeyEvent` — this
@@ -78,7 +84,7 @@ describe('Command palette', () => {
     // first dispatch when the focus context hasn't settled yet.
     let input: WebdriverIO.Element | undefined;
     for (let attempt = 0; attempt < 3; attempt++) {
-      await dispatchKey('k', { meta: true });
+      await dispatchKey('k', MOD_KEY);
       input = await browser.$('input[role="combobox"]');
       try {
         await input.waitForExist({ timeout: 3000 });
@@ -107,7 +113,7 @@ describe('Command palette', () => {
 
   it('palette lists the 5 seed nav actions, Esc closes', async () => {
     for (let attempt = 0; attempt < 3; attempt++) {
-      await dispatchKey('k', { meta: true });
+      await dispatchKey('k', MOD_KEY);
       const probe = await browser.$('input[role="combobox"]');
       try {
         await probe.waitForExist({ timeout: 3000 });
@@ -168,7 +174,7 @@ describe('Command palette', () => {
     // by asserting a fresh dispatch still reaches the command manager —
     // i.e. no prior test left the manager torn down / stack corrupted.
     for (let attempt = 0; attempt < 3; attempt++) {
-      await dispatchKey('k', { meta: true });
+      await dispatchKey('k', MOD_KEY);
       const probe = await browser.$('input[role="combobox"]');
       try {
         await probe.waitForExist({ timeout: 3000 });

@@ -692,11 +692,10 @@ export default function ComposioConnectModal({
               <div className="rounded-xl border border-coral-200 bg-coral-50 p-3">
                 <div className="flex items-center gap-2 text-sm font-medium text-coral-800">
                   <div className="w-2 h-2 rounded-full bg-coral-500" />
-                  {toolkit.name} authorization expired
+                  {t('composio.expiredAuthorization').replace('{name}', toolkit.name)}
                 </div>
                 <p className="mt-2 text-xs leading-relaxed text-coral-700">
-                  Reconnect to re-enable {toolkit.name} tools. OpenHuman will keep this integration
-                  unavailable until you refresh OAuth access.
+                  {t('composio.expiredDescription').replace('{name}', toolkit.name)}
                 </p>
               </div>
               <button
@@ -704,7 +703,7 @@ export default function ComposioConnectModal({
                 disabled={connectInFlight}
                 onClick={() => void handleConnect()}
                 className="w-full rounded-xl bg-primary-500 text-white text-sm font-medium py-2.5 hover:bg-primary-600 transition-colors disabled:opacity-60 disabled:cursor-not-allowed">
-                Reconnect {toolkit.name}
+                {`${t('composio.reconnect')} ${toolkit.name}`}
               </button>
             </>
           )}

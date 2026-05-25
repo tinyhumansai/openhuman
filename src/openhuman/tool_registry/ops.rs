@@ -107,7 +107,7 @@ pub fn registry_entries() -> Vec<ToolRegistryEntry> {
     // `block_in_place` requires the multi-threaded tokio runtime; fall back
     // silently to an empty list in single-threaded contexts (e.g. unit tests).
     let client_tools = {
-        use crate::openhuman::mcp_clients::connections;
+        use crate::openhuman::mcp_registry::connections;
         match tokio::runtime::Handle::try_current() {
             Ok(handle) => {
                 // Only use block_in_place when we are on the multi-threaded

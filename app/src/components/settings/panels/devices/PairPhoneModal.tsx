@@ -13,6 +13,7 @@ import createDebug from 'debug';
 import { QRCodeSVG } from 'qrcode.react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { useT } from '../../../../lib/i18n/I18nContext';
 import { callCoreRpc } from '../../../../services/coreRpcClient';
 
 const log = createDebug('app:devices-ui:pair-modal');
@@ -73,6 +74,7 @@ function buildPairUrl(session: CreatePairingResponse): string {
 // ---------------------------------------------------------------------------
 
 const PairPhoneModal = ({ onClose, onPaired }: PairPhoneModalProps) => {
+  const { t } = useT();
   const [state, setState] = useState<ModalState>({ kind: 'loading' });
   const [showDetails, setShowDetails] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -162,9 +164,12 @@ const PairPhoneModal = ({ onClose, onPaired }: PairPhoneModalProps) => {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       log('[devices-ui] [pair-modal] create pairing error: %s', msg);
-      setState({ kind: 'error', message: `Failed to create pairing: ${msg}` });
+      setState({
+        kind: 'error',
+        message: t('devices.pairModal.errorPrefix').replace('{message}', msg),
+      });
     }
-  }, [startPollForPaired]);
+  }, [startPollForPaired, t]);
 
   useEffect(() => {
     void createSession();
@@ -181,11 +186,11 @@ const PairPhoneModal = ({ onClose, onPaired }: PairPhoneModalProps) => {
       <div className="bg-white rounded-2xl max-w-sm w-full border border-stone-200 shadow-large overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between px-5 pt-5 pb-3 border-b border-stone-100">
-          <h3 className="text-base font-semibold text-stone-900">Pair iPhone</h3>
+          <h3 className="text-base font-semibold text-stone-900">{t('devices.pairModal.title')}</h3>
           <button
             onClick={onClose}
             className="w-6 h-6 flex items-center justify-center rounded-full hover:bg-stone-100 transition-colors"
-            aria-label="Close">
+            aria-label={t('common.close')}>
             <svg
               className="w-4 h-4 text-stone-500"
               fill="none"
@@ -238,7 +243,7 @@ const PairPhoneModal = ({ onClose, onPaired }: PairPhoneModalProps) => {
             <button
               onClick={onClose}
               className="w-full px-4 py-2 text-sm text-stone-600 hover:text-stone-800 transition-colors">
-              Cancel
+              {t('common.cancel')}
             </button>
           </div>
         )}
@@ -252,6 +257,7 @@ const PairPhoneModal = ({ onClose, onPaired }: PairPhoneModalProps) => {
 // ---------------------------------------------------------------------------
 
 function LoadingBody() {
+  const { t } = useT();
   return (
     <div className="flex flex-col items-center justify-center py-10 gap-3">
       <svg className="w-6 h-6 animate-spin text-primary-400" fill="none" viewBox="0 0 24 24">
@@ -269,7 +275,7 @@ function LoadingBody() {
           d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
         />
       </svg>
-      <p className="text-sm text-stone-500">Generating pairing code…</p>
+      <p className="text-sm text-stone-500">{t('devices.pairModal.loading')}</p>
     </div>
   );
 }
@@ -285,14 +291,13 @@ function QrBody({
   showDetails: boolean;
   onToggleDetails: () => void;
 }) {
+  const { t } = useT();
   const expiresAt = new Date(session.expires_at);
   const minutesLeft = Math.max(0, Math.floor((expiresAt.getTime() - Date.now()) / 60_000));
 
   return (
     <div className="flex flex-col items-center gap-4">
-      <p className="text-sm text-stone-600 text-center">
-        Open the OpenHuman app on your iPhone and scan this code.
-      </p>
+      <p className="text-sm text-stone-600 text-center">{t('devices.pairModal.instructions')}</p>
 
       {/* QR code */}
       <div className="p-3 bg-white rounded-xl border border-stone-200 shadow-sm">
@@ -300,26 +305,32 @@ function QrBody({
       </div>
 
       <p className="text-xs text-stone-400">
-        Code expires in ~{minutesLeft} minute{minutesLeft !== 1 ? 's' : ''}
+        {t(
+          minutesLeft === 1 ? 'devices.pairModal.expiresIn' : 'devices.pairModal.expiresInPlural'
+        ).replace('{count}', String(minutesLeft))}
       </p>
 
       {/* Details toggle */}
       <button
         onClick={onToggleDetails}
         className="text-xs text-primary-500 hover:text-primary-600 transition-colors">
-        {showDetails ? 'Hide details' : 'Show details'}
+        {showDetails ? t('devices.pairModal.hideDetails') : t('devices.pairModal.showDetails')}
       </button>
 
       {showDetails && (
         <div className="w-full space-y-2">
           <div>
-            <p className="text-xs font-medium text-stone-500 mb-1">Channel ID</p>
+            <p className="text-xs font-medium text-stone-500 mb-1">
+              {t('devices.pairModal.channelId')}
+            </p>
             <p className="text-xs font-mono text-stone-700 bg-stone-50 rounded px-2 py-1 break-all select-all">
               {session.channel_id}
             </p>
           </div>
           <div>
-            <p className="text-xs font-medium text-stone-500 mb-1">Pairing URL</p>
+            <p className="text-xs font-medium text-stone-500 mb-1">
+              {t('devices.pairModal.pairingUrl')}
+            </p>
             <div className="relative">
               <p className="text-xs font-mono text-stone-700 bg-stone-50 rounded px-2 py-1 break-all select-all pr-16">
                 {qrUrl}
@@ -329,7 +340,7 @@ function QrBody({
                   void navigator.clipboard.writeText(qrUrl);
                 }}
                 className="absolute top-1 right-1 text-xs text-primary-500 hover:text-primary-600 px-1 py-0.5 bg-white border border-stone-200 rounded">
-                Copy
+                {t('devices.pairModal.copyUrl')}
               </button>
             </div>
           </div>
@@ -340,6 +351,7 @@ function QrBody({
 }
 
 function ExpiredBody({ onRegenerate }: { onRegenerate: () => void }) {
+  const { t } = useT();
   return (
     <div className="flex flex-col items-center gap-4 py-4">
       <div className="w-12 h-12 rounded-xl bg-amber-50 flex items-center justify-center">
@@ -356,18 +368,19 @@ function ExpiredBody({ onRegenerate }: { onRegenerate: () => void }) {
           />
         </svg>
       </div>
-      <p className="text-sm font-medium text-stone-700">QR code expired</p>
-      <p className="text-xs text-stone-500 text-center">Generate a new code to continue pairing.</p>
+      <p className="text-sm font-medium text-stone-700">{t('devices.pairModal.expiredTitle')}</p>
+      <p className="text-xs text-stone-500 text-center">{t('devices.pairModal.expiredBody')}</p>
       <button
         onClick={onRegenerate}
         className="px-4 py-2 text-sm font-medium text-white bg-primary-500 hover:bg-primary-600 transition-colors rounded-lg">
-        Generate new code
+        {t('devices.pairModal.generateNewCode')}
       </button>
     </div>
   );
 }
 
 function SuccessBody({ label, channelId }: { label: string; channelId: string }) {
+  const { t } = useT();
   return (
     <div className="flex flex-col items-center gap-4 py-4">
       <div className="w-12 h-12 rounded-xl bg-sage-50 flex items-center justify-center">
@@ -380,18 +393,19 @@ function SuccessBody({ label, channelId }: { label: string; channelId: string })
         </svg>
       </div>
       <div className="text-center">
-        <p className="text-sm font-medium text-stone-800">Paired with iPhone</p>
+        <p className="text-sm font-medium text-stone-800">{t('devices.pairModal.successTitle')}</p>
         <p className="text-xs text-stone-500 mt-1">{label}</p>
         <p className="text-xs font-mono text-stone-400 mt-0.5">
           {channelId.slice(0, 8)}…{channelId.slice(-6)}
         </p>
       </div>
-      <p className="text-xs text-stone-400">Closing automatically…</p>
+      <p className="text-xs text-stone-400">{t('devices.pairModal.autoClose')}</p>
     </div>
   );
 }
 
 function ErrorBody({ message, onRetry }: { message: string; onRetry: () => void }) {
+  const { t } = useT();
   return (
     <div className="flex flex-col items-center gap-4 py-4">
       <div className="w-12 h-12 rounded-xl bg-coral-50 flex items-center justify-center">
@@ -408,12 +422,12 @@ function ErrorBody({ message, onRetry }: { message: string; onRetry: () => void 
           />
         </svg>
       </div>
-      <p className="text-sm font-medium text-stone-700">Something went wrong</p>
+      <p className="text-sm font-medium text-stone-700">{t('devices.pairModal.errorTitle')}</p>
       <p className="text-xs text-stone-500 text-center break-all">{message}</p>
       <button
         onClick={onRetry}
         className="px-4 py-2 text-sm font-medium text-white bg-primary-500 hover:bg-primary-600 transition-colors rounded-lg">
-        Try again
+        {t('common.retry')}
       </button>
     </div>
   );

@@ -20,7 +20,9 @@ use crate::openhuman::config::{Config, ContextConfig};
 use crate::openhuman::context::prompt::SystemPromptBuilder;
 use crate::openhuman::context::{ContextManager, ProviderSummarizer, SegmentRecapSummarizer};
 use crate::openhuman::inference::provider::{self, Provider};
-use crate::openhuman::memory::{self, Memory};
+use crate::openhuman::memory::Memory;
+use crate::openhuman::memory_store;
+use crate::openhuman::memory_tools::{ToolMemoryCaptureHook, ToolMemoryRule, ToolMemoryStore};
 use crate::openhuman::security::SecurityPolicy;
 use crate::openhuman::tools::{self, Tool, ToolSpec};
 use anyhow::Result;
@@ -827,7 +829,7 @@ impl Agent {
         )?;
 
         let local_embedding = config.workload_local_model("embeddings");
-        let memory: Arc<dyn Memory> = Arc::from(memory::create_memory_with_local_ai(
+        let memory: Arc<dyn Memory> = Arc::from(memory_store::create_memory_with_local_ai(
             &config.memory,
             local_embedding.as_deref(),
             &config.embedding_routes,
@@ -1142,9 +1144,7 @@ impl Agent {
             }
 
             if config.learning.tool_memory_capture_enabled {
-                post_turn_hooks.push(Arc::new(
-                    crate::openhuman::memory::ToolMemoryCaptureHook::new(memory.clone(), true),
-                ));
+                post_turn_hooks.push(Arc::new(ToolMemoryCaptureHook::new(memory.clone(), true)));
                 log::info!("[learning] tool_memory_capture hook registered");
             }
 
@@ -1582,7 +1582,7 @@ impl Agent {
 fn prefetch_tool_memory_rules_blocking(
     memory: Arc<dyn Memory>,
     tool_names: &[String],
-) -> Vec<crate::openhuman::memory::ToolMemoryRule> {
+) -> Vec<ToolMemoryRule> {
     let Ok(handle) = tokio::runtime::Handle::try_current() else {
         return Vec::new();
     };
@@ -1592,7 +1592,7 @@ fn prefetch_tool_memory_rules_blocking(
     let tool_names = tool_names.to_vec();
     tokio::task::block_in_place(|| {
         handle.block_on(async move {
-            let store = crate::openhuman::memory::ToolMemoryStore::new(memory);
+            let store = ToolMemoryStore::new(memory);
             match store.rules_for_prompt(&tool_names).await {
                 Ok(grouped) => {
                     let mut flat: Vec<_> = grouped.into_values().flatten().collect();

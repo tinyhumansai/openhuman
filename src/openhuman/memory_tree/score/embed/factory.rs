@@ -80,6 +80,21 @@ pub fn build_embedder_from_config(config: &Config) -> Result<Box<dyn Embedder>> 
             )))
         }
         _ => {
+            // If the user explicitly disabled embeddings, return InertEmbedder
+            // so semantic rerank degrades to recency-only ordering.
+            if config
+                .embeddings_provider
+                .as_deref()
+                .map(|s| s.trim())
+                .is_some_and(|s| s == "none")
+            {
+                log::info!(
+                    "[memory_tree::embed::factory] embeddings_provider=none — \
+                     using InertEmbedder (vector search disabled)"
+                );
+                return Ok(Box::new(InertEmbedder::new()));
+            }
+
             // Honour the unified AI settings: `embeddings_provider` is the
             // single source of truth. When it parses as `ollama:<model>` we
             // route locally; otherwise we fall back to the cloud session.
@@ -239,6 +254,15 @@ mod tests {
         touch_auth_profile(&cfg);
         let e = build_embedder_from_config(&cfg).expect("cloud default should build");
         assert_eq!(e.name(), "cloud");
+    }
+
+    #[test]
+    fn none_provider_returns_inert() {
+        let (_tmp, mut cfg) = test_config();
+        cfg.embeddings_provider = Some("none".into());
+        touch_auth_profile(&cfg);
+        let e = build_embedder_from_config(&cfg).expect("none should build");
+        assert_eq!(e.name(), "inert");
     }
 
     #[test]

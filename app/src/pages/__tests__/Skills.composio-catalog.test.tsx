@@ -1,4 +1,4 @@
-import { fireEvent, screen, within } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import '../../test/mockDefaultSkillStatusHooks';
@@ -9,6 +9,8 @@ let composioRefresh = vi.fn();
 let composioError: string | null = null;
 let composioToolkits: string[] = [];
 let composioConnectionByToolkit = new Map();
+let sessionToken = 'jwt-abc';
+let composioModeStatus = { result: { mode: 'backend', api_key_set: true }, logs: [] };
 // CodeRabbit on #2361: failure-path coverage for the agent-ready
 // RPC requires overriding the hook's state per test. Default state
 // keeps Preview badges off (loading=true) so legacy assertions on
@@ -46,12 +48,32 @@ vi.mock('../../lib/composio/hooks', () => ({
   useAgentReadyComposioToolkits: () => agentReadyState,
 }));
 
+vi.mock('../../lib/coreState/store', async () => {
+  const actual = await vi.importActual<typeof import('../../lib/coreState/store')>(
+    '../../lib/coreState/store'
+  );
+  return { ...actual, getCoreStateSnapshot: () => ({ snapshot: { sessionToken } }) };
+});
+
+vi.mock('../../utils/tauriCommands', async () => {
+  const actual = await vi.importActual<typeof import('../../utils/tauriCommands')>(
+    '../../utils/tauriCommands'
+  );
+  return {
+    ...actual,
+    openhumanComposioGetMode: vi.fn(async () => composioModeStatus),
+    subconsciousEscalationsDismiss: vi.fn(),
+  };
+});
+
 describe('Skills page — Composio catalog fallback', () => {
   beforeEach(() => {
     composioRefresh = vi.fn();
     composioError = null;
     composioToolkits = [];
     composioConnectionByToolkit = new Map();
+    sessionToken = 'jwt-abc';
+    composioModeStatus = { result: { mode: 'backend', api_key_set: true }, logs: [] };
     agentReadyState = { agentReady: new Set<string>(), loading: true, error: null };
   });
 
@@ -100,7 +122,7 @@ describe('Skills page — Composio catalog fallback', () => {
     expect(gmailTile).toBeInTheDocument();
     expect(within(gmailTile).getByText('Status unavailable')).toBeInTheDocument();
 
-    fireEvent.click(screen.getAllByRole('button', { name: 'Retry' })[0]);
+    fireEvent.click(screen.getAllByRole('button', { name: 'Try again' })[0]);
     expect(composioRefresh).toHaveBeenCalledTimes(1);
   });
 
@@ -152,5 +174,20 @@ describe('Skills page — Composio catalog fallback', () => {
       /composio-preview-badge-/
     );
     expect(previewBadges).toHaveLength(0);
+  });
+
+  it('shows a local-mode composio API key banner when no key is configured', async () => {
+    sessionToken = 'header.payload.local';
+    composioModeStatus = { result: { mode: 'direct', api_key_set: false }, logs: [] };
+
+    renderWithProviders(<Skills />, { initialEntries: ['/skills'] });
+
+    await waitFor(() => {
+      expect(screen.getByText(/No Composio API Key Configured/i)).toBeInTheDocument();
+    });
+    expect(screen.getByText(/Local mode uses your own Composio API key/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Open.*Settings/i })).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText('Search skills…')).not.toBeInTheDocument();
+    expect(screen.queryByText('Gmail')).not.toBeInTheDocument();
   });
 });

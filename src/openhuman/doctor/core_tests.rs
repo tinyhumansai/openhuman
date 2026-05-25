@@ -89,7 +89,7 @@ fn check_memory_tree_db_ok_when_accessible() {
     let cfg = test_config_in(&tmp);
 
     // Trigger DB creation.
-    crate::openhuman::memory_tree::store::with_connection(&cfg, |_conn| Ok(()))
+    crate::openhuman::memory_store::chunks::store::with_connection(&cfg, |_conn| Ok(()))
         .expect("DB init must succeed");
 
     let mut items = vec![];

@@ -4,6 +4,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mockListToolkits = vi.fn();
 const mockListConnections = vi.fn();
 const mockListAgentReadyToolkits = vi.fn();
+const mockOpenhumanComposioGetMode = vi.fn();
+let sessionToken = 'jwt-abc';
 
 vi.mock('./composioApi', () => ({
   listToolkits: () => mockListToolkits(),
@@ -11,10 +13,27 @@ vi.mock('./composioApi', () => ({
   listAgentReadyToolkits: () => mockListAgentReadyToolkits(),
 }));
 
+vi.mock('../coreState/store', async () => {
+  const actual = await vi.importActual<typeof import('../coreState/store')>('../coreState/store');
+  return { ...actual, getCoreStateSnapshot: () => ({ snapshot: { sessionToken } }) };
+});
+
+vi.mock('../../utils/tauriCommands', async () => {
+  const actual = await vi.importActual<typeof import('../../utils/tauriCommands')>(
+    '../../utils/tauriCommands'
+  );
+  return { ...actual, openhumanComposioGetMode: () => mockOpenhumanComposioGetMode() };
+});
+
 describe('useComposioIntegrations', () => {
   beforeEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
+    sessionToken = 'jwt-abc';
+    mockOpenhumanComposioGetMode.mockResolvedValue({
+      result: { mode: 'backend', api_key_set: true },
+      logs: [],
+    });
   });
 
   it('keeps toolkit cards visible when connections fetch fails', async () => {
@@ -49,6 +68,27 @@ describe('useComposioIntegrations', () => {
     expect(result.current.toolkits).toEqual([]);
     expect(result.current.connectionByToolkit.size).toBe(0);
     expect(result.current.error).toBe('backend unreachable');
+  });
+
+  it('skips toolkit fetch and polling for local sessions without a composio api key', async () => {
+    sessionToken = 'header.payload.local';
+    mockOpenhumanComposioGetMode.mockResolvedValue({
+      result: { mode: 'direct', api_key_set: false },
+      logs: [],
+    });
+
+    const { useComposioIntegrations } = await import('./hooks');
+    const { result } = renderHook(() => useComposioIntegrations(10));
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
+
+    expect(result.current.toolkits).toEqual([]);
+    expect(result.current.connectionByToolkit.size).toBe(0);
+    expect(result.current.error).toBeNull();
+    expect(mockListToolkits).not.toHaveBeenCalled();
+    expect(mockListConnections).not.toHaveBeenCalled();
   });
 });
 

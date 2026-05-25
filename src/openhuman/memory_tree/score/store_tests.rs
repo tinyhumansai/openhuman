@@ -159,7 +159,7 @@ fn lookup_limit_respected() {
 /// and summary hits. See PR #789 CodeRabbit review.
 #[test]
 fn summary_entity_index_kind_is_parseable() {
-    use crate::openhuman::memory_tree::store::with_connection;
+    use crate::openhuman::memory_store::chunks::store::with_connection;
 
     let (_tmp, cfg) = test_config();
 

@@ -131,11 +131,11 @@ const CompletionStyleSection = ({
             value={stylePreset}
             onChange={event => onSetStylePreset(event.target.value)}
             className="rounded border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 py-1 text-xs text-stone-700 dark:text-neutral-200">
-            <option value="balanced">Balanced</option>
-            <option value="concise">Concise</option>
-            <option value="formal">Formal</option>
-            <option value="casual">Casual</option>
-            <option value="custom">Custom</option>
+            <option value="balanced">{t('autocomplete.style.balanced')}</option>
+            <option value="concise">{t('autocomplete.style.concise')}</option>
+            <option value="formal">{t('autocomplete.style.formal')}</option>
+            <option value="casual">{t('autocomplete.style.casual')}</option>
+            <option value="custom">{t('autocomplete.style.custom')}</option>
           </select>
         </label>
         <div className="space-y-1">
@@ -200,7 +200,10 @@ const CompletionStyleSection = ({
             ? t('common.loading')
             : historyEntries.length === 0
               ? t('settings.autocomplete.completionStyle.noHistory')
-              : `${String(historyEntries.length)} ${historyEntries.length === 1 ? t('settings.autocomplete.completionStyle.acceptedCompletion') : t('settings.autocomplete.completionStyle.acceptedCompletions')}`}
+              : (historyEntries.length === 1
+                  ? t('settings.autocomplete.completionStyle.acceptedCompletion')
+                  : t('settings.autocomplete.completionStyle.acceptedCompletions')
+                ).replace('{count}', String(historyEntries.length))}
         </p>
         {historyEntries.length > 0 && (
           <div className="max-h-48 overflow-y-auto rounded-xl border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 p-2 space-y-1">
