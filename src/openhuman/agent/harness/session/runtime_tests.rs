@@ -51,8 +51,9 @@ fn make_agent(provider: Arc<dyn Provider>) -> Agent {
         backend: "none".into(),
         ..crate::openhuman::config::MemoryConfig::default()
     };
-    let mem: Arc<dyn Memory> =
-        Arc::from(crate::openhuman::memory::create_memory(&memory_cfg, &workspace_path).unwrap());
+    let mem: Arc<dyn Memory> = Arc::from(
+        crate::openhuman::memory_store::create_memory(&memory_cfg, &workspace_path).unwrap(),
+    );
 
     Agent::builder()
         .provider_arc(provider)

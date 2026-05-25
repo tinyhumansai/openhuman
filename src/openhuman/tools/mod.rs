@@ -2,6 +2,7 @@ pub mod generated;
 pub mod local_cli;
 pub mod ops;
 pub mod orchestrator_tools;
+pub mod policy;
 pub mod schema;
 mod schemas;
 pub mod traits;
@@ -12,6 +13,7 @@ pub(crate) mod implementations;
 
 pub use implementations::*;
 pub use ops::*;
+pub use policy::{DefaultToolPolicy, PolicyDecision, ToolPolicy};
 #[allow(unused_imports)]
 pub use schema::{CleaningStrategy, SchemaCleanr};
 pub use schemas::{

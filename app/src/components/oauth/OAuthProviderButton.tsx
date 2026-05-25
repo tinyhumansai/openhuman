@@ -239,7 +239,11 @@ const OAuthProviderButton = ({
       const loopback = isTauri() ? await startLoopbackOauthListener() : null;
       const loginUrlBase = `${backendUrl}/auth/${provider.id}/login`;
       const params = new URLSearchParams();
-      if (IS_DEV) params.set('responseType', 'json');
+      // `responseType=json` makes the backend return JSON in the browser tab
+      // instead of redirecting — useful as a pre-loopback dev workaround, but
+      // it shortcircuits the redirect so the loopback listener never fires.
+      // Only set it when we have no loopback handle (web build, or bind failed).
+      if (IS_DEV && !loopback) params.set('responseType', 'json');
       if (loopback) params.set('redirectUri', loopback.redirectUri);
       const loginUrl = params.toString() ? `${loginUrlBase}?${params}` : loginUrlBase;
 

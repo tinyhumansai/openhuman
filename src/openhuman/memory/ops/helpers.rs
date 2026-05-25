@@ -9,11 +9,13 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::openhuman::config::Config;
-use crate::openhuman::memory::store::GraphRelationRecord;
 use crate::openhuman::memory::{
-    MemoryClient, MemoryClientRef, MemoryDocumentSummary, MemoryItemKind, MemoryRetrievalChunk,
-    MemoryRetrievalContext, MemoryRetrievalEntity, MemoryRetrievalRelation, NamespaceMemoryHit,
-    QueryNamespaceRequest,
+    MemoryDocumentSummary, MemoryRetrievalChunk, MemoryRetrievalContext, MemoryRetrievalEntity,
+    MemoryRetrievalRelation, QueryNamespaceRequest,
+};
+use crate::openhuman::memory_store::GraphRelationRecord;
+use crate::openhuman::memory_store::{
+    MemoryClient, MemoryClientRef, MemoryItemKind, NamespaceMemoryHit,
 };
 
 // ---------------------------------------------------------------------------
@@ -223,6 +225,80 @@ pub(crate) fn format_llm_context_message(
     }
 
     Some(parts.join("\n\n"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::openhuman::memory_store::RetrievalScoreBreakdown;
+
+    fn sample_hit(kind: MemoryItemKind) -> NamespaceMemoryHit {
+        NamespaceMemoryHit {
+            id: "hit-1".into(),
+            kind,
+            namespace: "global".into(),
+            key: "note-1".into(),
+            title: Some("Title".into()),
+            content: "Body text".into(),
+            category: "core".into(),
+            source_type: Some("manual".into()),
+            updated_at: 1.5,
+            score: 0.7,
+            score_breakdown: RetrievalScoreBreakdown::default(),
+            document_id: Some("doc-1".into()),
+            chunk_id: Some("chunk-1".into()),
+            supporting_relations: vec![GraphRelationRecord {
+                namespace: Some("global".into()),
+                subject: "Alice".into(),
+                predicate: "OWNS".into(),
+                object: "OpenHuman".into(),
+                attrs: json!({"entity_types": {"subject": "PERSON", "object": "PRODUCT"}}),
+                updated_at: 2.0,
+                evidence_count: 1,
+                order_index: Some(0),
+                document_ids: vec!["doc-1".into()],
+                chunk_ids: vec!["chunk-1".into()],
+            }],
+        }
+    }
+
+    #[test]
+    fn timestamp_to_rfc3339_rejects_invalid_values() {
+        assert!(timestamp_to_rfc3339(f64::NAN).is_none());
+        assert!(timestamp_to_rfc3339(f64::INFINITY).is_none());
+        assert!(timestamp_to_rfc3339(-1.0).is_none());
+        assert!(timestamp_to_rfc3339(1.5).is_some());
+    }
+
+    #[test]
+    fn relation_identity_and_metadata_include_namespace_and_attrs() {
+        let relation = sample_hit(MemoryItemKind::Document)
+            .supporting_relations
+            .remove(0);
+        assert_eq!(relation_identity(&relation), "global|Alice|OWNS|OpenHuman");
+        let meta = relation_metadata(&relation);
+        assert_eq!(meta["namespace"], "global");
+        assert_eq!(meta["attrs"]["entity_types"]["subject"], "PERSON");
+    }
+
+    #[test]
+    fn build_retrieval_context_deduplicates_relations_and_entities() {
+        let hit = sample_hit(MemoryItemKind::Document);
+        let ctx = build_retrieval_context(&[hit.clone(), hit]);
+        assert_eq!(ctx.chunks.len(), 2);
+        assert_eq!(ctx.relations.len(), 1);
+        assert!(ctx.entities.iter().any(|e| e.name == "Alice"));
+        assert!(ctx.entities.iter().any(|e| e.name == "OpenHuman"));
+    }
+
+    #[test]
+    fn format_llm_context_message_includes_query_and_relation_text() {
+        let hit = sample_hit(MemoryItemKind::Document);
+        let text = format_llm_context_message(Some("who owns it"), &[hit]).unwrap();
+        assert!(text.contains("Query: who owns it"));
+        assert!(text.contains("Title: Body text"));
+        assert!(text.contains("Alice (PERSON) -[OWNS]-> OpenHuman (PRODUCT)"));
+    }
 }
 
 /// Filters memory hits to only include those matching specific document IDs.

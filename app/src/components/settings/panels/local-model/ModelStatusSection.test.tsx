@@ -375,7 +375,7 @@ describe('ModelStatusSection diagnostics', () => {
         })}
       />
     );
-    expect(screen.getByText('2,048 ctx — below 8,192 min')).toBeTruthy();
+    expect(screen.getByText('2,048 ctx - below 8,192 min')).toBeTruthy();
     // Model name is rendered in the rejection (red) treatment.
     const name = screen.getByTitle('tiny-embed:latest');
     expect(name.className).toContain('text-red-700');

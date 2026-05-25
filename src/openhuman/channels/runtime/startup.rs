@@ -32,7 +32,8 @@ use crate::openhuman::channels::Channel;
 use crate::openhuman::config::Config;
 use crate::openhuman::context::channels_prompt::build_system_prompt;
 use crate::openhuman::inference::provider::{self, Provider};
-use crate::openhuman::memory::{self, Memory};
+use crate::openhuman::memory::Memory;
+use crate::openhuman::memory_store;
 use crate::openhuman::security::SecurityPolicy;
 use crate::openhuman::tools;
 use anyhow::Result;
@@ -46,9 +47,10 @@ pub async fn start_channels(config: Config) -> Result<()> {
     let _tracing_handle = bus.subscribe(Arc::new(TracingSubscriber));
     crate::openhuman::health::bus::register_health_subscriber();
     crate::openhuman::skills::bus::register_skill_cleanup_subscriber();
-    crate::openhuman::memory::conversations::register_conversation_persistence_subscriber(
+    crate::openhuman::memory_conversations::register_conversation_persistence_subscriber(
         config.workspace_dir.clone(),
     );
+    crate::openhuman::memory::sync::register_sync_stage_bridge();
     crate::openhuman::composio::register_composio_trigger_subscriber();
     // Spawn the per-toolkit provider periodic sync scheduler. This is
     // a thin tokio task that ticks every minute and dispatches into
@@ -196,7 +198,7 @@ pub async fn start_channels(config: Config) -> Result<()> {
         .unwrap_or_else(|| crate::openhuman::config::DEFAULT_MODEL.into());
     let temperature = config.default_temperature;
     let local_embedding = config.workload_local_model("embeddings");
-    let mem: Arc<dyn Memory> = Arc::from(memory::create_memory_with_local_ai(
+    let mem: Arc<dyn Memory> = Arc::from(memory_store::create_memory_with_local_ai(
         &config.memory,
         local_embedding.as_deref(),
         &[],
@@ -505,7 +507,7 @@ pub async fn start_channels(config: Config) -> Result<()> {
 
     println!("🦀 OpenHuman Channel Server");
     println!("  🤖 Model:    {model}");
-    let effective_backend = memory::effective_memory_backend_name(
+    let effective_backend = memory_store::effective_memory_backend_name(
         &config.memory.backend,
         Some(&config.storage.provider.config),
     );
@@ -587,7 +589,7 @@ pub async fn start_channels(config: Config) -> Result<()> {
     };
     // Register the tree summarizer event subscriber for observability logging.
     let _tree_summarizer_handle = bus.subscribe(Arc::new(
-        crate::openhuman::tree_summarizer::bus::TreeSummarizerEventSubscriber::new(),
+        crate::openhuman::memory_tree::tree_runtime::bus::TreeSummarizerEventSubscriber::new(),
     ));
 
     let max_in_flight_messages = compute_max_in_flight_messages(channels.len());

@@ -186,6 +186,8 @@ const ar4: TranslationMap = {
   'pages.settings.ai.llmDesc': 'وصف LLM',
   'pages.settings.ai.voice': 'الصوت',
   'pages.settings.ai.voiceDesc': 'وصف الصوت',
+  'pages.settings.ai.embeddings': 'التضمينات',
+  'pages.settings.ai.embeddingsDesc': 'نموذج ترميز المتجهات لاسترجاع الذاكرة',
   'pages.settings.aiSection.description': 'مزودو نماذج اللغة وOllama المحلي والصوت (STT / TTS).',
   'pages.settings.aiSection.title': 'الذكاء الاصطناعي',
   'pages.settings.features.desktopCompanion': 'الرفيق المكتبي',
@@ -295,6 +297,18 @@ const ar4: TranslationMap = {
   'settings.ai.localOllama': 'محلي (Ollama)',
   'settings.ai.modelLabel': 'النموذج',
   'settings.ai.noCustomProviders': 'لا يوجد مزودون مخصصون',
+  'settings.ai.openAiCompat.authHeaderExample': 'التفويض: الحامل <مفتاحك>',
+  'settings.ai.openAiCompat.authHeaderLabel': 'رأس المصادقة',
+  'settings.ai.openAiCompat.baseUrlLabel': 'القاعدة URL',
+  'settings.ai.openAiCompat.baseUrlUnavailable': 'غير متاح',
+  'settings.ai.openAiCompat.clearKey': 'مسح المفتاح',
+  'settings.ai.openAiCompat.description':
+    "Point local harnesses at this /v1 server to route through the providers configured below. Authentication uses a stable key you set here, not the app's internal core bearer.",
+  'settings.ai.openAiCompat.keyConfigured': 'تم تكوين المفتاح',
+  'settings.ai.openAiCompat.keyRequired': 'المفتاح مطلوب',
+  'settings.ai.openAiCompat.rotateKey': 'مفتاح التدوير',
+  'settings.ai.openAiCompat.setKey': 'مفتاح التعيين',
+  'settings.ai.openAiCompat.title': 'OpenAI نقطة النهاية المتوافقة',
   'settings.ai.providerLabel': 'المزود',
   'settings.ai.routing': 'التوجيه',
   'settings.ai.routingCustom': 'توجيه مخصص',
@@ -389,6 +403,16 @@ const ar4: TranslationMap = {
   'pages.settings.account.migration': 'استيراد من مساعد آخر',
   'pages.settings.account.migrationDesc':
     'انقل الذاكرة والملاحظات من OpenClaw (وقريبًا Hermes) إلى مساحة العمل هذه.',
+  'composio.connect.scope.read': 'قراءة',
+  'composio.connect.scope.readHint': 'اسمح للوكيل بقراءة البيانات من هذا الاتصال.',
+  'composio.connect.scope.write': 'اكتب',
+  'composio.connect.scope.writeHint': 'اسمح للوكيل بإنشاء البيانات أو تعديلها من خلال هذا الاتصال.',
+  'composio.connect.scope.admin': 'المسؤول',
+  'composio.connect.scope.adminHint':
+    'السماح للوكيل بإدارة الإعدادات أو الأذونات أو الإجراءات المدمرة.',
+  'pages.settings.composioSection.title': 'Composio',
+  'pages.settings.composioSection.description':
+    'التوجيه والمشغلات وسجل عمليات التكامل المدعومة بواسطة Composio.',
 };
 
 export default ar4;

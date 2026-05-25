@@ -126,7 +126,15 @@ export default function TriggerToggles({
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         const actionWord = existing ? t('common.disable') : t('common.enable');
-        setRowError(`${actionWord} failed for ${formatTriggerLabel(entry.slug)}: ${msg}`);
+        setRowError(
+          t('triggers.toggleFailed')
+            .replace('{action}', actionWord)
+            .replace(
+              '{trigger}',
+              formatTriggerLabel(entry.slug, { toolkit: toolkitName || toolkitSlug })
+            )
+            .replace('{message}', msg)
+        );
       } finally {
         setPendingSignature(null);
       }
@@ -191,15 +199,17 @@ export default function TriggerToggles({
           const label =
             entry.scope === 'github_repo' && entry.repo
               ? `${entry.repo.owner}/${entry.repo.repo}`
-              : formatTriggerLabel(entry.slug);
+              : formatTriggerLabel(entry.slug, { toolkit: toolkitName || toolkitSlug });
           const sub =
             entry.scope === 'github_repo'
-              ? formatTriggerLabel(entry.slug)
+              ? formatTriggerLabel(entry.slug, { toolkit: toolkitName || toolkitSlug })
               : requiresConfig
                 ? t('composio.triggers.needsConfiguration')
                 : '';
           const action = enabled ? t('common.disable') : t('common.enable');
-          const triggerName = formatTriggerLabel(entry.slug);
+          const triggerName = formatTriggerLabel(entry.slug, {
+            toolkit: toolkitName || toolkitSlug,
+          });
           const ariaLabel =
             entry.scope === 'github_repo' && entry.repo
               ? `${action} ${triggerName} for ${entry.repo.owner}/${entry.repo.repo}`

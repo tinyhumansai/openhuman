@@ -29,6 +29,6 @@ describe('MemoryDebugPanel stable test hooks', () => {
     render(<MemoryDebugPanel />);
 
     expect(screen.getByTestId('memory-debug-panel')).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByText('Documents')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('memory.documents')).toBeInTheDocument());
   });
 });

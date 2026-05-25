@@ -83,5 +83,10 @@ pub use tools::{
 pub use update::{UpdateConfig, UpdateRestartStrategy};
 mod voice_server;
 pub use voice_server::{VoiceActivationMode, VoiceServerConfig};
+pub mod voice_providers;
+pub use voice_providers::{
+    generate_voice_provider_id, is_voice_slug_reserved, BuiltinVoiceProvider, SttApiStyle,
+    TtsApiStyle, VoiceCapability, VoiceProviderCreds, BUILTIN_VOICE_PROVIDERS,
+};
 mod types;
 pub use types::*;

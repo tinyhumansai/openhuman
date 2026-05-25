@@ -83,9 +83,12 @@ describe('Screen Intelligence', () => {
     const currentHash = await browser.execute(() => window.location.hash);
     stepLog('Navigated to screen intelligence route', { currentHash });
 
-    // The panel renders "Screen Awareness" title and "Permissions" section.
+    // The panel renders the "Screen Awareness" title on every platform.
+    // The "Permissions" sub-section is only rendered when
+    // status.platform_supported is true (macOS) — on Linux/Windows the
+    // section is gated out by ScreenIntelligencePanel, so don't assert
+    // on it here.
     await waitForText('Screen Awareness', 15_000);
-    await waitForText('Permissions', 10_000);
   });
 
   it('triggers capture test and reaches a stable UI outcome', async function () {

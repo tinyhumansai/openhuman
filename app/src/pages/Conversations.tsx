@@ -170,14 +170,19 @@ function formatAgentProfileAgentLabel(agentId: string): string {
     .join(' ');
 }
 
-const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsProps = {}) => {
+const Conversations = ({
+  variant = 'page',
+  composer: composerProp = 'text',
+}: ConversationsProps = {}) => {
+  const [composerOverride, setComposerOverride] = useState<'mic-cloud' | 'text' | null>(null);
+  const composer = composerOverride ?? composerProp;
   const { t } = useT();
   const dispatch = useAppDispatch();
   const navigate = useNavigate();
   const { threads, selectedThreadId, messages, isLoadingMessages, messagesError, activeThreadId } =
     useAppSelector(state => state.thread);
 
-  const [showSidebar, setShowSidebar] = useState(true);
+  const [showSidebar, setShowSidebar] = useState(false);
   const [inputValue, setInputValue] = useState('');
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [inputMode, setInputMode] = useState<InputMode>('text');
@@ -250,10 +255,10 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
       });
     }
     if (options.length === 0) {
-      options.push({ id: 'orchestrator', label: 'Orchestrator' });
+      options.push({ id: 'orchestrator', label: t('chat.agentProfile.defaultAgentLabel') });
     }
     return options;
-  }, [agentProfiles, profileDraft.agentId]);
+  }, [agentProfiles, profileDraft.agentId, t]);
 
   const textInputRef = useRef<HTMLTextAreaElement>(null);
   const isComposingTextRef = useRef(false);
@@ -305,7 +310,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
       profile => profile.name.trim().toLowerCase() === name.toLowerCase()
     );
     if (duplicate) {
-      setSendAdvisory(`Agent profile "${name}" already exists.`);
+      setSendAdvisory(t('chat.agentProfile.exists').replace('{name}', name));
       return;
     }
     const id = `profile-${globalThis.crypto.randomUUID().slice(0, 8)}`;
@@ -316,7 +321,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
     const profile: AgentProfile = {
       id,
       name,
-      description: 'Custom agent profile',
+      description: t('chat.agentProfile.customDescription'),
       agentId: profileDraft.agentId,
       systemPromptSuffix: profileDraft.systemPromptSuffix.trim() || null,
       allowedTools: allowedTools.length > 0 ? allowedTools : null,
@@ -330,7 +335,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
       setSendAdvisory(null);
     } catch (error) {
       debug('agent profile create failed: %o', error);
-      setSendAdvisory('Could not create agent profile.');
+      setSendAdvisory(t('chat.agentProfile.createFailed'));
     }
   };
 
@@ -1092,9 +1097,9 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
     if (!parentId) return null;
     const parent = threads.find(thr => thr.id === parentId);
     return parent
-      ? { id: parent.id, title: parent.title || 'parent thread' }
-      : { id: parentId, title: 'parent thread' };
-  }, [threads, selectedThreadId]);
+      ? { id: parent.id, title: parent.title || t('chat.parentThread') }
+      : { id: parentId, title: t('chat.parentThread') };
+  }, [threads, selectedThreadId, t]);
 
   return (
     <div
@@ -1270,7 +1275,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                   data-testid="worker-thread-back-to-parent">
                   <span aria-hidden="true">←</span>
                   <span className="truncate max-w-[16rem]">
-                    back to {selectedThreadParent.title}
+                    {t('chat.backToThread').replace('{title}', selectedThreadParent.title)}
                   </span>
                 </button>
               ) : null}
@@ -1281,7 +1286,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
             <>
               <div className="flex items-center gap-1">
                 <select
-                  aria-label="Agent profile"
+                  aria-label={t('chat.agentProfile.label')}
                   value={selectedAgentProfileId}
                   onChange={event => void handleSelectAgentProfile(event.target.value)}
                   className="h-7 max-w-[120px] rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-2 text-xs text-stone-700 dark:text-neutral-200 outline-none transition-colors focus:border-primary-400">
@@ -1295,8 +1300,8 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                   type="button"
                   onClick={() => setProfileDraftOpen(prev => !prev)}
                   className="h-7 w-7 rounded-lg text-xs font-medium text-stone-500 dark:text-neutral-400 transition-colors hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 dark:hover:bg-neutral-800/60 hover:text-stone-700 dark:hover:text-neutral-200 dark:text-neutral-200 dark:hover:text-neutral-200"
-                  title="Create agent profile"
-                  aria-label="Create agent profile">
+                  title={t('chat.agentProfile.create')}
+                  aria-label={t('chat.agentProfile.create')}>
                   +
                 </button>
               </div>
@@ -1317,7 +1322,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
               <input
                 value={profileDraft.name}
                 onChange={event => setProfileDraft(prev => ({ ...prev, name: event.target.value }))}
-                placeholder="Profile name"
+                placeholder={t('chat.agentProfile.namePlaceholder')}
                 className="h-8 rounded-lg border border-stone-200 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-200 px-3 text-xs outline-none focus:border-primary-400"
               />
               <select
@@ -1338,7 +1343,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
               onChange={event =>
                 setProfileDraft(prev => ({ ...prev, systemPromptSuffix: event.target.value }))
               }
-              placeholder="Prompt style"
+              placeholder={t('chat.agentProfile.promptStylePlaceholder')}
               rows={2}
               className="mt-2 w-full resize-none rounded-lg border border-stone-200 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-200 px-3 py-2 text-xs outline-none focus:border-primary-400"
             />
@@ -1348,7 +1353,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                 onChange={event =>
                   setProfileDraft(prev => ({ ...prev, allowedTools: event.target.value }))
                 }
-                placeholder="Allowed tools"
+                placeholder={t('chat.agentProfile.allowedToolsPlaceholder')}
                 className="h-8 min-w-0 flex-1 rounded-lg border border-stone-200 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-200 px-3 text-xs outline-none focus:border-primary-400"
               />
               <button
@@ -1356,7 +1361,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                 onClick={() => void handleCreateAgentProfile()}
                 disabled={!profileDraft.name.trim()}
                 className="h-8 rounded-lg bg-primary-500 px-3 text-xs font-medium text-white transition-colors hover:bg-primary-600 disabled:opacity-40">
-                Save
+                {t('common.save')}
               </button>
               <button
                 type="button"
@@ -1365,7 +1370,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                   setProfileDraftOpen(false);
                 }}
                 className="h-8 rounded-lg border border-stone-200 dark:border-neutral-800 px-3 text-xs font-medium text-stone-600 dark:text-neutral-300 transition-colors hover:bg-stone-50 dark:hover:bg-neutral-800/60">
-                Cancel
+                {t('common.cancel')}
               </button>
             </div>
           </div>
@@ -1539,7 +1544,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                                   )
                                 }
                                 className="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-primary-100 border border-primary-200 text-xs transition-colors hover:bg-primary-200"
-                                title={`Remove ${emoji}`}>
+                                title={t('chat.removeReaction').replace('{emoji}', emoji)}>
                                 {emoji}
                               </button>
                             ))}
@@ -1576,7 +1581,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                                 <button
                                   onClick={() => setReactionPickerMsgId(msg.id)}
                                   className="opacity-0 group-hover/msg:opacity-100 flex items-center px-1.5 py-0.5 rounded-full bg-stone-50 dark:bg-neutral-800/60 hover:bg-stone-200 dark:bg-neutral-800 dark:hover:bg-neutral-800 text-stone-500 dark:text-neutral-400 hover:text-stone-300 dark:hover:text-neutral-600 text-xs transition-all"
-                                  title="Add reaction">
+                                  title={t('chat.addReaction')}>
                                   +
                                 </button>
                               ))}
@@ -1843,15 +1848,18 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
           )}
 
           {composer === 'mic-cloud' ? (
-            <MicComposer
-              // Without `!selectedThreadId`, a mic submit before a thread is
-              // ready hits `handleSendMessage`'s early return and the
-              // transcript is silently dropped — the user spoke into the void.
-              disabled={composerInteractionBlocked || isSending || !selectedThreadId}
-              onSubmit={text => handleSendMessage(text)}
-              onError={message => setSendError(chatSendError('voice_transcription', message))}
-              showDeviceSelector
-            />
+            <div className="flex flex-col items-center gap-3 py-1">
+              <MicComposer
+                // Without `!selectedThreadId`, a mic submit before a thread is
+                // ready hits `handleSendMessage`'s early return and the
+                // transcript is silently dropped — the user spoke into the void.
+                disabled={composerInteractionBlocked || isSending || !selectedThreadId}
+                onSubmit={text => handleSendMessage(text)}
+                onError={message => setSendError(chatSendError('voice_transcription', message))}
+                showDeviceSelector
+                onSwitchToText={() => setComposerOverride('text')}
+              />
+            </div>
           ) : inputMode === 'text' ? (
             <div className="flex items-end gap-3">
               <div className="relative flex flex-1 items-center justify-center rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 transition-all focus-within:border-primary-500/50 focus-within:ring-1 focus-within:ring-primary-500/50">
@@ -1881,6 +1889,28 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                 />
                 {/* Voice input mic hidden per #717 (inputMode='voice' path retained). */}
               </div>
+              <button
+                type="button"
+                aria-label={t('mic.startRecording')}
+                title={t('mic.startRecording')}
+                onClick={() => setComposerOverride('mic-cloud')}
+                disabled={composerInteractionBlocked || isSending}
+                className="w-10 h-10 flex items-center justify-center rounded-full border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-stone-500 dark:text-neutral-400 hover:text-primary-500 dark:hover:text-primary-400 hover:border-primary-300 dark:hover:border-primary-700 transition-colors flex-shrink-0 disabled:opacity-40 disabled:cursor-not-allowed">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"
+                  />
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M19 10v2a7 7 0 01-14 0v-2M12 19v4m-4 0h8"
+                  />
+                </svg>
+              </button>
               <button
                 data-testid="send-message-button"
                 aria-label={t('chat.send')}

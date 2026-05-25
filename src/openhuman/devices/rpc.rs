@@ -22,7 +22,7 @@ use crate::openhuman::devices::tunnel_client;
 use crate::openhuman::devices::types::{
     CreatePairingResponse, ListDevicesResponse, PairingSession, RevokeDeviceResponse,
 };
-use crate::openhuman::security::SecretStore;
+use crate::openhuman::keyring::SecretStore;
 use crate::rpc::RpcOutcome;
 
 // ---------------------------------------------------------------------------
