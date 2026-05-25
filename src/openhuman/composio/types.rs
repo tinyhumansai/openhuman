@@ -170,6 +170,8 @@ pub struct ComposioAuthorizeResponse {
 pub struct ComposioDeleteResponse {
     #[serde(default)]
     pub deleted: bool,
+    #[serde(skip_deserializing, skip_serializing_if = "Option::is_none")]
+    pub memory_clear: Option<serde_json::Value>,
 }
 
 // ── Tools ───────────────────────────────────────────────────────────

@@ -9,8 +9,8 @@
 //! agent harness) when they need composio data at runtime.
 
 use crate::openhuman::config::Config;
-use crate::openhuman::memory::tree::store::delete_chunks_by_source;
-use crate::openhuman::memory::tree::types::SourceKind;
+use crate::openhuman::memory_store::chunks::store::delete_chunks_by_source;
+use crate::openhuman::memory_store::chunks::types::SourceKind;
 use crate::rpc::RpcOutcome;
 
 /// Result alias used by every `composio_*` op in this module.
@@ -422,7 +422,7 @@ pub async fn composio_delete_connection(
             "[composio] delete_connection: cannot clear memory — failed to resolve toolkit"
         );
     }
-    let mut memory_clear_on_toolkit_fail: Option<serde_json::Value> = if toolkit.is_none()
+    let memory_clear_on_toolkit_fail: Option<serde_json::Value> = if toolkit.is_none()
         && clear_memory
     {
         Some(
@@ -431,7 +431,7 @@ pub async fn composio_delete_connection(
     } else {
         None
     };
-    let resp = client.delete_connection(connection_id).await.map_err(|e| {
+    let mut resp = client.delete_connection(connection_id).await.map_err(|e| {
         report_composio_op_error("delete_connection", &e);
         format!("[composio] delete_connection failed: {e:#}")
     })?;
@@ -477,7 +477,8 @@ pub async fn composio_delete_connection(
                             error = %e,
                             "[composio] delete_connection: memory clear failed (non-fatal)"
                         );
-                        Some(serde_json::json!({"ok": false, "error": e.to_string()}))
+                        let err_msg = e.to_string();
+                        Some(serde_json::json!({"ok": false, "error": err_msg}))
                     }
                 };
             }
@@ -521,10 +522,7 @@ pub async fn composio_delete_connection(
             );
         }
     }
-    let effective_memory_clear = memory_clear.or(memory_clear_on_toolkit_fail);
-    if let Some(ref mc) = effective_memory_clear {
-        resp["memory_clear"] = mc.clone();
-    }
+    resp.memory_clear = memory_clear.or(memory_clear_on_toolkit_fail);
     Ok(RpcOutcome::new(
         resp,
         vec![format!("composio: connection {connection_id} deleted")],

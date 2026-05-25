@@ -8,8 +8,8 @@ use crate::api::jwt::get_session_token;
 use crate::api::rest::BackendOAuthClient;
 use crate::openhuman::config::{Config, DiscordConfig, IMessageConfig, TelegramConfig};
 use crate::openhuman::credentials;
-use crate::openhuman::memory::tree::store::delete_chunks_by_source;
-use crate::openhuman::memory::tree::types::SourceKind;
+use crate::openhuman::memory_store::chunks::store::delete_chunks_by_source;
+use crate::openhuman::memory_store::chunks::types::SourceKind;
 use crate::rpc::RpcOutcome;
 
 use super::definitions::{
@@ -430,7 +430,8 @@ pub async fn disconnect_channel(
                     error = %e,
                     "[channels] disconnect_channel: memory clear failed (non-fatal)"
                 );
-                Some(json!({"ok": false, "error": e.to_string()}))
+                let err_msg = e.to_string();
+                Some(json!({"ok": false, "error": err_msg}))
             }
         }
     } else {
