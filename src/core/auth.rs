@@ -154,8 +154,8 @@ pub fn get_rpc_token() -> Option<&'static str> {
 /// This is the single entry point that non-HTTP transports (Socket.IO event
 /// handlers, SSE bind-token issuance, future WebSocket surfaces) should call
 /// before letting attacker-controlled input reach executable code. Keeping
-/// the comparison in one helper means a future move to constant-time
-/// equality is a one-line change for every transport at once.
+/// the comparison in one helper means every transport gets the same
+/// constant-time equality semantics.
 pub fn verify_bearer_token(supplied: &str) -> bool {
     let Some(expected) = get_rpc_token() else {
         return false;
@@ -235,11 +235,29 @@ pub async fn rpc_auth_middleware(req: axum::extract::Request, next: Next) -> Res
         .into_response()
 }
 
-/// Single source of truth for token comparison. Hex tokens of fixed length
-/// make the comparison non-secret-shaped, but we still pin a deliberate
-/// helper so adding constant-time semantics later is a one-line change.
+/// Single source of truth for token comparison.
+///
+/// Use constant-time equality so callers that validate attacker-controlled
+/// bearer strings do not leak partial-match timing through HTTP, SSE, Socket.IO,
+/// or future transports that share this helper.
 fn bearer_matches(supplied: &str, expected: &str) -> bool {
-    !supplied.is_empty() && supplied == expected
+    !supplied.is_empty() && constant_time_eq(supplied, expected)
+}
+
+fn constant_time_eq(a: &str, b: &str) -> bool {
+    let a = a.as_bytes();
+    let b = b.as_bytes();
+    let len_diff = a.len() ^ b.len();
+    let max_len = a.len().max(b.len());
+    let mut byte_diff = 0u8;
+
+    for i in 0..max_len {
+        let left = *a.get(i).unwrap_or(&0);
+        let right = *b.get(i).unwrap_or(&0);
+        byte_diff |= left ^ right;
+    }
+
+    (len_diff == 0) & (byte_diff == 0)
 }
 
 fn is_external_inference_path(path: &str) -> bool {
@@ -372,6 +390,11 @@ mod tests {
     #[test]
     fn bearer_matches_rejects_mismatch() {
         assert!(!bearer_matches("deadbeef", "cafebabe"));
+    }
+
+    #[test]
+    fn bearer_matches_rejects_prefix_match() {
+        assert!(!bearer_matches("cafeba", "cafebabe"));
     }
 
     #[test]

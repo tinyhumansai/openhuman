@@ -154,6 +154,17 @@ pub fn episodic_search(
     limit: usize,
 ) -> anyhow::Result<Vec<EpisodicEntry>> {
     let conn = conn.lock();
+    let trimmed = query.trim();
+    if trimmed.is_empty() {
+        tracing::debug!("[fts5] search skipped — empty query");
+        return Ok(Vec::new());
+    }
+    let phrase_query = sanitize_fts_query(trimmed);
+    if phrase_query.is_empty() {
+        tracing::debug!("[fts5] search skipped — sanitised query is empty");
+        return Ok(Vec::new());
+    }
+
     let mut stmt = conn.prepare(
         "SELECT el.id, el.session_id, el.timestamp, el.role, el.content, el.lesson,
                 el.tool_calls_json, el.cost_microdollars
@@ -165,7 +176,7 @@ pub fn episodic_search(
     )?;
 
     let rows = stmt
-        .query_map(rusqlite::params![query, limit as i64], |row| {
+        .query_map(rusqlite::params![phrase_query, limit as i64], |row| {
             Ok(EpisodicEntry {
                 id: row.get(0)?,
                 session_id: row.get(1)?,
@@ -179,7 +190,7 @@ pub fn episodic_search(
         })?
         .collect::<Result<Vec<_>, _>>()?;
 
-    tracing::debug!("[fts5] search '{}' returned {} results", query, rows.len());
+    tracing::debug!("[fts5] search returned {} results", rows.len());
     Ok(rows)
 }
 
@@ -281,17 +292,19 @@ pub fn episodic_cross_session_search(
     Ok(rows)
 }
 
-/// Best-effort FTS5 query sanitiser: strip characters that break the
-/// MATCH grammar (quotes, parens, asterisks) and wrap each surviving
-/// whitespace-delimited token in double quotes so the FTS engine treats
-/// it as a literal phrase. Returns an empty string when nothing usable
-/// survives — the caller short-circuits to "no hits".
-fn sanitize_fts_query(query: &str) -> String {
+/// Best-effort FTS5 query sanitiser: split user text on punctuation and
+/// symbols that break the MATCH grammar, then quote each surviving token
+/// so FTS5 treats it as literal text. Returns an empty string when
+/// nothing usable survives — callers short-circuit to "no hits".
+pub(super) fn sanitize_fts_query(query: &str) -> String {
     let cleaned: String = query
         .chars()
-        .map(|c| match c {
-            '"' | '(' | ')' | '*' | ':' => ' ',
-            other => other,
+        .map(|c| {
+            if c.is_alphanumeric() || c == '_' {
+                c
+            } else {
+                ' '
+            }
         })
         .collect();
     let tokens: Vec<String> = cleaned
@@ -532,6 +545,21 @@ mod tests {
         // the row to avoid AND-mismatch false negatives).
         let hits =
             episodic_cross_session_search(&conn, "\"Postgres\" (deployment)?", 10, None).unwrap();
+        assert!(
+            !hits.is_empty(),
+            "punctuated query whose surviving tokens match the indexed row must still surface it"
+        );
+        assert!(hits[0].content.contains("Postgres"));
+    }
+
+    #[test]
+    fn episodic_search_sanitises_punctuation_safely() {
+        let conn = setup_db();
+        insert_turn(&conn, "session-a", 1000.0, "Postgres deployment notes");
+
+        let hits = episodic_search(&conn, "\"Postgres\"，(deployment)?", 10)
+            .expect("punctuated user query should not trip FTS5 syntax errors");
+
         assert!(
             !hits.is_empty(),
             "punctuated query whose surviving tokens match the indexed row must still surface it"
