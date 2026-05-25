@@ -1,6 +1,6 @@
 use super::*;
-use crate::openhuman::memory::tree::store::upsert_chunks;
-use crate::openhuman::memory::tree::types::{Metadata, SourceKind};
+use crate::openhuman::memory_store::chunks::store::upsert_chunks;
+use crate::openhuman::memory_store::chunks::types::{Metadata, SourceKind};
 use tempfile::tempdir;
 
 fn isolated_test_config() -> (tempfile::TempDir, Config) {
@@ -487,7 +487,7 @@ async fn connected_channel_slugs_empty_when_nothing_configured() {
 
 #[tokio::test]
 async fn disconnect_discord_clear_memory_deletes_chunks() {
-    use crate::openhuman::memory::tree::types::{chunk_id, SourceRef};
+    use crate::openhuman::memory_store::chunks::types::{chunk_id, SourceRef};
     use chrono::TimeZone;
 
     let (_tmp, mut config) = isolated_test_config();
@@ -503,7 +503,7 @@ async fn disconnect_discord_clear_memory_deletes_chunks() {
 
     // Seed a chunk that belongs to the discord source.
     let ts = chrono::Utc.timestamp_millis_opt(1_700_000_000_000).unwrap();
-    let chunk = crate::openhuman::memory::tree::types::Chunk {
+    let chunk = crate::openhuman::memory_store::chunks::types::Chunk {
         id: chunk_id(SourceKind::Chat, "discord:clear-test", 0, "test-content"),
         content: "discord memory".into(),
         metadata: Metadata {
@@ -527,7 +527,8 @@ async fn disconnect_discord_clear_memory_deletes_chunks() {
         .expect("disconnect with clear_memory should succeed");
 
     // The chunk should be gone.
-    let stored = crate::openhuman::memory::tree::store::get_chunk(&config, &chunk.id).unwrap();
+    let stored =
+        crate::openhuman::memory_store::chunks::store::get_chunk(&config, &chunk.id).unwrap();
     assert!(
         stored.is_none(),
         "chunk should be deleted after disconnect with clear_memory=true"
@@ -536,7 +537,7 @@ async fn disconnect_discord_clear_memory_deletes_chunks() {
 
 #[tokio::test]
 async fn disconnect_discord_without_clear_memory_preserves_chunks() {
-    use crate::openhuman::memory::tree::types::{chunk_id, SourceRef};
+    use crate::openhuman::memory_store::chunks::types::{chunk_id, SourceRef};
     use chrono::TimeZone;
 
     let (_tmp, mut config) = isolated_test_config();
@@ -551,7 +552,7 @@ async fn disconnect_discord_without_clear_memory_preserves_chunks() {
     config.save().await.expect("save config");
 
     let ts = chrono::Utc.timestamp_millis_opt(1_700_000_000_000).unwrap();
-    let chunk = crate::openhuman::memory::tree::types::Chunk {
+    let chunk = crate::openhuman::memory_store::chunks::types::Chunk {
         id: chunk_id(SourceKind::Chat, "discord:keep-test", 0, "test-content"),
         content: "discord memory keep".into(),
         metadata: Metadata {
@@ -574,7 +575,8 @@ async fn disconnect_discord_without_clear_memory_preserves_chunks() {
         .await
         .expect("disconnect without clear_memory should succeed");
 
-    let stored = crate::openhuman::memory::tree::store::get_chunk(&config, &chunk.id).unwrap();
+    let stored =
+        crate::openhuman::memory_store::chunks::store::get_chunk(&config, &chunk.id).unwrap();
     assert!(
         stored.is_some(),
         "chunk should survive disconnect with clear_memory=false"
