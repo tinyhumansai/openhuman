@@ -127,7 +127,6 @@ const makeTabs = (t: (key: string) => string) => [
 
 const BottomTabBar = () => {
   const { t } = useT();
-  const tabs = useMemo(() => makeTabs(t), [t]);
   const location = useLocation();
   const navigate = useNavigate();
   const { snapshot } = useCoreState();
@@ -142,6 +141,7 @@ const BottomTabBar = () => {
   // so an absent theme branch can't crash the bar.
   const tabBarLabels = useAppSelector(state => state.theme?.tabBarLabels ?? 'hover');
   const labelsAlwaysVisible = tabBarLabels === 'always';
+  const tabs = useMemo(() => makeTabs(t), [t]);
 
   const hiddenPaths = ['/', '/login'];
   if (

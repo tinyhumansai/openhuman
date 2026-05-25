@@ -17,14 +17,14 @@ use anyhow::Result;
 use chrono::{Duration, TimeZone, Utc};
 
 use crate::openhuman::config::Config;
-use crate::openhuman::memory_tree::content_store::read as content_read;
+use crate::openhuman::memory_store::content::read as content_read;
+use crate::openhuman::memory_store::trees::types::{Tree, TreeKind};
 use crate::openhuman::memory_tree::retrieval::types::{
     hit_from_summary, QueryResponse, RetrievalHit,
 };
 use crate::openhuman::memory_tree::score::embed::{build_embedder_from_config, cosine_similarity};
 use crate::openhuman::memory_tree::score::store::{lookup_entity, EntityHit};
-use crate::openhuman::memory_tree::tree_source::store;
-use crate::openhuman::memory_tree::tree_source::types::{Tree, TreeKind};
+use crate::openhuman::memory_tree::tree::store;
 
 const DEFAULT_LIMIT: usize = 10;
 /// How many rows we pull from the entity index before filtering. We give
@@ -175,9 +175,9 @@ async fn rerank_by_semantic_similarity(
     query: &str,
     hits: Vec<RetrievalHit>,
 ) -> Result<Vec<RetrievalHit>> {
+    use crate::openhuman::memory_store::chunks::store::get_chunk_embedding;
     use crate::openhuman::memory_tree::retrieval::types::NodeKind;
-    use crate::openhuman::memory_tree::store::get_chunk_embedding;
-    use crate::openhuman::memory_tree::tree_source::store as src_store;
+    use crate::openhuman::memory_tree::tree::store as src_store;
 
     let embedder = build_embedder_from_config(config)?;
     let query_vec = embedder.embed(query).await?;
@@ -318,8 +318,8 @@ async fn entity_hit_to_retrieval_hit(
             return Ok(Some(h));
         }
         // Leaf: fetch chunk and hydrate.
+        use crate::openhuman::memory_store::chunks::store::get_chunk;
         use crate::openhuman::memory_tree::retrieval::types::hit_from_chunk;
-        use crate::openhuman::memory_tree::store::get_chunk;
         let mut chunk = match get_chunk(&config_owned, &node_id)? {
             Some(c) => c,
             None => {
@@ -368,8 +368,14 @@ fn filter_by_window(hits: Vec<RetrievalHit>, window_days: u32) -> Vec<RetrievalH
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::openhuman::memory_tree::canonicalize::chat::{ChatBatch, ChatMessage};
-    use crate::openhuman::memory_tree::ingest::ingest_chat;
+    use crate::openhuman::memory::ingest_pipeline::ingest_chat;
+    use crate::openhuman::memory_store::chunks::store::upsert_chunks;
+    use crate::openhuman::memory_store::chunks::types::{
+        chunk_id, Chunk, Metadata, SourceKind, SourceRef,
+    };
+    use crate::openhuman::memory_sync::canonicalize::chat::{ChatBatch, ChatMessage};
+    use crate::openhuman::memory_tree::score::extract::EntityKind;
+    use crate::openhuman::memory_tree::score::store::EntityHit;
     use chrono::TimeZone;
     use tempfile::TempDir;
 
@@ -522,6 +528,71 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn zero_limit_uses_default_limit() {
+        let (_tmp, cfg) = test_config();
+        for i in 0..12 {
+            let source = format!("slack:#c{i}");
+            let batch = ChatBatch {
+                platform: "slack".into(),
+                channel_label: format!("#c{i}"),
+                messages: vec![ChatMessage {
+                    author: "alice".into(),
+                    timestamp: Utc::now(),
+                    text: format!(
+                        "Meeting {i} about Phoenix migration. alice@example.com owns it. \
+                         Launch status looks good."
+                    ),
+                    source_ref: None,
+                }],
+            };
+            ingest_chat(&cfg, &source, "alice", vec![], batch)
+                .await
+                .unwrap();
+        }
+
+        let resp = query_topic(&cfg, "email:alice@example.com", None, None, 0)
+            .await
+            .unwrap();
+        assert!(resp.hits.len() <= DEFAULT_LIMIT);
+        if resp.total > DEFAULT_LIMIT {
+            assert!(resp.truncated);
+        }
+    }
+
+    #[tokio::test]
+    async fn topic_tree_root_missing_summary_row_is_ignored() {
+        use crate::openhuman::memory_store::chunks::store::with_connection;
+        use crate::openhuman::memory_store::trees::types::{Tree, TreeKind, TreeStatus};
+        use crate::openhuman::memory_tree::tree::store as tree_store;
+
+        let (_tmp, cfg) = test_config();
+        let ts = Utc::now();
+        let entity_id = "topic:phoenix";
+        let tree = Tree {
+            id: "test:phoenix-missing-root".into(),
+            kind: TreeKind::Topic,
+            scope: entity_id.into(),
+            root_id: Some("summary:missing".into()),
+            max_level: 1,
+            status: TreeStatus::Active,
+            created_at: ts,
+            last_sealed_at: Some(ts),
+        };
+
+        with_connection(&cfg, |conn| {
+            let tx = conn.unchecked_transaction()?;
+            tree_store::insert_tree_conn(&tx, &tree)?;
+            tx.commit()?;
+            Ok(())
+        })
+        .unwrap();
+
+        let resp = query_topic(&cfg, entity_id, None, None, 10).await.unwrap();
+        assert!(resp.hits.is_empty());
+        assert_eq!(resp.total, 0);
+    }
+
     // Regression: the same node_id must only appear once in `hits`, even
     // when the topic-tree root overlaps with its own entity-index row.
     // Flagged on PR #831 CodeRabbit review — see the HashMap-based merge
@@ -529,14 +600,13 @@ mod tests {
     // caller would see two rows for the same summary.
     #[tokio::test]
     async fn duplicate_node_is_deduplicated_across_index_and_topic_tree_root() {
-        use crate::openhuman::memory_tree::score::extract::EntityKind;
-        use crate::openhuman::memory_tree::score::resolver::CanonicalEntity;
-        use crate::openhuman::memory_tree::score::store as score_store;
-        use crate::openhuman::memory_tree::store::with_connection;
-        use crate::openhuman::memory_tree::tree_source::store as tree_store;
-        use crate::openhuman::memory_tree::tree_source::types::{
+        use crate::openhuman::memory_store::chunks::store::with_connection;
+        use crate::openhuman::memory_store::trees::types::{
             SummaryNode, Tree, TreeKind, TreeStatus,
         };
+        use crate::openhuman::memory_tree::score::resolver::CanonicalEntity;
+        use crate::openhuman::memory_tree::score::store as score_store;
+        use crate::openhuman::memory_tree::tree::store as tree_store;
 
         let (_tmp, cfg) = test_config();
         let ts = Utc::now();
@@ -624,5 +694,145 @@ mod tests {
             resp.total, 1,
             "total should count distinct nodes, not raw row occurrences"
         );
+    }
+
+    #[tokio::test]
+    async fn stale_leaf_entity_index_row_is_skipped() {
+        let (_tmp, cfg) = test_config();
+        let hit = EntityHit {
+            entity_id: "email:alice@example.com".into(),
+            node_id: "chunk:missing".into(),
+            node_kind: "leaf".into(),
+            entity_kind: EntityKind::Email,
+            surface: "alice@example.com".into(),
+            score: 0.7,
+            timestamp_ms: Utc::now().timestamp_millis(),
+            tree_id: Some("tree:missing".into()),
+            is_user: false,
+        };
+
+        let converted = entity_hit_to_retrieval_hit(&cfg, &hit).await.unwrap();
+        assert!(converted.is_none());
+    }
+
+    #[tokio::test]
+    async fn leaf_hit_falls_back_to_source_scope_when_tree_lookup_misses() {
+        let (_tmp, cfg) = test_config();
+        let ts = Utc.timestamp_millis_opt(1_700_123_456_789).unwrap();
+        let chunk = Chunk {
+            id: chunk_id(
+                SourceKind::Chat,
+                "slack:#eng",
+                0,
+                "Phoenix owner is alice@example.com",
+            ),
+            content: "Phoenix owner is alice@example.com".into(),
+            metadata: Metadata {
+                source_kind: SourceKind::Chat,
+                source_id: "slack:#eng".into(),
+                owner: "alice".into(),
+                timestamp: ts,
+                time_range: (ts, ts),
+                tags: vec!["phoenix".into()],
+                source_ref: Some(SourceRef::new("slack://eng/1")),
+            },
+            token_count: 8,
+            seq_in_source: 0,
+            created_at: ts,
+            partial_message: false,
+        };
+        upsert_chunks(&cfg, &[chunk.clone()]).unwrap();
+
+        let hit = EntityHit {
+            entity_id: "email:alice@example.com".into(),
+            node_id: chunk.id.clone(),
+            node_kind: "leaf".into(),
+            entity_kind: EntityKind::Email,
+            surface: "alice@example.com".into(),
+            score: 0.91,
+            timestamp_ms: ts.timestamp_millis(),
+            tree_id: Some("tree:missing".into()),
+            is_user: false,
+        };
+
+        let converted = entity_hit_to_retrieval_hit(&cfg, &hit)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(converted.tree_scope, "slack:#eng");
+        assert_eq!(converted.tree_id, "tree:missing");
+        assert_eq!(converted.score, 0.91);
+        assert_eq!(converted.source_ref.as_deref(), Some("slack://eng/1"));
+        assert_eq!(converted.topics, vec!["phoenix"]);
+    }
+
+    #[tokio::test]
+    async fn summary_hit_without_tree_id_uses_empty_scope_and_index_score() {
+        use crate::openhuman::memory_store::chunks::store::with_connection;
+        use crate::openhuman::memory_store::trees::types::{
+            SummaryNode, Tree, TreeKind, TreeStatus,
+        };
+        use crate::openhuman::memory_tree::tree::store as tree_store;
+
+        let (_tmp, cfg) = test_config();
+        let ts = Utc::now();
+        let tree = Tree {
+            id: "tree:topic:phoenix".into(),
+            kind: TreeKind::Topic,
+            scope: "topic:phoenix".into(),
+            root_id: Some("summary:l1:phoenix".into()),
+            max_level: 1,
+            status: TreeStatus::Active,
+            created_at: ts,
+            last_sealed_at: Some(ts),
+        };
+        let summary = SummaryNode {
+            id: "summary:l1:phoenix".into(),
+            tree_id: tree.id.clone(),
+            tree_kind: TreeKind::Topic,
+            level: 1,
+            parent_id: None,
+            child_ids: vec!["chunk:a".into()],
+            content: "Phoenix recap preview".into(),
+            token_count: 16,
+            entities: vec!["topic:phoenix".into()],
+            topics: vec!["phoenix".into()],
+            time_range_start: ts,
+            time_range_end: ts,
+            score: 0.12,
+            sealed_at: ts,
+            deleted: false,
+            embedding: None,
+        };
+
+        with_connection(&cfg, |conn| {
+            let tx = conn.unchecked_transaction()?;
+            tree_store::insert_tree_conn(&tx, &tree)?;
+            tree_store::insert_summary_tx(&tx, &summary, None, "test")?;
+            tx.commit()?;
+            Ok(())
+        })
+        .unwrap();
+
+        let hit = EntityHit {
+            entity_id: "topic:phoenix".into(),
+            node_id: summary.id.clone(),
+            node_kind: "summary".into(),
+            entity_kind: EntityKind::Topic,
+            surface: "phoenix".into(),
+            score: 0.88,
+            timestamp_ms: ts.timestamp_millis(),
+            tree_id: None,
+            is_user: false,
+        };
+
+        let converted = entity_hit_to_retrieval_hit(&cfg, &hit)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(converted.tree_scope, "");
+        assert_eq!(converted.tree_id, tree.id);
+        assert_eq!(converted.score, 0.88);
+        assert_eq!(converted.content, "Phoenix recap preview");
     }
 }

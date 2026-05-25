@@ -18,24 +18,23 @@ import {
   type AISettings as ApiAISettings,
   type ProviderRef as ApiProviderRef,
   clearCloudProviderKey,
-  clearOpenAICompatEndpointKey,
   type CloudProviderView,
   flushCloudProviders,
   listProviderModels,
   loadAISettings,
   loadLocalProviderSnapshot,
-  loadOpenAICompatEndpointStatus,
   type LocalProviderSnapshot,
   type ModelInfo,
   saveAISettings,
   setCloudProviderKey,
-  setOpenAICompatEndpointKey,
+  testProviderModel,
 } from '../../../services/api/aiSettingsApi';
 import {
   creditsApi,
   type CreditTransaction,
   type TeamUsage,
 } from '../../../services/api/creditsApi';
+import { connectOpenRouterViaOAuth } from '../../../utils/openrouterOAuth';
 import {
   type AuthStyle,
   openhumanUpdateLocalAiSettings,
@@ -77,7 +76,6 @@ type WorkloadId =
   | 'agentic'
   | 'coding'
   | 'memory'
-  | 'embeddings'
   | 'heartbeat'
   | 'learning'
   | 'subconscious';
@@ -86,12 +84,24 @@ type WorkloadGroup = 'chat' | 'background';
 
 type ProviderRef =
   | { kind: 'openhuman' }
+  | { kind: 'default' }
   | { kind: 'cloud'; providerSlug: string; model: string; temperature?: number | null }
   | { kind: 'local'; model: string; temperature?: number | null };
 
 type Workload = { id: WorkloadId; group: WorkloadGroup; label: string; description: string };
 
 type RoutingMap = Record<WorkloadId, ProviderRef>;
+type RoutingMode = 'managed' | 'own' | 'custom';
+const ROUTING_WORKLOAD_IDS: WorkloadId[] = [
+  'chat',
+  'reasoning',
+  'agentic',
+  'coding',
+  'memory',
+  'heartbeat',
+  'learning',
+  'subconscious',
+];
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Static catalog
@@ -101,8 +111,8 @@ type RoutingMap = Record<WorkloadId, ProviderRef>;
 // chip rendering (label, tone). Custom providers use `provider.label` directly.
 const BUILTIN_PROVIDER_META: Record<string, { tone: string; label: string }> = {
   openhuman: {
-    label: 'OpenHuman',
-    tone: 'bg-primary-50 dark:bg-primary-500/10 ring-primary-200 text-primary-900 dark:text-primary-100',
+    label: 'Managed',
+    tone: 'bg-emerald-50 dark:bg-emerald-500/10 ring-emerald-200 text-emerald-900 dark:text-emerald-100',
   },
   openai: {
     label: 'OpenAI',
@@ -120,9 +130,21 @@ const BUILTIN_PROVIDER_META: Record<string, { tone: string; label: string }> = {
     label: 'OrcaRouter',
     tone: 'bg-sky-50 dark:bg-sky-500/10 ring-sky-200 text-sky-900 dark:text-sky-100',
   },
+  gmi: {
+    label: 'GMI',
+    tone: 'bg-fuchsia-50 dark:bg-fuchsia-500/10 ring-fuchsia-200 text-fuchsia-900 dark:text-fuchsia-100',
+  },
+  fireworks: {
+    label: 'Fireworks',
+    tone: 'bg-rose-50 dark:bg-rose-500/10 ring-rose-200 text-rose-900 dark:text-rose-100',
+  },
+  moonshot: {
+    label: 'Kimi (Moonshot)',
+    tone: 'bg-indigo-50 dark:bg-indigo-500/10 ring-indigo-200 text-indigo-900 dark:text-indigo-100',
+  },
   custom: {
-    label: 'Custom',
-    tone: 'bg-stone-100 dark:bg-neutral-800 ring-stone-300 text-stone-900 dark:text-neutral-100',
+    label: 'Advanced',
+    tone: 'bg-sky-50 dark:bg-sky-500/10 ring-sky-200 text-sky-900 dark:text-sky-100',
   },
 };
 
@@ -153,12 +175,6 @@ const WORKLOADS: Workload[] = [
     description: 'Tree-extracts and consolidations',
   },
   {
-    id: 'embeddings',
-    group: 'background',
-    label: 'Embeddings',
-    description: 'Vector encoding for memory retrieval',
-  },
-  {
     id: 'heartbeat',
     group: 'background',
     label: 'Heartbeat',
@@ -178,6 +194,24 @@ const WORKLOADS: Workload[] = [
   },
 ];
 
+const WORKLOAD_MODEL_HINTS: Record<WorkloadId, string> = {
+  chat: 'Recommended: a cheap or mid-cost fast chat model with high tokens/sec and low latency. Open-source local models can work well here if they feel responsive.',
+  reasoning:
+    'Recommended: a more expensive frontier or strong reasoning model for deep thinking. This is used for the main chat agent, meeting summaries, and heavier answer synthesis.',
+  agentic:
+    'Recommended: a reliable instruction-following model with strong tool use. Mid-cost frontier models are usually safest; capable open-source models can work if tool calling is stable.',
+  coding:
+    'Recommended: a coding-tuned model with strong instruction following, edit quality, and long-context performance. This is usually worth spending more on.',
+  memory:
+    'Recommended: a cheaper summarization model. It should be consistent and compact, but it does not need premium frontier-level reasoning.',
+  heartbeat:
+    'Recommended: a cheap, efficient background model. This runs often between turns, so low cost matters more than maximum intelligence.',
+  learning:
+    'Recommended: a stronger reflective model. This can be mid-cost or premium because it benefits from better synthesis over recent history.',
+  subconscious:
+    'Recommended: a very cheap monitoring model, ideally one that is lightweight and predictable. This is for eventfulness scoring, drift checks, and quiet background evaluation.',
+};
+
 // TIER_PRESETS removed alongside the Local provider section.
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -191,21 +225,28 @@ const WORKLOADS: Workload[] = [
 type AISettings = { cloudProviders: CloudProvider[]; routing: RoutingMap };
 
 const EMPTY_ROUTING: RoutingMap = {
-  chat: { kind: 'openhuman' },
-  reasoning: { kind: 'openhuman' },
-  agentic: { kind: 'openhuman' },
-  coding: { kind: 'openhuman' },
-  memory: { kind: 'openhuman' },
-  embeddings: { kind: 'openhuman' },
-  heartbeat: { kind: 'openhuman' },
-  learning: { kind: 'openhuman' },
-  subconscious: { kind: 'openhuman' },
+  chat: { kind: 'default' },
+  reasoning: { kind: 'default' },
+  agentic: { kind: 'default' },
+  coding: { kind: 'default' },
+  memory: { kind: 'default' },
+  heartbeat: { kind: 'default' },
+  learning: { kind: 'default' },
+  subconscious: { kind: 'default' },
 };
 
 const EMPTY_SETTINGS: AISettings = { cloudProviders: [], routing: EMPTY_ROUTING };
 
 function maskKeyLabel(hasKey: boolean): string {
   return hasKey ? '•••• configured' : 'Not configured';
+}
+
+function slugifyCustomProviderName(name: string): string {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
 }
 
 /**
@@ -241,7 +282,6 @@ function toPanelRoutingFromApi(api: ApiAISettings): { panel: AISettings } {
     agentic: liftRef(api.routing.agentic),
     coding: liftRef(api.routing.coding),
     memory: liftRef(api.routing.memory),
-    embeddings: liftRef(api.routing.embeddings),
     heartbeat: liftRef(api.routing.heartbeat),
     learning: liftRef(api.routing.learning),
     subconscious: liftRef(api.routing.subconscious),
@@ -265,7 +305,6 @@ function toApiSettings(panel: AISettings): ApiAISettings {
       agentic: panel.routing.agentic,
       coding: panel.routing.coding,
       memory: panel.routing.memory,
-      embeddings: panel.routing.embeddings,
       heartbeat: panel.routing.heartbeat,
       learning: panel.routing.learning,
       subconscious: panel.routing.subconscious,
@@ -474,6 +513,24 @@ const LOCAL_CHIP_TONE: Record<LocalChipSlug, string> = {
 
 const LOCAL_CHIP_LABEL: Record<LocalChipSlug, string> = { lmstudio: 'LM Studio', ollama: 'Ollama' };
 
+function providerToggleAriaLabel(
+  t: (key: string, fallback?: string) => string,
+  enabled: boolean,
+  label: string
+): string {
+  return formatI18n(
+    enabled ? t('settings.ai.disconnectProvider') : t('settings.ai.connectProviderLabel'),
+    { label }
+  );
+}
+
+function formatI18n(template: string, vars: Record<string, string | number>): string {
+  return Object.entries(vars).reduce(
+    (result, [key, value]) => result.replaceAll(`{${key}}`, String(value)),
+    template
+  );
+}
+
 function slugTone(slug: string): string {
   return (
     BUILTIN_PROVIDER_META[slug]?.tone ??
@@ -486,14 +543,17 @@ const ProviderToggleChip = ({
   label,
   enabled,
   busy,
+  locked = false,
   onToggle,
 }: {
   slug: string;
   label: string;
   enabled: boolean;
   busy?: boolean;
+  locked?: boolean;
   onToggle: () => void;
 }) => {
+  const { t } = useT();
   const tone = slugTone(slug);
   return (
     <div
@@ -503,10 +563,10 @@ const ProviderToggleChip = ({
         type="button"
         role="switch"
         aria-checked={enabled}
-        aria-label={`${enabled ? 'Disconnect' : 'Connect'} ${label}`}
-        disabled={busy}
+        aria-label={providerToggleAriaLabel(t, enabled, label)}
+        disabled={busy || locked}
         onClick={onToggle}
-        className={`relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors disabled:cursor-wait disabled:opacity-60 ${enabled ? 'bg-primary-500' : 'bg-stone-300 dark:bg-neutral-700'}`}>
+        className={`relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${enabled ? 'bg-primary-500' : 'bg-stone-300 dark:bg-neutral-700'}`}>
         <span
           aria-hidden
           className={`inline-block h-3 w-3 transform rounded-full bg-white dark:bg-neutral-900 shadow transition-transform ${enabled ? 'translate-x-3.5' : 'translate-x-0.5'}`}
@@ -530,6 +590,7 @@ const ProviderKeyDialog = ({
   slug,
   label,
   isLocalRuntime,
+  oauthAction,
   onCancel,
   onSubmit,
 }: {
@@ -537,6 +598,7 @@ const ProviderKeyDialog = ({
   label: string;
   /** When true, render an "Endpoint URL" field instead of API key. */
   isLocalRuntime: boolean;
+  oauthAction?: { label: string; onClick: () => Promise<void> | void } | null;
   onCancel: () => void;
   /** Returns the entered value. For local runtimes this is the endpoint URL;
    *  for cloud providers it's the API key. */
@@ -544,12 +606,12 @@ const ProviderKeyDialog = ({
 }) => {
   const { t } = useT();
   const [value, setValue] = useState<string>(isLocalRuntime ? defaultEndpointFor(slug) : '');
-  const [phase, setPhase] = useState<'idle' | 'saving'>('idle');
+  const [phase, setPhase] = useState<'idle' | 'saving' | 'oauth'>('idle');
   const [error, setError] = useState<string | null>(null);
   const busy = phase !== 'idle';
 
   const placeholder = isLocalRuntime
-    ? defaultEndpointFor(slug) || 'http://localhost:11434/v1'
+    ? defaultEndpointFor(slug) || t('settings.ai.defaultLocalEndpoint')
     : slug === 'openai'
       ? 'sk-...'
       : slug === 'anthropic'
@@ -558,21 +620,31 @@ const ProviderKeyDialog = ({
           ? 'sk-or-...'
           : slug === 'orcarouter'
             ? 'sk-orca-...'
-            : 'your-api-key';
+            : slug === 'gmi'
+              ? 'gmi-...'
+              : slug === 'fireworks'
+                ? 'fw-...'
+                : slug === 'moonshot'
+                  ? 'sk-...'
+                  : 'your-api-key';
 
-  const fieldLabel = isLocalRuntime ? 'Endpoint URL' : t('settings.ai.apiKeyFieldLabel');
+  const fieldLabel = isLocalRuntime
+    ? t('settings.ai.endpointUrlLabel')
+    : t('settings.ai.apiKeyFieldLabel');
   const helper = isLocalRuntime
-    ? `Where ${label} is reachable. Default is localhost; point this at a remote host (e.g. http://10.0.0.4:11434/v1) to use a shared instance.`
+    ? formatI18n(t('settings.ai.localRuntimeHelper'), { label })
     : t('settings.ai.apiKeyStoredEncrypted');
 
   const handleSave = async () => {
     const trimmed = value.trim();
     if (!trimmed) {
-      setError(isLocalRuntime ? 'Endpoint URL is required' : t('settings.ai.apiKeyRequired'));
+      setError(
+        isLocalRuntime ? t('settings.ai.endpointUrlRequired') : t('settings.ai.apiKeyRequired')
+      );
       return;
     }
     if (isLocalRuntime && !/^https?:\/\//i.test(trimmed)) {
-      setError('Endpoint must start with http:// or https://');
+      setError(t('settings.ai.endpointProtocolRequired'));
       return;
     }
     setError(null);
@@ -585,7 +657,24 @@ const ProviderKeyDialog = ({
       console.warn('[ai-settings] provider setup failed', {
         slug,
         local_runtime: isLocalRuntime,
-        summary: presentProviderSetupError(message).summary,
+        summary: presentProviderSetupError(message, t).summary,
+      });
+      setError(message);
+      setPhase('idle');
+    }
+  };
+
+  const handleOAuth = async () => {
+    if (!oauthAction) return;
+    setError(null);
+    setPhase('oauth');
+    try {
+      await oauthAction.onClick();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn('[ai-settings] provider oauth failed', {
+        slug,
+        summary: presentProviderSetupError(message, t).summary,
       });
       setError(message);
       setPhase('idle');
@@ -596,7 +685,7 @@ const ProviderKeyDialog = ({
     <div
       role="dialog"
       aria-modal="true"
-      aria-label={`Connect ${label}`}
+      aria-label={formatI18n(t('settings.ai.connectProviderDialog'), { label })}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
       <div className="w-full max-w-md rounded-2xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-6 shadow-soft">
         <div className="mb-4">
@@ -631,6 +720,24 @@ const ProviderKeyDialog = ({
           />
           {error ? <ProviderSetupErrorNotice error={error} /> : null}
         </div>
+
+        {oauthAction ? (
+          <div className="mt-4 rounded-xl border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/50 p-3">
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-stone-500 dark:text-neutral-400">
+              {t('settings.ai.or')}
+            </div>
+            <p className="mt-1 text-xs text-stone-500 dark:text-neutral-400">
+              {t('settings.ai.openRouterOauthDescription')}
+            </p>
+            <button
+              type="button"
+              onClick={() => void handleOAuth()}
+              disabled={busy}
+              className="mt-3 inline-flex items-center justify-center rounded-lg border border-stone-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-4 py-2 text-sm font-medium text-stone-900 dark:text-neutral-100 hover:bg-stone-100 dark:hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-50">
+              {phase === 'oauth' ? t('settings.ai.connecting') : oauthAction.label}
+            </button>
+          </div>
+        ) : null}
 
         <div className="mt-6 flex justify-end gap-2">
           <button
@@ -758,7 +865,8 @@ function summarizeSpendSample(transactions: CreditTransaction[]) {
 }
 
 function describeProvider(ref: ProviderRef, providers: BackgroundLoopProviderView[]): string {
-  if (ref.kind === 'openhuman') return 'OpenHuman';
+  if (ref.kind === 'openhuman') return 'Managed · OpenHuman';
+  if (ref.kind === 'default') return 'Default route';
   if (ref.kind === 'local') return `Local ${ref.model}`;
   const provider = providers.find(p => p.slug === ref.providerSlug);
   return `${provider?.label ?? ref.providerSlug} ${ref.model || 'custom model'}`;
@@ -848,6 +956,7 @@ export const BackgroundLoopControls = ({
   view?: BackgroundLoopControlsView;
   hideHeader?: boolean;
 }) => {
+  const { t } = useT();
   const [settings, setSettings] = useState<HeartbeatSettings | null>(null);
   const [usage, setUsage] = useState<TeamUsage | null>(null);
   const [transactions, setTransactions] = useState<CreditTransaction[]>([]);
@@ -1066,11 +1175,10 @@ export const BackgroundLoopControls = ({
       {!hideHeader && (
         <div className="border-b border-stone-200 dark:border-neutral-800 pb-2">
           <h2 className="text-base font-semibold text-stone-900 dark:text-neutral-100">
-            Background loops
+            {t('settings.ai.backgroundLoops')}
           </h2>
           <p className="mt-0.5 text-xs text-stone-500 dark:text-neutral-400">
-            See what runs without a chat message, pause heartbeat work, and inspect recent credit
-            ledger rows.
+            {t('settings.ai.backgroundLoopsDesc')}
           </p>
         </div>
       )}
@@ -1088,10 +1196,10 @@ export const BackgroundLoopControls = ({
               <div className="mb-3 flex items-center justify-between gap-3">
                 <div>
                   <div className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
-                    Heartbeat controls
+                    {t('settings.ai.heartbeatControls')}
                   </div>
                   <div className="text-xs text-stone-500 dark:text-neutral-400">
-                    Defaults off. Enabling starts the loop; disabling aborts the running task.
+                    {t('settings.ai.heartbeatControlsDesc')}
                   </div>
                 </div>
                 <button
@@ -1099,22 +1207,22 @@ export const BackgroundLoopControls = ({
                   onClick={() => void refresh()}
                   disabled={loading}
                   className="rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-2 py-1 text-xs font-medium text-stone-700 dark:text-neutral-200 hover:bg-stone-50 dark:hover:bg-neutral-800/60 dark:bg-neutral-800/60 dark:hover:bg-neutral-800/60 disabled:opacity-50">
-                  Refresh
+                  {t('common.refresh')}
                 </button>
               </div>
 
               {settings ? (
                 <div className="space-y-2">
                   <LoopToggle
-                    label="Heartbeat loop"
-                    description="Master scheduler for planner + optional subconscious inference."
+                    label={t('settings.ai.heartbeatLoop')}
+                    description={t('settings.ai.heartbeatLoopDesc')}
                     checked={settings.enabled}
                     busy={saving === 'enabled'}
                     onToggle={() => void applyHeartbeatPatch({ enabled: !settings.enabled })}
                   />
                   <LoopToggle
-                    label="Subconscious inference"
-                    description="Runs model-backed task/reflection evaluation on heartbeat ticks."
+                    label={t('settings.ai.subconsciousInference')}
+                    description={t('settings.ai.subconsciousInferenceDesc')}
                     checked={settings.inference_enabled}
                     busy={saving === 'inference_enabled'}
                     onToggle={() =>
@@ -1122,8 +1230,8 @@ export const BackgroundLoopControls = ({
                     }
                   />
                   <LoopToggle
-                    label="Calendar meeting checks"
-                    description="Calls calendar event list for active Google Calendar connections."
+                    label={t('settings.ai.calendarMeetingChecks')}
+                    description={t('settings.ai.calendarMeetingChecksDesc')}
                     checked={settings.notify_meetings}
                     busy={saving === 'notify_meetings'}
                     onToggle={() =>
@@ -1132,7 +1240,7 @@ export const BackgroundLoopControls = ({
                   />
                   <div className="grid gap-2 rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 md:grid-cols-3">
                     <label className="space-y-1 text-xs font-medium text-stone-700 dark:text-neutral-200">
-                      <span>Calendar cap</span>
+                      <span>{t('settings.ai.calendarCap')}</span>
                       <select
                         value={maxCalendarConnectionsPerTick}
                         disabled={saving === 'max_calendar_connections_per_tick'}
@@ -1144,13 +1252,13 @@ export const BackgroundLoopControls = ({
                         className="w-full rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-2 py-1 text-xs text-stone-900 dark:text-neutral-100 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500">
                         {[1, 2, 3, 5, 10].map(count => (
                           <option key={count} value={count}>
-                            {count} conn/tick
+                            {formatI18n(t('settings.ai.connectionsPerTick'), { count })}
                           </option>
                         ))}
                       </select>
                     </label>
                     <label className="space-y-1 text-xs font-medium text-stone-700 dark:text-neutral-200">
-                      <span>Meeting lookahead</span>
+                      <span>{t('settings.ai.meetingLookahead')}</span>
                       <select
                         value={settings.meeting_lookahead_minutes}
                         disabled={saving === 'meeting_lookahead_minutes'}
@@ -1162,13 +1270,13 @@ export const BackgroundLoopControls = ({
                         className="w-full rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-2 py-1 text-xs text-stone-900 dark:text-neutral-100 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500">
                         {[15, 30, 60, 120, 240].map(minutes => (
                           <option key={minutes} value={minutes}>
-                            {minutes} min
+                            {formatI18n(t('settings.ai.minutesShort'), { count: minutes })}
                           </option>
                         ))}
                       </select>
                     </label>
                     <label className="space-y-1 text-xs font-medium text-stone-700 dark:text-neutral-200">
-                      <span>Reminder lookahead</span>
+                      <span>{t('settings.ai.reminderLookahead')}</span>
                       <select
                         value={settings.reminder_lookahead_minutes}
                         disabled={saving === 'reminder_lookahead_minutes'}
@@ -1180,15 +1288,15 @@ export const BackgroundLoopControls = ({
                         className="w-full rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-2 py-1 text-xs text-stone-900 dark:text-neutral-100 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500">
                         {[5, 15, 30, 60, 120].map(minutes => (
                           <option key={minutes} value={minutes}>
-                            {minutes} min
+                            {formatI18n(t('settings.ai.minutesShort'), { count: minutes })}
                           </option>
                         ))}
                       </select>
                     </label>
                   </div>
                   <LoopToggle
-                    label="Cron reminder checks"
-                    description="Scans enabled cron jobs for reminder-like upcoming items."
+                    label={t('settings.ai.cronReminderChecks')}
+                    description={t('settings.ai.cronReminderChecksDesc')}
                     checked={settings.notify_reminders}
                     busy={saving === 'notify_reminders'}
                     onToggle={() =>
@@ -1196,8 +1304,8 @@ export const BackgroundLoopControls = ({
                     }
                   />
                   <LoopToggle
-                    label="Relevant notification checks"
-                    description="Promotes urgent local notifications into proactive alerts."
+                    label={t('settings.ai.relevantNotificationChecks')}
+                    description={t('settings.ai.relevantNotificationChecksDesc')}
                     checked={settings.notify_relevant_events}
                     busy={saving === 'notify_relevant_events'}
                     onToggle={() =>
@@ -1207,8 +1315,8 @@ export const BackgroundLoopControls = ({
                     }
                   />
                   <LoopToggle
-                    label="External delivery"
-                    description="Lets heartbeat alerts send proactive messages to external channels."
+                    label={t('settings.ai.externalDelivery')}
+                    description={t('settings.ai.externalDeliveryDesc')}
                     checked={settings.external_delivery_enabled}
                     busy={saving === 'external_delivery_enabled'}
                     onToggle={() =>
@@ -1222,7 +1330,7 @@ export const BackgroundLoopControls = ({
                     <label
                       className="text-xs font-medium text-stone-700 dark:text-neutral-200"
                       htmlFor="heartbeat-interval">
-                      Interval
+                      {t('settings.ai.interval')}
                     </label>
                     <select
                       id="heartbeat-interval"
@@ -1234,7 +1342,7 @@ export const BackgroundLoopControls = ({
                       className="rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-2 py-1 text-xs text-stone-900 dark:text-neutral-100 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500">
                       {[5, 10, 15, 30, 60].map(minutes => (
                         <option key={minutes} value={minutes}>
-                          {minutes} min
+                          {formatI18n(t('settings.ai.minutesShort'), { count: minutes })}
                         </option>
                       ))}
                     </select>
@@ -1243,28 +1351,31 @@ export const BackgroundLoopControls = ({
                       onClick={() => void runPlannerNow()}
                       disabled={runningTick}
                       className="ml-auto rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-2 py-1 text-xs font-medium text-stone-700 dark:text-neutral-200 hover:bg-stone-50 dark:hover:bg-neutral-800/60 dark:bg-neutral-800/60 dark:hover:bg-neutral-800/60 disabled:opacity-50">
-                      {runningTick ? 'Running...' : 'Planner tick now'}
+                      {runningTick ? t('settings.ai.running') : t('settings.ai.plannerTickNow')}
                     </button>
                   </div>
 
                   {plannerSummary && (
                     <div className="rounded-md border border-primary-100 bg-primary-50 dark:bg-primary-500/10 px-3 py-2 text-xs text-primary-900">
-                      Planner: {plannerSummary.source_events} source events,{' '}
-                      {plannerSummary.deliveries_sent} sent,{' '}
-                      {plannerSummary.deliveries_skipped_dedup} deduped.
+                      {t('settings.ai.plannerSummary')
+                        .replace('{sourceEvents}', String(plannerSummary.source_events))
+                        .replace('{sent}', String(plannerSummary.deliveries_sent))
+                        .replace('{deduped}', String(plannerSummary.deliveries_skipped_dedup))}
                     </div>
                   )}
                 </div>
               ) : (
                 <div className="text-xs text-stone-500 dark:text-neutral-400">
-                  {loading ? 'Loading heartbeat controls...' : 'Heartbeat controls unavailable.'}
+                  {loading
+                    ? t('settings.ai.loadingHeartbeatControls')
+                    : t('settings.ai.heartbeatControlsUnavailable')}
                 </div>
               )}
             </div>
 
             <div className="overflow-hidden rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60">
               <div className="border-b border-stone-200 dark:border-neutral-800 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-stone-400 dark:text-neutral-500">
-                Loop map
+                {t('settings.ai.loopMap')}
               </div>
               <div className="divide-y divide-stone-200 dark:divide-neutral-800">
                 {loops.map(loop => (
@@ -1274,14 +1385,14 @@ export const BackgroundLoopControls = ({
                         {loop.name}
                       </div>
                       <div className="mt-0.5 flex flex-wrap gap-1 text-[11px] text-stone-500 dark:text-neutral-400">
-                        <span>{loop.enabled ? 'on' : 'off'}</span>
+                        <span>{loop.enabled ? t('settings.ai.on') : t('settings.ai.off')}</span>
                         <span>{loop.cadence}</span>
                       </div>
                     </div>
                     <div className="text-xs text-stone-600 dark:text-neutral-300">
                       <div>{loop.work}</div>
                       <div className="mt-1 font-mono text-[11px] text-stone-500 dark:text-neutral-400">
-                        route: {loop.route}
+                        {t('settings.ai.routeLabel').replace('{route}', loop.route)}
                       </div>
                       <div className="mt-1 text-stone-500 dark:text-neutral-400">{loop.risk}</div>
                     </div>
@@ -1297,10 +1408,10 @@ export const BackgroundLoopControls = ({
             <div className="flex items-center justify-between gap-3">
               <div>
                 <div className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
-                  Recent usage ledger
+                  {t('settings.ai.recentUsageLedger')}
                 </div>
                 <div className="text-xs text-stone-500 dark:text-neutral-400">
-                  Backend rows expose action/time today; source tags need backend support.
+                  {t('settings.ai.recentUsageLedgerDesc')}
                 </div>
               </div>
               <button
@@ -1308,23 +1419,23 @@ export const BackgroundLoopControls = ({
                 onClick={() => void refresh()}
                 disabled={loading}
                 className="rounded-md border border-stone-200 dark:border-neutral-800 px-2 py-1 text-xs font-medium text-stone-700 dark:text-neutral-200 hover:bg-stone-50 dark:hover:bg-neutral-800/60 dark:bg-neutral-800/60 dark:hover:bg-neutral-800/60 disabled:opacity-50">
-                Reload
+                {t('common.reload')}
               </button>
             </div>
 
             <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-3">
               <MetricTile
-                label="Week budget"
+                label={t('settings.ai.weekBudget')}
                 value={usage ? formatUsd(usage.cycleBudgetUsd) : 'n/a'}
                 detail={`resets ${formatDateTime(usage?.cycleEndsAt)}`}
               />
               <MetricTile
-                label="Cycle remaining"
+                label={t('settings.ai.cycleRemaining')}
                 value={usage ? formatUsd(usage.remainingUsd) : 'n/a'}
                 detail={usage ? `${formatUsd(usage.cycleSpentUsd)} used` : undefined}
               />
               <MetricTile
-                label="Cycle total spend"
+                label={t('settings.ai.cycleTotalSpend')}
                 value={usage ? formatUsd(usage.insights.totals.totalUsd) : 'n/a'}
                 detail={
                   usage
@@ -1333,17 +1444,17 @@ export const BackgroundLoopControls = ({
                 }
               />
               <MetricTile
-                label="Avg spend row"
+                label={t('settings.ai.avgSpendRow')}
                 value={spendSample.avgRowUsd > 0 ? formatUsd(spendSample.avgRowUsd) : 'n/a'}
                 detail={`${spendRows.length} recent spend rows`}
               />
               <MetricTile
-                label="Bg API reads"
+                label={t('settings.ai.backgroundApiReads')}
                 value={`${formatCount(backgroundApiReadsPerWeek)}/week`}
                 detail={`${formatCount(calendarPlannerCallsPerWeek)} planner + ${formatCount(composioConnectionScansPerWeek)} sync`}
               />
               <MetricTile
-                label="Bg wakeups"
+                label={t('settings.ai.backgroundWakeups')}
                 value={`${formatCount(backgroundWakeupsPerWeek)}/week`}
                 detail={`${formatCount(memoryPollsPerWeek)} memory polls`}
               />
@@ -1351,11 +1462,11 @@ export const BackgroundLoopControls = ({
 
             <div className="mt-3 rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 p-3">
               <div className="text-[10px] font-semibold uppercase tracking-wide text-stone-400 dark:text-neutral-500">
-                Budget math
+                {t('settings.ai.budgetMath')}
               </div>
               <div className="mt-2 grid gap-2">
                 <FormulaRow
-                  label="Rows left"
+                  label={t('settings.ai.rowsLeft')}
                   value={estimatedRowsLeft !== null ? formatCount(estimatedRowsLeft) : 'n/a'}
                   detail={
                     estimatedRowsLeft !== null
@@ -1364,7 +1475,7 @@ export const BackgroundLoopControls = ({
                   }
                 />
                 <FormulaRow
-                  label="Rows per full week budget"
+                  label={t('settings.ai.rowsPerFullWeekBudget')}
                   value={
                     estimatedRowsPerBudget !== null ? formatCount(estimatedRowsPerBudget) : 'n/a'
                   }
@@ -1375,7 +1486,7 @@ export const BackgroundLoopControls = ({
                   }
                 />
                 <FormulaRow
-                  label="Sample burn rate"
+                  label={t('settings.ai.sampleBurnRate')}
                   value={
                     spendSample.spendPerHour > 0
                       ? `${formatUsd(spendSample.spendPerHour)}/hr`
@@ -1388,7 +1499,7 @@ export const BackgroundLoopControls = ({
                   }
                 />
                 <FormulaRow
-                  label="Projected empty"
+                  label={t('settings.ai.projectedEmpty')}
                   value={projectedExhaustAt}
                   detail={
                     projectedHoursLeft !== null
@@ -1397,7 +1508,7 @@ export const BackgroundLoopControls = ({
                   }
                 />
                 <FormulaRow
-                  label="API reads per $ remaining"
+                  label={t('settings.ai.apiReadsPerDollarRemaining')}
                   value={
                     scheduledCallsPerRemainingDollar !== null
                       ? `${formatCount(scheduledCallsPerRemainingDollar)} reads/$`
@@ -1414,16 +1525,16 @@ export const BackgroundLoopControls = ({
 
             <div className="mt-3 rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 p-3">
               <div className="text-[10px] font-semibold uppercase tracking-wide text-stone-400 dark:text-neutral-500">
-                Loop call budget
+                {t('settings.ai.loopCallBudget')}
               </div>
               <div className="mt-2 grid gap-2">
                 <FormulaRow
-                  label="Heartbeat ticks"
+                  label={t('settings.ai.heartbeatTicks')}
                   value={`${formatCount(heartbeatTicksPerWeek)}/week`}
                   detail={`10080 min/week / ${heartbeatIntervalMinutes} min interval`}
                 />
                 <FormulaRow
-                  label="Calendar planner calls"
+                  label={t('settings.ai.calendarPlannerCalls')}
                   value={`${formatCount(calendarPlannerCallsPerWeek)}/week`}
                   detail={
                     settings?.notify_meetings
@@ -1432,12 +1543,12 @@ export const BackgroundLoopControls = ({
                   }
                 />
                 <FormulaRow
-                  label="Calendar fanout cap"
+                  label={t('settings.ai.calendarFanoutCap')}
                   value={`${formatCount(calendarConnectionsPolled)}/${formatCount(activeCalendarConnections.length)} conn/tick`}
                   detail={`max_calendar_connections_per_tick = ${maxCalendarConnectionsPerTick}; skipped now = ${calendarConnectionsSkipped}`}
                 />
                 <FormulaRow
-                  label="Subconscious model calls"
+                  label={t('settings.ai.subconsciousModelCalls')}
                   value={`${formatCount(subconsciousModelCallsPerWeek)}/week`}
                   detail={
                     settings?.enabled && settings.inference_enabled
@@ -1446,17 +1557,17 @@ export const BackgroundLoopControls = ({
                   }
                 />
                 <FormulaRow
-                  label="Composio sync scans"
+                  label={t('settings.ai.composioSyncScans')}
                   value={`${formatCount(composioConnectionScansPerWeek)}/week`}
                   detail={`${activeConnections.length} active integration connection(s) scanned every ${COMPOSIO_PERIODIC_TICK_MINUTES} min`}
                 />
                 <FormulaRow
-                  label="Total bg API read budget"
+                  label={t('settings.ai.totalBackgroundApiReadBudget')}
                   value={`${formatCount(backgroundApiReadsPerWeek)}/week`}
                   detail={`calendar planner reads + periodic integration scans; excludes user-initiated chat tools`}
                 />
                 <FormulaRow
-                  label="Memory worker polls"
+                  label={t('settings.ai.memoryWorkerPolls')}
                   value={`${formatCount(memoryPollsPerWeek)}/week max`}
                   detail={`${MEMORY_WORKERS} workers * ${MEMORY_POLL_SECONDS}s poll; LLM calls only for queued jobs`}
                 />
@@ -1465,15 +1576,17 @@ export const BackgroundLoopControls = ({
 
             {latestSpend && (
               <div className="mt-3 rounded-md border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 px-3 py-2 text-xs text-stone-600 dark:text-neutral-300">
-                Latest spend: {formatUsd(spendAmount(latestSpend))} at{' '}
-                {new Date(latestSpend.createdAt).toLocaleString()} ({latestSpend.action})
+                {t('settings.ai.latestSpend')
+                  .replace('{amount}', formatUsd(spendAmount(latestSpend)))
+                  .replace('{time}', new Date(latestSpend.createdAt).toLocaleString())
+                  .replace('{action}', latestSpend.action)}
               </div>
             )}
 
             <div className="mt-3 space-y-3">
               <div>
                 <div className="text-[10px] font-semibold uppercase tracking-wide text-stone-400 dark:text-neutral-500">
-                  Top actions
+                  {t('settings.ai.topActions')}
                 </div>
                 <div className="mt-1 space-y-1">
                   {actionSummary.length > 0 ? (
@@ -1489,7 +1602,7 @@ export const BackgroundLoopControls = ({
                     ))
                   ) : (
                     <div className="text-xs text-stone-500 dark:text-neutral-400">
-                      No spend rows loaded.
+                      {t('settings.ai.noSpendRows')}
                     </div>
                   )}
                 </div>
@@ -1497,7 +1610,7 @@ export const BackgroundLoopControls = ({
 
               <div>
                 <div className="text-[10px] font-semibold uppercase tracking-wide text-stone-400 dark:text-neutral-500">
-                  Top hours
+                  {t('settings.ai.topHours')}
                 </div>
                 <div className="mt-1 space-y-1">
                   {hourSummary.length > 0 ? (
@@ -1513,7 +1626,7 @@ export const BackgroundLoopControls = ({
                     ))
                   ) : (
                     <div className="text-xs text-stone-500 dark:text-neutral-400">
-                      No hourly spend yet.
+                      {t('settings.ai.noHourlySpend')}
                     </div>
                   )}
                 </div>
@@ -1535,79 +1648,65 @@ export const BackgroundLoopControls = ({
 // Workload row (stacked, narrow-friendly)
 // ─────────────────────────────────────────────────────────────────────────────
 
-type WorkloadRowProps = {
-  workload: Workload;
-  ref_: ProviderRef;
-  cloudProviders: CloudProvider[];
-  localModels: OllamaModel[];
-  ollamaState: OllamaState;
-  onChange: (next: ProviderRef) => void;
-};
+type WorkloadRowProps = { workload: Workload; ref_: ProviderRef; cloudProviders: CloudProvider[] };
 
 const WorkloadRow = ({
   workload,
   ref_,
   cloudProviders,
-  localModels,
-  ollamaState,
-  onChange,
   onCustomClick,
 }: WorkloadRowProps & { onCustomClick: () => void }) => {
   const { t } = useT();
   const selectedCloud =
     ref_.kind === 'cloud' ? cloudProviders.find(c => c.slug === ref_.providerSlug) : undefined;
+  const isCustom = ref_.kind === 'cloud' || ref_.kind === 'local';
 
-  const isDefault = ref_.kind === 'openhuman';
-
-  let resolved: string;
-  if (ref_.kind === 'openhuman') {
-    resolved = 'OpenHuman (default)';
-  } else if (ref_.kind === 'cloud') {
-    if (!selectedCloud) resolved = `${ref_.providerSlug} · ${ref_.model}`;
-    else resolved = `${selectedCloud.label} · ${ref_.model}`;
-  } else {
-    resolved = `Ollama · ${ref_.model}`;
+  let resolved = '';
+  if (ref_.kind === 'cloud') {
+    resolved = selectedCloud
+      ? `${selectedCloud.label} · ${ref_.model}`
+      : `${ref_.providerSlug} · ${ref_.model}`;
+  } else if (ref_.kind === 'local') {
+    resolved = formatI18n(t('settings.ai.localModelResolved'), { model: ref_.model });
+  } else if (ref_.kind === 'openhuman') {
+    resolved = t('settings.ai.openhumanDefault');
   }
 
-  // Quiet `ollamaState` / `localModels` unused-prop warnings — they're still
-  // consumed by the parent's onChange wiring through `onCustomClick`.
-  void ollamaState;
-  void localModels;
-
-  const segmentBase =
-    'flex-1 px-3 py-1.5 text-xs font-medium rounded-md transition-colors cursor-pointer';
-  const activeSegment =
-    'bg-white dark:bg-neutral-900 text-stone-900 dark:text-neutral-100 shadow-subtle ring-1 ring-stone-200 dark:ring-neutral-600';
-  const inactiveSegment =
-    'text-stone-500 dark:text-neutral-400 hover:text-stone-800 dark:text-neutral-100 dark:hover:text-neutral-200';
-
   return (
-    <div className="flex items-center justify-between gap-3 py-3">
-      <div className="min-w-0 flex-1">
+    <div className="flex items-center justify-between gap-3 py-3 transition-colors">
+      <div className="min-w-0 flex-1 space-y-1">
         <div className="text-sm font-medium text-stone-900 dark:text-neutral-100">
           {workload.label}
         </div>
-        <div className="truncate text-xs text-stone-500 dark:text-neutral-400">
+        <div className="text-xs leading-5 text-stone-500 dark:text-neutral-400">
           {workload.description}
         </div>
-        <div className="mt-0.5 font-mono text-[11px] text-stone-400 dark:text-neutral-500 truncate">
-          ↳ {resolved}
+        <div className="text-[11px] leading-5 text-stone-500 dark:text-neutral-400">
+          {WORKLOAD_MODEL_HINTS[workload.id]}
         </div>
+        {resolved ? (
+          <div
+            className={`font-mono text-[11px] truncate ${
+              isCustom ? 'text-sky-700 dark:text-sky-200' : 'text-stone-500 dark:text-neutral-400'
+            }`}>
+            {resolved}
+          </div>
+        ) : (
+          <div className="text-[11px] text-stone-400 dark:text-neutral-500">
+            {t('settings.ai.workload.noModel')}
+          </div>
+        )}
       </div>
-      <div className="inline-flex shrink-0 items-center rounded-lg bg-stone-100 dark:bg-neutral-800 p-0.5">
-        <button
-          type="button"
-          onClick={() => onChange({ kind: 'openhuman' })}
-          className={`${segmentBase} ${isDefault ? activeSegment : inactiveSegment}`}>
-          {t('settings.ai.routingDefault')}
-        </button>
-        <button
-          type="button"
-          onClick={onCustomClick}
-          className={`${segmentBase} ${!isDefault ? activeSegment : inactiveSegment}`}>
-          {t('settings.ai.routingCustom')}
-        </button>
-      </div>
+      <button
+        type="button"
+        onClick={onCustomClick}
+        className={`shrink-0 rounded-lg px-3 py-2 text-xs font-medium transition-colors ${
+          isCustom
+            ? 'bg-stone-100 text-stone-700 ring-1 ring-stone-300 dark:bg-neutral-800 dark:text-neutral-200 dark:ring-neutral-700'
+            : 'bg-stone-100 text-stone-700 hover:bg-stone-200 dark:bg-neutral-800 dark:text-neutral-200 dark:hover:bg-neutral-700'
+        }`}>
+        {isCustom ? t('settings.ai.workload.changeModel') : t('settings.ai.workload.chooseModel')}
+      </button>
     </div>
   );
 };
@@ -1629,8 +1728,68 @@ interface CustomRoutingDialogProps {
 
 type CustomDialogSource = { kind: 'cloud'; providerSlug: string } | { kind: 'local' };
 
+function providerRefSignature(ref: ProviderRef): string {
+  switch (ref.kind) {
+    case 'openhuman':
+      return 'openhuman';
+    case 'default':
+      return 'default';
+    case 'cloud':
+      return `cloud:${ref.providerSlug}:${ref.model}:${ref.temperature ?? ''}`;
+    case 'local':
+      return `local:${ref.model}:${ref.temperature ?? ''}`;
+  }
+}
+
+function inferRoutingMode(routing: RoutingMap): RoutingMode {
+  const refs = ROUTING_WORKLOAD_IDS.map(id => routing[id]);
+  if (refs.every(ref => ref.kind === 'openhuman' || ref.kind === 'default')) {
+    return 'managed';
+  }
+  const first = refs[0];
+  if (
+    first &&
+    (first.kind === 'cloud' || first.kind === 'local') &&
+    refs.every(ref => providerRefSignature(ref) === providerRefSignature(first))
+  ) {
+    return 'own';
+  }
+  return 'custom';
+}
+
+function inferSharedModelRef(routing: RoutingMap): ProviderRef | null {
+  const refs = ROUTING_WORKLOAD_IDS.map(id => routing[id]);
+  const first = refs[0];
+  if (!first) return null;
+  if (refs.every(ref => providerRefSignature(ref) === providerRefSignature(first))) {
+    return first.kind === 'openhuman' ? null : first;
+  }
+  return (
+    refs.find(ref => ref.kind === 'cloud' || ref.kind === 'local' || ref.kind === 'default') ?? null
+  );
+}
+
+function routingWithAllWorkloads(next: ProviderRef): RoutingMap {
+  return {
+    chat: next,
+    reasoning: next,
+    agentic: next,
+    coding: next,
+    memory: next,
+    heartbeat: next,
+    learning: next,
+    subconscious: next,
+  };
+}
+
 function humanizeModelId(id: string): string {
   return id.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
+function appendTemperatureToProviderString(provider: string, temperature: number | null): string {
+  if (temperature == null || !Number.isFinite(temperature)) return provider;
+  const rounded = Math.round(temperature * 100) / 100;
+  return `${provider}@${String(rounded)}`;
 }
 
 const CustomRoutingDialog = ({
@@ -1644,7 +1803,8 @@ const CustomRoutingDialog = ({
 }: CustomRoutingDialogProps) => {
   const { t } = useT();
   // Non-openhuman cloud providers + local-ollama (if available) are the
-  // "Custom" options. OpenHuman is excluded — it's the Default path.
+  // "Custom" options. OpenHuman is its own Managed path; Default serializes
+  // to the backend's `cloud` sentinel.
   const customCloud = cloudProviders.filter(p => p.slug !== 'openhuman');
   const localAvailable = ollamaRunning && localModels.length > 0;
 
@@ -1672,6 +1832,11 @@ const CustomRoutingDialog = ({
   const [cloudModelsLoading, setCloudModelsLoading] = useState(false);
   const [cloudModelsError, setCloudModelsError] = useState<string | null>(null);
   const [modelsKey, setModelsKey] = useState(0);
+  const [testBusy, setTestBusy] = useState(false);
+  const [testReply, setTestReply] = useState<string | null>(null);
+  const [testError, setTestError] = useState<string | null>(null);
+  const [testStartedAt, setTestStartedAt] = useState<string | null>(null);
+  const testRequestIdRef = useRef(0);
   // Optional temperature override for this workload. `null` = use provider/global default;
   // a finite number means "send `temperature: X` upstream for this workload only".
   const [temperature, setTemperature] = useState<number | null>(
@@ -1724,6 +1889,28 @@ const CustomRoutingDialog = ({
   }, [selectedSlug, modelsKey]);
 
   const canSave = source !== null && model.trim().length > 0;
+  const canTest = canSave && !cloudModelsLoading;
+
+  const resetTestState = () => {
+    testRequestIdRef.current += 1;
+    setTestReply(null);
+    setTestError(null);
+    setTestStartedAt(null);
+    setTestBusy(false);
+  };
+
+  const currentProviderString =
+    source == null
+      ? null
+      : source.kind === 'cloud'
+        ? appendTemperatureToProviderString(
+            `${source.providerSlug}:${model.trim()}`,
+            temperature == null || !Number.isFinite(temperature) ? null : temperature
+          )
+        : appendTemperatureToProviderString(
+            `ollama:${model.trim()}`,
+            temperature == null || !Number.isFinite(temperature) ? null : temperature
+          );
 
   const handleSave = () => {
     if (!source || !canSave) return;
@@ -1740,13 +1927,35 @@ const CustomRoutingDialog = ({
     }
   };
 
+  const handleTest = async () => {
+    if (!currentProviderString || !canTest) return;
+    const requestId = testRequestIdRef.current + 1;
+    testRequestIdRef.current = requestId;
+    setTestBusy(true);
+    setTestReply(null);
+    setTestError(null);
+    setTestStartedAt(new Date().toLocaleTimeString());
+    try {
+      const result = await testProviderModel(workload.id, currentProviderString, 'Hello world');
+      if (testRequestIdRef.current !== requestId) return;
+      setTestReply(result.reply);
+    } catch (err) {
+      if (testRequestIdRef.current !== requestId) return;
+      setTestError(err instanceof Error ? err.message : String(err));
+    } finally {
+      if (testRequestIdRef.current === requestId) {
+        setTestBusy(false);
+      }
+    }
+  };
+
   const noProviders = customCloud.length === 0 && !localAvailable;
 
   return (
     <div
       role="dialog"
       aria-modal="true"
-      aria-label={`Custom routing for ${workload.label}`}
+      aria-label={formatI18n(t('settings.ai.customRoutingForWorkload'), { label: workload.label })}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
       <div className="w-full max-w-md rounded-2xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-6 shadow-soft">
         <div className="flex items-start justify-between gap-3 mb-4">
@@ -1755,6 +1964,9 @@ const CustomRoutingDialog = ({
               {t('settings.ai.customRouting')}
             </h3>
             <p className="mt-0.5 text-xs text-stone-500 dark:text-neutral-400">{workload.label}</p>
+            <p className="mt-2 max-w-md text-xs leading-5 text-stone-500 dark:text-neutral-400">
+              {WORKLOAD_MODEL_HINTS[workload.id]}
+            </p>
           </div>
           <button
             type="button"
@@ -1792,6 +2004,7 @@ const CustomRoutingDialog = ({
                   const colonIdx = e.target.value.indexOf(':');
                   const kind = e.target.value.slice(0, colonIdx);
                   const slug = e.target.value.slice(colonIdx + 1);
+                  resetTestState();
                   if (kind === 'local') {
                     setSource({ kind: 'local' });
                     setModel(localModels[0]?.id ?? '');
@@ -1817,7 +2030,10 @@ const CustomRoutingDialog = ({
               {source?.kind === 'local' ? (
                 <select
                   value={model}
-                  onChange={e => setModel(e.target.value)}
+                  onChange={e => {
+                    resetTestState();
+                    setModel(e.target.value);
+                  }}
                   className="rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500">
                   {localModels.map(m => (
                     <option key={m.id} value={m.id}>
@@ -1829,7 +2045,7 @@ const CustomRoutingDialog = ({
                 <select
                   disabled
                   className="rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-400 dark:text-neutral-500 opacity-60 cursor-wait">
-                  <option>Loading models…</option>
+                  <option>{t('settings.ai.loadingModels')}</option>
                 </select>
               ) : cloudModelsError ? (
                 <div className="space-y-1.5">
@@ -1841,26 +2057,38 @@ const CustomRoutingDialog = ({
                       type="button"
                       onClick={() => setModelsKey(k => k + 1)}
                       className="text-xs text-primary-600 dark:text-primary-400 hover:underline">
-                      Retry
+                      {t('common.retry')}
                     </button>
                     <span className="text-xs text-stone-400 dark:text-neutral-500">
-                      or enter model id manually:
+                      {t('settings.ai.enterModelIdManually')}
                     </span>
                   </div>
                   <input
                     type="text"
                     value={model}
-                    onChange={e => setModel(e.target.value)}
-                    placeholder={selectedCloud ? `${selectedCloud.slug} model id` : 'model-id'}
+                    onChange={e => {
+                      resetTestState();
+                      setModel(e.target.value);
+                    }}
+                    placeholder={
+                      selectedCloud
+                        ? formatI18n(t('settings.ai.modelIdPlaceholderForProvider'), {
+                            slug: selectedCloud.slug,
+                          })
+                        : t('settings.ai.modelIdPlaceholder')
+                    }
                     className="w-full rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm font-mono text-stone-900 dark:text-neutral-100 placeholder-stone-400 dark:placeholder-neutral-500 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
                   />
                 </div>
               ) : cloudModels.length > 0 ? (
                 <select
                   value={model}
-                  onChange={e => setModel(e.target.value)}
+                  onChange={e => {
+                    resetTestState();
+                    setModel(e.target.value);
+                  }}
                   className="rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500">
-                  {!model && <option value="">Select a model…</option>}
+                  {!model && <option value="">{t('settings.ai.selectModel')}</option>}
                   {/* Keep existing value selectable even if the provider no longer lists it */}
                   {model && !cloudModels.some(m => m.id === model) && (
                     <option value={model}>{model}</option>
@@ -1875,8 +2103,17 @@ const CustomRoutingDialog = ({
                 <input
                   type="text"
                   value={model}
-                  onChange={e => setModel(e.target.value)}
-                  placeholder={selectedCloud ? `${selectedCloud.slug} model id` : 'model-id'}
+                  onChange={e => {
+                    resetTestState();
+                    setModel(e.target.value);
+                  }}
+                  placeholder={
+                    selectedCloud
+                      ? formatI18n(t('settings.ai.modelIdPlaceholderForProvider'), {
+                          slug: selectedCloud.slug,
+                        })
+                      : t('settings.ai.modelIdPlaceholder')
+                  }
                   className="rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm font-mono text-stone-900 dark:text-neutral-100 placeholder-stone-400 dark:placeholder-neutral-500 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
                 />
               )}
@@ -1890,10 +2127,13 @@ const CustomRoutingDialog = ({
                   <input
                     type="checkbox"
                     checked={temperature != null}
-                    onChange={e => setTemperature(e.target.checked ? 0.7 : null)}
+                    onChange={e => {
+                      resetTestState();
+                      setTemperature(e.target.checked ? 0.7 : null);
+                    }}
                     className="h-3.5 w-3.5 rounded border-stone-300 dark:border-neutral-700 text-primary-500 focus:ring-primary-500"
                   />
-                  Temperature override
+                  {t('settings.ai.temperatureOverride')}
                 </span>
                 {temperature != null && (
                   <span className="font-mono text-[11px] text-stone-500 dark:text-neutral-400">
@@ -1905,33 +2145,92 @@ const CustomRoutingDialog = ({
                 <div className="flex items-center gap-2">
                   <input
                     type="range"
-                    aria-label="Temperature override (slider)"
+                    aria-label={t('settings.ai.temperatureOverrideSlider')}
                     min={0}
                     max={2}
                     step={0.05}
                     value={temperature}
-                    onChange={e => setTemperature(Number(e.target.value))}
+                    onChange={e => {
+                      resetTestState();
+                      setTemperature(Number(e.target.value));
+                    }}
                     className="flex-1 accent-primary-500"
                   />
                   <input
                     type="number"
-                    aria-label="Temperature override (value)"
+                    aria-label={t('settings.ai.temperatureOverrideValue')}
                     min={0}
                     max={2}
                     step={0.05}
                     value={temperature}
                     onChange={e => {
                       const v = Number(e.target.value);
-                      if (Number.isFinite(v)) setTemperature(Math.max(0, Math.min(2, v)));
+                      if (Number.isFinite(v)) {
+                        resetTestState();
+                        setTemperature(Math.max(0, Math.min(2, v)));
+                      }
                     }}
                     className="w-16 rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 py-1 text-xs font-mono text-stone-900 dark:text-neutral-100 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
                   />
                 </div>
               )}
               <p className="text-[11px] text-stone-400 dark:text-neutral-500">
-                Lower = more deterministic. Leave unchecked to use the provider default.
+                {t('settings.ai.temperatureOverrideDesc')}
               </p>
             </div>
+
+            {(testBusy || testReply || testError || testStartedAt) && (
+              <div
+                role={testError ? 'alert' : 'status'}
+                className={`rounded-lg border px-3 py-2 text-xs ${
+                  testError
+                    ? 'border-coral-200 dark:border-coral-500/30 bg-coral-50 dark:bg-coral-500/10 text-coral-700 dark:text-coral-300'
+                    : testBusy
+                      ? 'border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 text-amber-800 dark:text-amber-200'
+                      : 'border-sage-200 dark:border-sage-500/30 bg-sage-50 dark:bg-sage-500/10 text-sage-800 dark:text-sage-200'
+                }`}>
+                <div className="font-semibold">
+                  {testError
+                    ? t('settings.ai.testFailed')
+                    : testBusy
+                      ? t('settings.ai.testingModel')
+                      : t('settings.ai.modelResponse')}
+                </div>
+                <div className="mt-1 space-y-1">
+                  <div className="font-mono text-[11px] text-current/80">
+                    {formatI18n(t('settings.ai.providerWithValue'), {
+                      value: currentProviderString ?? t('settings.ai.noneDash'),
+                    })}
+                  </div>
+                  <div className="font-mono text-[11px] text-current/80">
+                    {t('settings.ai.promptHelloWorld')}
+                  </div>
+                  {testStartedAt && (
+                    <div className="font-mono text-[11px] text-current/80">
+                      {formatI18n(t('settings.ai.startedAt'), { value: testStartedAt })}
+                    </div>
+                  )}
+                </div>
+                {testBusy ? (
+                  <div className="mt-2 rounded-md border border-current/15 bg-white/50 px-3 py-2 text-[12px] dark:bg-black/10">
+                    {t('settings.ai.waitingForModelResponse')}
+                  </div>
+                ) : testError ? (
+                  <div className="mt-2 rounded-md border border-current/15 bg-white/50 px-3 py-2 font-mono text-[11px] whitespace-pre-wrap break-words dark:bg-black/10">
+                    {testError}
+                  </div>
+                ) : (
+                  <div className="mt-3 space-y-1.5">
+                    <div className="text-[11px] font-semibold uppercase tracking-wide text-current/80">
+                      {t('settings.ai.response')}
+                    </div>
+                    <div className="rounded-md border border-current/15 bg-white/70 px-3 py-3 text-[13px] leading-relaxed text-stone-900 whitespace-pre-wrap break-words dark:bg-black/10 dark:text-neutral-100">
+                      {testReply}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
 
@@ -1941,6 +2240,13 @@ const CustomRoutingDialog = ({
             onClick={onClose}
             className="rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-4 py-2 text-sm font-medium text-stone-700 dark:text-neutral-200 hover:bg-stone-50 dark:hover:bg-neutral-800/60 dark:bg-neutral-800/60 dark:hover:bg-neutral-800/60">
             {t('common.cancel')}
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleTest()}
+            disabled={!canTest || testBusy}
+            className="rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-4 py-2 text-sm font-medium text-stone-700 dark:text-neutral-200 hover:bg-stone-50 dark:hover:bg-neutral-800/60 disabled:cursor-not-allowed disabled:opacity-50">
+            {testBusy ? t('settings.ai.testing') : t('settings.ai.test')}
           </button>
           <button
             type="button"
@@ -2004,6 +2310,240 @@ const SaveBar = ({
   );
 };
 
+const GlobalOwnModelSelector = ({
+  current,
+  saved,
+  cloudProviders,
+  localModels,
+  ollamaRunning,
+  onApply,
+}: {
+  current: ProviderRef | null;
+  saved: ProviderRef | null;
+  cloudProviders: CloudProvider[];
+  localModels: OllamaModel[];
+  ollamaRunning: boolean;
+  onApply: (next: ProviderRef) => Promise<void>;
+}) => {
+  const { t } = useT();
+  const customCloud = cloudProviders.filter(p => p.slug !== 'openhuman');
+  const localAvailable = ollamaRunning && localModels.length > 0;
+
+  const initialSource: CustomDialogSource | null =
+    current?.kind === 'cloud'
+      ? { kind: 'cloud', providerSlug: current.providerSlug }
+      : current?.kind === 'local'
+        ? { kind: 'local' }
+        : customCloud[0]
+          ? { kind: 'cloud', providerSlug: customCloud[0].slug }
+          : localAvailable
+            ? { kind: 'local' }
+            : null;
+
+  const [source, setSource] = useState<CustomDialogSource | null>(initialSource);
+  const [model, setModel] = useState<string>(
+    current?.kind === 'cloud' || current?.kind === 'local' ? current.model : ''
+  );
+  const [cloudModels, setCloudModels] = useState<ModelInfo[]>([]);
+  const [cloudModelsLoading, setCloudModelsLoading] = useState(false);
+  const [cloudModelsError, setCloudModelsError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const selectedSlug = source?.kind === 'cloud' ? source.providerSlug : null;
+
+  useEffect(() => {
+    if (!selectedSlug) {
+      setCloudModels([]);
+      setCloudModelsError(null);
+      return;
+    }
+    const provider = customCloud.find(c => c.slug === selectedSlug);
+    if (!provider) {
+      setCloudModels([]);
+      setCloudModelsError(null);
+      return;
+    }
+    let active = true;
+    setCloudModelsLoading(true);
+    setCloudModels([]);
+    setCloudModelsError(null);
+    listProviderModels(provider.slug)
+      .then(ms => {
+        if (!active) return;
+        setCloudModels(ms);
+        setCloudModelsLoading(false);
+        if (!model.trim() && ms[0]?.id) {
+          setModel(ms[0].id);
+        }
+      })
+      .catch((err: unknown) => {
+        if (!active) return;
+        setCloudModelsError(err instanceof Error ? err.message : String(err));
+        setCloudModelsLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedSlug]);
+
+  useEffect(() => {
+    if (source?.kind === 'local' && !model.trim()) {
+      setModel(localModels[0]?.id ?? '');
+    }
+  }, [source, localModels, model]);
+
+  const canApply = source !== null && model.trim().length > 0;
+  const selectedRef =
+    !source || !model.trim()
+      ? null
+      : source.kind === 'local'
+        ? ({ kind: 'local', model: model.trim() } as const)
+        : ({ kind: 'cloud', providerSlug: source.providerSlug, model: model.trim() } as const);
+  const isSaved =
+    selectedRef !== null &&
+    saved !== null &&
+    providerRefSignature(selectedRef) === providerRefSignature(saved);
+
+  const applySelection = async (nextSource: CustomDialogSource | null, nextModel: string) => {
+    if (!nextSource || !nextModel.trim()) return;
+    setSaving(true);
+    try {
+      if (nextSource.kind === 'local') {
+        await onApply({ kind: 'local', model: nextModel.trim() });
+      } else {
+        await onApply({
+          kind: 'cloud',
+          providerSlug: nextSource.providerSlug,
+          model: nextModel.trim(),
+        });
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4 rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4">
+      <div className="space-y-1">
+        <div className="text-sm font-medium text-stone-900 dark:text-neutral-100">
+          {t('settings.ai.globalModel.title')}
+        </div>
+        <p className="text-xs text-amber-700 dark:text-amber-200">
+          {t('settings.ai.globalModel.desc')}
+        </p>
+      </div>
+
+      {customCloud.length === 0 && !localAvailable ? (
+        <div className="rounded-lg border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 p-3 text-xs text-amber-800 dark:text-amber-200">
+          {t('settings.ai.globalModel.noProviders')}
+        </div>
+      ) : (
+        <>
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-stone-700 dark:text-neutral-200">
+                {t('settings.ai.globalModel.provider')}
+              </label>
+              <select
+                value={
+                  source
+                    ? `${source.kind}:${source.kind === 'cloud' ? source.providerSlug : ''}`
+                    : ''
+                }
+                onChange={e => {
+                  const colonIdx = e.target.value.indexOf(':');
+                  const kind = e.target.value.slice(0, colonIdx);
+                  const slug = e.target.value.slice(colonIdx + 1);
+                  if (kind === 'local') {
+                    const nextSource = { kind: 'local' } as const;
+                    const nextModel = localModels[0]?.id ?? '';
+                    setSource(nextSource);
+                    setModel(nextModel);
+                  } else {
+                    const nextSource = { kind: 'cloud', providerSlug: slug } as const;
+                    setSource(nextSource);
+                    setModel('');
+                  }
+                }}
+                className="w-full rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100">
+                {customCloud.map(p => (
+                  <option key={p.slug} value={`cloud:${p.slug}`}>
+                    {p.label}
+                  </option>
+                ))}
+                {localAvailable ? (
+                  <option value="local:">{t('settings.ai.provider.ollama')}</option>
+                ) : null}
+              </select>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-stone-700 dark:text-neutral-200">
+                {t('settings.ai.globalModel.model')}
+              </label>
+              {source?.kind === 'local' ? (
+                <select
+                  value={model}
+                  onChange={e => setModel(e.target.value)}
+                  className="w-full rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100">
+                  {localModels.map(m => (
+                    <option key={m.id} value={m.id}>
+                      {m.id}
+                    </option>
+                  ))}
+                </select>
+              ) : cloudModels.length > 0 ? (
+                <select
+                  value={model}
+                  onChange={e => setModel(e.target.value)}
+                  className="w-full rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100">
+                  {cloudModels.map(m => (
+                    <option key={m.id} value={m.id}>
+                      {m.id}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  value={model}
+                  onChange={e => setModel(e.target.value)}
+                  placeholder={
+                    cloudModelsLoading
+                      ? t('settings.ai.globalModel.loadingModels')
+                      : t('settings.ai.globalModel.enterModelId')
+                  }
+                  className="w-full rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100"
+                />
+              )}
+              {cloudModelsError ? (
+                <div className="text-xs text-coral-700 dark:text-coral-300">{cloudModelsError}</div>
+              ) : null}
+            </div>
+          </div>
+          <div className="rounded-lg bg-stone-50 dark:bg-neutral-800/60 px-3 py-2 text-xs text-stone-500 dark:text-neutral-400">
+            {t('settings.ai.globalModel.appliesToAll')}
+          </div>
+
+          <div className="flex justify-end">
+            <button
+              type="button"
+              disabled={!canApply || saving || isSaved}
+              onClick={() => void applySelection(source, model)}
+              className="rounded-lg bg-primary-500 px-3 py-2 text-xs font-medium text-white hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-50">
+              {saving
+                ? t('settings.ai.globalModel.saving')
+                : isSaved
+                  ? t('settings.ai.globalModel.saved')
+                  : t('common.save')}
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+};
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Main panel
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2018,8 +2558,7 @@ interface AIPanelProps {
 const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
   const { t } = useT();
   const { navigateBack, breadcrumbs } = useSettingsNavigation();
-  const { saved, draft, setDraft, isDirty, save, persist, discard, loading, error, reload } =
-    useAISettings();
+  const { saved, draft, isDirty, save, persist, discard, loading, error, reload } = useAISettings();
   // #1574 §4b: advisory re-embed modal, driven by the backend status RPC.
   // Logic lives in a unit-testable hook (see useReembedBackfillModal).
   const { reembed, handleSave, dismissReembed } = useReembedBackfillModal(save);
@@ -2029,39 +2568,118 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
   const [busyAction, setBusyAction] = useState<string | null>(null);
   // Which workload's "Custom" dialog is currently open (null = closed).
   const [customDialogFor, setCustomDialogFor] = useState<WorkloadId | null>(null);
+  const [routingEditorMode, setRoutingEditorMode] = useState<'own' | 'custom' | null>(null);
   // Which provider slug's API-key dialog is currently open (null = closed).
   const [keyDialogFor, setKeyDialogFor] = useState<string | null>(null);
-  const [openAiCompatDialogOpen, setOpenAiCompatDialogOpen] = useState(false);
-  const [openAiCompatStatus, setOpenAiCompatStatus] = useState<{
-    baseUrl: string | null;
-    has_api_key: boolean;
-  }>({ baseUrl: null, has_api_key: false });
-  const [openAiCompatBusy, setOpenAiCompatBusy] = useState<string | null>(null);
   // When the user toggles LM Studio / Ollama (local runtimes), we
   // need to remember which label to attach to the upserted provider so the
   // chip can find it again. Cleared when the dialog closes.
   const [pendingLocalLabel, setPendingLocalLabel] = useState<string | null>(null);
+  const openRouterOauthAbortRef = useRef<AbortController | null>(null);
 
-  const updateRouting = (id: WorkloadId, next: ProviderRef) =>
-    setDraft({ ...draft, routing: { ...draft.routing, [id]: next } });
+  const connectProvider = useCallback(
+    async ({
+      slug,
+      localLabel = null,
+      value,
+      credentialMode,
+    }: {
+      slug: string;
+      localLabel?: string | null;
+      value: string;
+      credentialMode: 'api_key' | 'oauth' | 'endpoint';
+    }) => {
+      const isLocalRuntime = credentialMode === 'endpoint';
+      setBusyAction(`toggle-${localLabel ? localLabel.toLowerCase().replace(/\s/g, '') : slug}`);
 
-  useEffect(() => {
-    let active = true;
-    loadOpenAICompatEndpointStatus()
-      .then(status => {
-        if (active) {
-          setOpenAiCompatStatus(status);
+      try {
+        const trimmed = value.trim();
+        const endpoint = isLocalRuntime
+          ? (() => {
+              const url = new URL(trimmed);
+              if (!/^https?:$/.test(url.protocol)) {
+                throw new Error('Endpoint must start with http:// or https://');
+              }
+              if (url.pathname === '' || url.pathname === '/') {
+                url.pathname = '/v1';
+              }
+              return url.toString().replace(/\/$/, '');
+            })()
+          : defaultEndpointFor(slug);
+
+        const upserted: CloudProvider = {
+          id: `p_${slug}_${Math.random().toString(36).slice(2, 7)}`,
+          slug,
+          label: localLabel ?? BUILTIN_PROVIDER_META[slug]?.label ?? slug,
+          endpoint,
+          authStyle: authStyleForSlug(slug),
+          maskedKey: maskKeyLabel(true),
+        };
+
+        const priorWireProviders = saved.cloudProviders.map(p => ({
+          id: p.id,
+          slug: p.slug,
+          label: p.label,
+          endpoint: p.endpoint,
+          auth_style: p.authStyle,
+        }));
+
+        if (!isLocalRuntime && slug !== 'openhuman') {
+          await setCloudProviderKey(slug, trimmed);
+        } else if (isLocalRuntime && slug === 'ollama') {
+          const baseUrl = endpoint.replace(/\/v1\/?$/, '');
+          await openhumanUpdateLocalAiSettings({
+            base_url: baseUrl,
+            provider: 'ollama',
+            runtime_enabled: true,
+            opt_in_confirmed: true,
+          });
+        } else if (isLocalRuntime && slug === 'lmstudio') {
+          await openhumanUpdateLocalAiSettings({
+            base_url: endpoint,
+            provider: 'lm_studio',
+            runtime_enabled: true,
+            opt_in_confirmed: true,
+          });
         }
-      })
-      .catch(() => {
-        if (active) {
-          setOpenAiCompatStatus({ baseUrl: null, has_api_key: false });
+
+        if (slug !== 'openhuman') {
+          const nextWireProviders = [
+            ...priorWireProviders.filter(p => p.slug !== slug),
+            {
+              id: upserted.id,
+              slug: upserted.slug,
+              label: upserted.label,
+              endpoint: upserted.endpoint,
+              auth_style: upserted.authStyle,
+            },
+          ];
+          await flushCloudProviders(nextWireProviders);
+          try {
+            await listProviderModels(slug);
+          } catch (probeErr) {
+            await flushCloudProviders(priorWireProviders).catch(() => {});
+            if (!isLocalRuntime && slug !== 'openhuman') {
+              await clearCloudProviderKey(slug).catch(() => {});
+            }
+            const msg = probeErr instanceof Error ? probeErr.message : String(probeErr);
+            throw new Error(`Could not reach ${upserted.label}: ${msg}`);
+          }
         }
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
+
+        const nextDraft = {
+          ...draft,
+          cloudProviders: [...draft.cloudProviders.filter(p => p.slug !== slug), upserted],
+        };
+        await persist(nextDraft);
+        setKeyDialogFor(null);
+        setPendingLocalLabel(null);
+      } finally {
+        setBusyAction(null);
+      }
+    },
+    [draft, persist, saved.cloudProviders]
+  );
 
   // applyPreset removed alongside the Cloud / Local / Mixed preset pills —
   // the new Default/Custom binary toggle handles routing per workload.
@@ -2074,6 +2692,7 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
       if (JSON.stringify(a) !== JSON.stringify(b)) {
         const describe = (r: ProviderRef) => {
           if (r.kind === 'openhuman') return 'openhuman';
+          if (r.kind === 'default') return 'cloud';
           const tempSuffix = r.temperature != null ? `@${r.temperature.toFixed(2)}` : '';
           if (r.kind === 'cloud') return `${r.providerSlug}:${r.model}${tempSuffix}`;
           return `local:${r.model}${tempSuffix}`;
@@ -2086,12 +2705,20 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
 
   const chatRows = WORKLOADS.filter(w => w.group === 'chat');
   const bgRows = WORKLOADS.filter(w => w.group === 'background');
+  const inferredRoutingMode = useMemo(() => inferRoutingMode(draft.routing), [draft.routing]);
+  const effectiveRoutingMode: RoutingMode =
+    routingEditorMode === 'own'
+      ? 'own'
+      : routingEditorMode === 'custom'
+        ? 'custom'
+        : inferredRoutingMode;
+  const sharedModelRef = useMemo(() => inferSharedModelRef(draft.routing), [draft.routing]);
 
   return (
     <div className="relative">
       {!embedded && (
         <SettingsHeader
-          title="LLM"
+          title={t('pages.settings.ai.llm')}
           showBackButton
           onBack={navigateBack}
           breadcrumbs={breadcrumbs}
@@ -2113,85 +2740,6 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
             </p>
           </div>
 
-          <section className="rounded-2xl border border-stone-200 dark:border-neutral-800 bg-stone-50/80 dark:bg-neutral-900/70 p-4">
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-              <div className="min-w-0">
-                <h3 className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
-                  {t('settings.ai.openAiCompat.title')}
-                </h3>
-                <p className="mt-1 text-xs text-stone-500 dark:text-neutral-400">
-                  {t('settings.ai.openAiCompat.description')}
-                </p>
-              </div>
-              <div className="flex shrink-0 items-center gap-2">
-                <span
-                  className={`rounded-full px-2.5 py-1 text-[11px] font-medium ring-1 ${
-                    openAiCompatStatus.has_api_key
-                      ? 'bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-200 dark:ring-emerald-500/30'
-                      : 'bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-500/10 dark:text-amber-200 dark:ring-amber-500/30'
-                  }`}>
-                  {openAiCompatStatus.has_api_key
-                    ? t('settings.ai.openAiCompat.keyConfigured')
-                    : t('settings.ai.openAiCompat.keyRequired')}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setOpenAiCompatDialogOpen(true)}
-                  disabled={openAiCompatBusy !== null}
-                  className="rounded-lg bg-primary-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-600 disabled:opacity-50">
-                  {openAiCompatStatus.has_api_key
-                    ? t('settings.ai.openAiCompat.rotateKey')
-                    : t('settings.ai.openAiCompat.setKey')}
-                </button>
-                {openAiCompatStatus.has_api_key ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setOpenAiCompatBusy('clear');
-                      clearOpenAICompatEndpointKey()
-                        .then(() => {
-                          setOpenAiCompatStatus(prev => ({ ...prev, has_api_key: false }));
-                        })
-                        .catch(err => {
-                          console.warn(
-                            '[ai-settings] clearOpenAICompatEndpointKey failed',
-                            err instanceof Error ? err.message : String(err)
-                          );
-                        })
-                        .finally(() => setOpenAiCompatBusy(null));
-                    }}
-                    disabled={openAiCompatBusy !== null}
-                    className="rounded-lg border border-stone-200 dark:border-neutral-800 px-3 py-1.5 text-xs font-medium text-stone-700 dark:text-neutral-200 hover:bg-stone-100 dark:hover:bg-neutral-800 disabled:opacity-50">
-                    {t('settings.ai.openAiCompat.clearKey')}
-                  </button>
-                ) : null}
-              </div>
-            </div>
-
-            <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_220px]">
-              <div>
-                <label className="text-[10px] font-semibold uppercase tracking-wide text-stone-500 dark:text-neutral-400">
-                  {t('settings.ai.openAiCompat.baseUrlLabel')}
-                </label>
-                <input
-                  readOnly
-                  value={
-                    openAiCompatStatus.baseUrl ?? t('settings.ai.openAiCompat.baseUrlUnavailable')
-                  }
-                  className="mt-1 w-full rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 font-mono text-xs text-stone-900 dark:text-neutral-100"
-                />
-              </div>
-              <div>
-                <label className="text-[10px] font-semibold uppercase tracking-wide text-stone-500 dark:text-neutral-400">
-                  {t('settings.ai.openAiCompat.authHeaderLabel')}
-                </label>
-                <div className="mt-1 rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 font-mono text-xs text-stone-700 dark:text-neutral-300">
-                  {t('settings.ai.openAiCompat.authHeaderExample')}
-                </div>
-              </div>
-            </div>
-          </section>
-
           {/* ─── Provider chip-toggle list ────────────────────────────────── */}
           <section className="space-y-3">
             {loading && (
@@ -2206,50 +2754,103 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
             )}
 
             <div className="flex flex-wrap gap-2">
+              <ProviderToggleChip
+                key="openhuman"
+                slug="openhuman"
+                label={t('settings.ai.routing.managed')}
+                enabled
+                locked
+                onToggle={() => {}}
+              />
+
               {/* Built-in cloud providers — openai/anthropic/openrouter/orcarouter/custom */}
-              {(['openai', 'anthropic', 'openrouter', 'orcarouter', 'custom'] as const).map(
-                slug => {
-                  const meta = BUILTIN_PROVIDER_META[slug];
-                  const label = meta?.label ?? slug;
-                  const existing = draft.cloudProviders.find(cp => cp.slug === slug);
-                  const enabled = !!existing;
-                  return (
-                    <ProviderToggleChip
-                      key={slug}
-                      slug={slug}
-                      label={label}
-                      enabled={enabled}
-                      busy={busyAction === `toggle-${slug}`}
-                      onToggle={() => {
-                        if (enabled && existing) {
-                          // Toggle OFF: remove the provider + scrub any
-                          // routing entries that pin to it.
-                          const remaining = draft.cloudProviders.filter(
-                            cp => cp.id !== existing.id
-                          );
-                          const nextRouting = Object.fromEntries(
-                            Object.entries(draft.routing).map(([wid, ref]) => [
-                              wid,
-                              ref.kind === 'cloud' && ref.providerSlug === existing.slug
-                                ? ({ kind: 'openhuman' } as const)
-                                : ref,
-                            ])
-                          ) as typeof draft.routing;
-                          setDraft({ ...draft, cloudProviders: remaining, routing: nextRouting });
-                        } else if (slug === 'custom') {
-                          // Custom providers need slug + endpoint + label, not
-                          // just an API key — defer to the full editor modal.
-                          setEditing('new');
-                        } else {
-                          // Toggle ON: open the API-key popup. The chip
-                          // only flips after the dialog saves.
-                          setKeyDialogFor(slug);
-                        }
-                      }}
-                    />
-                  );
-                }
-              )}
+              {(
+                [
+                  'openai',
+                  'anthropic',
+                  'openrouter',
+                  'orcarouter',
+                  'gmi',
+                  'fireworks',
+                  'moonshot',
+                ] as const
+              ).map(slug => {
+                const meta = BUILTIN_PROVIDER_META[slug];
+                const label = meta?.label ?? slug;
+                const existing = draft.cloudProviders.find(cp => cp.slug === slug);
+                const enabled = !!existing;
+                return (
+                  <ProviderToggleChip
+                    key={slug}
+                    slug={slug}
+                    label={label}
+                    enabled={enabled}
+                    busy={busyAction === `toggle-${slug}`}
+                    onToggle={async () => {
+                      if (enabled && existing) {
+                        // Toggle OFF: remove the provider + scrub any
+                        // routing entries that pin to it.
+                        const remaining = draft.cloudProviders.filter(cp => cp.id !== existing.id);
+                        const nextRouting = Object.fromEntries(
+                          Object.entries(draft.routing).map(([wid, ref]) => [
+                            wid,
+                            ref.kind === 'cloud' && ref.providerSlug === existing.slug
+                              ? ({ kind: 'default' } as const)
+                              : ref,
+                          ])
+                        ) as typeof draft.routing;
+                        await persist({
+                          ...draft,
+                          cloudProviders: remaining,
+                          routing: nextRouting,
+                        });
+                      } else {
+                        // Toggle ON: open the API-key popup. The chip
+                        // only flips after the dialog saves.
+                        setKeyDialogFor(slug);
+                      }
+                    }}
+                  />
+                );
+              })}
+
+              {draft.cloudProviders
+                .filter(
+                  cp =>
+                    ![
+                      'openhuman',
+                      'openai',
+                      'anthropic',
+                      'openrouter',
+                      'orcarouter',
+                      'gmi',
+                      'fireworks',
+                      'moonshot',
+                      'lmstudio',
+                      'ollama',
+                    ].includes(cp.slug)
+                )
+                .map(existing => (
+                  <ProviderToggleChip
+                    key={existing.id}
+                    slug="custom"
+                    label={existing.label}
+                    enabled
+                    busy={busyAction === `toggle-${existing.slug}`}
+                    onToggle={async () => {
+                      const remaining = draft.cloudProviders.filter(cp => cp.id !== existing.id);
+                      const nextRouting = Object.fromEntries(
+                        Object.entries(draft.routing).map(([wid, ref]) => [
+                          wid,
+                          ref.kind === 'cloud' && ref.providerSlug === existing.slug
+                            ? ({ kind: 'default' } as const)
+                            : ref,
+                        ])
+                      ) as typeof draft.routing;
+                      await persist({ ...draft, cloudProviders: remaining, routing: nextRouting });
+                    }}
+                  />
+                ))}
 
               {/* LM Studio + Ollama — local runtimes stored with a slug of
                   "lmstudio" / "ollama" so they're distinct from generic custom. */}
@@ -2269,9 +2870,9 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
                       type="button"
                       role="switch"
                       aria-checked={enabled}
-                      aria-label={`${enabled ? 'Disconnect' : 'Connect'} ${label}`}
+                      aria-label={providerToggleAriaLabel(t, enabled, label)}
                       disabled={busyAction === `toggle-${localKind}`}
-                      onClick={() => {
+                      onClick={async () => {
                         if (enabled && existing) {
                           const remaining = draft.cloudProviders.filter(
                             cp => cp.id !== existing.id
@@ -2280,11 +2881,15 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
                             Object.entries(draft.routing).map(([wid, ref]) => [
                               wid,
                               ref.kind === 'cloud' && ref.providerSlug === localKind
-                                ? ({ kind: 'openhuman' } as const)
+                                ? ({ kind: 'default' } as const)
                                 : ref,
                             ])
                           ) as typeof draft.routing;
-                          setDraft({ ...draft, cloudProviders: remaining, routing: nextRouting });
+                          await persist({
+                            ...draft,
+                            cloudProviders: remaining,
+                            routing: nextRouting,
+                          });
                         } else {
                           setKeyDialogFor(localKind);
                           setPendingLocalLabel(label);
@@ -2300,14 +2905,23 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
                 );
               })}
             </div>
+
+            <div className="pt-1">
+              <button
+                type="button"
+                onClick={() => setEditing('new')}
+                className="inline-flex items-center gap-2 rounded-lg bg-primary-50 px-3 py-2 text-xs font-medium text-primary-900 ring-1 ring-primary-200 transition-colors hover:bg-primary-100 dark:bg-primary-500/10 dark:text-primary-100 dark:ring-primary-500/30 dark:hover:bg-primary-500/20">
+                {t('settings.ai.routing.addCustomProvider')}
+              </button>
+            </div>
           </section>
         </div>
         {/* end of Auth section */}
 
         {/* ═══════════════════════════════════════════════════════════════
-            ROUTING — which workload uses which model. Each row is a
-            binary toggle: Default (let OpenHuman pick) or Custom (opens
-            a popup to choose provider + model).
+            ROUTING — top-level routing mode. Managed = OpenHuman decides.
+            Own = one provider/model for everything. Custom = fine-grained
+            per-workload routing.
             ═══════════════════════════════════════════════════════════════ */}
         <div className="space-y-4">
           <div className="border-b border-stone-200 dark:border-neutral-800 pb-2">
@@ -2320,51 +2934,134 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
           </div>
 
           <section className="space-y-3">
-            <div className="overflow-hidden rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 px-3">
-              <div className="pt-3">
-                <div className="text-[10px] font-semibold uppercase tracking-wide text-stone-400 dark:text-neutral-500">
-                  {t('settings.ai.workloadGroupChat')}
+            <div className="grid gap-3 md:grid-cols-3">
+              <button
+                type="button"
+                onClick={async () => {
+                  setRoutingEditorMode(null);
+                  await persist({
+                    ...draft,
+                    routing: routingWithAllWorkloads({ kind: 'openhuman' }),
+                  });
+                }}
+                className={`flex h-full min-h-[152px] flex-col rounded-2xl border p-4 text-left transition-colors ${
+                  effectiveRoutingMode === 'managed'
+                    ? 'border-emerald-300 bg-emerald-50 dark:border-emerald-500/40 dark:bg-emerald-500/10'
+                    : 'border-stone-200 bg-white hover:bg-stone-50 dark:border-neutral-800 dark:bg-neutral-900 dark:hover:bg-neutral-800'
+                }`}>
+                <div className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
+                  {t('settings.ai.routing.managed')}
                 </div>
-                <div className="divide-y divide-stone-200 dark:divide-neutral-800">
-                  {chatRows.map(w => (
-                    <WorkloadRow
-                      key={w.id}
-                      workload={w}
-                      ref_={draft.routing[w.id]}
-                      cloudProviders={draft.cloudProviders}
-                      localModels={installed}
-                      ollamaState={ollama.state}
-                      onChange={next => updateRouting(w.id, next)}
-                      onCustomClick={() => setCustomDialogFor(w.id)}
-                    />
-                  ))}
+                <p className="mt-2 text-xs leading-5 text-stone-600 dark:text-neutral-300">
+                  {t('settings.ai.routing.managedDesc')}
+                </p>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setRoutingEditorMode('own')}
+                className={`flex h-full min-h-[152px] flex-col rounded-2xl border p-4 text-left transition-colors ${
+                  effectiveRoutingMode === 'own'
+                    ? 'border-sky-300 bg-sky-50 dark:border-sky-500/40 dark:bg-sky-500/10'
+                    : 'border-stone-200 bg-white hover:bg-stone-50 dark:border-neutral-800 dark:bg-neutral-900 dark:hover:bg-neutral-800'
+                }`}>
+                <div className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
+                  {t('settings.ai.routing.useYourOwn')}
                 </div>
-              </div>
-              <div className="pb-3 pt-3">
-                <div className="text-[10px] font-semibold uppercase tracking-wide text-stone-400 dark:text-neutral-500">
-                  {t('settings.ai.workloadGroupBackground')}
+                <p className="mt-2 text-xs leading-5 text-stone-600 dark:text-neutral-300">
+                  {t('settings.ai.routing.useYourOwnDesc')}
+                </p>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setRoutingEditorMode('custom')}
+                className={`flex h-full min-h-[152px] flex-col rounded-2xl border p-4 text-left transition-colors ${
+                  effectiveRoutingMode === 'custom'
+                    ? 'border-sky-300 bg-sky-50 dark:border-sky-500/40 dark:bg-sky-500/10'
+                    : 'border-stone-200 bg-white hover:bg-stone-50 dark:border-neutral-800 dark:bg-neutral-900 dark:hover:bg-neutral-800'
+                }`}>
+                <div className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
+                  {t('settings.ai.routing.advanced')}
                 </div>
-                <div className="divide-y divide-stone-200 dark:divide-neutral-800">
-                  {bgRows.map(w => (
-                    <WorkloadRow
-                      key={w.id}
-                      workload={w}
-                      ref_={draft.routing[w.id]}
-                      cloudProviders={draft.cloudProviders}
-                      localModels={installed}
-                      ollamaState={ollama.state}
-                      onChange={next => updateRouting(w.id, next)}
-                      onCustomClick={() => setCustomDialogFor(w.id)}
-                    />
-                  ))}
-                </div>
-              </div>
+                <p className="mt-2 text-xs leading-5 text-stone-600 dark:text-neutral-300">
+                  {t('settings.ai.routing.advancedDesc')}
+                </p>
+              </button>
             </div>
 
-            <div className="text-[11px] text-stone-500 dark:text-neutral-400">
-              {t('settings.ai.defaultResolvesTo')}{' '}
-              <span className="font-mono text-stone-700 dark:text-neutral-200">OpenHuman</span>.
-            </div>
+            {effectiveRoutingMode === 'managed' ? (
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50/70 px-4 py-3 text-sm text-emerald-900 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-100">
+                {t('settings.ai.routing.managedMsg')}
+              </div>
+            ) : null}
+
+            {effectiveRoutingMode === 'own' ? (
+              <GlobalOwnModelSelector
+                current={sharedModelRef}
+                saved={inferSharedModelRef(saved.routing)}
+                cloudProviders={draft.cloudProviders}
+                localModels={installed}
+                ollamaRunning={ollama.state === 'running'}
+                onApply={async next => {
+                  await persist({ ...draft, routing: routingWithAllWorkloads(next) });
+                }}
+              />
+            ) : null}
+
+            {effectiveRoutingMode === 'custom' ? (
+              <>
+                <div className="rounded-xl border border-sky-200 bg-sky-50/70 px-4 py-3 text-sm text-sky-900 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-100">
+                  {t('settings.ai.routing.customDesc')}
+                </div>
+
+                <div className="space-y-3">
+                  <div className="overflow-hidden rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 px-3">
+                    <div className="border-b border-stone-200 dark:border-neutral-800 py-3">
+                      <div className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
+                        {t('settings.ai.routing.chatAndConversations')}
+                      </div>
+                      <div className="mt-1 text-xs text-stone-500 dark:text-neutral-400">
+                        {t('settings.ai.routing.chatDesc')}
+                      </div>
+                    </div>
+                    <div className="divide-y divide-stone-200 dark:divide-neutral-800">
+                      {chatRows.map(w => (
+                        <WorkloadRow
+                          key={w.id}
+                          workload={w}
+                          ref_={draft.routing[w.id]}
+                          cloudProviders={draft.cloudProviders}
+                          onCustomClick={() => setCustomDialogFor(w.id)}
+                        />
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="overflow-hidden rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 px-3">
+                    <div className="border-b border-stone-200 dark:border-neutral-800 py-3">
+                      <div className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
+                        {t('settings.ai.routing.backgroundTasks')}
+                      </div>
+                      <div className="mt-1 text-xs text-stone-500 dark:text-neutral-400">
+                        {t('settings.ai.routing.bgTasksDesc')}
+                      </div>
+                    </div>
+                    <div className="divide-y divide-stone-200 dark:divide-neutral-800">
+                      {bgRows.map(w => (
+                        <WorkloadRow
+                          key={w.id}
+                          workload={w}
+                          ref_={draft.routing[w.id]}
+                          cloudProviders={draft.cloudProviders}
+                          onCustomClick={() => setCustomDialogFor(w.id)}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </>
+            ) : null}
           </section>
         </div>
         {/* end of Routing section */}
@@ -2382,13 +3079,11 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
       <ConfirmationModal
         modal={{
           isOpen: reembed.open,
-          title: 'Re-indexing memory',
-          message:
-            `Embeddings are being reprocessed. ${reembed.pending} memory item(s) ` +
-            `are being re-embedded under the current model — semantic recall is ` +
-            `reduced until this finishes. Keyword search keeps working, and ` +
-            `re-embedding continues in the background if you close this.`,
-          confirmText: 'OK',
+          title: t('settings.ai.reindexingMemory'),
+          message: formatI18n(t('settings.ai.reindexingMemoryMessage'), {
+            pending: reembed.pending,
+          }),
+          confirmText: t('common.ok'),
           onConfirm: dismissReembed,
           onCancel: dismissReembed,
         }}
@@ -2466,7 +3161,7 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
                 editing === 'new'
                   ? [...draft.cloudProviders, upserted]
                   : draft.cloudProviders.map(p => (p.id === editing.id ? upserted : p));
-              setDraft({ ...draft, cloudProviders: list });
+              await persist({ ...draft, cloudProviders: list });
               setEditing(null);
             } finally {
               setBusyAction(null);
@@ -2508,144 +3203,48 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
           );
         })()}
 
-      {openAiCompatDialogOpen && (
-        <ProviderKeyDialog
-          slug="external-openai-compat"
-          label={t('settings.ai.openAiCompat.title')}
-          isLocalRuntime={false}
-          onCancel={() => setOpenAiCompatDialogOpen(false)}
-          onSubmit={async value => {
-            setOpenAiCompatBusy('save');
-            try {
-              await setOpenAICompatEndpointKey(value.trim());
-              setOpenAiCompatStatus(prev => ({ ...prev, has_api_key: true }));
-              setOpenAiCompatDialogOpen(false);
-            } finally {
-              setOpenAiCompatBusy(null);
-            }
-          }}
-        />
-      )}
-
       {keyDialogFor && (
         <ProviderKeyDialog
           slug={keyDialogFor}
           label={pendingLocalLabel ?? BUILTIN_PROVIDER_META[keyDialogFor]?.label ?? keyDialogFor}
           isLocalRuntime={Boolean(pendingLocalLabel)}
+          oauthAction={
+            keyDialogFor === 'openrouter' && !pendingLocalLabel
+              ? {
+                  label: t('settings.ai.signInWithOpenRouter'),
+                  onClick: async () => {
+                    const controller = new AbortController();
+                    openRouterOauthAbortRef.current = controller;
+                    try {
+                      const apiKey = await connectOpenRouterViaOAuth({ signal: controller.signal });
+                      await connectProvider({
+                        slug: 'openrouter',
+                        value: apiKey,
+                        credentialMode: 'oauth',
+                      });
+                    } finally {
+                      if (openRouterOauthAbortRef.current === controller) {
+                        openRouterOauthAbortRef.current = null;
+                      }
+                    }
+                  },
+                }
+              : null
+          }
           onCancel={() => {
+            openRouterOauthAbortRef.current?.abort();
+            openRouterOauthAbortRef.current = null;
             setKeyDialogFor(null);
             setPendingLocalLabel(null);
           }}
-          onSubmit={async value => {
-            const slug = keyDialogFor;
-            const localLabel = pendingLocalLabel;
-            const isLocalRuntime = Boolean(localLabel);
-            setBusyAction(
-              `toggle-${localLabel ? localLabel.toLowerCase().replace(/\s/g, '') : slug}`
-            );
-            try {
-              const trimmed = value.trim();
-              // Normalize local-runtime endpoints so the cloud_providers entry
-              // always carries the OpenAI-compatible `/v1` path that the
-              // `list_configured_models` probe expects. Without this,
-              // `http://host:11434` would pass validation, be stored verbatim,
-              // and silently fail model discovery until the user manually
-              // appended `/v1` — confusing because the UI would still mark the
-              // provider connected (caught in review).
-              const endpoint = isLocalRuntime
-                ? (() => {
-                    const url = new URL(trimmed); // throws on malformed → caught above
-                    if (!/^https?:$/.test(url.protocol)) {
-                      throw new Error('Endpoint must start with http:// or https://');
-                    }
-                    if (url.pathname === '' || url.pathname === '/') {
-                      url.pathname = '/v1';
-                    }
-                    return url.toString().replace(/\/$/, '');
-                  })()
-                : defaultEndpointFor(slug);
-              const upserted: CloudProvider = {
-                id: `p_${slug}_${Math.random().toString(36).slice(2, 7)}`,
-                slug,
-                label: localLabel ?? BUILTIN_PROVIDER_META[slug]?.label ?? slug,
-                endpoint,
-                authStyle: authStyleForSlug(slug),
-                maskedKey: maskKeyLabel(true),
-              };
-
-              // Snapshot the prior persisted cloud_providers list so we can
-              // roll back to it if the live probe fails. `saved` reflects what
-              // is currently on disk (the eager-flush effect keeps it in sync
-              // with `draft`), so this is the right baseline to restore to.
-              const priorWireProviders = saved.cloudProviders.map(p => ({
-                id: p.id,
-                slug: p.slug,
-                label: p.label,
-                endpoint: p.endpoint,
-                auth_style: p.authStyle,
-              }));
-
-              // Persist the credential / endpoint BEFORE the probe, so the
-              // factory has everything it needs to actually answer it. Each
-              // step short-circuits and surfaces its own error via throw —
-              // ProviderKeyDialog.handleSave catches and keeps the dialog open
-              // so the user can fix the value and retry.
-              if (!isLocalRuntime && slug !== 'openhuman') {
-                await setCloudProviderKey(slug, trimmed);
-              } else if (isLocalRuntime && slug === 'ollama') {
-                // The Rust Ollama branch reads `config.local_ai.base_url`
-                // (not `cloud_providers[].endpoint`) when building the chat
-                // provider — persist it eagerly so chat routing actually hits
-                // the user-chosen host. Strip a trailing `/v1` since
-                // `make_ollama_provider` appends `/v1` itself.
-                const baseUrl = endpoint.replace(/\/v1\/?$/, '');
-                await openhumanUpdateLocalAiSettings({
-                  base_url: baseUrl,
-                  provider: 'ollama',
-                  runtime_enabled: true,
-                  opt_in_confirmed: true,
-                });
-              }
-
-              // Live verification: flush the new cloud_providers list to disk
-              // and call `/models` through the Rust controller. A reachable
-              // endpoint + valid auth header is the strongest check we can
-              // make without burning tokens. Skip the probe for the
-              // OpenHuman backend (session JWT, no /models endpoint to hit).
-              if (slug !== 'openhuman') {
-                const nextWireProviders = [
-                  ...priorWireProviders.filter(p => p.slug !== slug),
-                  {
-                    id: upserted.id,
-                    slug: upserted.slug,
-                    label: upserted.label,
-                    endpoint: upserted.endpoint,
-                    auth_style: upserted.authStyle,
-                  },
-                ];
-                await flushCloudProviders(nextWireProviders);
-                try {
-                  await listProviderModels(slug);
-                } catch (probeErr) {
-                  // Roll back so the UI / on-disk state never reflects a
-                  // provider we couldn't actually reach. The user sees the
-                  // error in the dialog and the chip stays in the OFF state.
-                  await flushCloudProviders(priorWireProviders).catch(() => {});
-                  if (!isLocalRuntime && slug !== 'openhuman') {
-                    await clearCloudProviderKey(slug).catch(() => {});
-                  }
-                  const msg = probeErr instanceof Error ? probeErr.message : String(probeErr);
-                  throw new Error(`Could not reach ${upserted.label}: ${msg}`);
-                }
-              }
-
-              setDraft({ ...draft, cloudProviders: [...draft.cloudProviders, upserted] });
-              setKeyDialogFor(null);
-              setPendingLocalLabel(null);
-            } finally {
-              setBusyAction(null);
-            }
-          }}
+          onSubmit={async value =>
+            await connectProvider({
+              slug: keyDialogFor,
+              localLabel: pendingLocalLabel,
+              value,
+              credentialMode: pendingLocalLabel ? 'endpoint' : 'api_key',
+            })
+          }
         />
       )}
     </div>
@@ -2670,21 +3269,36 @@ const CloudProviderEditor = ({
   onClearKey: (slug: string) => Promise<void> | void;
 }) => {
   const { t } = useT();
-  const defaultSlug: string =
-    initial?.slug ??
-    (['openai', 'anthropic', 'openrouter', 'orcarouter', 'custom'] as const).find(
-      s => !existingSlugs.includes(s)
-    ) ??
-    'custom';
-  const [slug, setSlug] = useState<string>(defaultSlug);
-  const [label, setLabel] = useState<string>(
-    initial?.label ?? BUILTIN_PROVIDER_META[defaultSlug]?.label ?? defaultSlug
-  );
-  const [endpoint, setEndpoint] = useState(initial?.endpoint ?? defaultEndpointFor(defaultSlug));
+  const [label, setLabel] = useState<string>(initial?.label ?? '');
+  const [endpoint, setEndpoint] = useState(initial?.endpoint ?? '');
   const [apiKey, setApiKey] = useState('');
   const [saving, setSaving] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
-  const isOpenHuman = slug === 'openhuman';
+  const slug = initial?.slug ?? slugifyCustomProviderName(label);
+  const hasReservedSlugCollision =
+    !initial &&
+    [
+      'cloud',
+      'openhuman',
+      'pid',
+      'openai',
+      'anthropic',
+      'openrouter',
+      'orcarouter',
+      'gmi',
+      'fireworks',
+      'moonshot',
+      'custom',
+      'ollama',
+      'lmstudio',
+    ].includes(slug);
+  const slugError = !slug
+    ? t('settings.ai.slugMissingError')
+    : existingSlugs.includes(slug)
+      ? t('settings.ai.slugInUseError')
+      : hasReservedSlugCollision
+        ? t('settings.ai.slugReservedError')
+        : null;
   const hasExistingKey = (initial?.maskedKey ?? '').startsWith('••••');
 
   return (
@@ -2693,7 +3307,7 @@ const CloudProviderEditor = ({
         <div className="border-b border-stone-200 dark:border-neutral-800 px-4 py-3">
           <div className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
             {initial
-              ? `${t('settings.ai.editProvider')} ${initial.label}`
+              ? formatI18n(t('settings.ai.editProvider'), { label: initial.label })
               : t('settings.ai.addCloudProvider')}
           </div>
           <div className="mt-0.5 text-xs text-stone-500 dark:text-neutral-400">
@@ -2703,74 +3317,69 @@ const CloudProviderEditor = ({
         </div>
         <div className="space-y-3 px-4 py-3">
           <div>
-            <label className="text-[10px] font-semibold uppercase tracking-wide text-stone-500 dark:text-neutral-400">
-              Provider slug
-            </label>
-            <select
-              value={slug}
-              onChange={e => {
-                const next = e.target.value;
-                setSlug(next);
-                setLabel(BUILTIN_PROVIDER_META[next]?.label ?? next);
-                if (!initial) {
-                  setEndpoint(defaultEndpointFor(next));
-                }
-              }}
-              disabled={!!initial}
-              className="mt-1 w-full rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 disabled:opacity-60 focus:border-primary-400 focus:outline-none focus:ring-1 focus:ring-primary-200">
-              {(['openai', 'anthropic', 'openrouter', 'orcarouter', 'custom'] as const)
-                .filter(s => s === slug || !existingSlugs.includes(s))
-                .map(s => (
-                  <option key={s} value={s}>
-                    {BUILTIN_PROVIDER_META[s]?.label ?? s}
-                  </option>
-                ))}
-            </select>
-          </div>
-          <div>
-            <label className="text-[10px] font-semibold uppercase tracking-wide text-stone-500 dark:text-neutral-400">
-              Display label
+            <label
+              htmlFor="cloud-provider-name"
+              className="text-[10px] font-semibold uppercase tracking-wide text-stone-500 dark:text-neutral-400">
+              {t('common.name')}
             </label>
             <input
+              id="cloud-provider-name"
               value={label}
               onChange={e => setLabel(e.target.value)}
               className="mt-1 w-full rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 placeholder:text-stone-400 dark:placeholder:text-neutral-500 dark:text-neutral-500 dark:placeholder:text-neutral-500 focus:border-primary-400 focus:outline-none focus:ring-1 focus:ring-primary-200"
-              placeholder="My Provider"
+              placeholder={t('settings.ai.providerNamePlaceholder')}
+            />
+            <div className="mt-1 text-[11px] text-stone-500 dark:text-neutral-400">
+              {t('settings.ai.slugLabel')}{' '}
+              <span className="font-mono text-stone-700 dark:text-neutral-200">
+                {slug || t('settings.ai.noneDash')}
+              </span>
+            </div>
+            {slugError ? (
+              <div className="mt-1 text-[11px] text-coral-600 dark:text-coral-300">{slugError}</div>
+            ) : null}
+          </div>
+          <div>
+            <label
+              htmlFor="cloud-provider-openai-url"
+              className="text-[10px] font-semibold uppercase tracking-wide text-stone-500 dark:text-neutral-400">
+              {t('settings.ai.openAiUrlLabel')}
+            </label>
+            <input
+              id="cloud-provider-openai-url"
+              value={endpoint}
+              onChange={e => setEndpoint(e.target.value)}
+              className="mt-1 w-full rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 font-mono text-xs text-stone-900 dark:text-neutral-100 placeholder:text-stone-400 dark:placeholder:text-neutral-500 dark:text-neutral-500 dark:placeholder:text-neutral-500 disabled:opacity-60 focus:border-primary-400 focus:outline-none focus:ring-1 focus:ring-primary-200"
+              placeholder={t('settings.ai.openAiUrlPlaceholder')}
             />
           </div>
           <div>
-            <label className="text-[10px] font-semibold uppercase tracking-wide text-stone-500 dark:text-neutral-400">
-              Endpoint
+            <label className="flex items-center justify-between text-[10px] font-semibold uppercase tracking-wide text-stone-500 dark:text-neutral-400">
+              <span>{t('settings.ai.apiKeyFieldLabel')}</span>
+              {hasExistingKey && (
+                <button
+                  onClick={() => void onClearKey(slug)}
+                  className="text-[10px] font-medium normal-case text-coral-600 dark:text-coral-300 hover:text-coral-700 dark:text-coral-300">
+                  {t('settings.ai.clearStoredKey')}
+                </button>
+              )}
             </label>
             <input
-              value={endpoint}
-              onChange={e => setEndpoint(e.target.value)}
-              disabled={isOpenHuman}
-              className="mt-1 w-full rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 font-mono text-xs text-stone-900 dark:text-neutral-100 placeholder:text-stone-400 dark:placeholder:text-neutral-500 dark:text-neutral-500 dark:placeholder:text-neutral-500 disabled:opacity-60 focus:border-primary-400 focus:outline-none focus:ring-1 focus:ring-primary-200"
-              placeholder="https://api.example.com/v1"
+              aria-label={t('settings.ai.apiKeyFieldLabel')}
+              type="text"
+              autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="off"
+              spellCheck={false}
+              data-form-type="other"
+              data-lpignore="true"
+              data-1p-ignore="true"
+              value={apiKey}
+              onChange={e => setApiKey(e.target.value)}
+              className="mt-1 w-full rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 font-mono text-xs text-stone-900 dark:text-neutral-100 placeholder:text-stone-400 dark:placeholder:text-neutral-500 dark:text-neutral-500 dark:placeholder:text-neutral-500 focus:border-primary-400 focus:outline-none focus:ring-1 focus:ring-primary-200"
+              placeholder={hasExistingKey ? t('settings.ai.keepExistingKeyPlaceholder') : 'sk-...'}
             />
           </div>
-          {!isOpenHuman && (
-            <div>
-              <label className="flex items-center justify-between text-[10px] font-semibold uppercase tracking-wide text-stone-500 dark:text-neutral-400">
-                <span>API key</span>
-                {hasExistingKey && (
-                  <button
-                    onClick={() => void onClearKey(slug)}
-                    className="text-[10px] font-medium normal-case text-coral-600 dark:text-coral-300 hover:text-coral-700 dark:text-coral-300">
-                    {t('settings.ai.clearStoredKey')}
-                  </button>
-                )}
-              </label>
-              <input
-                type="password"
-                value={apiKey}
-                onChange={e => setApiKey(e.target.value)}
-                className="mt-1 w-full rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 font-mono text-xs text-stone-900 dark:text-neutral-100 placeholder:text-stone-400 dark:placeholder:text-neutral-500 dark:text-neutral-500 dark:placeholder:text-neutral-500 focus:border-primary-400 focus:outline-none focus:ring-1 focus:ring-primary-200"
-                placeholder={hasExistingKey ? 'Leave blank to keep existing key' : 'sk-...'}
-              />
-            </div>
-          )}
           {submitError ? <ProviderSetupErrorNotice error={submitError} /> : null}
         </div>
         <div className="flex items-center justify-end gap-2 border-t border-stone-200 dark:border-neutral-800 px-4 py-3">
@@ -2785,13 +3394,16 @@ const CloudProviderEditor = ({
               setSaving(true);
               setSubmitError(null);
               try {
+                if (slugError) {
+                  throw new Error(slugError);
+                }
                 await onSubmit(
                   {
                     id: initial?.id ?? '',
                     slug,
                     label: label.trim() || slug,
                     endpoint: endpoint.trim(),
-                    authStyle: initial?.authStyle ?? authStyleForSlug(slug),
+                    authStyle: initial?.authStyle ?? 'bearer',
                     maskedKey: maskKeyLabel(hasExistingKey || apiKey.length > 0),
                   },
                   apiKey.trim()
@@ -2803,14 +3415,14 @@ const CloudProviderEditor = ({
                 const message = err instanceof Error ? err.message : String(err);
                 console.warn('[ai-settings] cloud provider editor submit failed', {
                   slug,
-                  summary: presentProviderSetupError(message).summary,
+                  summary: presentProviderSetupError(message, t).summary,
                 });
                 setSubmitError(message);
               } finally {
                 setSaving(false);
               }
             }}
-            disabled={saving || !endpoint.trim()}
+            disabled={saving || !endpoint.trim() || Boolean(slugError)}
             className="rounded-lg bg-primary-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-600 disabled:opacity-50">
             {saving
               ? t('settings.ai.saving')
@@ -2836,6 +3448,12 @@ function defaultEndpointFor(slug: string): string {
       return 'https://openrouter.ai/api/v1';
     case 'orcarouter':
       return 'https://api.orcarouter.ai/v1';
+    case 'gmi':
+      return 'https://api.gmi-serving.com/v1';
+    case 'fireworks':
+      return 'https://api.fireworks.ai/inference/v1';
+    case 'moonshot':
+      return 'https://api.moonshot.ai/v1';
     case 'ollama':
       // Ollama exposes an OpenAI-compatible endpoint at /v1; the bare host is
       // also accepted by the Rust factory (it appends /v1 internally for chat).

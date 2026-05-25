@@ -15,7 +15,8 @@ import ComposioPanel from '../components/settings/panels/ComposioPanel';
 import ComposioTriagePanel from '../components/settings/panels/ComposioTriagePanel';
 import CronJobsPanel from '../components/settings/panels/CronJobsPanel';
 import DeveloperOptionsPanel from '../components/settings/panels/DeveloperOptionsPanel';
-import DevicesPanel from '../components/settings/panels/DevicesPanel';
+import DevicesComingSoonPanel from '../components/settings/panels/DevicesComingSoonPanel';
+import EmbeddingsPanel from '../components/settings/panels/EmbeddingsPanel';
 import HeartbeatPanel from '../components/settings/panels/HeartbeatPanel';
 import LedgerUsagePanel from '../components/settings/panels/LedgerUsagePanel';
 import LocalModelDebugPanel from '../components/settings/panels/LocalModelDebugPanel';
@@ -180,19 +181,17 @@ const WrappedSettingsPage = ({
   );
 };
 
-function wrapSettingsPage(element: ReactNode, opts?: { maxWidthClass?: string }) {
-  return (
+const Settings = () => {
+  const { t } = useT();
+
+  const wrapSettingsPage = (element: ReactNode, opts?: { maxWidthClass?: string }) => (
     <WrappedSettingsPage maxWidthClass={opts?.maxWidthClass}>
       {element}
       <div className="border-t border-stone-100 dark:border-neutral-800 px-4 py-3 text-center text-[11px] text-stone-400 dark:text-neutral-500">
-        Beta build - v{APP_VERSION}
+        {t('settings.betaBuild').replace('{version}', APP_VERSION)}
       </div>
     </WrappedSettingsPage>
   );
-}
-
-const Settings = () => {
-  const { t } = useT();
 
   const accountSettingsItems = [
     {
@@ -270,6 +269,13 @@ const Settings = () => {
       title: t('pages.settings.ai.llm'),
       description: t('pages.settings.ai.llmDesc'),
       route: 'llm',
+      icon: LlmIcon,
+    },
+    {
+      id: 'embeddings',
+      title: t('pages.settings.ai.embeddings'),
+      description: t('pages.settings.ai.embeddingsDesc'),
+      route: 'embeddings',
       icon: LlmIcon,
     },
     {
@@ -417,6 +423,7 @@ const Settings = () => {
           element={<Navigate to="/settings/notifications#routing" replace />}
         />
         <Route path="llm" element={wrapSettingsPage(<AIPanel />, { maxWidthClass: 'max-w-4xl' })} />
+        <Route path="embeddings" element={wrapSettingsPage(<EmbeddingsPanel />)} />
         <Route
           path="heartbeat"
           element={wrapSettingsPage(<HeartbeatPanel />, { maxWidthClass: 'max-w-4xl' })}
@@ -443,7 +450,7 @@ const Settings = () => {
         <Route path="composio-triggers" element={wrapSettingsPage(<ComposioTriagePanel />)} />
         <Route path="composio-routing" element={wrapSettingsPage(<ComposioPanel />)} />
         {/* Mobile devices */}
-        <Route path="devices" element={wrapSettingsPage(<DevicesPanel />)} />
+        <Route path="devices" element={wrapSettingsPage(<DevicesComingSoonPanel />)} />
         {/* About / updates */}
         <Route path="about" element={wrapSettingsPage(<AboutPanel />)} />
         {/* Fallback */}

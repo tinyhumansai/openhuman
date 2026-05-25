@@ -9,7 +9,7 @@ use super::harness::memory_context::{
     CROSS_CHAT_LIMIT, CROSS_CHAT_SNIPPET_CHARS, WORKING_MEMORY_KEY_PREFIX, WORKING_MEMORY_LIMIT,
 };
 use crate::openhuman::learning::transcript_ingest::CONVERSATION_MEMORY_NAMESPACE;
-use crate::openhuman::memory::conversations::ConversationStore;
+use crate::openhuman::memory_conversations::ConversationStore;
 
 /// Maximum number of `[Prior conversations]` lines surfaced into the prompt
 /// at the start of a fresh chat. Tight cap on purpose: this block is meant
@@ -707,7 +707,7 @@ mod tests {
     /// actually run.
     #[tokio::test]
     async fn loader_surfaces_jsonl_primary_path_with_workspace_dir() {
-        use crate::openhuman::memory::conversations::{
+        use crate::openhuman::memory_conversations::{
             ConversationMessage, ConversationStore, CreateConversationThread,
         };
 

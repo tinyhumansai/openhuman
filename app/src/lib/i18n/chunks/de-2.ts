@@ -434,7 +434,7 @@ const de2: TranslationMap = {
   'devOptions.menuComposioTriggers': 'Integrationsauslöser',
   'devOptions.menuComposioTriggersDesc':
     'Konfiguriere KI-Triage-Einstellungen für Composio-Integrationsauslöser',
-  'mic.deviceSelector': 'Microphone device',
+  'mic.deviceSelector': 'Mikrofongerät',
 };
 
 export default de2;

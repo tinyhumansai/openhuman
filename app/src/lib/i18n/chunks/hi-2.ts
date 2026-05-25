@@ -388,40 +388,40 @@ const hi2: TranslationMap = {
   'insights.skills': 'स्किल्स',
   'insights.opinions': 'राय',
   // Developer options menu items (#2225) — English stubs; native translations welcome
-  'devOptions.menuAi': 'AI Configuration',
-  'devOptions.menuAiDesc': 'Cloud providers, local Ollama models, and per-workload routing',
-  'devOptions.menuScreenAware': 'Screen Awareness',
-  'devOptions.menuScreenAwareDesc':
-    'Screen capture permissions, monitoring policy, and session controls',
-  'devOptions.menuMessaging': 'Messaging Channels',
+  'devOptions.menuAi': 'एआई कॉन्फ़िगरेशन',
+  'devOptions.menuAiDesc': 'क्लाउड प्रदाता, स्थानीय Ollama मॉडल, और प्रति-वर्कलोड रूटिंग',
+  'devOptions.menuScreenAware': 'स्क्रीन जागरूकता',
+  'devOptions.menuScreenAwareDesc': 'स्क्रीन कैप्चर अनुमतियाँ, निगरानी नीति और सत्र नियंत्रण',
+  'devOptions.menuMessaging': 'मैसेजिंग चैनल',
   'devOptions.menuMessagingDesc':
-    'Configure Telegram/Discord auth modes and default channel routing',
-  'devOptions.menuTools': 'Tools',
-  'devOptions.menuToolsDesc': 'Enable or disable capabilities OpenHuman can use on your behalf',
-  'devOptions.menuAgentChat': 'Agent Chat',
-  'devOptions.menuAgentChatDesc': 'Test agent conversation with model and temperature overrides',
-  'devOptions.menuCronJobs': 'Cron Jobs',
-  'devOptions.menuCronJobsDesc': 'View and configure scheduled jobs for runtime skills',
-  'devOptions.menuLocalModelDebug': 'Local Model Debug',
+    'Telegram/Discord प्रमाणीकरण मोड और डिफ़ॉल्ट चैनल रूटिंग कॉन्फ़िगर करें',
+  'devOptions.menuTools': 'उपकरण',
+  'devOptions.menuToolsDesc':
+    'क्षमताओं को सक्षम या अक्षम करें OpenHuman आपकी ओर से उपयोग कर सकते हैं',
+  'devOptions.menuAgentChat': 'एजेंट चैट',
+  'devOptions.menuAgentChatDesc': 'मॉडल और तापमान ओवरराइड के साथ परीक्षण एजेंट की बातचीत',
+  'devOptions.menuCronJobs': 'क्रॉन जॉब्स',
+  'devOptions.menuCronJobsDesc': 'रनटाइम कौशल के लिए निर्धारित कार्य देखें और कॉन्फ़िगर करें',
+  'devOptions.menuLocalModelDebug': 'स्थानीय मॉडल डीबग',
   'devOptions.menuLocalModelDebugDesc':
-    'Ollama config, asset downloads, model tests, and diagnostics',
-  'devOptions.menuWebhooksDebug': 'Webhooks',
+    'Ollama कॉन्फ़िगरेशन, एसेट डाउनलोड, मॉडल परीक्षण और डायग्नोस्टिक्स',
+  'devOptions.menuWebhooksDebug': 'वेबहुक',
   'devOptions.menuWebhooksDebugDesc':
-    'Inspect runtime webhook registrations and captured request logs',
-  'devOptions.menuIntelligence': 'Intelligence',
-  'devOptions.menuIntelligenceDesc': 'Memory workspace, subconscious engine, dreams, and settings',
-  'devOptions.menuNotificationRouting': 'Notification Routing',
+    'रनटाइम वेबहुक पंजीकरण और कैप्चर किए गए अनुरोध लॉग का निरीक्षण करें',
+  'devOptions.menuIntelligence': 'बुद्धि',
+  'devOptions.menuIntelligenceDesc': 'मेमोरी कार्यक्षेत्र, अवचेतन इंजन, सपने और सेटिंग्स',
+  'devOptions.menuNotificationRouting': 'अधिसूचना रूटिंग',
   'devOptions.menuNotificationRoutingDesc':
-    'AI importance scoring and orchestrator escalation for integration alerts',
-  'devOptions.menuComposeIOTriggers': 'ComposeIO Triggers',
-  'devOptions.menuComposeIOTriggersDesc': 'View ComposeIO trigger history and archive',
-  'devOptions.menuComposioRouting': 'Composio Routing (Direct Mode)',
+    'एकीकरण अलर्ट के लिए एआई महत्व स्कोरिंग और ऑर्केस्ट्रेटर एस्केलेशन',
+  'devOptions.menuComposeIOTriggers': 'कंपोज़आईओ ट्रिगर्स',
+  'devOptions.menuComposeIOTriggersDesc': 'ComposeIO ट्रिगर इतिहास और संग्रह देखें',
+  'devOptions.menuComposioRouting': 'Composio रूटिंग (डायरेक्ट मोड)',
   'devOptions.menuComposioRoutingDesc':
-    'Bring your own Composio API key and route calls directly to backend.composio.dev',
-  'devOptions.menuComposioTriggers': 'Integration Triggers',
+    'अपनी स्वयं की Composio API कुंजी लाएँ और कॉल को सीधे Backend.composio.dev पर रूट करें',
+  'devOptions.menuComposioTriggers': 'एकीकरण ट्रिगर',
   'devOptions.menuComposioTriggersDesc':
-    'Configure AI triage settings for Composio integration triggers',
-  'mic.deviceSelector': 'Microphone device',
+    'Composio एकीकरण ट्रिगर के लिए AI ट्राइएज सेटिंग्स कॉन्फ़िगर करें',
+  'mic.deviceSelector': 'माइक्रोफोन डिवाइस',
 };
 
 export default hi2;

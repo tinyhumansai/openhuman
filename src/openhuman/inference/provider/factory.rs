@@ -35,6 +35,8 @@ use crate::openhuman::inference::provider::ProviderRuntimeOptions;
 pub const PROVIDER_OPENHUMAN: &str = "openhuman";
 /// Prefix for Ollama-local providers: `"ollama:<model>"`.
 pub const OLLAMA_PROVIDER_PREFIX: &str = "ollama:";
+/// Prefix for LM Studio-local providers: `"lmstudio:<model>"`.
+pub const LM_STUDIO_PROVIDER_PREFIX: &str = "lmstudio:";
 /// Sentinel returned when a user has expressed custom/BYOK inference intent
 /// (via a non-openhuman `inference_url`) but no matching `cloud_providers`
 /// entry was found. Passed through `provider_for_role` and caught early in
@@ -211,6 +213,19 @@ pub fn create_chat_provider_from_string(
         return make_ollama_provider(&model, temperature_override, config);
     }
 
+    if let Some(model_with_temp) = p.strip_prefix(LM_STUDIO_PROVIDER_PREFIX) {
+        let (model, temperature_override) = split_model_and_temperature(model_with_temp);
+        if model.is_empty() {
+            anyhow::bail!(
+                "[chat-factory] provider string '{}' for role '{}' has an empty model — \
+                 use 'lmstudio:<model-id>'",
+                p,
+                role
+            );
+        }
+        return make_lm_studio_provider(&model, temperature_override, config);
+    }
+
     // New grammar: "<slug>:<model>[@<temp>]"
     if let Some(colon_pos) = p.find(':') {
         let slug = p[..colon_pos].trim();
@@ -232,7 +247,7 @@ pub fn create_chat_provider_from_string(
     // than an opaque parse failure.
     anyhow::bail!(
         "[chat-factory] unrecognised provider string '{}' for role '{}'. \
-         Valid forms: openhuman, ollama:<model>, <slug>:<model>. \
+         Valid forms: openhuman, ollama:<model>, lmstudio:<model>, <slug>:<model>. \
          Configured slugs: [{}]",
         p,
         role,
@@ -243,6 +258,59 @@ pub fn create_chat_provider_from_string(
             .collect::<Vec<_>>()
             .join(", ")
     )
+}
+
+/// Build a local-runtime provider without applying the custom-provider session gate.
+///
+/// Used by setup/probe flows that need to validate an endpoint before the
+/// workload routing layer is fully configured. This still routes through the
+/// same standardized compatible-provider implementation as the main factory.
+pub(crate) fn create_local_chat_provider_from_string(
+    provider: &str,
+    config: &Config,
+) -> anyhow::Result<(Box<dyn Provider>, String)> {
+    let p = provider.trim();
+    log::debug!(
+        "[providers][chat-factory] create_local_chat_provider_from_string provider={}",
+        p
+    );
+
+    if let Some(model_with_temp) = p.strip_prefix(OLLAMA_PROVIDER_PREFIX) {
+        let (model, temperature_override) = split_model_and_temperature(model_with_temp);
+        if model.is_empty() {
+            anyhow::bail!(
+                "[chat-factory] provider string '{}' has an empty model — use 'ollama:<model-id>'",
+                p
+            );
+        }
+        log::debug!(
+            "[providers][chat-factory] local:ollama model={} temp={:?}",
+            model,
+            temperature_override
+        );
+        return make_ollama_provider(&model, temperature_override, config);
+    }
+
+    if let Some(model_with_temp) = p.strip_prefix(LM_STUDIO_PROVIDER_PREFIX) {
+        let (model, temperature_override) = split_model_and_temperature(model_with_temp);
+        if model.is_empty() {
+            anyhow::bail!(
+                "[chat-factory] provider string '{}' has an empty model — use 'lmstudio:<model-id>'",
+                p
+            );
+        }
+        log::debug!(
+            "[providers][chat-factory] local:lmstudio model={} temp={:?}",
+            model,
+            temperature_override
+        );
+        return make_lm_studio_provider(&model, temperature_override, config);
+    }
+
+    anyhow::bail!(
+        "[chat-factory] '{}' is not a supported local provider string. Valid local forms: ollama:<model>, lmstudio:<model>",
+        p
+    );
 }
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
@@ -530,13 +598,10 @@ fn make_ollama_provider(
     temperature_override: Option<f64>,
     config: &Config,
 ) -> anyhow::Result<(Box<dyn Provider>, String)> {
-    let base_url = config
-        .local_ai
-        .base_url
-        .as_deref()
-        .unwrap_or("http://localhost:11434");
+    let base_url = crate::openhuman::inference::local::ollama_base_url_from_config(config);
+    let normalized_base_url = base_url.trim_end_matches('/').trim_end_matches("/v1");
     // Ollama exposes an OpenAI-compatible endpoint at /v1.
-    let endpoint = format!("{}/v1", base_url.trim_end_matches('/'));
+    let endpoint = format!("{normalized_base_url}/v1");
     log::info!(
         "[providers][chat-factory] building ollama provider model={} endpoint_host={} temp_override={:?}",
         model,
@@ -544,9 +609,39 @@ fn make_ollama_provider(
         temperature_override
     );
     let p = make_openai_compatible_provider_with_config(
+        "ollama",
         &endpoint,
         "",
         CompatAuthStyle::None,
+        &config.temperature_unsupported_models,
+        temperature_override,
+    )?;
+    Ok((p, model.to_string()))
+}
+
+/// Build an LM Studio local provider.
+fn make_lm_studio_provider(
+    model: &str,
+    temperature_override: Option<f64>,
+    config: &Config,
+) -> anyhow::Result<(Box<dyn Provider>, String)> {
+    let endpoint = crate::openhuman::inference::local::lm_studio::lm_studio_base_url(config);
+    let api_key = config.local_ai.api_key.as_deref().unwrap_or("");
+    log::info!(
+        "[providers][chat-factory] building lmstudio provider model={} endpoint_host={} temp_override={:?}",
+        model,
+        redact_endpoint(&endpoint),
+        temperature_override
+    );
+    let p = make_openai_compatible_provider_with_config(
+        "lmstudio",
+        &endpoint,
+        api_key,
+        if api_key.trim().is_empty() {
+            CompatAuthStyle::None
+        } else {
+            CompatAuthStyle::Bearer
+        },
         &config.temperature_unsupported_models,
         temperature_override,
     )?;
@@ -628,6 +723,7 @@ fn make_cloud_provider_by_slug(
     match entry.auth_style {
         AuthStyle::Anthropic => {
             let p = make_openai_compatible_provider_with_config(
+                slug,
                 &entry.endpoint,
                 &key,
                 CompatAuthStyle::Anthropic,
@@ -647,6 +743,7 @@ fn make_cloud_provider_by_slug(
         }
         AuthStyle::None => {
             let p = make_openai_compatible_provider_with_config(
+                slug,
                 &entry.endpoint,
                 "",
                 CompatAuthStyle::None,
@@ -657,6 +754,7 @@ fn make_cloud_provider_by_slug(
         }
         AuthStyle::Bearer => {
             let p = make_openai_compatible_provider_with_config(
+                slug,
                 &entry.endpoint,
                 &key,
                 CompatAuthStyle::Bearer,
@@ -741,13 +839,14 @@ fn make_openai_compatible_provider(
     api_key: &str,
     auth_style: CompatAuthStyle,
 ) -> anyhow::Result<Box<dyn Provider>> {
-    make_openai_compatible_provider_with_config(endpoint, api_key, auth_style, &[], None)
+    make_openai_compatible_provider_with_config("cloud", endpoint, api_key, auth_style, &[], None)
 }
 
 /// Build an `OpenAiCompatibleProvider` with auth style, temperature
 /// suppression list from config, and an optional per-workload temperature
 /// override (extracted from the provider string's `@<temp>` suffix).
 fn make_openai_compatible_provider_with_config(
+    provider_name: &str,
     endpoint: &str,
     api_key: &str,
     auth_style: CompatAuthStyle,
@@ -760,7 +859,7 @@ fn make_openai_compatible_provider_with_config(
         Some(api_key)
     };
     Ok(Box::new(
-        OpenAiCompatibleProvider::new("cloud", endpoint, key, auth_style)
+        OpenAiCompatibleProvider::new(provider_name, endpoint, key, auth_style)
             .with_temperature_unsupported_models(temperature_unsupported_models.to_vec())
             .with_temperature_override(temperature_override),
     ))

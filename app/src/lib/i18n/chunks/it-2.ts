@@ -142,7 +142,7 @@ const it2: TranslationMap = {
   'team.failedToSwitch': 'Cambio team fallito',
   'team.failedToLeave': 'Uscita dal team fallita',
   'team.role.owner': 'Proprietario',
-  'team.role.admin': 'Admin',
+  'team.role.admin': 'Amministratore',
   'team.role.billingManager': 'Responsabile fatturazione',
   'team.role.member': 'Membro',
   'team.active': 'Attivo',
@@ -171,7 +171,7 @@ const it2: TranslationMap = {
   'voice.title': 'Dettatura vocale',
   'voice.settings': 'Impostazioni voce',
   'voice.settingsDesc': "Tieni premuta l'hotkey per dettare e inserire testo nel campo attivo.",
-  'voice.hotkey': 'Hotkey',
+  'voice.hotkey': 'Tasto di scelta rapida',
   'voice.activationMode': 'Modalità di attivazione',
   'voice.tapToToggle': 'Tocca per attivare/disattivare',
   'voice.writingStyle': 'Stile di scrittura',
@@ -315,7 +315,7 @@ const it2: TranslationMap = {
   'memory.searchAria': 'Cerca memoria',
   'memory.searchPlaceholder': 'Cerca voci di memoria...',
   'memory.sourceFilter.all': 'Tutte le origini',
-  'memory.sourceFilter.email': 'Email',
+  'memory.sourceFilter.email': 'E-mail',
   'memory.sourceFilter.calendar': 'Calendario',
   'memory.sourceFilter.telegram': 'Telegram',
   'memory.sourceFilter.aiInsight': 'AI Insight',
@@ -381,7 +381,7 @@ const it2: TranslationMap = {
   'dreams.comingSoon': 'In arrivo',
   'assignment.memoryLlm': 'LLM memoria',
   'assignment.memoryLlmAria': 'Selezione LLM memoria',
-  'assignment.embedder': 'Embedder',
+  'assignment.embedder': 'Incorpora',
   'assignment.loaded': 'Caricato',
   'assignment.notDownloaded': 'Non scaricato',
   'assignment.usedForExtractSummarise': 'Usato per estrazione e riassunto',
@@ -391,40 +391,45 @@ const it2: TranslationMap = {
   'insights.skills': 'Competenze',
   'insights.opinions': 'Opinioni',
   // Developer options menu items (#2225) — English stubs; native translations welcome
-  'devOptions.menuAi': 'AI Configuration',
-  'devOptions.menuAiDesc': 'Cloud providers, local Ollama models, and per-workload routing',
-  'devOptions.menuScreenAware': 'Screen Awareness',
+  'devOptions.menuAi': 'Configurazione AI',
+  'devOptions.menuAiDesc': 'Provider cloud, modelli Ollama locali e routing per carico di lavoro',
+  'devOptions.menuScreenAware': 'Riconoscimento schermo',
   'devOptions.menuScreenAwareDesc':
-    'Screen capture permissions, monitoring policy, and session controls',
-  'devOptions.menuMessaging': 'Messaging Channels',
+    "Autorizzazioni per l'acquisizione dello schermo, policy di monitoraggio e controlli della sessione",
+  'devOptions.menuMessaging': 'Canali di messaggistica',
   'devOptions.menuMessagingDesc':
-    'Configure Telegram/Discord auth modes and default channel routing',
-  'devOptions.menuTools': 'Tools',
-  'devOptions.menuToolsDesc': 'Enable or disable capabilities OpenHuman can use on your behalf',
-  'devOptions.menuAgentChat': 'Agent Chat',
-  'devOptions.menuAgentChatDesc': 'Test agent conversation with model and temperature overrides',
+    'Configura le modalità di autenticazione Telegram/Discord e il routing del canale predefinito',
+  'devOptions.menuTools': 'Strumenti',
+  'devOptions.menuToolsDesc':
+    'Abilita o disabilita le funzionalità che OpenHuman può utilizzare per tuo conto',
+  'devOptions.menuAgentChat': "Chat dell'agente",
+  'devOptions.menuAgentChatDesc':
+    "Conversazione dell'agente di test con override di modello e temperatura",
   'devOptions.menuCronJobs': 'Cron Jobs',
-  'devOptions.menuCronJobsDesc': 'View and configure scheduled jobs for runtime skills',
-  'devOptions.menuLocalModelDebug': 'Local Model Debug',
+  'devOptions.menuCronJobsDesc':
+    'Visualizza e configura processi pianificati per le competenze di runtime',
+  'devOptions.menuLocalModelDebug': 'Debug modello locale',
   'devOptions.menuLocalModelDebugDesc':
-    'Ollama config, asset downloads, model tests, and diagnostics',
-  'devOptions.menuWebhooksDebug': 'Webhooks',
+    'Ollama configurazione, download di risorse, test del modello e diagnostica',
+  'devOptions.menuWebhooksDebug': 'Webhook',
   'devOptions.menuWebhooksDebugDesc':
-    'Inspect runtime webhook registrations and captured request logs',
-  'devOptions.menuIntelligence': 'Intelligence',
-  'devOptions.menuIntelligenceDesc': 'Memory workspace, subconscious engine, dreams, and settings',
-  'devOptions.menuNotificationRouting': 'Notification Routing',
+    'Esamina le registrazioni dei webhook di runtime e i registri delle richieste acquisite',
+  'devOptions.menuIntelligence': 'Intelligenza',
+  'devOptions.menuIntelligenceDesc':
+    'Spazio di lavoro della memoria, motore subconscio, sogni e impostazioni',
+  'devOptions.menuNotificationRouting': 'Routing delle notifiche',
   'devOptions.menuNotificationRoutingDesc':
-    'AI importance scoring and orchestrator escalation for integration alerts',
-  'devOptions.menuComposeIOTriggers': 'ComposeIO Triggers',
-  'devOptions.menuComposeIOTriggersDesc': 'View ComposeIO trigger history and archive',
-  'devOptions.menuComposioRouting': 'Composio Routing (Direct Mode)',
+    "Punteggio di importanza AI ed escalation dell'agente di orchestrazione per gli avvisi di integrazione",
+  'devOptions.menuComposeIOTriggers': 'Trigger ComposeIO',
+  'devOptions.menuComposeIOTriggersDesc':
+    "Visualizza la cronologia e l'archivio dei trigger ComposeIO",
+  'devOptions.menuComposioRouting': 'Composio Routing (modalità diretta)',
   'devOptions.menuComposioRoutingDesc':
-    'Bring your own Composio API key and route calls directly to backend.composio.dev',
-  'devOptions.menuComposioTriggers': 'Integration Triggers',
+    'Porta la tua chiave Composio API e instrada le chiamate direttamente a backend.composio.dev',
+  'devOptions.menuComposioTriggers': 'Trigger di integrazione',
   'devOptions.menuComposioTriggersDesc':
-    'Configure AI triage settings for Composio integration triggers',
-  'mic.deviceSelector': 'Microphone device',
+    'Configura le impostazioni di triage AI per i trigger di integrazione Composio',
+  'mic.deviceSelector': 'Dispositivo microfono',
 };
 
 export default it2;

@@ -24,7 +24,7 @@ use crate::openhuman::scheduler_gate::signals::Signals;
 /// simultaneous Ollama requests have crashed the user's laptop twice.
 ///
 /// Cloud-backend LLM calls bypass this semaphore at the worker layer
-/// (see `memory_tree::jobs::worker::run_once`) because they're
+/// (see `memory::jobs::worker::run_once`) because they're
 /// bandwidth-bound, not RAM-bound, and the worker pool itself bounds
 /// concurrency upstream. Keeping this at 1 preserves the laptop-RAM
 /// contract regardless of backend.

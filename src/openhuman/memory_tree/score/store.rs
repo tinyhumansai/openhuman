@@ -14,10 +14,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::openhuman::composio::providers::profile::{is_self_identity_any_toolkit, IdentityKind};
 use crate::openhuman::config::Config;
+use crate::openhuman::memory_store::chunks::store::with_connection;
 use crate::openhuman::memory_tree::score::extract::EntityKind;
 use crate::openhuman::memory_tree::score::resolver::CanonicalEntity;
 use crate::openhuman::memory_tree::score::signals::ScoreSignals;
-use crate::openhuman::memory_tree::store::with_connection;
 
 /// Map a memory-tree `EntityKind` to the Composio identity-registry
 /// [`IdentityKind`] used for self-matching, or `None` for kinds that

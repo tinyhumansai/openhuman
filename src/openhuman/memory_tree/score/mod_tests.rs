@@ -1,5 +1,5 @@
 use super::*;
-use crate::openhuman::memory_tree::types::{chunk_id, Chunk, Metadata, SourceKind};
+use crate::openhuman::memory_store::chunks::types::{chunk_id, Chunk, Metadata, SourceKind};
 use chrono::Utc;
 
 fn test_chunk(content: &str) -> Chunk {
@@ -7,7 +7,7 @@ fn test_chunk(content: &str) -> Chunk {
     Chunk {
         id: chunk_id(SourceKind::Email, "t1", 0, "test-content"),
         content: content.to_string(),
-        token_count: crate::openhuman::memory_tree::types::approx_token_count(content),
+        token_count: crate::openhuman::memory_store::chunks::types::approx_token_count(content),
         metadata: meta,
         seq_in_source: 0,
         created_at: Utc::now(),

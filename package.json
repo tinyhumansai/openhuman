@@ -31,6 +31,7 @@
     "merge-pr": "bash scripts/shortcuts/review/merge.sh",
     "mock:api": "node scripts/mock-api-server.mjs",
     "pr:checklist": "node scripts/check-pr-checklist.mjs",
+    "pr:sync-main": "node scripts/merge-main-into-open-prs.mjs",
     "rabbit": "bash scripts/rabbit/cli.sh",
     "reset": "bash scripts/shortcuts/ws-reset.sh",
     "deep-work": "bash scripts/deep-work/cli.sh",
@@ -49,6 +50,7 @@
     "tauri:android:dev": "pnpm --filter openhuman-app tauri:android:dev",
     "tauri:android:build": "pnpm --filter openhuman-app tauri:android:build",
     "i18n:check": "tsx scripts/i18n-coverage.ts",
+    "i18n:react:check": "tsx scripts/i18n-react-audit.ts",
     "i18n:bundle:check": "node scripts/verify-i18n-bundle.mjs",
     "i18n:dump": "tsx scripts/i18n-coverage.ts --no-unused --out tmp/i18n-coverage"
   },

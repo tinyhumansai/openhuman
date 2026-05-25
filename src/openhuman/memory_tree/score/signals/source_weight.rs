@@ -10,7 +10,7 @@
 //! Finer distinction (DM vs channel on Slack specifically) requires richer
 //! ingest-time metadata and is deferred.
 
-use crate::openhuman::memory_tree::types::{DataSource, Metadata, SourceKind};
+use crate::openhuman::memory_store::chunks::types::{DataSource, Metadata, SourceKind};
 
 const PROVIDER_PREFIX: &str = "provider:";
 

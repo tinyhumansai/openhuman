@@ -12,8 +12,8 @@ pub mod types;
 
 use std::sync::Arc;
 
-use crate::openhuman::config::{Config, DEFAULT_CLOUD_LLM_MODEL};
-use crate::openhuman::memory_tree::chat::{build_chat_provider, ChatConsumer};
+use crate::openhuman::config::Config;
+use crate::openhuman::memory::chat::build_chat_runtime;
 
 pub use extractor::{CompositeExtractor, EntityExtractor, RegexEntityExtractor};
 pub use llm::{LlmEntityExtractor, LlmExtractorConfig};
@@ -23,10 +23,8 @@ pub use types::{EntityKind, ExtractedEntities, ExtractedEntity, ExtractedTopic};
 ///
 /// Composition:
 /// - regex extractor — always on, mechanical, near-zero cost
-/// - LLM extractor with `emit_topics: true` — added when the LLM backend
-///   is reachable. For `llm_backend = "cloud"` (default) that's always. For
-///   `llm_backend = "local"` we still require `llm_extractor_endpoint` +
-///   `_model` to be set (otherwise the legacy regex-only path stays).
+/// - LLM extractor with `emit_topics: true` — added when the unified
+///   summarization workload can be built from inference routing.
 ///
 /// Differs from [`super::ScoringConfig::from_config`] (the chunk-admission
 /// builder) in two ways: returns *just* an extractor (no thresholds /
@@ -34,14 +32,15 @@ pub use types::{EntityKind, ExtractedEntities, ExtractedEntity, ExtractedTopic};
 /// `emit_topics` on so summaries surface thematic labels alongside
 /// entities. Leaf-side scoring is unchanged.
 pub fn build_summary_extractor(config: &Config) -> Arc<dyn EntityExtractor> {
-    let model = resolve_extractor_model(config);
-    let Some(model) = model else {
-        log::debug!(
-            "[memory_tree::extract] summary extractor: LLM model not resolvable for \
-             memory_provider={:?} — using regex-only",
-            config.memory_provider.as_deref().unwrap_or("cloud")
-        );
-        return Arc::new(CompositeExtractor::regex_only());
+    let (provider, model) = match build_chat_runtime(config) {
+        Ok(runtime) => runtime,
+        Err(err) => {
+            log::warn!(
+                "[memory_tree::extract] summary extractor: build_chat_runtime failed: \
+                 {err:#} — falling back to regex-only"
+            );
+            return Arc::new(CompositeExtractor::regex_only());
+        }
     };
 
     let cfg = LlmExtractorConfig {
@@ -49,17 +48,6 @@ pub fn build_summary_extractor(config: &Config) -> Arc<dyn EntityExtractor> {
         emit_topics: true,
         output_language: config.output_language.clone(),
         ..LlmExtractorConfig::default()
-    };
-
-    let provider = match build_chat_provider(config, ChatConsumer::Extract) {
-        Ok(p) => p,
-        Err(err) => {
-            log::warn!(
-                "[memory_tree::extract] summary extractor: build_chat_provider failed: \
-                 {err:#} — falling back to regex-only"
-            );
-            return Arc::new(CompositeExtractor::regex_only());
-        }
     };
 
     log::debug!(
@@ -72,42 +60,4 @@ pub fn build_summary_extractor(config: &Config) -> Arc<dyn EntityExtractor> {
         Box::new(RegexEntityExtractor),
         Box::new(LlmEntityExtractor::new(cfg, provider)),
     ]))
-}
-
-/// Resolve the model identifier the extractor's [`ChatProvider`] should
-/// target, returning `None` when the configured backend can't be served:
-///
-/// - Cloud (i.e. `Config::workload_uses_local("memory")` is false): always
-///   returns the configured `cloud_llm_model` or its `summarization-v1`
-///   default.
-/// - Local (i.e. `memory_provider = "ollama:<m>"`): returns `Some(model)`
-///   only when both `llm_extractor_endpoint` AND `llm_extractor_model` are
-///   set — otherwise the legacy regex-only path engages.
-pub(super) fn resolve_extractor_model(config: &Config) -> Option<String> {
-    if config.workload_uses_local("memory") {
-        let endpoint = config
-            .memory_tree
-            .llm_extractor_endpoint
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty());
-        let model = config
-            .memory_tree
-            .llm_extractor_model
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty());
-        match (endpoint, model) {
-            (Some(_), Some(m)) => Some(m.to_string()),
-            _ => None,
-        }
-    } else {
-        Some(
-            config
-                .memory_tree
-                .cloud_llm_model
-                .clone()
-                .unwrap_or_else(|| DEFAULT_CLOUD_LLM_MODEL.to_string()),
-        )
-    }
 }
