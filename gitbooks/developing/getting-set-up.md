@@ -1,5 +1,5 @@
 ---
-description: How to build OpenHuman from source - toolchain, vendored Tauri CLI, sidecar staging.
+description: How to build OpenHuman from source - toolchain, vendored Tauri CLI, and local desktop builds.
 icon: wrench
 ---
 
@@ -60,25 +60,17 @@ git submodule update --init --recursive
 # 3) Install JS deps (workspace)
 pnpm install
 
-# 4) Build Rust core binary
-cargo build --manifest-path Cargo.toml --bin openhuman-core
-
-# 5) Run the desktop staging hook (currently a no-op; kept for script compatibility)
-cd app
-pnpm core:stage
-
-# 6) Build desktop app artifacts
+# 4) Build desktop app artifacts
 pnpm build
 ```
 
 For local development instead of production build:
 
 ```bash
-# Web-only UI development: run inside app/ after the `cd app` step above
+# Web-only UI development
 pnpm dev
 
 # Desktop app development with the vendored Tauri/CEF CLI: run from the workspace root
-cd ..
 pnpm --filter openhuman-app dev:app
 ```
 

@@ -1,23 +1,23 @@
 ---
-description: 桌面宿主 (`app/src-tauri/`) —— Tauri v2 + WebView、IPC、sidecar 生命周期、核心桥接。
+description: 桌面宿主 (`app/src-tauri/`) —— Tauri v2 + WebView、IPC、嵌入式核心生命周期、核心桥接。
 icon: desktop
 ---
 
 # Tauri Shell (`app/src-tauri/`)
 
-OpenHuman 的桌面宿主：Tauri v2 + WebView、IPC 命令、窗口管理，以及桥接到 `openhuman-core` Rust sidecar（核心 JSON-RPC）。它**不会**重复完整的领域栈；那部分存在于仓库根目录的 Rust crate 中（`openhuman_core`、`src/main.rs`）。
+OpenHuman 的桌面宿主：Tauri v2 + WebView、IPC 命令、窗口管理，以及桥接到嵌入式 `openhuman-core` Rust 运行时（核心 JSON-RPC）。它**不会**重复完整的领域栈；那部分存在于仓库根目录的 Rust crate 中（`openhuman_core`、`src/main.rs`）。
 
 ## 职责
 
 1. **Web UI**。从 `app/dist` 加载 Vite 构建（或开发服务器，端口 1420）。
 2. **IPC**。暴露一小套明确的 Tauri 命令（见 [Commands](#tauri-ipc-commands-app-src-tauri)）。
-3. **核心生命周期**。确保 `openhuman-core` 二进制文件正在运行（子进程和/或服务）并通过 `core_rpc_relay` 代理 JSON-RPC。
+3. **核心生命周期**。启动进程内核心服务器，并通过 `core_rpc_relay` 代理 JSON-RPC。
 4. **磁盘上的 AI 提示**。从资源 / 开发 cwd 解析捆绑的 `src/openhuman/agent/prompts`，用于 `ai_get_config` / `write_ai_config_file`。
 5. **窗口 + 托盘**。桌面窗口行为和系统托盘（见 `lib.rs`）。
 
-## 构建 sidecar
+## 核心进程模型
 
-`app/package.json` 的 `core:stage` 运行 `scripts/stage-core-sidecar.mjs`，后者在仓库根目录运行 `cargo build --bin openhuman-core` 并将二进制文件复制到 `app/src-tauri/binaries/`，供 Tauri `externalBin` 使用。
+`app/package.json` 的 `core:stage` 现在有意保持为 no-op，仅用于脚本兼容性。桌面应用会在进程内链接核心，因此本地构建不再需要在 `app/src-tauri/binaries/` 下 staging `openhuman-core-*` sidecar。
 
 ## 卡死进程恢复
 
@@ -32,7 +32,7 @@ OpenHuman 的桌面宿主：Tauri v2 + WebView、IPC 命令、窗口管理，以
 
 ### 概述
 
-**`app/src-tauri`** crate（Rust 包 **`OpenHuman`**，二进制文件 **`OpenHuman`**）是一个**仅限桌面**的宿主。它嵌入 React UI，注册插件（深度链接、打开器、OS、通知、自动启动、更新器），管理主窗口和托盘，并**中继 JSON-RPC** 到单独构建的 **`openhuman-core`** 二进制文件。
+**`app/src-tauri`** crate（Rust 包 **`OpenHuman`**，二进制文件 **`OpenHuman`**）是一个**仅限桌面**的宿主。它嵌入 React UI，注册插件（深度链接、打开器、OS、通知、自动启动、更新器），管理主窗口和托盘，并**中继 JSON-RPC** 到嵌入式核心服务器。
 
 非桌面目标在编译时失败（`lib.rs` 中的 `compile_error!`）。
 
@@ -42,7 +42,7 @@ OpenHuman 的桌面宿主：Tauri v2 + WebView、IPC 命令、窗口管理，以
 app/src-tauri/src/
 ├── lib.rs                 # `run()`、托盘/菜单动作、插件、`generate_handler!`、核心启动
 ├── main.rs                # 二进制入口
-├── core_process.rs        # CoreProcessHandle、生成/监控 openhuman sidecar
+├── core_process.rs        # CoreProcessHandle、嵌入式核心服务器任务
 ├── core_rpc.rs            # 核心 JSON-RPC 的 HTTP 客户端
 ├── commands/
 │   ├── mod.rs             # 重新导出
@@ -62,10 +62,10 @@ app/src-tauri/src/
 React (invoke)
     → core_rpc_relay { method, params, serviceManaged? }
         → core_rpc::call HTTP POST 到 OPENHUMAN_CORE_RPC_URL
-            → openhuman 二进制文件 (src/bin/openhuman.rs → core_server)
+            → 嵌入式 openhuman 核心服务器
 ```
 
-`core_process.rs` 中的 `CoreProcessHandle` 启动或等待 sidecar；`commands/core_relay.rs` 可选地在 relay 之前确保**服务管理**的核心正在运行。
+`core_process.rs` 中的 `CoreProcessHandle` 拥有嵌入式服务器任务；`commands/core_relay.rs` 可选地在 relay 之前确保**服务管理**的核心正在运行。
 
 ### 窗口和托盘行为
 
