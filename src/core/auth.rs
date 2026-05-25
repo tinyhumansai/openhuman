@@ -22,7 +22,6 @@
 //! - `GET /auth/telegram` — external browser callback (carries its own token)
 //! - `GET /schema`        — read-only schema discovery
 //! - `GET /events`        — SSE stream; browser `EventSource` cannot set headers
-//! - `GET /ws/dictation`  — WebSocket upgrade; browser WS API cannot set headers
 //! - `OPTIONS *`          — CORS preflight (handled by outer CORS middleware)
 //!
 //! Endpoints that accept the bearer either via header **or** `?token=…` query
@@ -30,6 +29,9 @@
 //! - `GET /events/webhooks` — webhook SSE; browser `EventSource` cannot set
 //!   headers, so the FE forwards the bearer as a query param. Validated
 //!   against the same in-process RPC token — no separate secret.
+//! - `GET /ws/dictation` — dictation WebSocket upgrade; browser WebSocket APIs
+//!   cannot attach arbitrary headers, so browser clients must forward the same
+//!   core bearer as `?token=…`.
 //!
 //! Executable surfaces:
 //! - `POST /rpc` requires the per-launch core bearer token.
@@ -62,14 +64,7 @@ static RPC_TOKEN: OnceLock<String> = OnceLock::new();
 /// other routes are read-only, streaming, or WebSocket upgrades whose clients
 /// (browser `EventSource`, browser `WebSocket`) cannot set `Authorization`
 /// headers via standard APIs.
-const PUBLIC_PATHS: &[&str] = &[
-    "/",
-    "/health",
-    "/auth/telegram",
-    "/schema",
-    "/events",
-    "/ws/dictation",
-];
+const PUBLIC_PATHS: &[&str] = &["/", "/health", "/auth/telegram", "/schema", "/events"];
 
 /// Paths that may authenticate via `?token=…` in the URL when no
 /// `Authorization` header is present.
@@ -84,7 +79,7 @@ const PUBLIC_PATHS: &[&str] = &[
 /// Add new entries here only for SSE / WebSocket routes whose clients cannot
 /// send headers and that carry per-user data. The follow-up approvals stream
 /// (#1339) is the next planned addition.
-const QUERY_TOKEN_PATHS: &[&str] = &["/events/webhooks"];
+const QUERY_TOKEN_PATHS: &[&str] = &["/events/webhooks", "/ws/dictation"];
 
 /// The environment variable the Tauri shell sets before spawning the core.
 ///

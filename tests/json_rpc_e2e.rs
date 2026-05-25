@@ -5695,7 +5695,7 @@ async fn public_paths_accessible_without_token() {
     // Paths that bypass auth but return non-2xx for unrelated reasons
     // (missing required query params, no WebSocket upgrade headers, etc.).
     // The invariant is that the auth middleware does NOT reject them with 401.
-    for path in ["/auth/telegram", "/events", "/ws/dictation"] {
+    for path in ["/auth/telegram", "/events"] {
         let resp = client
             .get(format!("{base}{path}"))
             .send()

@@ -16,11 +16,11 @@
 //! # Security notes
 //!
 //! ## Authentication
-//! `GET /ws/dictation` is intentionally exempt from Bearer-token authentication because
-//! the browser WebSocket API cannot set arbitrary request headers on upgrade. The correct
-//! auth mechanism is a separate maintainer decision; see `src/core/auth.rs` for the
-//! documented exemption. Do NOT add a Bearer-header check here — it will not work from
-//! browsers and the design decision is tracked in issue #1924.
+//! `GET /ws/dictation` is gated by the core auth middleware before upgrade.
+//! Native callers may use `Authorization: Bearer <core token>`; browser callers
+//! must forward the same token as `?token=…` because the WebSocket API cannot
+//! attach arbitrary request headers on upgrade. Keep auth at the HTTP boundary
+//! (`src/core/auth.rs`) so this handler only runs for authenticated upgrades.
 //!
 //! ## Memory cap
 //! The full-audio accumulation buffer (`full_audio_buf`) is bounded by

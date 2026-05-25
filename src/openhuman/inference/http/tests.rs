@@ -88,6 +88,49 @@ async fn test_models_no_bearer_returns_401() {
     );
 }
 
+/// Requests to `GET /ws/dictation` without either a bearer or `?token=…`
+/// must be rejected with `401 Unauthorized`.
+#[tokio::test]
+async fn test_dictation_ws_no_credentials_returns_401() {
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri("/ws/dictation")
+        .body(Body::empty())
+        .unwrap();
+
+    let resp = dispatch(req).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::UNAUTHORIZED,
+        "GET /ws/dictation without credentials must return 401"
+    );
+}
+
+/// Browser WebSocket clients cannot attach `Authorization` headers on upgrade,
+/// so `GET /ws/dictation?token=…` must pass auth and fail only on the missing
+/// upgrade headers.
+#[tokio::test]
+async fn test_dictation_ws_query_token_not_rejected_as_auth_error() {
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri(format!("/ws/dictation?token={TEST_RPC_TOKEN}"))
+        .body(Body::empty())
+        .unwrap();
+
+    let resp = dispatch(req).await;
+    let status = resp.status();
+    assert_ne!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "401 must not fire when dictation query token is present"
+    );
+    assert_ne!(
+        status,
+        StatusCode::FORBIDDEN,
+        "403 must not fire when dictation query token is present"
+    );
+}
+
 /// A request with a bearer token must not be rejected as 401/403. The actual
 /// response code depends on whether a live inference backend is running; the
 /// test only asserts that auth passed.
