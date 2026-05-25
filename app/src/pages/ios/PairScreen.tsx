@@ -19,6 +19,7 @@ import debug from 'debug';
 import { type FC, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
+import { useT } from '../../lib/i18n/I18nContext';
 import { base64urlEncode, generateKeypair } from '../../lib/tunnel/crypto';
 import { type ConnectionProfile, saveProfile } from '../../services/transport/profileStore';
 import { createTransportManager } from '../../services/transport/TransportManager';
@@ -90,6 +91,7 @@ type ScreenState =
 
 export const PairScreen: FC = () => {
   const navigate = useNavigate();
+  const { t } = useT();
   const [state, setState] = useState<ScreenState>({ kind: 'idle' });
 
   async function startScan(): Promise<void> {
@@ -103,10 +105,7 @@ export const PairScreen: FC = () => {
       await handleScanResult(rawContent);
     } catch (err) {
       logErr('[ios] scan error: %o', err);
-      setState({
-        kind: 'error',
-        message: 'Camera scan failed. Check camera permissions and try again.',
-      });
+      setState({ kind: 'error', message: t('iosPair.error.camera') });
     }
   }
 
@@ -114,10 +113,7 @@ export const PairScreen: FC = () => {
     // 1. Parse
     const payload = parsePairUrl(raw);
     if (!payload) {
-      setState({
-        kind: 'error',
-        message: 'Invalid QR code. Make sure you are scanning an OpenHuman pairing code.',
-      });
+      setState({ kind: 'error', message: t('iosPair.error.invalidQr') });
       return;
     }
 
@@ -141,7 +137,7 @@ export const PairScreen: FC = () => {
     // 4. Build and persist profile
     const profile: ConnectionProfile = {
       id: payload.channelId,
-      label: 'Desktop',
+      label: t('iosPair.desktopLabel'),
       kind: 'tunnel',
       channelId: payload.channelId,
       pairingToken: payload.pairingToken,
@@ -161,19 +157,13 @@ export const PairScreen: FC = () => {
       const healthy = await transport.isHealthy();
       if (!healthy) {
         logErr('[ios] transport health check failed kind=%s', transport.kind);
-        setState({
-          kind: 'error',
-          message: 'Could not reach the desktop. Make sure both devices are online and try again.',
-        });
+        setState({ kind: 'error', message: t('iosPair.error.unreachableDesktop') });
         return;
       }
       log('[ios] transport healthy kind=%s; navigating to /human', transport.kind);
     } catch (err) {
       logErr('[ios] transport probe error: %o', err);
-      setState({
-        kind: 'error',
-        message: 'Connection failed. Make sure the desktop app is running and try again.',
-      });
+      setState({ kind: 'error', message: t('iosPair.error.connectionFailed') });
       return;
     }
 
@@ -205,11 +195,8 @@ export const PairScreen: FC = () => {
 
         {/* Heading */}
         <div className="text-center">
-          <h1 className="text-2xl font-semibold text-white mb-2">Pair with your desktop</h1>
-          <p className="text-sm text-white/60 leading-relaxed">
-            Open OpenHuman on your desktop, go to Settings &gt; Devices, and tap &ldquo;Pair
-            phone&rdquo; to show the QR code.
-          </p>
+          <h1 className="text-2xl font-semibold text-white mb-2">{t('iosPair.title')}</h1>
+          <p className="text-sm text-white/60 leading-relaxed">{t('iosPair.instructions')}</p>
         </div>
 
         {/* State-specific content */}
@@ -218,34 +205,34 @@ export const PairScreen: FC = () => {
             onClick={() => void startScan()}
             className="w-full py-4 rounded-xl bg-[#4A83DD] text-white font-medium text-base
                        active:opacity-80 transition-opacity shadow-md">
-            Scan QR code
+            {t('iosPair.scanQrCode')}
           </button>
         )}
 
         {state.kind === 'scanning' && (
-          <p className="text-white/60 text-sm text-center animate-pulse">Scanner opening...</p>
+          <p className="text-white/60 text-sm text-center animate-pulse">
+            {t('iosPair.scannerOpening')}
+          </p>
         )}
 
         {state.kind === 'connecting' && (
           <p className="text-white/60 text-sm text-center animate-pulse">
-            Connecting to desktop...
+            {t('iosPair.connecting')}
           </p>
         )}
 
         {state.kind === 'success' && (
-          <p className="text-green-400 text-sm text-center">Connected! Loading...</p>
+          <p className="text-green-400 text-sm text-center">{t('iosPair.connectedLoading')}</p>
         )}
 
         {state.kind === 'expired' && (
           <div className="flex flex-col items-center gap-4 text-center">
-            <p className="text-amber-400 text-sm">
-              QR code expired. Ask the desktop to regenerate the code.
-            </p>
+            <p className="text-amber-400 text-sm">{t('iosPair.expired')}</p>
             <button
               onClick={() => setState({ kind: 'idle' })}
               className="w-full py-3 rounded-xl border border-white/20 text-white/80 text-sm
                          active:opacity-70 transition-opacity">
-              Try again
+              {t('common.retry')}
             </button>
           </div>
         )}
@@ -257,12 +244,12 @@ export const PairScreen: FC = () => {
               onClick={() => void startScan()}
               className="w-full py-3 rounded-xl bg-[#4A83DD]/80 text-white text-sm
                          active:opacity-70 transition-opacity">
-              Retry scan
+              {t('iosPair.retryScan')}
             </button>
             <button
               onClick={() => setState({ kind: 'idle' })}
               className="text-white/40 text-xs underline-offset-2 underline">
-              Cancel
+              {t('common.cancel')}
             </button>
           </div>
         )}
@@ -271,9 +258,9 @@ export const PairScreen: FC = () => {
         {(state.kind === 'idle' || state.kind === 'error' || state.kind === 'expired') && (
           <div className="flex flex-col gap-3 w-full mt-2">
             {[
-              'Open OpenHuman on desktop',
-              'Go to Settings > Devices',
-              'Tap "Pair phone" to show QR',
+              t('iosPair.step.openDesktop'),
+              t('iosPair.step.openSettings'),
+              t('iosPair.step.showQr'),
             ].map((step, i) => (
               <div key={step} className="flex items-center gap-3 text-white/50 text-xs">
                 <span className="w-5 h-5 rounded-full border border-white/20 flex items-center justify-center text-[10px] shrink-0">

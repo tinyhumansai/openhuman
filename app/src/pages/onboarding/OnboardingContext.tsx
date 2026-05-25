@@ -2,7 +2,7 @@ import { createContext, useContext } from 'react';
 
 export type AiMode = 'cloud' | 'custom';
 
-export type CustomStepKey = 'inference' | 'voice' | 'oauth' | 'search' | 'memory';
+export type CustomStepKey = 'inference' | 'voice' | 'oauth' | 'search' | 'embeddings' | 'memory';
 export type CustomStepChoice = 'default' | 'configure';
 
 export interface OnboardingDraft {

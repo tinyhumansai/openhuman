@@ -143,6 +143,11 @@ pub const BUILTINS: &[BuiltinAgent] = &[
         toml: include_str!("help/agent.toml"),
         prompt_fn: super::help::prompt::build,
     },
+    BuiltinAgent {
+        id: "mcp_setup",
+        toml: include_str!("mcp_setup/agent.toml"),
+        prompt_fn: super::mcp_setup::prompt::build,
+    },
 ];
 
 /// Parse every entry in [`BUILTINS`] into an [`AgentDefinition`].

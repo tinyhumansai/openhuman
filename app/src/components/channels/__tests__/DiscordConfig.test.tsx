@@ -1,5 +1,5 @@
 import { fireEvent, screen, waitFor } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { FALLBACK_DEFINITIONS } from '../../../lib/channels/definitions';
 import { channelConnectionsApi } from '../../../services/api/channelConnectionsApi';
@@ -17,7 +17,16 @@ vi.mock('../../../services/api/channelConnectionsApi', () => ({
   },
 }));
 
+const coreStateMock = vi.hoisted(() => vi.fn(() => ({ snapshot: { sessionToken: 'jwt-abc' } })));
+
+vi.mock('../../../providers/CoreStateProvider', () => ({ useCoreState: () => coreStateMock() }));
+
 const discordDef = FALLBACK_DEFINITIONS.find(d => d.id === 'discord')!;
+
+afterEach(() => {
+  vi.clearAllMocks();
+  coreStateMock.mockReturnValue({ snapshot: { sessionToken: 'jwt-abc' } });
+});
 
 describe('DiscordConfig', () => {
   it('renders auth mode labels', () => {
@@ -89,5 +98,18 @@ describe('DiscordConfig', () => {
         true
       );
     });
+  });
+
+  it('hides managed channel auth modes for local users', () => {
+    coreStateMock.mockReturnValue({ snapshot: { sessionToken: 'header.payload.local' } });
+
+    renderWithProviders(<DiscordConfig definition={discordDef} />);
+
+    expect(
+      screen.getByText('Managed channels are not available for local users.')
+    ).toBeInTheDocument();
+    expect(screen.queryByText('OAuth Sign-in')).not.toBeInTheDocument();
+    expect(screen.queryByText('Login with OpenHuman')).not.toBeInTheDocument();
+    expect(screen.getAllByText('Bot Token').length).toBeGreaterThanOrEqual(1);
   });
 });

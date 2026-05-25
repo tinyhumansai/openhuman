@@ -271,7 +271,7 @@ export default function ScreenIntelligenceSetupModal({ onClose, initialStep }: P
                   <p>{t('skills.setup.screenIntel.deniedHint')}</p>
                   {status?.permission_check_process_path && (
                     <p className="mt-1 opacity-75 text-[10px]">
-                      macOS applies privacy to:{' '}
+                      {t('skills.setup.screenIntel.permissionPathLabel')}{' '}
                       <span className="font-mono break-all text-stone-600 dark:text-neutral-300">
                         {status.permission_check_process_path}
                       </span>

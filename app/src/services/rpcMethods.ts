@@ -4,6 +4,8 @@ export const CORE_RPC_METHODS = {
   configGetAutonomySettings: 'openhuman.config_get_autonomy_settings',
   configGetComposioTriggerSettings: 'openhuman.config_get_composio_trigger_settings',
   configGetRuntimeFlags: 'openhuman.config_get_runtime_flags',
+  configGetSearchSettings: 'openhuman.config_get_search_settings',
+  configUpdateSearchSettings: 'openhuman.config_update_search_settings',
   configSetBrowserAllowAll: 'openhuman.config_set_browser_allow_all',
   configUpdateAnalyticsSettings: 'openhuman.config_update_analytics_settings',
   configUpdateAutonomySettings: 'openhuman.config_update_autonomy_settings',
@@ -27,6 +29,12 @@ export const CORE_RPC_METHODS = {
   inferenceUpdateModelSettings: 'openhuman.inference_update_model_settings',
   providersListModels: 'openhuman.inference_list_models',
   screenIntelligenceStatus: 'openhuman.screen_intelligence_status',
+  embeddingsGetSettings: 'openhuman.embeddings_get_settings',
+  embeddingsUpdateSettings: 'openhuman.embeddings_update_settings',
+  embeddingsSetApiKey: 'openhuman.embeddings_set_api_key',
+  embeddingsClearApiKey: 'openhuman.embeddings_clear_api_key',
+  embeddingsEmbed: 'openhuman.embeddings_embed',
+  embeddingsTestConnection: 'openhuman.embeddings_test_connection',
 } as const;
 
 export type CoreRpcMethod = (typeof CORE_RPC_METHODS)[keyof typeof CORE_RPC_METHODS];
@@ -56,6 +64,7 @@ export const LEGACY_METHOD_ALIASES: Record<string, CoreRpcMethod> = {
   'openhuman.local_ai_diagnostics': CORE_RPC_METHODS.inferenceDiagnostics,
   'openhuman.local_ai_presets': CORE_RPC_METHODS.inferencePresets,
   'openhuman.providers_list_models': CORE_RPC_METHODS.inferenceListModels,
+  'openhuman.inference_embed': CORE_RPC_METHODS.embeddingsEmbed,
 };
 
 export function normalizeRpcMethod(method: string): string {

@@ -266,7 +266,7 @@ async fn handle_update_autonomy_settings_rejects_invalid_value() {
     let err = super::handle_update_autonomy_settings(params)
         .await
         .unwrap_err();
-    assert!(err.contains("between 1 and 10000"), "got: {err}");
+    assert!(err.contains("at least 1"), "got: {err}");
 
     unsafe {
         std::env::remove_var("OPENHUMAN_WORKSPACE");

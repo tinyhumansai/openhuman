@@ -277,6 +277,158 @@ Active Connections
     assert_eq!(parse_netstat_pid(stdout, 9999), None);
 }
 
+#[test]
+fn parse_netstat_pid_skips_protected_kernel_pids() {
+    // HTTP.sys / driver-level reservations occasionally show as LISTENING
+    // under PID 4 (NT Kernel) or PID 0 (System Idle). Returning those pids
+    // would lead startup recovery to call taskkill on a process that cannot
+    // be signalled from user mode — aborting the entire takeover flow.
+    // The parser must treat these entries as "no owner" so callers fall
+    // back to the port-reroute path instead of trying to kill the kernel.
+    let stdout = "\
+Active Connections
+
+  Proto  Local Address          Foreign Address        State           PID
+  TCP    127.0.0.1:7788         0.0.0.0:0              LISTENING       4
+  TCP    127.0.0.1:7789         0.0.0.0:0              LISTENING       0
+  TCP    127.0.0.1:7790         0.0.0.0:0              LISTENING       1234
+";
+    assert_eq!(parse_netstat_pid(stdout, 7788), None);
+    assert_eq!(parse_netstat_pid(stdout, 7789), None);
+    assert_eq!(parse_netstat_pid(stdout, 7790), Some(1234));
+}
+
+#[test]
+fn parse_netstat_pid_falls_through_protected_to_real_owner_on_dual_stack() {
+    // Real-world dual-stack listener: kernel-reserved entry sits ahead of
+    // the actual user-mode owner on the same port. The parser must keep
+    // scanning past the protected pid and return the genuine owner.
+    let stdout = "\
+  Proto  Local Address          Foreign Address        State           PID
+  TCP    [::]:7788              [::]:0                 LISTENING       4
+  TCP    127.0.0.1:7788         0.0.0.0:0              LISTENING       9999
+";
+    assert_eq!(parse_netstat_pid(stdout, 7788), Some(9999));
+}
+
+// ---------------------------------------------------------------------------
+// Windows end-to-end port-takeover test
+//
+// Spawns a real child process that occupies a TCP port, then walks the same
+// path the Tauri host walks at startup (find_pid_on_port → kill_pid_force →
+// is_port_open) and asserts the port is actually freed. This is the
+// behavior the user reported broken — a unit-only parser test is not enough
+// to catch netstat/taskkill drift on real Windows machines.
+// ---------------------------------------------------------------------------
+
+#[cfg(windows)]
+#[test]
+fn windows_port_takeover_finds_and_kills_listener() {
+    use crate::process_kill::kill_pid_force;
+    use std::net::TcpListener;
+    use std::os::windows::process::CommandExt;
+    use std::time::{Duration, Instant};
+
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+    // Bind in this process first to claim an ephemeral free port the OS
+    // picks for us, capture the port, then drop the listener so the child
+    // can bind to the same port. There is a tiny TOCTOU window here but
+    // ephemeral ports on Windows are not aggressively recycled so it is
+    // robust enough for a single-shot test.
+    let probe = TcpListener::bind("127.0.0.1:0").expect("bind probe");
+    let port = probe.local_addr().expect("probe addr").port();
+    drop(probe);
+
+    // Use PowerShell to spawn a listener that holds the port open for 60s.
+    // PowerShell ships with every supported Windows version.
+    let script = format!(
+        "$l = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, {port}); \
+         $l.Start(); Start-Sleep -Seconds 60; $l.Stop()"
+    );
+    let mut child = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .creation_flags(CREATE_NO_WINDOW)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .stdin(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn powershell listener");
+
+    // Wait until the listener is actually bound (PowerShell startup is slow).
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let mut bound = false;
+    while Instant::now() < deadline {
+        if std::net::TcpStream::connect_timeout(
+            &format!("127.0.0.1:{port}").parse().unwrap(),
+            Duration::from_millis(100),
+        )
+        .is_ok()
+        {
+            bound = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    if !bound {
+        let _ = child.kill();
+        let _ = child.wait();
+        panic!("child listener never bound to 127.0.0.1:{port}");
+    }
+
+    // Walk the production path: pid lookup via netstat, then force-kill.
+    let pid = match super::find_pid_on_port(port) {
+        Some(pid) => pid,
+        None => {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("find_pid_on_port returned None for port {port}");
+        }
+    };
+    // The pid we discovered won't be `child.id()` directly — the powershell
+    // process is the listener, and on Windows `child.id()` IS that pid.
+    // Sanity-check they match so a future netstat parser regression is loud.
+    // Tear down the child *before* panicking so a 60s listener doesn't leak
+    // into the rest of the test suite.
+    if pid != child.id() {
+        let expected = child.id();
+        let _ = child.kill();
+        let _ = child.wait();
+        panic!("find_pid_on_port returned pid {pid}, expected child pid {expected}");
+    }
+
+    kill_pid_force(pid).expect("force-kill listener");
+
+    // Verify the port is actually free within a reasonable window — this is
+    // the assertion that fails when taskkill mis-reports success or when
+    // /T fails to take down the powershell subtree.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut freed = false;
+    while Instant::now() < deadline {
+        if std::net::TcpStream::connect_timeout(
+            &format!("127.0.0.1:{port}").parse().unwrap(),
+            Duration::from_millis(100),
+        )
+        .is_err()
+        {
+            freed = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+
+    let _ = child.wait();
+    assert!(
+        freed,
+        "port {port} still bound after kill_pid_force(pid={pid})"
+    );
+
+    // Idempotency: kill the same pid again — must be Ok, not Err, because
+    // the process is already gone and recovery code calls force-kill after
+    // a re-validation that may race.
+    kill_pid_force(pid).expect("kill_pid_force on dead pid must be idempotent");
+}
+
 // ---------------------------------------------------------------------------
 // Token generation tests
 // ---------------------------------------------------------------------------

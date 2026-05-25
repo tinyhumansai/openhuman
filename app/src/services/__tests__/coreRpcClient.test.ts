@@ -685,6 +685,11 @@ describe('classifyRpcError', () => {
       undefined,
       'provider_auth',
     ],
+    [
+      '[composio] list_connections failed: Backend returned 500 Internal Server Error for GET https://api.tinyhumans.ai/agent-integrations/composio/connections: 401 {"error":{"message":"Invalid API key: ak_o1Og5*****","code":10401,"slug":"HTTP_Unauthorized","status":401}}',
+      undefined,
+      'provider_auth',
+    ],
     ['OpenAI API error (401 Unauthorized): invalid api key', undefined, 'provider_auth'],
     ['Anthropic API error (401 Unauthorized): auth error', undefined, 'provider_auth'],
     ['some random message', undefined, 'unknown'],

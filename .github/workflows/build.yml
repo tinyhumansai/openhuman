@@ -6,6 +6,7 @@ on:
   pull_request:
 permissions:
   contents: read
+  packages: read
   pull-requests: read
   # Required for Sentry to associate commits with releases
   actions: read
@@ -24,6 +25,7 @@ jobs:
         uses: actions/checkout@v5
         with:
           fetch-depth: 1
+          persist-credentials: false
           submodules: recursive
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2

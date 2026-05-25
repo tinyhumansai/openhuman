@@ -35,6 +35,8 @@ ALL_E2E_SUITES=(
   autocomplete_memory_e2e
   calendar_grounding_e2e
   json_rpc_e2e
+  keyring_secretstore_fresh_e2e
+  keyring_secretstore_e2e
   linux_cef_deb_runtime_e2e
   live_routing_e2e
   memory_graph_sync_e2e

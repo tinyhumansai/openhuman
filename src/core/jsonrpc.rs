@@ -186,9 +186,15 @@ pub async fn invoke_method(state: AppState, method: &str, params: Value) -> Resu
                 method,
                 sanitized_reason
             );
-            // Scrub before publishing — subscribers log `reason`, and the
-            // upstream error string could include API keys / tokens from
-            // pasted-through provider replies.
+            // pasted-through provider replies. `sanitize_api_error` runs
+            // `scrub_secret_patterns` and truncates.
+            //
+            // Local-session protection is handled by `SessionExpiredSubscriber`
+            // in `src/openhuman/credentials/bus.rs` — it checks `is_local_session_token`
+            // after config load and short-circuits teardown with
+            // `scheduler_gate::set_signed_out(false)`. Duplicating that check
+            // here would pull a domain concern into the transport layer and would
+            // add an extra config-load round-trip on every 401.
             crate::core::event_bus::publish_global(
                 crate::core::event_bus::DomainEvent::SessionExpired {
                     source: format!("jsonrpc.invoke_method:{method}"),
@@ -1507,9 +1513,10 @@ fn register_domain_subscribers(
 
         crate::openhuman::health::bus::register_health_subscriber();
         crate::openhuman::notifications::register_notification_bridge_subscriber();
-        crate::openhuman::memory::conversations::register_conversation_persistence_subscriber(
+        crate::openhuman::memory_conversations::register_conversation_persistence_subscriber(
             workspace_dir.clone(),
         );
+        crate::openhuman::memory::sync::register_sync_stage_bridge();
         if let Err(error) = crate::openhuman::composio::init_composio_trigger_history(
             workspace_dir.clone(),
         ) {
@@ -1558,7 +1565,7 @@ fn register_domain_subscribers(
             );
         }
 
-        crate::openhuman::memory::tree::jobs::start(config.clone());
+        crate::openhuman::memory_queue::start(config.clone());
 
         // Restart requests go through a subscriber so every trigger path shares
         // the same respawn logic.
@@ -1692,6 +1699,18 @@ pub async fn bootstrap_core_runtime(embedded_core: bool) {
 
     // --- Workspace migrations --------------------------------------------
     crate::openhuman::startup::run_workspace_migrations(&workspace_dir);
+
+    // --- MCP registry boot-spawn -----------------------------------------
+    // Bring up every locally-installed MCP server's stdio subprocess so its
+    // tools are available to the agent as soon as the core is ready.
+    // Errors are logged per-server and never block boot. Runs as a
+    // background task so a slow npx install can't gate startup.
+    {
+        let cfg = cfg.clone();
+        tokio::spawn(async move {
+            crate::openhuman::mcp_registry::boot::spawn_installed_servers(&cfg).await;
+        });
+    }
 
     // --- Socket manager bootstrap ---
     let socket_mgr = Arc::new(SocketManager::new());

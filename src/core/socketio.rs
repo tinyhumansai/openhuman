@@ -509,6 +509,7 @@ pub fn spawn_web_channel_bridge(io: SocketIo) {
     let io_transcription = io.clone();
     let io_auth = io.clone();
     let io_companion = io.clone();
+    let io_mcp_setup = io.clone();
 
     // 2. Dictation hotkey events → broadcast to all connected clients.
     tokio::spawn(async move {
@@ -657,6 +658,67 @@ pub fn spawn_web_channel_bridge(io: SocketIo) {
             }
         }
         log::debug!("[socketio] auth session_expired bridge stopped");
+    });
+
+    // 6b. McpSetupSecretRequested → broadcast `mcp_setup:secret_requested`
+    //     so the UI can render a native input dialog. Only the opaque
+    //     ref + safe display fields are forwarded; raw secret values
+    //     are not part of the event payload.
+    tokio::spawn(async move {
+        let bus = {
+            const RETRY_INTERVAL_MS: u64 = 250;
+            const MAX_WAIT_SECS: u64 = 30;
+            let max_attempts = (MAX_WAIT_SECS * 1000) / RETRY_INTERVAL_MS;
+            let mut attempts: u64 = 0;
+            loop {
+                if let Some(bus) = crate::core::event_bus::global() {
+                    break bus;
+                }
+                attempts += 1;
+                if attempts > max_attempts {
+                    log::warn!(
+                        "[socketio] event_bus not initialised after {}s — mcp_setup bridge giving up",
+                        MAX_WAIT_SECS
+                    );
+                    return;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(RETRY_INTERVAL_MS)).await;
+            }
+        };
+        let mut rx = bus.raw_receiver();
+        loop {
+            let event = match rx.recv().await {
+                Ok(event) => event,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                    log::warn!(
+                        "[socketio] dropped {} event_bus events due to lag (mcp_setup bridge)",
+                        skipped
+                    );
+                    continue;
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            };
+            if let crate::core::event_bus::DomainEvent::McpSetupSecretRequested {
+                ref_id,
+                key_name,
+                prompt,
+            } = event
+            {
+                log::info!(
+                    "[socketio] broadcast mcp_setup:secret_requested ref={} key={}",
+                    ref_id,
+                    key_name
+                );
+                let payload = serde_json::json!({
+                    "ref_id": ref_id,
+                    "key_name": key_name,
+                    "prompt": prompt,
+                });
+                let _ = io_mcp_setup.emit("mcp_setup:secret_requested", &payload);
+                let _ = io_mcp_setup.emit("mcp_setup_secret_requested", &payload);
+            }
+        }
+        log::debug!("[socketio] mcp_setup secret_requested bridge stopped");
     });
 
     // 5. Transcription results → broadcast to all connected clients.

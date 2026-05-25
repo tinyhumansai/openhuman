@@ -1,5 +1,6 @@
 use crate::openhuman::config::Config;
-use crate::openhuman::memory::{self, Memory, MemoryCategory};
+use crate::openhuman::memory::{Memory, MemoryCategory};
+use crate::openhuman::memory_store;
 use anyhow::{bail, Context, Result};
 use directories::UserDirs;
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
@@ -118,7 +119,7 @@ pub async fn migrate_openclaw_memory(
 }
 
 fn target_memory_backend(config: &Config) -> Result<Box<dyn Memory>> {
-    memory::create_memory_for_migration(&config.memory, &config.workspace_dir)
+    memory_store::create_memory_for_migration(&config.memory, &config.workspace_dir)
 }
 
 fn collect_source_entries(

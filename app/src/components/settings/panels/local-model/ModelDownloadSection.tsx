@@ -103,6 +103,14 @@ const ModelDownloadSection = ({
   onRunTtsTest,
 }: ModelDownloadSectionProps) => {
   const { t } = useT();
+  const capabilityCards = [
+    ['settings.localModel.download.capabilityChat', 'chat', assets?.chat],
+    ['settings.localModel.download.capabilityVision', 'vision', assets?.vision],
+    ['settings.localModel.download.capabilityEmbedding', 'embedding', assets?.embedding],
+    ['settings.localModel.download.capabilityStt', 'stt', assets?.stt],
+    ['settings.localModel.download.capabilityTts', 'tts', assets?.tts],
+  ] as const;
+
   return (
     <>
       <section className="space-y-3">
@@ -114,21 +122,15 @@ const ModelDownloadSection = ({
             {t('settings.localModel.download.quantizationPref')} {assets?.quantization ?? 'q4'}
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
-            {[
-              { label: 'Chat', key: 'chat' as const, item: assets?.chat },
-              { label: 'Vision', key: 'vision' as const, item: assets?.vision },
-              { label: 'Embedding', key: 'embedding' as const, item: assets?.embedding },
-              { label: 'STT', key: 'stt' as const, item: assets?.stt },
-              { label: 'TTS', key: 'tts' as const, item: assets?.tts },
-            ].map(({ label, key, item }) => (
+            {capabilityCards.map(([labelKey, key, item]) => (
               <div
-                key={String(label)}
+                key={key}
                 className="rounded-md border border-stone-200 dark:border-neutral-800 p-2">
                 <div className="text-stone-500 dark:text-neutral-400 text-xs uppercase tracking-wide">
-                  {label}
+                  {t(labelKey)}
                 </div>
                 <div className="text-stone-800 dark:text-neutral-100 mt-1 break-all">
-                  {item?.id ?? 'n/a'}
+                  {item?.id ?? t('settings.localModel.download.notAvailable')}
                 </div>
                 <div className={`text-xs mt-1 ${statusTone(item?.state ?? 'idle')}`}>
                   {statusLabel(item?.state ?? 'idle')}
@@ -171,7 +173,7 @@ const ModelDownloadSection = ({
           />
           <div className="flex items-center justify-between">
             <div className="text-xs text-stone-500 dark:text-neutral-400">
-              Calls `openhuman.inference_summarize` via Rust core
+              {t('settings.localModel.download.summaryHelper')}
             </div>
             <button
               onClick={onRunSummaryTest}
@@ -298,9 +300,24 @@ const ModelDownloadSection = ({
           </button>
           {embeddingOutput && (
             <div className="rounded-md bg-stone-50 dark:bg-neutral-800/60 border border-stone-200 dark:border-neutral-800 p-3 text-xs text-stone-700 dark:text-neutral-200 space-y-1">
-              <div>Model: {embeddingOutput.model_id}</div>
-              <div>Dimensions: {embeddingOutput.dimensions}</div>
-              <div>Vectors: {embeddingOutput.vectors.length}</div>
+              <div>
+                {t('settings.localModel.download.embeddingModel').replace(
+                  '{modelId}',
+                  embeddingOutput.model_id
+                )}
+              </div>
+              <div>
+                {t('settings.localModel.download.embeddingDimensions').replace(
+                  '{dimensions}',
+                  String(embeddingOutput.dimensions)
+                )}
+              </div>
+              <div>
+                {t('settings.localModel.download.embeddingVectors').replace(
+                  '{count}',
+                  String(embeddingOutput.vectors.length)
+                )}
+              </div>
             </div>
           )}
         </div>
@@ -327,9 +344,16 @@ const ModelDownloadSection = ({
           </button>
           {transcribeOutput && (
             <div className="rounded-md bg-stone-50 dark:bg-neutral-800/60 border border-stone-200 dark:border-neutral-800 p-3 text-xs text-stone-700 dark:text-neutral-200 space-y-2">
-              <div>Model: {transcribeOutput.model_id}</div>
               <div>
-                <span className="text-stone-400 dark:text-neutral-500">Transcript:</span>
+                {t('settings.localModel.download.embeddingModel').replace(
+                  '{modelId}',
+                  transcribeOutput.model_id
+                )}
+              </div>
+              <div>
+                <span className="text-stone-400 dark:text-neutral-500">
+                  {t('settings.localModel.download.transcript')}
+                </span>
                 <pre className="whitespace-pre-wrap mt-1">{transcribeOutput.text}</pre>
               </div>
             </div>
@@ -364,8 +388,18 @@ const ModelDownloadSection = ({
           </button>
           {ttsOutput && (
             <div className="rounded-md bg-stone-50 dark:bg-neutral-800/60 border border-stone-200 dark:border-neutral-800 p-3 text-xs text-stone-700 dark:text-neutral-200 space-y-1">
-              <div>Voice: {ttsOutput.voice_id}</div>
-              <div className="break-all">Output: {ttsOutput.output_path}</div>
+              <div>
+                {t('settings.localModel.download.ttsVoice').replace(
+                  '{voiceId}',
+                  ttsOutput.voice_id
+                )}
+              </div>
+              <div className="break-all">
+                {t('settings.localModel.download.ttsOutput').replace(
+                  '{outputPath}',
+                  ttsOutput.output_path
+                )}
+              </div>
             </div>
           )}
         </div>

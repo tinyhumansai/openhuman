@@ -5173,6 +5173,7 @@ dependencies = [
  "whatsapp-rust-tokio-transport",
  "whatsapp-rust-ureq-http-client",
  "whisper-rs",
+ "windows-sys 0.61.2",
  "wiremock",
  "x25519-dalek",
  "xz2",

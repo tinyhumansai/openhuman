@@ -8,9 +8,7 @@
 //!
 //! - [`FileBackend`]: Stores secrets in a plain JSON file at
 //!   `{workspace}/dev-keychain.json`.  **This file is NOT encrypted** — it is a
-//!   development artifact only and must never be used in production.  It exists
-//!   solely to avoid the "different binary signature → macOS Keychain permission
-//!   prompt on every `cargo run`" problem that plagues dev workflows.
+//!   test/debug artifact only and must never be used in production.
 //!
 //! Backend selection happens once at first use (see [`super::selected_backend`]).
 
@@ -99,15 +97,13 @@ impl KeyringBackend for OsBackend {
 
 // ── FileBackend ───────────────────────────────────────────────────────────────
 
-/// Dev-only backend: plain JSON file at `{workspace}/dev-keychain.json`.
+/// Test/debug backend: plain JSON file at `{workspace}/dev-keychain.json`.
 ///
 /// # WARNING — NOT FOR PRODUCTION
 ///
 /// Secrets stored here are **not encrypted**.  This backend exists only to
-/// eliminate macOS Keychain permission prompts during development (where the
-/// binary signature changes on every `cargo build`).  It is selected
-/// automatically in debug builds and when `OPENHUMAN_APP_ENV=dev|staging`.
-/// Never use it in a production deployment.
+/// keep unit tests and explicit recovery/debug overrides independent from the
+/// host OS keychain. Never use it in a production deployment.
 ///
 /// # Thread safety
 ///

@@ -424,7 +424,15 @@ fn empty_path_allowed() {
 
 #[test]
 fn dotfile_in_workspace_allowed() {
-    let p = default_policy();
+    let workspace = tempfile::tempdir().expect("workspace tempdir");
+    std::fs::write(workspace.path().join(".gitignore"), "target/\n").expect("write .gitignore");
+    std::fs::write(workspace.path().join(".env"), "LOCAL_ONLY=1\n").expect("write .env");
+    let p = SecurityPolicy {
+        workspace_dir: workspace.path().to_path_buf(),
+        workspace_only: true,
+        forbidden_paths: vec![],
+        ..SecurityPolicy::default()
+    };
     assert!(p.is_path_string_allowed(".gitignore"));
     assert!(p.is_path_string_allowed(".env"));
 }
