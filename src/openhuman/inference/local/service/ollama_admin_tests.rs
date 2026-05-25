@@ -248,6 +248,38 @@ async fn ensure_ollama_server_reports_broken_external_runner_without_restart_att
 }
 
 #[tokio::test]
+async fn ensure_ollama_server_accepts_healthy_external_runner() {
+    let _guard = crate::openhuman::inference::inference_test_guard();
+
+    let app = Router::new()
+        .route("/api/tags", get(|| async { Json(json!({ "models": [] })) }))
+        .route(
+            "/api/show",
+            axum::routing::post(|| async {
+                (
+                    axum::http::StatusCode::NOT_FOUND,
+                    Json(json!({ "error": "model '___nonexistent_probe___' not found" })),
+                )
+            }),
+        );
+    let base = spawn_mock(app).await;
+    unsafe {
+        std::env::set_var("OPENHUMAN_OLLAMA_BASE_URL", &base);
+    }
+
+    let config = Config::default();
+    let service = LocalAiService::new(&config);
+    service
+        .ensure_ollama_server(&config)
+        .await
+        .expect("healthy external runner should pass");
+
+    unsafe {
+        std::env::remove_var("OPENHUMAN_OLLAMA_BASE_URL");
+    }
+}
+
+#[tokio::test]
 async fn assets_status_marks_ollama_unavailable_when_runtime_is_down_even_if_binary_exists() {
     let _guard = crate::openhuman::inference::inference_test_guard();
 
