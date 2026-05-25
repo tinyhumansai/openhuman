@@ -48,7 +48,7 @@ const SettingsHeader = ({
 
         {/* Breadcrumbs */}
         {breadcrumbs && breadcrumbs.length > 0 && (
-          <nav aria-label="Breadcrumb" className="mr-1">
+          <nav aria-label={t('common.breadcrumb')} className="mr-1">
             <ol className="flex items-center gap-1">
               {breadcrumbs.map((crumb, i) => (
                 <li key={i} className="flex items-center gap-1">

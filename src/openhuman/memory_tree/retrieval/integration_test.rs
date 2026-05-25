@@ -14,12 +14,12 @@ use chrono::{TimeZone, Utc};
 use tempfile::TempDir;
 
 use crate::openhuman::config::Config;
-use crate::openhuman::memory_tree::canonicalize::chat::{ChatBatch, ChatMessage};
-use crate::openhuman::memory_tree::ingest::ingest_chat;
+use crate::openhuman::memory::ingest_pipeline::ingest_chat;
+use crate::openhuman::memory_store::chunks::types::SourceKind;
+use crate::openhuman::memory_sync::canonicalize::chat::{ChatBatch, ChatMessage};
 use crate::openhuman::memory_tree::retrieval::{
     drill_down, fetch_leaves, query_global, query_source, query_topic, search_entities,
 };
-use crate::openhuman::memory_tree::types::SourceKind;
 
 fn test_config() -> (TempDir, Config) {
     let tmp = TempDir::new().unwrap();
@@ -164,9 +164,9 @@ async fn topic_entity_surfaces_after_ingest() {
 /// handler, so the test drains the queue before inspecting.
 #[tokio::test]
 async fn ingest_populates_chunk_embeddings() {
-    use crate::openhuman::memory_tree::jobs::drain_until_idle;
+    use crate::openhuman::memory_queue::drain_until_idle;
+    use crate::openhuman::memory_store::chunks::store::get_chunk_embedding;
     use crate::openhuman::memory_tree::score::embed::EMBEDDING_DIM;
-    use crate::openhuman::memory_tree::store::get_chunk_embedding;
 
     let (_tmp, cfg) = test_config();
     let out = ingest_chat(&cfg, "slack:#eng", "alice", vec![], chat_about_phoenix(0))
@@ -192,20 +192,21 @@ async fn ingest_populates_chunk_embeddings() {
 /// the seal from firing on short batches.
 #[tokio::test]
 async fn seal_populates_summary_embedding() {
-    use crate::openhuman::memory_tree::content_store;
-    use crate::openhuman::memory_tree::score::embed::EMBEDDING_DIM;
-    use crate::openhuman::memory_tree::store::upsert_chunks;
-    use crate::openhuman::memory_tree::tree_source::bucket_seal::{
-        append_leaf, LabelStrategy, LeafRef,
+    use crate::openhuman::memory::chat::{test_override, ChatProvider, StaticChatProvider};
+    use crate::openhuman::memory::tree_source::registry::get_or_create_source_tree;
+    use crate::openhuman::memory_store::chunks::store::upsert_chunks;
+    use crate::openhuman::memory_store::chunks::types::{
+        chunk_id, Chunk, Metadata, SourceKind, SourceRef,
     };
-    use crate::openhuman::memory_tree::tree_source::registry::get_or_create_source_tree;
-    use crate::openhuman::memory_tree::tree_source::store as src_store;
-    use crate::openhuman::memory_tree::tree_source::summariser::inert::InertSummariser;
-    use crate::openhuman::memory_tree::types::{chunk_id, Chunk, Metadata, SourceKind, SourceRef};
+    use crate::openhuman::memory_store::content as content_store;
+    use crate::openhuman::memory_tree::score::embed::EMBEDDING_DIM;
+    use crate::openhuman::memory_tree::tree::bucket_seal::{append_leaf, LabelStrategy, LeafRef};
+    use crate::openhuman::memory_tree::tree::store as src_store;
+    use std::sync::Arc;
 
     let (_tmp, cfg) = test_config();
     let tree = get_or_create_source_tree(&cfg, "slack:#seal-test").unwrap();
-    let summariser = InertSummariser::new();
+    let provider: Arc<dyn ChatProvider> = Arc::new(StaticChatProvider::new("test summary content"));
     let ts = Utc.timestamp_millis_opt(1_700_000_000_000).unwrap();
 
     let mk_chunk = |seq: u32, tokens: u32| Chunk {
@@ -233,9 +234,9 @@ async fn seal_populates_summary_embedding() {
         std::fs::create_dir_all(&content_root).expect("create content_root for test");
         let staged = content_store::stage_chunks(&content_root, &[c1.clone(), c2.clone()])
             .expect("stage_chunks for test chunks");
-        crate::openhuman::memory_tree::store::with_connection(&cfg, |conn| {
+        crate::openhuman::memory_store::chunks::store::with_connection(&cfg, |conn| {
             let tx = conn.unchecked_transaction()?;
-            crate::openhuman::memory_tree::store::upsert_staged_chunks_tx(&tx, &staged)?;
+            crate::openhuman::memory_store::chunks::store::upsert_staged_chunks_tx(&tx, &staged)?;
             tx.commit()?;
             Ok(())
         })
@@ -251,24 +252,18 @@ async fn seal_populates_summary_embedding() {
         topics: vec![],
         score: 0.5,
     };
-    append_leaf(
-        &cfg,
-        &tree,
-        &leaf_of(&c1),
-        &summariser,
-        &LabelStrategy::Empty,
-    )
-    .await
-    .unwrap();
-    let sealed = append_leaf(
-        &cfg,
-        &tree,
-        &leaf_of(&c2),
-        &summariser,
-        &LabelStrategy::Empty,
-    )
-    .await
-    .unwrap();
+    test_override::with_provider(Arc::clone(&provider), async {
+        append_leaf(&cfg, &tree, &leaf_of(&c1), &LabelStrategy::Empty)
+            .await
+            .unwrap()
+    })
+    .await;
+    let sealed = test_override::with_provider(Arc::clone(&provider), async {
+        append_leaf(&cfg, &tree, &leaf_of(&c2), &LabelStrategy::Empty)
+            .await
+            .unwrap()
+    })
+    .await;
     assert_eq!(sealed.len(), 1, "expected one seal at the budget crossing");
 
     // #1574 cutover: the seal path no longer writes the legacy

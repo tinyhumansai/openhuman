@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 
 import { useT } from '../../../lib/i18n/I18nContext';
+import { useCoreState } from '../../../providers/CoreStateProvider';
+import { isLocalSessionToken } from '../../../utils/localSession';
 import {
   openhumanGetSearchSettings,
   openhumanUpdateSearchSettings,
@@ -24,9 +26,11 @@ interface EngineOption {
   requiresKey: boolean;
 }
 
-const SearchPanel = () => {
+const SearchPanel = ({ embedded = false }: { embedded?: boolean }) => {
   const { t } = useT();
   const { navigateBack, breadcrumbs } = useSettingsNavigation();
+  const { snapshot } = useCoreState();
+  const isLocalSession = isLocalSessionToken(snapshot.sessionToken);
 
   const [settings, setSettings] = useState<SearchSettings | null>(null);
   const [status, setStatus] = useState<Status>({ kind: 'loading' });
@@ -55,6 +59,9 @@ const SearchPanel = () => {
       requiresKey: true,
     },
   ];
+  const visibleEngines = isLocalSession
+    ? ENGINES.filter(engine => engine.id !== 'managed')
+    : ENGINES;
 
   useEffect(() => {
     let cancelled = false;
@@ -118,17 +125,25 @@ const SearchPanel = () => {
 
   return (
     <div className="z-10 relative">
-      <SettingsHeader
-        title={t('settings.search.title')}
-        showBackButton
-        onBack={navigateBack}
-        breadcrumbs={breadcrumbs}
-      />
+      {!embedded && (
+        <SettingsHeader
+          title={t('settings.search.title')}
+          showBackButton
+          onBack={navigateBack}
+          breadcrumbs={breadcrumbs}
+        />
+      )}
 
-      <div className="p-4 space-y-4">
+      <div className={embedded ? 'space-y-4' : 'p-4 space-y-4'}>
         <p className="text-xs text-stone-500 dark:text-neutral-400 leading-relaxed">
           {t('settings.search.description')}
         </p>
+
+        {isLocalSession && (
+          <div className="rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 px-4 py-3 text-sm text-stone-700 dark:text-neutral-200">
+            {t('settings.search.localManagedUnavailable')}
+          </div>
+        )}
 
         {status.kind === 'loading' && (
           <div className="rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 text-xs text-stone-500 dark:text-neutral-400">
@@ -142,7 +157,7 @@ const SearchPanel = () => {
               className="bg-white dark:bg-neutral-900 rounded-xl border border-neutral-200 dark:border-neutral-800 overflow-hidden"
               role="radiogroup"
               aria-label={t('settings.search.engineAria')}>
-              {ENGINES.map((opt, idx) => {
+              {visibleEngines.map((opt, idx) => {
                 const selected = opt.id === selectedEngine;
                 const configured = isConfigured(opt.id);
                 const blocked = opt.requiresKey && !configured && selected;

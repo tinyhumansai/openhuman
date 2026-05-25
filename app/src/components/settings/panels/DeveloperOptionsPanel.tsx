@@ -282,7 +282,7 @@ const SentryTestRow = () => {
             {status.eventId ? (
               <span className="font-mono">id: {status.eventId}</span>
             ) : (
-              <span>(no id — Sentry disabled in this build)</span>
+              <span>{t('devOptions.sentryDisabled')}</span>
             )}
           </span>
         )}

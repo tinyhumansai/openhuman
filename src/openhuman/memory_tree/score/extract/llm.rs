@@ -35,7 +35,7 @@ use serde::Deserialize;
 
 use super::types::{EntityKind, ExtractedEntities, ExtractedEntity, ExtractedTopic};
 use super::EntityExtractor;
-use crate::openhuman::memory_tree::chat::{ChatPrompt, ChatProvider};
+use crate::openhuman::memory::chat::{ChatPrompt, ChatProvider};
 
 // ── Configuration ────────────────────────────────────────────────────────
 
@@ -101,7 +101,7 @@ impl Default for LlmExtractorConfig {
 /// Holds an `Arc<dyn ChatProvider>` rather than a per-instance HTTP
 /// client. The provider abstraction lets a single workspace choose
 /// cloud vs local at runtime (see
-/// [`crate::openhuman::memory_tree::chat::build_chat_provider`]). Tests
+/// [`crate::openhuman::memory::chat::build_chat_provider`]). Tests
 /// can mock the provider to assert the prompt / parse behaviour without
 /// a real Ollama or backend.
 pub struct LlmEntityExtractor {

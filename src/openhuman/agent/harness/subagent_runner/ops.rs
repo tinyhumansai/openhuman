@@ -32,7 +32,7 @@ use crate::openhuman::context::prompt::{
     render_subagent_system_prompt, PromptContext, PromptTool, SubagentRenderOptions,
 };
 use crate::openhuman::inference::provider::{ChatMessage, ChatRequest, Provider, ToolCall};
-use crate::openhuman::memory::conversations::ConversationMessage;
+use crate::openhuman::memory_conversations::ConversationMessage;
 use crate::openhuman::tools::{Tool, ToolCategory, ToolSpec};
 
 /// Prompt suffix injected into every typed sub-agent run.
@@ -1307,7 +1307,7 @@ async fn run_inner_loop(
                     sender,
                     created_at: chrono::Utc::now().to_rfc3339(),
                 };
-                if let Err(err) = crate::openhuman::memory::conversations::append_message(
+                if let Err(err) = crate::openhuman::memory_conversations::append_message(
                     parent.workspace_dir.clone(),
                     thread_id,
                     message,
