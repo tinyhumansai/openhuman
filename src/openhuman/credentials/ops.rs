@@ -10,7 +10,7 @@ use crate::openhuman::credentials::session_support::{
     build_session_state, is_local_session_token, local_session_user_id, parse_fields_value,
     profile_name_or_default, summarize_auth_profile, LOCAL_SESSION_USER_ID,
 };
-use crate::openhuman::security::SecretStore;
+use crate::openhuman::keyring::SecretStore;
 use crate::rpc::RpcOutcome;
 
 use super::{AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME};

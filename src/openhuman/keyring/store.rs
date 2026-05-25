@@ -63,33 +63,14 @@ pub(super) fn build_backend() -> Box<dyn KeyringBackend> {
         }
     }
 
-    // Priority 2: debug build → file backend.
-    if cfg!(debug_assertions) {
+    // Priority 2: unit tests → file backend for deterministic isolation.
+    if cfg!(test) {
         let path = workspace_dir_for_file_backend();
-        log::info!(
-            "[keyring] backend=file path={} (debug_assertions build)",
-            path.display()
-        );
+        log::info!("[keyring] backend=file path={} (cfg(test))", path.display());
         return Box::new(backend::FileBackend::new(&path));
     }
 
-    // Priority 3: OPENHUMAN_APP_ENV dev/staging → file backend.
-    if let Ok(app_env) = std::env::var("OPENHUMAN_APP_ENV") {
-        match app_env.trim() {
-            "dev" | "staging" => {
-                let path = workspace_dir_for_file_backend();
-                log::info!(
-                    "[keyring] backend=file path={} (OPENHUMAN_APP_ENV={})",
-                    path.display(),
-                    app_env.trim()
-                );
-                return Box::new(backend::FileBackend::new(&path));
-            }
-            _ => {}
-        }
-    }
-
-    // Priority 4: production OS backend.
+    // Priority 3: real app environments → OS backend.
     log::info!("[keyring] backend=os");
     Box::new(backend::OsBackend)
 }

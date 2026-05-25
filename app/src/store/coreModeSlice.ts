@@ -11,6 +11,7 @@
  * it is pre-login and not tied to any particular user identity.
  */
 import { createSlice, type PayloadAction } from '@reduxjs/toolkit';
+import { REHYDRATE } from 'redux-persist';
 
 import { E2E_DEFAULT_CORE_MODE } from '../utils/config';
 import { normalizeRpcUrl } from '../utils/configPersistence';
@@ -94,6 +95,19 @@ const coreModeSlice = createSlice({
     resetCoreMode(state) {
       state.mode = { kind: 'unset' };
     },
+  },
+  extraReducers: builder => {
+    builder.addCase(REHYDRATE, (state, action) => {
+      const rehydrateAction = action as typeof action & { key?: string };
+      if (rehydrateAction.key !== 'coreMode') return;
+
+      // The plain marker is written synchronously before boot-check work can
+      // reload the renderer. Let it win over stale async redux-persist blobs.
+      const synchronousMode = deriveInitialMode();
+      if (synchronousMode.kind !== 'unset') {
+        state.mode = synchronousMode;
+      }
+    });
   },
 });
 

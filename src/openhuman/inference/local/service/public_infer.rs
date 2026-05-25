@@ -63,6 +63,26 @@ impl LocalAiService {
             .await
     }
 
+    pub async fn prompt_interactive(
+        &self,
+        config: &Config,
+        prompt: &str,
+        max_tokens: Option<u32>,
+        no_think: bool,
+    ) -> Result<String, String> {
+        log::trace!("[local_ai] prompt_interactive bypasses scheduler_gate permit");
+        if !config.local_ai.runtime_enabled {
+            return Err("local ai is disabled".to_string());
+        }
+        let system = if no_think {
+            "You are a concise assistant. Return only the final answer. Do not include reasoning or chain-of-thought."
+        } else {
+            "You are a helpful assistant."
+        };
+        self.inference_interactive(config, system, prompt, max_tokens.or(Some(160)), no_think)
+            .await
+    }
+
     pub async fn inline_complete(
         &self,
         config: &Config,
@@ -94,9 +114,11 @@ impl LocalAiService {
     /// turn against it than show stale or empty completions for the
     /// duration of the backfill.
     ///
-    /// This is the only path inside [`LocalAiService`] that opts out of
-    /// the gate. Every other entry point (`inference`, `prompt`,
-    /// `summarize`, `inline_complete`, `vision_prompt`, `embed`)
+    /// Along with [`Self::prompt_interactive`] and
+    /// [`Self::chat_with_history_interactive`], this is one of the paths
+    /// inside [`LocalAiService`] that opts out of the gate. Every other
+    /// entry point (`inference`, `prompt`, `summarize`,
+    /// `inline_complete`, `vision_prompt`, `embed`, `chat_with_history`)
     /// acquires before talking to Ollama.
     pub async fn inline_complete_interactive(
         &self,
@@ -183,6 +205,180 @@ impl LocalAiService {
             )
             .await?;
         Ok(sanitize_inline_completion(&raw, context))
+    }
+
+    /// Multi-turn chat completion via Ollama /api/chat.
+    /// Messages are `[{role: "user"|"assistant"|"system", content: "..."}]`.
+    /// Returns the assistant reply string.
+    pub(crate) async fn chat_with_history(
+        &self,
+        config: &Config,
+        messages: Vec<crate::openhuman::inference::local::ollama::OllamaChatMessage>,
+        max_tokens: Option<u32>,
+    ) -> Result<String, String> {
+        self.chat_with_history_internal(config, messages, max_tokens, true)
+            .await
+    }
+
+    pub(crate) async fn chat_with_history_interactive(
+        &self,
+        config: &Config,
+        messages: Vec<crate::openhuman::inference::local::ollama::OllamaChatMessage>,
+        max_tokens: Option<u32>,
+    ) -> Result<String, String> {
+        log::trace!("[local_ai] chat_with_history_interactive bypasses scheduler_gate permit");
+        self.chat_with_history_internal(config, messages, max_tokens, false)
+            .await
+    }
+
+    async fn chat_with_history_internal(
+        &self,
+        config: &Config,
+        messages: Vec<crate::openhuman::inference::local::ollama::OllamaChatMessage>,
+        max_tokens: Option<u32>,
+        gated: bool,
+    ) -> Result<String, String> {
+        if !config.local_ai.runtime_enabled {
+            return Err("local ai is disabled".to_string());
+        }
+
+        if !matches!(self.status.lock().state.as_str(), "ready") {
+            self.bootstrap(config).await;
+        }
+
+        if messages.is_empty() {
+            return Err("messages must not be empty".to_string());
+        }
+
+        let _gate_permit = if gated {
+            crate::openhuman::scheduler_gate::wait_for_capacity().await
+        } else {
+            None
+        };
+
+        if provider_from_config(config) == LocalAiProvider::LmStudio {
+            let started = std::time::Instant::now();
+            let lm_messages = messages
+                .into_iter()
+                .map(
+                    |message| crate::openhuman::inference::local::lm_studio::LmStudioChatMessage {
+                        role: message.role,
+                        content: message.content,
+                    },
+                )
+                .collect();
+            let outcome = self
+                .lm_studio_chat_completion(
+                    config,
+                    lm_messages,
+                    max_tokens,
+                    config.default_temperature as f32,
+                    false,
+                )
+                .await?;
+            let elapsed_ms = started.elapsed().as_millis() as u64;
+            {
+                let mut status = self.status.lock();
+                status.state = "ready".to_string();
+                status.last_latency_ms = Some(elapsed_ms);
+                status.prompt_toks_per_sec = None;
+                status.gen_toks_per_sec = None;
+                status.warning = None;
+            }
+            tracing::debug!(
+                elapsed_ms,
+                prompt_tokens = ?outcome.prompt_tokens,
+                completion_tokens = ?outcome.completion_tokens,
+                reply_len = outcome.reply.len(),
+                "[local_ai:chat] lm studio /v1/chat/completions done"
+            );
+            return Ok(outcome.reply);
+        }
+
+        tracing::debug!(
+            message_count = messages.len(),
+            model = %crate::openhuman::inference::model_ids::effective_chat_model_id(config),
+            "[local_ai:chat] sending to ollama /api/chat"
+        );
+
+        let started = std::time::Instant::now();
+
+        let body = crate::openhuman::inference::local::ollama::OllamaChatRequest {
+            model: crate::openhuman::inference::model_ids::effective_chat_model_id(config),
+            messages,
+            stream: false,
+            options: Some(
+                crate::openhuman::inference::local::ollama::OllamaGenerateOptions {
+                    temperature: Some(config.default_temperature as f32),
+                    top_k: Some(40),
+                    top_p: Some(0.9),
+                    num_predict: max_tokens.map(|v| v as i32),
+                },
+            ),
+        };
+
+        let base_url = ollama_base_url_from_config(config);
+        let response = self
+            .http
+            .post(format!("{base_url}/api/chat"))
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| {
+                external_ollama_request_error_with_url("ollama chat request failed", &e, &base_url)
+            })?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            let detail = body.trim();
+            return Err(format!(
+                "ollama chat failed with status {}{}",
+                status,
+                if detail.is_empty() {
+                    String::new()
+                } else {
+                    format!(": {detail}")
+                }
+            ));
+        }
+
+        let payload: crate::openhuman::inference::local::ollama::OllamaChatResponse = response
+            .json()
+            .await
+            .map_err(|e| format!("ollama chat response parse failed: {e}"))?;
+
+        let elapsed_ms = started.elapsed().as_millis() as u64;
+        let prompt_tps = payload
+            .prompt_eval_count
+            .zip(payload.prompt_eval_duration)
+            .and_then(|(count, dur_ns)| ns_to_tps(count as f32, dur_ns));
+        let gen_tps = payload
+            .eval_count
+            .zip(payload.eval_duration)
+            .and_then(|(count, dur_ns)| ns_to_tps(count as f32, dur_ns));
+
+        {
+            let mut status = self.status.lock();
+            status.state = "ready".to_string();
+            status.last_latency_ms = Some(elapsed_ms);
+            status.prompt_toks_per_sec = prompt_tps;
+            status.gen_toks_per_sec = gen_tps;
+            status.warning = None;
+        }
+
+        tracing::debug!(
+            elapsed_ms,
+            reply_len = payload.message.content.len(),
+            "[local_ai:chat] ollama /api/chat done"
+        );
+
+        let reply = payload.message.content.trim().to_string();
+        if reply.is_empty() {
+            Err("ollama returned empty reply".to_string())
+        } else {
+            Ok(reply)
+        }
     }
 
     pub(crate) async fn inference(
