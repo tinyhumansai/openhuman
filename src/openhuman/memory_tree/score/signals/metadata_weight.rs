@@ -8,7 +8,7 @@
 //! context (e.g., channel size, thread participant count) is a future
 //! refinement when we actually have that metadata at ingest.
 
-use crate::openhuman::memory_tree::types::{Metadata, SourceKind};
+use crate::openhuman::memory_store::chunks::types::{Metadata, SourceKind};
 
 /// Base weight for each source kind.
 ///

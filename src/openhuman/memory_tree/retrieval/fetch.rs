@@ -13,10 +13,10 @@
 use anyhow::Result;
 
 use crate::openhuman::config::Config;
-use crate::openhuman::memory_tree::content_store::read as content_read;
+use crate::openhuman::memory_store::chunks::store::get_chunk;
+use crate::openhuman::memory_store::content::read as content_read;
 use crate::openhuman::memory_tree::retrieval::types::{hit_from_chunk, RetrievalHit};
 use crate::openhuman::memory_tree::score::store::get_score;
-use crate::openhuman::memory_tree::store::get_chunk;
 
 /// Max batch size. Callers that pass more than this get truncated with a
 /// warn log — no error surface so the LLM sees a partial result.
@@ -96,9 +96,11 @@ pub async fn fetch_leaves(config: &Config, chunk_ids: &[String]) -> Result<Vec<R
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::openhuman::memory_tree::content_store;
-    use crate::openhuman::memory_tree::store::upsert_chunks;
-    use crate::openhuman::memory_tree::types::{chunk_id, Chunk, Metadata, SourceKind, SourceRef};
+    use crate::openhuman::memory_store::chunks::store::upsert_chunks;
+    use crate::openhuman::memory_store::chunks::types::{
+        chunk_id, Chunk, Metadata, SourceKind, SourceRef,
+    };
+    use crate::openhuman::memory_store::content as content_store;
     use chrono::{TimeZone, Utc};
     use tempfile::TempDir;
 
@@ -107,9 +109,9 @@ mod tests {
         std::fs::create_dir_all(&content_root).expect("create content_root for test");
         let staged = content_store::stage_chunks(&content_root, chunks)
             .expect("stage_chunks for test chunks");
-        crate::openhuman::memory_tree::store::with_connection(cfg, |conn| {
+        crate::openhuman::memory_store::chunks::store::with_connection(cfg, |conn| {
             let tx = conn.unchecked_transaction()?;
-            crate::openhuman::memory_tree::store::upsert_staged_chunks_tx(&tx, &staged)?;
+            crate::openhuman::memory_store::chunks::store::upsert_staged_chunks_tx(&tx, &staged)?;
             tx.commit()?;
             Ok(())
         })

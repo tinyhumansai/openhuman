@@ -44,15 +44,42 @@ const AppFilterSection = ({
           {t('settings.autocomplete.appFilter.runtime')}
         </h3>
         <div className="text-sm text-stone-700 dark:text-neutral-200 space-y-1">
-          <div>Platform supported: {status?.platform_supported ? 'yes' : 'no'}</div>
-          <div>Enabled: {status?.enabled ? 'yes' : 'no'}</div>
-          <div>Running: {status?.running ? 'yes' : 'no'}</div>
-          <div>Phase: {status?.phase ?? 'unknown'}</div>
-          <div>Debounce: {status?.debounce_ms ?? 0}ms</div>
-          <div>Model: {status?.model_id ?? 'n/a'}</div>
-          <div>App: {status?.app_name ?? 'n/a'}</div>
-          <div>Last error: {status?.last_error ?? 'none'}</div>
-          <div>Current suggestion: {status?.suggestion?.value ?? 'none'}</div>
+          <div>
+            {t('settings.autocomplete.appFilter.platformSupported')}:{' '}
+            {status?.platform_supported ? t('common.yes') : t('common.no')}
+          </div>
+          <div>
+            {t('settings.autocomplete.appFilter.enabled')}:{' '}
+            {status?.enabled ? t('common.yes') : t('common.no')}
+          </div>
+          <div>
+            {t('settings.autocomplete.appFilter.running')}:{' '}
+            {status?.running ? t('common.yes') : t('common.no')}
+          </div>
+          <div>
+            {t('settings.autocomplete.appFilter.phase')}:{' '}
+            {status?.phase ?? t('settings.autocomplete.shared.unknown')}
+          </div>
+          <div>
+            {t('settings.autocomplete.appFilter.debounce')}:{' '}
+            {`${String(status?.debounce_ms ?? 0)}ms`}
+          </div>
+          <div>
+            {t('settings.autocomplete.appFilter.model')}:{' '}
+            {status?.model_id ?? t('settings.autocomplete.shared.notApplicable')}
+          </div>
+          <div>
+            {t('settings.autocomplete.appFilter.app')}:{' '}
+            {status?.app_name ?? t('settings.autocomplete.shared.notApplicable')}
+          </div>
+          <div>
+            {t('settings.autocomplete.appFilter.lastError')}:{' '}
+            {status?.last_error ?? t('settings.autocomplete.shared.none')}
+          </div>
+          <div>
+            {t('settings.autocomplete.appFilter.currentSuggestion')}:{' '}
+            {status?.suggestion?.value ?? t('settings.autocomplete.shared.none')}
+          </div>
         </div>
         <div className="flex gap-2">
           <button

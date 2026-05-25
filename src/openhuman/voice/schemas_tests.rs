@@ -332,3 +332,187 @@ fn every_registered_function_has_non_empty_description() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// New voice provider registry RPC tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn new_provider_schemas_are_named_correctly() {
+    let s = voice_schemas("voice_update_provider_settings");
+    assert_eq!(s.namespace, "voice");
+    assert_eq!(s.function, "update_provider_settings");
+
+    let s = voice_schemas("voice_list_models");
+    assert_eq!(s.namespace, "voice");
+    assert_eq!(s.function, "list_models");
+
+    let s = voice_schemas("voice_test_provider");
+    assert_eq!(s.namespace, "voice");
+    assert_eq!(s.function, "test_provider");
+}
+
+#[test]
+fn new_rpcs_are_in_registry() {
+    let registry = all_voice_registered_controllers();
+    let functions: Vec<&'static str> = registry.iter().map(|c| c.schema.function).collect();
+    assert!(
+        functions.contains(&"update_provider_settings"),
+        "voice.update_provider_settings must be registered"
+    );
+    assert!(
+        functions.contains(&"list_models"),
+        "voice.list_models must be registered"
+    );
+    assert!(
+        functions.contains(&"test_provider"),
+        "voice.test_provider must be registered"
+    );
+}
+
+#[test]
+fn validate_stt_provider_accepts_sentinels() {
+    assert!(validate_stt_provider("cloud").is_ok());
+    assert!(validate_stt_provider("openhuman").is_ok());
+    assert!(validate_stt_provider("whisper").is_ok());
+}
+
+#[test]
+fn validate_stt_provider_accepts_slug_grammar() {
+    assert!(validate_stt_provider("deepgram:nova-2").is_ok());
+    assert!(validate_stt_provider("openai:whisper-1").is_ok());
+    assert!(validate_stt_provider("custom").is_ok()); // bare slug
+}
+
+#[test]
+fn validate_tts_provider_accepts_sentinels() {
+    assert!(validate_tts_provider("cloud").is_ok());
+    assert!(validate_tts_provider("openhuman").is_ok());
+    assert!(validate_tts_provider("piper").is_ok());
+}
+
+#[test]
+fn validate_tts_provider_accepts_slug_grammar() {
+    assert!(validate_tts_provider("openai:alloy").is_ok());
+    assert!(validate_tts_provider("elevenlabs:voice-id").is_ok());
+    assert!(validate_tts_provider("custom").is_ok());
+}
+
+#[test]
+fn update_provider_settings_schema_has_correct_inputs() {
+    let s = voice_schemas("voice_update_provider_settings");
+    let names: Vec<&str> = s.inputs.iter().map(|i| i.name).collect();
+    assert!(names.contains(&"voice_providers"));
+    assert!(names.contains(&"stt_provider"));
+    assert!(names.contains(&"tts_provider"));
+    // All should be optional
+    for input in &s.inputs {
+        assert!(
+            !input.required,
+            "voice_update_provider_settings input `{}` should be optional",
+            input.name
+        );
+    }
+}
+
+#[test]
+fn list_models_schema_requires_provider_id() {
+    let s = voice_schemas("voice_list_models");
+    assert!(s
+        .inputs
+        .iter()
+        .any(|i| i.name == "provider_id" && i.required));
+}
+
+#[test]
+fn test_provider_schema_requires_workload_and_provider() {
+    let s = voice_schemas("voice_test_provider");
+    assert!(s.inputs.iter().any(|i| i.name == "workload" && i.required));
+    assert!(s.inputs.iter().any(|i| i.name == "provider" && i.required));
+}
+
+#[test]
+fn deserialize_voice_update_provider_settings_params() {
+    let params = Map::from_iter([
+        (
+            "voice_providers".to_string(),
+            json!([{
+                "slug": "deepgram",
+                "endpoint": "https://api.deepgram.com/v1",
+                "capability": "stt",
+                "stt_api_style": "deepgram"
+            }]),
+        ),
+        ("stt_provider".to_string(), json!("deepgram:nova-2")),
+    ]);
+    let parsed = deserialize_params::<VoiceUpdateProviderSettingsParams>(params).unwrap();
+    assert_eq!(parsed.stt_provider, Some("deepgram:nova-2".into()));
+    assert!(parsed.voice_providers.is_some());
+    let providers = parsed.voice_providers.unwrap();
+    assert_eq!(providers.len(), 1);
+    assert_eq!(providers[0].slug, "deepgram");
+}
+
+#[test]
+fn deserialize_voice_list_models_params() {
+    let params = Map::from_iter([
+        ("provider_id".to_string(), json!("deepgram")),
+        ("capability".to_string(), json!("stt")),
+    ]);
+    let parsed = deserialize_params::<VoiceListModelsParams>(params).unwrap();
+    assert_eq!(parsed.provider_id, "deepgram");
+    assert_eq!(parsed.capability, Some("stt".into()));
+}
+
+#[test]
+fn deserialize_voice_test_provider_params() {
+    let params = Map::from_iter([
+        ("workload".to_string(), json!("stt")),
+        ("provider".to_string(), json!("deepgram:nova-2")),
+    ]);
+    let parsed = deserialize_params::<VoiceTestProviderParams>(params).unwrap();
+    assert_eq!(parsed.workload, "stt");
+    assert_eq!(parsed.provider, "deepgram:nova-2");
+}
+
+#[test]
+fn generate_silent_wav_produces_valid_wav_header() {
+    let wav = generate_silent_wav();
+    assert!(wav.len() >= 44, "WAV must have at least 44 bytes (header)");
+    assert_eq!(&wav[0..4], b"RIFF");
+    assert_eq!(&wav[8..12], b"WAVE");
+    assert_eq!(&wav[12..16], b"fmt ");
+    assert_eq!(&wav[36..40], b"data");
+    // total size = header(44) + 800 samples * 2 bytes = 1644
+    assert_eq!(wav.len(), 1644);
+}
+
+#[test]
+fn stt_dispatch_params_all_optional_except_audio() {
+    let params = Map::from_iter([("audio_base64".to_string(), json!("AAAA"))]);
+    let parsed = deserialize_params::<SttDispatchParams>(params).unwrap();
+    assert_eq!(parsed.audio_base64, "AAAA");
+    assert!(parsed.provider.is_none());
+    assert!(parsed.model.is_none());
+    assert!(parsed.mime_type.is_none());
+    assert!(parsed.file_name.is_none());
+    assert!(parsed.language.is_none());
+}
+
+#[test]
+fn tts_dispatch_params_all_optional_except_text() {
+    let params = Map::from_iter([("text".to_string(), json!("hello"))]);
+    let parsed = deserialize_params::<TtsDispatchParams>(params).unwrap();
+    assert_eq!(parsed.text, "hello");
+    assert!(parsed.provider.is_none());
+    assert!(parsed.voice.is_none());
+}
+
+#[test]
+fn set_providers_params_all_optional() {
+    let parsed = deserialize_params::<SetProvidersParams>(Map::new()).unwrap();
+    assert!(parsed.stt_provider.is_none());
+    assert!(parsed.tts_provider.is_none());
+    assert!(parsed.stt_model.is_none());
+    assert!(parsed.tts_voice.is_none());
+}

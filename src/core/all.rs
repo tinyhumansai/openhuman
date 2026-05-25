@@ -158,10 +158,12 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(crate::openhuman::service::all_service_registered_controllers());
     // Data migration utilities
     controllers.extend(crate::openhuman::migration::all_migration_registered_controllers());
-    // Unified inference domain: text / vision / embedding / local runtime / cloud providers.
+    // Unified inference domain: text / vision / local runtime / cloud providers.
     // (Formerly split across inference, local_ai, and providers namespaces.)
     controllers.extend(crate::openhuman::inference::all_inference_registered_controllers());
     controllers.extend(crate::openhuman::inference::all_local_ai_registered_controllers());
+    // Embedding provider configuration and embed RPC.
+    controllers.extend(crate::openhuman::embeddings::all_embeddings_registered_controllers());
     // People resolution and interaction scoring
     controllers.extend(crate::openhuman::people::all_people_registered_controllers());
     // Screen capture and UI analysis
@@ -193,7 +195,9 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
         crate::openhuman::composio::providers::slack::all_slack_memory_registered_controllers(),
     );
     // Per-connection memory sync status, controls, and progress (#1136)
-    controllers.extend(crate::openhuman::memory::all_memory_sync_status_registered_controllers());
+    controllers.extend(
+        crate::openhuman::memory_sync::sync_status::all_memory_sync_status_registered_controllers(),
+    );
     // Link shortener for long tracking URLs — saves LLM tokens
     controllers
         .extend(crate::openhuman::redirect_links::all_redirect_links_registered_controllers());
@@ -301,6 +305,7 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::migration::all_migration_controller_schemas());
     schemas.extend(crate::openhuman::inference::all_inference_controller_schemas());
     schemas.extend(crate::openhuman::inference::all_local_ai_controller_schemas());
+    schemas.extend(crate::openhuman::embeddings::all_embeddings_controller_schemas());
     schemas.extend(crate::openhuman::people::all_people_controller_schemas());
     schemas.extend(
         crate::openhuman::screen_intelligence::all_screen_intelligence_controller_schemas(),
@@ -318,7 +323,9 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(
         crate::openhuman::composio::providers::slack::all_slack_memory_controller_schemas(),
     );
-    schemas.extend(crate::openhuman::memory::all_memory_sync_status_controller_schemas());
+    schemas.extend(
+        crate::openhuman::memory_sync::sync_status::all_memory_sync_status_controller_schemas(),
+    );
     schemas.extend(crate::openhuman::redirect_links::all_redirect_links_controller_schemas());
     schemas.extend(crate::openhuman::referral::all_referral_controller_schemas());
     schemas.extend(crate::openhuman::billing::all_billing_controller_schemas());

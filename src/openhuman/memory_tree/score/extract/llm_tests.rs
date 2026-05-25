@@ -193,7 +193,7 @@ async fn extract_soft_fallback_on_provider_failure() {
     // Provider always errors. extract() must NOT return Err — it must
     // return an empty ExtractedEntities with a warn log after retry
     // exhaustion.
-    use crate::openhuman::memory_tree::chat::{ChatPrompt, ChatProvider};
+    use crate::openhuman::memory::chat::{ChatPrompt, ChatProvider};
     use async_trait::async_trait;
     use std::sync::Arc;
 
@@ -220,7 +220,7 @@ async fn extract_routes_through_chat_provider_and_parses_response() {
     // Mock provider returns canned NER+importance JSON. Verify the
     // extractor parses it, recovers spans by string search, and emits the
     // expected entities + importance signal.
-    use crate::openhuman::memory_tree::chat::{ChatPrompt, ChatProvider};
+    use crate::openhuman::memory::chat::{ChatPrompt, ChatProvider};
     use async_trait::async_trait;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
@@ -266,7 +266,7 @@ async fn extract_returns_empty_on_malformed_provider_response() {
     // Provider returns garbage. Caller must NOT see an Err — the parse
     // failure path returns empty entities (retrying the same input would
     // yield the same garbage, so we don't burn retries).
-    use crate::openhuman::memory_tree::chat::{ChatPrompt, ChatProvider};
+    use crate::openhuman::memory::chat::{ChatPrompt, ChatProvider};
     use async_trait::async_trait;
     use std::sync::Arc;
 
@@ -386,7 +386,7 @@ fn into_extracted_entities_disallowed_known_kind_falls_back_to_misc() {
 
 #[test]
 fn build_prompt_carries_user_text_and_kind_tag() {
-    use crate::openhuman::memory_tree::chat::{ChatPrompt, ChatProvider};
+    use crate::openhuman::memory::chat::{ChatPrompt, ChatProvider};
     use async_trait::async_trait;
     use std::sync::Arc;
 

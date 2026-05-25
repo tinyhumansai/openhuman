@@ -391,40 +391,39 @@ const bn2: TranslationMap = {
   'insights.skills': 'দক্ষতা',
   'insights.opinions': 'মতামত',
   // Developer options menu items (#2225) — English stubs; native translations welcome
-  'devOptions.menuAi': 'AI Configuration',
-  'devOptions.menuAiDesc': 'Cloud providers, local Ollama models, and per-workload routing',
-  'devOptions.menuScreenAware': 'Screen Awareness',
-  'devOptions.menuScreenAwareDesc':
-    'Screen capture permissions, monitoring policy, and session controls',
-  'devOptions.menuMessaging': 'Messaging Channels',
+  'devOptions.menuAi': 'AI কনফিগারেশন',
+  'devOptions.menuAiDesc': 'ক্লাউড প্রদানকারী, স্থানীয় Ollama মডেল, এবং প্রতি-ওয়ার্কলোড রাউটিং',
+  'devOptions.menuScreenAware': 'স্ক্রীন সচেতনতা',
+  'devOptions.menuScreenAwareDesc': 'স্ক্রীন ক্যাপচার অনুমতি এবং সেশন নিয়ন্ত্রণ, নিরীক্ষণ নীতি',
+  'devOptions.menuMessaging': 'মেসেজিং চ্যানেলগুলি',
   'devOptions.menuMessagingDesc':
-    'Configure Telegram/Discord auth modes and default channel routing',
-  'devOptions.menuTools': 'Tools',
-  'devOptions.menuToolsDesc': 'Enable or disable capabilities OpenHuman can use on your behalf',
-  'devOptions.menuAgentChat': 'Agent Chat',
-  'devOptions.menuAgentChatDesc': 'Test agent conversation with model and temperature overrides',
-  'devOptions.menuCronJobs': 'Cron Jobs',
-  'devOptions.menuCronJobsDesc': 'View and configure scheduled jobs for runtime skills',
-  'devOptions.menuLocalModelDebug': 'Local Model Debug',
+    'কনফিগার করুন Telegram/Discord প্রমাণীকরণ মোড এবং ডিফল্ট চ্যানেল রাউটিং',
+  'devOptions.menuTools': 'টুলগুলি',
+  'devOptions.menuToolsDesc':
+    'টুলগুলি [[I18N_SEP_92731] BR__7 সক্ষম করতে সক্ষম]__3 সক্ষম করতে পারে। আপনার পক্ষে ব্যবহার করুন',
+  'devOptions.menuAgentChat': 'এজেন্ট চ্যাট',
+  'devOptions.menuAgentChatDesc': 'মডেল এবং তাপমাত্রা ওভাররাইডের সাথে পরীক্ষা এজেন্ট কথোপকথন',
+  'devOptions.menuCronJobs': 'ক্রোন জবস',
+  'devOptions.menuCronJobsDesc': 'কাজের সময়সূচী চালনার সময়সূচী কনফিগার করুন',
+  'devOptions.menuLocalModelDebug': 'স্থানীয় মডেল ডিবাগ',
   'devOptions.menuLocalModelDebugDesc':
-    'Ollama config, asset downloads, model tests, and diagnostics',
-  'devOptions.menuWebhooksDebug': 'Webhooks',
+    'Ollama কনফিগারেশন, সম্পদ ডাউনলোড, মডেল পরীক্ষা, এবং ডায়াগনস্টিকস',
+  'devOptions.menuWebhooksDebug': 'ওয়েবহুক',
   'devOptions.menuWebhooksDebugDesc':
-    'Inspect runtime webhook registrations and captured request logs',
-  'devOptions.menuIntelligence': 'Intelligence',
-  'devOptions.menuIntelligenceDesc': 'Memory workspace, subconscious engine, dreams, and settings',
-  'devOptions.menuNotificationRouting': 'Notification Routing',
-  'devOptions.menuNotificationRoutingDesc':
-    'AI importance scoring and orchestrator escalation for integration alerts',
-  'devOptions.menuComposeIOTriggers': 'ComposeIO Triggers',
-  'devOptions.menuComposeIOTriggersDesc': 'View ComposeIO trigger history and archive',
-  'devOptions.menuComposioRouting': 'Composio Routing (Direct Mode)',
+    'রানটাইম ওয়েবহুক নিবন্ধন এবং ক্যাপচার করা অনুরোধ লগগুলি পরিদর্শন করুন',
+  'devOptions.menuIntelligence': 'বুদ্ধিমত্তা',
+  'devOptions.menuIntelligenceDesc': 'মেমরি ওয়ার্কস্পেস, অবচেতন ইঞ্জিন, স্বপ্ন এবং সেটিংস',
+  'devOptions.menuNotificationRouting': 'বিজ্ঞপ্তি রাউটিং',
+  'devOptions.menuNotificationRoutingDesc': 'এআই গুরুত্ব স্কোরিং এবং অর্কেস্ট্রেটর বৃদ্ধির জন্য',
+  'devOptions.menuComposeIOTriggers': 'ComposeIO ট্রিগারগুলি',
+  'devOptions.menuComposeIOTriggersDesc': 'ComposeIO ট্রিগার ইতিহাস দেখুন এবং সংরক্ষণাগার',
+  'devOptions.menuComposioRouting': 'Composio রাউটিং (ডাইরেক্ট মোড)',
   'devOptions.menuComposioRoutingDesc':
-    'Bring your own Composio API key and route calls directly to backend.composio.dev',
-  'devOptions.menuComposioTriggers': 'Integration Triggers',
+    'আপনার নিজের Composio এবং Composio Composio __বিরুট সরাসরি কল করুন।',
+  'devOptions.menuComposioTriggers': 'ইন্টিগ্রেশন ট্রিগার',
   'devOptions.menuComposioTriggersDesc':
-    'Configure AI triage settings for Composio integration triggers',
-  'mic.deviceSelector': 'Microphone device',
+    'Composio ইন্টিগ্রেশন ট্রিগারের জন্য AI ট্রাইজ সেটিংস কনফিগার করুন',
+  'mic.deviceSelector': 'মাইক্রোফোন ডিভাইস',
 };
 
 export default bn2;

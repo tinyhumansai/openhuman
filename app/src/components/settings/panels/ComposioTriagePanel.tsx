@@ -83,7 +83,9 @@ const ComposioTriagePanel = () => {
           breadcrumbs={breadcrumbs}
         />
         <div className="p-4">
-          <p className="text-sm text-stone-500 dark:text-neutral-400">Loading…</p>
+          <p className="text-sm text-stone-500 dark:text-neutral-400">
+            {t('settings.composio.loading')}
+          </p>
         </div>
       </div>
     );
@@ -110,7 +112,7 @@ const ComposioTriagePanel = () => {
             type="button"
             role="switch"
             aria-checked={triageDisabled}
-            aria-label="Disable AI triage for all triggers"
+            aria-label={t('composio.disableAllTriage')}
             onClick={() => setTriageDisabled(v => !v)}
             className="w-full flex items-center justify-between">
             <div className="text-left">
@@ -141,15 +143,16 @@ const ComposioTriagePanel = () => {
             {t('composio.disableSpecificIntegrations')}
           </label>
           <p className="text-xs text-stone-500 dark:text-neutral-400">
-            Comma-separated integration slugs, e.g. <span className="font-mono">gmail, slack</span>.
-            Case-insensitive.
+            {t('composio.integrationSlugsHelp')}{' '}
+            <span className="font-mono">{t('composio.integrationSlugsExample')}</span>.{' '}
+            {t('composio.integrationSlugsCaseInsensitive')}
           </p>
           <input
             id="disabled-toolkits"
             type="text"
             value={disabledToolkits}
             onChange={e => setDisabledToolkits(e.target.value)}
-            placeholder="gmail, slack, ..."
+            placeholder={t('composio.integrationSlugsPlaceholder')}
             disabled={triageDisabled}
             className="w-full rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 placeholder-stone-400 dark:placeholder-neutral-500 focus:border-primary-400 focus:outline-none focus:ring-1 focus:ring-primary-400 disabled:cursor-not-allowed"
           />

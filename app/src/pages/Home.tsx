@@ -152,9 +152,9 @@ const Home = () => {
           <UsageLimitBanner
             tone="danger"
             icon="⚠️"
-            title="You’ve Exhausted Your Usage"
-            message="You’re out of included usage for now. Start a subscription to unlock more ongoing capacity."
-            ctaLabel="Get a subscription"
+            title={t('home.usageExhaustedTitle')}
+            message={t('home.usageExhaustedBody')}
+            ctaLabel={t('home.usageExhaustedCta')}
           />
         )}
 

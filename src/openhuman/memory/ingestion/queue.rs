@@ -19,7 +19,7 @@ use tokio::sync::mpsc;
 use super::state::IngestionState;
 use super::MemoryIngestionConfig;
 use crate::core::event_bus::{publish_global, DomainEvent};
-use crate::openhuman::memory::store::{NamespaceDocumentInput, UnifiedMemory};
+use crate::openhuman::memory_store::{NamespaceDocumentInput, UnifiedMemory};
 
 /// Default capacity of the ingestion job channel.
 ///

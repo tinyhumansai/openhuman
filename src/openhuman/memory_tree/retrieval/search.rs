@@ -19,9 +19,9 @@ use anyhow::{Context, Result};
 use rusqlite::params_from_iter;
 
 use crate::openhuman::config::Config;
+use crate::openhuman::memory_store::chunks::store::with_connection;
 use crate::openhuman::memory_tree::retrieval::types::EntityMatch;
 use crate::openhuman::memory_tree::score::extract::EntityKind;
-use crate::openhuman::memory_tree::store::with_connection;
 
 const DEFAULT_LIMIT: usize = 5;
 const MAX_LIMIT: usize = 100;
@@ -156,8 +156,8 @@ fn row_to_match(row: &rusqlite::Row<'_>) -> rusqlite::Result<EntityMatch> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::openhuman::memory_tree::canonicalize::chat::{ChatBatch, ChatMessage};
-    use crate::openhuman::memory_tree::ingest::ingest_chat;
+    use crate::openhuman::memory::ingest_pipeline::ingest_chat;
+    use crate::openhuman::memory_sync::canonicalize::chat::{ChatBatch, ChatMessage};
     use chrono::{TimeZone, Utc};
     use tempfile::TempDir;
 

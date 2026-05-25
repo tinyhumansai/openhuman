@@ -384,7 +384,7 @@ const zhCN2: TranslationMap = {
   'devOptions.menuCronJobsDesc': '查看和配置运行时技能的定时任务',
   'devOptions.menuLocalModelDebug': '本地模型调试',
   'devOptions.menuLocalModelDebugDesc': 'Ollama 配置、资源下载、模型测试与诊断',
-  'devOptions.menuWebhooksDebug': 'Webhooks',
+  'devOptions.menuWebhooksDebug': '网络钩子',
   'devOptions.menuWebhooksDebugDesc': '查看运行时 webhook 注册和已捕获的请求日志',
   'devOptions.menuIntelligence': '智能',
   'devOptions.menuIntelligenceDesc': '记忆工作区、潜意识引擎、梦境与设置',
@@ -397,7 +397,7 @@ const zhCN2: TranslationMap = {
     '使用你自己的 Composio API 密钥，将调用直接路由到 backend.composio.dev',
   'devOptions.menuComposioTriggers': '集成触发器',
   'devOptions.menuComposioTriggersDesc': '为 Composio 集成触发器配置 AI 分级设置',
-  'mic.deviceSelector': 'Microphone device',
+  'mic.deviceSelector': '麦克风装置',
 };
 
 export default zhCN2;

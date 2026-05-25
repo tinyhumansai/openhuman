@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use super::load_learned_from_cache;
 use crate::openhuman::learning::cache::FacetCache;
-use crate::openhuman::memory::store::profile::{
+use crate::openhuman::memory_store::profile::{
     FacetState, FacetType, ProfileFacet, UserState, PROFILE_INIT_SQL,
 };
 

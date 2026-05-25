@@ -199,6 +199,8 @@ const en4: TranslationMap = {
   'pages.settings.ai.llmDesc': 'Llm desc',
   'pages.settings.ai.voice': 'Voice',
   'pages.settings.ai.voiceDesc': 'Voice desc',
+  'pages.settings.ai.embeddings': 'Embeddings',
+  'pages.settings.ai.embeddingsDesc': 'Vector encoding model for memory retrieval',
   'pages.settings.aiSection.description':
     'Language model providers, local Ollama, and voice (STT / TTS).',
   'pages.settings.aiSection.title': 'AI',
