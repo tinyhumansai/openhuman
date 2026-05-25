@@ -16,7 +16,7 @@ describe('channelConnectionsApi.disconnectChannel', () => {
     await channelConnectionsApi.disconnectChannel('telegram', 'bot_token');
     expect(mockCallCoreRpc).toHaveBeenCalledWith({
       method: 'openhuman.channels_disconnect',
-      params: { channel: 'telegram', authMode: 'bot_token', clearMemory: false },
+      params: { channel: 'telegram', authMode: 'bot_token' },
     });
   });
 
@@ -34,7 +34,7 @@ describe('channelConnectionsApi.disconnectChannel', () => {
     await channelConnectionsApi.disconnectChannel('telegram', 'oauth');
     expect(mockCallCoreRpc).toHaveBeenCalledWith({
       method: 'openhuman.channels_disconnect',
-      params: { channel: 'telegram', authMode: 'oauth', clearMemory: false },
+      params: { channel: 'telegram', authMode: 'oauth' },
     });
   });
 });

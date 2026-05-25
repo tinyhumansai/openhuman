@@ -202,7 +202,7 @@ describe('deleteConnection', () => {
     await deleteConnection('conn-abc');
     expect(mockCallCoreRpc).toHaveBeenCalledWith({
       method: 'openhuman.composio_delete_connection',
-      params: { connection_id: 'conn-abc', clear_memory: false },
+      params: { connection_id: 'conn-abc' },
     });
   });
 
