@@ -151,6 +151,7 @@ async fn full_turn_cycle_user_llm_tool_result_final() {
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .expect("full turn cycle should succeed");
@@ -210,6 +211,7 @@ async fn max_iterations_exceeded_downcasts_to_typed_agent_error() {
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .expect_err("loop must fail when iterations exhausted");
@@ -285,6 +287,7 @@ async fn visible_tool_names_rejects_tool_outside_whitelist() {
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .expect("loop should recover after whitelisted-out tool call");
@@ -342,6 +345,7 @@ async fn visible_tool_names_allows_tool_inside_whitelist() {
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .expect("whitelisted tool should execute");

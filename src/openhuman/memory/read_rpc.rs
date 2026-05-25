@@ -1670,8 +1670,11 @@ mod tests {
     use crate::openhuman::composio::providers::sync_state::KV_NAMESPACE;
     use crate::openhuman::embeddings::NoopEmbedding;
     use crate::openhuman::memory::ingest_pipeline::ingest_chat;
+    use crate::openhuman::memory_queue::drain_until_idle;
     use crate::openhuman::memory_store::unified::UnifiedMemory;
     use crate::openhuman::memory_sync::canonicalize::chat::{ChatBatch, ChatMessage};
+    use crate::openhuman::memory_sync::composio::providers::slack::ingest::ingest_page_into_memory_tree as ingest_slack_page;
+    use crate::openhuman::memory_sync::composio::providers::slack::SlackMessage;
     use chrono::{TimeZone, Utc};
     use rusqlite::params;
     use std::sync::Arc;
@@ -1708,6 +1711,35 @@ mod tests {
         ingest_chat(cfg, source, "alice", vec![], batch)
             .await
             .unwrap();
+    }
+
+    async fn seed_slack_chunk_with_raw_archive(cfg: &Config) -> String {
+        let msg = SlackMessage {
+            channel_id: "C123".into(),
+            channel_name: "engineering".into(),
+            is_private: false,
+            author: "alice".into(),
+            author_id: "U123".into(),
+            text: "Phoenix migration launch window is Friday at 22:00 UTC.".into(),
+            timestamp: Utc.timestamp_opt(1_700_000_000, 0).single().unwrap(),
+            ts_raw: "1700000000.000100".into(),
+            thread_ts: None,
+            permalink: Some("https://slack.example.test/archives/C123/p1700000000000100".into()),
+        };
+        ingest_slack_page(cfg, "alice", "conn-slack-1", &[msg])
+            .await
+            .expect("seed slack ingest");
+        drain_until_idle(cfg).await.expect("drain slack ingest");
+
+        list_chunks_rpc(cfg, ChunkFilter::default())
+            .await
+            .expect("list chunks")
+            .value
+            .chunks
+            .into_iter()
+            .find(|chunk| chunk.source_id == "slack:conn-slack-1")
+            .expect("seeded slack chunk")
+            .id
     }
 
     fn update_chunk_timestamp(cfg: &Config, chunk_id: &str, timestamp_ms: i64) {
@@ -2153,6 +2185,93 @@ mod tests {
         let row = read_chunk_row(&cfg, &chunk.id).unwrap().expect("chunk row");
         assert_eq!(row.content_path, chunk.content_path);
         assert!(row.content_preview.as_deref().unwrap_or("").contains(body));
+    }
+
+    #[tokio::test]
+    async fn flush_now_enqueues_once_and_reports_stale_buffers() {
+        let (_tmp, cfg) = test_config();
+        seed_chat_chunk(
+            &cfg,
+            "slack:#eng",
+            "Phoenix migration ships Friday after the release checklist closes.",
+        )
+        .await;
+        drain_until_idle(&cfg).await.expect("drain jobs");
+
+        let first = flush_now_rpc(&cfg).await.expect("flush_now first");
+        assert!(first.value.enqueued, "first flush should enqueue work");
+        assert!(
+            first.value.stale_buffers >= 1,
+            "expected at least one stale buffer after ingest"
+        );
+
+        let second = flush_now_rpc(&cfg).await.expect("flush_now second");
+        assert!(
+            !second.value.enqueued,
+            "same 3-hour window should dedupe duplicate flush triggers"
+        );
+        assert!(
+            second.value.stale_buffers >= 1,
+            "deduped flush should still report current stale buffer count"
+        );
+    }
+
+    #[tokio::test]
+    async fn reset_tree_preserves_raw_archive_and_source_registry() {
+        let (_tmp, cfg) = test_config();
+        let chunk_id = seed_slack_chunk_with_raw_archive(&cfg).await;
+        let content_root = cfg.memory_tree_content_root();
+        let raw_file = content_root
+            .join("raw")
+            .join("slack-conn-slack-1")
+            .join("chats")
+            .join("1700000000000_1700000000.000100.md");
+        let source_file = content_root
+            .join("raw")
+            .join("slack-conn-slack-1")
+            .join("_source.md");
+        assert!(raw_file.exists(), "raw archive should exist before reset");
+        assert!(
+            source_file.exists(),
+            "source registry should exist before reset"
+        );
+
+        let stale_summary = content_root
+            .join("wiki")
+            .join("summaries")
+            .join("source-slack-conn-slack-1")
+            .join("L1")
+            .join("summary-stale.md");
+        std::fs::create_dir_all(
+            stale_summary
+                .parent()
+                .expect("stale summary parent should exist"),
+        )
+        .expect("create stale summary dir");
+        std::fs::write(&stale_summary, "stale summary body").expect("write stale summary");
+        assert!(stale_summary.exists(), "stale summary fixture should exist");
+
+        let outcome = reset_tree_rpc(&cfg).await.expect("reset_tree");
+        assert_eq!(outcome.value.chunks_requeued, 1);
+        assert_eq!(outcome.value.jobs_enqueued, 1);
+        assert!(
+            outcome.value.tree_rows_deleted >= 1,
+            "buffer/tree rows should be removed during reset"
+        );
+
+        let row = read_chunk_row(&cfg, &chunk_id)
+            .expect("read chunk row")
+            .expect("chunk row present after reset");
+        assert_eq!(row.lifecycle_status, "pending_extraction");
+        assert!(raw_file.exists(), "raw archive must survive reset_tree");
+        assert!(
+            source_file.exists(),
+            "source registry must survive reset_tree"
+        );
+        assert!(
+            !content_root.join("wiki").join("summaries").exists(),
+            "derived wiki summaries should be removed"
+        );
     }
 
     #[test]

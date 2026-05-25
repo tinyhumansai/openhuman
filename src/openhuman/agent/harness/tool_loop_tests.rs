@@ -226,6 +226,7 @@ async fn run_tool_call_loop_intercepts_oversized_tool_results_via_summarizer() {
         &[],
         None,
         Some(&summarizer),
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .expect("loop with summarizer should succeed");
@@ -277,6 +278,7 @@ async fn run_tool_call_loop_rejects_vision_markers_for_non_vision_provider() {
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .expect_err("vision markers should be rejected");
@@ -315,6 +317,7 @@ async fn run_tool_call_loop_streams_final_text_chunks() {
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .expect("final text should succeed");
@@ -368,6 +371,7 @@ async fn run_tool_call_loop_blocks_cli_rpc_only_tools_in_prompt_mode() {
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .expect("loop should recover after denial");
@@ -424,6 +428,7 @@ async fn run_tool_call_loop_persists_native_tool_results_as_tool_messages() {
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .expect("native tool flow should succeed");
@@ -481,6 +486,7 @@ async fn run_tool_call_loop_auto_approves_supervised_tools_on_non_cli_channels()
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .expect("non-cli channels should auto-approve supervised tools");
@@ -531,6 +537,7 @@ async fn run_tool_call_loop_reports_unknown_tool_and_uses_default_max_iterations
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .expect("default iteration fallback should still succeed");
@@ -587,6 +594,7 @@ async fn run_tool_call_loop_formats_tool_error_paths() {
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .expect("loop should recover after tool errors");
@@ -627,6 +635,7 @@ async fn run_tool_call_loop_propagates_provider_errors_and_max_iteration_failure
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .expect_err("provider error path should fail");
@@ -660,6 +669,7 @@ async fn run_tool_call_loop_propagates_provider_errors_and_max_iteration_failure
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .expect_err("loop should stop after configured iterations");
@@ -736,6 +746,7 @@ async fn run_tool_call_loop_aborts_when_stop_hook_returns_stop() {
             &[],
             None,
             None,
+            &crate::openhuman::tools::policy::DefaultToolPolicy,
         )
         .await
     })
@@ -788,6 +799,7 @@ async fn run_tool_call_loop_runs_unchanged_when_no_stop_hooks_installed() {
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .expect("loop should succeed without stop hooks");
@@ -863,6 +875,7 @@ async fn run_tool_call_loop_applies_per_tool_max_result_size_cap() {
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .expect("loop with capped tool should succeed");
@@ -989,6 +1002,7 @@ async fn run_tool_call_loop_dedups_duplicate_tool_names_before_provider_call() {
         &extra,
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .expect("loop should succeed with deduplicated tool list");
