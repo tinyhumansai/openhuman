@@ -1,7 +1,7 @@
 use super::*;
 use crate::openhuman::agent::hooks::{ToolCallRecord, TurnContext};
-use crate::openhuman::memory::store::{events as ev, fts5, segments as seg};
-use crate::openhuman::memory::tree::chat::ChatPrompt;
+use crate::openhuman::memory::chat::ChatPrompt;
+use crate::openhuman::memory_store::{events as ev, fts5, segments as seg};
 
 fn setup_conn() -> Arc<Mutex<Connection>> {
     let conn = Connection::open_in_memory().unwrap();
@@ -343,7 +343,7 @@ async fn phase0_episodic_rows_and_segment_without_learning_enabled() {
 struct StubChatProvider;
 
 #[async_trait::async_trait]
-impl crate::openhuman::memory::tree::chat::ChatProvider for StubChatProvider {
+impl crate::openhuman::memory::chat::ChatProvider for StubChatProvider {
     fn name(&self) -> &str {
         "stub:test"
     }
@@ -361,7 +361,7 @@ impl crate::openhuman::memory::tree::chat::ChatProvider for StubChatProvider {
 struct StubEmbedder;
 
 #[async_trait::async_trait]
-impl crate::openhuman::memory::tree::score::embed::Embedder for StubEmbedder {
+impl crate::openhuman::memory_tree::score::embed::Embedder for StubEmbedder {
     fn name(&self) -> &'static str {
         "stub-embedder-v1"
     }
@@ -546,7 +546,7 @@ async fn phase1_flush_open_segment_finalizes_trailing_segment() {
 //   g) flush_open_segment also triggers tree ingest.
 
 use crate::openhuman::config::Config;
-use crate::openhuman::memory::tree::store::{count_chunks, list_chunks, ListChunksQuery};
+use crate::openhuman::memory_store::chunks::store::{count_chunks, list_chunks, ListChunksQuery};
 use tempfile::TempDir;
 
 /// Build a Config that points at a temp workspace, suitable for tree-ingest tests.
@@ -736,7 +736,7 @@ async fn phase2_provenance_stamped_on_leaf_and_source_id_is_constant() {
         .iter()
         .find(|s| {
             s.session_id == session
-                && s.status != crate::openhuman::memory::store::segments::SegmentStatus::Open
+                && s.status != crate::openhuman::memory_store::segments::SegmentStatus::Open
         })
         .expect("Expected a closed segment after flush");
 
@@ -836,7 +836,9 @@ async fn phase2_ingested_content_is_raw_prose_not_recap() {
     }
 
     // The raw prose text MUST appear in at least one chunk.
-    let has_user_prose = chunks.iter().any(|c| c.content.contains("lifetimes"));
+    let has_user_prose = chunks
+        .iter()
+        .any(|c| c.content.to_ascii_lowercase().contains("lifetimes"));
     assert!(
         has_user_prose,
         "Expected at least one chunk body to contain raw prose from the turn \

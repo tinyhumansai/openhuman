@@ -8,9 +8,11 @@ import {
   loadLocalProviderSnapshot,
   saveAISettings,
   setCloudProviderKey,
+  testProviderModel,
 } from '../../../../services/api/aiSettingsApi';
 import { creditsApi } from '../../../../services/api/creditsApi';
 import { renderWithProviders } from '../../../../test/test-utils';
+import { connectOpenRouterViaOAuth } from '../../../../utils/openrouterOAuth';
 // Lazy import so the typed mock is available to individual tests.
 import { openhumanUpdateLocalAiSettings as openhumanUpdateLocalAiSettingsMock } from '../../../../utils/tauriCommands/config';
 import {
@@ -18,7 +20,7 @@ import {
   openhumanHeartbeatSettingsSet,
   openhumanHeartbeatTickNow,
 } from '../../../../utils/tauriCommands/heartbeat';
-import AIPanel from '../AIPanel';
+import AIPanel, { BackgroundLoopControls } from '../AIPanel';
 
 vi.mock('../../../../services/api/aiSettingsApi', () => ({
   ALL_WORKLOADS: [
@@ -35,6 +37,7 @@ vi.mock('../../../../services/api/aiSettingsApi', () => ({
   loadAISettings: vi.fn(),
   saveAISettings: vi.fn(),
   loadLocalProviderSnapshot: vi.fn(),
+  testProviderModel: vi.fn(),
   setCloudProviderKey: vi.fn(),
   clearCloudProviderKey: vi.fn().mockResolvedValue(undefined),
   serializeProviderRef: vi.fn((r: { kind: string; providerSlug?: string; model?: string }) =>
@@ -82,6 +85,8 @@ vi.mock('../../../../utils/tauriCommands/config', async () => {
       .mockResolvedValue({ result: { config: {}, workspace_dir: '', config_path: '' }, logs: [] }),
   };
 });
+
+vi.mock('../../../../utils/openrouterOAuth', () => ({ connectOpenRouterViaOAuth: vi.fn() }));
 
 const baseSettings = {
   cloudProviders: [
@@ -191,7 +196,9 @@ describe('AIPanel', () => {
     vi.mocked(loadAISettings).mockResolvedValue(baseSettings);
     vi.mocked(loadLocalProviderSnapshot).mockResolvedValue(baseLocalSnapshot);
     vi.mocked(setCloudProviderKey).mockResolvedValue(undefined);
+    vi.mocked(testProviderModel).mockResolvedValue({ reply: 'Hello from the selected model.' });
     vi.mocked(listProviderModels).mockResolvedValue([]);
+    vi.mocked(connectOpenRouterViaOAuth).mockResolvedValue('sk-or-oauth');
     vi.mocked(openhumanHeartbeatSettingsGet).mockResolvedValue({
       result: { settings: baseHeartbeatSettings },
       logs: [],
@@ -239,8 +246,28 @@ describe('AIPanel', () => {
     await waitFor(() => expect(screen.getAllByText(/OpenHuman/i).length).toBeGreaterThan(0));
   });
 
-  it('renders all nine workload labels', async () => {
+  it('renders the always-on Managed chip', async () => {
     renderWithProviders(<AIPanel />);
+    const managedSwitch = await screen.findByRole('switch', { name: /Disconnect Managed/i });
+    expect(managedSwitch).toBeDisabled();
+    expect(managedSwitch).toHaveAttribute('aria-checked', 'true');
+  });
+
+  it('renders Managed, Use Your Own Models, and Advanced routing controls', async () => {
+    renderWithProviders(<AIPanel />);
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /Managed/i })).toBeInTheDocument()
+    );
+    expect(screen.getByRole('button', { name: /Use Your Own Models/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Advanced/i })).toBeInTheDocument();
+  });
+
+  it('renders all visible advanced workload labels', async () => {
+    renderWithProviders(<AIPanel />);
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /Advanced/i })).toBeInTheDocument()
+    );
+    fireEvent.click(screen.getByRole('button', { name: /Advanced/i }));
     await waitFor(() => expect(screen.getByText('Chat')).toBeInTheDocument());
     for (const label of [
       'Chat',
@@ -248,7 +275,6 @@ describe('AIPanel', () => {
       'Agentic',
       'Coding',
       'Memory summarization',
-      'Embeddings',
       'Heartbeat',
       /Learning/,
       'Subconscious',
@@ -296,20 +322,7 @@ describe('AIPanel', () => {
     // Wait for load.
     await waitFor(() => expect(screen.getAllByText(/Anthropic/i).length).toBeGreaterThan(0));
 
-    // Trigger a routing change so the SaveBar appears, then save.
-    // Click the "Default" button specifically on the Reasoning row (which is
-    // currently set to custom cloud routing) to switch it back to openhuman.
-    const reasoningRow = screen
-      .getByText('Reasoning')
-      .closest('[class*="flex items-center justify-between"]');
-    fireEvent.click(within(reasoningRow as HTMLElement).getByText('Default'));
-
-    // SaveBar should appear.
-    await waitFor(() => expect(screen.getByText(/unsaved change/i)).toBeInTheDocument());
-
-    // Click Save in the SaveBar.
-    const saveButton = screen.getByRole('button', { name: /^Save$/i });
-    fireEvent.click(saveButton);
+    fireEvent.click(screen.getByRole('button', { name: /Managed/i }));
 
     await waitFor(() => expect(vi.mocked(saveAISettings)).toHaveBeenCalled());
 
@@ -343,21 +356,57 @@ describe('AIPanel', () => {
     expect(screen.getByLabelText(/API key/i)).toBeInTheDocument();
   });
 
-  it('clicking the Custom chip (when disabled) opens the CloudProviderEditor, not the key dialog', async () => {
-    // Load with no custom provider → chip is off.
+  it('clicking the OpenRouter chip shows both API key entry and the OAuth button', async () => {
     vi.mocked(loadAISettings).mockResolvedValue({ ...baseSettings, cloudProviders: [] });
 
     renderWithProviders(<AIPanel />);
-    await waitFor(() => expect(screen.getAllByText(/Custom/i).length).toBeGreaterThan(0));
+    await waitFor(() =>
+      expect(screen.getByRole('switch', { name: /Connect OpenRouter/i })).toBeInTheDocument()
+    );
 
-    // Find the "Connect Custom" switch and click it.
-    const connectSwitch = screen.getByRole('switch', { name: /Connect Custom/i });
-    fireEvent.click(connectSwitch);
+    fireEvent.click(screen.getByRole('switch', { name: /Connect OpenRouter/i }));
 
-    // The full CloudProviderEditor should appear (has "Add cloud provider" heading).
+    const dialog = await screen.findByRole('dialog', { name: /Connect OpenRouter/i });
+    expect(within(dialog).getByLabelText(/API key/i)).toBeInTheDocument();
+    expect(
+      within(dialog).getByRole('button', { name: /Sign in with OpenRouter/i })
+    ).toBeInTheDocument();
+  });
+
+  it('stores the OpenRouter OAuth key and enables the provider chip', async () => {
+    vi.mocked(loadAISettings).mockResolvedValue({ ...baseSettings, cloudProviders: [] });
+    vi.mocked(connectOpenRouterViaOAuth).mockResolvedValue('sk-or-from-oauth');
+
+    renderWithProviders(<AIPanel />);
+    await waitFor(() =>
+      expect(screen.getByRole('switch', { name: /Connect OpenRouter/i })).toBeInTheDocument()
+    );
+
+    fireEvent.click(screen.getByRole('switch', { name: /Connect OpenRouter/i }));
+    const dialog = await screen.findByRole('dialog', { name: /Connect OpenRouter/i });
+    fireEvent.click(within(dialog).getByRole('button', { name: /Sign in with OpenRouter/i }));
+
+    await waitFor(() => expect(connectOpenRouterViaOAuth).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(setCloudProviderKey).toHaveBeenCalledWith('openrouter', 'sk-or-from-oauth')
+    );
+    await waitFor(() =>
+      expect(screen.getByRole('switch', { name: /Disconnect OpenRouter/i })).toBeInTheDocument()
+    );
+  });
+
+  it('clicking Add Custom Provider opens the CloudProviderEditor', async () => {
+    vi.mocked(loadAISettings).mockResolvedValue({ ...baseSettings, cloudProviders: [] });
+
+    renderWithProviders(<AIPanel />);
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /Add Custom Provider/i })).toBeInTheDocument()
+    );
+    fireEvent.click(screen.getByRole('button', { name: /Add Custom Provider/i }));
+
     await waitFor(() => expect(screen.getByText(/Add cloud provider/i)).toBeInTheDocument());
-    // The simple ProviderKeyDialog should NOT appear.
-    expect(screen.queryByRole('dialog', { name: /Connect Custom/i })).not.toBeInTheDocument();
+    expect(screen.getByLabelText(/^Name$/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/OpenAI URL/i)).toBeInTheDocument();
   });
 
   // ─── chip toggle: toggle OFF scrubs routing entries ──────────────────────────
@@ -399,11 +448,6 @@ describe('AIPanel', () => {
     // Toggle OFF.
     fireEvent.click(screen.getByRole('switch', { name: /Disconnect OpenAI/i }));
 
-    // A SaveBar must appear because the draft changed.
-    await waitFor(() => expect(screen.getByText(/unsaved change/i)).toBeInTheDocument());
-
-    // Save to capture the nextSettings arg.
-    fireEvent.click(screen.getByRole('button', { name: /^Save$/i }));
     await waitFor(() => expect(vi.mocked(saveAISettings)).toHaveBeenCalled());
 
     const [, nextSettings] = vi.mocked(saveAISettings).mock.calls[0];
@@ -413,10 +457,10 @@ describe('AIPanel', () => {
       nextSettings.cloudProviders.find((p: { slug: string }) => p.slug === 'openai')
     ).toBeUndefined();
 
-    // Routing entries that were pinned to openai must be reset to openhuman.
-    expect(nextSettings.routing.reasoning).toEqual({ kind: 'openhuman' });
-    expect(nextSettings.routing.agentic).toEqual({ kind: 'openhuman' });
-    // Entries that were already openhuman remain unchanged.
+    // Routing entries that were pinned to openai must be reset to the user default route.
+    expect(nextSettings.routing.reasoning).toEqual({ kind: 'default' });
+    expect(nextSettings.routing.agentic).toEqual({ kind: 'default' });
+    // Entries that were already OpenHuman-managed remain unchanged.
     expect(nextSettings.routing.coding).toEqual({ kind: 'openhuman' });
   });
 
@@ -506,23 +550,57 @@ describe('AIPanel', () => {
 
     renderWithProviders(<AIPanel />);
     await waitFor(() =>
-      expect(screen.getByRole('switch', { name: /Connect Custom/i })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /Add Custom Provider/i })).toBeInTheDocument()
     );
 
-    fireEvent.click(screen.getByRole('switch', { name: /Connect Custom/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Add Custom Provider/i }));
     await waitFor(() => expect(screen.getByText(/Add cloud provider/i)).toBeInTheDocument());
+    fireEvent.change(screen.getByLabelText(/^Name$/i), { target: { value: 'Team Gateway' } });
+    fireEvent.change(screen.getByLabelText(/OpenAI URL/i), {
+      target: { value: 'https://api.openai.com/v1' },
+    });
     fireEvent.change(screen.getByPlaceholderText('sk-...'), { target: { value: 'sk-test-key' } });
     fireEvent.click(screen.getByRole('button', { name: /Add provider/i }));
 
     const alert = await screen.findByRole('alert');
     expect(
       within(alert).getByText(
-        'Could not reach OpenAI: Provider teapot says no. Try another endpoint.'
+        'Could not reach Team Gateway: Provider teapot says no. Try another endpoint.'
       )
     ).toBeInTheDocument();
     expect(within(alert).getByText('Technical details')).toBeInTheDocument();
     expect(within(alert).getByText(/provider returned 418/)).toBeInTheDocument();
-    expect(screen.queryByRole('switch', { name: /Disconnect OpenAI/i })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('switch', { name: /Disconnect Team Gateway/i })
+    ).not.toBeInTheDocument();
+  });
+
+  it('derives the custom provider slug from the entered name', async () => {
+    vi.mocked(loadAISettings).mockResolvedValue({ ...baseSettings, cloudProviders: [] });
+
+    renderWithProviders(<AIPanel />);
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /Add Custom Provider/i })).toBeInTheDocument()
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /Add Custom Provider/i }));
+    await waitFor(() => expect(screen.getByText(/Add cloud provider/i)).toBeInTheDocument());
+
+    fireEvent.change(screen.getByLabelText(/^Name$/i), { target: { value: 'My Team Gateway' } });
+    expect(screen.getByText(/Slug:/i)).toHaveTextContent('Slug: my-team-gateway');
+
+    fireEvent.change(screen.getByLabelText(/OpenAI URL/i), {
+      target: { value: 'https://gateway.example.com/v1' },
+    });
+    fireEvent.change(screen.getByPlaceholderText('sk-...'), { target: { value: 'sk-team-key' } });
+    fireEvent.click(screen.getByRole('button', { name: /Add provider/i }));
+
+    await waitFor(() =>
+      expect(vi.mocked(setCloudProviderKey)).toHaveBeenCalledWith('my-team-gateway', 'sk-team-key')
+    );
+    await waitFor(() =>
+      expect(vi.mocked(listProviderModels)).toHaveBeenCalledWith('my-team-gateway')
+    );
   });
 
   // ─── local runtime: Ollama endpoint URL dialog ──────────────────────────────
@@ -589,6 +667,30 @@ describe('AIPanel', () => {
     });
   });
 
+  it('LM Studio save persists the local_ai provider and endpoint', async () => {
+    vi.mocked(loadAISettings).mockResolvedValue({ ...baseSettings, cloudProviders: [] });
+    renderWithProviders(<AIPanel />);
+    await waitFor(() =>
+      expect(screen.getByRole('switch', { name: /Connect LM Studio/i })).toBeInTheDocument()
+    );
+    fireEvent.click(screen.getByRole('switch', { name: /Connect LM Studio/i }));
+    const dialog = await screen.findByRole('dialog', { name: /Connect LM Studio/i });
+
+    fireEvent.change(within(dialog).getByLabelText(/Endpoint URL/i), {
+      target: { value: 'http://127.0.0.1:1234/v1' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Save$/i }));
+
+    await waitFor(() => expect(openhumanUpdateLocalAiSettingsMock).toHaveBeenCalled());
+    const [arg] = vi.mocked(openhumanUpdateLocalAiSettingsMock).mock.calls[0];
+    expect(arg).toMatchObject({
+      base_url: 'http://127.0.0.1:1234/v1',
+      provider: 'lm_studio',
+      runtime_enabled: true,
+      opt_in_confirmed: true,
+    });
+  });
+
   // ─── Custom routing dialog: per-workload temperature override ───────────────
 
   it('Custom routing dialog saves the routing change immediately from the modal', async () => {
@@ -612,13 +714,11 @@ describe('AIPanel', () => {
     vi.mocked(saveAISettings).mockResolvedValue(undefined);
     renderWithProviders(<AIPanel />);
 
-    // Wait for the Reasoning workload row (identified by its unique
-    // description text), then click its "Custom" segment to open the
-    // Custom routing dialog.
-    const reasoningRow = await screen.findByText(/Main chat agent/i);
+    fireEvent.click(await screen.findByRole('button', { name: /Advanced/i }));
+    const reasoningRow = await screen.findByText('Reasoning');
     const rowEl = reasoningRow.closest('div.flex.items-center.justify-between');
     expect(rowEl).not.toBeNull();
-    fireEvent.click(within(rowEl as HTMLElement).getByRole('button', { name: /Custom/i }));
+    fireEvent.click(within(rowEl as HTMLElement).getByRole('button', { name: /Change Model/i }));
 
     const dialog = await screen.findByRole('dialog', { name: /Custom routing/i });
 
@@ -649,8 +749,137 @@ describe('AIPanel', () => {
     });
   });
 
-  it('renders background loop diagnostics with newest spend row and budget math', async () => {
+  it('Custom routing dialog can test the selected cloud model and show its reply', async () => {
+    const settingsWithOpenAI = {
+      cloudProviders: [
+        {
+          id: 'p_openai_1',
+          slug: 'openai',
+          label: 'OpenAI',
+          endpoint: 'https://api.openai.com/v1',
+          auth_style: 'bearer' as const,
+          has_api_key: true,
+        },
+      ],
+      routing: {
+        ...baseSettings.routing,
+        reasoning: { kind: 'cloud' as const, providerSlug: 'openai', model: 'gpt-4o' },
+      },
+    };
+    vi.mocked(loadAISettings).mockResolvedValue(settingsWithOpenAI);
+    vi.mocked(listProviderModels).mockResolvedValue([{ id: 'gpt-4o' }, { id: 'gpt-4o-mini' }]);
+    vi.mocked(testProviderModel).mockResolvedValue({ reply: 'Hello from gpt-4o.' });
+
     renderWithProviders(<AIPanel />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /Advanced/i }));
+    const reasoningRow = await screen.findByText('Reasoning');
+    const rowEl = reasoningRow.closest('div.flex.items-center.justify-between');
+    expect(rowEl).not.toBeNull();
+    fireEvent.click(within(rowEl as HTMLElement).getByRole('button', { name: /Change Model/i }));
+
+    const dialog = await screen.findByRole('dialog', { name: /Custom routing/i });
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Test$/i }));
+
+    await waitFor(() =>
+      expect(vi.mocked(testProviderModel)).toHaveBeenCalledWith(
+        'reasoning',
+        'openai:gpt-4o',
+        'Hello world'
+      )
+    );
+    expect(await within(dialog).findByText('Model response')).toBeInTheDocument();
+    expect(within(dialog).getByText('Hello from gpt-4o.')).toBeInTheDocument();
+  });
+
+  it('Custom routing dialog shows in-flight test status immediately', async () => {
+    const settingsWithOpenAI = {
+      cloudProviders: [
+        {
+          id: 'p_openai_1',
+          slug: 'openai',
+          label: 'OpenAI',
+          endpoint: 'https://api.openai.com/v1',
+          auth_style: 'bearer' as const,
+          has_api_key: true,
+        },
+      ],
+      routing: {
+        ...baseSettings.routing,
+        reasoning: { kind: 'cloud' as const, providerSlug: 'openai', model: 'gpt-4o' },
+      },
+    };
+    vi.mocked(loadAISettings).mockResolvedValue(settingsWithOpenAI);
+    vi.mocked(listProviderModels).mockResolvedValue([{ id: 'gpt-4o' }]);
+    let resolveTest: (value: { reply: string }) => void = () => {};
+    const pendingTest = new Promise<{ reply: string }>(resolve => {
+      resolveTest = resolve;
+    });
+    vi.mocked(testProviderModel).mockReturnValue(pendingTest);
+
+    renderWithProviders(<AIPanel />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /Advanced/i }));
+    const reasoningRow = await screen.findByText('Reasoning');
+    const rowEl = reasoningRow.closest('div.flex.items-center.justify-between');
+    expect(rowEl).not.toBeNull();
+    fireEvent.click(within(rowEl as HTMLElement).getByRole('button', { name: /Change Model/i }));
+
+    const dialog = await screen.findByRole('dialog', { name: /Custom routing/i });
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Test$/i }));
+
+    expect(await within(dialog).findByText('Testing model...')).toBeInTheDocument();
+    expect(within(dialog).getByText(/Provider: openai:gpt-4o/i)).toBeInTheDocument();
+    expect(within(dialog).getByText(/Prompt: Hello world/i)).toBeInTheDocument();
+
+    resolveTest({ reply: 'Hello from gpt-4o.' });
+    expect(await within(dialog).findByText('Model response')).toBeInTheDocument();
+  });
+
+  it('Custom routing dialog shows test errors inline', async () => {
+    const settingsWithOpenAI = {
+      cloudProviders: [
+        {
+          id: 'p_openai_1',
+          slug: 'openai',
+          label: 'OpenAI',
+          endpoint: 'https://api.openai.com/v1',
+          auth_style: 'bearer' as const,
+          has_api_key: true,
+        },
+      ],
+      routing: {
+        ...baseSettings.routing,
+        reasoning: { kind: 'cloud' as const, providerSlug: 'openai', model: 'gpt-4o' },
+      },
+    };
+    vi.mocked(loadAISettings).mockResolvedValue(settingsWithOpenAI);
+    vi.mocked(listProviderModels).mockResolvedValue([{ id: 'gpt-4o' }]);
+    vi.mocked(testProviderModel).mockRejectedValue(new Error('401 invalid api key'));
+
+    renderWithProviders(<AIPanel />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /Advanced/i }));
+    const reasoningRow = await screen.findByText('Reasoning');
+    const rowEl = reasoningRow.closest('div.flex.items-center.justify-between');
+    expect(rowEl).not.toBeNull();
+    fireEvent.click(within(rowEl as HTMLElement).getByRole('button', { name: /Change Model/i }));
+
+    const dialog = await screen.findByRole('dialog', { name: /Custom routing/i });
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Test$/i }));
+
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('401 invalid api key');
+  });
+
+  it('renders background loop diagnostics with newest spend row and budget math', async () => {
+    // BackgroundLoopControls was moved out of AIPanel into standalone panels.
+    renderWithProviders(
+      <BackgroundLoopControls
+        view="all"
+        routing={baseSettings.routing}
+        cloudProviders={baseSettings.cloudProviders}
+      />
+    );
 
     await waitFor(() => expect(screen.getByText('Background loops')).toBeInTheDocument());
 
@@ -701,7 +930,14 @@ describe('AIPanel', () => {
       return { result: { settings: currentSettings }, logs: [] };
     });
 
-    renderWithProviders(<AIPanel />);
+    // BackgroundLoopControls was moved out of AIPanel into standalone panels.
+    renderWithProviders(
+      <BackgroundLoopControls
+        view="all"
+        routing={baseSettings.routing}
+        cloudProviders={baseSettings.cloudProviders}
+      />
+    );
     await waitFor(() => expect(screen.getByText('Heartbeat controls')).toBeInTheDocument());
 
     const clickToggle = async (label: string, expectedPatch: Record<string, unknown>) => {
@@ -760,7 +996,14 @@ describe('AIPanel', () => {
     vi.mocked(openhumanHeartbeatSettingsGet).mockRejectedValueOnce(new Error('heartbeat offline'));
     vi.mocked(openhumanHeartbeatTickNow).mockRejectedValueOnce(new Error('tick failed'));
 
-    renderWithProviders(<AIPanel />);
+    // BackgroundLoopControls was moved out of AIPanel into standalone panels.
+    renderWithProviders(
+      <BackgroundLoopControls
+        view="all"
+        routing={baseSettings.routing}
+        cloudProviders={baseSettings.cloudProviders}
+      />
+    );
 
     await waitFor(() => expect(screen.getByText('heartbeat offline')).toBeInTheDocument());
     expect(screen.getByText('Heartbeat controls unavailable.')).toBeInTheDocument();

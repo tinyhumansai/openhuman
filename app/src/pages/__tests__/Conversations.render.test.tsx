@@ -197,6 +197,15 @@ async function renderConversations(preload: Record<string, unknown> = {}) {
   return store;
 }
 
+/** Click the sidebar toggle so the thread list becomes visible.
+ *  The sidebar starts hidden (showSidebar=false) in this PR. */
+async function openSidebar() {
+  const toggleBtn = screen.getByTitle('Show sidebar');
+  await act(async () => {
+    fireEvent.click(toggleBtn);
+  });
+}
+
 // Default empty state
 const emptyThreadState = {
   threads: [],
@@ -301,6 +310,9 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
       await renderConversations({ thread: emptyThreadState });
     });
 
+    // Sidebar is hidden by default — open it first.
+    await openSidebar();
+
     // The "Threads" header is always rendered in page mode (sidebar guard removed)
     expect(screen.getByText('Threads')).toBeInTheDocument();
   });
@@ -310,6 +322,9 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     await act(async () => {
       await renderConversations({ thread: emptyThreadState });
     });
+
+    // Sidebar is hidden by default — open it first.
+    await openSidebar();
 
     expect(screen.getByText('No threads yet')).toBeInTheDocument();
   });
@@ -327,6 +342,9 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     await act(async () => {
       await renderConversations({ thread: emptyThreadState });
     });
+
+    // Sidebar is hidden by default — open it first.
+    await openSidebar();
 
     // Wait for loadThreads to complete and the thread list to render.
     // Use getAllByText because the title may appear in both the sidebar list
@@ -436,6 +454,9 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
       await renderConversations({ thread: emptyThreadState });
     });
 
+    // Sidebar is hidden by default — open it first.
+    await openSidebar();
+
     // The sidebar "New thread" button has title="New thread"
     const newThreadBtn = screen.getByTitle('New thread');
     await act(async () => {
@@ -477,6 +498,9 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     await act(async () => {
       await renderConversations({ thread: emptyThreadState });
     });
+
+    // Sidebar is hidden by default — open it first.
+    await openSidebar();
 
     // Wait for the thread to appear in the sidebar
     await waitFor(() => {
@@ -1026,6 +1050,9 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
       await renderConversations({ thread: emptyThreadState });
     });
 
+    // Sidebar is hidden by default — open it first.
+    await openSidebar();
+
     // All four tabs must be present regardless of thread count.
     expect(screen.getByRole('tab', { name: 'All' })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'Work' })).toBeInTheDocument();
@@ -1038,6 +1065,9 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
       await renderConversations({ thread: emptyThreadState });
     });
 
+    // Sidebar is hidden by default — open it first.
+    await openSidebar();
+
     expect(screen.getByRole('tab', { name: 'All' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByRole('tab', { name: 'Work' })).toHaveAttribute('aria-selected', 'false');
   });
@@ -1047,6 +1077,9 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
       await renderConversations({ thread: emptyThreadState });
     });
 
+    // Sidebar is hidden by default — open it first.
+    await openSidebar();
+
     expect(screen.getByText('No threads yet')).toBeInTheDocument();
   });
 
@@ -1054,6 +1087,9 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     await act(async () => {
       await renderConversations({ thread: emptyThreadState });
     });
+
+    // Sidebar is hidden by default — open it first.
+    await openSidebar();
 
     fireEvent.click(screen.getByRole('tab', { name: 'Work' }));
 
@@ -1070,6 +1106,9 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     await act(async () => {
       await renderConversations({ thread: emptyThreadState });
     });
+
+    // Sidebar is hidden by default — open it first.
+    await openSidebar();
 
     fireEvent.click(screen.getByRole('tab', { name: 'Workers' }));
 

@@ -38,5 +38,7 @@ Thumbs.db
 tests/
 scripts/
 # Re-include the Docker entrypoint for the core image (Dockerfile COPYs it).
-# The negation must come after the broad exclusion above to take effect.
+# Re-include the parent directory first so older Docker pattern matchers that
+# prune excluded directories still see the leaf exception below.
+!scripts/
 !scripts/docker-entrypoint-core.sh

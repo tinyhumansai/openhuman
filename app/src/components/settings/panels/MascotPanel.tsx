@@ -97,20 +97,17 @@ const MascotPanel = () => {
       })
       .catch((err: unknown) => {
         if (cancelled) return;
-        const message = err instanceof Error ? err.message : 'Could not load mascot library.';
+        const message = err instanceof Error ? err.message : t('settings.mascot.loadLibraryError');
         setBackendListError(message);
         setBackendList([]);
       });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [t]);
 
   useEffect(() => {
-    if (!selectedMascotId) {
-      setActiveDetail(null);
-      return;
-    }
+    if (!selectedMascotId) return;
     let cancelled = false;
     getCachedMascotDetail(selectedMascotId)
       .then(detail => {
@@ -120,14 +117,14 @@ const MascotPanel = () => {
       })
       .catch((err: unknown) => {
         if (cancelled) return;
-        const message = err instanceof Error ? err.message : 'Could not load mascot.';
+        const message = err instanceof Error ? err.message : t('settings.mascot.loadDetailError');
         setDetailError(message);
         setActiveDetail(null);
       });
     return () => {
       cancelled = true;
     };
-  }, [selectedMascotId]);
+  }, [selectedMascotId, t]);
 
   // Stop any in-flight preview audio when the panel unmounts. Also
   // bump the preview request id so a `synthesizeSpeech(...)` that
@@ -259,7 +256,7 @@ const MascotPanel = () => {
       previewAudioRef.current = null;
     }
     try {
-      const tts = await synthesizeSpeech("Hi, I'm your assistant. This is a voice preview.", {
+      const tts = await synthesizeSpeech(t('settings.mascot.voice.previewText'), {
         voiceId: effectiveVoiceId,
       });
       if (previewRequestIdRef.current !== requestId) return;
@@ -269,7 +266,7 @@ const MascotPanel = () => {
       await audio.play();
     } catch (err) {
       if (previewRequestIdRef.current !== requestId) return;
-      const message = err instanceof Error ? err.message : 'Voice preview failed';
+      const message = err instanceof Error ? err.message : t('settings.mascot.voice.previewError');
       setVoicePreviewError(message);
     } finally {
       if (previewRequestIdRef.current === requestId) setIsPreviewingVoice(false);
@@ -280,6 +277,8 @@ const MascotPanel = () => {
   const presetPickerDisabled = useLocaleDefault;
   const isCustomVoice =
     !presetPickerDisabled && (voicePasteMode || !isCuratedVoicePreset(effectiveVoiceId));
+  const visibleActiveDetail = selectedMascotId ? activeDetail : null;
+  const visibleDetailError = selectedMascotId ? detailError : null;
 
   return (
     <div>
@@ -427,7 +426,7 @@ const MascotPanel = () => {
                     aria-label={t('settings.mascot.voice.customHeading')}
                     data-testid="mascot-voice-input"
                     value={voiceDraft}
-                    placeholder="e.g. 21m00Tcm4TlvDq8ikWAM"
+                    placeholder={t('settings.mascot.voice.customPlaceholder')}
                     onChange={e => setVoiceDraft(e.target.value)}
                     className="flex-1 rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 placeholder:text-stone-400 dark:placeholder:text-neutral-500 focus:outline-none focus:ring-1 focus:ring-primary-400"
                   />
@@ -501,7 +500,7 @@ const MascotPanel = () => {
                   aria-label={t('settings.mascot.customGifLabel')}
                   data-testid="mascot-custom-gif-input"
                   value={customGifDraft}
-                  placeholder="https://example.com/avatar.gif"
+                  placeholder={t('settings.mascot.customGifPlaceholder')}
                   onChange={e => {
                     setCustomGifDraft(e.target.value);
                     setCustomGifError(null);
@@ -612,20 +611,22 @@ const MascotPanel = () => {
             )}
           </div>
 
-          {activeDetail && (
+          {visibleActiveDetail && (
             <div className="mt-3 rounded-xl border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 p-4">
               <p className="text-[11px] font-medium uppercase tracking-wide text-stone-500 dark:text-neutral-400 mb-2">
-                {t('settings.mascot.characterPreview')} · {activeDetail.name}
+                {t('settings.mascot.characterPreview')} · {visibleActiveDetail.name}
               </p>
               <div className="flex justify-center">
                 <div style={{ width: 160, height: 160 }}>
-                  <BackendMascot mascot={activeDetail} />
+                  <BackendMascot mascot={visibleActiveDetail} />
                 </div>
               </div>
             </div>
           )}
-          {detailError && (
-            <p className="mt-2 text-xs text-coral-700 dark:text-coral-300 px-1">{detailError}</p>
+          {visibleDetailError && (
+            <p className="mt-2 text-xs text-coral-700 dark:text-coral-300 px-1">
+              {visibleDetailError}
+            </p>
           )}
           <p className="text-xs text-stone-500 dark:text-neutral-400 leading-relaxed px-1 mt-2">
             {t('settings.mascot.characterDesc')}

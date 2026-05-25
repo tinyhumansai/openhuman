@@ -8,6 +8,7 @@ import { openUrl } from '../../../utils/openUrl';
 import TelegramConfig from '../TelegramConfig';
 
 const telegramDef = FALLBACK_DEFINITIONS.find(d => d.id === 'telegram')!;
+const coreStateMock = vi.hoisted(() => vi.fn(() => ({ snapshot: { sessionToken: 'jwt-abc' } })));
 
 vi.mock('../../../services/api/channelConnectionsApi', () => ({
   channelConnectionsApi: {
@@ -21,9 +22,11 @@ vi.mock('../../../services/api/channelConnectionsApi', () => ({
 }));
 
 vi.mock('../../../utils/openUrl', () => ({ openUrl: vi.fn() }));
+vi.mock('../../../providers/CoreStateProvider', () => ({ useCoreState: () => coreStateMock() }));
 
 afterEach(() => {
   vi.clearAllMocks();
+  coreStateMock.mockReturnValue({ snapshot: { sessionToken: 'jwt-abc' } });
 });
 
 describe('TelegramConfig', () => {
@@ -97,5 +100,17 @@ describe('TelegramConfig', () => {
       expect(channelConnectionsApi.telegramLoginCheck).toHaveBeenCalledWith('link-token-abc');
     });
     expect(await screen.findByText('Connected')).toBeInTheDocument();
+  });
+
+  it('hides managed channel auth modes for local users', () => {
+    coreStateMock.mockReturnValue({ snapshot: { sessionToken: 'header.payload.local' } });
+
+    renderWithProviders(<TelegramConfig definition={telegramDef} />);
+
+    expect(
+      screen.getByText('Managed channels are not available for local users.')
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Login with OpenHuman')).not.toBeInTheDocument();
+    expect(screen.getAllByText(/Bot Token/i).length).toBeGreaterThanOrEqual(1);
   });
 });

@@ -7,6 +7,7 @@
 import debug from 'debug';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { useT } from '../../../lib/i18n/I18nContext';
 import { mcpClientsApi } from '../../../services/api/mcpClientsApi';
 import InstallDialog from './InstallDialog';
 import InstalledServerDetail from './InstalledServerDetail';
@@ -24,6 +25,7 @@ type RightPane =
   | { mode: 'install'; qualifiedName: string; prefillEnv?: Record<string, string> };
 
 const McpServersTab = () => {
+  const { t } = useT();
   const [servers, setServers] = useState<InstalledServer[]>([]);
   const [statuses, setStatuses] = useState<ConnStatus[]>([]);
   const [loading, setLoading] = useState(true);
@@ -35,7 +37,10 @@ const McpServersTab = () => {
     log('loading installed servers');
     try {
       const installed = await mcpClientsApi.installedList();
-      setServers(installed);
+      // Defensive: API contract guarantees an array, but if a future regression
+      // or malformed envelope returns `undefined`, downstream `.find` crashes
+      // the entire tab. Normalise here.
+      setServers(Array.isArray(installed) ? installed : []);
       // Clear any previous error on successful reload.
       setLoadError(null);
       log('loaded %d installed servers', installed.length);
@@ -50,7 +55,9 @@ const McpServersTab = () => {
     log('polling statuses');
     try {
       const sv = await mcpClientsApi.status();
-      setStatuses(sv);
+      // Defensive: same reasoning as `loadInstalled` — `.find` / `.map`
+      // downstream cannot tolerate an undefined array.
+      setStatuses(Array.isArray(sv) ? sv : []);
     } catch (err) {
       log('status poll error: %o', err);
     }
@@ -131,57 +138,67 @@ const McpServersTab = () => {
   if (loading) {
     return (
       <div className="py-10 text-center text-sm text-stone-400 dark:text-neutral-500">
-        Loading MCP servers...
+        {t('mcp.tab.loading')}
       </div>
     );
   }
 
   return (
-    <div className="flex gap-4 h-full min-h-0">
-      {/* Left pane: installed list */}
-      <div className="w-56 shrink-0 flex flex-col">
-        {loadError && (
-          <div className="mb-2 rounded-lg border border-coral-200 dark:border-coral-500/30 bg-coral-50 dark:bg-coral-500/10 px-3 py-2 text-xs text-coral-700 dark:text-coral-300">
-            {loadError}
-          </div>
-        )}
-        <InstalledServerList
-          servers={servers}
-          statuses={statuses}
-          selectedId={selectedServerId}
-          onSelect={handleSelectServer}
-          onBrowseCatalog={handleBrowseCatalog}
-        />
+    <div className="flex flex-col gap-3 h-full min-h-0">
+      <div
+        role="status"
+        className="flex items-start gap-2 rounded-lg border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">
+        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wider bg-amber-200/70 dark:bg-amber-500/30 text-amber-900 dark:text-amber-100 shrink-0 mt-0.5">
+          {t('mcp.alphaBadge')}
+        </span>
+        <span className="leading-relaxed">{t('mcp.alphaBannerText')}</span>
       </div>
-
-      {/* Right pane */}
-      <div className="flex-1 min-w-0 overflow-y-auto">
-        {rightPane.mode === 'none' && (
-          <div className="h-full flex items-center justify-center text-sm text-stone-400 dark:text-neutral-500">
-            Select a server or browse the catalog.
-          </div>
-        )}
-
-        {rightPane.mode === 'catalog' && (
-          <McpCatalogBrowser onSelectInstall={handleSelectInstall} />
-        )}
-
-        {rightPane.mode === 'install' && (
-          <InstallDialog
-            qualifiedName={rightPane.qualifiedName}
-            prefillEnv={rightPane.prefillEnv}
-            onSuccess={server => void handleInstallSuccess(server)}
-            onCancel={() => setRightPane({ mode: 'catalog' })}
+      <div className="flex gap-4 flex-1 min-h-0">
+        {/* Left pane: installed list */}
+        <div className="w-56 shrink-0 flex flex-col">
+          {loadError && (
+            <div className="mb-2 rounded-lg border border-coral-200 dark:border-coral-500/30 bg-coral-50 dark:bg-coral-500/10 px-3 py-2 text-xs text-coral-700 dark:text-coral-300">
+              {loadError}
+            </div>
+          )}
+          <InstalledServerList
+            servers={servers}
+            statuses={statuses}
+            selectedId={selectedServerId}
+            onSelect={handleSelectServer}
+            onBrowseCatalog={handleBrowseCatalog}
           />
-        )}
+        </div>
 
-        {rightPane.mode === 'detail' && selectedServer && (
-          <InstalledServerDetail
-            server={selectedServer}
-            connStatus={selectedConnStatus}
-            onUninstalled={serverId => void handleUninstalled(serverId)}
-          />
-        )}
+        {/* Right pane */}
+        <div className="flex-1 min-w-0 overflow-y-auto">
+          {rightPane.mode === 'none' && (
+            <div className="h-full flex items-center justify-center text-sm text-stone-400 dark:text-neutral-500">
+              {t('mcp.tab.emptyDetail')}
+            </div>
+          )}
+
+          {rightPane.mode === 'catalog' && (
+            <McpCatalogBrowser onSelectInstall={handleSelectInstall} />
+          )}
+
+          {rightPane.mode === 'install' && (
+            <InstallDialog
+              qualifiedName={rightPane.qualifiedName}
+              prefillEnv={rightPane.prefillEnv}
+              onSuccess={server => void handleInstallSuccess(server)}
+              onCancel={() => setRightPane({ mode: 'catalog' })}
+            />
+          )}
+
+          {rightPane.mode === 'detail' && selectedServer && (
+            <InstalledServerDetail
+              server={selectedServer}
+              connStatus={selectedConnStatus}
+              onUninstalled={serverId => void handleUninstalled(serverId)}
+            />
+          )}
+        </div>
       </div>
     </div>
   );

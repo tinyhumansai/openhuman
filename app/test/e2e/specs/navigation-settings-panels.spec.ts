@@ -136,11 +136,10 @@ describe('Navigation — settings sub-panels', () => {
     await verifyPanelLoaded(panel);
   });
 
-  it('N2.2 — /settings/connections loads', async () => {
-    const panel = PANELS[1];
-    console.log(`${LOG_PREFIX} N2.2: navigating to ${panel.hash}`);
-    await navigateViaHash(panel.hash);
-    await verifyPanelLoaded(panel);
+  it.skip('N2.2 — /settings/connections loads (removed in PR #2550)', async () => {
+    // Route was deleted as part of the OAuth loopback + settings cleanup
+    // (PR #2550). Kept as a `.skip` so the numbering N2.1..N2.9 still
+    // reads consistently with the spec list.
   });
 
   it('N2.3 — /settings/memory-data loads', async () => {

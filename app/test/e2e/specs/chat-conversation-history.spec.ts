@@ -87,12 +87,26 @@ describe('Chat conversation history', () => {
       timeout: 15_000,
       timeoutMsg: 'Conversations panel did not mount',
     });
+    // Capture any thread that was already selected (carries over from a
+    // prior spec in the shared session) so we can wait for it to CHANGE
+    // when New thread is clicked. Without this guard `waitUntil(getSelectedThreadId)`
+    // returns the stale id immediately and the rest of the spec asserts
+    // against the wrong on-disk thread file.
+    const priorThreadId = await getSelectedThreadId();
     expect(await clickByTitle('New thread', 8_000)).toBe(true);
 
-    threadId = (await browser.waitUntil(async () => await getSelectedThreadId(), {
-      timeout: 8_000,
-      timeoutMsg: 'thread.selectedThreadId never populated',
-    })) as string;
+    threadId = (await browser.waitUntil(
+      async () => {
+        const current = await getSelectedThreadId();
+        if (!current) return null;
+        if (priorThreadId && current === priorThreadId) return null;
+        return current;
+      },
+      {
+        timeout: 8_000,
+        timeoutMsg: `thread.selectedThreadId never advanced past ${priorThreadId ?? '<unset>'}`,
+      }
+    )) as string;
     expect(typeof threadId).toBe('string');
     console.log(`${LOG_PREFIX} H1.1: thread created: ${threadId}`);
 

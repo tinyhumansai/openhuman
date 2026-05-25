@@ -12,9 +12,18 @@ interface ChoiceCardProps {
   title: string;
   description: string;
   testId: string;
+  disabled?: boolean;
 }
 
-const ChoiceCard = ({ selected, onClick, accent, title, description, testId }: ChoiceCardProps) => {
+const ChoiceCard = ({
+  selected,
+  onClick,
+  accent,
+  title,
+  description,
+  testId,
+  disabled = false,
+}: ChoiceCardProps) => {
   const selectedClasses =
     accent === 'sage'
       ? '!border-sage-500 bg-sage-50 dark:bg-sage-500/10 shadow-sm'
@@ -23,9 +32,10 @@ const ChoiceCard = ({ selected, onClick, accent, title, description, testId }: C
     <button
       type="button"
       onClick={onClick}
+      disabled={disabled}
       aria-pressed={selected}
       data-testid={testId}
-      className={`flex h-full w-full flex-col rounded-2xl border-2 p-5 text-left transition-colors focus:outline-none ${
+      className={`flex h-full w-full flex-col rounded-2xl border-2 p-5 text-left transition-colors focus:outline-none disabled:cursor-not-allowed disabled:opacity-60 ${
         selected
           ? selectedClasses
           : '!border-stone-200 dark:!border-neutral-700 bg-white dark:bg-neutral-900 hover:!border-stone-300 dark:hover:!border-neutral-600 hover:bg-stone-50 dark:hover:bg-neutral-800/60'
@@ -59,6 +69,9 @@ interface CustomWizardStepProps {
   continueLoading?: boolean;
   continueLoadingLabel?: string;
   testId?: string;
+  defaultDisabled?: boolean;
+  defaultDisabledReason?: string;
+  hideChoiceCards?: boolean;
 }
 
 const CustomWizardStep = ({
@@ -78,6 +91,9 @@ const CustomWizardStep = ({
   continueLoading,
   continueLoadingLabel,
   testId,
+  defaultDisabled = false,
+  defaultDisabledReason,
+  hideChoiceCards = false,
 }: CustomWizardStepProps) => {
   const { t } = useT();
   const [isContinuing, setIsContinuing] = useState(false);
@@ -97,6 +113,7 @@ const CustomWizardStep = ({
     t('onboarding.custom.stepperVoice'),
     t('onboarding.custom.stepperOAuth'),
     t('onboarding.custom.stepperSearch'),
+    t('onboarding.custom.stepperEmbeddings'),
     t('onboarding.custom.stepperMemory'),
   ].slice(0, stepCount);
 
@@ -113,26 +130,37 @@ const CustomWizardStep = ({
         {subtitle}
       </p>
 
-      <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2 sm:items-stretch">
-        <ChoiceCard
-          testId={`${testId ?? 'onboarding-custom-wizard-step'}-default`}
-          accent="sage"
-          selected={choice === 'default'}
-          onClick={() => onChoiceChange('default')}
-          title={t('onboarding.custom.defaultTitle')}
-          description={defaultDescription || t('onboarding.custom.defaultSubtitle')}
-        />
-        <ChoiceCard
-          testId={`${testId ?? 'onboarding-custom-wizard-step'}-configure`}
-          accent="primary"
-          selected={choice === 'configure'}
-          onClick={() => onChoiceChange('configure')}
-          title={t('onboarding.custom.configureTitle')}
-          description={configureDescription || t('onboarding.custom.configureSubtitle')}
-        />
-      </div>
+      {!hideChoiceCards ? (
+        <>
+          <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2 sm:items-stretch">
+            <ChoiceCard
+              testId={`${testId ?? 'onboarding-custom-wizard-step'}-default`}
+              accent="sage"
+              selected={choice === 'default'}
+              onClick={() => onChoiceChange('default')}
+              disabled={defaultDisabled}
+              title={t('onboarding.custom.defaultTitle')}
+              description={defaultDescription || t('onboarding.custom.defaultSubtitle')}
+            />
+            <ChoiceCard
+              testId={`${testId ?? 'onboarding-custom-wizard-step'}-configure`}
+              accent="primary"
+              selected={choice === 'configure'}
+              onClick={() => onChoiceChange('configure')}
+              title={t('onboarding.custom.configureTitle')}
+              description={configureDescription || t('onboarding.custom.configureSubtitle')}
+            />
+          </div>
 
-      {choice === 'configure' && configureContent ? (
+          {defaultDisabled && defaultDisabledReason ? (
+            <p className="mt-3 text-xs text-stone-500 dark:text-neutral-400 leading-relaxed">
+              {defaultDisabledReason}
+            </p>
+          ) : null}
+        </>
+      ) : null}
+
+      {(choice === 'configure' || hideChoiceCards) && configureContent ? (
         <div className="mt-6 rounded-2xl border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 p-5">
           {configureContent}
         </div>

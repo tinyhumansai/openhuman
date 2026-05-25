@@ -5,7 +5,6 @@ export type SettingsRoute =
   | 'home'
   | 'account'
   | 'features'
-  | 'connections'
   | 'messaging'
   | 'cron-jobs'
   | 'screen-intelligence'
@@ -84,7 +83,6 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
     if (path.includes('/settings/team')) return 'team';
     if (path.includes('/settings/account')) return 'account';
     if (path.includes('/settings/features')) return 'features';
-    if (path.includes('/settings/connections')) return 'connections';
     if (path.includes('/settings/messaging')) return 'messaging';
     if (path.includes('/settings/cron-jobs')) return 'cron-jobs';
     if (path.includes('/settings/screen-awareness-debug')) return 'screen-awareness-debug';
@@ -186,7 +184,6 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
       // Leaf panels under account
       case 'recovery-phrase':
       case 'team':
-      case 'connections':
       case 'privacy':
         return [settingsCrumb, accountCrumb];
 

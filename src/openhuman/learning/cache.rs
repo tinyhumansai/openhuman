@@ -9,7 +9,7 @@ use rusqlite::Connection;
 use std::sync::Arc;
 
 use crate::openhuman::learning::candidate::FacetClass;
-use crate::openhuman::memory::store::profile::{self, ProfileFacet, UserState};
+use crate::openhuman::memory_store::profile::{self, ProfileFacet, UserState};
 
 /// Thin wrapper around the `user_profile` table.
 ///
@@ -115,7 +115,7 @@ pub fn class_prefix(class: FacetClass) -> &'static str {
 
 // ── Facet state enum re-export (convenience for callers of this module) ───────
 
-pub use crate::openhuman::memory::store::profile::{
+pub use crate::openhuman::memory_store::profile::{
     FacetState as CacheFacetState, UserState as CacheUserState,
 };
 
