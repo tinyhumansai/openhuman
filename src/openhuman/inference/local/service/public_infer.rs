@@ -70,6 +70,7 @@ impl LocalAiService {
         max_tokens: Option<u32>,
         no_think: bool,
     ) -> Result<String, String> {
+        log::trace!("[local_ai] prompt_interactive bypasses scheduler_gate permit");
         if !config.local_ai.runtime_enabled {
             return Err("local ai is disabled".to_string());
         }
@@ -113,9 +114,11 @@ impl LocalAiService {
     /// turn against it than show stale or empty completions for the
     /// duration of the backfill.
     ///
-    /// This is the only path inside [`LocalAiService`] that opts out of
-    /// the gate. Every other entry point (`inference`, `prompt`,
-    /// `summarize`, `inline_complete`, `vision_prompt`, `embed`)
+    /// Along with [`Self::prompt_interactive`] and
+    /// [`Self::chat_with_history_interactive`], this is one of the paths
+    /// inside [`LocalAiService`] that opts out of the gate. Every other
+    /// entry point (`inference`, `prompt`, `summarize`,
+    /// `inline_complete`, `vision_prompt`, `embed`, `chat_with_history`)
     /// acquires before talking to Ollama.
     pub async fn inline_complete_interactive(
         &self,
@@ -223,6 +226,7 @@ impl LocalAiService {
         messages: Vec<crate::openhuman::inference::local::ollama::OllamaChatMessage>,
         max_tokens: Option<u32>,
     ) -> Result<String, String> {
+        log::trace!("[local_ai] chat_with_history_interactive bypasses scheduler_gate permit");
         self.chat_with_history_internal(config, messages, max_tokens, false)
             .await
     }
