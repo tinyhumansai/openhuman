@@ -3,7 +3,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { FALLBACK_DEFINITIONS } from '../../../lib/channels/definitions';
 import { channelConnectionsApi } from '../../../services/api/channelConnectionsApi';
-import { renderWithProviders } from '../../../test/test-utils';
+import { upsertChannelConnection } from '../../../store/channelConnectionsSlice';
+import { createTestStore, renderWithProviders } from '../../../test/test-utils';
 import { openUrl } from '../../../utils/openUrl';
 import TelegramConfig from '../TelegramConfig';
 
@@ -66,6 +67,35 @@ describe('TelegramConfig', () => {
     expect(disconnectButtons.length).toBe(2);
     disconnectButtons.forEach(btn => {
       expect(btn).toBeDisabled();
+    });
+  });
+
+  it('passes clearMemory when disconnecting with the memory checkbox selected', async () => {
+    const store = createTestStore();
+    store.dispatch(
+      upsertChannelConnection({
+        channel: 'telegram',
+        authMode: 'bot_token',
+        patch: { status: 'connected', capabilities: ['read', 'write'] },
+      })
+    );
+    vi.mocked(channelConnectionsApi.disconnectChannel).mockResolvedValue(undefined);
+
+    renderWithProviders(<TelegramConfig definition={telegramDef} />, { store });
+
+    fireEvent.click(screen.getByLabelText(/also delete memory/i));
+    const disconnectButton = screen
+      .getAllByRole('button', { name: 'Disconnect' })
+      .find(button => !button.hasAttribute('disabled'));
+    expect(disconnectButton).toBeDefined();
+    fireEvent.click(disconnectButton!);
+
+    await waitFor(() => {
+      expect(channelConnectionsApi.disconnectChannel).toHaveBeenCalledWith(
+        'telegram',
+        'bot_token',
+        { clearMemory: true }
+      );
     });
   });
 

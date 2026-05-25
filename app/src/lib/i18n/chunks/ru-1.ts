@@ -306,10 +306,9 @@ const ru1: TranslationMap = {
   'accounts.respondQueue': 'Очередь ответов',
   'accounts.disconnect': 'Отключить',
   'accounts.disconnectConfirm': 'Ты уверен, что хочешь отключить этот аккаунт?',
-  'accounts.disconnectRevokeConfirm': 'Revoke credentials for {name}?',
-  'accounts.disconnectClearMemory':
-    'Also delete all memory ingested from this source (cannot be undone)',
-  'accounts.disconnectYes': 'Yes, disconnect',
+  'accounts.disconnectClearMemory': 'Also delete memory from this source',
+  'accounts.disconnectClearMemoryHint':
+    'Permanently removes local memory chunks linked to this connection.',
   'accounts.searchAccounts': 'Поиск аккаунтов...',
   'channels.title': 'Каналы',
   'channels.configure': 'Настроить канал',

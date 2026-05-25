@@ -101,6 +101,21 @@ describe('composioApi trigger wrappers', () => {
     });
     expect(out.deleted).toBe(true);
   });
+
+  it('deleteConnection forwards clear_memory only when requested', async () => {
+    mockCallCoreRpc.mockResolvedValue({
+      result: { deleted: true, memory_chunks_deleted: 3 },
+      logs: [],
+    });
+
+    const out = await deleteConnection('conn-1', { clearMemory: true });
+
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.composio_delete_connection',
+      params: { connection_id: 'conn-1', clear_memory: true },
+    });
+    expect(out.memory_chunks_deleted).toBe(3);
+  });
 });
 
 describe('syncConnection', () => {

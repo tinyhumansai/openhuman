@@ -194,6 +194,7 @@ export default function ComposioConnectModal({
   );
   const [error, setError] = useState<string | null>(null);
   const [connectUrl, setConnectUrl] = useState<string | null>(null);
+  const [clearMemoryOnDisconnect, setClearMemoryOnDisconnect] = useState(false);
 
   // Provider-specific required fields are sourced from the declarative
   // registry rather than per-toolkit booleans (#2127). New providers
@@ -216,8 +217,6 @@ export default function ComposioConnectModal({
   // Per-key in-flight flag so spamming a single toggle disables only
   // that row while the RPC round-trips.
   const [savingScope, setSavingScope] = useState<keyof ComposioUserScopePref | null>(null);
-  const [confirmingDisconnect, setConfirmingDisconnect] = useState(false);
-  const [clearMemory, setClearMemory] = useState(false);
 
   // Escape to close
   useEffect(() => {
@@ -505,27 +504,23 @@ export default function ComposioConnectModal({
     [savingScope, scopes, t, toolkit.slug]
   );
 
-  const handleDisconnect = useCallback(() => {
-    setClearMemory(false);
-    setConfirmingDisconnect(true);
-  }, []);
-
-  const handleConfirmDisconnect = useCallback(async () => {
+  const handleDisconnect = useCallback(async () => {
     if (!activeConnection) return;
-    setConfirmingDisconnect(false);
     setPhase('disconnecting');
     setError(null);
     try {
-      await deleteConnection(activeConnection.id, clearMemory);
+      await deleteConnection(activeConnection.id, { clearMemory: clearMemoryOnDisconnect });
       setActiveConnection(undefined);
+      setClearMemoryOnDisconnect(false);
       setPhase('idle');
       onChanged?.();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setPhase('error');
       setError(`${t('composio.connect.disconnectFailed')}: ${msg}`);
+      setClearMemoryOnDisconnect(false);
     }
-  }, [activeConnection, clearMemory, onChanged, t]);
+  }, [activeConnection, clearMemoryOnDisconnect, onChanged, t]);
 
   const handleBackdropClick = (e: React.MouseEvent) => {
     if (e.target === e.currentTarget) onClose();
@@ -742,53 +737,36 @@ export default function ComposioConnectModal({
                   connectionId={activeConnection.id}
                 />
               )}
-              {confirmingDisconnect ? (
-                <div className="flex flex-col gap-3">
-                  <span className="text-sm text-coral-600 dark:text-coral-400 font-medium">
-                    {t('accounts.disconnectRevokeConfirm').replace('{name}', toolkit.name)}
+              <label className="flex items-start gap-2 rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 px-3 py-2">
+                <input
+                  type="checkbox"
+                  checked={clearMemoryOnDisconnect}
+                  onChange={event => setClearMemoryOnDisconnect(event.currentTarget.checked)}
+                  className="mt-0.5 h-4 w-4 rounded border-stone-300 text-primary-600 focus:ring-primary-500"
+                />
+                <span className="min-w-0">
+                  <span className="block text-sm font-medium text-stone-800 dark:text-neutral-100">
+                    {t('accounts.disconnectClearMemory')}
                   </span>
-                  {['gmail', 'notion', 'googledrive'].includes(toolkit.slug) && (
-                    <label className="flex items-center gap-2 text-xs text-stone-500 dark:text-neutral-400 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={clearMemory}
-                        onChange={e => setClearMemory(e.target.checked)}
-                        className="rounded border-stone-300 dark:border-neutral-600"
-                      />
-                      {t('accounts.disconnectClearMemory')}
-                    </label>
-                  )}
-                  <div className="grid grid-cols-2 gap-3">
-                    <button
-                      type="button"
-                      onClick={() => void handleConfirmDisconnect()}
-                      className="w-full rounded-xl bg-coral-500 text-white text-sm font-medium py-2.5 hover:bg-coral-600 transition-colors">
-                      {t('accounts.disconnectYes')}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setConfirmingDisconnect(false)}
-                      className="w-full rounded-xl border border-stone-200 dark:border-neutral-700 text-stone-600 dark:text-neutral-300 text-sm font-medium py-2.5 hover:border-stone-300 dark:hover:border-neutral-600 transition-colors">
-                      {t('common.cancel')}
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="grid grid-cols-2 gap-3">
-                  <button
-                    type="button"
-                    onClick={() => handleDisconnect()}
-                    className="w-full rounded-xl border border-coral-200 bg-coral-50 text-coral-700 text-sm font-medium py-2.5 hover:bg-coral-100 transition-colors">
-                    {t('skills.disconnect')}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={onClose}
-                    className="w-full rounded-xl bg-primary-500 text-white text-sm font-medium py-2.5 hover:bg-primary-600 transition-colors">
-                    {t('common.close')}
-                  </button>
-                </div>
-              )}
+                  <span className="block text-xs text-stone-500 dark:text-neutral-400">
+                    {t('accounts.disconnectClearMemoryHint')}
+                  </span>
+                </span>
+              </label>
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => void handleDisconnect()}
+                  className="w-full rounded-xl border border-coral-200 bg-coral-50 text-coral-700 text-sm font-medium py-2.5 hover:bg-coral-100 transition-colors">
+                  {t('skills.disconnect')}
+                </button>
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="w-full rounded-xl bg-primary-500 text-white text-sm font-medium py-2.5 hover:bg-primary-600 transition-colors">
+                  {t('common.close')}
+                </button>
+              </div>
             </>
           )}
 
@@ -806,6 +784,7 @@ export default function ComposioConnectModal({
               <button
                 type="button"
                 onClick={() => {
+                  setClearMemoryOnDisconnect(false);
                   setPhase(
                     initiallyConnected ? 'connected' : initiallyExpired ? 'expired' : 'idle'
                   );

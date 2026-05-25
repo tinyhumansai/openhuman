@@ -313,10 +313,9 @@ const pt1: TranslationMap = {
   'accounts.respondQueue': 'Fila de Respostas',
   'accounts.disconnect': 'Desconectar',
   'accounts.disconnectConfirm': 'Tem certeza de que deseja desconectar esta conta?',
-  'accounts.disconnectRevokeConfirm': 'Revoke credentials for {name}?',
-  'accounts.disconnectClearMemory':
-    'Also delete all memory ingested from this source (cannot be undone)',
-  'accounts.disconnectYes': 'Yes, disconnect',
+  'accounts.disconnectClearMemory': 'Also delete memory from this source',
+  'accounts.disconnectClearMemoryHint':
+    'Permanently removes local memory chunks linked to this connection.',
   'accounts.searchAccounts': 'Pesquisar contas...',
   'channels.title': 'Canais',
   'channels.configure': 'Configurar Canal',

@@ -1,6 +1,9 @@
 use super::*;
-use crate::openhuman::memory_store::chunks::store::upsert_chunks;
-use crate::openhuman::memory_store::chunks::types::{Metadata, SourceKind};
+use crate::openhuman::memory_store::chunks::store as memory_tree_store;
+use crate::openhuman::memory_store::chunks::types::{
+    chunk_id, Chunk, Metadata, SourceKind, SourceRef,
+};
+use chrono::{TimeZone, Utc};
 use tempfile::tempdir;
 
 fn isolated_test_config() -> (tempfile::TempDir, Config) {
@@ -10,6 +13,29 @@ fn isolated_test_config() -> (tempfile::TempDir, Config) {
     config.config_path = tmp.path().join("config.toml");
     std::fs::create_dir_all(&config.workspace_dir).expect("failed to create workspace dir");
     (tmp, config)
+}
+
+fn sample_chat_chunk(source_id: &str, seq: u32) -> Chunk {
+    let ts = Utc
+        .timestamp_millis_opt(1_700_000_000_000 + i64::from(seq))
+        .unwrap();
+    Chunk {
+        id: chunk_id(SourceKind::Chat, source_id, seq, "channel memory"),
+        content: format!("channel memory {source_id} {seq}"),
+        metadata: Metadata {
+            source_kind: SourceKind::Chat,
+            source_id: source_id.to_string(),
+            owner: "alice@example.com".to_string(),
+            timestamp: ts,
+            time_range: (ts, ts),
+            tags: vec!["channel".to_string()],
+            source_ref: Some(SourceRef::new(format!("discord://{source_id}/{seq}"))),
+        },
+        token_count: 12,
+        seq_in_source: seq,
+        created_at: ts,
+        partial_message: false,
+    }
 }
 
 #[tokio::test]
@@ -154,6 +180,49 @@ async fn disconnect_discord_bot_token_clears_runtime_config() {
         discord.is_none(),
         "channels_config.discord should be removed after disconnect"
     );
+}
+
+#[tokio::test]
+async fn disconnect_channel_clear_memory_deletes_matching_chat_sources() {
+    let (_tmp, mut config) = isolated_test_config();
+    config.channels_config.discord = Some(DiscordConfig {
+        bot_token: "discord-token-abc".to_string(),
+        guild_id: Some("guild-1".to_string()),
+        channel_id: Some("channel-2".to_string()),
+        allowed_users: vec![],
+        listen_to_bots: false,
+        mention_only: false,
+    });
+    config
+        .save()
+        .await
+        .expect("preloaded config should be persisted");
+
+    let target_a = sample_chat_chunk("discord:guild-1", 0);
+    let target_b = sample_chat_chunk("discord:guild-1:channel-2", 1);
+    let unrelated = sample_chat_chunk("telegram:chat-1", 0);
+    memory_tree_store::upsert_chunks(&config, &[target_a, target_b, unrelated])
+        .expect("chunks should seed");
+
+    let result = disconnect_channel(&config, "discord", ChannelAuthMode::BotToken, true)
+        .await
+        .expect("discord disconnect should succeed");
+
+    assert_eq!(
+        result.value["memory_chunks_deleted"].as_u64(),
+        Some(2),
+        "disconnect should report deleted memory chunks"
+    );
+    let remaining = memory_tree_store::list_chunks(
+        &config,
+        &memory_tree_store::ListChunksQuery {
+            source_kind: Some(SourceKind::Chat),
+            ..Default::default()
+        },
+    )
+    .expect("chunks should list");
+    assert_eq!(remaining.len(), 1);
+    assert_eq!(remaining[0].metadata.source_id, "telegram:chat-1");
 }
 
 #[tokio::test]
@@ -482,103 +551,5 @@ async fn connected_channel_slugs_empty_when_nothing_configured() {
     assert!(
         slugs.is_empty(),
         "fresh config should yield no channels: {slugs:?}"
-    );
-}
-
-#[tokio::test]
-async fn disconnect_discord_clear_memory_deletes_chunks() {
-    use crate::openhuman::memory_store::chunks::types::{chunk_id, SourceRef};
-    use chrono::TimeZone;
-
-    let (_tmp, mut config) = isolated_test_config();
-    config.channels_config.discord = Some(DiscordConfig {
-        bot_token: "discord-token-abc".to_string(),
-        guild_id: None,
-        channel_id: None,
-        allowed_users: vec![],
-        listen_to_bots: false,
-        mention_only: false,
-    });
-    config.save().await.expect("save config");
-
-    // Seed a chunk that belongs to the discord source.
-    let ts = chrono::Utc.timestamp_millis_opt(1_700_000_000_000).unwrap();
-    let chunk = crate::openhuman::memory_store::chunks::types::Chunk {
-        id: chunk_id(SourceKind::Chat, "discord:clear-test", 0, "test-content"),
-        content: "discord memory".into(),
-        metadata: Metadata {
-            source_kind: SourceKind::Chat,
-            source_id: "discord:clear-test".into(),
-            owner: "alice@example.com".into(),
-            timestamp: ts,
-            time_range: (ts, ts),
-            tags: vec![],
-            source_ref: Some(SourceRef::new("discord://test/0")),
-        },
-        token_count: 3,
-        seq_in_source: 0,
-        created_at: ts,
-        partial_message: false,
-    };
-    upsert_chunks(&config, &[chunk.clone()]).unwrap();
-
-    disconnect_channel(&config, "discord", ChannelAuthMode::BotToken, true)
-        .await
-        .expect("disconnect with clear_memory should succeed");
-
-    // The chunk should be gone.
-    let stored =
-        crate::openhuman::memory_store::chunks::store::get_chunk(&config, &chunk.id).unwrap();
-    assert!(
-        stored.is_none(),
-        "chunk should be deleted after disconnect with clear_memory=true"
-    );
-}
-
-#[tokio::test]
-async fn disconnect_discord_without_clear_memory_preserves_chunks() {
-    use crate::openhuman::memory_store::chunks::types::{chunk_id, SourceRef};
-    use chrono::TimeZone;
-
-    let (_tmp, mut config) = isolated_test_config();
-    config.channels_config.discord = Some(DiscordConfig {
-        bot_token: "discord-token-preserve".to_string(),
-        guild_id: None,
-        channel_id: None,
-        allowed_users: vec![],
-        listen_to_bots: false,
-        mention_only: false,
-    });
-    config.save().await.expect("save config");
-
-    let ts = chrono::Utc.timestamp_millis_opt(1_700_000_000_000).unwrap();
-    let chunk = crate::openhuman::memory_store::chunks::types::Chunk {
-        id: chunk_id(SourceKind::Chat, "discord:keep-test", 0, "test-content"),
-        content: "discord memory keep".into(),
-        metadata: Metadata {
-            source_kind: SourceKind::Chat,
-            source_id: "discord:keep-test".into(),
-            owner: "alice@example.com".into(),
-            timestamp: ts,
-            time_range: (ts, ts),
-            tags: vec![],
-            source_ref: Some(SourceRef::new("discord://test/0")),
-        },
-        token_count: 3,
-        seq_in_source: 0,
-        created_at: ts,
-        partial_message: false,
-    };
-    upsert_chunks(&config, &[chunk.clone()]).unwrap();
-
-    disconnect_channel(&config, "discord", ChannelAuthMode::BotToken, false)
-        .await
-        .expect("disconnect without clear_memory should succeed");
-
-    let stored =
-        crate::openhuman::memory_store::chunks::store::get_chunk(&config, &chunk.id).unwrap();
-    assert!(
-        stored.is_some(),
-        "chunk should survive disconnect with clear_memory=false"
     );
 }

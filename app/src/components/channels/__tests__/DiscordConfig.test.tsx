@@ -3,25 +3,36 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { FALLBACK_DEFINITIONS } from '../../../lib/channels/definitions';
 import { channelConnectionsApi } from '../../../services/api/channelConnectionsApi';
-import { renderWithProviders } from '../../../test/test-utils';
+import { upsertChannelConnection } from '../../../store/channelConnectionsSlice';
+import { createTestStore, renderWithProviders } from '../../../test/test-utils';
 import DiscordConfig from '../DiscordConfig';
-
-vi.mock('../../../services/api/channelConnectionsApi', () => ({
-  channelConnectionsApi: {
-    connectChannel: vi.fn(),
-    disconnectChannel: vi.fn(),
-    listDefinitions: vi.fn(),
-    listStatus: vi.fn(),
-    discordLinkStart: vi.fn(),
-    discordLinkCheck: vi.fn(),
-  },
-}));
 
 const coreStateMock = vi.hoisted(() => vi.fn(() => ({ snapshot: { sessionToken: 'jwt-abc' } })));
 
 vi.mock('../../../providers/CoreStateProvider', () => ({ useCoreState: () => coreStateMock() }));
 
 const discordDef = FALLBACK_DEFINITIONS.find(d => d.id === 'discord')!;
+
+vi.mock('../../../hooks/useOAuthConnectionListener', () => ({
+  useOAuthConnectionListener: vi.fn(),
+}));
+
+vi.mock('../../../services/api/channelConnectionsApi', () => ({
+  channelConnectionsApi: {
+    connectChannel: vi.fn(),
+    disconnectChannel: vi.fn(),
+    discordLinkStart: vi.fn(),
+    discordLinkCheck: vi.fn(),
+    listDefinitions: vi.fn(),
+    listStatus: vi.fn(),
+  },
+}));
+
+vi.mock('../../../services/coreRpcClient', () => ({ callCoreRpc: vi.fn() }));
+
+vi.mock('../../../utils/openUrl', () => ({ openUrl: vi.fn() }));
+
+vi.mock('../../../utils/tauriCommands/core', () => ({ restartCoreProcess: vi.fn() }));
 
 afterEach(() => {
   vi.clearAllMocks();
@@ -52,50 +63,58 @@ describe('DiscordConfig', () => {
     expect(connectButtons.length).toBe(3);
   });
 
-  it('shows disconnect confirmation with clearMemory checkbox and calls API on confirm', async () => {
+  it('passes clearMemory when disconnecting a connected bot token account', async () => {
+    const store = createTestStore();
+    store.dispatch(
+      upsertChannelConnection({
+        channel: 'discord',
+        authMode: 'bot_token',
+        patch: { status: 'connected', capabilities: ['read', 'write'] },
+      })
+    );
     vi.mocked(channelConnectionsApi.disconnectChannel).mockResolvedValue(undefined);
 
-    renderWithProviders(<DiscordConfig definition={discordDef} />, {
-      preloadedState: {
-        channelConnections: {
-          schemaVersion: 1,
-          migrationCompleted: true,
-          defaultMessagingChannel: 'telegram',
-          connections: {
-            discord: {
-              bot_token: {
-                channel: 'discord',
-                authMode: 'bot_token',
-                status: 'connected',
-                selectedDefault: false,
-                capabilities: [],
-                updatedAt: new Date().toISOString(),
-              },
-            },
-          },
-        },
-      },
+    renderWithProviders(<DiscordConfig definition={discordDef} />, { store });
+
+    fireEvent.click(screen.getByLabelText(/also delete memory/i));
+    const disconnectButton = screen
+      .getAllByRole('button', { name: 'Disconnect' })
+      .find(button => !button.hasAttribute('disabled'));
+    expect(disconnectButton).toBeDefined();
+    fireEvent.click(disconnectButton!);
+
+    await waitFor(() => {
+      expect(channelConnectionsApi.disconnectChannel).toHaveBeenCalledWith('discord', 'bot_token', {
+        clearMemory: true,
+      });
     });
+  });
 
-    const disconnectBtns = screen.getAllByText('Disconnect');
-    // Find the first enabled Disconnect button (bot_token).
-    const enabledBtn = disconnectBtns.find(btn => !(btn as HTMLButtonElement).disabled);
-    if (!enabledBtn) throw new Error('No enabled Disconnect button found');
-    fireEvent.click(enabledBtn);
-    expect(await screen.findByText('Yes, disconnect')).toBeInTheDocument();
-    expect(
-      screen.getByText('Also delete all memory ingested from this source (cannot be undone)')
-    ).toBeInTheDocument();
+  it('passes clearMemory when disconnecting a connected managed DM account', async () => {
+    const store = createTestStore();
+    store.dispatch(
+      upsertChannelConnection({
+        channel: 'discord',
+        authMode: 'managed_dm',
+        patch: { status: 'connected', capabilities: ['dm'] },
+      })
+    );
+    vi.mocked(channelConnectionsApi.disconnectChannel).mockResolvedValue(undefined);
 
-    const checkbox = screen.getByRole('checkbox');
-    fireEvent.click(checkbox);
-    fireEvent.click(screen.getByText('Yes, disconnect'));
+    renderWithProviders(<DiscordConfig definition={discordDef} />, { store });
+
+    fireEvent.click(screen.getByLabelText(/also delete memory/i));
+    const disconnectButton = screen
+      .getAllByRole('button', { name: 'Disconnect' })
+      .find(button => !button.hasAttribute('disabled'));
+    expect(disconnectButton).toBeDefined();
+    fireEvent.click(disconnectButton!);
 
     await waitFor(() => {
       expect(channelConnectionsApi.disconnectChannel).toHaveBeenCalledWith(
         'discord',
-        'bot_token',
-        true
+        'managed_dm',
+        { clearMemory: true }
       );
     });
   });

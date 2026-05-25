@@ -113,11 +113,15 @@ export async function authorize(
  */
 export async function deleteConnection(
   connectionId: string,
-  clearMemory?: boolean
+  options?: { clearMemory?: boolean }
 ): Promise<ComposioDeleteResponse> {
+  const params: { connection_id: string; clear_memory?: boolean } = { connection_id: connectionId };
+  if (options?.clearMemory) {
+    params.clear_memory = true;
+  }
   const raw = await callCoreRpc<unknown>({
     method: 'openhuman.composio_delete_connection',
-    params: { connection_id: connectionId, clear_memory: clearMemory ?? false },
+    params,
   });
   return unwrapCliEnvelope<ComposioDeleteResponse>(raw);
 }

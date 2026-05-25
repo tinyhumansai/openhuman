@@ -278,7 +278,7 @@ pub fn schemas(function: &str) -> ControllerSchema {
         "delete_connection" => ControllerSchema {
             namespace: "composio",
             function: "delete_connection",
-            description: "Delete a Composio connection owned by the caller.",
+            description: "Delete a Composio connection and optionally remove source-scoped memory.",
             inputs: vec![
                 FieldSchema {
                     name: "connection_id",
@@ -288,8 +288,8 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 },
                 FieldSchema {
                     name: "clear_memory",
-                    ty: TypeSchema::Option(Box::new(TypeSchema::Bool)),
-                    comment: "When true, also delete memory chunks ingested from this integration (default false).",
+                    ty: TypeSchema::Bool,
+                    comment: "When true, delete memory chunks ingested from this connection.",
                     required: false,
                 },
             ],
@@ -301,10 +301,10 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     required: true,
                 },
                 FieldSchema {
-                    name: "memory_clear",
-                    ty: TypeSchema::Option(Box::new(TypeSchema::Json)),
-                    comment: "Memory cleanup result when clear_memory was requested.",
-                    required: false,
+                    name: "memory_chunks_deleted",
+                    ty: TypeSchema::U64,
+                    comment: "Number of memory chunks deleted for this connection.",
+                    required: true,
                 },
             ],
         },
@@ -767,11 +767,7 @@ fn handle_delete_connection(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
         let connection_id = read_required_non_empty(&params, "connection_id")?;
-        let clear_memory = match params.get("clear_memory") {
-            None | Some(Value::Null) => false,
-            Some(Value::Bool(b)) => *b,
-            Some(other) => return Err(format!("clear_memory must be a boolean, got {}", other)),
-        };
+        let clear_memory = read_optional::<bool>(&params, "clear_memory")?.unwrap_or(false);
         to_json(
             super::ops::composio_delete_connection(&config, &connection_id, clear_memory).await?,
         )

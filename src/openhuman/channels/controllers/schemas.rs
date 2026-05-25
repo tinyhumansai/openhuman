@@ -267,18 +267,18 @@ pub fn schemas(function: &str) -> ControllerSchema {
         "disconnect" => ControllerSchema {
             namespace: "channels",
             function: "disconnect",
-            description: "Disconnect a channel and remove stored credentials.",
+            description: "Disconnect a channel and optionally remove source-scoped memory.",
             inputs: vec![
                 required_string("channel", "Channel identifier."),
                 required_string("authMode", "Auth mode to disconnect."),
                 FieldSchema {
                     name: "clearMemory",
-                    ty: TypeSchema::Option(Box::new(TypeSchema::Bool)),
-                    comment: "When true, also delete all memory chunks ingested from this channel (default false).",
+                    ty: TypeSchema::Bool,
+                    comment: "When true, delete memory chunks ingested from this channel.",
                     required: false,
                 },
             ],
-            outputs: vec![json_output("result", "Disconnect result with optional memory_clear status.")],
+            outputs: vec![json_output("result", "Disconnect result.")],
         },
         "status" => ControllerSchema {
             namespace: "channels",

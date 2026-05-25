@@ -310,10 +310,9 @@ const it1: TranslationMap = {
   'accounts.respondQueue': 'Coda di risposta',
   'accounts.disconnect': 'Disconnetti',
   'accounts.disconnectConfirm': 'Sei sicuro di voler disconnettere questo account?',
-  'accounts.disconnectRevokeConfirm': 'Revoke credentials for {name}?',
-  'accounts.disconnectClearMemory':
-    'Also delete all memory ingested from this source (cannot be undone)',
-  'accounts.disconnectYes': 'Yes, disconnect',
+  'accounts.disconnectClearMemory': 'Also delete memory from this source',
+  'accounts.disconnectClearMemoryHint':
+    'Permanently removes local memory chunks linked to this connection.',
   'accounts.searchAccounts': 'Cerca account...',
   'channels.title': 'Canali',
   'channels.configure': 'Configura canale',
