@@ -262,6 +262,7 @@ const zhCN2: TranslationMap = {
   'chat.deleteThread': '删除对话',
   'chat.deleteThreadConfirm': '确定要删除"{title}"吗？',
   'chat.untitledThread': '未命名对话',
+  'chat.editThreadTitle': 'Edit thread title',
   'chat.hideSidebar': '隐藏侧边栏',
   'chat.showSidebar': '显示侧边栏',
   'chat.newThreadShortcut': '新建对话',

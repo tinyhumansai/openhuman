@@ -151,6 +151,14 @@ pub struct UpdateConversationThreadLabelsRequest {
     pub labels: Vec<String>,
 }
 
+/// Request to set a user-specified title on a conversation thread.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UpdateConversationThreadTitleRequest {
+    pub thread_id: String,
+    pub title: String,
+}
+
 /// Response payload for thread list operations.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

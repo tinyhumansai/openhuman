@@ -1321,6 +1321,100 @@ async fn json_rpc_thread_labels_create_and_update() {
 }
 
 #[tokio::test]
+async fn json_rpc_thread_title_create_and_update() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_url_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+    let _api_url_guard = EnvVarGuard::unset("OPENHUMAN_API_URL");
+
+    let (api_addr, api_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let api_origin = format!("http://{api_addr}");
+    write_min_config(openhuman_home.as_path(), &api_origin);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{rpc_addr}");
+
+    // 1. Create a thread.
+    let create = post_json_rpc(&rpc_base, 9101, "openhuman.threads_create_new", json!({})).await;
+    let create_outer = assert_no_jsonrpc_error(&create, "threads_create_new for title update");
+    let created = create_outer
+        .get("data")
+        .expect("data envelope in create response");
+    let thread_id = created
+        .get("id")
+        .and_then(Value::as_str)
+        .expect("id in created thread");
+
+    // 2. Update the title.
+    let update = post_json_rpc(
+        &rpc_base,
+        9102,
+        "openhuman.threads_update_title",
+        json!({ "thread_id": thread_id, "title": "Invoice follow-up" }),
+    )
+    .await;
+    let update_outer = assert_no_jsonrpc_error(&update, "threads_update_title");
+    let updated = update_outer
+        .get("data")
+        .expect("data envelope in update response");
+    assert_eq!(
+        updated.get("title").and_then(Value::as_str),
+        Some("Invoice follow-up"),
+        "update response must carry the new title"
+    );
+    assert_eq!(
+        updated.get("id").and_then(Value::as_str),
+        Some(thread_id),
+        "update response must carry the thread id"
+    );
+
+    // 3. Verify the new title is reflected in threads_list.
+    let list = post_json_rpc(&rpc_base, 9103, "openhuman.threads_list", json!({})).await;
+    let list_outer = assert_no_jsonrpc_error(&list, "threads_list after title update");
+    let threads = list_outer
+        .get("data")
+        .and_then(|d| d.get("threads"))
+        .and_then(Value::as_array)
+        .expect("threads array in list");
+    let persisted = threads
+        .iter()
+        .find(|t| t.get("id").and_then(Value::as_str) == Some(thread_id))
+        .expect("created thread must appear in list");
+    assert_eq!(
+        persisted.get("title").and_then(Value::as_str),
+        Some("Invoice follow-up"),
+        "threads_list must reflect the updated title"
+    );
+
+    // 4. Empty title is rejected.
+    let bad = post_json_rpc(
+        &rpc_base,
+        9104,
+        "openhuman.threads_update_title",
+        json!({ "thread_id": thread_id, "title": "" }),
+    )
+    .await;
+    let bad_err = assert_jsonrpc_error(&bad, "threads_update_title with empty title");
+    let err_message = bad_err
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| panic!("error object missing message: {bad_err}"));
+    assert!(
+        err_message.contains("must not be empty"),
+        "expected empty-title error, got: {err_message}"
+    );
+
+    api_join.abort();
+    rpc_join.abort();
+}
+
+#[tokio::test]
 async fn json_rpc_thread_not_found_errors_are_structured() {
     let _env_lock = json_rpc_e2e_env_lock();
     let tmp = tempdir().expect("tempdir");

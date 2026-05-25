@@ -206,6 +206,26 @@ fn schema_for_rpc_method_finds_security_policy_info() {
 }
 
 #[test]
+fn schema_for_rpc_method_finds_internal_mcp_audit_list() {
+    let schema = schema_for_rpc_method("openhuman.mcp_audit_list");
+    assert!(
+        schema.is_some(),
+        "mcp_audit.list should be internally routable"
+    );
+    let s = schema.unwrap();
+    assert_eq!(s.namespace, "mcp_audit");
+    assert_eq!(s.function, "list");
+}
+
+#[test]
+fn rpc_method_from_parts_does_not_expose_internal_mcp_audit_list() {
+    assert!(
+        rpc_method_from_parts("mcp_audit", "list").is_none(),
+        "internal MCP audit RPC must not appear in the public controller registry"
+    );
+}
+
+#[test]
 fn schema_for_rpc_method_returns_none_for_unknown() {
     assert!(schema_for_rpc_method("openhuman.nonexistent_method_xyz").is_none());
 }

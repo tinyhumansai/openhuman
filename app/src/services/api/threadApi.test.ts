@@ -118,4 +118,26 @@ describe('threadApi', () => {
     mockCallCoreRpc.mockResolvedValueOnce({ data: {} });
     await expect(threadApi.putTaskBoard('thread-1', [])).resolves.toBeNull();
   });
+
+  it('updates a thread title via threads RPC', async () => {
+    const thread = {
+      id: 'thread-1',
+      title: 'Invoice follow-up',
+      chatId: null,
+      isActive: true,
+      messageCount: 3,
+      lastMessageAt: '2026-05-01T09:00:00Z',
+      createdAt: '2026-05-01T08:00:00Z',
+    };
+    mockCallCoreRpc.mockResolvedValueOnce({ data: thread });
+
+    const { threadApi } = await import('./threadApi');
+    const result = await threadApi.updateTitle('thread-1', 'Invoice follow-up');
+
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.threads_update_title',
+      params: { thread_id: 'thread-1', title: 'Invoice follow-up' },
+    });
+    expect(result).toEqual(thread);
+  });
 });

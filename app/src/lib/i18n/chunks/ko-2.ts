@@ -262,6 +262,7 @@ const ko2: TranslationMap = {
   'chat.deleteThread': '스레드 삭제',
   'chat.deleteThreadConfirm': '"{title}" 스레드를 삭제하시겠습니까?',
   'chat.untitledThread': '제목 없는 스레드',
+  'chat.editThreadTitle': 'Edit thread title',
   'chat.hideSidebar': '사이드바 숨기기',
   'chat.showSidebar': '사이드바 표시',
   'chat.newThreadShortcut': '새 스레드 (/new)',

@@ -268,6 +268,9 @@ fn build_internal_only_controllers() -> Vec<RegisteredController> {
     // whatsapp_data ingest: scanner-side write path.  Callable over RPC by the
     // Tauri scanner but excluded from agent-facing schema discovery.
     controllers.extend(crate::openhuman::whatsapp_data::all_whatsapp_data_internal_controllers());
+    // MCP write audit list: internal-only so the desktop UI/CLI can inspect
+    // local write history without exposing cross-client history as an MCP tool.
+    controllers.extend(crate::openhuman::mcp_audit::all_mcp_audit_internal_controllers());
     controllers
 }
 

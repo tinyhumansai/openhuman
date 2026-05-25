@@ -292,6 +292,19 @@ export const updateThreadLabels = createAsyncThunk(
   }
 );
 
+export const updateThreadTitle = createAsyncThunk(
+  'thread/updateThreadTitle',
+  async (payload: { threadId: string; title: string }, { rejectWithValue }) => {
+    try {
+      return await threadApi.updateTitle(payload.threadId, payload.title);
+    } catch (error) {
+      return rejectWithValue(
+        error instanceof Error ? error.message : 'Failed to update thread title'
+      );
+    }
+  }
+);
+
 export const purgeThreads = createAsyncThunk(
   'thread/purgeThreads',
   async (_, { dispatch, rejectWithValue }) => {
@@ -431,6 +444,12 @@ const threadSlice = createSlice({
       })
       .addCase(deleteThread.fulfilled, (state, action) => {
         delete state.messagesByThreadId[action.payload.threadId];
+      })
+      .addCase(updateThreadTitle.fulfilled, (state, action) => {
+        const idx = state.threads.findIndex(t => t.id === action.payload.id);
+        if (idx >= 0) {
+          state.threads[idx] = action.payload;
+        }
       })
       .addCase(resetUserScopedState, () => initialState);
   },

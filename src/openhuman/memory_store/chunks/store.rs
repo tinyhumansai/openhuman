@@ -343,6 +343,26 @@ CREATE TABLE IF NOT EXISTS mem_tree_ingested_sources (
     ingested_at_ms         INTEGER NOT NULL,
     PRIMARY KEY (source_kind, source_id)
 );
+
+-- MCP write-tool audit trail (#2536). This intentionally stores compact
+-- identifying metadata instead of duplicating the memory document body.
+CREATE TABLE IF NOT EXISTS mcp_writes (
+    id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp_ms           INTEGER NOT NULL,
+    client_info            TEXT NOT NULL,
+    tool_name              TEXT NOT NULL,
+    args_summary           TEXT,
+    resulting_chunk_id     TEXT,
+    success                INTEGER NOT NULL,
+    error_message          TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_mcp_writes_timestamp
+    ON mcp_writes(timestamp_ms DESC);
+CREATE INDEX IF NOT EXISTS idx_mcp_writes_client
+    ON mcp_writes(client_info);
+CREATE INDEX IF NOT EXISTS idx_mcp_writes_tool
+    ON mcp_writes(tool_name);
 ";
 
 /// Upsert a batch of chunks atomically.

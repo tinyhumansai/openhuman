@@ -10,7 +10,7 @@ use crate::openhuman::memory::{
     DeleteConversationThreadRequest, DeleteConversationThreadResponse, EmptyRequest,
     GenerateConversationThreadTitleRequest, PaginationMeta, PurgeConversationThreadsResponse,
     UpdateConversationMessageRequest, UpdateConversationThreadLabelsRequest,
-    UpsertConversationThreadRequest,
+    UpdateConversationThreadTitleRequest, UpsertConversationThreadRequest,
 };
 use crate::openhuman::memory_conversations::{
     self as conversations, ConversationMessage, ConversationMessagePatch, ConversationStore,
@@ -445,6 +445,34 @@ pub async fn thread_update_labels(
     );
     Ok(envelope(
         thread_to_summary(thread),
+        Some(counts([("num_threads", 1)])),
+        None,
+    ))
+}
+
+/// Sets a user-specified title on a conversation thread, bypassing AI generation.
+pub async fn thread_update_title(
+    request: UpdateConversationThreadTitleRequest,
+) -> Result<RpcOutcome<ApiEnvelope<ConversationThreadSummary>>, String> {
+    let dir = workspace_dir().await?;
+    let title = request.title.trim().to_string();
+    if title.is_empty() {
+        return Err("title must not be empty".to_string());
+    }
+    let updated = conversations::update_thread_title(
+        dir,
+        &request.thread_id,
+        &title,
+        &chrono::Utc::now().to_rfc3339(),
+    )
+    .map_err(|err| format!("update title: {err}"))?;
+    tracing::debug!(
+        thread_id = %request.thread_id,
+        title_len = updated.title.chars().count(),
+        "[threads] user updated thread title"
+    );
+    Ok(envelope(
+        thread_to_summary(updated),
         Some(counts([("num_threads", 1)])),
         None,
     ))

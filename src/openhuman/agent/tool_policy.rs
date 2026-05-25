@@ -5,6 +5,7 @@
 //! deny a tool before any side effect reaches the tool implementation.
 
 use async_trait::async_trait;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 /// Structured context for a tool call before it reaches the tool
@@ -69,6 +70,7 @@ pub struct ToolPolicyRequest {
     pub tool_name: String,
     pub arguments: serde_json::Value,
     pub context: ToolCallContext,
+    pub generated_tool: Option<GeneratedToolRuntimeContext>,
     /// Backward-compatible mirror of `context.session_id`.
     #[deprecated(note = "use context.session_id")]
     pub session_id: String,
@@ -88,6 +90,7 @@ impl fmt::Debug for ToolPolicyRequest {
                 .field("tool_name", &self.tool_name)
                 .field("arguments", &"<redacted>")
                 .field("context", &self.context)
+                .field("generated_tool", &self.generated_tool)
                 .field("session_id", &redact_for_debug(&self.session_id))
                 .field("channel", &redact_for_debug(&self.channel))
                 .field("agent_definition_id", &self.agent_definition_id)
@@ -111,8 +114,14 @@ impl ToolPolicyRequest {
                 channel: context.channel.clone(),
                 agent_definition_id: context.agent_definition_id.clone(),
                 context,
+                generated_tool: None,
             }
         }
+    }
+
+    pub fn with_generated_tool_context(mut self, context: GeneratedToolRuntimeContext) -> Self {
+        self.generated_tool = Some(context);
+        self
     }
 }
 
@@ -129,13 +138,37 @@ fn redact_for_debug(value: &str) -> String {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ToolPolicyDecision {
     Allow,
-    Deny { reason: String },
+    /// The policy requires an approval handoff before execution.
+    ///
+    /// Session execution currently treats this as fail-closed through
+    /// [`ToolPolicyDecision::blocking_reason`]. Callers that can prompt for
+    /// approval may branch on this variant and retry after approval is granted.
+    RequireApproval {
+        reason: String,
+    },
+    Deny {
+        reason: String,
+    },
 }
 
 impl ToolPolicyDecision {
+    pub fn require_approval(reason: impl Into<String>) -> Self {
+        Self::RequireApproval {
+            reason: reason.into(),
+        }
+    }
+
     pub fn deny(reason: impl Into<String>) -> Self {
         Self::Deny {
             reason: reason.into(),
+        }
+    }
+
+    /// Reason used by fail-closed executors that cannot complete approvals inline.
+    pub fn blocking_reason(&self) -> Option<&str> {
+        match self {
+            Self::Allow => None,
+            Self::RequireApproval { reason } | Self::Deny { reason } => Some(reason.as_str()),
         }
     }
 }
@@ -162,6 +195,196 @@ impl ToolPolicy for AllowAllToolPolicy {
 
     async fn check(&self, _request: &ToolPolicyRequest) -> ToolPolicyDecision {
         ToolPolicyDecision::Allow
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GeneratedToolRuntimeContext {
+    pub provider_id: String,
+    pub capability_id: String,
+    pub risk: GeneratedToolRuntimeRisk,
+    pub source_digest: Option<String>,
+    pub approval_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum GeneratedToolRuntimeRisk {
+    Read,
+    Write,
+    ExternalWrite,
+    Execute,
+    Dangerous,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeToolPolicyAction {
+    Allow,
+    RequireApproval,
+    Deny,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct GeneratedToolRuntimePolicyConfig {
+    pub enabled: bool,
+    pub revoked_providers: BTreeSet<String>,
+    pub revoked_capabilities: BTreeSet<String>,
+    pub provider_actions: BTreeMap<String, RuntimeToolPolicyAction>,
+    pub capability_actions: BTreeMap<String, RuntimeToolPolicyAction>,
+    pub risk_actions: BTreeMap<GeneratedToolRuntimeRisk, RuntimeToolPolicyAction>,
+}
+
+#[derive(Debug, Clone)]
+pub struct GeneratedToolRuntimePolicy {
+    config: GeneratedToolRuntimePolicyConfig,
+}
+
+impl GeneratedToolRuntimePolicy {
+    pub fn new(config: GeneratedToolRuntimePolicyConfig) -> Self {
+        Self { config }
+    }
+
+    fn action_for(
+        &self,
+        tool_name: &str,
+        context: &GeneratedToolRuntimeContext,
+    ) -> (RuntimeToolPolicyAction, String) {
+        if self
+            .config
+            .revoked_providers
+            .contains(context.provider_id.as_str())
+        {
+            tracing::debug!(
+                tool = tool_name,
+                provider_id = context.provider_id.as_str(),
+                capability_id = context.capability_id.as_str(),
+                risk = ?context.risk,
+                action = ?RuntimeToolPolicyAction::Deny,
+                "[generated_tool_runtime] provider revoked"
+            );
+            return (
+                RuntimeToolPolicyAction::Deny,
+                format!("provider `{}` is revoked", context.provider_id),
+            );
+        }
+        if self
+            .config
+            .revoked_capabilities
+            .contains(context.capability_id.as_str())
+        {
+            tracing::debug!(
+                tool = tool_name,
+                provider_id = context.provider_id.as_str(),
+                capability_id = context.capability_id.as_str(),
+                risk = ?context.risk,
+                action = ?RuntimeToolPolicyAction::Deny,
+                "[generated_tool_runtime] capability revoked"
+            );
+            return (
+                RuntimeToolPolicyAction::Deny,
+                format!("capability `{}` is revoked", context.capability_id),
+            );
+        }
+        if let Some(action) = self.config.capability_actions.get(&context.capability_id) {
+            tracing::debug!(
+                tool = tool_name,
+                provider_id = context.provider_id.as_str(),
+                capability_id = context.capability_id.as_str(),
+                risk = ?context.risk,
+                action = ?action,
+                "[generated_tool_runtime] capability action matched"
+            );
+            return (
+                *action,
+                format!(
+                    "capability `{}` matched runtime policy",
+                    context.capability_id
+                ),
+            );
+        }
+        if let Some(action) = self.config.provider_actions.get(&context.provider_id) {
+            tracing::debug!(
+                tool = tool_name,
+                provider_id = context.provider_id.as_str(),
+                capability_id = context.capability_id.as_str(),
+                risk = ?context.risk,
+                action = ?action,
+                "[generated_tool_runtime] provider action matched"
+            );
+            return (
+                *action,
+                format!("provider `{}` matched runtime policy", context.provider_id),
+            );
+        }
+        if let Some(action) = self.config.risk_actions.get(&context.risk) {
+            tracing::debug!(
+                tool = tool_name,
+                provider_id = context.provider_id.as_str(),
+                capability_id = context.capability_id.as_str(),
+                risk = ?context.risk,
+                action = ?action,
+                "[generated_tool_runtime] risk action matched"
+            );
+            return (
+                *action,
+                format!("risk `{:?}` matched runtime policy", context.risk),
+            );
+        }
+        tracing::trace!(
+            tool = tool_name,
+            provider_id = context.provider_id.as_str(),
+            capability_id = context.capability_id.as_str(),
+            risk = ?context.risk,
+            action = ?RuntimeToolPolicyAction::Allow,
+            "[generated_tool_runtime] default allow"
+        );
+        (
+            RuntimeToolPolicyAction::Allow,
+            format!("tool `{tool_name}` allowed"),
+        )
+    }
+}
+
+#[async_trait]
+impl ToolPolicy for GeneratedToolRuntimePolicy {
+    fn name(&self) -> &str {
+        "generated_tool_runtime"
+    }
+
+    async fn check(&self, request: &ToolPolicyRequest) -> ToolPolicyDecision {
+        if !self.config.enabled {
+            tracing::trace!(
+                policy = self.name(),
+                tool = request.tool_name.as_str(),
+                "[generated_tool_runtime] policy disabled"
+            );
+            return ToolPolicyDecision::Allow;
+        }
+        let Some(context) = request.generated_tool.as_ref() else {
+            tracing::trace!(
+                policy = self.name(),
+                tool = request.tool_name.as_str(),
+                "[generated_tool_runtime] context missing"
+            );
+            return ToolPolicyDecision::Allow;
+        };
+        let (action, reason) = self.action_for(&request.tool_name, context);
+        tracing::debug!(
+            policy = self.name(),
+            tool = request.tool_name.as_str(),
+            provider_id = context.provider_id.as_str(),
+            capability_id = context.capability_id.as_str(),
+            risk = ?context.risk,
+            action = ?action,
+            reason = reason.as_str(),
+            "[generated_tool_runtime] policy decision"
+        );
+        match action {
+            RuntimeToolPolicyAction::Allow => ToolPolicyDecision::Allow,
+            RuntimeToolPolicyAction::RequireApproval => {
+                ToolPolicyDecision::require_approval(reason)
+            }
+            RuntimeToolPolicyAction::Deny => ToolPolicyDecision::deny(reason),
+        }
     }
 }
 
@@ -212,5 +435,90 @@ mod tests {
         assert!(!rendered.contains("session-secret-123"));
         assert!(!rendered.contains("private-channel"));
         assert!(!rendered.contains("super-secret-token"));
+    }
+
+    fn generated_request() -> ToolPolicyRequest {
+        ToolPolicyRequest::new(
+            "email.send",
+            serde_json::json!({ "to": "user@example.com" }),
+            ToolCallContext::session("session", "chat", "orchestrator", "call-1", 1),
+        )
+        .with_generated_tool_context(GeneratedToolRuntimeContext {
+            provider_id: "mail.runtime".to_string(),
+            capability_id: "email.send".to_string(),
+            risk: GeneratedToolRuntimeRisk::ExternalWrite,
+            source_digest: Some("sha256:abc".to_string()),
+            approval_id: None,
+        })
+    }
+
+    #[tokio::test]
+    async fn generated_runtime_policy_allows_when_disabled() {
+        let policy = GeneratedToolRuntimePolicy::new(GeneratedToolRuntimePolicyConfig::default());
+
+        assert_eq!(
+            policy.check(&generated_request()).await,
+            ToolPolicyDecision::Allow
+        );
+    }
+
+    #[tokio::test]
+    async fn generated_runtime_policy_allows_when_enabled_but_missing_context() {
+        let policy = GeneratedToolRuntimePolicy::new(GeneratedToolRuntimePolicyConfig {
+            enabled: true,
+            ..Default::default()
+        });
+
+        let request = ToolPolicyRequest::new(
+            "echo",
+            serde_json::json!({ "value": 1 }),
+            ToolCallContext::session("session", "chat", "orchestrator", "call-1", 1),
+        );
+
+        assert_eq!(policy.check(&request).await, ToolPolicyDecision::Allow);
+    }
+
+    #[tokio::test]
+    async fn generated_runtime_policy_denies_revoked_provider() {
+        let policy = GeneratedToolRuntimePolicy::new(GeneratedToolRuntimePolicyConfig {
+            enabled: true,
+            revoked_providers: BTreeSet::from(["mail.runtime".to_string()]),
+            ..Default::default()
+        });
+
+        let decision = policy.check(&generated_request()).await;
+        assert!(matches!(decision, ToolPolicyDecision::Deny { .. }));
+        assert!(decision.blocking_reason().unwrap().contains("revoked"));
+    }
+
+    #[tokio::test]
+    async fn generated_runtime_policy_denies_revoked_capability() {
+        let policy = GeneratedToolRuntimePolicy::new(GeneratedToolRuntimePolicyConfig {
+            enabled: true,
+            revoked_capabilities: BTreeSet::from(["email.send".to_string()]),
+            ..Default::default()
+        });
+
+        let decision = policy.check(&generated_request()).await;
+        assert!(matches!(decision, ToolPolicyDecision::Deny { .. }));
+        assert!(decision.blocking_reason().unwrap().contains("capability"));
+    }
+
+    #[tokio::test]
+    async fn generated_runtime_policy_requires_approval_by_risk() {
+        let policy = GeneratedToolRuntimePolicy::new(GeneratedToolRuntimePolicyConfig {
+            enabled: true,
+            risk_actions: BTreeMap::from([(
+                GeneratedToolRuntimeRisk::ExternalWrite,
+                RuntimeToolPolicyAction::RequireApproval,
+            )]),
+            ..Default::default()
+        });
+
+        let decision = policy.check(&generated_request()).await;
+        assert!(matches!(
+            decision,
+            ToolPolicyDecision::RequireApproval { .. }
+        ));
     }
 }

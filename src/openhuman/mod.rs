@@ -47,6 +47,7 @@ pub mod integrations;
 pub mod javascript;
 pub mod keyring;
 pub mod learning;
+pub mod mcp_audit;
 pub mod mcp_client;
 pub mod mcp_registry;
 pub mod mcp_server;
