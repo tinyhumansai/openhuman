@@ -3,12 +3,13 @@ use rusqlite::{params, types::Type, Row, ToSql};
 use serde_json::Value;
 
 use crate::openhuman::config::Config;
-use crate::openhuman::memory_tree;
+use crate::openhuman::memory_store::chunks::store as chunk_store;
 
 use super::types::{McpWriteListQuery, McpWriteRecord, NewMcpWriteRecord};
 
 const DEFAULT_LIST_LIMIT: u64 = 50;
 const MAX_LIST_LIMIT: u64 = 500;
+const ERROR_MESSAGE_MAX_BYTES: usize = 1024;
 
 pub fn record_write(config: &Config, record: NewMcpWriteRecord) -> Result<i64> {
     log::debug!(
@@ -38,7 +39,8 @@ pub fn record_write(config: &Config, record: NewMcpWriteRecord) -> Result<i64> {
                 .context("failed to serialize mcp write args_summary");
         }
     };
-    let result = memory_tree::store::with_connection(config, |conn| {
+    let error_message = truncate_error_message(record.error_message.as_deref());
+    let result = chunk_store::with_connection(config, |conn| {
         log::trace!(
             "[mcp_audit] record_write inserting row tool={} client={} timestamp_ms={}",
             record.tool_name,
@@ -62,7 +64,7 @@ pub fn record_write(config: &Config, record: NewMcpWriteRecord) -> Result<i64> {
                 &args_summary,
                 record.resulting_chunk_id.as_deref(),
                 if record.success { 1_i64 } else { 0_i64 },
-                record.error_message.as_deref(),
+                error_message.as_deref(),
             ],
         ) {
             Ok(_) => {}
@@ -105,7 +107,7 @@ pub fn list_writes(config: &Config, query: &McpWriteListQuery) -> Result<Vec<Mcp
         query.tool_filter,
         query.success_only
     );
-    let result = memory_tree::store::with_connection(config, |conn| {
+    let result = chunk_store::with_connection(config, |conn| {
         let mut sql = String::from(
             "SELECT
                 id,
@@ -210,6 +212,19 @@ fn normalized_filter(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|value| !value.is_empty())
 }
 
+fn truncate_error_message(message: Option<&str>) -> Option<String> {
+    let message = message?;
+    if message.len() <= ERROR_MESSAGE_MAX_BYTES {
+        return Some(message.to_string());
+    }
+
+    let mut end = ERROR_MESSAGE_MAX_BYTES;
+    while end > 0 && !message.is_char_boundary(end) {
+        end -= 1;
+    }
+    Some(message[..end].to_string())
+}
+
 fn row_to_record(row: &Row<'_>) -> rusqlite::Result<McpWriteRecord> {
     let args_summary_text: Option<String> = row.get(4)?;
     let args_summary = match args_summary_text {
@@ -282,6 +297,24 @@ mod tests {
         assert_eq!(rows[1].id, success_id);
         assert!(rows[1].success);
         assert_eq!(rows[1].resulting_chunk_id.as_deref(), Some("chunk-100"));
+    }
+
+    #[test]
+    fn record_handles_multibyte_error_truncation_safely() {
+        let tmp = TempDir::new().unwrap();
+        let config = test_config(&tmp);
+        let symbol = "\u{1F980}";
+        let symbol_char = symbol.chars().next().unwrap();
+        let mut failed = record(100, "mcp:claude-desktop", "memory.store", false);
+        failed.error_message = Some(symbol.repeat((ERROR_MESSAGE_MAX_BYTES / symbol.len()) + 2));
+
+        record_write(&config, failed).unwrap();
+
+        let rows = list_writes(&config, &McpWriteListQuery::default()).unwrap();
+        let stored = rows[0].error_message.as_deref().expect("error message");
+        assert!(stored.len() <= ERROR_MESSAGE_MAX_BYTES);
+        assert!(stored.is_char_boundary(stored.len()));
+        assert!(stored.chars().all(|ch| ch == symbol_char));
     }
 
     #[test]

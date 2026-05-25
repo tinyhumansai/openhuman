@@ -1191,14 +1191,14 @@ async fn enforce_act_policy(tool_name: &str) -> Result<(), ToolCallError> {
 
 async fn load_write_config(tool_name: &str) -> Result<Config, ToolCallError> {
     match config_rpc::load_config_with_timeout().await {
-        Ok(config) => config,
+        Ok(config) => Ok(config),
         Err(err) => {
             log::warn!(
                 "[mcp_server] enforce_write_policy config load failed tool={tool_name} error={err}"
             );
-            return Err(ToolCallError::Internal(format!(
+            Err(ToolCallError::Internal(format!(
                 "failed to load config: {err}"
-            )));
+            )))
         }
     }
 }
