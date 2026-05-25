@@ -156,6 +156,14 @@ describe('SettingsHome', () => {
       expect(mockNavigateToSettings).toHaveBeenCalledWith('notifications');
     });
 
+    it('navigates to persona settings when Persona is clicked', async () => {
+      const user = userEvent.setup();
+      renderSettingsHome();
+
+      await user.click(screen.getByText('Persona').closest('button')!);
+      expect(mockNavigateToSettings).toHaveBeenCalledWith('persona');
+    });
+
     it('navigates to /notifications inbox when Alerts is clicked', async () => {
       const user = userEvent.setup();
       renderSettingsHome();

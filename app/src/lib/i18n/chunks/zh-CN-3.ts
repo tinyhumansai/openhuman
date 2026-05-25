@@ -400,6 +400,12 @@ const zhCN3: TranslationMap = {
   'channels.web.description': '通过内置的 Web UI 聊天。',
   'channels.web.authMode.managed_dm.description': '使用嵌入式 Web 聊天 — 无需设置。',
   'welcome.continueLocallyExperimental': '在本地继续（实验性）',
+  'channels.yuanbao.connect': 'Connect',
+  'channels.yuanbao.connecting': '连接中…',
+  'channels.yuanbao.fieldRequired': '{field} 不能为空',
+  'channels.yuanbao.reconnect': 'Reconnect',
+  'channels.yuanbao.savedRestartRequired': 'Channel saved. Restart the app to activate it.',
+  'channels.yuanbao.unexpectedStatus': '意外的连接状态：{status}',
 };
 
 export default zhCN3;

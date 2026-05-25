@@ -284,6 +284,7 @@ const es2: TranslationMap = {
   'chat.deleteThread': 'Eliminar hilo',
   'chat.deleteThreadConfirm': '¿Seguro que quieres eliminar "{title}"?',
   'chat.untitledThread': 'Hilo sin título',
+  'chat.editThreadTitle': 'Edit thread title',
   'chat.hideSidebar': 'Ocultar barra lateral',
   'chat.showSidebar': 'Mostrar barra lateral',
   'chat.newThreadShortcut': 'Nuevo hilo (/new)',

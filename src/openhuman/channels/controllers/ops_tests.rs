@@ -1,4 +1,5 @@
 use super::*;
+use crate::openhuman::channels::providers::yuanbao::YuanbaoConfig;
 use crate::openhuman::memory_store::chunks::store as memory_tree_store;
 use crate::openhuman::memory_store::chunks::types::{
     chunk_id, Chunk, Metadata, SourceKind, SourceRef,
@@ -551,5 +552,273 @@ async fn connected_channel_slugs_empty_when_nothing_configured() {
     assert!(
         slugs.is_empty(),
         "fresh config should yield no channels: {slugs:?}"
+    );
+}
+
+// ── Yuanbao channel credential verification ────────────────────
+// Issue: connect_channel for yuanbao previously stored creds and returned
+// "connected" without ever calling the upstream sign-token endpoint, so
+// random input (e.g. app_key=12) showed as Connected in the UI. The fix
+// calls `/api/v5/robotLogic/sign-token` and propagates the API error.
+
+/// Build a Config pre-pointed at a mock `api_domain` so the verification
+/// step hits the wiremock server instead of the live prod URL.
+fn yuanbao_test_config(mock_uri: &str) -> (tempfile::TempDir, Config) {
+    let (tmp, mut config) = isolated_test_config();
+    config.channels_config.yuanbao = Some(YuanbaoConfig {
+        api_domain: mock_uri.to_string(),
+        ..Default::default()
+    });
+    (tmp, config)
+}
+
+#[tokio::test]
+async fn connect_yuanbao_rejects_invalid_credentials() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/v5/robotLogic/sign-token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "code": 40001,
+            "msg": "invalid signature",
+        })))
+        .mount(&server)
+        .await;
+
+    let (_tmp, config) = yuanbao_test_config(&server.uri());
+    let err = connect_channel(
+        &config,
+        "yuanbao",
+        ChannelAuthMode::ApiKey,
+        serde_json::json!({ "app_key": "12", "app_secret": "12" }),
+    )
+    .await
+    .expect_err("invalid yuanbao credentials should fail");
+
+    assert!(
+        err.contains("yuanbao credential verification failed") && err.contains("invalid signature"),
+        "expected upstream API msg in error, got: {err}"
+    );
+
+    // Nothing should be persisted on failure: no TOML write, no credential row.
+    let raw = tokio::fs::read_to_string(&config.config_path).await.ok();
+    if let Some(text) = raw {
+        let parsed: toml::Value = toml::from_str(&text).expect("config parses");
+        // The mock api_domain we pre-loaded is allowed to be present, but
+        // app_key / app_secret must NOT have been written.
+        if let Some(yb) = parsed
+            .get("channels_config")
+            .and_then(|v| v.get("yuanbao"))
+            .and_then(toml::Value::as_table)
+        {
+            assert_ne!(
+                yb.get("app_key").and_then(toml::Value::as_str),
+                Some("12"),
+                "app_key must not be persisted when verification fails"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn connect_yuanbao_persists_when_credentials_valid() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/v5/robotLogic/sign-token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "code": 0,
+            "data": {
+                "token": "tok-abc",
+                "bot_id": "bot-123",
+                "product": "yuanbao",
+                "source": "openhuman",
+                "duration": 3600,
+            }
+        })))
+        .mount(&server)
+        .await;
+
+    let (_tmp, config) = yuanbao_test_config(&server.uri());
+    let result = connect_channel(
+        &config,
+        "yuanbao",
+        ChannelAuthMode::ApiKey,
+        serde_json::json!({ "app_key": "real-key", "app_secret": "real-secret" }),
+    )
+    .await
+    .expect("valid yuanbao credentials should succeed");
+
+    assert_eq!(result.value.status, "connected");
+    assert!(result.value.restart_required);
+
+    let raw = tokio::fs::read_to_string(&config.config_path)
+        .await
+        .expect("config should be persisted");
+    let parsed: toml::Value = toml::from_str(&raw).expect("config parses");
+    let yb = parsed
+        .get("channels_config")
+        .and_then(|v| v.get("yuanbao"))
+        .and_then(toml::Value::as_table)
+        .expect("channels_config.yuanbao persisted");
+    assert_eq!(
+        yb.get("app_key").and_then(toml::Value::as_str),
+        Some("real-key")
+    );
+    // The plaintext `app_secret` must NOT be persisted in TOML — the
+    // runtime loads it from the encrypted credentials store instead.
+    let toml_secret = yb.get("app_secret").and_then(toml::Value::as_str);
+    assert!(
+        toml_secret.is_none() || toml_secret == Some(""),
+        "app_secret must not be persisted in plaintext TOML, got {toml_secret:?}"
+    );
+
+    // The credentials store should contain the secret so startup can recover it.
+    let auth = crate::openhuman::credentials::AuthService::from_config(&config);
+    let profile = auth
+        .get_profile("channel:yuanbao:api_key", None)
+        .expect("credentials lookup succeeds")
+        .expect("yuanbao credentials stored");
+    assert_eq!(
+        profile.metadata.get("app_secret").map(String::as_str),
+        Some("real-secret")
+    );
+    assert_eq!(
+        profile.metadata.get("app_key").map(String::as_str),
+        Some("real-key")
+    );
+}
+
+#[tokio::test]
+async fn connect_yuanbao_verifies_against_overridden_api_domain() {
+    // Regression: previously, `verify_yuanbao_credentials` rebuilt the
+    // YuanbaoConfig from `config.channels_config.yuanbao` alone and
+    // ignored the `api_domain` / `env` / `route_env` overrides on the
+    // connect-channel payload. A user submitting `env = "pre"` could
+    // pass verification against PROD and then fail after restart when
+    // the persisted override took effect.
+    //
+    // Here the base TOML's `api_domain` deliberately points at an
+    // unreachable URL — verification only succeeds if the override
+    // supplied in `creds_map` is what actually gets used.
+    use wiremock::matchers::{header, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/v5/robotLogic/sign-token"))
+        .and(header("X-Route-Env", "canary"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "code": 0,
+            "data": {
+                "token": "tok-override",
+                "bot_id": "bot-1",
+                "product": "yuanbao",
+                "source": "openhuman",
+                "duration": 3600,
+            }
+        })))
+        .mount(&server)
+        .await;
+
+    let (_tmp, mut config) = isolated_test_config();
+    // Base TOML points to a black hole so the test fails immediately if
+    // the verifier ignores the override.
+    config.channels_config.yuanbao = Some(YuanbaoConfig {
+        api_domain: "http://127.0.0.1:1".to_string(),
+        ..Default::default()
+    });
+
+    let mock_uri = server.uri();
+    let result = connect_channel(
+        &config,
+        "yuanbao",
+        ChannelAuthMode::ApiKey,
+        serde_json::json!({
+            "app_key": "k",
+            "app_secret": "s",
+            "api_domain": mock_uri.clone(),
+            "route_env": "canary",
+        }),
+    )
+    .await
+    .expect("override should be applied before verify");
+
+    assert_eq!(result.value.status, "connected");
+
+    // The override should also have been persisted (single source of
+    // truth between verify and persist).
+    let raw = tokio::fs::read_to_string(&config.config_path)
+        .await
+        .expect("config should be persisted");
+    let parsed: toml::Value = toml::from_str(&raw).expect("config parses");
+    let yb = parsed
+        .get("channels_config")
+        .and_then(|v| v.get("yuanbao"))
+        .and_then(toml::Value::as_table)
+        .expect("channels_config.yuanbao persisted");
+    assert_eq!(
+        yb.get("api_domain").and_then(toml::Value::as_str),
+        Some(mock_uri.as_str()),
+    );
+    assert_eq!(
+        yb.get("route_env").and_then(toml::Value::as_str),
+        Some("canary"),
+    );
+}
+
+#[tokio::test]
+async fn connect_yuanbao_persists_env_override() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/v5/robotLogic/sign-token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "code": 0,
+            "data": {
+                "token": "tok-pre",
+                "bot_id": "bot-456",
+                "product": "yuanbao",
+                "source": "openhuman",
+                "duration": 3600,
+            }
+        })))
+        .mount(&server)
+        .await;
+
+    let (_tmp, config) = yuanbao_test_config(&server.uri());
+    connect_channel(
+        &config,
+        "yuanbao",
+        ChannelAuthMode::ApiKey,
+        serde_json::json!({
+            "app_key": "k",
+            "app_secret": "s",
+            "env": "pre",
+            "route_env": "canary",
+        }),
+    )
+    .await
+    .expect("valid yuanbao credentials should succeed");
+
+    let raw = tokio::fs::read_to_string(&config.config_path)
+        .await
+        .expect("config should be persisted");
+    let parsed: toml::Value = toml::from_str(&raw).expect("config parses");
+    let yb = parsed
+        .get("channels_config")
+        .and_then(|v| v.get("yuanbao"))
+        .and_then(toml::Value::as_table)
+        .expect("channels_config.yuanbao persisted");
+    assert_eq!(yb.get("env").and_then(toml::Value::as_str), Some("pre"));
+    assert_eq!(
+        yb.get("route_env").and_then(toml::Value::as_str),
+        Some("canary")
     );
 }

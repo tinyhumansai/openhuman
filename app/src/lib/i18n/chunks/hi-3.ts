@@ -410,6 +410,12 @@ const hi3: TranslationMap = {
   'channels.web.authMode.managed_dm.description':
     'एम्बेडेड वेब चैट का उपयोग करें - किसी सेटअप की आवश्यकता नहीं है।',
   'welcome.continueLocallyExperimental': 'स्थानीय रूप से जारी रखें (प्रायोगिक)',
+  'channels.yuanbao.connect': 'Connect',
+  'channels.yuanbao.connecting': 'Connecting…',
+  'channels.yuanbao.fieldRequired': '{field} is required',
+  'channels.yuanbao.reconnect': 'Reconnect',
+  'channels.yuanbao.savedRestartRequired': 'Channel saved. Restart the app to activate it.',
+  'channels.yuanbao.unexpectedStatus': 'Unexpected connection status: {status}',
 };
 
 export default hi3;

@@ -75,6 +75,7 @@ vi.mock('../../services/api/threadApi', () => ({
     updateMessage: vi.fn().mockResolvedValue({}),
     purge: vi.fn().mockResolvedValue({}),
     updateLabels: vi.fn().mockResolvedValue({}),
+    updateTitle: vi.fn().mockResolvedValue({}),
     persistReaction: vi.fn().mockResolvedValue({}),
   },
 }));
@@ -1308,5 +1309,138 @@ describe('Conversations — worker thread back-to-parent navigation (#1624)', ()
 
     // Loading span with animate-pulse is present when teamUsage=null and loading
     expect(screen.getByText('Loading…')).toBeInTheDocument();
+  });
+});
+
+describe('Conversations — thread title editing', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockUseUsageState.mockReturnValue({
+      teamUsage: null,
+      currentPlan: null,
+      currentTier: 'FREE' as const,
+      isFreeTier: true,
+      usagePct: 0,
+      isNearLimit: false,
+      isAtLimit: false,
+      isBudgetExhausted: false,
+      shouldShowBudgetCompletedMessage: false,
+      isLoading: false,
+      refresh: vi.fn(),
+    });
+    mockGetThreadMessages.mockResolvedValue({ messages: [], count: 0 });
+  });
+
+  it('shows pencil icon on hover and enters edit mode on click', async () => {
+    const thread = makeThread({ id: 'edit-title-thread', title: 'Original Title' });
+    mockGetThreads.mockResolvedValue({ threads: [thread], count: 1 });
+
+    await act(async () => {
+      await renderConversations({
+        thread: selectedThreadState(thread),
+        socket: socketState('connected'),
+      });
+    });
+
+    expect(screen.getByText('Original Title')).toBeInTheDocument();
+
+    const editBtn = screen.getByRole('button', { name: 'Edit thread title' });
+    expect(editBtn).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(editBtn);
+    });
+
+    const input = screen.getByLabelText('Edit thread title');
+    expect(input).toBeInTheDocument();
+    expect(input).toHaveValue('Original Title');
+  });
+
+  it('commits edited title on Enter and dispatches updateThreadTitle', async () => {
+    const thread = makeThread({ id: 'commit-title-thread', title: 'Old Title' });
+    mockGetThreads.mockResolvedValue({ threads: [thread], count: 1 });
+    (threadApi.updateTitle as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...thread,
+      title: 'New Title',
+    });
+
+    await act(async () => {
+      await renderConversations({
+        thread: selectedThreadState(thread),
+        socket: socketState('connected'),
+      });
+    });
+
+    const editBtn = screen.getByRole('button', { name: 'Edit thread title' });
+    await act(async () => {
+      fireEvent.click(editBtn);
+    });
+
+    const input = screen.getByLabelText('Edit thread title');
+    await act(async () => {
+      fireEvent.change(input, { target: { value: 'New Title' } });
+    });
+    await act(async () => {
+      fireEvent.keyDown(input, { key: 'Enter' });
+    });
+
+    await waitFor(() => {
+      expect(threadApi.updateTitle).toHaveBeenCalledWith('commit-title-thread', 'New Title');
+    });
+  });
+
+  it('cancels editing on Escape without dispatching', async () => {
+    const thread = makeThread({ id: 'cancel-title-thread', title: 'Keep Me' });
+    mockGetThreads.mockResolvedValue({ threads: [thread], count: 1 });
+
+    await act(async () => {
+      await renderConversations({
+        thread: selectedThreadState(thread),
+        socket: socketState('connected'),
+      });
+    });
+
+    const editBtn = screen.getByRole('button', { name: 'Edit thread title' });
+    await act(async () => {
+      fireEvent.click(editBtn);
+    });
+
+    const input = screen.getByLabelText('Edit thread title');
+    await act(async () => {
+      fireEvent.change(input, { target: { value: 'Changed' } });
+    });
+    await act(async () => {
+      fireEvent.keyDown(input, { key: 'Escape' });
+    });
+
+    expect(screen.getByText('Keep Me')).toBeInTheDocument();
+    expect(threadApi.updateTitle).not.toHaveBeenCalled();
+  });
+
+  it('does not dispatch when title is empty after trim', async () => {
+    const thread = makeThread({ id: 'empty-title-thread', title: 'Has Title' });
+    mockGetThreads.mockResolvedValue({ threads: [thread], count: 1 });
+
+    await act(async () => {
+      await renderConversations({
+        thread: selectedThreadState(thread),
+        socket: socketState('connected'),
+      });
+    });
+
+    const editBtn = screen.getByRole('button', { name: 'Edit thread title' });
+    await act(async () => {
+      fireEvent.click(editBtn);
+    });
+
+    const input = screen.getByLabelText('Edit thread title');
+    await act(async () => {
+      fireEvent.change(input, { target: { value: '   ' } });
+    });
+    await act(async () => {
+      fireEvent.keyDown(input, { key: 'Enter' });
+    });
+
+    expect(threadApi.updateTitle).not.toHaveBeenCalled();
   });
 });

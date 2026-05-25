@@ -1023,6 +1023,16 @@ const CAPABILITIES: &[Capability] = &[
         privacy: None,
     },
     Capability {
+        id: "settings.persona_pack",
+        name: "Persona Pack",
+        domain: "settings",
+        category: CapabilityCategory::Settings,
+        description: "Personalize the assistant as one identity: set a display name and description, edit or reset the SOUL.md personality prompt, and reach mascot avatar and voice settings — all from a single Persona surface.",
+        how_to: "Settings > Persona",
+        status: CapabilityStatus::Beta,
+        privacy: None,
+    },
+    Capability {
         id: "settings.manage_privacy_analytics",
         name: "Manage Privacy and Analytics",
         domain: "settings",

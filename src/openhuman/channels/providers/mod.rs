@@ -19,3 +19,4 @@ pub mod web;
 pub mod whatsapp;
 #[cfg(feature = "whatsapp-web")]
 pub mod whatsapp_web;
+pub mod yuanbao;

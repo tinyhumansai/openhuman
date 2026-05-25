@@ -529,6 +529,30 @@ const de5: TranslationMap = {
   'settings.mascot.colorYellow': 'Gelb',
   'settings.mascot.libraryUnavailable': 'OpenHuman Bibliothek nicht verfügbar',
   'settings.mascot.title': 'OpenHuman',
+  'settings.persona.title': 'Persona',
+  'settings.persona.menuTitle': 'Persona',
+  'settings.persona.menuDesc':
+    'Name, personality, avatar, and voice — your assistant as one identity',
+  'settings.persona.identityHeading': 'Identity',
+  'settings.persona.identityDesc':
+    'A display name and short description for your assistant. Shown in the app; does not change how the assistant reasons.',
+  'settings.persona.displayNameLabel': 'Display name',
+  'settings.persona.displayNamePlaceholder': 'e.g. Nova',
+  'settings.persona.descriptionLabel': 'Description',
+  'settings.persona.descriptionPlaceholder': 'e.g. A calm, concise assistant for my team.',
+  'settings.persona.soul.heading': 'Personality (SOUL.md)',
+  'settings.persona.soul.desc':
+    'The personality prompt the assistant follows in every conversation. Edits are saved to your workspace and take effect on the next reply.',
+  'settings.persona.soul.editorLabel': 'SOUL.md contents',
+  'settings.persona.soul.reset': 'Reset to default',
+  'settings.persona.soul.usingDefault': 'Using the bundled default',
+  'settings.persona.soul.loadError': 'Could not load SOUL.md',
+  'settings.persona.soul.saveError': 'Could not save SOUL.md',
+  'settings.persona.soul.resetError': 'Could not reset SOUL.md',
+  'settings.persona.appearanceHeading': 'Avatar & Voice',
+  'settings.persona.appearanceDesc':
+    'Mascot color, custom GIF avatar, and reply voice are configured in Mascot settings.',
+  'settings.persona.openMascotSettings': 'Open Mascot settings',
   'settings.developerMenu.composio.title': 'Composio',
   'settings.developerMenu.composio.desc':
     'Routing-Modus, Integrations-Trigger und Trigger-Verlaufsarchiv.',
@@ -653,6 +677,7 @@ const de5: TranslationMap = {
   'skills.channelIcon.imessage': 'iMessage',
   'skills.channelIcon.telegram': 'Telegram',
   'skills.channelIcon.web': 'Web',
+  'skills.channelIcon.yuanbao': 'Yuanbao',
   'skills.composio.poweredBy': 'Unterstützt von Composio',
   'skills.composio.staleStatusTitle': 'Verbindungen zeigen den veralteten Status an',
   'skills.create.allowedToolsHelp': 'Im SKILL.md-Frontmatter gerendert als',

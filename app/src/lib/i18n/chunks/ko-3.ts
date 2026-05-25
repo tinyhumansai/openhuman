@@ -408,5 +408,11 @@ const ko3: TranslationMap = {
   'channels.web.authMode.managed_dm.description':
     '내장된 웹 채팅을 사용하세요. 설정이 필요하지 않습니다.',
   'welcome.continueLocallyExperimental': '로컬에서 계속(실험적)',
+  'channels.yuanbao.connect': 'Connect',
+  'channels.yuanbao.connecting': 'Connecting…',
+  'channels.yuanbao.fieldRequired': '{field} is required',
+  'channels.yuanbao.reconnect': 'Reconnect',
+  'channels.yuanbao.savedRestartRequired': 'Channel saved. Restart the app to activate it.',
+  'channels.yuanbao.unexpectedStatus': 'Unexpected connection status: {status}',
 };
 export default ko3;

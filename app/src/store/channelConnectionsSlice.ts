@@ -34,8 +34,20 @@ const initialState: ChannelConnectionsState = {
     // MCP Servers tab is a virtual channel — no auth-mode connections,
     // but must be present to satisfy Record<ChannelType, …>.
     mcp: makeEmptyChannelModes(),
+    yuanbao: makeEmptyChannelModes(),
   },
 };
+
+// Lazy-init a channel's mode bucket on first write. Protects writes against
+// rehydrated state from older app versions (or any channel added after a user
+// first persisted state) where `state.connections[channel]` is `undefined`
+// because redux-persist's default `autoMergeLevel1` reconciler does not deep-
+// merge into `connections`.
+function ensureChannelModes(state: ChannelConnectionsState, channel: ChannelType): void {
+  if (!state.connections[channel]) {
+    state.connections[channel] = makeEmptyChannelModes();
+  }
+}
 
 function touchConnection(
   existing: ChannelConnection | undefined,
@@ -68,11 +80,13 @@ const channelConnectionsSlice = createSlice({
       // explicit initialisation here, the first `upsertChannelConnection`
       // for either channel would crash on `state.connections[channel]`
       // being undefined. Pin them by default so the migration is total.
+      state.connections.yuanbao = makeEmptyChannelModes();
       state.connections.lark = makeEmptyChannelModes();
       state.connections.dingtalk = makeEmptyChannelModes();
       // MCP virtual channel must be present in persisted states migrated from
       // before PR #2276 or the Record<ChannelType,…> shape is incomplete.
       state.connections.mcp = makeEmptyChannelModes();
+      state.connections.yuanbao = makeEmptyChannelModes();
       state.defaultMessagingChannel = 'telegram';
       state.migrationCompleted = true;
       state.schemaVersion = SCHEMA_VERSION;
@@ -91,6 +105,7 @@ const channelConnectionsSlice = createSlice({
       }>
     ) {
       const { channel, authMode, patch } = action.payload;
+      ensureChannelModes(state, channel);
       const existing = state.connections[channel][authMode];
       state.connections[channel][authMode] = touchConnection(existing, {
         channel,
@@ -109,6 +124,7 @@ const channelConnectionsSlice = createSlice({
       }>
     ) {
       const { channel, authMode, status, lastError } = action.payload;
+      ensureChannelModes(state, channel);
       const existing = state.connections[channel][authMode];
       state.connections[channel][authMode] = touchConnection(existing, {
         channel,
@@ -123,6 +139,7 @@ const channelConnectionsSlice = createSlice({
       action: PayloadAction<{ channel: ChannelType; authMode: ChannelAuthMode }>
     ) {
       const { channel, authMode } = action.payload;
+      ensureChannelModes(state, channel);
       state.connections[channel][authMode] = touchConnection(state.connections[channel][authMode], {
         channel,
         authMode,

@@ -411,6 +411,12 @@ const pt3: TranslationMap = {
   'channels.web.authMode.managed_dm.description':
     'Use o chat da web incorporado – não é necessária nenhuma configuração.',
   'welcome.continueLocallyExperimental': 'Continuar localmente (experimental)',
+  'channels.yuanbao.connect': 'Connect',
+  'channels.yuanbao.connecting': 'Connecting…',
+  'channels.yuanbao.fieldRequired': '{field} is required',
+  'channels.yuanbao.reconnect': 'Reconnect',
+  'channels.yuanbao.savedRestartRequired': 'Channel saved. Restart the app to activate it.',
+  'channels.yuanbao.unexpectedStatus': 'Unexpected connection status: {status}',
 };
 
 export default pt3;

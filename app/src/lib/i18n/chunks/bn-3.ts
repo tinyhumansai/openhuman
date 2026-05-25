@@ -406,6 +406,12 @@ const bn3: TranslationMap = {
   'channels.web.authMode.managed_dm.description':
     'এমবেড করা ওয়েব চ্যাট ব্যবহার করুন — কোনো সেটআপের প্রয়োজন নেই।',
   'welcome.continueLocallyExperimental': 'স্থানীয়ভাবে চালিয়ে যান (পরীক্ষামূলক)',
+  'channels.yuanbao.connect': 'Connect',
+  'channels.yuanbao.connecting': 'Connecting…',
+  'channels.yuanbao.fieldRequired': '{field} is required',
+  'channels.yuanbao.reconnect': 'Reconnect',
+  'channels.yuanbao.savedRestartRequired': 'Channel saved. Restart the app to activate it.',
+  'channels.yuanbao.unexpectedStatus': 'Unexpected connection status: {status}',
 };
 
 export default bn3;

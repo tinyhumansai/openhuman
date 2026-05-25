@@ -279,6 +279,7 @@ const hi2: TranslationMap = {
   'chat.deleteThread': 'थ्रेड डिलीट करें',
   'chat.deleteThreadConfirm': 'क्या आप वाकई "{title}" डिलीट करना चाहते हैं?',
   'chat.untitledThread': 'बिना शीर्षक की थ्रेड',
+  'chat.editThreadTitle': 'Edit thread title',
   'chat.hideSidebar': 'साइडबार छुपाएं',
   'chat.showSidebar': 'साइडबार दिखाएं',
   'chat.newThreadShortcut': 'नई थ्रेड (/new)',

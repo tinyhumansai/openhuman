@@ -524,6 +524,30 @@ const fr5: TranslationMap = {
   'settings.mcpServer.clientZed': 'Zed',
   'settings.mcpServer.configFilePath': 'Fichier de configuration',
   'settings.mcpServer.clientSelectorAriaLabel': 'MCP sélecteur de client',
+  'settings.persona.title': 'Persona',
+  'settings.persona.menuTitle': 'Persona',
+  'settings.persona.menuDesc':
+    'Name, personality, avatar, and voice — your assistant as one identity',
+  'settings.persona.identityHeading': 'Identity',
+  'settings.persona.identityDesc':
+    'A display name and short description for your assistant. Shown in the app; does not change how the assistant reasons.',
+  'settings.persona.displayNameLabel': 'Display name',
+  'settings.persona.displayNamePlaceholder': 'e.g. Nova',
+  'settings.persona.descriptionLabel': 'Description',
+  'settings.persona.descriptionPlaceholder': 'e.g. A calm, concise assistant for my team.',
+  'settings.persona.soul.heading': 'Personality (SOUL.md)',
+  'settings.persona.soul.desc':
+    'The personality prompt the assistant follows in every conversation. Edits are saved to your workspace and take effect on the next reply.',
+  'settings.persona.soul.editorLabel': 'SOUL.md contents',
+  'settings.persona.soul.reset': 'Reset to default',
+  'settings.persona.soul.usingDefault': 'Using the bundled default',
+  'settings.persona.soul.loadError': 'Could not load SOUL.md',
+  'settings.persona.soul.saveError': 'Could not save SOUL.md',
+  'settings.persona.soul.resetError': 'Could not reset SOUL.md',
+  'settings.persona.appearanceHeading': 'Avatar & Voice',
+  'settings.persona.appearanceDesc':
+    'Mascot color, custom GIF avatar, and reply voice are configured in Mascot settings.',
+  'settings.persona.openMascotSettings': 'Open Mascot settings',
   'settings.developerMenu.composio.title': 'Composio',
   'settings.developerMenu.composio.desc':
     "Mode de routage, déclencheurs d'intégration et archive de l'historique des déclencheurs.",
@@ -646,6 +670,7 @@ const fr5: TranslationMap = {
   'skills.channelIcon.imessage': 'iMessage',
   'skills.channelIcon.telegram': 'Telegram',
   'skills.channelIcon.web': 'Web',
+  'skills.channelIcon.yuanbao': 'Yuanbao',
   'skills.composio.poweredBy': 'Propulsé par Composio',
   'skills.composio.staleStatusTitle': 'Les connexions affichent un état obsolète',
   'skills.create.allowedToolsHelp': 'Rendu dans le frontmatter SKILL.md comme',

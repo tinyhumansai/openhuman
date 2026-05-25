@@ -2,6 +2,8 @@ import type { ReactNode } from 'react';
 import type { IconType } from 'react-icons';
 import { FaDiscord, FaGlobe, FaTelegramPlane } from 'react-icons/fa';
 import { IoChatbubble } from 'react-icons/io5';
+
+import YuanbaoIcon from '../channels/YuanbaoIcon';
 import {
   LuBlocks,
   LuBot,
@@ -84,6 +86,14 @@ export function getChannelIcons(
       iconClassName="text-[#34C759]"
     />
   ),
+    yuanbao: (
+      <span
+        role="img"
+        aria-label={t('skills.channelIcon.yuanbao')}
+        className="flex h-8 w-8 items-center justify-center rounded-xl shadow-sm ring-1 ring-black/5 bg-white">
+        <YuanbaoIcon className="h-[18px] w-[18px]" />
+      </span>
+    ),
   };
 }
 

@@ -418,6 +418,12 @@ const de3: TranslationMap = {
   'welcome.localSessionStarting': 'Lokal starten Sitzung...',
   'welcome.localSessionDesc':
     'Verwendet ein lokales Offline-Profil und überspringt TinyHumans OAuth.',
+  'channels.yuanbao.connect': 'Connect',
+  'channels.yuanbao.connecting': 'Connecting…',
+  'channels.yuanbao.fieldRequired': '{field} is required',
+  'channels.yuanbao.reconnect': 'Reconnect',
+  'channels.yuanbao.savedRestartRequired': 'Channel saved. Restart the app to activate it.',
+  'channels.yuanbao.unexpectedStatus': 'Unexpected connection status: {status}',
 };
 
 export default de3;
