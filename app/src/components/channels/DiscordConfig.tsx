@@ -373,7 +373,9 @@ const DiscordConfig = ({ definition }: DiscordConfigProps) => {
             )}
 
             {/* Connected state for managed_dm — show only Disconnect */}
-            {spec.mode === 'managed_dm' && status === 'connected' ? (
+            {spec.mode === 'managed_dm' &&
+            status === 'connected' &&
+            confirmingDisconnect !== spec.mode ? (
               <div className="mt-3 flex items-center justify-between">
                 <p className="text-xs text-sage-700 dark:text-sage-300 font-medium">
                   {t('channels.discord.accountLinked')}
