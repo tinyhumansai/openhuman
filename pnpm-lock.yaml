@@ -126,9 +126,6 @@ importers:
       react-router-dom:
         specifier: ^7.13.0
         version: 7.14.2(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
-      redux-logger:
-        specifier: ^3.0.6
-        version: 3.0.6
       redux-persist:
         specifier: ^6.0.0
         version: 6.0.0(react@19.2.5)(redux@5.0.1)
@@ -259,6 +256,9 @@ importers:
       prettier:
         specifier: ^3.8.1
         version: 3.8.3
+      redux-logger:
+        specifier: ^3.0.6
+        version: 3.0.6
       tailwindcss:
         specifier: ^3.4.19
         version: 3.4.19(tsx@4.21.0)(yaml@2.8.3)
