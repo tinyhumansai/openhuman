@@ -17,6 +17,7 @@ import threadReducer, {
   setSelectedThread,
   setWelcomeThreadId,
   THREAD_NOT_FOUND_MESSAGE,
+  updateThreadTitle,
 } from '../threadSlice';
 
 vi.mock('../../services/api/threadApi', () => ({
@@ -29,6 +30,7 @@ vi.mock('../../services/api/threadApi', () => ({
     generateTitleIfNeeded: vi.fn(),
     updateMessage: vi.fn(),
     updateLabels: vi.fn(),
+    updateTitle: vi.fn(),
     purge: vi.fn(),
   },
 }));
@@ -443,5 +445,57 @@ describe('threadSlice generateThreadTitleIfNeeded thunk', () => {
     expect(mockedThreadApi.generateTitleIfNeeded).toHaveBeenCalledTimes(1);
     expect(mockedThreadApi.getThreads).toHaveBeenCalledTimes(2);
     expect(store.getState().thread.selectedThreadId).toBeNull();
+  });
+});
+
+describe('threadSlice updateThreadTitle thunk', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('replaces the thread in state on fulfilled', async () => {
+    const store = createStore();
+    const original = makeThread({ id: 't-1', title: 'Old title' });
+    const updated = makeThread({ id: 't-1', title: 'Invoice follow-up' });
+
+    mockedThreadApi.getThreads.mockResolvedValueOnce({ threads: [original], count: 1 });
+    await store.dispatch(loadThreads());
+
+    mockedThreadApi.updateTitle.mockResolvedValueOnce(updated);
+    const result = await store.dispatch(
+      updateThreadTitle({ threadId: 't-1', title: 'Invoice follow-up' })
+    );
+
+    expect(result.type).toBe('thread/updateThreadTitle/fulfilled');
+    expect(mockedThreadApi.updateTitle).toHaveBeenCalledWith('t-1', 'Invoice follow-up');
+    const state = store.getState().thread;
+    expect(state.threads[0].title).toBe('Invoice follow-up');
+  });
+
+  it('does not mutate other threads when one title is updated', async () => {
+    const store = createStore();
+    const t1 = makeThread({ id: 't-1', title: 'Thread one' });
+    const t2 = makeThread({ id: 't-2', title: 'Thread two' });
+    const t1Updated = makeThread({ id: 't-1', title: 'Renamed one' });
+
+    mockedThreadApi.getThreads.mockResolvedValueOnce({ threads: [t1, t2], count: 2 });
+    await store.dispatch(loadThreads());
+
+    mockedThreadApi.updateTitle.mockResolvedValueOnce(t1Updated);
+    await store.dispatch(updateThreadTitle({ threadId: 't-1', title: 'Renamed one' }));
+
+    const state = store.getState().thread;
+    expect(state.threads.find(t => t.id === 't-1')?.title).toBe('Renamed one');
+    expect(state.threads.find(t => t.id === 't-2')?.title).toBe('Thread two');
+  });
+
+  it('rejects with an error message when the API fails', async () => {
+    const store = createStore();
+    mockedThreadApi.updateTitle.mockRejectedValueOnce(new Error('network error'));
+
+    const result = await store.dispatch(updateThreadTitle({ threadId: 't-1', title: 'New title' }));
+
+    expect(result.type).toBe('thread/updateThreadTitle/rejected');
+    expect(result.payload).toBe('network error');
   });
 });
