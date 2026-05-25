@@ -10,6 +10,7 @@ import { mcpClientsApi } from '../../../services/api/mcpClientsApi';
 import ConfigAssistantPanel from './ConfigAssistantPanel';
 import McpStatusBadge from './McpStatusBadge';
 import McpToolList from './McpToolList';
+import McpToolPlayground from './McpToolPlayground';
 import type { ConnStatus, InstalledServer, McpTool, ServerStatus } from './types';
 
 const log = debug('mcp-clients:detail');
@@ -33,6 +34,10 @@ const InstalledServerDetail = ({
   const [confirmUninstall, setConfirmUninstall] = useState(false);
   const [showAssistant, setShowAssistant] = useState(false);
   const [suggestedEnv, setSuggestedEnv] = useState<Record<string, string> | null>(null);
+  // When non-null, the Tool Execution Playground modal is rendered for
+  // this tool. Cleared on close. Only meaningful while the server is
+  // connected (the gate is enforced at the McpToolList rendering site).
+  const [playgroundTool, setPlaygroundTool] = useState<McpTool | null>(null);
 
   const runBusy = useCallback(async (task: () => Promise<void>) => {
     setBusy(true);
@@ -211,12 +216,17 @@ const InstalledServerDetail = ({
         </div>
       )}
 
-      {/* Tool list — only show when connected so stale tools don't linger */}
+      {/* Tool list — only show when connected so stale tools don't linger.
+          When connected, each tool gets a "Try" button via `onTryTool`
+          that opens the Tool Execution Playground modal below. */}
       <div className="space-y-1">
         <p className="text-xs font-medium text-stone-600 dark:text-neutral-400">
           {t('mcp.detail.tools')}
         </p>
-        <McpToolList tools={status === 'connected' ? tools : []} />
+        <McpToolList
+          tools={status === 'connected' ? tools : []}
+          onTryTool={status === 'connected' ? setPlaygroundTool : undefined}
+        />
       </div>
 
       {/* Config assistant */}
@@ -227,6 +237,17 @@ const InstalledServerDetail = ({
             onApplySuggestedEnv={handleApplySuggestedEnv}
           />
         </div>
+      )}
+
+      {/* Tool Execution Playground modal. Rendered conditionally so the
+          modal lifecycle (useEffect listeners, focus management) is
+          bound to a specific tool invocation session. */}
+      {playgroundTool && (
+        <McpToolPlayground
+          serverId={server.server_id}
+          tool={playgroundTool}
+          onClose={() => setPlaygroundTool(null)}
+        />
       )}
     </div>
   );
