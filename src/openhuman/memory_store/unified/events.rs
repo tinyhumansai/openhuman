@@ -224,6 +224,17 @@ pub fn event_search_fts(
     limit: usize,
 ) -> anyhow::Result<Vec<EventRecord>> {
     let conn = conn.lock();
+    let trimmed = query.trim();
+    if trimmed.is_empty() {
+        tracing::debug!("[events] FTS search skipped — empty query");
+        return Ok(Vec::new());
+    }
+    let phrase_query = super::fts5::sanitize_fts_query(trimmed);
+    if phrase_query.is_empty() {
+        tracing::debug!("[events] FTS search skipped — sanitised query is empty");
+        return Ok(Vec::new());
+    }
+
     let mut stmt = conn.prepare(
         "SELECT el.event_id, el.segment_id, el.session_id, el.namespace,
                 el.event_type, el.content, el.subject, el.timestamp_ref,
@@ -235,13 +246,12 @@ pub fn event_search_fts(
          LIMIT ?3",
     )?;
     let rows = stmt
-        .query_map(params![query, namespace, limit as i64], |row| {
+        .query_map(params![phrase_query, namespace, limit as i64], |row| {
             row_to_event(row)
         })?
         .collect::<Result<Vec<_>, _>>()?;
     tracing::debug!(
-        "[events] FTS search '{}' (ns={}) returned {} results",
-        query,
+        "[events] FTS search ns={} returned {} results",
         namespace,
         rows.len()
     );
