@@ -650,4 +650,3 @@ describe('<ComposioConnectModal> — WhatsApp WABA id parity (#2127)', () => {
     });
   });
 });
-
