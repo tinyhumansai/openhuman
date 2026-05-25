@@ -1315,6 +1315,19 @@ describe('Conversations — worker thread back-to-parent navigation (#1624)', ()
 describe('Conversations — thread title editing', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockUseUsageState.mockReturnValue({
+      teamUsage: null,
+      currentPlan: null,
+      currentTier: 'FREE' as const,
+      isFreeTier: true,
+      usagePct: 0,
+      isNearLimit: false,
+      isAtLimit: false,
+      isBudgetExhausted: false,
+      shouldShowBudgetCompletedMessage: false,
+      isLoading: false,
+      refresh: vi.fn(),
+    });
     mockGetThreadMessages.mockResolvedValue({ messages: [], count: 0 });
   });
 
