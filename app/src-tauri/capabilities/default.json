@@ -31,6 +31,7 @@
     "updater:default",
     "allow-core-process",
     "allow-workspace-files",
-    "allow-app-update"
+    "allow-app-update",
+    "allow-loopback-oauth"
   ]
 }

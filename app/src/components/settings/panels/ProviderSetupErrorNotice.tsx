@@ -1,3 +1,5 @@
+import { useT } from '../../../lib/i18n/I18nContext';
+
 export type ProviderErrorPresentation = { summary: string; details: string };
 
 function decodeJsonString(value: string): string {
@@ -17,31 +19,71 @@ function cleanProviderMessage(message: string): string {
   return message.replace(/\s+/g, ' ').trim();
 }
 
-export function presentProviderSetupError(raw: string): ProviderErrorPresentation {
-  const details = raw.trim() || 'Provider setup failed.';
+function fillTemplate(template: string, replacements: Record<string, string>): string {
+  return Object.entries(replacements).reduce(
+    (result, [key, value]) => result.replaceAll(`{${key}}`, value),
+    template
+  );
+}
+
+export function presentProviderSetupError(
+  raw: string,
+  t: (key: string, fallback?: string) => string
+): ProviderErrorPresentation {
+  const details = raw.trim() || t('providerSetup.error.defaultDetails', 'Provider setup failed.');
   const couldNotReach = details.match(/^Could not reach\s+([^:]+):\s*(.*)$/i);
   const provider = couldNotReach?.[1]?.trim();
   const cause = couldNotReach?.[2]?.trim() || details;
   const status = cause.match(/provider returned\s+(\d{3})/i)?.[1];
-  const providerLabel = provider || 'The provider';
+  const providerLabel = provider || t('providerSetup.error.providerFallback', 'The provider');
 
   let summary: string | null = null;
 
   if (status === '401' || status === '403') {
-    summary = `${providerLabel} rejected the credentials. Check the API key and try again.`;
+    summary = fillTemplate(
+      t(
+        'providerSetup.error.credentialsRejected',
+        '{provider} rejected the credentials. Check the API key and try again.'
+      ),
+      { provider: providerLabel }
+    );
   } else if (status === '404') {
-    summary = `${providerLabel} did not recognize the endpoint. Check the base URL and try again.`;
+    summary = fillTemplate(
+      t(
+        'providerSetup.error.endpointNotRecognized',
+        '{provider} did not recognize the endpoint. Check the base URL and try again.'
+      ),
+      { provider: providerLabel }
+    );
   } else if (status && Number(status) >= 500) {
-    summary = `${providerLabel} is unavailable right now. Try again or check the provider status.`;
+    summary = fillTemplate(
+      t(
+        'providerSetup.error.providerUnavailable',
+        '{provider} is unavailable right now. Try again or check the provider status.'
+      ),
+      { provider: providerLabel }
+    );
   } else if (/HTTP request failed|error sending request|timed out|ECONNREFUSED/i.test(cause)) {
-    summary = `Could not reach ${providerLabel}. Check the endpoint URL and network connection, then try again.`;
+    summary = fillTemplate(
+      t(
+        'providerSetup.error.unreachable',
+        'Could not reach {provider}. Check the endpoint URL and network connection, then try again.'
+      ),
+      { provider: providerLabel }
+    );
   }
 
   if (!summary) {
     const jsonMessage = findProviderJsonMessage(cause);
     if (jsonMessage) {
       summary = provider
-        ? `Could not reach ${provider}: ${cleanProviderMessage(jsonMessage)}`
+        ? fillTemplate(
+            t(
+              'providerSetup.error.couldNotReachWithMessage',
+              'Could not reach {provider}: {message}'
+            ),
+            { provider, message: cleanProviderMessage(jsonMessage) }
+          )
         : cleanProviderMessage(jsonMessage);
     }
   }
@@ -58,7 +100,8 @@ export function presentProviderSetupError(raw: string): ProviderErrorPresentatio
 }
 
 export const ProviderSetupErrorNotice = ({ error }: { error: string }) => {
-  const { summary, details } = presentProviderSetupError(error);
+  const { t } = useT();
+  const { summary, details } = presentProviderSetupError(error, t);
   const hasDetails = details !== summary;
 
   return (
@@ -69,7 +112,7 @@ export const ProviderSetupErrorNotice = ({ error }: { error: string }) => {
       {hasDetails ? (
         <details className="mt-2 max-w-full min-w-0">
           <summary className="cursor-pointer text-[11px] font-medium text-red-700 dark:text-red-200">
-            Technical details
+            {t('providerSetup.error.technicalDetails')}
           </summary>
           <pre className="mt-1 max-h-32 max-w-full overflow-auto whitespace-pre-wrap break-words rounded border border-red-200/70 dark:border-red-500/30 bg-white/70 dark:bg-neutral-950/40 p-2 font-mono text-[11px] leading-relaxed text-red-800 dark:text-red-200 [overflow-wrap:anywhere]">
             {details}

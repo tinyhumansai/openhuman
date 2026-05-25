@@ -88,7 +88,7 @@ fn resolve_client(config: &Config) -> OpResult<ComposioClient> {
 /// handshake eof`, …), we tag `failure="transport"` instead so the
 /// `before_send` filter's transport-phrase branch fires — and keep the
 /// status tag absent (transport failures don't carry a status).
-pub(super) fn report_composio_op_error<E: std::fmt::Display + ?Sized>(operation: &str, err: &E) {
+pub(crate) fn report_composio_op_error<E: std::fmt::Display + ?Sized>(operation: &str, err: &E) {
     // `{err:#}` renders the full anyhow chain when applicable; for plain
     // `String` / `&str` errors it falls back to the Display impl.
     let rendered = format!("{err:#}");

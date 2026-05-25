@@ -3,7 +3,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Provider } from 'react-redux';
 import { MemoryRouter } from 'react-router-dom';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { I18nProvider } from '../../../lib/i18n/I18nContext';
 import type { Locale } from '../../../lib/i18n/types';
@@ -33,10 +33,13 @@ vi.mock('../hooks/useSettingsNavigation', () => ({
   useSettingsNavigation: () => ({ navigateToSettings: mockNavigateToSettings }),
 }));
 
+const mockClearSession = vi.fn().mockResolvedValue(undefined);
+let mockSessionToken: string | null = null;
+
 vi.mock('../../../providers/CoreStateProvider', () => ({
   useCoreState: () => ({
-    clearSession: vi.fn().mockResolvedValue(undefined),
-    snapshot: { auth: { userId: null }, currentUser: null },
+    clearSession: mockClearSession,
+    snapshot: { auth: { userId: null }, currentUser: null, sessionToken: mockSessionToken },
   }),
 }));
 
@@ -50,13 +53,6 @@ vi.mock('../../../utils/tauriCommands', () => ({
   resetOpenHumanDataAndRestartCore: vi.fn().mockResolvedValue(undefined),
   restartApp: vi.fn().mockResolvedValue(undefined),
   scheduleCefProfilePurge: vi.fn().mockResolvedValue(undefined),
-}));
-
-const { mockClearAllAppData } = vi.hoisted(() => ({
-  mockClearAllAppData: vi.fn().mockResolvedValue(undefined),
-}));
-vi.mock('../../../utils/clearAllAppData', () => ({
-  clearAllAppData: (...args: unknown[]) => mockClearAllAppData(...args),
 }));
 
 vi.mock('../../walkthrough/AppWalkthrough', () => ({ resetWalkthrough: vi.fn() }));
@@ -105,10 +101,15 @@ describe('SettingsHome', () => {
       expect(screen.getByText('Notifications')).toBeInTheDocument();
       expect(screen.getByText('Billing & Usage')).toBeInTheDocument();
       expect(screen.getByText('Advanced')).toBeInTheDocument();
-      expect(screen.getByText('Clear App Data')).toBeInTheDocument();
-      expect(screen.getByText('Log out')).toBeInTheDocument();
       expect(screen.getByTestId('settings-nav-account')).toBeInTheDocument();
       expect(screen.getByTestId('settings-nav-notifications')).toBeInTheDocument();
+    });
+
+    it('no longer renders destructive actions on the home screen', () => {
+      // Clear App Data + Log out moved to Settings → Account.
+      renderSettingsHome();
+      expect(screen.queryByText('Clear App Data')).not.toBeInTheDocument();
+      expect(screen.queryByText('Log out')).not.toBeInTheDocument();
     });
 
     it('localizes Appearance and Mascot menu items', () => {
@@ -181,55 +182,27 @@ describe('SettingsHome', () => {
     });
   });
 
-  describe('Clear App Data flow', () => {
+  describe('local session gating', () => {
     beforeEach(() => {
-      mockClearAllAppData.mockReset().mockResolvedValue(undefined);
+      // Use a valid local-session token (three parts, last part = 'local')
+      mockSessionToken = 'header.payload.local';
     });
 
-    it('passes the current snapshot user id + clearSession to clearAllAppData', async () => {
-      const user = userEvent.setup();
-      renderSettingsHome();
-
-      await user.click(screen.getByText('Clear App Data').closest('button')!);
-      // Confirm in the modal
-      const confirmButtons = screen.getAllByRole('button', { name: /Clear App Data/i });
-      // The last one is the modal confirm button (first is the menu item we just clicked).
-      await user.click(confirmButtons[confirmButtons.length - 1]);
-
-      expect(mockClearAllAppData).toHaveBeenCalledTimes(1);
-      const args = mockClearAllAppData.mock.calls[0][0];
-      expect(args).toMatchObject({ userId: null });
-      expect(typeof args.clearSession).toBe('function');
+    afterEach(() => {
+      mockSessionToken = null;
     });
 
-    it('surfaces the core error message when clearAllAppData fails (Windows file-lock guidance)', async () => {
-      const user = userEvent.setup();
-      mockClearAllAppData.mockRejectedValueOnce(
-        new Error(
-          'Failed to remove C:\\Users\\me\\.openhuman because it is locked by another OpenHuman window or process. Close all OpenHuman windows and try again.'
-        )
-      );
+    it('hides the Billing & Usage item in local mode', () => {
       renderSettingsHome();
-
-      await user.click(screen.getByText('Clear App Data').closest('button')!);
-      const confirmButtons = screen.getAllByRole('button', { name: /Clear App Data/i });
-      await user.click(confirmButtons[confirmButtons.length - 1]);
-
-      expect(
-        await screen.findByText(/locked by another OpenHuman window or process/)
-      ).toBeInTheDocument();
+      expect(screen.queryByText('Billing & Usage')).not.toBeInTheDocument();
     });
 
-    it('falls back to the translated message when the error has no message', async () => {
-      const user = userEvent.setup();
-      mockClearAllAppData.mockRejectedValueOnce(new Error(''));
+    it('shows "Billing & Usage" when not in local mode', () => {
+      mockSessionToken = null;
       renderSettingsHome();
-
-      await user.click(screen.getByText('Clear App Data').closest('button')!);
-      const confirmButtons = screen.getAllByRole('button', { name: /Clear App Data/i });
-      await user.click(confirmButtons[confirmButtons.length - 1]);
-
-      expect(await screen.findByText(/Failed to clear data and logout/)).toBeInTheDocument();
+      expect(screen.getByText('Billing & Usage')).toBeInTheDocument();
     });
   });
+  // Clear App Data flow moved to LogoutAndClearActions (rendered on Account
+  // page) — see LogoutAndClearActions.test.tsx.
 });

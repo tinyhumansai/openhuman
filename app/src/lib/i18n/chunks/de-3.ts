@@ -413,6 +413,11 @@ const de3: TranslationMap = {
   'channels.web.description': 'Chatte über die integrierte Web-Oberfläche.',
   'channels.web.authMode.managed_dm.description':
     'Nutze den eingebetteten Web-Chat — keine Einrichtung erforderlich.',
+  'welcome.continueLocally': 'Lokal fortfahren',
+  'welcome.continueLocallyExperimental': 'Lokal fortfahren (experimentell)',
+  'welcome.localSessionStarting': 'Lokal starten Sitzung...',
+  'welcome.localSessionDesc':
+    'Verwendet ein lokales Offline-Profil und überspringt TinyHumans OAuth.',
 };
 
 export default de3;

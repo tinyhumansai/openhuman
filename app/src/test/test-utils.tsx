@@ -8,6 +8,8 @@ import type { PropsWithChildren, ReactElement } from 'react';
 import { Provider } from 'react-redux';
 import { MemoryRouter } from 'react-router-dom';
 
+import { getCoreStateSnapshot } from '../lib/coreState/store';
+import { CoreStateContext } from '../providers/coreStateContext';
 import channelConnectionsReducer from '../store/channelConnectionsSlice';
 import companionReducer from '../store/companionSlice';
 import connectivityReducer from '../store/connectivitySlice';
@@ -58,10 +60,28 @@ export function renderWithProviders(
     ...renderOptions
   }: ExtendedRenderOptions = {}
 ) {
+  const coreStateStub = {
+    ...getCoreStateSnapshot(),
+    refresh: async () => {},
+    refreshTeams: async () => {},
+    refreshTeamMembers: async () => {},
+    refreshTeamInvites: async () => {},
+    setAnalyticsEnabled: async () => {},
+    setMeetAutoOrchestratorHandoff: async () => {},
+    setOnboardingCompletedFlag: async () => {},
+    setEncryptionKey: async () => {},
+    patchSnapshot: () => {},
+    setOnboardingTasks: async () => {},
+    storeSessionToken: async () => {},
+    clearSession: async () => {},
+  };
+
   function Wrapper({ children }: PropsWithChildren) {
     return (
       <Provider store={store}>
-        <MemoryRouter initialEntries={initialEntries}>{children}</MemoryRouter>
+        <CoreStateContext.Provider value={coreStateStub}>
+          <MemoryRouter initialEntries={initialEntries}>{children}</MemoryRouter>
+        </CoreStateContext.Provider>
       </Provider>
     );
   }

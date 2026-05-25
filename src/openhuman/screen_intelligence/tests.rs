@@ -16,7 +16,7 @@ use super::types::{CaptureFrame, InputActionParams, StartSessionParams};
 use crate::openhuman::accessibility::{parse_foreground_output, AppContext};
 use crate::openhuman::config::{Config, ScreenIntelligenceConfig};
 use crate::openhuman::embeddings::NoopEmbedding;
-use crate::openhuman::memory::store::UnifiedMemory;
+use crate::openhuman::memory_store::UnifiedMemory;
 
 struct EnvVarGuard {
     key: &'static str,

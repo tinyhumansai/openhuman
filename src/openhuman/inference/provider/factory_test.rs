@@ -2,6 +2,7 @@ use super::*;
 use crate::openhuman::config::schema::cloud_providers::{AuthStyle, CloudProviderCreds};
 use crate::openhuman::config::Config;
 use crate::openhuman::credentials::AuthService;
+use crate::openhuman::inference::provider::traits::{ChatMessage, ChatRequest, ProviderDelta};
 use tempfile::TempDir;
 
 fn config_with_providers(providers: Vec<CloudProviderCreds>) -> Config {
@@ -208,6 +209,16 @@ fn ollama_prefix() {
 }
 
 #[test]
+fn lmstudio_prefix() {
+    let mut config = Config::default();
+    config.local_ai.base_url = Some("http://127.0.0.1:1234".to_string());
+    let (_, model) =
+        create_chat_provider_from_string("heartbeat", "lmstudio:google/gemma-4-e4b", &config)
+            .expect("lmstudio:<model> must build");
+    assert_eq!(model, "google/gemma-4-e4b");
+}
+
+#[test]
 fn temperature_suffix_is_stripped_from_model_id() {
     // The `@<temp>` suffix is informational for the factory — the model id sent
     // upstream must not include it, or providers will 404 on an unknown model.
@@ -247,6 +258,25 @@ async fn ollama_provider_does_not_require_api_key() {
     assert!(
         !msg.contains("API key not set"),
         "ollama path must not fail on missing key: {msg}"
+    );
+}
+
+#[tokio::test]
+async fn lmstudio_provider_without_api_key_does_not_require_credentials() {
+    let mut config = Config::default();
+    config.local_ai.base_url = Some("http://127.0.0.1:9/v1".to_string());
+    let (provider, model) =
+        create_chat_provider_from_string("heartbeat", "lmstudio:test-model", &config)
+            .expect("lmstudio:<model> must build");
+
+    let err = provider
+        .chat_with_system(None, "hello", &model, 0.0)
+        .await
+        .expect_err("unreachable local LM Studio should still attempt a transport call");
+    let msg = err.to_string();
+    assert!(
+        !msg.contains("API key not set"),
+        "lmstudio path must not fail on missing key: {msg}"
     );
 }
 
@@ -364,7 +394,7 @@ async fn cloud_provider_without_stored_key_fails_with_actionable_error() {
         .await
         .expect_err("missing key should fail at call time");
     assert!(
-        err.to_string().contains("cloud API key not set"),
+        err.to_string().contains("API key not set"),
         "expected missing-key guidance, got: {err}"
     );
 }
@@ -545,6 +575,60 @@ fn config_in_tempdir(tmp: &TempDir) -> Config {
     let mut c = Config::default();
     c.config_path = tmp.path().join("config.toml");
     c
+}
+
+async fn discover_live_lmstudio_model() -> anyhow::Result<String> {
+    if let Ok(model) = std::env::var("OPENHUMAN_LIVE_LMSTUDIO_MODEL") {
+        let trimmed = model.trim();
+        if !trimmed.is_empty() {
+            return Ok(trimmed.to_string());
+        }
+    }
+
+    let body: serde_json::Value = reqwest::get("http://127.0.0.1:1234/v1/models")
+        .await?
+        .json()
+        .await?;
+    body["data"]
+        .as_array()
+        .and_then(|models| {
+            models.iter().find_map(|item| {
+                let id = item.get("id")?.as_str()?.trim();
+                if id.is_empty() || id.contains("embed") {
+                    None
+                } else {
+                    Some(id.to_string())
+                }
+            })
+        })
+        .ok_or_else(|| anyhow::anyhow!("no non-embedding LM Studio model discovered"))
+}
+
+async fn discover_live_ollama_model() -> anyhow::Result<String> {
+    if let Ok(model) = std::env::var("OPENHUMAN_LIVE_OLLAMA_MODEL") {
+        let trimmed = model.trim();
+        if !trimmed.is_empty() {
+            return Ok(trimmed.to_string());
+        }
+    }
+
+    let body: serde_json::Value = reqwest::get("http://127.0.0.1:11434/api/tags")
+        .await?
+        .json()
+        .await?;
+    body["models"]
+        .as_array()
+        .and_then(|models| {
+            models.iter().find_map(|item| {
+                let name = item.get("name")?.as_str()?.trim();
+                if name.is_empty() || name.contains("embed") {
+                    None
+                } else {
+                    Some(name.to_string())
+                }
+            })
+        })
+        .ok_or_else(|| anyhow::anyhow!("no non-embedding Ollama model discovered"))
 }
 
 #[test]
@@ -796,5 +880,112 @@ fn byok_sentinel_error_mentions_configuration_action() {
     assert!(
         msg.contains("cloud_providers") || msg.contains("inference_url"),
         "error must suggest a remediation; got: {msg}"
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires live LM Studio on localhost:1234"]
+async fn live_lmstudio_provider_streams_thinking_and_text() {
+    let _guard = crate::openhuman::inference::inference_test_guard();
+    let mut config = Config::default();
+    config.local_ai.base_url = Some("http://127.0.0.1:1234/v1".to_string());
+    let model = discover_live_lmstudio_model()
+        .await
+        .expect("discover live lmstudio model");
+    let provider_string = format!("lmstudio:{model}");
+    let (provider, resolved_model) =
+        create_local_chat_provider_from_string(&provider_string, &config).expect("build provider");
+
+    let (tx, mut rx) = tokio::sync::mpsc::channel(64);
+    let messages = vec![ChatMessage::user(
+        "Think briefly, then reply with exactly LMSTUDIO_LIVE_OK.",
+    )];
+    let response = provider
+        .chat(
+            ChatRequest {
+                messages: &messages,
+                tools: None,
+                stream: Some(&tx),
+            },
+            &resolved_model,
+            0.0,
+        )
+        .await
+        .expect("live lmstudio chat");
+    drop(tx);
+
+    let mut saw_thinking = false;
+    let mut streamed_text = String::new();
+    while let Some(delta) = rx.recv().await {
+        match delta {
+            ProviderDelta::ThinkingDelta { delta } => {
+                if !delta.trim().is_empty() {
+                    saw_thinking = true;
+                }
+            }
+            ProviderDelta::TextDelta { delta } => streamed_text.push_str(&delta),
+            ProviderDelta::ToolCallStart { .. } | ProviderDelta::ToolCallArgsDelta { .. } => {}
+        }
+    }
+
+    assert!(
+        saw_thinking,
+        "LM Studio should emit reasoning/thinking deltas through the compatible provider path"
+    );
+    assert!(
+        response.text_or_empty().contains("LMSTUDIO_LIVE_OK"),
+        "unexpected final response: {:?}",
+        response.text
+    );
+    assert!(
+        streamed_text.contains("LMSTUDIO_LIVE_OK"),
+        "streamed text never surfaced the final answer: {streamed_text}"
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires live Ollama on localhost:11434"]
+async fn live_ollama_provider_streams_text() {
+    let _guard = crate::openhuman::inference::inference_test_guard();
+    let mut config = Config::default();
+    config.local_ai.base_url = Some("http://127.0.0.1:11434".to_string());
+    let model = discover_live_ollama_model()
+        .await
+        .expect("discover live ollama model");
+    let provider_string = format!("ollama:{model}");
+    let (provider, resolved_model) =
+        create_local_chat_provider_from_string(&provider_string, &config).expect("build provider");
+
+    let (tx, mut rx) = tokio::sync::mpsc::channel(64);
+    let messages = vec![ChatMessage::user("Reply with exactly OLLAMA_LIVE_OK.")];
+    let response = provider
+        .chat(
+            ChatRequest {
+                messages: &messages,
+                tools: None,
+                stream: Some(&tx),
+            },
+            &resolved_model,
+            0.0,
+        )
+        .await
+        .expect("live ollama chat");
+    drop(tx);
+
+    let mut streamed_text = String::new();
+    while let Some(delta) = rx.recv().await {
+        if let ProviderDelta::TextDelta { delta } = delta {
+            streamed_text.push_str(&delta);
+        }
+    }
+
+    assert!(
+        response.text_or_empty().contains("OLLAMA_LIVE_OK"),
+        "unexpected final response: {:?}",
+        response.text
+    );
+    assert!(
+        streamed_text.contains("OLLAMA_LIVE_OK"),
+        "streamed text never surfaced the final answer: {streamed_text}"
     );
 }

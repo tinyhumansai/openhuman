@@ -4,7 +4,7 @@
 //! "autocomplete" namespace and fed back as dynamic style examples on the
 //! next inference cycle, giving the model in-context personalisation.
 
-use crate::openhuman::memory::{MemoryClient, NamespaceDocumentInput};
+use crate::openhuman::memory_store::{MemoryClient, NamespaceDocumentInput};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::json;

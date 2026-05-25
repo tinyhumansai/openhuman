@@ -221,7 +221,7 @@ const PrivacyPanel = () => {
                 <button
                   data-testid="privacy-meet-handoff-toggle"
                   onClick={handleToggleMeetAutoHandoff}
-                  aria-label="Auto-handoff Google Meet transcripts to the orchestrator"
+                  aria-label={t('privacy.autoHandoffMeet')}
                   className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
                     meetAutoHandoff ? 'bg-primary-500' : 'bg-stone-600 dark:bg-neutral-600'
                   }`}
@@ -253,11 +253,6 @@ const PrivacyPanel = () => {
               <div>
                 <p className="text-xs text-stone-500 dark:text-neutral-400 leading-relaxed">
                   {t('privacy.analyticsDisclaimer')}
-                  All analytics and bug reports are fully anonymized. When enabled, we collect crash
-                  information and device type (via Sentry), plus anonymous usage analytics such as
-                  page views and feature engagement (via Google Analytics). We never access your
-                  messages, session data, wallet keys, API keys, or any personally identifiable
-                  information. You can change this setting at any time.
                 </p>
               </div>
             </div>
