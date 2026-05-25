@@ -30,10 +30,17 @@ const PersonaPanel = () => {
   const storedDisplayName = useAppSelector(selectPersonaDisplayName);
   const storedDescription = useAppSelector(selectPersonaDescription);
 
-  // Identity drafts are local until Save so a half-typed name never lands in
-  // persisted state (and the Save button can stay disabled when unchanged).
   const [nameDraft, setNameDraft] = useState(storedDisplayName);
   const [descriptionDraft, setDescriptionDraft] = useState(storedDescription);
+
+  // Re-sync drafts when the store is reset externally (e.g. resetUserScopedState
+  // during an identity flip) so Save can't write stale values into a clean store.
+  useEffect(() => {
+    setNameDraft(storedDisplayName);
+  }, [storedDisplayName]);
+  useEffect(() => {
+    setDescriptionDraft(storedDescription);
+  }, [storedDescription]);
 
   // SOUL.md editor state. The file is loaded over RPC on mount; `isDefault`
   // tracks whether the current on-disk copy is the bundled prompt so the UI can
@@ -46,9 +53,6 @@ const PersonaPanel = () => {
   const [soulBusy, setSoulBusy] = useState(false);
 
   useEffect(() => {
-    // `soulLoading` initialises to `true`, so the effect doesn't set it again
-    // synchronously (that would trip react-hooks/set-state-in-effect); the
-    // `finally` below clears it once the read settles.
     let cancelled = false;
     log('[ui-flow] soul.load:start file=%s', PERSONA_FILE_SOUL);
     readPersonaFile(PERSONA_FILE_SOUL)
@@ -63,7 +67,7 @@ const PersonaPanel = () => {
       .catch((err: unknown) => {
         if (cancelled) return;
         log('[ui-flow] soul.load:error %s', err instanceof Error ? err.message : err);
-        setSoulError(err instanceof Error ? err.message : t('settings.persona.soul.loadError'));
+        setSoulError(err instanceof Error ? err.message : 'Could not load SOUL.md');
       })
       .finally(() => {
         if (!cancelled) setSoulLoading(false);
@@ -71,7 +75,10 @@ const PersonaPanel = () => {
     return () => {
       cancelled = true;
     };
-  }, [t]);
+    // Load once on mount — `t` is intentionally excluded so a locale change
+    // does not re-fetch and overwrite unsaved edits.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const nameDirty = nameDraft.trim() !== storedDisplayName;
   const descriptionDirty = descriptionDraft.trim() !== storedDescription;
