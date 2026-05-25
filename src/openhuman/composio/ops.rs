@@ -422,6 +422,15 @@ pub async fn composio_delete_connection(
             "[composio] delete_connection: cannot clear memory — failed to resolve toolkit"
         );
     }
+    let mut memory_clear_on_toolkit_fail: Option<serde_json::Value> = if toolkit.is_none()
+        && clear_memory
+    {
+        Some(
+            serde_json::json!({"ok": false, "error": "could not resolve toolkit for memory cleanup"}),
+        )
+    } else {
+        None
+    };
     let resp = client.delete_connection(connection_id).await.map_err(|e| {
         report_composio_op_error("delete_connection", &e);
         format!("[composio] delete_connection failed: {e:#}")
@@ -512,7 +521,8 @@ pub async fn composio_delete_connection(
             );
         }
     }
-    if let Some(ref mc) = memory_clear {
+    let effective_memory_clear = memory_clear.or(memory_clear_on_toolkit_fail);
+    if let Some(ref mc) = effective_memory_clear {
         resp["memory_clear"] = mc.clone();
     }
     Ok(RpcOutcome::new(
