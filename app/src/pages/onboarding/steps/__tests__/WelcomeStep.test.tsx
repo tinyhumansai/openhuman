@@ -35,7 +35,7 @@ describe('WelcomeStep', () => {
   it('CTA has proper ARIA attributes for accessibility', () => {
     renderWithProviders(<WelcomeStep onNext={() => {}} />);
     const button = screen.getByRole('button', { name: 'Get Started' });
-    
+
     expect(button).toHaveAttribute('aria-label', 'Get Started');
     expect(button).toHaveAttribute('aria-live', 'polite');
     expect(button).toHaveAttribute('aria-busy', 'false');
