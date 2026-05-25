@@ -359,9 +359,7 @@ describe('AIPanel', () => {
   it('surfaces provider setup errors in an alert with technical details collapsed', async () => {
     vi.mocked(loadAISettings).mockResolvedValue({ ...baseSettings, cloudProviders: [] });
     vi.mocked(listProviderModels).mockRejectedValueOnce(
-      new Error(
-        'Could not reach OpenAI: provider returned 401 Unauthorized'
-      )
+      new Error('Could not reach OpenAI: provider returned 401 Unauthorized')
     );
 
     renderWithProviders(<AIPanel />);
