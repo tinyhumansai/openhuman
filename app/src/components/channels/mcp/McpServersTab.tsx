@@ -13,6 +13,7 @@ import InstallDialog from './InstallDialog';
 import InstalledServerDetail from './InstalledServerDetail';
 import InstalledServerList from './InstalledServerList';
 import McpCatalogBrowser from './McpCatalogBrowser';
+import McpConnectionHealthToolbar from './McpConnectionHealthToolbar';
 import type { ConnStatus, InstalledServer } from './types';
 
 const log = debug('mcp-clients:tab');
@@ -131,6 +132,31 @@ const McpServersTab = () => {
     [loadInstalled, fetchStatuses]
   );
 
+  // Bulk Retry — iterate through errored servers, swallow per-server
+  // failures via `Promise.allSettled` so one bad apple doesn't abort the
+  // batch, then refresh statuses once at the end. The toolbar shows its
+  // own disabled state during the await; the next poll tick reconciles
+  // any drift.
+  const handleBulkReconnect = useCallback(
+    async (serverIds: string[]) => {
+      log('bulk reconnect ids=%o', serverIds);
+      await Promise.allSettled(serverIds.map(id => mcpClientsApi.connect(id)));
+      await fetchStatuses();
+    },
+    [fetchStatuses]
+  );
+
+  // Bulk Disconnect — same shape as bulk reconnect. The toolbar gates this
+  // behind a confirmation dialog before we get here.
+  const handleBulkDisconnect = useCallback(
+    async (serverIds: string[]) => {
+      log('bulk disconnect ids=%o', serverIds);
+      await Promise.allSettled(serverIds.map(id => mcpClientsApi.disconnect(id)));
+      await fetchStatuses();
+    },
+    [fetchStatuses]
+  );
+
   const selectedServerId = rightPane.mode === 'detail' ? rightPane.serverId : null;
   const selectedServer = servers.find(s => s.server_id === selectedServerId) ?? null;
   const selectedConnStatus = statuses.find(s => s.server_id === selectedServerId);
@@ -154,13 +180,18 @@ const McpServersTab = () => {
         <span className="leading-relaxed">{t('mcp.alphaBannerText')}</span>
       </div>
       <div className="flex gap-4 flex-1 min-h-0">
-        {/* Left pane: installed list */}
+        {/* Left pane: health toolbar + installed list */}
         <div className="w-56 shrink-0 flex flex-col">
           {loadError && (
             <div className="mb-2 rounded-lg border border-coral-200 dark:border-coral-500/30 bg-coral-50 dark:bg-coral-500/10 px-3 py-2 text-xs text-coral-700 dark:text-coral-300">
               {loadError}
             </div>
           )}
+          <McpConnectionHealthToolbar
+            statuses={statuses}
+            onReconnect={handleBulkReconnect}
+            onDisconnect={handleBulkDisconnect}
+          />
           <InstalledServerList
             servers={servers}
             statuses={statuses}
