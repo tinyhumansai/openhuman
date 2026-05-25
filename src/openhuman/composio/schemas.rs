@@ -279,18 +279,34 @@ pub fn schemas(function: &str) -> ControllerSchema {
             namespace: "composio",
             function: "delete_connection",
             description: "Delete a Composio connection owned by the caller.",
-            inputs: vec![FieldSchema {
-                name: "connection_id",
-                ty: TypeSchema::String,
-                comment: "Identifier of the connection to delete.",
-                required: true,
-            }],
-            outputs: vec![FieldSchema {
-                name: "deleted",
-                ty: TypeSchema::Bool,
-                comment: "True when the backend confirmed the deletion.",
-                required: true,
-            }],
+            inputs: vec![
+                FieldSchema {
+                    name: "connection_id",
+                    ty: TypeSchema::String,
+                    comment: "Identifier of the connection to delete.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "clear_memory",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Bool)),
+                    comment: "When true, also delete memory chunks ingested from this integration (default false).",
+                    required: false,
+                },
+            ],
+            outputs: vec![
+                FieldSchema {
+                    name: "deleted",
+                    ty: TypeSchema::Bool,
+                    comment: "True when the backend confirmed the deletion.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "memory_clear",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Json)),
+                    comment: "Memory cleanup result when clear_memory was requested.",
+                    required: false,
+                },
+            ],
         },
         "list_tools" => ControllerSchema {
             namespace: "composio",
@@ -751,10 +767,11 @@ fn handle_delete_connection(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
         let connection_id = read_required_non_empty(&params, "connection_id")?;
-        let clear_memory = params
-            .get("clear_memory")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
+        let clear_memory = match params.get("clear_memory") {
+            None | Some(Value::Null) => false,
+            Some(Value::Bool(b)) => *b,
+            Some(other) => return Err(format!("clear_memory must be a boolean, got {}", other)),
+        };
         to_json(
             super::ops::composio_delete_connection(&config, &connection_id, clear_memory).await?,
         )
