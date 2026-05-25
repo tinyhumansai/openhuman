@@ -1,4 +1,4 @@
-use crate::openhuman::security::SecretStore;
+use crate::openhuman::keyring::SecretStore;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};

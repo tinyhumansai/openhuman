@@ -658,6 +658,23 @@ fn is_session_expired_error_does_not_match_byo_key_provider_401() {
 }
 
 #[test]
+fn is_session_expired_error_does_not_match_backend_wrapped_composio_invalid_api_key() {
+    // Issue #2537: the backend can return a 500 whose body wraps a Composio
+    // upstream 401. That is a scoped integration/service failure, not proof
+    // that the user's OpenHuman app session expired.
+    let msg = r#"[composio] list_connections failed: Backend returned 500 Internal Server Error for GET https://api.tinyhumans.ai/agent-integrations/composio/connections: 401 {"error":{"message":"Invalid API key: ak_o1Og5*****","code":10401,"slug":"HTTP_Unauthorized","status":401}}"#;
+
+    assert!(
+        !is_session_expired_error(msg),
+        "Composio upstream 401 wrapped by the backend must not publish SessionExpired"
+    );
+    assert!(
+        is_unconfirmed_unauthorized_error(msg),
+        "auth-looking upstream failures should still be logged diagnostically"
+    );
+}
+
+#[test]
 fn is_session_expired_error_does_not_match_invalid_token_case_insensitive() {
     // "invalid token" is no longer a session-expiry trigger (issue #2286):
     // it was too broad and caught Discord/OAuth provider token errors. It is

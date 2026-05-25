@@ -370,12 +370,12 @@ async fn resolve_config_dirs_ignoring_env(
 }
 
 fn decrypt_optional_secret(
-    store: &crate::openhuman::security::SecretStore,
+    store: &crate::openhuman::keyring::SecretStore,
     value: &mut Option<String>,
     field_name: &str,
 ) -> Result<()> {
     if let Some(raw) = value.clone() {
-        if crate::openhuman::security::SecretStore::is_encrypted(&raw) {
+        if crate::openhuman::keyring::SecretStore::is_encrypted(&raw) {
             *value = Some(
                 store
                     .decrypt(&raw)
@@ -387,12 +387,12 @@ fn decrypt_optional_secret(
 }
 
 fn encrypt_optional_secret(
-    store: &crate::openhuman::security::SecretStore,
+    store: &crate::openhuman::keyring::SecretStore,
     value: &mut Option<String>,
     field_name: &str,
 ) -> Result<()> {
     if let Some(raw) = value.clone() {
-        if !crate::openhuman::security::SecretStore::is_encrypted(&raw) {
+        if !crate::openhuman::keyring::SecretStore::is_encrypted(&raw) {
             *value = Some(
                 store
                     .encrypt(&raw)
@@ -412,7 +412,7 @@ fn decrypt_config_secrets(config: &mut Config, openhuman_dir: &Path) -> Result<(
     if !config.secrets.encrypt {
         return Ok(());
     }
-    let store = crate::openhuman::security::SecretStore::new(openhuman_dir, true);
+    let store = crate::openhuman::keyring::SecretStore::new(openhuman_dir, true);
 
     decrypt_optional_secret(&store, &mut config.api_key, "api_key")?;
 
@@ -521,7 +521,7 @@ fn encrypt_config_secrets(config: &mut Config) -> Result<()> {
         .config_path
         .parent()
         .context("Config path must have a parent directory")?;
-    let store = crate::openhuman::security::SecretStore::new(parent_dir, true);
+    let store = crate::openhuman::keyring::SecretStore::new(parent_dir, true);
 
     encrypt_optional_secret(&store, &mut config.api_key, "api_key")?;
 

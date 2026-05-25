@@ -158,3 +158,124 @@ impl EventHandler for MemorySyncStageBridge {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Arc, Mutex, OnceLock};
+
+    use crate::core::event_bus::{self, init_global, subscribe_global};
+
+    fn test_mutex() -> &'static std::sync::Mutex<()> {
+        static LOCK: OnceLock<std::sync::Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| std::sync::Mutex::new(()))
+    }
+
+    #[derive(Clone, Default)]
+    struct StageCollector {
+        events: Arc<Mutex<Vec<DomainEvent>>>,
+    }
+
+    #[async_trait]
+    impl EventHandler for StageCollector {
+        fn name(&self) -> &str {
+            "memory::sync::tests::stage_collector"
+        }
+
+        fn domains(&self) -> Option<&[&str]> {
+            Some(&["memory"])
+        }
+
+        async fn handle(&self, event: &DomainEvent) {
+            if matches!(event, DomainEvent::MemorySyncStageChanged { .. }) {
+                self.events.lock().unwrap().push(event.clone());
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn document_canonicalized_emits_stored_and_queued_stages() {
+        let _guard = test_mutex()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        init_global(event_bus::DEFAULT_CAPACITY);
+
+        let collector = StageCollector::default();
+        let _subscription =
+            subscribe_global(Arc::new(collector.clone())).expect("event bus initialized");
+
+        let bridge = MemorySyncStageBridge;
+        bridge
+            .handle(&DomainEvent::DocumentCanonicalized {
+                source_id: "slack:workspace-1".into(),
+                source_kind: "chat".into(),
+                chunks_written: 3,
+                chunk_ids: vec!["chunk-1".into()],
+                canonicalized_at: 1_700_000_000.0,
+                body_preview: None,
+            })
+            .await;
+
+        tokio::task::yield_now().await;
+
+        let stages: Vec<String> = collector
+            .events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|event| match event {
+                DomainEvent::MemorySyncStageChanged { stage, .. } => Some(stage.clone()),
+                _ => None,
+            })
+            .collect();
+        assert!(stages.contains(&"stored".to_string()));
+        assert!(stages.contains(&"queued".to_string()));
+    }
+
+    #[tokio::test]
+    async fn memory_ingestion_started_emits_ingesting_stage() {
+        let _guard = test_mutex()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        init_global(event_bus::DEFAULT_CAPACITY);
+
+        let collector = StageCollector::default();
+        let _subscription =
+            subscribe_global(Arc::new(collector.clone())).expect("event bus initialized");
+
+        let bridge = MemorySyncStageBridge;
+        bridge
+            .handle(&DomainEvent::MemoryIngestionStarted {
+                document_id: "doc-123".into(),
+                title: "Vault Note".into(),
+                namespace: "vault:v-1".into(),
+                queue_depth: 2,
+            })
+            .await;
+
+        tokio::task::yield_now().await;
+
+        let ingesting = collector
+            .events
+            .lock()
+            .unwrap()
+            .iter()
+            .find_map(|event| match event {
+                DomainEvent::MemorySyncStageChanged {
+                    stage,
+                    provider,
+                    connection_id,
+                    detail,
+                    ..
+                } if stage == "ingesting" => {
+                    Some((provider.clone(), connection_id.clone(), detail.clone()))
+                }
+                _ => None,
+            })
+            .expect("ingesting stage should be emitted");
+
+        assert_eq!(ingesting.0.as_deref(), Some("vault:v-1"));
+        assert_eq!(ingesting.1.as_deref(), Some("doc-123"));
+        assert_eq!(ingesting.2.as_deref(), Some("queue_depth=2"));
+    }
+}
