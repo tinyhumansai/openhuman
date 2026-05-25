@@ -62,7 +62,7 @@
 
 Download installers from [tinyhumans.ai/openhuman](https://tinyhumans.ai/openhuman?utm_source=github&utm_medium=readme) or from the [GitHub Releases](https://github.com/tinyhumansai/openhuman/releases/latest) page. For terminal installs, the native package paths below are preferred — they ride your OS package-manager's signing chain.
 
-### Recommended install (native packages)
+## Recommended install (native packages)
 
 These paths verify the artifact through your OS package manager's signing chain (Homebrew bottle hash, signed apt repo, MSI signature).
 
@@ -94,7 +94,7 @@ sudo apt-get install -y openhuman
 
 > **Linux:** the AppImage can crash on launch under Wayland (and on Arch-based distros with `sharun: Interpreter not found!`) — see [#2463](https://github.com/tinyhumansai/openhuman/issues/2463) for the cause and env-var workarounds. The `.deb` package above avoids those failure modes on Debian/Ubuntu.
 
-### Alternative: script install (no integrity check)
+## Alternative: script install (no integrity check)
 
 > **Warning — unverified install.** These scripts are served live from `raw.githubusercontent.com` and do **not** ship a separate signature, so `curl … | bash` and `irm … | iex` have no way to detect tampering of the script bytes. Prefer the **native package** paths above whenever possible. If you must use the script, see "Verified script install" below.
 
@@ -106,7 +106,7 @@ curl -fsSL https://raw.githubusercontent.com/tinyhumansai/openhuman/main/scripts
 irm https://raw.githubusercontent.com/tinyhumansai/openhuman/main/scripts/install.ps1 | iex
 ```
 
-### Verified script install (coming soon)
+## Verified script install (coming soon)
 
 PR2 of [#2620](https://github.com/tinyhumansai/openhuman/issues/2620) will publish `install.sh.asc` / `install.ps1.asc` as release assets and document the `gpg --verify` (and Windows equivalent) flow here, so the script path can be made integrity-checked end-to-end.
 
