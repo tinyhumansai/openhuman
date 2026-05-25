@@ -1,23 +1,23 @@
 ---
-description: The desktop host (`app/src-tauri/`) - Tauri v2 + WebView, IPC, sidecar lifecycle, core bridge.
+description: The desktop host (`app/src-tauri/`) - Tauri v2 + WebView, IPC, embedded core lifecycle, core bridge.
 icon: desktop
 ---
 
 # Tauri shell (`app/src-tauri/`)
 
-The desktop host for OpenHuman: Tauri v2 + WebView, IPC commands, window management, and bridging to the `openhuman-core` Rust sidecar (core JSON-RPC). It does **not** duplicate the full domain stack; that lives in the repo-root Rust crate (`openhuman_core`, `src/main.rs`).
+The desktop host for OpenHuman: Tauri v2 + WebView, IPC commands, window management, and bridging to the embedded `openhuman-core` Rust runtime (core JSON-RPC). It does **not** duplicate the full domain stack; that lives in the repo-root Rust crate (`openhuman_core`, `src/main.rs`).
 
 ## Responsibilities
 
 1. **Web UI**. Load the Vite build from `app/dist` (or dev server on port 1420).
-2. **IPC**. Expose a small, explicit set of Tauri commands (see [Commands](#commands)).
-3. **Core lifecycle**. Ensure the `openhuman-core` binary is running (child process and/or service) and proxy JSON-RPC via `core_rpc_relay`.
+2. **IPC**. Expose a small, explicit set of Tauri commands (see [Commands](#tauri-ipc-commands-app-src-tauri)).
+3. **Core lifecycle**. Start the in-process core server and proxy JSON-RPC via `core_rpc_relay`.
 4. **AI prompts on disk**. Resolve bundled `src/openhuman/agent/prompts` from resources / dev cwd for `ai_get_config` / `write_ai_config_file`.
 5. **Window + tray**. Desktop window behavior and system tray (see `lib.rs`).
 
-## Building the sidecar
+## Core process model
 
-`app/package.json` `core:stage` runs `scripts/stage-core-sidecar.mjs`, which runs `cargo build --bin openhuman-core` at the repo root and copies the binary into `app/src-tauri/binaries/` for Tauri `externalBin`.
+`app/package.json` `core:stage` is intentionally a no-op kept for script compatibility. The desktop app links the core in-process, so local builds no longer need a staged `openhuman-core-*` sidecar under `app/src-tauri/binaries/`.
 
 ## Stuck process recovery
 
@@ -31,7 +31,7 @@ Startup recovery skips when `OPENHUMAN_CORE_REUSE_EXISTING=1` is set (so manual 
 
 ### Overview
 
-The **`app/src-tauri`** crate (Rust package **`OpenHuman`**, binary **`OpenHuman`**) is a **desktop-only** host. It embeds the React UI, registers plugins (deep link, opener, OS, notifications, autostart, updater), manages the main window and tray, and **relays JSON-RPC** to the separately built **`openhuman-core`** binary.
+The **`app/src-tauri`** crate (Rust package **`OpenHuman`**, binary **`OpenHuman`**) is a **desktop-only** host. It embeds the React UI, registers plugins (deep link, opener, OS, notifications, autostart, updater), manages the main window and tray, and **relays JSON-RPC** to the embedded core server.
 
 Non-desktop targets fail at compile time (`compile_error!` in `lib.rs`).
 
@@ -41,7 +41,7 @@ Non-desktop targets fail at compile time (`compile_error!` in `lib.rs`).
 app/src-tauri/src/
 ├── lib.rs                 # `run()`, tray/menu actions, plugins, `generate_handler!`, core startup
 ├── main.rs                # Binary entry
-├── core_process.rs        # CoreProcessHandle, spawn/monitor openhuman sidecar
+├── core_process.rs        # CoreProcessHandle, embedded core server task
 ├── core_rpc.rs            # HTTP client to core JSON-RPC
 ├── commands/
 │   ├── mod.rs             # Re-exports
@@ -61,10 +61,10 @@ There is **no** `src-tauri/src/services/session_service.rs` in this tree; sessio
 React (invoke)
     → core_rpc_relay { method, params, serviceManaged? }
         → core_rpc::call HTTP POST to OPENHUMAN_CORE_RPC_URL
-            → openhuman binary (src/bin/openhuman.rs → core_server)
+            → embedded openhuman core server
 ```
 
-`CoreProcessHandle` in `core_process.rs` starts or waits for the sidecar; `commands/core_relay.rs` optionally ensures a **service-managed** core is running before relaying.
+`CoreProcessHandle` in `core_process.rs` owns the embedded server task; `commands/core_relay.rs` optionally ensures a **service-managed** core is running before relaying.
 
 ### Window and tray behavior
 

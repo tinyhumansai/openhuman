@@ -310,6 +310,97 @@ async fn inline_complete_interactive_does_not_block_on_held_permit() {
     );
 }
 
+#[tokio::test]
+async fn prompt_interactive_does_not_block_on_held_permit() {
+    let _guard = crate::openhuman::inference::inference_test_guard();
+
+    let _held = crate::openhuman::scheduler_gate::gate::try_acquire_llm_permit()
+        .expect("test must start with a free permit");
+
+    let app = Router::new().route(
+        "/api/generate",
+        post(|Json(_body): Json<serde_json::Value>| async move {
+            Json(json!({
+                "model": "test",
+                "response": "hello from mock",
+                "done": true
+            }))
+        }),
+    );
+    let base = spawn_mock(app).await;
+    unsafe {
+        std::env::set_var("OPENHUMAN_OLLAMA_BASE_URL", &base);
+    }
+
+    let config = enabled_config();
+    let service = ready_service(&config);
+
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        service.prompt_interactive(&config, "hi", Some(16), true),
+    )
+    .await;
+
+    unsafe {
+        std::env::remove_var("OPENHUMAN_OLLAMA_BASE_URL");
+    }
+
+    let reply = result
+        .expect("interactive prompt must not block on a held permit")
+        .expect("interactive prompt response");
+    assert_eq!(reply, "hello from mock");
+}
+
+#[tokio::test]
+async fn chat_with_history_interactive_does_not_block_on_held_permit() {
+    let _guard = crate::openhuman::inference::inference_test_guard();
+
+    let _held = crate::openhuman::scheduler_gate::gate::try_acquire_llm_permit()
+        .expect("test must start with a free permit");
+
+    let app = Router::new().route(
+        "/api/chat",
+        post(|Json(_body): Json<serde_json::Value>| async move {
+            Json(json!({
+                "model": "test",
+                "message": { "role": "assistant", "content": "history reply" },
+                "done": true
+            }))
+        }),
+    );
+    let base = spawn_mock(app).await;
+    unsafe {
+        std::env::set_var("OPENHUMAN_OLLAMA_BASE_URL", &base);
+    }
+
+    let config = enabled_config();
+    let service = ready_service(&config);
+
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        service.chat_with_history_interactive(
+            &config,
+            vec![
+                crate::openhuman::inference::local::ollama::OllamaChatMessage {
+                    role: "user".to_string(),
+                    content: "hi".to_string(),
+                },
+            ],
+            Some(16),
+        ),
+    )
+    .await;
+
+    unsafe {
+        std::env::remove_var("OPENHUMAN_OLLAMA_BASE_URL");
+    }
+
+    let reply = result
+        .expect("interactive chat must not block on a held permit")
+        .expect("interactive chat response");
+    assert_eq!(reply, "history reply");
+}
+
 /// Counterpart: the gated `inline_complete` (and `prompt`/`summarize`)
 /// MUST queue behind a held permit. We assert this with a try-style
 /// race: spawn the gated call, give it time to enter the wait, then
