@@ -16,6 +16,10 @@ vi.mock('../../../../utils/tauriCommands', () => ({
   openhumanComposioClearApiKey: hoisted.clearApiKey,
 }));
 
+const coreStateMock = vi.fn(() => ({ snapshot: { sessionToken: 'cloud.jwt.remote' } }));
+
+vi.mock('../../../../providers/CoreStateProvider', () => ({ useCoreState: () => coreStateMock() }));
+
 vi.mock('../../hooks/useSettingsNavigation', () => ({
   useSettingsNavigation: () => ({
     navigateBack: vi.fn(),
@@ -41,6 +45,7 @@ const directModeWithKey = { result: { mode: 'direct' as const, api_key_set: true
 describe('ComposioPanel', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    coreStateMock.mockReturnValue({ snapshot: { sessionToken: 'cloud.jwt.remote' } });
     hoisted.getMode.mockResolvedValue(backendMode);
     hoisted.setApiKey.mockResolvedValue({ result: { stored: true, mode: 'direct' }, logs: [] });
     hoisted.clearApiKey.mockResolvedValue({ result: { cleared: true, mode: 'backend' }, logs: [] });
@@ -102,6 +107,20 @@ describe('ComposioPanel', () => {
     expect(screen.queryByLabelText('Composio API key')).toBeNull();
     fireEvent.click(screen.getByLabelText('Direct (bring your own API key)'));
     expect(screen.getByLabelText('Composio API key')).toBeInTheDocument();
+  });
+
+  test('defaults to direct-only API-key mode when managed auth is unavailable', async () => {
+    coreStateMock.mockReturnValue({ snapshot: { sessionToken: 'header.payload.local' } });
+    const Panel = await importPanel();
+    renderWithProviders(<Panel embedded />);
+    await waitFor(() => expect(screen.queryByText('Loading…')).toBeNull());
+
+    expect(
+      screen.queryByLabelText('Managed (OpenHuman handles it for you)')
+    ).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Direct (bring your own API key)')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Composio API key')).toBeInTheDocument();
+    expect(screen.getByText(/Managed Composio auth is unavailable here/i)).toBeInTheDocument();
   });
 
   test('saving Direct mode with a key calls setApiKey and masks the field', async () => {

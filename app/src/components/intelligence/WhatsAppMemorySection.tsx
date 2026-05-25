@@ -53,7 +53,7 @@ export function WhatsAppMemorySection({ pollIntervalMs = 30000 }: WhatsAppMemory
         <div className="flex items-center gap-2 min-w-0">
           <WhatsAppIcon />
           <span className="text-sm font-semibold text-stone-800 dark:text-neutral-100">
-            WhatsApp
+            {t('whatsapp.title')}
           </span>
           <span className="text-xs text-stone-500 dark:text-neutral-400">
             {chatCount.toLocaleString()}{' '}

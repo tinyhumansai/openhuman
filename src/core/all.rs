@@ -115,7 +115,7 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     // Scheduled job management
     controllers.extend(crate::openhuman::cron::all_cron_registered_controllers());
     // MCP client subsystem: Smithery registry browser, local server install/connect, tool dispatch
-    controllers.extend(crate::openhuman::mcp_clients::all_mcp_clients_registered_controllers());
+    controllers.extend(crate::openhuman::mcp_registry::all_mcp_registry_registered_controllers());
     // Webview APIs bridge — proxies connector calls (Gmail, …) through
     // a WebSocket to the Tauri shell so curl reaches the live webview.
     controllers.extend(crate::openhuman::webview_apis::all_webview_apis_registered_controllers());
@@ -158,10 +158,12 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(crate::openhuman::service::all_service_registered_controllers());
     // Data migration utilities
     controllers.extend(crate::openhuman::migration::all_migration_registered_controllers());
-    // Unified inference domain: text / vision / embedding / local runtime / cloud providers.
+    // Unified inference domain: text / vision / local runtime / cloud providers.
     // (Formerly split across inference, local_ai, and providers namespaces.)
     controllers.extend(crate::openhuman::inference::all_inference_registered_controllers());
     controllers.extend(crate::openhuman::inference::all_local_ai_registered_controllers());
+    // Embedding provider configuration and embed RPC.
+    controllers.extend(crate::openhuman::embeddings::all_embeddings_registered_controllers());
     // People resolution and interaction scoring
     controllers.extend(crate::openhuman::people::all_people_registered_controllers());
     // Screen capture and UI analysis
@@ -185,15 +187,17 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     // Document and knowledge graph storage
     controllers.extend(crate::openhuman::memory::all_memory_registered_controllers());
     // Memory tree ingestion layer (#707 — canonicalised chunks with provenance)
-    controllers.extend(crate::openhuman::memory::all_memory_tree_registered_controllers());
+    controllers.extend(crate::openhuman::memory_tree::all_memory_tree_registered_controllers());
     // Memory tree retrieval layer (#710 — LLM-callable read tools over the tree)
-    controllers.extend(crate::openhuman::memory::all_retrieval_registered_controllers());
+    controllers.extend(crate::openhuman::memory_tree::all_retrieval_registered_controllers());
     // Slack → memory-tree ingestion engine (per-message ingest, no bucketing)
     controllers.extend(
         crate::openhuman::composio::providers::slack::all_slack_memory_registered_controllers(),
     );
     // Per-connection memory sync status, controls, and progress (#1136)
-    controllers.extend(crate::openhuman::memory::all_memory_sync_status_registered_controllers());
+    controllers.extend(
+        crate::openhuman::memory_sync::sync_status::all_memory_sync_status_registered_controllers(),
+    );
     // Link shortener for long tracking URLs — saves LLM tokens
     controllers
         .extend(crate::openhuman::redirect_links::all_redirect_links_registered_controllers());
@@ -226,8 +230,7 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     // Core binary update management
     controllers.extend(crate::openhuman::update::all_update_registered_controllers());
     // Hierarchical knowledge summarization
-    controllers
-        .extend(crate::openhuman::tree_summarizer::all_tree_summarizer_registered_controllers());
+    controllers.extend(crate::openhuman::memory_tree::all_tree_summarizer_registered_controllers());
     // Self-learning and user context enrichment
     controllers.extend(crate::openhuman::learning::all_learning_registered_controllers());
     // Conversation thread and message management
@@ -279,7 +282,7 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::audio_toolkit::all_audio_toolkit_controller_schemas());
     schemas.extend(crate::openhuman::composio::all_composio_controller_schemas());
     schemas.extend(crate::openhuman::cron::all_cron_controller_schemas());
-    schemas.extend(crate::openhuman::mcp_clients::all_mcp_clients_controller_schemas());
+    schemas.extend(crate::openhuman::mcp_registry::all_mcp_registry_controller_schemas());
     schemas.extend(crate::openhuman::webview_apis::all_webview_apis_controller_schemas());
     schemas.extend(crate::openhuman::agent::all_agent_controller_schemas());
     schemas.extend(crate::openhuman::agent_experience::all_agent_experience_controller_schemas());
@@ -302,6 +305,7 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::migration::all_migration_controller_schemas());
     schemas.extend(crate::openhuman::inference::all_inference_controller_schemas());
     schemas.extend(crate::openhuman::inference::all_local_ai_controller_schemas());
+    schemas.extend(crate::openhuman::embeddings::all_embeddings_controller_schemas());
     schemas.extend(crate::openhuman::people::all_people_controller_schemas());
     schemas.extend(
         crate::openhuman::screen_intelligence::all_screen_intelligence_controller_schemas(),
@@ -314,12 +318,14 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::tools::all_tools_controller_schemas());
     schemas.extend(crate::openhuman::tool_registry::all_tool_registry_controller_schemas());
     schemas.extend(crate::openhuman::memory::all_memory_controller_schemas());
-    schemas.extend(crate::openhuman::memory::all_memory_tree_controller_schemas());
-    schemas.extend(crate::openhuman::memory::all_retrieval_controller_schemas());
+    schemas.extend(crate::openhuman::memory_tree::all_memory_tree_controller_schemas());
+    schemas.extend(crate::openhuman::memory_tree::all_retrieval_controller_schemas());
     schemas.extend(
         crate::openhuman::composio::providers::slack::all_slack_memory_controller_schemas(),
     );
-    schemas.extend(crate::openhuman::memory::all_memory_sync_status_controller_schemas());
+    schemas.extend(
+        crate::openhuman::memory_sync::sync_status::all_memory_sync_status_controller_schemas(),
+    );
     schemas.extend(crate::openhuman::redirect_links::all_redirect_links_controller_schemas());
     schemas.extend(crate::openhuman::referral::all_referral_controller_schemas());
     schemas.extend(crate::openhuman::billing::all_billing_controller_schemas());
@@ -333,7 +339,7 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::subconscious::all_subconscious_controller_schemas());
     schemas.extend(crate::openhuman::webhooks::all_webhooks_controller_schemas());
     schemas.extend(crate::openhuman::update::all_update_controller_schemas());
-    schemas.extend(crate::openhuman::tree_summarizer::all_tree_summarizer_controller_schemas());
+    schemas.extend(crate::openhuman::memory_tree::all_tree_summarizer_controller_schemas());
     schemas.extend(crate::openhuman::learning::all_learning_controller_schemas());
     // Conversation thread and message management
     schemas.extend(crate::openhuman::threads::all_threads_controller_schemas());
@@ -395,6 +401,9 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
         "cron" => Some("Manage scheduled jobs and run history."),
         "mcp_clients" => Some(
             "Browse the Smithery.ai MCP registry, install MCP servers locally, manage their stdio connections, and expose their tools to the agent.",
+        ),
+        "mcp_setup" => Some(
+            "MCP setup agent surface: search registries, request secrets out-of-band (opaque refs, no raw values in agent context), test, and install + connect.",
         ),
         "decrypt" => Some("Decrypt secure values managed by secret storage."),
         "doctor" => Some("Run diagnostics for workspace and runtime health."),

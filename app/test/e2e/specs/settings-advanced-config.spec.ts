@@ -41,7 +41,8 @@ describe('Settings - Advanced Config', () => {
 
     await waitForText('Advanced', 15_000);
     await waitForText('AI Configuration', 15_000);
-    await waitForText('Notification Routing', 15_000);
+    // 'Notification Routing' was removed as a top-level dev option in
+    // PR #2550 — it now lives as a tab inside Settings → Notifications.
     await waitForText('Composio Routing (Direct Mode)', 15_000);
     await waitForText('About', 15_000);
   });
@@ -54,7 +55,13 @@ describe('Settings - Advanced Config', () => {
     expect(before.ok).toBe(true);
     const initialEnabled = Boolean(before.result?.settings?.enabled);
 
-    await navigateViaHash('/settings/notification-routing');
+    // /settings/notification-routing now redirects to
+    // /settings/notifications#routing (the Routing tab on the tabbed
+    // Notifications panel). Navigate to the tabbed panel directly and click
+    // the Routing tab so we land on the same content the legacy path used to
+    // render.
+    await navigateViaHash('/settings/notifications');
+    await clickText('Routing', 10_000);
     await waitForText('Notification Intelligence', 15_000);
     await clickSelector('input[type="checkbox"]');
 

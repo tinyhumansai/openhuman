@@ -150,17 +150,20 @@ const AutoRechargeSection = ({
             )}
             {arSettings.spentThisWeekUsd > 0 && (
               <span className="text-[10px] text-stone-400 dark:text-neutral-500">
-                ${arSettings.spentThisWeekUsd.toFixed(2)} of ${arSettings.weeklyLimitUsd} used this
-                week
+                {t('settings.billing.autoRecharge.spentThisWeek')
+                  .replace('{spent}', arSettings.spentThisWeekUsd.toFixed(2))
+                  .replace('{limit}', String(arSettings.weeklyLimitUsd))}
               </span>
             )}
             {arSettings.lastRechargeAt && (
               <span className="text-[10px] text-stone-500 dark:text-neutral-400">
-                {t('settings.billing.autoRecharge.lastRecharged')}{' '}
-                {new Date(arSettings.lastRechargeAt).toLocaleDateString('en-US', {
-                  month: 'short',
-                  day: 'numeric',
-                })}
+                {t('settings.billing.autoRecharge.expires').replace(
+                  '{date}',
+                  new Date(arSettings.lastRechargeAt).toLocaleDateString('en-US', {
+                    month: 'short',
+                    day: 'numeric',
+                  })
+                )}
               </span>
             )}
           </div>
@@ -349,8 +352,10 @@ const AutoRechargeSection = ({
                       )}
                     </div>
                     <p className="text-[10px] text-stone-500 dark:text-neutral-400 mt-0.5">
-                      Expires {String(card.expMonth).padStart(2, '0')}/
-                      {String(card.expYear).slice(-2)}
+                      {t('settings.billing.autoRecharge.expires').replace(
+                        '{date}',
+                        `${String(card.expMonth).padStart(2, '0')}/${String(card.expYear).slice(-2)}`
+                      )}
                     </p>
                   </div>
 

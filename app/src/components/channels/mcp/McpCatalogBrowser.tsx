@@ -5,6 +5,7 @@
 import debug from 'debug';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { useT } from '../../../lib/i18n/I18nContext';
 import { mcpClientsApi } from '../../../services/api/mcpClientsApi';
 import SmitheryServerCard from './SmitheryServerCard';
 import type { SmitheryServer } from './types';
@@ -18,6 +19,7 @@ interface McpCatalogBrowserProps {
 }
 
 const McpCatalogBrowser = ({ onSelectInstall }: McpCatalogBrowserProps) => {
+  const { t } = useT();
   const [query, setQuery] = useState('');
   const [servers, setServers] = useState<SmitheryServer[]>([]);
   const [page, setPage] = useState(1);
@@ -29,37 +31,42 @@ const McpCatalogBrowser = ({ onSelectInstall }: McpCatalogBrowserProps) => {
   // responses when a newer request has already been issued.
   const requestSeqRef = useRef(0);
 
-  const fetchPage = useCallback(async (searchQuery: string, pageNum: number, append: boolean) => {
-    const seq = ++requestSeqRef.current;
-    setLoading(true);
-    setError(null);
-    log('fetching page=%d query=%s seq=%d', pageNum, searchQuery, seq);
-    try {
-      const result = await mcpClientsApi.registrySearch({
-        query: searchQuery || undefined,
-        page: pageNum,
-        page_size: PAGE_SIZE,
-      });
-      // Discard if a newer request has already been dispatched.
-      if (seq !== requestSeqRef.current) {
-        log('discarding stale response seq=%d (latest=%d)', seq, requestSeqRef.current);
-        return;
+  const fetchPage = useCallback(
+    async (searchQuery: string, pageNum: number, append: boolean) => {
+      const seq = ++requestSeqRef.current;
+      setLoading(true);
+      setError(null);
+      log('fetching page=%d query=%s seq=%d', pageNum, searchQuery, seq);
+      try {
+        const result = await mcpClientsApi.registrySearch({
+          query: searchQuery || undefined,
+          page: pageNum,
+          page_size: PAGE_SIZE,
+        });
+        // Discard if a newer request has already been dispatched.
+        if (seq !== requestSeqRef.current) {
+          log('discarding stale response seq=%d (latest=%d)', seq, requestSeqRef.current);
+          return;
+        }
+        setTotalPages(result.total_pages);
+        setPage(result.page);
+        // Guard against malformed envelope where `servers` is null/undefined.
+        const incoming = result.servers ?? [];
+        setServers(prev => (append ? [...prev, ...incoming] : incoming));
+        log('loaded %d servers (append=%s)', incoming.length, append);
+      } catch (err) {
+        if (seq !== requestSeqRef.current) return;
+        const msg = err instanceof Error ? err.message : t('mcp.catalog.loadFailed');
+        log('catalog fetch error: %s', msg);
+        setError(msg);
+      } finally {
+        if (seq === requestSeqRef.current) {
+          setLoading(false);
+        }
       }
-      setTotalPages(result.total_pages);
-      setPage(result.page);
-      setServers(prev => (append ? [...prev, ...result.servers] : result.servers));
-      log('loaded %d servers (append=%s)', result.servers.length, append);
-    } catch (err) {
-      if (seq !== requestSeqRef.current) return;
-      const msg = err instanceof Error ? err.message : 'Failed to load catalog';
-      log('catalog fetch error: %s', msg);
-      setError(msg);
-    } finally {
-      if (seq === requestSeqRef.current) {
-        setLoading(false);
-      }
-    }
-  }, []);
+    },
+    [t]
+  );
 
   // Debounce the query and reset to page 1 whenever it changes.
   useEffect(() => {
@@ -81,8 +88,8 @@ const McpCatalogBrowser = ({ onSelectInstall }: McpCatalogBrowserProps) => {
       <div className="flex items-center gap-2">
         <input
           type="search"
-          aria-label="Search Smithery catalog"
-          placeholder="Search Smithery catalog..."
+          aria-label={t('mcp.catalog.searchAria')}
+          placeholder={t('mcp.catalog.searchPlaceholder')}
           value={query}
           onChange={e => setQuery(e.target.value)}
           className="flex-1 rounded-lg border border-stone-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-800 dark:text-neutral-100 placeholder:text-stone-400 dark:placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-primary-500/40"
@@ -97,11 +104,13 @@ const McpCatalogBrowser = ({ onSelectInstall }: McpCatalogBrowserProps) => {
 
       {loading && servers.length === 0 ? (
         <div className="text-sm text-stone-400 dark:text-neutral-500 py-6 text-center">
-          Loading...
+          {t('common.loading')}
         </div>
       ) : servers.length === 0 ? (
         <div className="text-sm text-stone-400 dark:text-neutral-500 py-6 text-center">
-          No servers found{query ? ` for "${query}"` : ''}.
+          {query
+            ? t('mcp.catalog.noResultsFor').replace('{query}', query)
+            : t('mcp.catalog.noResults')}
         </div>
       ) : (
         <>
@@ -122,7 +131,7 @@ const McpCatalogBrowser = ({ onSelectInstall }: McpCatalogBrowserProps) => {
                 disabled={loading}
                 onClick={handleLoadMore}
                 className="rounded-lg border border-stone-200 dark:border-neutral-700 px-4 py-2 text-sm font-medium text-stone-600 dark:text-neutral-300 hover:border-stone-300 dark:hover:border-neutral-600 disabled:opacity-50">
-                {loading ? 'Loading...' : 'Load more'}
+                {loading ? t('common.loading') : t('mcp.catalog.loadMore')}
               </button>
             </div>
           )}

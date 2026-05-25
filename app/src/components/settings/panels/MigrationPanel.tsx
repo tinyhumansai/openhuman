@@ -145,9 +145,9 @@ const MigrationPanel = ({ embedded = false }: MigrationPanelProps = {}) => {
               value={vendor}
               onChange={e => setVendor(e.target.value as Vendor)}
               className="w-full rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 focus:outline-none focus:ring-1 focus:ring-primary-400">
-              <option value="openclaw">OpenClaw</option>
+              <option value="openclaw">{t('migration.vendor.openclaw')}</option>
               <option value="hermes" disabled>
-                Hermes Agent (coming soon)
+                {t('migration.vendor.hermes')}
               </option>
             </select>
           </label>
