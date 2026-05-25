@@ -138,7 +138,7 @@ const McpServersTab = () => {
   if (loading) {
     return (
       <div className="py-10 text-center text-sm text-stone-400 dark:text-neutral-500">
-        Loading MCP servers...
+        {t('mcp.tab.loading')}
       </div>
     );
   }
@@ -174,7 +174,7 @@ const McpServersTab = () => {
         <div className="flex-1 min-w-0 overflow-y-auto">
           {rightPane.mode === 'none' && (
             <div className="h-full flex items-center justify-center text-sm text-stone-400 dark:text-neutral-500">
-              Select a server or browse the catalog.
+              {t('mcp.tab.emptyDetail')}
             </div>
           )}
 

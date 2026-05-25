@@ -38,6 +38,7 @@ import {
   navigateToBilling,
   navigateToHome,
   navigateToSettings,
+  navigateViaHash,
   waitForHomePage,
   walkOnboarding,
 } from '../helpers/shared-flows';
@@ -340,7 +341,10 @@ describe('Auth & Access Control', () => {
       await navigateToHome();
     }
 
-    await navigateToSettings();
+    // Log out + Clear App Data moved out of the main /settings page and
+    // into the Account section in PR #2550 (LogoutAndClearActions footer
+    // on /settings/account).
+    await navigateViaHash('/settings/account');
 
     // Click "Log out" via JS — the settings menu item text is "Log out"
     // with description "Sign out of your account"

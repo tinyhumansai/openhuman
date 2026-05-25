@@ -1,82 +1,65 @@
-# Memory
+# memory
 
-Persistent knowledge layer. Owns the unified store (SQLite + FTS5 + vector embeddings + graph relations), document ingestion pipelines, namespace + KV operations, conversation history, and retrieval scoring. Does NOT own raw provider embedding APIs (`local_ai/`), agent prompt assembly (`agent/memory_loader.rs`), or per-channel ingestion adapters beyond the bundled Slack importer.
+Orchestration layer over the memory stack. Owns:
 
-## Architecture
+- **Sync orchestration** — accepts cron/manual sync requests, emits
+  frontend-visible lifecycle events, and dispatches into `memory_sync`.
+- **Query orchestration** — surfaces the high-level memory query tools
+  and agentic tree walk flow, delegating traversal/retrieval to `memory_tree`.
+- **Remember orchestration** — classifies chat history, uploaded data,
+  and LLM-thought memory before routing it onward.
+- **Ingest pipeline** — orchestrates source → canonicalise → chunk →
+  score → persist → enqueue extract jobs.
+- **RPC surface** — `read_rpc`, sync handlers, controller schemas for the
+  memory\_\* RPC namespace.
 
-The module is organised in concentric layers — the contract on the
-inside, the persistent backend around it, the ingestion + retrieval
-pipelines on top, and the per-domain glue at the edge:
+Does **not** own any storage primitives — those live in
+[`memory_store`](../memory_store/). See that module for raw md, chunks,
+entities, trees, vectors, kv, and contacts.
 
-```text
-                      ┌──────────────────────────────────────┐
-                      │  conversations/   slack_ingestion/   │  per-domain plumbing
-                      ├──────────────────────────────────────┤
-                      │  tree/   (bucket-seal LLD pipeline)  │  new retrieval architecture
-                      ├──────────────────────────────────────┤
-                      │  ingestion/        (extract chunks)  │  document ingestion
-                      ├──────────────────────────────────────┤
-                      │  store/      (UnifiedMemory backend) │  SQLite + FTS5 + vectors
-                      ├──────────────────────────────────────┤
-                      │  traits.rs           (Memory trait)  │  contract
-                      └──────────────────────────────────────┘
-```
+## Sibling memory\_\* modules
 
-- **`traits.rs`** — `Memory`, `MemoryEntry`, `MemoryCategory`,
-  `RecallOpts`. The backend-agnostic contract every store implements.
-- **`store/`** — `UnifiedMemory` is the production backend (SQLite
-  with FTS5 for keyword search, vector tables for embeddings, and
-  graph tables for entity/relation triples) plus the `MemoryClient`
-  handle used by the rest of the process.
-- **`ingestion/`** — chunking + extraction pipeline (entities,
-  relations, embeddings) and the background `IngestionQueue` worker.
-- **`tree/`** — the new bucket-seal retrieval architecture from
-  `docs/MEMORY_ARCHITECTURE_LLD.md`: `canonicalize` (normalise
-  inputs), `chunker` and `content_store` (durable chunks),
-  `score`/`retrieval` (ranking surface),
-  `tree_source`/`tree_topic`/`tree_global` (the three concentric
-  trees the LLD calls for), and `jobs` (background seals/summaries).
-- **`conversations/`** — workspace-backed JSONL chat thread/message
-  history. See `conversations/README.md`.
-- **`slack_ingestion/`** — Slack provider plumbing (bucketer +
-  ingest wrapper + RPC). See `slack_ingestion/README.md`.
+The memory stack is split across several top-level modules so each has
+one job. memory orchestrates and routes between them.
 
-The legacy memory store (`store/` + `ingestion/`) and the new
-`tree/` pipeline coexist for now — `tree/` is replacing the older
-retrieval surface incrementally and both must remain wired into RPC
-until the migration completes.
+| Module                                     | Role                                                                                                |
+| ------------------------------------------ | --------------------------------------------------------------------------------------------------- |
+| [`memory_store`](../memory_store/)         | Storage primitives: raw / chunks / entities / trees / vectors / kv / contacts. SQLite + on-disk md. |
+| [`memory_tree`](../memory_tree/)           | Generic tree mechanics: bucket-seal, flush, summarise, and retrieval/traversal backends.            |
+| [`memory_archivist`](../memory_archivist/) | Chat conversation → clip tool-calls → push to tree.                                                 |
+| [`memory_entities`](../memory_entities/)   | Md-backed entity registry (people + orgs + topics + …). Replacing `people/`.                        |
+| [`memory_graph`](../memory_graph/)         | Derived co-occurrence edges over the entity index.                                                  |
+| [`memory_tools`](../memory_tools/)         | Tool-scoped rules + agent read/write tools.                                                         |
+| [`memory_sync`](../memory_sync/)           | Composio + workspace + MCP sync pipelines.                                                          |
 
-## Public surface
+## What lives here
 
-- `pub trait Memory` / `pub struct MemoryEntry` / `pub enum MemoryCategory` / `pub struct RecallOpts` — `traits.rs:11-100` — backend contract for any memory store.
-- `pub struct UnifiedMemory` — `store/unified/` (re-exported `store/mod.rs:40`) — primary SQLite + FTS5 + vector implementation.
-- `pub struct MemoryClient` / `pub struct MemoryClientRef` / `pub enum MemoryState` — `store/client.rs` — async client handle used by RPC handlers.
-- `pub fn create_memory` / `pub fn create_memory_with_storage` / `pub fn create_memory_with_storage_and_routes` / `pub fn create_memory_for_migration` — `store/factories.rs` — bootstrap a memory instance.
-- `pub struct MemoryIngestionRequest` / `pub struct MemoryIngestionResult` / `pub struct MemoryIngestionConfig` / `pub enum ExtractionMode` / `pub struct ExtractedEntity` / `pub struct ExtractedRelation` / `const DEFAULT_MEMORY_EXTRACTION_MODEL` — `ingestion.rs` (re-exported `mod.rs:22`).
-- `pub struct IngestionQueue` / `pub struct IngestionJob` — `ingestion_queue.rs` — async background ingestion worker.
-- `pub struct NamespaceDocumentInput` / `pub struct NamespaceMemoryHit` / `pub struct NamespaceQueryResult` / `pub struct NamespaceRetrievalContext` / `pub struct RetrievalScoreBreakdown` / `pub enum MemoryItemKind` — `store/types.rs`.
-- RPC `memory.{init, list_documents, list_namespaces, delete_document, query_namespace, recall_context, recall_memories, list_files, read_file, write_file, namespace_list, doc_put, doc_ingest, doc_list, doc_delete, context_query, context_recall, kv_set, kv_get, kv_delete, kv_list_namespace, graph_upsert, graph_query, clear_namespace}` — `schemas.rs:29-55`.
-- RPC tree `memory.tree.*` and retrieval — `tree/` (re-exported via `all_memory_tree_*` / `all_retrieval_*`).
-- RPC slack ingestion — `slack_ingestion/` (re-exported via `all_slack_ingestion_*`).
+| Path                                              | Role                                                                                                                                                                    |
+| ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`mod.rs`](mod.rs)                                | Module root + orchestration-facing exports.                                                                                                                              |
+| [`sync.rs`](sync.rs)                              | High-level sync lifecycle types + frontend-visible stage events.                                                                                                         |
+| [`query/`](query/)                                | High-level memory query tools, including the agentic tree-walk flow.                                                                                                     |
+| [`remember.rs`](remember.rs)                      | High-level remember source classification (`chat_history`, `uploaded_data`, `llm_thought`).                                                                              |
+| [`ingest_pipeline.rs`](ingest_pipeline.rs)        | Source-agnostic ingest orchestration. Called by sync pipelines and tree ingest RPC.                                                                                      |
+| [`ingestion/`](ingestion/)                        | Document ingestion queue + extraction (entities, relations, embeddings) — feeds UnifiedMemory documents.                                                                |
+| [`canonicalize/`](../memory_sync/canonicalize/)   | Source → canonical markdown (chat / email / document). Implemented in `memory_sync/canonicalize` and used at ingest time.                                               |
+| [`chat/`](chat.rs)                                | Chat-source canonicalisation helpers.                                                                                                                                   |
+| [`read_rpc.rs`](read_rpc.rs)                      | RPC handlers for memory reads.                                                                                                                                          |
+| [`schemas/`](schemas/) + [`schema.rs`](schema.rs) | Controller schema definitions for the memory + memory_tree RPC namespaces.                                                                                              |
+| [`sync_status/`](../memory_sync/sync_status/)     | Sync freshness tracking + RPC.                                                                                                                                          |
+| [`ops/`](ops/)                                    | RPC operation handlers + the shared `active_memory_client` helper.                                                                                                      |
+| [`preferences.rs`](preferences.rs)                | User preference read/write helpers.                                                                                                                                     |
+| [`rpc_models.rs`](rpc_models.rs)                  | Shared RPC request/response shapes.                                                                                                                                     |
+| [`traits.rs`](traits.rs)                          | `Memory`, `MemoryEntry`, `MemoryCategory`, `NamespaceSummary`, `RecallOpts`. The backend-agnostic contract every store implements.                                      |
+| [`util/`](util/)                                  | Small helpers (redact for log PII).                                                                                                                                     |
+| [`global.rs`](global.rs)                          | Global-namespace helpers.                                                                                                                                               |
 
-## Calls into
+## Layer rules
 
-- `src/openhuman/local_ai/` — embedding model, sentiment scoring, extraction LLM.
-- `src/openhuman/embeddings/` — vector backend selection.
-- `src/openhuman/config/` — memory backend choice + filesystem paths.
-- `src/openhuman/encryption/` — at-rest secrets for KV namespaces.
-- `src/core/event_bus/` — emits `DomainEvent::Memory(*)` on ingestion / mutation.
-
-## Called by
-
-- `src/openhuman/agent/` (`memory_loader.rs`, `harness/memory_context.rs`, `harness/archivist*.rs`, `harness/fork_context.rs`) — context injection and episodic indexing.
-- `src/openhuman/learning/{reflection,tool_tracker,user_profile,prompt_sections}.rs` — long-term insight storage.
-- `src/openhuman/screen_intelligence/{helpers,tests}.rs` — recall surfaces for visual context.
-- `src/openhuman/autocomplete/history.rs` — query-history recall.
-- `src/openhuman/tools/ops.rs` and `tools/impl/system/tool_stats.rs` — memory-backed tool stats.
-- `src/core/all.rs` — registers `all_memory_*` controllers.
-
-## Tests
-
-- Unit: `ops_tests.rs`, `schemas_tests.rs`, `rpc_models_tests.rs`, `ingestion_tests.rs`, plus `*_tests.rs` files inside `store/`, `tree/`, `conversations/`, `slack_ingestion/`.
-- Integration: `tests/autocomplete_memory_e2e.rs`, `tests/memory_graph_sync_e2e.rs`.
+- **No storage in this module.** All persistence goes through
+  `memory_store::*`. If you're tempted to open a SQLite connection
+  here, the connection helper belongs one layer down.
+- **Orchestration lives here.** High-level sync/query/remember decisions
+  should land in `memory`; sibling `memory_*` modules do the backend work.
+- **Surface high-level tool calls** that route to the right submodule;
+  don't expose internals at the call site.

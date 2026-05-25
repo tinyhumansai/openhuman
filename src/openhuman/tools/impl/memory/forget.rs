@@ -92,7 +92,8 @@ impl Tool for MemoryForgetTool {
 mod tests {
     use super::*;
     use crate::openhuman::embeddings::NoopEmbedding;
-    use crate::openhuman::memory::{MemoryCategory, UnifiedMemory};
+    use crate::openhuman::memory::MemoryCategory;
+    use crate::openhuman::memory_store::UnifiedMemory;
     use crate::openhuman::security::{AutonomyLevel, SecurityPolicy};
     use tempfile::TempDir;
 

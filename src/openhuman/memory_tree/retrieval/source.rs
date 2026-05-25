@@ -21,14 +21,14 @@ use anyhow::Result;
 use chrono::{Duration, Utc};
 
 use crate::openhuman::config::Config;
-use crate::openhuman::memory_tree::content_store::read as content_read;
+use crate::openhuman::memory_store::chunks::types::SourceKind;
+use crate::openhuman::memory_store::content::read as content_read;
+use crate::openhuman::memory_store::trees::types::{SummaryNode, Tree, TreeKind};
 use crate::openhuman::memory_tree::retrieval::types::{
     hit_from_summary, QueryResponse, RetrievalHit,
 };
 use crate::openhuman::memory_tree::score::embed::{build_embedder_from_config, cosine_similarity};
-use crate::openhuman::memory_tree::tree_source::store;
-use crate::openhuman::memory_tree::tree_source::types::{SummaryNode, Tree, TreeKind};
-use crate::openhuman::memory_tree::types::SourceKind;
+use crate::openhuman::memory_tree::tree::store;
 
 const DEFAULT_LIMIT: usize = 10;
 
@@ -306,15 +306,16 @@ fn filter_by_window(hits: Vec<RetrievalHit>, window_days: u32) -> Vec<RetrievalH
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::openhuman::memory_tree::content_store;
-    use crate::openhuman::memory_tree::store::upsert_chunks;
-    use crate::openhuman::memory_tree::tree_source::bucket_seal::{
-        append_leaf, LabelStrategy, LeafRef,
+    use crate::openhuman::memory::chat::{test_override, ChatProvider, StaticChatProvider};
+    use crate::openhuman::memory::tree_source::registry::get_or_create_source_tree;
+    use crate::openhuman::memory_store::chunks::store::upsert_chunks;
+    use crate::openhuman::memory_store::chunks::types::{
+        chunk_id, Chunk, Metadata, SourceKind, SourceRef,
     };
-    use crate::openhuman::memory_tree::tree_source::registry::get_or_create_source_tree;
-    use crate::openhuman::memory_tree::tree_source::summariser::inert::InertSummariser;
-    use crate::openhuman::memory_tree::types::{chunk_id, Chunk, Metadata, SourceKind, SourceRef};
+    use crate::openhuman::memory_store::content as content_store;
+    use crate::openhuman::memory_tree::tree::bucket_seal::{append_leaf, LabelStrategy, LeafRef};
     use chrono::{DateTime, TimeZone};
+    use std::sync::Arc;
     use tempfile::TempDir;
 
     fn test_config() -> (TempDir, Config) {
@@ -330,7 +331,8 @@ mod tests {
 
     async fn seed_source(cfg: &Config, scope: &str, ts: DateTime<Utc>) {
         let tree = get_or_create_source_tree(cfg, scope).unwrap();
-        let summariser = InertSummariser::new();
+        let provider: Arc<dyn ChatProvider> =
+            Arc::new(StaticChatProvider::new("test summary content"));
         let content_root = cfg.memory_tree_content_root();
         std::fs::create_dir_all(&content_root).unwrap();
         for seq in 0..2u32 {
@@ -346,8 +348,7 @@ mod tests {
                     tags: vec!["eng".into()],
                     source_ref: Some(SourceRef::new(format!("slack://{scope}/{seq}"))),
                 },
-                token_count: crate::openhuman::memory_tree::tree_source::types::INPUT_TOKEN_BUDGET
-                    * 6
+                token_count: crate::openhuman::memory_store::trees::types::INPUT_TOKEN_BUDGET * 6
                     / 10,
                 seq_in_source: seq,
                 created_at: ts,
@@ -358,32 +359,31 @@ mod tests {
             // via `read_chunk_body` during the seal triggered by `append_leaf`,
             // and `collect_hits_and_nodes` can read summary bodies for the API.
             let staged = content_store::stage_chunks(&content_root, &[c.clone()]).unwrap();
-            crate::openhuman::memory_tree::store::with_connection(cfg, |conn| {
+            crate::openhuman::memory_store::chunks::store::with_connection(cfg, |conn| {
                 let tx = conn.unchecked_transaction()?;
-                crate::openhuman::memory_tree::store::upsert_staged_chunks_tx(&tx, &staged)?;
+                crate::openhuman::memory_store::chunks::store::upsert_staged_chunks_tx(
+                    &tx, &staged,
+                )?;
                 tx.commit()?;
                 Ok(())
             })
             .unwrap();
-            append_leaf(
-                cfg,
-                &tree,
-                &LeafRef {
-                    chunk_id: c.id.clone(),
-                    token_count:
-                        crate::openhuman::memory_tree::tree_source::types::INPUT_TOKEN_BUDGET * 6
-                            / 10,
-                    timestamp: ts,
-                    content: c.content.clone(),
-                    entities: vec![],
-                    topics: vec![],
-                    score: 0.5,
-                },
-                &summariser,
-                &LabelStrategy::Empty,
-            )
-            .await
-            .unwrap();
+            let leaf = LeafRef {
+                chunk_id: c.id.clone(),
+                token_count: crate::openhuman::memory_store::trees::types::INPUT_TOKEN_BUDGET * 6
+                    / 10,
+                timestamp: ts,
+                content: c.content.clone(),
+                entities: vec![],
+                topics: vec![],
+                score: 0.5,
+            };
+            test_override::with_provider(Arc::clone(&provider), async {
+                append_leaf(cfg, &tree, &leaf, &LabelStrategy::Empty)
+                    .await
+                    .unwrap()
+            })
+            .await;
         }
     }
 
@@ -528,7 +528,7 @@ mod tests {
     #[tokio::test]
     async fn query_reranks_by_cosine_similarity() {
         use crate::openhuman::memory_tree::score::embed::{pack_embedding, EMBEDDING_DIM};
-        use crate::openhuman::memory_tree::tree_source::store as src_store;
+        use crate::openhuman::memory_tree::tree::store as src_store;
 
         let (_tmp, cfg) = test_config();
         let ts = Utc::now();
@@ -548,17 +548,17 @@ mod tests {
 
         // Write directly via raw UPDATE so we replace whatever the
         // seal-time inert embedder wrote.
-        use crate::openhuman::memory_tree::store::with_connection;
+        use crate::openhuman::memory_store::chunks::store::with_connection;
         let phoenix_tree = src_store::get_tree_by_scope(
             &cfg,
-            crate::openhuman::memory_tree::tree_source::types::TreeKind::Source,
+            crate::openhuman::memory_store::trees::types::TreeKind::Source,
             "slack:#phoenix",
         )
         .unwrap()
         .unwrap();
         let unrelated_tree = src_store::get_tree_by_scope(
             &cfg,
-            crate::openhuman::memory_tree::tree_source::types::TreeKind::Source,
+            crate::openhuman::memory_store::trees::types::TreeKind::Source,
             "slack:#unrelated",
         )
         .unwrap()
@@ -629,9 +629,9 @@ mod tests {
     /// summaries that do have embeddings when a `query` is supplied.
     #[tokio::test]
     async fn legacy_null_embedding_rows_sort_last() {
+        use crate::openhuman::memory_store::trees::types::TreeKind;
         use crate::openhuman::memory_tree::score::embed::{pack_embedding, EMBEDDING_DIM};
-        use crate::openhuman::memory_tree::tree_source::store as src_store;
-        use crate::openhuman::memory_tree::tree_source::types::TreeKind;
+        use crate::openhuman::memory_tree::tree::store as src_store;
 
         let (_tmp, cfg) = test_config();
         let ts = Utc::now();
@@ -655,7 +655,7 @@ mod tests {
         v[0] = 1.0;
         let blob = pack_embedding(&v);
 
-        use crate::openhuman::memory_tree::store::with_connection;
+        use crate::openhuman::memory_store::chunks::store::with_connection;
         with_connection(&cfg, |conn| {
             conn.execute(
                 "UPDATE mem_tree_summaries SET embedding = ?1 WHERE id = ?2",

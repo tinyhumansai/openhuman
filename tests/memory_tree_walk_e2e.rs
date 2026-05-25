@@ -29,11 +29,11 @@ use openhuman_core::openhuman::config::Config;
 use openhuman_core::openhuman::inference::provider::compatible::{
     AuthStyle, OpenAiCompatibleProvider,
 };
-use openhuman_core::openhuman::memory_tree::summarizer::store::write_node;
-use openhuman_core::openhuman::memory_tree::summarizer::types::{
+use openhuman_core::openhuman::memory_tree::tools::walk::{run_walk, WalkOptions, WalkStopReason};
+use openhuman_core::openhuman::memory_tree::tree_runtime::store::write_node;
+use openhuman_core::openhuman::memory_tree::tree_runtime::types::{
     derive_parent_id, estimate_tokens, level_from_node_id, TreeNode,
 };
-use openhuman_core::openhuman::memory_tree::tools::walk::{run_walk, WalkOptions, WalkStopReason};
 
 // ── Environment serialisation lock ──────────────────────────────────────────
 //

@@ -29,6 +29,12 @@ export const CORE_RPC_METHODS = {
   inferenceUpdateModelSettings: 'openhuman.inference_update_model_settings',
   providersListModels: 'openhuman.inference_list_models',
   screenIntelligenceStatus: 'openhuman.screen_intelligence_status',
+  embeddingsGetSettings: 'openhuman.embeddings_get_settings',
+  embeddingsUpdateSettings: 'openhuman.embeddings_update_settings',
+  embeddingsSetApiKey: 'openhuman.embeddings_set_api_key',
+  embeddingsClearApiKey: 'openhuman.embeddings_clear_api_key',
+  embeddingsEmbed: 'openhuman.embeddings_embed',
+  embeddingsTestConnection: 'openhuman.embeddings_test_connection',
 } as const;
 
 export type CoreRpcMethod = (typeof CORE_RPC_METHODS)[keyof typeof CORE_RPC_METHODS];
@@ -58,6 +64,7 @@ export const LEGACY_METHOD_ALIASES: Record<string, CoreRpcMethod> = {
   'openhuman.local_ai_diagnostics': CORE_RPC_METHODS.inferenceDiagnostics,
   'openhuman.local_ai_presets': CORE_RPC_METHODS.inferencePresets,
   'openhuman.providers_list_models': CORE_RPC_METHODS.inferenceListModels,
+  'openhuman.inference_embed': CORE_RPC_METHODS.embeddingsEmbed,
 };
 
 export function normalizeRpcMethod(method: string): string {

@@ -3,7 +3,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Provider } from 'react-redux';
 import { MemoryRouter } from 'react-router-dom';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { I18nProvider } from '../../../lib/i18n/I18nContext';
 import type { Locale } from '../../../lib/i18n/types';
@@ -33,10 +33,13 @@ vi.mock('../hooks/useSettingsNavigation', () => ({
   useSettingsNavigation: () => ({ navigateToSettings: mockNavigateToSettings }),
 }));
 
+const mockClearSession = vi.fn().mockResolvedValue(undefined);
+let mockSessionToken: string | null = null;
+
 vi.mock('../../../providers/CoreStateProvider', () => ({
   useCoreState: () => ({
-    clearSession: vi.fn().mockResolvedValue(undefined),
-    snapshot: { auth: { userId: null }, currentUser: null },
+    clearSession: mockClearSession,
+    snapshot: { auth: { userId: null }, currentUser: null, sessionToken: mockSessionToken },
   }),
 }));
 
@@ -179,6 +182,27 @@ describe('SettingsHome', () => {
     });
   });
 
+  describe('local session gating', () => {
+    beforeEach(() => {
+      // Use a valid local-session token (three parts, last part = 'local')
+      mockSessionToken = 'header.payload.local';
+    });
+
+    afterEach(() => {
+      mockSessionToken = null;
+    });
+
+    it('hides the Billing & Usage item in local mode', () => {
+      renderSettingsHome();
+      expect(screen.queryByText('Billing & Usage')).not.toBeInTheDocument();
+    });
+
+    it('shows "Billing & Usage" when not in local mode', () => {
+      mockSessionToken = null;
+      renderSettingsHome();
+      expect(screen.getByText('Billing & Usage')).toBeInTheDocument();
+    });
+  });
   // Clear App Data flow moved to LogoutAndClearActions (rendered on Account
   // page) — see LogoutAndClearActions.test.tsx.
 });

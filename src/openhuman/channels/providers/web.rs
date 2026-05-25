@@ -874,7 +874,7 @@ async fn run_chat_task(
     // method is a no-op if the agent already has a cached transcript
     // or non-empty history, so this is cheap on the warm path too.
     if was_built_fresh {
-        match crate::openhuman::memory::conversations::get_messages(
+        match crate::openhuman::memory_conversations::get_messages(
             config.workspace_dir.clone(),
             thread_id,
         ) {
@@ -1587,7 +1587,7 @@ fn load_reflection_chunks_for_thread(
     workspace_dir: &std::path::Path,
     thread_id: &str,
 ) -> Option<Vec<crate::openhuman::subconscious::SourceChunk>> {
-    let messages = crate::openhuman::memory::conversations::get_messages(
+    let messages = crate::openhuman::memory_conversations::get_messages(
         workspace_dir.to_path_buf(),
         thread_id,
     )

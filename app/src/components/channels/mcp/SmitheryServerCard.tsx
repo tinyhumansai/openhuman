@@ -2,6 +2,7 @@
  * Card component for a single Smithery registry server.
  * Shows icon, name, description (clamped), usage count and deployed badge.
  */
+import { useT } from '../../../lib/i18n/I18nContext';
 import type { SmitheryServer } from './types';
 
 interface SmitheryServerCardProps {
@@ -10,6 +11,7 @@ interface SmitheryServerCardProps {
 }
 
 const SmitheryServerCard = ({ server, onInstall }: SmitheryServerCardProps) => {
+  const { t } = useT();
   return (
     <div className="rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 p-3 flex flex-col gap-2">
       <div className="flex items-start gap-2">
@@ -31,13 +33,13 @@ const SmitheryServerCard = ({ server, onInstall }: SmitheryServerCardProps) => {
             </p>
             {server.is_deployed && (
               <span className="shrink-0 px-1.5 py-0.5 text-[10px] border rounded-full bg-primary-50 dark:bg-primary-500/15 border-primary-200 dark:border-primary-500/30 text-primary-700 dark:text-primary-300">
-                Deployed
+                {t('mcp.catalog.deployed')}
               </span>
             )}
           </div>
           {server.use_count != null && server.use_count > 0 && (
             <p className="text-[11px] text-stone-400 dark:text-neutral-500 mt-0.5">
-              {server.use_count.toLocaleString()} installs
+              {t('mcp.catalog.installCount').replace('{count}', server.use_count.toLocaleString())}
             </p>
           )}
         </div>
@@ -53,7 +55,7 @@ const SmitheryServerCard = ({ server, onInstall }: SmitheryServerCardProps) => {
         type="button"
         onClick={() => onInstall(server.qualified_name)}
         className="mt-auto w-full rounded-lg bg-primary-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-600 transition-colors">
-        Install
+        {t('mcp.install.button')}
       </button>
     </div>
   );

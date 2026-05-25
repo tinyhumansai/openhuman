@@ -21,13 +21,13 @@ use chrono::{TimeZone, Utc};
 use tempfile::TempDir;
 
 use crate::openhuman::config::Config;
-use crate::openhuman::memory_tree::canonicalize::chat::{ChatBatch, ChatMessage};
-use crate::openhuman::memory_tree::ingest::ingest_chat;
-use crate::openhuman::memory_tree::jobs::testing::drain_until_idle;
+use crate::openhuman::memory::ingest_pipeline::ingest_chat;
+use crate::openhuman::memory_queue::testing::drain_until_idle;
+use crate::openhuman::memory_store::chunks::types::SourceKind;
+use crate::openhuman::memory_sync::canonicalize::chat::{ChatBatch, ChatMessage};
 use crate::openhuman::memory_tree::retrieval::{
     fetch_leaves, query_source, query_topic, search_entities,
 };
-use crate::openhuman::memory_tree::types::SourceKind;
 
 /// Shared test config — disables embedding for deterministic inert behaviour.
 fn bench_config() -> (TempDir, Config) {

@@ -19,7 +19,7 @@
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
-use crate::openhuman::memory::{MemoryClient, MemoryClientRef};
+use crate::openhuman::memory_store::{MemoryClient, MemoryClientRef};
 
 /// The process-global memory client.
 static GLOBAL_CLIENT: OnceLock<MemoryClientRef> = OnceLock::new();

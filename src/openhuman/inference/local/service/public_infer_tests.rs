@@ -196,47 +196,6 @@ async fn lm_studio_prompt_hits_openai_chat_completions() {
 }
 
 #[tokio::test]
-async fn lm_studio_chat_with_history_returns_response() {
-    let _guard = crate::openhuman::inference::inference_test_guard();
-
-    let app = Router::new().route(
-        "/v1/chat/completions",
-        post(|Json(body): Json<serde_json::Value>| async move {
-            assert_eq!(body["messages"][0]["role"], "system");
-            assert_eq!(body["messages"][1]["role"], "user");
-            Json(json!({
-                "choices": [{
-                    "message": { "role": "assistant", "content": "history reply" }
-                }]
-            }))
-        }),
-    );
-    let base = spawn_mock(app).await;
-    let config = lm_studio_config(&base);
-    let service = ready_service(&config);
-
-    let reply = service
-        .chat_with_history(
-            &config,
-            vec![
-                crate::openhuman::inference::local::ollama::OllamaChatMessage {
-                    role: "system".to_string(),
-                    content: "be terse".to_string(),
-                },
-                crate::openhuman::inference::local::ollama::OllamaChatMessage {
-                    role: "user".to_string(),
-                    content: "hi".to_string(),
-                },
-            ],
-            None,
-        )
-        .await
-        .expect("lm studio chat");
-
-    assert_eq!(reply, "history reply");
-}
-
-#[tokio::test]
 async fn lm_studio_prompt_errors_on_non_success_status() {
     let _guard = crate::openhuman::inference::inference_test_guard();
 

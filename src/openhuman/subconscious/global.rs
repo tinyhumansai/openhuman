@@ -47,10 +47,11 @@ pub async fn get_or_init_engine() -> Result<Arc<Mutex<Option<SubconsciousEngine>
         .await
         .map_err(|e| format!("load config: {e}"))?;
 
-    let memory =
-        crate::openhuman::memory::MemoryClient::from_workspace_dir(config.workspace_dir.clone())
-            .ok()
-            .map(Arc::new);
+    let memory = crate::openhuman::memory_store::MemoryClient::from_workspace_dir(
+        config.workspace_dir.clone(),
+    )
+    .ok()
+    .map(Arc::new);
 
     let engine = SubconsciousEngine::new(&config, memory);
 

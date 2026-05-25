@@ -37,7 +37,7 @@ pub struct LearningConfig {
     pub tool_tracking_enabled: bool,
 
     /// Enable the tool-scoped memory capture hook (see
-    /// [`crate::openhuman::memory::tool_memory::ToolMemoryCaptureHook`]).
+    /// [`crate::openhuman::memory_tools::ToolMemoryCaptureHook`]).
     ///
     /// When enabled, the hook records user edicts ("never email Sarah")
     /// as `Critical`-priority rules in the `tool-{name}` memory

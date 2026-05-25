@@ -13,7 +13,7 @@
 //! Ingest adapters can attach these tags during canonicalisation when the
 //! upstream source supports the distinction. Absent tags → neutral score.
 
-use crate::openhuman::memory_tree::types::Metadata;
+use crate::openhuman::memory_store::chunks::types::Metadata;
 
 /// Tag set when the user replied to this message/thread.
 pub const TAG_REPLY: &str = "reply";
@@ -67,7 +67,7 @@ pub fn score(meta: &Metadata) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::openhuman::memory_tree::types::SourceKind;
+    use crate::openhuman::memory_store::chunks::types::SourceKind;
     use chrono::Utc;
 
     fn meta(tags: &[&str]) -> Metadata {

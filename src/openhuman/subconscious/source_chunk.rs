@@ -150,7 +150,7 @@ fn resolve_summary(config: &crate::openhuman::config::Config, raw: &str) -> Sour
     // `L<digits>:` token, which left no row matching anything in the
     // table.
     let lookup: anyhow::Result<Option<(String, i64, String)>> =
-        crate::openhuman::memory_tree::store::with_connection(config, |conn| {
+        crate::openhuman::memory_store::chunks::store::with_connection(config, |conn| {
             let mut stmt = conn.prepare(
                 "SELECT s.content, s.level, t.scope
                  FROM mem_tree_summaries s
@@ -219,7 +219,7 @@ fn resolve_entity(config: &crate::openhuman::config::Config, raw: &str) -> Sourc
     let original_kind = parse_ref(raw).0.to_string();
     type EntityLookup = anyhow::Result<Option<(String, String, f64, Option<f64>)>>;
     let lookup: EntityLookup =
-        crate::openhuman::memory_tree::store::with_connection(config, |conn| {
+        crate::openhuman::memory_store::chunks::store::with_connection(config, |conn| {
             // Top-scoring surface form for this entity.
             let mut stmt = conn.prepare(
                 "SELECT entity_kind, surface, score

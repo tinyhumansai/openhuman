@@ -13,10 +13,10 @@ use anyhow::Result;
 use chrono::Duration;
 
 use crate::openhuman::config::Config;
+use crate::openhuman::memory::tree_global::recap::{recap, RecapOutput};
+use crate::openhuman::memory_store::trees::registry::get_or_create_global_tree;
+use crate::openhuman::memory_store::trees::types::TreeKind;
 use crate::openhuman::memory_tree::retrieval::types::{NodeKind, QueryResponse, RetrievalHit};
-use crate::openhuman::memory_tree::tree_global::recap::{recap, RecapOutput};
-use crate::openhuman::memory_tree::tree_global::registry::get_or_create_global_tree;
-use crate::openhuman::memory_tree::tree_source::types::TreeKind;
 
 /// Return the global digest for the given window in days. Always returns a
 /// [`QueryResponse`]; the response is empty if the global tree has no
@@ -87,16 +87,17 @@ fn recap_to_hits(recap: RecapOutput, tree_id: &str, tree_scope: &str) -> Vec<Ret
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::openhuman::memory_tree::content_store;
-    use crate::openhuman::memory_tree::store::upsert_chunks;
-    use crate::openhuman::memory_tree::tree_global::digest::{end_of_day_digest, DigestOutcome};
-    use crate::openhuman::memory_tree::tree_source::bucket_seal::{
-        append_leaf, LabelStrategy, LeafRef,
+    use crate::openhuman::memory::chat::{test_override, ChatProvider, StaticChatProvider};
+    use crate::openhuman::memory::tree_global::digest::{end_of_day_digest, DigestOutcome};
+    use crate::openhuman::memory::tree_source::registry::get_or_create_source_tree;
+    use crate::openhuman::memory_store::chunks::store::upsert_chunks;
+    use crate::openhuman::memory_store::chunks::types::{
+        chunk_id, Chunk, Metadata, SourceKind, SourceRef,
     };
-    use crate::openhuman::memory_tree::tree_source::registry::get_or_create_source_tree;
-    use crate::openhuman::memory_tree::tree_source::summariser::inert::InertSummariser;
-    use crate::openhuman::memory_tree::types::{chunk_id, Chunk, Metadata, SourceKind, SourceRef};
+    use crate::openhuman::memory_store::content as content_store;
+    use crate::openhuman::memory_tree::tree::bucket_seal::{append_leaf, LabelStrategy, LeafRef};
     use chrono::{DateTime, Utc};
+    use std::sync::Arc;
     use tempfile::TempDir;
 
     fn stage_test_chunks(cfg: &Config, chunks: &[Chunk]) {
@@ -104,9 +105,9 @@ mod tests {
         std::fs::create_dir_all(&content_root).expect("create content_root for test");
         let staged = content_store::stage_chunks(&content_root, chunks)
             .expect("stage_chunks for test chunks");
-        crate::openhuman::memory_tree::store::with_connection(cfg, |conn| {
+        crate::openhuman::memory_store::chunks::store::with_connection(cfg, |conn| {
             let tx = conn.unchecked_transaction()?;
-            crate::openhuman::memory_tree::store::upsert_staged_chunks_tx(&tx, &staged)?;
+            crate::openhuman::memory_store::chunks::store::upsert_staged_chunks_tx(&tx, &staged)?;
             tx.commit()?;
             Ok(())
         })
@@ -125,16 +126,21 @@ mod tests {
     }
 
     async fn seed_daily_digest(cfg: &Config) {
-        let summariser = InertSummariser::new();
+        let provider: Arc<dyn ChatProvider> =
+            Arc::new(StaticChatProvider::new("test summary content"));
         let day = Utc::now().date_naive();
         let ts = day.and_hms_opt(12, 0, 0).unwrap().and_utc();
         seed_source_for_day(cfg, "slack:#eng", ts).await;
-        end_of_day_digest(cfg, day, &summariser).await.unwrap();
+        test_override::with_provider(provider, async {
+            end_of_day_digest(cfg, day).await.unwrap()
+        })
+        .await;
     }
 
     async fn seed_source_for_day(cfg: &Config, scope: &str, ts: DateTime<Utc>) {
         let tree = get_or_create_source_tree(cfg, scope).unwrap();
-        let summariser = InertSummariser::new();
+        let provider: Arc<dyn ChatProvider> =
+            Arc::new(StaticChatProvider::new("test summary content"));
         for seq in 0..2u32 {
             let c = Chunk {
                 id: chunk_id(SourceKind::Chat, scope, seq, "test-content"),
@@ -155,23 +161,21 @@ mod tests {
             };
             upsert_chunks(cfg, &[c.clone()]).unwrap();
             stage_test_chunks(cfg, &[c.clone()]);
-            append_leaf(
-                cfg,
-                &tree,
-                &LeafRef {
-                    chunk_id: c.id.clone(),
-                    token_count: 30_000,
-                    timestamp: ts,
-                    content: c.content.clone(),
-                    entities: vec![],
-                    topics: vec![],
-                    score: 0.5,
-                },
-                &summariser,
-                &LabelStrategy::Empty,
-            )
-            .await
-            .unwrap();
+            let leaf = LeafRef {
+                chunk_id: c.id.clone(),
+                token_count: 30_000,
+                timestamp: ts,
+                content: c.content.clone(),
+                entities: vec![],
+                topics: vec![],
+                score: 0.5,
+            };
+            test_override::with_provider(Arc::clone(&provider), async {
+                append_leaf(cfg, &tree, &leaf, &LabelStrategy::Empty)
+                    .await
+                    .unwrap()
+            })
+            .await;
         }
     }
 
@@ -205,11 +209,15 @@ mod tests {
         // if this ever returned Skipped the rest of the suite would trivially
         // pass which would be misleading.
         let (_tmp, cfg) = test_config();
-        let summariser = InertSummariser::new();
+        let provider: Arc<dyn ChatProvider> =
+            Arc::new(StaticChatProvider::new("test summary content"));
         let day = Utc::now().date_naive();
         let ts = day.and_hms_opt(12, 0, 0).unwrap().and_utc();
         seed_source_for_day(&cfg, "slack:#eng", ts).await;
-        let outcome = end_of_day_digest(&cfg, day, &summariser).await.unwrap();
+        let outcome = test_override::with_provider(provider, async {
+            end_of_day_digest(&cfg, day).await.unwrap()
+        })
+        .await;
         assert!(matches!(outcome, DigestOutcome::Emitted { .. }));
     }
 }

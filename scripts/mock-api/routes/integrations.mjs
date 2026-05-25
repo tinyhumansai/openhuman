@@ -142,6 +142,42 @@ export function handleIntegrations(ctx) {
     return true;
   }
 
+  if (method === "POST" && /^\/openai\/v1\/embeddings\/?$/.test(url)) {
+    const inputs = Array.isArray(parsedBody?.input)
+      ? parsedBody.input
+      : [parsedBody?.input ?? ""];
+    const data = inputs.map((input, index) => {
+      const text = String(input ?? "");
+      // Keep the vector tiny but deterministic so callers that cache /
+      // compare embeddings can still observe stable output.
+      const basis = text.length || index + 1;
+      return {
+        object: "embedding",
+        index,
+        embedding: [basis, basis / 10, basis / 100, 1],
+      };
+    });
+    json(res, 200, {
+      object: "list",
+      data,
+      model:
+        typeof parsedBody?.model === "string" && parsedBody.model.length > 0
+          ? parsedBody.model
+          : "text-embedding-3-small",
+      usage: {
+        prompt_tokens: inputs.reduce(
+          (acc, input) => acc + String(input ?? "").length,
+          0,
+        ),
+        total_tokens: inputs.reduce(
+          (acc, input) => acc + String(input ?? "").length,
+          0,
+        ),
+      },
+    });
+    return true;
+  }
+
   // (chat/completions is handled by routes/llm.mjs ahead of this route)
 
   // ── Composio ───────────────────────────────────────────────
@@ -313,7 +349,10 @@ export function handleIntegrations(ctx) {
           : "";
     // composioExecuteFails → inject error response
     // Knob values: '400' or '1' → HTTP 400; '500' → HTTP 500
-    if (mockBehavior.composioExecuteFails === "400" || mockBehavior.composioExecuteFails === "1") {
+    if (
+      mockBehavior.composioExecuteFails === "400" ||
+      mockBehavior.composioExecuteFails === "1"
+    ) {
       json(res, 400, {
         success: false,
         error: "Mock execute failure",
@@ -325,7 +364,11 @@ export function handleIntegrations(ctx) {
       json(res, 500, {
         success: false,
         error: "Mock execute server error",
-        data: { successful: false, data: null, error: "Mock execute server error" },
+        data: {
+          successful: false,
+          data: null,
+          error: "Mock execute server error",
+        },
       });
       return true;
     }
@@ -369,11 +412,20 @@ export function handleIntegrations(ctx) {
     /^\/agent-integrations\/composio\/connections\/[^/]+\/?$/.test(url)
   ) {
     if (mockBehavior.composioDeleteFails === "400") {
-      json(res, 400, { success: false, error: "Mock connection delete failure" });
+      json(res, 400, {
+        success: false,
+        error: "Mock connection delete failure",
+      });
       return true;
     }
-    if (mockBehavior.composioDeleteFails === "500" || mockBehavior.composioDeleteFails === "1") {
-      json(res, 500, { success: false, error: "Mock connection delete failure" });
+    if (
+      mockBehavior.composioDeleteFails === "500" ||
+      mockBehavior.composioDeleteFails === "1"
+    ) {
+      json(res, 500, {
+        success: false,
+        error: "Mock connection delete failure",
+      });
       return true;
     }
     let connId = url.split("/").filter(Boolean).pop() ?? "";
@@ -381,7 +433,10 @@ export function handleIntegrations(ctx) {
     try {
       connId = decodeURIComponent(connId);
     } catch {
-      json(res, 400, { success: false, error: "Invalid connection id encoding" });
+      json(res, 400, {
+        success: false,
+        error: "Invalid connection id encoding",
+      });
       return true;
     }
     // Remove the connection from the seeded list if present
@@ -404,7 +459,10 @@ export function handleIntegrations(ctx) {
       json(res, 400, { success: false, error: "Mock sync failure" });
       return true;
     }
-    if (mockBehavior.composioSyncFails === "500" || mockBehavior.composioSyncFails === "1") {
+    if (
+      mockBehavior.composioSyncFails === "500" ||
+      mockBehavior.composioSyncFails === "1"
+    ) {
       json(res, 500, { success: false, error: "Mock sync failure" });
       return true;
     }
