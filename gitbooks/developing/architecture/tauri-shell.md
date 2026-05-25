@@ -27,7 +27,6 @@ On macOS, hard exits (Force Quit, `SIGKILL`, renderer crash) can skip normal tea
 
 Startup recovery skips when `OPENHUMAN_CORE_REUSE_EXISTING=1` is set (so manual CLI-core reuse still works) and when the CEF `SingletonLock` is held by a live process (so the normal second-instance path can fail without killing the already-running app). The Tauri command `process_diagnostics_list_owned` returns the currently owned process list; the macOS implementation is bundle-scoped, Linux/Windows currently return empty.
 
-
 ## Tauri shell architecture (`app/src-tauri/`)
 
 ### Overview
@@ -84,7 +83,6 @@ React (invoke)
 - HTTP bridge: see the [Core bridge & helpers](#core-bridge-helpers-app-src-tauri) section below
 - Rust domains (implementation): repo root `src/openhuman/`, `src/core_server/`
 
-
 ## Tauri IPC commands (`app/src-tauri`)
 
 All commands are registered in **`app/src-tauri/src/lib.rs`** inside `tauri::generate_handler![...]` (desktop build). Names below are the **Rust** command names (camelCase in JS via serde where applicable).
@@ -97,16 +95,16 @@ All commands are registered in **`app/src-tauri/src/lib.rs`** inside `tauri::gen
 
 ### AI configuration (bundled prompts)
 
-| Command                | Purpose                                                                                      |
-| ---------------------- | -------------------------------------------------------------------------------------------- |
+| Command                | Purpose                                                                                                   |
+| ---------------------- | --------------------------------------------------------------------------------------------------------- |
 | `ai_get_config`        | Build `AIPreview` from resolved `SOUL.md` / `TOOLS.md` under bundled or dev `src/openhuman/agent/prompts` |
-| `ai_refresh_config`    | Same read path as `ai_get_config` (refresh hook)                                             |
+| `ai_refresh_config`    | Same read path as `ai_get_config` (refresh hook)                                                          |
 | `write_ai_config_file` | Write a single `.md` under repo `src/openhuman/agent/prompts` (dev / safe filename checks)                |
 
 ### Core JSON-RPC relay
 
-| Command          | Purpose                                                                                                        |
-| ---------------- | -------------------------------------------------------------------------------------------------------------- |
+| Command          | Purpose                                                                                                             |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------- |
 | `core_rpc_relay` | Body: `{ method, params?, serviceManaged? }` → forwards to local **`openhuman-core`** HTTP JSON-RPC (`core_rpc.rs`) |
 
 Use **`app/src/services/coreRpcClient.ts`** (`callCoreRpc`) from the frontend.
@@ -144,11 +142,21 @@ From **`commands/openhuman.rs`** (see source for exact payloads):
 
 From **`screen_capture/mod.rs`**. Backs the in-page `getDisplayMedia` shim in `webview_accounts/runtime.js`. Session-gated: the shim must open a session with a live user gesture before enumeration / thumbnail captures succeed. See issue #713 (picker UX) + #812 (session gating).
 
-| Command                           | Purpose                                                                                                                 |
-| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `screen_share_begin_session`      | Open a 30s session from an account webview, after a `navigator.userActivation.isActive` gesture. Returns `{ token, sources }`. Rate-limited to 10/minute per account. |
-| `screen_share_thumbnail`          | Capture a single source's thumbnail as base64 PNG. Requires a live token and an `id` that the session was issued for. macOS only; other platforms return an error.    |
-| `screen_share_finalize_session`   | Close the session. Called by the shim on Share or Cancel; safe to call with an unknown/expired token (no-op).                                                         |
+| Command                         | Purpose                                                                                                                                                               |
+| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `screen_share_begin_session`    | Open a 30s session from an account webview, after a `navigator.userActivation.isActive` gesture. Returns `{ token, sources }`. Rate-limited to 10/minute per account. |
+| `screen_share_thumbnail`        | Capture a single source's thumbnail as base64 PNG. Requires a live token and an `id` that the session was issued for. macOS only; other platforms return an error.    |
+| `screen_share_finalize_session` | Close the session. Called by the shim on Share or Cancel; safe to call with an unknown/expired token (no-op).                                                         |
+
+### Workspace file links
+
+From **`workspace_paths.rs`** (closes `#1402`). These commands accept workspace-relative paths only. The shell resolves each path against the active OpenHuman workspace, canonicalizes the target, and rejects traversal, absolute paths, URI-like prefixes, and symlink escapes before opening or reading anything.
+
+| Command                  | Purpose                                                                |
+| ------------------------ | ---------------------------------------------------------------------- |
+| `open_workspace_path`    | Open an existing workspace file or directory with the OS default app.  |
+| `reveal_workspace_path`  | Reveal an existing workspace file or directory in the OS file manager. |
+| `preview_workspace_text` | Read a capped UTF-8 text preview from an existing workspace file.      |
 
 ### Removed / not present
 
@@ -171,7 +179,6 @@ const result = await invoke("core_rpc_relay", {
 ---
 
 _See `app/src-tauri/src/lib.rs` for the authoritative list._
-
 
 ## Core bridge & helpers (`app/src-tauri`)
 

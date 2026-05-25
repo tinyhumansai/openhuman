@@ -2,6 +2,7 @@ use super::*;
 use crate::openhuman::config::schema::cloud_providers::{AuthStyle, CloudProviderCreds};
 use crate::openhuman::config::Config;
 use crate::openhuman::credentials::AuthService;
+use crate::openhuman::inference::provider::traits::{ChatMessage, ChatRequest, ProviderDelta};
 use tempfile::TempDir;
 
 fn config_with_providers(providers: Vec<CloudProviderCreds>) -> Config {
@@ -208,6 +209,16 @@ fn ollama_prefix() {
 }
 
 #[test]
+fn lmstudio_prefix() {
+    let mut config = Config::default();
+    config.local_ai.base_url = Some("http://127.0.0.1:1234".to_string());
+    let (_, model) =
+        create_chat_provider_from_string("heartbeat", "lmstudio:google/gemma-4-e4b", &config)
+            .expect("lmstudio:<model> must build");
+    assert_eq!(model, "google/gemma-4-e4b");
+}
+
+#[test]
 fn temperature_suffix_is_stripped_from_model_id() {
     // The `@<temp>` suffix is informational for the factory — the model id sent
     // upstream must not include it, or providers will 404 on an unknown model.
@@ -247,6 +258,25 @@ async fn ollama_provider_does_not_require_api_key() {
     assert!(
         !msg.contains("API key not set"),
         "ollama path must not fail on missing key: {msg}"
+    );
+}
+
+#[tokio::test]
+async fn lmstudio_provider_without_api_key_does_not_require_credentials() {
+    let mut config = Config::default();
+    config.local_ai.base_url = Some("http://127.0.0.1:9/v1".to_string());
+    let (provider, model) =
+        create_chat_provider_from_string("heartbeat", "lmstudio:test-model", &config)
+            .expect("lmstudio:<model> must build");
+
+    let err = provider
+        .chat_with_system(None, "hello", &model, 0.0)
+        .await
+        .expect_err("unreachable local LM Studio should still attempt a transport call");
+    let msg = err.to_string();
+    assert!(
+        !msg.contains("API key not set"),
+        "lmstudio path must not fail on missing key: {msg}"
     );
 }
 
@@ -364,7 +394,7 @@ async fn cloud_provider_without_stored_key_fails_with_actionable_error() {
         .await
         .expect_err("missing key should fail at call time");
     assert!(
-        err.to_string().contains("cloud API key not set"),
+        err.to_string().contains("API key not set"),
         "expected missing-key guidance, got: {err}"
     );
 }
@@ -458,7 +488,10 @@ fn legacy_inference_url_custom_provider_wins_over_openhuman_primary_for_unset_ro
 }
 
 #[test]
-fn legacy_inference_url_without_matching_provider_stays_on_openhuman_primary() {
+fn legacy_inference_url_without_matching_provider_returns_byok_sentinel() {
+    // BYOK intent: primary is OpenHuman but inference_url points at a custom
+    // endpoint with no matching cloud_providers entry. Must fail closed — do
+    // NOT silently route through the managed backend.
     let mut other = openai_entry("p_other", "other");
     other.endpoint = "https://other.example.com/v1".to_string();
 
@@ -466,7 +499,10 @@ fn legacy_inference_url_without_matching_provider_stays_on_openhuman_primary() {
     config.primary_cloud = Some("p_oh".to_string());
     config.inference_url = Some("https://api.example.com/v1".to_string());
 
-    assert_eq!(provider_for_role("reasoning", &config), "openhuman");
+    assert_eq!(
+        provider_for_role("reasoning", &config),
+        BYOK_INCOMPLETE_SENTINEL
+    );
 }
 
 #[test]
@@ -539,6 +575,60 @@ fn config_in_tempdir(tmp: &TempDir) -> Config {
     let mut c = Config::default();
     c.config_path = tmp.path().join("config.toml");
     c
+}
+
+async fn discover_live_lmstudio_model() -> anyhow::Result<String> {
+    if let Ok(model) = std::env::var("OPENHUMAN_LIVE_LMSTUDIO_MODEL") {
+        let trimmed = model.trim();
+        if !trimmed.is_empty() {
+            return Ok(trimmed.to_string());
+        }
+    }
+
+    let body: serde_json::Value = reqwest::get("http://127.0.0.1:1234/v1/models")
+        .await?
+        .json()
+        .await?;
+    body["data"]
+        .as_array()
+        .and_then(|models| {
+            models.iter().find_map(|item| {
+                let id = item.get("id")?.as_str()?.trim();
+                if id.is_empty() || id.contains("embed") {
+                    None
+                } else {
+                    Some(id.to_string())
+                }
+            })
+        })
+        .ok_or_else(|| anyhow::anyhow!("no non-embedding LM Studio model discovered"))
+}
+
+async fn discover_live_ollama_model() -> anyhow::Result<String> {
+    if let Ok(model) = std::env::var("OPENHUMAN_LIVE_OLLAMA_MODEL") {
+        let trimmed = model.trim();
+        if !trimmed.is_empty() {
+            return Ok(trimmed.to_string());
+        }
+    }
+
+    let body: serde_json::Value = reqwest::get("http://127.0.0.1:11434/api/tags")
+        .await?
+        .json()
+        .await?;
+    body["models"]
+        .as_array()
+        .and_then(|models| {
+            models.iter().find_map(|item| {
+                let name = item.get("name")?.as_str()?.trim();
+                if name.is_empty() || name.contains("embed") {
+                    None
+                } else {
+                    Some(name.to_string())
+                }
+            })
+        })
+        .ok_or_else(|| anyhow::anyhow!("no non-embedding Ollama model discovered"))
 }
 
 #[test]
@@ -707,4 +797,195 @@ fn make_openhuman_backend_keeps_reasoning_quick() {
     config.default_model = Some("reasoning-quick-v1".to_string());
     let (_, model) = make_openhuman_backend(&config).expect("factory should succeed");
     assert_eq!(model, "reasoning-quick-v1");
+}
+
+// ── BYOK fail-closed tests ────────────────────────────────────────────────────
+
+#[test]
+fn byok_intent_no_primary_no_matching_entry_returns_sentinel() {
+    // No primary_cloud set, inference_url points at a non-openhuman host with
+    // no matching cloud_providers entry → must return the fail-closed sentinel.
+    let mut config = Config::default();
+    config.inference_url = Some("https://custom-api.example.com/v1".to_string());
+    assert_eq!(
+        provider_for_role("reasoning", &config),
+        BYOK_INCOMPLETE_SENTINEL
+    );
+}
+
+#[test]
+fn byok_intent_with_matching_entry_resolves_correctly() {
+    // Matching cloud_providers entry exists → legacy lookup succeeds; no sentinel.
+    let mut custom = openai_entry("p_custom", "custom");
+    custom.endpoint = "https://custom-api.example.com/v1".to_string();
+
+    let mut config = config_with_providers(vec![custom]);
+    config.inference_url = Some("https://custom-api.example.com/v1".to_string());
+
+    // Legacy URL matches the custom entry → "custom:gpt-4o"
+    assert_eq!(provider_for_role("reasoning", &config), "custom:gpt-4o");
+}
+
+#[test]
+fn openhuman_inference_url_never_triggers_sentinel() {
+    // inference_url pointing at the managed backend is not BYOK intent.
+    let mut config = Config::default();
+    config.inference_url = Some("https://api.openhuman.ai/v1".to_string());
+    assert_eq!(provider_for_role("reasoning", &config), "openhuman");
+}
+
+#[test]
+fn explicit_workload_route_bypasses_byok_sentinel() {
+    // A per-role provider route set explicitly always wins over the BYOK check.
+    let mut config = Config::default();
+    config.inference_url = Some("https://custom-api.example.com/v1".to_string());
+    config.reasoning_provider = Some("openhuman".to_string());
+    // Explicit "openhuman" route → goes straight to backend, no sentinel.
+    assert_eq!(provider_for_role("reasoning", &config), "openhuman");
+}
+
+#[test]
+fn byok_sentinel_makes_provider_creation_error_with_clear_message() {
+    let mut config = Config::default();
+    config.inference_url = Some("https://custom-api.example.com/v1".to_string());
+
+    // Use match instead of unwrap_err(): Box<dyn Provider> doesn't impl Debug.
+    let msg = match create_chat_provider_from_string("reasoning", BYOK_INCOMPLETE_SENTINEL, &config)
+    {
+        Ok(_) => panic!("sentinel must produce an error, not a provider"),
+        Err(e) => e.to_string(),
+    };
+    assert!(
+        msg.contains("BYOK_INCOMPLETE"),
+        "error must name BYOK_INCOMPLETE; got: {msg}"
+    );
+    assert!(
+        msg.contains("custom-api.example.com"),
+        "error must include the configured inference_url; got: {msg}"
+    );
+}
+
+#[test]
+fn byok_sentinel_error_mentions_configuration_action() {
+    // The error message must tell the user how to fix the issue.
+    let mut config = Config::default();
+    config.inference_url = Some("https://byok.example.com/v1".to_string());
+
+    // Use match instead of unwrap_err(): Box<dyn Provider> doesn't impl Debug.
+    let msg = match create_chat_provider_from_string("chat", BYOK_INCOMPLETE_SENTINEL, &config) {
+        Ok(_) => panic!("sentinel must produce an error"),
+        Err(e) => e.to_string(),
+    };
+    // Must mention adding a cloud_providers entry or clearing inference_url.
+    assert!(
+        msg.contains("cloud_providers") || msg.contains("inference_url"),
+        "error must suggest a remediation; got: {msg}"
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires live LM Studio on localhost:1234"]
+async fn live_lmstudio_provider_streams_thinking_and_text() {
+    let _guard = crate::openhuman::inference::inference_test_guard();
+    let mut config = Config::default();
+    config.local_ai.base_url = Some("http://127.0.0.1:1234/v1".to_string());
+    let model = discover_live_lmstudio_model()
+        .await
+        .expect("discover live lmstudio model");
+    let provider_string = format!("lmstudio:{model}");
+    let (provider, resolved_model) =
+        create_local_chat_provider_from_string(&provider_string, &config).expect("build provider");
+
+    let (tx, mut rx) = tokio::sync::mpsc::channel(64);
+    let messages = vec![ChatMessage::user(
+        "Think briefly, then reply with exactly LMSTUDIO_LIVE_OK.",
+    )];
+    let response = provider
+        .chat(
+            ChatRequest {
+                messages: &messages,
+                tools: None,
+                stream: Some(&tx),
+            },
+            &resolved_model,
+            0.0,
+        )
+        .await
+        .expect("live lmstudio chat");
+    drop(tx);
+
+    let mut saw_thinking = false;
+    let mut streamed_text = String::new();
+    while let Some(delta) = rx.recv().await {
+        match delta {
+            ProviderDelta::ThinkingDelta { delta } => {
+                if !delta.trim().is_empty() {
+                    saw_thinking = true;
+                }
+            }
+            ProviderDelta::TextDelta { delta } => streamed_text.push_str(&delta),
+            ProviderDelta::ToolCallStart { .. } | ProviderDelta::ToolCallArgsDelta { .. } => {}
+        }
+    }
+
+    assert!(
+        saw_thinking,
+        "LM Studio should emit reasoning/thinking deltas through the compatible provider path"
+    );
+    assert!(
+        response.text_or_empty().contains("LMSTUDIO_LIVE_OK"),
+        "unexpected final response: {:?}",
+        response.text
+    );
+    assert!(
+        streamed_text.contains("LMSTUDIO_LIVE_OK"),
+        "streamed text never surfaced the final answer: {streamed_text}"
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires live Ollama on localhost:11434"]
+async fn live_ollama_provider_streams_text() {
+    let _guard = crate::openhuman::inference::inference_test_guard();
+    let mut config = Config::default();
+    config.local_ai.base_url = Some("http://127.0.0.1:11434".to_string());
+    let model = discover_live_ollama_model()
+        .await
+        .expect("discover live ollama model");
+    let provider_string = format!("ollama:{model}");
+    let (provider, resolved_model) =
+        create_local_chat_provider_from_string(&provider_string, &config).expect("build provider");
+
+    let (tx, mut rx) = tokio::sync::mpsc::channel(64);
+    let messages = vec![ChatMessage::user("Reply with exactly OLLAMA_LIVE_OK.")];
+    let response = provider
+        .chat(
+            ChatRequest {
+                messages: &messages,
+                tools: None,
+                stream: Some(&tx),
+            },
+            &resolved_model,
+            0.0,
+        )
+        .await
+        .expect("live ollama chat");
+    drop(tx);
+
+    let mut streamed_text = String::new();
+    while let Some(delta) = rx.recv().await {
+        if let ProviderDelta::TextDelta { delta } = delta {
+            streamed_text.push_str(&delta);
+        }
+    }
+
+    assert!(
+        response.text_or_empty().contains("OLLAMA_LIVE_OK"),
+        "unexpected final response: {:?}",
+        response.text
+    );
+    assert!(
+        streamed_text.contains("OLLAMA_LIVE_OK"),
+        "streamed text never surfaced the final answer: {streamed_text}"
+    );
 }

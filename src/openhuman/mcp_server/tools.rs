@@ -26,6 +26,20 @@ const TREE_BROWSE_ARGUMENTS: &[&str] = &[
 ];
 const TREE_TOP_ENTITIES_ARGUMENTS: &[&str] = &["kind", "k"];
 const TREE_LIST_SOURCES_ARGUMENTS: &[&str] = &["user_email_hint"];
+const MEMORY_STORE_ARGUMENTS: &[&str] = &["title", "content", "namespace", "tags"];
+const MEMORY_NOTE_ARGUMENTS: &[&str] = &["chunk_id", "note_text"];
+const TREE_TAG_ARGUMENTS: &[&str] = &["chunk_id", "tags"];
+/// Upper bound on the number of tags `tree.tag` accepts per call.
+/// Matches the "explicit rejection over silent clamping" pattern used
+/// elsewhere in the MCP layer; prevents a misbehaving client from
+/// flooding a chunk's tag-record document with thousands of entries.
+const TREE_TAG_MAX_TAGS: usize = 50;
+/// Upper bound on a single tag's character length. Tags are categorical
+/// labels — anything past ~128 chars is almost certainly free-form text
+/// that should be `memory.note` instead, so reject up-front to surface
+/// the misuse rather than silently writing a giant token into the
+/// queryable `tags` index.
+const TREE_TAG_MAX_TAG_LENGTH: usize = 128;
 
 #[derive(Debug, Clone)]
 pub struct McpToolSpec {
@@ -214,6 +228,39 @@ fn base_tool_specs() -> Vec<McpToolSpec> {
             input_schema: tree_list_sources_schema(),
             annotations: read_only_local_annotations(),
         },
+        McpToolSpec {
+            name: "memory.store",
+            title: "Store Memory",
+            description: "Create a new memory document from content. The document is stored in \
+                          the specified namespace (default `mcp`) and can be retrieved via \
+                          `memory.search` or `memory.recall`.",
+            rpc_method: Some("openhuman.memory_doc_put"),
+            input_schema: memory_store_schema(),
+            annotations: write_local_annotations(),
+        },
+        McpToolSpec {
+            name: "memory.note",
+            title: "Annotate Memory Chunk",
+            description: "Append a note to an existing memory chunk by storing a linked annotation \
+                          document. The note references the original chunk_id for provenance and \
+                          can be retrieved alongside it.",
+            rpc_method: Some("openhuman.memory_doc_put"),
+            input_schema: memory_note_schema(),
+            annotations: write_local_annotations(),
+        },
+        McpToolSpec {
+            name: "tree.tag",
+            title: "Tag Memory Chunk",
+            description: "Apply one or more category tags to an existing memory chunk. \
+                          Stored as an upsertable tag-record document linked to the target \
+                          chunk_id, so re-tagging the same chunk replaces the prior tag set \
+                          rather than accumulating duplicate annotations. Differs from \
+                          `memory.note` in that the payload is a categorical label list — \
+                          queryable via the document `tags` field — rather than free-form text.",
+            rpc_method: Some("openhuman.memory_doc_put"),
+            input_schema: tree_tag_schema(),
+            annotations: write_local_annotations(),
+        },
     ]
 }
 
@@ -226,6 +273,23 @@ fn base_tool_specs() -> Vec<McpToolSpec> {
 fn read_only_local_annotations() -> Value {
     json!({
         "readOnlyHint": true,
+        "openWorldHint": false
+    })
+}
+
+/// Annotation preset for the MCP write tools (`memory.store`, `memory.note`,
+/// `tree.tag`) that upsert documents into OpenHuman's local memory tree.
+/// Writes are keyed deterministically (slug-from-title, `mcp-note-<chunk_id>`,
+/// `mcp-tag-<chunk_id>`) so repeating a call with identical arguments yields
+/// the same stored state — `idempotentHint: true`. The upsert can replace a
+/// previously stored document for the same key, which is a destructive update
+/// in MCP-spec terms — `destructiveHint: true`. Local-only, no external I/O —
+/// `openWorldHint: false`.
+fn write_local_annotations() -> Value {
+    json!({
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
         "openWorldHint": false
     })
 }
@@ -335,6 +399,80 @@ fn tree_list_sources_schema() -> Value {
     })
 }
 
+fn memory_store_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "title": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Human-readable title for the memory document."
+            },
+            "content": {
+                "type": "string",
+                "minLength": 1,
+                "description": "The text content to store as a memory document."
+            },
+            "namespace": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Namespace to store the document in. Defaults to `mcp` when omitted."
+            },
+            "tags": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Optional tags for categorisation and filtering."
+            }
+        },
+        "required": ["title", "content"],
+        "additionalProperties": false
+    })
+}
+
+fn memory_note_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "chunk_id": {
+                "type": "string",
+                "minLength": 1,
+                "description": "ID of the memory chunk to annotate. Use an ID from memory.search or memory.recall results."
+            },
+            "note_text": {
+                "type": "string",
+                "minLength": 1,
+                "description": "The note text to attach to the chunk."
+            }
+        },
+        "required": ["chunk_id", "note_text"],
+        "additionalProperties": false
+    })
+}
+
+fn tree_tag_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "chunk_id": {
+                "type": "string",
+                "minLength": 1,
+                "description": "ID of the memory chunk to tag. Use an ID from `memory.search`, `memory.recall`, or `tree.browse` results."
+            },
+            "tags": {
+                "type": "array",
+                "items": {
+                    "type": "string",
+                    "minLength": 1
+                },
+                "minItems": 1,
+                "description": "One or more category labels to attach (e.g. `[\"todo\", \"q3-planning\"]`). Re-tagging the same chunk replaces the prior tag set; supply the complete desired set on each call."
+            }
+        },
+        "required": ["chunk_id", "tags"],
+        "additionalProperties": false
+    })
+}
+
 fn searxng_search_schema() -> Value {
     json!({
         "type": "object",
@@ -431,6 +569,11 @@ pub async fn call_tool(name: &str, arguments: Value) -> Result<Value, ToolCallEr
         "agent.run_subagent" => {
             enforce_act_policy(spec.name).await?;
             return run_subagent_tool(&params).await;
+        }
+        "memory.store" | "memory.note" | "tree.tag" => {
+            enforce_write_policy(spec.name).await?;
+            validate_controller_params(&spec, &params)?;
+            return dispatch_write_tool(spec.name, &params).await;
         }
         _ => {}
     }
@@ -613,6 +756,108 @@ fn build_rpc_params(
             }
             Ok(params)
         }
+        "memory.store" => {
+            reject_unexpected_arguments(&args, MEMORY_STORE_ARGUMENTS)?;
+            let title = required_non_empty_string(&args, "title")?;
+            let content = required_non_empty_string(&args, "content")?;
+            let namespace =
+                optional_non_empty_string(&args, "namespace")?.unwrap_or_else(|| "mcp".to_string());
+            // Generate a deterministic key from the title for upsert dedup.
+            let key = format!("mcp-store-{}", slug_from(&title));
+            let mut params = Map::new();
+            params.insert("namespace".to_string(), Value::String(namespace));
+            params.insert("key".to_string(), Value::String(key));
+            params.insert("title".to_string(), Value::String(title));
+            params.insert("content".to_string(), Value::String(content));
+            params.insert("source_type".to_string(), Value::String("mcp".to_string()));
+            if let Some(tags) = optional_string_array(&args, "tags")? {
+                params.insert(
+                    "tags".to_string(),
+                    Value::Array(tags.into_iter().map(Value::String).collect()),
+                );
+            }
+            Ok(params)
+        }
+        "memory.note" => {
+            reject_unexpected_arguments(&args, MEMORY_NOTE_ARGUMENTS)?;
+            let chunk_id = required_non_empty_string(&args, "chunk_id")?;
+            let note_text = required_non_empty_string(&args, "note_text")?;
+            let key = format!("mcp-note-{chunk_id}");
+            let title = format!("Note on chunk {chunk_id}");
+            let content = format!("[annotation for chunk_id={chunk_id}]\n\n{note_text}");
+            let mut metadata = Map::new();
+            metadata.insert("annotates_chunk_id".to_string(), Value::String(chunk_id));
+            let mut params = Map::new();
+            params.insert("namespace".to_string(), Value::String("mcp".to_string()));
+            params.insert("key".to_string(), Value::String(key));
+            params.insert("title".to_string(), Value::String(title));
+            params.insert("content".to_string(), Value::String(content));
+            params.insert("source_type".to_string(), Value::String("mcp".to_string()));
+            params.insert("metadata".to_string(), Value::Object(metadata));
+            Ok(params)
+        }
+        "tree.tag" => {
+            reject_unexpected_arguments(&args, TREE_TAG_ARGUMENTS)?;
+            let chunk_id = required_non_empty_string(&args, "chunk_id")?;
+            // `required_non_empty_string_array` checks both presence and
+            // that the resulting list isn't empty after trimming — keeps
+            // the LLM honest about supplying at least one label per call.
+            let tags = required_non_empty_string_array(&args, "tags")?;
+            // Cap the tag set to keep the tag-record document bounded:
+            //   * `TREE_TAG_MAX_TAGS` rejects pathological cases where a
+            //     misbehaving client floods one chunk with hundreds of
+            //     labels (would also bloat the document tags index).
+            //   * `TREE_TAG_MAX_TAG_LENGTH` rejects oversize labels that
+            //     are almost certainly free-form text (which belongs in
+            //     `memory.note`, not the categorical tag surface).
+            // Both reject up-front rather than silently truncating — same
+            // "explicit rejection" pattern as `required_non_empty_string_array`.
+            if tags.len() > TREE_TAG_MAX_TAGS {
+                return Err(ToolCallError::InvalidParams(format!(
+                    "argument `tags` accepts at most {TREE_TAG_MAX_TAGS} entries (got {})",
+                    tags.len()
+                )));
+            }
+            if let Some(oversize) = tags.iter().find(|t| t.len() > TREE_TAG_MAX_TAG_LENGTH) {
+                return Err(ToolCallError::InvalidParams(format!(
+                    "argument `tags` entry exceeds {TREE_TAG_MAX_TAG_LENGTH} bytes (got {} bytes)",
+                    oversize.len()
+                )));
+            }
+            // Deterministic key keyed on `chunk_id` (not on tag content)
+            // so re-tagging the same chunk upserts the prior tag-record
+            // document rather than accumulating duplicate annotations.
+            // This is the structural difference from `memory.note`
+            // (which keys on chunk_id too but is content-additive in
+            // intent; the LLM is expected to call note again to append).
+            let key = format!("mcp-tag-{chunk_id}");
+            let title = format!("Tags for chunk {chunk_id}");
+            let content = format!(
+                "[tag record for chunk_id={chunk_id}]\n\nApplied tags: {}",
+                tags.join(", ")
+            );
+            // Build the tag list as a JSON array once, then share it
+            // between metadata.applied_tags and the top-level `tags`
+            // field. `tags_array.clone()` on the cached Value is the
+            // cheapest path — it clones each tag String once total,
+            // matching what an in-place double-collect would do.
+            let tags_array = Value::Array(tags.into_iter().map(Value::String).collect());
+            let mut metadata = Map::new();
+            metadata.insert("tags_for_chunk_id".to_string(), Value::String(chunk_id));
+            // `applied_tags` mirrors `tags` for callers that consume the
+            // metadata view; the top-level `tags` field below feeds the
+            // document tags index (queryable through `doc_list` etc.).
+            metadata.insert("applied_tags".to_string(), tags_array.clone());
+            let mut params = Map::new();
+            params.insert("namespace".to_string(), Value::String("mcp".to_string()));
+            params.insert("key".to_string(), Value::String(key));
+            params.insert("title".to_string(), Value::String(title));
+            params.insert("content".to_string(), Value::String(content));
+            params.insert("source_type".to_string(), Value::String("mcp".to_string()));
+            params.insert("tags".to_string(), tags_array);
+            params.insert("metadata".to_string(), Value::Object(metadata));
+            Ok(params)
+        }
         _ => Err(ToolCallError::InvalidParams(format!(
             "unknown MCP tool `{tool_name}`"
         ))),
@@ -733,6 +978,28 @@ fn optional_string_array(
         );
     }
     Ok(Some(out))
+}
+
+/// Variant of [`optional_string_array`] that errors when the field is
+/// absent, null, or resolves to an empty list after blank-trim.
+///
+/// Used by tools where supplying an empty `tags: []` is a no-op the
+/// caller almost certainly didn't mean (e.g. `tree.tag`). The MCP layer
+/// rejects it up-front instead of letting it through to the document
+/// RPC where the failure mode is silent.
+fn required_non_empty_string_array(
+    args: &Map<String, Value>,
+    key: &str,
+) -> Result<Vec<String>, ToolCallError> {
+    let trimmed = optional_string_array(args, key)?.ok_or_else(|| {
+        ToolCallError::InvalidParams(format!("missing required argument `{key}`"))
+    })?;
+    if trimmed.is_empty() {
+        return Err(ToolCallError::InvalidParams(format!(
+            "argument `{key}` must contain at least one non-empty string"
+        )));
+    }
+    Ok(trimmed)
 }
 
 fn optional_i64(args: &Map<String, Value>, key: &str) -> Result<Option<i64>, ToolCallError> {
@@ -874,6 +1141,78 @@ async fn enforce_act_policy(tool_name: &str) -> Result<(), ToolCallError> {
     policy
         .enforce_tool_operation(ToolOperation::Act, tool_name)
         .map_err(ToolCallError::InvalidParams)
+}
+
+/// Write operations use the same gate as Act — they are side-effecting and
+/// must not run in read-only mode. The separate function gives us a distinct
+/// log line so auditors can tell reads from writes at a glance.
+async fn enforce_write_policy(tool_name: &str) -> Result<(), ToolCallError> {
+    let config = match config_rpc::load_config_with_timeout().await {
+        Ok(config) => config,
+        Err(err) => {
+            log::warn!(
+                "[mcp_server] enforce_write_policy config load failed tool={tool_name} error={err}"
+            );
+            return Err(ToolCallError::Internal(format!(
+                "failed to load config: {err}"
+            )));
+        }
+    };
+    let policy = SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir);
+    policy
+        .enforce_tool_operation(ToolOperation::Act, tool_name)
+        .map_err(ToolCallError::InvalidParams)
+}
+
+/// Dispatch a write tool to its underlying RPC method with provenance and
+/// audit logging.
+async fn dispatch_write_tool(
+    tool_name: &str,
+    params: &Map<String, Value>,
+) -> Result<Value, ToolCallError> {
+    let rpc_method = "openhuman.memory_doc_put";
+
+    tracing::info!(
+        tool = tool_name,
+        rpc_method = rpc_method,
+        client = "mcp",
+        "[mcp_server] write dispatch"
+    );
+
+    match all::try_invoke_registered_rpc(rpc_method, params.clone()).await {
+        Some(Ok(value)) => {
+            let document_id = value
+                .get("document_id")
+                .and_then(Value::as_str)
+                .unwrap_or("<unknown>");
+            tracing::info!(
+                tool = tool_name,
+                chunk_id = document_id,
+                client = "mcp",
+                "[mcp_server] write success"
+            );
+            Ok(tool_success(value))
+        }
+        Some(Err(message)) => {
+            log::warn!(
+                "[mcp_server] write handler error tool={} error={}",
+                tool_name,
+                message
+            );
+            Ok(tool_error(format!("{} failed: {message}", tool_name)))
+        }
+        None => {
+            log::error!(
+                "[mcp_server] write mapping missing registered RPC method tool={} rpc_method={}",
+                tool_name,
+                rpc_method
+            );
+            Ok(tool_error(format!(
+                "{} is unavailable: mapped RPC method `{}` is not registered",
+                tool_name, rpc_method
+            )))
+        }
+    }
 }
 
 async fn load_config_and_init_registry() -> Result<crate::openhuman::config::Config, ToolCallError>
@@ -1036,6 +1375,55 @@ fn tool_error(message: String) -> Value {
     })
 }
 
+/// Produce a URL-safe slug from a title for use as a document key.
+/// Lowercases, replaces non-alphanumeric runs with a single hyphen, and
+/// truncates at 64 characters.
+fn slug_from(title: &str) -> String {
+    let slug: String = title
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    // Collapse runs of hyphens, trim leading/trailing.
+    let mut result = String::with_capacity(slug.len());
+    let mut prev_hyphen = true; // treat start as hyphen to trim leading
+    for ch in slug.chars() {
+        if ch == '-' {
+            if !prev_hyphen {
+                result.push('-');
+            }
+            prev_hyphen = true;
+        } else {
+            result.push(ch);
+            prev_hyphen = false;
+        }
+    }
+    // Trim trailing hyphen
+    while result.ends_with('-') {
+        result.pop();
+    }
+    if result.len() > 64 {
+        result.truncate(64);
+        while result.ends_with('-') {
+            result.pop();
+        }
+    }
+    if result.is_empty() {
+        // Fallback for titles with no ASCII-alphanumeric characters (e.g.
+        // Unicode-only titles like "会议记录" or "Протокол"). Use a short
+        // stable hash of the original title to ensure distinct slugs.
+        use sha2::{Digest, Sha256};
+        let hash = hex::encode(&Sha256::digest(title.as_bytes())[..8]);
+        return format!("untitled-{hash}");
+    }
+    result
+}
+
 fn json_type_name(value: &Value) -> &'static str {
     match value {
         Value::Null => "null",
@@ -1075,6 +1463,9 @@ mod tests {
                 "tree.browse",
                 "tree.top_entities",
                 "tree.list_sources",
+                "memory.store",
+                "memory.note",
+                "tree.tag",
             ]
         );
     }
@@ -1108,7 +1499,12 @@ mod tests {
         // to clients. (`searxng_search` is read-only but openWorld, so it
         // verifies the read-only axis here and is exempt from the
         // openWorld=false check below.)
-        let act_tool_names = ["agent.run_subagent"];
+        let act_tool_names = [
+            "agent.run_subagent",
+            "memory.store",
+            "memory.note",
+            "tree.tag",
+        ];
         let open_world_read_only = ["searxng_search"];
         for spec in tool_specs() {
             if act_tool_names.contains(&spec.name) {
@@ -1548,5 +1944,355 @@ mod tests {
         let err = build_rpc_params("tree.list_sources", json!({ "limit": 5 }))
             .expect_err("list_sources takes no pagination");
         assert!(err.message().contains("unexpected argument `limit`"));
+    }
+
+    // ── memory.store ──────────────────────────────────────────────────
+
+    #[test]
+    fn memory_store_requires_title_and_content() {
+        let err = build_rpc_params("memory.store", json!({})).expect_err("must reject");
+        assert!(err.message().contains("missing required argument `title`"));
+
+        let err =
+            build_rpc_params("memory.store", json!({ "title": "T" })).expect_err("must reject");
+        assert!(err
+            .message()
+            .contains("missing required argument `content`"));
+    }
+
+    #[test]
+    fn memory_store_defaults_namespace_to_mcp() {
+        let params = build_rpc_params(
+            "memory.store",
+            json!({ "title": "My note", "content": "Hello world" }),
+        )
+        .expect("params");
+
+        assert_eq!(params["namespace"], "mcp");
+        assert_eq!(params["title"], "My note");
+        assert_eq!(params["content"], "Hello world");
+        assert_eq!(params["source_type"], "mcp");
+        assert!(params["key"].as_str().unwrap().starts_with("mcp-store-"));
+    }
+
+    #[test]
+    fn memory_store_accepts_custom_namespace_and_tags() {
+        let params = build_rpc_params(
+            "memory.store",
+            json!({
+                "title": "Project Plan",
+                "content": "Q3 milestones",
+                "namespace": "work",
+                "tags": ["project", "planning"]
+            }),
+        )
+        .expect("params");
+
+        assert_eq!(params["namespace"], "work");
+        assert_eq!(params["tags"], json!(["project", "planning"]));
+    }
+
+    #[test]
+    fn memory_store_rejects_unknown_argument() {
+        let err = build_rpc_params(
+            "memory.store",
+            json!({ "title": "T", "content": "C", "priority": "high" }),
+        )
+        .expect_err("must reject");
+        assert!(err.message().contains("unexpected argument `priority`"));
+    }
+
+    // ── memory.note ───────────────────────────────────────────────────
+
+    #[test]
+    fn memory_note_requires_chunk_id_and_note_text() {
+        let err = build_rpc_params("memory.note", json!({})).expect_err("must reject");
+        assert!(err
+            .message()
+            .contains("missing required argument `chunk_id`"));
+
+        let err =
+            build_rpc_params("memory.note", json!({ "chunk_id": "abc" })).expect_err("must reject");
+        assert!(err
+            .message()
+            .contains("missing required argument `note_text`"));
+    }
+
+    #[test]
+    fn memory_note_builds_annotation_document() {
+        let params = build_rpc_params(
+            "memory.note",
+            json!({ "chunk_id": "chunk-42", "note_text": "Important context" }),
+        )
+        .expect("params");
+
+        assert_eq!(params["namespace"], "mcp");
+        assert_eq!(params["key"], "mcp-note-chunk-42");
+        assert!(params["title"].as_str().unwrap().contains("chunk-42"));
+        assert!(params["content"]
+            .as_str()
+            .unwrap()
+            .contains("Important context"));
+        assert!(params["content"]
+            .as_str()
+            .unwrap()
+            .contains("chunk_id=chunk-42"));
+        assert_eq!(params["metadata"]["annotates_chunk_id"], "chunk-42");
+        assert_eq!(params["source_type"], "mcp");
+    }
+
+    #[test]
+    fn memory_note_rejects_unknown_argument() {
+        let err = build_rpc_params(
+            "memory.note",
+            json!({ "chunk_id": "abc", "note_text": "N", "extra": true }),
+        )
+        .expect_err("must reject");
+        assert!(err.message().contains("unexpected argument `extra`"));
+    }
+
+    // ── tree.tag ──────────────────────────────────────────────────────
+
+    #[test]
+    fn tree_tag_requires_chunk_id_and_tags() {
+        let err = build_rpc_params("tree.tag", json!({})).expect_err("must reject");
+        assert!(
+            err.message()
+                .contains("missing required argument `chunk_id`"),
+            "got: {}",
+            err.message()
+        );
+
+        let err =
+            build_rpc_params("tree.tag", json!({ "chunk_id": "abc" })).expect_err("must reject");
+        assert!(
+            err.message().contains("missing required argument `tags`"),
+            "got: {}",
+            err.message()
+        );
+    }
+
+    #[test]
+    fn tree_tag_rejects_empty_tags_array() {
+        let err = build_rpc_params("tree.tag", json!({ "chunk_id": "abc", "tags": [] }))
+            .expect_err("must reject");
+        assert!(
+            err.message().contains("at least one non-empty string"),
+            "got: {}",
+            err.message()
+        );
+    }
+
+    #[test]
+    fn tree_tag_rejects_all_blank_tags() {
+        // After blank-trim the list is empty — same failure mode as `[]`.
+        let err = build_rpc_params(
+            "tree.tag",
+            json!({ "chunk_id": "abc", "tags": ["   ", ""] }),
+        )
+        .expect_err("must reject");
+        assert!(
+            err.message().contains("at least one non-empty string"),
+            "got: {}",
+            err.message()
+        );
+    }
+
+    #[test]
+    fn tree_tag_rejects_non_string_tags() {
+        // Numeric entries inside `tags` get caught by the string-array helper.
+        let err = build_rpc_params("tree.tag", json!({ "chunk_id": "abc", "tags": ["ok", 42] }))
+            .expect_err("must reject");
+        assert!(
+            err.message()
+                .contains("argument `tags` must contain only strings"),
+            "got: {}",
+            err.message()
+        );
+    }
+
+    #[test]
+    fn tree_tag_builds_tag_record_document() {
+        let params = build_rpc_params(
+            "tree.tag",
+            json!({ "chunk_id": "chunk-42", "tags": ["todo", "q3-planning"] }),
+        )
+        .expect("params");
+
+        // Document key is deterministic on chunk_id only → re-tagging
+        // the same chunk upserts.
+        assert_eq!(params["namespace"], "mcp");
+        assert_eq!(params["key"], "mcp-tag-chunk-42");
+        assert_eq!(params["source_type"], "mcp");
+
+        // Title surfaces the target chunk for human-readable recall.
+        assert!(
+            params["title"]
+                .as_str()
+                .expect("title is a string")
+                .contains("chunk-42"),
+            "title was: {}",
+            params["title"]
+        );
+
+        // Top-level `tags` flows to the document tag index (queryable
+        // via `doc_list` / search filters) — this is the key differentiator
+        // from `memory.note` whose payload is opaque free-form text.
+        assert_eq!(params["tags"], json!(["todo", "q3-planning"]));
+
+        // Metadata carries the back-reference plus a mirrored tag list,
+        // so consumers reading the metadata view don't need to also
+        // join against the top-level `tags` field.
+        let metadata = params["metadata"]
+            .as_object()
+            .expect("metadata is an object");
+        assert_eq!(metadata["tags_for_chunk_id"], "chunk-42");
+        assert_eq!(metadata["applied_tags"], json!(["todo", "q3-planning"]));
+    }
+
+    #[test]
+    fn tree_tag_trims_blanks_but_keeps_real_tags() {
+        // Mixed list — blanks are silently dropped (matches existing
+        // `optional_string_array` behaviour) but the resulting set is
+        // still non-empty so the call succeeds.
+        let params = build_rpc_params(
+            "tree.tag",
+            json!({ "chunk_id": "chunk-7", "tags": ["  important  ", "", "  ", "todo"] }),
+        )
+        .expect("params");
+
+        assert_eq!(params["tags"], json!(["important", "todo"]));
+    }
+
+    #[test]
+    fn tree_tag_rejects_empty_chunk_id() {
+        let err = build_rpc_params("tree.tag", json!({ "chunk_id": "", "tags": ["todo"] }))
+            .expect_err("must reject");
+        assert!(
+            err.message()
+                .contains("argument `chunk_id` must not be empty"),
+            "got: {}",
+            err.message()
+        );
+    }
+
+    #[test]
+    fn tree_tag_rejects_unknown_argument() {
+        let err = build_rpc_params(
+            "tree.tag",
+            json!({ "chunk_id": "abc", "tags": ["t"], "priority": "high" }),
+        )
+        .expect_err("must reject");
+        assert!(
+            err.message().contains("unexpected argument `priority`"),
+            "got: {}",
+            err.message()
+        );
+    }
+
+    #[test]
+    fn tree_tag_rejects_oversize_tag_array() {
+        // Per-graycyrus #2316 review: cap the tag-array length so a
+        // misbehaving client can't flood a chunk's tag-record document
+        // with hundreds of categorical labels. Builds an over-cap
+        // array and asserts the dedicated rejection message.
+        let oversize: Vec<String> = (0..(TREE_TAG_MAX_TAGS + 1))
+            .map(|i| format!("tag-{i}"))
+            .collect();
+        let err = build_rpc_params("tree.tag", json!({ "chunk_id": "abc", "tags": oversize }))
+            .expect_err("must reject");
+        assert!(
+            err.message().contains("accepts at most"),
+            "got: {}",
+            err.message()
+        );
+    }
+
+    #[test]
+    fn tree_tag_rejects_oversize_individual_tag() {
+        // Per-graycyrus #2316 review: a single oversize tag is almost
+        // certainly free-form text that should be `memory.note` instead
+        // of going through the categorical tag surface — reject up-front
+        // so the misuse is visible rather than silently writing a giant
+        // token into the queryable `tags` index.
+        let oversize_tag = "a".repeat(TREE_TAG_MAX_TAG_LENGTH + 1);
+        let err = build_rpc_params(
+            "tree.tag",
+            json!({ "chunk_id": "abc", "tags": [oversize_tag] }),
+        )
+        .expect_err("must reject");
+        assert!(err.message().contains("exceeds"), "got: {}", err.message());
+    }
+
+    #[test]
+    fn tree_tag_accepts_max_size_tags() {
+        // Boundary: exactly TREE_TAG_MAX_TAGS entries (the cap is
+        // "at most N", not "fewer than N") with each entry at exactly
+        // TREE_TAG_MAX_TAG_LENGTH chars must succeed. Locks the
+        // inclusive-vs-exclusive bound so a future off-by-one
+        // refactor breaks the test, not user calls.
+        let max_tags: Vec<String> = (0..TREE_TAG_MAX_TAGS)
+            .map(|i| format!("tag-{i:0width$}", width = TREE_TAG_MAX_TAG_LENGTH - 4))
+            .collect();
+        // Sanity: each entry is == TREE_TAG_MAX_TAG_LENGTH chars.
+        assert!(max_tags.iter().all(|t| t.len() == TREE_TAG_MAX_TAG_LENGTH));
+        let params = build_rpc_params("tree.tag", json!({ "chunk_id": "abc", "tags": max_tags }))
+            .expect("at the cap must succeed");
+        // The built params should preserve all TREE_TAG_MAX_TAGS entries.
+        assert_eq!(
+            params["tags"].as_array().expect("tags is array").len(),
+            TREE_TAG_MAX_TAGS
+        );
+    }
+
+    // ── slug_from ─────────────────────────────────────────────────────
+
+    #[test]
+    fn slug_from_produces_clean_slug() {
+        assert_eq!(slug_from("Hello World!"), "hello-world");
+        assert_eq!(slug_from("  spaces  "), "spaces");
+        assert_eq!(slug_from("CamelCase123"), "camelcase123");
+        assert_eq!(slug_from("a--b"), "a-b");
+    }
+
+    #[test]
+    fn slug_from_truncates_long_titles() {
+        let long = "a".repeat(100);
+        let slug = slug_from(&long);
+        assert!(slug.len() <= 64);
+    }
+
+    #[test]
+    fn slug_from_returns_hash_fallback_for_non_alphanumeric_titles() {
+        // Non-alphanumeric titles should produce "untitled-<hash>" with a
+        // stable, deterministic hash suffix.
+        let slug_bang = slug_from("!!!");
+        let slug_at = slug_from("@@@");
+        assert!(slug_bang.starts_with("untitled-"), "got: {slug_bang}");
+        assert!(slug_at.starts_with("untitled-"), "got: {slug_at}");
+        // Different inputs → different slugs
+        assert_ne!(slug_bang, slug_at);
+        // Empty title also gets a fallback
+        assert!(slug_from("").starts_with("untitled-"));
+        // Stable across calls
+        assert_eq!(slug_from("!!!"), slug_bang);
+    }
+
+    #[test]
+    fn slug_from_unicode_only_titles_are_unique_and_stable() {
+        let chinese = slug_from("会议记录");
+        let russian = slug_from("Протокол");
+        let emoji = slug_from("🦀🚀");
+        // All produce hash-based fallbacks
+        assert!(chinese.starts_with("untitled-"), "got: {chinese}");
+        assert!(russian.starts_with("untitled-"), "got: {russian}");
+        assert!(emoji.starts_with("untitled-"), "got: {emoji}");
+        // All distinct
+        assert_ne!(chinese, russian);
+        assert_ne!(chinese, emoji);
+        assert_ne!(russian, emoji);
+        // Stable
+        assert_eq!(slug_from("会议记录"), chinese);
+        assert_eq!(slug_from("Протокол"), russian);
     }
 }

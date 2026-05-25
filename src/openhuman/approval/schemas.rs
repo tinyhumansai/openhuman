@@ -13,7 +13,11 @@ use super::rpc as approval_rpc;
 use super::types::ApprovalDecision;
 
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
-    vec![schemas("list_pending"), schemas("decide")]
+    vec![
+        schemas("list_pending"),
+        schemas("list_recent_decisions"),
+        schemas("decide"),
+    ]
 }
 
 pub fn all_registered_controllers() -> Vec<RegisteredController> {
@@ -21,6 +25,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("list_pending"),
             handler: handle_list_pending,
+        },
+        RegisteredController {
+            schema: schemas("list_recent_decisions"),
+            handler: handle_list_recent_decisions,
         },
         RegisteredController {
             schema: schemas("decide"),
@@ -41,6 +49,23 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 name: "pending",
                 ty: TypeSchema::Array(Box::new(TypeSchema::Ref("PendingApproval"))),
                 comment: "Pending approval rows.",
+                required: true,
+            }],
+        },
+        "list_recent_decisions" => ControllerSchema {
+            namespace: "approval",
+            function: "list_recent_decisions",
+            description: "List recently decided approval rows for durable audit and diagnostics.",
+            inputs: vec![FieldSchema {
+                name: "limit",
+                ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
+                comment: "Maximum decided rows to return (1-500, default 50).",
+                required: false,
+            }],
+            outputs: vec![FieldSchema {
+                name: "decisions",
+                ty: TypeSchema::Array(Box::new(TypeSchema::Ref("ApprovalAuditEntry"))),
+                comment: "Recently decided approval rows.",
                 required: true,
             }],
         },
@@ -95,6 +120,16 @@ fn handle_list_pending(_params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
+fn handle_list_recent_decisions(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let limit = read_optional_u64(&params, "limit")?.map(|value| value as usize);
+        let outcome = approval_rpc::approval_list_recent_decisions(limit)
+            .await
+            .map_err(|e| e.to_string())?;
+        to_json(outcome)
+    })
+}
+
 fn handle_decide(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let request_id = read_required_string(&params, "request_id")?;
@@ -109,6 +144,20 @@ fn handle_decide(params: Map<String, Value>) -> ControllerFuture {
             .map_err(|e| e.to_string())?;
         to_json(outcome)
     })
+}
+
+fn read_optional_u64(params: &Map<String, Value>, key: &str) -> Result<Option<u64>, String> {
+    match params.get(key) {
+        Some(Value::Number(n)) => n
+            .as_u64()
+            .map(Some)
+            .ok_or_else(|| format!("invalid '{key}': expected unsigned integer")),
+        Some(Value::Null) | None => Ok(None),
+        Some(other) => Err(format!(
+            "invalid '{key}': expected unsigned integer, got {}",
+            type_name(other)
+        )),
+    }
 }
 
 fn read_required_string(params: &Map<String, Value>, key: &str) -> Result<String, String> {
@@ -169,9 +218,21 @@ mod tests {
     #[test]
     fn all_registered_controllers_has_handler_per_schema() {
         let controllers = all_registered_controllers();
-        assert_eq!(controllers.len(), 2);
+        assert_eq!(controllers.len(), 3);
         let names: Vec<_> = controllers.iter().map(|c| c.schema.function).collect();
-        assert_eq!(names, vec!["list_pending", "decide"]);
+        assert_eq!(
+            names,
+            vec!["list_pending", "list_recent_decisions", "decide"]
+        );
+    }
+
+    #[test]
+    fn schemas_list_recent_decisions_has_optional_limit() {
+        let s = schemas("list_recent_decisions");
+        assert_eq!(s.namespace, "approval");
+        assert_eq!(s.function, "list_recent_decisions");
+        assert_eq!(s.inputs[0].name, "limit");
+        assert!(!s.inputs[0].required);
     }
 
     #[test]
@@ -194,5 +255,13 @@ mod tests {
     fn read_required_string_missing_key_errors() {
         let err = read_required_string(&Map::new(), "request_id").unwrap_err();
         assert!(err.contains("missing required"));
+    }
+
+    #[test]
+    fn read_optional_u64_accepts_missing_and_number() {
+        assert_eq!(read_optional_u64(&Map::new(), "limit").unwrap(), None);
+        let mut params = Map::new();
+        params.insert("limit".into(), json!(25));
+        assert_eq!(read_optional_u64(&params, "limit").unwrap(), Some(25));
     }
 }

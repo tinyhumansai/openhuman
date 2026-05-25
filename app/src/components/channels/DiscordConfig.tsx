@@ -2,8 +2,8 @@ import debug from 'debug';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useOAuthConnectionListener } from '../../hooks/useOAuthConnectionListener';
-import { AUTH_MODE_LABELS } from '../../lib/channels/definitions';
 import { useT } from '../../lib/i18n/I18nContext';
+import { useCoreState } from '../../providers/CoreStateProvider';
 import { channelConnectionsApi } from '../../services/api/channelConnectionsApi';
 import { callCoreRpc } from '../../services/coreRpcClient';
 import {
@@ -19,6 +19,7 @@ import type {
   ChannelConnectionStatus,
   ChannelDefinition,
 } from '../../types/channels';
+import { isLocalSessionToken } from '../../utils/localSession';
 import { openUrl } from '../../utils/openUrl';
 import { restartCoreProcess } from '../../utils/tauriCommands/core';
 import ChannelFieldInput from './ChannelFieldInput';
@@ -37,6 +38,11 @@ const DiscordConfig = ({ definition }: DiscordConfigProps) => {
   const { t } = useT();
   const dispatch = useAppDispatch();
   const channelConnections = useAppSelector(state => state.channelConnections);
+  const { snapshot } = useCoreState();
+  const isLocalSession = isLocalSessionToken(snapshot.sessionToken);
+  const visibleAuthModes = definition.auth_modes.filter(
+    spec => !isLocalSession || (spec.mode !== 'managed_dm' && spec.mode !== 'oauth')
+  );
 
   const [busyKeys, setBusyKeys] = useState<Record<string, boolean>>({});
   const [fieldValues, setFieldValues] = useState<Record<string, Record<string, string>>>({});
@@ -167,7 +173,10 @@ const DiscordConfig = ({ definition }: DiscordConfigProps) => {
                 channel: 'discord',
                 authMode: spec.mode,
                 status: 'error',
-                lastError: `${field.label} is required`,
+                lastError: t('channels.fieldRequired', '{field} is required').replace(
+                  '{field}',
+                  t(`channels.discord.fields.${field.key}.label`, field.label || field.key)
+                ),
               })
             );
             return;
@@ -277,7 +286,13 @@ const DiscordConfig = ({ definition }: DiscordConfigProps) => {
         </div>
       )}
 
-      {definition.auth_modes.map(spec => {
+      {isLocalSession && visibleAuthModes.length !== definition.auth_modes.length && (
+        <div className="rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 px-4 py-3 text-sm text-stone-700 dark:text-neutral-200">
+          {t('channels.localManagedUnavailable')}
+        </div>
+      )}
+
+      {visibleAuthModes.map(spec => {
         const compositeKey = `discord:${spec.mode}`;
         const connection = channelConnections.connections.discord?.[spec.mode];
         const status: ChannelConnectionStatus = connection?.status ?? 'disconnected';
@@ -290,10 +305,10 @@ const DiscordConfig = ({ definition }: DiscordConfigProps) => {
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="text-sm font-medium text-stone-900 dark:text-neutral-100">
-                  {AUTH_MODE_LABELS[spec.mode] ?? spec.mode}
+                  {t(`channels.authMode.${spec.mode}`)}
                 </p>
                 <p className="text-xs text-stone-500 dark:text-neutral-400 mt-1">
-                  {spec.description}
+                  {t(`channels.discord.authMode.${spec.mode}.description`)}
                 </p>
                 {connection?.lastError && (
                   <p className="text-xs text-coral-600 mt-1">{connection.lastError}</p>
@@ -308,7 +323,13 @@ const DiscordConfig = ({ definition }: DiscordConfigProps) => {
                 {spec.fields.map(field => (
                   <ChannelFieldInput
                     key={field.key}
-                    field={field}
+                    field={{
+                      ...field,
+                      label: t(`channels.discord.fields.${field.key}.label`, field.label),
+                      placeholder: field.placeholder
+                        ? t(`channels.discord.fields.${field.key}.placeholder`, field.placeholder)
+                        : field.placeholder,
+                    }}
                     value={fieldValues[compositeKey]?.[field.key] ?? ''}
                     onChange={val => updateField(compositeKey, field.key, val)}
                     disabled={busy}

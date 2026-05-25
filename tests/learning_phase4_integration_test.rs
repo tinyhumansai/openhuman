@@ -22,7 +22,7 @@ use openhuman_core::openhuman::learning::candidate::{
 };
 use openhuman_core::openhuman::learning::profile_md_renderer::ProfileMdRenderer;
 use openhuman_core::openhuman::learning::stability_detector::StabilityDetector;
-use openhuman_core::openhuman::memory::store::profile::{
+use openhuman_core::openhuman::memory_store::profile::{
     FacetState, FacetType, ProfileFacet, UserState, PROFILE_INIT_SQL,
 };
 use parking_lot::Mutex;

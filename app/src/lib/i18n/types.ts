@@ -7,6 +7,7 @@ export type Locale =
   | 'fr'
   | 'bn'
   | 'pt'
+  | 'de'
   | 'ru'
   | 'id'
   | 'it'

@@ -12,7 +12,17 @@ interface ChannelSelectorProps {
   onSelectChannel: (channel: ChannelType) => void;
 }
 
-const CHANNEL_ICONS: Record<string, string> = { telegram: '✈️', discord: '🎮', web: '🌐' };
+const CHANNEL_ICONS: Record<string, string> = {
+  telegram: '✈️',
+  discord: '🎮',
+  web: '🌐',
+  mcp: '🔌',
+};
+
+/** Virtual (static) tabs that are not backed by a ChannelDefinition from the core. */
+const VIRTUAL_TABS: { id: ChannelType; display_name: string }[] = [
+  { id: 'mcp', display_name: 'MCP Servers' },
+];
 const CHANNEL_STATUS_PRIORITY: ChannelConnectionStatus[] = [
   'connected',
   'connecting',
@@ -48,7 +58,7 @@ const ChannelSelector = ({
         </p>
       </div>
 
-      <div className="flex gap-2">
+      <div className="flex gap-2 flex-wrap">
         {definitions.map(def => {
           const channelId = def.id as ChannelType;
           const isSelected = selectedChannel === channelId;
@@ -78,6 +88,25 @@ const ChannelSelector = ({
                 <span className="font-medium">{def.display_name}</span>
               </span>
               <ChannelStatusBadge status={bestStatus} />
+            </button>
+          );
+        })}
+
+        {/* Virtual tabs — not backed by a ChannelDefinition from the core */}
+        {VIRTUAL_TABS.map(tab => {
+          const isSelected = selectedChannel === tab.id;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => onSelectChannel(tab.id)}
+              className={`flex-1 flex items-center gap-2 rounded-lg border px-4 py-3 text-sm transition-colors ${
+                isSelected
+                  ? 'border-primary-500/60 bg-primary-50 dark:bg-primary-500/15 text-primary-600 dark:text-primary-300'
+                  : 'border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 text-stone-600 dark:text-neutral-300 hover:border-stone-300 dark:hover:border-neutral-700'
+              }`}>
+              <span className="text-base">{CHANNEL_ICONS[tab.id] ?? ''}</span>
+              <span className="font-medium">{tab.display_name}</span>
             </button>
           );
         })}

@@ -69,6 +69,13 @@ case "${CI:-}" in 1) export CI=true ;; 0) export CI=false ;; esac
 # All other build scripts in app/package.json do `pnpm tauri:ensure` + use
 # `cargo tauri build`; the E2E build was the one outlier and we got the panic.
 pnpm tauri:ensure
+# ensure-tauri-cli.sh installs cargo-tauri into $INSTALL_ROOT/bin (default
+# <repo>/.cache/cargo-install/bin) and only exports PATH within its own
+# subshell. Replicate that PATH update here so `cargo tauri build` can find
+# the subcommand on fresh CI runners (macOS / Windows) where ~/.cargo/bin
+# does not already contain a cargo-tauri from a prior install.
+INSTALL_ROOT="${OPENHUMAN_CARGO_INSTALL_ROOT:-$REPO_ROOT/.cache/cargo-install}"
+export PATH="$HOME/.cargo/bin:$INSTALL_ROOT/bin:$PATH"
 export CEF_PATH="$HOME/Library/Caches/tauri-cef"
 
 OS="$(uname)"

@@ -28,6 +28,7 @@ pub mod fork_context;
 mod instructions;
 pub mod interrupt;
 pub(crate) mod memory_context;
+pub(crate) mod memory_context_safety;
 mod parse;
 pub(crate) mod payload_summarizer;
 pub mod sandbox_context;

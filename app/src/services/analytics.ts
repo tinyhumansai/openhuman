@@ -101,7 +101,7 @@ export function initSentry(): void {
     // Privacy: disable EVERYTHING that could leak sensitive state.
     replaysSessionSampleRate: 0,
     replaysOnErrorSampleRate: 0,
-    tracesSampleRate: 0,
+    tracesSampler: () => (isAnalyticsEnabled() ? 0.1 : 0),
     defaultIntegrations: false,
     integrations: [
       Sentry.functionToStringIntegration(),
@@ -189,11 +189,6 @@ export function initSentry(): void {
       }
 
       return event;
-    },
-
-    beforeSendTransaction() {
-      // Block all transactions (performance traces).
-      return null;
     },
 
     // Ignore common non-actionable errors.

@@ -35,6 +35,10 @@ The first screen is **"Sign in! Let's Cook"**. Multiple sign-in options are avai
 **No permanent lock-in.** Signing in does not grant OpenHuman ongoing access to anything. All third-party access requires explicit OAuth approval per integration in the steps below.
 {% endhint %}
 
+{% hint style="warning" %}
+**Know what is local and what is managed.** Your Memory Tree database, Markdown vault, workspace config, and local runtime state live on your machine. The default setup still uses OpenHuman-hosted services for sign-in, model routing, managed integration OAuth/tool calls, and web search proxying. Use the custom setup paths if you want to bring your own model, search, or Composio credentials. Some hosted features and real-time integration triggers still require the managed backend.
+{% endhint %}
+
 ## 3. Run your first request
 
 Once Gmail has been ingested (the first auto-fetch tick happens within twenty minutes), try prompts like:

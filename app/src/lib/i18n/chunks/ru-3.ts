@@ -33,14 +33,14 @@ const ru3: TranslationMap = {
   'workspace.building': 'Построение...',
   'workspace.buildSummaryTrees': 'Построить деревья суммаризации',
   'workspace.viewVault': 'Открыть хранилище',
-  'workspace.openingVaultTitle': 'Opening vault in Obsidian',
+  'workspace.openingVaultTitle': 'Открытие хранилища в Obsidian',
   'workspace.openingVaultMessage':
     "If Obsidian doesn't open, install it from obsidian.md or use Reveal Folder. Vault path:",
   'workspace.openVaultFailedTitle': "Couldn't open vault in Obsidian",
   'workspace.openVaultFailedMessage':
-    'Use Reveal Folder to open the vault directory directly. Vault path:',
+    'Используйте Reveal Folder, чтобы напрямую открыть каталог хранилища. Путь к хранилищу:',
   'workspace.revealVaultFailed': "Couldn't reveal vault folder",
-  'workspace.revealFolder': 'Reveal Folder',
+  'workspace.revealFolder': 'Показать папку',
   'workspace.graphLoadFailed': 'Не удалось загрузить граф памяти',
   'workspace.loadingGraph': 'Загрузка графа памяти...',
   'workspace.graphViewMode': 'Режим просмотра графа памяти',
@@ -215,6 +215,10 @@ const ru3: TranslationMap = {
   'about.update.status.default': 'Проверить обновления',
   'welcome.connectionFailed': 'Ошибка подключения: {status} {statusText}',
   'welcome.connectionFailedMsg': 'Ошибка подключения: {message}',
+  'welcome.continueLocally': 'Продолжить локально',
+  'welcome.localSessionStarting': 'Запуск локального сеанса...',
+  'welcome.localSessionDesc':
+    'Использует автономный локальный профиль и пропускает TinyHumans OAuth.',
   'chat.agentChatDesc': 'Открыть прямой чат с агентом.',
   'channels.activeRouteValue': '{channel} через {authMode}',
   'privacy.dataKind.messages': 'Сообщения',
@@ -378,6 +382,34 @@ const ru3: TranslationMap = {
   'channels.telegram.reconnect': 'Переподключить',
   'channels.telegram.savedRestartRequired': 'Канал сохранён. Перезапусти приложение для активации.',
   'channels.web.alwaysAvailable': 'Всегда доступно',
+  'channels.discord.displayName': 'Discord',
+  'channels.discord.description': 'Отправляйте и получайте сообщения через Discord.',
+  'channels.discord.authMode.bot_token.description':
+    'Предоставьте свой собственный токен бота Discord.',
+  'channels.discord.authMode.oauth.description':
+    'Установите бот OpenHuman на свой сервер Discord через OAuth.',
+  'channels.discord.authMode.managed_dm.description':
+    'Свяжите свою личную учетную запись Discord с ботом OpenHuman.',
+  'channels.discord.fields.bot_token.label': 'Токен бота',
+  'channels.discord.fields.bot_token.placeholder': 'Ваш токен бота Discord',
+  'channels.discord.fields.guild_id.label': 'Идентификатор сервера (гильдии)',
+  'channels.discord.fields.guild_id.placeholder': 'Необязательно: ограничить конкретным сервером',
+  'channels.telegram.displayName': 'Telegram',
+  'channels.telegram.description': 'Отправка и получение сообщений через Telegram.',
+  'channels.telegram.authMode.managed_dm.description':
+    'Отправьте сообщение боту OpenHuman Telegram напрямую.',
+  'channels.telegram.authMode.bot_token.description':
+    'Предоставьте свой собственный токен бота Telegram от @BotFather.',
+  'channels.telegram.fields.bot_token.label': 'Токен бота',
+  'channels.telegram.fields.bot_token.placeholder': '123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11',
+  'channels.telegram.fields.allowed_users.label': 'Разрешенные пользователи',
+  'channels.telegram.fields.allowed_users.placeholder':
+    'Имена пользователей Telegram, разделенные запятыми',
+  'channels.web.displayName': 'Интернет',
+  'channels.web.description': 'Общайтесь через встроенный веб-интерфейс.',
+  'channels.web.authMode.managed_dm.description':
+    'Используйте встроенный веб-чат — настройка не требуется.',
+  'welcome.continueLocallyExperimental': 'Продолжить локально (экспериментально)',
 };
 
 export default ru3;

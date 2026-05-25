@@ -71,6 +71,10 @@ describe('rpcMethods catalog', () => {
         path.resolve(__dirname, '../../../../src/openhuman/inference/schemas.rs'),
         'utf8'
       ),
+      fs.readFileSync(
+        path.resolve(__dirname, '../../../../src/openhuman/embeddings/schemas.rs'),
+        'utf8'
+      ),
     ].join('\n');
 
     for (const method of Object.values(CORE_RPC_METHODS)) {
@@ -81,9 +85,11 @@ describe('rpcMethods catalog', () => {
         ? 'screen_intelligence'
         : methodRoot.startsWith('inference_')
           ? 'inference'
-          : methodRoot.startsWith('providers_')
-            ? 'providers'
-            : 'config';
+          : methodRoot.startsWith('embeddings_')
+            ? 'embeddings'
+            : methodRoot.startsWith('providers_')
+              ? 'providers'
+              : 'config';
       const fnName = methodRoot.slice(`${namespace}_`.length);
       expect(schemaSources).toContain(`namespace: "${namespace}"`);
       expect(schemaSources).toContain(`function: "${fnName}"`);

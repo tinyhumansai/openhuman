@@ -1,6 +1,10 @@
 use super::*;
+use once_cell::sync::Lazy as TestLazy;
+use parking_lot::Mutex as TestMutex;
 use serde_json::json;
 use tempfile::tempdir;
+
+static APP_STATE_CACHE_TEST_LOCK: TestLazy<TestMutex<()>> = TestLazy::new(|| TestMutex::new(()));
 
 #[test]
 fn sanitize_snapshot_user_drops_empty_payloads() {
@@ -137,6 +141,7 @@ fn save_and_reload_stored_app_state_round_trips() {
 
 #[test]
 fn peek_cached_current_user_identity_plucks_known_fields() {
+    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.lock();
     struct CacheResetGuard;
     impl Drop for CacheResetGuard {
         fn drop(&mut self) {
@@ -164,6 +169,7 @@ fn peek_cached_current_user_identity_plucks_known_fields() {
 
 #[test]
 fn peek_cached_current_user_identity_returns_none_when_only_empty_fields_exist() {
+    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.lock();
     struct CacheResetGuard;
     impl Drop for CacheResetGuard {
         fn drop(&mut self) {
@@ -196,6 +202,7 @@ impl Drop for SnapshotCacheResetGuard {
 
 #[test]
 fn runtime_snapshot_cache_hit_within_ttl() {
+    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.lock();
     let _reset = SnapshotCacheResetGuard;
 
     let dummy = build_dummy_runtime_snapshot();
@@ -215,6 +222,7 @@ fn runtime_snapshot_cache_hit_within_ttl() {
 
 #[test]
 fn runtime_snapshot_cache_miss_after_ttl() {
+    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.lock();
     let _reset = SnapshotCacheResetGuard;
 
     *RUNTIME_SNAPSHOT_CACHE.lock() = Some(CachedRuntimeSnapshot {

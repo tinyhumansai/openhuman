@@ -1,268 +1,358 @@
-//! Base URL and defaults for the TinyHumans / AlphaHuman hosted API.
+//! # API URL resolution & classification
+//!
+//! This module is the **single source of truth** for every URL the app uses to
+//! reach either:
+//!
+//! * the **hosted backend** (auth, billing, integrations, voice, sockets, …), or
+//! * the **LLM inference endpoint** (OpenAI-compatible chat completions).
+//!
+//! ## Why two separate URL families?
+//!
+//! Users can point `config.api_url` at a local model runner (Ollama, vLLM,
+//! LM Studio). Those servers only speak `/v1/chat/completions` and 404 on
+//! every other path. Naïvely reusing a single base URL for both families
+//! caused every `/auth/*`, `/agent-integrations/*`, and `/voice/*` request to
+//! 404 against the local runner — see Sentry cluster `OPENHUMAN-TAURI-51/-80/-7Z`.
+//!
+//! The fix is the [`effective_backend_api_url`] / [`effective_inference_url`]
+//! split:
+//!
+//! ```text
+//!                    config.api_url
+//!                         │
+//!              ┌──────────┴──────────┐
+//!              │ looks_like_local_ai │
+//!              └──────────┬──────────┘
+//!                yes      │      no
+//!         ┌───────────────┼────────────────────┐
+//!         ▼               ▼                    ▼
+//!  env / default   backend calls OK    inference calls OK
+//!  (backend only)
+//! ```
+//!
+//! ## Resolution order (both families)
+//!
+//! 1. Non-empty `config.api_url` / `config.inference_url` (user override).
+//! 2. `BACKEND_URL` / `VITE_BACKEND_URL` runtime env (each checked
+//!    independently so an empty primary does not shadow a valid secondary).
+//! 3. Same keys baked in at compile time via `option_env!` (makes a
+//!    distributed binary resolve to the correct environment without a shell).
+//! 4. Environment-aware default: `staging` env → [`DEFAULT_STAGING_API_BASE_URL`],
+//!    otherwise [`DEFAULT_API_BASE_URL`].
 
-/// Default API host when `config.api_url` is unset or blank and no env override is set.
+// ─── Public constants ────────────────────────────────────────────────────────
+
+/// Production hosted-API root. Used as the final fallback for non-staging
+/// builds when no override is configured.
 pub const DEFAULT_API_BASE_URL: &str = "https://api.tinyhumans.ai";
-/// Default staging API host when the app environment is explicitly `staging`.
+
+/// Staging hosted-API root. Activated when `OPENHUMAN_APP_ENV=staging` (or
+/// the Vite equivalent) is set at runtime or baked in at compile time.
 pub const DEFAULT_STAGING_API_BASE_URL: &str = "https://staging-api.tinyhumans.ai";
-/// Primary app-environment selector used by the core and desktop app.
+
+/// Runtime env key used by the Tauri/core side to select the app environment.
 pub const APP_ENV_VAR: &str = "OPENHUMAN_APP_ENV";
-/// Vite-exposed app-environment selector used by the frontend bundle.
+
+/// Runtime env key exposed to the Vite frontend bundle. Mirrors `APP_ENV_VAR`
+/// so both the core sidecar and the renderer agree on the environment without
+/// a separate IPC round-trip.
 pub const VITE_APP_ENV_VAR: &str = "VITE_OPENHUMAN_APP_ENV";
 
-/// Resolves the hosted API base URL (no path suffix).
+/// The path the hosted backend appends to its root to expose the
+/// OpenAI-compatible inference proxy. Joined onto [`effective_api_url`] when
+/// the user has not configured a dedicated `inference_url`.
 ///
-/// Order:
-/// 1. Non-empty `api_url` from config (user explicitly set it)
-/// 2. `BACKEND_URL` / `VITE_BACKEND_URL` runtime env vars (each checked independently)
-/// 3. `BACKEND_URL` / `VITE_BACKEND_URL` baked in at compile time via `option_env!`
-/// 4. Environment-aware default: `app_env_from_env()` == `staging` →
-///    [`DEFAULT_STAGING_API_BASE_URL`], otherwise [`DEFAULT_API_BASE_URL`]
-/// Default path the OpenHuman backend exposes for its OpenAI-compatible
-/// inference proxy. Joined onto [`effective_api_url`] when the user has not
-/// configured a custom `inference_url`.
+/// Having this as a named constant (rather than a string literal scattered
+/// across call-sites) means a backend path rename shows up as a single diff.
 pub const OPENHUMAN_INFERENCE_PATH: &str = "/openai/v1/chat/completions";
 
-/// Resolves the LLM inference endpoint to call.
+// ─── Known local-AI ports ────────────────────────────────────────────────────
+
+/// Well-known ports used by local model runners.
 ///
-/// Derived state — not stored as a single field. Order:
-/// 1. `config.inference_url` when set (user pointed inference at a custom
-///    OpenAI-compatible endpoint — e.g. `https://api.openai.com/v1/chat/completions`).
-/// 2. Otherwise `effective_api_url(api_url)` joined with `/openai/v1/chat/completions`
-///    via the safe [`api_url`] helper, so inference flows through the OpenHuman
-///    backend's OpenAI-compat proxy.
+/// Used by [`looks_like_local_ai_endpoint`] as a secondary signal when the
+/// URL's host is loopback / private but the path alone is not conclusive
+/// (e.g. `http://localhost:11434` — no path, but clearly Ollama).
 ///
-/// This split is what keeps account/auth/billing calls (always `effective_api_url`)
-/// separate from inference (this function). Mixing them is what caused
-/// `/auth/me`, `/auth/google/login`, and `/voice/*` to start hitting
-/// `api.openai.com` when the user pointed `api_url` at a custom provider.
+/// | Port  | Runner        |
+/// |-------|---------------|
+/// | 11434 | Ollama        |
+/// | 8000  | vLLM          |
+/// | 8080  | common alt    |
+/// | 1234  | LM Studio     |
+/// | 8888  | Jupyter proxy |
+const LOCAL_AI_PORTS: &[u16] = &[11434, 8000, 8080, 1234, 8888];
+
+// ─── Effective URL resolvers ─────────────────────────────────────────────────
+
+/// Resolve the URL for **LLM inference calls** (chat completions only).
+///
+/// # Resolution order
+///
+/// 1. `inference_url_override` — user explicitly pointed inference at a
+///    custom OpenAI-compatible endpoint (e.g. `https://api.openai.com/v1/chat/completions`
+///    or a local Ollama). Used as-is; no path stripping.
+/// 2. [`effective_api_url`]`(api_url_override)` + [`OPENHUMAN_INFERENCE_PATH`] —
+///    inference proxied through the hosted backend.
+///
+/// # Why the split matters
+///
+/// Without a dedicated `inference_url`, every inference call flows through the
+/// hosted backend's OpenAI-compat proxy. When the user *does* set
+/// `inference_url`, backend calls still go to [`effective_backend_api_url`] —
+/// so `/auth/*`, `/voice/*`, and `/agent-integrations/*` never accidentally
+/// hit `api.openai.com` or a local runner.
 pub fn effective_inference_url(
     api_url_override: &Option<String>,
     inference_url_override: &Option<String>,
 ) -> String {
-    if let Some(u) = inference_url_override
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
+    // Explicit inference override always wins — no normalization applied
+    // because the user may intentionally include a full path.
+    if let Some(u) = non_empty_str(inference_url_override) {
         return u.to_string();
     }
+
     api_url(
         &effective_api_url(api_url_override),
         OPENHUMAN_INFERENCE_PATH,
     )
 }
 
+/// Resolve the **chat/inference base URL** (used for inference routing only,
+/// not for backend domain calls).
+///
+/// Prefer [`effective_backend_api_url`] for anything other than chat completions.
+/// The two functions are intentionally separate — see the module-level doc.
 pub fn effective_api_url(api_url: &Option<String>) -> String {
-    if let Some(u) = api_url.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+    if let Some(u) = non_empty_str(api_url) {
         return normalize_api_base_url(u);
     }
-    if let Some(env_url) = api_base_from_env() {
-        return env_url;
-    }
-    default_api_base_url_for_env(app_env_from_env().as_deref()).to_string()
+
+    api_base_from_env()
+        .unwrap_or_else(|| default_api_base_url_for_env(app_env_from_env().as_deref()).to_string())
 }
 
-/// Heuristic — does this URL look like a local-AI chat-completions endpoint
-/// (Ollama, vLLM, LM Studio, OpenAI-compatible proxy on loopback) rather than
-/// our hosted backend?
+/// Resolve the API base URL for **all hosted-backend calls**:
+/// auth, billing, team, referral, webhooks, credentials, channels,
+/// voice, sockets, app-state, integrations, core/jsonrpc, …
 ///
-/// Used by [`effective_backend_api_url`] to avoid concatenating
-/// backend-integration paths (e.g. `/agent-integrations/composio/toolkits`)
-/// onto a user-set local-AI URL — see the Sentry cluster
-/// `OPENHUMAN-TAURI-51 / -80 / -7Z` where Ollama users had every integration
-/// request 404 because `config.api_url` was reused as both the chat base AND
-/// the integrations base.
+/// # Key difference from [`effective_api_url`]
 ///
-/// Heuristic is intentionally tight:
-/// - Path explicitly ends with the OpenAI-style chat-completions endpoint
-///   (`/v1/chat/completions` or `/v1/completions`) — matches anywhere, OR
-/// - Host is loopback (`127.0.0.1` / `localhost` / `::1` / `0.0.0.0`) or
-///   a private RFC 1918 IPv4 range (`10.0.0.0/8`, `172.16.0.0/12`,
-///   `192.168.0.0/16`) **AND** the URL carries an additional LLM signal:
-///   either a known local-AI port (`11434` Ollama, `8000` vLLM, `8080`
-///   common alt, `1234` LM Studio, `8888` Jupyter-style proxies) or a
-///   path beginning with `/v1`.
+/// The user override is **skipped** when it [`looks_like_local_ai_endpoint`]
+/// **and** does not [`looks_like_openhuman_backend_endpoint`]. In that case
+/// the function falls through to the env / default chain so backend requests
+/// still reach the hosted API.
 ///
-/// The combined loopback/private + LLM-signal requirement avoids
-/// misclassifying ad-hoc mock backends bound on `127.0.0.1:<random port>`
-/// with no path (the standard pattern used by our integration tests) as
-/// local-AI while still catching every real-world Sentry case — those
-/// always have either an LLM port or `/v1` in the URL.
+/// A one-shot `warn!` is emitted the first time the fallback fires so the
+/// diagnostic is visible in sidecar logs without spamming on every request.
 ///
-/// Both path arms in the chat-completions check use `ends_with` rather
-/// than `contains` so a real backend URL whose path merely embeds the
-/// segment as a substring (e.g. `/audit/v1/chat/completions-logs`) is
-/// NOT misclassified.
+/// # Sentry context
 ///
-/// We deliberately do NOT match a bare `/v1` — that's a legitimate API
-/// version suffix used by many self-hosted backends, and over-matching here
-/// would silently route real backends to the default and break paying users.
+/// `OPENHUMAN-TAURI-51 / -80 / -7Z` — Ollama users saw every integration
+/// request 404 because `config.api_url` (set to the Ollama endpoint) was also
+/// used as the integrations base.
+pub fn effective_backend_api_url(api_url: &Option<String>) -> String {
+    if let Some(u) = non_empty_str(api_url) {
+        let is_local_ai = looks_like_local_ai_endpoint(u);
+        let is_openhuman = looks_like_openhuman_backend_endpoint(u);
+
+        tracing::debug!(
+            api_url = %redact_url_for_log(u),
+            is_local_ai,
+            is_openhuman,
+            "[api/config] evaluating backend api_url override"
+        );
+
+        // Let the override through only when it is NOT a local-AI endpoint,
+        // OR when it is one of our own hosted backends (user deliberately set
+        // `api_url` to `https://api.tinyhumans.ai/openai/v1/chat/completions`).
+        if !is_local_ai || is_openhuman {
+            let normalized = normalize_backend_api_base_url(u);
+            tracing::trace!(
+                api_url        = %redact_url_for_log(u),
+                normalized_url = %redact_url_for_log(&normalized),
+                "[api/config] using configured backend api_url override"
+            );
+            return normalized;
+        }
+
+        tracing::debug!(
+            api_url = %redact_url_for_log(u),
+            "[api/config] override classified as local AI — falling back to backend default chain"
+        );
+        warn_backend_url_fallback_once(u);
+    }
+
+    // Env / compile-time / default fallback — strip any inference path that
+    // may have slipped through a misconfigured `BACKEND_URL` (Sentry
+    // `OPENHUMAN-TAURI-H6 / -HN`, issue #2075).
+    api_base_from_env()
+        .map(|u| normalize_backend_api_base_url(&u))
+        .unwrap_or_else(|| default_api_base_url_for_env(app_env_from_env().as_deref()).to_string())
+}
+
+// ─── URL classification ──────────────────────────────────────────────────────
+
+/// Returns `true` when the URL appears to be a local / self-hosted model
+/// runner rather than the hosted OpenHuman backend.
+///
+/// The heuristic is **intentionally tight** to avoid misclassifying:
+/// * ad-hoc mock backends used in integration tests
+///   (`http://127.0.0.1:<ephemeral-port>` with no path), and
+/// * real custom backends that happen to include `/v1` as an API-version prefix.
+///
+/// # Classification logic
+///
+/// ```text
+/// ┌─ path ends with /v1/chat/completions  ─────────────────────────────► TRUE
+/// │  or /v1/completions (any host)
+/// │
+/// └─ host is loopback / private IP / localhost
+///    AND (port ∈ LOCAL_AI_PORTS  OR  path starts with /v1/)  ──────────► TRUE
+///
+/// everything else  ────────────────────────────────────────────────────► FALSE
+/// ```
+///
+/// Both path checks use `ends_with` (not `contains`) so a real backend whose
+/// path merely *embeds* the segment (e.g. `/audit/v1/chat/completions-logs`)
+/// is not misclassified.
+///
+/// A bare `/v1` path (e.g. `https://api.openai.com/v1`) intentionally does
+/// NOT match — it is a legitimate API-version suffix used by many real
+/// backends, and over-matching here would silently reroute paying users.
 pub fn looks_like_local_ai_endpoint(url: &str) -> bool {
     let trimmed = url.trim();
     if trimmed.is_empty() {
         return false;
     }
+
     let parsed = match url::Url::parse(trimmed) {
         Ok(u) => u,
         Err(_) => return false,
     };
+
     let path = parsed.path();
-    // Path-based match wins regardless of host so an OpenAI-style endpoint
-    // exposed on any host (LAN, tunnel, public IP) still classifies.
-    // `ends_with` (not `contains`) keeps a real backend whose path merely
-    // embeds the segment as a substring (e.g. `/audit/v1/chat/completions-logs`)
-    // from being misclassified.
+
+    // ── Signal 1: chat-completions path (wins regardless of host) ──────────
+    // `ends_with` not `contains` — see function doc.
     if path.ends_with("/v1/chat/completions") || path.ends_with("/v1/completions") {
         return true;
     }
-    // Match by typed host so IPv4-mapped IPv6 (`::ffff:127.0.0.1`),
-    // the bare IPv6 loopback (`::1`), and IPv4 loopback all classify
-    // correctly regardless of how url::Url renders them via `host_str()`.
-    let host_is_local = match parsed.host() {
-        Some(url::Host::Ipv4(addr)) => {
-            addr.is_loopback() || addr.is_unspecified() || addr.is_private()
-        }
-        Some(url::Host::Ipv6(addr)) => addr.is_loopback() || addr.is_unspecified(),
-        Some(url::Host::Domain(name)) => {
-            let host = name.to_ascii_lowercase();
-            host == "localhost" || host.ends_with(".localhost")
-        }
-        None => false,
-    };
-    if !host_is_local {
+
+    // ── Signal 2: loopback / private host + secondary LLM signal ───────────
+    if !host_is_local(&parsed) {
         return false;
     }
-    // Loopback / private host alone is not enough — many tests bind
-    // mock backends on `127.0.0.1:<random ephemeral port>` with no path,
-    // and we must not misclassify those as local-AI. Require an
-    // additional LLM signal: a known local-AI port or a `/v1` path.
-    const LOCAL_AI_PORTS: &[u16] = &[11434, 8000, 8080, 1234, 8888];
-    let port_signals_llm = parsed
+
+    // Loopback alone is not enough — integration-test mock servers bind on
+    // `127.0.0.1:<ephemeral>` with no path. Require at least one LLM signal.
+    let port_is_llm = parsed
         .port()
         .map(|p| LOCAL_AI_PORTS.contains(&p))
         .unwrap_or(false);
-    let path_signals_llm = path.starts_with("/v1/") || path == "/v1";
-    port_signals_llm || path_signals_llm
+
+    // `/v1/` (with trailing slash) or exactly `/v1` — avoids matching a bare
+    // root `/` which is indistinguishable from any plain HTTP server.
+    let path_is_llm = path.starts_with("/v1/") || path == "/v1";
+
+    port_is_llm || path_is_llm
 }
 
+/// Returns `true` when the URL's host is one of the known OpenHuman backends.
+///
+/// Used in [`effective_backend_api_url`] to short-circuit the local-AI check:
+/// a user who set `api_url` to `https://api.tinyhumans.ai/openai/v1/chat/completions`
+/// must still reach the real backend (not fall back to the default chain).
 fn looks_like_openhuman_backend_endpoint(url: &str) -> bool {
     let trimmed = url.trim();
-    let redacted_url = redact_url_for_log(trimmed);
+    let redacted = redact_url_for_log(trimmed);
+
     let parsed = match url::Url::parse(trimmed) {
-        Ok(parsed) => {
+        Ok(p) => {
             tracing::trace!(
-                api_url = %redacted_url,
-                "[api/config] parsed api_url while checking OpenHuman backend classification"
+                api_url = %redacted,
+                "[api/config] parsed api_url for OpenHuman backend classification"
             );
-            parsed
+            p
         }
-        Err(error) => {
+        Err(e) => {
             tracing::trace!(
-                api_url = %redacted_url,
-                error = %error,
-                "[api/config] api_url parse failed while checking OpenHuman backend classification"
+                api_url = %redacted,
+                error   = %e,
+                "[api/config] api_url parse failed during OpenHuman backend classification"
             );
             return false;
         }
     };
+
     let Some(host) = parsed.host_str().map(str::to_ascii_lowercase) else {
         tracing::trace!(
-            api_url = %redacted_url,
-            "[api/config] api_url has no host; not classified as OpenHuman backend"
+            api_url = %redacted,
+            "[api/config] api_url has no host — not classified as OpenHuman backend"
         );
         return false;
     };
-    let is_openhuman_backend = matches!(
+
+    let is_openhuman = matches!(
         host.as_str(),
         "api.tinyhumans.ai" | "staging-api.tinyhumans.ai"
     );
+
     tracing::debug!(
-        api_url = %redacted_url,
-        host = %host,
-        is_openhuman_backend,
+        api_url = %redacted,
+        host    = %host,
+        is_openhuman,
         "[api/config] OpenHuman backend classification complete"
     );
-    is_openhuman_backend
+
+    is_openhuman
 }
 
-/// Resolves the API base URL for **all hosted-backend calls** (billing,
-/// team, referral, webhooks, credentials, channels, voice, socket,
-/// app_state, integrations, core/jsonrpc, etc.).
+// ─── URL normalization helpers ───────────────────────────────────────────────
+
+/// Trim whitespace and strip trailing slashes so all base URLs are in
+/// canonical form before being joined with a path.
 ///
-/// Same resolution chain as [`effective_api_url`] EXCEPT the user override
-/// is skipped when it [`looks_like_local_ai_endpoint`]. In that case we
-/// fall through to env / default backend so backend requests still hit
-/// the hosted API instead of being concatenated onto the user's local
-/// Ollama/vLLM endpoint (which only knows about chat completions and
-/// 404s every other path — see the Sentry cluster
-/// `OPENHUMAN-TAURI-51 / -80 / -7Z`).
-///
-/// Logs a one-shot `warn!` the first time the fallback fires so users
-/// can see the diagnostic in their core sidecar logs.
-pub fn effective_backend_api_url(api_url: &Option<String>) -> String {
-    if let Some(u) = api_url.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-        let redacted_url = redact_url_for_log(u);
-        let is_local_ai = looks_like_local_ai_endpoint(u);
-        let is_openhuman_backend = looks_like_openhuman_backend_endpoint(u);
-        tracing::debug!(
-            api_url = %redacted_url,
-            is_local_ai,
-            is_openhuman_backend,
-            "[api/config] evaluating backend api_url override"
-        );
-        if is_local_ai && !is_openhuman_backend {
-            tracing::debug!(
-                api_url = %redacted_url,
-                "[api/config] backend api_url override classified as local AI; falling back to backend default chain"
-            );
-            warn_backend_url_fallback_once(u);
-            // Fall through to env / default — do NOT use the user override.
-        } else {
-            let normalized = normalize_backend_api_base_url(u);
-            tracing::trace!(
-                api_url = %redacted_url,
-                normalized_api_url = %redact_url_for_log(&normalized),
-                "[api/config] using configured backend api_url override"
-            );
-            return normalized;
-        }
-    }
-    if let Some(env_url) = api_base_from_env() {
-        // Strip any inference-style path that slipped through the env /
-        // compile-time bake (`BACKEND_URL=https://api.tinyhumans.ai/openai/v1/chat/completions`
-        // produces a backend base that 404s every domain path — see Sentry
-        // `OPENHUMAN-TAURI-H6 / -HN`, issue #2075). The override branch
-        // above already normalizes; without normalizing here the env path
-        // silently bypassed it.
-        return normalize_backend_api_base_url(&env_url);
-    }
-    default_api_base_url_for_env(app_env_from_env().as_deref()).to_string()
+/// This is deliberately a cheap string operation (no URL parsing) so it can
+/// be called on potentially-invalid strings without panicking.
+pub fn normalize_api_base_url(url: &str) -> String {
+    url.trim().trim_end_matches('/').to_string()
 }
 
-/// Normalize a configured backend override to its host root.
+/// Like [`normalize_api_base_url`] but also **strips any inference-style path**
+/// (e.g. `/openai/v1/chat/completions`) so the result is always a bare host
+/// root suitable as a backend base.
 ///
-/// Users may have `config.api_url` populated with an inference endpoint such
-/// as `https://api.tinyhumans.ai/openai/v1/chat/completions`. Backend
-/// callers append domain-specific paths, so the LLM-specific path must not
-/// survive into the backend base.
+/// # Why this exists
+///
+/// Users (and CI configs) sometimes set `BACKEND_URL` or `config.api_url` to
+/// the full inference endpoint. Backend callers append domain-specific paths
+/// (`/auth/me`, `/agent-integrations/…`) which then land on
+/// `.../openai/v1/chat/completions/auth/me` — an obvious 404.
+///
+/// # Scheme-less fallback
+///
+/// `option_env!`-baked values occasionally omit the scheme
+/// (e.g. `api.tinyhumans.ai/openai/v1/chat/completions`). We retry with an
+/// `https://` prefix so the path can still be stripped before the value is
+/// used as a base. Without this, a scheme-less inference path survived into
+/// every backend call — Sentry `OPENHUMAN-TAURI-H6 / -HN`, issue #2075.
 pub(crate) fn normalize_backend_api_base_url(url: &str) -> String {
     let normalized = normalize_api_base_url(url);
     if normalized.is_empty() {
         return normalized;
     }
-    // Try parsing as-is first; if it fails (no scheme — e.g. a misbaked
-    // `BACKEND_URL=api.tinyhumans.ai/openai/v1/chat/completions`),
-    // retry with an `https://` prefix so we can still strip the path
-    // before the value is used as a base. Without this fallback, a
-    // scheme-less override carrying an inference path fell straight
-    // through to `api_url()` + `fallback_concat()`, reproducing the
-    // exact 404 URLs in Sentry `OPENHUMAN-TAURI-H6 / -HN` (issue #2075).
+
     let parsed =
         url::Url::parse(&normalized).or_else(|_| url::Url::parse(&format!("https://{normalized}")));
+
     let Ok(mut parsed) = parsed else {
+        // Unparseable even with the scheme prefix — return as-is; the caller
+        // will surface a network error rather than silently 404.
         return normalized;
     };
 
+    // Strip everything after the host (path, query, fragment).
     if parsed.path() != "/" {
         parsed.set_path("");
     }
@@ -272,75 +362,41 @@ pub(crate) fn normalize_backend_api_base_url(url: &str) -> String {
     parsed.to_string().trim_end_matches('/').to_string()
 }
 
-/// Emit a single `warn!` **once per process lifetime** the first time
-/// [`effective_backend_api_url`] falls back away from a user-set
-/// local-AI URL. Subsequent calls — including calls with a *different*
-/// local-AI URL — are silently suppressed via `std::sync::Once` so we
-/// don't spam logs on every backend request.
-fn warn_backend_url_fallback_once(local_url: &str) {
-    use std::sync::Once;
-    static WARNED: Once = Once::new();
-    WARNED.call_once(|| {
-        tracing::warn!(
-            local_url = %redact_url_for_log(local_url),
-            "[api/config] config.api_url looks like a local-AI endpoint; \
-             integrations base will fall back to env/default backend so \
-             /agent-integrations/* requests don't 404 against your local LLM"
-        );
-    });
-}
-
-pub(crate) fn redact_url_for_log(raw: &str) -> String {
-    let trimmed = raw.trim();
-    // Attempt bare-host parsing (e.g. "localhost:1234") before giving up so
-    // that non-scheme URLs are still redacted rather than returned verbatim.
-    let parsed =
-        url::Url::parse(trimmed).or_else(|_| url::Url::parse(&format!("http://{trimmed}")));
-    let Ok(mut parsed) = parsed else {
-        return trimmed.to_string();
-    };
-    if !parsed.username().is_empty() {
-        let _ = parsed.set_username("redacted");
-    }
-    if parsed.password().is_some() {
-        let _ = parsed.set_password(Some("redacted"));
-    }
-    parsed.to_string().trim_end_matches('/').to_string()
-}
-
-/// Trim and strip trailing slashes so paths join consistently.
-pub fn normalize_api_base_url(url: &str) -> String {
-    url.trim().trim_end_matches('/').to_string()
-}
-
-/// Safely join an API base URL with a path.
+/// Safely join an API base URL with an absolute path.
 ///
-/// Behaviour:
-/// - Empty `path` → normalized `base` (no trailing slash).
-/// - `path` starting with `/` → replaces any path on `base` (RFC 3986
-///   absolute-path reference). This is the case that protects us from a
-///   misconfigured `api_url` like `https://api.tinyhumans.ai/openai/v1/chat/completions`
-///   silently corrupting every `/agent-integrations/...` call.
-/// - If `base` fails to parse as a URL, falls back to slash-safe concat
-///   so callers always get a usable string.
+/// # Behaviour
 ///
-/// Paths SHOULD start with `/`. Relative paths (no leading slash) are
-/// resolved against the base path per RFC 3986, which means the base's
-/// last path segment is dropped — almost never what you want for an API.
+/// | `base`                                    | `path`                    | result                                                                 |
+/// |-------------------------------------------|---------------------------|------------------------------------------------------------------------|
+/// | `https://api.tinyhumans.ai`               | `/auth/me`                | `https://api.tinyhumans.ai/auth/me`                                   |
+/// | `https://api.tinyhumans.ai/openai/v1/…`   | `/agent-integrations/foo` | `https://api.tinyhumans.ai/agent-integrations/foo`  ← path replaced   |
+/// | `https://api.tinyhumans.ai`               | `""`                      | `https://api.tinyhumans.ai`                                           |
+/// | `not a url`                               | `/x`                      | `not a url/x`  ← safe fallback concat                                 |
+///
+/// Paths **must start with `/`**. Relative paths (no leading slash) are
+/// resolved per RFC 3986 — the base's last segment is dropped — which is
+/// almost never what an API client wants.
 pub fn api_url(base: &str, path: &str) -> String {
-    let base_trimmed = base.trim();
+    let base = base.trim();
+
     if path.is_empty() {
-        return normalize_api_base_url(base_trimmed);
+        return normalize_api_base_url(base);
     }
-    match url::Url::parse(base_trimmed) {
+
+    match url::Url::parse(base) {
         Ok(parsed) => match parsed.join(path) {
             Ok(joined) => joined.to_string().trim_end_matches('/').to_string(),
-            Err(_) => fallback_concat(base_trimmed, path),
+            Err(_) => fallback_concat(base, path),
         },
-        Err(_) => fallback_concat(base_trimmed, path),
+        Err(_) => fallback_concat(base, path),
     }
 }
 
+/// Last-resort URL join used when `url::Url::parse` rejects the base.
+///
+/// Guarantees a slash between `base` and `path` regardless of whether either
+/// carries one, but does not otherwise validate the resulting string.
+#[inline]
 fn fallback_concat(base: &str, path: &str) -> String {
     let base = base.trim_end_matches('/');
     if path.starts_with('/') {
@@ -350,16 +406,19 @@ fn fallback_concat(base: &str, path: &str) -> String {
     }
 }
 
-/// Resolve API base URL from the environment.
+// ─── Environment resolution ───────────────────────────────────────────────────
+
+/// Resolve the hosted API base URL from the environment.
 ///
-/// Each key is checked independently so that an empty `BACKEND_URL` does not
-/// shadow a valid `VITE_BACKEND_URL`. Runtime vars are checked first, then
-/// compile-time values baked in via `option_env!`. The compile-time path is
-/// what makes a shipped DMG/installer resolve to the correct environment —
-/// at runtime the process has no shell env vars set.
+/// Checks `BACKEND_URL` then `VITE_BACKEND_URL` independently (runtime first,
+/// then compile-time bakes). An empty string for the primary key does **not**
+/// shadow a valid secondary key — this matters when a `.env` file sets
+/// `BACKEND_URL=""` to disable the override while keeping `VITE_BACKEND_URL`
+/// active for the renderer.
+///
+/// Returns `None` when neither key is set or both are empty.
 pub fn api_base_from_env() -> Option<String> {
-    // 1. Runtime — each key checked independently; empty values are skipped
-    //    so VITE_BACKEND_URL is still reachable when BACKEND_URL="" is set.
+    // 1. Runtime — each key checked independently.
     for key in ["BACKEND_URL", "VITE_BACKEND_URL"] {
         if let Ok(v) = std::env::var(key) {
             let url = normalize_api_base_url(&v);
@@ -368,37 +427,25 @@ pub fn api_base_from_env() -> Option<String> {
             }
         }
     }
-    // 2. Compile-time fallback — baked in by build-desktop.yml.
-    //    Each key checked independently for the same reason as above.
+
+    // 2. Compile-time fallback — baked by the CI pipeline into the binary.
+    //    Allows a shipped DMG / installer to resolve the correct environment
+    //    without any shell vars in the user's session.
     for v in compile_time_api_base_env_values().into_iter().flatten() {
         let url = normalize_api_base_url(v);
         if !url.is_empty() {
             return Some(url);
         }
     }
+
     None
 }
 
-#[cfg(not(test))]
-fn compile_time_api_base_env_values() -> [Option<&'static str>; 2] {
-    [option_env!("BACKEND_URL"), option_env!("VITE_BACKEND_URL")]
-}
-
-#[cfg(test)]
-fn compile_time_api_base_env_values() -> [Option<&'static str>; 2] {
-    // Test wrappers may set BACKEND_URL to the mock server before rustc
-    // starts. Runtime env coverage remains in the tests above; ignoring
-    // baked values here keeps env-clearing assertions deterministic.
-    [None, None]
-}
-
-/// Resolve the app environment, checking runtime env first then compile-time.
+/// Resolve the app environment string (e.g. `"staging"`, `"production"`).
 ///
-/// Each key is checked independently so that an empty primary key does not
-/// shadow a valid secondary key. The compile-time fallback (`option_env!`)
-/// mirrors what the Tauri shell already does for its Sentry environment tag.
+/// Resolution order mirrors [`api_base_from_env`]: runtime vars first, then
+/// compile-time bakes, each key checked independently.
 pub fn app_env_from_env() -> Option<String> {
-    // 1. Runtime — each key checked independently
     for key in [APP_ENV_VAR, VITE_APP_ENV_VAR] {
         if let Ok(v) = std::env::var(key) {
             let s = v.trim().to_ascii_lowercase();
@@ -407,14 +454,45 @@ pub fn app_env_from_env() -> Option<String> {
             }
         }
     }
-    // 2. Compile-time fallback — each key checked independently
+
     for v in compile_time_app_env_values().into_iter().flatten() {
         let s = v.trim().to_ascii_lowercase();
         if !s.is_empty() {
             return Some(s);
         }
     }
+
     None
+}
+
+/// Return `true` when `app_env` equals `"staging"` (case-insensitive).
+pub fn is_staging_app_env(app_env: Option<&str>) -> bool {
+    matches!(app_env.map(str::trim), Some(env) if env.eq_ignore_ascii_case("staging"))
+}
+
+/// Map an app environment string to its canonical API base URL constant.
+pub fn default_api_base_url_for_env(app_env: Option<&str>) -> &'static str {
+    if is_staging_app_env(app_env) {
+        DEFAULT_STAGING_API_BASE_URL
+    } else {
+        DEFAULT_API_BASE_URL
+    }
+}
+
+// ─── Compile-time env accessors ───────────────────────────────────────────────
+
+/// Values baked in by the build pipeline.
+///
+/// Stubbed to `[None, None]` in tests so that clearing runtime env vars
+/// produces fully deterministic results regardless of what the CI baked in.
+#[cfg(not(test))]
+fn compile_time_api_base_env_values() -> [Option<&'static str>; 2] {
+    [option_env!("BACKEND_URL"), option_env!("VITE_BACKEND_URL")]
+}
+
+#[cfg(test)]
+fn compile_time_api_base_env_values() -> [Option<&'static str>; 2] {
+    [None, None]
 }
 
 #[cfg(not(test))]
@@ -430,17 +508,82 @@ fn compile_time_app_env_values() -> [Option<&'static str>; 2] {
     [None, None]
 }
 
-pub fn is_staging_app_env(app_env: Option<&str>) -> bool {
-    matches!(app_env.map(str::trim), Some(env) if env.eq_ignore_ascii_case("staging"))
+// ─── Logging helpers ─────────────────────────────────────────────────────────
+
+/// Redact username and password from a URL before writing it to a log.
+///
+/// Falls back to a scheme-prefixed parse for bare-host strings like
+/// `localhost:1234` so those are still sanitised rather than returned verbatim.
+pub(crate) fn redact_url_for_log(raw: &str) -> String {
+    let trimmed = raw.trim();
+
+    let parsed =
+        url::Url::parse(trimmed).or_else(|_| url::Url::parse(&format!("http://{trimmed}")));
+
+    let Ok(mut parsed) = parsed else {
+        return trimmed.to_string();
+    };
+
+    if !parsed.username().is_empty() {
+        let _ = parsed.set_username("redacted");
+    }
+    if parsed.password().is_some() {
+        let _ = parsed.set_password(Some("redacted"));
+    }
+
+    parsed.to_string().trim_end_matches('/').to_string()
 }
 
-pub fn default_api_base_url_for_env(app_env: Option<&str>) -> &'static str {
-    if is_staging_app_env(app_env) {
-        DEFAULT_STAGING_API_BASE_URL
-    } else {
-        DEFAULT_API_BASE_URL
+/// Emit a single `warn!` log the **first time** the backend URL falls back
+/// from a user-set local-AI endpoint. Uses `std::sync::Once` to suppress
+/// subsequent emissions so the log is not spammed on every backend request.
+fn warn_backend_url_fallback_once(local_url: &str) {
+    use std::sync::Once;
+    static WARNED: Once = Once::new();
+    WARNED.call_once(|| {
+        tracing::warn!(
+            local_url = %redact_url_for_log(local_url),
+            "[api/config] config.api_url looks like a local-AI endpoint; \
+             integrations base will fall back to env/default backend so \
+             /agent-integrations/* requests don't 404 against your local LLM"
+        );
+    });
+}
+
+// ─── Private utilities ───────────────────────────────────────────────────────
+
+/// Extract a trimmed, non-empty string reference from an `Option<String>`.
+///
+/// Centralises the `as_deref().map(str::trim).filter(|s| !s.is_empty())`
+/// pattern that was repeated throughout the original code.
+#[inline]
+fn non_empty_str(s: &Option<String>) -> Option<&str> {
+    s.as_deref().map(str::trim).filter(|s| !s.is_empty())
+}
+
+/// Returns `true` when the parsed URL's host is loopback, unspecified
+/// (`0.0.0.0` / `[::]`), a private RFC 1918 IPv4 range, or `localhost`.
+///
+/// Using typed-host matching (via `url::Host` variants) rather than
+/// `host_str()` string comparison ensures that IPv4-mapped IPv6 addresses
+/// (`::ffff:127.0.0.1`), the bare IPv6 loopback (`::1`), and all three
+/// IPv4 loopback forms classify correctly.
+#[inline]
+fn host_is_local(parsed: &url::Url) -> bool {
+    match parsed.host() {
+        Some(url::Host::Ipv4(addr)) => {
+            addr.is_loopback() || addr.is_unspecified() || addr.is_private()
+        }
+        Some(url::Host::Ipv6(addr)) => addr.is_loopback() || addr.is_unspecified(),
+        Some(url::Host::Domain(name)) => {
+            let h = name.to_ascii_lowercase();
+            h == "localhost" || h.ends_with(".localhost")
+        }
+        None => false,
     }
 }
+
+// ─── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
@@ -448,58 +591,62 @@ mod tests {
 
     use super::*;
 
-    // Serialise all env-mutating tests to prevent flaky failures under
-    // parallel test execution (std::env is process-global).
+    // ── Test infrastructure ───────────────────────────────────────────────────
+
+    /// Global mutex that serialises all env-mutating tests.
+    /// `std::env` is process-global; without serialisation, parallel test
+    /// threads race on `set_var` / `remove_var` and produce flaky failures.
     static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
     fn env_lock() -> MutexGuard<'static, ()> {
         match ENV_LOCK.get_or_init(Mutex::default).lock() {
-            Ok(guard) => guard,
-            Err(poisoned) => poisoned.into_inner(),
+            Ok(g) => g,
+            Err(p) => p.into_inner(), // recover from a poisoned lock
         }
     }
 
+    /// RAII guard that captures the current values of the four backend env
+    /// vars, removes them, and restores them on drop — even if the test panics.
     struct EnvSnapshot {
         vars: [(&'static str, Option<String>); 4],
     }
 
     impl EnvSnapshot {
         fn clear_backend_env() -> Self {
-            let vars = [
-                ("BACKEND_URL", std::env::var("BACKEND_URL").ok()),
-                ("VITE_BACKEND_URL", std::env::var("VITE_BACKEND_URL").ok()),
-                (APP_ENV_VAR, std::env::var(APP_ENV_VAR).ok()),
-                (VITE_APP_ENV_VAR, std::env::var(VITE_APP_ENV_VAR).ok()),
+            let keys = [
+                "BACKEND_URL",
+                "VITE_BACKEND_URL",
+                APP_ENV_VAR,
+                VITE_APP_ENV_VAR,
             ];
-
-            for (key, _) in vars.iter() {
-                std::env::remove_var(*key);
+            let vars = keys.map(|k| (k, std::env::var(k).ok()));
+            for (k, _) in &vars {
+                std::env::remove_var(k);
             }
-
             Self { vars }
         }
     }
 
+    impl Drop for EnvSnapshot {
+        fn drop(&mut self) {
+            for (key, value) in &self.vars {
+                match value {
+                    Some(v) => std::env::set_var(key, v),
+                    None => std::env::remove_var(key),
+                }
+            }
+        }
+    }
+
+    /// The URL that should be used as the backend base when no config override
+    /// is present and the runtime env has been cleared for the test.
     fn fallback_backend_base_for_current_build() -> String {
         api_base_from_env().unwrap_or_else(|| {
             default_api_base_url_for_env(app_env_from_env().as_deref()).to_string()
         })
     }
 
-    impl Drop for EnvSnapshot {
-        fn drop(&mut self) {
-            for (key, value) in self.vars.iter() {
-                match value {
-                    Some(v) => std::env::set_var(*key, v),
-                    None => std::env::remove_var(*key),
-                }
-            }
-        }
-    }
-
-    fn backend_base_with_runtime_env_cleared() -> String {
-        effective_api_url(&None)
-    }
+    // ── api_url ───────────────────────────────────────────────────────────────
 
     #[test]
     fn api_url_empty_path_returns_normalized_base() {
@@ -519,12 +666,12 @@ mod tests {
 
     #[test]
     fn api_url_absolute_path_replaces_base_path() {
-        // This is the regression: api_url misconfigured with a path baked in
-        // must not corrupt /agent-integrations/* calls.
+        // Regression: a base with an inference path baked in must not corrupt
+        // /agent-integrations/* calls.
         assert_eq!(
             api_url(
                 "https://api.tinyhumans.ai/openai/v1/chat/completions",
-                "/agent-integrations/composio/toolkits"
+                "/agent-integrations/composio/toolkits",
             ),
             "https://api.tinyhumans.ai/agent-integrations/composio/toolkits"
         );
@@ -532,19 +679,20 @@ mod tests {
 
     #[test]
     fn api_url_clean_base_joins_cleanly() {
+        let expected = "https://api.tinyhumans.ai/agent-integrations/composio/toolkits";
         assert_eq!(
             api_url(
                 "https://api.tinyhumans.ai",
                 "/agent-integrations/composio/toolkits"
             ),
-            "https://api.tinyhumans.ai/agent-integrations/composio/toolkits"
+            expected
         );
         assert_eq!(
             api_url(
                 "https://api.tinyhumans.ai/",
                 "/agent-integrations/composio/toolkits"
             ),
-            "https://api.tinyhumans.ai/agent-integrations/composio/toolkits"
+            expected
         );
     }
 
@@ -566,7 +714,103 @@ mod tests {
     }
 
     #[test]
-    fn staging_app_env_uses_staging_default_api() {
+    fn api_url_with_lm_studio_base_joins_correctly() {
+        // LM Studio URL must not reach effective_backend_api_url in practice
+        // (it redirects), but api_url itself must not panic and the result
+        // must use the correct host root.
+        assert_eq!(
+            api_url("http://localhost:1234/v1", "/agent-integrations/foo"),
+            "http://localhost:1234/agent-integrations/foo"
+        );
+    }
+
+    #[test]
+    fn api_url_multiple_trailing_slashes_on_base_are_stripped() {
+        assert_eq!(
+            api_url("https://api.tinyhumans.ai///", "/v1/foo"),
+            "https://api.tinyhumans.ai/v1/foo"
+        );
+    }
+
+    #[test]
+    fn api_url_relative_path_without_leading_slash_does_not_panic() {
+        // Documented edge-case: relative paths are resolved RFC 3986-style
+        // (last base segment dropped). The exact result depends on base
+        // structure; we just pin the no-panic contract.
+        assert!(!api_url("https://api.tinyhumans.ai", "relative").is_empty());
+    }
+
+    // ── normalize_api_base_url ────────────────────────────────────────────────
+
+    #[test]
+    fn normalize_strips_trailing_slashes_and_whitespace() {
+        assert_eq!(
+            normalize_api_base_url("https://api.tinyhumans.ai/"),
+            "https://api.tinyhumans.ai"
+        );
+        assert_eq!(
+            normalize_api_base_url("https://api.tinyhumans.ai///"),
+            "https://api.tinyhumans.ai"
+        );
+        assert_eq!(
+            normalize_api_base_url("  https://api.tinyhumans.ai  "),
+            "https://api.tinyhumans.ai"
+        );
+        assert_eq!(
+            normalize_api_base_url("  https://api.tinyhumans.ai/  "),
+            "https://api.tinyhumans.ai"
+        );
+    }
+
+    #[test]
+    fn normalize_preserves_mid_path() {
+        assert_eq!(
+            normalize_api_base_url("https://api.tinyhumans.ai/v2"),
+            "https://api.tinyhumans.ai/v2"
+        );
+    }
+
+    #[test]
+    fn normalize_empty_string_returns_empty() {
+        assert_eq!(normalize_api_base_url(""), "");
+    }
+
+    // ── normalize_backend_api_base_url ────────────────────────────────────────
+
+    #[test]
+    fn normalize_backend_strips_inference_path() {
+        assert_eq!(
+            normalize_backend_api_base_url("https://api.tinyhumans.ai/openai/v1/chat/completions"),
+            "https://api.tinyhumans.ai"
+        );
+    }
+
+    #[test]
+    fn normalize_backend_handles_schemeless_input() {
+        // Sentry OPENHUMAN-TAURI-H6 / issue #2075.
+        assert_eq!(
+            normalize_backend_api_base_url("api.tinyhumans.ai/openai/v1/chat/completions"),
+            "https://api.tinyhumans.ai"
+        );
+    }
+
+    #[test]
+    fn normalize_backend_passes_through_clean_root() {
+        assert_eq!(
+            normalize_backend_api_base_url("https://api.tinyhumans.ai/"),
+            "https://api.tinyhumans.ai"
+        );
+    }
+
+    #[test]
+    fn normalize_backend_empty_string_is_idempotent() {
+        assert_eq!(normalize_backend_api_base_url(""), "");
+    }
+
+    // ── app / api env resolution ──────────────────────────────────────────────
+
+    #[test]
+    fn staging_env_resolves_to_staging_url() {
         assert_eq!(
             default_api_base_url_for_env(Some("staging")),
             DEFAULT_STAGING_API_BASE_URL
@@ -575,7 +819,7 @@ mod tests {
     }
 
     #[test]
-    fn non_staging_app_env_uses_production_default_api() {
+    fn non_staging_env_resolves_to_production_url() {
         assert_eq!(
             default_api_base_url_for_env(Some("production")),
             DEFAULT_API_BASE_URL
@@ -587,30 +831,29 @@ mod tests {
     #[test]
     fn app_env_from_env_reads_runtime_var() {
         let _guard = env_lock();
-        let key = APP_ENV_VAR;
-        let prev = std::env::var(key).ok();
-        std::env::set_var(key, "staging");
+        let prev = std::env::var(APP_ENV_VAR).ok();
+        std::env::set_var(APP_ENV_VAR, "staging");
         let result = app_env_from_env();
         match prev {
-            Some(v) => std::env::set_var(key, v),
-            None => std::env::remove_var(key),
+            Some(v) => std::env::set_var(APP_ENV_VAR, v),
+            None => std::env::remove_var(APP_ENV_VAR),
         }
         assert_eq!(result.as_deref(), Some("staging"));
     }
 
     #[test]
-    fn app_env_from_env_falls_through_empty_primary_to_secondary() {
+    fn app_env_empty_primary_falls_through_to_secondary() {
         let _guard = env_lock();
-        let prev_primary = std::env::var(APP_ENV_VAR).ok();
-        let prev_secondary = std::env::var(VITE_APP_ENV_VAR).ok();
-        std::env::set_var(APP_ENV_VAR, ""); // empty — must not block secondary
+        let prev_p = std::env::var(APP_ENV_VAR).ok();
+        let prev_s = std::env::var(VITE_APP_ENV_VAR).ok();
+        std::env::set_var(APP_ENV_VAR, "");
         std::env::set_var(VITE_APP_ENV_VAR, "staging");
         let result = app_env_from_env();
-        match prev_primary {
+        match prev_p {
             Some(v) => std::env::set_var(APP_ENV_VAR, v),
             None => std::env::remove_var(APP_ENV_VAR),
         }
-        match prev_secondary {
+        match prev_s {
             Some(v) => std::env::set_var(VITE_APP_ENV_VAR, v),
             None => std::env::remove_var(VITE_APP_ENV_VAR),
         }
@@ -620,60 +863,50 @@ mod tests {
     #[test]
     fn api_base_from_env_reads_runtime_var() {
         let _guard = env_lock();
-        let key = "BACKEND_URL";
-        let prev = std::env::var(key).ok();
-        std::env::set_var(key, "https://staging-api.tinyhumans.ai/");
+        let prev = std::env::var("BACKEND_URL").ok();
+        std::env::set_var("BACKEND_URL", "https://staging-api.tinyhumans.ai/");
         let result = api_base_from_env();
         match prev {
-            Some(v) => std::env::set_var(key, v),
-            None => std::env::remove_var(key),
+            Some(v) => std::env::set_var("BACKEND_URL", v),
+            None => std::env::remove_var("BACKEND_URL"),
         }
         assert_eq!(result.as_deref(), Some("https://staging-api.tinyhumans.ai"));
     }
 
     #[test]
-    fn api_base_from_env_falls_through_empty_primary_to_secondary() {
+    fn api_base_empty_primary_falls_through_to_secondary() {
         let _guard = env_lock();
-        let prev_primary = std::env::var("BACKEND_URL").ok();
-        let prev_secondary = std::env::var("VITE_BACKEND_URL").ok();
-        std::env::set_var("BACKEND_URL", ""); // empty — must not block secondary
+        let prev_p = std::env::var("BACKEND_URL").ok();
+        let prev_s = std::env::var("VITE_BACKEND_URL").ok();
+        std::env::set_var("BACKEND_URL", "");
         std::env::set_var("VITE_BACKEND_URL", "https://staging-api.tinyhumans.ai/");
         let result = api_base_from_env();
-        match prev_primary {
+        match prev_p {
             Some(v) => std::env::set_var("BACKEND_URL", v),
             None => std::env::remove_var("BACKEND_URL"),
         }
-        match prev_secondary {
+        match prev_s {
             Some(v) => std::env::set_var("VITE_BACKEND_URL", v),
             None => std::env::remove_var("VITE_BACKEND_URL"),
         }
         assert_eq!(result.as_deref(), Some("https://staging-api.tinyhumans.ai"));
     }
 
-    // ── looks_like_local_ai_endpoint ───────────────────────────────────
+    // ── looks_like_local_ai_endpoint ─────────────────────────────────────────
 
     #[test]
-    fn looks_like_local_ai_matches_loopback_hosts() {
-        // Ollama default
+    fn local_ai_matches_loopback_hosts() {
         assert!(looks_like_local_ai_endpoint("http://127.0.0.1:11434/v1"));
-        // vLLM default
         assert!(looks_like_local_ai_endpoint(
             "http://127.0.0.1:8080/v1/chat/completions"
         ));
-        // localhost variant
         assert!(looks_like_local_ai_endpoint("http://localhost:11434/v1"));
-        // IPv6 loopback
         assert!(looks_like_local_ai_endpoint("http://[::1]:11434"));
-        // Any-host bind, occasionally used by self-hosted dev rigs
         assert!(looks_like_local_ai_endpoint("http://0.0.0.0:11434/v1"));
     }
 
     #[test]
-    fn looks_like_local_ai_matches_chat_completions_path_on_non_loopback() {
-        // Some self-hosted setups expose the OpenAI-compatible endpoint on
-        // a non-loopback, non-private host (dev VM with a public IP, tunnel,
-        // mDNS .local name). The chat-completions path is still a strong
-        // tell that it's not our backend.
+    fn local_ai_matches_chat_completions_path_on_any_host() {
         assert!(looks_like_local_ai_endpoint(
             "http://203.0.113.5:8080/v1/chat/completions"
         ));
@@ -683,13 +916,7 @@ mod tests {
     }
 
     #[test]
-    fn looks_like_local_ai_rejects_bare_loopback_with_random_port() {
-        // Integration tests (e.g. `composio/ops_tests.rs`) bind mock
-        // backends on `127.0.0.1:0` and let the kernel pick an ephemeral
-        // port (~32768-60999), with no path. Loopback alone is *not* a
-        // local-AI signal — we must not misclassify these as local-AI or
-        // every integration test that goes through `build_client` will
-        // see its request silently rerouted to the production backend.
+    fn local_ai_rejects_bare_loopback_with_random_port() {
         assert!(!looks_like_local_ai_endpoint("http://127.0.0.1:54321"));
         assert!(!looks_like_local_ai_endpoint("http://127.0.0.1:42000/"));
         assert!(!looks_like_local_ai_endpoint("http://localhost:33333"));
@@ -697,11 +924,7 @@ mod tests {
     }
 
     #[test]
-    fn looks_like_local_ai_matches_private_lan_hosts() {
-        // LAN-hosted Ollama / vLLM on RFC 1918 ranges — covered by the
-        // private-IP arm so users with `http://192.168.x.x:11434/v1`
-        // configurations don't see integration requests routed at the
-        // local LLM and 404.
+    fn local_ai_matches_private_lan_hosts() {
         assert!(looks_like_local_ai_endpoint(
             "http://192.168.1.100:11434/v1"
         ));
@@ -710,23 +933,63 @@ mod tests {
     }
 
     #[test]
-    fn looks_like_local_ai_rejects_real_backends() {
+    fn local_ai_rejects_real_backends() {
         assert!(!looks_like_local_ai_endpoint("https://api.tinyhumans.ai"));
         assert!(!looks_like_local_ai_endpoint(
             "https://staging-api.tinyhumans.ai"
         ));
-        // OpenAI public API — uses /v1 as a version prefix but no
-        // chat-completions path on its own; we must NOT misclassify it.
+        // OpenAI public API exposes /v1 as a version prefix — must NOT match.
         assert!(!looks_like_local_ai_endpoint("https://api.openai.com/v1"));
-        // Custom self-hosted backend exposing a bare /v1 prefix — still
-        // a real backend, must not be misclassified.
         assert!(!looks_like_local_ai_endpoint(
             "https://my-backend.example/v1"
         ));
     }
 
     #[test]
-    fn openhuman_backend_endpoint_detection_accepts_hosted_api_paths() {
+    fn local_ai_rejects_substring_path_false_positives() {
+        // Earlier version used `contains` — these are the regressions it caused.
+        assert!(!looks_like_local_ai_endpoint(
+            "https://real-backend.example/audit/v1/chat/completions-logs"
+        ));
+        assert!(!looks_like_local_ai_endpoint(
+            "https://real-backend.example/v1/chat/completions/history"
+        ));
+        assert!(!looks_like_local_ai_endpoint(
+            "https://real-backend.example/v1/completions-archive"
+        ));
+    }
+
+    #[test]
+    fn local_ai_handles_garbage_input() {
+        assert!(!looks_like_local_ai_endpoint(""));
+        assert!(!looks_like_local_ai_endpoint("   "));
+        assert!(!looks_like_local_ai_endpoint("not a url"));
+        assert!(!looks_like_local_ai_endpoint("/v1/chat/completions")); // relative — must not panic
+    }
+
+    #[test]
+    fn local_ai_matches_lm_studio_default_port() {
+        assert!(looks_like_local_ai_endpoint("http://localhost:1234"));
+        assert!(looks_like_local_ai_endpoint("http://127.0.0.1:1234"));
+        assert!(looks_like_local_ai_endpoint(
+            "http://127.0.0.1:1234/v1/chat/completions"
+        ));
+    }
+
+    #[test]
+    fn local_ai_matches_v1_subpath_on_loopback() {
+        assert!(looks_like_local_ai_endpoint(
+            "http://localhost:11434/v1/models"
+        ));
+        assert!(looks_like_local_ai_endpoint(
+            "http://127.0.0.1:8080/v1/embeddings"
+        ));
+    }
+
+    // ── openhuman_backend detection ───────────────────────────────────────────
+
+    #[test]
+    fn openhuman_backend_detection_accepts_hosted_api_paths() {
         assert!(looks_like_openhuman_backend_endpoint(
             "https://api.tinyhumans.ai/openai/v1/chat/completions"
         ));
@@ -741,237 +1004,81 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn looks_like_local_ai_rejects_substring_path_false_positives() {
-        // graycyrus review of #1630: an earlier version used
-        // `path.contains("/v1/chat/completions")` which would misclassify
-        // any real backend whose path merely embedded that substring —
-        // e.g. an audit-log endpoint suffixed with `-logs`. Both arms now
-        // use `ends_with`, so these URLs must classify as NON-local.
-        assert!(!looks_like_local_ai_endpoint(
-            "https://real-backend.example/audit/v1/chat/completions-logs"
-        ));
-        assert!(!looks_like_local_ai_endpoint(
-            "https://real-backend.example/v1/chat/completions/history"
-        ));
-        assert!(!looks_like_local_ai_endpoint(
-            "https://real-backend.example/v1/completions-archive"
-        ));
-    }
+    // ── effective_backend_api_url ─────────────────────────────────────────────
 
     #[test]
-    fn looks_like_local_ai_handles_garbage_input() {
-        assert!(!looks_like_local_ai_endpoint(""));
-        assert!(!looks_like_local_ai_endpoint("   "));
-        assert!(!looks_like_local_ai_endpoint("not a url"));
-        // Relative paths fail url::Url::parse — must not panic.
-        assert!(!looks_like_local_ai_endpoint("/v1/chat/completions"));
-    }
-
-    #[test]
-    fn looks_like_local_ai_matches_lm_studio_default_port() {
-        // LM Studio default port 1234 is in the LOCAL_AI_PORTS list and
-        // must be classified as a local-AI endpoint so integrations
-        // requests are not routed through it (pr#1630 / pr#1715).
-        assert!(looks_like_local_ai_endpoint("http://localhost:1234"));
-        assert!(looks_like_local_ai_endpoint("http://127.0.0.1:1234"));
-        assert!(looks_like_local_ai_endpoint(
-            "http://127.0.0.1:1234/v1/chat/completions"
-        ));
-    }
-
-    #[test]
-    fn looks_like_local_ai_matches_v1_subpath_on_loopback() {
-        // /v1/models, /v1/embeddings etc. on loopback are local-AI signals.
-        assert!(looks_like_local_ai_endpoint(
-            "http://localhost:11434/v1/models"
-        ));
-        assert!(looks_like_local_ai_endpoint(
-            "http://127.0.0.1:8080/v1/embeddings"
-        ));
-    }
-
-    // ── normalize_api_base_url (direct) ───────────────────────────────
-
-    #[test]
-    fn normalize_api_base_url_strips_single_trailing_slash() {
-        assert_eq!(
-            normalize_api_base_url("https://api.tinyhumans.ai/"),
-            "https://api.tinyhumans.ai"
-        );
-    }
-
-    #[test]
-    fn normalize_api_base_url_strips_multiple_trailing_slashes() {
-        assert_eq!(
-            normalize_api_base_url("https://api.tinyhumans.ai///"),
-            "https://api.tinyhumans.ai"
-        );
-    }
-
-    #[test]
-    fn normalize_api_base_url_trims_leading_and_trailing_whitespace() {
-        assert_eq!(
-            normalize_api_base_url("  https://api.tinyhumans.ai  "),
-            "https://api.tinyhumans.ai"
-        );
-    }
-
-    #[test]
-    fn normalize_api_base_url_trims_whitespace_and_trailing_slash_together() {
-        assert_eq!(
-            normalize_api_base_url("  https://api.tinyhumans.ai/  "),
-            "https://api.tinyhumans.ai"
-        );
-    }
-
-    #[test]
-    fn normalize_api_base_url_preserves_path_without_trailing_slash() {
-        // A base that intentionally ends mid-path must not be touched beyond
-        // trailing-slash removal — callers that set a sub-path base (unusual)
-        // should still get what they provided.
-        assert_eq!(
-            normalize_api_base_url("https://api.tinyhumans.ai/v2"),
-            "https://api.tinyhumans.ai/v2"
-        );
-    }
-
-    #[test]
-    fn normalize_api_base_url_empty_string_returns_empty() {
-        // Normalising an empty string must not panic and must return empty.
-        assert_eq!(normalize_api_base_url(""), "");
-    }
-
-    // ── api_url additional edge cases (pr#1715 / pr#1650) ─────────────
-
-    #[test]
-    fn api_url_with_lm_studio_base_joins_correctly() {
-        // Verify that an LM Studio URL used as the api_url base (which
-        // should not reach here in practice — effective_backend_api_url
-        // redirects it away) still joins without panicking and produces
-        // something parseable.
-        let result = api_url("http://localhost:1234/v1", "/agent-integrations/foo");
-        assert_eq!(result, "http://localhost:1234/agent-integrations/foo");
-    }
-
-    #[test]
-    fn api_url_relative_path_without_leading_slash_joins_rfc3986() {
-        // Relative paths (no leading `/`) are resolved against the base
-        // path per RFC 3986 — the base's last segment is dropped. This is
-        // documented behaviour; this test pins it so regressions are
-        // visible.
-        let result = api_url("https://api.tinyhumans.ai", "relative");
-        // url::Url::join of a relative path onto a base with no trailing
-        // segment simply appends — but the exact RFC 3986 result depends on
-        // whether the base has a trailing slash. We just assert the call
-        // doesn't panic and produces a non-empty string.
-        assert!(!result.is_empty());
-    }
-
-    #[test]
-    fn api_url_multiple_trailing_slashes_on_base_are_stripped() {
-        assert_eq!(
-            api_url("https://api.tinyhumans.ai///", "/v1/foo"),
-            "https://api.tinyhumans.ai/v1/foo"
-        );
-    }
-
-    // ── effective_backend_api_url ─────────────────────────────────
-
-    #[test]
-    fn integrations_url_handles_llm_endpoint_overrides() {
+    fn backend_url_handles_llm_endpoint_overrides() {
         let _guard = env_lock();
         let _env = EnvSnapshot::clear_backend_env();
-        let fallback_backend = fallback_backend_base_for_current_build();
+        let fallback = fallback_backend_base_for_current_build();
 
-        struct Case {
-            api_url: &'static str,
-            expected: String,
-        }
-
-        let cases = [
-            Case {
-                api_url: "https://api.tinyhumans.ai/openai/v1/chat/completions",
-                expected: "https://api.tinyhumans.ai".to_string(),
-            },
-            Case {
-                api_url: "http://localhost:11434/v1/chat/completions",
-                expected: fallback_backend.clone(),
-            },
-            Case {
-                api_url: "https://api.tinyhumans.ai",
-                expected: "https://api.tinyhumans.ai".to_string(),
-            },
-            Case {
-                api_url: "https://api.tinyhumans.ai/openai/v1/",
-                expected: "https://api.tinyhumans.ai".to_string(),
-            },
-            Case {
-                api_url: "https://openrouter.ai/api/v1/chat/completions",
-                expected: fallback_backend,
-            },
+        let cases: &[(&str, &str)] = &[
+            (
+                "https://api.tinyhumans.ai/openai/v1/chat/completions",
+                "https://api.tinyhumans.ai",
+            ),
+            ("http://localhost:11434/v1/chat/completions", &fallback),
+            ("https://api.tinyhumans.ai", "https://api.tinyhumans.ai"),
+            (
+                "https://api.tinyhumans.ai/openai/v1/",
+                "https://api.tinyhumans.ai",
+            ),
+            ("https://openrouter.ai/api/v1/chat/completions", &fallback),
         ];
 
-        for case in cases {
+        for (api_url, expected) in cases {
             assert_eq!(
-                effective_backend_api_url(&Some(case.api_url.to_string())),
-                case.expected,
-                "api_url={}",
-                case.api_url
+                effective_backend_api_url(&Some(api_url.to_string())),
+                *expected,
+                "api_url = {api_url}"
             );
         }
     }
 
     #[test]
-    fn integrations_url_falls_back_to_backend_when_override_is_local_ai() {
+    fn backend_url_falls_back_for_local_ai_override() {
         let _guard = env_lock();
         let _env = EnvSnapshot::clear_backend_env();
         let expected = fallback_backend_base_for_current_build();
 
-        let result = effective_backend_api_url(&Some("http://127.0.0.1:11434/v1".to_string()));
-
-        assert_eq!(result, expected);
+        assert_eq!(
+            effective_backend_api_url(&Some("http://127.0.0.1:11434/v1".to_string())),
+            expected
+        );
     }
 
     #[test]
-    fn integrations_url_falls_back_to_env_when_override_is_local_ai() {
+    fn backend_url_falls_back_to_env_when_override_is_local_ai() {
         let _guard = env_lock();
         let _env = EnvSnapshot::clear_backend_env();
         std::env::set_var("BACKEND_URL", "https://staging-api.tinyhumans.ai/");
 
-        let result = effective_backend_api_url(&Some(
-            "http://127.0.0.1:8080/v1/chat/completions".to_string(),
-        ));
-
-        assert_eq!(result, "https://staging-api.tinyhumans.ai");
+        assert_eq!(
+            effective_backend_api_url(&Some(
+                "http://127.0.0.1:8080/v1/chat/completions".to_string()
+            )),
+            "https://staging-api.tinyhumans.ai"
+        );
     }
 
     #[test]
-    fn integrations_url_keeps_real_backend_override() {
-        // User explicitly set a real backend host — must be respected.
-        let result =
-            effective_backend_api_url(&Some("https://staging-api.tinyhumans.ai/".to_string()));
-        assert_eq!(result, "https://staging-api.tinyhumans.ai");
+    fn backend_url_keeps_real_backend_override() {
+        assert_eq!(
+            effective_backend_api_url(&Some("https://staging-api.tinyhumans.ai/".to_string())),
+            "https://staging-api.tinyhumans.ai"
+        );
     }
 
     #[test]
-    fn integrations_url_matches_effective_api_url_without_override() {
+    fn backend_url_without_override_matches_effective_api_url() {
         let _guard = env_lock();
         let _env = EnvSnapshot::clear_backend_env();
-
-        let integrations = effective_backend_api_url(&None);
-        let api = effective_api_url(&None);
-
-        assert_eq!(integrations, api);
+        assert_eq!(effective_backend_api_url(&None), effective_api_url(&None));
     }
 
     #[test]
-    fn effective_backend_api_url_strips_inference_path_from_env() {
-        // Regression for issue #2075 / Sentry OPENHUMAN-TAURI-H6, -HN: a
-        // misconfigured `BACKEND_URL` baked an inference path into the
-        // env-fallback branch, which silently fell through to integration
-        // callers as e.g.
-        //   …/openai/v1/chat/completions/agent-integrations/composio/connections
+    fn backend_url_strips_inference_path_from_env() {
+        // Regression: OPENHUMAN-TAURI-H6 / -HN, issue #2075.
         let _guard = env_lock();
         let _env = EnvSnapshot::clear_backend_env();
         std::env::set_var(
@@ -979,29 +1086,9 @@ mod tests {
             "https://api.tinyhumans.ai/openai/v1/chat/completions",
         );
 
-        let result = effective_backend_api_url(&None);
-
-        assert_eq!(result, "https://api.tinyhumans.ai");
-    }
-
-    #[test]
-    fn normalize_backend_api_base_url_handles_schemeless_input() {
-        // Defensive: env files / compile-time bakes sometimes drop the
-        // scheme. Without the `https://` fallback we used to return the
-        // raw string unchanged, leaving the inference path attached.
-        let cleaned =
-            normalize_backend_api_base_url("api.tinyhumans.ai/openai/v1/chat/completions");
-        assert_eq!(cleaned, "https://api.tinyhumans.ai");
-    }
-
-    #[test]
-    fn normalize_backend_api_base_url_passes_through_clean_root() {
-        let cleaned = normalize_backend_api_base_url("https://api.tinyhumans.ai/");
-        assert_eq!(cleaned, "https://api.tinyhumans.ai");
-    }
-
-    #[test]
-    fn normalize_backend_api_base_url_empty_string_is_idempotent() {
-        assert_eq!(normalize_backend_api_base_url(""), "");
+        assert_eq!(
+            effective_backend_api_url(&None),
+            "https://api.tinyhumans.ai"
+        );
     }
 }

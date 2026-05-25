@@ -8,11 +8,57 @@ use super::AuthService;
 
 use super::{APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME};
 
+pub const LOCAL_SESSION_USER_ID: &str = "local";
+
+pub fn local_session_user_id() -> String {
+    let host = hostname::get()
+        .ok()
+        .and_then(|value| value.into_string().ok())
+        .unwrap_or_default();
+    let slug = slugify_local_session_host(&host);
+    format!("local-{slug}")
+}
+
+fn slugify_local_session_host(host: &str) -> String {
+    let mut slug = String::with_capacity(host.len());
+    let mut last_was_sep = false;
+
+    for ch in host.trim().chars() {
+        let normalized = ch.to_ascii_lowercase();
+        if normalized.is_ascii_alphanumeric() {
+            slug.push(normalized);
+            last_was_sep = false;
+        } else if !slug.is_empty() && !last_was_sep {
+            slug.push('-');
+            last_was_sep = true;
+        }
+    }
+
+    while slug.ends_with('-') {
+        slug.pop();
+    }
+
+    if slug.is_empty() {
+        "device".to_string()
+    } else {
+        slug
+    }
+}
+
 pub fn profile_name_or_default(value: Option<&str>) -> &str {
     value
         .map(str::trim)
         .filter(|v| !v.is_empty())
         .unwrap_or(DEFAULT_AUTH_PROFILE_NAME)
+}
+
+pub fn is_local_session_token(token: &str) -> bool {
+    let trimmed = token.trim();
+    let mut parts = trimmed.split('.');
+    matches!(
+        (parts.next(), parts.next(), parts.next(), parts.next()),
+        (Some(_), Some(_), Some("local"), None)
+    )
 }
 
 pub fn parse_fields_value(
@@ -179,6 +225,26 @@ mod tests {
     fn profile_name_or_default_returns_value_when_present() {
         assert_eq!(profile_name_or_default(Some("work")), "work");
         assert_eq!(profile_name_or_default(Some("  work  ")), "work");
+    }
+
+    #[test]
+    fn is_local_session_token_requires_local_signature_marker() {
+        assert!(is_local_session_token("header.payload.local"));
+        assert!(is_local_session_token("  header.payload.local  "));
+        assert!(!is_local_session_token("header.payload.remote"));
+        assert!(!is_local_session_token("header.payload.local.extra"));
+        assert!(!is_local_session_token("not-a-jwt"));
+    }
+
+    #[test]
+    fn slugify_local_session_host_normalizes_machine_names() {
+        assert_eq!(
+            slugify_local_session_host("My MacBook Pro"),
+            "my-macbook-pro"
+        );
+        assert_eq!(slugify_local_session_host("DESKTOP_123"), "desktop-123");
+        assert_eq!(slugify_local_session_host("   "), "device");
+        assert_eq!(slugify_local_session_host("---"), "device");
     }
 
     // ── parse_fields_value ─────────────────────────────────────────

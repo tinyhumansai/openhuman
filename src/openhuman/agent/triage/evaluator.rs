@@ -15,8 +15,10 @@
 //! ```
 //!
 //! Non-transient cloud failures (auth, malformed prompt, model not
-//! found, parse failure) bubble up immediately — there's no point
-//! retrying them and the local arm wouldn't help either.
+//! found) bubble up immediately — there's no point retrying them and
+//! the local arm wouldn't help either. Malformed classifier replies
+//! are treated like retryable cloud failures: retry once, then fall
+//! through to local / Deferred.
 //!
 //! ## Why `run_tool_call_loop` doesn't care about `tools_registry = []`
 //!
@@ -511,20 +513,24 @@ async fn try_arm(
             );
             // A parse failure means the model produced unusable
             // output. Retrying the same arm with the same prompt
-            // won't help, but on the *cloud* arm a parse failure is
-            // worth retrying once because the cloud model can be
-            // non-deterministic across calls. On the local arm we've
-            // already exhausted cloud and would just spin — treat it
-            // as fatal so the chain progresses to Deferred.
+            // won't usually help, but on the cloud arm one retry is
+            // cheap enough because hosted models can be
+            // non-deterministic across calls. If the cloud retry also
+            // returns malformed output, let the outer chain fall
+            // through to local/Deferred instead of surfacing Err to
+            // background callers like Composio trigger triage.
             return Err(match intended_path {
-                TriageResolutionPath::Cloud => ArmError::Retryable {
-                    retry_after_ms: None,
-                    source: anyhow!(
-                        "classifier reply did not parse: {}",
-                        format_parse_error(&parse_err)
-                    ),
-                },
-                _ => ArmError::Fatal(anyhow!(
+                TriageResolutionPath::Cloud | TriageResolutionPath::CloudAfterRetry => {
+                    ArmError::Retryable {
+                        retry_after_ms: None,
+                        source: anyhow!(
+                            "classifier reply did not parse on {} arm: {}",
+                            intended_path.as_str(),
+                            format_parse_error(&parse_err)
+                        ),
+                    }
+                }
+                TriageResolutionPath::LocalFallback => ArmError::Fatal(anyhow!(
                     "classifier reply did not parse on {} arm: {}",
                     intended_path.as_str(),
                     format_parse_error(&parse_err)

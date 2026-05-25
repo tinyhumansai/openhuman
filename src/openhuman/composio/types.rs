@@ -101,6 +101,17 @@ pub struct ComposioCapabilitiesResponse {
     pub capabilities: Vec<ComposioCapability>,
 }
 
+/// Response body of `composio.list_agent_ready_toolkits`.
+///
+/// Sorted slugs that have a curated agent catalog — the frontend
+/// uses this to decide whether to label a connected toolkit as
+/// "preview / agent integration coming soon". See #2283.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ComposioAgentReadyToolkitsResponse {
+    #[serde(default)]
+    pub toolkits: Vec<String>,
+}
+
 // ── Connections ─────────────────────────────────────────────────────
 
 /// One connected Composio account (OAuth integration instance).

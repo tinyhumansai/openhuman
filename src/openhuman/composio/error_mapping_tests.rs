@@ -1,4 +1,6 @@
-use super::{classify_composio_error, remap_transport_error, ComposioErrorClass};
+use super::{
+    classify_composio_error, format_provider_error, remap_transport_error, ComposioErrorClass,
+};
 
 #[test]
 fn classifies_gmail_insufficient_scope() {
@@ -7,6 +9,21 @@ fn classifies_gmail_insufficient_scope() {
         classify_composio_error("GMAIL_FETCH_EMAILS", msg),
         ComposioErrorClass::InsufficientScope
     );
+}
+
+#[test]
+fn formats_gmail_insufficient_scope_as_missing_permissions_not_disconnected() {
+    let mapped = format_provider_error(
+        "GMAIL_SEND_EMAIL",
+        "HTTP 403: Request had insufficient authentication scopes.",
+    );
+    assert!(mapped.contains("[composio:error:insufficient_scope]"));
+    assert!(mapped.contains("connected gmail account is missing required permissions"));
+    assert!(mapped.contains("Settings"));
+    assert!(mapped.contains("Connections"));
+    assert!(mapped.contains("gmail"));
+    assert!(!mapped.contains("not connected"));
+    assert!(!mapped.contains("Settings → Skills"));
 }
 
 #[test]

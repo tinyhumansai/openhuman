@@ -278,8 +278,8 @@ impl OpenAiCompatibleProvider {
                 headers.insert(USER_AGENT, value);
             }
 
-            let builder = Client::builder()
-                .use_rustls_tls()
+            // Platform-appropriate TLS backend — see [`crate::openhuman::tls`].
+            let builder = crate::openhuman::tls::tls_client_builder()
                 .timeout(std::time::Duration::from_secs(120))
                 .connect_timeout(std::time::Duration::from_secs(10))
                 .default_headers(headers);
@@ -290,12 +290,14 @@ impl OpenAiCompatibleProvider {
 
             return builder.build().unwrap_or_else(|error| {
                 tracing::warn!("Failed to build proxied timeout client with user-agent: {error}");
-                Client::new()
+                crate::openhuman::tls::tls_client_builder()
+                    .build()
+                    .unwrap_or_default()
             });
         }
 
-        let builder = Client::builder()
-            .use_rustls_tls()
+        // Platform-appropriate TLS backend — see [`crate::openhuman::tls`].
+        let builder = crate::openhuman::tls::tls_client_builder()
             .timeout(std::time::Duration::from_secs(120))
             .connect_timeout(std::time::Duration::from_secs(10));
         let builder = crate::openhuman::config::apply_runtime_proxy_to_builder(
@@ -304,7 +306,9 @@ impl OpenAiCompatibleProvider {
         );
         builder.build().unwrap_or_else(|error| {
             tracing::warn!("Failed to build proxied timeout client: {error}");
-            Client::new()
+            crate::openhuman::tls::tls_client_builder()
+                .build()
+                .unwrap_or_default()
         })
     }
 
@@ -485,6 +489,13 @@ impl OpenAiCompatibleProvider {
                 );
             } else if super::is_provider_access_policy_denied_http_403(status, &error) {
                 super::log_provider_access_policy_denied_http_403(
+                    "responses_api",
+                    self.name.as_str(),
+                    Some(model),
+                    status,
+                );
+            } else if super::is_provider_config_rejection_http(status, self.name.as_str(), &error) {
+                super::log_provider_config_rejection(
                     "responses_api",
                     self.name.as_str(),
                     Some(model),
@@ -851,6 +862,13 @@ impl OpenAiCompatibleProvider {
                 );
             } else if super::is_provider_access_policy_denied_http_403(status, &body) {
                 super::log_provider_access_policy_denied_http_403(
+                    "streaming_chat",
+                    self.name.as_str(),
+                    Some(native_request.model.as_str()),
+                    status,
+                );
+            } else if super::is_provider_config_rejection_http(status, self.name.as_str(), &body) {
+                super::log_provider_config_rejection(
                     "streaming_chat",
                     self.name.as_str(),
                     Some(native_request.model.as_str()),
@@ -1348,6 +1366,13 @@ impl Provider for OpenAiCompatibleProvider {
                     Some(model),
                     status,
                 );
+            } else if super::is_provider_config_rejection_http(status, self.name.as_str(), &error) {
+                super::log_provider_config_rejection(
+                    "chat_completions",
+                    self.name.as_str(),
+                    Some(model),
+                    status,
+                );
             } else if super::should_report_provider_http_failure(status) {
                 crate::core::observability::report_error(
                     message.as_str(),
@@ -1797,6 +1822,13 @@ impl Provider for OpenAiCompatibleProvider {
                     Some(model),
                     status,
                 );
+            } else if super::is_provider_config_rejection_http(status, self.name.as_str(), &error) {
+                super::log_provider_config_rejection(
+                    "native_chat",
+                    self.name.as_str(),
+                    Some(model),
+                    status,
+                );
             } else if super::should_report_provider_http_failure(status) {
                 crate::core::observability::report_error(
                     message.as_str(),
@@ -1947,6 +1979,17 @@ impl Provider for OpenAiCompatibleProvider {
                     );
                 } else if super::is_provider_access_policy_denied_http_403(status, &raw_error) {
                     super::log_provider_access_policy_denied_http_403(
+                        "stream_chat",
+                        provider_name.as_str(),
+                        Some(model_owned.as_str()),
+                        status,
+                    );
+                } else if super::is_provider_config_rejection_http(
+                    status,
+                    provider_name.as_str(),
+                    &raw_error,
+                ) {
+                    super::log_provider_config_rejection(
                         "stream_chat",
                         provider_name.as_str(),
                         Some(model_owned.as_str()),

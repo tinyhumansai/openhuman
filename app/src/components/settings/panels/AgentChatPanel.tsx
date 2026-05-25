@@ -93,7 +93,7 @@ const AgentChatPanel = () => {
               {t('chat.model')}
               <input
                 className="input input-bordered w-full text-slate-900 bg-white dark:bg-neutral-900"
-                placeholder="gpt-4o"
+                placeholder={t('chat.modelPlaceholder')}
                 value={modelOverride}
                 onChange={event => setModelOverride(event.target.value)}
               />

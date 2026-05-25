@@ -1,4 +1,8 @@
 use super::*;
+use sentry::test::TestTransport;
+use std::sync::Arc;
+use wiremock::matchers::{method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
 
 fn make_provider(name: &str, url: &str, key: Option<&str>) -> OpenAiCompatibleProvider {
     OpenAiCompatibleProvider::new(name, url, key, AuthStyle::Bearer)
@@ -372,6 +376,69 @@ async fn chat_via_responses_requires_non_system_message() {
     assert!(err
         .to_string()
         .contains("requires at least one non-system message"));
+}
+
+#[tokio::test]
+async fn streaming_chat_config_rejection_propagates_error_without_sentry_report() {
+    // Representative guardrail for the new provider-config-rejection
+    // suppression branches in compatible.rs: streaming_chat should still
+    // return an error, but it must not call report_error/Sentry for this
+    // deterministic user-config state.
+    let mock_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(400)
+                .set_body_string("invalid temperature: only 1 is allowed for this model"),
+        )
+        .mount(&mock_server)
+        .await;
+
+    let transport = TestTransport::new();
+    let sentry_options = sentry::ClientOptions {
+        dsn: Some("https://public@sentry.invalid/1".parse().unwrap()),
+        transport: Some(Arc::new(transport.clone())),
+        ..Default::default()
+    };
+    let sentry_hub = Arc::new(sentry::Hub::new(
+        Some(Arc::new(sentry_options.into())),
+        Arc::new(Default::default()),
+    ));
+    let _sentry_guard = sentry::HubSwitchGuard::new(sentry_hub);
+
+    let provider =
+        OpenAiCompatibleProvider::new("custom_openai", &mock_server.uri(), None, AuthStyle::None);
+    let request = NativeChatRequest {
+        model: "kimi-k2".to_string(),
+        messages: vec![NativeMessage {
+            role: "user".to_string(),
+            content: Some("hello".to_string()),
+            tool_call_id: None,
+            tool_calls: None,
+        }],
+        temperature: Some(0.7),
+        stream: Some(true),
+        tools: None,
+        tool_choice: None,
+        thread_id: None,
+        stream_options: Some(super::compatible_types::OpenAiStreamOptions {
+            include_usage: true,
+        }),
+    };
+    let (delta_tx, _delta_rx) = tokio::sync::mpsc::channel(8);
+
+    let err = provider
+        .stream_native_chat(None, &request, &delta_tx, 0)
+        .await
+        .expect_err("400 provider config-rejection must still propagate as Err");
+    assert!(
+        err.to_string().contains("streaming API error"),
+        "err: {err}"
+    );
+    assert!(
+        transport.fetch_and_clear_events().is_empty(),
+        "provider config-rejection must not be reported to Sentry"
+    );
 }
 
 // ----------------------------------------------------------

@@ -11,7 +11,7 @@ pub mod openhuman;
 pub mod rpc;
 
 pub use openhuman::config::DaemonConfig;
-pub use openhuman::memory::{MemoryClient, MemoryState};
+pub use openhuman::memory_store::{MemoryClient, MemoryState};
 
 /// Runs the core logic based on the provided command-line arguments.
 ///

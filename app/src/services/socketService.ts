@@ -1,5 +1,5 @@
 import debug from 'debug';
-import { io, Socket } from 'socket.io-client';
+import { type Socket } from 'socket.io-client';
 
 import { getCoreStateSnapshot } from '../lib/coreState/store';
 import { SocketIOMCPTransportImpl } from '../lib/mcp';
@@ -11,7 +11,8 @@ import { resetForUser, setSocketIdForUser, setStatusForUser } from '../store/soc
 import type { ChannelAuthMode, ChannelConnectionStatus, ChannelType } from '../types/channels';
 import { IS_DEV } from '../utils/config';
 import { createSafeLogData, sanitizeError } from '../utils/sanitize';
-import { getCoreRpcUrl } from './coreRpcClient';
+import { getCoreRpcToken, getCoreRpcUrl } from './coreRpcClient';
+import { createCoreSocket } from './coreSocket';
 
 // Socket service logger using debug package
 // Enable logging by setting DEBUG=socket* in environment or localStorage
@@ -160,6 +161,13 @@ class SocketService {
       } else if (!this.socket.disconnected) {
         // Socket is connecting, wait for it
         return;
+      } else {
+        // Stale disconnected socket instance for the same token.
+        // Drop it so this connect attempt can create a fresh socket;
+        // otherwise the async stale-invocation guard below (`|| this.socket`)
+        // returns early and leaves connectivity stuck at "connecting".
+        this.socket = null;
+        this.mcpTransport = null;
       }
     }
 
@@ -170,6 +178,12 @@ class SocketService {
     store.dispatch(setBackend({ value: 'connecting' }));
 
     const backendUrl = await resolveCoreSocketBaseUrl();
+    // If another `connect(token)` raced in while the URL was resolving,
+    // a stale invocation will see `this.token` flipped to the newer JWT
+    // (or a fresh socket already attached) and must bail before its
+    // io(...) call stomps the newer connection. Same guard repeats
+    // after the core-token resolve below.
+    if (this.token !== token || this.socket) return;
     socketLog('Connecting to core socket', { userId: uid, backendUrl });
 
     // Ensure we're not connecting to the wrong URL (Vite dev HMR port guard).
@@ -182,20 +196,24 @@ class SocketService {
       return;
     }
 
-    const socketOptions = {
-      auth: { token },
-      path: '/socket.io/',
-      transports: ['websocket', 'polling'] as ('websocket' | 'polling')[],
-      reconnection: true,
-      reconnectionDelay: 1000,
-      reconnectionAttempts: 5,
-      forceNew: true,
-      timeout: 2000,
-      upgrade: true,
-      query: {},
-    };
+    // The local core's Socket.IO handshake validates the per-process bearer
+    // exposed via `core_rpc_token` (Tauri IPC) / the cloud-mode picker. The
+    // session JWT rides alongside on the `auth` payload as `session` so a
+    // future handler can correlate the connection with the logged-in user.
+    const coreToken = await getCoreRpcToken();
+    if (this.token !== token || this.socket) return;
 
-    this.socket = io(backendUrl, socketOptions);
+    this.socket = createCoreSocket(backendUrl, {
+      coreToken,
+      authExtras: { session: token },
+      overrides: {
+        reconnectionDelay: 1000,
+        reconnectionAttempts: 5,
+        timeout: 2000,
+        upgrade: true,
+        query: {},
+      },
+    });
 
     // Flush any listeners that were registered before the socket existed.
     if (this.pendingListeners.length > 0) {
@@ -229,6 +247,17 @@ class SocketService {
       store.dispatch(setStatusForUser({ userId: uid, status: 'connected' }));
       store.dispatch(setSocketIdForUser({ userId: uid, socketId }));
       store.dispatch(setBackend({ value: 'connected' }));
+
+      // Re-join the active thread's room so an in-flight turn's stream survives
+      // this (re)connection. Chat events are delivered to both the client_id
+      // room and a per-thread room (see socketio.rs `emit_web_channel_event`);
+      // because a reconnect produces a NEW client_id, the new socket must
+      // re-subscribe to the thread room to keep receiving the stream.
+      const threadState = store.getState().thread;
+      const activeThreadId = threadState?.selectedThreadId ?? threadState?.activeThreadId;
+      if (activeThreadId) {
+        this.socket?.emit('thread:subscribe', { thread_id: activeThreadId });
+      }
     });
 
     this.socket.on('ready', () => {
@@ -299,6 +328,36 @@ class SocketService {
     };
     this.socket.on('auth:session_expired', handleSessionExpired);
     this.socket.on('auth_session_expired', handleSessionExpired);
+
+    // MCP setup agent: server-side `request_secret` blocks until the
+    // user submits a value. Dispatch a window event so a singleton React
+    // dialog can render a native input and POST back via
+    // openhuman.mcp_setup_submit_secret. Raw secret values never travel
+    // through the socket — only the opaque ref + safe display fields.
+    const handleSecretRequested = (data: unknown) => {
+      const obj = data as Record<string, unknown> | null;
+      if (!obj || typeof obj !== 'object') {
+        socketWarn('mcp_setup:secret_requested dropped — invalid payload');
+        return;
+      }
+      const refId = typeof obj.ref_id === 'string' ? obj.ref_id : null;
+      const keyName = typeof obj.key_name === 'string' ? obj.key_name : null;
+      const prompt = typeof obj.prompt === 'string' ? obj.prompt : '';
+      if (!refId || !keyName) {
+        socketWarn('mcp_setup:secret_requested missing ref_id or key_name');
+        return;
+      }
+      socketLog('mcp_setup:secret_requested', { refId, keyName });
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(
+          new CustomEvent('openhuman:mcp-setup-secret-requested', {
+            detail: { refId, keyName, prompt },
+          })
+        );
+      }
+    };
+    this.socket.on('mcp_setup:secret_requested', handleSecretRequested);
+    this.socket.on('mcp_setup_secret_requested', handleSecretRequested);
 
     this.socket.on('channel:managed-dm-verified', data => {
       const obj = data as Record<string, unknown> | null;

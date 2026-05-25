@@ -20,14 +20,20 @@ const ContextEligibilityBadge = ({
 }: {
   eligibility: ModelContextEligibility | null | undefined;
 }) => {
+  const { t } = useT();
   if (!eligibility) return null;
   const fmt = (n: number) => n.toLocaleString();
   if (eligibility.status === 'ok') {
     return (
       <span
         className="shrink-0 rounded-full bg-green-100 dark:bg-green-500/15 px-2 py-0.5 text-[10px] font-medium text-green-700 dark:text-green-300"
-        title={`Context window ${fmt(eligibility.context_length)} tokens — meets the memory-layer minimum`}>
-        {fmt(eligibility.context_length)} ctx ✓
+        title={t('settings.localModel.status.contextOkTitle')
+          .replace('{contextLength}', fmt(eligibility.context_length))
+          .replace('{required}', fmt(eligibility.context_length))}>
+        {t('settings.localModel.status.contextOkBadge').replace(
+          '{contextLength}',
+          fmt(eligibility.context_length)
+        )}
       </span>
     );
   }
@@ -35,16 +41,23 @@ const ContextEligibilityBadge = ({
     return (
       <span
         className="shrink-0 rounded-full bg-red-100 dark:bg-red-500/15 px-2 py-0.5 text-[10px] font-medium text-red-700 dark:text-red-300"
-        title={`Rejected: context window ${fmt(eligibility.context_length)} tokens is below the ${fmt(eligibility.required)}-token minimum the memory layer requires. Recall would be corrupted by silent truncation.`}>
-        {fmt(eligibility.context_length)} ctx — below {fmt(eligibility.required)} min
+        title={t('settings.localModel.status.contextBelowMinimumTitle')
+          .replace('{contextLength}', fmt(eligibility.context_length))
+          .replace('{required}', fmt(eligibility.required))}>
+        {t('settings.localModel.status.contextBelowMinimumBadge')
+          .replace('{contextLength}', fmt(eligibility.context_length))
+          .replace('{required}', fmt(eligibility.required))}
       </span>
     );
   }
   return (
     <span
       className="shrink-0 rounded-full bg-stone-200 dark:bg-neutral-700 px-2 py-0.5 text-[10px] font-medium text-stone-600 dark:text-neutral-300"
-      title={`Context window unknown — could not confirm it meets the ${fmt(eligibility.required)}-token memory-layer minimum`}>
-      ctx unknown
+      title={t('settings.localModel.status.contextUnknownTitle').replace(
+        '{required}',
+        fmt(eligibility.required)
+      )}>
+      {t('settings.localModel.status.contextUnknownBadge')}
     </span>
   );
 };
@@ -333,7 +346,7 @@ const ModelStatusSection = ({
                 {t('settings.localModel.status.provider')}
               </div>
               <div className="text-stone-800 dark:text-neutral-100 mt-1">
-                {status?.provider ?? 'n/a'}
+                {status?.provider ?? t('settings.localModel.status.notAvailable')}
               </div>
             </div>
             <div className="rounded-md border border-stone-200 dark:border-neutral-800 p-2">
@@ -341,7 +354,7 @@ const ModelStatusSection = ({
                 {t('settings.localModel.status.model')}
               </div>
               <div className="text-stone-800 dark:text-neutral-100 mt-1">
-                {status?.model_id ?? 'n/a'}
+                {status?.model_id ?? t('settings.localModel.status.notAvailable')}
               </div>
             </div>
           </div>
@@ -362,7 +375,7 @@ const ModelStatusSection = ({
               <div className="text-stone-800 dark:text-neutral-100 mt-1">
                 {typeof status?.last_latency_ms === 'number'
                   ? `${status.last_latency_ms} ms`
-                  : 'n/a'}
+                  : t('settings.localModel.status.notAvailable')}
               </div>
             </div>
             <div className="rounded-md border border-stone-200 dark:border-neutral-800 p-2">
@@ -372,7 +385,7 @@ const ModelStatusSection = ({
               <div className="text-stone-800 dark:text-neutral-100 mt-1">
                 {typeof status?.gen_toks_per_sec === 'number'
                   ? `${status.gen_toks_per_sec.toFixed(1)} tok/s`
-                  : 'n/a'}
+                  : t('settings.localModel.status.notAvailable')}
               </div>
             </div>
           </div>
@@ -504,7 +517,9 @@ const ModelStatusSection = ({
                     className="mt-1 text-stone-600 dark:text-neutral-300 truncate"
                     title={
                       diagnostics.ollama_binary_path ??
-                      (diagnostics.ollama_running ? 'External process' : 'Not found')
+                      (diagnostics.ollama_running
+                        ? t('settings.localModel.status.externalProcess')
+                        : t('settings.localModel.status.notFound'))
                     }>
                     {diagnostics.ollama_binary_path === null
                       ? diagnostics.ollama_running
@@ -569,7 +584,10 @@ const ModelStatusSection = ({
                       {diagnostics.expected.chat_found ? '✓' : '✗'}
                     </span>
                     <span className="text-stone-700 dark:text-neutral-200">
-                      Chat: {diagnostics.expected.chat_model}
+                      {t('settings.localModel.status.expectedChat').replace(
+                        '{model}',
+                        diagnostics.expected.chat_model
+                      )}
                     </span>
                   </div>
                   <div className="flex items-center gap-2">
@@ -582,7 +600,10 @@ const ModelStatusSection = ({
                       {diagnostics.expected.embedding_found ? '✓' : '✗'}
                     </span>
                     <span className="text-stone-700 dark:text-neutral-200">
-                      Embedding: {diagnostics.expected.embedding_model}
+                      {t('settings.localModel.status.expectedEmbedding').replace(
+                        '{model}',
+                        diagnostics.expected.embedding_model
+                      )}
                     </span>
                   </div>
                   <div className="flex items-center gap-2">
@@ -595,7 +616,10 @@ const ModelStatusSection = ({
                       {diagnostics.expected.vision_found ? '✓' : '–'}
                     </span>
                     <span className="text-stone-700 dark:text-neutral-200">
-                      Vision: {diagnostics.expected.vision_model}
+                      {t('settings.localModel.status.expectedVision').replace(
+                        '{model}',
+                        diagnostics.expected.vision_model
+                      )}
                     </span>
                   </div>
                 </div>

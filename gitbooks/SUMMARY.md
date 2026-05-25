@@ -4,6 +4,7 @@
 
 * [Welcome to OpenHuman](README.md)
 * [Getting Started](overview/getting-started.md)
+* [Troubleshooting Sign-In](overview/troubleshooting-sign-in.md)
 
 ## Features
 
@@ -32,6 +33,7 @@
   * [System & Utilities](features/native-tools/system-and-utilities.md)
 * [Subconscious Loop](features/subconscious.md)
 * [Privacy & Security](features/privacy-and-security.md)
+  * [OS Keyring & Secret Storage](features/os-keyring-and-secret-storage.md)
 * [Platform & Availability](features/platform.md)
 * [Cloud Deploy](features/cloud-deploy.md)
 

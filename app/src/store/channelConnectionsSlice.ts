@@ -31,6 +31,9 @@ const initialState: ChannelConnectionsState = {
     // populates them when the user wires up credentials.
     lark: makeEmptyChannelModes(),
     dingtalk: makeEmptyChannelModes(),
+    // MCP Servers tab is a virtual channel — no auth-mode connections,
+    // but must be present to satisfy Record<ChannelType, …>.
+    mcp: makeEmptyChannelModes(),
   },
 };
 
@@ -67,6 +70,9 @@ const channelConnectionsSlice = createSlice({
       // being undefined. Pin them by default so the migration is total.
       state.connections.lark = makeEmptyChannelModes();
       state.connections.dingtalk = makeEmptyChannelModes();
+      // MCP virtual channel must be present in persisted states migrated from
+      // before PR #2276 or the Record<ChannelType,…> shape is incomplete.
+      state.connections.mcp = makeEmptyChannelModes();
       state.defaultMessagingChannel = 'telegram';
       state.migrationCompleted = true;
       state.schemaVersion = SCHEMA_VERSION;

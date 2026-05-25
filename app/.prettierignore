@@ -3,6 +3,7 @@ dist
 coverage
 app
 src-tauri
+src-tauri-mobile
 rust-core
 skills
 *.config.js

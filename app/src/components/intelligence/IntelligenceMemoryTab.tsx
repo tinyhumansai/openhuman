@@ -51,7 +51,7 @@ export default function IntelligenceMemoryTab({
           />
         </div>
         <label htmlFor="actionable-source" className="sr-only">
-          Filter by source
+          {t('memory.sourceFilterAria')}
         </label>
         <select
           id="actionable-source"
