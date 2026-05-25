@@ -8,6 +8,7 @@ export const CUSTOM_WIZARD_STEPS: CustomStepKey[] = [
   'voice',
   'oauth',
   'search',
+  'embeddings',
   // 'memory',
 ];
 
@@ -16,6 +17,7 @@ export const CUSTOM_WIZARD_ROUTES: Record<CustomStepKey, string> = {
   voice: '/onboarding/custom/voice',
   oauth: '/onboarding/custom/oauth',
   search: '/onboarding/custom/search',
+  embeddings: '/onboarding/custom/embeddings',
   memory: '/onboarding/custom/memory',
 };
 
@@ -26,5 +28,6 @@ export const CUSTOM_WIZARD_SETTINGS_ROUTES: Record<CustomStepKey, string> = {
   voice: '/settings/voice',
   oauth: '/settings/composio-routing',
   search: '/settings/tools',
+  embeddings: '/settings/embeddings',
   memory: '/settings/memory-data',
 };

@@ -35,14 +35,14 @@ const fr3: TranslationMap = {
   'workspace.building': 'Construction…',
   'workspace.buildSummaryTrees': 'Construire les arbres de résumé',
   'workspace.viewVault': 'Voir le coffre',
-  'workspace.openingVaultTitle': 'Opening vault in Obsidian',
+  'workspace.openingVaultTitle': 'Ouverture du coffre-fort dans Obsidian',
   'workspace.openingVaultMessage':
     "If Obsidian doesn't open, install it from obsidian.md or use Reveal Folder. Vault path:",
   'workspace.openVaultFailedTitle': "Couldn't open vault in Obsidian",
   'workspace.openVaultFailedMessage':
-    'Use Reveal Folder to open the vault directory directly. Vault path:',
+    'Utilisez Reveal Folder pour ouvrir directement le répertoire du coffre-fort. Chemin du coffre-fort :',
   'workspace.revealVaultFailed': "Couldn't reveal vault folder",
-  'workspace.revealFolder': 'Reveal Folder',
+  'workspace.revealFolder': 'Révéler le dossier',
   'workspace.graphLoadFailed': 'Échec du chargement du graphe de mémoire',
   'workspace.loadingGraph': 'Chargement du graphe de mémoire…',
   'workspace.graphViewMode': 'Mode de vue du graphe de mémoire',
@@ -219,9 +219,9 @@ const fr3: TranslationMap = {
   'about.update.status.default': 'Rechercher des mises à jour',
   'welcome.connectionFailed': 'Connexion échouée : {status} {statusText}',
   'welcome.connectionFailedMsg': 'Connexion échouée : {message}',
-  'welcome.continueLocally': 'Continue locally',
-  'welcome.localSessionStarting': 'Starting local session...',
-  'welcome.localSessionDesc': 'Uses an offline local profile and skips TinyHumans OAuth.',
+  'welcome.continueLocally': 'Continuer localement',
+  'welcome.localSessionStarting': 'Démarrage de la session locale...',
+  'welcome.localSessionDesc': 'Utilise un profil local hors ligne et ignore TinyHumans OAuth.',
   'chat.agentChatDesc': "Ouvrir une session de chat direct avec l'agent.",
   'channels.activeRouteValue': '{channel} via {authMode}',
   'privacy.dataKind.messages': 'Messages',
@@ -387,30 +387,34 @@ const fr3: TranslationMap = {
   'channels.telegram.savedRestartRequired': "Canal enregistré. Redémarre l'app pour l'activer.",
   'channels.web.alwaysAvailable': 'Toujours disponible',
   'channels.discord.displayName': 'Discord',
-  'channels.discord.description': 'Send and receive messages via Discord.',
-  'channels.discord.authMode.bot_token.description': 'Provide your own Discord bot token.',
+  'channels.discord.description': 'Envoyer et recevoir des messages via Discord.',
+  'channels.discord.authMode.bot_token.description':
+    'Fournissez votre propre jeton de bot Discord.',
   'channels.discord.authMode.oauth.description':
-    'Install the OpenHuman bot to your Discord server via OAuth.',
+    'Installez le bot OpenHuman sur votre serveur Discord via OAuth.',
   'channels.discord.authMode.managed_dm.description':
-    'Link your personal Discord account to the OpenHuman bot.',
-  'channels.discord.fields.bot_token.label': 'Bot Token',
-  'channels.discord.fields.bot_token.placeholder': 'Your Discord bot token',
-  'channels.discord.fields.guild_id.label': 'Server (Guild) ID',
-  'channels.discord.fields.guild_id.placeholder': 'Optional: restrict to a specific server',
+    'Liez votre compte personnel Discord au bot OpenHuman.',
+  'channels.discord.fields.bot_token.label': 'Jeton de bot',
+  'channels.discord.fields.bot_token.placeholder': 'Votre jeton de bot Discord',
+  'channels.discord.fields.guild_id.label': 'ID de serveur (guilde)',
+  'channels.discord.fields.guild_id.placeholder':
+    'Facultatif : restreindre à un serveur spécifique',
   'channels.telegram.displayName': 'Telegram',
-  'channels.telegram.description': 'Send and receive messages via Telegram.',
+  'channels.telegram.description': 'Envoyer et recevoir des messages via Telegram.',
   'channels.telegram.authMode.managed_dm.description':
-    'Message the OpenHuman Telegram bot directly.',
+    'Envoyez un message directement au robot OpenHuman Telegram.',
   'channels.telegram.authMode.bot_token.description':
-    'Provide your own Telegram Bot token from @BotFather.',
-  'channels.telegram.fields.bot_token.label': 'Bot Token',
+    'Fournissez votre propre jeton Bot Telegram de @BotFather.',
+  'channels.telegram.fields.bot_token.label': 'Jeton de robot',
   'channels.telegram.fields.bot_token.placeholder': '123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11',
-  'channels.telegram.fields.allowed_users.label': 'Allowed Users',
-  'channels.telegram.fields.allowed_users.placeholder': 'Comma-separated Telegram usernames',
+  'channels.telegram.fields.allowed_users.label': 'Utilisateurs autorisés',
+  'channels.telegram.fields.allowed_users.placeholder':
+    "Noms d'utilisateur Telegram séparés par des virgules",
   'channels.web.displayName': 'Web',
-  'channels.web.description': 'Chat via the built-in web UI.',
-  'channels.web.authMode.managed_dm.description': 'Use the embedded web chat — no setup required.',
-  'welcome.continueLocallyExperimental': 'Continue Locally (Experimental)',
+  'channels.web.description': "Discutez via l'interface utilisateur Web intégrée.",
+  'channels.web.authMode.managed_dm.description':
+    'Utilisez le chat Web intégré – aucune configuration requise.',
+  'welcome.continueLocallyExperimental': 'Continuer localement (expérimental)',
 };
 
 export default fr3;

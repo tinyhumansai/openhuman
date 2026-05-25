@@ -14,8 +14,8 @@ use super::compose::{
     split_front_matter,
 };
 use crate::openhuman::config::Config;
-use crate::openhuman::memory::score::store::list_entity_ids_for_node;
 use crate::openhuman::memory_store::chunks::store::get_summary_content_pointers;
+use crate::openhuman::memory_tree::score::store::list_entity_ids_for_node;
 
 /// Rewrite the `tags:` block in a chunk's on-disk `.md` file.
 ///

@@ -6,7 +6,8 @@ use serde_json::json;
 use tempfile::TempDir;
 
 use crate::openhuman::embeddings::NoopEmbedding;
-use crate::openhuman::memory::{Memory, NamespaceDocumentInput, UnifiedMemory};
+use crate::openhuman::memory::Memory;
+use crate::openhuman::memory_store::{NamespaceDocumentInput, UnifiedMemory};
 
 #[tokio::test]
 async fn graph_duplicate_upsert_aggregates_evidence_count() {
@@ -142,7 +143,7 @@ async fn recall_namespace_memories_includes_namespace_kv() {
     let hits = memory.recall_namespace_memories("team", 5).await.unwrap();
     assert!(hits
         .iter()
-        .any(|hit| matches!(hit.kind, crate::openhuman::memory::MemoryItemKind::Kv)));
+        .any(|hit| matches!(hit.kind, crate::openhuman::memory_store::MemoryItemKind::Kv)));
 }
 
 #[tokio::test]
@@ -175,7 +176,7 @@ async fn query_returns_episodic_hits_when_available() {
 
     let episodic_hits: Vec<_> = hits
         .iter()
-        .filter(|h| h.kind == crate::openhuman::memory::MemoryItemKind::Episodic)
+        .filter(|h| h.kind == crate::openhuman::memory_store::MemoryItemKind::Episodic)
         .collect();
     assert!(
         !episodic_hits.is_empty(),
@@ -217,7 +218,7 @@ async fn query_returns_event_hits_when_available() {
 
     let event_hits: Vec<_> = hits
         .iter()
-        .filter(|h| h.kind == crate::openhuman::memory::MemoryItemKind::Event)
+        .filter(|h| h.kind == crate::openhuman::memory_store::MemoryItemKind::Event)
         .collect();
     assert!(
         !event_hits.is_empty(),
@@ -255,7 +256,7 @@ async fn query_episodic_hits_have_correct_kind() {
     for hit in hits.iter().filter(|h| h.id.starts_with("episodic:")) {
         assert_eq!(
             hit.kind,
-            crate::openhuman::memory::MemoryItemKind::Episodic,
+            crate::openhuman::memory_store::MemoryItemKind::Episodic,
             "Hits with 'episodic:' id prefix must have kind Episodic"
         );
     }

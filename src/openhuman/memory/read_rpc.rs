@@ -27,15 +27,14 @@
 
 use anyhow::{Context, Result};
 use rusqlite::params;
-use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::openhuman::config::Config;
-use crate::openhuman::memory::retrieval::types::NodeKind;
-use crate::openhuman::memory::score::store as score_store;
 use crate::openhuman::memory_store::chunks::store::{self as chunk_store, with_connection};
 use crate::openhuman::memory_store::chunks::types::SourceKind;
 use crate::openhuman::memory_store::content::read as content_read;
+use crate::openhuman::memory_tree::retrieval::types::NodeKind;
+use crate::openhuman::memory_tree::score::store as score_store;
 use crate::rpc::RpcOutcome;
 
 const PREVIEW_MAX_CHARS: usize = 500;
@@ -462,7 +461,7 @@ pub async fn recall_rpc(
     // Reuse the source-tree retrieval path which already does cosine
     // rerank against query embeddings. We pull more summaries than `k`
     // because each summary expands into multiple leaves.
-    let resp = crate::openhuman::memory::retrieval::query_source(
+    let resp = crate::openhuman::memory_tree::retrieval::query_source(
         config,
         None,
         None,
@@ -780,7 +779,7 @@ pub async fn chunk_score_rpc(
             ScoreBreakdown {
                 signals,
                 total: r.total,
-                threshold: crate::openhuman::memory::score::DEFAULT_DROP_THRESHOLD,
+                threshold: crate::openhuman::memory_tree::score::DEFAULT_DROP_THRESHOLD,
                 kept: !r.dropped,
                 llm_consulted,
             }
@@ -1430,8 +1429,8 @@ pub struct ResetTreeResponse {
 ///      outside `spawn_blocking`) so the on-disk removal can use
 ///      async retry without blocking the worker thread.
 pub async fn reset_tree_rpc(config: &Config) -> Result<RpcOutcome<ResetTreeResponse>, String> {
-    use crate::openhuman::memory::jobs::store as jobs_store;
-    use crate::openhuman::memory::jobs::types::{ExtractChunkPayload, NewJob};
+    use crate::openhuman::memory_queue::store as jobs_store;
+    use crate::openhuman::memory_queue::types::{ExtractChunkPayload, NewJob};
 
     let cfg = config.clone();
     let (tree_rows_deleted, chunks_requeued, jobs_enqueued) =
@@ -1535,7 +1534,7 @@ pub async fn reset_tree_rpc(config: &Config) -> Result<RpcOutcome<ResetTreeRespo
     // Wake the worker pool. Done after the on-disk cleanup so jobs don't
     // start racing against an in-progress directory removal; the small
     // delay (at most the retry window on Windows) is acceptable.
-    crate::openhuman::memory::jobs::wake_workers();
+    crate::openhuman::memory_queue::wake_workers();
 
     let resp = ResetTreeResponse {
         tree_rows_deleted,
@@ -1579,8 +1578,8 @@ pub struct FlushNowResponse {
 /// where `<block>` is the current 3-hour UTC block (0..=7), so
 /// spamming the button within the same window doesn't queue duplicates.
 pub async fn flush_now_rpc(config: &Config) -> Result<RpcOutcome<FlushNowResponse>, String> {
-    use crate::openhuman::memory::jobs::store as jobs_store;
-    use crate::openhuman::memory::jobs::types::{FlushStalePayload, NewJob};
+    use crate::openhuman::memory_queue::store as jobs_store;
+    use crate::openhuman::memory_queue::types::{FlushStalePayload, NewJob};
     use crate::openhuman::memory_tree::tree::store as tree_store;
 
     let cfg = config.clone();
@@ -1616,165 +1615,6 @@ pub async fn flush_now_rpc(config: &Config) -> Result<RpcOutcome<FlushNowRespons
         resp.enqueued, resp.stale_buffers
     );
     Ok(RpcOutcome::single_log(resp, log))
-}
-
-// ── llm get/set ─────────────────────────────────────────────────────────
-
-/// Response shape for [`get_llm_rpc`] / [`set_llm_rpc`].
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct LlmResponse {
-    /// `"cloud"` or `"local"`.
-    pub current: String,
-}
-
-/// Request shape for [`set_llm_rpc`].
-///
-/// The handler always updates `memory_tree.llm_backend` from the required
-/// `backend` field. The three model fields are optional and follow
-/// "absent → unchanged, present → overwritten" semantics so the UI can
-/// either flip the mode without touching models, or persist a per-role
-/// model selection without forcing the caller to re-supply every other
-/// model id. All updates land in a single atomic `Config::save` write.
-#[derive(Clone, Debug, Deserialize, JsonSchema)]
-pub struct SetLlmRequest {
-    /// Required: which backend to use for chat (extract + summariser).
-    pub backend: String,
-
-    /// Optional: when `backend = "cloud"`, the cloud model id to use. If
-    /// `None`, the existing `config.memory_tree.cloud_llm_model` stays
-    /// unchanged.
-    #[serde(default)]
-    pub cloud_model: Option<String>,
-
-    /// Optional: when `backend = "local"`, the Ollama model id the
-    /// `LlmEntityExtractor` should use. If `None`, the existing
-    /// `config.memory_tree.llm_extractor_model` stays unchanged.
-    #[serde(default)]
-    pub extract_model: Option<String>,
-
-    /// Optional: when `backend = "local"`, the Ollama model id the
-    /// `LlmSummariser` should use. If `None`, the existing
-    /// `config.memory_tree.llm_summariser_model` stays unchanged.
-    #[serde(default)]
-    pub summariser_model: Option<String>,
-}
-
-/// `memory_tree_get_llm` — read the currently configured LLM backend.
-pub async fn get_llm_rpc(config: &Config) -> Result<RpcOutcome<LlmResponse>, String> {
-    let current = config.memory_tree.llm_backend.as_str().to_string();
-    Ok(RpcOutcome::single_log(
-        LlmResponse {
-            current: current.clone(),
-        },
-        format!("memory_tree::read: get_llm current={current}"),
-    ))
-}
-
-/// `memory_tree_set_llm` — overwrite the LLM backend selector (and
-/// optionally per-role model choices) and persist the result to
-/// `config.toml`.
-///
-/// Mutates the in-memory [`Config`] passed in (so the caller's running
-/// instance picks up the new value immediately) and writes it to disk via
-/// [`Config::save`], which uses an atomic temp-file + rename so a crash
-/// mid-write can't corrupt the config. The next sidecar restart reads the
-/// persisted values rather than reverting to defaults.
-///
-/// The three optional model fields follow "absent → corresponding config
-/// key untouched, present → overwritten" semantics, so the UI can call
-/// `{ backend: "cloud" }` to flip the mode without touching the models or
-/// `{ backend: "local", extract_model: Some(...), summariser_model: Some(...) }`
-/// to flip mode + set both local models in one atomic write.
-pub async fn set_llm_rpc(
-    config: &mut Config,
-    req: SetLlmRequest,
-) -> Result<RpcOutcome<LlmResponse>, String> {
-    let parsed = crate::openhuman::config::LlmBackend::parse(&req.backend)
-        .map_err(|e| format!("set_llm: {e}"))?;
-
-    // Stage all updates on a clone first, persist, and only commit to the
-    // live `&mut Config` if save succeeds. Without this, a save() failure
-    // (disk full, permissions, ENOSPC mid-write) leaves the in-memory
-    // config divergent from disk: the worker pool would build a chat
-    // provider against the new model id while config.toml still reflects
-    // the old one, so the next sidecar restart would silently revert.
-    let mut staged = config.clone();
-    staged.memory_tree.llm_backend = parsed;
-
-    let mut changed_models: Vec<&'static str> = Vec::new();
-    if let Some(model) = req.cloud_model {
-        log::debug!(
-            "[memory_tree::read] staging memory_tree.cloud_llm_model={}",
-            model
-        );
-        staged.memory_tree.cloud_llm_model = Some(model);
-        changed_models.push("cloud_model");
-    }
-    if let Some(model) = req.extract_model {
-        log::debug!(
-            "[memory_tree::read] staging memory_tree.llm_extractor_model={}",
-            model
-        );
-        staged.memory_tree.llm_extractor_model = Some(model);
-        changed_models.push("extract_model");
-    }
-    if let Some(model) = req.summariser_model {
-        log::debug!(
-            "[memory_tree::read] staging memory_tree.llm_summariser_model={}",
-            model
-        );
-        staged.memory_tree.llm_summariser_model = Some(model);
-        changed_models.push("summariser_model");
-    }
-
-    // Mirror to the unified memory_provider AFTER optional model overrides so
-    // the persisted routing reflects the final staged values. The extract
-    // model isn't applied to memory_provider — it's a hint for the separate
-    // extractor path, not a top-level provider switch.
-    staged.memory_provider = Some(match parsed {
-        crate::openhuman::config::schema::LlmBackend::Local => {
-            let m = staged
-                .memory_tree
-                .llm_summariser_model
-                .clone()
-                .or_else(|| staged.memory_tree.llm_extractor_model.clone())
-                .unwrap_or_else(|| staged.local_ai.chat_model_id.clone());
-            format!("ollama:{m}")
-        }
-        crate::openhuman::config::schema::LlmBackend::Cloud => "cloud".to_string(),
-    });
-
-    // Persist the staged version to config.toml. Atomic write-temp +
-    // rename per Config::save. Commit to the live config only after a
-    // successful write.
-    log::debug!(
-        "[memory_tree::read] persisting memory_tree.llm_backend={} (changed_models={:?}) to {}",
-        parsed.as_str(),
-        changed_models,
-        staged.config_path.display()
-    );
-    staged
-        .save()
-        .await
-        .map_err(|e| format!("set_llm: persist to config.toml failed: {e}"))?;
-    *config = staged;
-
-    let effective = parsed.as_str().to_string();
-    log::info!(
-        "[memory_tree::read] llm_backend switched to {} (changed_models={:?}) and persisted to {}",
-        effective,
-        changed_models,
-        config.config_path.display()
-    );
-    Ok(RpcOutcome::single_log(
-        LlmResponse {
-            current: effective.clone(),
-        },
-        format!(
-            "memory_tree::read: set_llm current={effective} changed_models={:?}",
-            changed_models
-        ),
-    ))
 }
 
 // ── small helpers ───────────────────────────────────────────────────────
@@ -1841,9 +1681,8 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let mut cfg = Config::default();
         cfg.workspace_dir = tmp.path().to_path_buf();
-        // Point config_path inside the tempdir so set_llm_rpc's
-        // Config::save call writes to a disposable location instead of
-        // touching the real user config.
+        // Point config_path inside the tempdir so any persistence during
+        // tests stays inside disposable workspace state.
         cfg.config_path = tmp.path().join("config.toml");
         cfg.memory_tree.embedding_endpoint = None;
         cfg.memory_tree.embedding_model = None;
@@ -2322,282 +2161,6 @@ mod tests {
         assert!(read_chunk_row(&cfg, "missing-chunk").unwrap().is_none());
     }
 
-    #[tokio::test]
-    async fn get_llm_returns_cloud_by_default() {
-        let (_tmp, cfg) = test_config();
-        let resp = get_llm_rpc(&cfg).await.unwrap().value;
-        assert_eq!(resp.current, "cloud");
-    }
-
-    /// Test helper — build a backend-only `SetLlmRequest` with all model
-    /// overrides set to `None`. Used by tests that want the legacy
-    /// "flip the backend, leave models untouched" behaviour.
-    fn req_backend_only(backend: &str) -> SetLlmRequest {
-        SetLlmRequest {
-            backend: backend.into(),
-            cloud_model: None,
-            extract_model: None,
-            summariser_model: None,
-        }
-    }
-
-    #[tokio::test]
-    async fn set_llm_switches_in_memory_and_persists_to_config_toml() {
-        let (_tmp, mut cfg) = test_config();
-        let config_path = cfg.config_path.clone();
-
-        let resp = set_llm_rpc(&mut cfg, req_backend_only("local"))
-            .await
-            .unwrap()
-            .value;
-        assert_eq!(resp.current, "local");
-        // 1. In-memory state updated.
-        assert_eq!(
-            cfg.memory_tree.llm_backend,
-            crate::openhuman::config::LlmBackend::Local
-        );
-
-        // 2. config.toml on disk updated. The file should exist (Config::save
-        //    always writes — there is no "skip default" branch) and the
-        //    [memory_tree] section should contain `llm_backend = "local"`.
-        assert!(
-            config_path.is_file(),
-            "expected set_llm to create config.toml at {}",
-            config_path.display()
-        );
-        let on_disk =
-            std::fs::read_to_string(&config_path).expect("read config.toml after set_llm");
-        let parsed: toml::Value =
-            toml::from_str(&on_disk).expect("parse config.toml after set_llm");
-        let llm_field = parsed
-            .get("memory_tree")
-            .and_then(|m| m.get("llm_backend"))
-            .and_then(|v| v.as_str())
-            .expect("memory_tree.llm_backend present in persisted config.toml");
-        assert_eq!(llm_field, "local");
-
-        // 3. get_llm_rpc on the same in-memory config reports the new value.
-        let after = get_llm_rpc(&cfg).await.unwrap().value;
-        assert_eq!(after.current, "local");
-    }
-
-    #[tokio::test]
-    async fn set_llm_persists_when_section_does_not_yet_exist() {
-        // First-call scenario: config.toml does not exist yet. set_llm_rpc
-        // must create it (via Config::save) with a `[memory_tree]` section
-        // containing the chosen value.
-        let (_tmp, mut cfg) = test_config();
-        let config_path = cfg.config_path.clone();
-        assert!(
-            !config_path.exists(),
-            "precondition: config.toml should not exist yet"
-        );
-
-        let _ = set_llm_rpc(&mut cfg, req_backend_only("local"))
-            .await
-            .unwrap()
-            .value;
-        assert!(
-            config_path.is_file(),
-            "set_llm must create config.toml on first call"
-        );
-        let on_disk =
-            std::fs::read_to_string(&config_path).expect("read config.toml after first set_llm");
-        let parsed: toml::Value =
-            toml::from_str(&on_disk).expect("parse config.toml after first set_llm");
-        assert_eq!(
-            parsed
-                .get("memory_tree")
-                .and_then(|m| m.get("llm_backend"))
-                .and_then(|v| v.as_str()),
-            Some("local"),
-        );
-    }
-
-    #[tokio::test]
-    async fn set_llm_rejects_unknown() {
-        let (_tmp, mut cfg) = test_config();
-        let err = set_llm_rpc(&mut cfg, req_backend_only("hybrid"))
-            .await
-            .unwrap_err();
-        assert!(err.contains("unknown llm"));
-    }
-
-    #[tokio::test]
-    async fn set_llm_with_cloud_model_persists_cloud_model() {
-        // Backend=cloud + cloud_model=Some(...) → persisted config.toml has
-        // both `llm_backend = "cloud"` AND `cloud_llm_model = "..."`.
-        let (_tmp, mut cfg) = test_config();
-        let config_path = cfg.config_path.clone();
-
-        let resp = set_llm_rpc(
-            &mut cfg,
-            SetLlmRequest {
-                backend: "cloud".into(),
-                cloud_model: Some("summarizer-v2".into()),
-                extract_model: None,
-                summariser_model: None,
-            },
-        )
-        .await
-        .unwrap()
-        .value;
-        assert_eq!(resp.current, "cloud");
-
-        // In-memory state updated.
-        assert_eq!(
-            cfg.memory_tree.cloud_llm_model.as_deref(),
-            Some("summarizer-v2"),
-        );
-
-        // On-disk state updated — both fields land in [memory_tree].
-        let on_disk = std::fs::read_to_string(&config_path).expect("read config.toml");
-        let parsed: toml::Value = toml::from_str(&on_disk).expect("parse config.toml");
-        let mt = parsed
-            .get("memory_tree")
-            .expect("expected [memory_tree] section");
-        assert_eq!(
-            mt.get("llm_backend").and_then(|v| v.as_str()),
-            Some("cloud")
-        );
-        assert_eq!(
-            mt.get("cloud_llm_model").and_then(|v| v.as_str()),
-            Some("summarizer-v2"),
-        );
-    }
-
-    #[tokio::test]
-    async fn set_llm_with_local_models_persists_extract_and_summariser() {
-        // Backend=local + both per-role model overrides → both fields land
-        // in `[memory_tree]` in the same atomic write.
-        let (_tmp, mut cfg) = test_config();
-        let config_path = cfg.config_path.clone();
-
-        let _ = set_llm_rpc(
-            &mut cfg,
-            SetLlmRequest {
-                backend: "local".into(),
-                cloud_model: None,
-                extract_model: Some("qwen2.5:0.5b".into()),
-                summariser_model: Some("gemma3:1b-it-qat".into()),
-            },
-        )
-        .await
-        .unwrap()
-        .value;
-
-        // In-memory state updated for both roles.
-        assert_eq!(
-            cfg.memory_tree.llm_extractor_model.as_deref(),
-            Some("qwen2.5:0.5b"),
-        );
-        assert_eq!(
-            cfg.memory_tree.llm_summariser_model.as_deref(),
-            Some("gemma3:1b-it-qat"),
-        );
-
-        // Both fields persisted to disk under [memory_tree].
-        let on_disk = std::fs::read_to_string(&config_path).expect("read config.toml");
-        let parsed: toml::Value = toml::from_str(&on_disk).expect("parse config.toml");
-        let mt = parsed
-            .get("memory_tree")
-            .expect("expected [memory_tree] section");
-        assert_eq!(
-            mt.get("llm_backend").and_then(|v| v.as_str()),
-            Some("local")
-        );
-        assert_eq!(
-            mt.get("llm_extractor_model").and_then(|v| v.as_str()),
-            Some("qwen2.5:0.5b"),
-        );
-        assert_eq!(
-            mt.get("llm_summariser_model").and_then(|v| v.as_str()),
-            Some("gemma3:1b-it-qat"),
-        );
-    }
-
-    #[tokio::test]
-    async fn set_llm_without_models_leaves_existing_models_unchanged() {
-        // Pre-seed config with an existing extractor model. Calling
-        // set_llm_rpc with `{ backend: "local" }` (no model overrides)
-        // must leave the existing `llm_extractor_model` intact on disk.
-        let (_tmp, mut cfg) = test_config();
-        cfg.memory_tree.llm_extractor_model = Some("gemma3:1b".into());
-        let config_path = cfg.config_path.clone();
-
-        let _ = set_llm_rpc(&mut cfg, req_backend_only("local"))
-            .await
-            .unwrap()
-            .value;
-
-        // In-memory state still has the pre-seeded model.
-        assert_eq!(
-            cfg.memory_tree.llm_extractor_model.as_deref(),
-            Some("gemma3:1b"),
-        );
-
-        // Disk also reflects the pre-seeded model — it was carried through
-        // the Config::save round-trip even though set_llm didn't supply it.
-        let on_disk = std::fs::read_to_string(&config_path).expect("read config.toml");
-        let parsed: toml::Value = toml::from_str(&on_disk).expect("parse config.toml");
-        assert_eq!(
-            parsed
-                .get("memory_tree")
-                .and_then(|m| m.get("llm_extractor_model"))
-                .and_then(|v| v.as_str()),
-            Some("gemma3:1b"),
-        );
-    }
-
-    #[tokio::test]
-    async fn set_llm_with_partial_models_only_changes_provided() {
-        // Pre-seed BOTH extract and summariser models. Call set_llm with
-        // only `extract_model` set. The extractor must change; the
-        // summariser must stay on the pre-seeded value.
-        let (_tmp, mut cfg) = test_config();
-        cfg.memory_tree.llm_extractor_model = Some("gemma3:1b".into());
-        cfg.memory_tree.llm_summariser_model = Some("llama3.1:8b".into());
-        let config_path = cfg.config_path.clone();
-
-        let _ = set_llm_rpc(
-            &mut cfg,
-            SetLlmRequest {
-                backend: "local".into(),
-                cloud_model: None,
-                extract_model: Some("qwen2.5:0.5b".into()),
-                summariser_model: None,
-            },
-        )
-        .await
-        .unwrap()
-        .value;
-
-        // In-memory: extract changed, summariser unchanged.
-        assert_eq!(
-            cfg.memory_tree.llm_extractor_model.as_deref(),
-            Some("qwen2.5:0.5b"),
-        );
-        assert_eq!(
-            cfg.memory_tree.llm_summariser_model.as_deref(),
-            Some("llama3.1:8b"),
-        );
-
-        // Disk reflects the same partial-update behaviour.
-        let on_disk = std::fs::read_to_string(&config_path).expect("read config.toml");
-        let parsed: toml::Value = toml::from_str(&on_disk).expect("parse config.toml");
-        let mt = parsed
-            .get("memory_tree")
-            .expect("expected [memory_tree] section");
-        assert_eq!(
-            mt.get("llm_extractor_model").and_then(|v| v.as_str()),
-            Some("qwen2.5:0.5b"),
-        );
-        assert_eq!(
-            mt.get("llm_summariser_model").and_then(|v| v.as_str()),
-            Some("llama3.1:8b"),
-        );
-    }
-
     #[test]
     fn display_name_unslugs_email_thread_with_user_hint() {
         let name = display_name_for_source(
@@ -2655,18 +2218,6 @@ mod tests {
             Some(SourceKind::Document)
         );
         assert_eq!(parse_source_kind_str("unknown"), None);
-    }
-
-    #[tokio::test]
-    async fn get_llm_rpc_includes_current_backend_in_value_and_log() {
-        let (_tmp, mut cfg) = test_config();
-        cfg.memory_tree.llm_backend = crate::openhuman::config::LlmBackend::Local;
-        let outcome = get_llm_rpc(&cfg).await.unwrap();
-        assert_eq!(outcome.value.current, "local");
-        assert_eq!(
-            outcome.logs,
-            vec!["memory_tree::read: get_llm current=local".to_string()]
-        );
     }
 
     #[test]

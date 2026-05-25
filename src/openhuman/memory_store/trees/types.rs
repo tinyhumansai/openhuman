@@ -271,7 +271,7 @@ pub const TOPIC_ARCHIVE_THRESHOLD: f32 = 2.0;
 /// full [`EntityIndexStats`]. Between recomputes only the cheap counters bump.
 pub const TOPIC_RECHECK_EVERY: u32 = 100;
 
-/// Input record fed to the hotness math (see `memory_tree::topic::hotness`).
+/// Input record fed to the hotness math (see `memory::tree_topic::hotness`).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct EntityIndexStats {
     pub mention_count_30d: u32,

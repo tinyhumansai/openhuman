@@ -3,7 +3,20 @@ import { describe, expect, it } from 'vitest';
 import enAggregate from '../en';
 
 const CHUNK_COUNT = 5;
-const LOCALES = ['zh-CN', 'hi', 'es', 'ar', 'fr', 'bn', 'pt', 'de', 'ru', 'id', 'it'] as const;
+const LOCALES = [
+  'zh-CN',
+  'hi',
+  'es',
+  'ar',
+  'fr',
+  'bn',
+  'pt',
+  'de',
+  'ru',
+  'id',
+  'it',
+  'ko',
+] as const;
 
 interface ChunkModule {
   default: Record<string, string>;

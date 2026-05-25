@@ -22,8 +22,8 @@ use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use uuid::Uuid;
 
 use crate::openhuman::config::Config;
-use crate::openhuman::memory::jobs::redact::scrub_for_log;
-use crate::openhuman::memory::jobs::types::{Job, JobKind, JobStatus, NewJob};
+use crate::openhuman::memory_queue::redact::scrub_for_log;
+use crate::openhuman::memory_queue::types::{Job, JobKind, JobStatus, NewJob};
 use crate::openhuman::memory_store::chunks::store::with_connection;
 
 /// Default visibility lock — a worker that crashes mid-job will have its
@@ -420,7 +420,7 @@ fn backoff_ms(attempts_so_far: u32) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::openhuman::memory::jobs::types::{
+    use crate::openhuman::memory_queue::types::{
         AppendBufferPayload, AppendTarget, ExtractChunkPayload, NodeRef,
     };
     use tempfile::TempDir;

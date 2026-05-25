@@ -19,7 +19,7 @@ use crate::openhuman::memory_tree::tree::store;
 ///
 /// Source-specific side-effects (writing the `_source.md` on-disk mirror)
 /// are NOT performed here; callers that need them should go through
-/// [`crate::openhuman::memory_tree::sources::registry::get_or_create_source_tree`].
+/// [`crate::openhuman::memory::tree_source::registry::get_or_create_source_tree`].
 pub fn get_or_create_tree(config: &Config, kind: TreeKind, scope: &str) -> Result<Tree> {
     if let Some(existing) = store::get_tree_by_scope(config, kind, scope)? {
         log::debug!(

@@ -6,7 +6,7 @@ use serde_json::{Map, Value};
 
 use super::regex::sanitize_entity_name;
 use super::types::{ExtractionAccumulator, RawEntity, RawRelation};
-use crate::openhuman::memory::UnifiedMemory;
+use crate::openhuman::memory_store::UnifiedMemory;
 
 /// A validation rule for semantic relationships.
 #[derive(Debug)]

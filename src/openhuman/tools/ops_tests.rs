@@ -20,7 +20,7 @@ fn test_memory(tmp: &TempDir) -> Arc<dyn Memory> {
         backend: "markdown".into(),
         ..MemoryConfig::default()
     };
-    Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path()).unwrap())
+    Arc::from(crate::openhuman::memory_store::create_memory(&mem_cfg, tmp.path()).unwrap())
 }
 
 fn tool_names(tools: &[Box<dyn Tool>]) -> Vec<String> {
@@ -111,7 +111,7 @@ fn all_tools_includes_spawn_subagent() {
         ..MemoryConfig::default()
     };
     let mem: Arc<dyn Memory> =
-        Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path()).unwrap());
+        Arc::from(crate::openhuman::memory_store::create_memory(&mem_cfg, tmp.path()).unwrap());
 
     let browser = BrowserConfig {
         enabled: false,
@@ -149,7 +149,7 @@ fn all_tools_includes_spawn_parallel_agents() {
         ..MemoryConfig::default()
     };
     let mem: Arc<dyn Memory> =
-        Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path()).unwrap());
+        Arc::from(crate::openhuman::memory_store::create_memory(&mem_cfg, tmp.path()).unwrap());
     let browser = BrowserConfig {
         enabled: false,
         allowed_domains: vec![],
@@ -190,7 +190,7 @@ fn all_tools_always_registers_curl() {
         ..MemoryConfig::default()
     };
     let mem: Arc<dyn Memory> =
-        Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path()).unwrap());
+        Arc::from(crate::openhuman::memory_store::create_memory(&mem_cfg, tmp.path()).unwrap());
 
     let browser = BrowserConfig::default();
     let http = crate::openhuman::config::HttpRequestConfig::default();
@@ -223,7 +223,7 @@ fn all_tools_registers_gitbooks_when_enabled() {
         ..MemoryConfig::default()
     };
     let mem: Arc<dyn Memory> =
-        Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path()).unwrap());
+        Arc::from(crate::openhuman::memory_store::create_memory(&mem_cfg, tmp.path()).unwrap());
     let browser = BrowserConfig::default();
     let http = crate::openhuman::config::HttpRequestConfig::default();
     let mut cfg = test_config(&tmp);
@@ -290,7 +290,7 @@ fn all_tools_skips_gitbooks_when_disabled() {
         ..MemoryConfig::default()
     };
     let mem: Arc<dyn Memory> =
-        Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path()).unwrap());
+        Arc::from(crate::openhuman::memory_store::create_memory(&mem_cfg, tmp.path()).unwrap());
     let browser = BrowserConfig::default();
     let http = crate::openhuman::config::HttpRequestConfig::default();
     let mut cfg = test_config(&tmp);
@@ -327,7 +327,7 @@ fn all_tools_includes_current_time() {
         ..MemoryConfig::default()
     };
     let mem: Arc<dyn Memory> =
-        Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path()).unwrap());
+        Arc::from(crate::openhuman::memory_store::create_memory(&mem_cfg, tmp.path()).unwrap());
 
     let browser = BrowserConfig::default();
     let http = crate::openhuman::config::HttpRequestConfig::default();
@@ -468,7 +468,7 @@ fn all_tools_excludes_browser_when_disabled() {
         ..MemoryConfig::default()
     };
     let mem: Arc<dyn Memory> =
-        Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path()).unwrap());
+        Arc::from(crate::openhuman::memory_store::create_memory(&mem_cfg, tmp.path()).unwrap());
 
     let browser = BrowserConfig {
         enabled: false,
@@ -506,7 +506,7 @@ fn all_tools_includes_browser_when_enabled() {
         ..MemoryConfig::default()
     };
     let mem: Arc<dyn Memory> =
-        Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path()).unwrap());
+        Arc::from(crate::openhuman::memory_store::create_memory(&mem_cfg, tmp.path()).unwrap());
 
     let browser = BrowserConfig {
         enabled: true,
@@ -628,7 +628,7 @@ fn all_tools_includes_delegate_when_agents_configured() {
         ..MemoryConfig::default()
     };
     let mem: Arc<dyn Memory> =
-        Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path()).unwrap());
+        Arc::from(crate::openhuman::memory_store::create_memory(&mem_cfg, tmp.path()).unwrap());
 
     let browser = BrowserConfig::default();
     let http = crate::openhuman::config::HttpRequestConfig::default();
@@ -669,7 +669,7 @@ fn all_tools_excludes_delegate_when_no_agents() {
         ..MemoryConfig::default()
     };
     let mem: Arc<dyn Memory> =
-        Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path()).unwrap());
+        Arc::from(crate::openhuman::memory_store::create_memory(&mem_cfg, tmp.path()).unwrap());
 
     let browser = BrowserConfig::default();
     let http = crate::openhuman::config::HttpRequestConfig::default();
@@ -703,7 +703,7 @@ fn all_tools_registers_node_exec_when_node_enabled() {
         ..MemoryConfig::default()
     };
     let mem: Arc<dyn Memory> =
-        Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path()).unwrap());
+        Arc::from(crate::openhuman::memory_store::create_memory(&mem_cfg, tmp.path()).unwrap());
 
     let browser = BrowserConfig::default();
     let http = crate::openhuman::config::HttpRequestConfig::default();
@@ -740,7 +740,7 @@ fn all_tools_excludes_node_exec_when_node_disabled() {
         ..MemoryConfig::default()
     };
     let mem: Arc<dyn Memory> =
-        Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path()).unwrap());
+        Arc::from(crate::openhuman::memory_store::create_memory(&mem_cfg, tmp.path()).unwrap());
 
     let browser = BrowserConfig::default();
     let http = crate::openhuman::config::HttpRequestConfig::default();
@@ -778,7 +778,7 @@ fn all_tools_excludes_computer_control_when_disabled() {
         ..MemoryConfig::default()
     };
     let mem: Arc<dyn Memory> =
-        Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path()).unwrap());
+        Arc::from(crate::openhuman::memory_store::create_memory(&mem_cfg, tmp.path()).unwrap());
 
     let browser = BrowserConfig::default();
     let http = crate::openhuman::config::HttpRequestConfig::default();
@@ -816,7 +816,7 @@ fn all_tools_includes_computer_control_when_enabled() {
         ..MemoryConfig::default()
     };
     let mem: Arc<dyn Memory> =
-        Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path()).unwrap());
+        Arc::from(crate::openhuman::memory_store::create_memory(&mem_cfg, tmp.path()).unwrap());
 
     let browser = BrowserConfig::default();
     let http = crate::openhuman::config::HttpRequestConfig::default();

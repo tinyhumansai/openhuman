@@ -79,9 +79,9 @@ pub fn group_by_weight(edges: Vec<GraphEdge>) -> HashMap<u32, Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::openhuman::memory::score::extract::EntityKind;
-    use crate::openhuman::memory::score::resolver::CanonicalEntity;
-    use crate::openhuman::memory::score::store::index_entity;
+    use crate::openhuman::memory_tree::score::extract::EntityKind;
+    use crate::openhuman::memory_tree::score::resolver::CanonicalEntity;
+    use crate::openhuman::memory_tree::score::store::index_entity;
     use tempfile::TempDir;
 
     fn test_config() -> (TempDir, Config) {

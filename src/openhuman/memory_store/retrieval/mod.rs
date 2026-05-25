@@ -4,7 +4,7 @@
 //! a different submodule today:
 //!
 //! 1. **tree-walk** — BFS over sealed summary nodes (delegates to the
-//!    existing drill_down logic in `memory::retrieval::drill_down`).
+//!    existing drill_down logic in `memory_tree::retrieval::drill_down`).
 //! 2. **vector search** — embedding-similarity ranking over namespace docs
 //!    (delegates to `UnifiedMemory::query_namespace_hits`).
 //! 3. **keyword search** — FTS5/keyword overlap, same hybrid entry point as
@@ -18,7 +18,7 @@
 //! (`memory_store::retrieval::RetrievalFacade`) instead of reaching into four
 //! different submodules.
 //!
-//! Layering note: `tree_walk` calls `memory::retrieval::drill_down`, which is
+//! Layering note: `tree_walk` calls `memory_tree::retrieval::drill_down`, which is
 //! a reverse dependency from `memory_store` up into `memory`. This is
 //! intentional and bounded — `drill_down` is "tree walk over stored trees" and
 //! conceptually belongs in `memory_store`, but moving it is out of scope for
@@ -30,11 +30,11 @@ use anyhow::Result;
 use std::sync::Arc;
 
 use crate::openhuman::config::Config;
-use crate::openhuman::memory::retrieval::types::RetrievalHit;
 use crate::openhuman::memory_store::chunks::store::list_chunks;
 use crate::openhuman::memory_store::chunks::types::{Chunk, SourceKind};
 use crate::openhuman::memory_store::types::NamespaceMemoryHit;
 use crate::openhuman::memory_store::UnifiedMemory;
+use crate::openhuman::memory_tree::retrieval::types::RetrievalHit;
 
 /// Optional filter set for `param_tag_search`. All `Some` fields are AND-ed
 /// together; `None` fields are unconstrained.
@@ -68,7 +68,7 @@ impl RetrievalFacade {
     /// BFS walk from `node_id` down to `max_depth`. When `query` is `Some`,
     /// hits are reranked by cosine similarity to the query embedding.
     ///
-    /// See `memory::retrieval::drill_down::drill_down` for the full contract.
+    /// See `memory_tree::retrieval::drill_down::drill_down` for the full contract.
     pub async fn tree_walk(
         &self,
         config: &Config,
@@ -77,7 +77,7 @@ impl RetrievalFacade {
         query: Option<&str>,
         limit: Option<usize>,
     ) -> Result<Vec<RetrievalHit>> {
-        crate::openhuman::memory::retrieval::drill_down::drill_down(
+        crate::openhuman::memory_tree::retrieval::drill_down::drill_down(
             config, node_id, max_depth, query, limit,
         )
         .await

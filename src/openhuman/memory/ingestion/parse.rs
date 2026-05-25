@@ -14,8 +14,8 @@ use super::types::{
     ExtractedEntity, ExtractedRelation, ExtractionAccumulator, ExtractionMode, ExtractionUnit,
     MemoryIngestionConfig, ParsedIngestion, RawEntity, RawRelation, DEFAULT_CHUNK_TOKENS,
 };
-use crate::openhuman::memory::UnifiedMemory;
 use crate::openhuman::memory_store::types::NamespaceDocumentInput;
+use crate::openhuman::memory_store::UnifiedMemory;
 
 // ── Chunking helpers ──────────────────────────────────────────────────────────
 

@@ -80,12 +80,12 @@ pub async fn force_flush_tree(
 mod tests {
     use super::*;
     use crate::openhuman::memory::chat::{test_override, ChatProvider, StaticChatProvider};
+    use crate::openhuman::memory::tree_source::registry::get_or_create_source_tree;
     use crate::openhuman::memory_store::chunks::store::upsert_chunks;
     use crate::openhuman::memory_store::chunks::types::{
         chunk_id, Chunk, Metadata, SourceKind, SourceRef,
     };
     use crate::openhuman::memory_store::content as content_store;
-    use crate::openhuman::memory_tree::sources::registry::get_or_create_source_tree;
     use crate::openhuman::memory_tree::tree::bucket_seal::{append_leaf, LeafRef};
     use std::sync::Arc;
     use tempfile::TempDir;

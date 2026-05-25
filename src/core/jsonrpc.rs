@@ -1513,9 +1513,10 @@ fn register_domain_subscribers(
 
         crate::openhuman::health::bus::register_health_subscriber();
         crate::openhuman::notifications::register_notification_bridge_subscriber();
-        crate::openhuman::memory::conversations::register_conversation_persistence_subscriber(
+        crate::openhuman::memory_conversations::register_conversation_persistence_subscriber(
             workspace_dir.clone(),
         );
+        crate::openhuman::memory::sync::register_sync_stage_bridge();
         if let Err(error) = crate::openhuman::composio::init_composio_trigger_history(
             workspace_dir.clone(),
         ) {
@@ -1564,7 +1565,7 @@ fn register_domain_subscribers(
             );
         }
 
-        crate::openhuman::memory::jobs::start(config.clone());
+        crate::openhuman::memory_queue::start(config.clone());
 
         // Restart requests go through a subscriber so every trigger path shares
         // the same respawn logic.

@@ -299,18 +299,18 @@ const bn4: TranslationMap = {
   'settings.ai.localOllama': 'লোকাল (Ollama)',
   'settings.ai.modelLabel': 'মডেল',
   'settings.ai.noCustomProviders': 'কোনো কাস্টম প্রোভাইডার নেই',
-  'settings.ai.openAiCompat.authHeaderExample': 'Authorization: Bearer <your key>',
-  'settings.ai.openAiCompat.authHeaderLabel': 'Auth header',
-  'settings.ai.openAiCompat.baseUrlLabel': 'Base URL',
-  'settings.ai.openAiCompat.baseUrlUnavailable': 'Unavailable',
-  'settings.ai.openAiCompat.clearKey': 'Clear key',
+  'settings.ai.openAiCompat.authHeaderExample': 'অনুমোদন: বহনকারী <আপনার কী>',
+  'settings.ai.openAiCompat.authHeaderLabel': '2th head]9',
+  'settings.ai.openAiCompat.baseUrlLabel': 'বেস URL',
+  'settings.ai.openAiCompat.baseUrlUnavailable': 'অনুপলব্ধ',
+  'settings.ai.openAiCompat.clearKey': 'ক্লিয়ার কী',
   'settings.ai.openAiCompat.description':
     "Point local harnesses at this /v1 server to route through the providers configured below. Authentication uses a stable key you set here, not the app's internal core bearer.",
-  'settings.ai.openAiCompat.keyConfigured': 'Key configured',
-  'settings.ai.openAiCompat.keyRequired': 'Key required',
-  'settings.ai.openAiCompat.rotateKey': 'Rotate key',
-  'settings.ai.openAiCompat.setKey': 'Set key',
-  'settings.ai.openAiCompat.title': 'OpenAI-compatible endpoint',
+  'settings.ai.openAiCompat.keyConfigured': 'কী কনফিগার করা',
+  'settings.ai.openAiCompat.keyRequired': 'কী প্রয়োজন',
+  'settings.ai.openAiCompat.rotateKey': 'ঘোরান কী',
+  'settings.ai.openAiCompat.setKey': 'সেট কী',
+  'settings.ai.openAiCompat.title': 'OpenAI-সামঞ্জস্যপূর্ণ এন্ডপয়েন্ট',
   'settings.ai.providerLabel': 'প্রোভাইডার',
   'settings.ai.routing': 'রুটিং',
   'settings.ai.routingCustom': 'কাস্টম রুটিং',
@@ -405,17 +405,17 @@ const bn4: TranslationMap = {
   'pages.settings.account.migration': 'অন্য সহকারী থেকে আমদানি করুন',
   'pages.settings.account.migrationDesc':
     'OpenClaw (এবং শীঘ্রই Hermes) থেকে মেমরি ও নোট এই ওয়ার্কস্পেসে স্থানান্তর করুন।',
-  'composio.connect.scope.read': 'Read',
-  'composio.connect.scope.readHint': 'Allow the agent to read data from this connection.',
-  'composio.connect.scope.write': 'Write',
+  'composio.connect.scope.read': 'পড়ুন',
+  'composio.connect.scope.readHint': 'এজেন্টকে এই সংযোগ থেকে ডেটা পড়ার অনুমতি দিন।',
+  'composio.connect.scope.write': 'লিখুন',
   'composio.connect.scope.writeHint':
-    'Allow the agent to create or modify data through this connection.',
-  'composio.connect.scope.admin': 'Admin',
+    'এজেন্টকে এই সংযোগের মাধ্যমে ডেটা তৈরি বা পরিবর্তন করার অনুমতি দিন।',
+  'composio.connect.scope.admin': 'প্রশাসক',
   'composio.connect.scope.adminHint':
-    'Allow the agent to manage settings, permissions, or destructive actions.',
+    'এজেন্টকে সেটিংস, অনুমতি বা ধ্বংসাত্মক ক্রিয়াকলাপ পরিচালনা করার অনুমতি দিন।',
   'pages.settings.composioSection.title': 'Composio',
   'pages.settings.composioSection.description':
-    'Routing, triggers, and history for integrations powered by Composio.',
+    'Composio দ্বারা চালিত ইন্টিগ্রেশনের জন্য রাউটিং, ট্রিগার এবং ইতিহাস।',
 };
 
 export default bn4;

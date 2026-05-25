@@ -15,13 +15,13 @@ use anyhow::Result;
 use tokio::sync::Notify;
 
 use crate::openhuman::config::Config;
-use crate::openhuman::memory::jobs::handlers;
-use crate::openhuman::memory::jobs::redact::scrub_for_log;
-use crate::openhuman::memory::jobs::store::{
+use crate::openhuman::memory_queue::handlers;
+use crate::openhuman::memory_queue::redact::scrub_for_log;
+use crate::openhuman::memory_queue::store::{
     claim_next, mark_deferred, mark_done, mark_failed, recover_stale_locks,
     DEFAULT_LOCK_DURATION_MS,
 };
-use crate::openhuman::memory::jobs::types::JobOutcome;
+use crate::openhuman::memory_queue::types::JobOutcome;
 
 /// Number of concurrent job-worker tasks. Each worker claims one job
 /// at a time via `claim_next` (atomic UPDATE under SQLite WAL with
@@ -304,8 +304,8 @@ fn is_sqlite_busy(err: &anyhow::Error) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::openhuman::memory::jobs::store::{count_by_status, enqueue, get_job};
-    use crate::openhuman::memory::jobs::types::{
+    use crate::openhuman::memory_queue::store::{count_by_status, enqueue, get_job};
+    use crate::openhuman::memory_queue::types::{
         FlushStalePayload, JobKind, JobStatus, NewJob, ReembedBackfillPayload,
     };
     use crate::openhuman::memory_store::chunks::store::{

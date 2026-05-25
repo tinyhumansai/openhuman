@@ -9,8 +9,8 @@ use anyhow::Result;
 use chrono::{Datelike, Duration as ChronoDuration, NaiveDate, TimeZone, Timelike, Utc};
 
 use crate::openhuman::config::Config;
-use crate::openhuman::memory::jobs::store;
-use crate::openhuman::memory::jobs::types::{DigestDailyPayload, FlushStalePayload, NewJob};
+use crate::openhuman::memory_queue::store;
+use crate::openhuman::memory_queue::types::{DigestDailyPayload, FlushStalePayload, NewJob};
 
 static STARTED: std::sync::Once = std::sync::Once::new();
 
@@ -175,10 +175,10 @@ fn next_sleep_duration() -> Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::openhuman::memory::jobs::store::{
+    use crate::openhuman::memory_queue::store::{
         claim_next, count_by_status, count_total, mark_done, DEFAULT_LOCK_DURATION_MS,
     };
-    use crate::openhuman::memory::jobs::types::{
+    use crate::openhuman::memory_queue::types::{
         DigestDailyPayload, FlushStalePayload, JobKind, JobStatus,
     };
     use tempfile::TempDir;

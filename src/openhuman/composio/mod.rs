@@ -52,22 +52,24 @@ pub mod tools;
 pub mod trigger_history;
 pub mod types;
 
-pub use action_tool::ComposioActionTool;
-pub use bus::{
+pub use crate::openhuman::memory_sync::composio::bus::{
     register_composio_trigger_subscriber, ComposioConfigChangedSubscriber,
     ComposioTriggerSubscriber,
 };
+pub use crate::openhuman::memory_sync::composio::periodic::{
+    record_sync_success, start_periodic_sync,
+};
+pub use crate::openhuman::memory_sync::composio::providers::{
+    all_providers as all_composio_providers, get_provider as get_composio_provider,
+    init_default_providers as init_default_composio_providers, ComposioProvider, ProviderContext,
+    ProviderUserProfile, SyncOutcome, SyncReason,
+};
+pub use action_tool::ComposioActionTool;
 pub use client::ComposioClient;
 pub use ops::{
     cached_active_integrations, connected_set_hash, fetch_connected_integrations,
     fetch_connected_integrations_status, fetch_toolkit_actions,
     invalidate_connected_integrations_cache, FetchConnectedIntegrationsStatus,
-};
-pub use periodic::{record_sync_success, start_periodic_sync};
-pub use providers::{
-    all_providers as all_composio_providers, get_provider as get_composio_provider,
-    init_default_providers as init_default_composio_providers, ComposioProvider, ProviderContext,
-    ProviderUserProfile, SyncOutcome, SyncReason,
 };
 pub use schemas::{
     all_controller_schemas as all_composio_controller_schemas,

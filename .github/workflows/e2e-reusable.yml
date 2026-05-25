@@ -28,8 +28,7 @@ on:
   workflow_call:
     inputs:
       ref:
-        description:
-          Git ref (tag or SHA) to test. Release workflows pass the
+        description: Git ref (tag or SHA) to test. Release workflows pass the
           freshly-pushed staging/production tag here so pretest validates
           the exact commit the build matrix will check out, not main HEAD
           at workflow_dispatch time. Defaults to empty (checkout uses its
@@ -379,8 +378,8 @@ jobs:
       image: ghcr.io/tinyhumansai/openhuman_ci:latest
     timeout-minutes: 60
     env:
-      CARGO_INCREMENTAL: '0'
-      RUST_BACKTRACE: '1'
+      CARGO_INCREMENTAL: "0"
+      RUST_BACKTRACE: "1"
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -612,7 +611,9 @@ jobs:
         shard:
           - { name: foundation, suites: "auth,navigation,system" }
           - { name: chat, suites: "chat,skills,journeys" }
-          - { name: integrations, suites: "providers,webhooks,notifications" }
+          - { name: providers, suites: "providers,notifications" }
+          - { name: webhooks, suites: "webhooks" }
+          - { name: connectors, suites: "connectors" }
           - { name: commerce, suites: "payments,settings" }
     steps:
       - name: Checkout code
@@ -758,7 +759,9 @@ jobs:
         shard:
           - { name: foundation, suites: "auth,navigation,system" }
           - { name: chat, suites: "chat,skills,journeys" }
-          - { name: integrations, suites: "providers,webhooks,notifications" }
+          - { name: providers, suites: "providers,notifications" }
+          - { name: webhooks, suites: "webhooks" }
+          - { name: connectors, suites: "connectors" }
           - { name: commerce, suites: "payments,settings" }
     steps:
       - name: Checkout code

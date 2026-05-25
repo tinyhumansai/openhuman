@@ -299,18 +299,18 @@ const ru4: TranslationMap = {
   'settings.ai.localOllama': 'Локально (Ollama)',
   'settings.ai.modelLabel': 'Модель',
   'settings.ai.noCustomProviders': 'Нет пользовательских провайдеров',
-  'settings.ai.openAiCompat.authHeaderExample': 'Authorization: Bearer <your key>',
-  'settings.ai.openAiCompat.authHeaderLabel': 'Auth header',
-  'settings.ai.openAiCompat.baseUrlLabel': 'Base URL',
-  'settings.ai.openAiCompat.baseUrlUnavailable': 'Unavailable',
-  'settings.ai.openAiCompat.clearKey': 'Clear key',
+  'settings.ai.openAiCompat.authHeaderExample': 'Авторизация: Носитель <ваш ключ>',
+  'settings.ai.openAiCompat.authHeaderLabel': 'Заголовок аутентификации',
+  'settings.ai.openAiCompat.baseUrlLabel': 'База URL',
+  'settings.ai.openAiCompat.baseUrlUnavailable': 'Недоступно',
+  'settings.ai.openAiCompat.clearKey': 'Очистить ключ',
   'settings.ai.openAiCompat.description':
     "Point local harnesses at this /v1 server to route through the providers configured below. Authentication uses a stable key you set here, not the app's internal core bearer.",
-  'settings.ai.openAiCompat.keyConfigured': 'Key configured',
-  'settings.ai.openAiCompat.keyRequired': 'Key required',
-  'settings.ai.openAiCompat.rotateKey': 'Rotate key',
-  'settings.ai.openAiCompat.setKey': 'Set key',
-  'settings.ai.openAiCompat.title': 'OpenAI-compatible endpoint',
+  'settings.ai.openAiCompat.keyConfigured': 'Ключ настроен',
+  'settings.ai.openAiCompat.keyRequired': 'Требуется ключ',
+  'settings.ai.openAiCompat.rotateKey': 'Повернуть ключ',
+  'settings.ai.openAiCompat.setKey': 'Установить ключ',
+  'settings.ai.openAiCompat.title': 'OpenAI-совместимая конечная точка',
   'settings.ai.providerLabel': 'Провайдер',
   'settings.ai.routing': 'Маршрутизация',
   'settings.ai.routingCustom': 'Пользовательская маршрутизация',
@@ -405,17 +405,17 @@ const ru4: TranslationMap = {
   'pages.settings.account.migration': 'Импорт из другого ассистента',
   'pages.settings.account.migrationDesc':
     'Перенесите память и заметки из OpenClaw (а вскоре и Hermes) в это рабочее пространство.',
-  'composio.connect.scope.read': 'Read',
-  'composio.connect.scope.readHint': 'Allow the agent to read data from this connection.',
-  'composio.connect.scope.write': 'Write',
+  'composio.connect.scope.read': 'Чтение',
+  'composio.connect.scope.readHint': 'Разрешить агенту читать данные из этого соединения.',
+  'composio.connect.scope.write': 'Запись',
   'composio.connect.scope.writeHint':
-    'Allow the agent to create or modify data through this connection.',
-  'composio.connect.scope.admin': 'Admin',
+    'Разрешить агенту создавать или изменять данные через это соединение.',
+  'composio.connect.scope.admin': 'Администратор',
   'composio.connect.scope.adminHint':
-    'Allow the agent to manage settings, permissions, or destructive actions.',
+    'Разрешить агенту управлять настройками, разрешениями или деструктивными действиями.',
   'pages.settings.composioSection.title': 'Composio',
   'pages.settings.composioSection.description':
-    'Routing, triggers, and history for integrations powered by Composio.',
+    'Маршрутизация, триггеры и история интеграций на базе Composio.',
 };
 
 export default ru4;

@@ -39,19 +39,18 @@ use chrono::{DateTime, Utc};
 use rusqlite::Transaction;
 
 use crate::openhuman::config::Config;
-use crate::openhuman::memory::score::embed::build_embedder_from_config;
-use crate::openhuman::memory::score::extract::EntityExtractor;
-use crate::openhuman::memory::score::resolver::canonicalise;
 use crate::openhuman::memory_store::chunks::store::with_connection;
-use crate::openhuman::memory_store::content::{
-    atomic::stage_summary, paths::slugify_source_id, SummaryComposeInput, SummaryTreeKind,
-};
+use crate::openhuman::memory_store::content::{atomic::stage_summary, SummaryComposeInput};
 use crate::openhuman::memory_store::trees::types::{
     Buffer, SummaryNode, Tree, TreeKind, INPUT_TOKEN_BUDGET, OUTPUT_TOKEN_BUDGET, SUMMARY_FANOUT,
 };
+use crate::openhuman::memory_tree::score::embed::build_embedder_from_config;
+use crate::openhuman::memory_tree::score::extract::EntityExtractor;
+use crate::openhuman::memory_tree::score::resolver::canonicalise;
 use crate::openhuman::memory_tree::summarise::{
     fallback_summary, summarise, SummaryContext, SummaryInput,
 };
+use crate::openhuman::memory_tree::tree::factory::TreeFactory;
 use crate::openhuman::memory_tree::tree::registry::new_summary_id;
 use crate::openhuman::memory_tree::tree::store;
 
@@ -480,43 +479,9 @@ pub(crate) async fn seal_one_level(
     // tx. A staging failure aborts the seal cleanly — nothing is persisted
     // and the buffer stays intact for retry.
     //
-    // `bucket_seal.rs` handles both Source and Topic tree seals (Topic trees
-    // use the same cascade machinery via `handle_seal` in the job handler).
-    // Map TreeKind to SummaryTreeKind accordingly.
-    let summary_tree_kind = match tree.kind {
-        TreeKind::Topic => SummaryTreeKind::Topic,
-        _ => SummaryTreeKind::Source,
-    };
-    let scope_slug = {
-        // Path slug semantics per source kind:
-        //
-        // - Gmail source trees: scope is `"gmail:<participants>"` where
-        //   participants is `addr1|addr2|...`. Strip the `gmail:` prefix so the
-        //   path is `summaries/source/<participants_slug>/...` and mirrors the
-        //   chunk layout under `email/<participants_slug>/`.
-        //
-        // - Topic trees: scope is the canonical entity_id (e.g.
-        //   `"email:alice@example.com"`). Slugify the FULL string so topic-tree
-        //   summaries and source-tree summaries don't share a path prefix.
-        //
-        // - All other source kinds (slack:, discord:, document:, …): slugify the
-        //   FULL scope string. Stripping the prefix for non-Gmail sources was a
-        //   bug — `"slack:#eng"` and `"discord:#eng"` would both produce slug
-        //   `"eng"` and collide in `summaries/source/eng/`.
-        let s = &tree.scope;
-        match tree.kind {
-            TreeKind::Topic => slugify_source_id(s),
-            _ => {
-                if s.starts_with("gmail:") {
-                    // Strip "gmail:" prefix; slugify the participants portion.
-                    slugify_source_id(&s["gmail:".len()..])
-                } else {
-                    // All other source kinds: slugify the full scope string.
-                    slugify_source_id(s)
-                }
-            }
-        }
-    };
+    let tree_factory = TreeFactory::from_tree(tree);
+    let summary_tree_kind = tree_factory.summary_tree_kind();
+    let scope_slug = tree_factory.scope_slug();
     // For L1 seals (children are chunks), point each child wikilink at
     // the raw archive file the chunk's body lives in — the email
     // chunk-store path `email/<scope>/<chunk_id>.md` no longer
@@ -658,7 +623,7 @@ pub(crate) async fn seal_one_level(
         // leaves. No-op when entities is empty (the current summarise()
         // always emits empty — entity extraction is the learning domain's job);
         // becomes active once the summariser or a post-seal extractor emits canonical ids.
-        crate::openhuman::memory::score::store::index_summary_entity_ids_tx(
+        crate::openhuman::memory_tree::score::store::index_summary_entity_ids_tx(
             &tx,
             &node.entities,
             &node.id,
@@ -711,8 +676,8 @@ pub(crate) async fn seal_one_level(
             // `seal:{tree_id}:{parent_level}` prevents duplicates if a
             // parallel path already queued it.
             if should_seal(&parent) {
-                use crate::openhuman::memory::jobs::store::enqueue_tx as enqueue_job_tx;
-                use crate::openhuman::memory::jobs::types::{NewJob, SealPayload};
+                use crate::openhuman::memory_queue::store::enqueue_tx as enqueue_job_tx;
+                use crate::openhuman::memory_queue::types::{NewJob, SealPayload};
                 let parent_seal = SealPayload {
                     tree_id: tree_id.clone(),
                     level: target_level_for_closure,
@@ -724,8 +689,8 @@ pub(crate) async fn seal_one_level(
             // entities back into the topic-tree spawn pipeline. Topic
             // and global trees are sinks — no fan-out from their seals.
             if matches!(tree_kind, TreeKind::Source) {
-                use crate::openhuman::memory::jobs::store::enqueue_tx as enqueue_job_tx;
-                use crate::openhuman::memory::jobs::types::{NewJob, NodeRef, TopicRoutePayload};
+                use crate::openhuman::memory_queue::store::enqueue_tx as enqueue_job_tx;
+                use crate::openhuman::memory_queue::types::{NewJob, NodeRef, TopicRoutePayload};
                 let route = TopicRoutePayload {
                     node: NodeRef::Summary {
                         summary_id: summary_id_for_closure.clone(),
@@ -807,9 +772,9 @@ fn hydrate_inputs(config: &Config, level: u32, item_ids: &[String]) -> Result<Ve
 }
 
 fn hydrate_leaf_inputs(config: &Config, chunk_ids: &[String]) -> Result<Vec<SummaryInput>> {
-    use crate::openhuman::memory::score::store::{get_score, list_entity_ids_for_node};
     use crate::openhuman::memory_store::chunks::store::get_chunk;
     use crate::openhuman::memory_store::content::read as content_read;
+    use crate::openhuman::memory_tree::score::store::{get_score, list_entity_ids_for_node};
 
     let mut out: Vec<SummaryInput> = Vec::with_capacity(chunk_ids.len());
     for id in chunk_ids {

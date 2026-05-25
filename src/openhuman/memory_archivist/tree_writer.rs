@@ -107,10 +107,10 @@ mod tests {
 
     use super::{archive_to_tree, chunk_id_for_session};
     use crate::openhuman::config::Config;
+    use crate::openhuman::memory::tree_source::registry::get_or_create_source_tree;
     use crate::openhuman::memory_archivist::types::Turn;
     use crate::openhuman::memory_store::trees::store as tree_store;
     use crate::openhuman::memory_store::trees::{Tree, TreeKind, TreeStatus};
-    use crate::openhuman::memory_tree::sources::registry::get_or_create_source_tree;
 
     #[test]
     fn chunk_id_is_stable_for_same_session_and_markdown() {

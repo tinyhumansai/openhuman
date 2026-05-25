@@ -19,9 +19,9 @@
 use std::path::PathBuf;
 
 use crate::openhuman::memory_store::chunks::types::Chunk;
-use crate::openhuman::memory_store::contacts::Person;
 use crate::openhuman::memory_store::kinds::MemoryKind;
 use crate::openhuman::memory_store::trees::{SummaryNode, Tree};
+use crate::openhuman::people::types::Person;
 
 /// A rendered Obsidian markdown file: where it lives in the vault and what
 /// bytes to write. Vault path is relative to the content-store root.

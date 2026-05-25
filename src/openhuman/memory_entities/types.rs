@@ -8,7 +8,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 /// Kinds an entity can take. Mirrors
-/// [`crate::openhuman::memory::score::extract::EntityKind`] so canonical
+/// [`crate::openhuman::memory_tree::score::extract::EntityKind`] so canonical
 /// ids the scorer emits round-trip through this module unchanged. Kept as
 /// a local enum (not a re-export) so memory_entities stays usable
 /// independently of the score module's exact internals.

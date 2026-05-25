@@ -379,7 +379,7 @@ const zhCN3: TranslationMap = {
     '通过 OAuth 将 OpenHuman 机器人安装到你的 Discord 服务器。',
   'channels.discord.authMode.managed_dm.description':
     '将你的个人 Discord 账户关联到 OpenHuman 机器人。',
-  'channels.discord.fields.bot_token.label': 'Bot Token',
+  'channels.discord.fields.bot_token.label': '机器人代币',
   'channels.discord.fields.bot_token.placeholder': '你的 Discord bot token',
   'channels.discord.fields.guild_id.label': '服务器 (Guild) ID',
   'channels.discord.fields.guild_id.placeholder': '可选：限制到特定服务器',
@@ -390,16 +390,16 @@ const zhCN3: TranslationMap = {
   'channels.telegram.authMode.managed_dm.description': '直接向 OpenHuman Telegram 机器人发送消息。',
   'channels.telegram.authMode.bot_token.description':
     '从 @BotFather 获取你自己的 Telegram Bot token。',
-  'channels.telegram.fields.bot_token.label': 'Bot Token',
+  'channels.telegram.fields.bot_token.label': '机器人代币',
   'channels.telegram.fields.bot_token.placeholder': '123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11',
   'channels.telegram.fields.allowed_users.label': '允许的用户',
   'channels.telegram.fields.allowed_users.placeholder': '逗号分隔的 Telegram 用户名',
 
   // Web
-  'channels.web.displayName': 'Web',
+  'channels.web.displayName': '网络',
   'channels.web.description': '通过内置的 Web UI 聊天。',
   'channels.web.authMode.managed_dm.description': '使用嵌入式 Web 聊天 — 无需设置。',
-  'welcome.continueLocallyExperimental': 'Continue Locally (Experimental)',
+  'welcome.continueLocallyExperimental': '在本地继续（实验性）',
 };
 
 export default zhCN3;

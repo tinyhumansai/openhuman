@@ -1,5 +1,5 @@
 //! RPC handlers for the tool-scoped memory layer (see
-//! [`crate::openhuman::memory::tool_memory`]).
+//! [`crate::openhuman::memory_tools`]).
 //!
 //! All handlers go through [`active_memory_client`] so they hit the
 //! same `UnifiedMemory` backend the rest of the memory RPCs use, and
@@ -9,7 +9,7 @@
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::openhuman::memory::tool_memory::{
+use crate::openhuman::memory_tools::{
     ToolMemoryPriority, ToolMemoryRule, ToolMemorySource, ToolMemoryStore,
 };
 use crate::rpc::RpcOutcome;
@@ -151,7 +151,7 @@ pub async fn tool_rules_for_prompt(
             .then_with(|| a.tool_name.cmp(&b.tool_name))
             .then_with(|| a.rule.cmp(&b.rule))
     });
-    let rendered = crate::openhuman::memory::tool_memory::render_tool_memory_rules(&flat);
+    let rendered = crate::openhuman::memory_tools::render_tool_memory_rules(&flat);
     Ok(RpcOutcome::single_log(
         ToolRulesForPromptResult {
             rendered,
@@ -181,7 +181,7 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
-    use crate::openhuman::memory::ToolMemoryPriority;
+    use crate::openhuman::memory_tools::ToolMemoryPriority;
 
     fn ensure_memory_client() {
         static WORKSPACE: OnceLock<PathBuf> = OnceLock::new();
@@ -220,7 +220,7 @@ mod tests {
         assert_eq!(stored.priority, ToolMemoryPriority::Normal);
         assert_eq!(
             stored.source,
-            crate::openhuman::memory::ToolMemorySource::Programmatic
+            crate::openhuman::memory_tools::ToolMemorySource::Programmatic
         );
         assert_eq!(stored.tags, vec!["safety".to_string()]);
         assert!(

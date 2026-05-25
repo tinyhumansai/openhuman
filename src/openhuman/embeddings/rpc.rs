@@ -43,18 +43,29 @@ pub async fn get_settings(config: &Config) -> Result<RpcOutcome<serde_json::Valu
         })
         .collect();
 
+    let vector_search_enabled = {
+        let slug = if provider.starts_with("custom:") {
+            "custom"
+        } else {
+            provider.as_str()
+        };
+        slug != "none"
+    };
+
     let payload = serde_json::json!({
         "provider": provider,
         "model": model,
         "dimensions": dimensions,
         "rate_limit_per_min": rate_limit,
         "providers": providers,
+        "vector_search_enabled": vector_search_enabled,
     });
 
     tracing::debug!(
         provider = provider.as_str(),
         model = model.as_str(),
         dimensions,
+        vector_search_enabled,
         "{LOG_PREFIX} get_settings"
     );
 

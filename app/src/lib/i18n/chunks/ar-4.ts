@@ -297,18 +297,18 @@ const ar4: TranslationMap = {
   'settings.ai.localOllama': 'محلي (Ollama)',
   'settings.ai.modelLabel': 'النموذج',
   'settings.ai.noCustomProviders': 'لا يوجد مزودون مخصصون',
-  'settings.ai.openAiCompat.authHeaderExample': 'Authorization: Bearer <your key>',
-  'settings.ai.openAiCompat.authHeaderLabel': 'Auth header',
-  'settings.ai.openAiCompat.baseUrlLabel': 'Base URL',
-  'settings.ai.openAiCompat.baseUrlUnavailable': 'Unavailable',
-  'settings.ai.openAiCompat.clearKey': 'Clear key',
+  'settings.ai.openAiCompat.authHeaderExample': 'التفويض: الحامل <مفتاحك>',
+  'settings.ai.openAiCompat.authHeaderLabel': 'رأس المصادقة',
+  'settings.ai.openAiCompat.baseUrlLabel': 'القاعدة URL',
+  'settings.ai.openAiCompat.baseUrlUnavailable': 'غير متاح',
+  'settings.ai.openAiCompat.clearKey': 'مسح المفتاح',
   'settings.ai.openAiCompat.description':
     "Point local harnesses at this /v1 server to route through the providers configured below. Authentication uses a stable key you set here, not the app's internal core bearer.",
-  'settings.ai.openAiCompat.keyConfigured': 'Key configured',
-  'settings.ai.openAiCompat.keyRequired': 'Key required',
-  'settings.ai.openAiCompat.rotateKey': 'Rotate key',
-  'settings.ai.openAiCompat.setKey': 'Set key',
-  'settings.ai.openAiCompat.title': 'OpenAI-compatible endpoint',
+  'settings.ai.openAiCompat.keyConfigured': 'تم تكوين المفتاح',
+  'settings.ai.openAiCompat.keyRequired': 'المفتاح مطلوب',
+  'settings.ai.openAiCompat.rotateKey': 'مفتاح التدوير',
+  'settings.ai.openAiCompat.setKey': 'مفتاح التعيين',
+  'settings.ai.openAiCompat.title': 'OpenAI نقطة النهاية المتوافقة',
   'settings.ai.providerLabel': 'المزود',
   'settings.ai.routing': 'التوجيه',
   'settings.ai.routingCustom': 'توجيه مخصص',
@@ -403,17 +403,16 @@ const ar4: TranslationMap = {
   'pages.settings.account.migration': 'استيراد من مساعد آخر',
   'pages.settings.account.migrationDesc':
     'انقل الذاكرة والملاحظات من OpenClaw (وقريبًا Hermes) إلى مساحة العمل هذه.',
-  'composio.connect.scope.read': 'Read',
-  'composio.connect.scope.readHint': 'Allow the agent to read data from this connection.',
-  'composio.connect.scope.write': 'Write',
-  'composio.connect.scope.writeHint':
-    'Allow the agent to create or modify data through this connection.',
-  'composio.connect.scope.admin': 'Admin',
+  'composio.connect.scope.read': 'قراءة',
+  'composio.connect.scope.readHint': 'اسمح للوكيل بقراءة البيانات من هذا الاتصال.',
+  'composio.connect.scope.write': 'اكتب',
+  'composio.connect.scope.writeHint': 'اسمح للوكيل بإنشاء البيانات أو تعديلها من خلال هذا الاتصال.',
+  'composio.connect.scope.admin': 'المسؤول',
   'composio.connect.scope.adminHint':
-    'Allow the agent to manage settings, permissions, or destructive actions.',
+    'السماح للوكيل بإدارة الإعدادات أو الأذونات أو الإجراءات المدمرة.',
   'pages.settings.composioSection.title': 'Composio',
   'pages.settings.composioSection.description':
-    'Routing, triggers, and history for integrations powered by Composio.',
+    'التوجيه والمشغلات وسجل عمليات التكامل المدعومة بواسطة Composio.',
 };
 
 export default ar4;

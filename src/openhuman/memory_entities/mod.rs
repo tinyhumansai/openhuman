@@ -34,7 +34,7 @@
 //! <free-form notes; the user can edit this body in Obsidian>
 //! ```
 //!
-//! `kind` matches [`memory::score::extract::EntityKind`] verbatim so the
+//! `kind` matches [`memory_tree::score::extract::EntityKind`] verbatim so the
 //! same canonical-id format the scorer emits round-trips through here.
 //!
 //! ## API

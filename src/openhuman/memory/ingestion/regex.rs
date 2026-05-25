@@ -5,7 +5,7 @@ use std::sync::OnceLock;
 
 use regex::Regex;
 
-use crate::openhuman::memory::UnifiedMemory;
+use crate::openhuman::memory_store::UnifiedMemory;
 
 /// Regex for identifying standard email headers (From, To, Cc).
 pub(super) fn email_header_regex() -> &'static Regex {

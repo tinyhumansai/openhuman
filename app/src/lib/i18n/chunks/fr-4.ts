@@ -105,7 +105,7 @@ const fr4: TranslationMap = {
   'intelligence.memoryChunk.scoreBars.kept': 'conservé',
   'intelligence.memoryText.entityTypePrefix': "Type d'entité",
   'intelligence.screenDebug.active': 'Actif',
-  'intelligence.screenDebug.app': 'App',
+  'intelligence.screenDebug.app': 'Application',
   'intelligence.screenDebug.bounds': 'Limites',
   'intelligence.screenDebug.captureAlt': 'Résultat du test de capture',
   'intelligence.screenDebug.captureFailed': 'Échec',
@@ -188,7 +188,7 @@ const fr4: TranslationMap = {
   'pages.settings.ai.llmDesc': 'Description du LLM',
   'pages.settings.ai.voice': 'Voix',
   'pages.settings.ai.voiceDesc': 'Description de la voix',
-  'pages.settings.ai.embeddings': 'Embeddings',
+  'pages.settings.ai.embeddings': 'Intégrations',
   'pages.settings.ai.embeddingsDesc':
     "Modèle d'encodage vectoriel pour la récupération de la mémoire",
   'pages.settings.aiSection.description':
@@ -302,18 +302,18 @@ const fr4: TranslationMap = {
   'settings.ai.localOllama': 'Local (Ollama)',
   'settings.ai.modelLabel': 'Modèle',
   'settings.ai.noCustomProviders': 'Aucun fournisseur personnalisé',
-  'settings.ai.openAiCompat.authHeaderExample': 'Authorization: Bearer <your key>',
-  'settings.ai.openAiCompat.authHeaderLabel': 'Auth header',
+  'settings.ai.openAiCompat.authHeaderExample': 'Autorisation : Porteur <votre clé>',
+  'settings.ai.openAiCompat.authHeaderLabel': "En-tête d'authentification",
   'settings.ai.openAiCompat.baseUrlLabel': 'Base URL',
-  'settings.ai.openAiCompat.baseUrlUnavailable': 'Unavailable',
-  'settings.ai.openAiCompat.clearKey': 'Clear key',
+  'settings.ai.openAiCompat.baseUrlUnavailable': 'Indisponible',
+  'settings.ai.openAiCompat.clearKey': 'Effacer la clé',
   'settings.ai.openAiCompat.description':
     "Point local harnesses at this /v1 server to route through the providers configured below. Authentication uses a stable key you set here, not the app's internal core bearer.",
-  'settings.ai.openAiCompat.keyConfigured': 'Key configured',
-  'settings.ai.openAiCompat.keyRequired': 'Key required',
-  'settings.ai.openAiCompat.rotateKey': 'Rotate key',
-  'settings.ai.openAiCompat.setKey': 'Set key',
-  'settings.ai.openAiCompat.title': 'OpenAI-compatible endpoint',
+  'settings.ai.openAiCompat.keyConfigured': 'Clé configurée',
+  'settings.ai.openAiCompat.keyRequired': 'Clé requise',
+  'settings.ai.openAiCompat.rotateKey': 'Rotation key',
+  'settings.ai.openAiCompat.setKey': 'Définir la clé',
+  'settings.ai.openAiCompat.title': 'Point de terminaison compatible OpenAI',
   'settings.ai.providerLabel': 'Fournisseur',
   'settings.ai.routing': 'Routage',
   'settings.ai.routingCustom': 'Routage personnalisé',
@@ -408,17 +408,17 @@ const fr4: TranslationMap = {
   'pages.settings.account.migration': 'Importer depuis un autre assistant',
   'pages.settings.account.migrationDesc':
     'Migrez la mémoire et les notes depuis OpenClaw (et bientôt Hermes) vers cet espace de travail.',
-  'composio.connect.scope.read': 'Read',
-  'composio.connect.scope.readHint': 'Allow the agent to read data from this connection.',
-  'composio.connect.scope.write': 'Write',
+  'composio.connect.scope.read': 'Lire',
+  'composio.connect.scope.readHint': "Autoriser l'agent à lire les données de cette connexion.",
+  'composio.connect.scope.write': 'Ecriture',
   'composio.connect.scope.writeHint':
-    'Allow the agent to create or modify data through this connection.',
-  'composio.connect.scope.admin': 'Admin',
+    "Autoriser l'agent à créer ou modifier des données via cette connexion.",
+  'composio.connect.scope.admin': 'Administrateur',
   'composio.connect.scope.adminHint':
-    'Allow the agent to manage settings, permissions, or destructive actions.',
+    "Autoriser l'agent à gérer les paramètres, les autorisations ou les actions destructrices.",
   'pages.settings.composioSection.title': 'Composio',
   'pages.settings.composioSection.description':
-    'Routing, triggers, and history for integrations powered by Composio.',
+    'Routage, déclencheurs et historique pour les intégrations optimisées par Composio.',
 };
 
 export default fr4;

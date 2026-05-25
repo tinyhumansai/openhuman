@@ -361,7 +361,7 @@ impl crate::openhuman::memory::chat::ChatProvider for StubChatProvider {
 struct StubEmbedder;
 
 #[async_trait::async_trait]
-impl crate::openhuman::memory::score::embed::Embedder for StubEmbedder {
+impl crate::openhuman::memory_tree::score::embed::Embedder for StubEmbedder {
     fn name(&self) -> &'static str {
         "stub-embedder-v1"
     }

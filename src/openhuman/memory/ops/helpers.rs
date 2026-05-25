@@ -10,11 +10,13 @@ use serde_json::{json, Value};
 
 use crate::openhuman::config::Config;
 use crate::openhuman::memory::{
-    MemoryClient, MemoryClientRef, MemoryDocumentSummary, MemoryItemKind, MemoryRetrievalChunk,
-    MemoryRetrievalContext, MemoryRetrievalEntity, MemoryRetrievalRelation, NamespaceMemoryHit,
-    QueryNamespaceRequest,
+    MemoryDocumentSummary, MemoryRetrievalChunk, MemoryRetrievalContext, MemoryRetrievalEntity,
+    MemoryRetrievalRelation, QueryNamespaceRequest,
 };
 use crate::openhuman::memory_store::GraphRelationRecord;
+use crate::openhuman::memory_store::{
+    MemoryClient, MemoryClientRef, MemoryItemKind, NamespaceMemoryHit,
+};
 
 // ---------------------------------------------------------------------------
 // Formatting helpers
@@ -228,7 +230,7 @@ pub(crate) fn format_llm_context_message(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::openhuman::memory::RetrievalScoreBreakdown;
+    use crate::openhuman::memory_store::RetrievalScoreBreakdown;
 
     fn sample_hit(kind: MemoryItemKind) -> NamespaceMemoryHit {
         NamespaceMemoryHit {

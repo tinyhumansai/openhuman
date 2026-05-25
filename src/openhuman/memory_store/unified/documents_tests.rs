@@ -6,7 +6,7 @@ use serde_json::json;
 use tempfile::TempDir;
 
 use crate::openhuman::embeddings::NoopEmbedding;
-use crate::openhuman::memory::{NamespaceDocumentInput, UnifiedMemory};
+use crate::openhuman::memory_store::{NamespaceDocumentInput, UnifiedMemory};
 
 fn make_doc_input(
     namespace: &str,

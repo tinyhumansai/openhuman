@@ -32,6 +32,7 @@ export interface EmbeddingsSettings {
   dimensions: number;
   rate_limit_per_min: number;
   providers: EmbeddingProviderEntry[];
+  vector_search_enabled: boolean;
 }
 
 export interface EmbeddingsUpdateResult {

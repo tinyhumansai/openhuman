@@ -3,6 +3,9 @@
 //! Sync RPCs publish `DomainEvent::MemorySyncRequested` on the global event
 //! bus — they are fire-and-forget hooks for future ingestion subscribers.
 
+use crate::openhuman::config::rpc as config_rpc;
+use crate::openhuman::memory::sync::{emit_sync_stage, MemorySyncStage, MemorySyncTrigger};
+use crate::openhuman::memory_sync::composio::{self, SyncReason};
 use crate::rpc::RpcOutcome;
 
 /// Parameters for `memory_sync_channel`.
@@ -63,6 +66,19 @@ pub async fn memory_sync_channel(
             channel_id: Some(params.channel_id.clone()),
         },
     );
+    emit_sync_stage(
+        MemorySyncTrigger::Manual,
+        MemorySyncStage::Requested,
+        None,
+        Some(&params.channel_id),
+        Some("channel-targeted sync requested".to_string()),
+    );
+    let channel_id_for_spawn = params.channel_id.clone();
+    tokio::spawn(async move {
+        if let Err(e) = spawn_manual_sync(Some(channel_id_for_spawn)).await {
+            tracing::warn!(error = %e, "[memory.sync] background channel sync failed");
+        }
+    });
     tracing::debug!("[memory.sync] memory_sync_channel: MemorySyncRequested published");
     Ok(RpcOutcome::new(
         SyncChannelResult {
@@ -83,8 +99,107 @@ pub async fn memory_sync_all() -> Result<RpcOutcome<SyncAllResult>, String> {
     crate::core::event_bus::publish_global(
         crate::core::event_bus::DomainEvent::MemorySyncRequested { channel_id: None },
     );
+    emit_sync_stage(
+        MemorySyncTrigger::Manual,
+        MemorySyncStage::Requested,
+        None,
+        None,
+        Some("global sync requested".to_string()),
+    );
+    tokio::spawn(async move {
+        if let Err(e) = spawn_manual_sync(None).await {
+            tracing::warn!(error = %e, "[memory.sync] background global sync failed");
+        }
+    });
     tracing::debug!("[memory.sync] memory_sync_all: MemorySyncRequested(all) published");
     Ok(RpcOutcome::new(SyncAllResult { requested: true }, vec![]))
+}
+
+async fn spawn_manual_sync(requested_connection: Option<String>) -> Result<(), String> {
+    let config = config_rpc::load_config_with_timeout().await?;
+    let targets = match composio::list_sync_targets(&config).await {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::debug!(
+                error = %e,
+                "[memory.sync] no composio sync targets available — proceeding with empty list"
+            );
+            Vec::new()
+        }
+    };
+
+    let targets: Vec<composio::SyncTarget> = match requested_connection.as_deref() {
+        Some(requested) => targets
+            .into_iter()
+            .filter(|target| target.connection_id == requested || target.toolkit == requested)
+            .collect(),
+        None => targets,
+    };
+
+    if let Some(requested) = requested_connection.as_deref() {
+        if targets.is_empty() {
+            emit_sync_stage(
+                MemorySyncTrigger::Manual,
+                MemorySyncStage::Failed,
+                None,
+                Some(requested),
+                Some("no active provider-backed sync target matched request".to_string()),
+            );
+            return Err(format!(
+                "memory sync: no active provider-backed target matched `{requested}`"
+            ));
+        }
+    }
+
+    tokio::spawn(async move {
+        for target in targets {
+            emit_sync_stage(
+                MemorySyncTrigger::Manual,
+                MemorySyncStage::Fetching,
+                Some(&target.toolkit),
+                Some(&target.connection_id),
+                Some("provider sync started".to_string()),
+            );
+
+            match composio::run_connection_sync(
+                config.clone(),
+                &target.connection_id,
+                SyncReason::Manual,
+            )
+            .await
+            {
+                Ok(outcome) => {
+                    emit_sync_stage(
+                        MemorySyncTrigger::Manual,
+                        MemorySyncStage::Completed,
+                        Some(&outcome.toolkit),
+                        outcome.connection_id.as_deref(),
+                        Some(format!(
+                            "provider sync completed items_ingested={}",
+                            outcome.items_ingested
+                        )),
+                    );
+                }
+                Err(error) => {
+                    emit_sync_stage(
+                        MemorySyncTrigger::Manual,
+                        MemorySyncStage::Failed,
+                        Some(&target.toolkit),
+                        Some(&target.connection_id),
+                        Some(error.clone()),
+                    );
+                    tracing::warn!(
+                        toolkit = %target.toolkit,
+                        connection_id = %target.connection_id,
+                        error = %error,
+                        "[memory.sync] provider sync failed"
+                    );
+                }
+            }
+        }
+    });
+
+    Ok(())
 }
 
 /// Returns the current memory-ingestion status: whether a job is running, the
@@ -130,7 +245,7 @@ mod tests {
         LOCK.get_or_init(|| std::sync::Mutex::new(()))
     }
 
-    fn ensure_memory_client() -> crate::openhuman::memory::MemoryClientRef {
+    fn ensure_memory_client() -> crate::openhuman::memory_store::MemoryClientRef {
         static WORKSPACE: OnceLock<PathBuf> = OnceLock::new();
         let workspace = WORKSPACE.get_or_init(|| {
             let tmp = TempDir::new().expect("tempdir");

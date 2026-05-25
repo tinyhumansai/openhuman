@@ -73,10 +73,10 @@ impl MemoryKind {
 /// source-of-truth types stay in their owning modules.
 pub mod types {
     pub use crate::openhuman::memory_store::chunks::types::Chunk;
-    pub use crate::openhuman::memory_store::contacts::Person as Contact;
     pub use crate::openhuman::memory_store::entities::EntityHit as Entity;
     pub use crate::openhuman::memory_store::trees::{SummaryNode as TreeNode, Tree, TreeKind};
     pub use crate::openhuman::memory_store::types::MemoryKvRecord as Kv;
+    pub use crate::openhuman::people::types::Person as Contact;
 }
 
 #[cfg(test)]

@@ -12,7 +12,7 @@
 //!
 //! Phase 4 (#710) adds a nullable `embedding` blob on
 //! `mem_tree_summaries` — packed little-endian `f32` vectors via
-//! [`crate::openhuman::memory::score::embed::pack_embedding`]. New
+//! [`crate::openhuman::memory_tree::score::embed::pack_embedding`]. New
 //! writes populate it via [`insert_summary_tx`]; reads decode it when
 //! present.
 
@@ -21,12 +21,12 @@ use chrono::{DateTime, TimeZone, Utc};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 
 use crate::openhuman::config::Config;
-use crate::openhuman::memory::score::embed::{decode_optional_blob, pack_checked};
 use crate::openhuman::memory_store::chunks::store::with_connection;
 use crate::openhuman::memory_store::content::StagedSummary;
 use crate::openhuman::memory_store::trees::types::{
     Buffer, SummaryNode, Tree, TreeKind, TreeStatus,
 };
+use crate::openhuman::memory_tree::score::embed::{decode_optional_blob, pack_checked};
 
 fn ms_to_utc(ms: i64) -> rusqlite::Result<DateTime<Utc>> {
     Utc.timestamp_millis_opt(ms).single().ok_or_else(|| {

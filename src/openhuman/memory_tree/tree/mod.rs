@@ -1,22 +1,21 @@
-//! Generic summary-tree mechanics shared by all three tree flavors:
-//! Source (per ingest source), Global (cross-source digest), and Topic
-//! (per-entity). Covers storage, buffer management, bucket-seal cascade,
-//! time-based flush, and the get-or-create registry primitive.
+//! Generic summary-tree mechanics shared by all tree flavors.
 //!
-//! Source-specific policy (the `_source.md` on-disk mirror, the
-//! `get_or_create_source_tree` wrapper) lives in the sibling
-//! [`crate::openhuman::memory_tree::sources`] module.
+//! Covers storage, buffer management, bucket-seal cascade, time-based
+//! flush, the get-or-create registry primitive, and the kind/profile
+//! factory.
 //!
-//! Global and topic policies (scope constants, hotness gates, curator)
-//! live in [`crate::openhuman::memory_tree::global`] and
-//! [`crate::openhuman::memory_tree::topic`] respectively; both
-//! import generic primitives from this module.
+//! Flavor-specific policy (global digest, topic hotness, source file
+//! mirror) lives in [`crate::openhuman::memory::tree_global`],
+//! [`crate::openhuman::memory::tree_topic`], and
+//! [`crate::openhuman::memory::tree_source`] respectively.
 //!
 //! Persistence (store + types) has moved to `memory_store::trees`.
 
 pub mod bucket_seal;
+pub mod factory;
 pub mod flush;
 pub mod registry;
+pub mod rpc;
 
 // Re-export persistence from memory_store so callers using tree::store / tree::types still work.
 pub use crate::openhuman::memory_store::trees::store;
@@ -28,4 +27,5 @@ pub use crate::openhuman::memory_store::trees::{
     SUMMARY_FANOUT,
 };
 pub use bucket_seal::{append_leaf, append_leaf_deferred, LabelStrategy, LeafRef};
+pub use factory::{TreeFactory, TreeProfile, GLOBAL_SCOPE};
 pub use registry::{get_or_create_tree, new_summary_id, new_tree_id};

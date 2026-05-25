@@ -43,7 +43,7 @@ pub struct MemoryState(pub std::sync::Mutex<Option<MemoryClientRef>>);
 /// first `embed` call rather than at client construction.
 ///
 /// Callers that need a non-default embedder should construct the underlying
-/// store via [`crate::openhuman::memory::create_memory_with_local_ai`] with the
+/// store via [`crate::openhuman::memory_store::create_memory_with_local_ai`] with the
 /// appropriate `MemoryConfig.embedding_provider`.
 #[derive(Clone)]
 pub struct MemoryClient {

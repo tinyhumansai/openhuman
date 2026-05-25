@@ -18,7 +18,7 @@ use crate::openhuman::config::{
     default_root_openhuman_dir, pre_login_user_dir, read_active_user_id, user_openhuman_dir,
     write_active_user_id,
 };
-use crate::openhuman::memory::conversations;
+use crate::openhuman::memory_conversations as conversations;
 
 /// Start all login-gated background services (local AI, voice, screen
 /// intelligence, autocomplete).  Called both from the initial boot path

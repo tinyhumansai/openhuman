@@ -145,7 +145,7 @@ const fr2: TranslationMap = {
   'team.failedToSwitch': "Échec du changement d'équipe",
   'team.failedToLeave': "Échec de la sortie de l'équipe",
   'team.role.owner': 'Propriétaire',
-  'team.role.admin': 'Admin',
+  'team.role.admin': 'Administrateur',
   'team.role.billingManager': 'Gestionnaire de facturation',
   'team.role.member': 'Membre',
   'team.active': 'Actif',
@@ -277,7 +277,7 @@ const fr2: TranslationMap = {
   'chat.filter.work': 'Travail',
   'chat.filter.briefing': 'Briefing',
   'chat.filter.notification': 'Notification',
-  'chat.filter.workers': 'Workers',
+  'chat.filter.workers': 'Travailleurs',
   'chat.selectThread': 'Sélectionne un fil',
   'chat.threads': 'Fils',
   'chat.noThreads': "Aucun fil pour l'instant",
@@ -396,40 +396,46 @@ const fr2: TranslationMap = {
   'insights.skills': 'Compétences',
   'insights.opinions': 'Opinions',
   // Developer options menu items (#2225) — English stubs; native translations welcome
-  'devOptions.menuAi': 'AI Configuration',
-  'devOptions.menuAiDesc': 'Cloud providers, local Ollama models, and per-workload routing',
-  'devOptions.menuScreenAware': 'Screen Awareness',
+  'devOptions.menuAi': "Configuration de l'IA",
+  'devOptions.menuAiDesc':
+    'Fournisseurs de cloud, modèles Ollama locaux et routage par charge de travail',
+  'devOptions.menuScreenAware': "Connaissance de l'écran",
   'devOptions.menuScreenAwareDesc':
-    'Screen capture permissions, monitoring policy, and session controls',
-  'devOptions.menuMessaging': 'Messaging Channels',
+    "Autorisations de capture d'écran, stratégie de surveillance et contrôles de session",
+  'devOptions.menuMessaging': 'Canaux de messagerie',
   'devOptions.menuMessagingDesc':
-    'Configure Telegram/Discord auth modes and default channel routing',
-  'devOptions.menuTools': 'Tools',
-  'devOptions.menuToolsDesc': 'Enable or disable capabilities OpenHuman can use on your behalf',
-  'devOptions.menuAgentChat': 'Agent Chat',
-  'devOptions.menuAgentChatDesc': 'Test agent conversation with model and temperature overrides',
-  'devOptions.menuCronJobs': 'Cron Jobs',
-  'devOptions.menuCronJobsDesc': 'View and configure scheduled jobs for runtime skills',
-  'devOptions.menuLocalModelDebug': 'Local Model Debug',
+    "Configurer les modes d'authentification Telegram/Discord et le routage des canaux par défaut",
+  'devOptions.menuTools': 'Outils',
+  'devOptions.menuToolsDesc':
+    'Activer ou désactiver les fonctionnalités que OpenHuman peut utiliser en votre nom',
+  'devOptions.menuAgentChat': "Chat d'agent",
+  'devOptions.menuAgentChatDesc':
+    "Conversation de l'agent de test avec remplacements de modèle et de température",
+  'devOptions.menuCronJobs': 'Tâches Cron',
+  'devOptions.menuCronJobsDesc':
+    "Afficher et configurer les tâches planifiées pour les compétences d'exécution",
+  'devOptions.menuLocalModelDebug': 'Débogage du modèle local',
   'devOptions.menuLocalModelDebugDesc':
-    'Ollama config, asset downloads, model tests, and diagnostics',
+    "Ollama configuration, téléchargements d'actifs, tests de modèles et diagnostics",
   'devOptions.menuWebhooksDebug': 'Webhooks',
   'devOptions.menuWebhooksDebugDesc':
-    'Inspect runtime webhook registrations and captured request logs',
+    "Inspecter les enregistrements de webhooks d'exécution et les journaux de requêtes capturés",
   'devOptions.menuIntelligence': 'Intelligence',
-  'devOptions.menuIntelligenceDesc': 'Memory workspace, subconscious engine, dreams, and settings',
-  'devOptions.menuNotificationRouting': 'Notification Routing',
+  'devOptions.menuIntelligenceDesc':
+    'Espace de travail mémoire, moteur subconscient, rêves et paramètres',
+  'devOptions.menuNotificationRouting': 'Routage des notifications',
   'devOptions.menuNotificationRoutingDesc':
-    'AI importance scoring and orchestrator escalation for integration alerts',
-  'devOptions.menuComposeIOTriggers': 'ComposeIO Triggers',
-  'devOptions.menuComposeIOTriggersDesc': 'View ComposeIO trigger history and archive',
-  'devOptions.menuComposioRouting': 'Composio Routing (Direct Mode)',
+    "Score d'importance de l'IA et escalade de l'orchestrateur pour les alertes d'intégration",
+  'devOptions.menuComposeIOTriggers': 'Déclencheurs ComposeIO',
+  'devOptions.menuComposeIOTriggersDesc':
+    "Afficher l'historique et les archives des déclencheurs ComposeIO",
+  'devOptions.menuComposioRouting': 'Routage Composio (mode direct)',
   'devOptions.menuComposioRoutingDesc':
-    'Bring your own Composio API key and route calls directly to backend.composio.dev',
-  'devOptions.menuComposioTriggers': 'Integration Triggers',
+    'Apportez votre propre clé Composio API et acheminez les appels directement vers backend.composio.dev',
+  'devOptions.menuComposioTriggers': "Déclencheurs d'intégration",
   'devOptions.menuComposioTriggersDesc':
-    'Configure AI triage settings for Composio integration triggers',
-  'mic.deviceSelector': 'Microphone device',
+    "Configurez les paramètres de triage IA pour les déclencheurs d'intégration Composio",
+  'mic.deviceSelector': 'Dispositif de microphone',
 };
 
 export default fr2;

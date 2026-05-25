@@ -3,10 +3,6 @@
 use crate::openhuman::channels::providers::web as web_channel;
 use crate::openhuman::config::Config;
 use crate::openhuman::inference::provider::{self, ProviderRuntimeOptions};
-use crate::openhuman::memory::conversations::{
-    self, ConversationMessage, ConversationMessagePatch, ConversationThread,
-    CreateConversationThread,
-};
 use crate::openhuman::memory::{
     ApiEnvelope, ApiMeta, AppendConversationMessageRequest, ConversationMessageRecord,
     ConversationMessagesRequest, ConversationMessagesResponse, ConversationThreadSummary,
@@ -15,6 +11,10 @@ use crate::openhuman::memory::{
     GenerateConversationThreadTitleRequest, PaginationMeta, PurgeConversationThreadsResponse,
     UpdateConversationMessageRequest, UpdateConversationThreadLabelsRequest,
     UpsertConversationThreadRequest,
+};
+use crate::openhuman::memory_conversations::{
+    self as conversations, ConversationMessage, ConversationMessagePatch, ConversationStore,
+    ConversationThread, CreateConversationThread,
 };
 use crate::openhuman::threads::title::{
     build_title_prompt, is_auto_generated_thread_title, sanitize_generated_title,
@@ -475,7 +475,7 @@ pub async fn thread_delete(
     request: DeleteConversationThreadRequest,
 ) -> Result<RpcOutcome<ApiEnvelope<DeleteConversationThreadResponse>>, String> {
     let dir = workspace_dir().await?;
-    let deleted = conversations::ConversationStore::new(dir.clone())
+    let deleted = ConversationStore::new(dir.clone())
         .delete_thread(&request.thread_id, &request.deleted_at)?;
     // Invalidate the in-process web-channel session BEFORE the
     // turn-state cleanup. The snapshot deletion is fallible and

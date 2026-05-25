@@ -282,6 +282,33 @@ pub struct Config {
     #[serde(default)]
     pub voice_server: VoiceServerConfig,
 
+    // ── Voice provider routing ──────────────────────────────────────────────
+    //
+    // Mirrors the LLM `cloud_providers` + per-workload routing pattern.
+    //
+    // Provider-string grammar (consumed by `voice::factory`):
+    //
+    //   "cloud" / "openhuman"  → OpenHuman backend proxy (STT or TTS)
+    //   "whisper"              → local Whisper (STT only)
+    //   "piper"                → local Piper (TTS only)
+    //   "<slug>:<model>"       → voice_providers entry matched by slug
+    //
+    // When `stt_provider` / `tts_provider` are `None`, the factory falls
+    // back to `local_ai.stt_provider` / `local_ai.tts_provider` (legacy),
+    // then to `"cloud"`.
+    /// Registered voice providers (STT/TTS). Analogous to `cloud_providers`
+    /// for LLM inference.
+    #[serde(default)]
+    pub voice_providers: Vec<crate::openhuman::config::schema::voice_providers::VoiceProviderCreds>,
+
+    /// STT routing string. Grammar: `"cloud"` | `"whisper"` | `"<slug>:<model>"`.
+    #[serde(default)]
+    pub stt_provider: Option<String>,
+
+    /// TTS routing string. Grammar: `"cloud"` | `"piper"` | `"<slug>:<voice>"`.
+    #[serde(default)]
+    pub tts_provider: Option<String>,
+
     #[serde(default)]
     pub integrations: IntegrationsConfig,
 
@@ -614,6 +641,9 @@ impl Default for Config {
             node: NodeConfig::default(),
             runtime_python: RuntimePythonConfig::default(),
             voice_server: VoiceServerConfig::default(),
+            voice_providers: Vec::new(),
+            stt_provider: None,
+            tts_provider: None,
             integrations: IntegrationsConfig::default(),
             learning: LearningConfig::default(),
             update: UpdateConfig::default(),

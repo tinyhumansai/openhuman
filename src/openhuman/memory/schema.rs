@@ -4,8 +4,8 @@
 //! (`ingest`, `list_chunks`, `get_chunk`, `trigger_digest`) plus the new
 //! Memory-tab read RPCs added by the cloud-default backend refactor:
 //! `list_sources`, `search`, `recall`, `entity_index_for`,
-//! `top_entities`, `chunk_score`, `delete_chunk`, plus
-//! `get_llm` / `set_llm` for the backend-selector UI.
+//! `top_entities`, `chunk_score`, `delete_chunk`, and destructive
+//! maintenance helpers for local iteration.
 //!
 //! Handlers delegate to [`super::rpc`] (write side) or
 //! [`super::read_rpc`] (UI read side).
@@ -17,7 +17,7 @@ use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 use crate::openhuman::config::rpc as config_rpc;
 use crate::openhuman::memory::read_rpc;
-use crate::openhuman::memory::tree_rpc;
+use crate::openhuman::memory_tree::tree::rpc;
 use crate::rpc::RpcOutcome;
 
 const NAMESPACE: &str = "memory_tree";
@@ -39,8 +39,6 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("top_entities"),
         schemas("chunk_score"),
         schemas("delete_chunk"),
-        schemas("get_llm"),
-        schemas("set_llm"),
         schemas("graph_export"),
         schemas("flush_now"),
         schemas("wipe_all"),
@@ -103,14 +101,6 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("delete_chunk"),
             handler: handle_delete_chunk,
-        },
-        RegisteredController {
-            schema: schemas("get_llm"),
-            handler: handle_get_llm,
-        },
-        RegisteredController {
-            schema: schemas("set_llm"),
-            handler: handle_set_llm,
         },
         RegisteredController {
             schema: schemas("graph_export"),
@@ -489,68 +479,6 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 },
             ],
         },
-        "get_llm" => ControllerSchema {
-            namespace: NAMESPACE,
-            function: "get_llm",
-            description: "Read the currently configured LLM backend (`cloud` or `local`).",
-            inputs: vec![],
-            outputs: vec![FieldSchema {
-                name: "current",
-                ty: TypeSchema::Enum {
-                    variants: vec!["cloud", "local"],
-                },
-                comment: "Active backend string.",
-                required: true,
-            }],
-        },
-        "set_llm" => ControllerSchema {
-            namespace: NAMESPACE,
-            function: "set_llm",
-            description: "Update the LLM backend selector and (optionally) per-role model choices \
-                 (`cloud_model`, `extract_model`, `summariser_model`) and persist the \
-                 result to config.toml in a single atomic write. Absent model fields \
-                 leave the corresponding config key unchanged so a caller flipping just \
-                 the backend doesn't have to re-supply every model id.",
-            inputs: vec![
-                FieldSchema {
-                    name: "backend",
-                    ty: TypeSchema::Enum {
-                        variants: vec!["cloud", "local"],
-                    },
-                    comment: "New backend value.",
-                    required: true,
-                },
-                FieldSchema {
-                    name: "cloud_model",
-                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
-                    comment: "Cloud model id (used when backend=cloud). \
-                              Absent → leave existing memory_tree.cloud_llm_model unchanged.",
-                    required: false,
-                },
-                FieldSchema {
-                    name: "extract_model",
-                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
-                    comment: "Ollama model id for the entity extractor (used when backend=local). \
-                              Absent → leave existing memory_tree.llm_extractor_model unchanged.",
-                    required: false,
-                },
-                FieldSchema {
-                    name: "summariser_model",
-                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
-                    comment: "Ollama model id for the summariser (used when backend=local). \
-                              Absent → leave existing memory_tree.llm_summariser_model unchanged.",
-                    required: false,
-                },
-            ],
-            outputs: vec![FieldSchema {
-                name: "current",
-                ty: TypeSchema::Enum {
-                    variants: vec!["cloud", "local"],
-                },
-                comment: "The effective backend after the call.",
-                required: true,
-            }],
-        },
         "wipe_all" => ControllerSchema {
             namespace: NAMESPACE,
             function: "wipe_all",
@@ -762,31 +690,31 @@ pub fn schemas(function: &str) -> ControllerSchema {
 fn handle_ingest(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
-        let req = parse_value::<tree_rpc::IngestRequest>(Value::Object(params))?;
-        to_json(tree_rpc::ingest_rpc(&config, req).await?)
+        let req = parse_value::<rpc::IngestRequest>(Value::Object(params))?;
+        to_json(rpc::ingest_rpc(&config, req).await?)
     })
 }
 
 fn handle_get_chunk(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
-        let req = parse_value::<tree_rpc::GetChunkRequest>(Value::Object(params))?;
-        to_json(tree_rpc::get_chunk_rpc(&config, req).await?)
+        let req = parse_value::<rpc::GetChunkRequest>(Value::Object(params))?;
+        to_json(rpc::get_chunk_rpc(&config, req).await?)
     })
 }
 
 fn handle_trigger_digest(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
-        let req = parse_value::<tree_rpc::TriggerDigestRequest>(Value::Object(params))?;
-        to_json(tree_rpc::trigger_digest_rpc(&config, req).await?)
+        let req = parse_value::<rpc::TriggerDigestRequest>(Value::Object(params))?;
+        to_json(rpc::trigger_digest_rpc(&config, req).await?)
     })
 }
 
 fn handle_memory_backfill_status(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
-        to_json(tree_rpc::backfill_status_rpc(&config).await?)
+        to_json(rpc::backfill_status_rpc(&config).await?)
     })
 }
 
@@ -901,21 +829,6 @@ fn handle_delete_chunk(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
-fn handle_get_llm(_params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
-        to_json(read_rpc::get_llm_rpc(&config).await?)
-    })
-}
-
-fn handle_set_llm(params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async move {
-        let mut config = config_rpc::load_config_with_timeout().await?;
-        let req = parse_value::<read_rpc::SetLlmRequest>(Value::Object(params))?;
-        to_json(read_rpc::set_llm_rpc(&mut config, req).await?)
-    })
-}
-
 fn handle_graph_export(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         #[derive(serde::Deserialize, Default)]
@@ -993,15 +906,5 @@ mod tests {
         assert!(required.contains(&"source_kind"));
         assert!(required.contains(&"source_id"));
         assert!(required.contains(&"payload"));
-    }
-
-    #[test]
-    fn set_llm_schema_exposes_backend_update_fields() {
-        let schema = schemas("set_llm");
-        let names: Vec<&str> = schema.inputs.iter().map(|f| f.name).collect();
-        assert!(names.contains(&"backend"));
-        assert!(names.contains(&"cloud_model"));
-        assert!(names.contains(&"extract_model"));
-        assert!(names.contains(&"summariser_model"));
     }
 }

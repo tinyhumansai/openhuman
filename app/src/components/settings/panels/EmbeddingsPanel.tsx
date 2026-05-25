@@ -28,7 +28,11 @@ type Status =
   | { kind: 'saved' }
   | { kind: 'error'; message: string };
 
-const EmbeddingsPanel = () => {
+interface EmbeddingsPanelProps {
+  embedded?: boolean;
+}
+
+const EmbeddingsPanel = ({ embedded = false }: EmbeddingsPanelProps = {}) => {
   const { t } = useT();
   const { navigateBack, breadcrumbs } = useSettingsNavigation();
 
@@ -74,13 +78,15 @@ const EmbeddingsPanel = () => {
   if (!settings) {
     return (
       <div className="z-10 relative">
-        <SettingsHeader
-          title={t('settings.embeddings.title')}
-          showBackButton
-          onBack={navigateBack}
-          breadcrumbs={breadcrumbs}
-        />
-        <div className="p-4">
+        {!embedded && (
+          <SettingsHeader
+            title={t('settings.embeddings.title')}
+            showBackButton
+            onBack={navigateBack}
+            breadcrumbs={breadcrumbs}
+          />
+        )}
+        <div className={embedded ? '' : 'p-4'}>
           <div className="rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 text-xs text-stone-500 dark:text-neutral-400">
             {status.kind === 'loading'
               ? t('common.loading')
@@ -318,14 +324,16 @@ const EmbeddingsPanel = () => {
 
   return (
     <div className="z-10 relative">
-      <SettingsHeader
-        title={t('settings.embeddings.title')}
-        showBackButton
-        onBack={navigateBack}
-        breadcrumbs={breadcrumbs}
-      />
+      {!embedded && (
+        <SettingsHeader
+          title={t('settings.embeddings.title')}
+          showBackButton
+          onBack={navigateBack}
+          breadcrumbs={breadcrumbs}
+        />
+      )}
 
-      <div className="p-4 space-y-4">
+      <div className={embedded ? 'space-y-4' : 'p-4 space-y-4'}>
         <p className="text-xs text-stone-500 dark:text-neutral-400 leading-relaxed">
           {t('settings.embeddings.description')}
         </p>
@@ -392,6 +400,15 @@ const EmbeddingsPanel = () => {
             );
           })}
         </div>
+
+        {/* Vector search disabled notice */}
+        {selectedProvider === 'none' && (
+          <div className="rounded-xl border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-900/10 p-3">
+            <p className="text-xs text-amber-800 dark:text-amber-200 leading-relaxed">
+              {t('settings.embeddings.vectorSearchDisabled')}
+            </p>
+          </div>
+        )}
 
         {/* Model & dimensions (for active provider with catalog models) */}
         {currentModels.length > 0 &&

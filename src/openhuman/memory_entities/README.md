@@ -32,7 +32,7 @@ updated_at: 2026-05-23T22:00:00Z
 Free-form notes the user can edit in Obsidian. Preserved across upserts.
 ```
 
-`kind` matches `memory::score::extract::EntityKind` so canonical ids the
+`kind` matches `memory_tree::score::extract::EntityKind` so canonical ids the
 scorer emits round-trip through here unchanged.
 
 ## API

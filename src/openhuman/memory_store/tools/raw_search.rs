@@ -1,6 +1,6 @@
 //! `memory_store_raw_search` — free-text search over the entity index.
 //!
-//! Thin wrapper around `memory::retrieval::search_entities`. Returns canonical
+//! Thin wrapper around `memory_tree::retrieval::search_entities`. Returns canonical
 //! entity ids ranked by mention count. This is the rawest of the raw search
 //! paths: no narrative, no scoring beyond aggregate occurrence, no rerank.
 //! Use it when an agent needs to discover what entities exist in the store
@@ -11,8 +11,8 @@ use serde::Deserialize;
 use serde_json::json;
 
 use crate::openhuman::config::rpc as config_rpc;
-use crate::openhuman::memory::retrieval::search::search_entities;
-use crate::openhuman::memory::score::extract::EntityKind;
+use crate::openhuman::memory_tree::retrieval::search::search_entities;
+use crate::openhuman::memory_tree::score::extract::EntityKind;
 use crate::openhuman::tools::traits::{Tool, ToolResult};
 
 pub struct MemoryStoreRawSearchTool;
