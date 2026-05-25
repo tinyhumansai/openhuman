@@ -463,6 +463,22 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn generated_runtime_policy_allows_when_enabled_but_missing_context() {
+        let policy = GeneratedToolRuntimePolicy::new(GeneratedToolRuntimePolicyConfig {
+            enabled: true,
+            ..Default::default()
+        });
+
+        let request = ToolPolicyRequest::new(
+            "echo",
+            serde_json::json!({ "value": 1 }),
+            ToolCallContext::session("session", "chat", "orchestrator", "call-1", 1),
+        );
+
+        assert_eq!(policy.check(&request).await, ToolPolicyDecision::Allow);
+    }
+
+    #[tokio::test]
     async fn generated_runtime_policy_denies_revoked_provider() {
         let policy = GeneratedToolRuntimePolicy::new(GeneratedToolRuntimePolicyConfig {
             enabled: true,

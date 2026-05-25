@@ -664,8 +664,9 @@ async fn execute_tool_call_threads_generated_tool_context_into_policy() {
         backend: "none".into(),
         ..crate::openhuman::config::MemoryConfig::default()
     };
-    let mem: Arc<dyn Memory> =
-        Arc::from(crate::openhuman::memory::create_memory(&memory_cfg, &workspace_path).unwrap());
+    let mem: Arc<dyn Memory> = Arc::from(
+        crate::openhuman::memory_store::create_memory(&memory_cfg, &workspace_path).unwrap(),
+    );
     let calls = Arc::new(AtomicUsize::new(0));
 
     let agent = Agent::builder()
