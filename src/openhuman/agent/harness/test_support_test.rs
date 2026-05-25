@@ -402,6 +402,7 @@ async fn keyword_provider_drives_prompt_guided_tool_loop_to_completion() {
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .expect("loop should complete");
@@ -451,6 +452,7 @@ async fn keyword_provider_drives_native_tool_calls_path() {
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .expect("loop should complete");
@@ -506,6 +508,7 @@ async fn keyword_provider_chains_multiple_tools_across_iterations() {
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .unwrap();
@@ -623,6 +626,7 @@ async fn crypto_wallet_send_flow_sequences_wallet_tools_and_confirmation_gate() 
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .expect("crypto wallet flow should complete");
@@ -735,6 +739,7 @@ async fn crypto_wallet_send_flow_does_not_execute_when_confirmation_is_not_grant
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .expect("declined flow should still complete");
@@ -795,6 +800,7 @@ async fn keyword_provider_uses_latest_tool_result_to_drive_the_next_tool_call() 
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .expect("loop should complete");
@@ -868,6 +874,7 @@ async fn keyword_provider_executes_multiple_native_tool_calls_from_one_turn() {
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .expect("loop should complete");
@@ -916,6 +923,7 @@ async fn keyword_provider_unknown_tool_surfaces_error_and_loop_continues() {
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .unwrap();
@@ -965,6 +973,7 @@ async fn run_tool_call_loop_returns_max_iterations_error() {
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .expect_err("should hit max iterations");
@@ -1034,6 +1043,7 @@ async fn agent_loop_refuses_clirpconly_tools() {
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .unwrap();
@@ -1093,6 +1103,7 @@ async fn tool_error_result_is_surfaced_to_next_iteration() {
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .unwrap();
@@ -1148,6 +1159,7 @@ async fn tool_anyhow_error_surfaces_in_history() {
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .unwrap();
@@ -1192,6 +1204,7 @@ async fn visible_tool_names_whitelist_rejects_filtered_out_tools() {
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .unwrap();
@@ -1237,6 +1250,7 @@ async fn extra_tools_are_invokable_alongside_registry() {
         &extras,
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .unwrap();
@@ -1391,6 +1405,7 @@ async fn harness_invokes_composio_action_tool_against_fake_backend() {
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .unwrap();
@@ -1537,6 +1552,7 @@ impl Tool for TestDelegationTool {
             &[],
             None,
             None,
+            &crate::openhuman::tools::policy::DefaultToolPolicy,
         )
         .await?;
 
@@ -1679,6 +1695,7 @@ async fn orchestrator_prompt_drives_composio_call_via_delegation_chain() {
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .expect("orchestrator loop should complete");

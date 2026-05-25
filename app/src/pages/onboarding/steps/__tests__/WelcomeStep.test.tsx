@@ -31,4 +31,13 @@ describe('WelcomeStep', () => {
     renderWithProviders(<WelcomeStep onNext={() => {}} />);
     expect(screen.getByRole('button', { name: 'Get Started' })).not.toBeDisabled();
   });
+
+  it('CTA has proper ARIA attributes for accessibility', () => {
+    renderWithProviders(<WelcomeStep onNext={() => {}} />);
+    const button = screen.getByRole('button', { name: 'Get Started' });
+
+    expect(button).toHaveAttribute('aria-label', 'Get Started');
+    expect(button).toHaveAttribute('aria-live', 'polite');
+    expect(button).toHaveAttribute('aria-busy', 'false');
+  });
 });

@@ -46,6 +46,21 @@ fn disabled_store_returns_plaintext() {
 }
 
 #[test]
+fn keyring_user_id_uses_last_path_component_when_available() {
+    let path = std::path::Path::new("/tmp/openhuman/users/user-123");
+    assert_eq!(keyring_user_id_from_dir(path), "user-123");
+}
+
+#[test]
+fn keyring_user_id_falls_back_to_stable_hash() {
+    let path = std::path::Path::new("/");
+    let first = keyring_user_id_from_dir(path);
+    let second = keyring_user_id_from_dir(path);
+    assert_eq!(first, second);
+    assert!(first.starts_with("secretstore-path-"));
+}
+
+#[test]
 fn is_encrypted_detects_prefix() {
     assert!(SecretStore::is_encrypted("enc2:aabbcc"));
     assert!(SecretStore::is_encrypted("enc:aabbcc")); // legacy

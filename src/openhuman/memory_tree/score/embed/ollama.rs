@@ -105,6 +105,34 @@ impl OllamaEmbedder {
     }
 }
 
+fn is_missing_model_response(status: reqwest::StatusCode, body: &str) -> bool {
+    if status != reqwest::StatusCode::NOT_FOUND {
+        return false;
+    }
+
+    let normalized = body.to_ascii_lowercase();
+    normalized.contains("model") && normalized.contains("not found")
+}
+
+fn format_embedding_status_error(
+    status: reqwest::StatusCode,
+    body: &str,
+    endpoint: &str,
+    model: &str,
+) -> String {
+    let trimmed_body = body.trim();
+
+    if is_missing_model_response(status, trimmed_body) {
+        return format!(
+            "Ollama embedding model `{model}` is not installed at {endpoint}. \
+             Run `ollama pull {model}` or choose an installed embedding model in \
+             Settings -> AI & Skills -> Local AI. status={status} body={trimmed_body}"
+        );
+    }
+
+    format!("ollama embeddings failed status={status} body={trimmed_body}")
+}
+
 /// Override Ollama's per-model `num_ctx` default. Ollama loads
 /// embedding models with `num_ctx = 4096` (or whatever default the
 /// model's modelfile carries) unless the request explicitly asks for
@@ -181,10 +209,12 @@ impl Embedder for OllamaEmbedder {
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            anyhow::bail!(
-                "ollama embeddings failed status={status} body={}",
-                body.trim()
-            );
+            anyhow::bail!(format_embedding_status_error(
+                status,
+                &body,
+                &self.endpoint,
+                &self.model
+            ));
         }
 
         let payload: EmbedResponse = resp
@@ -287,6 +317,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn missing_model_404_mentions_pull_command() {
+        let app = Router::new().route(
+            "/api/embeddings",
+            post(|| async { (StatusCode::NOT_FOUND, "{\"error\":\"model not found\"}") }),
+        );
+        let url = start_mock(app).await;
+        let e = OllamaEmbedder::new(url, "custom-embed".into(), 0);
+        let err = e.embed("hello").await.unwrap_err().to_string();
+
+        assert!(
+            err.contains("embedding model `custom-embed` is not installed"),
+            "msg: {err}"
+        );
+        assert!(err.contains("ollama pull custom-embed"), "msg: {err}");
+    }
+
+    #[tokio::test]
     async fn dim_mismatch_rejected() {
         let app = Router::new().route(
             "/api/embeddings",
@@ -315,9 +362,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn connection_refused_is_descriptive() {
-        // Port 1 is effectively guaranteed refused on any reasonable host.
-        let e = OllamaEmbedder::new("http://127.0.0.1:1".into(), String::new(), 500);
+    async fn request_failure_is_descriptive() {
+        let e = OllamaEmbedder::new("http://%".into(), String::new(), 500);
         let err = e.embed("hi").await.unwrap_err().to_string();
         assert!(
             err.contains("is Ollama running"),

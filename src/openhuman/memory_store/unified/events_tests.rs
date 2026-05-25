@@ -212,6 +212,32 @@ fn event_fts_matches_subject_field() {
 }
 
 #[test]
+fn event_fts_sanitises_punctuation_safely() {
+    let conn = setup_db();
+    let event = EventRecord {
+        event_id: "evt-punct".into(),
+        segment_id: "seg-1".into(),
+        session_id: "s1".into(),
+        namespace: "global".into(),
+        event_type: EventType::Decision,
+        content: "We decided to use Rust for backend deployment".into(),
+        subject: Some("backend deployment".into()),
+        timestamp_ref: None,
+        confidence: 0.85,
+        embedding: None,
+        source_turn_ids: None,
+        created_at: 1000.0,
+    };
+    event_insert(&conn, &event).unwrap();
+
+    let results = event_search_fts(&conn, "global", "\"Rust\"，(backend)?", 5)
+        .expect("punctuated user query should not trip FTS5 syntax errors");
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].event_id, "evt-punct");
+}
+
+#[test]
 fn event_embeddings_are_scoped_by_model_signature() {
     let conn = setup_db();
     let event = EventRecord {

@@ -6,6 +6,7 @@ use crate::openhuman::approval::{ApprovalManager, ApprovalRequest, ApprovalRespo
 use crate::openhuman::inference::provider::{
     ChatMessage, ChatRequest, Provider, ProviderCapabilityError, ProviderDelta,
 };
+use crate::openhuman::tools::policy::{DefaultToolPolicy, PolicyDecision, ToolPolicy};
 use crate::openhuman::tools::traits::ToolScope;
 use crate::openhuman::tools::Tool;
 use anyhow::Result;
@@ -49,6 +50,7 @@ pub(crate) async fn agent_turn(
     max_tool_iterations: usize,
     payload_summarizer: Option<&dyn PayloadSummarizer>,
 ) -> Result<String> {
+    let default_policy = DefaultToolPolicy;
     run_tool_call_loop(
         provider,
         history,
@@ -66,6 +68,7 @@ pub(crate) async fn agent_turn(
         &[],
         None,
         payload_summarizer,
+        &default_policy,
     )
     .await
 }
@@ -117,6 +120,7 @@ pub(crate) async fn run_tool_call_loop(
     extra_tools: &[Box<dyn Tool>],
     on_progress: Option<tokio::sync::mpsc::Sender<AgentProgress>>,
     payload_summarizer: Option<&dyn PayloadSummarizer>,
+    tool_policy: &dyn ToolPolicy,
 ) -> Result<String> {
     let max_iterations = if max_tool_iterations == 0 {
         DEFAULT_MAX_TOOL_ITERATIONS
@@ -608,6 +612,30 @@ pub(crate) async fn run_tool_call_loop(
                     }
                 }
             };
+
+            // ── Tool policy check (#2131) ─────────────────
+            // Evaluate the pluggable ToolPolicy before any approval or
+            // execution. If the policy denies the call, skip everything
+            // (including approval side-effects) and return the denial
+            // reason as a tool error to the model.
+            if let PolicyDecision::Deny(reason) = tool_policy.evaluate(&call.name, &call.arguments)
+            {
+                tracing::debug!(
+                    iteration,
+                    tool = call.name.as_str(),
+                    reason = %reason,
+                    "[agent_loop] tool policy denied tool call"
+                );
+                let denied = format!("Tool '{}' denied by policy: {reason}", call.name);
+                emit_failed_completion(&denied).await;
+                individual_results.push(denied.clone());
+                let _ = writeln!(
+                    tool_results,
+                    "<tool_result name=\"{}\">\n{denied}\n</tool_result>",
+                    call.name
+                );
+                continue;
+            }
 
             // ── Approval hook ────────────────────────────────
             if let Some(mgr) = approval {
