@@ -33,7 +33,8 @@ use crate::openhuman::inference::provider::{
     ChatMessage, ChatRequest, ChatResponse, ConversationMessage, Provider, ToolCall,
     ToolResultMessage,
 };
-use crate::openhuman::memory::{self, Memory};
+use crate::openhuman::memory::Memory;
+use crate::openhuman::memory_store;
 use crate::openhuman::tools::{Tool, ToolResult};
 use anyhow::Result;
 use async_trait::async_trait;
@@ -247,7 +248,7 @@ fn make_memory() -> (Arc<dyn Memory>, tempfile::TempDir) {
         backend: "none".into(),
         ..MemoryConfig::default()
     };
-    let mem = Arc::from(memory::create_memory(&cfg, tmp.path()).unwrap());
+    let mem = Arc::from(memory_store::create_memory(&cfg, tmp.path()).unwrap());
     (mem, tmp)
 }
 
@@ -257,7 +258,7 @@ fn make_sqlite_memory() -> (Arc<dyn Memory>, tempfile::TempDir) {
         backend: "sqlite".into(),
         ..MemoryConfig::default()
     };
-    let mem = Arc::from(memory::create_memory(&cfg, tmp.path()).unwrap());
+    let mem = Arc::from(memory_store::create_memory(&cfg, tmp.path()).unwrap());
     (mem, tmp)
 }
 

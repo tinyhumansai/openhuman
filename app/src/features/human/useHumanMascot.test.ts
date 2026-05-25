@@ -3,7 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ChatEventListeners } from '../../services/chatService';
 import { VISEMES } from './Mascot/visemes';
-import { ACK_FACE_HOLD_MS, pickViseme, useHumanMascot } from './useHumanMascot';
+import {
+  ACK_FACE_HOLD_MS,
+  pickConversationAckFace,
+  pickViseme,
+  useHumanMascot,
+} from './useHumanMascot';
 import { type PlaybackHandle, playBase64Audio } from './voice/audioPlayer';
 import { synthesizeSpeech } from './voice/ttsClient';
 
@@ -133,6 +138,46 @@ describe('pickViseme', () => {
   });
 });
 
+describe('pickConversationAckFace', () => {
+  it('prefers explicit reaction emoji from chat_done', () => {
+    expect(pickConversationAckFace({ full_response: 'Done', reaction_emoji: '✅' })).toBe('happy');
+    expect(pickConversationAckFace({ full_response: 'Done', reaction_emoji: '🤔' })).toBe(
+      'confused'
+    );
+    expect(pickConversationAckFace({ full_response: 'Done', reaction_emoji: '⚠️' })).toBe(
+      'concerned'
+    );
+  });
+
+  it('falls back to deterministic response text cues', () => {
+    expect(
+      pickConversationAckFace({ full_response: 'All set, this is fixed.', reaction_emoji: null })
+    ).toBe('happy');
+    expect(
+      pickConversationAckFace({
+        full_response: 'I need more detail to clarify which workspace you mean.',
+        reaction_emoji: null,
+      })
+    ).toBe('confused');
+    expect(
+      pickConversationAckFace({
+        full_response: 'Sorry, the provider failed and I cannot continue.',
+        reaction_emoji: null,
+      })
+    ).toBe('concerned');
+  });
+
+  it('returns null when there is no strong cue', () => {
+    expect(
+      pickConversationAckFace({ full_response: 'Here is the summary.', reaction_emoji: null })
+    ).toBeNull();
+  });
+
+  it('returns null when the response text is missing', () => {
+    expect(pickConversationAckFace({ reaction_emoji: null })).toBeNull();
+  });
+});
+
 describe('useHumanMascot state machine', () => {
   beforeEach(() => {
     capturedListeners = null;
@@ -224,6 +269,42 @@ describe('useHumanMascot state machine', () => {
       vi.advanceTimersByTime(ACK_FACE_HOLD_MS + 1);
     });
     expect(result.current.face).toBe('idle');
+  });
+
+  it('uses reaction emoji for the post-turn acknowledgement face', () => {
+    const { result } = renderHook(() => useHumanMascot({ speakReplies: false }));
+    act(() => {
+      capturedListeners?.onDone?.(
+        fakeEvent({
+          full_response: 'I need more detail before I can choose.',
+          reaction_emoji: '🤔',
+          rounds_used: 1,
+          total_input_tokens: 1,
+          total_output_tokens: 1,
+        })
+      );
+    });
+    expect(result.current.face).toBe('confused');
+    act(() => {
+      vi.advanceTimersByTime(ACK_FACE_HOLD_MS + 1);
+    });
+    expect(result.current.face).toBe('idle');
+  });
+
+  it('uses response text cues when no reaction emoji is present', () => {
+    const { result } = renderHook(() => useHumanMascot({ speakReplies: false }));
+    act(() => {
+      capturedListeners?.onDone?.(
+        fakeEvent({
+          full_response: 'Sorry, that failed because the provider is unavailable.',
+          reaction_emoji: null,
+          rounds_used: 1,
+          total_input_tokens: 1,
+          total_output_tokens: 1,
+        })
+      );
+    });
+    expect(result.current.face).toBe('concerned');
   });
 
   it('holds concerned briefly on chat_error, then idles', () => {
@@ -507,6 +588,28 @@ describe('useHumanMascot TTS playback', () => {
     const { result } = renderHook(() => useHumanMascot({ speakReplies: true }));
     await act(async () => {
       capturedListeners?.onDone?.(fakeDone('hello'));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(result.current.face).toBe('concerned');
+    act(() => {
+      vi.advanceTimersByTime(ACK_FACE_HOLD_MS + 1);
+    });
+    expect(result.current.face).toBe('idle');
+  });
+
+  it('shows concerned when audio playback cannot start', async () => {
+    (synthesizeSpeech as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      audio_base64: 'AAA=',
+      audio_mime: 'audio/mpeg',
+      visemes: [{ viseme: 'aa', start_ms: 0, end_ms: 100 }],
+    });
+    (playBase64Audio as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('decode failed'));
+
+    const { result } = renderHook(() => useHumanMascot({ speakReplies: true }));
+    await act(async () => {
+      capturedListeners?.onDone?.(fakeDone('All set, this is fixed.'));
       await Promise.resolve();
       await Promise.resolve();
       await Promise.resolve();

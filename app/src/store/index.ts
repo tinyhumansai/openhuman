@@ -83,7 +83,11 @@ const persistedLocaleReducer = persistReducer(localePersistConfig, localeReducer
 // Theme preference is pre-login and applies to the whole desktop app
 // (light/dark/system). Persist via plain localStorage so it survives user
 // switches like coreMode does.
-const themePersistConfig = { key: 'theme', storage: localStorageAdapter, whitelist: ['mode'] };
+const themePersistConfig = {
+  key: 'theme',
+  storage: localStorageAdapter,
+  whitelist: ['mode', 'tabBarLabels'],
+};
 const persistedThemeReducer = persistReducer(themePersistConfig, themeReducer);
 
 const channelConnectionsPersistConfig = {

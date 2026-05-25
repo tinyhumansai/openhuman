@@ -1,5 +1,5 @@
-use crate::openhuman::memory::safety;
 use crate::openhuman::memory::{Memory, MemoryCategory};
+use crate::openhuman::memory_store::safety;
 use crate::openhuman::security::policy::ToolOperation;
 use crate::openhuman::security::SecurityPolicy;
 use crate::openhuman::tools::traits::{Tool, ToolResult};
@@ -123,7 +123,7 @@ impl Tool for MemoryStoreTool {
 mod tests {
     use super::*;
     use crate::openhuman::embeddings::NoopEmbedding;
-    use crate::openhuman::memory::UnifiedMemory;
+    use crate::openhuman::memory_store::UnifiedMemory;
     use crate::openhuman::security::{AutonomyLevel, SecurityPolicy};
     use tempfile::TempDir;
 

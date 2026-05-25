@@ -28,7 +28,7 @@ use openhuman_core::openhuman::embeddings::{
     DEFAULT_CLOUD_EMBEDDING_DIMENSIONS, DEFAULT_CLOUD_EMBEDDING_MODEL, DEFAULT_OLLAMA_DIMENSIONS,
     DEFAULT_OLLAMA_MODEL,
 };
-use openhuman_core::openhuman::memory::{
+use openhuman_core::openhuman::memory_store::factories::{
     effective_embedding_settings, effective_embedding_settings_probed,
 };
 

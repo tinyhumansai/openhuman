@@ -9,8 +9,10 @@ import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
 const DebugSection = ({
   state,
+  t,
 }: {
   state: ComponentProps<typeof ScreenIntelligenceDebugPanel>['state'];
+  t: (key: string, fallback?: string) => string;
 }) => {
   const [isOpen, setIsOpen] = useState(false);
 
@@ -20,9 +22,9 @@ const DebugSection = ({
         type="button"
         onClick={() => setIsOpen(prev => !prev)}
         className="flex w-full items-center justify-between text-sm font-semibold text-stone-900 dark:text-neutral-100">
-        <span>Debug & Diagnostics</span>
+        <span>{t('screenAwareness.debug.debugAndDiagnostics')}</span>
         <span className="text-xs text-stone-400 dark:text-neutral-500">
-          {isOpen ? 'Collapse' : 'Expand'}
+          {isOpen ? t('screenAwareness.debug.collapse') : t('screenAwareness.debug.expand')}
         </span>
       </button>
       {isOpen && <ScreenIntelligenceDebugPanel state={state} />}
@@ -94,7 +96,9 @@ const ScreenAwarenessDebugPanel = () => {
       });
       await refreshStatus();
     } catch (error) {
-      setConfigError(error instanceof Error ? error.message : 'Failed to save screen intelligence');
+      setConfigError(
+        error instanceof Error ? error.message : t('screenAwareness.debug.failedToSave')
+      );
     } finally {
       setIsSavingConfig(false);
     }
@@ -113,11 +117,13 @@ const ScreenAwarenessDebugPanel = () => {
         {/* Advanced policy settings */}
         <section className="space-y-3">
           <h3 className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
-            Screen Intelligence Policy
+            {t('screenAwareness.debug.policyTitle')}
           </h3>
 
           <label className="flex items-center justify-between rounded-xl border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 px-3 py-2">
-            <span className="text-sm text-stone-700 dark:text-neutral-200">Baseline FPS</span>
+            <span className="text-sm text-stone-700 dark:text-neutral-200">
+              {t('screenAwareness.debug.baselineFps')}
+            </span>
             <input
               type="number"
               min={0.2}
@@ -131,10 +137,11 @@ const ScreenAwarenessDebugPanel = () => {
 
           <label className="flex items-center justify-between rounded-xl border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 px-3 py-2">
             <div>
-              <span className="text-sm text-stone-700 dark:text-neutral-200">Use Vision Model</span>
+              <span className="text-sm text-stone-700 dark:text-neutral-200">
+                {t('screenAwareness.debug.useVisionModel')}
+              </span>
               <p className="text-xs text-stone-400 dark:text-neutral-500">
-                Send screenshots to a vision LLM for richer context. When off, only OCR text is used
-                with a text LLM — faster and no vision model required.
+                {t('screenAwareness.debug.useVisionModelDesc')}
               </p>
             </div>
             <input
@@ -146,9 +153,11 @@ const ScreenAwarenessDebugPanel = () => {
 
           <label className="flex items-center justify-between rounded-xl border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 px-3 py-2">
             <div>
-              <span className="text-sm text-stone-700 dark:text-neutral-200">Keep Screenshots</span>
+              <span className="text-sm text-stone-700 dark:text-neutral-200">
+                {t('screenAwareness.debug.keepScreenshots')}
+              </span>
               <p className="text-xs text-stone-400 dark:text-neutral-500">
-                Save captured screenshots to the workspace instead of deleting after processing
+                {t('screenAwareness.debug.keepScreenshotsDesc')}
               </p>
             </div>
             <input
@@ -160,7 +169,7 @@ const ScreenAwarenessDebugPanel = () => {
 
           <div className="space-y-1">
             <div className="text-xs text-stone-600 dark:text-neutral-300">
-              Allowlist (one rule per line)
+              {t('screenAwareness.debug.allowlist')}
             </div>
             <textarea
               value={allowlistText}
@@ -172,7 +181,7 @@ const ScreenAwarenessDebugPanel = () => {
 
           <div className="space-y-1">
             <div className="text-xs text-stone-600 dark:text-neutral-300">
-              Denylist (one rule per line)
+              {t('screenAwareness.debug.denylist')}
             </div>
             <textarea
               value={denylistText}
@@ -187,7 +196,7 @@ const ScreenAwarenessDebugPanel = () => {
             onClick={() => void saveConfig()}
             disabled={isSavingConfig}
             className="rounded-lg border border-primary-400 bg-primary-50 dark:bg-primary-500/10 px-3 py-2 text-sm text-primary-700 dark:text-primary-300 disabled:opacity-50">
-            {isSavingConfig ? 'Saving…' : 'Save Screen Intelligence Settings'}
+            {isSavingConfig ? t('common.loading') : t('screenAwareness.debug.saveSettings')}
           </button>
           {configError && (
             <div className="text-xs text-red-600 dark:text-red-300">{configError}</div>
@@ -197,18 +206,28 @@ const ScreenAwarenessDebugPanel = () => {
         {/* Session stats */}
         <section className="space-y-3">
           <h3 className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
-            Session Stats
+            {t('screenAwareness.debug.sessionStats')}
           </h3>
           <div className="text-sm text-stone-600 dark:text-neutral-300 space-y-1">
-            <div>Frames (ephemeral): {status?.session.frames_in_memory ?? 0}</div>
-            <div>Panic stop: {status?.session.panic_hotkey ?? 'Cmd+Shift+.'}</div>
-            <div>Vision: {status?.session.vision_state ?? 'idle'}</div>
-            <div>Vision queue: {status?.session.vision_queue_depth ?? 0}</div>
             <div>
-              Last vision:{' '}
+              {t('screenAwareness.debug.framesEphemeral')}: {status?.session.frames_in_memory ?? 0}
+            </div>
+            <div>
+              {t('screenAwareness.debug.panicStop')}:{' '}
+              {status?.session.panic_hotkey ?? t('screenAwareness.debug.defaultPanicHotkey')}
+            </div>
+            <div>
+              {t('screenAwareness.debug.vision')}:{' '}
+              {status?.session.vision_state ?? t('screenAwareness.debug.idle')}
+            </div>
+            <div>
+              {t('screenAwareness.debug.visionQueue')}: {status?.session.vision_queue_depth ?? 0}
+            </div>
+            <div>
+              {t('screenAwareness.debug.lastVision')}:{' '}
               {status?.session.last_vision_at_ms
                 ? new Date(status.session.last_vision_at_ms).toLocaleTimeString()
-                : 'n/a'}
+                : t('screenAwareness.debug.notAvailable')}
             </div>
           </div>
         </section>
@@ -217,19 +236,21 @@ const ScreenAwarenessDebugPanel = () => {
         <section className="space-y-3">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
-              Vision Summaries
+              {t('screenAwareness.debug.visionSummaries')}
             </h3>
             <button
               type="button"
               onClick={() => void refreshVision(10)}
               disabled={isLoadingVision}
               className="rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 px-3 py-1.5 text-xs text-stone-600 dark:text-neutral-300 disabled:opacity-50">
-              {isLoadingVision ? 'Refreshing…' : 'Refresh'}
+              {isLoadingVision ? t('screenAwareness.debug.refreshing') : t('common.refresh')}
             </button>
           </div>
 
           {recentVisionSummaries.length === 0 ? (
-            <div className="text-xs text-stone-500 dark:text-neutral-400">No summaries yet.</div>
+            <div className="text-xs text-stone-500 dark:text-neutral-400">
+              {t('screenAwareness.debug.noSummaries')}
+            </div>
           ) : (
             <div className="space-y-2">
               {recentVisionSummaries.map(summary => (
@@ -238,7 +259,7 @@ const ScreenAwarenessDebugPanel = () => {
                   className="rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-3 text-xs text-stone-200">
                   <div className="text-stone-500 dark:text-neutral-400">
                     {new Date(summary.captured_at_ms).toLocaleTimeString()} ·{' '}
-                    {summary.app_name ?? 'Unknown App'}
+                    {summary.app_name ?? t('screenAwareness.debug.unknownApp')}
                     {summary.window_title ? ` · ${summary.window_title}` : ''}
                   </div>
                   <div className="mt-1 text-stone-800 dark:text-neutral-100">
@@ -252,6 +273,7 @@ const ScreenAwarenessDebugPanel = () => {
 
         {/* Debug & Diagnostics (collapsible) */}
         <DebugSection
+          t={t}
           state={{
             status,
             recentVisionSummaries,
@@ -267,7 +289,7 @@ const ScreenAwarenessDebugPanel = () => {
         {/* Platform unsupported notice */}
         {status !== null && !status.platform_supported && (
           <div className="rounded-xl border border-amber-300 dark:border-amber-500/40 bg-amber-50 dark:bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-300">
-            Screen Intelligence V1 is currently supported on macOS only.
+            {t('screenAwareness.debug.macosOnly')}
           </div>
         )}
 

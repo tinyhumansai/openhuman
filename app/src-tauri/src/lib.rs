@@ -1,5 +1,7 @@
+// Desktop targets: Windows, macOS, Linux. iOS + Android live in
+// `app/src-tauri-mobile/`.
 #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-compile_error!("src-tauri host is desktop-only. Non-desktop targets are not supported.");
+compile_error!("src-tauri host supports desktop (Windows/macOS/Linux) only. Mobile lives in app/src-tauri-mobile.");
 
 mod cdp;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -3370,7 +3372,7 @@ pub fn run_core_from_args(args: &[String]) -> Result<(), String> {
 }
 
 // ---------------------------------------------------------------------------
-// Sentry release / environment resolution (Tauri shell)
+// Sentry release / environment resolution (Tauri shell — desktop only)
 // ---------------------------------------------------------------------------
 
 /// Canonical release tag: `openhuman@<version>[+<short_sha>]`.

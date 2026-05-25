@@ -93,13 +93,12 @@ async fn tick_skips_unavailable_provider_without_activity_log_spam() {
 }
 
 #[test]
-fn local_subconscious_provider_with_endpoint_is_available() {
+fn local_subconscious_provider_is_available() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let mut config = Config::default();
     config.config_path = tmp.path().join("config.toml");
     config.workspace_dir = tmp.path().join("workspace");
     config.subconscious_provider = Some("ollama:qwen2.5:0.5b".into());
-    config.memory_tree.llm_summariser_endpoint = Some("http://localhost:11434".into());
 
     assert!(subconscious_provider_unavailable_reason(&config).is_none());
 }
@@ -108,26 +107,22 @@ fn local_subconscious_provider_with_endpoint_is_available() {
 fn local_subconscious_route_preserves_ollama_model() {
     let mut config = Config::default();
     config.subconscious_provider = Some("ollama:qwen2.5:0.5b".into());
-    config.memory_tree.llm_summariser_endpoint = Some("http://localhost:11434".into());
 
     assert_eq!(
         resolve_subconscious_route(&config),
         SubconsciousProviderRoute::LocalOllama {
-            endpoint_set: true,
             model: "qwen2.5:0.5b".into(),
         }
     );
 }
 
 #[test]
-fn local_subconscious_provider_without_endpoint_is_unavailable() {
+fn local_subconscious_provider_does_not_require_legacy_endpoint() {
     let mut config = Config::default();
     config.subconscious_provider = Some("ollama:qwen2.5:0.5b".into());
     config.memory_tree.llm_summariser_endpoint = None;
 
-    let reason = subconscious_provider_unavailable_reason(&config).expect("unavailable reason");
-
-    assert!(reason.contains("Ollama summarizer endpoint"));
+    assert!(subconscious_provider_unavailable_reason(&config).is_none());
 }
 
 #[test]

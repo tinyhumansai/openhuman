@@ -66,15 +66,41 @@ export async function assertConnectorCardVisible(name: string, timeout = 15_000)
  */
 export async function openConnectorModal(name: string, timeout = 15_000): Promise<string | null> {
   console.log(`${LOG} opening connector modal for "${name}"`);
-  // Click the connector card by name
-  const cardEl = await waitForText(name, timeout);
-  await cardEl.click();
-  // @ts-expect-error -- browser global is injected by WDIO at runtime, not typed in this env
-  await browser.pause(1_500);
+  const candidates = [
+    `Connect ${name}`,
+    `Manage ${name}`,
+    `Reconnect ${name}`,
+    `${name} authorization expired`,
+    `${name} is connected`,
+    'Disconnect',
+  ];
 
-  // Wait for any of the standard modal header patterns
-  const candidates = [`Connect ${name}`, `Manage ${name}`, `Reconnect ${name}`];
+  const ensureModalOpen = async (): Promise<boolean> =>
+    browser.execute((connectorName: string) => {
+      const dialog = document.querySelector('[role="dialog"]');
+      if (dialog) return true;
+      const exactButton = Array.from(document.querySelectorAll('button')).find(btn => {
+        const label = btn.getAttribute('aria-label') ?? '';
+        const title = btn.getAttribute('title') ?? '';
+        const text = btn.textContent ?? '';
+        return (
+          label.includes(connectorName) ||
+          title.includes(connectorName) ||
+          text.includes(connectorName)
+        );
+      }) as HTMLButtonElement | undefined;
+      if (!exactButton) return false;
+      exactButton.click();
+      return false;
+    }, name);
+
+  // Click once up front. If the modal appears, stop trying to re-click the
+  // underlying card; the backdrop will intercept any later coordinate clicks.
+  await waitForText(name, timeout);
+  await ensureModalOpen();
+
   const deadline = Date.now() + timeout;
+  let lastReopenAt = 0;
   while (Date.now() < deadline) {
     for (const candidate of candidates) {
       if (await textExists(candidate)) {
@@ -82,8 +108,15 @@ export async function openConnectorModal(name: string, timeout = 15_000): Promis
         return candidate;
       }
     }
+    const modalVisible = await browser
+      .execute(() => Boolean(document.querySelector('[role="dialog"]')))
+      .catch(() => false);
+    if (!modalVisible && Date.now() - lastReopenAt > 1_000) {
+      await ensureModalOpen();
+      lastReopenAt = Date.now();
+    }
     // @ts-expect-error -- browser global is injected by WDIO at runtime, not typed in this env
-    await browser.pause(400);
+    await browser.pause(250);
   }
 
   console.log(`${LOG} modal for "${name}" did not open within timeout`);

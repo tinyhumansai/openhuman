@@ -20,7 +20,8 @@ use crate::openhuman::autocomplete::AutocompleteStatus;
 use crate::openhuman::config::rpc as config_rpc;
 use crate::openhuman::config::Config;
 use crate::openhuman::credentials::session_support::{
-    load_app_session_profile, session_state_from_profile, session_token_from_profile,
+    is_local_session_token, load_app_session_profile, session_state_from_profile,
+    session_token_from_profile,
 };
 use crate::openhuman::inference::LocalAiStatus;
 use crate::openhuman::screen_intelligence::AccessibilityStatus;
@@ -539,20 +540,24 @@ pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
     let session_token = session_token_from_profile(session_profile.as_ref());
     let stored_user = sanitize_snapshot_user(auth.user.clone());
     let current_user = if let Some(token) = session_token.clone().filter(|t| !t.trim().is_empty()) {
-        match tokio::time::timeout(
-            AUTH_FETCH_TIMEOUT,
-            fetch_current_user_cached(&config, &token),
-        )
-        .await
-        {
-            Ok(Ok(fresh_user)) => fresh_user.or(stored_user.clone()),
-            Ok(Err(error)) => {
-                warn!("{LOG_PREFIX} current user refresh failed; using stored snapshot fallback: {error}");
-                stored_user.clone()
-            }
-            Err(_) => {
-                warn!("{LOG_PREFIX} current user fetch timed out after {}s; using stored snapshot fallback", AUTH_FETCH_TIMEOUT.as_secs());
-                stored_user.clone()
+        if is_local_session_token(&token) {
+            stored_user.clone()
+        } else {
+            match tokio::time::timeout(
+                AUTH_FETCH_TIMEOUT,
+                fetch_current_user_cached(&config, &token),
+            )
+            .await
+            {
+                Ok(Ok(fresh_user)) => fresh_user.or(stored_user.clone()),
+                Ok(Err(error)) => {
+                    warn!("{LOG_PREFIX} current user refresh failed; using stored snapshot fallback: {error}");
+                    stored_user.clone()
+                }
+                Err(_) => {
+                    warn!("{LOG_PREFIX} current user fetch timed out after {}s; using stored snapshot fallback", AUTH_FETCH_TIMEOUT.as_secs());
+                    stored_user.clone()
+                }
             }
         }
     } else {

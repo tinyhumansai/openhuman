@@ -31,6 +31,27 @@ Commands assume the **repo root**; `pnpm dev` delegates to the `app` workspace. 
 
 ---
 
+## iOS client (experimental)
+
+The iOS client is an **in-progress, non-shipping** target in this repo. It does not ship a Rust core on-device; instead it connects to the desktop core via one of three transports selected by a `ConnectionProfile`.
+
+**Transport strategies** (see `app/src/services/transport/`):
+- `LanHttpTransport` — direct HTTP to the desktop core on the same LAN.
+- `TunnelTransport` — socket.io relay through the backend; E2E encrypted with XChaCha20-Poly1305 over X25519 key agreement.
+- `CloudHttpTransport` — fallback via the cloud backend API.
+
+**Key paths:**
+- PTT plugin: `packages/tauri-plugin-ptt/` (Swift + Rust, iOS-only).
+- iOS screens: `app/src/pages/ios/` and `app/src/components/ios/`.
+- Devices domain (Rust): `src/openhuman/devices/`.
+- Tunnel crypto (TS): `app/src/lib/tunnel/`.
+- iOS build entry: `pnpm tauri:ios:dev` — uses stock `@tauri-apps/cli@^2` via `npx`, **not** the vendored CEF CLI.
+- Setup guide: `docs/ios/SETUP.md`.
+
+**Backend dependency:** `tinyhumansai/backend#709` (tunnel socket.io contract) must be merged and deployed for end-to-end pairing to work.
+
+---
+
 ## Commands (from repo root)
 
 ```bash
@@ -300,6 +321,8 @@ Specify → prove in Rust → prove over RPC → surface in the UI → test.
 - **Pre-merge** (code changes): Prettier, ESLint, `tsc --noEmit` in `app/`; `cargo fmt` + `cargo check` for changed Rust.
 - **No dynamic imports** in production `app/src` code — static `import` / `import type` only. No `import()`, `React.lazy(() => import(...))`, `await import(...)`. For heavy optional paths, use a static import and guard the call site with `try/catch` or a runtime check. *Exceptions*: Vitest harness patterns in `*.test.ts` / `__tests__` / `test/setup.ts`; ambient `typeof import('…')` in `.d.ts`; config files (e.g. `tailwind.config.js` JSDoc).
 - **Dual socket sync**: when changing the realtime protocol, keep `socketService` / MCP transport aligned with core socket behavior (see `gitbooks/developing/architecture.md` dual-socket section).
+- **i18n for all UI text**: every user-visible string in `app/src/**` (headings, labels, button text, placeholders, status chips, toasts, error messages, dialog copy) must go through `useT()` from `app/src/lib/i18n/I18nContext`. Hard-coded literals in JSX or `label=`/`placeholder=`/`aria-label=` props are not allowed. Add the key to [`app/src/lib/i18n/en.ts`](app/src/lib/i18n/en.ts) in the same PR — other locales fall back to English. Exceptions: developer-only debug logs, code identifiers, and non-display data (URLs, slugs, technical sentinel values).
+- **i18n chunk files — update ALL locales**: the source-of-truth translation files are the **chunk files** under `app/src/lib/i18n/chunks/` (`en-{1..5}.ts` plus `<locale>-{1..5}.ts` for each locale). When adding or changing keys in `en.ts`, you **must also** add them to the corresponding English chunk file (`en-N.ts`) **and** to the same chunk number for every non-English locale (use the English value as a placeholder — translators fill in later). CI enforces parity via `pnpm i18n:check`; missing keys in any locale chunk will fail the i18n coverage gate. Locales: `ar`, `bn`, `de`, `es`, `fr`, `hi`, `id`, `it`, `ko`, `pt`, `ru`, `zh-CN`.
 
 ---
 

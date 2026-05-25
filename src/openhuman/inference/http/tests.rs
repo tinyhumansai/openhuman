@@ -15,6 +15,7 @@ use tower::ServiceExt;
 
 use crate::core::auth::CORE_TOKEN_ENV_VAR;
 use crate::core::jsonrpc::build_core_http_router;
+use crate::openhuman::inference::http::server::strip_temperature_suffix;
 
 const TEST_RPC_TOKEN: &str = "inference-http-tests-token";
 
@@ -121,4 +122,11 @@ async fn test_chat_completions_with_bearer_not_rejected_as_auth_error() {
         StatusCode::FORBIDDEN,
         "403 must not fire when bearer is present"
     );
+}
+
+#[test]
+fn strip_temperature_suffix_only_removes_numeric_suffixes() {
+    assert_eq!(strip_temperature_suffix("gpt-4o@0.7"), "gpt-4o");
+    assert_eq!(strip_temperature_suffix("llama3.1:8b@1"), "llama3.1:8b");
+    assert_eq!(strip_temperature_suffix("gpt@beta"), "gpt@beta");
 }

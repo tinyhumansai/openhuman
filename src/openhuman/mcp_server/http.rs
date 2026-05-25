@@ -1,7 +1,7 @@
 //! Streamable HTTP + SSE transport for the OpenHuman MCP server.
 //!
 //! Reuses [`super::protocol`] for JSON-RPC dispatch. Session lifecycle and header
-//! names match [`crate::openhuman::mcp_client::client::McpHttpClient`] so remote
+//! names match [`crate::openhuman::mcp_client::McpHttpClient`] so remote
 //! MCP clients can talk to this server without custom glue.
 
 use std::collections::HashMap;

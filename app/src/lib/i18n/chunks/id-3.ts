@@ -86,7 +86,7 @@ const id3: TranslationMap = {
   'sync.noContent':
     'Belum ada konten yang disinkronkan ke memori. Hubungkan integrasi untuk memulai.',
   'backend.aiBackend': 'Backend AI',
-  'backend.cloud': 'Cloud',
+  'backend.cloud': 'Awan',
   'backend.recommended': 'Direkomendasikan',
   'backend.cloudDescription': 'Model cepat dan kuat yang dihosting di server kami. Siap dipakai.',
   'backend.privacyNote': 'Data pribadi, pesan, atau kunci tidak pernah dikirim ke server kami.',
@@ -215,6 +215,9 @@ const id3: TranslationMap = {
   'about.update.status.default': 'Periksa pembaruan',
   'welcome.connectionFailed': 'Koneksi gagal: {status} {statusText}',
   'welcome.connectionFailedMsg': 'Koneksi gagal: {message}',
+  'welcome.continueLocally': 'Lanjutkan secara lokal',
+  'welcome.localSessionStarting': 'Memulai sesi lokal...',
+  'welcome.localSessionDesc': 'Menggunakan profil lokal offline dan melewati TinyHumans OAuth.',
   'chat.agentChatDesc': 'Buka sesi chat langsung dengan agen.',
   'channels.activeRouteValue': '{channel} lewat {authMode}',
   'privacy.dataKind.messages': 'Pesan',
@@ -382,6 +385,32 @@ const id3: TranslationMap = {
   'channels.telegram.savedRestartRequired':
     'Kanal tersimpan. Mulai ulang aplikasi untuk mengaktifkannya.',
   'channels.web.alwaysAvailable': 'Selalu tersedia',
+  'channels.discord.displayName': 'Discord',
+  'channels.discord.description': 'Mengirim dan menerima pesan melalui Discord.',
+  'channels.discord.authMode.bot_token.description': 'Berikan token bot Discord Anda sendiri.',
+  'channels.discord.authMode.oauth.description':
+    'Instal bot OpenHuman ke server Discord Anda melalui OAuth.',
+  'channels.discord.authMode.managed_dm.description':
+    'Tautkan akun Discord pribadi Anda ke bot OpenHuman.',
+  'channels.discord.fields.bot_token.label': 'Token Bot',
+  'channels.discord.fields.bot_token.placeholder': 'Token bot Discord Anda',
+  'channels.discord.fields.guild_id.label': 'ID Server (Guild)',
+  'channels.discord.fields.guild_id.placeholder': 'Opsional: membatasi ke server tertentu',
+  'channels.telegram.displayName': 'Telegram',
+  'channels.telegram.description': 'Mengirim dan menerima pesan melalui Telegram.',
+  'channels.telegram.authMode.managed_dm.description':
+    'Kirim pesan langsung ke bot OpenHuman Telegram.',
+  'channels.telegram.authMode.bot_token.description':
+    'Berikan token Bot Telegram Anda sendiri dari @Botfather.',
+  'channels.telegram.fields.bot_token.label': 'Token Bot',
+  'channels.telegram.fields.bot_token.placeholder': '123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11',
+  'channels.telegram.fields.allowed_users.label': 'Pengguna yang Diizinkan',
+  'channels.telegram.fields.allowed_users.placeholder': 'dipisahkan koma Telegram nama pengguna',
+  'channels.web.displayName': 'Web',
+  'channels.web.description': 'Mengobrol melalui UI web bawaan.',
+  'channels.web.authMode.managed_dm.description':
+    'Gunakan obrolan web tertanam — tidak perlu penyiapan.',
+  'welcome.continueLocallyExperimental': 'Lanjutkan Secara Lokal (Eksperimental)',
 };
 
 export default id3;

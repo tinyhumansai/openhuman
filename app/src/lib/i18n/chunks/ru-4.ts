@@ -187,6 +187,8 @@ const ru4: TranslationMap = {
   'pages.settings.ai.llmDesc': 'Описание LLM',
   'pages.settings.ai.voice': 'Голос',
   'pages.settings.ai.voiceDesc': 'Описание голоса',
+  'pages.settings.ai.embeddings': 'Эмбеддинги',
+  'pages.settings.ai.embeddingsDesc': 'Модель векторного кодирования для извлечения из памяти',
   'pages.settings.aiSection.description': 'Языковые модели, локальный Ollama и голос (STT / TTS).',
   'pages.settings.aiSection.title': 'ИИ',
   'pages.settings.features.desktopCompanion': 'Десктоп-спутник',
@@ -297,6 +299,18 @@ const ru4: TranslationMap = {
   'settings.ai.localOllama': 'Локально (Ollama)',
   'settings.ai.modelLabel': 'Модель',
   'settings.ai.noCustomProviders': 'Нет пользовательских провайдеров',
+  'settings.ai.openAiCompat.authHeaderExample': 'Авторизация: Носитель <ваш ключ>',
+  'settings.ai.openAiCompat.authHeaderLabel': 'Заголовок аутентификации',
+  'settings.ai.openAiCompat.baseUrlLabel': 'База URL',
+  'settings.ai.openAiCompat.baseUrlUnavailable': 'Недоступно',
+  'settings.ai.openAiCompat.clearKey': 'Очистить ключ',
+  'settings.ai.openAiCompat.description':
+    "Point local harnesses at this /v1 server to route through the providers configured below. Authentication uses a stable key you set here, not the app's internal core bearer.",
+  'settings.ai.openAiCompat.keyConfigured': 'Ключ настроен',
+  'settings.ai.openAiCompat.keyRequired': 'Требуется ключ',
+  'settings.ai.openAiCompat.rotateKey': 'Повернуть ключ',
+  'settings.ai.openAiCompat.setKey': 'Установить ключ',
+  'settings.ai.openAiCompat.title': 'OpenAI-совместимая конечная точка',
   'settings.ai.providerLabel': 'Провайдер',
   'settings.ai.routing': 'Маршрутизация',
   'settings.ai.routingCustom': 'Пользовательская маршрутизация',
@@ -391,6 +405,17 @@ const ru4: TranslationMap = {
   'pages.settings.account.migration': 'Импорт из другого ассистента',
   'pages.settings.account.migrationDesc':
     'Перенесите память и заметки из OpenClaw (а вскоре и Hermes) в это рабочее пространство.',
+  'composio.connect.scope.read': 'Чтение',
+  'composio.connect.scope.readHint': 'Разрешить агенту читать данные из этого соединения.',
+  'composio.connect.scope.write': 'Запись',
+  'composio.connect.scope.writeHint':
+    'Разрешить агенту создавать или изменять данные через это соединение.',
+  'composio.connect.scope.admin': 'Администратор',
+  'composio.connect.scope.adminHint':
+    'Разрешить агенту управлять настройками, разрешениями или деструктивными действиями.',
+  'pages.settings.composioSection.title': 'Composio',
+  'pages.settings.composioSection.description':
+    'Маршрутизация, триггеры и история интеграций на базе Composio.',
 };
 
 export default ru4;

@@ -3,7 +3,7 @@
 use crate::openhuman::config::rpc as config_rpc;
 use crate::openhuman::config::Config;
 use crate::openhuman::inference::local as local_runtime;
-use crate::openhuman::inference::local::ops::{LocalAiChatMessage, ReactionDecision};
+use crate::openhuman::inference::local::ops::ReactionDecision;
 use crate::openhuman::inference::provider as providers;
 use crate::openhuman::inference::{device, presets, sentiment, SentimentResult};
 use crate::openhuman::inference::{LocalAiEmbeddingResult, LocalAiStatus};
@@ -12,6 +12,11 @@ use serde_json::{json, Value};
 use tracing::{debug, error};
 
 const LOG_PREFIX: &str = "[inference::ops]";
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct InferenceTestProviderModelResult {
+    pub reply: String,
+}
 
 pub async fn inference_status(config: &Config) -> Result<RpcOutcome<LocalAiStatus>, String> {
     debug!("{LOG_PREFIX} status:start");
@@ -105,20 +110,60 @@ pub async fn inference_embed(
     result
 }
 
-pub async fn inference_chat(
+pub async fn inference_test_provider_model(
     config: &Config,
-    messages: Vec<LocalAiChatMessage>,
-    max_tokens: Option<u32>,
-) -> Result<RpcOutcome<String>, String> {
+    workload: &str,
+    provider: &str,
+    prompt: &str,
+) -> Result<RpcOutcome<InferenceTestProviderModelResult>, String> {
     debug!(
-        message_count = messages.len(),
-        ?max_tokens,
-        "{LOG_PREFIX} chat:start"
+        workload,
+        provider,
+        prompt_len = prompt.len(),
+        "{LOG_PREFIX} test_provider_model:start"
     );
-    let result = local_runtime::rpc::local_ai_chat(config, messages, max_tokens).await;
+    let result =
+        if provider.trim().starts_with("lmstudio:") || provider.trim().starts_with("ollama:") {
+            log::debug!("{LOG_PREFIX} test_provider_model: routing to local provider={provider}");
+            let (chat_provider, model) =
+            crate::openhuman::inference::provider::factory::create_local_chat_provider_from_string(
+                provider, config,
+            )
+            .map_err(|e| e.to_string())?;
+            log::debug!("{LOG_PREFIX} test_provider_model: invoking local model={model}");
+            chat_provider
+                .simple_chat(prompt, &model, config.default_temperature)
+                .await
+                .map_err(|e| e.to_string())
+                .map(|reply| {
+                    RpcOutcome::single_log(
+                        InferenceTestProviderModelResult { reply },
+                        "provider model test completed",
+                    )
+                })
+        } else {
+            let (chat_provider, model) =
+                crate::openhuman::inference::provider::factory::create_chat_provider_from_string(
+                    workload, provider, config,
+                )
+                .map_err(|e| e.to_string())?;
+            chat_provider
+                .simple_chat(prompt, &model, config.default_temperature)
+                .await
+                .map_err(|e| e.to_string())
+                .map(|reply| {
+                    RpcOutcome::single_log(
+                        InferenceTestProviderModelResult { reply },
+                        "provider model test completed",
+                    )
+                })
+        };
     match &result {
-        Ok(outcome) => debug!(output_len = outcome.value.len(), "{LOG_PREFIX} chat:ok"),
-        Err(err) => error!(error = %err, "{LOG_PREFIX} chat:error"),
+        Ok(outcome) => debug!(
+            output_len = outcome.value.reply.len(),
+            "{LOG_PREFIX} test_provider_model:ok"
+        ),
+        Err(err) => error!(error = %err, "{LOG_PREFIX} test_provider_model:error"),
     }
     result
 }
