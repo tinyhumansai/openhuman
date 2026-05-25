@@ -3,6 +3,30 @@ use crate::openhuman::credentials::session_support::local_session_user_id;
 use serde_json::json;
 use tempfile::TempDir;
 
+struct EnvVarGuard {
+    key: &'static str,
+    previous: Option<std::ffi::OsString>,
+}
+
+impl EnvVarGuard {
+    fn set_to_path(key: &'static str, path: &std::path::Path) -> Self {
+        let previous = std::env::var_os(key);
+        unsafe { std::env::set_var(key, path) };
+        Self { key, previous }
+    }
+}
+
+impl Drop for EnvVarGuard {
+    fn drop(&mut self) {
+        unsafe {
+            match self.previous.take() {
+                Some(value) => std::env::set_var(self.key, value),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
+}
+
 fn test_config(tmp: &TempDir) -> Config {
     Config {
         workspace_dir: tmp.path().join("workspace"),
@@ -81,7 +105,12 @@ fn sanitize_stored_session_user_discards_empty_objects() {
 /// user from an API response.
 #[tokio::test]
 async fn store_session_local_token_rejects_missing_user_payload() {
+    let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let tmp = TempDir::new().unwrap();
+    std::fs::create_dir_all(tmp.path().join("workspace")).unwrap();
+    let _home = EnvVarGuard::set_to_path("HOME", tmp.path());
     let config = test_config(&tmp);
     let local_token = "header.payload.local";
     let err = store_session(&config, local_token, None, None)
@@ -99,7 +128,12 @@ async fn store_session_local_token_rejects_missing_user_payload() {
 /// summary.
 #[tokio::test]
 async fn store_session_local_token_succeeds_without_network_and_forces_local_user_id() {
+    let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let tmp = TempDir::new().unwrap();
+    std::fs::create_dir_all(tmp.path().join("workspace")).unwrap();
+    let _home = EnvVarGuard::set_to_path("HOME", tmp.path());
     let config = test_config(&tmp);
     let local_token = "header.payload.local";
     let user = serde_json::json!({
