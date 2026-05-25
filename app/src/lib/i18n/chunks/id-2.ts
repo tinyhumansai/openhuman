@@ -279,6 +279,7 @@ const id2: TranslationMap = {
   'chat.deleteThread': 'Hapus thread',
   'chat.deleteThreadConfirm': 'Yakin ingin menghapus "{title}"?',
   'chat.untitledThread': 'Thread tanpa judul',
+  'chat.editThreadTitle': 'Edit thread title',
   'chat.hideSidebar': 'Sembunyikan sidebar',
   'chat.showSidebar': 'Tampilkan sidebar',
   'chat.newThreadShortcut': 'Thread baru (/new)',

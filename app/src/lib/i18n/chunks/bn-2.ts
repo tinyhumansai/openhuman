@@ -281,6 +281,7 @@ const bn2: TranslationMap = {
   'chat.deleteThread': 'থ্রেড মুছুন',
   'chat.deleteThreadConfirm': 'আপনি কি "{title}" মুছতে চান?',
   'chat.untitledThread': 'শিরোনামহীন থ্রেড',
+  'chat.editThreadTitle': 'Edit thread title',
   'chat.hideSidebar': 'সাইডবার লুকান',
   'chat.showSidebar': 'সাইডবার দেখান',
   'chat.newThreadShortcut': 'নতুন থ্রেড (/new)',

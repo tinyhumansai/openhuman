@@ -1314,6 +1314,7 @@ const Conversations = ({
                     }
                   }}
                   onBlur={handleCommitTitle}
+                  aria-label={t('chat.editThreadTitle')}
                   className="h-5 text-sm font-medium text-stone-700 dark:text-neutral-200 bg-transparent border-b border-primary-400 outline-none w-full min-w-0 leading-none py-0"
                   autoFocus
                 />
@@ -1326,6 +1327,8 @@ const Conversations = ({
                     <button
                       type="button"
                       onClick={handleStartEditTitle}
+                      aria-label={t('chat.editThreadTitle')}
+                      title={t('chat.editThreadTitle')}
                       className="opacity-0 group-hover/title:opacity-100 flex-shrink-0 w-5 h-5 flex items-center justify-center rounded hover:bg-stone-100 dark:hover:bg-neutral-800 text-stone-400 dark:text-neutral-500 hover:text-stone-600 dark:hover:text-neutral-300 transition-all">
                       <svg
                         className="w-3 h-3"
