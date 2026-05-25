@@ -96,8 +96,8 @@ const pt4: TranslationMap = {
   'intelligence.memoryChunk.detail.noEmbedding': 'Sem embedding',
   'intelligence.memoryChunk.letterhead.from': 'de',
   'intelligence.memoryChunk.letterhead.to': 'para',
-  'intelligence.memoryChunk.mentioned.chunkOne': '1 chunk',
-  'intelligence.memoryChunk.mentioned.chunkOther': '{count} chunks',
+  'intelligence.memoryChunk.mentioned.chunkOne': '1 pedaço',
+  'intelligence.memoryChunk.mentioned.chunkOther': '{count} pedaços',
   'intelligence.memoryChunk.mentioned.heading': 'm e n c i o n a d o',
   'intelligence.memoryChunk.scoreBars.ariaScore': '{name} pontuação {pct} por cento',
   'intelligence.memoryChunk.scoreBars.atThreshold': 'em {threshold}',
@@ -106,7 +106,7 @@ const pt4: TranslationMap = {
   'intelligence.memoryChunk.scoreBars.kept': 'mantido',
   'intelligence.memoryText.entityTypePrefix': 'Tipo de entidade',
   'intelligence.screenDebug.active': 'Ativo',
-  'intelligence.screenDebug.app': 'App',
+  'intelligence.screenDebug.app': 'Aplicativo',
   'intelligence.screenDebug.bounds': 'Limites',
   'intelligence.screenDebug.captureAlt': 'Resultado do teste de captura',
   'intelligence.screenDebug.captureFailed': 'Falhou',
@@ -139,7 +139,7 @@ const pt4: TranslationMap = {
   'intelligence.tasks.failedToLoad': 'Falha ao carregar',
   'intelligence.tasks.live': 'ao vivo',
   'intelligence.tasks.loadingBoards': 'Carregando quadros de tarefas…',
-  'intelligence.tasks.threadPrefix': 'Thread {thread}',
+  'intelligence.tasks.threadPrefix': 'Tópico {thread}',
   'notifications.card.dismiss': 'Dispensar notificação',
   'notifications.card.importanceTitle': 'Importância: {pct}%',
   'notifications.center.empty': 'Nenhuma notificação ainda',
@@ -189,6 +189,8 @@ const pt4: TranslationMap = {
   'pages.settings.ai.llmDesc': 'Descrição do LLM',
   'pages.settings.ai.voice': 'Voz',
   'pages.settings.ai.voiceDesc': 'Descrição de voz',
+  'pages.settings.ai.embeddings': 'Incorporações',
+  'pages.settings.ai.embeddingsDesc': 'Modelo de codificação vetorial para recuperação de memória',
   'pages.settings.aiSection.description':
     'Provedores de modelos de linguagem, Ollama local e voz (STT / TTS).',
   'pages.settings.aiSection.title': 'IA',
@@ -300,6 +302,18 @@ const pt4: TranslationMap = {
   'settings.ai.localOllama': 'Local (Ollama)',
   'settings.ai.modelLabel': 'Modelo',
   'settings.ai.noCustomProviders': 'Sem provedores personalizados',
+  'settings.ai.openAiCompat.authHeaderExample': 'Autorização: Portador <sua chave>',
+  'settings.ai.openAiCompat.authHeaderLabel': 'Cabeçalho de autenticação',
+  'settings.ai.openAiCompat.baseUrlLabel': 'Base URL',
+  'settings.ai.openAiCompat.baseUrlUnavailable': 'Indisponível',
+  'settings.ai.openAiCompat.clearKey': 'Limpar chave',
+  'settings.ai.openAiCompat.description':
+    "Point local harnesses at this /v1 server to route through the providers configured below. Authentication uses a stable key you set here, not the app's internal core bearer.",
+  'settings.ai.openAiCompat.keyConfigured': 'Chave configurada',
+  'settings.ai.openAiCompat.keyRequired': 'Chave necessária',
+  'settings.ai.openAiCompat.rotateKey': 'Girar chave',
+  'settings.ai.openAiCompat.setKey': 'Definir chave',
+  'settings.ai.openAiCompat.title': 'Endpoint compatível com OpenAI',
   'settings.ai.providerLabel': 'Provedor',
   'settings.ai.routing': 'Roteamento',
   'settings.ai.routingCustom': 'Roteamento personalizado',
@@ -319,7 +333,7 @@ const pt4: TranslationMap = {
   'settings.autocomplete.appFilter.noLogs': ') :',
   'settings.autocomplete.appFilter.refreshStatus': 'Atualizando…',
   'settings.autocomplete.appFilter.refreshing': 'Atualizando…',
-  'settings.autocomplete.appFilter.runtime': 'Runtime',
+  'settings.autocomplete.appFilter.runtime': 'Tempo de execução',
   'settings.autocomplete.appFilter.test': 'Testar',
   'settings.autocomplete.completionStyle.acceptedCompletion':
     '{count} complemento aceito armazenado — usado para personalizar sugestões futuras.',
@@ -394,6 +408,17 @@ const pt4: TranslationMap = {
   'pages.settings.account.migration': 'Importar de outro assistente',
   'pages.settings.account.migrationDesc':
     'Migre memória e anotações do OpenClaw (e, em breve, do Hermes) para este espaço de trabalho.',
+  'composio.connect.scope.read': 'Leitura',
+  'composio.connect.scope.readHint': 'Permitir que o agente leia dados desta conexão.',
+  'composio.connect.scope.write': 'Gravar',
+  'composio.connect.scope.writeHint':
+    'Permitir que o agente crie ou modifique dados por meio desta conexão.',
+  'composio.connect.scope.admin': 'Administrador',
+  'composio.connect.scope.adminHint':
+    'Permitir que o agente gerencie configurações, permissões ou ações destrutivas.',
+  'pages.settings.composioSection.title': 'Composio',
+  'pages.settings.composioSection.description':
+    'Roteamento, gatilhos e histórico para integrações desenvolvidas por Composio.',
 };
 
 export default pt4;

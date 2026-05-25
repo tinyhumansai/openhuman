@@ -114,8 +114,10 @@ export async function openhumanUpdateVoiceServerSettings(update: {
 }
 
 export interface VoiceProvidersUpdate {
-  stt_provider?: 'cloud' | 'whisper';
-  tts_provider?: 'cloud' | 'piper';
+  /** STT provider string: 'cloud', 'whisper', or '<slug>:<model>'. */
+  stt_provider?: string;
+  /** TTS provider string: 'cloud', 'piper', or '<slug>:<voice>'. */
+  tts_provider?: string;
   stt_model?: string;
   tts_voice?: string;
 }

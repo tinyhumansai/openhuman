@@ -25,6 +25,10 @@ path = "src/bin/memory_tree_init_smoke.rs"
 name = "inference-probe"
 path = "src/bin/inference_probe.rs"
 
+[[bin]]
+name = "test-mcp-stub"
+path = "src/bin/test_mcp_stub.rs"
+
 [lib]
 name = "openhuman_core"
 crate-type = ["rlib"]
@@ -183,6 +187,19 @@ wacore = { version = "0.5", optional = true, default-features = false }
 # connections honor the Windows cert store, including corporate CAs
 # installed by AV / TLS-inspection proxies. See run-dev-win.sh notes.
 tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect", "handshake", "native-tls"] }
+# AppContainer / process-jail backend in `openhuman::cwd_jail`.
+# Feature list mirrors the Win32 surface used by cwd_jail/windows.rs:
+# AppContainer profile APIs, ACL editing, STARTUPINFOEXW process spawn,
+# and the GENERIC_* file access masks.
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Security_Isolation",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Memory",
+    "Win32_System_Threading",
+] }
 
 [target.'cfg(not(windows))'.dependencies]
 # macOS / Linux: keep rustls + Mozilla webpki-roots — the historical

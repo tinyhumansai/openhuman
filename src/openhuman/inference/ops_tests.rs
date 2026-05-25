@@ -1,6 +1,7 @@
 use super::*;
 use crate::openhuman::credentials::profiles::{AuthProfile, AuthProfilesStore, TokenSet};
 use crate::openhuman::inference::openai_oauth::{OPENAI_OAUTH_PROFILE_NAME, OPENAI_PROVIDER_KEY};
+use axum::{routing::post, Json, Router};
 use chrono::{Duration, Utc};
 use tempfile::tempdir;
 
@@ -14,6 +15,13 @@ fn disabled_config() -> (Config, tempfile::TempDir) {
     config.local_ai.runtime_enabled = false;
     config.local_ai.opt_in_confirmed = false;
     (config, tmp)
+}
+
+async fn spawn_mock(app: Router) -> String {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    format!("http://127.0.0.1:{}", addr.port())
 }
 
 #[tokio::test]
@@ -55,12 +63,52 @@ async fn inference_embed_reuses_local_ai_disabled_error() {
 }
 
 #[tokio::test]
-async fn inference_chat_rejects_empty_messages() {
+async fn inference_test_provider_model_routes_lmstudio_prefix_through_provider_layer() {
     let (config, _tmp) = disabled_config();
-    let err = inference_chat(&config, vec![], None)
+    let app = Router::new().route(
+        "/v1/chat/completions",
+        post(|Json(body): Json<serde_json::Value>| async move {
+            assert_eq!(body["model"], "test-model");
+            Json(serde_json::json!({
+                "choices": [{
+                    "message": { "role": "assistant", "content": "LMSTUDIO_PROVIDER_OK" }
+                }]
+            }))
+        }),
+    );
+    let base = spawn_mock(app).await;
+    let mut config = config;
+    config.local_ai.base_url = Some(format!("{base}/v1"));
+
+    let outcome =
+        inference_test_provider_model(&config, "reasoning", "lmstudio:test-model", "Hello")
+            .await
+            .expect("lmstudio provider probe");
+    assert_eq!(outcome.value.reply, "LMSTUDIO_PROVIDER_OK");
+}
+
+#[tokio::test]
+async fn inference_test_provider_model_routes_ollama_prefix_through_provider_layer() {
+    let (config, _tmp) = disabled_config();
+    let app = Router::new().route(
+        "/v1/chat/completions",
+        post(|Json(body): Json<serde_json::Value>| async move {
+            assert_eq!(body["model"], "test-model");
+            Json(serde_json::json!({
+                "choices": [{
+                    "message": { "role": "assistant", "content": "OLLAMA_PROVIDER_OK" }
+                }]
+            }))
+        }),
+    );
+    let base = spawn_mock(app).await;
+    let mut config = config;
+    config.local_ai.base_url = Some(base);
+
+    let outcome = inference_test_provider_model(&config, "reasoning", "ollama:test-model", "Hello")
         .await
-        .expect_err("chat should fail");
-    assert!(err.contains("must not be empty"));
+        .expect("ollama provider probe");
+    assert_eq!(outcome.value.reply, "OLLAMA_PROVIDER_OK");
 }
 
 #[tokio::test]

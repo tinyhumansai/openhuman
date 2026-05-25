@@ -177,14 +177,14 @@ impl SystemPromptBuilder {
     /// construction so the rendered system prompt stays byte-identical
     /// for the lifetime of the session. The session builder is
     /// responsible for pre-fetching via
-    /// [`crate::openhuman::memory::ToolMemoryStore::rules_for_prompt`]
+    /// [`crate::openhuman::memory_tools::ToolMemoryStore::rules_for_prompt`]
     /// (or the `memory_tool_rules_for_prompt` RPC) before invoking
     /// this method.
     ///
     /// No-op when `rules` is empty.
     pub fn with_tool_memory_rules(
         mut self,
-        rules: Vec<crate::openhuman::memory::ToolMemoryRule>,
+        rules: Vec<crate::openhuman::memory_tools::ToolMemoryRule>,
     ) -> Self {
         if rules.is_empty() {
             return self;
@@ -192,8 +192,9 @@ impl SystemPromptBuilder {
         // Insert before the tool-catalogue section so these rules appear
         // adjacent to the tool listings and survive tail-biased trimming.
         // Falls back to push when no tools section is present.
-        let section: Box<dyn PromptSection> =
-            Box::new(crate::openhuman::memory::ToolMemoryRulesSection::new(rules));
+        let section: Box<dyn PromptSection> = Box::new(
+            crate::openhuman::memory_tools::ToolMemoryRulesSection::new(rules),
+        );
         let tools_idx = self
             .sections
             .iter()

@@ -225,10 +225,8 @@ impl LocalAiService {
         let reply = payload
             .choices
             .first()
-            .and_then(|choice| choice.message.content.as_deref())
-            .unwrap_or_default()
-            .trim()
-            .to_string();
+            .map(|choice| choice.message.effective_content())
+            .unwrap_or_default();
 
         if reply.is_empty() && !allow_empty {
             return Err("lm studio returned empty content".to_string());

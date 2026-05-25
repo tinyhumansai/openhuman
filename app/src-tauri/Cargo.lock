@@ -5314,6 +5314,7 @@ dependencies = [
  "walkdir",
  "webpki-roots 1.0.7",
  "whisper-rs",
+ "windows-sys 0.61.2",
  "x25519-dalek",
  "xz2",
  "zip 2.4.2",

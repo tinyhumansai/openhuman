@@ -97,7 +97,11 @@ COPY --from=builder /tmp/openhuman-core /usr/local/bin/openhuman-core
 # privileges.  The script is a separate file so the E2E entrypoint
 # (e2e/docker-entrypoint.sh) is not affected.
 COPY scripts/docker-entrypoint-core.sh /usr/local/bin/docker-entrypoint-core.sh
-RUN chmod +x /usr/local/bin/docker-entrypoint-core.sh
+# Windows checkouts may materialize shell scripts with CRLF line endings when
+# core.autocrlf is enabled.  A CRLF shebang makes Linux report the executable
+# as "no such file or directory" at container startup, so normalize in-image.
+RUN sed -i 's/\r$//' /usr/local/bin/docker-entrypoint-core.sh \
+ && chmod +x /usr/local/bin/docker-entrypoint-core.sh
 
 # The entrypoint runs as root so it can chown the mounted volume, then execs
 # gosu to drop to the openhuman user before starting the binary.

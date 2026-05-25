@@ -275,6 +275,22 @@ pub fn client_config_json(config: &Config) -> serde_json::Value {
         "heartbeat_provider": config.heartbeat_provider,
         "learning_provider": config.learning_provider,
         "subconscious_provider": config.subconscious_provider,
+        "voice_providers": config.voice_providers.iter().map(|v| {
+            serde_json::json!({
+                "id": v.id,
+                "slug": v.slug,
+                "label": v.label,
+                "endpoint": v.endpoint,
+                "auth_style": v.auth_style.as_str(),
+                "capability": v.capability.as_str(),
+                "stt_api_style": v.stt_api_style,
+                "tts_api_style": v.tts_api_style,
+                "default_stt_model": v.default_stt_model,
+                "default_tts_voice": v.default_tts_voice,
+            })
+        }).collect::<Vec<_>>(),
+        "stt_provider": config.stt_provider,
+        "tts_provider": config.tts_provider,
     })
 }
 
@@ -377,6 +393,21 @@ pub struct MeetSettingsPatch {
 #[derive(Debug, Clone, Default)]
 pub struct AutonomySettingsPatch {
     pub max_actions_per_hour: Option<u32>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct SearchSettingsPatch {
+    /// One of `managed` | `parallel` | `brave`. Empty string / unknown values
+    /// fall back to `managed` at registration time.
+    pub engine: Option<String>,
+    /// 1..=20. Clamped silently at apply time.
+    pub max_results: Option<usize>,
+    /// Per-request timeout in seconds (default 15).
+    pub timeout_secs: Option<u64>,
+    /// Parallel API key. An empty string clears the stored key.
+    pub parallel_api_key: Option<String>,
+    /// Brave Search API key. An empty string clears the stored key.
+    pub brave_api_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -573,7 +604,7 @@ pub async fn apply_model_settings(
     // so a UI embedder switch recovers prior memory under the new
     // signature. Coverage-gated + non-fatal: if the active signature did
     // not actually change, this enqueues nothing.
-    crate::openhuman::memory::tree::jobs::ensure_reembed_backfill(config);
+    crate::openhuman::memory_queue::ensure_reembed_backfill(config);
     let snapshot = snapshot_config_json(config)?;
     Ok(RpcOutcome::new(
         snapshot,
@@ -623,7 +654,7 @@ pub async fn apply_memory_settings(
     // dark. Idempotent + non-fatal (covered space enqueues nothing; errors
     // are logged, never fail the settings save). §7's migration is
     // one-shot so it does not cover a later switch — this does.
-    crate::openhuman::memory::tree::jobs::ensure_reembed_backfill(config);
+    crate::openhuman::memory_queue::ensure_reembed_backfill(config);
     let snapshot = snapshot_config_json(config)?;
     Ok(RpcOutcome::new(
         snapshot,
@@ -819,16 +850,16 @@ pub async fn load_and_apply_meet_settings(
 }
 
 /// Updates the autonomy policy settings in the configuration.
-/// Validation: 1 <= max_actions_per_hour <= 10_000.
+/// Validation: 1 <= max_actions_per_hour <= u32::MAX. The upper bound is the
+/// sentinel for "unlimited" (matches the schema default); the UI surfaces
+/// this preset explicitly.
 pub async fn apply_autonomy_settings(
     config: &mut Config,
     update: AutonomySettingsPatch,
 ) -> Result<RpcOutcome<serde_json::Value>, String> {
     if let Some(v) = update.max_actions_per_hour {
-        if v == 0 || v > 10_000 {
-            return Err(format!(
-                "max_actions_per_hour must be between 1 and 10000 (got {v})"
-            ));
+        if v == 0 {
+            return Err(format!("max_actions_per_hour must be at least 1 (got {v})"));
         }
         config.autonomy.max_actions_per_hour = v;
     }
@@ -849,6 +880,100 @@ pub async fn load_and_apply_autonomy_settings(
 ) -> Result<RpcOutcome<serde_json::Value>, String> {
     let mut config = load_config_with_timeout().await?;
     apply_autonomy_settings(&mut config, update).await
+}
+
+/// Updates the search engine configuration. Empty API-key strings clear the
+/// stored value rather than treat empty-string as "credential present".
+pub async fn apply_search_settings(
+    config: &mut Config,
+    update: SearchSettingsPatch,
+) -> Result<RpcOutcome<serde_json::Value>, String> {
+    if let Some(engine) = update.engine {
+        let trimmed = engine.trim();
+        // Reject blatantly bogus values so the panel can show a friendly
+        // error. Unknown values still resolve to managed at registration
+        // time via `effective_engine()`, but failing fast in the writer keeps
+        // the TOML clean.
+        match trimmed {
+            "managed" | "parallel" | "brave" => {
+                config.search.engine = trimmed.to_string();
+            }
+            other => {
+                return Err(format!(
+                    "engine must be one of managed/parallel/brave (got {other:?})"
+                ));
+            }
+        }
+    }
+    if let Some(n) = update.max_results {
+        if !(1..=20).contains(&n) {
+            return Err(format!("max_results must be between 1 and 20 (got {n})"));
+        }
+        config.search.max_results = n;
+    }
+    if let Some(secs) = update.timeout_secs {
+        if !(1..=120).contains(&secs) {
+            return Err(format!(
+                "timeout_secs must be between 1 and 120 (got {secs})"
+            ));
+        }
+        config.search.timeout_secs = secs;
+    }
+    if let Some(raw) = update.parallel_api_key {
+        let trimmed = raw.trim();
+        config.search.parallel.api_key = if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        };
+    }
+    if let Some(raw) = update.brave_api_key {
+        let trimmed = raw.trim();
+        config.search.brave.api_key = if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        };
+    }
+    config.save().await.map_err(|e| e.to_string())?;
+    let snapshot = snapshot_config_json(config)?;
+    Ok(RpcOutcome::new(
+        snapshot,
+        vec![format!(
+            "search settings saved to {}",
+            config.config_path.display()
+        )],
+    ))
+}
+
+pub async fn load_and_apply_search_settings(
+    update: SearchSettingsPatch,
+) -> Result<RpcOutcome<serde_json::Value>, String> {
+    let mut config = load_config_with_timeout().await?;
+    apply_search_settings(&mut config, update).await
+}
+
+/// Read the current search engine settings (with API keys redacted to a
+/// presence boolean so the UI can show "configured" without ever rendering
+/// the raw secret).
+pub async fn get_search_settings() -> Result<RpcOutcome<serde_json::Value>, String> {
+    let config = load_config_with_timeout().await?;
+    let result = serde_json::json!({
+        "engine": config.search.requested_engine_str(),
+        "effective_engine": match config.search.effective_engine() {
+            crate::openhuman::config::SearchEngine::Managed => "managed",
+            crate::openhuman::config::SearchEngine::Parallel => "parallel",
+            crate::openhuman::config::SearchEngine::Brave => "brave",
+        },
+        "max_results": config.search.max_results,
+        "timeout_secs": config.search.timeout_secs,
+        "parallel_configured": config.search.parallel.has_key(),
+        "brave_configured": config.search.brave.has_key(),
+    });
+    Ok(RpcOutcome::new(
+        result,
+        vec!["search settings read".to_string()],
+    ))
 }
 
 /// Loads the configuration, applies browser settings updates, and saves it.

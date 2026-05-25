@@ -1,6 +1,5 @@
 import debugFactory from 'debug';
 import {
-  createContext,
   type ReactNode,
   useCallback,
   useContext,
@@ -12,7 +11,6 @@ import {
 
 import {
   type CoreAppSnapshot,
-  type CoreOnboardingTasks,
   type CoreState,
   getCoreStateSnapshot,
   setCoreStateSnapshot,
@@ -30,6 +28,7 @@ import { store } from '../store';
 import { resetUserScopedState } from '../store/resetActions';
 import { loadThreads, resetThreadCachesPreservingSelection } from '../store/threadSlice';
 import { getActiveUserId, setActiveUserId } from '../store/userScopedStorage';
+import { isLocalSessionToken } from '../utils/localSession';
 import {
   openhumanUpdateAnalyticsSettings,
   openhumanUpdateMeetSettings,
@@ -39,6 +38,7 @@ import {
   syncMemoryClientToken,
   logout as tauriLogout,
 } from '../utils/tauriCommands';
+import { CoreStateContext, type CoreStateContextValue } from './coreStateContext';
 
 const log = debugFactory('core-state');
 
@@ -114,34 +114,8 @@ function isPlausibleSessionToken(token: unknown): token is string {
   return payload.exp * 1000 > Date.now();
 }
 
-interface CoreStateContextValue extends CoreState {
-  refresh: () => Promise<void>;
-  refreshTeams: () => Promise<void>;
-  refreshTeamMembers: (teamId: string) => Promise<void>;
-  refreshTeamInvites: (teamId: string) => Promise<void>;
-  setAnalyticsEnabled: (enabled: boolean) => Promise<void>;
-  setMeetAutoOrchestratorHandoff: (enabled: boolean) => Promise<void>;
-  setOnboardingCompletedFlag: (value: boolean) => Promise<void>;
-  setEncryptionKey: (value: string | null) => Promise<void>;
-  /**
-   * Shallow-merge `patch` into `state.snapshot`. Top-level keys in `patch`
-   * REPLACE the existing value — they are not deep-merged.
-   *
-   * This means passing a nested object (e.g. `{ localState: { encryptionKey: 'x' } }`)
-   * will CLOBBER sibling fields on that object (`onboardingTasks`). Only flat
-   * top-level fields are safe to patch directly:
-   * `currentUser`, `onboardingCompleted`, `chatOnboardingCompleted`,
-   * `analyticsEnabled`, `sessionToken`. For nested-object updates, use the
-   * dedicated setter (`setEncryptionKey`, `setOnboardingTasks`) which
-   * preserves siblings.
-   */
-  patchSnapshot: (patch: Partial<CoreAppSnapshot>) => void;
-  setOnboardingTasks: (value: CoreOnboardingTasks | null) => Promise<void>;
-  storeSessionToken: (token: string, user?: object) => Promise<void>;
-  clearSession: () => Promise<void>;
-}
-
-const CoreStateContext = createContext<CoreStateContextValue | null>(null);
+// CoreStateContextValue and CoreStateContext are defined in ./coreStateContext.ts
+// to avoid mock-interception issues when tests vi.mock this module.
 
 function snapshotIdentity(snapshot: CoreAppSnapshot): string | null {
   return snapshot.auth.userId ?? snapshot.currentUser?._id ?? null;
@@ -290,7 +264,8 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
     //   - poll-detected flip (core-side user swap)
     //   - re-login as a different user after sign-out
     const seedUserId = getActiveUserId();
-    const isFlip = Boolean(nextIdentity) && seedUserId !== nextIdentity;
+    const isLocalSession = isLocalSessionToken(nextSnapshot.sessionToken);
+    const isFlip = Boolean(nextIdentity) && seedUserId !== nextIdentity && !isLocalSession;
     const isLogout = Boolean(previousAuthed) && !nextAuthed;
     // Clear team caches whenever the visible identity changes (in-memory user
     // shift) so the post-commit UI doesn't show user A's team list during the
@@ -343,6 +318,10 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
           }
           log('post-identity thread reload failed: %O', sanitizeError(err));
         });
+    }
+
+    if (nextIdentity && isLocalSession && seedUserId !== nextIdentity) {
+      setActiveUserId(nextIdentity);
     }
 
     if (isFlip && nextIdentity) {
@@ -463,7 +442,10 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
       await doRefresh();
       if (!cancelled) {
         const next = getCoreStateSnapshot();
-        if (next.snapshot.auth.isAuthenticated) {
+        if (
+          next.snapshot.auth.isAuthenticated &&
+          !isLocalSessionToken(next.snapshot.sessionToken)
+        ) {
           await refreshTeams().catch(err => {
             log('refreshTeams failed during bootstrap: %O', sanitizeError(err));
           });
@@ -609,9 +591,11 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
       await refresh().catch(err => {
         log('refresh failed after session store: %O', sanitizeError(err));
       });
-      await refreshTeams().catch(err => {
-        log('refreshTeams failed after session store: %O', sanitizeError(err));
-      });
+      if (!isLocalSessionToken(token)) {
+        await refreshTeams().catch(err => {
+          log('refreshTeams failed after session store: %O', sanitizeError(err));
+        });
+      }
     },
     [refresh, refreshTeams]
   );
@@ -681,6 +665,10 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
   // so re-registers are rare.
   useEffect(() => {
     const runReauth = (method: string, source: string) => {
+      if (isLocalSessionToken(getCoreStateSnapshot().snapshot.sessionToken)) {
+        log('auth-expired ignored for local session (method=%s source=%s)', method, source);
+        return;
+      }
       const now = Date.now();
       if (now < suppressReauthUntilRef.current) {
         log(

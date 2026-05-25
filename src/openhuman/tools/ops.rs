@@ -152,7 +152,8 @@ pub fn all_tools_with_runtime(
         Box::new(MemoryStoreTool::new(memory.clone(), security.clone())),
         Box::new(MemoryRecallTool::new(memory.clone())),
         Box::new(MemoryForgetTool::new(memory.clone(), security.clone())),
-        Box::new(MemoryTreeTool),
+        Box::new(MemoryQueryTool),
+        Box::new(MemoryQueryWalkTool),
         // Explicit user-preference pinning — always registered so the model
         // can save user-stated preferences regardless of whether the full
         // inference-based learning subsystem is enabled.  The preference
@@ -258,22 +259,6 @@ pub fn all_tools_with_runtime(
         root_config.curl.timeout_secs,
     )));
 
-    // Phase 3 STM recall — on-demand cross-thread episodic search tool.
-    // Feature-gated on `learning.stm_recall_enabled` (default true) so the
-    // tool surface and the preemptive prompt injection are enabled/disabled
-    // together. `session_id` is not known at tool-build time; exclude-own-
-    // session is enforced by the preemptive first-turn injection in turn.rs
-    // (the on-demand tool intentionally uses an empty exclude_session).
-    if root_config.learning.stm_recall_enabled {
-        tools.push(Box::new(
-            crate::openhuman::memory::stm_recall::tool::StmRecallTool::new(
-                memory.clone(),
-                String::new(),
-                None,
-            ),
-        ));
-    }
-
     // gitbooks — answers questions about OpenHuman by calling the
     // GitBook MCP server. Two tools mirroring the upstream MCP tools.
     if root_config.gitbooks.enabled {
@@ -286,6 +271,20 @@ pub fn all_tools_with_runtime(
             root_config.gitbooks.timeout_secs,
         )));
         tracing::debug!("[gitbooks] registered gitbooks_search + gitbooks_get_page");
+    }
+
+    // MCP setup-agent tool surface (search/get/request_secret/test/install).
+    // Registered unconditionally — the `mcp_setup` sub-agent filters to just
+    // these via its `[tools] named = [...]` allowlist, and the host agent's
+    // own tool list is wide enough that the extra five entries are negligible.
+    {
+        let cfg = Arc::new(root_config.clone());
+        tools.push(Box::new(McpSetupSearchTool::new(Arc::clone(&cfg))));
+        tools.push(Box::new(McpSetupGetTool::new(Arc::clone(&cfg))));
+        tools.push(Box::new(McpSetupRequestSecretTool::new()));
+        tools.push(Box::new(McpSetupTestConnectionTool::new(Arc::clone(&cfg))));
+        tools.push(Box::new(McpSetupInstallAndConnectTool::new(cfg)));
+        tracing::debug!("[mcp_setup] registered 5 setup-agent tools");
     }
 
     // Generic remote MCP bridge tools. These let the agent enumerate

@@ -387,6 +387,48 @@ export async function openhumanGetAutonomySettings(): Promise<
   });
 }
 
+export type SearchEngineId = 'managed' | 'parallel' | 'brave';
+
+export interface SearchSettingsUpdate {
+  engine?: SearchEngineId;
+  max_results?: number;
+  timeout_secs?: number;
+  /** Empty string clears the stored key. */
+  parallel_api_key?: string;
+  /** Empty string clears the stored key. */
+  brave_api_key?: string;
+}
+
+export interface SearchSettings {
+  engine: SearchEngineId | string;
+  effective_engine: SearchEngineId;
+  max_results: number;
+  timeout_secs: number;
+  parallel_configured: boolean;
+  brave_configured: boolean;
+}
+
+export async function openhumanGetSearchSettings(): Promise<CommandResponse<SearchSettings>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await callCoreRpc<CommandResponse<SearchSettings>>({
+    method: CORE_RPC_METHODS.configGetSearchSettings,
+  });
+}
+
+export async function openhumanUpdateSearchSettings(
+  update: SearchSettingsUpdate
+): Promise<CommandResponse<ConfigSnapshot>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await callCoreRpc<CommandResponse<ConfigSnapshot>>({
+    method: CORE_RPC_METHODS.configUpdateSearchSettings,
+    params: update,
+  });
+}
+
 export interface ComposioTriggerSettingsUpdate {
   triage_disabled?: boolean | null;
   triage_disabled_toolkits?: string[] | null;

@@ -2,7 +2,7 @@ import { type ComponentType, type FC, useMemo } from 'react';
 
 import type { MascotFace } from './Ghosty';
 import type { MascotColor } from './mascotPalette';
-import { FrameProvider } from './yellow/frameContext';
+import { FrameProvider, StaticFrameProvider } from './yellow/frameContext';
 import type { MascotProps as YellowMascotInnerProps } from './yellow/MascotCharacter';
 import { YellowMascotIdle } from './yellow/MascotIdle';
 import { YellowMascotTalking } from './yellow/MascotTalking';
@@ -21,6 +21,10 @@ export interface YellowMascotProps {
   compactArmShading?: boolean;
   /** Mascot color palette. Defaults to yellow. */
   mascotColor?: MascotColor;
+  /** Render a static (non-animated) pose. Skips the rAF tick used by
+   *  the default animated FrameProvider so decorative instances
+   *  (e.g. subagent indicators) don't churn frames. */
+  static?: boolean;
 }
 
 const FPS = 30;
@@ -94,6 +98,7 @@ export const YellowMascot: FC<YellowMascotProps> = ({
   groundShadowOpacity,
   compactArmShading,
   mascotColor = 'yellow',
+  static: isStatic = false,
 }) => {
   const { Component, inputProps } = useMemo(() => {
     const variant = variantForFace(face, arm, { mascotColor });
@@ -122,13 +127,18 @@ export const YellowMascot: FC<YellowMascotProps> = ({
       <style>{`
         .mascot-yellow-host svg { width: 100% !important; height: 100% !important; }
       `}</style>
-      <FrameProvider
-        fps={FPS}
-        width={CANVAS}
-        height={CANVAS}
-        durationInFrames={face === 'sleep' ? FPS * 600 : DURATION_FRAMES}>
-        <Component {...inputProps} />
-      </FrameProvider>
+      {(() => {
+        const Provider = isStatic ? StaticFrameProvider : FrameProvider;
+        return (
+          <Provider
+            fps={FPS}
+            width={CANVAS}
+            height={CANVAS}
+            durationInFrames={face === 'sleep' ? FPS * 600 : DURATION_FRAMES}>
+            <Component {...inputProps} />
+          </Provider>
+        );
+      })()}
     </div>
   );
 };

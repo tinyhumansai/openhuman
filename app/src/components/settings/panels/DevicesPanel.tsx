@@ -1,6 +1,7 @@
 import createDebug from 'debug';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { useT } from '../../../lib/i18n/I18nContext';
 import { callCoreRpc } from '../../../services/coreRpcClient';
 import type { ToastNotification } from '../../../types/intelligence';
 import { ToastContainer } from '../../intelligence/Toast';
@@ -48,15 +49,34 @@ function relativeTime(iso: string | null): string {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
+function formatRelativeTime(value: string, t: (key: string) => string): string {
+  if (value === 'Never') return t('devices.lastSeenNever');
+  if (value === 'Just now') return t('devices.lastSeenNow');
+
+  const match = value.match(/^(\d+)([mhd]) ago$/);
+  if (!match) return value;
+
+  const [, count, unit] = match;
+  const key =
+    unit === 'm'
+      ? 'devices.lastSeenMinutes'
+      : unit === 'h'
+        ? 'devices.lastSeenHours'
+        : 'devices.lastSeenDays';
+
+  return t(key).replace('{count}', count);
+}
+
 // ---------------------------------------------------------------------------
 // Sub-components
 // ---------------------------------------------------------------------------
 
 function PeerDot({ online }: { online: boolean | null }) {
+  const { t } = useT();
   const isOnline = online === true;
   return (
     <span
-      title={isOnline ? 'Online' : 'Offline'}
+      title={isOnline ? t('devices.online') : t('devices.offline')}
       className={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${isOnline ? 'bg-sage-500' : 'bg-stone-300'}`}
     />
   );
@@ -73,6 +93,8 @@ function DeviceRow({
   isFirst: boolean;
   isLast: boolean;
 }) {
+  const { t } = useT();
+
   return (
     <div
       className={`flex items-center gap-3 px-4 py-3 bg-white border-b ${isLast ? 'border-b-0' : 'border-stone-100'} ${isFirst ? 'rounded-t-lg' : ''} ${isLast ? 'rounded-b-lg' : ''}`}>
@@ -80,13 +102,15 @@ function DeviceRow({
       <div className="flex-1 min-w-0">
         <p className="text-sm font-medium text-stone-900 truncate">{device.label}</p>
         <p className="text-xs text-stone-400 font-mono">{truncateId(device.channel_id)}</p>
-        <p className="text-xs text-stone-400">{relativeTime(device.last_seen_at)}</p>
+        <p className="text-xs text-stone-400">
+          {formatRelativeTime(relativeTime(device.last_seen_at), t)}
+        </p>
       </div>
       <button
         onClick={() => onRevoke(device)}
         className="text-xs text-coral-600 hover:text-coral-700 transition-colors flex-shrink-0 px-2 py-1 rounded hover:bg-coral-50"
-        aria-label={`Revoke ${device.label}`}>
-        Revoke
+        aria-label={t('devices.revokeAria').replace('{label}', device.label)}>
+        {t('devices.revoke')}
       </button>
     </div>
   );
@@ -101,24 +125,27 @@ function ConfirmRevokeDialog({
   onConfirm: () => void;
   onCancel: () => void;
 }) {
+  const { t } = useT();
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/30">
       <div className="bg-white rounded-2xl max-w-sm w-full p-6 border border-stone-200 shadow-large">
-        <h3 className="text-base font-semibold text-stone-900 mb-2">Revoke device?</h3>
+        <h3 className="text-base font-semibold text-stone-900 mb-2">
+          {t('devices.confirmRevokeTitle')}
+        </h3>
         <p className="text-sm text-stone-600 mb-5">
-          <span className="font-medium">{device.label}</span> will no longer be able to connect.
-          This cannot be undone.
+          {t('devices.confirmRevokeBody').replace('{label}', device.label)}
         </p>
         <div className="flex gap-3">
           <button
             onClick={onCancel}
             className="flex-1 px-4 py-2 rounded-lg border border-stone-200 text-stone-700 hover:bg-stone-50 transition-colors text-sm">
-            Cancel
+            {t('common.cancel')}
           </button>
           <button
             onClick={onConfirm}
             className="flex-1 px-4 py-2 rounded-lg bg-coral-500 hover:bg-coral-600 text-white transition-colors text-sm">
-            Revoke
+            {t('devices.revoke')}
           </button>
         </div>
       </div>
@@ -131,6 +158,7 @@ function ConfirmRevokeDialog({
 // ---------------------------------------------------------------------------
 
 const DevicesPanel = () => {
+  const { t } = useT();
   const { navigateBack, breadcrumbs } = useSettingsNavigation();
 
   const [devices, setDevices] = useState<PairedDevice[]>([]);
@@ -165,11 +193,11 @@ const DevicesPanel = () => {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       log('[devices-ui] loadDevices error: %s', msg);
-      setError(`Failed to load devices: ${msg}`);
+      setError(t('devices.loadFailed').replace('{message}', msg));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [t]);
 
   // intervalRef keeps the poll alive when the pair modal is open.
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -212,8 +240,8 @@ const DevicesPanel = () => {
     log('[devices-ui] DevicePaired event channelId=%s', channelId);
     addToast({
       type: 'success',
-      title: 'Device paired',
-      message: 'iPhone connected successfully.',
+      title: t('devices.devicePairedTitle'),
+      message: t('devices.devicePairedMessage'),
     });
     stopPolling();
     setShowPairModal(false);
@@ -231,13 +259,17 @@ const DevicesPanel = () => {
         params: { channel_id: target.channel_id },
       });
       log('[devices-ui] revoke ok channel_id=%s', target.channel_id);
-      addToast({ type: 'success', title: 'Device revoked', message: `${target.label} removed.` });
+      addToast({
+        type: 'success',
+        title: t('devices.deviceRevokedTitle'),
+        message: t('devices.deviceRevokedMessage').replace('{label}', target.label),
+      });
       setRevokeTarget(null);
       await loadDevices();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       log('[devices-ui] revoke error: %s', msg);
-      addToast({ type: 'error', title: 'Revoke failed', message: msg });
+      addToast({ type: 'error', title: t('devices.revokeFailedTitle'), message: msg });
     } finally {
       setRevoking(false);
     }
@@ -247,7 +279,7 @@ const DevicesPanel = () => {
     <div className="z-10 relative">
       <div className="flex items-center justify-between px-5 pt-5 pb-3">
         <SettingsHeader
-          title="Devices"
+          title={t('devices.title')}
           showBackButton={breadcrumbs.length > 0}
           onBack={navigateBack}
           breadcrumbs={breadcrumbs}
@@ -255,13 +287,16 @@ const DevicesPanel = () => {
         <button
           onClick={handleOpenPairModal}
           className="text-xs font-medium text-white bg-primary-500 hover:bg-primary-600 transition-colors px-3 py-1.5 rounded-lg flex-shrink-0">
-          Pair iPhone
+          {t('devices.pairIphone')}
         </button>
       </div>
 
-      <p className="px-5 pb-3 text-xs text-stone-500">
-        Pair iOS phones with this OpenHuman to use them as a remote client.
-      </p>
+      <div className="px-5 pb-3 flex items-center gap-2">
+        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200 border border-amber-200 dark:border-amber-800/60">
+          {t('devices.betaBadge')}
+        </span>
+        <p className="text-xs text-stone-500 dark:text-neutral-400">{t('devices.betaText')}</p>
+      </div>
 
       <div className="px-5 pb-5">
         {loading && (
@@ -306,14 +341,12 @@ const DevicesPanel = () => {
                 />
               </svg>
             </div>
-            <p className="text-sm font-medium text-stone-700 mb-1">No paired devices</p>
-            <p className="text-xs text-stone-400 mb-4 max-w-xs">
-              Scan a QR code on your iPhone to connect it to this OpenHuman session.
-            </p>
+            <p className="text-sm font-medium text-stone-700 mb-1">{t('devices.noPaired')}</p>
+            <p className="text-xs text-stone-400 mb-4 max-w-xs">{t('devices.emptyState')}</p>
             <button
               onClick={handleOpenPairModal}
               className="px-4 py-2 text-sm font-medium text-white bg-primary-500 hover:bg-primary-600 transition-colors rounded-lg">
-              Pair iPhone
+              {t('devices.pairIphone')}
             </button>
           </div>
         )}

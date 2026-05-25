@@ -33,7 +33,7 @@ describe('Settings - Data Management', function () {
   });
 
   it('shows Clear App Data confirmation dialog and handles Cancel (13.5.1)', async () => {
-    await navigateViaHash('/settings');
+    await navigateViaHash('/settings/account');
     await waitForText('Clear App Data', 15_000);
 
     await clickText('Clear App Data');
@@ -48,7 +48,7 @@ describe('Settings - Data Management', function () {
 
   it('performs Full State Reset (13.5.3)', async function () {
     this.timeout(60_000);
-    await navigateViaHash('/settings');
+    await navigateViaHash('/settings/account');
     await waitForText('Clear App Data', 15_000);
 
     await clickText('Clear App Data');
