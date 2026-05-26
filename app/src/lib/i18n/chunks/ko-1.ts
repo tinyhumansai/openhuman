@@ -178,6 +178,7 @@ const ko1: TranslationMap = {
   'memory.tab.subconscious': '잠재의식',
   'memory.tab.dreams': '꿈',
   'memory.tab.calls': '통화',
+  'memory.tab.diagram': 'Diagram',
   'memory.tab.settings': '설정',
   'memory.analyzeNow': '지금 분석',
   'alerts.title': '알림',

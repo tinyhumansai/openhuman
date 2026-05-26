@@ -128,7 +128,7 @@ jobs:
     if: inputs.run_rust_core
     name: Rust Core Tests (Windows — secrets ACL)
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
     env:
       CARGO_INCREMENTAL: '0'
       SCCACHE_GHA_ENABLED: 'true'
@@ -150,10 +150,10 @@ jobs:
       - name: Install sccache
         uses: mozilla-actions/sccache-action@v0.0.9
       - name: Run Windows-specific secrets tests
-        # Runs the full security::secrets suite including all #[cfg(windows)]
+        # Runs the encrypted secret-store suite including all #[cfg(windows)]
         # tests: self-repair ACL path (OPENHUMAN-TAURI-GN), domain-qualified
         # icacls username, is_permission_error, repair_windows_acl.
-        run: bash scripts/ci-cancel-aware.sh cargo test -p openhuman -- security::secrets --nocapture
+        run: bash scripts/ci-cancel-aware.sh cargo test -p openhuman -- keyring::encrypted_store::tests --nocapture
 
   rust-tauri-tests:
     if: inputs.run_rust_tauri

@@ -222,6 +222,7 @@ const de1: TranslationMap = {
   'memory.tab.subconscious': 'Unterbewusstsein',
   'memory.tab.dreams': 'Träume',
   'memory.tab.calls': 'Anrufe',
+  'memory.tab.diagram': 'Diagram',
   'memory.tab.settings': 'Einstellungen',
   'memory.analyzeNow': 'Jetzt analysieren',
   'alerts.title': 'Warnungen',

@@ -464,6 +464,7 @@ const en1: TranslationMap = {
   'memory.tab.subconscious': 'Subconscious',
   'memory.tab.dreams': 'Dreams',
   'memory.tab.calls': 'Calls',
+  'memory.tab.diagram': 'Diagram',
   'memory.tab.settings': 'Settings',
   'memory.analyzeNow': 'Analyze Now',
   'alerts.title': 'Alerts',

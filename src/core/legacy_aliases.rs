@@ -29,6 +29,10 @@ const LEGACY_ALIASES: &[(&str, &str)] = &[
         "openhuman.get_composio_trigger_settings",
         "openhuman.config_get_composio_trigger_settings",
     ),
+    (
+        "openhuman.get_dashboard_settings",
+        "openhuman.config_get_dashboard_settings",
+    ),
     ("openhuman.get_config", "openhuman.config_get"),
     (
         "openhuman.get_runtime_flags",

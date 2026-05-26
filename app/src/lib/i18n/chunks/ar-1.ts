@@ -178,6 +178,7 @@ const ar1: TranslationMap = {
   'memory.tab.subconscious': 'اللاوعي',
   'memory.tab.dreams': 'الأحلام',
   'memory.tab.calls': 'المكالمات',
+  'memory.tab.diagram': 'Diagram',
   'memory.tab.settings': 'الإعدادات',
   'memory.analyzeNow': 'تحليل الآن',
   'alerts.title': 'التنبيهات',

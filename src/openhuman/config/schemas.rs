@@ -236,6 +236,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("workspace_onboarding_flag_set"),
         schemas("update_analytics_settings"),
         schemas("get_analytics_settings"),
+        schemas("get_dashboard_settings"),
         schemas("update_meet_settings"),
         schemas("get_meet_settings"),
         schemas("agent_server_status"),
@@ -317,6 +318,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("get_analytics_settings"),
             handler: handle_get_analytics_settings,
+        },
+        RegisteredController {
+            schema: schemas("get_dashboard_settings"),
+            handler: handle_get_dashboard_settings,
         },
         RegisteredController {
             schema: schemas("update_meet_settings"),
@@ -766,6 +771,18 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 name: "enabled",
                 ty: TypeSchema::Bool,
                 comment: "Whether anonymized analytics is enabled.",
+                required: true,
+            }],
+        },
+        "get_dashboard_settings" => ControllerSchema {
+            namespace: "config",
+            function: "get_dashboard_settings",
+            description: "Read dashboard settings, including the local architecture diagram viewer.",
+            inputs: vec![],
+            outputs: vec![FieldSchema {
+                name: "dashboard",
+                ty: TypeSchema::Json,
+                comment: "Current [dashboard] config block.",
                 required: true,
             }],
         },
@@ -1319,6 +1336,10 @@ fn handle_get_analytics_settings(_params: Map<String, Value>) -> ControllerFutur
             vec!["analytics settings read".to_string()],
         ))
     })
+}
+
+fn handle_get_dashboard_settings(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async { to_json(config_rpc::get_dashboard_settings().await?) })
 }
 
 fn handle_update_meet_settings(params: Map<String, Value>) -> ControllerFuture {

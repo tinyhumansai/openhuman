@@ -185,6 +185,7 @@ const pt1: TranslationMap = {
   'memory.tab.subconscious': 'Subconsciente',
   'memory.tab.dreams': 'Sonhos',
   'memory.tab.calls': 'Chamadas',
+  'memory.tab.diagram': 'Diagram',
   'memory.tab.settings': 'Configurações',
   'memory.analyzeNow': 'Analisar Agora',
   'alerts.title': 'Alertas',

@@ -216,9 +216,9 @@ mod tests {
         let cfg = Config::default();
         let (_provider, model) = build_chat_runtime(&cfg).unwrap();
         // build_chat_runtime resolves the "summarization" role, which gained a
-        // dedicated tier (summarization-v1) — the role no longer falls back to
-        // the generic reasoning-v1 default.
-        assert_eq!(model, "summarization-v1");
+        // dedicated tier through DEFAULT_CLOUD_LLM_MODEL — the role no longer
+        // falls back to the generic reasoning-v1 default.
+        assert_eq!(model, DEFAULT_CLOUD_LLM_MODEL);
     }
 
     #[test]

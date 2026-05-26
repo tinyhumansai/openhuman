@@ -13,6 +13,7 @@ mod autocomplete;
 mod autonomy;
 mod channels;
 mod context;
+mod dashboard;
 mod defaults;
 mod dictation;
 mod heartbeat_cron;
@@ -50,6 +51,7 @@ pub use channels::{
     TelegramConfig, WebhookConfig, WhatsAppConfig,
 };
 pub use context::ContextConfig;
+pub use dashboard::{DashboardConfig, DiagramViewerConfig};
 pub use dictation::{DictationActivationMode, DictationConfig};
 pub use heartbeat_cron::{CronConfig, HeartbeatConfig};
 pub use identity_cost::{CostConfig, ModelPricing};

@@ -179,6 +179,7 @@ const id1: TranslationMap = {
   'memory.tab.subconscious': 'Bawah sadar',
   'memory.tab.dreams': 'Mimpi',
   'memory.tab.calls': 'Panggilan',
+  'memory.tab.diagram': 'Diagram',
   'memory.tab.settings': 'Pengaturan',
   'memory.analyzeNow': 'Analisis Sekarang',
   'alerts.title': 'Peringatan',

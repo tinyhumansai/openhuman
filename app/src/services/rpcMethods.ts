@@ -3,6 +3,7 @@ export const CORE_RPC_METHODS = {
   configGetAnalyticsSettings: 'openhuman.config_get_analytics_settings',
   configGetAutonomySettings: 'openhuman.config_get_autonomy_settings',
   configGetComposioTriggerSettings: 'openhuman.config_get_composio_trigger_settings',
+  configGetDashboardSettings: 'openhuman.config_get_dashboard_settings',
   configGetRuntimeFlags: 'openhuman.config_get_runtime_flags',
   configGetSearchSettings: 'openhuman.config_get_search_settings',
   configUpdateSearchSettings: 'openhuman.config_update_search_settings',
@@ -42,6 +43,7 @@ export type CoreRpcMethod = (typeof CORE_RPC_METHODS)[keyof typeof CORE_RPC_METH
 export const LEGACY_METHOD_ALIASES: Record<string, CoreRpcMethod> = {
   'openhuman.get_analytics_settings': CORE_RPC_METHODS.configGetAnalyticsSettings,
   'openhuman.get_composio_trigger_settings': CORE_RPC_METHODS.configGetComposioTriggerSettings,
+  'openhuman.get_dashboard_settings': CORE_RPC_METHODS.configGetDashboardSettings,
   'openhuman.get_config': CORE_RPC_METHODS.configGet,
   'openhuman.get_runtime_flags': CORE_RPC_METHODS.configGetRuntimeFlags,
   'openhuman.ping': CORE_RPC_METHODS.corePing,

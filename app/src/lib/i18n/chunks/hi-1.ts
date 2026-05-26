@@ -178,6 +178,7 @@ const hi1: TranslationMap = {
   'memory.tab.subconscious': 'सबकॉन्शस',
   'memory.tab.dreams': 'ड्रीम्स',
   'memory.tab.calls': 'कॉल्स',
+  'memory.tab.diagram': 'Diagram',
   'memory.tab.settings': 'सेटिंग्स',
   'memory.analyzeNow': 'अभी एनालाइज़ करें',
   'alerts.title': 'अलर्ट',

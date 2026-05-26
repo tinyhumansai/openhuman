@@ -1129,6 +1129,63 @@ pub async fn get_search_settings() -> Result<RpcOutcome<serde_json::Value>, Stri
     ))
 }
 
+/// Reads dashboard settings exposed to the desktop UI.
+pub async fn get_dashboard_settings() -> Result<RpcOutcome<serde_json::Value>, String> {
+    let request_id = uuid::Uuid::new_v4().to_string();
+    tracing::debug!(
+        target: "openhuman_core::config",
+        request_id = %request_id,
+        method = "openhuman.config_get_dashboard_settings",
+        "OPENHUMAN: get_dashboard_settings entry"
+    );
+    tracing::debug!(
+        target: "openhuman_core::config",
+        request_id = %request_id,
+        method = "openhuman.config_get_dashboard_settings",
+        "OPENHUMAN: get_dashboard_settings loading config"
+    );
+
+    let config = load_config_with_timeout().await.map_err(|error| {
+        tracing::warn!(
+            target: "openhuman_core::config",
+            request_id = %request_id,
+            method = "openhuman.config_get_dashboard_settings",
+            error = %error,
+            "OPENHUMAN: get_dashboard_settings config load failed"
+        );
+        error
+    })?;
+
+    tracing::debug!(
+        target: "openhuman_core::config",
+        request_id = %request_id,
+        method = "openhuman.config_get_dashboard_settings",
+        "OPENHUMAN: get_dashboard_settings serializing dashboard settings"
+    );
+    let result = serde_json::to_value(&config.dashboard).map_err(|error| {
+        let message = error.to_string();
+        tracing::warn!(
+            target: "openhuman_core::config",
+            request_id = %request_id,
+            method = "openhuman.config_get_dashboard_settings",
+            error = %message,
+            "OPENHUMAN: get_dashboard_settings serialization failed"
+        );
+        message
+    })?;
+
+    tracing::debug!(
+        target: "openhuman_core::config",
+        request_id = %request_id,
+        method = "openhuman.config_get_dashboard_settings",
+        "OPENHUMAN: get_dashboard_settings exit"
+    );
+    Ok(RpcOutcome::new(
+        result,
+        vec!["dashboard settings read".to_string()],
+    ))
+}
+
 /// Loads the configuration, applies browser settings updates, and saves it.
 pub async fn load_and_apply_browser_settings(
     update: BrowserSettingsPatch,

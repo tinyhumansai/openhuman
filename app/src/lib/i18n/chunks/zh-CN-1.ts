@@ -174,6 +174,7 @@ const zhCN1: TranslationMap = {
   'memory.tab.subconscious': '潜意识',
   'memory.tab.dreams': '梦境',
   'memory.tab.calls': '调用记录',
+  'memory.tab.diagram': 'Diagram',
   'memory.tab.settings': '设置',
   'memory.analyzeNow': '立即分析',
   'alerts.title': '通知',

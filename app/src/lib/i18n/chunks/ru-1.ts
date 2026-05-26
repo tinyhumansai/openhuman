@@ -179,6 +179,7 @@ const ru1: TranslationMap = {
   'memory.tab.subconscious': 'Подсознание',
   'memory.tab.dreams': 'Сны',
   'memory.tab.calls': 'Звонки',
+  'memory.tab.diagram': 'Diagram',
   'memory.tab.settings': 'Настройки',
   'memory.analyzeNow': 'Анализировать сейчас',
   'alerts.title': 'Оповещения',

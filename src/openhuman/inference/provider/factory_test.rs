@@ -771,6 +771,14 @@ fn make_openhuman_backend_forwards_unknown_hint_verbatim() {
 }
 
 #[test]
+fn make_openhuman_backend_translates_summarization_hint() {
+    let mut config = Config::default();
+    config.default_model = Some("hint:summarization".to_string());
+    let (_, model) = make_openhuman_backend(&config).expect("factory should succeed");
+    assert_eq!(model, crate::openhuman::config::MODEL_SUMMARIZATION_V1);
+}
+
+#[test]
 fn make_openhuman_backend_falls_back_for_invalid_model() {
     // An invalid default_model must not be forwarded to the backend.
     // The factory must silently fall back to reasoning-v1 (the platform default).
