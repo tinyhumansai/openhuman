@@ -16,6 +16,7 @@ import Onboarding from './pages/onboarding/Onboarding';
 import Rewards from './pages/Rewards';
 import Settings from './pages/Settings';
 import Skills from './pages/Skills';
+import WebCallbackPage from './pages/WebCallbackPage';
 import Welcome from './pages/Welcome';
 
 const AppRoutes = () => {
@@ -36,6 +37,9 @@ const AppRoutes = () => {
           </PublicRoute>
         }
       />
+
+      <Route path="/callback/:kind" element={<WebCallbackPage />} />
+      <Route path="/callback/:kind/:status" element={<WebCallbackPage />} />
 
       {/* Onboarding (full-page stepper, gated by onboarding_completed) */}
       <Route

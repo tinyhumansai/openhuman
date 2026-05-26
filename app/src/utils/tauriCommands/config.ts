@@ -297,6 +297,59 @@ export async function openhumanUpdateScreenIntelligenceSettings(
   });
 }
 
+// ── Agent access mode (autonomy / filesystem permissions) ───────────────────
+
+export type AutonomyLevel = 'readonly' | 'supervised' | 'full';
+export type TrustedAccess = 'read' | 'readwrite';
+
+export interface TrustedRoot {
+  path: string;
+  access: TrustedAccess;
+}
+
+/** The full [autonomy] block as returned by config_get_autonomy_settings. */
+export interface AutonomySettings {
+  level: AutonomyLevel;
+  workspace_only: boolean;
+  allowed_commands: string[];
+  forbidden_paths: string[];
+  trusted_roots: TrustedRoot[];
+  allow_tool_install: boolean;
+  max_actions_per_hour: number;
+}
+
+/** Partial update — omitted fields are left unchanged. */
+export interface AutonomySettingsUpdate {
+  level?: AutonomyLevel;
+  workspace_only?: boolean;
+  allowed_commands?: string[];
+  forbidden_paths?: string[];
+  trusted_roots?: TrustedRoot[];
+  allow_tool_install?: boolean;
+  max_actions_per_hour?: number;
+}
+
+export async function openhumanGetAutonomySettings(): Promise<CommandResponse<AutonomySettings>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await callCoreRpc<CommandResponse<AutonomySettings>>({
+    method: CORE_RPC_METHODS.configGetAutonomySettings,
+  });
+}
+
+export async function openhumanUpdateAutonomySettings(
+  update: AutonomySettingsUpdate
+): Promise<CommandResponse<ConfigSnapshot>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await callCoreRpc<CommandResponse<ConfigSnapshot>>({
+    method: CORE_RPC_METHODS.configUpdateAutonomySettings,
+    params: update,
+  });
+}
+
 export async function openhumanUpdateLocalAiSettings(
   update: LocalAiSettingsUpdate
 ): Promise<CommandResponse<ConfigSnapshot>> {
@@ -352,38 +405,6 @@ export async function openhumanGetMeetSettings(): Promise<
   }
   return await callCoreRpc<CommandResponse<{ auto_orchestrator_handoff: boolean }>>({
     method: 'openhuman.config_get_meet_settings',
-  });
-}
-
-/**
- * Update the agent autonomy policy settings (currently just the per-hour tool
- * action ceiling). Persists to the user's `config.toml`. Takes effect on the
- * next agent session — running sessions / cron jobs / channel listeners keep
- * the limit they were started with until core restart.
- */
-export async function openhumanUpdateAutonomySettings(update: {
-  max_actions_per_hour?: number;
-}): Promise<CommandResponse<ConfigSnapshot>> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
-  return await callCoreRpc<CommandResponse<ConfigSnapshot>>({
-    method: CORE_RPC_METHODS.configUpdateAutonomySettings,
-    params: update,
-  });
-}
-
-/**
- * Read the current agent autonomy policy settings from the loaded config.
- */
-export async function openhumanGetAutonomySettings(): Promise<
-  CommandResponse<{ max_actions_per_hour: number }>
-> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
-  return await callCoreRpc<CommandResponse<{ max_actions_per_hour: number }>>({
-    method: CORE_RPC_METHODS.configGetAutonomySettings,
   });
 }
 

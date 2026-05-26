@@ -66,27 +66,27 @@ jobs:
           cache: 'pnpm'
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: bash scripts/ci-cancel-aware.sh pnpm install --frozen-lockfile
 
       # Hard gate: mobile Tauri host compiles for iOS. No more soft-gate
       # `continue-on-error` — the mobile crate uses stock Tauri without CEF
       # so cef-dll-sys is not in the dependency graph.
       - name: cargo check -- mobile host (aarch64-apple-ios)
-        run: cargo check --manifest-path app/src-tauri-mobile/Cargo.toml --target aarch64-apple-ios
+        run: bash scripts/ci-cancel-aware.sh cargo check --manifest-path app/src-tauri-mobile/Cargo.toml --target aarch64-apple-ios
 
       # Hard gate: PTT plugin (host-target check; Swift sources are built
       # lazily by swift-rs during the iOS-target check above).
       - name: cargo check -- tauri-plugin-ptt
-        run: cargo check --manifest-path packages/tauri-plugin-ptt/Cargo.toml
+        run: bash scripts/ci-cancel-aware.sh cargo check --manifest-path packages/tauri-plugin-ptt/Cargo.toml
 
       # Hard gate: TypeScript compile.
       - name: pnpm compile
-        run: pnpm --dir app compile
+        run: bash scripts/ci-cancel-aware.sh pnpm --dir app compile
 
       # Hard gate: iOS-relevant Vitest suites.
       - name: pnpm test (iOS suites)
         run: >
-          pnpm --dir app test --
+          bash scripts/ci-cancel-aware.sh pnpm --dir app test --
           src/services/transport
           src/lib/tunnel
           src/pages/ios

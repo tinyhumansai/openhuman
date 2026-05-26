@@ -1313,6 +1313,11 @@ async fn run_server_inner(
     // Ensure all controllers are registered before starting.
     let _ = all::all_registered_controllers();
 
+    // Ensure the master encryption key is loaded from keychain before any
+    // config or credential operation that needs to decrypt secrets. This is
+    // a no-op if already called (e.g. from run_core_from_args for CLI).
+    crate::openhuman::keyring::init_master_key();
+
     // Initialize the per-process RPC bearer token.
     // Written to {workspace_dir}/core.token so the Tauri shell can read it.
     let token_dir = crate::openhuman::config::default_root_openhuman_dir().unwrap_or_else(|_| {
@@ -1820,17 +1825,20 @@ pub async fn bootstrap_core_runtime(embedded_core: bool) {
     }
 
     // --- Approval gate (#1339) ---
-    // Opt-in via `OPENHUMAN_APPROVAL_GATE=1`. When enabled, tool calls
-    // with `external_effect() == true` (composio, pushover, gmail
-    // unsubscribe, proactive external sends, triage React/Escalate)
-    // route through `ApprovalGate::intercept` and park until the UI
-    // dispatches `approval_decide` (or the 10-minute TTL elapses and
-    // the call is denied). Off by default until the React UI
-    // (toast + settings panel) lands — otherwise gated tool calls
-    // would block the agent loop with nothing to release them.
+    // ON by default; opt out with `OPENHUMAN_APPROVAL_GATE=0` (or `false`).
+    // Prompt-class `external_effect()` tool calls route through
+    // `ApprovalGate::intercept` and park until the UI dispatches
+    // `approval_decide` (or the 10-minute TTL elapses → deny). Safe to default
+    // on now that the release surface exists (ApprovalRequestCard + the Agent
+    // OS access panel) AND only *interactive chat* turns park — background /
+    // triage / cron turns carry no chat context and pass straight through, so
+    // autonomous automation is never blocked.
     if std::env::var("OPENHUMAN_APPROVAL_GATE")
-        .map(|v| matches!(v.trim(), "1" | "true" | "TRUE"))
-        .unwrap_or(false)
+        .map(|v| {
+            let t = v.trim();
+            !(t == "0" || t.eq_ignore_ascii_case("false"))
+        })
+        .unwrap_or(true)
     {
         let (session_id, ephemeral) = match std::env::var("OPENHUMAN_CORE_TOKEN")
             .ok()
@@ -1849,14 +1857,29 @@ pub async fn bootstrap_core_runtime(embedded_core: bool) {
         }
         let _ =
             crate::openhuman::approval::ApprovalGate::init_global(cfg.clone(), session_id.clone());
+        // Never log a token-derived session_id: when OPENHUMAN_CORE_TOKEN is set,
+        // session_id IS that secret. Only the generated ephemeral UUID is safe to
+        // print.
+        let session_label = if ephemeral {
+            session_id.as_str()
+        } else {
+            "<redacted>"
+        };
         log::info!(
-            "[runtime] approval gate installed (OPENHUMAN_APPROVAL_GATE=1, session_id={session_id}) — \
-             external-effect tool calls will block until approval_decide"
+            "[runtime] approval gate installed (on by default; set OPENHUMAN_APPROVAL_GATE=0 to disable, session_id={session_label}) — \
+             Prompt-class external-effect tool calls park for approval in interactive chat turns"
         );
+        // Bridge ApprovalRequested → `approval_request` web socket event. This MUST
+        // be registered here on the always-run serve boot, not only inside
+        // `start_channels` — that path is skipped when no messaging integrations
+        // (Telegram/Discord/…) are configured, which is the common web-chat-only
+        // case. Without this, the gate parks and publishes but nothing reaches the
+        // frontend → every prompt dies at the TTL. Idempotent (Once-guarded).
+        crate::openhuman::channels::providers::web::register_approval_surface_subscriber();
     } else {
-        log::debug!(
-            "[runtime] approval gate disabled (OPENHUMAN_APPROVAL_GATE unset) — \
-             external-effect tool calls run unsupervised"
+        log::info!(
+            "[runtime] approval gate disabled (OPENHUMAN_APPROVAL_GATE=0) — \
+             Prompt-class external-effect tool calls run unprompted"
         );
     }
 

@@ -122,11 +122,6 @@ struct MeetSettingsUpdate {
 }
 
 #[derive(Debug, Deserialize)]
-struct AutonomySettingsUpdate {
-    max_actions_per_hour: Option<u32>,
-}
-
-#[derive(Debug, Deserialize)]
 struct SearchSettingsUpdate {
     engine: Option<String>,
     max_results: Option<usize>,
@@ -201,6 +196,24 @@ struct ComposioTriggerSettingsUpdate {
     triage_disabled_toolkits: Option<Vec<String>>,
 }
 
+#[derive(Debug, Deserialize)]
+struct AutonomySettingsUpdate {
+    /// `"readonly" | "supervised" | "full"` (case-insensitive).
+    level: Option<String>,
+    workspace_only: Option<bool>,
+    /// Replaces the shell command allow-list wholesale.
+    allowed_commands: Option<Vec<String>>,
+    /// Replaces the forbidden-paths denylist wholesale.
+    forbidden_paths: Option<Vec<String>>,
+    /// Replaces the trusted-roots allow-list wholesale. Each entry is
+    /// `{ "path": "/abs/dir", "access": "read" | "readwrite" }`.
+    trusted_roots: Option<Vec<crate::openhuman::security::TrustedRoot>>,
+    allow_tool_install: Option<bool>,
+    // Accept u64 to match the published schema (`TypeSchema::U64`); clamped to the
+    // internal u32 at apply time. u32::MAX/hr is already effectively unlimited.
+    max_actions_per_hour: Option<u64>,
+}
+
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
     vec![
         schemas("get_config"),
@@ -220,8 +233,6 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("get_analytics_settings"),
         schemas("update_meet_settings"),
         schemas("get_meet_settings"),
-        schemas("update_autonomy_settings"),
-        schemas("get_autonomy_settings"),
         schemas("agent_server_status"),
         schemas("reset_local_data"),
         schemas("get_data_paths"),
@@ -233,6 +244,8 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("update_voice_server_settings"),
         schemas("update_composio_trigger_settings"),
         schemas("get_composio_trigger_settings"),
+        schemas("get_autonomy_settings"),
+        schemas("update_autonomy_settings"),
         schemas("update_search_settings"),
         schemas("get_search_settings"),
     ]
@@ -309,14 +322,6 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
             handler: handle_get_meet_settings,
         },
         RegisteredController {
-            schema: schemas("update_autonomy_settings"),
-            handler: handle_update_autonomy_settings,
-        },
-        RegisteredController {
-            schema: schemas("get_autonomy_settings"),
-            handler: handle_get_autonomy_settings,
-        },
-        RegisteredController {
             schema: schemas("agent_server_status"),
             handler: handle_agent_server_status,
         },
@@ -359,6 +364,14 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("get_composio_trigger_settings"),
             handler: handle_get_composio_trigger_settings,
+        },
+        RegisteredController {
+            schema: schemas("get_autonomy_settings"),
+            handler: handle_get_autonomy_settings,
+        },
+        RegisteredController {
+            schema: schemas("update_autonomy_settings"),
+            handler: handle_update_autonomy_settings,
         },
         RegisteredController {
             schema: schemas("update_search_settings"),
@@ -546,6 +559,48 @@ pub fn schemas(function: &str) -> ControllerSchema {
             ],
             outputs: vec![json_output("snapshot", "Updated config snapshot.")],
         },
+        "get_autonomy_settings" => ControllerSchema {
+            namespace: "config",
+            function: "get_autonomy_settings",
+            description: "Get the agent access-mode settings (autonomy level, workspace confinement, trusted roots, command allow-list, forbidden paths).",
+            inputs: vec![],
+            outputs: vec![json_output("autonomy", "Current [autonomy] config block.")],
+        },
+        "update_autonomy_settings" => ControllerSchema {
+            namespace: "config",
+            function: "update_autonomy_settings",
+            description: "Update the agent access mode: autonomy level, workspace confinement, trusted-roots allow-list, command allow-list, forbidden paths, and OS-install permission. Applies live to active sessions.",
+            inputs: vec![
+                optional_string("level", "Autonomy level: readonly | supervised | full."),
+                optional_bool("workspace_only", "Confine file/path access to the workspace directory."),
+                FieldSchema {
+                    name: "allowed_commands",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Array(Box::new(TypeSchema::String)))),
+                    comment: "Replace the shell command allow-list (array of base command names).",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "forbidden_paths",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Array(Box::new(TypeSchema::String)))),
+                    comment: "Replace the forbidden-paths denylist (array of path prefixes).",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "trusted_roots",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Json)),
+                    comment: "Replace the trusted-roots allow-list: array of {path, access: read|readwrite}. Grants access outside the workspace; credential dirs (~/.ssh, ~/.gnupg, ~/.aws) stay blocked regardless.",
+                    required: false,
+                },
+                optional_bool("allow_tool_install", "Allow the agent to install OS packages via install_tool (intended for Full mode)."),
+                FieldSchema {
+                    name: "max_actions_per_hour",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
+                    comment: "Rate limit for side-effecting actions per hour.",
+                    required: false,
+                },
+            ],
+            outputs: vec![json_output("snapshot", "Updated config snapshot.")],
+        },
         "update_browser_settings" => ControllerSchema {
             namespace: "config",
             function: "update_browser_settings",
@@ -723,31 +778,6 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 name: "auto_orchestrator_handoff",
                 ty: TypeSchema::Bool,
                 comment: "Whether the orchestrator handoff fires on Meet call end.",
-                required: true,
-            }],
-        },
-        "update_autonomy_settings" => ControllerSchema {
-            namespace: "config",
-            function: "update_autonomy_settings",
-            description:
-                "Update agent autonomy policy settings (currently the per-hour tool action ceiling).",
-            inputs: vec![FieldSchema {
-                name: "max_actions_per_hour",
-                ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
-                comment: "Maximum tool actions an agent may run per rolling hour (1..=u32::MAX; u32::MAX is the unlimited sentinel).",
-                required: false,
-            }],
-            outputs: vec![json_output("snapshot", "Updated config snapshot.")],
-        },
-        "get_autonomy_settings" => ControllerSchema {
-            namespace: "config",
-            function: "get_autonomy_settings",
-            description: "Read current agent autonomy policy settings.",
-            inputs: vec![],
-            outputs: vec![FieldSchema {
-                name: "max_actions_per_hour",
-                ty: TypeSchema::U64,
-                comment: "Current maximum tool actions per rolling hour.",
                 required: true,
             }],
         },
@@ -1149,6 +1179,28 @@ fn handle_update_runtime_settings(params: Map<String, Value>) -> ControllerFutur
     })
 }
 
+fn handle_get_autonomy_settings(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move { to_json(config_rpc::get_autonomy_settings().await?) })
+}
+
+fn handle_update_autonomy_settings(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let update = deserialize_params::<AutonomySettingsUpdate>(params)?;
+        let patch = config_rpc::AutonomySettingsPatch {
+            level: update.level,
+            workspace_only: update.workspace_only,
+            allowed_commands: update.allowed_commands,
+            forbidden_paths: update.forbidden_paths,
+            trusted_roots: update.trusted_roots,
+            allow_tool_install: update.allow_tool_install,
+            max_actions_per_hour: update
+                .max_actions_per_hour
+                .map(|v| u32::try_from(v).unwrap_or(u32::MAX)),
+        };
+        to_json(config_rpc::load_and_apply_autonomy_settings(patch).await?)
+    })
+}
+
 fn handle_update_browser_settings(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let update = deserialize_params::<BrowserSettingsUpdate>(params)?;
@@ -1293,60 +1345,6 @@ fn handle_get_meet_settings(_params: Map<String, Value>) -> ControllerFuture {
         to_json(RpcOutcome::new(
             result,
             vec!["meet settings read".to_string()],
-        ))
-    })
-}
-
-fn handle_update_autonomy_settings(params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async move {
-        log::debug!("[config][rpc] update_autonomy_settings enter");
-        let update = match deserialize_params::<AutonomySettingsUpdate>(params) {
-            Ok(u) => u,
-            Err(err) => {
-                log::warn!("[config][rpc] update_autonomy_settings invalid params: {err}");
-                return Err(err);
-            }
-        };
-        log::debug!(
-            "[config][rpc] update_autonomy_settings patch max_actions_per_hour={:?}",
-            update.max_actions_per_hour
-        );
-        let patch = config_rpc::AutonomySettingsPatch {
-            max_actions_per_hour: update.max_actions_per_hour,
-        };
-        match config_rpc::load_and_apply_autonomy_settings(patch).await {
-            Ok(outcome) => {
-                log::debug!("[config][rpc] update_autonomy_settings ok");
-                to_json(outcome)
-            }
-            Err(err) => {
-                log::warn!("[config][rpc] update_autonomy_settings failed: {err}");
-                Err(err)
-            }
-        }
-    })
-}
-
-fn handle_get_autonomy_settings(_params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async {
-        log::debug!("[config][rpc] get_autonomy_settings enter");
-        let config = match config_rpc::load_config_with_timeout().await {
-            Ok(c) => c,
-            Err(err) => {
-                log::warn!("[config][rpc] get_autonomy_settings load failed: {err}");
-                return Err(err);
-            }
-        };
-        let max_actions_per_hour = config.autonomy.max_actions_per_hour;
-        log::debug!(
-            "[config][rpc] get_autonomy_settings ok max_actions_per_hour={max_actions_per_hour}"
-        );
-        let result = serde_json::json!({
-            "max_actions_per_hour": max_actions_per_hour,
-        });
-        to_json(RpcOutcome::new(
-            result,
-            vec!["autonomy settings read".to_string()],
         ))
     })
 }

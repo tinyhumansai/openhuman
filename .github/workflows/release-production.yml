@@ -28,16 +28,23 @@ on:
         default: patch
         type: choice
         options: [patch, minor, major]
-      skip_e2e:
+      skip_pretests:
         description:
-          Skip the entire pretest phase (unit/rust plus E2E) and continue
-          directly to create-release + build matrix. Use only when the
-          required pretest signal is already known (e.g. promoting a
-          staging tag whose pretests already ran green) and you need to
-          unblock a production cut.
+          Skip the unit/rust pretest phase and continue directly to the build
+          matrix. Release workflows no longer run E2E. Use only when the
+          required pretest signal is already known and you need to unblock a
+          production cut.
         required: false
         type: boolean
         default: false
+      create_release:
+        description:
+          Create and publish the GitHub Release and attach release assets. When
+          false, run the production build matrix without creating or publishing
+          a GitHub Release.
+        required: false
+        type: boolean
+        default: true
 permissions:
   contents: write
   packages: write
@@ -52,9 +59,8 @@ concurrency:
 #   prepare-build
 #        │
 #        ├─── pretest-tests   (reusable test-reusable.yml — unit + rust)
-#        ├─── pretest-e2e     (reusable e2e-reusable.yml — all 3 OS, full)
 #        │
-#        ├─── create-release
+#        ├─── create-release   (optional no-op when `create_release=false`)
 #        │         │
 #        │    ┌────┴───────────────┬────────────────┐
 #        │    │                    │                │
@@ -309,8 +315,7 @@ jobs:
           echo "base_url=$BASE_URL" >> "$GITHUB_OUTPUT"
 
   # =========================================================================
-  # Phase 1b: Pretest gate — run the full test + E2E suite across every
-  # target OS exactly once on the build ref before we spin up the release
+  # Phase 1b: Pretest gate — run unit + rust on the build ref before we spin up the release
   # draft or any signed-build matrix. Pretest failures abort the workflow
   # before `create-release` runs, so a busted commit never produces a
   # half-finished GH Release that has to be cleaned up.
@@ -318,42 +323,35 @@ jobs:
   pretest-tests:
     name: Pretest — unit + rust
     needs: [prepare-build]
-    if: ${{ !inputs.skip_e2e }}
+    if: ${{ !inputs.skip_pretests }}
     uses: ./.github/workflows/test-reusable.yml
     with:
       ref: ${{ needs.prepare-build.outputs.build_ref }}
-  pretest-e2e:
-    name: Pretest — E2E (all OS, full suite)
-    needs: [prepare-build]
-    if: ${{ !inputs.skip_e2e }}
-    uses: ./.github/workflows/e2e-reusable.yml
-    with:
-      ref: ${{ needs.prepare-build.outputs.build_ref }}
-      run_linux: true
-      run_macos: true
-      run_windows: true
-      full: true
-
   # =========================================================================
   # Phase 2: Create draft GitHub release
   # =========================================================================
   create-release:
-    name: Create GitHub release
+    name: Prepare GitHub release
     runs-on: ubuntu-latest
     environment: Production
-    needs: [prepare-build, pretest-tests, pretest-e2e]
+    needs: [prepare-build, pretest-tests]
     if: >-
       always()
       && needs.prepare-build.result == 'success'
       && (needs.pretest-tests.result == 'success'
-          || (inputs.skip_e2e && needs.pretest-tests.result == 'skipped'))
-      && (needs.pretest-e2e.result == 'success'
-          || (inputs.skip_e2e && needs.pretest-e2e.result == 'skipped'))
+          || (inputs.skip_pretests && needs.pretest-tests.result == 'skipped'))
     outputs:
-      release_id: ${{ steps.create.outputs.release_id }}
-      upload_url: ${{ steps.create.outputs.upload_url }}
+      release_id: ${{ steps.create.outputs.release_id || steps.noop.outputs.release_id }}
+      upload_url: ${{ steps.create.outputs.upload_url || steps.noop.outputs.upload_url }}
     steps:
+      - name: Skip release creation
+        if: ${{ !inputs.create_release }}
+        id: noop
+        run: |
+          echo "release_id=" >> "$GITHUB_OUTPUT"
+          echo "upload_url=" >> "$GITHUB_OUTPUT"
       - name: Create draft release with generated notes
+        if: ${{ inputs.create_release }}
         id: create
         uses: actions/github-script@v8
         with:
@@ -390,7 +388,7 @@ jobs:
   build-desktop:
     name: Build desktop matrix
     needs: [prepare-build, create-release]
-    # `always()` is load-bearing: when `skip_e2e=true` the pretest jobs are
+    # `always()` is load-bearing: when `skip_pretests=true` the pretest job is
     # `skipped`, and GitHub propagates that skipped status transitively to any
     # downstream job lacking an explicit status function — even though we only
     # `needs` create-release here, the build would otherwise be skipped along
@@ -412,10 +410,10 @@ jobs:
       telegram_bot_username: openhumanaibot
       # with_macos_signing defaults to true — left implicit; production
       # always notarizes. See build-desktop.yml inputs.
-      with_release_upload: true
+      with_release_upload: ${{ inputs.create_release }}
       release_id: ${{ needs.create-release.outputs.release_id }}
       build_sidecar: false
-      skip_pretests: ${{ inputs.skip_e2e }}
+      skip_pretests: ${{ inputs.skip_pretests }}
 
   # =========================================================================
   # Phase 3b: Build & push Docker image (runs parallel with build-desktop).
@@ -514,7 +512,7 @@ jobs:
   build-cli-linux:
     name: "CLI: ${{ matrix.target }}"
     needs: [prepare-build, create-release]
-    if: always() && needs.create-release.result == 'success'
+    if: ${{ inputs.create_release && always() && needs.create-release.result == 'success' }}
     environment: Production
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -561,7 +559,7 @@ jobs:
           # baked elsewhere — see prepare-build.outputs.short_sha comment.
           OPENHUMAN_BUILD_SHA: ${{ needs.prepare-build.outputs.short_sha }}
           OPENHUMAN_APP_ENV: production
-        run: cargo build --release --bin openhuman-core
+        run: bash scripts/ci-cancel-aware.sh cargo build --release --bin openhuman-core
       - name: Package and upload tarball to release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -583,7 +581,7 @@ jobs:
   publish-updater-manifest:
     name: Publish updater manifest (latest.json)
     needs: [prepare-build, create-release, build-desktop]
-    if: always() && needs.build-desktop.result == 'success'
+    if: ${{ inputs.create_release && always() && needs.build-desktop.result == 'success' }}
     runs-on: ubuntu-latest
     environment: Production
     steps:
@@ -616,6 +614,8 @@ jobs:
       - build-docker
       - publish-updater-manifest
     if: >-
+      inputs.create_release
+      && 
       always()
       && needs.build-desktop.result == 'success'
       && needs.build-cli-linux.result == 'success'
@@ -716,7 +716,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: Production
     needs: [prepare-build, publish-release]
-    if: always() && needs.publish-release.result == 'success'
+    if: ${{ inputs.create_release && always() && needs.publish-release.result == 'success' }}
     env:
       REGISTRY: ghcr.io
       IMAGE_NAME: tinyhumansai/openhuman-core
@@ -752,7 +752,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: Production
     needs: [prepare-build, publish-release]
-    if: always() && needs.publish-release.result == 'success'
+    if: ${{ inputs.create_release && always() && needs.publish-release.result == 'success' }}
     env:
       SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
       SENTRY_URL: ${{ vars.SENTRY_URL }}
@@ -792,7 +792,6 @@ jobs:
     needs:
       - prepare-build
       - pretest-tests
-      - pretest-e2e
       - create-release
       - build-desktop
       - build-cli-linux
@@ -812,7 +811,7 @@ jobs:
       && (
         (needs.create-release.result != 'success'
          && (needs.pretest-tests.result == 'failure' || needs.pretest-tests.result == 'cancelled'
-             || needs.pretest-e2e.result == 'failure' || needs.pretest-e2e.result == 'cancelled'))
+            ))
         || (needs.create-release.result == 'success'
             && (needs.build-desktop.result == 'failure' || needs.build-desktop.result == 'cancelled'
                 || needs.build-cli-linux.result == 'failure' || needs.build-cli-linux.result == 'cancelled'
@@ -823,7 +822,7 @@ jobs:
       - name: Delete GitHub release
         # Skip on the pretest-failure cleanup path: create-release didn't run,
         # so there's no draft release to delete (only an orphaned tag).
-        if: needs.create-release.result == 'success'
+        if: ${{ inputs.create_release && needs.create-release.result == 'success' }}
         uses: actions/github-script@v8
         with:
           script: |

@@ -1139,6 +1139,7 @@ async fn apply_autonomy_settings_persists_max_actions_per_hour() {
         &mut cfg,
         AutonomySettingsPatch {
             max_actions_per_hour: Some(200),
+            ..Default::default()
         },
     )
     .await
@@ -1163,6 +1164,7 @@ async fn apply_autonomy_settings_no_op_when_patch_empty() {
         &mut cfg,
         AutonomySettingsPatch {
             max_actions_per_hour: None,
+            ..Default::default()
         },
     )
     .await
@@ -1178,6 +1180,7 @@ async fn apply_autonomy_settings_rejects_zero() {
         &mut cfg,
         AutonomySettingsPatch {
             max_actions_per_hour: Some(0),
+            ..Default::default()
         },
     )
     .await
@@ -1200,6 +1203,7 @@ async fn apply_autonomy_settings_accepts_unlimited_sentinel() {
         &mut cfg,
         AutonomySettingsPatch {
             max_actions_per_hour: Some(u32::MAX),
+            ..Default::default()
         },
     )
     .await
@@ -1217,6 +1221,7 @@ async fn load_and_apply_autonomy_settings_roundtrip() {
 
     let patch = AutonomySettingsPatch {
         max_actions_per_hour: Some(500),
+        ..Default::default()
     };
     let outcome = load_and_apply_autonomy_settings(patch)
         .await

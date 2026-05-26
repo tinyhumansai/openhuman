@@ -535,7 +535,17 @@ pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
     // snapshot. On Windows this doubled the surface area for the
     // "Timed out waiting for auth profile lock" failure reported in
     // Sentry against `openhuman.app_state_snapshot`.
-    let session_profile = load_app_session_profile(&config)?;
+    //
+    // `load_app_session_profile` calls `acquire_lock()`, which busy-waits
+    // with `thread::sleep` for up to ~35s when the lock is contended. Calling
+    // it directly on a tokio worker thread blocks that thread for the entire
+    // wait, exhausting the thread pool under concurrent snapshot calls and
+    // triggering `ERR_CONNECTION_TIMED_OUT` on all RPC connections.
+    let config_for_profile = config.clone();
+    let session_profile =
+        tokio::task::spawn_blocking(move || load_app_session_profile(&config_for_profile))
+            .await
+            .unwrap_or_else(|e| Err(format!("[app_state] auth profile load task panicked: {e}")))?;
     let mut auth = session_state_from_profile(session_profile.as_ref());
     let session_token = session_token_from_profile(session_profile.as_ref());
     let stored_user = sanitize_snapshot_user(auth.user.clone());

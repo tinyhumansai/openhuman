@@ -362,6 +362,7 @@ const zhCN1: TranslationMap = {
   'mnemonic.copyWarning': '永远不要分享你的恢复短语。任何拥有这些单词的人都可以访问你的账户。',
   'mnemonic.copied': '恢复短语已复制到剪贴板',
   'mnemonic.reveal': '显示短语',
+  'mnemonic.revealPhrase': 'Reveal recovery phrase',
   'mnemonic.hidden': '恢复短语已隐藏',
   'privacy.title': '隐私与安全',
   'privacy.description': '发送到外部服务的数据透明度报告。',

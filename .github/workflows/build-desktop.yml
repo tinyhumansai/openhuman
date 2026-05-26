@@ -238,9 +238,9 @@ jobs:
           != 'true') || (matrix.settings.platform != 'windows-latest' && steps.tauri-cli-cache-unix.outputs.cache-hit
           != 'true')
         shell: bash
-        run: cargo install --locked --path app/src-tauri/vendor/tauri-cef/crates/tauri-cli
+        run: bash scripts/ci-cancel-aware.sh cargo install --locked --path app/src-tauri/vendor/tauri-cef/crates/tauri-cli
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: bash scripts/ci-cancel-aware.sh pnpm install --frozen-lockfile
 
       - name: Validate signing prerequisites
         # The minisign pubkey is baked into the static tauri.conf.json, not
@@ -349,7 +349,7 @@ jobs:
           if [ -z "${OPENHUMAN_CORE_SENTRY_DSN}" ]; then
             echo "::warning::vars.OPENHUMAN_CORE_SENTRY_DSN (or legacy vars.OPENHUMAN_SENTRY_DSN) is empty — the standalone CLI artifact will ship without crash reporting."
           fi
-          cargo build \
+          bash scripts/ci-cancel-aware.sh cargo build \
             --manifest-path "$CORE_MANIFEST" \
             --target "$MATRIX_TARGET" \
             --bin "$CORE_BIN_NAME"
@@ -440,7 +440,7 @@ jobs:
           # macOS / Windows take the original single-call path.
           if [ "${RUNNER_OS}" = "Linux" ]; then
             echo "[appimage-fix] linux split build: compile first to fetch CEF"
-            NODE_OPTIONS="--max-old-space-size=8192" cargo tauri build --no-bundle $PROFILE_FLAG -c "$TAURI_CONFIG_OVERRIDE" $MATRIX_ARGS
+            NODE_OPTIONS="--max-old-space-size=8192" bash ../scripts/ci-cancel-aware.sh cargo tauri build --no-bundle $PROFILE_FLAG -c "$TAURI_CONFIG_OVERRIDE" $MATRIX_ARGS
             CEF_LIB_DIR="$(find "$HOME/.cache/tauri-cef" -name libcef.so -printf '%h\n' 2>/dev/null | head -1)"
             if [ -z "$CEF_LIB_DIR" ]; then
               echo "::error::libcef.so not found under ~/.cache/tauri-cef after --no-bundle compile; cannot satisfy lib4bin ldd resolution." >&2
@@ -449,7 +449,7 @@ jobs:
             echo "[appimage-fix] prepending CEF lib dir to LD_LIBRARY_PATH: $CEF_LIB_DIR"
             export LD_LIBRARY_PATH="$CEF_LIB_DIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
           fi
-          NODE_OPTIONS="--max-old-space-size=8192" cargo tauri build $PROFILE_FLAG -c "$TAURI_CONFIG_OVERRIDE" $MATRIX_ARGS
+          NODE_OPTIONS="--max-old-space-size=8192" bash ../scripts/ci-cancel-aware.sh cargo tauri build $PROFILE_FLAG -c "$TAURI_CONFIG_OVERRIDE" $MATRIX_ARGS
 
       # Diagnostic for the recurring quick-sharun "is missing libraries!
       # Aborting..." error on the AppImage bundler — the upstream script

@@ -21,7 +21,7 @@ pub mod schemas;
 pub mod store;
 pub mod types;
 
-pub use gate::ApprovalGate;
+pub use gate::{parse_approval_reply, ApprovalChatContext, ApprovalGate, APPROVAL_CHAT_CONTEXT};
 pub use ops::*;
 pub use redact::{redact_args, summarize_action};
 pub use schemas::all_controller_schemas as all_approval_controller_schemas;

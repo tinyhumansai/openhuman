@@ -169,7 +169,9 @@ impl Tool for HttpRequestTool {
         let body = args.get("body").and_then(|v| v.as_str());
 
         if !self.security.can_act() {
-            return Ok(ToolResult::error("Action blocked: autonomy is read-only"));
+            return Ok(ToolResult::error(
+                "[policy-blocked] Action blocked: autonomy is read-only",
+            ));
         }
 
         if !self.security.record_action() {

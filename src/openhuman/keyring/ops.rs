@@ -3,11 +3,20 @@
 //! All public functions delegate to the active backend selected by [`crate::openhuman::keyring::store`].
 
 use std::path::Path;
+use std::sync::OnceLock;
 
 use chacha20poly1305::aead::{rand_core::RngCore, OsRng};
 
 use crate::openhuman::keyring::error::KeyringError;
 use crate::openhuman::keyring::store::backend;
+
+// Cached result of the one-time keychain probe. Running the probe on every
+// `is_available()` call means 4 OS-keychain round-trips (delete / set / get /
+// delete) per call, which triggers repeated macOS access-permission dialogs
+// and starves callers that poll frequently (e.g. snapshot, wallet guards).
+// The backend selection is already frozen in a OnceLock, so the probe result
+// is stable for the lifetime of the process — caching it here is safe.
+static AVAILABILITY_CACHE: OnceLock<bool> = OnceLock::new();
 
 // ── Outcome type ─────────────────────────────────────────────────────────────
 
@@ -82,7 +91,16 @@ pub fn delete(user_id: &str, key: &str) -> Result<(), KeyringError> {
 /// For the `file` and `mock` backends this always returns `true`.  For the
 /// `os` backend on Linux headless systems (no Secret Service daemon) this
 /// returns `false`; callers should fall back to file-based storage.
+///
+/// The result is cached after the first call — the probe runs exactly once
+/// per process lifetime. This prevents repeated OS-keychain round-trips (and
+/// the macOS access-permission dialogs they trigger) when polled by
+/// wallet guards or snapshot loops.
 pub fn is_available() -> bool {
+    *AVAILABILITY_CACHE.get_or_init(probe_availability)
+}
+
+fn probe_availability() -> bool {
     const PROBE_USER: &str = "__probe__";
     const PROBE_KEY: &str = "__openhuman_keyring_probe__";
     const PROBE_VALUE: &str = "__probe_value__";
@@ -92,14 +110,19 @@ pub fn is_available() -> bool {
         backend().name()
     );
 
-    // File and mock backends are always available.
+    // File-based and mock backends are always available.
     let b = backend();
-    if b.name() == "file" || b.name() == "mock" {
+    if b.name() == "file" || b.name() == "mock" || b.name() == "encrypted_file" {
         log::debug!("[keyring] is_available=true (non-os backend)");
         return true;
     }
 
     let result = (|| -> Result<bool, KeyringError> {
+        // Delete any leftover probe key from a previous launch before writing.
+        // Without this, `set` fails with "item already exists" (-25299) on
+        // every launch after the first, causing `is_available` to incorrectly
+        // return false even when the keychain is fully functional.
+        let _ = delete(PROBE_USER, PROBE_KEY);
         set(PROBE_USER, PROBE_KEY, PROBE_VALUE)?;
         let readback = get(PROBE_USER, PROBE_KEY)?;
         delete(PROBE_USER, PROBE_KEY)?;
@@ -264,12 +287,7 @@ pub(crate) fn namespaced_key(user_id: &str, key: &str) -> String {
 }
 
 pub(crate) fn hex_encode(data: &[u8]) -> String {
-    let mut s = String::with_capacity(data.len() * 2);
-    for b in data {
-        use std::fmt::Write;
-        let _ = write!(s, "{b:02x}");
-    }
-    s
+    super::crypto::hex_encode(data)
 }
 
 // ── Test helpers ──────────────────────────────────────────────────────────────

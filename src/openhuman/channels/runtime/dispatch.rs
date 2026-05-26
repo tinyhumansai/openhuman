@@ -855,6 +855,20 @@ pub(crate) async fn process_channel_message(
     // `Config::onboarding_completed` happens inside `resolve_target_agent`.
     let scoping = resolve_target_agent(&msg.channel).await;
 
+    // A channel's explicitly-registered `tools_registry` tools are always visible
+    // to the model. The resolved agent's visible-tool scope is meant to filter the
+    // ambient/builtin tool surface, not to hide tools the channel deliberately
+    // handed in for this turn. Without this, a channel that provides a tool
+    // outside the resolved agent's `Named` scope (e.g. a test mock, or a custom
+    // channel-specific tool) would be filtered out and surfaced to the model as
+    // "unknown tool". When the scope is `Wildcard` (`None`), no filter applies.
+    let visible_tool_names = scoping.visible_tool_names.map(|mut set| {
+        for tool in ctx.tools_registry.iter() {
+            set.insert(tool.name().to_string());
+        }
+        set
+    });
+
     let turn_request = AgentTurnRequest {
         provider: Arc::clone(&active_provider),
         history: std::mem::take(&mut history),
@@ -868,7 +882,7 @@ pub(crate) async fn process_channel_message(
         max_tool_iterations: ctx.max_tool_iterations,
         on_delta: None, // on_progress handles text deltas now
         target_agent_id: scoping.target_agent_id,
-        visible_tool_names: scoping.visible_tool_names,
+        visible_tool_names,
         extra_tools: scoping.extra_tools,
         on_progress: progress_tx,
     };

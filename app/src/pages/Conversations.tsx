@@ -5,6 +5,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 
 import { type ChatSendError, chatSendError } from '../chat/chatSendError';
 import { checkPromptInjection, promptGuardMessage } from '../chat/promptInjectionGuard';
+import ApprovalRequestCard from '../components/chat/ApprovalRequestCard';
 import TokenUsagePill from '../components/chat/TokenUsagePill';
 import { ConfirmationModal } from '../components/intelligence/ConfirmationModal';
 import PillTabBar from '../components/PillTabBar';
@@ -211,6 +212,9 @@ const Conversations = ({
   const taskBoardByThread = useAppSelector(state => state.chatRuntime.taskBoardByThread);
   const inferenceStatusByThread = useAppSelector(
     state => state.chatRuntime.inferenceStatusByThread
+  );
+  const pendingApprovalByThread = useAppSelector(
+    state => state.chatRuntime.pendingApprovalByThread
   );
   const streamingAssistantByThread = useAppSelector(
     state => state.chatRuntime.streamingAssistantByThread
@@ -1910,6 +1914,20 @@ const Conversations = ({
               </div>
             </div>
           )}
+
+          {(() => {
+            // Surface a parked ApprovalGate request for the shown thread just
+            // above the composer, so it stays visible regardless of scroll.
+            const approvalThreadId = selectedThreadId ?? activeThreadId;
+            const pendingApproval = approvalThreadId
+              ? pendingApprovalByThread[approvalThreadId]
+              : undefined;
+            return pendingApproval && approvalThreadId ? (
+              <div className="mb-2">
+                <ApprovalRequestCard threadId={approvalThreadId} approval={pendingApproval} />
+              </div>
+            ) : null;
+          })()}
 
           {composer === 'mic-cloud' ? (
             <div className="flex flex-col items-center gap-3 py-1">

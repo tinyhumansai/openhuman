@@ -138,6 +138,8 @@ pub fn all_tools_with_runtime(
         Box::new(TodoTool::new()),
         Box::new(PlanExitTool::new()),
         Box::new(CurrentTimeTool::new()),
+        Box::new(DetectToolsTool::new()),
+        Box::new(InstallToolTool::new(security.clone())),
         Box::new(CronAddTool::new(config.clone(), security.clone())),
         Box::new(CronListTool::new(config.clone())),
         Box::new(CronRemoveTool::new(config.clone())),

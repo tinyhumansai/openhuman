@@ -1323,3 +1323,57 @@ async fn all_tools_executes_stock_and_twilio_family_against_fake_backend() {
     assert_eq!(requests[2].body["requireGreeks"], serde_json::json!(true));
     assert_eq!(requests[5].body["to"], serde_json::json!("+14155551234"));
 }
+
+/// Every acting tool gates on `can_act()` and returns its own read-only refusal
+/// string. Each of those must carry [`POLICY_BLOCKED_MARKER`] so the agent
+/// harness recognizes the block as a hard reject and halts on a verbatim repeat
+/// (see `agent::harness::tool_loop::hard_reject_kind`). This pins every tool's
+/// literal to the marker const — drift between them fails here rather than
+/// silently letting the agent grind on a doomed call. Args are the minimum
+/// needed to reach the `can_act()` check in each tool.
+#[tokio::test]
+async fn readonly_acting_tools_carry_policy_blocked_marker() {
+    use crate::openhuman::security::{AutonomyLevel, POLICY_BLOCKED_MARKER};
+
+    let tmp = TempDir::new().unwrap();
+    let sec = Arc::new(SecurityPolicy {
+        autonomy: AutonomyLevel::ReadOnly,
+        workspace_dir: tmp.path().to_path_buf(),
+        ..SecurityPolicy::default()
+    });
+
+    let cases: Vec<(Box<dyn Tool>, serde_json::Value)> = vec![
+        (
+            Box::new(ApplyPatchTool::new(sec.clone())),
+            serde_json::json!({ "edits": [{ "path": "a.txt", "old_string": "x", "new_string": "y" }] }),
+        ),
+        (
+            Box::new(CsvExportTool::new(sec.clone())),
+            serde_json::json!({ "data": "col1\nval1", "filename": "x.csv" }),
+        ),
+        (
+            Box::new(KeyboardTool::new(sec.clone())),
+            serde_json::json!({}),
+        ),
+        (Box::new(MouseTool::new(sec.clone())), serde_json::json!({})),
+        (
+            Box::new(BrowserOpenTool::new(sec.clone(), vec![])),
+            serde_json::json!({ "url": "https://example.com" }),
+        ),
+        (
+            Box::new(HttpRequestTool::new(sec.clone(), vec![], 0, 0)),
+            serde_json::json!({ "url": "https://example.com" }),
+        ),
+    ];
+
+    for (tool, args) in cases {
+        let name = tool.name().to_string();
+        let out = tool.execute(args).await.unwrap();
+        assert!(out.is_error, "{name} should error under read-only autonomy");
+        assert!(
+            out.output().contains(POLICY_BLOCKED_MARKER),
+            "{name} read-only block must carry {POLICY_BLOCKED_MARKER}, got: {}",
+            out.output()
+        );
+    }
+}

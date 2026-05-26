@@ -1,12 +1,15 @@
+use async_trait::async_trait;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, OnceLock};
 use tokio::sync::{broadcast, Mutex};
 use uuid::Uuid;
 
 use crate::core::all::{ControllerFuture, RegisteredController};
+use crate::core::event_bus::{DomainEvent, EventHandler, SubscriptionHandle};
 use crate::core::socketio::{SubagentProgressDetail, WebChannelEvent};
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 use crate::openhuman::agent::profiles::{AgentProfile, AgentProfileStore, DEFAULT_PROFILE_ID};
@@ -32,6 +35,89 @@ pub fn subscribe_web_channel_events() -> broadcast::Receiver<WebChannelEvent> {
 
 pub fn publish_web_channel_event(event: WebChannelEvent) {
     let _ = EVENT_BUS.send(event);
+}
+
+static APPROVAL_SURFACE_HANDLE: OnceLock<SubscriptionHandle> = OnceLock::new();
+
+/// Bridge a parked `ApprovalGate` request onto the web channel. When the gate
+/// publishes `ApprovalRequested` carrying a chat thread/client (set via the
+/// per-turn `ApprovalChatContext`), surface the "run X? (yes/no)" question as an
+/// `approval_request` event on that thread so the user can answer in chat.
+/// Idempotent. No-op for non-chat approvals (thread/client id absent).
+pub fn register_approval_surface_subscriber() {
+    if APPROVAL_SURFACE_HANDLE.get().is_some() {
+        return;
+    }
+    match crate::core::event_bus::subscribe_global(Arc::new(ApprovalSurfaceSubscriber)) {
+        Some(handle) => {
+            let _ = APPROVAL_SURFACE_HANDLE.set(handle);
+            log::info!(
+                "[web-channel] approval-surface subscriber registered (domain=approval) — will bridge ApprovalRequested → approval_request socket event"
+            );
+        }
+        None => {
+            log::warn!(
+                "[web-channel] failed to register approval-surface subscriber — bus not initialized"
+            );
+        }
+    }
+}
+
+struct ApprovalSurfaceSubscriber;
+
+#[async_trait]
+impl EventHandler for ApprovalSurfaceSubscriber {
+    fn name(&self) -> &str {
+        "channels::web::approval_surface"
+    }
+
+    fn domains(&self) -> Option<&[&str]> {
+        Some(&["approval"])
+    }
+
+    async fn handle(&self, event: &DomainEvent) {
+        if let DomainEvent::ApprovalRequested {
+            request_id,
+            tool_name,
+            action_summary,
+            args_redacted,
+            thread_id,
+            client_id,
+            ..
+        } = event
+        {
+            match (thread_id, client_id) {
+                (Some(thread_id), Some(client_id)) => {
+                    // Short, neutral description — the card renders the exact
+                    // command/args (from `args` below) and has Approve/Deny
+                    // buttons, so no "reply yes/no" instruction here.
+                    let question = format!("Run `{tool_name}` — {action_summary}");
+                    log::info!(
+                        "[web-channel] approval-surface emitting approval_request request_id={request_id} thread_id={thread_id} client_id={client_id} tool={tool_name}"
+                    );
+                    publish_web_channel_event(WebChannelEvent {
+                        event: "approval_request".to_string(),
+                        client_id: client_id.clone(),
+                        thread_id: thread_id.clone(),
+                        request_id: request_id.clone(),
+                        tool_name: Some(tool_name.clone()),
+                        message: Some(question),
+                        // The exact (redacted) command/args being requested, so
+                        // the card can show precisely what will run.
+                        args: Some(args_redacted.clone()),
+                        ..Default::default()
+                    });
+                }
+                _ => {
+                    log::warn!(
+                        "[web-channel] approval-surface received ApprovalRequested request_id={request_id} tool={tool_name} but thread_id/client_id absent (thread={}, client={}) — NOT surfacing",
+                        thread_id.is_some(),
+                        client_id.is_some()
+                    );
+                }
+            }
+        }
+    }
 }
 
 /// All inputs that the cached `SessionEntry`'s `Agent` was built from,
@@ -65,11 +151,31 @@ struct SessionCacheFingerprint {
     /// against the updated provider rather than silently reusing the
     /// stale instance.
     provider_binding: String,
+    /// Signature of the autonomy/access config (`[autonomy]`) at build time.
+    /// The cached `Agent` holds tools that each captured a `SecurityPolicy`
+    /// snapshot at construction, so a change to the agent-access tier
+    /// (`config.update_autonomy_settings` → Settings → Agent access) must
+    /// invalidate the cache — otherwise the next turn silently reuses tools
+    /// gated by the OLD policy and the setting appears to do nothing. Derived
+    /// from the on-disk autonomy block (read fresh each turn), so it flips the
+    /// moment a new tier is saved.
+    autonomy_signature: String,
 }
 
 struct SessionEntry {
     agent: Agent,
     fingerprint: SessionCacheFingerprint,
+}
+
+/// Deterministic signature of the autonomy/access config for the session cache
+/// fingerprint. Serializing the whole `[autonomy]` block (serde emits fields in
+/// stable declaration order) captures every knob that feeds `SecurityPolicy` —
+/// `level`, `workspace_only`, `trusted_roots`, `allow_tool_install`,
+/// `allowed_commands`, … — so saving any agent-access change flips the
+/// signature and forces a rebuild. On the practically-impossible serialize
+/// error we return an empty string, which just means "treat as changed".
+fn autonomy_signature(config: &Config) -> String {
+    serde_json::to_string(&config.autonomy).unwrap_or_default()
 }
 
 /// Decide which agent definition this turn should run with.
@@ -502,6 +608,54 @@ pub async fn start_chat(
         return Err(prompt_guard_user_message(prompt_decision.action).to_string());
     }
 
+    // Chat-native approval: if this thread has a parked approval and the message
+    // is a yes/no reply, route it to the gate (resuming the parked turn) rather
+    // than starting a new turn — which would cancel the parked approval. Any
+    // other text falls through to the normal path below, which cancels the
+    // in-flight turn and dispatches the message fresh (the intended "redirect").
+    if let Some(gate) = crate::openhuman::approval::ApprovalGate::try_global() {
+        if let Some(request_id) = gate.pending_for_thread(&thread_id) {
+            if let Some(decision) = crate::openhuman::approval::parse_approval_reply(&message) {
+                match gate.decide(&request_id, decision) {
+                    Ok(Some(_)) => {
+                        log::info!(
+                            "[web-channel] routed chat reply to approval gate thread_id={} request_id={} decision={}",
+                            thread_id,
+                            request_id,
+                            decision.as_str()
+                        );
+                        return Ok(request_id);
+                    }
+                    Ok(None) => {
+                        // `decide` returns `Ok(None)` when the request is already
+                        // gone / already decided — the parked turn was NOT resumed
+                        // by this call. Don't ACK it as applied; fall through so the
+                        // reply is dispatched as a fresh turn.
+                        log::warn!(
+                            "[web-channel] approval reply targeted a non-pending/already-decided request thread_id={} request_id={} decision={} — dispatching as fresh turn",
+                            thread_id,
+                            request_id,
+                            decision.as_str()
+                        );
+                    }
+                    Err(err) => {
+                        // Don't claim success: the parked turn is still waiting on
+                        // its oneshot. Log and fall through so the reply is
+                        // dispatched as a fresh turn rather than silently dropped
+                        // (the stale parked request will TTL out).
+                        log::warn!(
+                            "[web-channel] failed to route chat reply to approval gate thread_id={} request_id={} decision={} err={}",
+                            thread_id,
+                            request_id,
+                            decision.as_str(),
+                            err
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     let map_key = key_for(&thread_id);
 
     {
@@ -542,17 +696,30 @@ pub async fn start_chat(
 
     let user_message = message.clone();
     let handle = tokio::spawn(async move {
-        let result = run_chat_task(
-            &client_id_task,
-            &thread_id_task,
-            &request_id_task,
-            &user_message,
-            model_override,
-            temperature,
-            profile_id,
-            locale,
-        )
-        .await;
+        // Scope the per-turn approval chat context so a parked `ApprovalGate`
+        // request (raised deep in the tool loop, which runs inline in this same
+        // task) carries the thread/client id — letting a yes/no chat reply be
+        // routed back to `approval_decide`. No sub-task is spawned between here
+        // and `intercept`, so the task-local propagates.
+        let approval_ctx = crate::openhuman::approval::ApprovalChatContext {
+            thread_id: thread_id_task.clone(),
+            client_id: client_id_task.clone(),
+        };
+        let result = crate::openhuman::approval::APPROVAL_CHAT_CONTEXT
+            .scope(
+                approval_ctx,
+                run_chat_task(
+                    &client_id_task,
+                    &thread_id_task,
+                    &request_id_task,
+                    &user_message,
+                    model_override,
+                    temperature,
+                    profile_id,
+                    locale,
+                ),
+            )
+            .await;
 
         match result {
             Ok(chat_result) => {
@@ -804,6 +971,7 @@ async fn run_chat_task(
             provider_role,
             &config,
         ),
+        autonomy_signature: autonomy_signature(&config),
     };
 
     let prior = {

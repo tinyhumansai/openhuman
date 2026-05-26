@@ -130,6 +130,28 @@ pub fn default_root_openhuman_dir() -> Result<PathBuf> {
     Ok(home.join(default_root_dir_name()))
 }
 
+/// Environment override for the agent's default projects directory.
+pub const PROJECTS_DIR_ENV_VAR: &str = "OPENHUMAN_PROJECTS_DIR";
+
+/// The agent's default **projects home** — a visible, read-write directory
+/// (`~/OpenHuman/projects`) where the coding agent creates and saves projects,
+/// kept distinct from the hidden internal state dir (`~/.openhuman/workspace`,
+/// which also holds `memory_tree` etc.). Overridable via `OPENHUMAN_PROJECTS_DIR`;
+/// falls back to `./OpenHuman/projects` only when the home dir can't be resolved.
+pub fn default_projects_dir() -> PathBuf {
+    if let Ok(p) = std::env::var(PROJECTS_DIR_ENV_VAR) {
+        let trimmed = p.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed);
+        }
+    }
+    UserDirs::new()
+        .map(|u| u.home_dir().to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("OpenHuman")
+        .join("projects")
+}
+
 fn active_workspace_state_path(default_dir: &Path) -> PathBuf {
     default_dir.join(ACTIVE_WORKSPACE_STATE_FILE)
 }

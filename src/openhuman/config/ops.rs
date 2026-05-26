@@ -361,6 +361,21 @@ pub struct RuntimeSettingsPatch {
     pub reasoning_enabled: Option<bool>,
 }
 
+/// Partial update for the `[autonomy]` block — the agent's filesystem access
+/// mode. Each `None` field is left unchanged. `trusted_roots`, `allowed_commands`,
+/// and `forbidden_paths`, when `Some`, REPLACE the corresponding array wholesale.
+#[derive(Debug, Clone, Default)]
+pub struct AutonomySettingsPatch {
+    /// `"readonly" | "supervised" | "full"` (case-insensitive).
+    pub level: Option<String>,
+    pub workspace_only: Option<bool>,
+    pub allowed_commands: Option<Vec<String>>,
+    pub forbidden_paths: Option<Vec<String>>,
+    pub trusted_roots: Option<Vec<crate::openhuman::security::TrustedRoot>>,
+    pub allow_tool_install: Option<bool>,
+    pub max_actions_per_hour: Option<u32>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct BrowserSettingsPatch {
     pub enabled: Option<bool>,
@@ -388,11 +403,6 @@ pub struct AnalyticsSettingsPatch {
 #[derive(Debug, Clone, Default)]
 pub struct MeetSettingsPatch {
     pub auto_orchestrator_handoff: Option<bool>,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct AutonomySettingsPatch {
-    pub max_actions_per_hour: Option<u32>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -795,6 +805,91 @@ pub async fn load_and_apply_runtime_settings(
     apply_runtime_settings(&mut config, update).await
 }
 
+/// Updates the `[autonomy]` (agent access mode) settings in the configuration.
+///
+/// After saving, publishes a `DomainEvent::System(AutonomyConfigChanged)` so that
+/// live agent sessions can rebuild their `SecurityPolicy` without a core restart
+/// (see `channels::runtime`). Returns the updated config snapshot.
+pub async fn apply_autonomy_settings(
+    config: &mut Config,
+    update: AutonomySettingsPatch,
+) -> Result<RpcOutcome<serde_json::Value>, String> {
+    use crate::openhuman::security::AutonomyLevel;
+
+    if let Some(level) = update.level {
+        config.autonomy.level = match level.trim().to_ascii_lowercase().as_str() {
+            "readonly" | "read_only" | "read-only" => AutonomyLevel::ReadOnly,
+            "supervised" => AutonomyLevel::Supervised,
+            "full" => AutonomyLevel::Full,
+            other => {
+                return Err(format!(
+                    "invalid autonomy level '{other}' (expected readonly | supervised | full)"
+                ))
+            }
+        };
+    }
+    if let Some(workspace_only) = update.workspace_only {
+        config.autonomy.workspace_only = workspace_only;
+    }
+    if let Some(allowed_commands) = update.allowed_commands {
+        config.autonomy.allowed_commands = allowed_commands;
+    }
+    if let Some(forbidden_paths) = update.forbidden_paths {
+        config.autonomy.forbidden_paths = forbidden_paths;
+    }
+    if let Some(trusted_roots) = update.trusted_roots {
+        config.autonomy.trusted_roots = trusted_roots;
+    }
+    if let Some(allow_tool_install) = update.allow_tool_install {
+        config.autonomy.allow_tool_install = allow_tool_install;
+    }
+    if let Some(max_actions_per_hour) = update.max_actions_per_hour {
+        if max_actions_per_hour == 0 {
+            return Err(format!(
+                "max_actions_per_hour must be at least 1 (got {max_actions_per_hour})"
+            ));
+        }
+        config.autonomy.max_actions_per_hour = max_actions_per_hour;
+    }
+
+    config.save().await.map_err(|e| e.to_string())?;
+
+    // Swap the process-global live SecurityPolicy so `current()` reflects the new
+    // access mode immediately, then broadcast for any other interested listeners.
+    crate::openhuman::security::live_policy::reload_from(&config.autonomy);
+    crate::core::event_bus::publish_global(
+        crate::core::event_bus::DomainEvent::AutonomyConfigChanged,
+    );
+
+    let snapshot = snapshot_config_json(config)?;
+    Ok(RpcOutcome::new(
+        snapshot,
+        vec![format!(
+            "autonomy settings saved to {}",
+            config.config_path.display()
+        )],
+    ))
+}
+
+/// Loads the configuration, applies autonomy settings updates, and saves it.
+pub async fn load_and_apply_autonomy_settings(
+    update: AutonomySettingsPatch,
+) -> Result<RpcOutcome<serde_json::Value>, String> {
+    let mut config = load_config_with_timeout().await?;
+    apply_autonomy_settings(&mut config, update).await
+}
+
+/// Returns the current `[autonomy]` settings block as JSON (no secrets).
+///
+/// Emits a log line so `into_cli_compatible_json` wraps the payload under
+/// `result` — the shape every consumer reads (`AgentAccessPanel` /
+/// `AutonomyPanel` use `res.result.*`, and `json_rpc_e2e` strips the wrapper).
+pub async fn get_autonomy_settings() -> Result<RpcOutcome<serde_json::Value>, String> {
+    let config = load_config_with_timeout().await?;
+    let value = serde_json::to_value(&config.autonomy).map_err(|e| e.to_string())?;
+    Ok(RpcOutcome::single_log(value, "autonomy settings read"))
+}
+
 /// Updates the analytics-related settings in the configuration.
 pub async fn apply_analytics_settings(
     config: &mut Config,
@@ -847,39 +942,6 @@ pub async fn load_and_apply_meet_settings(
 ) -> Result<RpcOutcome<serde_json::Value>, String> {
     let mut config = load_config_with_timeout().await?;
     apply_meet_settings(&mut config, update).await
-}
-
-/// Updates the autonomy policy settings in the configuration.
-/// Validation: 1 <= max_actions_per_hour <= u32::MAX. The upper bound is the
-/// sentinel for "unlimited" (matches the schema default); the UI surfaces
-/// this preset explicitly.
-pub async fn apply_autonomy_settings(
-    config: &mut Config,
-    update: AutonomySettingsPatch,
-) -> Result<RpcOutcome<serde_json::Value>, String> {
-    if let Some(v) = update.max_actions_per_hour {
-        if v == 0 {
-            return Err(format!("max_actions_per_hour must be at least 1 (got {v})"));
-        }
-        config.autonomy.max_actions_per_hour = v;
-    }
-    config.save().await.map_err(|e| e.to_string())?;
-    let snapshot = snapshot_config_json(config)?;
-    Ok(RpcOutcome::new(
-        snapshot,
-        vec![format!(
-            "autonomy settings saved to {}",
-            config.config_path.display()
-        )],
-    ))
-}
-
-/// Loads the configuration, applies autonomy settings updates, and saves it.
-pub async fn load_and_apply_autonomy_settings(
-    update: AutonomySettingsPatch,
-) -> Result<RpcOutcome<serde_json::Value>, String> {
-    let mut config = load_config_with_timeout().await?;
-    apply_autonomy_settings(&mut config, update).await
 }
 
 /// Updates the search engine configuration. Empty API-key strings clear the

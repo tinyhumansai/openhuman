@@ -881,6 +881,7 @@ const en1: TranslationMap = {
     'Never share your recovery phrase. Anyone with these words can access your account.',
   'mnemonic.copied': 'Recovery phrase copied to clipboard',
   'mnemonic.reveal': 'Reveal phrase',
+  'mnemonic.revealPhrase': 'Reveal recovery phrase',
   'mnemonic.hidden': 'Recovery phrase is hidden',
   'privacy.title': 'Privacy & Security',
   'privacy.description': 'Transparency report of data sent to external services.',

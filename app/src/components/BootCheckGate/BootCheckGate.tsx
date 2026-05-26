@@ -620,15 +620,8 @@ export default function BootCheckGate({ children }: BootCheckGateProps) {
       try {
         const checkResult = await runBootCheck(mode, transport);
         log('[boot-check] gate — check result=%s', checkResult.kind);
-
-        if (checkResult.kind === 'match') {
-          // Gate resolves — render children.
-          setPhase('result');
-          setResult(checkResult);
-        } else {
-          setPhase('result');
-          setResult(checkResult);
-        }
+        setPhase('result');
+        setResult(checkResult);
       } catch (err) {
         logError('[boot-check] gate — unexpected error: %o', err);
         setPhase('result');

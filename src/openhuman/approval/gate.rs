@@ -33,6 +33,7 @@ use tokio::sync::oneshot;
 
 use crate::core::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::config::Config;
+use crate::openhuman::security::POLICY_DENIED_MARKER;
 
 use super::store;
 use super::types::{ApprovalDecision, ExecutionOutcome, GateOutcome, PendingApproval};
@@ -41,6 +42,37 @@ use super::types::{ApprovalDecision, ExecutionOutcome, GateOutcome, PendingAppro
 /// returning `Deny`. 10 minutes matches the default `expires_at`
 /// written into the persisted row.
 const DEFAULT_APPROVAL_TTL: Duration = Duration::from_secs(60 * 10);
+
+/// Per-turn chat context for routing a parked approval's yes/no reply back to
+/// the originating thread. The web channel scopes this task-local around the
+/// agent run (`channels::providers::web`); because the `run_turn` handler, the
+/// tool loop, and `intercept` all run inline (`.await`) within that spawned
+/// task, it propagates down to `intercept` with no signature plumbing. Absent
+/// for non-chat callers (CLI, sub-agents) — their approvals are simply not
+/// chat-routable.
+#[derive(Clone, Debug)]
+pub struct ApprovalChatContext {
+    pub thread_id: String,
+    pub client_id: String,
+}
+
+tokio::task_local! {
+    pub static APPROVAL_CHAT_CONTEXT: ApprovalChatContext;
+}
+
+/// Parse a chat reply to a parked approval into a binary decision (v1). Only an
+/// explicit yes/no answer maps to a decision; anything else returns `None` — the
+/// web channel treats `None` as "not an answer", cancels the parked turn, and
+/// dispatches the message as a fresh user turn (so the user can redirect).
+pub fn parse_approval_reply(message: &str) -> Option<ApprovalDecision> {
+    match message.trim().to_ascii_lowercase().as_str() {
+        "yes" | "y" | "ok" | "okay" | "approve" | "approved" | "allow" => {
+            Some(ApprovalDecision::ApproveOnce)
+        }
+        "no" | "n" | "deny" | "denied" => Some(ApprovalDecision::Deny),
+        _ => None,
+    }
+}
 
 static GLOBAL_GATE: OnceLock<Arc<ApprovalGate>> = OnceLock::new();
 
@@ -51,6 +83,11 @@ pub struct ApprovalGate {
     ttl: Duration,
     waiters: Mutex<HashMap<String, oneshot::Sender<ApprovalDecision>>>,
     always_allowlist: Mutex<HashSet<String>>,
+    /// thread_id → request_id for the approval currently parked on that chat
+    /// thread, so the web channel can route a yes/no reply to `approval_decide`.
+    /// In-memory only (session-scoped — a parked approval doesn't survive a
+    /// restart, and the oneshot waiter is in-memory anyway).
+    thread_to_request: Mutex<HashMap<String, String>>,
 }
 
 impl ApprovalGate {
@@ -87,6 +124,7 @@ impl ApprovalGate {
             ttl,
             waiters: Mutex::new(HashMap::new()),
             always_allowlist: Mutex::new(HashSet::new()),
+            thread_to_request: Mutex::new(HashMap::new()),
         }
     }
 
@@ -142,6 +180,26 @@ impl ApprovalGate {
             }
         }
 
+        // Chat context (thread/client id) for routing the yes/no reply — set by
+        // the web channel around the agent run; absent for non-chat callers.
+        let chat_ctx = APPROVAL_CHAT_CONTEXT.try_with(|c| c.clone()).ok();
+        let chat_thread_id = chat_ctx.as_ref().map(|c| c.thread_id.clone());
+        let chat_client_id = chat_ctx.as_ref().map(|c| c.client_id.clone());
+
+        // The gate is interactive: it only engages when there's a live chat turn
+        // to surface the prompt to and a human to answer it. Background / triage
+        // / cron turns carry no `ApprovalChatContext` — they are pre-authorized
+        // autonomous automation, and gating them would park with nobody to
+        // answer (→ TTL timeout → deny), stalling the automation. So with no
+        // chat context, allow the call straight through.
+        if chat_ctx.is_none() {
+            tracing::debug!(
+                tool = tool_name,
+                "[approval::gate] no chat context (non-interactive turn) — not gating"
+            );
+            return (GateOutcome::Allow, None);
+        }
+
         let request_id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now();
         let expires_at = Some(now + chrono::Duration::from_std(self.ttl).unwrap_or_default());
@@ -165,9 +223,17 @@ impl ApprovalGate {
             let mut waiters = self.waiters.lock();
             waiters.insert(request_id.clone(), tx);
         }
+        // Record the thread → request mapping so an inbound chat reply on this
+        // thread can be routed to `approval_decide` (see web channel ingress).
+        if let Some(thread_id) = chat_thread_id.as_ref() {
+            self.thread_to_request
+                .lock()
+                .insert(thread_id.clone(), request_id.clone());
+        }
 
         if let Err(err) = store::insert_pending(&self.config, &pending) {
             self.evict_waiter(&request_id);
+            self.clear_thread(&chat_thread_id);
             tracing::error!(
                 error = %err,
                 tool = tool_name,
@@ -176,19 +242,29 @@ impl ApprovalGate {
             return (
                 GateOutcome::Deny {
                     reason: format!(
-                        "Approval gate could not persist the request — denying for safety: {err}"
+                        "{POLICY_DENIED_MARKER} Approval gate could not persist the request — \
+                         denying for safety: {err}"
                     ),
                 },
                 None,
             );
         }
 
+        tracing::info!(
+            request_id = %request_id,
+            tool = tool_name,
+            thread_id = chat_thread_id.as_deref().unwrap_or("<none>"),
+            client_id = chat_client_id.as_deref().unwrap_or("<none>"),
+            "[approval::gate] publishing ApprovalRequested (surface fires only if thread_id+client_id are both set)"
+        );
         publish_global(DomainEvent::ApprovalRequested {
             request_id: request_id.clone(),
             tool_name: tool_name.to_string(),
             action_summary: action_summary.to_string(),
             args_redacted,
             session_id: self.session_id.clone(),
+            thread_id: chat_thread_id.clone(),
+            client_id: chat_client_id.clone(),
         });
 
         tracing::info!(
@@ -197,7 +273,7 @@ impl ApprovalGate {
             "[approval::gate] tool call parked, waiting for decision"
         );
 
-        match tokio::time::timeout(self.ttl, rx).await {
+        let outcome = match tokio::time::timeout(self.ttl, rx).await {
             Ok(Ok(decision)) => {
                 tracing::info!(
                     request_id = %request_id,
@@ -210,7 +286,11 @@ impl ApprovalGate {
                 } else {
                     (
                         GateOutcome::Deny {
-                            reason: format!("User denied '{tool_name}' execution."),
+                            reason: format!(
+                                "{POLICY_DENIED_MARKER} User denied '{tool_name}' execution. Do \
+                                 not re-request the same call this turn; take a different approach \
+                                 or stop."
+                            ),
                         },
                         None,
                     )
@@ -228,7 +308,8 @@ impl ApprovalGate {
                 (
                     GateOutcome::Deny {
                         reason: format!(
-                            "Approval channel for '{tool_name}' closed before a decision was made."
+                            "{POLICY_DENIED_MARKER} Approval channel for '{tool_name}' closed \
+                             before a decision was made."
                         ),
                     },
                     None,
@@ -258,25 +339,36 @@ impl ApprovalGate {
                         ttl_secs = self.ttl.as_secs(),
                         "[approval::gate] timeout race: persisted decision was Approve, honoring approval"
                     );
-                    return (GateOutcome::Allow, Some(request_id));
+                    // Fall through (no early return) so `clear_thread` below runs
+                    // on this path too — otherwise the stale thread→request
+                    // mapping survives and the next yes/no on the thread could be
+                    // routed to this already-finished request.
+                    (GateOutcome::Allow, Some(request_id))
+                } else {
+                    tracing::warn!(
+                        request_id = %request_id,
+                        tool = tool_name,
+                        ttl_secs = self.ttl.as_secs(),
+                        "[approval::gate] approval timed out, denying"
+                    );
+                    (
+                        GateOutcome::Deny {
+                            reason: format!(
+                                "{POLICY_DENIED_MARKER} Approval for '{tool_name}' timed out after \
+                                 {}s. Do not re-request the same call this turn; take a different \
+                                 approach or stop.",
+                                self.ttl.as_secs()
+                            ),
+                        },
+                        None,
+                    )
                 }
-                tracing::warn!(
-                    request_id = %request_id,
-                    tool = tool_name,
-                    ttl_secs = self.ttl.as_secs(),
-                    "[approval::gate] approval timed out, denying"
-                );
-                (
-                    GateOutcome::Deny {
-                        reason: format!(
-                            "Approval for '{tool_name}' timed out after {}s.",
-                            self.ttl.as_secs()
-                        ),
-                    },
-                    None,
-                )
             }
-        }
+        };
+        // The thread routing mapping is only needed while parked; clear it on
+        // every exit (decision, channel drop, or timeout).
+        self.clear_thread(&chat_thread_id);
+        outcome
     }
 
     /// Write the *terminal* status of a tool call onto its approval
@@ -368,6 +460,19 @@ impl ApprovalGate {
         let mut waiters = self.waiters.lock();
         waiters.remove(request_id);
     }
+
+    /// The request_id of the approval currently parked on `thread_id`, if any.
+    /// Used by the web channel to route an inbound yes/no reply to a decision.
+    pub fn pending_for_thread(&self, thread_id: &str) -> Option<String> {
+        self.thread_to_request.lock().get(thread_id).cloned()
+    }
+
+    /// Drop the thread → request mapping (best-effort; no-op when absent).
+    fn clear_thread(&self, thread_id: &Option<String>) {
+        if let Some(t) = thread_id {
+            self.thread_to_request.lock().remove(t);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -392,6 +497,15 @@ mod tests {
         (gate, dir)
     }
 
+    /// A chat context — the gate only parks within a live chat turn now, so
+    /// tests that exercise parking must run intercept inside this scope.
+    fn chat_ctx() -> ApprovalChatContext {
+        ApprovalChatContext {
+            thread_id: "t-test".into(),
+            client_id: "c-test".into(),
+        }
+    }
+
     #[tokio::test]
     async fn approve_once_returns_allow() {
         let (gate, _dir) = test_gate();
@@ -399,7 +513,11 @@ mod tests {
 
         let g = gate.clone();
         let handle = tokio::spawn(async move {
-            g.intercept("composio", "send slack", serde_json::json!({}))
+            APPROVAL_CHAT_CONTEXT
+                .scope(
+                    chat_ctx(),
+                    g.intercept("composio", "send slack", serde_json::json!({})),
+                )
                 .await
         });
 
@@ -429,7 +547,11 @@ mod tests {
 
         let g = gate.clone();
         let handle = tokio::spawn(async move {
-            g.intercept("pushover", "send push", serde_json::json!({}))
+            APPROVAL_CHAT_CONTEXT
+                .scope(
+                    chat_ctx(),
+                    g.intercept("pushover", "send push", serde_json::json!({})),
+                )
                 .await
         });
 
@@ -457,7 +579,11 @@ mod tests {
 
         let g = gate.clone();
         let first = tokio::spawn(async move {
-            g.intercept("composio", "first", serde_json::json!({}))
+            APPROVAL_CHAT_CONTEXT
+                .scope(
+                    chat_ctx(),
+                    g.intercept("composio", "first", serde_json::json!({})),
+                )
                 .await
         });
         let pending = loop {
@@ -481,8 +607,11 @@ mod tests {
     async fn timeout_returns_deny() {
         let (gate, _dir) = test_gate(); // TTL = 500ms
         let gate = Arc::new(gate);
-        let outcome = gate
-            .intercept("composio", "timed out", serde_json::json!({}))
+        let outcome = APPROVAL_CHAT_CONTEXT
+            .scope(
+                chat_ctx(),
+                gate.intercept("composio", "timed out", serde_json::json!({})),
+            )
             .await;
         match outcome {
             GateOutcome::Deny { reason } => assert!(reason.contains("timed out")),
@@ -500,6 +629,84 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn pending_for_thread_tracks_request_under_chat_context_and_clears() {
+        let (gate, _dir) = test_gate();
+        let gate = Arc::new(gate);
+
+        // Run intercept inside a scoped chat context (as the web channel does).
+        let g = gate.clone();
+        let ctx = ApprovalChatContext {
+            thread_id: "thread-42".into(),
+            client_id: "client-1".into(),
+        };
+        let handle = tokio::spawn(async move {
+            APPROVAL_CHAT_CONTEXT
+                .scope(ctx, g.intercept("shell", "run ls", serde_json::json!({})))
+                .await
+        });
+
+        // While parked, the thread → request mapping is queryable.
+        let mut tries = 0;
+        let request_id = loop {
+            if let Some(r) = gate.pending_for_thread("thread-42") {
+                break r;
+            }
+            tries += 1;
+            assert!(tries < 50, "thread mapping never appeared");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        };
+
+        // Decide via the mapped request_id (as the chat ingress router will).
+        gate.decide(&request_id, ApprovalDecision::ApproveOnce)
+            .unwrap();
+        assert!(matches!(handle.await.unwrap(), GateOutcome::Allow));
+
+        // Mapping is cleared once intercept returns.
+        assert!(gate.pending_for_thread("thread-42").is_none());
+    }
+
+    #[test]
+    fn parse_approval_reply_maps_yes_no_and_rejects_other() {
+        for y in ["yes", "Y", " OK ", "approve", "Allow", "okay"] {
+            assert_eq!(
+                super::parse_approval_reply(y),
+                Some(ApprovalDecision::ApproveOnce),
+                "{y}"
+            );
+        }
+        for n in ["no", "N", "deny", "Denied"] {
+            assert_eq!(
+                super::parse_approval_reply(n),
+                Some(ApprovalDecision::Deny),
+                "{n}"
+            );
+        }
+        // Anything else is NOT an answer → caller cancels + redirects.
+        for other in [
+            "maybe",
+            "actually do Y instead",
+            "",
+            "yep nope",
+            "sure thing",
+        ] {
+            assert_eq!(super::parse_approval_reply(other), None, "{other}");
+        }
+    }
+
+    #[tokio::test]
+    async fn no_chat_context_is_allowed_not_gated() {
+        // The gate is interactive: a non-chat caller (background / triage / cron,
+        // no ApprovalChatContext) is allowed straight through — never parked —
+        // so autonomous turns don't stall on an approval no one can answer.
+        let (gate, _dir) = test_gate();
+        let outcome = gate
+            .intercept("shell", "run ls", serde_json::json!({}))
+            .await;
+        assert!(matches!(outcome, GateOutcome::Allow));
+        assert!(gate.pending_for_thread("thread-42").is_none());
+    }
+
+    #[tokio::test]
     async fn intercept_audited_returns_request_id_only_when_allowed_and_persisted() {
         let (gate, _dir) = test_gate();
         let gate = Arc::new(gate);
@@ -509,7 +716,14 @@ mod tests {
         // (issue #2135).
         let g = gate.clone();
         let handle = tokio::spawn(async move {
-            g.intercept_audited("composio", "send slack", serde_json::json!({}))
+            // Scope a chat context *inside* the spawned task — task-locals don't
+            // cross `tokio::spawn`, and `intercept` only parks (creates a pending
+            // row) when a chat context is present.
+            APPROVAL_CHAT_CONTEXT
+                .scope(
+                    chat_ctx(),
+                    g.intercept_audited("composio", "send slack", serde_json::json!({})),
+                )
                 .await
         });
         let pending = loop {
@@ -541,7 +755,11 @@ mod tests {
         // Deny path → no id (nothing to record afterward).
         let g = gate.clone();
         let denied = tokio::spawn(async move {
-            g.intercept_audited("composio", "send slack", serde_json::json!({}))
+            APPROVAL_CHAT_CONTEXT
+                .scope(
+                    chat_ctx(),
+                    g.intercept_audited("composio", "send slack", serde_json::json!({})),
+                )
                 .await
         });
         let pending = loop {
@@ -559,7 +777,11 @@ mod tests {
         // Allowlist-shortcut path → also no id (no row was created).
         let g = gate.clone();
         let first = tokio::spawn(async move {
-            g.intercept_audited("pushover", "first send", serde_json::json!({}))
+            APPROVAL_CHAT_CONTEXT
+                .scope(
+                    chat_ctx(),
+                    g.intercept_audited("pushover", "first send", serde_json::json!({})),
+                )
                 .await
         });
         let pending = loop {
@@ -582,8 +804,11 @@ mod tests {
             "the prompting call still persists a row"
         );
 
-        let (second_outcome, second_id) = gate
-            .intercept_audited("pushover", "second send", serde_json::json!({}))
+        let (second_outcome, second_id) = APPROVAL_CHAT_CONTEXT
+            .scope(
+                chat_ctx(),
+                gate.intercept_audited("pushover", "second send", serde_json::json!({})),
+            )
             .await;
         assert!(matches!(second_outcome, GateOutcome::Allow));
         assert!(

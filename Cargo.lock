@@ -5060,7 +5060,7 @@ dependencies = [
 
 [[package]]
 name = "openhuman"
-version = "0.54.13"
+version = "0.54.15"
 dependencies = [
  "aes-gcm",
  "anyhow",

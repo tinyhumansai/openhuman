@@ -1,7 +1,7 @@
 use crate::openhuman::agent::host_runtime::RuntimeAdapter;
 use crate::openhuman::javascript::NodeBootstrap;
-use crate::openhuman::security::{AuditLogger, CommandExecutionLog, SecurityPolicy};
-use crate::openhuman::tools::traits::{Tool, ToolResult};
+use crate::openhuman::security::{AuditLogger, CommandExecutionLog, GateDecision, SecurityPolicy};
+use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
 use std::sync::Arc;
@@ -131,10 +131,10 @@ impl Tool for ShellTool {
                     "type": "string",
                     "description": "The shell command to execute"
                 },
-                "approved": {
-                    "type": "boolean",
-                    "description": "Set true to explicitly approve medium/high-risk commands in supervised mode",
-                    "default": false
+                "category": {
+                    "type": "string",
+                    "enum": ["read", "write", "network", "install", "destructive"],
+                    "description": "Optional self-declared risk category for this command. Advisory and ESCALATE-ONLY: it can raise the approval requirement (e.g. flag a destructive command) but never lowers what the runtime determines."
                 }
             },
             "required": ["command"]
@@ -150,19 +150,48 @@ impl Tool for ShellTool {
         Some(30_000)
     }
 
+    fn permission_level(&self) -> PermissionLevel {
+        PermissionLevel::Execute
+    }
+
+    /// Whether this shell call must be approved by the human before it runs.
+    /// True for any command the current tier prompts on (Write / Network /
+    /// Destructive in ask-before-edit; Network / Destructive in Full). The
+    /// harness routes these through the `ApprovalGate`; the read-only `Block`
+    /// and the structural guard are enforced in `run_with_security`.
+    fn external_effect_with_args(&self, args: &serde_json::Value) -> bool {
+        let command = args.get("command").and_then(|v| v.as_str()).unwrap_or("");
+        let mut class = self.security.classify_command(command);
+        // Escalate-only LLM hint: max() so a self-declared category can raise
+        // the requirement (e.g. Write -> Destructive) but never lower it.
+        if let Some(declared) = args
+            .get("category")
+            .and_then(|v| v.as_str())
+            .and_then(SecurityPolicy::parse_declared_class)
+        {
+            class = class.max(declared);
+        }
+        self.security.gate_decision(class) == GateDecision::Prompt
+    }
+
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
         let command = args
             .get("command")
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("Missing 'command' parameter"))?;
-        let approved = args
-            .get("approved")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
 
         let start = Instant::now();
-        let (allowed, result) = self.run_with_security(command, approved).await;
+        let (allowed, result) = self.run_with_security(command).await;
         let duration_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
+        // `allowed` = passed the in-tool security checks. `approved` = the command
+        // is Prompt-class (required human approval) and thus went through the
+        // harness ApprovalGate to reach here — distinct from `allowed`. Reads and
+        // Full-mode writes run without a prompt, so they audit as approved=false
+        // rather than over-claiming a human approval that never happened. (The
+        // gate's exact yes/no isn't threaded into tools; this is the accurate
+        // "required approval" proxy.)
+        let approved = self.external_effect_with_args(&args);
+        // emit_audit signature is (command, approved, allowed, …) — keep that order.
         self.emit_audit(command, approved, allowed, !result.is_error, duration_ms);
         Ok(result)
     }
@@ -172,16 +201,20 @@ impl ShellTool {
     /// Run the command through the security policy and runtime. Returns
     /// `(allowed, result)` where `allowed=false` means the policy or rate
     /// limiter blocked execution before the command was launched.
-    async fn run_with_security(&self, command: &str, approved: bool) -> (bool, ToolResult) {
+    async fn run_with_security(&self, command: &str) -> (bool, ToolResult) {
+        // Read-only `Block` + the Option-2 structural guard. Approval for
+        // Write / Network / Destructive already happened at the harness
+        // `ApprovalGate` (see `external_effect_with_args`) before `execute()`
+        // ran; this enforces what must still hold afterwards.
+        if let Err(reason) = self.security.check_gated_command(command) {
+            return (false, ToolResult::error(reason));
+        }
+
         if self.security.is_rate_limited() {
             return (
                 false,
                 ToolResult::error("Rate limit exceeded: too many actions in the last hour"),
             );
-        }
-
-        if let Err(reason) = self.security.validate_command_execution(command, approved) {
-            return (false, ToolResult::error(reason));
         }
 
         if !self.security.record_action() {
@@ -285,7 +318,7 @@ impl ShellTool {
 mod tests {
     use super::*;
     use crate::openhuman::agent::host_runtime::{NativeRuntime, RuntimeAdapter};
-    use crate::openhuman::security::{AutonomyLevel, SecurityPolicy};
+    use crate::openhuman::security::{AutonomyLevel, CommandClass, SecurityPolicy};
 
     fn test_security(autonomy: AutonomyLevel) -> Arc<SecurityPolicy> {
         Arc::new(SecurityPolicy {
@@ -354,7 +387,11 @@ mod tests {
             test_runtime(),
             audit,
         );
-        let _ = tool.execute(json!({"command": "ls"})).await.unwrap();
+        // A write command in read-only mode is denied before execution.
+        let _ = tool
+            .execute(json!({"command": "touch denied_file"}))
+            .await
+            .unwrap();
         let log = std::fs::read_to_string(tmp.path().join("audit.log"))
             .expect("audit log file should exist");
         let parsed: AuditEvent = serde_json::from_str(log.trim()).expect("audit event JSON parses");
@@ -398,7 +435,9 @@ mod tests {
             .as_array()
             .unwrap()
             .contains(&json!("command")));
-        assert!(schema["properties"]["approved"].is_object());
+        // The self-asserted `approved` param was removed — approval now happens
+        // at the harness ApprovalGate, not via a model-set flag.
+        assert!(schema["properties"]["approved"].is_null());
     }
 
     #[cfg(not(windows))]
@@ -419,28 +458,35 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn shell_blocks_disallowed_command() {
-        let tool = ShellTool::new(
-            test_security(AutonomyLevel::Supervised),
-            test_runtime(),
-            test_audit(),
+    async fn shell_destructive_command_is_gated_not_run_inline() {
+        // `rm -rf /` is Destructive → it must route through the human approval
+        // gate (external_effect), never auto-run. Assert the classification
+        // here rather than executing it.
+        let security = test_security(AutonomyLevel::Supervised);
+        let tool = ShellTool::new(security.clone(), test_runtime(), test_audit());
+        assert_eq!(
+            security.classify_command("rm -rf /"),
+            CommandClass::Destructive
         );
-        let result = tool.execute(json!({"command": "rm -rf /"})).await.unwrap();
-        assert!(result.is_error);
-        let error = result.output();
-        assert!(error.contains("not allowed") || error.contains("high-risk"));
+        assert!(tool.external_effect_with_args(&json!({"command": "rm -rf /"})));
     }
 
     #[tokio::test]
-    async fn shell_blocks_readonly() {
-        let tool = ShellTool::new(
-            test_security(AutonomyLevel::ReadOnly),
-            test_runtime(),
-            test_audit(),
+    async fn shell_readonly_allows_reads_blocks_writes() {
+        let security = test_security(AutonomyLevel::ReadOnly);
+        // Read commands are permitted in read-only mode…
+        assert_eq!(
+            security.gate_decision(security.classify_command("ls")),
+            GateDecision::Allow
         );
-        let result = tool.execute(json!({"command": "ls"})).await.unwrap();
-        assert!(result.is_error);
-        assert!(&result.output().contains("not allowed"));
+        // …but a write command is blocked before execution.
+        let tool = ShellTool::new(security, test_runtime(), test_audit());
+        let blocked = tool
+            .execute(json!({"command": "touch ro_test_file"}))
+            .await
+            .unwrap();
+        assert!(blocked.is_error);
+        assert!(blocked.output().contains("read-only"));
     }
 
     #[tokio::test]
@@ -556,41 +602,37 @@ mod tests {
         );
     }
 
-    #[cfg(not(windows))]
     #[tokio::test]
-    async fn shell_requires_approval_for_medium_risk_command() {
-        let security = Arc::new(SecurityPolicy {
-            autonomy: AutonomyLevel::Supervised,
-            allowed_commands: vec!["touch".into(), "mkdir".into()],
-            workspace_dir: std::env::temp_dir(),
-            ..SecurityPolicy::default()
-        });
+    async fn shell_writes_are_gated_in_supervised_run_in_full() {
+        // A write command routes through the approval gate in ask-before-edit
+        // (no self-asserted `approved` flag any more)…
+        let supervised = test_security(AutonomyLevel::Supervised);
+        let tool = ShellTool::new(supervised.clone(), test_runtime(), test_audit());
+        assert_eq!(supervised.classify_command("touch f"), CommandClass::Write);
+        assert!(tool.external_effect_with_args(&json!({"command": "touch f"})));
 
-        let tool = ShellTool::new(security.clone(), test_runtime(), test_audit());
-        let command = if cfg!(windows) {
-            "mkdir openhuman_shell_approval_test"
-        } else {
-            "touch openhuman_shell_approval_test"
-        };
-        let denied = tool.execute(json!({"command": command})).await.unwrap();
-        assert!(denied.is_error);
-        assert!(denied.output().contains("explicit approval"));
+        // …and runs without prompting in Full.
+        let full = test_security(AutonomyLevel::Full);
+        let full_tool = ShellTool::new(full, test_runtime(), test_audit());
+        assert!(!full_tool.external_effect_with_args(&json!({"command": "touch f"})));
+    }
 
-        let allowed = tool
-            .execute(json!({
-                "command": command,
-                "approved": true
-            }))
-            .await
-            .unwrap();
-        assert!(!allowed.is_error, "{}", allowed.output());
-
-        let cleanup = std::env::temp_dir().join("openhuman_shell_approval_test");
-        if cfg!(windows) {
-            let _ = tokio::fs::remove_dir_all(&cleanup).await;
-        } else {
-            let _ = tokio::fs::remove_file(&cleanup).await;
-        }
+    #[tokio::test]
+    async fn shell_llm_category_escalates_but_never_lowers() {
+        // In Full a Write runs silently…
+        let full = test_security(AutonomyLevel::Full);
+        let tool = ShellTool::new(full, test_runtime(), test_audit());
+        assert!(!tool.external_effect_with_args(&json!({"command": "touch f"})));
+        // …but a self-declared `destructive` escalates it to a prompt.
+        assert!(tool
+            .external_effect_with_args(&json!({"command": "touch f", "category": "destructive"})));
+        // The hint can never LOWER: declaring a destructive command "read"
+        // still prompts (in any acting tier).
+        let supervised = test_security(AutonomyLevel::Supervised);
+        let stool = ShellTool::new(supervised, test_runtime(), test_audit());
+        assert!(
+            stool.external_effect_with_args(&json!({"command": "sudo reboot", "category": "read"}))
+        );
     }
 
     // ── §5.2 Shell timeout enforcement tests ─────────────────

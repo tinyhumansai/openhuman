@@ -707,6 +707,42 @@ const ko5: TranslationMap = {
   'skills.meetingBots.platforms.zoom': 'Zoom',
   'skills.meetingBots.soonSuffix': '곧',
   'skills.setup.screenIntel.permissionPathLabel': 'macOS는 다음에 개인 정보 보호를 적용합니다.',
+  'settings.agentAccess.title': 'Agent OS access',
+  'settings.agentAccess.menuDesc':
+    'Control where the agent can read/write and whether it can use the shell.',
+  'settings.agentAccess.loadError': 'Failed to load access settings',
+  'settings.agentAccess.saveError': 'Failed to save access settings',
+  'settings.agentAccess.saved': 'Saved — applies on your next message.',
+  'settings.agentAccess.desktopOnly': 'Access settings are only available in the desktop app.',
+  'settings.agentAccess.loading': 'Loading…',
+  'settings.agentAccess.accessMode': 'Access mode',
+  'settings.agentAccess.tier.readonly.title': 'Read-only',
+  'settings.agentAccess.tier.readonly.desc':
+    'Reads files and runs read-only commands to explore — but never writes, edits, or runs anything that changes state.',
+  'settings.agentAccess.tier.supervised.title': 'Ask before edit',
+  'settings.agentAccess.tier.supervised.desc':
+    'Creates new files freely, but asks for your approval before editing an existing file, running a command, reaching the network, or installing anything.',
+  'settings.agentAccess.tier.full.title': 'Full access',
+  'settings.agentAccess.tier.full.desc':
+    'Runs commands with your full user account access — it can read/write anywhere allowed, except credential and system stores. Destructive commands, network access, and installs still ask for approval.',
+  'settings.agentAccess.defaultTag': '(default)',
+  'settings.agentAccess.fullWarning':
+    '⚠ Full access runs commands with your full account access and is not sandboxed. Only enable it when you trust the agent with this machine. Credential and system directories stay blocked, and destructive, network, and install actions still ask for approval.',
+  'settings.agentAccess.confine.label': 'Confine to workspace',
+  'settings.agentAccess.confine.desc':
+    'Restrict the agent to the workspace directory (plus any granted folders), whichever access mode is selected. When off, it can reach anywhere your user can — except the always-blocked credential and system directories.',
+  'settings.agentAccess.grantedFolders': 'Granted folders',
+  'settings.agentAccess.grantedDesc':
+    'Folders the agent may read and write, in addition to the workspace. Credential stores (~/.ssh, ~/.gnupg, ~/.aws, keychains) and system directories (/etc, /System, C:\\Windows, …) are always blocked, even inside a granted folder.',
+  'settings.agentAccess.noneGranted': 'No folders granted.',
+  'settings.agentAccess.readWrite': 'read + write',
+  'settings.agentAccess.readOnly': 'read-only',
+  'settings.agentAccess.remove': 'Remove',
+  'settings.agentAccess.pathPlaceholder': '/absolute/path/to/folder',
+  'settings.agentAccess.accessLevelLabel': 'Access level',
+  'settings.agentAccess.add': 'Add',
+  'settings.agentAccess.saving': 'Saving…',
+  'settings.agentAccess.changesApply': 'Changes apply on your next message.',
 };
 
 export default ko5;

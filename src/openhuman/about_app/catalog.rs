@@ -1323,6 +1323,40 @@ const CAPABILITIES: &[Capability] = &[
         privacy: None,
     },
     Capability {
+        id: "filesystem.access_mode",
+        name: "Agent OS Access Mode",
+        domain: "security",
+        category: CapabilityCategory::Settings,
+        description: "Choose how much filesystem and shell access the agent has: Read-Only, \
+                      Workspace, Trusted Roots (grant specific folders outside the workspace), \
+                      or Full Access. Credential stores stay blocked in every mode.",
+        how_to: "Settings → Agent OS access",
+        status: CapabilityStatus::Stable,
+        privacy: None,
+    },
+    Capability {
+        id: "tool.detect_tools",
+        name: "Detect Installed Tools",
+        domain: "tools",
+        category: CapabilityCategory::Settings,
+        description: "Probe the host PATH to report which developer tools and language \
+                      runtimes are installed (node, python, cargo, docker, git, …).",
+        how_to: "Used by the agent automatically; gated by the tool toggle list.",
+        status: CapabilityStatus::Stable,
+        privacy: None,
+    },
+    Capability {
+        id: "tool.install_tool",
+        name: "Install OS Packages",
+        domain: "tools",
+        category: CapabilityCategory::Settings,
+        description: "Install OS or language packages (apt/dnf/brew/winget/pipx/npm/cargo). \
+                      High impact: only available when Full access / tool installation is enabled.",
+        how_to: "Enable in Settings → Agent OS access (Full access mode).",
+        status: CapabilityStatus::Beta,
+        privacy: None,
+    },
+    Capability {
         id: "intelligence.remember_preferences",
         name: "Remember Preferences",
         domain: "memory",

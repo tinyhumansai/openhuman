@@ -1336,6 +1336,12 @@ async fn run_inner_loop(
     // so the inner loop body doesn't repeatedly re-resolve `parent.on_progress`.
     let progress_sink = parent.on_progress.clone();
 
+    // Repeated-failure circuit breaker (shared guard with run_tool_call_loop):
+    // halt the subagent with a root cause instead of grinding to
+    // MaxIterationsExceeded when it re-issues a doomed action or makes no
+    // progress (e.g. re-running `pip install` that keeps failing PEP 668).
+    let mut failure_guard = crate::openhuman::agent::harness::tool_loop::RepeatFailureGuard::new();
+    let mut halt_reason: Option<String> = None;
     for iteration in 0..max_iterations {
         tracing::debug!(
             task_id = %task_id,
@@ -1688,6 +1694,20 @@ async fn run_inner_loop(
             let call_output_chars = result_text.chars().count();
             let call_elapsed_ms = call_started.elapsed().as_millis() as u64;
 
+            // Repeated-failure circuit breaker (shared guard). `call.arguments`
+            // is the stable signature; on a trip we stash the root-cause summary
+            // and bail after this iteration's tool results are recorded.
+            if let Some(reason) =
+                failure_guard.record(&call.name, &call.arguments, call_success, &result_text)
+            {
+                tracing::warn!(
+                    agent_id = %agent_id,
+                    tool = call.name.as_str(),
+                    "[subagent_runner] circuit breaker tripped — halting with root cause"
+                );
+                halt_reason = Some(reason);
+            }
+
             if force_text_mode {
                 let status = if call_success { "ok" } else { "error" };
                 let _ = std::fmt::Write::write_fmt(
@@ -1756,6 +1776,13 @@ async fn run_inner_loop(
         // iteration's provider call would leave the transcript without
         // the tool outputs the next turn will be reasoning from.
         persist_transcript(history, &usage);
+
+        // Circuit breaker tripped this iteration: return the root-cause summary
+        // as the subagent's result (tool results are already in `history`),
+        // instead of looping to MaxIterationsExceeded and being re-delegated.
+        if let Some(reason) = halt_reason.take() {
+            return Ok((reason, iteration + 1, usage));
+        }
     }
 
     Err(SubagentRunError::MaxIterationsExceeded(max_iterations))

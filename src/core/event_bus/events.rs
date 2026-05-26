@@ -243,6 +243,13 @@ pub enum DomainEvent {
         /// Session id binding the request to the current core launch
         /// so stale approvals cannot be replayed after restart.
         session_id: String,
+        /// Chat thread the gated call belongs to, when the turn originated
+        /// from a chat channel — lets the web channel route a `yes`/`no`
+        /// reply back to this request. `None` for non-chat callers.
+        thread_id: Option<String>,
+        /// Socket.IO client id (room) to surface the approval question to,
+        /// when known. `None` for non-chat callers.
+        client_id: Option<String>,
     },
     /// User decided a pending approval. Published by `approval_decide`
     /// RPC handler after the gate's parked future resolves.
@@ -549,6 +556,10 @@ pub enum DomainEvent {
     /// Distinct from [`Self::SystemShutdown`] (per-component shutdown
     /// notification) — this variant asks the running process to exit.
     SystemShutdownRequested { source: String, reason: String },
+    /// The `[autonomy]` block (agent access mode / filesystem permissions) was
+    /// changed at runtime. Live sessions should rebuild their `SecurityPolicy`
+    /// from the persisted config before the next turn.
+    AutonomyConfigChanged,
     /// A component's health status changed.
     HealthChanged {
         component: String,
@@ -650,6 +661,7 @@ impl DomainEvent {
             | Self::SystemShutdown { .. }
             | Self::SystemRestartRequested { .. }
             | Self::SystemShutdownRequested { .. }
+            | Self::AutonomyConfigChanged
             | Self::HealthChanged { .. }
             | Self::HealthRestarted { .. } => "system",
 

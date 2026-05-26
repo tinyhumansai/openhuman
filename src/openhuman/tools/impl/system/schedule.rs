@@ -134,7 +134,7 @@ impl ScheduleTool {
     fn enforce_mutation_allowed(&self, action: &str) -> Option<ToolResult> {
         if !self.security.can_act() {
             return Some(ToolResult::error(format!(
-                "Security policy: read-only mode, cannot perform '{action}'"
+                "[policy-blocked] Security policy: read-only mode, cannot perform '{action}'"
             )));
         }
 
